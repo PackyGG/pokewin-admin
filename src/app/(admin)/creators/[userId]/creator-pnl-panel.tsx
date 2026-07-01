@@ -245,19 +245,10 @@ export async function CreatorPnlPanel({
             }
             valueClassName="text-muted-foreground"
           />
-          <PanelRow
-            label="Card Withdrawals"
-            value={
-              data.lifetime.totalCardWithdrawals === 0
-                ? "—"
-                : formatCurrency(data.lifetime.totalCardWithdrawals)
-            }
-            valueClassName={
-              data.lifetime.totalCardWithdrawals > 0
-                ? "text-rose-600 dark:text-rose-400"
-                : ""
-            }
-          />
+          {/* Card Withdrawals row intentionally omitted — the money-out figure
+              is not surfaced (owner request). The lifetime P&L above still nets
+              it (`deposits − cardWithdrawals`); only the standalone row is
+              hidden, so the P&L number is unchanged. */}
         </div>
       </StatPanel>
 
@@ -267,7 +258,6 @@ export async function CreatorPnlPanel({
           const pnl = row?.pnl ?? 0;
           const deposits = row?.deposits ?? 0;
           const wagered = row?.wagered ?? 0;
-          const cardWithdrawals = row?.cardWithdrawals ?? 0;
           const ftds = ftdByPeriod[PNL_TO_FTD_PERIOD[key]] ?? 0;
           const isWin = pnl > 0;
           const isLoss = pnl < 0;
@@ -327,19 +317,8 @@ export async function CreatorPnlPanel({
                   value={wagered === 0 ? "—" : formatCurrency(wagered)}
                   valueClassName="text-muted-foreground"
                 />
-                <PanelRow
-                  label="Card WD"
-                  value={
-                    cardWithdrawals === 0
-                      ? "—"
-                      : formatCurrency(cardWithdrawals)
-                  }
-                  valueClassName={
-                    cardWithdrawals > 0
-                      ? "text-rose-600 dark:text-rose-400"
-                      : ""
-                  }
-                />
+                {/* Card WD row intentionally omitted — money-out figure not
+                    surfaced (owner request). The P&L above still nets it. */}
               </div>
             </StatPanel>
           );

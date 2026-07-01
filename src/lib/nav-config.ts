@@ -271,21 +271,10 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inSidebar: true,
     inPalette: true,
   },
-  {
-    // Withdrawals — palette-only. The standalone /withdrawals route redirects
-    // to the unified Transactions page, but the palette still advertises the
-    // legacy entry-point (key retained in ADMIN_PAGES).
-    id: "nav.withdrawals",
-    group: "Overview",
-    label: "Withdrawals",
-    href: "/withdrawals",
-    pageKey: "/withdrawals",
-    icon: "ArrowDownToLine",
-    description: "Withdrawal queue",
-    keywords: ["payouts", "shipping"],
-    inSidebar: false,
-    inPalette: true,
-  },
+  // Withdrawals palette entry removed — the money-out figure/queue is no
+  // longer surfaced in navigation (owner request). The /withdrawals route
+  // still 308-redirects to the unified Transactions page (next.config.ts) and
+  // its permission key stays in ADMIN_PAGES, but there is no nav/palette entry.
   {
     // Physical Withdrawals — real-world card-shipment availability controls
     // (global withdrawals master switch + per-country physical toggle) and the
@@ -980,7 +969,6 @@ const PALETTE_ORDER: string[] = [
   "nav.users",
   "nav.crm",
   "nav.deposits",
-  "nav.withdrawals",
   "nav.physical",
   "nav.creators",
   "nav.creators.analytics",

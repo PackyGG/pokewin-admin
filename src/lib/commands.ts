@@ -211,16 +211,6 @@ export const ACTION_COMMANDS: ActionCommand[] = [
   },
   {
     kind: "action",
-    id: "action.latest-withdrawals",
-    label: "Latest withdrawals",
-    description: "Open the withdrawal queue",
-    icon: ArrowDownToLine,
-    run: { type: "navigate", href: "/withdrawals" },
-    pageKey: "/withdrawals",
-    keywords: ["payouts", "queue"],
-  },
-  {
-    kind: "action",
     id: "action.audit-log",
     label: "Audit log",
     description: "Recent admin actions",
@@ -325,7 +315,6 @@ export function getNavCommandsByDocsGroup(): Array<{
 
 export const EXAMPLE_QUERIES: Array<{ query: string; what: string }> = [
   { query: "@vlad", what: "Fuzzy search end-users whose username starts with 'vlad'." },
-  { query: "withdrawals", what: "Jump to the withdrawal queue." },
   { query: "ban", what: "Shorthand for user moderation flows — opens the users page." },
   { query: "dark", what: "Switch to dark mode." },
   { query: "audit", what: "Open the audit log." },

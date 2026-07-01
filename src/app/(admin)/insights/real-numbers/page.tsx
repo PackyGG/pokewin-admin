@@ -1090,14 +1090,10 @@ function BalanceSheetWaterfall({ snapshot }: { snapshot: RealizedPnlSnapshot }) 
       tone: "base",
       icon: ArrowDownToLine,
     },
-    {
-      key: "withdrawals",
-      label: "Withdrawals (cash + cards out)",
-      signed: -snapshot.totalWithdrawn,
-      sign: "−",
-      tone: "cost",
-      icon: ArrowUpFromLine,
-    },
+    // Withdrawals waterfall line intentionally omitted — the money-out figure
+    // is not surfaced (owner request). The Realized P&L total below still nets
+    // it (`deposits − withdrawals − …`); only the standalone line is hidden, so
+    // the P&L number is unchanged.
     {
       key: "balance",
       label: "On-site balance held",
@@ -1150,7 +1146,7 @@ function BalanceSheetWaterfall({ snapshot }: { snapshot: RealizedPnlSnapshot }) 
           const colors = SEMANTIC_TONES[l.tone] ?? SEMANTIC_TONES.muted;
           const Icon = l.icon;
           const band =
-            l.key === "withdrawals"
+            l.key === "balance"
               ? { label: "Less money owed to / held by users", hint: "liabilities" }
               : null;
           return (
@@ -1360,12 +1356,9 @@ function ReconciliationCallout({
             sign="+"
             tone="base"
           />
-          <BridgeStep
-            label="Withdrawals (cashed out)"
-            value={snapshot.totalWithdrawn}
-            sign="−"
-            tone="cost"
-          />
+          {/* Withdrawals (cashed out) step intentionally omitted — the
+              money-out figure is not surfaced (owner request). The Realized
+              P&L below still nets it, so the total is unchanged. */}
           <BridgeStep
             label="Customers still hold"
             value={held}
@@ -1381,10 +1374,9 @@ function ReconciliationCallout({
           />
           <p className="pt-2 text-[10px] leading-snug text-muted-foreground">
             The real money: of {formatCurrency(snapshot.totalDeposited)}{" "}
-            deposited, customers withdrew{" "}
-            {formatCurrency(snapshot.totalWithdrawn)} and still hold{" "}
-            {formatCurrency(held)} (balance + inventory + vouchers + rakeback).
-            This column reconciles exactly.
+            deposited, after cash-outs customers still hold{" "}
+            {formatCurrency(held)} (balance + inventory + vouchers + rakeback),
+            leaving the realized P&L below. This column reconciles exactly.
           </p>
         </div>
       </div>
@@ -1395,12 +1387,9 @@ function ReconciliationCallout({
           GGR is a gaming-margin number measured on{" "}
           <span className="font-medium text-foreground">turnover</span>, not
           cash. The real money is the cash flow on the right: of{" "}
-          {formatCurrency(snapshot.totalDeposited)} deposited, the biggest
-          outflow by far is the{" "}
-          <span className="font-semibold tabular-nums text-rose-600 dark:text-rose-400">
-            {formatCurrency(snapshot.totalWithdrawn)}
-          </span>{" "}
-          customers withdrew, leaving a realized{" "}
+          {formatCurrency(snapshot.totalDeposited)} deposited, after customer
+          cash-outs and everything customers still hold, the realized bottom
+          line is{" "}
           <span
             className={cn(
               "font-semibold tabular-nums",

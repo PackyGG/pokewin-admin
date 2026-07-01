@@ -408,15 +408,18 @@ export function DashboardKpiSection({
 
   return (
     <div className="space-y-6">
-      {/* Period-bound boxes — each with a today/24h toggle. FIVE boxes now:
-          GGR, Wager (Total + Organic merged), Deposits, Withdrawals, and the
-          Crypto Fee counter (anchored monotonic estimate — NOT period-bound,
-          carries a static "since" label instead of a toggle). Mobile-first:
-          one column at <sm so the hero value + toggle never crush; 2-up at sm;
-          3-up at lg (the Wager dual-hero box keeps room before we go wide);
-          5 across at xl where there's width for all five (the wide Wager box
-          included) without crushing. */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-5">
+      {/* Period-bound boxes — each with a today/24h toggle. FOUR boxes now:
+          GGR, Wager (Total + Organic merged), Deposits, and the Crypto Fee
+          counter (anchored monotonic estimate — NOT period-bound, carries a
+          static "since" label instead of a toggle). The Withdrawals figure is
+          intentionally NOT surfaced anywhere in the admin (money-out display
+          removed by owner request); the derived P&L / GGR math still nets it
+          internally, the number is simply never shown. Mobile-first: one column
+          at <sm so the hero value + toggle never crush; 2-up at sm; 3-up at lg
+          (the Wager dual-hero box keeps room before we go wide); 4 across at xl
+          where there's width for all four (the wide Wager box included) without
+          crushing. */}
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
         {/* GGR — industry definition (`wager − payouts`): what we won from
             the games today (packs, battles, upgrader), pre-rewards,
             pre-promo. Cyan identity; Info popover surfaces the per-leg
@@ -439,7 +442,6 @@ export function DashboardKpiSection({
                   contributorScope={{ kind: "kpi", value: mode }}
                   cashGgr={p.cashGgr}
                   deposits={p.deposits}
-                  withdrawals={p.withdrawals}
                 />
               }
               headerRight={
@@ -542,38 +544,10 @@ export function DashboardKpiSection({
           );
         })()}
 
-        {/* Withdrawals — money out. Pink identity (matches the old tile);
-            chip row carries the completed/shipped request count. */}
-        {(() => {
-          const p = payloadFor("withdrawals");
-          const mode = modeFor("withdrawals");
-          return (
-            <KpiPanel
-              title="Withdrawals"
-              tint="pink"
-              headerRight={
-                <WindowToggle
-                  active={mode}
-                  loading={loading}
-                  onPick={(w) => pick("withdrawals", w)}
-                />
-              }
-              footer={
-                <div className="grid grid-cols-2 gap-1.5 sm:-mx-0.5">
-                  <PanelChip
-                    label="Count"
-                    value={p.withdrawalCount}
-                    format="number"
-                    tone="rose"
-                  />
-                  <PanelChip label="Total" value={p.withdrawals} tone="rose" />
-                </div>
-              }
-            >
-              <PlainHero value={p.withdrawals} format="currency" />
-            </KpiPanel>
-          );
-        })()}
+        {/* Withdrawals KPI box removed — the money-out figure is no longer
+            shown anywhere in the admin (owner request). Deposits − withdrawals
+            still nets correctly inside P&L / GGR; only the standalone display
+            was removed. */}
 
         {/* Crypto Fee — house profit from the hidden crypto exchange-rate fee,
             an ANCHORED + MONOTONIC estimate counted since the seed anchor (so
@@ -592,23 +566,21 @@ export function DashboardKpiSection({
             }
             footer={
               <div className="space-y-1.5">
-                <div className="grid grid-cols-2 gap-1.5 sm:-mx-0.5">
+                {/* Only the deposits fee leg is shown — the withdrawals fee
+                    figure is intentionally not surfaced (money-out display
+                    removed). The headline total (deposit + withdrawal fee
+                    house profit) is unchanged. */}
+                <div className="grid grid-cols-1 gap-1.5 sm:-mx-0.5">
                   <PanelChip
                     label="Deposits"
                     value={cryptoFee.depositFeeUsd}
-                    tone="emerald"
-                  />
-                  <PanelChip
-                    label="Withdrawals"
-                    value={cryptoFee.withdrawalFeeUsd}
                     tone="emerald"
                   />
                 </div>
                 {/* Bumped 10px → 11px so the bps caption is readable
                     next to the chip values it explains. */}
                 <p className="text-[11px] leading-snug text-muted-foreground">
-                  avg ~{formatBpsPct(cryptoFee.depositBps)} deposits · ~
-                  {formatBpsPct(cryptoFee.withdrawalBps)} withdrawals
+                  avg ~{formatBpsPct(cryptoFee.depositBps)} deposits
                 </p>
               </div>
             }

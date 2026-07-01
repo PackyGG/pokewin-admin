@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { PieChart, ArrowDown, ArrowUp, Coins, Gift, Repeat } from "lucide-react";
+import { PieChart, ArrowDown, ArrowUp, Gift, Repeat } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -9,26 +9,17 @@ import {
   TableBody,
   TableCell,
 } from "@/components/ui/table";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { formatCurrency } from "@/lib/utils/format";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { MetricTile } from "@/components/modern-panels";
-import { EmptyState } from "@/components/empty-state";
 import { cn } from "@/lib/utils";
 import {
   getRevenueBreakdown,
   type RevenuePeriod,
 } from "@/lib/queries/analytics-revenue";
-import {
-  getWithdrawnCoinsBreakdown,
-  type WithdrawnAsset,
-} from "@/lib/queries/analytics-withdrawals";
 import { compareRevenue } from "@/lib/clickhouse/compare/analytics-revenue";
-import { compareWithdrawals } from "@/lib/clickhouse/compare/analytics-revenue-withdrawals";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getWithdrawnCoinsBreakdownFromClickHouse } from "@/lib/clickhouse/queries/analytics/withdrawals";
-import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { RevenueStackedCharts } from "./revenue-chart";
 import type { AnalyticsPeriod } from "./types";
 
@@ -66,34 +57,15 @@ export async function RevenueTab({
         ? heroPeriod
         : "30d";
 
-  // Each leg degrades independently: a failed revenue breakdown takes
-  // the whole tab to a panel fallback (everything below depends on it);
-  // a failed withdrawn-coins scan only degrades its own card.
-  const [{ data, error }, withdrawnCoinsResult] = await Promise.all([
-    safeQuery(
-      () => getRevenueBreakdown(period),
-      null,
-      "analytics.revenue",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () =>
-        resolveAdminRead<Awaited<ReturnType<typeof getWithdrawnCoinsBreakdown>>>(
-          "analytics_revenue_withdrawals",
-          {
-            pg: () => getWithdrawnCoinsBreakdown(period),
-            ch: async () =>
-              getWithdrawnCoinsBreakdownFromClickHouse(
-                period,
-                await getExcludedUserIds(),
-              ),
-          },
-        ),
-      null,
-      "analytics.revenue.withdrawnCoins",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-  ]);
+  // A failed revenue breakdown takes the whole tab to a panel fallback
+  // (everything below depends on it). The withdrawn-coins card was removed
+  // (money-out display hidden by owner request), so its scan no longer runs.
+  const { data, error } = await safeQuery(
+    () => getRevenueBreakdown(period),
+    null,
+    "analytics.revenue",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
   if (error || !data) {
     return (
       <TileErrorFallback
@@ -103,14 +75,12 @@ export async function RevenueTab({
       />
     );
   }
-  const withdrawnCoins = withdrawnCoinsResult.data;
 
-  // Comparison-mode ClickHouse twins (fire-and-forget). No-op unless the
-  // `analytics_revenue` / `analytics_revenue_withdrawals` surfaces are in
-  // `comparison` mode. Diff against the served Postgres payloads; never
-  // awaited, swallow their own errors, never affect the rendered output.
+  // Comparison-mode ClickHouse twin (fire-and-forget). No-op unless the
+  // `analytics_revenue` surface is in `comparison` mode. Diffs against the
+  // served Postgres payload; never awaited, swallows its own errors, never
+  // affects the rendered output.
   void compareRevenue(data);
-  if (withdrawnCoins) void compareWithdrawals(withdrawnCoins);
 
   return (
     <FadeIn>
@@ -239,30 +209,10 @@ export async function RevenueTab({
           </Card>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm font-medium">
-              <Coins className="size-4 text-primary" />
-              Withdrawn coins — {periodLabel(period)}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {withdrawnCoinsResult.error || !withdrawnCoins ? (
-              <TileErrorFallback
-                label="Withdrawn coins"
-                hint="The withdrawal breakdown query failed — other sections still rendered. Refresh to retry."
-                size="panel"
-              />
-            ) : (
-              <WithdrawnCoinsTable
-                assets={withdrawnCoins.assets}
-                totalCryptoUsd={withdrawnCoins.totalCryptoUsd}
-                physicalUsd={withdrawnCoins.physicalUsd}
-                physicalCount={withdrawnCoins.physicalCount}
-              />
-            )}
-          </CardContent>
-        </Card>
+        {/* "Withdrawn coins" card removed — the money-out (crypto + physical
+            withdrawal) breakdown is no longer surfaced (owner request). It fed
+            only its own display card, never GGR/NGR/P&L, so those figures are
+            unchanged. */}
 
         <Card>
           <CardHeader>
@@ -279,162 +229,6 @@ export async function RevenueTab({
   );
 }
 
-/**
- * Crypto-asset withdrawal breakdown. Each row = one crypto asset
- * sorted by USD value descending. The footer line shows physical
- * (shipped card) totals so admins can compare crypto-cashout volume
- * against physical-card volume in the same window.
- *
- * House POV: every row here is real cash leaving the platform, so
- * dollar amounts render in rose. Native crypto amount is rendered
- * neutral (it's a quantity, not a P&L impact).
- */
-function WithdrawnCoinsTable({
-  assets,
-  totalCryptoUsd,
-  physicalUsd,
-  physicalCount,
-}: {
-  assets: WithdrawnAsset[];
-  totalCryptoUsd: number;
-  physicalUsd: number;
-  physicalCount: number;
-}) {
-  if (assets.length === 0 && physicalCount === 0) {
-    return (
-      <EmptyState
-        icon={Coins}
-        title="No withdrawals in this window"
-        description="No crypto cash-outs or physical card shipments in the selected period. Try a longer period."
-        compact
-      />
-    );
-  }
-  return (
-    <div className="space-y-3">
-      {assets.length === 0 ? (
-        <EmptyState
-          icon={Coins}
-          title="No crypto withdrawals in this window"
-          compact
-        />
-      ) : (
-        <>
-          {/* Mobile card list (<md) — asset + USD headline (rose, real
-              cash leaving), count/native/share as meta + a bar. */}
-          <div className="space-y-2 md:hidden">
-            {assets.map((a) => {
-              const pct =
-                totalCryptoUsd > 0 ? (a.totalUsd / totalCryptoUsd) * 100 : 0;
-              return (
-                <div key={a.asset} className="rounded-lg border bg-card p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-mono text-xs font-medium">
-                      {a.asset}
-                    </span>
-                    <span className="shrink-0 text-sm font-medium tabular-nums text-rose-600 dark:text-rose-400">
-                      {formatCurrency(a.totalUsd)}
-                    </span>
-                  </div>
-                  <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                    <span className="tabular-nums">
-                      {formatNumber(a.count)} withdrawals
-                    </span>
-                    <span className="truncate font-mono tabular-nums">
-                      {a.totalCryptoAmount.toLocaleString("en-US", {
-                        maximumFractionDigits: 8,
-                      })}
-                    </span>
-                  </div>
-                  <div className="mt-2 flex items-center gap-2">
-                    <div className="h-2 flex-1 overflow-hidden rounded-sm bg-muted">
-                      <div
-                        className="h-full rounded-sm bg-rose-500/60 transition-all"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                    <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                      {pct.toFixed(1)}%
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Desktop table (>=md) */}
-          <div className="hidden md:block">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Asset</TableHead>
-                  <TableHead className="text-right">Withdrawals</TableHead>
-                  <TableHead className="text-right">Native amount</TableHead>
-                  <TableHead className="text-right">USD value</TableHead>
-                  <TableHead className="text-right">Share</TableHead>
-                  <TableHead className="w-[120px]">Bar</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {assets.map((a) => {
-                  const pct =
-                    totalCryptoUsd > 0
-                      ? (a.totalUsd / totalCryptoUsd) * 100
-                      : 0;
-                  return (
-                    <TableRow key={a.asset}>
-                      <TableCell className="font-mono text-xs">
-                        {a.asset}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatNumber(a.count)}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
-                        {a.totalCryptoAmount.toLocaleString("en-US", {
-                          maximumFractionDigits: 8,
-                        })}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums text-rose-600 dark:text-rose-400">
-                        {formatCurrency(a.totalUsd)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {pct.toFixed(1)}%
-                      </TableCell>
-                      <TableCell>
-                        <div className="h-2 overflow-hidden rounded-sm bg-muted">
-                          <div
-                            className="h-full rounded-sm bg-rose-500/60 transition-all"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        </>
-      )}
-
-      {/* Physical card shipments — separate line so the crypto table
-          stays focused on coins. Physical withdrawals don't have a
-          coin to attribute to but they're still real outflows of the
-          same shape, so we surface them here for completeness. */}
-      <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2 text-xs">
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">Physical card shipments</span>
-          <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
-            {formatNumber(physicalCount)}
-          </span>
-        </div>
-        <span className="font-medium tabular-nums text-rose-600 dark:text-rose-400">
-          {physicalCount > 0 ? formatCurrency(physicalUsd) : "—"}
-        </span>
-      </div>
-    </div>
-  );
-}
 
 function periodLabel(p: RevenuePeriod): string {
   switch (p) {

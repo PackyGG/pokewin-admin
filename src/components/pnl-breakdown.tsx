@@ -2,7 +2,6 @@ import Link from "next/link";
 import { type ElementType } from "react";
 import {
   ArrowDownToLine,
-  ArrowUpFromLine,
   Wallet,
   Box,
   Ticket,
@@ -58,14 +57,9 @@ export function PnlBreakdown({
       icon: ArrowDownToLine,
       href: "/transactions/deposits",
     },
-    {
-      label: "Withdrawals",
-      description: "Card withdrawals shipped or completed",
-      value: breakdown.totalWithdrawals,
-      sign: "−",
-      icon: ArrowUpFromLine,
-      href: "/withdrawals",
-    },
+    // Withdrawals row intentionally omitted — the money-out figure is not
+    // surfaced (owner request). `total` above still nets withdrawals; only
+    // the standalone line is hidden, so the Realized P&L number is unchanged.
     {
       label: "User Balances",
       description: "Available + locked balances on real-user accounts",

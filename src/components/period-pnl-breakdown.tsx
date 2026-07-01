@@ -2,7 +2,6 @@ import Link from "next/link";
 import { type ElementType } from "react";
 import {
   ArrowDownToLine,
-  ArrowUpFromLine,
   Wallet,
   Box,
   Ticket,
@@ -66,14 +65,9 @@ const FORMULA_ROWS: RowDef[] = [
     accent: "emerald",
     href: "/transactions/deposits",
   },
-  {
-    label: "Withdrawals",
-    description: "Card withdrawals shipped/completed + manual",
-    contribution: (b) => -b.withdrawals,
-    icon: ArrowUpFromLine,
-    accent: "rose",
-    href: "/withdrawals",
-  },
+  // Withdrawals row intentionally omitted — the money-out figure is not
+  // surfaced (owner request). The Total P&L row still nets withdrawals
+  // internally; only the standalone line is hidden, so the total is unchanged.
   {
     label: "User Balance change",
     description: "Net change in user available + locked balance",

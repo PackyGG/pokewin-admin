@@ -315,14 +315,9 @@ function LifetimePnlReference({
                     sign="+"
                     tone="base"
                   />
-                  <InfoRow
-                    iconNode={<ArrowUpFromLine className="size-3" />}
-                    label="Withdrawals"
-                    sub="balance + shipped-card cash-out"
-                    amount={snapshot.totalWithdrawn}
-                    sign="−"
-                    tone="cost"
-                  />
+                  {/* Withdrawals row intentionally omitted — the money-out
+                      figure is not surfaced (owner request). The Realized P&L
+                      total below still nets it, so the number is unchanged. */}
                   <InfoRow
                     iconNode={<Wallet className="size-3" />}
                     label="On-site balance held"
@@ -778,21 +773,10 @@ function SummaryFlow({
               </MetricInfoPopover>
             }
           />
-          <SummaryTile
-            label="Cards shipped (realized)"
-            value={`−${formatCurrency(data.cardWithdrawals)}`}
-            sub="left the house entirely"
-            icon={ArrowUpFromLine}
-            tone="cost"
-            info={
-              <MetricInfoPopover
-                tone="cost"
-                label="What shipped cards means"
-                title="Card withdrawals (shipped)"
-                blurb="Physical cards shipped out in the window (completed/shipped withdrawal requests). Unlike held inventory, this value has left the house entirely — so it's a realized cost (rose), not an unrealized hold (amber)."
-              />
-            }
-          />
+          {/* "Cards shipped (realized)" card-withdrawal tile intentionally
+              omitted — the money-out figure is not surfaced (owner request).
+              The window P&L / net-result totals still net it, so those numbers
+              are unchanged. */}
         </div>
       </SummaryGroup>
 
@@ -852,13 +836,9 @@ function SummaryFlow({
                     sign="−"
                     tone="held"
                   />
-                  <InfoRow
-                    iconNode={<ArrowUpFromLine className="size-3" />}
-                    label="Cards shipped"
-                    amount={data.cardWithdrawals}
-                    sign="−"
-                    tone="cost"
-                  />
+                  {/* "Cards shipped" card-withdrawal row intentionally omitted
+                      — money-out figure not surfaced (owner request). The Net
+                      result total still nets it, so the number is unchanged. */}
                   <InfoRow
                     iconNode={<Ticket className="size-3" />}
                     label="Unclaimed vouchers"

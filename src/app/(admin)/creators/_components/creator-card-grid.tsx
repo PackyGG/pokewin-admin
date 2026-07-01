@@ -411,7 +411,6 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
           signups={creator.signups}
           ftds={creator.ftds}
           convertedUsd={creator.convertedUsd}
-          withdrawnFromConverted={creator.withdrawnFromConverted}
         />
 
         {/* MOMENTUM — last 3 days. Reads as a thin support line under
@@ -669,9 +668,9 @@ function CreatorListRow({ creator }: { creator: CreatorWithSocials }) {
       </ListStatCell>
 
       {/* CAP USED — deal-cap usage (neutral), relabeled from the old
-          "Converted" misnomer (the field is cap-usage, not money out),
-          with the withdrawn sub-line in emerald when there's off-
-          platform activity, same split as the card. */}
+          "Converted" misnomer (the field is cap-usage, not money out). The
+          "↳ withdrawn / in flight" money-out sub-line is intentionally not
+          shown (owner request). */}
       <ListStatCell label="Cap used" align="right">
         <span
           className="block truncate text-sm font-semibold tabular-nums"
@@ -685,25 +684,6 @@ function CreatorListRow({ creator }: { creator: CreatorWithSocials }) {
             ? formatCurrency(creator.convertedUsd)
             : "—"}
         </span>
-        {creator.convertedUsd != null &&
-          creator.withdrawnFromConverted != null &&
-          (creator.withdrawnFromConverted.withdrawnUsd > 0 ||
-            creator.withdrawnFromConverted.withdrawPendingUsd > 0) && (
-            <span className="mt-0.5 block truncate font-mono text-[10px] text-emerald-600/80 dark:text-emerald-400/80">
-              ↳ {formatCurrency(creator.withdrawnFromConverted.withdrawnUsd)}{" "}
-              withdrawn
-              {creator.withdrawnFromConverted.withdrawPendingUsd > 0 && (
-                <>
-                  {" "}
-                  · +
-                  {formatCurrency(
-                    creator.withdrawnFromConverted.withdrawPendingUsd,
-                  )}{" "}
-                  in flight
-                </>
-              )}
-            </span>
-          )}
       </ListStatCell>
 
       {/* ACTIONS — same kebab as the card. */}
@@ -821,7 +801,6 @@ function StatsStrip({
   signups,
   ftds,
   convertedUsd,
-  withdrawnFromConverted,
 }: {
   code: string | null;
   wagerVolumeUsd: number;
@@ -829,10 +808,6 @@ function StatsStrip({
   signups: number;
   ftds: number;
   convertedUsd: number | null;
-  withdrawnFromConverted: {
-    withdrawnUsd: number;
-    withdrawPendingUsd: number;
-  } | null;
 }) {
   const conv =
     signups > 0 ? Math.min(100, (ftds / signups) * 100).toFixed(0) : null;
@@ -908,29 +883,8 @@ function StatsStrip({
         >
           {convertedUsd != null ? formatCurrency(convertedUsd) : "—"}
         </span>
-        {convertedUsd != null &&
-          withdrawnFromConverted != null &&
-          (withdrawnFromConverted.withdrawnUsd > 0 ||
-            withdrawnFromConverted.withdrawPendingUsd > 0) && (
-            <span
-              className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground/80"
-              title={
-                `${withdrawnFromConverted.withdrawnUsd} USD withdrawn off-platform` +
-                (withdrawnFromConverted.withdrawPendingUsd > 0
-                  ? ` · ${withdrawnFromConverted.withdrawPendingUsd} USD in flight (pending/processing/shipped)`
-                  : "")
-              }
-            >
-              ↳ {formatCurrency(withdrawnFromConverted.withdrawnUsd)} withdrawn
-              {withdrawnFromConverted.withdrawPendingUsd > 0 && (
-                <>
-                  {" "}
-                  · +{formatCurrency(withdrawnFromConverted.withdrawPendingUsd)}{" "}
-                  in flight
-                </>
-              )}
-            </span>
-          )}
+        {/* The "↳ withdrawn / in flight" money-out sub-line is intentionally
+            not shown (owner request). The Cap-used figure above is unchanged. */}
       </Stat>
     </div>
   );

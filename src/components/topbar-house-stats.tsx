@@ -1,4 +1,4 @@
-import { ArrowDownToLine, ArrowUpFromLine, Coins, TrendingUp } from "lucide-react";
+import { ArrowDownToLine, Coins, TrendingUp } from "lucide-react";
 import { getInsightsHubWager } from "@/lib/queries/insights-analytics/hub-wager";
 import { getCostBreakdownLifetimeCached } from "@/lib/queries/insights-analytics/cost-breakdown";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
@@ -71,7 +71,8 @@ export async function TopbarHouseStats() {
   const data = {
     wager: wager ?? 0,
     deposits: cb?.lines.find((l) => l.key === "residual:deposit")?.amount ?? 0,
-    withdrawals: cb?.cardWithdrawals ?? 0,
+    // Withdrawals figure intentionally not surfaced (money-out display removed
+    // by owner request). GGR below still nets it internally.
     ggr: cb?.ggr ?? 0,
   };
 
@@ -106,16 +107,6 @@ export async function TopbarHouseStats() {
       />
       <HouseStatPill
         className="hidden lg:inline-flex"
-        tone="rose"
-        icon={<ArrowUpFromLine className="size-3.5 shrink-0" aria-hidden />}
-        label="Withdrawals"
-        value={cbFailed ? "—" : formatCompactUsd(data.withdrawals)}
-        title={`${WINDOW_SOURCE} · card withdrawals (completed/shipped) · ${
-          cbFailed ? "unavailable" : usd(data.withdrawals)
-        }`}
-      />
-      <HouseStatPill
-        className="hidden xl:inline-flex"
         tone={ggrPositive ? "emerald" : "rose"}
         icon={<TrendingUp className="size-3.5 shrink-0" aria-hidden />}
         label="GGR"

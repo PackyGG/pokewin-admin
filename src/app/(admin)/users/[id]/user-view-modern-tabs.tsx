@@ -1875,7 +1875,6 @@ function FundsTraceStreamed({
   // read-only signal we have for "cash free to pull right now".
   const withdrawable = Math.max(0, available - locked);
   const deposited = balances?.totalDeposited ?? 0;
-  const withdrawn = balances?.totalWithdrawn ?? 0;
   const wagered = balances?.totalWagered ?? 0;
   const won = balances?.totalWon ?? 0;
   const shards = wagerProgress?.shards ?? 0;
@@ -1919,16 +1918,15 @@ function FundsTraceStreamed({
       {/* ── FLOW LINE — Deposited → Wagered → Won → Balance → Withdrawable
           A compact left-to-right money story. Deposited / Wagered are the
           house-gain side (capital in / stake risked) → emerald; Won and the
-          two balance figures are user-held → rose. Withdrawals shown as a
-          caption on the balance node so the operator can read the realized
-          cash-out leg too. */}
+          two balance figures are user-held → rose. The realized withdrawn
+          figure is intentionally NOT shown (money-out display removed by owner
+          request). */}
       <FundsFlowLine
         deposited={deposited}
         wagered={wagered}
         won={won}
         balance={available + locked}
         withdrawable={withdrawable}
-        withdrawn={withdrawn}
       />
 
       {/* ── WHERE THE MONEY CAME FROM — provenance ─────────────────────
@@ -1960,14 +1958,12 @@ function FundsFlowLine({
   won,
   balance,
   withdrawable,
-  withdrawn,
 }: {
   deposited: number;
   wagered: number;
   won: number;
   balance: number;
   withdrawable: number;
-  withdrawn: number;
 }) {
   const nodes: {
     label: string;
@@ -1993,7 +1989,6 @@ function FundsFlowLine({
     {
       label: "Balance",
       value: formatCurrency(balance),
-      sub: withdrawn > 0 ? `${formatCurrency(withdrawn)} withdrawn` : undefined,
       color: "text-rose-600 dark:text-rose-400",
     },
     {

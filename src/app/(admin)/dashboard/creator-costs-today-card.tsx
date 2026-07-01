@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Info, Trophy, HandCoins, Gift, ArrowUpFromLine } from "lucide-react";
+import { Info, Trophy, HandCoins, Gift } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Popover,
@@ -12,7 +12,6 @@ import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { LeaderboardGrossClaimants } from "./creator-cost-leaderboard-claimants";
-import { CreatorWithdrawalsDrilldown } from "./creator-cost-withdrawals-drilldown";
 
 /**
  * "Creators Costs (today)" dashboard tile — what CREATORS cost the house for
@@ -32,10 +31,12 @@ import { CreatorWithdrawalsDrilldown } from "./creator-cost-withdrawals-drilldow
  * The card face shows the rose total + the two largest lines as chips; the
  * Info popover (styled exactly like the Reward Costs / GGR breakdown popover)
  * spells out every line. The leaderboard line carries a click-to-reveal
- * per-claimant drilldown (`LeaderboardGrossClaimants`); the creator-
- * withdrawals line carries a sibling drilldown (`CreatorWithdrawalsDrilldown`).
- * Both reconcile to their line amounts and load lazily on click (server
- * actions), never on the dashboard's initial render.
+ * per-claimant drilldown (`LeaderboardGrossClaimants`).
+ *
+ * The creator-withdrawals line is a money-out figure and is intentionally NOT
+ * shown (removed from the card chips + popover by owner request). Its amount is
+ * still folded into `total` so the headline cost is unchanged — only the
+ * standalone withdrawals line + its drilldown are hidden.
  *
  * The header's top-right corner also carries a SMALL aggregate-P&L badge
  * (`affiliateReferredPnl`) — house P&L on affiliate-referred players for the
@@ -67,8 +68,14 @@ export function CreatorCostsTodayCard({
    */
   affiliateReferredPnl?: number | null;
 }) {
-  // The two loudest non-zero lines headline the card face as chips.
-  const topLines = lines.filter((l) => l.amount > 0).slice(0, 2);
+  // The creator-withdrawals line is a money-out figure and is intentionally
+  // NOT surfaced (money-out display removed by owner request). It is dropped
+  // from every rendered line (card chips + popover) while the `total` above
+  // still INCLUDES it — the headline cost number is unchanged, only the
+  // standalone withdrawals line is hidden.
+  const shownLines = lines.filter((l) => l.key !== "creator_withdrawals");
+  // The two loudest non-zero shown lines headline the card face as chips.
+  const topLines = shownLines.filter((l) => l.amount > 0).slice(0, 2);
 
   return (
     <Card className="bg-rose-500/10">
@@ -78,7 +85,7 @@ export function CreatorCostsTodayCard({
             Creators Costs
             <CreatorCostsInfoPopover
               total={total}
-              lines={lines}
+              lines={shownLines}
               dayLabel={dayLabel}
             />
           </CardTitle>
@@ -193,8 +200,6 @@ function AffiliateReferredPnlBadge({ pnl }: { pnl: number }) {
 /** Icon per line key — keeps the popover rows readable at a glance. */
 function lineIcon(key: string) {
   switch (key) {
-    case "creator_withdrawals":
-      return ArrowUpFromLine;
     case "tips":
       return Gift;
     case "leaderboard":
@@ -267,9 +272,6 @@ function CreatorCostsInfoPopover({
               label={l.label}
               amount={l.amount}
             >
-              {l.key === "creator_withdrawals" && l.amount > 0 && (
-                <CreatorWithdrawalsDrilldown withdrawalsTotal={l.amount} />
-              )}
               {l.key === "leaderboard" && l.amount > 0 && (
                 <LeaderboardGrossClaimants grossTotal={l.amount} />
               )}

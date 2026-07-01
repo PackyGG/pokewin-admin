@@ -89,7 +89,8 @@ export function GlobalPnlByCreatorPopover({ creators }: Props) {
                 <th className="px-3 py-1.5 text-left font-medium">Creator</th>
                 <th className="px-2 py-1.5 text-right font-medium">Dep</th>
                 <th className="px-2 py-1.5 text-right font-medium">Wagered</th>
-                <th className="px-2 py-1.5 text-right font-medium">Card WD</th>
+                {/* Card WD column removed — money-out figure not surfaced (owner
+                    request). The PnL column still nets it. */}
                 <th className="px-3 py-1.5 text-right font-medium">PnL</th>
               </tr>
             </thead>
@@ -150,18 +151,8 @@ export function GlobalPnlByCreatorPopover({ creators }: Props) {
                         ? "—"
                         : formatCurrency(c.totalWagered)}
                     </td>
-                    <td
-                      className={cn(
-                        "px-2 py-1.5 text-right tabular-nums",
-                        c.totalCardWithdrawals > 0
-                          ? "text-rose-600 dark:text-rose-400"
-                          : "text-muted-foreground/60",
-                      )}
-                    >
-                      {c.totalCardWithdrawals === 0
-                        ? "—"
-                        : formatCurrency(c.totalCardWithdrawals)}
-                    </td>
+                    {/* Card WD cell removed — money-out figure not surfaced
+                        (owner request). PnL still nets it. */}
                     <td
                       className={cn(
                         "px-3 py-1.5 text-right font-semibold tabular-nums",

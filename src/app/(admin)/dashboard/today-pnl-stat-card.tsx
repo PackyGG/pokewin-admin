@@ -5,7 +5,6 @@ import {
   TrendingUp,
   TrendingDown,
   ArrowDownToLine,
-  ArrowUpFromLine,
   Wallet,
   Box,
   Ticket,
@@ -81,7 +80,6 @@ export function TodayPnlStatCard({
               isProfit={isProfit}
               pnl={pnl}
               deposits={deposits}
-              withdrawals={withdrawals}
               balanceChange={balanceChange}
               inventoryChange={inventoryChange}
               voucherChange={voucherChange}
@@ -111,18 +109,15 @@ export function TodayPnlStatCard({
             <AnimatedNumber value={Math.abs(pnl)} format="currency" />
           </span>
         </div>
-        {/* Deposits / Withdrawals / Net holdings — deposits − withdrawals
-            alone does NOT equal P&L; the third chip explains the gap. */}
+        {/* Deposits / Net holdings — the standalone withdrawals figure is
+            intentionally not shown (money-out display removed by owner
+            request). Deposits is the one cash leg shown; the withdrawals leg
+            is still netted into the headline P&L and the Cash P&L badge. */}
         <div className="grid grid-cols-2 gap-1.5 -mx-0.5">
           <TodayComponentChip
             label="Deposits"
             value={deposits}
             tone="emerald"
-          />
-          <TodayComponentChip
-            label="Withdrawals"
-            value={withdrawals}
-            tone="rose"
           />
           <TodayNetHoldingsHoldersChip
             netHoldingsChange={netHoldingsChange}
@@ -267,19 +262,16 @@ function TodayPnlInfoPopover({
   isProfit: boolean;
   pnl: number;
   deposits: number;
-  withdrawals: number;
   balanceChange: number;
   inventoryChange: number;
   voucherChange: number;
   dayLabel: string;
 }) {
-  // Gross withdrawals on the chip; popover derives the signed formula term
-  // from the headline total so manual-withdrawal sign never breaks the sum.
-  const withdrawalsFormulaTerm =
-    deposits - balanceChange - inventoryChange - voucherChange - pnl;
-  const withdrawalsContribution = -withdrawalsFormulaTerm;
+  // The withdrawals row is intentionally omitted (money-out display removed by
+  // owner request). The headline P&L total below still nets it — only the
+  // per-line withdrawals figure is not shown.
   const rows: Array<{
-    id: "deposits" | "withdrawals" | "balance" | "inventory" | "voucher";
+    id: "deposits" | "balance" | "inventory" | "voucher";
     label: string;
     description: string;
     contribution: number;
@@ -291,13 +283,6 @@ function TodayPnlInfoPopover({
       description: "Completed real-money deposits credited today",
       contribution: deposits,
       icon: ArrowDownToLine,
-    },
-    {
-      id: "withdrawals",
-      label: "Withdrawals",
-      description: "Card withdrawals shipped/completed + manual today",
-      contribution: withdrawalsContribution,
-      icon: ArrowUpFromLine,
     },
     {
       id: "balance",

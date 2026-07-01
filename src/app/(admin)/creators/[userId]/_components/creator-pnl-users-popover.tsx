@@ -109,7 +109,8 @@ export function CreatorPnlUsersPopover({ users, periodLabel }: Props) {
                 <th className="px-3 py-1.5 text-left font-medium">User</th>
                 <th className="px-2 py-1.5 text-right font-medium">Dep</th>
                 <th className="px-2 py-1.5 text-right font-medium">Wagered</th>
-                <th className="px-2 py-1.5 text-right font-medium">Card WD</th>
+                {/* Card WD column removed — money-out figure not surfaced (owner
+                    request). The PnL column still nets it. */}
                 <th className="px-3 py-1.5 text-right font-medium">PnL</th>
               </tr>
             </thead>
@@ -166,18 +167,8 @@ export function CreatorPnlUsersPopover({ users, periodLabel }: Props) {
                     <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
                       {u.wagered === 0 ? "—" : formatCurrency(u.wagered)}
                     </td>
-                    <td
-                      className={cn(
-                        "px-2 py-1.5 text-right tabular-nums",
-                        u.cardWithdrawals > 0
-                          ? "text-rose-600 dark:text-rose-400"
-                          : "text-muted-foreground/60",
-                      )}
-                    >
-                      {u.cardWithdrawals === 0
-                        ? "—"
-                        : formatCurrency(u.cardWithdrawals)}
-                    </td>
+                    {/* Card WD cell removed — money-out figure not surfaced
+                        (owner request). PnL still nets it. */}
                     <td
                       className={cn(
                         "px-3 py-1.5 text-right font-semibold tabular-nums",

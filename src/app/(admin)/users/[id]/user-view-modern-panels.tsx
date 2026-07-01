@@ -745,7 +745,7 @@ export function ModernPnlPanel({
     <StatPanel title="Platform P&L" icon={Icon} accent={isProfit ? "emerald" : "rose"}>
       <div className="space-y-0.5">
         <p className="text-[11px] uppercase tracking-wider text-muted-foreground truncate">
-          Deposits − Withdrawals − Balance − Inventory
+          Deposits − Balance − Inventory
         </p>
         <p
           className={cn(
@@ -759,7 +759,10 @@ export function ModernPnlPanel({
       </div>
       <div className="mt-4 space-y-0.5 border-t pt-3">
         <PanelRow label="Deposited" value={formatCurrency(deposits)} />
-        <PanelRow label="Withdrawn" value={formatCurrency(withdrawals)} />
+        {/* Withdrawn row intentionally omitted — the money-out figure is not
+            surfaced (owner request). The P&L above still subtracts withdrawals
+            (`deposits − withdrawals − …`); only the standalone row is hidden,
+            so the P&L number is unchanged. */}
         <PanelRow label="On-site balance" value={`-${formatCurrency(onSiteBalance)}`} />
         <PanelRow label="Inventory value" value={`-${formatCurrency(inventoryValue)}`} />
         {vouchersValue > 0 ? (

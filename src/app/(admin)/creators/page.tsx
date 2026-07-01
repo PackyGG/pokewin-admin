@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
-import { cn } from "@/lib/utils";
 import {
   safeQuery,
   safeQueryOrNull,
@@ -34,7 +33,6 @@ import {
   CreatorsKpiPanel,
   CreatorsSignedHero,
   CreatorsPlainHero,
-  CreatorsPanelChip,
   CreatorsPanelSub,
 } from "./_components/creators-kpi-panel";
 
@@ -490,34 +488,10 @@ async function CreatorsKpiStrip({
           format="currency"
         />
         <CreatorsPanelSub>Converted to payout vouchers</CreatorsPanelSub>
-        {/* Of that converted total: how much has actually walked out via a
-            completed withdraw request, + in-flight (pending/processing/
-            shipped) when non-zero. Same voucher set + lifetime/all-creators
-            scope, so withdrawn ≤ converted. Withdrawn = money off-platform
-            → house cost → rose. */}
-        {stats && (
-          <div
-            className={cn(
-              "grid gap-1.5 -mx-0.5",
-              stats.withdrawPendingFromConvertedTotal > 0
-                ? "grid-cols-2"
-                : "grid-cols-1",
-            )}
-          >
-            <CreatorsPanelChip
-              label="Withdrawn"
-              value={stats.withdrawnFromConvertedTotal}
-              tone="rose"
-            />
-            {stats.withdrawPendingFromConvertedTotal > 0 && (
-              <CreatorsPanelChip
-                label="In flight"
-                value={stats.withdrawPendingFromConvertedTotal}
-                tone="rose"
-              />
-            )}
-          </div>
-        )}
+        {/* The "Withdrawn" / "In flight" breakdown chips (how much of the
+            converted total has walked out off-platform via a withdraw request)
+            are intentionally omitted — the money-out figure is not surfaced
+            (owner request). The Converted hero above is unchanged. */}
       </CreatorsKpiPanel>
       {/* Leaderboard Spend — a dashboard-style panel (same shell as the
           other KPI boxes). Splits creator-leaderboard house cost by time:

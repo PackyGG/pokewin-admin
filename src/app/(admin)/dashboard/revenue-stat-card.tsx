@@ -63,22 +63,21 @@ export function GgrBreakdownPopover({
   contributorScope,
   cashGgr,
   deposits,
-  withdrawals,
 }: {
   breakdown: GgrBreakdown;
   periodLabel: string;
   contributorScope: GgrContributorScope;
   /**
-   * Cash P&L (`deposits − withdrawals`) for the window. Surfaced as a
+   * Cash P&L (net deposits − withdrawals) for the window. Surfaced as a
    * SECONDARY figure inside the popover so an operator can see net cash
    * kept (crypto-flow tracking) without leaving the tile — NOT the headline
-   * number (the tile's headline is the industry GGR).
+   * number (the tile's headline is the industry GGR). The withdrawals leg is
+   * netted into this total but is not displayed as its own line (money-out
+   * display removed by owner request).
    */
   cashGgr: number;
-  /** Window's deposit dollars — drives the secondary `deposits − withdrawals` math. */
+  /** Window's deposit dollars — the one cash leg still shown alongside the net total. */
   deposits: number;
-  /** Window's withdrawal dollars — drives the secondary `deposits − withdrawals` math. */
-  withdrawals: number;
 }) {
   const cashIsProfit = cashGgr >= 0;
   const ggrIsProfit = breakdown.ggr >= 0;
@@ -206,18 +205,18 @@ export function GgrBreakdownPopover({
           </div>
         </div>
 
-        {/* Secondary reference — Cash P&L (`deposits − withdrawals`).
-            Net cash kept after withdrawals — useful for crypto-flow
-            tracking. NOT the headline (the headline above is the gaming
-            margin); shown here so an operator doesn't have to leave the
-            popover to see net cash. */}
+        {/* Secondary reference — Cash P&L (net crypto cash flow).
+            The Cash P&L total nets deposits and withdrawals internally, but
+            the standalone withdrawals figure is intentionally not surfaced
+            (money-out display removed by owner request). Deposits + the net
+            total are shown; the withdrawals leg is folded into the total. */}
         <div className="space-y-1 border-t border-border/60 pt-2">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Cash P&L (deposits − withdrawals)
+              Cash P&L
             </p>
             <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
-              Net cash kept after withdrawals — for crypto-flow tracking.
+              Net crypto cash flow for the window — for crypto-flow tracking.
               Not gaming margin.
             </p>
           </div>
@@ -225,12 +224,6 @@ export function GgrBreakdownPopover({
             <span className="text-muted-foreground">Deposits</span>
             <span className="tabular-nums text-emerald-400/90">
               +{formatCurrency(deposits)}
-            </span>
-          </div>
-          <div className="flex items-center justify-between rounded px-1 py-0.5 text-[11px]">
-            <span className="text-muted-foreground">Withdrawals</span>
-            <span className="tabular-nums text-rose-400/90">
-              −{formatCurrency(withdrawals)}
             </span>
           </div>
           <div className="flex items-center justify-between border-t border-border/60 px-1 pt-1.5 text-xs">
