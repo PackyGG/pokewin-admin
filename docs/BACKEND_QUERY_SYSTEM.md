@@ -252,9 +252,15 @@ Postgres** — do not give them CH twins.
 5. `"off"`.
 
 Modes: `"off"` = Postgres only · `"comparison"` = serve Postgres, log CH drift ·
-`"clickhouse"` = CH is the sole path (on failure it THROWS so the caller's
-cache/`safeQuery` degrades — it must **not** silently re-run the heavy PG
-aggregate).
+`"clickhouse"` = CH is the primary path. **On CH failure/timeout `resolveAdminRead`
+gracefully degrades to the real Postgres read** (the cent-exact source of truth,
+which the cutover already treats as the parity baseline) and logs it — rather
+than throwing and tripping the route error boundary dashboard-wide (2026-07-01
+incident fix, digest 3332686773). The trade-off (a CH failure re-runs the heavy
+PG aggregate for that surface) is accepted: slower-but-correct beats a
+dashboard-wide crash, and reads return to CH automatically once it recovers.
+Per-surface instant rollback (Edge Config `admin-read-source:<surface>` = `off`)
+is unchanged.
 
 ### How to wire a surface — `resolveAdminRead`
 `src/lib/clickhouse/resolve-read.ts`:

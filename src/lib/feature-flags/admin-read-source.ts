@@ -9,9 +9,12 @@ import { isClickHouseEnabled } from "@/lib/clickhouse/client";
  *
  *   • "off"        → Postgres only (default; today's behavior).
  *   • "comparison" → run BOTH paths, serve Postgres, log drift (validation).
- *   • "clickhouse" → ClickHouse is the SOLE read path. On CH failure the caller
- *                    degrades to cached/error — it MUST NOT silently re-run the
- *                    heavy Postgres aggregate (that re-overloads prod).
+ *   • "clickhouse" → ClickHouse is the PRIMARY read path. On CH failure/timeout
+ *                    `resolveAdminRead` gracefully degrades to the real Postgres
+ *                    read (the cent-exact source of truth) and logs it — rather
+ *                    than throwing and tripping the route error boundary
+ *                    dashboard-wide (2026-07-01 incident fix). See
+ *                    `resolve-read.ts` for the full rationale.
  *
  * Resolution precedence (first match wins):
  *   0. HARD SAFETY  ClickHouse dormant (no creds) ⇒ "off"  (checked FIRST, below)
