@@ -840,7 +840,7 @@ export async function getUserTransactions(
   // convention as the battle lookup) — on error the map stays empty.
   const ddByGsid = new Map<
     string,
-    { result: "win" | "lose"; amount: number; resolvedAt: Date }
+    { id: string; result: "win" | "lose"; amount: number; resolvedAt: Date }
   >();
   const ddGsids = [
     ...new Set(
@@ -854,6 +854,7 @@ export async function getUserTransactions(
     try {
       const ddRows = await db.$queryRaw<
         {
+          id: string;
           game_session_id: string;
           result: "win" | "lose";
           won_amount_usd: string;
@@ -866,7 +867,8 @@ export async function getUserTransactions(
           created_at: Date;
         }[]
       >(Prisma.sql`
-        SELECT o.game_session_id,
+        SELECT o.id,
+               o.game_session_id,
                o.result,
                o.won_amount_usd,
                o.resolved_at,
@@ -895,6 +897,7 @@ export async function getUserTransactions(
             ? ddNum(r.payout_amount_usd) ?? ddNum(r.won_amount_usd) ?? 0
             : ddNum(r.won_amount_usd) ?? 0;
         ddByGsid.set(r.game_session_id, {
+          id: r.id,
           result: r.result,
           amount,
           resolvedAt: r.resolved_at ?? r.created_at,
@@ -1273,7 +1276,12 @@ export async function getUserTransactions(
     const isWin = dd.result === "win";
     const syntheticRow: Transaction = {
       ...row,
-      id: `dd-${row.gameSessionId}`,
+      // Surface the REAL double-down offer UUID (battle_double_down_offers.id)
+      // as the row id so the ID column matches every other transaction. A
+      // battle_double_down_offers.id UUID is globally unique and lives in a
+      // different table than ledger_transactions.id, so it never collides with
+      // a ledger id (safe as a React key and for the in-memory detail lookup).
+      id: dd.id,
       // Keep `type` as the real linked enum value (valid
       // ledger_transaction_type); the UI branches on syntheticKind instead.
       syntheticKind: "double_down",

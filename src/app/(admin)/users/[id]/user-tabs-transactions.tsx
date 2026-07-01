@@ -670,11 +670,34 @@ export const CategoryTransactionsTable = React.memo(
                   return (
                     <TableRow key={t.id} className="bg-muted/20">
                       <TableCell>
-                        <span className="font-mono text-xs text-muted-foreground">
-                          <Dices className="inline size-3.5" />
-                        </span>
+                        {/* Clickable ID → opens the transaction-detail modal,
+                            same as every real row. The synthetic dd row is NOT
+                            an admin_balance_adjustment, so it never routes to
+                            the edit dialog — just setSelectedTx(t). */}
+                        <button
+                          onClick={() => setSelectedTx(t)}
+                          className="font-mono text-xs text-blue-400 hover:underline"
+                          title="View transaction details"
+                        >
+                          <Dices className="mr-1 inline size-3.5" />
+                          {t.id.slice(0, 8)}...
+                        </button>
                       </TableCell>
-                      {showCardsValue && <TableCell />}
+                      {showCardsValue && (
+                        <TableCell>
+                          {/* Same battle "watch live" link the real battle_bet
+                              row shows, so the double-down leg ties back to its
+                              battle. Nested clickable — no stopPropagation
+                              needed here since the row itself has no onClick
+                              (only the ID button opens the modal). */}
+                          {t.battleId ? (
+                            <WatchButton
+                              battleId={t.battleId}
+                              hasPassword={t.hasPassword === true && isAdmin}
+                            />
+                          ) : null}
+                        </TableCell>
+                      )}
                       <TableCell>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <Badge

@@ -113,7 +113,14 @@ export function TransactionDetailModal({
   const [sessionError, setSessionError] = useState(false);
 
   useEffect(() => {
-    if (!transaction?.gameSessionId) {
+    // The synthetic double-down row carries the battle's game_session_id
+    // (spread from the battle bet) but has its own dedicated detail view that
+    // never renders the game-session block — skip the lookup to avoid a wasted
+    // fetch (and a server-seed query) for it.
+    if (
+      !transaction?.gameSessionId ||
+      transaction?.syntheticKind === "double_down"
+    ) {
       setGameSession(null);
       setSessionError(false);
       return;
@@ -128,10 +135,128 @@ export function TransactionDetailModal({
       .then((data) => setGameSession(data))
       .catch(() => setSessionError(true))
       .finally(() => setLoadingSession(false));
-  }, [transaction?.id, transaction?.gameSessionId, userId]);
+  }, [
+    transaction?.id,
+    transaction?.gameSessionId,
+    transaction?.syntheticKind,
+    userId,
+  ]);
 
   if (!transaction) return null;
   const t = transaction;
+
+  // Synthetic post-battle DOUBLE-DOWN row — it has no ledger backing, so the
+  // generic ledger-oriented rows below (crypto/blockchain/worth/balance) would
+  // be misleading. Render a dedicated, coherent detail view instead, reusing
+  // the same Dialog + row-grid primitives. House-POV colors (CLAUDE.md):
+  //   • user WON  → house paid the doubled winnings → HOUSE LOSS → rose
+  //   • user LOST → winnings forfeited → HOUSE WIN → emerald
+  if (t.syntheticKind === "double_down") {
+    const isWin = t.doubleDownResult === "win";
+    const amount = t.doubleDownAmount ?? 0;
+    const ddRows: { label: string; value: React.ReactNode }[] = [
+      {
+        label: "ID",
+        value: <span className="font-mono text-xs break-all">{t.id}</span>,
+      },
+      {
+        label: "Type",
+        value: (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge variant="outline" className="text-xs">
+              Double Down
+            </Badge>
+            <span
+              className={
+                isWin
+                  ? "inline-flex items-center rounded border border-rose-500/30 bg-rose-500/15 px-1.5 py-0 text-[10px] font-medium text-rose-600 dark:text-rose-400"
+                  : "inline-flex items-center rounded border border-emerald-500/30 bg-emerald-500/15 px-1.5 py-0 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+              }
+            >
+              {isWin ? "Won" : "Lost"}
+            </span>
+          </div>
+        ),
+      },
+      {
+        // Amount is the money the user walked away with on a win, or the
+        // winnings they forfeited on a loss. Color is house-POV: a win is our
+        // loss (rose), a loss is our gain (emerald).
+        label: "Amount",
+        value: (
+          <span
+            className={
+              isWin
+                ? "text-rose-600 dark:text-rose-400"
+                : "text-emerald-600 dark:text-emerald-400"
+            }
+          >
+            {formatCurrency(amount)}
+          </span>
+        ),
+      },
+      {
+        label: "Status",
+        value: (
+          <Badge variant="outline" className={STATUS_COLORS[t.status] ?? ""}>
+            {t.status}
+          </Badge>
+        ),
+      },
+      { label: "Description", value: t.description },
+      { label: "Created", value: formatDateTime(t.createdAt) },
+    ];
+    if (t.battleId) {
+      ddRows.push({
+        label: "Battle",
+        value: (
+          <a
+            href={battleUrl(t.battleId)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 font-mono text-xs text-blue-400 break-all hover:underline"
+            title="Open the live battle on packy.gg"
+          >
+            {t.battleId}
+            <ExternalLink className="size-3 shrink-0" />
+          </a>
+        ),
+      });
+      if (isAdmin && t.hasPassword === true) {
+        ddRows.push({
+          label: "Battle Password",
+          value: <BattlePasswordReveal battleId={t.battleId} />,
+        });
+      }
+    }
+    return (
+      <Dialog
+        open
+        onOpenChange={(open) => {
+          if (!open) onClose();
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl flex flex-col max-h-[85vh]">
+          <DialogHeader>
+            <DialogTitle>Transaction Details</DialogTitle>
+          </DialogHeader>
+          <div className="overflow-y-auto flex-1 -mx-4 px-4 space-y-4">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+              {ddRows.map((row) => (
+                <div key={row.label} className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">
+                    {row.label}
+                  </span>
+                  <div className="text-sm">{row.value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <DialogFooter showCloseButton />
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   const rows: { label: string; value: React.ReactNode }[] = [
     {
