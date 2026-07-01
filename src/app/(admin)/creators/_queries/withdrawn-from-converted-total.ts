@@ -1,6 +1,8 @@
 import "server-only";
 
 import { getDb } from "@/lib/db";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 
 /**
  * LIFETIME, ALL-CREATORS "withdrawn from converted" total — of every
@@ -38,13 +40,24 @@ export type WithdrawnFromConvertedTotal = {
 export async function getWithdrawnFromConvertedTotal(): Promise<WithdrawnFromConvertedTotal> {
   const db = await getDb();
 
-  const rows = await db.$queryRaw<
+  // Blacklist gate: drop excluded (staff-flagged / owner-locked) creator ids
+  // from this identifiable lifetime withdrawn total. Guarded for the empty set
+  // so the SQL stays valid when nothing is excluded. Inlined into a
+  // $queryRawUnsafe string (no bind params on this whole-table aggregate) via
+  // the canonical pre-escaped id list — same shape as the per-deal sibling.
+  const excluded = await getExcludedUserIds();
+  const blacklistClause =
+    excluded.length > 0
+      ? `AND v.user_id NOT IN (${escapeBlacklistIds(excluded)})`
+      : "";
+
+  const rows = await db.$queryRawUnsafe<
     {
       withdrawn_completed: string | null;
       withdraw_in_flight: string | null;
     }[]
-  >`
-    SELECT
+  >(
+    `SELECT
       COALESCE(SUM(CASE WHEN best_status = 'completed' THEN value END), 0)::text AS withdrawn_completed,
       COALESCE(SUM(CASE WHEN best_status IN ('pending', 'processing', 'shipped') THEN value END), 0)::text AS withdraw_in_flight
     FROM (
@@ -57,6 +70,7 @@ export async function getWithdrawnFromConvertedTotal(): Promise<WithdrawnFromCon
       -- ::text — prod's voucher_origin enum lacks this label; a bare enum
       -- comparison 22P02s the statement (ffa61b5c class). ::text → $0.
       WHERE v.origin::text = 'creator_fill_conversion'
+        ${blacklistClause}
         AND wr.status IN ('pending', 'processing', 'shipped', 'completed')
       ORDER BY v.id, CASE wr.status
         WHEN 'completed' THEN 1
@@ -64,8 +78,8 @@ export async function getWithdrawnFromConvertedTotal(): Promise<WithdrawnFromCon
         WHEN 'processing' THEN 3
         WHEN 'pending'   THEN 4
       END
-    ) t
-  `;
+    ) t`,
+  );
 
   return {
     withdrawnUsd: Number(rows[0]?.withdrawn_completed ?? 0) || 0,

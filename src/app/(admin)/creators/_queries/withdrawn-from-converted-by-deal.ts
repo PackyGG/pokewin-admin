@@ -1,6 +1,8 @@
 import "server-only";
 
 import { getDb } from "@/lib/db";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 
 /**
  * Per-deal "withdrawn from converted" breakdown — of the conversion
@@ -45,6 +47,15 @@ export async function getWithdrawnFromConvertedByDeal(
 
   const db = await getDb();
 
+  // Blacklist gate: drop excluded (staff-flagged / owner-locked) creator ids
+  // from this identifiable per-(creator,deal) withdrawn figure on the card.
+  // Guarded for the empty set so the SQL stays valid when nothing is excluded.
+  const excluded = await getExcludedUserIds();
+  const blacklistClause =
+    excluded.length > 0
+      ? `AND v.user_id NOT IN (${escapeBlacklistIds(excluded)})`
+      : "";
+
   // Deal -> user_id back-map, so the SQL only needs to return one
   // (user_id, deal_id) row per deal and we can key the result by
   // user_id without a re-lookup at the call site.
@@ -75,6 +86,7 @@ export async function getWithdrawnFromConvertedByDeal(
           -- enum comparison 22P02s the statement (ffa61b5c class).
           AND v.origin::text = 'creator_fill_conversion'
           AND v.metadata->>'deal_id' = ANY($2::text[])
+          ${blacklistClause}
           AND wr.status IN ('pending', 'processing', 'shipped', 'completed')
         ORDER BY v.id, CASE wr.status
           WHEN 'completed' THEN 1

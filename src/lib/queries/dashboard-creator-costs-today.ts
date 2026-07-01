@@ -3,6 +3,8 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 import { withTiming } from "@/lib/observability/query-timings";
 import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
 import { getCreatorCostsTodayFromClickHouse } from "@/lib/clickhouse/queries/dashboard/creator-costs-today";
@@ -336,6 +338,18 @@ export async function getLeaderboardGrossClaimants(): Promise<LeaderboardGrossBr
       const db = await getDb();
       const sinceSql = `'${sinceIso}'::timestamptz`;
 
+      // Blacklist gate: drop excluded (staff-flagged / owner-locked) claimant
+      // ids from this identifiable per-claimant prize drilldown. A leaderboard
+      // prize is a PRIZE, not a card/balance withdrawal, but it is still
+      // identifiable money paid to the recipient, so it is gated conservatively
+      // per the owner's total-lockdown intent. Guarded for the empty set so
+      // the SQL stays valid when nothing is excluded.
+      const excluded = await getExcludedUserIds();
+      const leaderboardBlacklistClause =
+        excluded.length > 0
+          ? `AND lt.user_id NOT IN (${escapeBlacklistIds(excluded)})`
+          : "";
+
       // Per (leaderboard, claimant) gross prize today, over the SAME un-scoped
       // window as the card's leaderboard line. NULL/missing leaderboard_id
       // folds into a single null-board bucket.
@@ -356,6 +370,7 @@ export async function getLeaderboardGrossClaimants(): Promise<LeaderboardGrossBr
          WHERE lt.status = 'completed'
            AND lt.type::text = 'affiliate_leaderboard_prize'
            AND lt.created_at >= ${sinceSql}
+           ${leaderboardBlacklistClause}
          GROUP BY lt.metadata->>'leaderboard_id', lt.user_id, u.username`,
       );
 
@@ -500,7 +515,19 @@ export async function getCreatorWithdrawalsBreakdown(): Promise<CreatorWithdrawa
       const db = await getDb();
       const sinceSql = `'${sinceIso}'::timestamptz`;
 
-      const fillSessions = await getConvertedFillSessionsInWindow(since);
+      // Blacklist gate: drop excluded (staff-flagged / owner-locked) creator
+      // ids from this identifiable per-creator payout drilldown. Applied in
+      // JS to the fill sessions and inline to the multiplier voucher SQL so
+      // the drilldown never surfaces a locked-down recipient. Guarded for the
+      // empty set so the SQL stays valid when nothing is excluded.
+      const excluded = new Set(await getExcludedUserIds());
+      const excludedList = escapeBlacklistIds([...excluded]);
+      const multiplierBlacklistClause =
+        excluded.size > 0 ? `AND v.user_id NOT IN (${excludedList})` : "";
+
+      const fillSessions = (
+        await getConvertedFillSessionsInWindow(since)
+      ).filter((s) => !excluded.has(s.userId));
 
       type MultiplierVoucherRow = {
         creator_user_id: string;
@@ -520,6 +547,7 @@ export async function getCreatorWithdrawalsBreakdown(): Promise<CreatorWithdrawa
          JOIN "user" u ON u.id = v.user_id
          WHERE v.origin::text = 'creator_multiplier_payout'
            AND v.created_at >= ${sinceSql}
+           ${multiplierBlacklistClause}
          ORDER BY v.created_at DESC`,
       );
 
