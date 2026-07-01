@@ -2,11 +2,21 @@ import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { CUSTOMER_EXCLUDED_ROLES } from "@/lib/metrics/scope";
 import {
-  daysForInsightsPeriod,
+  daysForInsightsPeriodCapped,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "./_period";
+
+// Canonical CUSTOMER scope roles as a raw-SQL list — staff (admin/support)
+// PLUS creators, matching getMetricsScope()/CUSTOMER_EXCLUDED_ROLES. Creators
+// are dropped WHOLESALE so the claimant + non-claimant cohorts line up with
+// the per-category sub-pages instead of being inflated by creator rows.
+// Blacklist is applied separately via blacklistNotInClause.
+const CUSTOMER_EXCLUDED_ROLES_SQL = `(${CUSTOMER_EXCLUDED_ROLES.map(
+  (r) => `'${r}'`,
+).join(", ")})`;
 
 /**
  * Retention lift per reward category — for every category, compare:
@@ -137,7 +147,14 @@ async function computeRetentionLift(
   blacklistIds: string[],
 ): Promise<RewardsRetentionLift> {
   const db = await getDb();
-  const days = daysForInsightsPeriod(period);
+  // Lifetime (`all`) CAPPED to INSIGHTS_LIFETIME_LOOKBACK_DAYS (365d) via
+  // daysForInsightsPeriodCapped so the claim-window, baseline-wager, and
+  // non-claimant reward-exclusion sweeps over the full ledger_transactions
+  // history never run unbounded — the correlated per-user EXISTS retention
+  // probes over an unbounded cohort are the worst case (CLAUDE.md
+  // "Performance & Daten-Laden"). Finite windows are unchanged; every window
+  // clause below is now always present (capped never returns null).
+  const days = daysForInsightsPeriodCapped(period);
   const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
 
   // Each category sweeps:
@@ -146,10 +163,7 @@ async function computeRetentionLift(
   // Counts roll up into retention buckets — a user can be in both
   // 7d and 30d buckets simultaneously (30d is a superset of 7d).
   const sql = (typesSql: string) => {
-    const claimWindowClause =
-      days !== null
-        ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'`
-        : "";
+    const claimWindowClause = `AND lt.created_at >= NOW() - INTERVAL '${days} days'`;
     return `
       WITH first_claim AS (
         SELECT lt.user_id, MIN(lt.created_at) AS anchor
@@ -157,7 +171,7 @@ async function computeRetentionLift(
         JOIN "user" u ON u.id = lt.user_id
         WHERE lt.status = 'completed'
           AND lt.type::text IN ${typesSql}
-          AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+          AND u.role NOT IN ${CUSTOMER_EXCLUDED_ROLES_SQL} ${blacklistJoin}
           ${claimWindowClause}
         GROUP BY lt.user_id
       )
@@ -191,10 +205,7 @@ async function computeRetentionLift(
   // window but were active (had a wager row) in the window. Anchor =
   // first wager in window. Retention buckets count returns AFTER that
   // anchor in the same 7d / 30d windows.
-  const baselineWindowClause =
-    days !== null
-      ? `AND wager.created_at >= NOW() - INTERVAL '${days} days'`
-      : "";
+  const baselineWindowClause = `AND wager.created_at >= NOW() - INTERVAL '${days} days'`;
   const baselineSql = `
     WITH first_wager AS (
       SELECT wager.user_id, MIN(wager.created_at) AS anchor
@@ -202,7 +213,7 @@ async function computeRetentionLift(
       JOIN "user" u ON u.id = wager.user_id
       WHERE wager.status = 'completed'
         AND wager.type::text IN ${WAGER_TYPES_SQL}
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ${CUSTOMER_EXCLUDED_ROLES_SQL} ${blacklistJoin}
         ${baselineWindowClause}
       GROUP BY wager.user_id
     ),
@@ -215,7 +226,7 @@ async function computeRetentionLift(
         WHERE r.user_id = fw.user_id
           AND r.status = 'completed'
           AND r.type::text IN ${ALL_REWARD_TYPES_SQL}
-          ${days !== null ? `AND r.created_at >= NOW() - INTERVAL '${days} days'` : ""}
+          AND r.created_at >= NOW() - INTERVAL '${days} days'
       )
     )
     SELECT

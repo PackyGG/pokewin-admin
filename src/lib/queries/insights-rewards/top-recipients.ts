@@ -4,11 +4,22 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import { resolveRainHouseCost } from "@/lib/metrics";
+import { CUSTOMER_EXCLUDED_ROLES } from "@/lib/metrics/scope";
 import {
-  daysForInsightsPeriod,
+  daysForInsightsPeriodCapped,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "./_period";
+
+// Canonical CUSTOMER scope roles as a raw-SQL list — staff (admin/support)
+// PLUS creators, matching getMetricsScope()/CUSTOMER_EXCLUDED_ROLES. Creators
+// are dropped WHOLESALE (their house-funded promo play is not real-customer
+// reward activity), so this rollup lines up with the per-category sub-pages
+// instead of being inflated by creator rows. Blacklist is applied separately
+// via blacklistNotInClause.
+const CUSTOMER_EXCLUDED_ROLES_SQL = `(${CUSTOMER_EXCLUDED_ROLES.map(
+  (r) => `'${r}'`,
+).join(", ")})`;
 
 /**
  * Top reward recipients across ALL categories combined for the active
@@ -83,9 +94,13 @@ async function computeTopRecipients(
   blacklistIds: string[],
 ): Promise<TopRecipientRow[]> {
   const db = await getDb();
-  const days = daysForInsightsPeriod(period);
-  const dateFilter =
-    days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
+  // Lifetime (`all`) CAPPED to INSIGHTS_LIFETIME_LOOKBACK_DAYS (365d) via
+  // daysForInsightsPeriodCapped so the reward/wager/payout sweeps over the
+  // full ledger_transactions history never run unbounded (CLAUDE.md
+  // "Performance & Daten-Laden"). Finite windows are unchanged; the filter
+  // is now always present (capped never returns null).
+  const days = daysForInsightsPeriodCapped(period);
+  const dateFilter = `AND lt.created_at >= NOW() - INTERVAL '${days} days'`;
   const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
 
   // Single CTE-based pivot. The per-category SUM(CASE) buckets the
@@ -131,7 +146,7 @@ async function computeTopRecipients(
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
         AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ${CUSTOMER_EXCLUDED_ROLES_SQL} ${blacklistJoin}
         ${dateFilter}
       GROUP BY lt.user_id
     ),
@@ -141,7 +156,7 @@ async function computeTopRecipients(
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
         AND lt.type::text IN ${WAGER_TYPES_SQL}
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ${CUSTOMER_EXCLUDED_ROLES_SQL} ${blacklistJoin}
         ${dateFilter}
       GROUP BY lt.user_id
     ),
@@ -151,7 +166,7 @@ async function computeTopRecipients(
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
         AND lt.type::text IN ${PAYOUT_TYPES_SQL}
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ${CUSTOMER_EXCLUDED_ROLES_SQL} ${blacklistJoin}
         ${dateFilter}
       GROUP BY lt.user_id
     )

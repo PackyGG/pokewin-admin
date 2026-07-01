@@ -3,11 +3,21 @@ import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
+import { CUSTOMER_EXCLUDED_ROLES } from "@/lib/metrics/scope";
 import {
-  daysForInsightsPeriod,
+  daysForInsightsPeriodCapped,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "./_period";
+
+// Canonical CUSTOMER scope roles as a raw-SQL list — staff (admin/support)
+// PLUS creators, matching getMetricsScope()/CUSTOMER_EXCLUDED_ROLES. Creators
+// are dropped WHOLESALE so this geo/source distribution lines up with the
+// per-category sub-pages instead of being inflated by creator rows. Blacklist
+// is applied separately via blacklistNotInClause.
+const CUSTOMER_EXCLUDED_ROLES_SQL = `(${CUSTOMER_EXCLUDED_ROLES.map(
+  (r) => `'${r}'`,
+).join(", ")})`;
 
 /**
  * Geo + signup-source distribution of reward claimants.
@@ -76,9 +86,13 @@ async function computeGeoSource(
   blacklistIds: string[],
 ): Promise<RewardsGeoSourceBreakdown> {
   const db = await getDb();
-  const days = daysForInsightsPeriod(period);
-  const dateFilter =
-    days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
+  // Lifetime (`all`) CAPPED to INSIGHTS_LIFETIME_LOOKBACK_DAYS (365d) via
+  // daysForInsightsPeriodCapped so the reward sweeps over the full
+  // ledger_transactions history never run unbounded (CLAUDE.md "Performance
+  // & Daten-Laden"). Finite windows are unchanged; the filter is now always
+  // present (capped never returns null).
+  const days = daysForInsightsPeriodCapped(period);
+  const dateFilter = `AND lt.created_at >= NOW() - INTERVAL '${days} days'`;
   const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
 
   // Country breakdown — JOIN ledger rows to users and group by their
@@ -98,7 +112,7 @@ async function computeGeoSource(
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
         AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ${CUSTOMER_EXCLUDED_ROLES_SQL} ${blacklistJoin}
         ${dateFilter}
       GROUP BY COALESCE(u.country_code, '??')
       ORDER BY (${NETTED_REWARD_SQL("lt.type::text", "lt.amount")}) DESC
@@ -115,7 +129,7 @@ async function computeGeoSource(
         JOIN "user" u ON u.id = lt.user_id
         WHERE lt.status = 'completed'
           AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
-          AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+          AND u.role NOT IN ${CUSTOMER_EXCLUDED_ROLES_SQL} ${blacklistJoin}
           ${dateFilter}
       ),
       primary_provider AS (
@@ -142,7 +156,7 @@ async function computeGeoSource(
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
         AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ${CUSTOMER_EXCLUDED_ROLES_SQL} ${blacklistJoin}
         ${dateFilter}
     `),
   ]);

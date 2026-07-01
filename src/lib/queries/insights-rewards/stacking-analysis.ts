@@ -5,7 +5,7 @@ import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import { resolveRainHouseCost } from "@/lib/metrics";
 import {
-  daysForInsightsPeriod,
+  daysForInsightsPeriodCapped,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "./_period";
@@ -100,9 +100,13 @@ async function computeStackingAnalysis(
   blacklistIds: string[],
 ): Promise<RewardsStackingAnalysis> {
   const db = await getDb();
-  const days = daysForInsightsPeriod(period);
-  const dateFilter =
-    days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
+  // Lifetime (`all`) CAPPED to INSIGHTS_LIFETIME_LOOKBACK_DAYS (365d) via
+  // daysForInsightsPeriodCapped so the reward/wager/payout sweeps over the
+  // full ledger_transactions history never run unbounded (CLAUDE.md
+  // "Performance & Daten-Laden"). Finite windows are unchanged; the filter
+  // is now always present (capped never returns null).
+  const days = daysForInsightsPeriodCapped(period);
+  const dateFilter = `AND lt.created_at >= NOW() - INTERVAL '${days} days'`;
   const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
 
   // Per-user rollup — collapse claim categories + sum the per-side
