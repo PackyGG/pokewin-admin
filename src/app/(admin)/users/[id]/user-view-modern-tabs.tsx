@@ -107,18 +107,8 @@ import {
 import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustments-profile";
 import type { UserRewards } from "@/lib/queries/users";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
-import type {
-  ShardWinningsResult,
-  ShardPackOpensResult,
-} from "@/lib/queries/users-shard-winnings";
 import type { UserXpPurchasesResult } from "@/lib/queries/users-xp-purchases";
 import type { UserRewardPackOpensResult } from "@/lib/queries/users-reward-pack-opens";
-import type { UserDoubleDownHistory } from "@/lib/queries/double-down";
-import {
-  ShardWinningsSection,
-  ShardPackOpensSection,
-} from "./shard-winnings-section";
-import { DoubleDownSection } from "./double-down-section";
 import { XpPurchasesSection } from "./xp-purchases-section";
 import { RewardPackOpensSection } from "./reward-pack-opens-section";
 import { BandError } from "./band-error";
@@ -787,24 +777,9 @@ export function FinancesTab({
 export function GamingTab({
   data,
   gamingTxPromise,
-  shardWinningsPromise,
-  shardPackOpensPromise,
-  doubleDownPromise,
 }: {
   data: UserDetail;
   gamingTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
-  // Per-user shard/coin winnings tagged by source game. null = not kicked
-  // for the active tab (Active-Timeframe-Only). The section self-hides when
-  // the connected DB has no coin_transactions table or the user has none.
-  shardWinningsPromise: Promise<SafeQueryResult<ShardWinningsResult>> | null;
-  // Per-user shard-PACK opens (shards spent + value won, both in shards),
-  // diamond-tagged. null = not kicked for the active tab. Self-hides when
-  // the connected DB has no coin ledger or the user never opened a shard pack.
-  shardPackOpensPromise: Promise<SafeQueryResult<ShardPackOpensResult>> | null;
-  // Per-user Double Down (gamble-your-battle-winnings) history. null = not
-  // kicked for the active tab (Active-Timeframe-Only). The section self-hides
-  // when the user has had no Double Down rounds.
-  doubleDownPromise: Promise<SafeQueryResult<UserDoubleDownHistory>> | null;
 }) {
   const { user } = data;
   // sessionRole drives the password-aware Watch button + password-reveal
@@ -827,36 +802,6 @@ export function GamingTab({
       ) : (
         <SkeletonTable rows={5} columns={6} />
       )}
-
-      {/* Shard PACK opens (packs bought with shards, not USD) — diamond-
-          tagged, showing shards spent + value won (both in shards). Streamed
-          so the coin-ledger read never blocks the USD table above; self-hides
-          when there are no shard pack opens (or no coin ledger on the
-          connected DB). */}
-      <Suspense fallback={null}>
-        <ShardPackOpensSection shardPackOpensPromise={shardPackOpensPromise} />
-      </Suspense>
-
-      {/* Shard/coin winnings (secondary currency) tagged by source game.
-          Streamed so the coin-ledger read never blocks the USD table above;
-          self-hides when there are no shard winnings (or no coin ledger on
-          the connected DB). */}
-      <Suspense fallback={null}>
-        <ShardWinningsSection shardWinningsPromise={shardWinningsPromise} />
-      </Suspense>
-
-      {/* Double Down (gamble-your-battle-winnings) history — this user's
-          rounds as a House-POV log + summary. Streamed so the indexed
-          per-user lookup never blocks the tables above; self-hides when the
-          user has had no Double Down rounds. */}
-      <Suspense fallback={null}>
-        <DoubleDownSection doubleDownPromise={doubleDownPromise} />
-      </Suspense>
-
-      {/* Sponsored / free battles joined — these have no battle_bet ledger
-          row so they never appear in the Gaming Transactions table above.
-          Surfaced here so free battles + their winnings are accounted for. */}
-      <JoinedBattlesPanel userId={user.id} />
     </div>
   );
 }

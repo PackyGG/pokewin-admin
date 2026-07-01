@@ -35,13 +35,8 @@ import {
 import { getUserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import { getUserWagerProgress } from "@/lib/queries/users-wager-progress";
 import { getUserBalanceWeighting } from "@/lib/queries/users-balance-weighting";
-import {
-  getUserShardWinnings,
-  getUserShardPackOpens,
-} from "@/lib/queries/users-shard-winnings";
 import { getUserXpPurchases } from "@/lib/queries/users-xp-purchases";
 import { getUserRewardPackOpens } from "@/lib/queries/users-reward-pack-opens";
-import { getUserDoubleDownHistory } from "@/lib/queries/double-down";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -462,58 +457,6 @@ async function UserDetailBody({
           USER_DETAIL_QUERY_TIMEOUT_MS,
         )
       : null;
-  // Shard/coin winnings (secondary currency) tagged by source game — Gaming
-  // tab only (Active-Timeframe-Only). Self-hides when the connected DB has no
-  // coin_transactions table (e.g. the live prod game DB) or the user has none.
-  const shardWinningsPromise =
-    initialTab === "gaming"
-      ? safeQuery(
-          () => getUserShardWinnings(id),
-          { available: false as const },
-          "users.detail.shardWinnings",
-          USER_DETAIL_QUERY_TIMEOUT_MS,
-        )
-      : null;
-  // Shard-PACK opens (shards spent + value won, both in shards) — Gaming tab
-  // only (Active-Timeframe-Only). Same coin_transactions source + self-hiding
-  // drift-guard as the winnings query: returns { available: false } when the
-  // connected DB has no coin ledger (e.g. the live prod game DB).
-  const shardPackOpensPromise =
-    initialTab === "gaming"
-      ? safeQuery(
-          () => getUserShardPackOpens(id),
-          { available: false as const },
-          "users.detail.shardPackOpens",
-          USER_DETAIL_QUERY_TIMEOUT_MS,
-        )
-      : null;
-  // Double Down history (gamble-your-battle-winnings rounds) — Gaming tab only
-  // (Active-Timeframe-Only). INDEXED per-user lookup ((user_id,status) index →
-  // Bitmap Index Scan). Self-hides when the user has had no rounds. The empty
-  // fallback ({ summary all-zero, rows: [] }) lets the section render its
-  // self-hiding empty state on a slow/failed read rather than throwing.
-  const doubleDownPromise =
-    initialTab === "gaming"
-      ? safeQuery(
-          () => getUserDoubleDownHistory(id),
-          {
-            summary: {
-              totalRounds: 0,
-              resolvedRounds: 0,
-              winCount: 0,
-              loseCount: 0,
-              winRate: null,
-              totalStaked: 0,
-              totalPaidOut: 0,
-              netStakedVsPaid: 0,
-              netHousePnl: 0,
-            },
-            rows: [],
-          },
-          "users.detail.doubleDown",
-          USER_DETAIL_QUERY_TIMEOUT_MS,
-        )
-      : null;
   // Adjustments: Overview-only. Kicked only when the viewer is the owner
   // `motha` — a non-owner gets a resolved empty page instead of a wasted
   // round trip (the server returns zero adjustment rows for them anyway;
@@ -811,9 +754,6 @@ async function UserDetailBody({
       tagsSlot={tagsSlot}
       pnlResultPromise={pnlResultPromise}
       gamingTxPromise={gamingTxPromise}
-      shardWinningsPromise={shardWinningsPromise}
-      shardPackOpensPromise={shardPackOpensPromise}
-      doubleDownPromise={doubleDownPromise}
       xpPurchasesPromise={xpPurchasesPromise}
       financialTxPromise={financialTxPromise}
       adjustmentsTxPromise={adjustmentsTxPromise}

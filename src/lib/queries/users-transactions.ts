@@ -213,6 +213,187 @@ async function getUserFinancialTransactionsLight(
   };
 }
 
+// ── Post-battle DOUBLE-DOWN (decoupled source for the inline gaming feed) ──
+//
+// A resolved post-battle double-down round is surfaced as its OWN first-class
+// row in the gaming transactions feed. It is read from the SAME authoritative
+// table as getUserDoubleDownHistory (src/lib/queries/double-down.ts) —
+// `battle_double_down_offers` for THIS user, keyed on the (user_id,status)
+// index — NOT derived from whichever battle_bet rows happen to be on the
+// current ledger page. This is what makes the row a "proper system": every one
+// of the user's rounds is counted and paginated, independent of the page.
+//
+// `battle_double_down_offers` is NOT modeled in prisma/schema.prisma (no
+// generated accessor), so this is hand-written READ-ONLY raw SQL through the
+// prod client. MAIN is strictly read-only — SELECT only.
+
+type SyntheticDdRow = {
+  /** battle_double_down_offers.id — globally unique, used as the row id. */
+  id: string;
+  battleGameSessionId: string | null;
+  result: "win" | "lose";
+  /**
+   * House-POV amount = on a WIN the REAL credited payout (the paired
+   * `battle_double_down_payout` voucher's `value`, falling back to the stake if
+   * the voucher value is missing), on a LOSE the forfeited stake
+   * (`won_amount_usd`).
+   */
+  amount: number;
+  /** When the round settled — the timestamp the synthetic row sorts by. */
+  resolvedAt: Date;
+};
+
+/**
+ * Read ALL of a user's resolved double-down rounds, newest first. Indexed
+ * (user_id,status) → Bitmap Index Scan. Non-fatal: on any error (e.g. a DB
+ * without the table) returns [] so the gaming feed still renders its ledger
+ * rows. Payout source = the paired payout voucher's real value (reconciles to
+ * the voucher_redeemed ledger), NO multiplier — mirrors double-down.ts.
+ */
+async function fetchUserDoubleDownRows(
+  db: Awaited<ReturnType<typeof getDb>>,
+  canonicalUserId: string,
+): Promise<SyntheticDdRow[]> {
+  try {
+    const rows = await db.$queryRaw<
+      {
+        id: string;
+        game_session_id: string | null;
+        result: "win" | "lose";
+        won_amount_usd: string;
+        payout_amount_usd: string | null;
+        resolved_at: Date | null;
+        created_at: Date;
+      }[]
+    >(Prisma.sql`
+      SELECT o.id,
+             o.game_session_id,
+             o.result,
+             o.won_amount_usd,
+             o.resolved_at,
+             o.created_at,
+             CASE WHEN o.result = 'win' THEN v.value::text END AS payout_amount_usd
+      FROM battle_double_down_offers o
+      LEFT JOIN vouchers v
+        ON v.id = o.won_voucher_id
+       AND v.origin = 'battle_double_down_payout'
+      WHERE o.user_id = ${canonicalUserId}
+        AND o.status = 'resolved'
+        AND o.result IS NOT NULL
+      ORDER BY COALESCE(o.resolved_at, o.created_at) DESC
+    `);
+    const ddNum = (v: string | null): number | null => {
+      if (v === null) return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    return rows.map((r) => ({
+      id: r.id,
+      battleGameSessionId: r.game_session_id,
+      result: r.result,
+      amount:
+        r.result === "win"
+          ? ddNum(r.payout_amount_usd) ?? ddNum(r.won_amount_usd) ?? 0
+          : ddNum(r.won_amount_usd) ?? 0,
+      resolvedAt: r.resolved_at ?? r.created_at,
+    }));
+  } catch (e) {
+    console.error(
+      "[getUserTransactions] double-down lookup failed (non-fatal):",
+      e,
+    );
+    return [];
+  }
+}
+
+/**
+ * Build a complete, neutral Transaction row for a synthetic double-down event.
+ * The row carries NO ledger balance movement (a LOSE writes no ledger row at
+ * all), so balance/worth fields are neutralized and the UI renders "—" for
+ * them. `type` stays the real `battle_bet` enum value so the field remains a
+ * valid ledger_transaction_type; the UI branches on `syntheticKind` instead.
+ * House-POV colors are derived in the UI from `doubleDownResult`.
+ */
+function buildDoubleDownRow(d: SyntheticDdRow): Transaction {
+  const isWin = d.result === "win";
+  const iso = d.resolvedAt.toISOString();
+  return {
+    id: d.id,
+    type: "battle_bet",
+    amount: d.amount,
+    balanceBefore: 0,
+    balanceAfter: 0,
+    worthBefore: 0,
+    worthAfter: 0,
+    description: isWin
+      ? "Double-down — gambled battle winnings and won"
+      : "Double-down — gambled battle winnings and lost",
+    status: "completed",
+    gameSessionId: d.battleGameSessionId,
+    packId: null,
+    packName: null,
+    cardsValue: null,
+    gameResult: null,
+    inventoryValue: 0,
+    soldCard: null,
+    cryptoAsset: null,
+    cryptoAmount: null,
+    exchangeRate: null,
+    blockchainTxHash: null,
+    sourceAddress: null,
+    destinationAddress: null,
+    depositAddressId: null,
+    failureReason: null,
+    metadata: null,
+    fireblocksTxId: null,
+    externalTxId: null,
+    createdAt: iso,
+    updatedAt: iso,
+    borrowPercentage: null,
+    borrowedAmountUsd: null,
+    sponsorshipPercentage: null,
+    battleId: null,
+    battleMode: null,
+    battlePending: null,
+    hasPassword: null,
+    battleWinnings: null,
+    battleOutcomePending: null,
+    upgraderResult: null,
+    upgraderWinnings: null,
+    upgraderTargetMultiplier: null,
+    upgraderTargetChance: null,
+    upgraderTargetChanceDerived: null,
+    upgraderHouseEdge: null,
+    syntheticKind: "double_down",
+    doubleDownResult: d.result,
+    doubleDownAmount: d.amount,
+    isInstantRakeback: null,
+  };
+}
+
+/**
+ * For each timestamp in `timestamps`, count the ledger rows (under the SAME
+ * `where` as the page query) that are STRICTLY NEWER (created_at > ts). Used to
+ * position each synthetic double-down row in the merged global timeline without
+ * scanning the whole ledger. One round-trip per timestamp, but the double-down
+ * set is tiny per user (indexed lookup), so this is a handful of cheap indexed
+ * COUNTs. Returns counts aligned to the input order.
+ */
+async function countLedgerNewerThanEach(
+  db: Awaited<ReturnType<typeof getDb>>,
+  where: Prisma.ledger_transactionsWhereInput,
+  timestamps: Date[],
+): Promise<number[]> {
+  if (timestamps.length === 0) return [];
+  return Promise.all(
+    timestamps.map((ts) =>
+      db.ledger_transactions.count({
+        where: { AND: [where, { created_at: { gt: ts } }] },
+      }),
+    ),
+  );
+}
+
 export async function getUserTransactions(
   userId: string,
   page: number = 1,
@@ -390,12 +571,50 @@ export async function getUserTransactions(
     return getUserFinancialTransactionsLight(db, where, page, perPage);
   }
 
-  const [transactions, total] = await Promise.all([
+  // ── Decoupled DOUBLE-DOWN source (PROPER system) ──────────────────────
+  // Post-battle double-down rounds are surfaced as first-class rows inside
+  // this gaming feed. A LOST round writes NO ledger row (the winnings are
+  // forfeited entirely) and even a WON round's payout voucher is not a
+  // ledger row on this game_session, so the double-down is INVISIBLE to the
+  // ledger query. We therefore read the rounds directly from the SAME
+  // authoritative source as getUserDoubleDownHistory (double-down.ts) —
+  // `battle_double_down_offers` for THIS user, keyed on (user_id,status)
+  // (indexed → Bitmap Index Scan), DECOUPLED from whichever battle_bet rows
+  // happen to land on the current ledger page. Each resolved round becomes a
+  // synthetic row dated at `resolved_at`, merged into the desc-by-time feed
+  // and counted in `total` so pagination stays exact (a page never silently
+  // exceeds perPage; page counts add up). MAIN is READ-ONLY — SELECT only;
+  // `battle_double_down_offers` is not modeled in prisma/schema.prisma, so
+  // this is hand-written parameterized raw SQL through the prod client.
+  //
+  // House-POV (verified against the payout-voucher model, read-only on prod):
+  //   • WIN  → user kept MORE money (paid a `battle_double_down_payout`
+  //            voucher whose `value` == the credited amount) → HOUSE LOSS →
+  //            🔴 rose. `amount` = the REAL voucher value (no multiplier),
+  //            falling back to the stake if the voucher value is missing.
+  //   • LOSE → user forfeited the whole win → HOUSE WIN → 🟢 emerald.
+  //            `amount` = the forfeited stake (`won_amount_usd`).
+  // Non-fatal: a failure here must NOT take down the gaming tab — on error
+  // the synthetic list stays empty and only real ledger rows render.
+  const ddSynthetic = await fetchUserDoubleDownRows(db, canonicalUserId);
+  const ddTotal = ddSynthetic.length;
+
+  // Over-fetch the ledger window by `ddTotal` on each side so the in-memory
+  // merge below has every ledger row that could fall inside the merged page
+  // slice: at most `ddTotal` synthetic rows can shift the ledger boundary in
+  // either direction. DD volume is tiny (indexed per-user), so this is a
+  // negligible over-read. When there are no DD rows this is exactly the old
+  // skip/take.
+  const rawOffset = (page - 1) * perPage;
+  const fetchSkip = Math.max(0, rawOffset - ddTotal);
+  const fetchTake = perPage + ddTotal + (rawOffset - fetchSkip);
+
+  const [transactions, ledgerTotal] = await Promise.all([
     db.ledger_transactions.findMany({
       where,
       orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
+      skip: fetchSkip,
+      take: fetchTake,
       include: {
         game_sessions_ledger_transactions_game_session_idTogame_sessions: {
           select: {
@@ -817,99 +1036,10 @@ export async function getUserTransactions(
     }
   }
 
-  // ── Post-battle DOUBLE-DOWN outcome (for battle_bet rows) ──────────
-  // After WINNING a battle, a user may gamble those winnings
-  // (double-or-nothing). A LOSE produces NO ledger row and NO voucher
-  // (the winnings are forfeited entirely), so the gaming tab — which is
-  // otherwise ledger-driven — cannot see it. We enrich it directly onto
-  // the paired battle_bet row via the offer's game_session_id (== the
-  // winning battle_bet row's game_session_id).
-  //
-  // `battle_double_down_offers` is NOT modeled in prisma/schema.prisma —
-  // there is no generated accessor — so this is hand-written READ-ONLY raw
-  // SQL through the prod client, mirroring the existing verified read layer
-  // in src/lib/queries/double-down.ts (same table, same voucher LEFT JOIN
-  // for the real payout value). MAIN is strictly read-only — SELECT only.
-  //
-  // NO double-counting: the WIN payout voucher's origin_id is the dd OFFER
-  // id (NOT the gsid), so it does NOT collide with the gsid-keyed
-  // `voucherValueByGameSession` battle-win enrichment above.
-  //
-  // Only status='resolved' + non-null result counts as a PLAYED round.
-  // Non-fatal: a failure here must NOT take down the gaming tab (same
-  // convention as the battle lookup) — on error the map stays empty.
-  const ddByGsid = new Map<
-    string,
-    { id: string; result: "win" | "lose"; amount: number; resolvedAt: Date }
-  >();
-  const ddGsids = [
-    ...new Set(
-      transactions
-        .filter((t) => t.type === "battle_bet")
-        .map((t) => t.game_session_id)
-        .filter((id): id is string => typeof id === "string"),
-    ),
-  ];
-  if (ddGsids.length > 0) {
-    try {
-      const ddRows = await db.$queryRaw<
-        {
-          id: string;
-          game_session_id: string;
-          result: "win" | "lose";
-          won_amount_usd: string;
-          payout_amount_usd: string | null;
-          // Timestamp the round settled — dates the synthetic double-down row
-          // so it lands chronologically just AFTER the battle bet (and thus
-          // just ABOVE it in the desc-ordered feed). Falls back to created_at
-          // if resolved_at is somehow null on a resolved row.
-          resolved_at: Date | null;
-          created_at: Date;
-        }[]
-      >(Prisma.sql`
-        SELECT o.id,
-               o.game_session_id,
-               o.result,
-               o.won_amount_usd,
-               o.resolved_at,
-               o.created_at,
-               CASE WHEN o.result = 'win' THEN v.value::text END AS payout_amount_usd
-        FROM battle_double_down_offers o
-        LEFT JOIN vouchers v
-          ON v.id = o.won_voucher_id
-         AND v.origin = 'battle_double_down_payout'
-        WHERE o.game_session_id IN (${Prisma.join(ddGsids)})
-          AND o.status = 'resolved'
-          AND o.result IS NOT NULL
-          AND o.user_id = ${canonicalUserId}
-      `);
-      const ddNum = (v: string | null): number | null => {
-        if (v === null) return null;
-        const n = Number(v);
-        return Number.isFinite(n) ? n : null;
-      };
-      for (const r of ddRows) {
-        // WIN → the REAL credited payout (the payout voucher's value; fall
-        // back to the stake if the voucher value is missing). LOSE → the
-        // forfeited stake (won_amount_usd — the winnings the user lost).
-        const amount =
-          r.result === "win"
-            ? ddNum(r.payout_amount_usd) ?? ddNum(r.won_amount_usd) ?? 0
-            : ddNum(r.won_amount_usd) ?? 0;
-        ddByGsid.set(r.game_session_id, {
-          id: r.id,
-          result: r.result,
-          amount,
-          resolvedAt: r.resolved_at ?? r.created_at,
-        });
-      }
-    } catch (e) {
-      console.error(
-        "[getUserTransactions] double-down lookup failed (non-fatal):",
-        e,
-      );
-    }
-  }
+  // (Post-battle double-down rows are read decoupled up-front — see
+  // fetchUserDoubleDownRows / the ddSynthetic list above — and merged into the
+  // paginated feed at the end of this function, so there is no page-coupled DD
+  // enrichment here.)
 
   // Upgrader winnings — sourced DIRECTLY from `upgrader_games`, the
   // canonical per-play record (also used by /transactions/upgrader and
@@ -1243,79 +1373,68 @@ export async function getUserTransactions(
       };
     });
 
-  // ── Inject synthetic DOUBLE-DOWN rows ─────────────────────────────────
-  // A resolved post-battle double-down is surfaced as its OWN row (owner
-  // request), placed chronologically between the winning battle bet and the
-  // next event. A LOST double-down writes NO ledger row, so it is synthesized
-  // here rather than fetched. The synthetic row reuses the SAME shape as a
-  // real row (RowType below), carries a `dd-<gsid>` id that never collides
-  // with a ledger id, and is flagged via `syntheticKind: "double_down"` (its
-  // `type` stays the real `battle_bet` enum value so the field stays a valid
-  // ledger_transaction_type).
+  // ── Merge decoupled DOUBLE-DOWN rows into the paginated feed ───────────
+  // `data` currently holds the OVER-FETCHED ledger window (rows at global
+  // ledger positions [fetchSkip, fetchSkip + data.length), desc by
+  // created_at). We now merge the user's synthetic double-down rows
+  // (ddSynthetic, all of them, desc by resolved_at — read decoupled up-front)
+  // into the full desc-by-time timeline and return exactly the requested
+  // page's slice.
   //
-  // Placement: the feed is DESC by created_at, and a double-down resolves
-  // AFTER its battle bet, so the synthetic row (dated at resolved_at) is newer
-  // than the battle_bet and belongs just ABOVE it. We splice it in immediately
-  // before its battle_bet's index — adjacent, so we never rely on a global
-  // re-sort that could reshuffle the page's real rows.
-  //
-  // PAGINATION: `total` counts only ledger rows; synthetic rows are not
-  // counted. Because each synthetic row is injected adjacent to its own
-  // battle_bet, it only ever appears on the page that already contains that
-  // battle_bet — never duplicated, never lost. A page may therefore show a
-  // couple extra rows beyond `perPage`; that is intentional and acceptable.
-  for (let i = data.length - 1; i >= 0; i--) {
-    const row = data[i];
-    if (row.type !== "battle_bet" || !row.gameSessionId) continue;
-    const dd = ddByGsid.get(row.gameSessionId);
-    if (!dd) continue;
-    // House-POV amount/P&L:
-    //   • LOSE → user forfeited the winnings → HOUSE WIN → P&L = +stake.
-    //   • WIN  → house paid out the doubled winnings → HOUSE LOSS → P&L
-    //            = −(payout). `won` mirrors what the user walked away with.
-    const isWin = dd.result === "win";
-    const syntheticRow: Transaction = {
-      ...row,
-      // Surface the REAL double-down offer UUID (battle_double_down_offers.id)
-      // as the row id so the ID column matches every other transaction. A
-      // battle_double_down_offers.id UUID is globally unique and lives in a
-      // different table than ledger_transactions.id, so it never collides with
-      // a ledger id (safe as a React key and for the in-memory detail lookup).
-      id: dd.id,
-      // Keep `type` as the real linked enum value (valid
-      // ledger_transaction_type); the UI branches on syntheticKind instead.
-      syntheticKind: "double_down",
-      doubleDownResult: dd.result,
-      doubleDownAmount: dd.amount,
-      amount: dd.amount,
-      // No meaningful before/after balance for a synthesized event (a LOSE has
-      // no ledger movement at all) — neutralize rather than fabricate. The UI
-      // renders "—" for these on the synthetic row.
-      balanceBefore: 0,
-      balanceAfter: 0,
-      worthBefore: 0,
-      worthAfter: 0,
-      inventoryValue: 0,
-      cardsValue: null,
-      gameResult: null,
-      battleWinnings: null,
-      battleOutcomePending: null,
-      status: "completed",
-      description: isWin
-        ? "Double-down — gambled battle winnings and won"
-        : "Double-down — gambled battle winnings and lost",
-      createdAt: dd.resolvedAt.toISOString(),
-      updatedAt: dd.resolvedAt.toISOString(),
-    };
-    // Splice ABOVE the battle_bet row (desc order → newer sits above).
-    data.splice(i, 0, syntheticRow);
-  }
+  // Correct pagination WITHOUT fetching every ledger row: assign each row a
+  // GLOBAL merged position, then keep only the rows whose position falls in
+  // [rawOffset, rawOffset + perPage).
+  //   • A ledger row's global MERGED position = (its known global ledger rank)
+  //     + (number of DD rows strictly newer than it). Its ledger rank is
+  //     fetchSkip + its index in the desc window.
+  //   • A DD row's global MERGED position = (number of ledger rows strictly
+  //     newer than it) + (number of DD rows strictly newer than it). The
+  //     ledger-newer count per DD row is computed in ONE grouped query
+  //     (ddPrecedingLedger) so we never scan the whole ledger.
+  // Ties (equal timestamp) are broken deterministically: a DD row sorts
+  // ABOVE (newer than) a ledger row at the same instant, because a round
+  // resolves after — and is surfaced just above — its battle bet.
+  const ddPrecedingLedger = await countLedgerNewerThanEach(
+    db,
+    where,
+    ddSynthetic.map((d) => d.resolvedAt),
+  );
 
+  type Positioned = { pos: number; row: Transaction };
+  const positioned: Positioned[] = [];
+
+  // DD rows first so equal-timestamp ties resolve DD-above-ledger (a DD's
+  // position counts only STRICTLY-newer ledger rows, so a same-instant ledger
+  // row is NOT counted as newer → the DD lands above it).
+  ddSynthetic.forEach((d, i) => {
+    const ddNewer = ddSynthetic.filter(
+      (o) => o.resolvedAt.getTime() > d.resolvedAt.getTime(),
+    ).length;
+    const pos = (ddPrecedingLedger[i] ?? 0) + ddNewer;
+    positioned.push({ pos, row: buildDoubleDownRow(d) });
+  });
+
+  // Ledger rows: known global ledger rank + DD rows strictly newer than it.
+  data.forEach((row, i) => {
+    const ledgerRank = fetchSkip + i;
+    const rowTs = new Date(row.createdAt).getTime();
+    const ddNewer = ddSynthetic.filter(
+      (o) => o.resolvedAt.getTime() > rowTs,
+    ).length;
+    positioned.push({ pos: ledgerRank + ddNewer, row });
+  });
+
+  positioned.sort((a, b) => a.pos - b.pos);
+  const pageRows = positioned
+    .filter((p) => p.pos >= rawOffset && p.pos < rawOffset + perPage)
+    .map((p) => p.row);
+
+  const total = ledgerTotal + ddTotal;
   return {
-    data,
+    data: pageRows,
     total,
     page,
     perPage,
-    totalPages: Math.ceil(total / perPage),
+    totalPages: Math.max(1, Math.ceil(total / perPage)),
   };
 }
