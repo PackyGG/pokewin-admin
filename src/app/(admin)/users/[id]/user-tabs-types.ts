@@ -450,24 +450,39 @@ export type Transaction = {
    */
   upgraderHouseEdge: number | null;
   /**
-   * Post-battle DOUBLE-DOWN outcome for a WON battle_bet row — the user
-   * gambled their battle winnings (double-or-nothing) after the win.
-   * Sourced from `battle_double_down_offers` (resolved rounds only), joined
-   * to the battle_bet row by game_session_id.
+   * Discriminator for CLIENT-SYNTHESIZED rows that do NOT correspond to a
+   * real ledger_transactions row.
+   *   - "double_down" → the row is a synthetic post-battle double-down event
+   *                     (see the DOUBLE-DOWN block in users-transactions.ts).
+   *                     Its `id` is `dd-<gameSessionId>` (never collides with a
+   *                     ledger id) and its `type` is left as the real linked
+   *                     `battle_bet` enum value (so it stays a valid
+   *                     ledger_transaction_type); the UI branches on THIS field,
+   *                     not on `type`, to render the dedicated double-down row.
+   *   - null → a normal, ledger-backed row (every existing row).
+   */
+  syntheticKind: "double_down" | null;
+  /**
+   * Post-battle DOUBLE-DOWN outcome — the user gambled their battle winnings
+   * (double-or-nothing) after a WIN. Sourced from `battle_double_down_offers`
+   * (resolved rounds only), joined to the winning battle_bet by
+   * game_session_id. Set ONLY on the synthetic `syntheticKind === "double_down"`
+   * row (which is injected chronologically just above its battle_bet); null on
+   * every real ledger row.
    *   - "win"  → the double-down WON → user kept MORE money → house LOSS (rose)
    *   - "lose" → the double-down LOST → winnings forfeited → house WIN (emerald)
-   *   - null   → no resolved double-down for this row's game session.
+   *   - null   → not a double-down row.
    *
-   * A LOST double-down produces NO ledger row, so without this field it would
-   * be invisible on the gaming tab (which is otherwise ledger-driven).
+   * A LOST double-down produces NO ledger row, which is why the row is
+   * synthesized (the gaming tab is otherwise ledger-driven).
    */
   doubleDownResult: "win" | "lose" | null;
   /**
-   * USD tied to the double-down:
+   * USD tied to the double-down (set only on the synthetic double-down row):
    *   - on a WIN  → the REAL credited payout (the payout voucher's value).
    *   - on a LOSE → the forfeited stake (the battle winnings the user lost;
    *                 the house kept it).
-   *   - null when there's no resolved double-down for this row.
+   *   - null on non-double-down rows.
    */
   doubleDownAmount: number | null;
   /**

@@ -9,6 +9,7 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Dices,
   ExternalLink,
   KeyRound,
   Loader2,
@@ -655,7 +656,93 @@ export const CategoryTransactionsTable = React.memo(
               </TableRow>
             </TableHeader>
             <TableBody>
-              {txData.data.map((t) => (
+              {txData.data.map((t) => {
+                // Synthetic post-battle DOUBLE-DOWN row — its own dedicated
+                // row (injected chronologically between the battle bet and the
+                // next event by getUserTransactions). It has no ledger row, so
+                // it renders a compact, self-contained row rather than going
+                // through the ledger-oriented cell logic below. House-POV:
+                //   • dd LOST → winnings forfeited → HOUSE WIN → emerald
+                //   • dd WON  → house paid the doubled winnings → HOUSE LOSS → rose
+                if (t.syntheticKind === "double_down") {
+                  const isWin = t.doubleDownResult === "win";
+                  const amount = t.doubleDownAmount ?? 0;
+                  return (
+                    <TableRow key={t.id} className="bg-muted/20">
+                      <TableCell>
+                        <span className="font-mono text-xs text-muted-foreground">
+                          <Dices className="inline size-3.5" />
+                        </span>
+                      </TableCell>
+                      {showCardsValue && <TableCell />}
+                      <TableCell>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Badge
+                            variant="outline"
+                            className="gap-1 text-xs"
+                            title="Post-battle double-or-nothing on the battle winnings"
+                          >
+                            <Dices className="size-3" />
+                            Double Down
+                          </Badge>
+                          <span
+                            className={cn(
+                              "inline-flex items-center rounded border px-1.5 py-0 text-[10px] font-medium",
+                              isWin
+                                ? "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
+                                : "border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+                            )}
+                          >
+                            {isWin ? "Won" : "Lost"}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="tabular-nums">
+                        {formatCurrency(amount)}
+                      </TableCell>
+                      {showCardsValue && (
+                        // House P&L: LOSE → +stake (house gain, emerald);
+                        // WIN → −payout (house loss, rose). `won` mirrors the
+                        // money the user walked away with on a win.
+                        <MergedPnlCell
+                          profit={isWin ? -amount : amount}
+                          won={isWin ? amount : 0}
+                        />
+                      )}
+                      <TableCell className="text-muted-foreground tabular-nums">
+                        —
+                      </TableCell>
+                      <TableCell className="tabular-nums text-muted-foreground">
+                        —
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className={STATUS_COLORS[t.status] ?? ""}
+                        >
+                          {t.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="max-w-[280px] text-xs text-muted-foreground">
+                        <span className="truncate block">{t.description}</span>
+                      </TableCell>
+                      <TableCell
+                        className="whitespace-nowrap text-xs"
+                        title={formatRelative(t.createdAt)}
+                      >
+                        <div className="flex flex-col gap-0.5">
+                          <span className="font-medium tabular-nums text-foreground">
+                            {formatDateTime(t.createdAt)}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">
+                            {formatRelative(t.createdAt)}
+                          </span>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                }
+                return (
                 <TableRow key={t.id}>
                   <TableCell>
                     <button
@@ -832,36 +919,12 @@ export const CategoryTransactionsTable = React.memo(
                         return <MergedPnlCell profit={t.amount} won={null} />;
                       }
                       if (t.type === "battle_bet") {
-                        // Post-battle DOUBLE-DOWN badge — after winning, the
-                        // user may gamble those winnings (double-or-nothing).
-                        // A LOST double-down leaves NO ledger row, so it would
-                        // otherwise be invisible here; enriched onto this
-                        // battle_bet row by game_session_id. House-POV colors:
-                        //   • dd WON  → user kept MORE → house LOSS → rose
-                        //   • dd LOST → winnings forfeited → house WIN → emerald
-                        const ddBadge =
-                          t.doubleDownResult != null ? (
-                            <span
-                              className={
-                                t.doubleDownResult === "win"
-                                  ? "inline-flex items-center rounded border border-rose-500/30 bg-rose-500/15 px-1.5 py-0 text-[10px] font-medium text-rose-600 dark:text-rose-400"
-                                  : "inline-flex items-center rounded border border-emerald-500/30 bg-emerald-500/15 px-1.5 py-0 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
-                              }
-                              title={
-                                t.doubleDownResult === "win"
-                                  ? "User gambled their battle winnings (double-or-nothing) and WON — house paid out more"
-                                  : "User gambled their battle winnings (double-or-nothing) and LOST — winnings forfeited to the house"
-                              }
-                            >
-                              {t.doubleDownResult === "win"
-                                ? `Double-down WON +${formatCurrency(
-                                    t.doubleDownAmount ?? 0,
-                                  )}`
-                                : `Double-down LOST ${formatCurrency(
-                                    t.doubleDownAmount ?? 0,
-                                  )}`}
-                            </span>
-                          ) : null;
+                        // The post-battle double-down (double-or-nothing on the
+                        // winnings) is surfaced as its OWN dedicated row, injected
+                        // chronologically just above this battle_bet — see the
+                        // synthetic-row branch at the top of this map. It is no
+                        // longer shown as a badge on this row.
+                        //
                         // Win/loss is the battle outcome (winner_team vs
                         // team_number), surfaced as gameResult. null = the
                         // battle hasn't resolved yet.
@@ -919,15 +982,9 @@ export const CategoryTransactionsTable = React.memo(
                         if (t.gameResult === "lose") {
                           // LOSS: player won nothing → house keeps the
                           // full bet. Won Value = $0, House Profit = +bet
-                          // (house gain = emerald). A lost battle has no
-                          // winnings to double-down, so ddBadge is normally
-                          // null here — pass it defensively.
+                          // (house gain = emerald).
                           return (
-                            <MergedPnlCell
-                              profit={t.amount}
-                              won={0}
-                              extra={ddBadge}
-                            />
+                            <MergedPnlCell profit={t.amount} won={0} />
                           );
                         }
                         // WIN: winnings = the cards the player actually took
@@ -943,21 +1000,18 @@ export const CategoryTransactionsTable = React.memo(
                             <MergedPnlCell
                               wonLabel="Player won"
                               profitColor="text-rose-600 dark:text-rose-400"
-                              extra={ddBadge}
                             />
                           );
                         }
                         // House P&L on the battle = bet we took in minus the
                         // winnings we paid out. Negative = house lost (rose),
                         // positive = house won (emerald) — already house-POV.
-                        // ddBadge (if any) shows what happened to those
-                        // winnings afterward, as an ADDITIONAL badge — it does
-                        // not alter this win's P&L number.
+                        // What happened to those winnings afterward (the
+                        // double-down) is its OWN row above this one now.
                         return (
                           <MergedPnlCell
                             profit={t.amount - t.battleWinnings}
                             won={t.battleWinnings}
-                            extra={ddBadge}
                           />
                         );
                       }
@@ -1140,7 +1194,8 @@ export const CategoryTransactionsTable = React.memo(
                     </div>
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
               {txData.data.length === 0 && (
                 <TableRow className="hover:bg-transparent">
                   <TableCell
