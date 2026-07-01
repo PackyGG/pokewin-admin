@@ -15,6 +15,7 @@ import { RailWidthSync } from "@/components/rail-width-sync";
 import { readRailOpenOrder } from "@/lib/right-rail-server";
 import { CommandPalette } from "@/components/command-palette";
 import { TimezoneProvider } from "@/components/timezone-provider";
+import { PageTransition } from "@/components/page-transition";
 import { redirect } from "next/navigation";
 import { verifySession, getUserPermissions, sessionIsOwner } from "@/lib/dal";
 import { getSession, type SessionPayload } from "@/lib/session";
@@ -426,7 +427,12 @@ export default async function AdminLayout({
                 changes. Keyed on pathname only, so ?period=/?tab= param-only
                 updates (which pass scroll:false) are left in place. */}
             <ScrollToTopOnNav />
-            {children}
+            {/* Subtle route-enter animation: keys on pathname only, so a new
+                page eases in (fade + 1px slide) while in-page ?tab=/?period=
+                param updates do NOT re-animate. Wraps the outer content, so
+                Suspense fallbacks inside still stream; no layout shift, no
+                extra fetches. Reduced-motion → instant final state. */}
+            <PageTransition>{children}</PageTransition>
           </div>
         </SidebarInset>
         <CommandPalette

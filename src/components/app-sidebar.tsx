@@ -518,6 +518,11 @@ export function AppSidebar({
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton
                       isActive={isActive}
+                      // Marks the current route's link for assistive tech.
+                      // The visual active state already comes from `isActive`
+                      // (data-active bg/text-primary in the primitive); this
+                      // adds the matching `aria-current="page"` a11y hook.
+                      aria-current={isActive ? "page" : undefined}
                       tooltip={item.label}
                       render={<Link href={item.href} />}
                       onClick={handleNavTap}
@@ -526,7 +531,16 @@ export function AppSidebar({
                       // density matters more than tap area. group-data
                       // attribute keeps icon-mode (collapsed desktop) at
                       // its forced 32px square.
-                      className="h-11 md:h-9 group-data-[collapsible=icon]:h-8!"
+                      //
+                      // Interaction polish (motion-safe only): ease the
+                      // icon/text COLOR on hover (the base primitive only
+                      // transitions background-color, so text color hard-
+                      // snapped) and add a brief settle-on-press scale so the
+                      // row reads as a physical tap. The transition list
+                      // re-includes the primitive's own width/height/padding so
+                      // the collapse animation is unchanged. Reduced-motion
+                      // users get none of this (no tween, no scale).
+                      className="h-11 md:h-9 group-data-[collapsible=icon]:h-8! motion-safe:transition-[color,background-color,width,height,padding,transform] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-[0.98]"
                     >
                       <Icon className={cn("size-4", isActive ? "text-primary" : "text-muted-foreground")} />
                       <span>{item.label}</span>
@@ -622,10 +636,14 @@ export function AppSidebar({
                 <SidebarMenuItem key={item.href}>
                   <SidebarMenuButton
                     isActive={isActive}
+                    // Matching a11y + interaction polish to the main nav items
+                    // above (aria-current for the active route; motion-safe
+                    // color/press easing; reduced-motion users unaffected).
+                    aria-current={isActive ? "page" : undefined}
                     tooltip={item.label}
                     render={<Link href={item.href} />}
                     onClick={handleNavTap}
-                    className="h-11 md:h-9 group-data-[collapsible=icon]:h-8!"
+                    className="h-11 md:h-9 group-data-[collapsible=icon]:h-8! motion-safe:transition-[color,background-color,width,height,padding,transform] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-[0.98]"
                   >
                     <Icon
                       className={cn(

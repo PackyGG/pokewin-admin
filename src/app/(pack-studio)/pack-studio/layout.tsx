@@ -40,6 +40,7 @@ import { isNextControlFlowError } from "@/lib/utils/action-error";
 // (pack-studio) and (admin) route groups are sibling directories on disk,
 // so this relative path resolves across the group boundary.
 import { ScrollToTopOnNav } from "../../(admin)/scroll-to-top-on-nav";
+import { PageTransition } from "@/components/page-transition";
 import { PackStudioSidebar } from "./_components/pack-studio-sidebar";
 
 /**
@@ -288,7 +289,12 @@ export default async function PackStudioLayout({
             className="flex-1 overflow-auto min-w-0 p-3 sm:p-4 md:p-6 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-[max(1.5rem,env(safe-area-inset-bottom))]"
           >
             <ScrollToTopOnNav />
-            {children}
+            {/* Subtle route-enter animation, shared with the main admin +
+                creator-hub shells so sub-app switches feel coherent. Keys on
+                pathname only (in-page ?tab=/?period= don't re-animate); wraps
+                the outer content so Suspense fallbacks still stream; no layout
+                shift; reduced-motion → instant final state. */}
+            <PageTransition>{children}</PageTransition>
           </div>
         </SidebarInset>
         {/* Right-edge docks — reused 1:1 from the main shell so live money /

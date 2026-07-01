@@ -36,6 +36,7 @@ import { isNextControlFlowError } from "@/lib/utils/action-error";
 // (creator-hub) and (admin) route groups are sibling directories on disk,
 // so this relative path resolves across the group boundary.
 import { ScrollToTopOnNav } from "../../(admin)/scroll-to-top-on-nav";
+import { PageTransition } from "@/components/page-transition";
 import { CreatorHubSidebar } from "./_components/creator-hub-sidebar";
 import { DockedAlerts } from "./_components/docked-alerts";
 import { CreatorChecklistDock } from "./creators/[id]/_components/creator-checklist-dock";
@@ -266,7 +267,12 @@ export default async function CreatorHubLayout({
             className="flex-1 overflow-auto min-w-0 p-3 sm:p-4 md:p-6 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-[max(1.5rem,env(safe-area-inset-bottom))]"
           >
             <ScrollToTopOnNav />
-            {children}
+            {/* Subtle route-enter animation, shared with the main admin +
+                pack-studio shells so sub-app switches feel coherent. Keys on
+                pathname only (in-page ?tab=/?period= don't re-animate); wraps
+                the outer content so Suspense fallbacks still stream; no layout
+                shift; reduced-motion → instant final state. */}
+            <PageTransition>{children}</PageTransition>
           </div>
         </SidebarInset>
         {/* Onboarding checklist DOCK — the TOP of the right rail (above the
