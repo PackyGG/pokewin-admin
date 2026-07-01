@@ -13,7 +13,11 @@ import { isPackStudioRetuneOperator } from "@/lib/reprice-access";
 import { getDefaultRouteForRoles } from "@/lib/admin-roles";
 import { getUserPermissions, sessionRoles } from "@/lib/dal";
 
-import { listPendingDrafts } from "@/lib/queries/pack-retune-drafts";
+import {
+  listPendingDrafts,
+  type PendingDraftRow,
+} from "@/lib/queries/pack-retune-drafts";
+import { safeQuery } from "@/lib/errors/safe-query";
 
 import {
   DraftsList,
@@ -39,7 +43,15 @@ import {
  */
 
 async function DraftsListLoader() {
-  const rows = await listPendingDrafts();
+  // Cached ADMIN-DB read (no MAIN traffic). safeQuery-wrapped so a transient
+  // admin-DB fault degrades to the empty-drafts state instead of throwing the
+  // route into its error boundary — the draft list is non-destructive and the
+  // operator can simply retry.
+  const { data: rows } = await safeQuery(
+    () => listPendingDrafts(),
+    [] as PendingDraftRow[],
+    "pack-studio.drafts.list",
+  );
 
   return (
     <div className="space-y-3">
@@ -66,7 +78,14 @@ async function DraftsListLoader() {
  * the list — the hero + sub-text below paint instantly without it.
  */
 async function DraftsTopActionsLoader() {
-  const rows = await listPendingDrafts();
+  // Same cached read as the list (shared cache entry — no double-query).
+  // safeQuery-wrapped: on failure the count degrades to 0 (disables
+  // "Push all") instead of crashing the streamed action cluster.
+  const { data: rows } = await safeQuery(
+    () => listPendingDrafts(),
+    [] as PendingDraftRow[],
+    "pack-studio.drafts.count",
+  );
   return <DraftsTopActions pendingCount={rows.length} />;
 }
 

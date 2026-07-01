@@ -13,7 +13,11 @@ import {
   readMaxWinCap,
   readMaxMultCeiling,
   readEdgeCurveConfig,
+  DEFAULT_MAX_WIN_CAP,
+  DEFAULT_MAX_MULT_CEILING,
+  DEFAULT_EDGE_CURVE,
 } from "@/app/(admin)/packs/_lib/risk-config";
+import { safeQuery } from "@/lib/errors/safe-query";
 import { PackBuilderForm } from "./pack-builder-form";
 
 /**
@@ -42,16 +46,42 @@ export function BuilderSkeleton() {
 }
 
 async function BuilderBody({ canBuild }: { canBuild: boolean }) {
-  const [{ sets, rarities }, maxWinCap, maxMultCeiling, edgeCurve] =
-    await Promise.all([
-      (async () => {
-        const [s, r] = await Promise.all([getSets(), getRarities()]);
-        return { sets: s, rarities: r.filter((x): x is string => x != null) };
-      })(),
-      readMaxWinCap(),
-      readMaxMultCeiling(),
-      readEdgeCurveConfig(),
-    ]);
+  // Each read is safeQuery-wrapped so a transient DB fault on ONE read degrades
+  // to its safe default (the same fallbacks the config readers use internally)
+  // instead of throwing the whole route into the error boundary. The form stays
+  // functional: sets/rarities filter the picker (empty = "no sets/rarities yet")
+  // and the caps/curve seed the live preview + auto-target math.
+  //   • sets / rarities → MAIN read-only  • caps / curve → ADMIN read-only
+  const [
+    { data: sets },
+    { data: raritiesRaw },
+    { data: maxWinCap },
+    { data: maxMultCeiling },
+    { data: edgeCurve },
+  ] = await Promise.all([
+    safeQuery(
+      () => getSets(),
+      [] as Awaited<ReturnType<typeof getSets>>,
+      "pack-studio.builder.sets",
+    ),
+    safeQuery(
+      () => getRarities(),
+      [] as Awaited<ReturnType<typeof getRarities>>,
+      "pack-studio.builder.rarities",
+    ),
+    safeQuery(() => readMaxWinCap(), DEFAULT_MAX_WIN_CAP, "pack-studio.builder.maxWinCap"),
+    safeQuery(
+      () => readMaxMultCeiling(),
+      DEFAULT_MAX_MULT_CEILING,
+      "pack-studio.builder.maxMultCeiling",
+    ),
+    safeQuery(
+      () => readEdgeCurveConfig(),
+      DEFAULT_EDGE_CURVE,
+      "pack-studio.builder.edgeCurve",
+    ),
+  ]);
+  const rarities = raritiesRaw.filter((x): x is string => x != null);
 
   return (
     <PackBuilderForm

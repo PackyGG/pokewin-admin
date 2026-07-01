@@ -13,6 +13,7 @@ import { FadeIn } from "@/components/fade-in";
 import { requirePackStudioPageAccess } from "@/lib/require-pack-studio-access";
 import { isOwner } from "@/lib/owners";
 import { isUuid } from "@/lib/utils/ids";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { adminDb } from "@/lib/admin-db";
 import { getPackHistory, getHistoryCardMeta } from "@/app/(admin)/packs/_lib/pack-history";
 import { getPackMetaByIds } from "@/app/(admin)/packs/_lib/pack-meta";
@@ -68,7 +69,19 @@ function activePackId(sp: SearchParams): string | undefined {
   return raw && isUuid(raw) ? raw : undefined;
 }
 
-async function HistoryStream({ packId }: { packId: string | undefined }) {
+/** Resolved timeline payload — the pack-picker options + the rendered rows. */
+type HistoryData = { packOptions: PackOption[]; rows: HistoryRow[] };
+
+/**
+ * Read + shape the history timeline. Every read here is ADMIN (`getPackHistory`,
+ * `admin_users`) or MAIN read-only (`getPackMetaByIds`, `getHistoryCardMeta`) —
+ * no MAIN write. Returns `null` for the "no snapshots" case so the caller can
+ * render the empty state; throws only on a genuine read failure, which the
+ * caller catches via `safeQueryOrNull` and degrades to a band.
+ */
+async function loadHistory(
+  packId: string | undefined,
+): Promise<HistoryData | null> {
   // Always read the unfiltered head so the pack picker stays populated with
   // every pack that has history (the picker must not collapse to a single pack
   // just because the timeline is currently scoped). The scoped timeline then
@@ -103,19 +116,8 @@ async function HistoryStream({ packId }: { packId: string | undefined }) {
   packOptions.sort((a, b) => a.name.localeCompare(b.name));
 
   if (snapshots.length === 0) {
-    return (
-      <div className="rounded-md border">
-        <EmptyState
-          icon={History}
-          title={packId ? "No history for this pack" : "No change history yet"}
-          description={
-            packId
-              ? "This pack has no captured snapshots. A snapshot is recorded automatically before each retune, reprice, edit, or revert."
-              : "Snapshots are captured automatically before a pack's price or weights change (retune, reprice, edit, or revert). Once a pack changes, its prior state appears here."
-          }
-        />
-      </div>
-    );
+    // No snapshots for this scope — the caller renders the empty state.
+    return null;
   }
 
   // Batched ADMIN read: resolve every captured_by id → display name/email so the
@@ -203,10 +205,54 @@ async function HistoryStream({ packId }: { packId: string | undefined }) {
     };
   });
 
+  return { packOptions, rows };
+}
+
+/**
+ * Streamed timeline. Wraps `loadHistory` in `safeQueryOrNull` so a transient
+ * ADMIN/MAIN read fault degrades to an inline empty/error state instead of
+ * throwing the whole route into its error boundary. `null` data with no error =
+ * genuinely no snapshots; an error = a read failed (both render an empty-state,
+ * with the error copy nudging a retry).
+ */
+async function HistoryStream({ packId }: { packId: string | undefined }) {
+  const { data, error } = await safeQueryOrNull(
+    () => loadHistory(packId),
+    "pack-studio.history",
+  );
+
+  if (error) {
+    return (
+      <div className="rounded-md border">
+        <EmptyState
+          icon={History}
+          title="Couldn't load change history"
+          description="A read failed while building the timeline. It was logged — refresh to retry."
+        />
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="rounded-md border">
+        <EmptyState
+          icon={History}
+          title={packId ? "No history for this pack" : "No change history yet"}
+          description={
+            packId
+              ? "This pack has no captured snapshots. A snapshot is recorded automatically before each retune, reprice, edit, or revert."
+              : "Snapshots are captured automatically before a pack's price or weights change (retune, reprice, edit, or revert). Once a pack changes, its prior state appears here."
+          }
+        />
+      </div>
+    );
+  }
+
   return (
     <FadeIn>
-      <HistoryPackFilter options={packOptions} />
-      <HistoryTimeline rows={rows} />
+      <HistoryPackFilter options={data.packOptions} />
+      <HistoryTimeline rows={data.rows} />
     </FadeIn>
   );
 }
