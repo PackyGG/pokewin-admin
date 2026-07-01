@@ -103,6 +103,21 @@ export const ANALYTICS_OVERVIEW_PACKS_SURFACE_KEYS = [
 ] as const;
 
 /**
+ * Surface flag keys for the /analytics FUNNEL, COHORTS, HEATMAP and MAP tab CH
+ * twins. Listed here for discoverability only (these are already cut over in
+ * `CUTOVER_DEFAULT_CLICKHOUSE` below); like every other surface key they carry
+ * NO registration cost — `getAdminReadMode` resolves each through the
+ * precedence chain, and per-surface Edge Config still overrides for instant
+ * rollback.
+ */
+export const ANALYTICS_FUNNEL_COHORT_MAP_SURFACE_KEYS = [
+  "analytics_funnel",
+  "analytics_cohorts",
+  "analytics_heatmap",
+  "analytics_map",
+] as const;
+
+/**
  * Phase 2B surface flag keys for the /dashboard remaining daily-leg CH twins
  * (one per leg). Listed here for discoverability only; like every other
  * surface key they carry NO registration cost — `getAdminReadMode` resolves any
@@ -280,8 +295,6 @@ const CUTOVER_DEFAULT_CLICKHOUSE: ReadonlySet<string> = new Set([
   "insights_deposit_bonus_suspicious",
   // /insights misc + motha.
   "insights_motha_overview",
-  // /numbers composite (signup methods + pack max wins).
-  "numbers",
   // /analytics tabs (full-shape twins; reduced revenue-breakdown excluded).
   "analytics_overview",
   "analytics_funnel",
@@ -297,6 +310,14 @@ const CUTOVER_DEFAULT_CLICKHOUSE: ReadonlySet<string> = new Set([
   "pure_pnl",
   // /creators + /rewards analytics (full-shape twins).
   "creators_analytics",
+  // /creators net-GGR + lifetime-P&L twins (getAllCreatorsNetGgr /
+  // getAllCreatorsLifetimePnl — the creators list's per-creator Net GGR and
+  // lifetime House P&L). Cut over after their CH twins proved cent/count-exact
+  // (Δ=0.00, TZ=UTC, run twice, read-only) against the live PG twins, and are
+  // wired via resolveAdminRead at their canonical read functions. Graceful PG
+  // fallback + the circuit-breaker in resolve-read.ts protect them.
+  "creators_net_ggr",
+  "creators_lifetime_pnl",
   "rewards_analytics_overview",
   "rewards_analytics_category",
   "rewards_analytics_leaderboards",

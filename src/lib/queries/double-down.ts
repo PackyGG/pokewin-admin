@@ -363,18 +363,21 @@ async function computeTimeSeries(
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   const scope = customerScopeSql(excludedIds);
 
-  // HOURLY buckets (date_trunc('hour', …)). The feature is only a few days old
-  // with tiny volume — daily buckets collapse to 1 bar; hourly shows the trend.
-  // `started` = count of started rounds in the hour (Usage); `pnl` = net house
-  // P&L over RESOLVED rounds in the hour = Σ staked − Σ real voucher payout
-  // (same model as the KPI strip). Bounded by the period window (started-only).
-  // The table has no created_at index → this seq-scans the tiny table (fine at
-  // this volume; flagged in recommended-indexes.sql like the other reads).
+  // DAILY buckets (date_trunc('day', …), UTC). The page is locked to a 30d
+  // window, so hourly buckets produced up to 720 bars crammed under 24 repeating
+  // "HH:00" labels (unreadable + wrong — the same label reappeared every day).
+  // Daily gives one bar per day with a clean "MMM d" X-axis (matches the other
+  // insights daily charts). `started` = count of started rounds in the day
+  // (Usage); `pnl` = net house P&L over RESOLVED rounds in the day = Σ staked −
+  // Σ real voucher payout (same model as the KPI strip). Bounded by the period
+  // window (started-only). The table has no created_at index → this seq-scans
+  // the tiny table (fine at this volume; flagged in recommended-indexes.sql like
+  // the other reads).
   const rows = await db.$queryRaw<
     { bucket: Date; started: bigint; pnl: string | null }[]
   >(Prisma.sql`
     SELECT
-      date_trunc('hour', o.created_at)                            AS bucket,
+      date_trunc('day', o.created_at)                             AS bucket,
       count(*)                                                    AS started,
       coalesce(sum(o.won_amount_usd) FILTER (WHERE o.result IS NOT NULL), 0)
         - coalesce(sum(v.value) FILTER (WHERE o.result = 'win'), 0)  AS pnl
@@ -387,14 +390,17 @@ async function computeTimeSeries(
     ORDER BY 1
   `);
 
-  // Build the running cumulative P&L and the "HH:00" UTC hour label.
+  // Build the running cumulative P&L and the "yyyy-MM-dd" UTC day key (the
+  // client chart pretty-prints it to "MMM d", same helper as the other daily
+  // insights charts).
   let cum = 0;
   return rows.map((r) => {
     const pnl = num(r.pnl) ?? 0;
     cum += pnl;
-    const hh = String(r.bucket.getUTCHours()).padStart(2, "0");
+    const d = r.bucket;
+    const bucket = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
     return {
-      bucket: `${hh}:00`,
+      bucket,
       started: Number(r.started ?? 0),
       pnl,
       cumPnl: cum,
@@ -403,8 +409,8 @@ async function computeTimeSeries(
 }
 
 /**
- * Hourly time series for the /insights/double-down charts (Usage = round
- * count per hour; House P&L = staked − real payout per hour, + a cumulative
+ * Daily time series for the /insights/double-down charts (Usage = round
+ * count per day; House P&L = staked − real payout per day, + a cumulative
  * line). Cached on prod, keyed on period.
  */
 export async function getDoubleDownTimeSeries(
@@ -415,7 +421,10 @@ export async function getDoubleDownTimeSeries(
   if (env !== "prod") return computeTimeSeries(period, excludedIds);
   return unstable_cache(
     (p: DoubleDownPeriod, ids: string[]) => computeTimeSeries(p, ids),
-    ["double-down-timeseries-v2", period, excludedIds.join(",")],
+    // v3 (2026-07-01): buckets changed HOURLY ("HH:00") → DAILY ("yyyy-MM-dd").
+    // A stale v2 hit would serve the old hourly buckets under the new day-label
+    // chart, so the version is bumped to force a fresh daily-bucket compute.
+    ["double-down-timeseries-v3", period, excludedIds.join(",")],
     { revalidate: cacheTtlForDoubleDownPeriod(period), tags: ["double-down"] },
   )(period, excludedIds);
 }

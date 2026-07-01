@@ -45,9 +45,10 @@ const FIXED_PERIOD: DoubleDownPeriod = "30d";
  *   - Shell-first: this server component paints the hero + period/search
  *     controls instantly; the KPI strip, the log, and the charts each stream
  *     behind their own <Suspense> (matching loading.tsx).
- *   - Layout: below the 4 KPI tiles, a 2-col section — LEFT the round-by-round
+ *   - Layout: below the 5 KPI tiles, a 2-col section — LEFT the round-by-round
  *     audit log (search + paginated table), RIGHT two stacked charts (Usage =
- *     started rounds per hour; House P&L per hour). Stacks on mobile.
+ *     started rounds per day; House P&L per day + cumulative line). Stacks on
+ *     mobile.
  *   - Active-Timeframe-Only: only the active `?period=` window loads; the
  *     lifetime window is bounded (365d) so no unbounded scan ships.
  *   - The KPI + charts <Suspense> key ONLY on period (they must NOT re-skeleton
@@ -90,7 +91,7 @@ export default async function DoubleDownPage({
         </div>
       </PageHero>
 
-      {/* KPI strip (4 tiles) — keyed ONLY on period so it never re-skeletons
+      {/* KPI strip (5 tiles) — keyed ONLY on period so it never re-skeletons
           when the log paginates or the search changes. */}
       <Suspense key={`kpi-${period}`} fallback={<KpiStripSkeleton count={5} />}>
         <DoubleDownStatsSection period={period} />

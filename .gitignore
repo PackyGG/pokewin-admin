@@ -61,3 +61,10 @@ bun.lock
 
 # Responsive audit harness artifacts (annotated screenshots + JSON reports)
 /audit-artifacts/
+
+# Temporary read-only DB probe / verify scripts (node --env-file=.env + pg).
+# These touch the LIVE prod DB and must NEVER be committed — a stray
+# `git add -A` would otherwise pull them (and the connection string they load)
+# into history. Kept uncommitted + deleted after use.
+_probe-*.mjs
+_verify-*.mjs

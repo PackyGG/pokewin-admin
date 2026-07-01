@@ -162,14 +162,17 @@ export type DoubleDownLog = {
 };
 
 /**
- * One time-bucket of Double Down activity for the /insights charts. The
- * feature is only a few days old + tiny volume, so buckets are HOURLY (daily
- * would collapse to 1 bar). Serializable row (no function props across RSC).
- *   • bucket  — "HH:00" hour label (UTC) for the X axis.
- *   • started — count of STARTED rounds in the hour (Usage chart).
- *   • pnl     — net house P&L for the hour over RESOLVED rounds = staked −
+ * One time-bucket of Double Down activity for the /insights charts. The page is
+ * locked to a 30d window, so buckets are DAILY (one bar per day; hourly crammed
+ * up to 720 bars under 24 repeating "HH:00" labels). Serializable row (no
+ * function props across RSC).
+ *   • bucket  — "yyyy-MM-dd" UTC day key for the X axis (the client chart
+ *               pretty-prints it to "MMM d").
+ *   • started — count of STARTED rounds in the day (Usage chart).
+ *   • pnl     — net house P&L for the day over RESOLVED rounds = staked −
  *               real voucher payout (House-POV: >0 profit emerald, <0 rose).
- *   • cumPnl  — running cumulative house P&L through this bucket (trend line).
+ *   • cumPnl  — running cumulative house P&L through this bucket (rendered as
+ *               the cumulative House-P&L line on the P&L chart).
  */
 export type DoubleDownTimeSeriesPoint = {
   bucket: string;
