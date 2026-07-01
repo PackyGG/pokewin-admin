@@ -906,7 +906,18 @@ export async function getTransactions(
   return cachedTransactions(env, userScope, params);
 }
 
-export async function getTransactionDetail(id: string) {
+/**
+ * Actual transaction-detail read (~10+ Main-DB round-trips: the ledger row,
+ * the game session + its PF results, packs / battle packs, related ledger
+ * rows, session vouchers, upgrader won-amount + inventory, cards, and the
+ * battle password-existence check). Several of those legs currently
+ * seq-scan on prod (related ledger rows by `game_session_id`, session
+ * vouchers by `origin_id`, the upgrader `bet_ledger_tx_id` lookup — see the
+ * recommended-index flags in prisma/recommended-indexes.sql), so the read
+ * is genuinely heavy. The cached + safeQuery-wrapped public entry point is
+ * {@link getTransactionDetail} below; this `compute*` does the real work.
+ */
+async function computeTransactionDetail(id: string) {
   const db = await getDb();
   const tx = await db.ledger_transactions.findUnique({
     where: { id },
@@ -1430,4 +1441,44 @@ export async function getTransactionDetail(id: string) {
     createdAt: tx.created_at.toISOString(),
     updatedAt: tx.updated_at.toISOString(),
   };
+}
+
+/**
+ * Cross-request cache for the heavy transaction-detail read.
+ *
+ * `computeTransactionDetail` fans out ~10+ Main-DB round-trips and several
+ * of its legs seq-scan on prod (see the doc on `computeTransactionDetail`),
+ * so an uncached detail page re-pays that whole fan-out on every load,
+ * every 60s AutoRefresh tick, and every segment "Try again" — directly in
+ * the connection-pool contention path (the `max: 3` warm-instance pool).
+ * A short cache collapses repeat loads of the same tx onto one warmed
+ * entry. Ledger rows are immutable + never admin-mutated, so a 30s TTL is
+ * safe (the served numbers do not change). Same prod-only, env-resolved-
+ * outside pattern as `cachedUserDetail` in users-detail-cache.ts.
+ *
+ * Keyed on the tx id. `computeTransactionDetail` calls `getDb()` internally
+ * (which resolves the `admin_db_env` cookie); inside the cache callback that
+ * cookie read falls back to "prod", so the cached callback always queries
+ * the PROD client. To avoid serving prod data to a dev-toggled admin we
+ * cache ONLY on prod (see {@link getTransactionDetail}); a dev-toggled admin
+ * bypasses the cache and reads live.
+ */
+function cachedTransactionDetail(id: string) {
+  return unstable_cache(
+    () => computeTransactionDetail(id),
+    ["transaction-detail-v1", id],
+    { revalidate: 30, tags: ["transaction-detail"] },
+  )();
+}
+
+/**
+ * Public entry point for the transaction-detail page. Resolves the request
+ * DB env HERE (cookie read is illegal inside `unstable_cache`): a prod
+ * request goes through the cache; a dev-toggled admin reads live so they
+ * always see dev data. See {@link computeTransactionDetail} for the query.
+ */
+export async function getTransactionDetail(id: string) {
+  const env = await readDbEnv();
+  if (env !== "prod") return computeTransactionDetail(id);
+  return cachedTransactionDetail(id);
 }

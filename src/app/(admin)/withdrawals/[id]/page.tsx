@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowUpFromLine, Package, Ticket, Layers } from "lucide-react";
@@ -5,6 +6,7 @@ import { getWithdrawalDetail } from "@/lib/queries/withdrawals";
 import { requirePageAccess } from "@/lib/dal";
 import { isUuid } from "@/lib/utils/ids";
 import { isWithdrawalLocked } from "@/lib/withdrawal-lock/lock";
+import { safeQueryOrNull, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { Badge } from "@/components/ui/badge";
 import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
@@ -18,21 +20,18 @@ import {
   SectionHeading,
   KpiTile,
 } from "@/components/modern-panels";
+import {
+  KpiStripSkeleton,
+  SectionHeadingSkeleton,
+  GridSkeleton,
+} from "@/components/loading-skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { EmptyState } from "@/components/empty-state";
 import { FadeIn } from "@/components/fade-in";
+import { RARITY_COLORS } from "../../transactions/_shared/rarity-colors";
 
 export const metadata = { title: "Withdrawal Detail" };
-
-const RARITY_COLORS: Record<string, string> = {
-  common: "bg-zinc-700/90 text-zinc-100",
-  uncommon: "bg-emerald-700/90 text-emerald-100",
-  rare: "bg-blue-700/90 text-blue-100",
-  "ultra rare": "bg-purple-700/90 text-purple-100",
-  "secret rare": "bg-yellow-600/90 text-yellow-100",
-  legendary: "bg-orange-600/90 text-orange-100",
-  holo: "bg-cyan-700/90 text-cyan-100",
-  secret: "bg-pink-700/90 text-pink-100",
-};
 
 export default async function WithdrawalDetailPage({
   params,
@@ -43,7 +42,59 @@ export default async function WithdrawalDetailPage({
   const { id } = await params;
   // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
   if (!isUuid(id)) notFound();
-  const data = await getWithdrawalDetail(id);
+
+  // Shell-first: the PageHero + back affordance paint IMMEDIATELY (the id
+  // comes from the route params, no DB needed), and the heavy multi-round-
+  // trip withdrawal read streams in behind its own <Suspense> boundary.
+  // Never top-level-await the read here — that blocks first paint on the
+  // whole fan-out (and, if it threw, white-screens the route).
+  return (
+    <div className="space-y-6">
+      <PageHero>
+        <PageHeroIdentity
+          icon={ArrowUpFromLine}
+          backHref="/withdrawals"
+          title="Withdrawal"
+          subtitle={id}
+          subtitleClassName="font-mono truncate"
+        />
+      </PageHero>
+
+      <Suspense fallback={<WithdrawalDetailBodySkeleton />}>
+        <WithdrawalDetailBody id={id} />
+      </Suspense>
+    </div>
+  );
+}
+
+/** Streamed detail body: does the heavy read (safeQuery-wrapped) + the
+ *  withdrawal-lock gate, then renders the status badges / timeline / action
+ *  buttons + KPI strip + all detail sections. Split out of the page so the
+ *  shell above can paint before this resolves. */
+async function WithdrawalDetailBody({ id }: { id: string }) {
+  // safeQuery-wrap the heavy read: a throw (schema drift, pool timeout) or a
+  // slow scan degrades to a fallback band instead of hitting the route error
+  // boundary and white-screening the page. `null` on a clean miss means the
+  // withdrawal genuinely doesn't exist → 404 (preserves not-found semantics).
+  const { data, error, kind } = await safeQueryOrNull(
+    () => getWithdrawalDetail(id),
+    "withdrawals.detail",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+
+  // Hard failure / timeout — degrade to a band (never echo the raw error
+  // string) rather than 404; a slow/failed read must not be misreported as
+  // "no such withdrawal".
+  if (error) {
+    return (
+      <TileErrorFallback
+        label="Withdrawal"
+        kind={kind ?? "error"}
+        hint="Refresh to retry."
+        size="panel"
+      />
+    );
+  }
 
   if (!data) notFound();
 
@@ -74,33 +125,27 @@ export default async function WithdrawalDetailPage({
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={ArrowUpFromLine}
-          backHref="/withdrawals"
-          title="Withdrawal"
-          badges={
-            <>
-              <Badge variant="outline" className={STATUS_COLORS[data.status]}>{data.status}</Badge>
-              <Badge variant="outline">{data.method}</Badge>
-            </>
-          }
-          subtitle={data.id}
-          subtitleClassName="font-mono truncate"
-          action={
-            <div className="w-full sm:w-auto">
-              <WithdrawalActionButtons
-                withdrawalId={data.id}
-                status={data.status}
-                method={data.method}
-              />
-            </div>
-          }
-        />
+      {/* Status badges + timeline + action buttons — stream in with the body
+          (they need the read). Grouped in a compact header card so the
+          shell hero above can paint immediately. */}
+      <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80 p-4 sm:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className={STATUS_COLORS[data.status]}>{data.status}</Badge>
+            <Badge variant="outline">{data.method}</Badge>
+          </div>
+          <div className="w-full sm:w-auto">
+            <WithdrawalActionButtons
+              withdrawalId={data.id}
+              status={data.status}
+              method={data.method}
+            />
+          </div>
+        </div>
         <div className="mt-4 sm:mt-6 -mx-3 sm:-mx-0 px-3 sm:px-0 flex justify-start sm:justify-center overflow-x-auto">
           <StatusTimeline steps={timelineSteps} />
         </div>
-      </PageHero>
+      </div>
 
       {/* KPI strip — withdrawals are money leaving the house, so the
           Total Value KPI is accented rose (house loss) per CLAUDE.md.
@@ -306,6 +351,39 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
       <span className="text-sm text-muted-foreground shrink-0">{label}</span>
       <span className="text-sm min-w-0 break-words">{children}</span>
+    </div>
+  );
+}
+
+/**
+ * Fallback for the streamed <WithdrawalDetailBody> — the BODY only (the
+ * PageHero shell already painted in the page above). Mirrors the body of
+ * the route's loading.tsx: a header card (status badges + timeline + action
+ * buttons), a 4-tile KPI strip, the full-width Details panel, and the items
+ * grid — so the swap-in is shift-free.
+ */
+function WithdrawalDetailBodySkeleton() {
+  return (
+    <div className="space-y-6">
+      {/* Header card: badges + action buttons + timeline. */}
+      <div className="rounded-2xl border bg-gradient-to-br from-card via-card to-card/80 p-4 sm:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Skeleton className="h-6 w-20 rounded-md" />
+            <Skeleton className="h-6 w-16 rounded-md" />
+          </div>
+          <Skeleton className="h-9 w-full max-w-[140px] rounded-md sm:w-28" />
+        </div>
+        <div className="mt-4 flex justify-start sm:mt-6 sm:justify-center">
+          <Skeleton className="h-8 w-64 rounded-md" />
+        </div>
+      </div>
+      <KpiStripSkeleton count={4} />
+      <Skeleton className="h-72 rounded-2xl" />
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={100} />
+        <GridSkeleton count={6} cols={6} aspect="card" />
+      </div>
     </div>
   );
 }

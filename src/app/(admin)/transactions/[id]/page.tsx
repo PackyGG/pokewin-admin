@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
@@ -14,6 +15,7 @@ import { getTransactionDetail } from "@/lib/queries/transactions";
 import { requirePageAccess } from "@/lib/dal";
 import { isUuid } from "@/lib/utils/ids";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { safeQueryOrNull, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { Badge } from "@/components/ui/badge";
 import { CardImage } from "@/components/card-image";
 import { STATUS_COLORS } from "@/lib/constants";
@@ -30,9 +32,16 @@ import {
   SectionHeading,
   KpiTile,
 } from "@/components/modern-panels";
+import {
+  KpiStripSkeleton,
+  SectionHeadingSkeleton,
+} from "@/components/loading-skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { BattlePasswordReveal } from "@/components/battle-password-reveal";
 import { battleUrl } from "@/lib/utils/main-site";
+import { RARITY_COLORS } from "../_shared/rarity-colors";
 
 export const metadata = { title: "Transaction Detail" };
 
@@ -60,17 +69,6 @@ const WITHDRAWAL_LEDGER_TYPES = new Set([
   "withdrawal_shipping_fee",
 ]);
 
-const RARITY_COLORS: Record<string, string> = {
-  common: "bg-zinc-700/90 text-zinc-100",
-  uncommon: "bg-emerald-700/90 text-emerald-100",
-  rare: "bg-blue-700/90 text-blue-100",
-  "ultra rare": "bg-purple-700/90 text-purple-100",
-  "secret rare": "bg-yellow-600/90 text-yellow-100",
-  legendary: "bg-orange-600/90 text-orange-100",
-  holo: "bg-cyan-700/90 text-cyan-100",
-  secret: "bg-pink-700/90 text-pink-100",
-};
-
 export default async function TransactionDetailPage({
   params,
 }: {
@@ -86,7 +84,64 @@ export default async function TransactionDetailPage({
   const { id } = await params;
   // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
   if (!isUuid(id)) notFound();
-  const data = await getTransactionDetail(id);
+
+  // Shell-first: the PageHero + back affordance paint IMMEDIATELY (the id
+  // comes from the route params, no DB needed), and the heavy ~10+
+  // round-trip detail read streams in behind its own <Suspense> boundary.
+  // Never top-level-await the detail read here — that would block first
+  // paint on the whole fan-out (and, if it threw, white-screen the route).
+  return (
+    <div className="space-y-6">
+      <PageHero>
+        <PageHeroIdentity
+          icon={Receipt}
+          backHref="/transactions/deposits"
+          title="Transaction"
+          subtitle={id}
+          subtitleClassName="font-mono truncate"
+        />
+      </PageHero>
+
+      <Suspense fallback={<TransactionDetailBodySkeleton />}>
+        <TransactionDetailBody id={id} adminRole={session.role} />
+      </Suspense>
+    </div>
+  );
+}
+
+/** Streamed detail body: does the heavy read (safeQuery-wrapped) + the
+ *  blacklist gate, then renders the KPI strip + all detail sections. Split
+ *  out of the page so the shell above can paint before this resolves. */
+async function TransactionDetailBody({
+  id,
+  adminRole,
+}: {
+  id: string;
+  adminRole: string;
+}) {
+  // safeQuery-wrap the heavy read: a throw (schema drift, pool timeout) or a
+  // slow scan degrades to a fallback band instead of hitting the route error
+  // boundary and white-screening the page. `null` on a clean miss means the
+  // tx genuinely doesn't exist → 404 (preserves the not-found semantics).
+  const { data, error, kind } = await safeQueryOrNull(
+    () => getTransactionDetail(id),
+    "transactions.detail",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+
+  // Hard failure / timeout — the read threw or blew its budget. Degrade to a
+  // band (never echo the raw error string) rather than 404; a slow/failed
+  // read must not be misreported as "no such transaction".
+  if (error) {
+    return (
+      <TileErrorFallback
+        label="Transaction"
+        kind={kind ?? "error"}
+        hint="Refresh to retry."
+        size="panel"
+      />
+    );
+  }
 
   if (!data) notFound();
 
@@ -117,23 +172,14 @@ export default async function TransactionDetailPage({
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={Receipt}
-          backHref="/transactions/deposits"
-          title="Transaction"
-          badges={
-            <>
-              <Badge variant="outline" className={STATUS_COLORS[data.status] ?? ""}>
-                {data.status}
-              </Badge>
-              <Badge variant="outline">{data.type.replace(/_/g, " ")}</Badge>
-            </>
-          }
-          subtitle={data.id}
-          subtitleClassName="font-mono truncate"
-        />
-      </PageHero>
+      {/* Data-derived status / type badges — stream in with the body (they
+          need the read), so the shell hero above can paint immediately. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="outline" className={STATUS_COLORS[data.status] ?? ""}>
+          {data.status}
+        </Badge>
+        <Badge variant="outline">{data.type.replace(/_/g, " ")}</Badge>
+      </div>
 
       {/* KPI strip — Amount KPI is colored from the HOUSE's perspective,
           not the signed balance delta. A withdrawal decreases the user's
@@ -232,7 +278,7 @@ export default async function TransactionDetailPage({
                     in revealBattlePassword. */}
                 {data.battleId &&
                   data.hasPassword &&
-                  session.role === "admin" && (
+                  adminRole === "admin" && (
                     <InfoRow label="Battle Password">
                       <BattlePasswordReveal battleId={data.battleId} />
                     </InfoRow>
@@ -362,28 +408,19 @@ export default async function TransactionDetailPage({
                       <div className="border-t pt-1 mt-2 flex items-center justify-between font-semibold">
                         <span className="text-foreground">House net</span>
                         {(() => {
-                          const totalPayout = data.gameSession!.cardsObtained.reduce((s, c) => s + c.valueAtObtained, 0);
-                          // `relatedTransactions.amount` is the user-side
-                          // signed delta already. Flip its sign to get
-                          // the house contribution for this session. The
-                          // voucher-excess rows are excluded (balance-
-                          // neutral, counted via voucherValue below).
-                          const otherHouseImpact = data.gameSession!.relatedTransactions
-                            .filter(
-                              (rt) =>
-                                rt.id !== data.id &&
-                                rt.type !== "pack_opening" &&
-                                !VOUCHER_EXCESS_TYPES.has(rt.type),
-                            )
-                            .reduce((s, rt) => s - rt.amount, 0);
-                          // House net = what we received − what we paid
-                          // out (cards + voucher excess + related user-side
-                          // credits).
-                          const houseNet =
-                            data.gameSession!.betAmount -
-                            totalPayout -
-                            data.gameSession!.voucherValue +
-                            otherHouseImpact;
+                          // Render the CANONICAL house P&L the query already
+                          // computed (`housePnl = bet − itemsWon`, where
+                          // itemsWon = cards + voucher excess). Previously
+                          // this total was RE-SUMMED here from a different
+                          // formula (packs / cards / related-tx / voucher),
+                          // so the "House net" total and the "House P&L"
+                          // InfoRow above could drift apart on the same
+                          // session. Using the single served value keeps the
+                          // total consistent; the per-line rows above stay
+                          // purely for transparency (they don't drive this
+                          // number). House POV: >0 = house kept money
+                          // (emerald), <0 = user pulled above bet (rose).
+                          const houseNet = data.gameSession!.housePnl;
                           const positive = houseNet >= 0;
                           return (
                             <span
@@ -705,6 +742,62 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
       <span className="text-sm text-muted-foreground shrink-0">{label}</span>
       <span className="text-sm min-w-0 break-words">{children}</span>
+    </div>
+  );
+}
+
+/**
+ * Fallback for the streamed <TransactionDetailBody> — the BODY only (the
+ * PageHero shell already painted in the page above). Mirrors the body of
+ * the route's loading.tsx (badges row + 3 KPI tiles + the 2-col Details
+ * section) so the swap-in is shift-free.
+ */
+function TransactionDetailBodySkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center gap-2">
+        <Skeleton className="h-6 w-20 rounded-md" />
+        <Skeleton className="h-6 w-24 rounded-md" />
+      </div>
+      <KpiStripSkeleton count={3} />
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={80} />
+        <div className="grid gap-4 lg:grid-cols-2">
+          {/* Details card — InfoRow label/value pairs. */}
+          <div className="rounded-2xl border bg-gradient-to-br from-card via-card to-card/80 p-4 sm:p-5">
+            <div className="space-y-3">
+              {Array.from({ length: 9 }).map((_, i) => (
+                <div key={i} className="flex items-baseline gap-3">
+                  <Skeleton className="h-3.5 w-24 shrink-0 rounded" />
+                  <Skeleton
+                    className="h-3.5 rounded"
+                    style={{ width: `${45 + ((i * 13) % 40)}%` }}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+          {/* Game-session / detail card — header + card-image grid. */}
+          <div className="rounded-2xl border bg-gradient-to-br from-card via-card to-card/80 p-4 sm:p-5">
+            <div className="mb-4 flex items-center gap-2">
+              <Skeleton className="size-4 rounded" />
+              <Skeleton className="h-4 w-28 rounded" />
+            </div>
+            <Skeleton className="mb-2 h-3 w-20 rounded" />
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="overflow-hidden rounded-lg border bg-card">
+                  <Skeleton className="w-full rounded-none" style={{ aspectRatio: "2 / 3" }} />
+                  <div className="space-y-1 p-1.5">
+                    <Skeleton className="h-3 w-3/4 rounded" />
+                    <Skeleton className="h-3 w-1/2 rounded" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -262,7 +262,15 @@ export async function getWithdrawals(
   return cachedWithdrawals(env, blacklistKey, params);
 }
 
-export async function getWithdrawalDetail(id: string) {
+/**
+ * Actual withdrawal-detail read: the request row (with the requester /
+ * processor / shipper user joins) plus a parallel inventory-items +
+ * vouchers fan-out and a follow-up cards lookup — a multi-round-trip read
+ * on the money-exact critical path. The cached + safeQuery-wrapped public
+ * entry point is {@link getWithdrawalDetail} below; this `compute*` does
+ * the real work.
+ */
+async function computeWithdrawalDetail(id: string) {
   const db = await getDb();
   const withdrawal = await db.card_withdrawal_requests.findUnique({
     where: { id },
@@ -376,4 +384,46 @@ export async function getWithdrawalDetail(id: string) {
     confirmationReason: withdrawal.confirmation_reason,
     confirmedAt: withdrawal.confirmed_at?.toISOString() ?? null,
   };
+}
+
+/**
+ * Cross-request cache for the withdrawal-detail read.
+ *
+ * `computeWithdrawalDetail` is a multi-round-trip money-exact read that the
+ * detail page re-fires on every load + every segment "Try again", adding
+ * pool pressure on the `max: 3` warm-instance pool. Caching collapses
+ * repeat loads of the same withdrawal onto one warmed entry.
+ *
+ * Freshness after an admin action is safe WITHOUT any extra wiring: this
+ * cache is tagged with the SAME {@link WITHDRAWALS_LIST_TAG} the list cache
+ * uses, and every mutation in `withdrawals/actions.ts` (process / ship /
+ * complete / cancel / fail) already calls `revalidateTag(WITHDRAWALS_LIST_TAG)`,
+ * which evicts this entry too — so a just-actioned withdrawal never shows a
+ * stale status here. The 60s TTL is the backstop between actions; withdrawals
+ * are not mutated from anywhere but those actions. Same prod-only,
+ * env-resolved-outside pattern as `cachedWithdrawals` above.
+ *
+ * `computeWithdrawalDetail` calls `getDb()` internally; inside the cache
+ * callback the `admin_db_env` cookie read falls back to "prod", so the cached
+ * callback always queries the PROD client. We therefore cache ONLY on prod
+ * (see {@link getWithdrawalDetail}); a dev-toggled admin reads live.
+ */
+function cachedWithdrawalDetail(id: string) {
+  return unstable_cache(
+    () => computeWithdrawalDetail(id),
+    ["withdrawal-detail-v1", id],
+    { revalidate: 60, tags: [WITHDRAWALS_LIST_TAG] },
+  )();
+}
+
+/**
+ * Public entry point for the withdrawal-detail page. Resolves the request
+ * DB env HERE (cookie read is illegal inside `unstable_cache`): a prod
+ * request goes through the cache; a dev-toggled admin reads live so they
+ * always see dev data. See {@link computeWithdrawalDetail} for the query.
+ */
+export async function getWithdrawalDetail(id: string) {
+  const env = await readDbEnv();
+  if (env !== "prod") return computeWithdrawalDetail(id);
+  return cachedWithdrawalDetail(id);
 }
