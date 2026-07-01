@@ -202,9 +202,23 @@ export default async function RealNumbersPage({
         <Suspense
           key="analytics"
           fallback={
-            <div className="space-y-5">
-              <SectionHeadingSkeleton titleWidth={180} />
-              <KpiStripSkeleton count={3} />
+            // Mirrors the AnalyticsTab layout: Profit & loss (1 tile) +
+            // Acquisition & funding (3 tiles) + Deposit cadence (3 tiles),
+            // each under its own section heading, so the skeleton→content
+            // swap is shift-free.
+            <div className="space-y-6">
+              <div className="space-y-5">
+                <SectionHeadingSkeleton titleWidth={140} />
+                <KpiStripSkeleton count={3} />
+              </div>
+              <div className="space-y-5">
+                <SectionHeadingSkeleton titleWidth={200} />
+                <KpiStripSkeleton count={3} />
+              </div>
+              <div className="space-y-5">
+                <SectionHeadingSkeleton titleWidth={180} />
+                <KpiStripSkeleton count={3} />
+              </div>
             </div>
           }
         >

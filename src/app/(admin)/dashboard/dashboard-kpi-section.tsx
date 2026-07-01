@@ -2,10 +2,7 @@
 
 import { useCallback, useState, useTransition } from "react";
 import {
-  Percent,
   Coins,
-  BadgeDollarSign,
-  HandCoins,
   TrendingUp,
   TrendingDown,
   Loader2,
@@ -14,7 +11,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { AnimatedNumber, type AnimatedNumberFormat } from "@/components/animated-number";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { formatNumber } from "@/lib/utils/format";
 import { GgrBreakdownPopover } from "./revenue-stat-card";
 import {
   DASHBOARD_KPI_WINDOWS,
@@ -23,41 +20,6 @@ import {
 } from "@/lib/queries/dashboard-period";
 import { getDashboardKpiStatsAction } from "./actions";
 import type { KpiWindowPayload } from "./kpi-window-data";
-
-/**
- * Window-independent SNAPSHOT tile values — lifetime / fixed-window figures
- * that do NOT change with the today/24h toggle (FTDs 24h, Depositors, Avg
- * RTP, Avg P&L 7d). Computed once on the server from the eager "today" stats
- * and rendered without a toggle (an honest UI — no toggle on a box whose
- * number can't move).
- *
- * NOTE: the lifetime Total Users figure now lives in the admin top-bar pill
- * (to the LEFT of the GGR pill), and the Avg Deposit + Deposits/Hour tiles
- * were removed. `usersTotal/usersToday/usersWeek`, `avgDeposit`, and
- * `depositsPerHour24h/depositsPerHour7d` are therefore no longer rendered
- * here, but remain on the type because the server page still computes them
- * (e.g. `usersTotal` drives the Depositors "% of users" footer).
- */
-export type KpiSnapshotValues = {
-  usersTotal: number;
-  usersToday: number;
-  usersWeek: number;
-  ftds24h: number;
-  ftdTotal24h: number;
-  ftdAvg24h: number;
-  uniqueDepositors: number;
-  depositorsPctOfUsers: number | null;
-  avgDeposit: number;
-  depositsPerHour24h: number;
-  depositsPerHour7d: number;
-  avgRtp: number;
-  /** Rolling 7d total realized house P&L. */
-  totalPnl7d: number;
-  /** totalPnl7d ÷ 7 — average per day in the window. */
-  avgDailyPnl7d: number;
-  /** Lifetime realized house P&L (balance-sheet snapshot). */
-  totalPnlLifetime: number;
-};
 
 const PANEL_TINT = {
   cyan: "bg-cyan-500/10",
@@ -212,26 +174,11 @@ function SignedHero({ value }: { value: number }) {
   );
 }
 
-/** Plain hero value (no House-POV sign) for identity-only figures. */
-function PlainHero({
-  value,
-  format,
-}: {
-  value: number;
-  format: AnimatedNumberFormat;
-}) {
-  return (
-    <div className="text-stat-value truncate tabular-nums">
-      <AnimatedNumber value={value} format={format} />
-    </div>
-  );
-}
-
 /**
  * One of two side-by-side headline figures inside the merged Wager box
  * (Total + Organic). A small uppercase label sits above a currency value
- * sized to fit two-up in one KPI box (a notch smaller than the single
- * {@link PlainHero}). Wagers are flow-in, not a house P&L event, so the
+ * sized to fit two-up in one KPI box (a notch smaller than a full-size
+ * hero value). Wagers are flow-in, not a house P&L event, so the
  * value is neutral `text-foreground` (no emerald/rose) — consistent with
  * how the single Wager hero rendered before the merge.
  */
@@ -330,10 +277,12 @@ function StaticWindowLabel({ label }: { label: string }) {
  *
  * Renders the period-bound KPI boxes (GGR, Wager [Total + Organic in one
  * merged box], Deposits/Withdrawals [merged into one single tile]) with a
- * per-box today/24h toggle, plus the window-independent snapshot boxes (FTDs
- * 24h, Depositors, Avg RTP, Avg P&L 7d) reskinned onto the same panel design.
- * (Total Users moved to the top-bar pill; Avg Deposit + Deposits/Hour tiles
- * were removed.)
+ * per-box today/24h toggle, plus the anchored Crypto Fee counter. This is now
+ * a live-ops board only — the window-independent snapshot boxes (FTDs,
+ * Depositors, Avg RTP, Avg P&L 7d, Total P&L lifetime) MOVED to the Insights
+ * Overview Analytics tab (`/insights/real-numbers?tab=analytics`), where Total
+ * P&L + Avg P&L are folded into a single box. (Total Users moved to the
+ * top-bar pill; Avg Deposit + Deposits/Hour also live on the Analytics tab.)
  *
  * The "today" payload is rendered eagerly (the active default window). The
  * rolling 24h payload is fetched LAZILY (one server action) the first time
@@ -363,11 +312,9 @@ export type CryptoFeeKpi = {
 
 export function DashboardKpiSection({
   today,
-  snapshot,
   cryptoFee,
 }: {
   today: KpiWindowPayload;
-  snapshot: KpiSnapshotValues;
   cryptoFee: CryptoFeeKpi;
 }) {
   // Lazily-loaded rolling-24h payload (null until first 24h toggle).
@@ -634,88 +581,15 @@ export function DashboardKpiSection({
         )}
       </div>
 
-      {/* Snapshot boxes — lifetime / fixed-window figures that do NOT vary
-          by the today/24h selection, so they carry a static window label
-          (not a toggle). Reskinned onto the same panel design. */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8">
-        <KpiPanel
-          title="FTDs"
-          tint="amber"
-          icon={HandCoins}
-          headerRight={<StaticWindowLabel label="24h" />}
-          footer={
-            <p className="text-stat-label">
-              {formatCurrency(snapshot.ftdTotal24h)} total ·{" "}
-              {formatCurrency(snapshot.ftdAvg24h)} avg
-            </p>
-          }
-        >
-          <PlainHero value={snapshot.ftds24h} format="number" />
-        </KpiPanel>
-
-        <KpiPanel
-          title="Depositors"
-          tint="purple"
-          icon={BadgeDollarSign}
-          headerRight={<StaticWindowLabel label="lifetime" />}
-          footer={
-            <p className="text-stat-label">
-              {snapshot.depositorsPctOfUsers != null
-                ? `${snapshot.depositorsPctOfUsers.toFixed(1)}% of users have funded`
-                : "Unique players who funded at least once"}
-            </p>
-          }
-        >
-          <PlainHero value={snapshot.uniqueDepositors} format="number" />
-        </KpiPanel>
-
-        <KpiPanel
-          title="Avg RTP"
-          tint="pink"
-          icon={Percent}
-          headerRight={<StaticWindowLabel label="lifetime" />}
-        >
-          <PlainHero value={snapshot.avgRtp} format="percent" />
-        </KpiPanel>
-
-        {(() => {
-          const isProfit = snapshot.avgDailyPnl7d >= 0;
-          return (
-            <KpiPanel
-              title="Avg P&L"
-              tint={isProfit ? "emerald" : "rose"}
-              icon={isProfit ? TrendingUp : TrendingDown}
-              headerRight={<StaticWindowLabel label="7d" />}
-              footer={
-                <p className="text-stat-label">
-                  per day · {formatCurrency(snapshot.totalPnl7d)} rolling 7d
-                </p>
-              }
-            >
-              <SignedHero value={snapshot.avgDailyPnl7d} />
-            </KpiPanel>
-          );
-        })()}
-
-        {(() => {
-          const isProfit = snapshot.totalPnlLifetime >= 0;
-          return (
-            <KpiPanel
-              title="Total P&L"
-              tint={isProfit ? "emerald" : "rose"}
-              icon={isProfit ? TrendingUp : TrendingDown}
-              headerRight={<StaticWindowLabel label="lifetime" />}
-              footer={
-                <p className="text-stat-label">
-                  Balance-sheet snapshot · incl. unclaimed rakeback
-                </p>
-              }
-            >
-              <SignedHero value={snapshot.totalPnlLifetime} />
-            </KpiPanel>
-          );
-        })()}
-      </div>
+      {/* The window-independent SNAPSHOT boxes (FTDs, Depositors, Avg RTP, Avg
+          P&L 7d, Total P&L lifetime) were MOVED to the Insights Overview
+          Analytics tab (`/insights/real-numbers?tab=analytics`) — the
+          dashboard is now a live-ops board (period-bound GGR / Wager /
+          Deposits-Withdrawals + the Crypto Fee counter above), while the
+          lifetime / cadence aggregates live on the Analytics tab. The Total
+          P&L + Avg P&L boxes were folded into a single "Total P&L" box there
+          (lifetime headline + avg-daily-7d sub-line). See
+          `src/app/(admin)/insights/real-numbers/analytics-tab.tsx`. */}
     </div>
   );
 }

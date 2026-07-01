@@ -2,7 +2,6 @@ import { Suspense } from "react";
 import { LayoutDashboard, LineChart } from "lucide-react";
 import {
   getDashboardStats,
-  getDashboardKpiStats,
   getActiveRain,
 } from "@/lib/queries/dashboard";
 import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
@@ -10,14 +9,11 @@ import { getDoubleDownDashboardStats } from "@/lib/queries/double-down";
 import { getDailyPnl } from "@/lib/queries/pnl";
 import { getDailyCreatorCost } from "@/lib/queries/dashboard-daily-creator-cost";
 import { getTodayPnl } from "@/lib/queries/dashboard-today-pnl";
-import { getAvgPnl7d } from "@/lib/queries/dashboard-avg-pnl-7d";
-import { getRealizedPnlSnapshot } from "@/lib/queries/_realized-pnl";
 import { getRewardCostsToday } from "@/lib/queries/dashboard-reward-costs-today";
 import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-today";
 import { getAffiliateReferredPnlToday } from "@/lib/queries/dashboard-affiliate-referred-pnl-today";
 import { getCryptoFeeProfitCounter } from "@/lib/queries/dashboard-crypto-fee-counter";
 import { compareDashboardTodayPnl } from "@/lib/clickhouse/compare/dashboard-today-pnl";
-import { compareDashboardAvgPnl7d } from "@/lib/clickhouse/compare/dashboard-avg-pnl-7d";
 import { compareDashboardUpgraderStats } from "@/lib/clickhouse/compare/dashboard-upgrader-stats";
 import { compareDashboardCreatorCostsToday } from "@/lib/clickhouse/compare/dashboard-creator-costs-today";
 import { compareDashboardAffiliateReferredPnlToday } from "@/lib/clickhouse/compare/dashboard-affiliate-referred-pnl-today";
@@ -29,7 +25,6 @@ import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
   DashboardKpiSection,
-  type KpiSnapshotValues,
   type CryptoFeeKpi,
 } from "./dashboard-kpi-section";
 import { buildKpiWindowPayload } from "./kpi-window-data";
@@ -73,7 +68,7 @@ export default async function DashboardPage() {
 
   // Trend charts + Wager Attribution are ALWAYS 30-day daily buckets (fixed).
   // The headline KPI boxes are independent — they default to "today" (since
-  // 00:00 UTC) via getDashboardKpiStats and carry their own per-box today/24h
+  // 00:00 UTC) via buildKpiWindowPayload and carry their own per-box today/24h
   // toggle, fetching the 24h window lazily on first toggle.
 
   // The live feeds (Recent Activity, Live Money Movements) all live in
@@ -143,26 +138,23 @@ export default async function DashboardPage() {
         </Suspense>
       </div>
 
-      {/* KPI boxes — period-bound (GGR, Wager [Total + Organic merged into
-          one box], Deposits, Withdrawals) with a per-box today/24h toggle,
-          plus the window-independent snapshot boxes (Total Users, FTDs,
-          Depositors, Avg Deposit, Deposits/Hour, Avg RTP, Avg P&L 7d). DEFAULTS to
-          "today" (loaded eagerly here); the rolling 24h window is fetched
-          lazily on the first toggle inside the client section
-          (active-timeframe-only).
+      {/* KPI boxes — period-bound only now (GGR, Wager [Total + Organic merged
+          into one box], Deposits/Withdrawals [merged], plus the anchored Crypto
+          Fee counter) with a per-box today/24h toggle. DEFAULTS to "today"
+          (loaded eagerly here); the rolling 24h window is fetched lazily on the
+          first toggle inside the client section (active-timeframe-only).
+
+          The window-independent snapshot boxes (FTDs, Depositors, Avg RTP, Avg
+          P&L 7d, Total P&L lifetime) MOVED to the Insights Overview Analytics
+          tab (`/insights/real-numbers?tab=analytics`) — the dashboard is a
+          live-ops board, the lifetime / cadence aggregates live there. Total
+          P&L + Avg P&L were folded into a single box on that tab.
 
           NOT keyed on any global selector — these boxes own their own today/24h
           window via the toggle next to each title. Streams behind its own Suspense
           so the today-window aggregate never blocks the 3 cost cards above;
-          the skeleton mirrors the 4-up period strip + 6-up snapshot strip. */}
-      <Suspense
-        fallback={
-          <>
-            <SkeletonKpiStrip count={4} />
-            <SkeletonKpiStrip count={8} />
-          </>
-        }
-      >
+          the skeleton mirrors the single 4-up period strip. */}
+      <Suspense fallback={<SkeletonKpiStrip count={4} />}>
         <DashboardKpiBoxes />
       </Suspense>
 
@@ -308,60 +300,30 @@ async function DashboardLoadTime() {
 }
 
 /**
- * Eager-renders the dashboard's KPI boxes for the DEFAULT "today" window
- * (since 00:00 UTC) and hands the client section both the today payload and
- * the window-independent snapshot values. The client section adds the
- * per-box today/24h toggle and fetches the rolling-24h payload lazily on the
- * first toggle (active-timeframe-only — the 24h aggregate never runs here).
+ * Eager-renders the dashboard's period-bound KPI boxes for the DEFAULT "today"
+ * window (since 00:00 UTC) and hands the client section the today payload +
+ * the anchored Crypto Fee counter. The client section adds the per-box
+ * today/24h toggle and fetches the rolling-24h payload lazily on the first
+ * toggle (active-timeframe-only — the 24h aggregate never runs here).
+ *
+ * The window-independent snapshot boxes (FTDs, Depositors, Avg RTP, Avg P&L
+ * 7d, Total P&L lifetime) that used to live here MOVED to the Insights
+ * Overview Analytics tab (`/insights/real-numbers?tab=analytics`), so this
+ * component no longer reads `getDashboardKpiStats` / `getAvgPnl7d` /
+ * `getRealizedPnlSnapshot` — the dashboard is now a live-ops board only.
  *
  * Wrapped in safeQuery so a failing today-window aggregate degrades to a
  * single panel fallback instead of escaping to the route error boundary
  * (which would white-screen the whole dashboard — the failure mode this
- * page hit in prod). The snapshot values come from the SAME eager "today"
- * stats (they're lifetime / fixed-window figures, so the window doesn't
- * change them) — no extra query.
+ * page hit in prod).
  */
 async function DashboardKpiBoxes() {
-  const [
-    payloadResult,
-    statsResult,
-    avgPnl7dResult,
-    lifetimePnlResult,
-    cryptoFeeResult,
-  ] = await Promise.all([
+  const [payloadResult, cryptoFeeResult] = await Promise.all([
     // Period-bound box values + GGR legs for the eager "today" window.
     safeQuery(
       () => buildKpiWindowPayload("today"),
       null,
       "dashboard.kpiToday",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    // Snapshot (lifetime / fixed-window) figures — read off the same cached
-    // today aggregate so no second roundtrip is added.
-    safeQuery(
-      () => getDashboardKpiStats("today"),
-      null,
-      "dashboard.kpiSnapshot",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => getAvgPnl7d(),
-      { totalPnl7d: 0, avgDailyPnl: 0 },
-      "dashboard.avgPnl7d",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => getRealizedPnlSnapshot(),
-      {
-        pnl: 0,
-        totalDeposited: 0,
-        totalWithdrawn: 0,
-        userBalance: 0,
-        inventory: 0,
-        vouchers: 0,
-        unclaimedRakeback: 0,
-      },
-      "dashboard.lifetimePnl",
       REWARD_QUERY_TIMEOUT_MS,
     ),
     // Crypto Fee counter — anchored, monotonic, durable (admin-DB high-water).
@@ -375,57 +337,17 @@ async function DashboardKpiBoxes() {
       REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
-  if (
-    payloadResult.error ||
-    !payloadResult.data ||
-    statsResult.error ||
-    !statsResult.data
-  ) {
+  if (payloadResult.error || !payloadResult.data) {
     return (
       <TileErrorFallback
         label="Platform KPIs"
         hint="A metrics query failed while loading the KPI boxes — other sections still rendered. Refresh to retry."
-        kind={payloadResult.kind ?? statsResult.kind ?? undefined}
+        kind={payloadResult.kind ?? undefined}
         size="panel"
       />
     );
   }
   const today = payloadResult.data;
-  const stats = statsResult.data;
-  const avgPnl7d = avgPnl7dResult.data ?? { totalPnl7d: 0, avgDailyPnl: 0 };
-  const lifetimePnl = lifetimePnlResult.data?.pnl ?? 0;
-
-  // CQRS rollout: in `comparison` mode, run the ClickHouse Avg-P&L-7d path
-  // side-by-side and LOG drift. Fire-and-forget + never-throwing — the served
-  // snapshot below stays 100% Postgres. No-op unless the flag is `comparison`.
-  void compareDashboardAvgPnl7d(avgPnl7d);
-
-  // Snapshot (lifetime / fixed-window) figures — the window toggle doesn't
-  // change them, so they read the same for today and 24h. Deposits/Hour is a
-  // FIXED 24h / 7d rate (count ÷ hours).
-  const snapshot: KpiSnapshotValues = {
-    usersTotal: stats.users.total,
-    usersToday: stats.users.today,
-    usersWeek: stats.users.week,
-    ftds24h: stats.financials.ftds24h,
-    ftdTotal24h: stats.financials.ftdTotal24h,
-    ftdAvg24h: stats.financials.ftdAvg24h,
-    uniqueDepositors: stats.financials.uniqueDepositors,
-    depositorsPctOfUsers:
-      stats.users.total > 0
-        ? (stats.financials.uniqueDepositors / stats.users.total) * 100
-        : null,
-    avgDeposit: stats.financials.avgDeposit,
-    depositsPerHour24h: stats.depositCount24h / 24,
-    depositsPerHour7d: stats.depositCount7d / (7 * 24),
-    avgRtp:
-      stats.financials.totalWagered > 0
-        ? (stats.financials.totalWon / stats.financials.totalWagered) * 100
-        : 0,
-    totalPnl7d: avgPnl7d.totalPnl7d,
-    avgDailyPnl7d: avgPnl7d.avgDailyPnl,
-    totalPnlLifetime: lifetimePnl,
-  };
 
   // Crypto Fee box payload. A failed/degraded read (cryptoFeeResult.data ===
   // null) OR an explicitly-unavailable counter (admin row missing) both
@@ -451,13 +373,7 @@ async function DashboardKpiBoxes() {
         sinceLabel: "",
       };
 
-  return (
-    <DashboardKpiSection
-      today={today}
-      snapshot={snapshot}
-      cryptoFee={cryptoFee}
-    />
-  );
+  return <DashboardKpiSection today={today} cryptoFee={cryptoFee} />;
 }
 
 /**
