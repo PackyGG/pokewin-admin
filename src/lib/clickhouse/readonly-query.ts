@@ -15,7 +15,7 @@ import { assertReadOnlySql } from "./guards";
  *           WHERE created_at >= {since:DateTime}
  *           GROUP BY day ORDER BY day`,
  *     params: { since },          // CH {name:Type} binding — never string-concat input
- *     timeoutMs: 15000,
+ *     timeoutMs: 8000,
  *   });
  *
  * Guarantees:
@@ -29,7 +29,28 @@ import { assertReadOnlySql } from "./guards";
  *   • Returns typed rows parsed from JSONEachRow.
  */
 
-export const DEFAULT_CH_TIMEOUT_MS = 15_000;
+/**
+ * Default per-query wall-clock + server-execution budget (ms).
+ *
+ * Set to 8s (was 15s) as part of the 2026-07-01 thundering-herd incident fix.
+ * The reason is the interaction with the caller's `safeQuery`/tile budget
+ * (`REWARD_QUERY_TIMEOUT_MS` = 15s): if the CH per-query timeout equals that
+ * budget, a genuinely SLOW ClickHouse races the tile timeout — the whole
+ * segment's 15s is spent waiting on CH and there is NO headroom left to fall
+ * back to Postgres before `safeQuery` itself times out and degrades the tile
+ * to an error state.
+ *
+ * At 8s, a stalling CH read aborts (server-side kill + client AbortSignal)
+ * roughly ~7s inside the tile budget, so `resolveAdminRead` still has ample
+ * time to run the graceful-degradation Postgres leg (which the cron/warm cache
+ * keeps warm) and serve real data before the tile budget elapses. Healthy CH
+ * warm reads are sub-second, so 8s is generous headroom for the happy path and
+ * only ever bites a truly stuck query.
+ *
+ * A non-dashboard heavy CH read that legitimately needs longer can still pass
+ * an explicit `timeoutMs` per call to override this default.
+ */
+export const DEFAULT_CH_TIMEOUT_MS = 8_000;
 const CH_SLOW_MS = 2_000;
 
 /** Thrown when ClickHouse is not configured (dormant) — distinct from a query error. */

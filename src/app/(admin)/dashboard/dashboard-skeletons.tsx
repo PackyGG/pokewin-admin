@@ -50,6 +50,48 @@ export function ChartRowSkeleton({
 }
 
 /**
+ * Skeleton for ONE of the three "today" tiles (P&L Today · Reward Costs ·
+ * Creators Costs) that sit directly under the hero. Mirrors the real card
+ * chrome so the Suspense fallback swaps in shift-free instead of a flat grey
+ * block snapping into a dense card:
+ *   • Header row — title bar + a small right-side badge/icon chip.
+ *   • Hero number bar — the big stat value.
+ *   • Two faux breakdown rows — the 2-up component chip grid the real cards
+ *     render (Deposits/Withdrawals, cost lines, etc.).
+ *
+ * Fixed `h-[148px]` matches the real tile footprint (the same height the flat
+ * fallback used) so the 1-up→2-up→3-up responsive grid never jumps when the
+ * streamed tile resolves.
+ */
+export function TodayTileSkeleton() {
+  return (
+    <div className="h-[148px] w-full overflow-hidden rounded-xl border bg-card p-3 sm:p-4">
+      <div className="flex h-full flex-col gap-3">
+        {/* Header — title bar + right-side badge/icon chip. */}
+        <div className="flex items-center justify-between gap-2">
+          <Skeleton className="h-3.5 w-24 rounded" />
+          <Skeleton className="size-6 shrink-0 rounded-md" />
+        </div>
+
+        {/* Hero number bar — the big stat value. */}
+        <Skeleton className="h-7 w-32 rounded" />
+
+        {/* Two faux breakdown rows — the 2-up component chip grid. Pinned to
+            the bottom (mt-auto) so it aligns with the real card's chip row. */}
+        <div className="mt-auto grid grid-cols-2 gap-1.5">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <div key={i} className="rounded-md border bg-background/40 px-2 py-1.5">
+              <Skeleton className="h-2.5 w-12 rounded" />
+              <Skeleton className="mt-1.5 h-3 w-16 rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Skeleton for the Upgrader Stats panel — mirrors the real
  * `UpgraderStatsSection` layout exactly: cyan-tinted card chrome with corner
  * glows, a header strip (icon + title + scope chip), a 2-up hero row (House

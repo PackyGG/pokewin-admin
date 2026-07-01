@@ -1,10 +1,13 @@
-import { Skeleton } from "@/components/ui/skeleton";
 import { SkeletonKpiStrip, SkeletonChart, SkeletonBoundary } from "@/components/ux";
 import {
   PageHeroSkeleton,
   SectionHeadingSkeleton,
 } from "@/components/loading-skeletons";
-import { ChartRowSkeleton, UpgraderPanelSkeleton } from "./dashboard-skeletons";
+import {
+  ChartRowSkeleton,
+  UpgraderPanelSkeleton,
+  TodayTileSkeleton,
+} from "./dashboard-skeletons";
 
 /**
  * Full-page navigation skeleton for /dashboard — the entry surface (LCP).
@@ -13,9 +16,10 @@ import { ChartRowSkeleton, UpgraderPanelSkeleton } from "./dashboard-skeletons";
  * Suspense fallbacks agree, and the real content swaps in with zero layout
  * shift:
  *   • PageHero (with the trailing Active-Rain + load-time action chips).
- *   • Today-since-00:00 tiles — 4-up at xl, matches the P&L / Reward /
- *     Creators / Chat Messages row that page.tsx renders FIRST (directly
- *     under the hero).
+ *   • Today-since-00:00 tiles — 3-up at xl, matches the P&L Today · Reward
+ *     Costs · Creators Costs row that page.tsx renders FIRST (directly under
+ *     the hero). Uses the same `TodayTileSkeleton` as the in-page Suspense
+ *     fallbacks so the two agree exactly.
  *   • Primary KPI strip (4 tiles) + secondary KPI snapshot strip (8 tiles).
  *   • Upgrader Stats panel + Wager Attribution chart (paired 50/50, min-h-400).
  *   • Trends section: two 3-up chart rows
@@ -31,14 +35,16 @@ export default function DashboardLoading() {
           so the right edge doesn't jump when they stream in. */}
       <PageHeroSkeleton action />
 
-      {/* Today-since-00:00 tiles — P&L · Reward · Creators. Rendered
-          ABOVE the KPI strips to match page.tsx (which renders this row
-          directly under the hero), so the real content swaps in with no
-          layout shift. */}
+      {/* Today-since-00:00 tiles — P&L Today · Reward Costs · Creators Costs
+          (3-up at xl). Rendered ABOVE the KPI strips to match page.tsx (which
+          renders this row directly under the hero), so the real content swaps
+          in with no layout shift. Same `TodayTileSkeleton` the in-page
+          Suspense fallbacks use, so the route skeleton and the streamed
+          fallbacks agree exactly. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3">
-        <Skeleton className="h-[148px] w-full rounded-xl" />
-        <Skeleton className="h-[148px] w-full rounded-xl" />
-        <Skeleton className="h-[148px] w-full rounded-xl" />
+        <TodayTileSkeleton />
+        <TodayTileSkeleton />
+        <TodayTileSkeleton />
       </div>
 
       {/* KPI strips — 4-up primary period boxes (GGR · Wager [Total +

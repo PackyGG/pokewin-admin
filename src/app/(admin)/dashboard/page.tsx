@@ -60,7 +60,11 @@ import {
   SkeletonChart,
 } from "@/components/ux";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ChartRowSkeleton, UpgraderPanelSkeleton } from "./dashboard-skeletons";
+import {
+  ChartRowSkeleton,
+  UpgraderPanelSkeleton,
+  TodayTileSkeleton,
+} from "./dashboard-skeletons";
 
 export const metadata = { title: "Dashboard" };
 
@@ -128,19 +132,13 @@ export default async function DashboardPage() {
           UTC-midnight boundary. Each streams behind its OWN Suspense +
           safeQuery. Full-width on mobile, 2-up at sm, 3-up at xl. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3">
-        <Suspense
-          fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
-        >
+        <Suspense fallback={<TodayTileSkeleton />}>
           <DashboardTodayPnl />
         </Suspense>
-        <Suspense
-          fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
-        >
+        <Suspense fallback={<TodayTileSkeleton />}>
           <DashboardRewardCostsToday />
         </Suspense>
-        <Suspense
-          fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
-        >
+        <Suspense fallback={<TodayTileSkeleton />}>
           <DashboardCreatorCostsToday />
         </Suspense>
       </div>

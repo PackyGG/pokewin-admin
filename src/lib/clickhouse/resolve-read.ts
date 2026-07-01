@@ -4,6 +4,109 @@ import { logError } from "@/lib/errors/logger";
 import { getAdminReadMode } from "@/lib/feature-flags/admin-read-source";
 
 /**
+ * ─── Per-process ClickHouse circuit breaker (2026-07-01, incident fix) ───────
+ *
+ * WHY: the graceful-degradation fallback below is correct but not free. During a
+ * real ClickHouse OUTAGE (CH down / unreachable / lagging past its abort), EVERY
+ * `clickhouse`-mode request first pays the full CH per-query timeout
+ * (`DEFAULT_CH_TIMEOUT_MS`, now 8s) before falling back to Postgres. Under load,
+ * a whole wave of admin requests each burns that 8s on a doomed CH attempt and
+ * only THEN piles onto the (max:3) Postgres pool — the exact thundering-herd the
+ * broader incident fix targets.
+ *
+ * WHAT: a lightweight, per-PROCESS breaker (module-level state, pinned on
+ * globalThis so it survives dev HMR / module re-eval within one process). It is
+ * GLOBAL, not per-surface: when CH is unhealthy it is unhealthy for everyone, so
+ * a shared failure signal trips faster and recovers together. While the breaker
+ * is OPEN, `clickhouse`-mode reads SKIP the CH attempt entirely and serve
+ * Postgres directly (the cron/warm-kept cache-warm path) — no 8s CH wait per
+ * request.
+ *
+ * WHY IT IS SAFE (worst case == "CH temporarily off"):
+ *   • The breaker ONLY ever changes what happens in `clickhouse` mode, and ONLY
+ *     ever decides "attempt CH" vs "skip CH → serve Postgres". Skipping CH is
+ *     byte-identical to the existing CH-failure degradation path (serve the
+ *     authoritative Postgres read). So the WORST the breaker can do is behave as
+ *     if that surface were flipped to "off" for a short cooldown — real, correct
+ *     data, just from Postgres. It can never serve wrong/stale/empty data and
+ *     never throws on its own.
+ *   • It NEVER touches "off"/"comparison" modes — those paths are untouched.
+ *   • Happy path is UNCHANGED: when CH is healthy the breaker stays CLOSED, so
+ *     `shouldSkipClickHouse()` returns false and the control flow is identical to
+ *     the pre-breaker code (attempt CH, serve it).
+ *   • Bias toward CLOSED (attempt CH) on any doubt: the breaker only opens after
+ *     `BREAKER_FAILURE_THRESHOLD` CONSECUTIVE failures, opens for a SHORT
+ *     cooldown, and after the cooldown lets requests attempt CH again (a single
+ *     success closes it). A one-off CH blip never trips it.
+ *   • Postgres-free: this file lives under `src/lib/clickhouse/**`, so the
+ *     breaker imports nothing new — it uses only `Date.now()` and a plain
+ *     counter. It NEVER imports `@/lib/db` / prisma / `pg`.
+ */
+
+/** Consecutive CH failures required to OPEN the breaker (bias toward attempting CH). */
+const BREAKER_FAILURE_THRESHOLD = 3;
+/** How long the breaker stays OPEN (skips CH) once tripped, in ms. */
+const BREAKER_COOLDOWN_MS = 25_000;
+
+type ChBreakerState = {
+  /** Consecutive CH failures since the last success. */
+  consecutiveFailures: number;
+  /** Epoch ms until which the breaker is OPEN (skip CH). 0 = closed. */
+  openUntil: number;
+};
+
+// Pin the breaker state on globalThis so it is a single per-process instance
+// that survives dev HMR / module re-evaluation (a fresh module copy would reset
+// an in-module `let`, defeating the breaker across recompiles).
+const BREAKER_KEY = "__adminChCircuitBreaker__" as const;
+type BreakerGlobal = typeof globalThis & {
+  [BREAKER_KEY]?: ChBreakerState;
+};
+
+function breaker(): ChBreakerState {
+  const g = globalThis as BreakerGlobal;
+  if (!g[BREAKER_KEY]) {
+    g[BREAKER_KEY] = { consecutiveFailures: 0, openUntil: 0 };
+  }
+  return g[BREAKER_KEY];
+}
+
+/**
+ * True when the breaker is OPEN — i.e. CH has failed `BREAKER_FAILURE_THRESHOLD`
+ * times in a row recently AND we are still inside the cooldown window. When
+ * true, callers skip the CH attempt and serve Postgres directly. Errs toward
+ * CLOSED: outside the cooldown (or below threshold) this returns false so CH is
+ * attempted again.
+ */
+function shouldSkipClickHouse(): boolean {
+  const b = breaker();
+  return b.openUntil > Date.now();
+}
+
+/** Record a successful CH read — resets the counter and CLOSES the breaker. */
+function recordClickHouseSuccess(): void {
+  const b = breaker();
+  b.consecutiveFailures = 0;
+  b.openUntil = 0;
+}
+
+/**
+ * Record a failed CH read — increments the consecutive-failure counter and, once
+ * it reaches the threshold, OPENS the breaker for the cooldown window. Returns
+ * whether this failure just tripped the breaker (for a single greppable log).
+ */
+function recordClickHouseFailure(): boolean {
+  const b = breaker();
+  b.consecutiveFailures += 1;
+  if (b.consecutiveFailures >= BREAKER_FAILURE_THRESHOLD) {
+    const wasClosed = b.openUntil <= Date.now();
+    b.openUntil = Date.now() + BREAKER_COOLDOWN_MS;
+    return wasClosed;
+  }
+  return false;
+}
+
+/**
  * The serve-path resolver for the CQRS admin-read rollout — the Phase 2F
  * cutover counterpart to the Phase 2B comparison hooks.
  *
@@ -81,6 +184,17 @@ export async function resolveAdminRead<T>(
   const mode = await getAdminReadMode(surfaceKey);
 
   if (mode === "clickhouse") {
+    // CIRCUIT BREAKER: if CH has been failing consecutively and we're inside the
+    // cooldown window, skip the CH attempt entirely and serve Postgres directly
+    // — do NOT pay the CH per-query timeout on every request during an outage.
+    // This is byte-identical in outcome to the CH-failure degradation below
+    // (serve the authoritative Postgres read), just without first burning the
+    // CH wall-clock. Errs toward attempting CH: outside the cooldown this is
+    // false, so CH is retried and a single success re-closes the breaker.
+    if (shouldSkipClickHouse()) {
+      return opts.pg();
+    }
+
     // PRIMARY path: the ClickHouse twin serves. On a CH throw/timeout we
     // gracefully degrade to the real Postgres implementation instead of letting
     // the failure crash the route's error boundary dashboard-wide. The CH
@@ -88,14 +202,22 @@ export async function resolveAdminRead<T>(
     // server-side kill + client-side AbortSignal timeout, so a CH timeout
     // surfaces here as a throw and takes this same fallback path.
     try {
-      return await opts.ch();
+      const value = await opts.ch();
+      // A healthy CH read resets the failure counter + closes the breaker.
+      recordClickHouseSuccess();
+      return value;
     } catch (chErr) {
+      // Feed the breaker: past the consecutive-failure threshold this OPENs it
+      // so subsequent requests short-circuit to Postgres for the cooldown.
+      const justTripped = recordClickHouseFailure();
       // Make the degradation VISIBLE, not silent: one greppable structured
       // line, same redaction rules as every other query failure (name/message/
       // digest only — no SQL/params/rows).
       logError(
         `admin-read.${surfaceKey}`,
-        "clickhouse read failed — degrading to Postgres source of truth",
+        justTripped
+          ? "clickhouse read failed — circuit breaker OPEN, skipping ClickHouse for cooldown; degrading to Postgres source of truth"
+          : "clickhouse read failed — degrading to Postgres source of truth",
         chErr,
       );
       // Fall back to the authoritative Postgres read. If PG ALSO fails, that
