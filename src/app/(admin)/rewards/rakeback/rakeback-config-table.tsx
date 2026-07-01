@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Percent } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -30,21 +29,43 @@ type RakebackConfig = {
 
 export function RakebackConfigTable({ configs }: { configs: RakebackConfig[] }) {
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValues, setEditValues] = useState({ percentage: "", expirationDays: "" });
 
+  // Optimistic in-place mirror of the server rows. We flip a row locally the
+  // instant the admin toggles/saves — no router.refresh(), so the page never
+  // re-renders and the scroll position is preserved. The server action still
+  // revalidates the /rewards route (server-side, no cache tag exists for the
+  // uncached rakeback read), and when a genuine revalidation streams fresh
+  // props in we re-sync below — but never while a mutation is mid-flight, or a
+  // stale pre-mutation prop would clobber the optimistic value.
+  const [rows, setRows] = useState<RakebackConfig[]>(configs);
+  useEffect(() => {
+    if (isPending) return;
+    setRows(configs);
+  }, [configs, isPending]);
+
   function handleToggle(config: RakebackConfig) {
+    const next = !config.enabled;
+    // Optimistic flip — instant, no reload.
+    setRows((rs) =>
+      rs.map((r) => (r.id === config.id ? { ...r, enabled: next } : r)),
+    );
     startTransition(async () => {
       try {
         await updateRakebackConfig(config.id, {
           percentage: config.percentage,
           expirationDays: config.expirationDays,
-          enabled: !config.enabled,
+          enabled: next,
         });
-        toast.success(`${config.displayName} ${config.enabled ? "disabled" : "enabled"}`);
-        router.refresh();
+        toast.success(`${config.displayName} ${next ? "enabled" : "disabled"}`);
       } catch (e) {
+        // Roll back to the persisted value.
+        setRows((rs) =>
+          rs.map((r) =>
+            r.id === config.id ? { ...r, enabled: config.enabled } : r,
+          ),
+        );
         toast.error(e instanceof Error ? e.message : "Failed");
       }
     });
@@ -74,17 +95,30 @@ export function RakebackConfigTable({ configs }: { configs: RakebackConfig[] }) 
       toast.error("Expiration days must be a positive number");
       return;
     }
+    const nextPercentage = percentage / 100;
+    const prev = { percentage: config.percentage, expirationDays: config.expirationDays };
+    // Optimistic update — show the new value in place immediately.
+    setRows((rs) =>
+      rs.map((r) =>
+        r.id === config.id
+          ? { ...r, percentage: nextPercentage, expirationDays }
+          : r,
+      ),
+    );
+    setEditingId(null);
     startTransition(async () => {
       try {
         await updateRakebackConfig(config.id, {
-          percentage: percentage / 100,
+          percentage: nextPercentage,
           expirationDays,
           enabled: config.enabled,
         });
         toast.success("Rakeback config updated");
-        setEditingId(null);
-        router.refresh();
       } catch (e) {
+        // Roll back to the persisted values.
+        setRows((rs) =>
+          rs.map((r) => (r.id === config.id ? { ...r, ...prev } : r)),
+        );
         toast.error(e instanceof Error ? e.message : "Failed to update");
       }
     });
@@ -99,7 +133,7 @@ export function RakebackConfigTable({ configs }: { configs: RakebackConfig[] }) 
     <>
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
-        {configs.length === 0 ? (
+        {rows.length === 0 ? (
           <div className="rounded-md border">
             <EmptyState
               icon={Percent}
@@ -110,7 +144,7 @@ export function RakebackConfigTable({ configs }: { configs: RakebackConfig[] }) 
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border divide-y divide-border/60">
-            {configs.map((config) => (
+            {rows.map((config) => (
               <div key={config.id} className="px-3 py-3 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
@@ -211,7 +245,7 @@ export function RakebackConfigTable({ configs }: { configs: RakebackConfig[] }) 
             </TableRow>
           </TableHeader>
           <TableBody>
-            {configs.map((config) => (
+            {rows.map((config) => (
               <TableRow key={config.id}>
                 <TableCell>
                   <Badge variant="outline">{config.type}</Badge>
@@ -268,7 +302,7 @@ export function RakebackConfigTable({ configs }: { configs: RakebackConfig[] }) 
                 </TableCell>
               </TableRow>
             ))}
-            {configs.length === 0 && (
+            {rows.length === 0 && (
               <TableRow className="hover:bg-transparent">
                 <TableCell colSpan={6} className="p-0">
                   <EmptyState

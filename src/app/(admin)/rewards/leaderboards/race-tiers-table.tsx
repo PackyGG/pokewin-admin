@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Plus, Trash2, Trophy, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -55,7 +54,19 @@ function makePendingRow(position: number, amount = ""): PendingRow {
 
 export function RaceTiersTable({ tiers }: { tiers: PrizeTier[] }) {
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
+
+  // Optimistic in-place mirror of the server tiers. Edits/adds/deletes flip
+  // this local list the instant the admin acts — no router.refresh(), so the
+  // page never re-renders and scroll position is preserved. The server action
+  // still revalidates /rewards server-side (the underlying race read is
+  // uncached, so there is no cache tag to bust); when a genuine revalidation
+  // streams fresh props in we re-sync below, but never mid-flight so an
+  // in-progress optimistic change is not clobbered by a stale prop.
+  const [rows, setRows] = useState<PrizeTier[]>(tiers);
+  useEffect(() => {
+    if (isPending) return;
+    setRows(tiers);
+  }, [tiers, isPending]);
 
   // Inline edit state — only one row is ever being edited at a time
   // across both sections, so a single piece of state is enough.
@@ -70,13 +81,13 @@ export function RaceTiersTable({ tiers }: { tiers: PrizeTier[] }) {
   const [addingFor, setAddingFor] = useState<RaceType | null>(null);
   const [pendingRows, setPendingRows] = useState<PendingRow[]>([]);
 
-  const dailyTiers = tiers
+  const dailyTiers = rows
     .filter((t) => t.raceType === "daily")
     .sort((a, b) => a.position - b.position);
-  const weeklyTiers = tiers
+  const weeklyTiers = rows
     .filter((t) => t.raceType === "weekly")
     .sort((a, b) => a.position - b.position);
-  const monthlyTiers = tiers
+  const monthlyTiers = rows
     .filter((t) => t.raceType === "monthly")
     .sort((a, b) => a.position - b.position);
 
@@ -97,13 +108,25 @@ export function RaceTiersTable({ tiers }: { tiers: PrizeTier[] }) {
       toast.error("Invalid amount");
       return;
     }
+    const prevAmount = tier.prizeAmountUsd;
+    // Optimistic update — show the new prize in place immediately.
+    setRows((rs) =>
+      rs.map((r) =>
+        r.id === tier.id ? { ...r, prizeAmountUsd: amount } : r,
+      ),
+    );
+    setEditingId(null);
     startTransition(async () => {
       try {
         await upsertRacePrizeTier(tier.raceType, tier.position, amount);
         toast.success("Prize tier updated");
-        setEditingId(null);
-        router.refresh();
       } catch (e) {
+        // Roll back to the persisted amount.
+        setRows((rs) =>
+          rs.map((r) =>
+            r.id === tier.id ? { ...r, prizeAmountUsd: prevAmount } : r,
+          ),
+        );
         toast.error(e instanceof Error ? e.message : "Failed to update");
       }
     });
@@ -181,6 +204,36 @@ export function RaceTiersTable({ tiers }: { tiers: PrizeTier[] }) {
       parsed.push({ position, prizeAmountUsd: amount });
     }
 
+    // Snapshot for rollback, then apply the staged rows optimistically. An
+    // "add" upserts by (race_type, position): it replaces the prize on an
+    // existing position or inserts a brand-new one. New rows get a temporary
+    // client id (unique key) which is reconciled to the real id when the next
+    // genuine revalidation streams fresh props in.
+    const prevRows = rows;
+    setRows((rs) => {
+      const next = [...rs];
+      for (const row of parsed) {
+        const idx = next.findIndex(
+          (r) => r.raceType === raceType && r.position === row.position,
+        );
+        if (idx >= 0) {
+          next[idx] = { ...next[idx], prizeAmountUsd: row.prizeAmountUsd };
+        } else {
+          next.push({
+            id:
+              typeof crypto !== "undefined" && "randomUUID" in crypto
+                ? crypto.randomUUID()
+                : `tmp-${raceType}-${row.position}-${Math.random().toString(36).slice(2)}`,
+            raceType,
+            position: row.position,
+            prizeAmountUsd: row.prizeAmountUsd,
+          });
+        }
+      }
+      return next;
+    });
+    cancelAdd();
+
     // Single row → fall through to the existing single-row action so
     // the server-side audit event records "race_prize_tier_created"
     // (matches what a one-off edit produces). Multi-row → bulk action.
@@ -201,9 +254,9 @@ export function RaceTiersTable({ tiers }: { tiers: PrizeTier[] }) {
               : `${result.upserted} prize tiers saved`,
           );
         }
-        cancelAdd();
-        router.refresh();
       } catch (e) {
+        // Roll back to the pre-save tiers.
+        setRows(prevRows);
         toast.error(e instanceof Error ? e.message : "Failed to save");
       }
     });
@@ -219,12 +272,16 @@ export function RaceTiersTable({ tiers }: { tiers: PrizeTier[] }) {
     ) {
       return;
     }
+    const prevRows = rows;
+    // Optimistic removal — drop the row in place immediately.
+    setRows((rs) => rs.filter((r) => r.id !== tier.id));
     startTransition(async () => {
       try {
         await deleteRacePrizeTier(tier.id);
         toast.success("Prize tier deleted");
-        router.refresh();
       } catch (e) {
+        // Restore the row on failure.
+        setRows(prevRows);
         toast.error(e instanceof Error ? e.message : "Failed to delete");
       }
     });

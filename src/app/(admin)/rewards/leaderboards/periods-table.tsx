@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { History, Lock, LockOpen, Plus, Power, RefreshCw } from "lucide-react";
@@ -185,6 +185,27 @@ export function PeriodsTable({
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
+  // Optimistic in-place mirror of the two period lists. The per-row toggles
+  // (auto-renew, claims freeze/open) flip these locally the instant the admin
+  // acts — no router.refresh(), so the page never re-renders and scroll is
+  // preserved. Re-sync to fresh server props on a genuine revalidation, but
+  // never while a mutation is mid-flight so an in-progress optimistic flip is
+  // not clobbered by a stale prop.
+  //
+  // NOTE: the START (daily/weekly/monthly) and END-NOW flows still call
+  // router.refresh() below. Those are structural: starting inserts a
+  // server-dated/-id'd row, and ending moves a row from the Active table to
+  // the Recently-ended table AND generates leaderboard snapshots server-side.
+  // Faking either optimistically would show wrong data (guessed ids/dates,
+  // missing snapshots), so they deliberately re-pull from the server.
+  const [activeRows, setActiveRows] = useState<RacePeriod[]>(active);
+  const [recentRows, setRecentRows] = useState<RacePeriod[]>(recent);
+  useEffect(() => {
+    if (isPending) return;
+    setActiveRows(active);
+    setRecentRows(recent);
+  }, [active, recent, isPending]);
+
   // Monthly is the only type that needs a form (custom date picker). Daily
   // and weekly are start-with-one-click — the server snaps them to UTC
   // midnight, so the admin has no way to introduce drift by typing a
@@ -248,11 +269,18 @@ export function PeriodsTable({
   }
 
   function handleToggleAutoRenew(id: string) {
+    // Flip auto_renew optimistically in place (auto-renew only shows on active
+    // periods, but update either list defensively). Roll back on failure.
+    const flip = (rs: RacePeriod[]) =>
+      rs.map((p) => (p.id === id ? { ...p, autoRenew: !p.autoRenew } : p));
+    setActiveRows(flip);
+    setRecentRows(flip);
     startTransition(async () => {
       try {
         await toggleRacePeriodAutoRenew(id);
-        router.refresh();
       } catch (e) {
+        setActiveRows(flip);
+        setRecentRows(flip);
         toast.error(e instanceof Error ? e.message : "Failed to toggle");
       }
     });
@@ -288,12 +316,17 @@ export function PeriodsTable({
     if (!confirm(message)) {
       return;
     }
+    // Flip claims_frozen optimistically in place (only shown on ended periods,
+    // which live in the recently-ended list). Roll back on failure.
+    const setFrozen = (value: boolean) => (rs: RacePeriod[]) =>
+      rs.map((p) => (p.id === id ? { ...p, claimsFrozen: value } : p));
+    setRecentRows(setFrozen(frozen));
     startTransition(async () => {
       try {
         await setRacePeriodClaimsFrozen(id, frozen);
         toast.success(frozen ? "Claims frozen" : "Claims opened");
-        router.refresh();
       } catch (e) {
+        setRecentRows(setFrozen(!frozen));
         toast.error(
           e instanceof Error ? e.message : "Failed to update claims",
         );
@@ -301,7 +334,7 @@ export function PeriodsTable({
     });
   }
 
-  const activeByType = new Map(active.map((p) => [p.raceType, p]));
+  const activeByType = new Map(activeRows.map((p) => [p.raceType, p]));
 
   return (
     <div className="space-y-6">
@@ -473,7 +506,7 @@ export function PeriodsTable({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {recent.length === 0 ? (
+              {recentRows.length === 0 ? (
                 <TableRow className="hover:bg-transparent">
                   <TableCell colSpan={7} className="p-0">
                     <EmptyState
@@ -485,7 +518,7 @@ export function PeriodsTable({
                   </TableCell>
                 </TableRow>
               ) : (
-                recent.map((p) => (
+                recentRows.map((p) => (
                   <PeriodRow
                     key={p.id}
                     period={p}

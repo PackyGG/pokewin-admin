@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Trophy, Lock, LockOpen } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -125,8 +124,20 @@ export function StandingsTable({
   periodStart?: string;
   claimWindow?: RaceClaimWindow | null;
 }) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  // Optimistic in-place mirror of the standings. Freezing/opening a claim flips
+  // the row's `hold` locally the instant the admin acts — no router.refresh(),
+  // so the page never re-renders and scroll position is preserved. The server
+  // action still revalidates /rewards server-side (the underlying standings
+  // read is uncached, so there is no cache tag to bust); when a genuine
+  // revalidation streams fresh props in we re-sync below, but never mid-flight
+  // so an in-progress optimistic change is not clobbered by a stale prop.
+  const [rows, setRows] = useState<Standing[]>(data);
+  useEffect(() => {
+    if (isPending) return;
+    setRows(data);
+  }, [data, isPending]);
 
   // Holds are per (user, period). The all-time view has no single period, so
   // claim review is disabled there.
@@ -149,18 +160,38 @@ export function StandingsTable({
       return;
     }
     const target = freezeTarget;
+    const trimmedReason = reason.trim();
+    const prevHold = target.hold;
+    // Optimistic hold — mark the row on-hold in place immediately. A temporary
+    // id/timestamp stands in until the next revalidation reconciles the real
+    // hold row; only `reason` is surfaced (the on-hold badge tooltip).
+    const optimisticHold: HoldInfo = {
+      id:
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `tmp-hold-${target.id}`,
+      reason: trimmedReason,
+      createdBy: "",
+      createdAt: new Date().toISOString(),
+    };
+    setRows((rs) =>
+      rs.map((r) => (r.id === target.id ? { ...r, hold: optimisticHold } : r)),
+    );
+    setFreezeTarget(null);
     startTransition(async () => {
       try {
         await freezeUserRaceClaim({
           userId: target.userId,
           raceType,
           periodStart,
-          reason: reason.trim(),
+          reason: trimmedReason,
         });
         toast.success("Claim frozen");
-        setFreezeTarget(null);
-        router.refresh();
       } catch (e) {
+        // Roll back to the prior hold state.
+        setRows((rs) =>
+          rs.map((r) => (r.id === target.id ? { ...r, hold: prevHold } : r)),
+        );
         toast.error(e instanceof Error ? e.message : "Failed to freeze claim");
       }
     });
@@ -175,6 +206,11 @@ export function StandingsTable({
     ) {
       return;
     }
+    const prevHold = s.hold;
+    // Optimistic open — clear the hold in place immediately.
+    setRows((rs) =>
+      rs.map((r) => (r.id === s.id ? { ...r, hold: null } : r)),
+    );
     startTransition(async () => {
       try {
         await unfreezeUserRaceClaim({
@@ -183,8 +219,11 @@ export function StandingsTable({
           periodStart,
         });
         toast.success("Claim opened");
-        router.refresh();
       } catch (e) {
+        // Restore the hold on failure.
+        setRows((rs) =>
+          rs.map((r) => (r.id === s.id ? { ...r, hold: prevHold } : r)),
+        );
         toast.error(e instanceof Error ? e.message : "Failed to open claim");
       }
     });
@@ -229,7 +268,7 @@ export function StandingsTable({
     <>
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
-        {data.length === 0 ? (
+        {rows.length === 0 ? (
           <div className="rounded-md border">
             <EmptyState
               icon={Trophy}
@@ -240,7 +279,7 @@ export function StandingsTable({
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
-            {data.map((s) => {
+            {rows.map((s) => {
               const positionColor =
                 POSITION_COLORS[s.position] ??
                 "bg-muted text-muted-foreground border-border";
@@ -308,7 +347,7 @@ export function StandingsTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {data.map((e) => (
+            {rows.map((e) => (
               <TableRow key={e.id}>
                 <TableCell>
                   <Badge variant="outline">#{e.position}</Badge>
@@ -339,7 +378,7 @@ export function StandingsTable({
                 )}
               </TableRow>
             ))}
-            {data.length === 0 && (
+            {rows.length === 0 && (
               <TableRow className="hover:bg-transparent">
                 <TableCell colSpan={colCount} className="p-0">
                   <EmptyState

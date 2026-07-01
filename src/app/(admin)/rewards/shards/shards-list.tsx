@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Gem, Layers, Pencil, Power, PowerOff, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -44,7 +45,32 @@ export function ShardsList({
   canToggle: boolean;
   canDelete: boolean;
 }) {
-  if (packs.length === 0) {
+  // Optimistic in-place mirror of the pack list. Activate/deactivate flips a
+  // row's `active` and delete removes it the instant the admin acts — no
+  // router.refresh() for those, so the page never re-renders and scroll is
+  // preserved. Re-sync to fresh server props on a genuine revalidation.
+  //
+  // NOTE: the toggle/delete server actions live in packs/actions.ts (a shared
+  // packs surface) and revalidate /packs, not the /rewards shards cache; the
+  // shards list is unstable_cache'd, so a full re-render wouldn't reflect the
+  // change for up to 60s anyway. The optimistic local update gives instant,
+  // correct feedback and no scroll jump. On failure we roll back.
+  const [rows, setRows] = useState<ShardPackListItem[]>(packs);
+  useEffect(() => {
+    setRows(packs);
+  }, [packs]);
+
+  const flipActive = React.useCallback((id: string, active: boolean) => {
+    setRows((rs) => rs.map((p) => (p.id === id ? { ...p, active } : p)));
+  }, []);
+  const removeRow = React.useCallback((id: string) => {
+    setRows((rs) => rs.filter((p) => p.id !== id));
+  }, []);
+  const restoreRows = React.useCallback((snapshot: ShardPackListItem[]) => {
+    setRows(snapshot);
+  }, []);
+
+  if (rows.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed bg-card/30">
         <EmptyState
@@ -66,13 +92,17 @@ export function ShardsList({
         <span className="text-right">Actions</span>
       </div>
       <ul className="divide-y">
-        {packs.map((pack) => (
+        {rows.map((pack) => (
           <ShardRow
             key={pack.id}
             pack={pack}
             canEdit={canEdit}
             canToggle={canToggle}
             canDelete={canDelete}
+            allRows={rows}
+            onFlipActive={flipActive}
+            onRemove={removeRow}
+            onRestore={restoreRows}
           />
         ))}
       </ul>
@@ -85,11 +115,19 @@ function ShardRow({
   canEdit,
   canToggle,
   canDelete,
+  allRows,
+  onFlipActive,
+  onRemove,
+  onRestore,
 }: {
   pack: ShardPackListItem;
   canEdit: boolean;
   canToggle: boolean;
   canDelete: boolean;
+  allRows: ShardPackListItem[];
+  onFlipActive: (id: string, active: boolean) => void;
+  onRemove: (id: string) => void;
+  onRestore: (snapshot: ShardPackListItem[]) => void;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = React.useTransition();
@@ -121,25 +159,36 @@ function ShardRow({
   }
 
   function handleToggle() {
+    // Capture the pre-flip value for an accurate rollback (the closure's `pack`
+    // reflects the value at this click's render).
+    const prevActive = pack.active;
+    const next = !prevActive;
+    // Optimistic flip in place — no reload, no scroll jump.
+    onFlipActive(pack.id, next);
     startTransition(async () => {
       try {
-        await togglePackActive(pack.id, !pack.active);
-        toast.success(pack.active ? "Shard pack deactivated" : "Shard pack activated");
-        router.refresh();
+        await togglePackActive(pack.id, next);
+        toast.success(next ? "Shard pack activated" : "Shard pack deactivated");
       } catch (err) {
+        // Roll back to the persisted active state.
+        onFlipActive(pack.id, prevActive);
         toast.error(err instanceof Error ? err.message : "Failed");
       }
     });
   }
 
   function handleDelete() {
+    const snapshot = allRows;
+    // Optimistic removal — drop the row and close the dialog immediately.
+    onRemove(pack.id);
+    setDeleteOpen(false);
     startTransition(async () => {
       try {
         await deletePack(pack.id);
         toast.success("Shard pack deleted");
-        setDeleteOpen(false);
-        router.refresh();
       } catch (err) {
+        // Restore the full list on failure.
+        onRestore(snapshot);
         toast.error(err instanceof Error ? err.message : "Failed to delete pack");
       }
     });
