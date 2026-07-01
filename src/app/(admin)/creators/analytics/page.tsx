@@ -63,7 +63,16 @@ export default async function CreatorAnalyticsPage({
         key={period}
         fallback={
           <>
-            <KpiStripSkeleton count={7} />
+            {/* Pin the skeleton grid to the SAME shape as the real
+                <MetricTile> grid below (grid-cols-2 sm:grid-cols-3
+                lg:grid-cols-4). Without this override the 7-tile default
+                lays out a single lg:grid-cols-7 row, so streaming in the
+                real two-row (4+3) grid — and every period switch — would
+                jump both the column count and the height (CLS). */}
+            <KpiStripSkeleton
+              count={7}
+              className="grid-cols-2 sm:grid-cols-3 lg:grid-cols-4"
+            />
             <ChartRowSkeleton count={2} height={300} />
           </>
         }
