@@ -592,11 +592,15 @@ export async function getUserDetail(id: string) {
     }),
     db.user_statistics.findUnique({ where: { user_id: id } }),
     db.user_feature_locks.findUnique({ where: { user_id: id } }),
-    // The user_battle_limits table is ABSENT in live prod (P2021). A missing
-    // table means no per-user override row can exist, so `null` is the TRUE
-    // answer (site_config defaults apply) — not a degraded value. Without
-    // this .catch the rejection took down the WHOLE 19-promise aggregate and
-    // the entire body band rendered the amber error instead of the page.
+    // user_battle_limits now EXISTS on live prod (verified read-only via
+    // to_regclass, 2026-07-01), so the historical P2021-missing-table throw
+    // this .catch was written for no longer fires there. The .catch is KEPT
+    // as defence-in-depth: the same generated client also serves the
+    // dev-toggled DB (which can lag prod's migration state), and a bare
+    // rejection here would take down the WHOLE 19-promise aggregate and
+    // render the amber error instead of the page. On prod a null now means
+    // "no per-user override row" (site_config defaults apply) — the TRUE
+    // answer — returned by the query itself, not the catch.
     db.user_battle_limits.findUnique({ where: { user_id: id } }).catch(() => null),
     db.user_inventory.count({ where: { user_id: id, sold_at: null, exchanged_at: null } }),
     db.affiliate_accounts.findUnique({

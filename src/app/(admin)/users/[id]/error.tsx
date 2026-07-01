@@ -77,7 +77,7 @@ export default function UserDetailError({
           disabled={isRetrying}
         >
           {isRetrying ? (
-            <Loader2 className="size-4 animate-spin" />
+            <Loader2 className="size-4 motion-safe:animate-spin" />
           ) : (
             <RotateCw className="size-4" />
           )}
