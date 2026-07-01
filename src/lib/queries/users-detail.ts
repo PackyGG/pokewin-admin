@@ -352,6 +352,20 @@ async function enrichLeaderboardWins(
 /**
  * Resolve a `/users/[id]` route segment to the canonical packy.gg user id.
  * Accepts UUIDs, nanoid-style user ids, or a username (case-insensitive).
+ *
+ * The username branch is a RAW parameterized `lower(username) = lower($1)`
+ * lookup — NOT Prisma's `{ equals, mode:"insensitive" }`, which compiles to
+ * `username ILIKE $1` and (EXPLAIN-proven against prod, read-only) SEQ-SCANS
+ * the `"user"` table (cost ≈ 912). Under the MAIN `max:3` pool that seq scan
+ * is the crash source on this (#1-traffic) route. The `lower(username) = $1`
+ * form is served as an Index Scan by the EXISTING functional index
+ * `idx_user_lower_username_prefix` (`btree (lower(username) text_pattern_ops)`):
+ * the `text_pattern_ops` opclass includes the `=` operator, so the planner
+ * uses it with a clean `Index Cond: (lower(username) = $1)` (cost ≈ 8.30,
+ * ~110× cheaper), and a mixed-case input still resolves to the same lowered
+ * key. Exact-match semantics are preserved (no wildcard → the route key must
+ * equal the whole handle, case-insensitively). UUID / nanoid ids keep the PK
+ * lookup path unchanged.
  */
 export async function resolveUserIdFromRouteKey(
   key: string,
@@ -368,11 +382,13 @@ export async function resolveUserIdFromRouteKey(
     return user?.id ?? null;
   }
 
-  const byUsername = await db.user.findFirst({
-    where: { username: { equals: trimmed, mode: "insensitive" } },
-    select: { id: true },
-  });
-  return byUsername?.id ?? null;
+  // Case-insensitive EXACT username → id. Parameterized ($1 via tagged
+  // template), so no injection surface; served by
+  // idx_user_lower_username_prefix as an Index Scan (see doc comment above).
+  const rows = await db.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM "user" WHERE lower(username) = lower(${trimmed}) LIMIT 1
+  `;
+  return rows[0]?.id ?? null;
 }
 
 export async function getUserHeader(id: string): Promise<{

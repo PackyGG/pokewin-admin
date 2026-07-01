@@ -12,8 +12,8 @@ import {
   getUserPnlBreakdownCached,
   getUserGamingTransactionsCached,
   getUserFinancialTransactionsCached,
+  resolveUserIdCritical,
 } from "@/lib/queries/users-detail-cache";
-import { resolveUserIdFromRouteKey } from "@/lib/queries/users-detail";
 import { getNotesForUser } from "@/lib/queries/admin-notes";
 import { getUserTags } from "@/lib/queries/user-tags";
 import { getUserCreatorHistory } from "@/lib/queries/user-role-history";
@@ -175,8 +175,16 @@ export default async function UserDetailPage({
   await ensureSupportBaseline();
   const session = await requirePageAccess("/users");
   const { id: routeKey } = await params;
-  const id = await resolveUserIdFromRouteKey(routeKey);
-  if (!id) notFound();
+  // Route-key → user id resolution is the ONLY thing awaited before the
+  // Suspense boundary below, so an UNGUARDED throw here (pool starvation /
+  // transient DB error) would hit the segment error boundary and crash the
+  // whole page. resolveUserIdCritical races the (now-indexed) lookup against
+  // a short timeout and NEVER throws — a slow/failed resolve degrades to a
+  // clean notFound() instead of a raw crash (a refresh re-runs the indexed
+  // lookup and resolves). A genuinely-unknown key also returns found:false.
+  const resolved = await resolveUserIdCritical(routeKey);
+  if (!resolved.found) notFound();
+  const id = resolved.id;
   const sp = await searchParams;
   // Active tab is URL-driven (?tab=<key>): the URL is the source of truth
   // for WHICH tab's queries get kicked in UserDetailBody (Active-Timeframe-
@@ -188,15 +196,16 @@ export default async function UserDetailPage({
 
   // ── CRITICAL PATH — keep it tiny so first paint is instant ─────────
   //
-  // Existence / 404 is already settled above: resolveUserIdFromRouteKey
-  // returns null (→ notFound) for an unknown route key and a non-null id
-  // only for a row that exists. The streamed body's hero renders the
-  // identity (username/email) from its own timeout-wrapped getUserDetail,
-  // so the critical path needs no second identity read — dropping the
-  // extra getUserHeaderCritical round-trip shortens first paint on this
-  // (highest-traffic) route and removes a redundant pool hit. The whole
-  // heavy body still streams behind its own Suspense boundary below, so a
-  // slow/failed aggregate degrades that band instead of the page.
+  // Existence / 404 is already settled above by resolveUserIdCritical: a
+  // clean null (unknown key) OR a slow/failed resolve both surface as
+  // found:false → notFound(), and a non-null id only for a row that exists.
+  // Crucially, that guard NEVER throws, so a transient resolve failure can
+  // no longer crash this (highest-traffic) route via the segment error
+  // boundary — it degrades to a retry-able 404. The streamed body's hero
+  // renders the identity (username/email) from its own timeout-wrapped
+  // getUserDetail, so the critical path needs no second identity read. The
+  // whole heavy body still streams behind its own Suspense boundary below,
+  // so a slow/failed aggregate degrades that band instead of the page.
 
   // Permissions for the union-capability checks. For admins this is a
   // constant (no query); for non-admins it's a single cache()'d admin-DB

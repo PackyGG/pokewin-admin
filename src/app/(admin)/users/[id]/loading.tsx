@@ -8,10 +8,10 @@ import {
  * Matches /users/[id]: simple back-link header (no full PageHero), large
  * hero KPI strip from UserViewModern (8 tiles: Total Value · P&L · Total
  * Depo · Total Withdrawn · Deposits · Withdrawals · Multiplier · House Edge),
- * segmented tab bar (7 tabs: Overview · Gaming · Finances · Rewards ·
- * Inventory · Affiliate · Account), and tabbed content (panels +
- * tables). Counts mirror the real UserViewModern strip + tab bar so the
- * swap-in is jank-free.
+ * segmented tab bar (5 tabs: Overview · Gaming · Rewards · Inventory ·
+ * Account — the standalone Finances + Affiliate tabs were folded away), and
+ * tabbed content (panels + tables). Counts mirror the real UserViewModern
+ * strip + tab bar so the swap-in is jank-free.
  */
 export default function UserDetailLoading() {
   return (

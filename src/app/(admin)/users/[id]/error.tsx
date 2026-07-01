@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useTransition } from "react";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft, RotateCw } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Loader2, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHero } from "@/components/modern-panels";
 
@@ -26,6 +26,13 @@ export default function UserDetailError({
   useEffect(() => {
     console.error("[users/[id]] page error boundary caught:", error);
   }, [error]);
+
+  // reset() re-renders the segment and re-runs the failed server reads —
+  // that can take a beat (a retried DB aggregate). Drive it through a
+  // transition so the "Try again" button shows a pending spinner + disables
+  // itself instead of looking inert, matching the isPending pattern used by
+  // the tab controls in this route.
+  const [isRetrying, startRetry] = useTransition();
 
   return (
     <div className="space-y-5 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
@@ -62,9 +69,19 @@ export default function UserDetailError({
       </div>
 
       <div className="flex items-center gap-2">
-        <Button type="button" variant="default" size="sm" onClick={reset}>
-          <RotateCw className="size-4" />
-          Try again
+        <Button
+          type="button"
+          variant="default"
+          size="sm"
+          onClick={() => startRetry(() => reset())}
+          disabled={isRetrying}
+        >
+          {isRetrying ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <RotateCw className="size-4" />
+          )}
+          {isRetrying ? "Retrying…" : "Try again"}
         </Button>
         <Button
           variant="outline"

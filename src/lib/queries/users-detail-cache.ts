@@ -1,6 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { readDbEnv } from "@/lib/db-env";
-import { getUserDetail, getUserHeader } from "./users-detail";
+import { getUserDetail, resolveUserIdFromRouteKey } from "./users-detail";
 import { getUserPnlBreakdown, type PnlBreakdown } from "./users-financial";
 import { getUserTransactions } from "./users-transactions";
 
@@ -306,70 +306,74 @@ export async function getUserFinancialTransactionsCached(
 }
 
 /**
- * Slim header read with a SHORT wall-clock bound for the critical path.
+ * Route-key → canonical user id resolution with a SHORT wall-clock bound,
+ * for the page's critical path.
  *
- * `getUserHeader` is two indexed identity reads, normally sub-millisecond
- * — but it runs UN-streamed on the page's critical path (the page can't
- * render the back-link header or 404-decide without it). If the Postgres
- * pool is momentarily starved (a couple of runaway per-user scans pinning
- * the `max: 5` slots — the exact failure `db.ts` documents), even this
- * cheap read can block long enough that the platform tears the request
- * down, and the WHOLE page hits the segment error boundary
- * ("Couldn't load this user", digest 497656675).
+ * `resolveUserIdFromRouteKey` is the FIRST thing `/users/[id]/page.tsx`
+ * awaits — it runs UN-streamed, BEFORE any `<Suspense>` boundary, because
+ * nothing (not even the shell) can render until we know whether the route
+ * key maps to a real user (→ id) or an unknown one (→ 404). It is now a
+ * single indexed lookup (a PK read for id/uuid keys, or a
+ * `lower(username) = $1` Index Scan for handles). But because it runs on
+ * the bare critical path, if the Postgres pool is momentarily starved (a
+ * couple of runaway per-user scans pinning the `max: 3` slots — the exact
+ * failure `db.ts` documents), even this cheap read can block long enough
+ * that the query THROWS, and — with no Suspense above it — that throw goes
+ * straight to the segment error boundary, white-screening the WHOLE page
+ * ("Couldn't load this user", digest 497656675) on the #1-traffic route.
  *
- * Returns:
- *   - `{ found: true, header }`            — user exists (header may be the
- *                                            real row, or a minimal id-only
- *                                            placeholder if the read timed
- *                                            out / failed),
- *   - `{ found: false }`                   — definitively no such user (only
- *                                            returned on a clean null), so
- *                                            the caller 404s.
+ * This wrapper races the resolve against a short timeout and NEVER lets it
+ * throw up to the page:
+ *   - `{ found: true, id }`  — resolved to a real user id → render the page,
+ *   - `{ found: false }`     — either a genuinely-unknown key (clean null)
+ *                              OR a slow/failed resolve. In BOTH cases the
+ *                              caller `notFound()`s.
  *
- * On timeout/failure we DEGRADE rather than 404: we can't prove the user
- * is missing, so we render the shell with an id-only header and let the
- * streamed body load the real identity. This guarantees a slow identity
- * read can never take the page down — matching the "load till it's
- * possible" requirement.
+ * On timeout/failure we DEGRADE to `found: false` (→ notFound) rather than
+ * re-throwing: the whole page hangs off this id (every band, the hero
+ * identity, the tab reads), so there is no partial shell we could render
+ * without it — a clean 404 (retry-able by re-navigating) is strictly better
+ * than a raw error-boundary crash. `degraded` marks the timeout/failure case
+ * so it is logged distinctly from a real miss (the failure is transient — a
+ * refresh re-runs the now-indexed lookup and resolves).
  */
-const HEADER_TIMEOUT_MS = 4_000;
+const RESOLVE_TIMEOUT_MS = 4_000;
 
-export type CriticalHeaderResult =
-  | {
-      found: true;
-      degraded: boolean;
-      header: { id: string; username: string | null; email: string | null };
-    }
-  | { found: false };
+export type CriticalResolveResult =
+  | { found: true; id: string }
+  | { found: false; degraded: boolean };
 
-export async function getUserHeaderCritical(
-  id: string,
-): Promise<CriticalHeaderResult> {
+export async function resolveUserIdCritical(
+  routeKey: string,
+): Promise<CriticalResolveResult> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
-      () => reject(new Error("getUserHeader exceeded critical-path budget")),
-      HEADER_TIMEOUT_MS,
+      () =>
+        reject(
+          new Error("resolveUserIdFromRouteKey exceeded critical-path budget"),
+        ),
+      RESOLVE_TIMEOUT_MS,
     );
   });
   try {
-    const header = await Promise.race([getUserHeader(id), timeout]);
-    if (!header) return { found: false };
-    return { found: true, degraded: false, header };
+    const id = await Promise.race([
+      resolveUserIdFromRouteKey(routeKey),
+      timeout,
+    ]);
+    if (!id) return { found: false, degraded: false };
+    return { found: true, id };
   } catch (err) {
-    // Slow or failed identity read. We can NOT conclude the user is
-    // missing — degrade to an id-only header so the shell still renders
-    // and the streamed body (its own timeout-wrapped getUserDetail) fills
-    // in the real identity. Logged so the slow read is visible upstream.
+    // Slow or failed resolve (pool starvation / transient DB error). We can
+    // NOT render anything without the id, so degrade to a clean notFound
+    // instead of throwing to the error boundary and crashing the page.
+    // Logged so the degrade is visible upstream and distinguishable from a
+    // genuine unknown route key.
     console.error(
-      "[users/[id]] critical-path getUserHeader degraded:",
+      "[users/[id]] critical-path resolveUserIdFromRouteKey degraded:",
       err instanceof Error ? err.message : err,
     );
-    return {
-      found: true,
-      degraded: true,
-      header: { id, username: null, email: null },
-    };
+    return { found: false, degraded: true };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
