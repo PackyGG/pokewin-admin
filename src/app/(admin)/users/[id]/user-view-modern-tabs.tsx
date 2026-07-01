@@ -52,10 +52,6 @@ import {
   Waypoints,
   Loader2,
   Coins as CoinsIcon,
-  GitBranch,
-  Lock,
-  Landmark,
-  ArrowRight,
   Scale,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -107,9 +103,7 @@ import {
 import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustments-profile";
 import type { UserRewards } from "@/lib/queries/users";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
-import type { UserXpPurchasesResult } from "@/lib/queries/users-xp-purchases";
 import type { UserRewardPackOpensResult } from "@/lib/queries/users-reward-pack-opens";
-import { XpPurchasesSection } from "./xp-purchases-section";
 import { RewardPackOpensSection } from "./reward-pack-opens-section";
 import { BandError } from "./band-error";
 import {
@@ -119,7 +113,6 @@ import {
   ModernActivityPanel,
   ModernMetricTile,
 } from "./user-view-modern-panels";
-import { KpiTile, StatPanel } from "@/components/modern-panels";
 
 // ---------------------------------------------------------------------------
 // Streamed-band contract (reliability remake)
@@ -717,60 +710,6 @@ function RewardsStreamed({
 }
 
 // ───────────────────────────────────────────────────────────────────
-//  FINANCES TAB
-// ───────────────────────────────────────────────────────────────────
-
-export function FinancesTab({
-  data,
-  financialTxPromise,
-  xpPurchasesPromise,
-  wagerProgressPromise,
-  isAdmin,
-  viewerIsAdjustmentOwner,
-}: {
-  data: UserDetail;
-  financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
-  // Per-user XP purchases (USD balance spent to buy XP). null = not kicked
-  // for the active tab. The section self-hides when the user bought no XP.
-  xpPurchasesPromise: Promise<SafeQueryResult<UserXpPurchasesResult>> | null;
-  // Per-user wager-requirement progress (always kicked server-side). Threaded
-  // into the Deposits & Withdrawals popup so the wager-requirement status
-  // shows on a deposit/withdrawal row. null when not kicked → popup self-hides.
-  wagerProgressPromise: Promise<UserWagerProgress | null> | null;
-  isAdmin: boolean;
-  viewerIsAdjustmentOwner: boolean;
-}) {
-  const { user, capabilities } = data;
-  return (
-    <div className="space-y-6">
-      <SectionHeading icon={ArrowDownToLine} title="Deposits & Withdrawals" />
-      {financialTxPromise ? (
-        <Suspense fallback={<SkeletonTable rows={5} columns={6} />}>
-          <DepositsWithdrawalsStreamed
-            userId={user.id}
-            cardWithdrawals={data.cardWithdrawals}
-            financialTxPromise={financialTxPromise}
-            isAdmin={isAdmin}
-            canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
-            viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
-            wagerProgressPromise={wagerProgressPromise}
-          />
-        </Suspense>
-      ) : (
-        <SkeletonTable rows={5} columns={6} />
-      )}
-
-      {/* XP purchases (USD balance spent to buy XP) — streamed so the read
-          never blocks the table above; self-hides when the user bought no
-          XP. House-POV: the spend is a house gain (emerald). */}
-      <Suspense fallback={null}>
-        <XpPurchasesSection xpPurchasesPromise={xpPurchasesPromise} />
-      </Suspense>
-    </div>
-  );
-}
-
-// ───────────────────────────────────────────────────────────────────
 //  GAMING TAB
 // ───────────────────────────────────────────────────────────────────
 
@@ -1026,10 +965,14 @@ function DisposedCardsStreamed({
 }
 
 // ───────────────────────────────────────────────────────────────────
-//  CREATOR TAB
+//  AFFILIATE SECTION — folded into the Account tab (was its own tab)
 // ───────────────────────────────────────────────────────────────────
 
-export function AffiliateTab({ data }: { data: UserDetail }) {
+// Renders the full affiliate surface (referrer, attribution journey, owned
+// codes, affiliate stats). Previously the standalone "Affiliate" tab; now
+// rendered as a section INSIDE the Account tab so all account-level admin
+// surfaces live on one tab. Body unchanged — only the mounting point moved.
+function AffiliateSection({ data }: { data: UserDetail }) {
   const { user, affiliate } = data;
   return (
     <div className="space-y-6">
@@ -1739,373 +1682,6 @@ function OwnedCodeRow({
 }
 
 // ───────────────────────────────────────────────────────────────────
-//  FUNDS TAB — money-provenance trace
-//
-//  Answers two operator questions on one surface, now that the platform
-//  runs a custom sweepstakes funds system:
-//    1. WHERE did this user's money come from? (deposits vs house-given
-//       bonus / affiliate / rakeback / tips — per-source lifetime + the
-//       portion still locked behind the wager requirement)
-//    2. WHICH wager does it carry? (the withdrawal wager-requirement
-//       progress + per-source contribution — reuses UserWagerProgressCard)
-//
-//  Data sources (all already resolved / kicked — no new tab-gated read):
-//    • data.balances        → available / locked / deposited / withdrawn /
-//                             wagered / won / shards / coin balance
-//    • wagerProgressPromise → the per-source provenance + locked split +
-//                             requirement progress (always-kicked promise,
-//                             shared with the hero "Wager Left" tile +
-//                             Account tab). null = prod / no-balance / read
-//                             failed → the card's muted "not available".
-//
-//  House-POV colors (CLAUDE.md): user-held / user-owed money (available
-//  balance, locked, withdrawable, winnings, house-given source funds) →
-//  ROSE; deposits flowing in → EMERALD; neutral info (shards, requirement
-//  counts) → CYAN / BLUE.
-// ───────────────────────────────────────────────────────────────────
-
-export function FundsTab({
-  data,
-  wagerProgressPromise,
-}: {
-  data: UserDetail;
-  // Always-kicked read of the per-source provenance + wager progress. null
-  // promise only when the page hasn't kicked it (it always does today); a
-  // resolved null = prod / no-balance / read failed → muted not-available.
-  wagerProgressPromise: Promise<UserWagerProgress | null> | null;
-}) {
-  return (
-    <div className="space-y-6">
-      <SectionHeading icon={Wallet} title="Balance Now" />
-      {/* The KPI row + provenance + which-wager sections all read the same
-          wager-progress promise (for locked / sources / requirement), so
-          they stream together once it resolves. data.balances is already
-          resolved, so the balance figures paint as soon as the promise does. */}
-      {wagerProgressPromise ? (
-        <Suspense fallback={<SkeletonCard lines={6} />}>
-          <FundsTraceStreamed
-            balances={data.balances}
-            wagerProgressPromise={wagerProgressPromise}
-            userId={data.user.id}
-            canManage={data.sessionRole === "admin"}
-          />
-        </Suspense>
-      ) : (
-        <SkeletonCard lines={6} />
-      )}
-    </div>
-  );
-}
-
-function FundsTraceStreamed({
-  balances,
-  wagerProgressPromise,
-  userId,
-  canManage,
-}: {
-  balances: UserDetail["balances"];
-  wagerProgressPromise: Promise<UserWagerProgress | null>;
-  userId: string;
-  canManage: boolean;
-}) {
-  const wagerProgress = use(wagerProgressPromise);
-
-  // Balance figures — straight from the resolved detail aggregate.
-  const available = balances?.availableBalance ?? 0;
-  const locked = wagerProgress?.totalLockedUsd ?? balances?.lockedBalance ?? 0;
-  // Withdrawable = the available cash NOT gated behind the wager
-  // requirement. Clamped ≥ 0 so a fully-locked balance reads $0.00, never
-  // a negative. Approximation: the backend gates the whole balance until
-  // the requirement is met, but the per-source locked split is the closest
-  // read-only signal we have for "cash free to pull right now".
-  const withdrawable = Math.max(0, available - locked);
-  const deposited = balances?.totalDeposited ?? 0;
-  const withdrawn = balances?.totalWithdrawn ?? 0;
-  const wagered = balances?.totalWagered ?? 0;
-  const won = balances?.totalWon ?? 0;
-  const shards = wagerProgress?.shards ?? 0;
-
-  return (
-    <div className="space-y-6">
-      {/* ── BALANCE NOW — KPI row ──────────────────────────────────────
-          Available / Locked / Withdrawable are all user-held or user-owed
-          money → rose. Shards are neutral secondary currency → cyan. */}
-      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4">
-        <KpiTile
-          icon={Wallet}
-          label="Available"
-          accent="rose"
-          value={formatCurrency(available)}
-          sub="cash balance"
-        />
-        <KpiTile
-          icon={Lock}
-          label="Locked"
-          accent="rose"
-          value={formatCurrency(locked)}
-          sub="behind wager req."
-        />
-        <KpiTile
-          icon={ArrowUpFromLine}
-          label="Withdrawable"
-          accent="rose"
-          value={formatCurrency(withdrawable)}
-          sub="free to pull now"
-        />
-        <KpiTile
-          icon={Gem}
-          label="Shards"
-          accent="cyan"
-          value={shards.toLocaleString("en-US")}
-          sub="secondary currency"
-        />
-      </div>
-
-      {/* ── FLOW LINE — Deposited → Wagered → Won → Balance → Withdrawable
-          A compact left-to-right money story. Deposited / Wagered are the
-          house-gain side (capital in / stake risked) → emerald; Won and the
-          two balance figures are user-held → rose. Withdrawals shown as a
-          caption on the balance node so the operator can read the realized
-          cash-out leg too. */}
-      <FundsFlowLine
-        deposited={deposited}
-        wagered={wagered}
-        won={won}
-        balance={available + locked}
-        withdrawable={withdrawable}
-        withdrawn={withdrawn}
-      />
-
-      {/* ── WHERE THE MONEY CAME FROM — provenance ─────────────────────
-          Per-source lifetime received + still-locked, from the backend-
-          written source columns. Deposits → emerald (capital in); every
-          house-given source (bonus / affiliate / rakeback / tips) → rose. */}
-      <SectionHeading icon={GitBranch} title="Where the Money Came From" />
-      <FundsProvenanceCard wagerProgress={wagerProgress} />
-
-      {/* ── WHICH WAGER — attribution ──────────────────────────────────
-          The withdrawal wager-requirement progress + per-source
-          contribution. Reuses the exact card the Account tab renders so the
-          numbers can never drift between the two surfaces. */}
-      <SectionHeading icon={TrendingUp} title="Which Wager It Carries" />
-      <UserWagerProgressCard
-        userId={userId}
-        data={wagerProgress}
-        canManage={canManage}
-      />
-    </div>
-  );
-}
-
-// Compact money-flow strip: Deposited → Wagered → Won → On-site balance →
-// Withdrawable, with arrows between nodes. House-POV colors per CLAUDE.md.
-function FundsFlowLine({
-  deposited,
-  wagered,
-  won,
-  balance,
-  withdrawable,
-  withdrawn,
-}: {
-  deposited: number;
-  wagered: number;
-  won: number;
-  balance: number;
-  withdrawable: number;
-  withdrawn: number;
-}) {
-  const nodes: {
-    label: string;
-    value: string;
-    sub?: string;
-    color: string;
-  }[] = [
-    {
-      label: "Deposited",
-      value: formatCurrency(deposited),
-      color: "text-emerald-600 dark:text-emerald-400",
-    },
-    {
-      label: "Wagered",
-      value: formatCurrency(wagered),
-      color: "text-emerald-600 dark:text-emerald-400",
-    },
-    {
-      label: "Won",
-      value: formatCurrency(won),
-      color: "text-rose-600 dark:text-rose-400",
-    },
-    {
-      label: "Balance",
-      value: formatCurrency(balance),
-      sub: withdrawn > 0 ? `${formatCurrency(withdrawn)} withdrawn` : undefined,
-      color: "text-rose-600 dark:text-rose-400",
-    },
-    {
-      label: "Withdrawable",
-      value: formatCurrency(withdrawable),
-      color: "text-rose-600 dark:text-rose-400",
-    },
-  ];
-  return (
-    <Card>
-      <CardContent className="p-4 sm:p-5">
-        <div className="flex flex-wrap items-stretch gap-2 sm:gap-1">
-          {nodes.map((n, i) => (
-            <React.Fragment key={n.label}>
-              <div className="min-w-0 flex-1 basis-[7rem] rounded-lg border bg-muted/20 px-3 py-2 text-center">
-                <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  {n.label}
-                </p>
-                <p className={cn("mt-0.5 truncate text-sm font-bold tabular-nums", n.color)}>
-                  {n.value}
-                </p>
-                {n.sub && (
-                  <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-                    {n.sub}
-                  </p>
-                )}
-              </div>
-              {i < nodes.length - 1 && (
-                <div
-                  aria-hidden
-                  className="hidden shrink-0 items-center self-center text-muted-foreground/50 sm:flex"
-                >
-                  <ArrowRight className="size-4" />
-                </div>
-              )}
-            </React.Fragment>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// Per-source provenance breakdown — lifetime received + still-locked per
-// funding source. Deposits are the only emerald row (real capital the user
-// brought in = house gain in the moment); the other four sources are money
-// the HOUSE gave the user (bonus / affiliate / rakeback / tips) so they read
-// rose (house-loss side per CLAUDE.md). The Locked column is always rose
-// (user money we owe but is gated behind the wager requirement).
-function FundsProvenanceCard({
-  wagerProgress,
-}: {
-  wagerProgress: UserWagerProgress | null;
-}) {
-  if (!wagerProgress) {
-    return (
-      <Card className="border-dashed">
-        <CardContent className="p-0">
-          <EmptyState
-            icon={GitBranch}
-            title="Funds provenance not available"
-            description="This user has no balance record, or the connected database doesn't carry the sweepstakes source columns — no per-source breakdown can be shown."
-            compact
-          />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const { sources, totalLockedUsd } = wagerProgress;
-  // Σ lifetime across every source — the denominator for the "share of
-  // funds" read. Guard /0 so an all-zero user shows 0% not NaN%.
-  const totalLifetime = sources.reduce((acc, s) => acc + s.lifetimeTotalUsd, 0);
-
-  return (
-    <StatPanel title="Funding sources" icon={Landmark} accent="blue">
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b text-[11px] uppercase tracking-wider text-muted-foreground">
-              <th className="py-1.5 pr-2 text-left font-medium">Source</th>
-              <th className="px-2 py-1.5 text-right font-medium">Lifetime</th>
-              <th className="px-2 py-1.5 text-right font-medium">Share</th>
-              <th className="py-1.5 pl-2 text-right font-medium">Locked</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sources.map((s) => {
-              // Deposits = capital the user brought in → house-gain side →
-              // emerald. Every other source is house-given money → rose.
-              const isDeposit = s.key === "deposit";
-              const lifetimeColor = isDeposit
-                ? "text-emerald-600 dark:text-emerald-400"
-                : "text-rose-600 dark:text-rose-400";
-              const share =
-                totalLifetime > 0
-                  ? (s.lifetimeTotalUsd / totalLifetime) * 100
-                  : 0;
-              return (
-                <tr
-                  key={s.key}
-                  className="border-b border-border/40 last:border-0"
-                >
-                  <td className="py-1.5 pr-2 text-left">{s.label}</td>
-                  <td
-                    className={cn(
-                      "px-2 py-1.5 text-right tabular-nums",
-                      s.lifetimeTotalUsd > 0
-                        ? lifetimeColor
-                        : "text-muted-foreground",
-                    )}
-                  >
-                    {formatCurrency(s.lifetimeTotalUsd)}
-                  </td>
-                  <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
-                    {s.lifetimeTotalUsd > 0 ? `${share.toFixed(0)}%` : "—"}
-                  </td>
-                  <td className="py-1.5 pl-2 text-right tabular-nums">
-                    {s.lockedUsd > 0 ? (
-                      <span className="text-rose-600 dark:text-rose-400">
-                        {formatCurrency(s.lockedUsd)}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-          <tfoot>
-            <tr className="border-t font-medium">
-              <td className="py-1.5 pr-2 text-left">Total received</td>
-              <td className="px-2 py-1.5 text-right tabular-nums">
-                {formatCurrency(totalLifetime)}
-              </td>
-              <td className="px-2 py-1.5 text-right" />
-              <td className="py-1.5 pl-2 text-right tabular-nums">
-                {totalLockedUsd > 0 ? (
-                  <span className="text-rose-600 dark:text-rose-400">
-                    {formatCurrency(totalLockedUsd)}
-                  </span>
-                ) : (
-                  <span className="text-muted-foreground">—</span>
-                )}
-              </td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-
-      {/* Honest framing of what "Lifetime" / "Locked" mean so an operator
-          doesn't double-read the locked column as a separate liability. */}
-      <p className="mt-3 border-t pt-2 text-[11px] leading-relaxed text-muted-foreground">
-        <span className="font-medium text-foreground">Lifetime</span> is the
-        total this user has received from each source (backend truth from the{" "}
-        <code className="font-mono">balances</code> source columns).{" "}
-        <span className="font-medium text-foreground">Locked</span> is the
-        portion still gated behind the withdrawal wager requirement — a subset
-        of the balance, not an extra amount. Deposits carry no per-source
-        locked bucket.
-      </p>
-    </StatPanel>
-  );
-}
-
-// ───────────────────────────────────────────────────────────────────
 //  ACCOUNT TAB
 // ───────────────────────────────────────────────────────────────────
 
@@ -2226,6 +1802,15 @@ export function AccountTab({
       ) : (
         <SkeletonCard lines={3} />
       )}
+
+      {/* Affiliate — folded in from the old standalone Affiliate tab.
+          AffiliateSection renders the referrer card, attribution journey,
+          owned codes and affiliate stats (all reading data.affiliate /
+          data.user), so admins still manage a user's referral code from
+          here. The lead heading marks the start of the affiliate block; the
+          section supplies its own sub-headings below it. */}
+      <SectionHeading icon={Sparkles} title="Affiliate" />
+      <AffiliateSection data={data} />
     </div>
   );
 }

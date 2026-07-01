@@ -50,7 +50,6 @@ import {
   Calendar,
   MapPin,
   Megaphone,
-  GitBranch,
   Ban,
   Lock,
   Ticket,
@@ -74,18 +73,14 @@ import type { PaginatedInventory } from "./user-tabs-types";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
 import type { UserBalanceWeighting } from "@/lib/queries/users-balance-weighting";
-import type { UserXpPurchasesResult } from "@/lib/queries/users-xp-purchases";
 import type { UserRewardPackOpensResult } from "@/lib/queries/users-reward-pack-opens";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import { TILE_COLORS } from "./user-view-modern-panels";
 import {
   OverviewTab,
-  FinancesTab,
-  FundsTab,
   RewardsTab,
   GamingTab,
   InventoryTab,
-  AffiliateTab,
   AccountTab,
 } from "./user-view-modern-tabs";
 import { FadeIn } from "@/components/fade-in";
@@ -106,12 +101,9 @@ import { CopyButton } from "@/components/copy-button";
 // ---------------------------------------------------------------------------
 export {
   OverviewTab,
-  FinancesTab,
-  FundsTab,
   RewardsTab,
   GamingTab,
   InventoryTab,
-  AffiliateTab,
   AccountTab,
 } from "./user-view-modern-tabs";
 export {
@@ -138,26 +130,15 @@ type TabDef = {
 const TABS: TabDef[] = [
   { key: "overview", label: "Overview", icon: Activity },
   { key: "gaming", label: "Gaming", icon: Swords },
-  { key: "finances", label: "Finances", icon: Wallet },
-  // Funds trace — where the user's money came from + which wager it
-  // carries. Sits next to Finances (both are money surfaces): Finances
-  // is the raw deposit/withdrawal ledger, Funds is the provenance +
-  // wager-attribution view built on the sweepstakes source columns.
-  { key: "funds", label: "Funds", icon: GitBranch },
-  // Inventory sits next to the money surfaces (Finances / Funds) — it now
-  // also carries the card-sale cash-out ledger (card_sale / reward_card_sale),
-  // moved off the Gaming tab per owner, alongside the owned + sold/exchanged
-  // items those sales come from.
+  // Inventory carries the card-sale cash-out ledger (card_sale /
+  // reward_card_sale), moved off the Gaming tab per owner, alongside the
+  // owned + sold/exchanged items those sales come from.
   { key: "inventory", label: "Inventory", icon: Gem },
   { key: "rewards", label: "Rewards", icon: Gift },
-  // Affiliate tab is ALWAYS visible — admins need to be able to give
-  // a user a referral code (set their `referred_by`) regardless of
-  // whether the user has their own code yet. This supersedes the
-  // earlier visibility check `Boolean(user.affiliateCode) || affiliate !== null`
-  // because that still hid the tab from regular users with no
-  // referral activity yet, which is exactly when admins need to
-  // assign one.
-  { key: "affiliate", label: "Affiliate", icon: Sparkles },
+  // Affiliate data now lives as its own section INSIDE the Account tab (the
+  // separate Affiliate tab was folded in) — admins still manage a user's
+  // referral code there. Account is the catch-all for account-level admin
+  // surfaces (moderation, feature locks, wager req, affiliate).
   { key: "account", label: "Account", icon: ShieldCheck },
 ];
 
@@ -189,7 +170,6 @@ export function UserViewModern({
   tagsSlot,
   pnlResultPromise,
   gamingTxPromise,
-  xpPurchasesPromise,
   financialTxPromise,
   adjustmentsTxPromise,
   rewardsPromise,
@@ -227,10 +207,7 @@ export function UserViewModern({
   pnlResultPromise: Promise<SafeQueryResult<PnlBreakdown>>;
   // Overview + Gaming:
   gamingTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
-  // Finances tab only — per-user XP purchases (USD balance spent to buy XP).
-  // null = not kicked for the active tab (Active-Timeframe-Only).
-  xpPurchasesPromise: Promise<SafeQueryResult<UserXpPurchasesResult>> | null;
-  // Overview + Finances:
+  // Overview — deposits & withdrawals feed:
   financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   // Overview, owner only — dedicated uncapped admin_balance_adjustment page
   // (see page.tsx ADJ_LIMIT) so the Overview tab can surface every
@@ -786,25 +763,6 @@ export function UserViewModern({
           />
         )}
 
-        {activeTab === "finances" && (
-          <FinancesTab
-            data={data}
-            financialTxPromise={financialTxPromise}
-            xpPurchasesPromise={xpPurchasesPromise}
-            wagerProgressPromise={wagerProgressPromise}
-            isAdmin={isAdmin}
-            viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
-          />
-        )}
-
-        {/* Funds trace — money provenance + wager attribution. Uses the
-            always-kicked wagerProgressPromise for the per-source + "which
-            wager" sections and the already-resolved data.balances for the
-            balance-now KPIs, so it needs no new tab-gated query. */}
-        {activeTab === "funds" && (
-          <FundsTab data={data} wagerProgressPromise={wagerProgressPromise} />
-        )}
-
         {activeTab === "rewards" && (
           <RewardsTab
             rewardsPromise={rewardsPromise}
@@ -825,8 +783,6 @@ export function UserViewModern({
             battleVoucherTxPromise={battleVoucherTxPromise}
           />
         )}
-
-        {activeTab === "affiliate" && <AffiliateTab data={data} />}
 
         {activeTab === "account" && (
           <AccountTab

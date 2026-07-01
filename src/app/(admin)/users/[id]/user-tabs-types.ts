@@ -846,22 +846,16 @@ export const EXCHANGE_TX_TYPES = [
 
 export type TabKey =
   | "overview"
-  | "finances"
-  | "funds"
   | "rewards"
   | "gaming"
   | "inventory"
-  | "affiliate"
   | "account";
 
 export const TAB_KEYS = new Set<TabKey>([
   "overview",
-  "finances",
-  "funds",
   "rewards",
   "gaming",
   "inventory",
-  "affiliate",
   "account",
 ]);
 

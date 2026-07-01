@@ -35,7 +35,6 @@ import {
 import { getUserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import { getUserWagerProgress } from "@/lib/queries/users-wager-progress";
 import { getUserBalanceWeighting } from "@/lib/queries/users-balance-weighting";
-import { getUserXpPurchases } from "@/lib/queries/users-xp-purchases";
 import { getUserRewardPackOpens } from "@/lib/queries/users-reward-pack-opens";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -398,8 +397,9 @@ async function UserDetailBody({
   );
 
   const wantsGamingTx = initialTab === "overview" || initialTab === "gaming";
-  const wantsFinancialTx =
-    initialTab === "overview" || initialTab === "finances";
+  // Overview's "Deposits & Withdrawals" feed. The standalone Finances tab was
+  // removed (folded away), so this is now Overview-only.
+  const wantsFinancialTx = initialTab === "overview";
 
   const gamingTxPromise = wantsGamingTx
     ? safeQuery(
@@ -420,8 +420,8 @@ async function UserDetailBody({
         USER_DETAIL_QUERY_TIMEOUT_MS,
       )
     : null;
-  // Finances / Overview feed. Prod-only cached (30s) keyed on the resolved
-  // owner flag — the type set includes the owner-gated admin_balance_adjustment
+  // Overview deposits & withdrawals feed. Prod-only cached (30s) keyed on the
+  // resolved owner flag — the type set includes the owner-gated admin_balance_adjustment
   // rows, so the cache key carries `ownerRes.data` AND it's passed as the
   // viewerIsOwnerOverride (the live session read can't run inside the cache).
   // Chained on the fast owner probe, NOT the heavy body gate. Non-owners (the
@@ -443,18 +443,6 @@ async function UserDetailBody({
             "users.detail.financialTx",
             USER_DETAIL_QUERY_TIMEOUT_MS,
           ),
-        )
-      : null;
-  // XP purchases (USD balance spent to buy XP) — Finances tab only
-  // (Active-Timeframe-Only). Self-hides when the user never bought XP or the
-  // connected enum lacks the member (drift guard inside the query).
-  const xpPurchasesPromise =
-    initialTab === "finances"
-      ? safeQuery(
-          () => getUserXpPurchases(id),
-          { count: 0, totalSpent: 0, totalXp: 0, recent: [] },
-          "users.detail.xpPurchases",
-          USER_DETAIL_QUERY_TIMEOUT_MS,
         )
       : null;
   // Adjustments: Overview-only. Kicked only when the viewer is the owner
@@ -754,7 +742,6 @@ async function UserDetailBody({
       tagsSlot={tagsSlot}
       pnlResultPromise={pnlResultPromise}
       gamingTxPromise={gamingTxPromise}
-      xpPurchasesPromise={xpPurchasesPromise}
       financialTxPromise={financialTxPromise}
       adjustmentsTxPromise={adjustmentsTxPromise}
       rewardsPromise={rewardsPromise}
@@ -782,11 +769,11 @@ function UserDetailBodySkeleton() {
   return (
     <div className="space-y-6">
       {/* Modern user view: identity hero with avatar + status pills + KPIs.
-          8 KPI tiles + 8 tabs — counts mirror UserViewModern's hero strip
+          8 KPI tiles + 5 tabs — counts mirror UserViewModern's hero strip
           and tab bar so the streamed body swaps in without a layout jump. */}
       <Skeleton className="h-32 rounded-2xl" />
       <KpiStripSkeleton count={8} />
-      <TabBarSkeleton count={8} />
+      <TabBarSkeleton count={5} />
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <Skeleton className="h-48 rounded-2xl" />
         <Skeleton className="h-48 rounded-2xl" />

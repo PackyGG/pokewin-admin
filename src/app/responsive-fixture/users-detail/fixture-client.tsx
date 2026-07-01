@@ -26,7 +26,6 @@ import type {
 } from "@/app/(admin)/users/[id]/user-tabs-types";
 import type { UserRewards } from "@/lib/queries/users";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
-import type { UserXpPurchasesResult } from "@/lib/queries/users-xp-purchases";
 import type { UserRewardPackOpensResult } from "@/lib/queries/users-reward-pack-opens";
 
 /** Wrap a fixture value in the resolved success shape the page's
@@ -297,12 +296,6 @@ export function UserDetailFixtureClient() {
       tagsSlot={null}
       pnlResultPromise={ok(PNL)}
       gamingTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
-      xpPurchasesPromise={ok<UserXpPurchasesResult>({
-        count: 0,
-        totalSpent: 0,
-        totalXp: 0,
-        recent: [],
-      })}
       financialTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       adjustmentsTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       rewardsPromise={ok<UserRewards>(REWARDS)}

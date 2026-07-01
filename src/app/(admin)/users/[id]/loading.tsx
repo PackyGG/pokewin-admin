@@ -51,7 +51,7 @@ export default function UserDetailLoading() {
 
       <KpiStripSkeleton count={8} />
 
-      <TabBarSkeleton count={7} />
+      <TabBarSkeleton count={5} />
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <Skeleton className="h-48 rounded-2xl" />
