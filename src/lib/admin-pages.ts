@@ -7,14 +7,7 @@ export type AdminPage = {
 export const ADMIN_PAGES: AdminPage[] = [
   // Navigation
   { group: "Navigation", label: "Dashboard", key: "/dashboard" },
-  // Roadmap — internal product-planning month calendar (Overview sidebar
-  // group). Grantable so non-admin "developer" accounts can be given access;
-  // admins/owners bypass. Linear task CREATION on the detail page is gated
-  // separately by requireOwner() (super-admin only).
-  { group: "Navigation", label: "Roadmap", key: "/roadmap" },
   { group: "Navigation", label: "Analytics", key: "/analytics" },
-  { group: "Navigation", label: "One Piece", key: "/one-piece" },
-  { group: "Navigation", label: "Numbers", key: "/numbers" },
   { group: "Navigation", label: "Raw P&L", key: "/analytics/pure-pnl" },
   // GGR moved to the Insights group below.
   // /map was folded into /analytics as a tab — its permission inherits
@@ -39,11 +32,6 @@ export const ADMIN_PAGES: AdminPage[] = [
   // access still pass requirePageAccess on the legacy route; the
   // combined page itself gates on `/transactions/deposits`.
   { group: "Navigation", label: "Withdrawals (legacy)", key: "/withdrawals" },
-  // Physical Withdrawals — real-world card-shipment availability controls
-  // (global withdrawals master switch + per-country physical toggle) and the
-  // fulfillment queue. The intended landing page once physical withdrawals go
-  // live. Own grantable key; admins/owners bypass.
-  { group: "Navigation", label: "Physical", key: "/physical" },
   // Insights — cross-cutting analytical surfaces. Mirrors the sidebar
   // group sitting directly below Overview. Separate from the per-feature
   // analytics keys (e.g. /rewards/analytics) so role grants can be
@@ -100,11 +88,6 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Insights", label: "Reward Expiry", key: "/insights/rewards/expiry" },
   { group: "Insights", label: "Race", key: "/insights/rewards/race" },
   { group: "Insights", label: "Affiliate", key: "/insights/rewards/affiliate" },
-  // Forecast — unified reward-forecast hub. Hosts a full-depth
-  // scenario simulation per reward type (modeled on the deposit-bonus
-  // forecast), anchored on real production baselines. Own permission
-  // key so it can be granted independently of the per-reward deep-dives.
-  { group: "Insights", label: "Forecast", key: "/insights/forecast" },
   // Transactions
   // Standalone /transactions overview removed — admins land on a
   // specific sub-ledger instead. Each sub-page carries its own
@@ -128,18 +111,12 @@ export const ADMIN_PAGES: AdminPage[] = [
   // unchanged; this is a display-grouping label only.
   { group: "Content", label: "Pack Transactions", key: "/transactions/packs" },
   { group: "Content", label: "Battles", key: "/battles" },
-  { group: "Content", label: "Reward Transactions", key: "/transactions/rewards" },
   { group: "Content", label: "Upgrader Transactions", key: "/transactions/upgrader" },
   // Rewards
   { group: "Rewards", label: "Rewards", key: "/rewards" },
   { group: "Rewards", label: "Deposit Bonus", key: "/rewards/deposit-bonus" },
   { group: "Rewards", label: "Analytics", key: "/rewards/analytics" },
   { group: "Rewards", label: "Rakeback", key: "/rewards/rakeback" },
-  // Shard Pack Opens — opens of shard-bought packs from the
-  // `coin_transactions` ledger (shards spent + shards won per open). Own
-  // grantable key so it can be granted independently of the shard-pack
-  // CATALOG (/rewards/shards, in Content).
-  { group: "Rewards", label: "Shard Pack Opens", key: "/rewards/shard-opens" },
   // Promo Codes — moved here from the Marketing group so the role
   // editor mirrors the sidebar grouping. Permission key is unchanged.
   { group: "Rewards", label: "Promo Codes", key: "/promo-codes" },
@@ -147,19 +124,11 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Rewards", label: "Rain", key: "/rain" },
   { group: "Rewards", label: "Leaderboards", key: "/rewards/leaderboards" },
   { group: "Rewards", label: "Level Up", key: "/rewards/level-up" },
-  // Giveaway log — driven by `admin_giveaway_actions` rows that the
-  // adjust-balance flow writes when the reason is tagged "Giveaway".
-  { group: "Rewards", label: "Giveaway", key: "/marketing/giveaway" },
   { group: "Rewards", label: "Affiliate Settings", key: "/creators/settings" },
   { group: "Rewards", label: "Settings", key: "/rewards/settings" },
   // Creator analytics — palette-only; no sidebar link. Ads and gift cards
   // were removed; bookmarks redirect to /creators and /rewards.
   { group: "Navigation", label: "Creator Analytics", key: "/creators/analytics" },
-  // Creator leaderboards / changelog / socials review live in Creator Hub;
-  // removed from the admin sidebar. Routes remain for bookmarks; grant via
-  // /creators or admin role.
-  // Employees — internal staff workflow (board + shift planning)
-  { group: "Employees", label: "Employee Board", key: "/employees" },
   { group: "Employees", label: "Shifts", key: "/shifts" },
   // Creator Portal
   { group: "Creator Portal", label: "My Profile", key: "/my-profile" },
@@ -178,19 +147,6 @@ export const ADMIN_PAGES: AdminPage[] = [
   // page). The page + actions enforce requireAdmin server-side; listed here
   // so the key is known to the permission system.
   { group: "System", label: "Geo Blocking", key: "/system/geo-blocking" },
-  // "/audit" page key removed (RoleV2 cleanup): the Audit Log is now hard
-  // ADMIN-ONLY (the page + actions enforce `requireAdmin`, NOT a grantable page
-  // key), so the key was vestigial — keeping it only let a lower role be
-  // *granted* a toggle that the page would reject anyway. Dropping it removes
-  // that misleading grant from the permission picker / role editors. NO role
-  // baseline referenced it (verified), so no orphan token. The sidebar / command
-  // palette nav entry stays (`pageKey: "/audit"`): admins + owners see it via
-  // the role bypass; non-admins never see it (pageAccessGranted([], "/audit") =
-  // false) AND the page redirects them — so admins keep their Audit Log link.
-  // Monitor — health/overview of the standalone backend-monitor service
-  // (a separate Railway app from the game backend). Read-only telemetry
-  // surface fetched server-side from MONITOR_API_URL with a bearer token.
-  { group: "System", label: "Monitor", key: "/system/monitor" },
   // motha-only — the page + actions enforce the gate server-side;
   // listing here just makes the key known to the permission system
   // so it doesn't fall through as "unknown page".

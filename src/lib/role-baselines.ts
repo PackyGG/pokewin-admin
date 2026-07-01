@@ -82,8 +82,8 @@ const PACK_CREATOR_BASELINE_TOKENS: readonly PermissionToken[] = [
 ];
 
 /**
- * The canonical `support` baseline — the exact 16 tokens every live support
- * user carries (Jason / quaticy / Rot are byte-identical; dex shares all 16).
+ * The canonical `support` baseline — the exact 15 tokens every live support
+ * user carries (Jason / quaticy / Rot are byte-identical; dex shares all 15).
  * Derived from the live intersection per `ROLE_REDESIGN_DESIGN.md`; the
  * parity harness proves each support user reconciles to this set.
  */
@@ -92,7 +92,6 @@ const SUPPORT_BASELINE_TOKENS: readonly PermissionToken[] = [
   "/shifts",
   "/users",
   "/transactions/packs",
-  "/transactions/rewards",
   "/transactions/deposits",
   "/chat",
   "/withdrawals",

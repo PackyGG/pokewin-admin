@@ -221,16 +221,6 @@ export const ACTION_COMMANDS: ActionCommand[] = [
   },
   {
     kind: "action",
-    id: "action.audit-log",
-    label: "Audit log",
-    description: "Recent admin actions",
-    icon: Activity,
-    run: { type: "navigate", href: "/audit" },
-    pageKey: "/audit",
-    keywords: ["history"],
-  },
-  {
-    kind: "action",
     id: "action.theme-light",
     label: "Switch to light mode",
     icon: Sun,
@@ -328,7 +318,6 @@ export const EXAMPLE_QUERIES: Array<{ query: string; what: string }> = [
   { query: "withdrawals", what: "Jump to the withdrawal queue." },
   { query: "ban", what: "Shorthand for user moderation flows — opens the users page." },
   { query: "dark", what: "Switch to dark mode." },
-  { query: "audit", what: "Open the audit log." },
   { query: "admin user", what: "Create an admin user." },
 ];
 
