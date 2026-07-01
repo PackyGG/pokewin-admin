@@ -7,17 +7,14 @@
  * ONE coherent foundation the whole app builds loading states, motion, and
  * layout-stability on. Import everything from `@/components/ux`.
  *
- *   Motion system          → DURATION, EASING, EASE_OUT, transition(), enter(),
- *                            pressable(), transitionStyle(), prefersReducedMotion()
+ *   Motion system          → DURATION, EASE_OUT, EASE_STANDARD, transition(),
+ *                            pressable(), prefersReducedMotion()
  *   Skeleton atoms         → SkeletonText, SkeletonCard, SkeletonTable,
  *                            SkeletonChart, SkeletonKpiTile, SkeletonKpiStrip,
- *                            SkeletonAvatar, SkeletonBoundary
- *   Loading fallbacks      → Spinner, DelayedSpinnerFallback, DeferredContent,
- *                            useDelayedFlag
+ *                            SkeletonBoundary
+ *   Loading fallbacks      → Spinner, DelayedSpinnerFallback, useDelayedFlag
  *   Overlay laziness       → LazyModalContent
- *   Layout stability (CLS) → StableCard, StableTable, StableBlock,
- *                            PageReadyBoundary
- *   Route pending          → RouteTransitionShell, LinkPending, LinkPendingShell
+ *   Route pending          → LinkPending, LinkPendingShell
  *   Reveal                 → FadeIn (re-exported from components/fade-in)
  *
  * Design contract for every export here:
@@ -42,21 +39,12 @@ export * from "./motion";
 export {
   SkeletonBoundary,
   SkeletonText,
-  SkeletonAvatar,
   SkeletonCard,
   SkeletonKpiTile,
   SkeletonKpiStrip,
   SkeletonTable,
   SkeletonChart,
 } from "./skeleton";
-
-// Layout-stability wrappers (server-safe)
-export {
-  StableCard,
-  StableTable,
-  StableBlock,
-  PageReadyBoundary,
-} from "./stable";
 
 // Reveal (server-safe re-export)
 export { FadeIn } from "./fade";
@@ -65,7 +53,6 @@ export { FadeIn } from "./fade";
 export {
   Spinner,
   DelayedSpinnerFallback,
-  DeferredContent,
   useDelayedFlag,
 } from "./spinner";
 
@@ -74,13 +61,9 @@ export { LazyModalContent } from "./lazy-modal-content";
 
 // Route pending treatments (client)
 export {
-  RouteTransitionShell,
   LinkPending,
   LinkPendingShell,
 } from "./route-transition";
 
 // URL-driven chip selectors (client)
 export { PeriodChips, TabChips, type ChipItem } from "./period-chips";
-
-// Tabbed-surface body: keep-mounted panels + crossfade + height tween (client)
-export { TabContainer, type TabPanel } from "./tab-container";

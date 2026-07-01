@@ -1,6 +1,8 @@
 "use client";
 
+import { useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -40,16 +42,32 @@ export function DataTablePagination({
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  // Same-view page/perPage navigation runs through a transition so the
+  // controls surface a pending cue (dimmed + non-interactive) while the next
+  // page streams in — instead of feeling like a dead click with no feedback.
+  // The row data is a server component, so React keeps the current rows
+  // visible during the transition (no skeleton flash on same-view paging).
+  const [isPending, startTransition] = useTransition();
 
   function navigate(newPage: number, newPerPage?: number) {
     const params = new URLSearchParams(searchParams.toString());
     params.set(pageKey, String(newPage));
     if (newPerPage) params.set(perPageKey, String(newPerPage));
-    router.push(`?${params.toString()}`);
+    startTransition(() => router.push(`?${params.toString()}`));
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-4">
+    <div
+      className={cn(
+        "flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-4",
+        // Pending cue: dim the whole control while the next page loads.
+        // Color/opacity only, `motion-safe:`-gated, so reduced-motion users
+        // get the state instantly with no tween.
+        "motion-safe:transition-opacity motion-safe:duration-200",
+        isPending && "opacity-60",
+      )}
+      aria-busy={isPending || undefined}
+    >
       <p className="text-xs sm:text-sm text-muted-foreground">
         {degraded
           ? "Results unavailable"
@@ -62,7 +80,7 @@ export function DataTablePagination({
           size="sm"
           className="h-8 px-2"
           onClick={() => navigate(page - 1)}
-          disabled={page <= 1}
+          disabled={page <= 1 || isPending}
           aria-label="Previous page"
         >
           <ChevronLeft className="size-4" />
@@ -75,7 +93,7 @@ export function DataTablePagination({
           size="sm"
           className="h-8 px-2"
           onClick={() => navigate(page + 1)}
-          disabled={page >= totalPages}
+          disabled={page >= totalPages || isPending}
           aria-label="Next page"
         >
           <ChevronRight className="size-4" />
@@ -110,7 +128,7 @@ export function DataTablePagination({
             size="icon"
             className="size-8"
             onClick={() => navigate(1)}
-            disabled={page <= 1}
+            disabled={page <= 1 || isPending}
             aria-label="Go to first page"
           >
             <ChevronsLeft className="size-4" />
@@ -120,7 +138,7 @@ export function DataTablePagination({
             size="icon"
             className="size-8"
             onClick={() => navigate(page - 1)}
-            disabled={page <= 1}
+            disabled={page <= 1 || isPending}
             aria-label="Go to previous page"
           >
             <ChevronLeft className="size-4" />
@@ -130,7 +148,7 @@ export function DataTablePagination({
             size="icon"
             className="size-8"
             onClick={() => navigate(page + 1)}
-            disabled={page >= totalPages}
+            disabled={page >= totalPages || isPending}
             aria-label="Go to next page"
           >
             <ChevronRight className="size-4" />
@@ -140,7 +158,7 @@ export function DataTablePagination({
             size="icon"
             className="size-8"
             onClick={() => navigate(totalPages)}
-            disabled={page >= totalPages}
+            disabled={page >= totalPages || isPending}
             aria-label="Go to last page"
           >
             <ChevronsRight className="size-4" />

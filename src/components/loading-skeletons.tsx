@@ -1,4 +1,5 @@
 import { Skeleton } from "@/components/ui/skeleton";
+import { SkeletonTable } from "@/components/ux/skeleton";
 import { cn } from "@/lib/utils";
 
 /**
@@ -238,55 +239,14 @@ export function TableSkeleton({
   rows?: number;
   columns?: number;
 }) {
-  // Give each column a slightly different width so it doesn't look like a
-  // monotonous grid — matches how real tables look.
-  const colWidths = [
-    "w-16",
-    "w-28",
-    "w-20",
-    "w-24",
-    "w-16",
-    "w-24",
-    "w-20",
-    "w-24",
-  ];
-  return (
-    <div className="rounded-md border">
-      <div className="border-b px-4 py-3 bg-muted/50">
-        <div className="flex items-center gap-4">
-          {Array.from({ length: columns }).map((_, i) => (
-            <Skeleton
-              key={i}
-              className={cn(
-                "h-4",
-                colWidths[i % colWidths.length],
-                i === columns - 1 && "ml-auto",
-              )}
-            />
-          ))}
-        </div>
-      </div>
-      <div className="divide-y">
-        {Array.from({ length: rows }).map((_, r) => (
-          <div key={r} className="px-4 py-3">
-            <div className="flex items-center gap-4">
-              <Skeleton className="size-7 rounded-full" />
-              {Array.from({ length: columns - 1 }).map((_, c) => (
-                <Skeleton
-                  key={c}
-                  className={cn(
-                    "h-4",
-                    colWidths[(c + 1) % colWidths.length],
-                    c === columns - 2 && "ml-auto",
-                  )}
-                />
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  // Delegate to the single-source-of-truth `SkeletonTable` (ux/skeleton),
+  // which pins each body row to a FIXED px height (rowHeight=52) so the
+  // skeleton reserves the exact vertical space the real rows occupy — no
+  // CLS when data swaps in. Previously this composite used `py-3` rows
+  // (~40px) which mismatched the real ~52px rows and every ux SkeletonTable
+  // used elsewhere, causing arbitrary layout shift on routes that mixed the
+  // two systems. Public props (`rows`, `columns`) are unchanged.
+  return <SkeletonTable rows={rows} columns={columns} leadingAvatar />;
 }
 
 // ─── Chart ────────────────────────────────────────────────────────────────
@@ -299,9 +259,20 @@ export function TableSkeleton({
 export function ChartSkeleton({
   height = 300,
   title = true,
+  headerHeight = 48,
 }: {
   height?: number | string;
   title?: boolean;
+  /**
+   * Vertical space (px) the title/legend row above the chart body occupies.
+   * Subtracted from `height` to size the inner bar area so the skeleton's
+   * total height matches the real card exactly — no CLS. Cards with a taller
+   * header (multi-line title, a legend row, or an inline control) should pass
+   * a larger value so the fake bars don't overflow and shift the card when
+   * the real chart swaps in. Defaults to 48 (the standard single-line
+   * title-row height) so existing callers render identically.
+   */
+  headerHeight?: number;
 }) {
   return (
     <div className="relative overflow-hidden rounded-2xl border bg-card p-4">
@@ -317,7 +288,10 @@ export function ChartSkeleton({
       )}
       <div
         className="relative flex items-end gap-1.5"
-        style={{ height: typeof height === "number" ? height - 48 : height }}
+        style={{
+          height:
+            typeof height === "number" ? height - headerHeight : height,
+        }}
       >
         {/* Fake bar chart — varying heights via tailwind classes so it
             actually looks like a chart rather than a flat block. */}

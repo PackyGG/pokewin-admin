@@ -1,7 +1,9 @@
 "use client";
 
+import { useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
 export function DataTableColumnHeader({
@@ -13,6 +15,10 @@ export function DataTableColumnHeader({
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  // Sort re-navigates the list; run it through a transition so the header
+  // shows a pending cue (dimmed + non-interactive) while the re-sorted page
+  // streams in, instead of a dead click.
+  const [isPending, startTransition] = useTransition();
   const currentSort = searchParams.get("sortBy");
   const currentOrder = searchParams.get("sortOrder") ?? "desc";
   const isActive = currentSort === sortKey;
@@ -38,15 +44,19 @@ export function DataTableColumnHeader({
     const params = new URLSearchParams(searchParams.toString());
     params.set("sortBy", sortKey);
     params.set("sortOrder", isActive && currentOrder === "asc" ? "desc" : "asc");
-    router.push(`?${params.toString()}`);
+    startTransition(() => router.push(`?${params.toString()}`));
   }
 
   return (
     <Button
       variant="ghost"
       size="sm"
-      className="-ml-3 h-8"
+      className={cn(
+        "-ml-3 h-8 motion-safe:transition-opacity motion-safe:duration-200",
+        isPending && "opacity-60",
+      )}
       onClick={handleSort}
+      disabled={isPending}
       aria-sort={ariaSort}
       aria-label={ariaLabel}
     >

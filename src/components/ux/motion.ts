@@ -61,19 +61,8 @@ export type DurationToken = keyof typeof DURATION;
  */
 export const EASE_OUT = "cubic-bezier(0.16, 1, 0.3, 1)";
 
-/** Symmetric ease for things that move both in and out (e.g. shimmer sweep). */
-export const EASE_IN_OUT = "cubic-bezier(0.65, 0, 0.35, 1)";
-
 /** Standard Material-ish ease for indeterminate progress / linear sweeps. */
 export const EASE_STANDARD = "cubic-bezier(0.4, 0, 0.2, 1)";
-
-export const EASING = {
-  out: EASE_OUT,
-  inOut: EASE_IN_OUT,
-  standard: EASE_STANDARD,
-} as const;
-
-export type EasingToken = keyof typeof EASING;
 
 // ─── Tailwind duration class map ────────────────────────────────────────────
 
@@ -89,58 +78,6 @@ const DURATION_CLASS: Record<Exclude<DurationToken, "instant">, string> = {
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-/**
- * Inline-style transition string for a CSS `transition` property, using the
- * centralized duration + easing. For Client components that animate via
- * `style={{ transition }}` (e.g. progress bars, custom drawers).
- *
- *   transition: transitionStyle("transform", "base")
- *   // → "transform 220ms cubic-bezier(0.16, 1, 0.3, 1)"
- *
- * Callers that need reduced-motion safety for inline styles should branch on
- * `prefersReducedMotion()` and pass `"instant"`.
- */
-export function transitionStyle(
-  property = "all",
-  duration: DurationToken = "base",
-  easing: EasingToken = "out",
-): string {
-  return `${property} ${DURATION[duration]}ms ${EASING[easing]}`;
-}
-
-/**
- * Reduced-motion-aware Tailwind classes for an *enter* animation. Emits the
- * animation only under `motion-safe:`; reduced-motion users get the final
- * state with zero tweening.
- *
- * Relies on the `tw-animate-css` keyframes already imported in globals.css
- * (`animate-in`, `fade-in`, `zoom-in-*`, `slide-in-from-*`) — no new CSS.
- *
- *   enter("fade")            → soft opacity reveal
- *   enter("scale")           → fade + 95% zoom (cards, tiles, overlays)
- *   enter("slide-up")        → fade + 4px upward slide (default content blocks)
- *   enter("slide-down")      → fade + 4px downward slide (dropdowns / menus)
- */
-export function enter(
-  kind: "fade" | "scale" | "slide-up" | "slide-down" | "slide-left" = "fade",
-  duration: DurationToken = "base",
-): string {
-  const base = "motion-safe:animate-in motion-safe:fade-in";
-  const dur =
-    duration === "instant" ? "" : `motion-safe:${DURATION_CLASS[duration]}`;
-  const move =
-    kind === "scale"
-      ? "motion-safe:zoom-in-95"
-      : kind === "slide-up"
-        ? "motion-safe:slide-in-from-bottom-1"
-        : kind === "slide-down"
-          ? "motion-safe:slide-in-from-top-1"
-          : kind === "slide-left"
-            ? "motion-safe:slide-in-from-right-1"
-            : "";
-  return [base, move, dur].filter(Boolean).join(" ");
-}
 
 /**
  * Reduced-motion-aware transition utility classes for state changes driven by
@@ -207,6 +144,6 @@ export function prefersReducedMotion(): boolean {
 /**
  * Convenience: the delay (ms) after which a loading spinner/fallback should
  * appear, so fast resolutions never flash a spinner. Used by
- * `DelayedSpinnerFallback` / `DeferredContent`.
+ * `DelayedSpinnerFallback` and `useDelayedFlag`.
  */
 export const SPINNER_DELAY_MS = 300;

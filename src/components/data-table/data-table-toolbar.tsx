@@ -16,6 +16,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 type FilterOption = {
   label: string;
@@ -78,6 +79,15 @@ export function DataTableToolbar({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
+  // Gate the action children to a SINGLE mount location per viewport instead
+  // of rendering them twice (an inline `md:contents` copy + a mobile dropdown
+  // copy, display-toggled). Mounting the same children twice risked duplicate
+  // element ids / event listeners and doubled any child-local state. The hook
+  // keys off the same 768px `md` breakpoint the layout classes use, and
+  // returns `false` during SSR + first client render so hydration matches the
+  // desktop-inline branch (no flash, no mismatch); it flips to the dropdown
+  // branch after mount if the viewport is actually <md.
+  const isMobile = useIsMobile();
   const [searchValue, setSearchValue] = useState(
     searchParams.get("search") ?? ""
   );
@@ -199,21 +209,20 @@ export function DataTableToolbar({
         {/* Action buttons (children) — inline at md+ where 5+ chips
             comfortably fit one row, collapsed into a single "More" overflow
             menu at <md so the toolbar stays one tidy row on phones instead
-            of an unpredictable wrap of 5+ stacked buttons. The children are
-            rendered ONCE per breakpoint (display-toggled wrappers), not
-            duplicated — action buttons in this toolbar are stateless
-            triggers (sort toggles, exports), so a re-mount across resize is
-            safe and matches the audit's recommended pattern. */}
+            of an unpredictable wrap of 5+ stacked buttons. The children mount
+            in exactly ONE place per viewport (inline OR dropdown, chosen by
+            `useIsMobile`) — never both — so there are no duplicate ids /
+            listeners and no doubled child state. Visually identical to the
+            previous display-toggled layout at every breakpoint. */}
         {children && (
-          <>
-            <div className="hidden md:contents">{children}</div>
+          isMobile ? (
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
                   <Button
                     variant="outline"
                     size="sm"
-                    className="md:hidden h-9 px-2"
+                    className="h-9 px-2"
                     aria-label="More actions"
                   />
                 }
@@ -228,7 +237,9 @@ export function DataTableToolbar({
                 {children}
               </DropdownMenuContent>
             </DropdownMenu>
-          </>
+          ) : (
+            <div className="contents">{children}</div>
+          )
         )}
         {hasActiveFilters && (
           <Button variant="ghost" size="sm" onClick={clearFilters} className="h-9 px-2 lg:px-3">

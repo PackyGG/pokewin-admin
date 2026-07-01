@@ -78,32 +78,6 @@ export function DelayedSpinnerFallback({
   );
 }
 
-// ─── DeferredContent ────────────────────────────────────────────────────────
-
-/**
- * Delays revealing its children until `delayMs` has elapsed, optionally showing
- * a placeholder in the meantime. Useful for content that is cheap to render but
- * should not pop in the same frame as a heavier sibling (avoids a janky
- * double-paint), or to hold back a spinner-bearing region.
- *
- * Unlike Suspense, this is purely time-based and client-side — it does not wait
- * on data. Use it to *debounce a visual reveal*, not to gate on a promise.
- *
- *   placeholder defaults to `null` (render nothing until ready).
- */
-export function DeferredContent({
-  children,
-  delayMs = SPINNER_DELAY_MS,
-  placeholder = null,
-}: {
-  children: React.ReactNode;
-  delayMs?: number;
-  placeholder?: React.ReactNode;
-}) {
-  const ready = useDelayedFlag(delayMs);
-  return <>{ready ? children : placeholder}</>;
-}
-
 // ─── hook ───────────────────────────────────────────────────────────────────
 
 /**

@@ -64,7 +64,7 @@ export function MobileCard({
       onClick={onClick}
       data-selected={selected || undefined}
       className={cn(
-        "flex w-full items-center gap-3 px-3 py-3 text-left transition-colors",
+        "flex w-full items-center gap-3 px-3 py-3 text-left motion-safe:transition-colors",
         "border-b border-border/60 last:border-b-0",
         "min-h-[56px]",
         interactive && "hover:bg-muted/40 active:bg-muted/60 cursor-pointer",

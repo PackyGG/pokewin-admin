@@ -100,50 +100,6 @@ export function SkeletonText({
   );
 }
 
-// ─── SkeletonAvatar ─────────────────────────────────────────────────────────
-
-/**
- * Round (default) or rounded-square avatar placeholder. Sizes match the app's
- * avatar usage: xs (size-6) up to xl (size-16). Optional trailing two-line
- * label block for "avatar + name/handle" rows.
- */
-export function SkeletonAvatar({
-  size = "md",
-  shape = "circle",
-  withLabel = false,
-  className,
-}: {
-  size?: "xs" | "sm" | "md" | "lg" | "xl";
-  shape?: "circle" | "square";
-  /** Render a name + subtext block to the right of the avatar. */
-  withLabel?: boolean;
-  className?: string;
-}) {
-  const dim =
-    size === "xs"
-      ? "size-6"
-      : size === "sm"
-        ? "size-8"
-        : size === "lg"
-          ? "size-12"
-          : size === "xl"
-            ? "size-16"
-            : "size-10";
-  const radius = shape === "square" ? "rounded-lg" : "rounded-full";
-  if (!withLabel) {
-    return <Skeleton className={cn(dim, radius, "shrink-0", className)} />;
-  }
-  return (
-    <div className={cn("flex items-center gap-3", className)}>
-      <Skeleton className={cn(dim, radius, "shrink-0")} />
-      <div className="min-w-0 space-y-1.5">
-        <Skeleton className="h-3.5 w-28 rounded" />
-        <Skeleton className="h-3 w-20 rounded" />
-      </div>
-    </div>
-  );
-}
-
 // ─── SkeletonCard ───────────────────────────────────────────────────────────
 
 /**

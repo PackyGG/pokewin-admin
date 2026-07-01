@@ -2,6 +2,7 @@ import * as React from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { pressable } from "@/components/ux/motion";
 
 /**
  * Shared modern UI primitives. Extracted so every admin page can apply
@@ -328,6 +329,7 @@ export function KpiTile({
   icon: Icon,
   accent = "blue",
   action,
+  interactive = false,
 }: {
   label: string;
   value: string;
@@ -340,6 +342,17 @@ export function KpiTile({
    * /creators surfaces a per-creator breakdown popover here).
    */
   action?: React.ReactNode;
+  /**
+   * Opt-in press feedback for tiles that are themselves clickable
+   * (wrapped in a <Link> / <button> or rendered inside a clickable
+   * parent). Adds a subtle `active:` press (scale + slightly deeper
+   * accent tint) so a tap reads as physical. Defaults to `false` so the
+   * house rule "data/KPI tiles stay COMPLETELY static on hover" is
+   * preserved for the common non-interactive case — nothing changes
+   * unless a caller opts in. Reduced-motion safe (the scale is
+   * `motion-safe:`-gated via `pressable`; the tint is color-only).
+   */
+  interactive?: boolean;
 }) {
   const colors = TILE_COLORS[accent];
   // Spoken label = "<label>: <value>" (with the optional sub appended)
@@ -353,6 +366,7 @@ export function KpiTile({
       className={cn(
         "hover-raise group surface-sheen relative overflow-hidden rounded-xl border px-3 py-2.5 sm:px-4 sm:py-3",
         colors.bg,
+        interactive && cn(pressable("scale"), "active:brightness-95"),
       )}
     >
       {/* Left accent bar — inherits the accent hue via text-color +
@@ -413,12 +427,19 @@ export function MetricTile({
   sub,
   icon: Icon,
   accent = "blue",
+  interactive = false,
 }: {
   label: string;
   value: string;
   sub?: string;
   icon: React.ElementType;
   accent?: AccentColor;
+  /**
+   * Opt-in press feedback for clickable tiles — see `KpiTile`'s
+   * `interactive` prop. Defaults to `false` so non-interactive metric
+   * tiles stay completely static.
+   */
+  interactive?: boolean;
 }) {
   const colors = TILE_COLORS[accent];
   return (
@@ -426,6 +447,7 @@ export function MetricTile({
       className={cn(
         "hover-raise group surface-sheen relative overflow-hidden rounded-xl border p-3 sm:p-4",
         colors.bg,
+        interactive && cn(pressable("scale"), "active:brightness-95"),
       )}
     >
       {/* Left accent bar + glassy sheen — matches KpiTile so a grid of
