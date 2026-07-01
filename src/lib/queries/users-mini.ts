@@ -1,7 +1,19 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { safeQuery } from "@/lib/errors/safe-query";
-import { calculateUserPnl, type UserPnl } from "./pnl";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { calculateUserPnl, computeHousePnl, type UserPnl } from "./pnl";
+
+// Withdrawal ledger types surfaced by the live money/activity feeds. For a
+// blacklisted (excluded_users) user these rows — and the lifetime withdrawn
+// figure — are suppressed in the mini preview, mirroring the wholesale
+// suppression on /users/[id] (see users-detail.ts). Kept as a Set for O(1)
+// membership checks while filtering the recent-tx list.
+const WITHDRAWAL_TX_TYPES = new Set<string>([
+  "card_withdrawal",
+  "balance_withdrawal",
+  "withdrawal_shipping_fee",
+]);
 
 const USER_MINI_PNL_TIMEOUT_MS = 8_000;
 const USER_MINI_TX_TIMEOUT_MS = 5_000;
@@ -94,6 +106,20 @@ export async function getUserMiniSummary(
   const canonicalUserId = await resolveCanonicalUserId(db, userId);
   if (!canonicalUserId) return null;
 
+  // WITHDRAWAL SUPPRESSION for blacklisted (excluded_users) users — the mini
+  // preview opens from the live money/activity feeds and would otherwise leak
+  // a blacklisted user's lifetime withdrawn total AND their individual
+  // withdrawal ledger rows (amount + balanceAfter + timestamp). Mirror the
+  // wholesale suppression already applied on /users/[id] (users-detail.ts):
+  // zero the withdrawn figure + recompute the displayed P&L as if withdrawals
+  // were 0, and drop every withdrawal-type recent-tx row. Deposits + the
+  // P&L-ex-withdrawal stay visible (the dialog is NOT hidden).
+  //
+  // Gated GENERICALLY on blacklist membership (no hardcoded id), applied for
+  // EVERYONE viewing — there is no per-admin override. `getExcludedUserIds`
+  // reads the ADMIN DB (allowed), is React-cache()'d, and fails CLOSED.
+  const isBlacklisted = (await getExcludedUserIds()).includes(canonicalUserId);
+
   // calculateUserPnl already fetches balances + inventory + vouchers
   // + card_withdrawal_requests internally and applies the canonical
   // formula. We piggy-back on it so the numbers match /users/[id]
@@ -169,6 +195,18 @@ export async function getUserMiniSummary(
   if (pnlResult.error) degraded.pnl = true;
   if (recentTxResult.error) degraded.recentTransactions = true;
 
+  // Blacklisted → zero the withdrawn figure and recompute the displayed P&L
+  // from the SAME canonical formula (computeHousePnl) with the withdrawals
+  // term set to 0, so the shown withdrawn total, the P&L, and the tx list
+  // stay internally consistent — never a stale/original withdrawal number.
+  const displayedWithdrawn = isBlacklisted ? 0 : pnl.withdrawals;
+  const displayedPnl = isBlacklisted
+    ? computeHousePnl({ ...pnl, withdrawals: 0 })
+    : pnl.pnl;
+  const displayedRecentTx = isBlacklisted
+    ? recentTx.filter((r) => !WITHDRAWAL_TX_TYPES.has(r.type))
+    : recentTx;
+
   return {
     user: {
       id: user.id,
@@ -185,15 +223,15 @@ export async function getUserMiniSummary(
         : 0,
       lockedBalance: balanceExtra ? toNumber(balanceExtra.locked_balance) : 0,
       totalDeposited: pnl.deposits,
-      totalWithdrawn: pnl.withdrawals,
+      totalWithdrawn: displayedWithdrawn,
       totalWagered: balanceExtra ? toNumber(balanceExtra.total_wagered) : 0,
       totalWon: balanceExtra ? toNumber(balanceExtra.total_won) : 0,
     },
-    pnl: pnl.pnl,
+    pnl: displayedPnl,
     inventoryValue: pnl.inventoryValue,
     inventoryCount,
     vouchersValue: pnl.unclaimedVouchers,
-    recentTransactions: recentTx.map((r) => ({
+    recentTransactions: displayedRecentTx.map((r) => ({
       id: r.id,
       type: r.type,
       amount: toNumber(r.amount),
