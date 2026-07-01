@@ -1,4 +1,4 @@
-import { Dices, Trophy, Coins, Scale } from "lucide-react";
+import { Dices, Trophy, Coins, Scale, Swords } from "lucide-react";
 import { KpiTile } from "@/components/modern-panels";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
@@ -18,6 +18,9 @@ const EMPTY_STATS: DoubleDownStats = {
   totalStaked: 0,
   totalPaidOut: 0,
   netHousePnl: 0,
+  distinctBattlesWithDd: 0,
+  totalBattles: 0,
+  battleDoubleDownRate: null,
 };
 
 function pct(v: number | null): string {
@@ -26,9 +29,15 @@ function pct(v: number | null): string {
 }
 
 /**
- * KPI strip for /insights/double-down — EXACTLY four tiles (owner rule,
- * 2026-06-30): Started rounds · Win rate · Total wager · House P&L. STARTED
- * rounds only (Double Down is OPTIONAL — offered/expired offers excluded).
+ * KPI strip for /insights/double-down — five tiles: Battles w/ Double Down ·
+ * Started rounds · Win rate · Total wager · House P&L. STARTED rounds only
+ * (Double Down is OPTIONAL — offered/expired offers excluded).
+ *
+ * "Battles w/ Double Down" = distinct battles that had a started DD round
+ * (customer-scoped numerator) over ALL battles in the same window (index-served
+ * denominator, battles(created_at)) — a neutral engagement % (blue), NOT a P&L
+ * number. Divide-by-zero safe: renders "—" when no battles in the window. The
+ * money-derivation note below (paidOut/forfeited internal) is unchanged.
  *
  * House P&L is the headline "did WE make money": net house P&L = forfeited −
  * payouts (paidOut/forfeited stay computed internally to derive it, but are
@@ -62,7 +71,17 @@ export async function DoubleDownStatsSection({
   const houseProfit = s.netHousePnl >= 0;
 
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5">
+      {/* Battles w/ Double Down — how many battles used the feature vs. every
+          battle in the window. Neutral engagement % (blue), NOT a P&L number.
+          Divide-by-zero safe: rate is null (→ "—") when no battles in window. */}
+      <KpiTile
+        label="Battles w/ Double Down"
+        value={pct(s.battleDoubleDownRate)}
+        sub={`${formatNumber(s.distinctBattlesWithDd)} of ${formatNumber(s.totalBattles)} battles`}
+        icon={Swords}
+        accent="blue"
+      />
       <KpiTile
         label="Started rounds"
         value={formatNumber(s.totalRounds)}

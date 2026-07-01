@@ -86,7 +86,7 @@ export default async function DoubleDownPage({
 
       {/* KPI strip (4 tiles) — keyed ONLY on period so it never re-skeletons
           when the log paginates or the search changes. */}
-      <Suspense key={`kpi-${period}`} fallback={<KpiStripSkeleton count={4} />}>
+      <Suspense key={`kpi-${period}`} fallback={<KpiStripSkeleton count={5} />}>
         <DoubleDownStatsSection period={period} />
       </Suspense>
 

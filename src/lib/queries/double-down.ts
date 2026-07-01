@@ -105,6 +105,10 @@ export type {
  *     The aggregate + log are cached (unstable_cache) + timeout-wrapped at the
  *     call site, and the lifetime window is bounded (windowed, capped) so no
  *     unbounded scan ships.
+ *   • The "how many battles use Double Down" DENOMINATOR (total battles in the
+ *     window, added to the KPI aggregate) is INDEX-SERVED: EXPLAIN ANALYZE
+ *     (read-only, prod) → Index Only Scan using idx_battles_status_created_at
+ *     on battles(created_at >= since). No Seq Scan on the large battles table.
  */
 
 // ── Row mapping ───────────────────────────────────────────────────────────────
@@ -230,31 +234,51 @@ async function computeStats(
   // MISSING on most wins and the previous 0.9× fallback FABRICATED a lower
   // payout (e.g. a $24.76-stake win showed $22.28 instead of the real $24.76)
   // — both deleted. We read v.value with NO multiplier. SUM(numeric) is exact.
-  const rows = await db.$queryRaw<
-    {
-      total_rounds: bigint;
-      resolved_rounds: bigint;
-      win_count: bigint;
-      lose_count: bigint;
-      total_staked: string | null;
-      total_paid_out: string | null;
-    }[]
-  >(Prisma.sql`
-    SELECT
-      count(*)                                                          AS total_rounds,
-      count(*) FILTER (WHERE o.result IS NOT NULL)                      AS resolved_rounds,
-      count(*) FILTER (WHERE o.result = 'win')                          AS win_count,
-      count(*) FILTER (WHERE o.result = 'lose')                         AS lose_count,
-      -- Total wager = staked over RESOLVED rounds.
-      sum(o.won_amount_usd) FILTER (WHERE o.result IS NOT NULL)         AS total_staked,
-      -- Real payout = the paired payout voucher's value (no multiplier).
-      sum(v.value) FILTER (WHERE o.result = 'win')                      AS total_paid_out
-    FROM battle_double_down_offers o
-    LEFT JOIN vouchers v
-      ON v.id = o.won_voucher_id
-     AND v.origin = 'battle_double_down_payout'
-    WHERE ${STARTED_STATUS} AND o.created_at >= ${since} AND ${scope}
-  `);
+  // Two reads, run in parallel:
+  //   (1) the DD offers aggregate (existing) — plus count(DISTINCT o.battle_id),
+  //       the NUMERATOR of "how many battles do double down" (distinct battles
+  //       with a STARTED round; customer-scoped, same predicate as the rest of
+  //       the strip). Seq-scans the tiny offers table (planner-optimal, flagged).
+  //   (2) total battles in the SAME window — the DENOMINATOR. Index-served:
+  //       EXPLAIN ANALYZE (read-only, prod) → Index Only Scan using
+  //       idx_battles_status_created_at on battles(created_at >= since). NOT
+  //       customer-scoped (a battle has no single owner) — it is the whole
+  //       battle population the window covers.
+  const [rows, battleCountRows] = await Promise.all([
+    db.$queryRaw<
+      {
+        total_rounds: bigint;
+        resolved_rounds: bigint;
+        win_count: bigint;
+        lose_count: bigint;
+        total_staked: string | null;
+        total_paid_out: string | null;
+        distinct_battles_with_dd: bigint;
+      }[]
+    >(Prisma.sql`
+      SELECT
+        count(*)                                                          AS total_rounds,
+        count(*) FILTER (WHERE o.result IS NOT NULL)                      AS resolved_rounds,
+        count(*) FILTER (WHERE o.result = 'win')                          AS win_count,
+        count(*) FILTER (WHERE o.result = 'lose')                         AS lose_count,
+        -- Total wager = staked over RESOLVED rounds.
+        sum(o.won_amount_usd) FILTER (WHERE o.result IS NOT NULL)         AS total_staked,
+        -- Real payout = the paired payout voucher's value (no multiplier).
+        sum(v.value) FILTER (WHERE o.result = 'win')                      AS total_paid_out,
+        -- Distinct battles that had a started DD round (numerator).
+        count(DISTINCT o.battle_id)                                       AS distinct_battles_with_dd
+      FROM battle_double_down_offers o
+      LEFT JOIN vouchers v
+        ON v.id = o.won_voucher_id
+       AND v.origin = 'battle_double_down_payout'
+      WHERE ${STARTED_STATUS} AND o.created_at >= ${since} AND ${scope}
+    `),
+    db.$queryRaw<{ total_battles: bigint }[]>(Prisma.sql`
+      SELECT count(*) AS total_battles
+      FROM battles
+      WHERE created_at >= ${since}
+    `),
+  ]);
 
   const r = rows[0];
   const totalRounds = Number(r?.total_rounds ?? 0);
@@ -263,6 +287,8 @@ async function computeStats(
   const loseCount = Number(r?.lose_count ?? 0);
   const totalStaked = num(r?.total_staked ?? null) ?? 0;
   const totalPaidOut = num(r?.total_paid_out ?? null) ?? 0;
+  const distinctBattlesWithDd = Number(r?.distinct_battles_with_dd ?? 0);
+  const totalBattles = Number(battleCountRows[0]?.total_battles ?? 0);
   // House P&L over RESOLVED rounds = total staked − total actually paid out.
   // Losers forfeit their full stake (house keeps it); winners get their stake
   // back (net ~0 in the fixed era). POSITIVE = house PROFIT (emerald).
@@ -277,6 +303,11 @@ async function computeStats(
     totalStaked,
     totalPaidOut,
     netHousePnl,
+    distinctBattlesWithDd,
+    totalBattles,
+    // Divide-by-zero guard: no battles in the window → null (renders "—").
+    battleDoubleDownRate:
+      totalBattles > 0 ? distinctBattlesWithDd / totalBattles : null,
   };
 }
 

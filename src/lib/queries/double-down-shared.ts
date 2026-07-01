@@ -120,6 +120,23 @@ export type DoubleDownStats = {
    * PROFIT (emerald), <0 = house loss (rose).
    */
   netHousePnl: number;
+  /**
+   * Distinct battles (customer-scoped) in the window that had at least one
+   * STARTED Double Down round — the NUMERATOR of "how many battles do double
+   * down". Distinct battle_id, so a battle with two DD rounds counts once.
+   */
+  distinctBattlesWithDd: number;
+  /**
+   * Total battles in the SAME window (all battles, index-served on
+   * battles(created_at)) — the DENOMINATOR. Not customer-scoped (a battle has
+   * no single owner) — this is the whole battle population the window covers.
+   */
+  totalBattles: number;
+  /**
+   * distinctBattlesWithDd / totalBattles (0..1), null when totalBattles is 0
+   * (divide-by-zero guard). Neutral engagement %, not a P&L number.
+   */
+  battleDoubleDownRate: number | null;
 };
 
 export type DoubleDownLogRow = {
