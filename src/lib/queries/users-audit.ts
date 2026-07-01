@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { Prisma } from "@/generated/prisma/client";
 import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 // Only the audit_events.event_type values that the backend actually emits
 // AND are relevant to the "important account activity" view. Verified
@@ -23,6 +24,11 @@ export async function getUserAuditLog(
   filters?: { eventType?: string }
 ) {
   const db = await getDb();
+  // Blacklisted (excluded) users must never leak withdrawal events through
+  // any admin surface. When blacklisted, the card_withdrawal_requests fetch
+  // is skipped entirely and any admin_balance_adjustment row whose
+  // description references a withdrawal is suppressed post-fetch.
+  const isBlacklisted = (await getExcludedUserIds()).includes(userId);
   const explicitFilter =
     filters?.eventType && filters.eventType !== "all"
       ? filters.eventType
@@ -69,7 +75,7 @@ export async function getUserAuditLog(
           },
         })
       : Promise.resolve([]),
-    showFinancials
+    showFinancials && !isBlacklisted
       ? db.card_withdrawal_requests.findMany({
           where: { user_id: userId },
           orderBy: { requested_at: "desc" },
@@ -147,17 +153,26 @@ export async function getUserAuditLog(
         status: w.status,
       },
     })),
-    ...balanceAdjustRows.map((a) => ({
-      id: `adj_${a.id}`,
-      eventType: "admin_balance_adjustment",
-      ip: null,
-      country: null,
-      createdAt: a.created_at.toISOString(),
-      metadata: {
-        amountUsd: toNumber(a.amount),
-        description: a.description,
-      },
-    })),
+    ...balanceAdjustRows
+      // For blacklisted users, suppress any manual adjustment whose
+      // description references a withdrawal so no withdrawal amount leaks
+      // via the adjustment channel.
+      .filter(
+        (a) =>
+          !isBlacklisted ||
+          !/withdraw/i.test(a.description ?? ""),
+      )
+      .map((a) => ({
+        id: `adj_${a.id}`,
+        eventType: "admin_balance_adjustment",
+        ip: null,
+        country: null,
+        createdAt: a.created_at.toISOString(),
+        metadata: {
+          amountUsd: toNumber(a.amount),
+          description: a.description,
+        },
+      })),
   ];
 
   merged.sort((a, b) => b.createdAt.localeCompare(a.createdAt));

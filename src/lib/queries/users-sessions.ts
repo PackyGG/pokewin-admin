@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 export type UserSession = {
   id: number;
@@ -20,6 +21,10 @@ export type UserSession = {
 
 export async function getUserSessions(userId: string): Promise<UserSession[]> {
   const db = await getDb();
+  // Blacklisted (excluded) users must never leak withdrawal amounts/dates/
+  // status through any admin surface. When blacklisted, skip the crypto
+  // withdrawals fetch entirely so sessions render with withdrawAmount=null.
+  const isBlacklisted = (await getExcludedUserIds()).includes(userId);
   // Transactions and crypto-withdrawal requests are independent — fetch in parallel.
   const [transactions, cryptoWithdrawals] = await Promise.all([
     db.ledger_transactions.findMany({
@@ -32,15 +37,17 @@ export async function getUserSessions(userId: string): Promise<UserSession[]> {
         created_at: true,
       },
     }),
-    db.card_withdrawal_requests.findMany({
-      where: { user_id: userId, method: "crypto" },
-      orderBy: { requested_at: "asc" },
-      select: {
-        total_value_usd: true,
-        status: true,
-        requested_at: true,
-      },
-    }),
+    isBlacklisted
+      ? Promise.resolve([])
+      : db.card_withdrawal_requests.findMany({
+          where: { user_id: userId, method: "crypto" },
+          orderBy: { requested_at: "asc" },
+          select: {
+            total_value_usd: true,
+            status: true,
+            requested_at: true,
+          },
+        }),
   ]);
 
   // Build a merged timeline of events
