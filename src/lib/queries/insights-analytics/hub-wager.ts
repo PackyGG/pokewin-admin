@@ -2,6 +2,7 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
+import { singleFlight } from "@/lib/cache/single-flight";
 import {
   runPeriodWindowQuery,
   parsePeriodWindowRow,
@@ -94,20 +95,29 @@ const cachedHubWager = unstable_cache(
 
 /** Shared scope + cache plumbing for any hub-wager lookback. */
 async function hubWagerForLookbackDays(lookbackDays: number): Promise<number> {
-  const now = bucketedNow();
-  const cutoff = new Date(now.getTime() - lookbackDays * MS_PER_DAY);
-  const [excluded, sessionWindowsCte] = await Promise.all([
-    getExcludedUserIds(),
-    getCreatorSessionWindowsCte(),
-  ]);
-  const blacklistIdNotIn = blacklistNotInClause("id", excluded);
-  // `cutoffIso` is an unstable_cache key arg, so the 30d and 365d variants
-  // get DISTINCT cache entries from the same cached function.
-  return cachedHubWager(
-    cutoff.toISOString(),
-    blacklistIdNotIn,
-    sessionWindowsCte,
-  );
+  // Single-flight the whole fill (scope build + cache miss) keyed by the
+  // lookback window. This reader is shared by the topbar + /insights hub +
+  // real-numbers, so on a cold/expired `unstable_cache` entry a burst of
+  // concurrent requests would each rebuild the scope and re-run the heavy
+  // period-window + upgrader scans at once, competing for the max:3 prod pool.
+  // Per-instance coalescing collapses that burst to ONE fill per window; the
+  // 30d and 365d variants keep DISTINCT keys so they never collide.
+  return singleFlight(`hubWagerForLookbackDays:${lookbackDays}`, async () => {
+    const now = bucketedNow();
+    const cutoff = new Date(now.getTime() - lookbackDays * MS_PER_DAY);
+    const [excluded, sessionWindowsCte] = await Promise.all([
+      getExcludedUserIds(),
+      getCreatorSessionWindowsCte(),
+    ]);
+    const blacklistIdNotIn = blacklistNotInClause("id", excluded);
+    // `cutoffIso` is an unstable_cache key arg, so the 30d and 365d variants
+    // get DISTINCT cache entries from the same cached function.
+    return cachedHubWager(
+      cutoff.toISOString(),
+      blacklistIdNotIn,
+      sessionWindowsCte,
+    );
+  });
 }
 
 /**

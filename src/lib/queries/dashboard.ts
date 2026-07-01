@@ -1,5 +1,6 @@
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
+import { singleFlight } from "@/lib/cache/single-flight";
 import { getDb } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
@@ -1325,11 +1326,26 @@ export async function getTotalUserCount(): Promise<number> {
   const startOfMonth = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
   );
-  const userCounts = await cachedUserCounts(
-    blacklistIdNotIn,
-    startOfDay.toISOString(),
-    startOfWeek.toISOString(),
-    startOfMonth.toISOString(),
+  const startOfDayIso = startOfDay.toISOString();
+  const startOfWeekIso = startOfWeek.toISOString();
+  const startOfMonthIso = startOfMonth.toISOString();
+  // Single-flight the `cachedUserCounts` FILL: this backs a topbar pill shown
+  // on EVERY admin page, so on a cold/expired `unstable_cache` entry a burst of
+  // concurrent admin requests would each run the COUNT(*) scan at once,
+  // competing for the max:3 prod pool. Coalesce concurrent cold callers to ONE
+  // fill. The key carries the exact `cachedUserCounts` arg tuple (blacklist +
+  // the day/week/month boundaries) so it matches the underlying cache key and
+  // a boundary rollover starts a fresh flight. Wraps ONLY the entry-point read
+  // — no money math in this file is touched.
+  const userCounts = await singleFlight(
+    `getTotalUserCount:${blacklistIdNotIn}:${startOfDayIso}:${startOfWeekIso}:${startOfMonthIso}`,
+    () =>
+      cachedUserCounts(
+        blacklistIdNotIn,
+        startOfDayIso,
+        startOfWeekIso,
+        startOfMonthIso,
+      ),
   );
   return Number(userCounts[0]?.total ?? 0);
 }

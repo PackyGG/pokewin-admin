@@ -1,6 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
+import { singleFlight } from "@/lib/cache/single-flight";
 import { getDb } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { toNumber } from "@/lib/utils/decimal";
@@ -1334,7 +1335,17 @@ const cachedCostBreakdownLifetime = unstable_cache(
  * the value those pages render today.
  */
 export async function getCostBreakdownLifetimeCached(): Promise<CostBreakdown> {
-  return cachedCostBreakdownLifetime();
+  // Single-flight the cache FILL: this is the #1 shared read (topbar pills +
+  // /insights hub + /insights/real-numbers all hit it), so on a cold/expired
+  // `unstable_cache` entry a burst of concurrent admin requests would otherwise
+  // each recompute the full lifetime waterfall (~45 ledger scans) at once,
+  // exhausting the max:3 prod pool. Per-instance coalescing collapses that
+  // burst to ONE fill; once filled everyone is served by `unstable_cache`.
+  // Zero-arg → constant key (this reader only ever computes the one lifetime
+  // 365d-capped window).
+  return singleFlight("getCostBreakdownLifetimeCached", () =>
+    cachedCostBreakdownLifetime(),
+  );
 }
 
 // ─── Per-PERIOD cost-breakdown cache (the /insights/cost-breakdown page) ─────
