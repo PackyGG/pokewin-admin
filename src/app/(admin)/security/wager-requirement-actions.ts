@@ -91,7 +91,11 @@ export async function updateWagerRequirementDefaultsAction(
     },
   });
 
-  revalidatePath("/security");
+  // /security is refreshed via the narrow tag only — its card updates
+  // optimistically in place (no router.refresh), so revalidatePath("/security")
+  // would just re-render the route and jump scroll. The OTHER surfaces still
+  // need a path revalidation: they don't have the optimistic in-place card, so
+  // their next load must pick up the changed wager-requirement defaults.
   revalidatePath("/creators/settings");
   // Affiliate config also surfaces on the /rewards Affiliate tab.
   revalidatePath("/rewards");

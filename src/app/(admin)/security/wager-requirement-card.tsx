@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { AlertTriangle, Info } from "lucide-react";
 import {
@@ -157,8 +156,15 @@ export function WagerRequirementCard({
 }: {
   initial: WagerRequirementDefaults | null;
 }) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  // Server-truth baseline for dirty-tracking. Seeded from the initial prop and
+  // re-baselined to the saved defaults after a successful write, so the card
+  // reflects the saved values in place WITHOUT a router.refresh() (no scroll
+  // jump). Re-editing then diffs against what was actually persisted.
+  const [baseline, setBaseline] = useState<WagerRequirementDefaults | null>(
+    initial,
+  );
 
   // Form state: one ×-multiplier string per field. Seeded from the initial
   // bps values. Hooks must run unconditionally, so this is declared even
@@ -202,6 +208,10 @@ export function WagerRequirementCard({
     );
   }
 
+  // Past the `!initial` guard above, initial is non-null; baseline is seeded
+  // from it (and re-baselined on save), so this is the current server truth.
+  const base = baseline ?? initial;
+
   const handleSave = () => {
     const payload: Partial<Record<FieldKey, number>> = {};
 
@@ -214,7 +224,7 @@ export function WagerRequirementCard({
         return;
       }
       const bps = Math.min(MAX_BPS, Math.max(0, Math.round(x * BPS_PER_X)));
-      if (bps !== initial[f.key]) {
+      if (bps !== base[f.key]) {
         payload[f.key] = bps;
       }
     }
@@ -228,7 +238,10 @@ export function WagerRequirementCard({
       const result = await updateWagerRequirementDefaultsAction(payload);
       if (result.success) {
         toast.success("Wager requirement defaults updated");
-        router.refresh();
+        // Re-baseline to the saved defaults in place — no router.refresh(), so
+        // scroll never jumps. The controlled inputs already show these values;
+        // updating baseline just re-arms the dirty-check for the next edit.
+        setBaseline(result.data);
       } else {
         toast.error(result.error);
       }

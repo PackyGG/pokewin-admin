@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { AlertTriangle, Info } from "lucide-react";
 import {
@@ -37,8 +36,13 @@ export function DepositBonusConfigCard({
 }: {
   initial: DepositBonusConfig | null;
 }) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  // Server-truth baseline for dirty-tracking. Seeded from the initial prop and
+  // re-baselined to the saved config after a successful write, so the card
+  // reflects the saved value in place WITHOUT a router.refresh() (no scroll
+  // jump). Re-editing then diffs against what was actually persisted.
+  const [baseline, setBaseline] = useState<DepositBonusConfig | null>(initial);
 
   // Form state as strings. Hooks must run unconditionally, so these are
   // declared even when initial is null (the degraded branch returns first).
@@ -77,6 +81,10 @@ export function DepositBonusConfigCard({
     );
   }
 
+  // Past the `!initial` guard above, initial is non-null; baseline is seeded
+  // from it (and re-baselined on save), so this is the current server truth.
+  const base = baseline ?? initial;
+
   const handleSave = () => {
     const periodRaw = periodHours.trim();
     const capRaw = capPerPeriod.trim();
@@ -100,7 +108,7 @@ export function DepositBonusConfigCard({
         );
         return;
       }
-      if (period !== initial.period_hours) updates.period_hours = period;
+      if (period !== base.period_hours) updates.period_hours = period;
     }
 
     if (capRaw !== "") {
@@ -109,7 +117,7 @@ export function DepositBonusConfigCard({
         toast.error(`Cap must be a number between 0 and ${MAX_CAP_USD}`);
         return;
       }
-      if (cap !== initial.cap_per_period_usd) updates.cap_per_period_usd = cap;
+      if (cap !== base.cap_per_period_usd) updates.cap_per_period_usd = cap;
     }
 
     if (Object.keys(updates).length === 0) {
@@ -121,7 +129,10 @@ export function DepositBonusConfigCard({
       const result = await updateDepositBonusConfigAction(updates);
       if (result.success) {
         toast.success("Deposit bonus cap updated");
-        router.refresh();
+        // Re-baseline to the saved config in place — no router.refresh(), so
+        // scroll never jumps. The controlled inputs already show these values;
+        // updating baseline just re-arms the dirty-check for the next edit.
+        setBaseline(result.data);
       } else {
         toast.error(result.error);
       }

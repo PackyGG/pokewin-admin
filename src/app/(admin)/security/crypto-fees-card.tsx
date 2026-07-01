@@ -1,7 +1,6 @@
 "use client";
 
 import { Fragment, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { AlertTriangle } from "lucide-react";
 import {
@@ -100,8 +99,13 @@ const parsePctToBps = (raw: string): number | null => {
 };
 
 export function CryptoFeesCard({ initial }: { initial: CryptoFees | null }) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  // Server-truth baseline for dirty-tracking. Seeded from the initial prop and
+  // re-baselined to the saved config after a successful write, so the card
+  // reflects the saved values in place WITHOUT a router.refresh() (no scroll
+  // jump). Re-editing then diffs against what was actually persisted.
+  const [baseline, setBaseline] = useState<CryptoFees | null>(initial);
 
   // Form state: one row (enabled + min% + max% strings) per
   // (direction, asset). Hooks must run unconditionally, so this is declared
@@ -153,19 +157,23 @@ export function CryptoFeesCard({ initial }: { initial: CryptoFees | null }) {
     );
   }
 
+  // Past the `!initial` guard above, initial is non-null; baseline is seeded
+  // from it (and re-baselined on save), so this is the current server truth.
+  const base = baseline ?? initial;
+
   // Dirty-tracking for the Save button: a cell counts as changed when the
   // toggle differs from the loaded config or a non-empty % field parses to
   // different bps (unparseable text counts as dirty — the save click then
   // surfaces the validation toast). Empty fields mean "leave unchanged".
   const isDirty = DIRECTIONS.some((d) =>
     CRYPTO_FEE_ASSETS.some((asset) => {
-      const base = initial[d.key][asset];
+      const cell = base[d.key][asset];
       const row = values[rowKey(d.key, asset)];
-      if (row.enabled !== base.enabled) return true;
+      if (row.enabled !== cell.enabled) return true;
       const minBps = parsePctToBps(row.min);
-      if (minBps !== null && minBps !== base.min_bps) return true;
+      if (minBps !== null && minBps !== cell.min_bps) return true;
       const maxBps = parsePctToBps(row.max);
-      if (maxBps !== null && maxBps !== base.max_bps) return true;
+      if (maxBps !== null && maxBps !== cell.max_bps) return true;
       return false;
     }),
   );
@@ -178,12 +186,12 @@ export function CryptoFeesCard({ initial }: { initial: CryptoFees | null }) {
 
     for (const d of DIRECTIONS) {
       for (const asset of CRYPTO_FEE_ASSETS) {
-        const base = initial[d.key][asset];
+        const cell = base[d.key][asset];
         const row = values[rowKey(d.key, asset)];
         const rowName = `${d.title} · ${ASSET_LABELS[asset]}`;
         const patch: Partial<CryptoFeeConfig> = {};
 
-        if (row.enabled !== base.enabled) patch.enabled = row.enabled;
+        if (row.enabled !== cell.enabled) patch.enabled = row.enabled;
 
         const minBps = parsePctToBps(row.min);
         if (minBps !== null) {
@@ -191,7 +199,7 @@ export function CryptoFeesCard({ initial }: { initial: CryptoFees | null }) {
             toast.error(`${rowName}: min fee must be between 0% and 5%`);
             return;
           }
-          if (minBps !== base.min_bps) patch.min_bps = minBps;
+          if (minBps !== cell.min_bps) patch.min_bps = minBps;
         }
 
         const maxBps = parsePctToBps(row.max);
@@ -200,14 +208,14 @@ export function CryptoFeesCard({ initial }: { initial: CryptoFees | null }) {
             toast.error(`${rowName}: max fee must be between 0% and 5%`);
             return;
           }
-          if (maxBps !== base.max_bps) patch.max_bps = maxBps;
+          if (maxBps !== cell.max_bps) patch.max_bps = maxBps;
         }
 
         // Validate min ≤ max on the EFFECTIVE merged pair (what the backend
         // will hold after this PUT) — mirrors the backend's merged check so
         // the admin gets the error before the request fires.
-        const effMin = minBps ?? base.min_bps;
-        const effMax = maxBps ?? base.max_bps;
+        const effMin = minBps ?? cell.min_bps;
+        const effMax = maxBps ?? cell.max_bps;
         if (effMin > effMax) {
           toast.error(`${rowName}: min fee must be ≤ max fee`);
           return;
@@ -228,7 +236,10 @@ export function CryptoFeesCard({ initial }: { initial: CryptoFees | null }) {
       const result = await updateCryptoFeesAction(payload);
       if (result.success) {
         toast.success("Crypto exchange-rate fees updated");
-        router.refresh();
+        // Re-baseline to the saved config in place — no router.refresh(), so
+        // scroll never jumps. The controlled inputs already show these values;
+        // updating baseline just re-arms the dirty-check (Save disables again).
+        setBaseline(result.data);
       } else {
         toast.error(result.error);
       }

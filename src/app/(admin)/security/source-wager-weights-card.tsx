@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { AlertTriangle, Info } from "lucide-react";
 import {
@@ -116,8 +115,15 @@ export function SourceWagerWeightsCard({
 }: {
   initial: SourceWagerWeights | null;
 }) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  // Server-truth config for dirty-tracking. Seeded from the initial prop and
+  // re-baselined to the saved weights after a successful write, so the card
+  // reflects the saved values in place WITHOUT a router.refresh() (no scroll
+  // jump). Re-editing then diffs against what was actually persisted.
+  const [serverConfig, setServerConfig] = useState<SourceWagerWeights | null>(
+    initial,
+  );
 
   // Form state: one ×-multiplier string per (destination, source) cell.
   // Hooks must run unconditionally, so this is declared even when initial is
@@ -163,11 +169,16 @@ export function SourceWagerWeightsCard({
     );
   }
 
+  // Past the `!initial` guard above, initial is non-null; serverConfig is
+  // seeded from it (and re-baselined on save), so this is the current server
+  // truth.
+  const cfg = serverConfig ?? initial;
+
   const handleSave = () => {
     const payload: UpdateSourceWagerWeightsInput = {};
 
     for (const d of DESTINATIONS) {
-      const baseline = initial[d.key];
+      const baseline = cfg[d.key];
       if (!baseline) continue; // destination not on this backend deploy
       for (const s of SOURCES) {
         const raw = values[cellKey(d.key, s.key)].trim();
@@ -196,7 +207,10 @@ export function SourceWagerWeightsCard({
       const result = await updateSourceWagerWeightsAction(payload);
       if (result.success) {
         toast.success("Funding-source wager weights updated");
-        router.refresh();
+        // Re-baseline to the saved weights in place — no router.refresh(), so
+        // scroll never jumps. The controlled inputs already show these values;
+        // updating serverConfig just re-arms the dirty-check for the next edit.
+        setServerConfig(result.data);
       } else {
         toast.error(result.error);
       }
@@ -236,7 +250,7 @@ export function SourceWagerWeightsCard({
               <h4 className="text-sm font-medium">{d.title}</h4>
               <p className="text-[11px] text-muted-foreground">{d.help}</p>
             </div>
-            {!initial[d.key] ? (
+            {!cfg[d.key] ? (
               <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400">
                 <AlertTriangle className="size-4 shrink-0 mt-0.5" />
                 <p className="text-amber-600/80 dark:text-amber-400/80">

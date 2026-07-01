@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath, revalidateTag } from "next/cache";
+import { revalidateTag } from "next/cache";
 import { SECURITY_CACHE_TAG } from "./security-cache-tag";
 import { z } from "zod";
 import { requirePageAccess, requireAdmin } from "@/lib/dal";
@@ -105,7 +105,10 @@ export async function updateSourceWagerWeightsAction(
     },
   });
 
-  revalidatePath("/security");
+  // Narrow tag revalidation only — the client card updates optimistically in
+  // place (no router.refresh), so a broad revalidatePath("/security") would
+  // just re-render the whole route and jump scroll. The tag busts the cached
+  // /security reads so a genuine future load shows fresh data.
   revalidateTag(SECURITY_CACHE_TAG);
   return { success: true, data: updated };
 }

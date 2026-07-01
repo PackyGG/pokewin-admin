@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { AlertTriangle, Info } from "lucide-react";
 import {
@@ -162,8 +161,13 @@ export function RewardExpiryCard({
 }: {
   initial: RewardExpiry | null;
 }) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  // Server-truth baseline for dirty-tracking. Seeded from the initial prop and
+  // re-baselined to the saved config after a successful write, so the card
+  // reflects the saved values in place WITHOUT a router.refresh() (no scroll
+  // jump). Re-editing then diffs against what was actually persisted.
+  const [baseline, setBaseline] = useState<RewardExpiry | null>(initial);
 
   // Form state: one day-count string per field. Seeded from the initial
   // values. Hooks must run unconditionally, so this is declared even when
@@ -203,6 +207,10 @@ export function RewardExpiryCard({
     );
   }
 
+  // Past the `!initial` guard above, initial is non-null; baseline is seeded
+  // from it (and re-baselined on save), so this is the current server truth.
+  const base = baseline ?? initial;
+
   const handleSave = () => {
     const payload: UpdateRewardExpiryInput = {};
     let changed = false;
@@ -217,7 +225,7 @@ export function RewardExpiryCard({
         );
         return;
       }
-      if (n !== f.read(initial)) {
+      if (n !== f.read(base)) {
         f.write(payload, n);
         changed = true;
       }
@@ -232,7 +240,10 @@ export function RewardExpiryCard({
       const result = await updateRewardExpiryAction(payload);
       if (result.success) {
         toast.success("Reward expiry updated");
-        router.refresh();
+        // Re-baseline to the saved config in place — no router.refresh(), so
+        // scroll never jumps. The controlled inputs already show these values;
+        // updating baseline just re-arms the dirty-check for the next edit.
+        setBaseline(result.data);
       } else {
         toast.error(result.error);
       }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { AlertTriangle, Info, Plus, X } from "lucide-react";
 import {
@@ -144,8 +143,14 @@ export function MultiplierWagerWeightsCard({
 }: {
   initial: MultiplierWagerWeights | null;
 }) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  // Server-truth config for dirty-tracking. Seeded from the initial prop and
+  // re-baselined to the saved config after a successful write, so the card
+  // reflects the saved values in place WITHOUT a router.refresh() (no scroll
+  // jump). Re-editing then diffs against what was actually persisted.
+  const [serverConfig, setServerConfig] =
+    useState<MultiplierWagerWeights | null>(initial);
 
   // Form state: per destination an enabled flag + tier rows (bound × and
   // weight % as strings). Hooks must run unconditionally, so this is
@@ -200,12 +205,17 @@ export function MultiplierWagerWeightsCard({
     );
   }
 
+  // Past the `!initial` guard above, initial is non-null; serverConfig is
+  // seeded from it (and re-baselined on save), so this is the current server
+  // truth.
+  const cfg = serverConfig ?? initial;
+
   // Dirty-tracking for the Save button: a destination counts as changed
   // when its toggle differs from the loaded config or its tier list parses
   // to different tiers (unparseable text counts as dirty — the save click
   // then surfaces the validation toast).
   const isDirty = DESTINATIONS.some((d) => {
-    const base = initial[d.key];
+    const base = cfg[d.key];
     const st = values[d.key];
     if (st.enabled !== base.enabled) return true;
     const parsed = parseTiers(st.tiers);
@@ -250,7 +260,7 @@ export function MultiplierWagerWeightsCard({
     const payload: UpdateMultiplierWagerWeightsInput = {};
 
     for (const d of DESTINATIONS) {
-      const base = initial[d.key];
+      const base = cfg[d.key];
       const st = values[d.key];
       const patch: { enabled?: boolean; tiers?: MultiplierTier[] } = {};
 
@@ -279,7 +289,10 @@ export function MultiplierWagerWeightsCard({
       const result = await updateMultiplierWagerWeightsAction(payload);
       if (result.success) {
         toast.success("Multiplier wager weights updated");
-        router.refresh();
+        // Re-baseline to the saved config in place — no router.refresh(), so
+        // scroll never jumps. The controlled inputs already show these values;
+        // updating serverConfig just re-arms the dirty-check (Save disables).
+        setServerConfig(result.data);
       } else {
         toast.error(result.error);
       }
