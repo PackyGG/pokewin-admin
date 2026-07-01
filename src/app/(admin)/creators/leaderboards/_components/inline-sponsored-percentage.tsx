@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -23,6 +22,12 @@ import { setLeaderboardSponsorship } from "../actions";
  * `current` is null when the leaderboard has no annotation yet; it
  * then renders the muted default "100%" (a leaderboard with no row
  * counts at full cost).
+ *
+ * Scroll-fix: on Save the displayed % updates OPTIMISTICALLY from local
+ * state with NO `router.refresh()` — the page never re-renders / loses
+ * scroll position. The server stays source of truth via the narrow
+ * `revalidateTag("creator-leaderboards")` + `revalidatePath` the action
+ * fires; a failed save rolls the value back and toasts the error.
  */
 export function InlineSponsoredPercentage({
   leaderboardId,
@@ -32,12 +37,20 @@ export function InlineSponsoredPercentage({
   current: number | null;
 }) {
   const [open, setOpen] = useState(false);
+  // Optimistic server-truth value. Seeded from the prop; re-synced when a
+  // real revalidation streams a fresh prop in (unless a save is mid-flight,
+  // so the in-flight optimistic value is never clobbered).
+  const [saved, setSaved] = useState<number | null>(current);
   const [value, setValue] = useState(String(current ?? 100));
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
 
-  const isDefault = current == null;
-  const displayPct = current ?? 100;
+  useEffect(() => {
+    if (isPending) return;
+    setSaved(current);
+  }, [current, isPending]);
+
+  const isDefault = saved == null;
+  const displayPct = saved ?? 100;
 
   function handleSave() {
     const pct = Number(value);
@@ -45,20 +58,34 @@ export function InlineSponsoredPercentage({
       toast.error("Enter a percentage between 0 and 100");
       return;
     }
+    const prev = saved;
+    // Optimistic flip — instant, no reload. Close the popover right away.
+    setSaved(pct);
+    setOpen(false);
     startTransition(async () => {
       const r = await setLeaderboardSponsorship(leaderboardId, pct);
       if (!r.success) {
+        // Roll back to the previous server-truth value.
+        setSaved(prev);
+        setValue(String(prev ?? 100));
         toast.error(r.error);
         return;
       }
       toast.success("House share % updated");
-      setOpen(false);
-      router.refresh();
     });
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        // Seed the input from the current server-truth value each time the
+        // popover opens, so re-editing after an optimistic save starts from
+        // the right number.
+        if (next) setValue(String(saved ?? 100));
+        setOpen(next);
+      }}
+    >
       <PopoverTrigger
         render={
           <button

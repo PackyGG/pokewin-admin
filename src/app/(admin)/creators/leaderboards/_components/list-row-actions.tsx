@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -16,12 +15,24 @@ type Row = {
     title: string;
 };
 
+/**
+ * Inline row actions for a PENDING leaderboard. Approve resolves the row (it
+ * only renders actions while pending), so on success we OPTIMISTICALLY hide it
+ * with NO `router.refresh()` — the dense list never re-renders / loses scroll
+ * position. The server stays source of truth via the
+ * `revalidateTag("creator-leaderboards")` + `revalidatePath` the action fires
+ * (the row re-renders resolved on the next natural render). A failed approve
+ * restores the actions and toasts the error. Reject is a close+refocus dialog
+ * and is left as-is.
+ */
 export function ListRowActions({ row }: { row: Row }) {
     const [isPending, startTransition] = useTransition();
-    const router = useRouter();
     const [rejectOpen, setRejectOpen] = useState(false);
+    // Once approve succeeds this row is no longer pending, so it renders no
+    // actions — hide them immediately instead of waiting on a route refresh.
+    const [resolved, setResolved] = useState(false);
 
-    if (row.approval_status === "pending") {
+    if (row.approval_status === "pending" && !resolved) {
         return (
             <div className="flex gap-2 justify-end">
                 <Button
@@ -39,14 +50,16 @@ export function ListRowActions({ row }: { row: Row }) {
                         ) {
                             return;
                         }
+                        // Optimistically hide the actions — no reload.
+                        setResolved(true);
                         startTransition(async () => {
                             const r = await approveLeaderboard(row.id);
                             if (!r.success) {
+                                setResolved(false);
                                 toast.error(r.error);
                                 return;
                             }
                             toast.success("Approved");
-                            router.refresh();
                         });
                     }}
                 >

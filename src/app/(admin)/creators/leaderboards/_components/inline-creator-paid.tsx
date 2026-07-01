@@ -1,10 +1,8 @@
 "use client";
 
-import { useTransition } from "react";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
-
 import { Checkbox } from "@/components/ui/checkbox";
+import { useToggleAction } from "@/hooks/use-toggle-action";
+import type { ServerActionResult } from "@/lib/errors/server-action-result";
 
 import { setLeaderboardCreatorPaid } from "../actions";
 
@@ -15,9 +13,12 @@ import { setLeaderboardCreatorPaid } from "../actions";
  * Leaderboard Cost); it only flips the admin-DB flag.
  *
  * `initialPaid` seeds the checked state (false when the leaderboard has
- * no row yet). Optimistically flips, calls the server action, and on
- * failure reverts via `router.refresh()` (the server stays the source of
- * truth) after surfacing the error toast.
+ * no row yet). Driven by `useToggleAction`: the checkbox flips
+ * OPTIMISTICALLY on click with NO `router.refresh()`, so the page never
+ * re-renders / re-fades / loses scroll position. The server stays source
+ * of truth via the narrow `revalidateTag("creator-leaderboards")` +
+ * `revalidatePath` the action fires; a failed action rolls the checkbox
+ * back and toasts the error.
  */
 export function InlineCreatorPaid({
   leaderboardId,
@@ -26,23 +27,21 @@ export function InlineCreatorPaid({
   leaderboardId: string;
   initialPaid: boolean;
 }) {
-  const [isPending, startTransition] = useTransition();
-  const router = useRouter();
-
-  function handleChange(next: boolean) {
-    startTransition(async () => {
+  const { value, pending, toggle } = useToggleAction({
+    serverValue: initialPaid,
+    // The leaderboards actions return a local `ActionResult` (optional `data`);
+    // normalize it to the house `ServerActionResult` shape the hook expects.
+    // The hook only reads `success` / `error`, both present at runtime.
+    action: async (next): Promise<ServerActionResult> => {
       const r = await setLeaderboardCreatorPaid(leaderboardId, next);
-      if (!r.success) {
-        toast.error(r.error);
-        // Re-sync from the server so the checkbox snaps back to the
-        // unchanged stored value.
-        router.refresh();
-        return;
-      }
-      toast.success(next ? "Marked creator as paid" : "Marked creator as not paid");
-      router.refresh();
-    });
-  }
+      return r.success
+        ? { success: true, data: undefined }
+        : { success: false, error: r.error };
+    },
+    successMessage: (next) =>
+      next ? "Marked creator as paid" : "Marked creator as not paid",
+    errorMessage: "Failed to update paid flag",
+  });
 
   return (
     <label
@@ -50,9 +49,9 @@ export function InlineCreatorPaid({
       className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground cursor-pointer select-none"
     >
       <Checkbox
-        checked={initialPaid}
-        onCheckedChange={(checked) => handleChange(checked === true)}
-        disabled={isPending}
+        checked={value}
+        onCheckedChange={() => toggle()}
+        disabled={pending}
         aria-label="Creator paid his part"
       />
       <span className="hidden sm:inline">Creator paid</span>

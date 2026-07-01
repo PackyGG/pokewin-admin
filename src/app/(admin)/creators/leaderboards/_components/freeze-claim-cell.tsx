@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Snowflake } from "lucide-react";
 
@@ -26,6 +25,13 @@ import { freezeClaim, unfreezeClaim } from "../actions";
  * otherwise a Freeze button. Both open a small dialog — freeze requires a
  * reason, unfreeze takes an optional release reason. Capability gating is
  * enforced server-side; a rejected action just surfaces via toast.error.
+ *
+ * Scroll-fix: freeze/unfreeze update the cell OPTIMISTICALLY in place with NO
+ * `router.refresh()` — the standings table never re-renders / loses scroll
+ * position. Local `hold` state drives the frozen/unfrozen render; the server
+ * stays source of truth via the `revalidateTag("creator-leaderboards")` +
+ * `revalidatePath` the actions fire (re-syncing the prop on the next render).
+ * A failed action rolls the optimistic state back and toasts the error.
  */
 export function FreezeClaimCell({
     leaderboardId,
@@ -44,50 +50,66 @@ export function FreezeClaimCell({
     const [reason, setReason] = useState("");
     const [releaseReason, setReleaseReason] = useState("");
     const [isPending, startTransition] = useTransition();
-    const router = useRouter();
+    // Optimistic hold state. Seeded from the prop; re-synced when a real
+    // revalidation streams a fresh prop in (unless an action is mid-flight, so
+    // the in-flight optimistic value is never clobbered).
+    const [localHold, setLocalHold] = useState<{ reason: string } | null>(hold);
+
+    useEffect(() => {
+        if (isPending) return;
+        setLocalHold(hold);
+    }, [hold, isPending]);
 
     const handleFreeze = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!reason.trim()) {
+        const trimmed = reason.trim();
+        if (!trimmed) {
             toast.error("Reason is required");
             return;
         }
+        const prev = localHold;
+        // Optimistic flip — instant, no reload. Close the dialog right away.
+        setLocalHold({ reason: trimmed });
+        setReason("");
+        setFreezeOpen(false);
         startTransition(async () => {
-            const r = await freezeClaim(leaderboardId, userId, { reason: reason.trim() });
+            const r = await freezeClaim(leaderboardId, userId, { reason: trimmed });
             if (!r.success) {
+                setLocalHold(prev);
                 toast.error(r.error);
                 return;
             }
             toast.success("Claim frozen");
-            setReason("");
-            setFreezeOpen(false);
-            router.refresh();
         });
     };
 
     const handleUnfreeze = (e: React.FormEvent) => {
         e.preventDefault();
+        const prev = localHold;
+        const trimmedRelease = releaseReason.trim() || null;
+        // Optimistic flip — instant, no reload. Close the dialog right away.
+        setLocalHold(null);
+        setReleaseReason("");
+        setUnfreezeOpen(false);
         startTransition(async () => {
             const r = await unfreezeClaim(leaderboardId, userId, {
-                release_reason: releaseReason.trim() || null,
+                release_reason: trimmedRelease,
             });
             if (!r.success) {
+                setLocalHold(prev);
                 toast.error(r.error);
                 return;
             }
             toast.success("Claim unfrozen");
-            setReleaseReason("");
-            setUnfreezeOpen(false);
-            router.refresh();
         });
     };
 
-    if (hold) {
+    if (localHold) {
         return (
             <div className="flex items-center justify-end gap-2">
                 <Badge
                     className="gap-1 bg-sky-500 text-white hover:bg-sky-500 border-transparent shadow-sm"
-                    title={hold.reason}
+                    title={localHold.reason}
                 >
                     <Snowflake className="size-3" />
                     Frozen
