@@ -1,10 +1,29 @@
 import "server-only";
 
 import { cache } from "react";
+import { unstable_cache } from "next/cache";
 
 import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
+import { readDbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
+
+/**
+ * Cache tag for the `/system/excluded-users` PAGE list read
+ * ({@link getExcludedUsersForPage}). The withdrawal lock/unlock actions
+ * (`src/app/(admin)/withdrawals/lock-actions.ts`) bust ONLY this tag via
+ * `revalidateTag(EXCLUDED_USERS_LIST_TAG)` — a narrow eviction that keeps the
+ * page's server data fresh WITHOUT a broad `revalidatePath` of the whole route.
+ * That narrowness is what lets the client toggle stay optimistic (no
+ * full-route re-render / scroll jump). Import the const so writer and reader
+ * never drift on the string.
+ *
+ * NOTE: this tag is for the page list ONLY. The blacklist consumed by every
+ * customer-scoped analytics query ({@link getExcludedUserIds}) is deliberately
+ * NOT tagged/cached here — it has its own fail-open ladder and must not be
+ * coupled to this page's revalidation.
+ */
+export const EXCLUDED_USERS_LIST_TAG = "system-excluded-users-list";
 
 /** Cross-request fallback when the admin DB read fails after a prior success. */
 let lastKnownGoodExcludedUserIds: string[] | null = null;
@@ -99,8 +118,12 @@ export const getExcludedUserIds = cache(async (): Promise<string[]> => {
  * doesn't exist yet (pre-migration) — the UI then shows an inline hint
  * instead of letting the missing-table error crash the page.
  *
- * Not cached — the page wants live data after add / remove server
- * actions revalidate the route.
+ * Caching: the compute is wrapped in a prod-only, env-keyed
+ * `unstable_cache` tagged with {@link EXCLUDED_USERS_LIST_TAG} (see the
+ * exported {@link getExcludedUsersForPage} gateway at the bottom). Add /
+ * remove / balance-v2 / lock actions bust that tag so the page still shows
+ * fresh data after a mutation, but a mere pagination/re-render doesn't re-pay
+ * the three-table fan-out.
  */
 export type ExcludedUserRow = {
   userId: string;
@@ -142,7 +165,7 @@ function isTableMissing(err: unknown): boolean {
   );
 }
 
-export async function getExcludedUsersForPage(): Promise<ExcludedUsersPageData> {
+async function computeExcludedUsersForPage(): Promise<ExcludedUsersPageData> {
   const rows = await adminDb.excluded_users.findMany({
     orderBy: { created_at: "desc" },
     include: {
@@ -250,4 +273,37 @@ export async function getExcludedUsersForPage(): Promise<ExcludedUsersPageData> 
   });
 
   return { rows: mapped, balanceV2TableReady };
+}
+
+/**
+ * Cross-request cache for the excluded-users page list. Wraps
+ * {@link computeExcludedUsersForPage} in a 60s `unstable_cache` tagged with
+ * {@link EXCLUDED_USERS_LIST_TAG}, so re-renders (e.g. an optimistic client
+ * toggle whose narrow `revalidateTag` streams fresh props) don't re-pay the
+ * three-table admin+main fan-out on every paint. A mutation (add / remove /
+ * balance-v2 / withdrawal lock) busts the tag, so the next read is fresh.
+ *
+ * The compute reads BOTH the admin DB (blacklist rows, balance-v2, unlocks)
+ * and the main DB (deposit totals). Both resolve their client via `getDb()` /
+ * the module-level `adminDb`; the main-DB client is env-switched by the
+ * per-admin `admin_db_env` cookie, which `unstable_cache` cannot see (its
+ * callback runs outside the request's dynamic scope, so `cookies()` would
+ * throw and fall back to prod). Same fix as `rain-detail-cache.ts`: cache ONLY
+ * on prod (the default), and let a dev-toggled admin bypass to the uncached
+ * compute so they always see live dev data.
+ */
+const cachedExcludedUsersForPage = unstable_cache(
+  computeExcludedUsersForPage,
+  ["system-excluded-users-list-v1"],
+  { revalidate: 60, tags: [EXCLUDED_USERS_LIST_TAG] },
+);
+
+/**
+ * Public entry point for `/system/excluded-users`. Prod requests hit the
+ * tagged cache; a dev-toggled admin bypasses it and runs the query directly.
+ */
+export async function getExcludedUsersForPage(): Promise<ExcludedUsersPageData> {
+  const env = await readDbEnv();
+  if (env !== "prod") return computeExcludedUsersForPage();
+  return cachedExcludedUsersForPage();
 }

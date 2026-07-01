@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath, revalidateTag } from "next/cache";
+import { revalidateTag } from "next/cache";
 import { z } from "zod";
 
 import { adminDb } from "@/lib/admin-db";
@@ -8,6 +8,7 @@ import { verifySession } from "@/lib/dal";
 import { isMainOwner } from "@/lib/owners";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { WITHDRAWALS_LIST_TAG } from "@/lib/queries/withdrawals";
+import { EXCLUDED_USERS_LIST_TAG } from "@/lib/excluded-users/fetch";
 import { ok, fail, type ServerActionResult } from "@/lib/errors/server-action-result";
 
 /**
@@ -46,13 +47,20 @@ const unlockSchema = z.object({
 });
 
 function revalidateWithdrawalSurfaces(): void {
-  // The lock state gates the withdrawal ACTIONS and is surfaced on the list +
-  // detail views. Evict the cached list (tag) and revalidate the relevant
-  // routes so the locked/unlocked indication updates immediately.
+  // NARROW, tag-based eviction only — NO broad `revalidatePath`. The lock state
+  // affects exactly two cached surfaces:
+  //   • the withdrawals list (which requests are actionable) → WITHDRAWALS_LIST_TAG
+  //   • the excluded-users page list (the Locked/Unlocked badge)  → EXCLUDED_USERS_LIST_TAG
+  // Busting only those tags keeps the server data fresh WITHOUT forcing a
+  // full-route re-render. That narrowness is what lets the excluded-users
+  // client toggle stay optimistic (no scroll jump / FadeIn replay). The old
+  // `revalidatePath('/withdrawals' | '/transactions/deposits' | '/system/
+  // excluded-users')` calls were broad page revalidates: '/withdrawals' was
+  // redundant with WITHDRAWALS_LIST_TAG, '/transactions/deposits' doesn't
+  // consume the lock set at all, and '/system/excluded-users' is the one that
+  // caused the visible re-render — all three are replaced by the two tags.
   revalidateTag(WITHDRAWALS_LIST_TAG);
-  revalidatePath("/withdrawals");
-  revalidatePath("/transactions/deposits");
-  revalidatePath("/system/excluded-users");
+  revalidateTag(EXCLUDED_USERS_LIST_TAG);
 }
 
 /**

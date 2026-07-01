@@ -42,6 +42,7 @@ import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/empty-state";
 import { Spinner } from "@/components/ux";
+import { useToggleAction } from "@/hooks/use-toggle-action";
 
 import type { ExcludedUserRow } from "@/lib/excluded-users/fetch";
 
@@ -567,6 +568,12 @@ function BalanceV2Cell({
  * both actions re-check the motha gate server-side, so a non-motha viewer only
  * ever sees the read-only badge. Each toggle is confirmed to avoid an
  * accidental unlock.
+ *
+ * Scroll-fix: the toggle is driven by `useToggleAction`, so the badge flips
+ * OPTIMISTICALLY on confirm with NO `router.refresh()` — the page never
+ * re-renders / re-fades / loses scroll position. The server stays source of
+ * truth via the narrow `revalidateTag(EXCLUDED_USERS_LIST_TAG)` the lock
+ * actions fire; a failed action rolls the badge back and toasts the error.
  */
 function WithdrawalLockControl({
   userId,
@@ -577,11 +584,25 @@ function WithdrawalLockControl({
   unlocked: boolean;
   canManage: boolean;
 }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [isPending, startTransition] = useTransition();
+  const { value, pending, toggle } = useToggleAction({
+    // Server-truth seed. When the narrow revalidateTag streams a fresh row in,
+    // the hook re-syncs `value` to this (unless a toggle is mid-flight).
+    serverValue: unlocked,
+    // `next` is what we're flipping TO: true = unlock, false = re-lock.
+    action: (next) =>
+      next ? unlockUserWithdrawals({ userId }) : relockUserWithdrawals(userId),
+    successMessage: (next) =>
+      next
+        ? "Withdrawals unlocked for this user"
+        : "Withdrawals re-locked for this user",
+    errorMessage: "Failed to update lock",
+    // Close the confirmation dialog once the toggle settles (either way).
+    onSuccess: () => setOpen(false),
+    onError: () => setOpen(false),
+  });
 
-  const badge = unlocked ? (
+  const badge = value ? (
     <Badge
       variant="outline"
       className="gap-1 border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
@@ -604,31 +625,6 @@ function WithdrawalLockControl({
     return badge;
   }
 
-  function handleToggle() {
-    startTransition(async () => {
-      try {
-        const result = unlocked
-          ? await relockUserWithdrawals(userId)
-          : await unlockUserWithdrawals({ userId });
-        if (!result.success) {
-          toast.error(result.error);
-          setOpen(false);
-          return;
-        }
-        toast.success(
-          unlocked
-            ? "Withdrawals re-locked for this user"
-            : "Withdrawals unlocked for this user",
-        );
-        setOpen(false);
-        router.refresh();
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed to update lock");
-        setOpen(false);
-      }
-    });
-  }
-
   return (
     <div className="inline-flex items-center gap-2">
       {badge}
@@ -638,15 +634,13 @@ function WithdrawalLockControl({
             <Button
               variant="ghost"
               size="icon"
-              disabled={isPending}
+              disabled={pending}
               className="size-7 text-muted-foreground hover:text-foreground"
-              aria-label={
-                unlocked ? "Re-lock withdrawals" : "Unlock withdrawals"
-              }
+              aria-label={value ? "Re-lock withdrawals" : "Unlock withdrawals"}
             />
           }
         >
-          {unlocked ? (
+          {value ? (
             <Lock className="size-3.5" />
           ) : (
             <LockOpen className="size-3.5" />
@@ -655,27 +649,21 @@ function WithdrawalLockControl({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {unlocked
-                ? "Re-lock withdrawals?"
-                : "Unlock withdrawals?"}
+              {value ? "Re-lock withdrawals?" : "Unlock withdrawals?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
               <span className="font-mono text-xs">{userId}</span>
               <br />
-              {unlocked
+              {value
                 ? "Their withdrawals will be blocked again — no admin can process, cancel, ship, complete, or fail them until you unlock again."
                 : "Their withdrawals will become processable again by admins. Only you (motha) can undo this."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleToggle} disabled={isPending}>
-              {isPending && <Spinner size={14} className="text-current" />}
-              {isPending
-                ? "Saving…"
-                : unlocked
-                  ? "Re-lock"
-                  : "Unlock"}
+            <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={toggle} disabled={pending}>
+              {pending && <Spinner size={14} className="text-current" />}
+              {pending ? "Saving…" : value ? "Re-lock" : "Unlock"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
