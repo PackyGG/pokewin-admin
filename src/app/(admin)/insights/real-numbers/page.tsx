@@ -280,6 +280,13 @@ function RealNumbersBodySkeleton() {
  */
 async function RealNumbersBody() {
   // Lifetime, 365d-capped — the same window the insights hub + /ggr use.
+  // PERF/CH-CANDIDATE: 6 of these 9 lifetime aggregates are heavy PG-only reads
+  // with NO ClickHouse twin yet — getRewardSpendItemization, getCreatorNetCashDetail,
+  // getCreatorProgramCost, getCustomerRecyclingDetail, getRealNumbersGameSplit,
+  // getInsightsHubWager. They should get CH twins in a later cutover wave (wired
+  // through resolveAdminRead + compareRealNumbers, parity-proven before cutover).
+  // Until then each stays safeQuery-wrapped so a pool-timeout degrades one
+  // section, never the whole route. Do not change their logic here.
   const [
     { data: cost, error: costErr },
     { data: wager },

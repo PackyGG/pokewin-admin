@@ -41,7 +41,14 @@ export async function AnalyticsTab() {
     REWARD_QUERY_TIMEOUT_MS,
   );
 
-  if (error || !stats) {
+  // Defensive against a stale-shape `unstable_cache` entry (same failure
+  // class as the recent Double Down NaN fix): a cache entry serialized before
+  // the `financials` block existed deserializes with `financials === undefined`.
+  // Reading `stats.financials.avgDeposit` on that shape THROWS inside this
+  // Suspense boundary and collapses the whole page. So the required
+  // `financials` block being absent is treated as an error (render the same
+  // fallback as the `error || !stats` branch) rather than rendered as zeros.
+  if (error || !stats || !stats.financials) {
     return (
       <TileErrorFallback
         label="Deposit cadence"
@@ -52,10 +59,12 @@ export async function AnalyticsTab() {
     );
   }
 
-  // Same derivation the dashboard used — reused, not re-computed.
-  const avgDeposit = stats.financials.avgDeposit;
-  const depositsPerHour24h = stats.depositCount24h / 24;
-  const depositsPerHour7d = stats.depositCount7d / (7 * 24);
+  // Same derivation the dashboard used — reused, not re-computed. Read the
+  // count fields defensively (`?? 0`) so a stale entry missing them degrades
+  // to a 0/h cadence instead of surfacing NaN.
+  const avgDeposit = stats.financials.avgDeposit ?? 0;
+  const depositsPerHour24h = (stats.depositCount24h ?? 0) / 24;
+  const depositsPerHour7d = (stats.depositCount7d ?? 0) / (7 * 24);
 
   return (
     <div className="space-y-5">
