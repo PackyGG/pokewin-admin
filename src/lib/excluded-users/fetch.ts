@@ -41,10 +41,20 @@ export async function refreshExcludedUserIdsCache(): Promise<void> {
  * exactly once, regardless of how many call sites consult the list
  * inside a single page render.
  *
- * Fail-closed: on admin DB error, returns the last successfully loaded
- * list instead of an empty list (which would inflate P&L / stats). If no
- * prior successful load exists in this process, throws so metrics are
- * not rendered without a trustworthy scope.
+ * NEVER throws. The blacklist is read by nearly every customer-scoped
+ * query, so a throw here would propagate a route-500 across the whole
+ * dashboard on a single cold-process admin-DB blip (this was the P0
+ * crash: a constant-message throw hashing to the same Next digest on
+ * every page that touched the blacklist).
+ *
+ * Failure ladder (best available scope, never a crash):
+ *   1. On admin DB error, prefer the last successfully loaded list
+ *      (last-known-good) so P&L / stats stay correctly narrowed.
+ *   2. If no prior successful load exists in this process, FAIL OPEN:
+ *      return `[]` (exclude nobody this once) and log loudly. A
+ *      momentarily un-narrowed customer scope is far better than a
+ *      dashboard-wide crash — every caller treats `[]` as "exclude
+ *      nobody", which is the well-worn empty-blacklist path.
  */
 export const getExcludedUserIds = cache(async (): Promise<string[]> => {
   try {
@@ -59,14 +69,15 @@ export const getExcludedUserIds = cache(async (): Promise<string[]> => {
       );
       return [...lastKnownGoodExcludedUserIds];
     }
+    // Fail OPEN, never closed: no cached list exists, so returning `[]`
+    // (exclude nobody) keeps every dependent read rendering instead of
+    // throwing a route 500 across the dashboard. Loud log so the blip is
+    // visible in Vercel function logs; failures are never cached.
     console.error(
-      "[excluded-users] failed to read blacklist and no cached list exists:",
+      "[excluded-users] SCOPE DEGRADED — failed to read blacklist and no cached list exists; failing OPEN with an empty blacklist (customer scope momentarily un-narrowed):",
       e,
     );
-    throw new Error(
-      "Excluded-users blacklist unavailable — metrics cannot be scoped safely.",
-      { cause: e },
-    );
+    return [];
   }
 });
 

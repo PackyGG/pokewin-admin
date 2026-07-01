@@ -140,8 +140,15 @@ export default function GlobalError({
               lineHeight: 1.5,
             }}
           >
-            {error.message ||
-              "An unexpected error happened while rendering the root layout."}
+            {/* Never surface the raw error.message in production — it can
+                leak internal detail (query text, table names, stack hints).
+                Show a generic sentence + the digest only, matching every
+                other error boundary's no-raw-message policy. In dev the raw
+                message is kept to aid debugging (this file only renders in
+                prod builds, but the guard keeps the policy explicit). */}
+            {process.env.NODE_ENV !== "production" && error.message
+              ? error.message
+              : "An unexpected error happened while rendering the root layout."}
             {error.digest && (
               <span
                 style={{
