@@ -324,7 +324,8 @@ function StaticWindowLabel({ label }: { label: string }) {
  * Client KPI section for /dashboard.
  *
  * Renders the period-bound KPI boxes (GGR, Wager [Total + Organic in one
- * merged box], Deposits, Withdrawals) with a per-box today/24h toggle, plus
+ * merged box], Deposits/Withdrawals [merged into one single tile]) with a
+ * per-box today/24h toggle, plus
  * the window-independent snapshot boxes (Total Users, FTDs 24h, Depositors,
  * Avg Deposit, Deposits/Hour, Avg RTP, Avg P&L 7d) reskinned onto the same panel design.
  *
@@ -408,15 +409,14 @@ export function DashboardKpiSection({
 
   return (
     <div className="space-y-6">
-      {/* Period-bound boxes — each with a today/24h toggle. FIVE boxes now:
-          GGR, Wager (Total + Organic merged), Deposits, Withdrawals, and the
-          Crypto Fee counter (anchored monotonic estimate — NOT period-bound,
-          carries a static "since" label instead of a toggle). Mobile-first:
-          one column at <sm so the hero value + toggle never crush; 2-up at sm;
-          3-up at lg (the Wager dual-hero box keeps room before we go wide);
-          5 across at xl where there's width for all five (the wide Wager box
-          included) without crushing. */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-5">
+      {/* Period-bound boxes — each with a today/24h toggle. FOUR boxes now:
+          GGR, Deposits/Withdrawals (merged into one single tile), Wager
+          (Total + Organic merged), and the Crypto Fee counter (anchored
+          monotonic estimate — NOT period-bound, carries a static "since"
+          label instead of a toggle). Mobile-first: one column at <sm so the
+          hero value + toggle never crush; 2-up at sm; 4 across at xl where
+          there's width for all four without crushing. */}
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
         {/* GGR — industry definition (`wager − payouts`): what we won from
             the games today (packs, battles, upgrader), pre-rewards,
             pre-promo. Cyan identity; Info popover surfaces the per-leg
@@ -508,70 +508,62 @@ export function DashboardKpiSection({
           );
         })()}
 
-        {/* Deposits — fresh cash in (house gain → emerald identity). Chip
-            row carries the count + per-deposit average for the window. */}
+        {/* Cash flow — MERGED box (Deposits + Withdrawals) held to a SINGLE
+            tile footprint. Two stacked halves inside one KpiPanel: Deposits
+            (emerald, House-POV: fresh cash in = house gain = green) on top,
+            Withdrawals (rose, House-POV: money out = house loss = red)
+            below. One shared today/24h toggle drives BOTH figures (both read
+            the same window payload). Neutral "blue" tint on the shell so the
+            box itself doesn't bias one leg's color over the other — the
+            per-leg color lives on the values/counts inside. */}
         {(() => {
-          const p = payloadFor("deposits");
-          const mode = modeFor("deposits");
-          const avg = p.depositCount > 0 ? p.deposits / p.depositCount : 0;
+          const p = payloadFor("cashflow");
+          const mode = modeFor("cashflow");
           return (
             <KpiPanel
-              title="Deposits"
-              tint="emerald"
+              title="Deposits / Withdrawals"
+              tint="blue"
               headerRight={
                 <WindowToggle
                   active={mode}
                   loading={loading}
-                  onPick={(w) => pick("deposits", w)}
+                  onPick={(w) => pick("cashflow", w)}
                 />
               }
-              footer={
-                <div className="grid grid-cols-2 gap-1.5 sm:-mx-0.5">
-                  <PanelChip
-                    label="Count"
-                    value={p.depositCount}
-                    format="number"
-                    tone="emerald"
-                  />
-                  <PanelChip label="Avg" value={avg} tone="emerald" />
-                </div>
-              }
             >
-              <PlainHero value={p.deposits} format="currency" />
-            </KpiPanel>
-          );
-        })()}
-
-        {/* Withdrawals — money out. Rose identity (House-POV: user pulls
-            money out → house loss → red), matching the rose breakdown chips
-            below; chip row carries the completed/shipped request count. */}
-        {(() => {
-          const p = payloadFor("withdrawals");
-          const mode = modeFor("withdrawals");
-          return (
-            <KpiPanel
-              title="Withdrawals"
-              tint="rose"
-              headerRight={
-                <WindowToggle
-                  active={mode}
-                  loading={loading}
-                  onPick={(w) => pick("withdrawals", w)}
-                />
-              }
-              footer={
-                <div className="grid grid-cols-2 gap-1.5 sm:-mx-0.5">
-                  <PanelChip
-                    label="Count"
-                    value={p.withdrawalCount}
-                    format="number"
-                    tone="rose"
-                  />
-                  <PanelChip label="Total" value={p.withdrawals} tone="rose" />
+              {/* Two compact halves stacked to fit one single-size tile.
+                  Each half: uppercase label + emerald/rose count chip on the
+                  header row, hero $ value below. A hairline divider keeps the
+                  two legs visually distinct without a second card. */}
+              <div className="space-y-2.5">
+                <div className="min-w-0">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                      Deposits
+                    </p>
+                    <p className="text-[11px] font-medium tabular-nums text-muted-foreground shrink-0">
+                      {formatNumber(p.depositCount)} tx
+                    </p>
+                  </div>
+                  <div className="truncate text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400 sm:text-xl">
+                    <AnimatedNumber value={p.deposits} format="currency" />
+                  </div>
                 </div>
-              }
-            >
-              <PlainHero value={p.withdrawals} format="currency" />
+                <div className="border-t border-border/50" />
+                <div className="min-w-0">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-rose-600 dark:text-rose-400">
+                      Withdrawals
+                    </p>
+                    <p className="text-[11px] font-medium tabular-nums text-muted-foreground shrink-0">
+                      {formatNumber(p.withdrawalCount)} tx
+                    </p>
+                  </div>
+                  <div className="truncate text-lg font-bold tabular-nums text-rose-600 dark:text-rose-400 sm:text-xl">
+                    <AnimatedNumber value={p.withdrawals} format="currency" />
+                  </div>
+                </div>
+              </div>
             </KpiPanel>
           );
         })()}
