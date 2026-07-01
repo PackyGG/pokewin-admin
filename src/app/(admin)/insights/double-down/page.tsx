@@ -8,10 +8,9 @@ import {
   ChartSkeleton,
 } from "@/components/loading-skeletons";
 import {
-  parseDoubleDownPeriod,
   doubleDownPeriodLabel,
+  type DoubleDownPeriod,
 } from "@/lib/queries/double-down";
-import { DoubleDownPeriodFilter } from "./period-filter";
 import { DoubleDownSearchForm } from "./search-form";
 import { DoubleDownStatsSection } from "./stats-section";
 import { DoubleDownLogSection } from "./log-section";
@@ -20,6 +19,14 @@ import { DoubleDownChartsSection } from "./charts-section";
 export const metadata = { title: "Double Down" };
 
 const LOG_PER_PAGE = 25;
+
+/**
+ * The page is LOCKED to the last 30 days (owner rule, 2026-07-01): the period
+ * selector was removed and every section reads the fixed 30d window. The query
+ * module stays period-parametrized (shared with nothing else that varies it),
+ * but this surface always passes "30d".
+ */
+const FIXED_PERIOD: DoubleDownPeriod = "30d";
 
 /**
  * /insights/double-down — read-only tracking for the Double Down feature.
@@ -60,7 +67,7 @@ export default async function DoubleDownPage({
 }) {
   await requirePageAccess("/insights/double-down");
   const sp = await searchParams;
-  const period = parseDoubleDownPeriod(sp.period);
+  const period = FIXED_PERIOD;
   const search = (sp.q ?? "").trim();
   const pageRaw = Number.parseInt(sp.page ?? "1", 10);
   const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
@@ -76,7 +83,6 @@ export default async function DoubleDownPage({
             subtitle="Gamble-your-battle-winnings tracking — win/lose, total wager, and House-POV P&L over every started round."
           />
           <div className="flex flex-wrap items-center gap-3">
-            <DoubleDownPeriodFilter />
             <span className="text-xs text-muted-foreground">
               {doubleDownPeriodLabel(period)}
             </span>

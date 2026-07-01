@@ -322,9 +322,14 @@ export async function getDoubleDownStats(
   if (env !== "prod") return computeStats(period, excludedIds);
   // unstable_cache does not let us vary revalidate per-call from outside, so we
   // key the cache on the period AND pick the TTL via a period-specific wrapper.
+  // Cache key bumped to v3 (2026-07-01): v2 entries built before the
+  // "Battles w/ Double Down" KPI shipped (commit 4133e1d3) lack the
+  // distinctBattlesWithDd / totalBattles / battleDoubleDownRate keys, so a
+  // stale v2 hit served an old-shape object → the KPI rendered "— NaN of NaN
+  // battles". Bumping the version forces a fresh compute with the full shape.
   return unstable_cache(
     (p: DoubleDownPeriod, ids: string[]) => computeStats(p, ids),
-    ["double-down-stats-v2", period, excludedIds.join(",")],
+    ["double-down-stats-v3", period, excludedIds.join(",")],
     { revalidate: cacheTtlForDoubleDownPeriod(period), tags: ["double-down"] },
   )(period, excludedIds);
 }

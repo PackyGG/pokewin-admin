@@ -23,9 +23,22 @@ const EMPTY_STATS: DoubleDownStats = {
   battleDoubleDownRate: null,
 };
 
-function pct(v: number | null): string {
-  if (v === null || !Number.isFinite(v)) return "—";
+function pct(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
   return `${(v * 100).toFixed(1)}%`;
+}
+
+/**
+ * Render a count as an integer, never "NaN". `formatNumber(undefined)` (and
+ * `formatNumber(NaN)`) emit the literal string "NaN", which is what surfaced as
+ * "NaN of NaN battles" when a stale-shape cache hit made these fields
+ * undefined. Coercing here guarantees an integer at the render boundary even if
+ * an upstream value ever drifts to undefined/NaN again. `Number(undefined)` is
+ * NaN so the `|| 0` catches both.
+ */
+function intOrZero(v: number | null | undefined): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
 }
 
 /**
@@ -69,6 +82,14 @@ export async function DoubleDownStatsSection({
 
   const s = data;
   const houseProfit = s.netHousePnl >= 0;
+  // Defensive coercion at the render boundary: guarantees integers (never the
+  // literal "NaN" from formatNumber(undefined)) even if a value drifts.
+  const distinctBattlesWithDd = intOrZero(s.distinctBattlesWithDd);
+  const totalBattles = intOrZero(s.totalBattles);
+  // Recompute the rate here so it's always consistent with the shown counts and
+  // divide-by-zero safe (null → "—") regardless of what the aggregate returned.
+  const battleDoubleDownRate =
+    totalBattles > 0 ? distinctBattlesWithDd / totalBattles : null;
 
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5">
@@ -77,22 +98,22 @@ export async function DoubleDownStatsSection({
           Divide-by-zero safe: rate is null (→ "—") when no battles in window. */}
       <KpiTile
         label="Battles w/ Double Down"
-        value={pct(s.battleDoubleDownRate)}
-        sub={`${formatNumber(s.distinctBattlesWithDd)} of ${formatNumber(s.totalBattles)} battles`}
+        value={pct(battleDoubleDownRate)}
+        sub={`${formatNumber(distinctBattlesWithDd)} of ${formatNumber(totalBattles)} battles`}
         icon={Swords}
         accent="blue"
       />
       <KpiTile
         label="Started rounds"
-        value={formatNumber(s.totalRounds)}
-        sub={`${formatNumber(s.resolvedRounds)} resolved`}
+        value={formatNumber(intOrZero(s.totalRounds))}
+        sub={`${formatNumber(intOrZero(s.resolvedRounds))} resolved`}
         icon={Dices}
         accent="blue"
       />
       <KpiTile
         label="Win rate"
         value={pct(s.winRate)}
-        sub={`${formatNumber(s.winCount)} win · ${formatNumber(s.loseCount)} lose`}
+        sub={`${formatNumber(intOrZero(s.winCount))} win · ${formatNumber(intOrZero(s.loseCount))} lose`}
         icon={Trophy}
         accent="blue"
       />
