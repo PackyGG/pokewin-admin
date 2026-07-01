@@ -576,7 +576,19 @@ async function fetchCardsStats(setId?: string): Promise<CardsStats> {
   // `totalSets` keeps the catalog-wide value either way — it's a meta
   // figure ("how many sets exist") that doesn't change when the operator
   // is browsing a single set.
-  const where = setId ? { set_id: setId } : undefined;
+  //
+  // `"unassigned"` is the sentinel for the un-grouped backlog (`set_id IS
+  // NULL`) — the SAME sentinel `buildCardsWhere` / `fetchRarities` honour.
+  // It MUST NOT reach the query as a literal `set_id = "unassigned"`: the
+  // `set_id` column is a uuid, so Prisma throws P2023 and the whole KPI
+  // strip degrades to a permanent error tile on `/cards?set=unassigned`.
+  // Map it to `{ set_id: null }` so the aggregates scope to the backlog.
+  const where =
+    setId === "unassigned"
+      ? { set_id: null }
+      : setId
+        ? { set_id: setId }
+        : undefined;
   const [total, totalSets, priceAgg, rarityGroups] = await Promise.all([
     db.cards.count({ where }),
     db.sets.count(),

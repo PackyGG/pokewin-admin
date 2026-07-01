@@ -370,21 +370,26 @@ export default async function CardsPage({
     maxPrice: params.maxPrice,
   };
 
-  // Suspense key — anything that changes the result set re-triggers the
-  // view-matched loading fallback (and the view itself, so switching grid⇄table
-  // swaps to the right skeleton).
-  const suspenseKey = [
-    view,
-    effectiveSetId ?? "",
-    page,
-    perPage,
-    search ?? "",
-    params.rarity ?? "",
-    params.minPrice ?? "",
-    params.maxPrice ?? "",
-    sortBy ?? "",
-    sortOrder,
-  ].join("|");
+  // List Suspense key — keyed on the VIEW ONLY (grid vs table). Rationale:
+  //
+  //   - A grid⇄table switch changes the key → the boundary unmounts → the
+  //     view-matched hard skeleton swaps in. Grid and table need different
+  //     skeletons, so a real skeleton swap is the correct treatment there.
+  //   - Every OTHER navigation (paginate / sort / search / filter / set tab)
+  //     keeps the key STABLE. React therefore does NOT re-show the loading
+  //     fallback — App Router keeps the already-rendered count summary + rows
+  //     + pagination on screen while the new server payload streams, then swaps
+  //     them atomically on commit. That removes the full-list skeleton re-flash
+  //     the audit flagged on same-view page/sort/search navigations (the KPI
+  //     strip + filter bar already persisted via their own set-keyed
+  //     boundaries; only this leg was re-flashing).
+  //
+  // The global `TopProgressBar` (top of the viewport) remains the in-flight
+  // "loading" cue during that stale-content window. A row-level pending DIM is
+  // tracked as a follow-up (see the agent report) — it needs the shared
+  // pagination / FilterBar controls to expose a `useTransition` pending flag,
+  // which is out of this unit's file scope.
+  const listViewKey = `list-${view}`;
 
   const defaultCreateSetId =
     activeSet?.kind === "set" ? activeSet.setId : "";
@@ -436,7 +441,7 @@ export default async function CardsPage({
         </Suspense>
 
         <Suspense
-          key={suspenseKey}
+          key={listViewKey}
           fallback={
             <>
               {/* Count-summary line ("Showing N of M cards") placeholder. */}
