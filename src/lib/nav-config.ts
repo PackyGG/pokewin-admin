@@ -143,24 +143,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // Roadmap — internal product-planning month calendar. Each block is a
-    // planned feature; the detail page links Linear issues, detail fields,
-    // notes and resources. Icon `CalendarRange` MUST be registered in the
-    // ICONS map in `src/components/app-sidebar.tsx` (React #130) and, since
-    // `inPalette: true`, the id MUST also appear in PALETTE_ORDER (lockstep).
-    id: "nav.roadmap",
-    group: "Overview",
-    label: "Roadmap",
-    href: "/roadmap",
-    pageKey: "/roadmap",
-    icon: "CalendarRange",
-    description: "Plan features on a calendar; link Linear tasks",
-    keywords: ["roadmap", "calendar", "plan", "feature", "linear", "product"],
-    isNew: true,
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
     id: "nav.analytics",
     group: "Overview",
     label: "Analytics",
@@ -169,24 +151,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     icon: "BarChart3",
     description: "GGR, NGR, PnL charts",
     keywords: ["metrics", "chart", "ggr", "ngr", "pnl"],
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // One Piece — dedicated overview of the One Piece pack pool: lifetime
-    // stats, per-pack insights and a daily opens/revenue trend. Icon `Anchor`
-    // MUST be registered in the ICONS map in `src/components/app-sidebar.tsx`
-    // (React #130) and, since `inPalette: true`, the id MUST also appear in
-    // PALETTE_ORDER (lockstep).
-    id: "nav.one-piece",
-    group: "Overview",
-    label: "One Piece",
-    href: "/one-piece",
-    pageKey: "/one-piece",
-    icon: "Anchor",
-    description: "One Piece pack pool stats, insights & daily trend",
-    keywords: ["one piece", "onepiece", "packs", "pool", "pirate", "anchor"],
-    isNew: true,
     inSidebar: true,
     inPalette: true,
   },
@@ -286,25 +250,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inSidebar: false,
     inPalette: true,
   },
-  {
-    // Physical Withdrawals — real-world card-shipment availability controls
-    // (global withdrawals master switch + per-country physical toggle) and the
-    // fulfillment queue. The intended main page once physical withdrawals go
-    // live. Icon string `Package` is already registered in the ICONS map in
-    // `src/components/app-sidebar.tsx` (React #130); since `inPalette: true`,
-    // the id is also added to PALETTE_ORDER (lockstep).
-    id: "nav.physical",
-    group: "Overview",
-    label: "Physical",
-    href: "/physical",
-    pageKey: "/physical",
-    icon: "Package",
-    description: "Physical card-withdrawal availability & fulfillment",
-    keywords: ["physical", "shipping", "shipment", "fulfillment", "cards", "payout", "withdrawal"],
-    isNew: true,
-    inSidebar: true,
-    inPalette: true,
-  },
 
   // ── Insights (sidebar-only; absent from palette today) ─────────────────
   {
@@ -326,22 +271,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     isNew: true,
     inSidebar: true,
     inPalette: false,
-  },
-  {
-    // Numbers — signup-method breakdown. Moved here from the Overview group
-    // (owner: "move numbers page from overview to insights"). Same /numbers
-    // route + permission key; only the sidebar/palette grouping changed. Icon
-    // `Hash` is registered in the ICONS map in `src/components/app-sidebar.tsx`.
-    id: "nav.numbers",
-    group: "Insights",
-    label: "Numbers",
-    href: "/numbers",
-    pageKey: "/numbers",
-    icon: "Hash",
-    description: "Signup method breakdown",
-    keywords: ["signups", "registration", "email", "discord", "google", "steam", "auth"],
-    inSidebar: true,
-    inPalette: true,
   },
   {
     id: "nav.insights.rewards",
@@ -443,21 +372,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inSidebar: false,
     inPalette: false,
   },
-  {
-    // Forecast — unified reward-forecast hub (scenario simulation per
-    // reward type, anchored on real production baselines).
-    id: "nav.insights.forecast",
-    group: "Insights",
-    label: "Forecast",
-    href: "/insights/forecast",
-    pageKey: "/insights/forecast",
-    icon: "Gauge",
-    description: "Model reward programs before shipping a change",
-    keywords: ["forecast", "scenario", "simulate", "deposit bonus", "what-if"],
-    isNew: true,
-    inSidebar: true,
-    inPalette: true,
-  },
 
   {
     // Creator Analytics — palette-only (no sidebar link).
@@ -489,17 +403,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     // list is just the permanent root owner; void/kotha no longer see the link
     // (the route's `requireMotha` is owner-gated and would redirect them).
     usernameAllowlist: ["motha"],
-    inSidebar: true,
-    inPalette: false,
-  },
-  {
-    // Employee Board — sidebar-only.
-    id: "nav.employees",
-    group: "Employees",
-    label: "Employee Board",
-    href: "/employees",
-    pageKey: "/employees",
-    icon: "Network",
     inSidebar: true,
     inPalette: false,
   },
@@ -601,16 +504,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inSidebar: true,
     inPalette: true,
   },
-  {
-    id: "nav.transactions.rewards",
-    group: "Content",
-    label: "Reward Transactions",
-    href: "/transactions/rewards",
-    pageKey: "/transactions/rewards",
-    icon: "Receipt",
-    inSidebar: true,
-    inPalette: true,
-  },
 
   // ── Rewards ────────────────────────────────────────────────────────────
   {
@@ -679,23 +572,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // Shard Pack Opens — opens of shard-bought packs (shards spent + shards
-    // won per open) from the coin_transactions ledger. Icon string
-    // `PackageOpen` MUST be registered in the ICONS map in
-    // `src/components/app-sidebar.tsx` (React #130) — it is.
-    id: "nav.rewards.shard-opens",
-    group: "Rewards",
-    label: "Shard Pack Opens",
-    href: "/rewards/shard-opens",
-    pageKey: "/rewards/shard-opens",
-    icon: "PackageOpen",
-    description: "Opens of shard-bought packs — shards spent & won per open",
-    keywords: ["shard", "shards", "open", "opens", "pack", "currency", "wager"],
-    isNew: true,
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
     // Promo Codes — sidebar uses the Tag icon. Palette has it too.
     id: "nav.promo",
     group: "Rewards",
@@ -758,16 +634,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     icon: "TrendingUp",
     inSidebar: true,
     inPalette: true,
-  },
-  {
-    id: "nav.rewards.giveaway",
-    group: "Rewards",
-    label: "Giveaway",
-    href: "/marketing/giveaway",
-    pageKey: "/marketing/giveaway",
-    icon: "Gift",
-    inSidebar: true,
-    inPalette: false,
   },
   {
     // Affiliate tier + commission config (/creators/settings).
@@ -882,44 +748,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inSidebar: true,
     inPalette: false,
   },
-  {
-    id: "nav.audit",
-    group: "System",
-    label: "Audit Log",
-    href: "/audit",
-    pageKey: "/audit",
-    icon: "FileText",
-    description: "Every admin action, searchable",
-    keywords: ["log", "history"],
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // Monitor — health/overview of the standalone backend-monitor service.
-    // Icon string `Activity` MUST be registered in the ICONS map in
-    // `src/components/app-sidebar.tsx` (React #130) — it is. `inPalette: true`
-    // so it must also appear in PALETTE_ORDER below (lockstep).
-    id: "nav.system.monitor",
-    group: "System",
-    label: "Monitor",
-    href: "/system/monitor",
-    pageKey: "/system/monitor",
-    icon: "Activity",
-    description:
-      "Backend monitor service — health, notifications, analytics freshness",
-    keywords: [
-      "monitor",
-      "health",
-      "uptime",
-      "status",
-      "clickhouse",
-      "postgres",
-      "ntfy",
-    ],
-    isNew: true,
-    inSidebar: true,
-    inPalette: true,
-  },
 ];
 
 export const NAV_ENTRIES: NavEntry[] = RAW_NAV_ENTRIES.map((entry) =>
@@ -972,16 +800,13 @@ export function getSidebarFooterItems(): NavEntry[] {
 // references ids — all entry DATA still lives in `NAV_ENTRIES`.
 const PALETTE_ORDER: string[] = [
   "nav.dashboard",
-  "nav.roadmap",
   "nav.shifts",
   "nav.analytics",
-  "nav.one-piece",
   "nav.map",
   "nav.users",
   "nav.crm",
   "nav.deposits",
   "nav.withdrawals",
-  "nav.physical",
   "nav.creators",
   "nav.creators.analytics",
   "nav.promo",
@@ -989,11 +814,9 @@ const PALETTE_ORDER: string[] = [
   "nav.rewards.shards",
   "nav.cards",
   "nav.battles",
-  "nav.transactions.rewards",
   "nav.rewards",
   "nav.rewards.deposit-bonus",
   "nav.rewards.rakeback",
-  "nav.rewards.shard-opens",
   "nav.challenges",
   "nav.rain",
   "nav.rewards.leaderboards",
@@ -1004,8 +827,6 @@ const PALETTE_ORDER: string[] = [
   "nav.admin-users",
   "nav.security",
   "nav.geo-blocking",
-  "nav.audit",
-  "nav.system.monitor",
 ];
 
 /**
