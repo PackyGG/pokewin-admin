@@ -138,7 +138,8 @@ const cachedTopbarHouseKpis = unstable_cache(
     void blacklistIdNotIn;
     return getCanonicalMoneyKpis(new Date(cutoffIso));
   },
-  ["topbar-house-kpis-v2"],
+  // v2 → v3-dd: pulls GGR which now folds Double Down (see getGamingLegs).
+  ["topbar-house-kpis-v3-dd"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
 );
 

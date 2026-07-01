@@ -177,6 +177,31 @@ export type GamingLegs = {
   upgraderPayout: number;
   /** Upgrader bet count only, already INCLUDED in `bets`. */
   upgraderBets: number;
+  /**
+   * Double Down wager only (Σ `battle_double_down_offers.won_amount_usd`
+   * over RESOLVED rounds in window), already INCLUDED in `wager`. Do NOT
+   * add it again. 0 on a pre-DD DB (`to_regclass` guard). DD is optional
+   * gameplay on a battle win: the "wager" is the previously-won battle
+   * amount the user chooses to re-stake. On a LOSS the whole stake is
+   * forfeited (house recapture); on a WIN a payout voucher is minted
+   * (`ddPayout`). Sourced from `battle_double_down_offers` — NOT the ledger
+   * (DD money moves via the paired voucher, not a dedicated ledger type).
+   */
+  ddWager: number;
+  /**
+   * Double Down payout only (Σ paired voucher `value` for offers with
+   * `result='win'` and `won_voucher_id IS NOT NULL`, voucher origin =
+   * `battle_double_down_payout`). NOT included in `battleRefund` — passed
+   * to `gamingPayoutTotal` as the separate `ddPayout` input so both surface
+   * as first-class legs and the breakdown can show them independently.
+   * 0 on a pre-DD DB.
+   */
+  ddPayout: number;
+  /**
+   * Double Down bet count only (COUNT of RESOLVED offers in window), already
+   * INCLUDED in `bets`. 0 on a pre-DD DB.
+   */
+  ddBets: number;
 };
 
 /**
@@ -208,7 +233,7 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
     type LedgerRow = { wager: string; battle_refund: string; bets: string };
     type InvRow = { inv_payout: string };
 
-    const [ledger, inv, upg] = await Promise.all([
+    const [ledger, inv, upg, dd] = await Promise.all([
       db.$queryRawUnsafe<LedgerRow[]>(
         `WITH ${scope.sessionWindowsCte}
          SELECT
@@ -258,6 +283,14 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
       // minor asymmetry (upgrader is a smaller product line and the shared
       // reader is intentionally left untouched).
       upgraderMetrics(window),
+      // Double Down from battle_double_down_offers (real gameplay, NOT in
+      // the ledger — DD money moves via the paired payout voucher). Uses
+      // the same wholesale-creator-drop scope as `upgraderMetrics` (a
+      // superset of the session-window scope: creators are already dropped
+      // wholesale by `getMetricsScope`'s CUSTOMER_EXCLUDED_ROLES, so a
+      // per-row session-window exclusion is redundant for the tiny DD
+      // table). `null` on a pre-DD DB → contributes 0.
+      doubleDownLegs(window),
     ]);
 
     const ledgerWager = toNumber(ledger[0]?.wager);
@@ -269,16 +302,127 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
     const upgraderPayout = upg?.payout ?? 0;
     const upgraderBets = upg?.bets ?? 0;
 
+    const ddWager = dd?.wager ?? 0;
+    const ddPayout = dd?.payout ?? 0;
+    const ddBets = dd?.bets ?? 0;
+
     return {
-      // Upgrader folded into the headline legs by default.
-      wager: ledgerWager + upgraderWager,
+      // Upgrader + Double Down folded into the headline legs by default.
+      // DD wager joins `wager` and DD bets join `bets`; DD payout is passed
+      // separately as `ddPayout` (not into `battleRefund`) so
+      // `gamingPayoutTotal` sums it alongside the other legs — keeps the
+      // breakdown transparent (a caller can subtract `ddPayout` to see the
+      // pre-DD number). Losing DD rounds forfeit the stake: no `ddPayout`
+      // row on a loss → the whole DD wager stays as GGR contribution.
+      wager: ledgerWager + upgraderWager + ddWager,
       battleRefund: ledgerGamingPayout + upgraderPayout,
-      bets: ledgerBets + upgraderBets,
+      bets: ledgerBets + upgraderBets + ddBets,
       inventoryPayout,
       // Upgrader-only slices (already included above; do not re-add).
       upgraderWager,
       upgraderPayout,
       upgraderBets,
+      // Double Down-only slices (already included above; do not re-add).
+      ddWager,
+      ddPayout,
+      ddBets,
+    };
+  });
+}
+
+// ─── Double Down leg (reads battle_double_down_offers — GGR DD source) ─
+
+/** Double Down leg totals for the metrics-layer fold. */
+type DoubleDownLegs = {
+  /** Σ `won_amount_usd` over RESOLVED offers in window (the stake). */
+  wager: number;
+  /** Σ paired voucher `value` for offers with `result='win'`. */
+  payout: number;
+  /** COUNT of RESOLVED offers in window. */
+  bets: number;
+};
+
+/**
+ * Double Down gaming legs for the metrics-layer GGR fold — sourced from
+ * `battle_double_down_offers` LEFT JOIN `vouchers` on `won_voucher_id`
+ * (voucher origin `battle_double_down_payout`), matching the canonical
+ * `@/lib/queries/double-down` reader that powers the /insights/double-down
+ * surfaces and the dashboard DD panel:
+ *
+ *   • WAGER = Σ `won_amount_usd` FILTER (WHERE `result IS NOT NULL`) — the
+ *     stake, summed over RESOLVED rounds. `won_amount_usd` is the battle
+ *     winnings the user re-staked; on a LOSS the whole stake is forfeited
+ *     (house recapture — no payout row); on a WIN the paired voucher's
+ *     `value` is credited (payout, below).
+ *   • PAYOUT = Σ `vouchers.value` FILTER (WHERE `result='win'`) — the REAL
+ *     credited amount (reconciles exactly to the `voucher_redeemed` ledger
+ *     amount, verified read-only on prod in `@/lib/queries/double-down`).
+ *     NO multiplier, NO `metadata.payout_amount_usd` fallback (see the
+ *     canonical DD reader's docstring for the prior 0.9× bug).
+ *   • BETS = COUNT of RESOLVED rounds in window.
+ *
+ * Windowed on `resolved_at` (the settlement time — mirrors how
+ * `battle_refund` / `battle_excess_to_voucher` bucket by settlement, and
+ * how the DD KPI-strip stats are windowed). A pending accepted round has
+ * `resolved_at IS NULL` and therefore contributes nothing until settled —
+ * so a still-open round's stake doesn't inflate GGR.
+ *
+ * Scope: wholesale-creator-drop `role NOT IN ('admin','support','creator')`
+ * + blacklist — same shape as `upgraderMetrics` and the canonical DD
+ * reader's `customerScopeSql`. This is a superset of the session-window
+ * scope used by the ledger/inventory legs (creators are already dropped
+ * wholesale by `CUSTOMER_EXCLUDED_ROLES` in `scope.ts`), so a per-row
+ * session-window exclusion here would be a redundant no-op. The tiny DD
+ * table has no per-session `game_session_id` join anyway — DD is offered
+ * AFTER a battle win, so gating on the parent battle's session-scope would
+ * be a different (and stricter) predicate than the metrics layer uses
+ * elsewhere.
+ *
+ * Returns `null` when the connected DB has no `battle_double_down_offers`
+ * table (pre-DD snapshot) — `to_regclass` guard, same degradation as
+ * `upgraderMetrics` — so the caller contributes 0 rather than throwing
+ * `42P01`.
+ */
+async function doubleDownLegs(
+  window: MetricWindow,
+): Promise<DoubleDownLegs | null> {
+  return withTiming("metrics.doubleDown", async () => {
+    const db = await getDb();
+
+    // Probe: skip entirely if the table is absent (pre-DD DB).
+    const probe = await db.$queryRaw<{ exists: string | null }[]>`
+      SELECT to_regclass('public.battle_double_down_offers')::text AS exists`;
+    if (probe[0]?.exists == null) return null;
+
+    const excluded = await getExcludedUserIds();
+    const blacklist = blacklistNotInClause("id", excluded);
+    const since = window.since;
+
+    type Row = { wager: string; payout: string; bets: string };
+    const rows = await db.$queryRawUnsafe<Row[]>(
+      `WITH real_users AS (
+         SELECT id FROM "user"
+         WHERE role NOT IN ('admin', 'support', 'creator') ${blacklist}
+       )
+       SELECT
+         COALESCE(SUM(o.won_amount_usd::numeric), 0)::text AS wager,
+         COALESCE(SUM(CASE WHEN o.result = 'win'
+                           THEN v.value::numeric ELSE 0 END), 0)::text AS payout,
+         COUNT(*)::text AS bets
+       FROM battle_double_down_offers o
+       LEFT JOIN vouchers v
+         ON v.id = o.won_voucher_id
+        AND v.origin = 'battle_double_down_payout'
+       WHERE o.result IS NOT NULL
+         AND o.user_id IN (SELECT id FROM real_users)
+         ${sinceClause("o.resolved_at", since)}`,
+    );
+
+    const r = rows[0];
+    return {
+      wager: toNumber(r?.wager),
+      payout: toNumber(r?.payout),
+      bets: toNumber(r?.bets),
     };
   });
 }
@@ -513,14 +657,17 @@ export async function getWindowMetrics(opts: {
       getRewardCost(window),
     ]);
 
-    // legs already include upgrader (folded in by getGamingLegs from
-    // upgrader_games). `battleRefund` carries the ledger gaming-payout legs
-    // PLUS upgrader payout; `wager`/`bets` likewise include upgrader. So we
-    // pass them straight through — no separate upgrader term here.
+    // legs already include upgrader + double down (folded in by
+    // getGamingLegs). `battleRefund` carries the ledger gaming-payout legs
+    // PLUS upgrader payout; `wager`/`bets` likewise include upgrader AND
+    // DD. DD payout is carried on the separate `ddPayout` field so
+    // `gamingPayoutTotal` sums it as its own leg (kept transparent for
+    // future breakdowns). Pass them straight through — no separate term.
     const wager = legs.wager;
     const gamingPayout = gamingPayoutTotal({
       inventoryPayout: legs.inventoryPayout,
       battleRefund: legs.battleRefund,
+      ddPayout: legs.ddPayout,
     });
     const bets = legs.bets;
 
@@ -662,10 +809,16 @@ export async function getDailyGamingMetrics(
 
     // Probe once: does this DB carry upgrader_games? (pre-upgrader snapshot
     // returns NULL, not an error). Gates the per-day upgrader read so it
-    // degrades to 0 rather than throwing 42P01.
-    const upgProbe = await db.$queryRaw<{ exists: string | null }[]>`
-      SELECT to_regclass('public.upgrader_games')::text AS exists`;
+    // degrades to 0 rather than throwing 42P01. Same probe pattern for
+    // battle_double_down_offers (pre-DD snapshot).
+    const [upgProbe, ddProbe] = await Promise.all([
+      db.$queryRaw<{ exists: string | null }[]>`
+        SELECT to_regclass('public.upgrader_games')::text AS exists`,
+      db.$queryRaw<{ exists: string | null }[]>`
+        SELECT to_regclass('public.battle_double_down_offers')::text AS exists`,
+    ]);
     const hasUpgrader = upgProbe[0]?.exists != null;
+    const hasDoubleDown = ddProbe[0]?.exists != null;
 
     type LedgerDayRow = {
       date: Date;
@@ -677,8 +830,9 @@ export async function getDailyGamingMetrics(
     };
     type InvDayRow = { date: Date; inv_payout: string };
     type UpgDayRow = { date: Date; upg_wager: string; upg_payout: string };
+    type DdDayRow = { date: Date; dd_wager: string; dd_payout: string };
 
-    const [ledgerRows, invRows, upgRows] = await Promise.all([
+    const [ledgerRows, invRows, upgRows, ddRows] = await Promise.all([
       db.$queryRawUnsafe<LedgerDayRow[]>(
         `WITH ${scope.sessionWindowsCte}
          SELECT
@@ -759,11 +913,33 @@ export async function getDailyGamingMetrics(
              GROUP BY DATE(created_at)`,
           )
         : Promise.resolve([] as UpgDayRow[]),
+      // Per-day Double Down wager + payout from battle_double_down_offers,
+      // bucketed by resolved_at (settlement time — mirrors the headline
+      // fold in doubleDownLegs). Uses the same wholesale-creator-drop
+      // `upgScope`. WAGER = Σ won_amount_usd over RESOLVED offers;
+      // PAYOUT = Σ paired voucher `value` on wins. Skipped on a pre-DD DB.
+      hasDoubleDown
+        ? db.$queryRawUnsafe<DdDayRow[]>(
+            `SELECT
+               DATE(o.resolved_at) AS date,
+               COALESCE(SUM(o.won_amount_usd::numeric), 0)::text AS dd_wager,
+               COALESCE(SUM(CASE WHEN o.result = 'win'
+                                 THEN v.value::numeric ELSE 0 END), 0)::text AS dd_payout
+             FROM battle_double_down_offers o
+             LEFT JOIN vouchers v
+               ON v.id = o.won_voucher_id
+              AND v.origin = 'battle_double_down_payout'
+             WHERE o.result IS NOT NULL
+               AND o.user_id IN ${upgScope}
+               ${sinceClause("o.resolved_at", since)}
+             GROUP BY DATE(o.resolved_at)`,
+          )
+        : Promise.resolve([] as DdDayRow[]),
     ]);
 
-    // Merge the two day-keyed sets. A day can appear in either (wager-only
-    // days, or inventory-payout-only days when cards from an earlier wager
-    // settle later) — union the key space so neither side is dropped.
+    // Merge the day-keyed sets. A day can appear in any (wager-only days,
+    // inventory-payout-only days when cards from an earlier wager settle
+    // later, DD-only days) — union the key space so no side is dropped.
     const byDate = new Map<
       string,
       {
@@ -773,6 +949,7 @@ export async function getDailyGamingMetrics(
         rewardCostExclRain: number;
         rainWinTotal: number;
         rainTipTotal: number;
+        ddPayout: number;
       }
     >();
     const blank = () => ({
@@ -782,6 +959,7 @@ export async function getDailyGamingMetrics(
       rewardCostExclRain: 0,
       rainWinTotal: 0,
       rainTipTotal: 0,
+      ddPayout: 0,
     });
     const dayKey = (d: Date) => new Date(d).toISOString().slice(0, 10);
 
@@ -811,12 +989,25 @@ export async function getDailyGamingMetrics(
       e.battleRefund += toNumber(r.upg_payout);
       byDate.set(key, e);
     }
+    // Fold Double Down into the day's gaming legs: dd_wager → wager,
+    // dd_payout → the separate `ddPayout` field (passed to
+    // gamingPayoutTotal alongside battleRefund) so daily GGR =
+    // pack + battle + upgrader + double-down and Σ daily reconciles with
+    // the headline. Bucketed by resolved_at (same as the headline fold).
+    for (const r of ddRows) {
+      const key = dayKey(r.date);
+      const e = byDate.get(key) ?? blank();
+      e.wager += toNumber(r.dd_wager);
+      e.ddPayout += toNumber(r.dd_payout);
+      byDate.set(key, e);
+    }
 
     return [...byDate.entries()]
       .map(([date, e]) => {
         const gamingPayout = gamingPayoutTotal({
           inventoryPayout: e.inventoryPayout,
           battleRefund: e.battleRefund,
+          ddPayout: e.ddPayout,
         });
         const ggrValue = ggrFormula({ wager: e.wager, gamingPayout });
         const ngrValue = ngrFormula({

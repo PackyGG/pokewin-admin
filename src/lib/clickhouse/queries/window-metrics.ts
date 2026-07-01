@@ -63,6 +63,20 @@ import { toNumber } from "@/lib/utils/decimal";
  * Upgrader is FOLDED IN (same as the PG twin): its bet_amount joins wager and
  * won_amount joins the payout side, so headline GGR = pack + battle + upgrader.
  *
+ * TODO(dd): Double Down is NOT folded in here — the source table
+ * `battle_double_down_offers` is not yet mirrored to ClickHouse
+ * (`packy_prod.public_battle_double_down_offers` does not exist). The PG
+ * twin (`getGamingLegs` / `getWindowMetrics.pgRead`) folds DD via
+ * `doubleDownLegs` — wager = Σ `won_amount_usd` over resolved rounds,
+ * payout = Σ paired voucher `value` on wins. Until DD lands in the CH
+ * mirror this twin will UNDER-count GGR by the DD contribution (small
+ * today — the feature is a few days old with tiny volume — but the drift
+ * grows as DD picks up). Documented gap; when DD is mirrored: add a
+ * `public_battle_double_down_offers` FINAL leg here mirroring the PG one
+ * (wager Σ `won_amount_usd` on `result IS NOT NULL`, payout Σ v.value on
+ * `result='win'` joined by `won_voucher_id` to `public_vouchers` with
+ * `origin='battle_double_down_payout'`), bucketed by `resolved_at`.
+ *
  * SESSION-WINDOW CTE OMITTED (contract g): the PG twin uses
  * `getMetricsScope()` — a session-window predicate that KEEPS creators but
  * drops their on-session rows per-row. This ClickHouse module instead uses a

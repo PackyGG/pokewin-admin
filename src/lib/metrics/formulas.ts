@@ -64,6 +64,18 @@ export type GamingPayoutInput = {
    * Pass 0 when upgrader is reported separately / out of scope.
    */
   upgraderPayout?: number;
+  /**
+   * Double Down payout for the window. Source: the paired payout voucher's
+   * `value` for offers where `result='win'` (voucher origin =
+   * `battle_double_down_payout`) — the REAL credited amount (reconciles to
+   * the `voucher_redeemed` ledger amount). NOT in the ledger (Double Down
+   * money moves via the voucher, not a dedicated ledger type), so like the
+   * upgrader it must be folded in here to make GGR = pack + battle +
+   * upgrader + double-down. Pass 0 when DD is reported separately / out of
+   * scope. Losing DD rounds forfeit the STAKE — that recapture is booked on
+   * the wager side (DD wager IN, no DD payout on the loss).
+   */
+  ddPayout?: number;
 };
 
 /**
@@ -74,6 +86,7 @@ export type GamingPayoutInput = {
  *                + ledger gaming-payout legs
  *                  (|battle_refund| + |battle_excess_to_voucher|)
  *                + upgraderPayout
+ *                + ddPayout (Double Down winner voucher value)
  *
  * NEUTRAL conversions (card_sale, card_exchange, voucher_redeemed, …) are
  * intentionally NOT part of this — they are disposals of value the user
@@ -83,7 +96,8 @@ export function gamingPayoutTotal(input: GamingPayoutInput): number {
   return (
     input.inventoryPayout +
     input.battleRefund +
-    (input.upgraderPayout ?? 0)
+    (input.upgraderPayout ?? 0) +
+    (input.ddPayout ?? 0)
   );
 }
 
@@ -118,6 +132,7 @@ export function ggrFromLegs(input: {
   inventoryPayout: number;
   battleRefund: number;
   upgraderPayout?: number;
+  ddPayout?: number;
 }): number {
   return ggr({
     wager: input.wager,
@@ -125,6 +140,7 @@ export function ggrFromLegs(input: {
       inventoryPayout: input.inventoryPayout,
       battleRefund: input.battleRefund,
       upgraderPayout: input.upgraderPayout,
+      ddPayout: input.ddPayout,
     }),
   });
 }

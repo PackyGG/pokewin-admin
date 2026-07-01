@@ -485,6 +485,9 @@ const EMPTY_GAMING_LEGS: GamingLegs = {
   upgraderWager: 0,
   upgraderPayout: 0,
   upgraderBets: 0,
+  ddWager: 0,
+  ddPayout: 0,
+  ddBets: 0,
 };
 
 /** Neutral all-zero fallback for the reward cost. */

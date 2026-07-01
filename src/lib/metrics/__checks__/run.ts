@@ -310,6 +310,26 @@ check("headline GGR = pack + battle + upgrader (1200 − 930 = 270)", approx(gUp
 check("upgrader-folded GGR = base GGR + upgrader GGR (250 + 20)", approx(gUpg, g + (200 - 180)));
 check("ggrFromLegs folds upgrader payout too", approx(ggrFromLegs({ wager: 1200, inventoryPayout: 700, battleRefund: 50, upgraderPayout: 180 }), 270));
 
+// Double Down fold (headline GGR = pack + battle + upgrader + double-down).
+// getGamingLegs sources DD from battle_double_down_offers and adds
+// won_amount_usd → wager, paired voucher `value` on wins → ddPayout, so the
+// pure formula must reflect that addition. Scenario extension: add DD wager
+// 100 + DD payout 45 to the prior upgrader-included case. New totals:
+// wager 1200 + 100 = 1300; payout 700 + 50 + 180 + 45 = 975; GGR = 325
+// (= prior 270 + DD's own 100 − 45 = 55). Losing DD rounds forfeit the
+// stake and DO NOT emit a payout row, so a losing round adds 100 to wager
+// with 0 payout — pure recapture, house-POV positive.
+const gpDd = gamingPayoutTotal({ inventoryPayout: 700, battleRefund: 50, upgraderPayout: 180, ddPayout: 45 });
+check("gamingPayout includes double-down payout", approx(gpDd, 975));
+const gDd = ggr({ wager: 1200 + 100, gamingPayout: gpDd });
+check("headline GGR = pack + battle + upgrader + DD (1300 − 975 = 325)", approx(gDd, 325));
+check("DD-folded GGR = upgrader GGR + DD GGR (270 + 55)", approx(gDd, gUpg + (100 - 45)));
+check("ggrFromLegs folds DD payout too", approx(ggrFromLegs({ wager: 1300, inventoryPayout: 700, battleRefund: 50, upgraderPayout: 180, ddPayout: 45 }), 325));
+// Pure-loss DD round (stake forfeited, no payout) recaptures the whole stake.
+const gpDdLoss = gamingPayoutTotal({ inventoryPayout: 700, battleRefund: 50, upgraderPayout: 180, ddPayout: 0 });
+const gDdLoss = ggr({ wager: 1200 + 100, gamingPayout: gpDdLoss });
+check("DD pure-loss round adds full stake to GGR (recapture)", approx(gDdLoss, gUpg + 100));
+
 // ─── 4. Reward types reduce NGR, not GGR ─────────────────────────────
 // $250 GGR, then $40 deposit_bonus + $10 rakeback reward cost (excl rain).
 const n = ngr({ ggr: g, rewardCostExclRain: 50 });

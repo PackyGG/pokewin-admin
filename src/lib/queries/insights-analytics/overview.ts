@@ -551,7 +551,9 @@ const cachedWindowMetrics = unstable_cache(
     void sessionWindowsCte;
     return getWindowMetrics({ window: { since: new Date(sinceIso) } });
   },
-  ["insights-analytics-overview-window-metrics-v1"],
+  // v1 → v2-dd: GGR now folds Double Down (`doubleDownLegs`) into the
+  // headline. Fresh key forces a re-fetch on rollout.
+  ["insights-analytics-overview-window-metrics-v2-dd"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
 );
 

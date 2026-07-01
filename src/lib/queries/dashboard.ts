@@ -204,7 +204,10 @@ async function windowMetricsForPeriodInner(
 // …, all 300s).
 const cachedLifetimeWindowMetrics = unstable_cache(
   windowMetricsForPeriodInner,
-  ["dashboard-window-metrics-lifetime-v1"],
+  // Bumped v1 → v2-dd: GGR now folds Double Down (`doubleDownLegs`) into
+  // the headline wager + payout — see `getGamingLegs`. Fresh key forces a
+  // re-fetch on rollout so the corrected number materializes immediately.
+  ["dashboard-window-metrics-lifetime-v2-dd"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
 );
 
@@ -214,7 +217,8 @@ const cachedLifetimeWindowMetrics = unstable_cache(
 // (passed as the first arg) so different rolling chips never collide.
 const cachedRollingWindowMetrics = unstable_cache(
   windowMetricsForPeriodInner,
-  ["dashboard-window-metrics-rolling-v1"],
+  // Bumped v1 → v2-dd: GGR now folds Double Down.
+  ["dashboard-window-metrics-rolling-v2-dd"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 
@@ -274,7 +278,9 @@ const cachedKpiWindowMetrics = unstable_cache(
   // figure instead of the headline. Forcing a fresh cache miss on the
   // rollout guarantees the new label/placement materializes on the first
   // request (no carry-over of the previous payload's wiring).
-  ["dashboard-window-metrics-kpi-v3"],
+  // v3 → v4-dd: GGR now includes Double Down (see getGamingLegs). Bump
+  // guarantees the new fold materializes on the first request after deploy.
+  ["dashboard-window-metrics-kpi-v4-dd"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 
