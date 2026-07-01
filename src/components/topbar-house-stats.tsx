@@ -1,14 +1,22 @@
-import { ArrowDownToLine, ArrowUpFromLine, Coins, TrendingUp } from "lucide-react";
+import {
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  Coins,
+  TrendingUp,
+  Users,
+} from "lucide-react";
 import { getInsightsHubWager } from "@/lib/queries/insights-analytics/hub-wager";
 import { getCostBreakdownLifetimeCached } from "@/lib/queries/insights-analytics/cost-breakdown";
+import { getTotalUserCount } from "@/lib/queries/dashboard";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
-import { formatCompactUsd } from "@/lib/utils/format";
+import { formatCompactUsd, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
 /**
  * Admin-only "house at a glance" pills for the top bar — LIFETIME wager,
- * deposit, withdrawal, and gaming margin (GGR), shown to the RIGHT of the
- * sidebar toggle + breadcrumbs.
+ * deposit, withdrawal, total users, and gaming margin (GGR), shown to the
+ * RIGHT of the sidebar toggle + breadcrumbs. Pill order: Wager · Deposits ·
+ * Withdrawals · Users · GGR (Users sits immediately to the LEFT of GGR).
  *
  * DATA (the owner-trusted lifetime stack — the SAME reads the /insights pages
  * use, so the pills equal the /insights lifetime overview BY CONSTRUCTION):
@@ -21,6 +29,12 @@ import { cn } from "@/lib/utils";
  *     /insights/real-numbers also read (same `getCostBreakdown("all", …, 365)`
  *     assembly). GGR = `.ggr`; Deposits = the `residual:deposit` bridge row;
  *     Withdrawals = `.cardWithdrawals`.
+ *   • Users ← `getTotalUserCount` — reuses the dashboard's indexed,
+ *     5-min-cached `cachedUserCounts` (COUNT(*) FROM "user", staff + blacklist
+ *     excluded), so the pill equals the dashboard's old "Total Users" box BY
+ *     CONSTRUCTION and dedupes against the dashboard's own read. Neutral count
+ *     → BLUE (House-POV colours are money-only). This figure replaces the
+ *     Total Users tile that used to live on /dashboard.
  *
  * WHY SHARED CACHE: the pills used to flash "—" on a cold load because the
  * topbar's lifetime read had its OWN `unstable_cache` key, separate from the
@@ -49,21 +63,33 @@ export async function TopbarHouseStats() {
   // Two independent legs so a cold/slow cost-breakdown read degrades only its
   // three pills (deposits / withdrawals / GGR) to "—" without taking down the
   // lighter, separately-cached wager pill.
-  const [{ data: wager, error: wagerError }, { data: cb, error: cbError }] =
-    await Promise.all([
-      safeQuery(
-        () => getInsightsHubWager(),
-        0,
-        "topbar.houseStats.wager",
-        REWARD_QUERY_TIMEOUT_MS,
-      ),
-      safeQuery(
-        () => getCostBreakdownLifetimeCached(),
-        null,
-        "topbar.houseStats.costBreakdown",
-        REWARD_QUERY_TIMEOUT_MS,
-      ),
-    ]);
+  const [
+    { data: wager, error: wagerError },
+    { data: cb, error: cbError },
+    { data: totalUsers, error: usersError },
+  ] = await Promise.all([
+    safeQuery(
+      () => getInsightsHubWager(),
+      0,
+      "topbar.houseStats.wager",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getCostBreakdownLifetimeCached(),
+      null,
+      "topbar.houseStats.costBreakdown",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    // Total users — its OWN leg (reuses the dashboard's indexed, 5-min-cached
+    // `cachedUserCounts`), so a slow/cold user-count read degrades only its
+    // own pill without touching wager or the cost-breakdown pills.
+    safeQuery(
+      () => getTotalUserCount(),
+      0,
+      "topbar.houseStats.totalUsers",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+  ]);
 
   // Project the three figures out of the full shared CostBreakdown. A residual
   // bridge row with a zero total is omitted from `lines`, so a missing deposit
@@ -80,7 +106,9 @@ export async function TopbarHouseStats() {
   // cold/slow read never blanks the other's pills.
   const wagerFailed = wagerError !== null;
   const cbFailed = cbError !== null;
+  const usersFailed = usersError !== null;
   const ggrPositive = data.ggr >= 0;
+  const totalUsersCount = totalUsers ?? 0;
 
   return (
     <div className="hidden items-center gap-1.5 md:flex">
@@ -114,6 +142,19 @@ export async function TopbarHouseStats() {
           cbFailed ? "unavailable" : usd(data.withdrawals)
         }`}
       />
+      {/* Total users — neutral count, so BLUE (House-POV colours are for
+          money only; a headcount is neither a house win nor loss). Sits
+          immediately to the LEFT of the GGR pill. */}
+      <HouseStatPill
+        className="hidden lg:inline-flex"
+        tone="blue"
+        icon={<Users className="size-3.5 shrink-0" aria-hidden />}
+        label="Users"
+        value={usersFailed ? "—" : formatNumber(totalUsersCount)}
+        title={`Lifetime total users (real users, staff excluded — same source as the dashboard Total Users box) · ${
+          usersFailed ? "unavailable" : formatNumber(totalUsersCount)
+        }`}
+      />
       <HouseStatPill
         className="hidden xl:inline-flex"
         tone={ggrPositive ? "emerald" : "rose"}
@@ -128,10 +169,11 @@ export async function TopbarHouseStats() {
   );
 }
 
-const TONE_CLASSES: Record<"emerald" | "rose", string> = {
+const TONE_CLASSES: Record<"emerald" | "rose" | "blue", string> = {
   emerald:
     "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
   rose: "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-400",
+  blue: "border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-400",
 };
 
 function HouseStatPill({
@@ -142,7 +184,7 @@ function HouseStatPill({
   title,
   className,
 }: {
-  tone: "emerald" | "rose";
+  tone: "emerald" | "rose" | "blue";
   icon: React.ReactNode;
   label: string;
   value: string;
@@ -177,6 +219,7 @@ export function TopbarHouseStatsSkeleton() {
     <div className="hidden items-center gap-1.5 md:flex" aria-hidden>
       <SkeletonPill className="hidden md:inline-flex" />
       <SkeletonPill className="hidden md:inline-flex" />
+      <SkeletonPill className="hidden lg:inline-flex" />
       <SkeletonPill className="hidden lg:inline-flex" />
       <SkeletonPill className="hidden xl:inline-flex" />
     </div>

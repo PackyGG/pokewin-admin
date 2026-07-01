@@ -1297,6 +1297,44 @@ export async function getLifetimeHouseTotals(): Promise<{
 }
 
 /**
+ * Lifetime total-user count for the admin top-bar pill (shown on EVERY admin
+ * page, to the LEFT of the GGR pill).
+ *
+ * Reuses the EXACT same `cachedUserCounts` helper (indexed `COUNT(*) FROM
+ * "user"`, staff + blacklist excluded, `unstable_cache` 300s) that backs the
+ * dashboard's "Total Users" figure — so the pill equals the dashboard's Total
+ * Users box BY CONSTRUCTION and, because the cache key is identical, the call
+ * dedupes against the dashboard's own read (zero extra DB pressure once warm).
+ *
+ * The start-of-day/week/month args are part of `cachedUserCounts`' cache key
+ * but only the `total` field is read here; the same start-of-day the dashboard
+ * computes is passed so the cache key lines up within the 5-min TTL. Returns 0
+ * on a cold/failed read (the caller wraps this in `safeQuery` + `<Suspense>`,
+ * degrading to a "—" pill rather than blocking the header shell).
+ */
+export async function getTotalUserCount(): Promise<number> {
+  const blacklistIdNotIn = blacklistNotInClause(
+    "id",
+    await getExcludedUserIds(),
+  );
+  const now = new Date();
+  const startOfDay = new Date(now);
+  startOfDay.setUTCHours(0, 0, 0, 0);
+  const startOfWeek = new Date(startOfDay);
+  startOfWeek.setUTCDate(startOfDay.getUTCDate() - startOfDay.getUTCDay());
+  const startOfMonth = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+  );
+  const userCounts = await cachedUserCounts(
+    blacklistIdNotIn,
+    startOfDay.toISOString(),
+    startOfWeek.toISOString(),
+    startOfMonth.toISOString(),
+  );
+  return Number(userCounts[0]?.total ?? 0);
+}
+
+/**
  * Per-request memoized. The dashboard page streams several independent
  * Suspense segments (KPI strips, charts, the activity count strip) that
  * each read these stats; `cache()` ensures the heavy aggregate runs

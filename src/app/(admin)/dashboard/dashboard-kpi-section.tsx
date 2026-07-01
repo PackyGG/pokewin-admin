@@ -2,12 +2,10 @@
 
 import { useCallback, useState, useTransition } from "react";
 import {
-  Users,
   Percent,
   Coins,
   BadgeDollarSign,
   HandCoins,
-  Gauge,
   TrendingUp,
   TrendingDown,
   Loader2,
@@ -28,10 +26,17 @@ import type { KpiWindowPayload } from "./kpi-window-data";
 
 /**
  * Window-independent SNAPSHOT tile values — lifetime / fixed-window figures
- * that do NOT change with the today/24h toggle (Total Users, FTDs 24h,
- * Depositors, Avg Deposit, Deposits/Hour, Avg RTP, Avg P&L 7d). Computed once on the
- * server from the eager "today" stats and rendered without a toggle (an
- * honest UI — no toggle on a box whose number can't move).
+ * that do NOT change with the today/24h toggle (FTDs 24h, Depositors, Avg
+ * RTP, Avg P&L 7d). Computed once on the server from the eager "today" stats
+ * and rendered without a toggle (an honest UI — no toggle on a box whose
+ * number can't move).
+ *
+ * NOTE: the lifetime Total Users figure now lives in the admin top-bar pill
+ * (to the LEFT of the GGR pill), and the Avg Deposit + Deposits/Hour tiles
+ * were removed. `usersTotal/usersToday/usersWeek`, `avgDeposit`, and
+ * `depositsPerHour24h/depositsPerHour7d` are therefore no longer rendered
+ * here, but remain on the type because the server page still computes them
+ * (e.g. `usersTotal` drives the Depositors "% of users" footer).
  */
 export type KpiSnapshotValues = {
   usersTotal: number;
@@ -325,9 +330,10 @@ function StaticWindowLabel({ label }: { label: string }) {
  *
  * Renders the period-bound KPI boxes (GGR, Wager [Total + Organic in one
  * merged box], Deposits/Withdrawals [merged into one single tile]) with a
- * per-box today/24h toggle, plus
- * the window-independent snapshot boxes (Total Users, FTDs 24h, Depositors,
- * Avg Deposit, Deposits/Hour, Avg RTP, Avg P&L 7d) reskinned onto the same panel design.
+ * per-box today/24h toggle, plus the window-independent snapshot boxes (FTDs
+ * 24h, Depositors, Avg RTP, Avg P&L 7d) reskinned onto the same panel design.
+ * (Total Users moved to the top-bar pill; Avg Deposit + Deposits/Hour tiles
+ * were removed.)
  *
  * The "today" payload is rendered eagerly (the active default window). The
  * rolling 24h payload is fetched LAZILY (one server action) the first time
@@ -633,21 +639,6 @@ export function DashboardKpiSection({
           (not a toggle). Reskinned onto the same panel design. */}
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8">
         <KpiPanel
-          title="Total Users"
-          tint="blue"
-          icon={Users}
-          headerRight={<StaticWindowLabel label="lifetime" />}
-          footer={
-            <p className="text-stat-label">
-              +{formatNumber(snapshot.usersToday)} today, +
-              {formatNumber(snapshot.usersWeek)} this week
-            </p>
-          }
-        >
-          <PlainHero value={snapshot.usersTotal} format="number" />
-        </KpiPanel>
-
-        <KpiPanel
           title="FTDs"
           tint="amber"
           icon={HandCoins}
@@ -676,34 +667,6 @@ export function DashboardKpiSection({
           }
         >
           <PlainHero value={snapshot.uniqueDepositors} format="number" />
-        </KpiPanel>
-
-        <KpiPanel
-          title="Avg Deposit"
-          tint="cyan"
-          icon={Coins}
-          headerRight={<StaticWindowLabel label="lifetime" />}
-          footer={<p className="text-stat-label">Across all users (lifetime)</p>}
-        >
-          <PlainHero value={snapshot.avgDeposit} format="currency" />
-        </KpiPanel>
-
-        <KpiPanel
-          title="Deposits / Hour"
-          tint="emerald"
-          icon={Gauge}
-          headerRight={<StaticWindowLabel label="24h" />}
-          footer={
-            <p className="text-stat-label">
-              last 24h avg · 7d {snapshot.depositsPerHour7d.toFixed(1)}/hr
-            </p>
-          }
-        >
-          {/* Fractional rate — render directly (not AnimatedNumber, whose
-              "number" format rounds to an integer and would drop the .1). */}
-          <div className="text-stat-value truncate tabular-nums">
-            {snapshot.depositsPerHour24h.toFixed(1)}
-          </div>
         </KpiPanel>
 
         <KpiPanel
