@@ -105,10 +105,14 @@ export type {
  *     The aggregate + log are cached (unstable_cache) + timeout-wrapped at the
  *     call site, and the lifetime window is bounded (windowed, capped) so no
  *     unbounded scan ships.
- *   • The "how many battles use Double Down" DENOMINATOR (total battles in the
- *     window, added to the KPI aggregate) is INDEX-SERVED: EXPLAIN ANALYZE
- *     (read-only, prod) → Index Only Scan using idx_battles_status_created_at
- *     on battles(created_at >= since). No Seq Scan on the large battles table.
+ *   • The "how many battles use Double Down" DENOMINATOR (total battles SINCE
+ *     LAUNCH, added to the KPI aggregate) is INDEX-SERVED: EXPLAIN (ANALYZE,
+ *     BUFFERS) (read-only, prod) → Index Only Scan using
+ *     idx_battles_status_created_at on battles(created_at >= GREATEST(since,
+ *     min(offer.created_at))). No Seq Scan on the large battles table (the
+ *     min() launch subquery is a tiny Seq Scan on the offers table). The window
+ *     is FLOORED at the Double Down launch instant so the adoption rate is not
+ *     diluted by battles from before the feature existed (owner rule).
  */
 
 // ── Row mapping ───────────────────────────────────────────────────────────────
@@ -239,11 +243,19 @@ async function computeStats(
   //       the NUMERATOR of "how many battles do double down" (distinct battles
   //       with a STARTED round; customer-scoped, same predicate as the rest of
   //       the strip). Seq-scans the tiny offers table (planner-optimal, flagged).
-  //   (2) total battles in the SAME window — the DENOMINATOR. Index-served:
-  //       EXPLAIN ANALYZE (read-only, prod) → Index Only Scan using
-  //       idx_battles_status_created_at on battles(created_at >= since). NOT
-  //       customer-scoped (a battle has no single owner) — it is the whole
-  //       battle population the window covers.
+  //   (2) total battles SINCE DOUBLE DOWN LAUNCHED — the DENOMINATOR. Owner
+  //       rule (2026-07-01): "count from the time we added it, not lifetime".
+  //       DD is only a few days old, so counting the full 30d window here
+  //       (battles from BEFORE DD existed) massively understated the adoption
+  //       rate (~0.11% vs the real ~13.8%). The launch instant is derived IN
+  //       SQL — min(created_at) over the offers table — so nothing is hardcoded
+  //       and it self-adapts. GREATEST(${since}, launch) floors the window at
+  //       launch today and gracefully clamps back to the 30d page window once
+  //       the feature is >30d old. Index-served: EXPLAIN (ANALYZE, BUFFERS)
+  //       (read-only, prod) → Index Only Scan using idx_battles_status_created_at
+  //       on battles; the min() subquery is a tiny Seq Scan on the offers table.
+  //       NO Seq Scan on the large battles table. NOT customer-scoped (a battle
+  //       has no single owner) — it is the whole battle population since launch.
   const [rows, battleCountRows] = await Promise.all([
     db.$queryRaw<
       {
@@ -276,7 +288,10 @@ async function computeStats(
     db.$queryRaw<{ total_battles: bigint }[]>(Prisma.sql`
       SELECT count(*) AS total_battles
       FROM battles
-      WHERE created_at >= ${since}
+      WHERE created_at >= GREATEST(
+        ${since},
+        (SELECT min(created_at) FROM battle_double_down_offers)
+      )
     `),
   ]);
 
@@ -322,14 +337,17 @@ export async function getDoubleDownStats(
   if (env !== "prod") return computeStats(period, excludedIds);
   // unstable_cache does not let us vary revalidate per-call from outside, so we
   // key the cache on the period AND pick the TTL via a period-specific wrapper.
-  // Cache key bumped to v3 (2026-07-01): v2 entries built before the
-  // "Battles w/ Double Down" KPI shipped (commit 4133e1d3) lack the
-  // distinctBattlesWithDd / totalBattles / battleDoubleDownRate keys, so a
-  // stale v2 hit served an old-shape object → the KPI rendered "— NaN of NaN
-  // battles". Bumping the version forces a fresh compute with the full shape.
+  // Cache key bumped to v4 (2026-07-01): the MEANING of the denominator changed
+  // — totalBattles (and thus battleDoubleDownRate) is now floored at the Double
+  // Down LAUNCH instant (GREATEST(since, min(offer.created_at))) instead of the
+  // full 30d window, so a stale v4-predecessor hit would serve the old diluted
+  // ~0.11% rate instead of the real ~13.8%. Bumping the version forces a fresh
+  // compute with the launch-floored denominator. (v3 first shipped the
+  // distinctBattlesWithDd / totalBattles / battleDoubleDownRate keys — commit
+  // 4133e1d3; before that a stale v2 hit rendered "— NaN of NaN battles".)
   return unstable_cache(
     (p: DoubleDownPeriod, ids: string[]) => computeStats(p, ids),
-    ["double-down-stats-v3", period, excludedIds.join(",")],
+    ["double-down-stats-v4", period, excludedIds.join(",")],
     { revalidate: cacheTtlForDoubleDownPeriod(period), tags: ["double-down"] },
   )(period, excludedIds);
 }
