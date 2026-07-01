@@ -810,3 +810,61 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS admin_audit_events_target_user_id_idx
 --     ON game_sessions (game_type);
 -- (NOT recommended yet — a low-cardinality game_type index on a 653k hot table
 -- is write-amplifying and the current offers-driven plan is optimal.)
+
+-- =============================================================================
+-- #23+ — 2026-07-01 full-audit sweep (parallel per-surface EXPLAIN findings)
+-- MAIN is read-only; agents NEVER apply — owner applies these CONCURRENTLY.
+-- Each was read-only EXPLAIN-verified as a seq-scan on the current prod DB
+-- unless noted. Reads are cache+timeout+safeQuery protected in the meantime.
+-- =============================================================================
+
+-- #23 cards list — set_id/created_at (50.5k-row cards table seq-scans on the
+-- list order-by + per-set count + rarity groupBy; only PK/tcgplayer/card_number
+-- /type indexes exist). Also serves /cards?set=<uuid> filtering.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_cards_set_id_created_at
+  ON cards (set_id, created_at DESC);
+
+-- #24 deposits list — partial on type='deposit' (getDepositTransactions scans
+-- ~855k-1.08M ledger rows via idx_ledger_tx_created_at filtering type inline;
+-- #1 leads with status so cannot serve `type='deposit' ORDER BY created_at`).
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ledger_tx_deposit_created_at
+  ON ledger_transactions (created_at DESC)
+  WHERE type = 'deposit';
+
+-- #25 transaction detail fan-out (getTransactionDetail) — three FK legs seq-scan:
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ledger_tx_game_session_id
+  ON ledger_transactions (game_session_id);     -- related-tx leg
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vouchers_origin_id
+  ON vouchers (origin_id);                       -- session-voucher leg
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_game_sessions_bet_ledger_tx_id
+  ON game_sessions (bet_ledger_tx_id);           -- upgrader canonical-session leg
+
+-- #26 rain tips — rain_id FK is unindexed (Postgres doesn't auto-index FKs);
+-- getRainTips does WHERE rain_id = $1 → seq-scan as rain_tips grows.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS rain_tips_rain_id_idx
+  ON rain_tips (rain_id);
+
+-- #27 insights-rewards daily-packs giveaway — the reward-cost join drives a full
+-- user_inventory scan filtered on obtained_at >= now()-365d; an obtained_at index
+-- bounds it to a range scan.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_inventory_obtained_at
+  ON user_inventory (obtained_at);
+
+-- #28 creators-analytics PG-degradation fallback (computeAffiliateAnalytics
+-- signup/usage/daily legs) filter/group affiliate_code_usages by referred_user_id
+-- / created_at, but the only relevant index leads with affiliate_user_id → seq-scan.
+-- (Only bites when ClickHouse is down and the surface degrades to Postgres.)
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_affiliate_code_usages_referred_created
+  ON affiliate_code_usages (referred_user_id, created_at);
+
+-- #29 (LOWER PRIORITY) insights-rewards 365d-capped reward sweeps
+-- (stacking/top-recipients/geo-source/retention-lift) filter ledger_transactions
+-- by type + created_at without a status predicate; #1 leads with status. A
+-- (type, created_at) composite would help, but the 365d cap already bounds these
+-- and they are cached — evaluate only if they become user-visible slow.
+--   CREATE INDEX CONCURRENTLY idx_ledger_tx_type_created_at
+--     ON ledger_transactions (type, created_at DESC);
+
+-- NOTE (2026-07-01): idx_pf_result_metadata_pack_id_created_at (#14) is CONFIRMED
+-- PRESENT + index-served on the current prod DB (packs stats/games EXPLAIN);
+-- idx_user_inv_card_id (#10) is CONFIRMED APPLIED (Index Only Scan). No action.
