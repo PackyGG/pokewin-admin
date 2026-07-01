@@ -74,7 +74,21 @@ function createClient(connectionString: string | undefined, label: string) {
           try {
             return await query(args);
           } catch (error) {
-            if (attempt < MAX_RETRIES && isConnectionError(error)) {
+            // Retry genuine connection DROPS (P1017/P1001/ECONNRESET/
+            // terminated) but NEVER a pool-acquisition timeout (P2024 /
+            // "timeout exceeded when trying to connect"). When ClickHouse
+            // blips and every cutover surface degrades to heavy Postgres at
+            // once, the max:3 pool saturates and starts throwing P2024. That
+            // is a STAMPEDE symptom, not a dropped link — retrying it 2 more
+            // times just triples the pool pressure and prolongs the outage,
+            // and a user waiting 10s×3 then crashing is worse than failing
+            // fast. Fail fast instead so the caller's safeQuery degrades to
+            // its cached/fallback tile rather than hammering the pool again.
+            if (
+              attempt < MAX_RETRIES &&
+              isConnectionError(error) &&
+              !isPoolAcquisitionTimeout(error)
+            ) {
               const delay = attempt === 0 ? 100 : 500;
               console.warn(
                 `[db:${label}] Connection error (attempt ${attempt + 1}/${MAX_RETRIES + 1}), retrying in ${delay}ms...`,
@@ -107,6 +121,39 @@ function isConnectionError(error: unknown): boolean {
   )
     return true;
   if (error.cause instanceof Error) return isConnectionError(error.cause);
+  return false;
+}
+
+/**
+ * True when the error is a *pool-acquisition* timeout — i.e. the pool was
+ * saturated and no free connection could be checked out in time, as opposed
+ * to an established connection being dropped. Covers both driver shapes:
+ *   • Prisma `code === "P2024"` ("Timed out fetching a new connection from
+ *     the connection pool")
+ *   • the pg-pool message "timeout exceeded when trying to connect"
+ *   • the Prisma message "Timed out fetching a new connection from the
+ *     connection pool"
+ * Recurses into `error.cause` the same way `isConnectionError` does.
+ *
+ * These are deliberately EXCLUDED from the retry loop above: under a
+ * ClickHouse-blip stampede the pool is already at capacity, so retrying a
+ * pool-acquire timeout only piles more waiters onto an exhausted pool and
+ * amplifies the outage. Failing fast lets the caller's safeQuery fall back
+ * to cache instead. (A genuine dropped connection — P1017/P1001/ECONNRESET —
+ * is NOT a pool timeout and still retries, unchanged.)
+ */
+function isPoolAcquisitionTimeout(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as { code?: string }).code;
+  if (code === "P2024") return true;
+  const msg = error.message;
+  if (
+    msg.includes("timeout exceeded when trying to connect") ||
+    msg.includes("Timed out fetching a new connection from the connection pool")
+  )
+    return true;
+  if (error.cause instanceof Error)
+    return isPoolAcquisitionTimeout(error.cause);
   return false;
 }
 
