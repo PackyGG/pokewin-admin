@@ -1,9 +1,15 @@
-import { KeyRound, ShieldCheck } from "lucide-react";
+import { Suspense } from "react";
+import { AlertTriangle, KeyRound, ShieldCheck } from "lucide-react";
 
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import { getIntegrationKeyRows } from "@/lib/integration-settings";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  safeQueryOrNull,
+  REWARD_QUERY_TIMEOUT_MS,
+} from "@/lib/errors/safe-query";
 
 import { IntegrationKeysForm } from "./integration-keys-form";
 
@@ -16,6 +22,13 @@ export const metadata = { title: "Settings · Creator Hub" };
  * per-creator Kick + Twitter/X data (plan: iridescent-mixing-lecun.md →
  * "API-key handling"). The keys live in the ADMIN DB `admin_settings` table,
  * NOT env vars, per the owner's spec.
+ *
+ * SHELL-FIRST: the hero + security note paint immediately; the masked-key rows
+ * (an ADMIN-DB read) stream in behind a `<Suspense>` boundary — the read is no
+ * longer top-level-awaited in the page body (which would block first paint),
+ * and it's `safeQueryOrNull`-wrapped + timeout-bounded so an ADMIN-DB blip or
+ * slow read degrades this section to a friendly band instead of tripping the
+ * route error boundary. `loading.tsx` covers the cold-nav first paint.
  *
  * SECURITY:
  *  - ACCESS is gated to the SAME rule as the rest of the Creator Hub
@@ -31,9 +44,6 @@ export const metadata = { title: "Settings · Creator Hub" };
  */
 export default async function CreatorHubSettingsPage() {
   await requireCreatorHubPageAccess();
-
-  // Masked, name-resolved rows only — no raw secret crosses the RSC boundary.
-  const rows = await getIntegrationKeyRows();
 
   return (
     <div className="space-y-6">
@@ -59,9 +69,62 @@ export default async function CreatorHubSettingsPage() {
             </p>
           </div>
 
-          <IntegrationKeysForm rows={rows} />
+          <Suspense fallback={<IntegrationKeysSkeleton />}>
+            <IntegrationKeysSection />
+          </Suspense>
         </div>
       </FadeIn>
+    </div>
+  );
+}
+
+// ─── Data section (streamed via Suspense) ───────────────────────────
+
+/**
+ * Masked, name-resolved rows only — no raw secret crosses the RSC boundary.
+ * The ADMIN-DB read is `safeQueryOrNull`-wrapped + timeout-bounded so a slow
+ * or failing read degrades this section to a friendly band while the page
+ * shell (hero + security note) stays painted, rather than throwing to the
+ * route error boundary.
+ */
+async function IntegrationKeysSection() {
+  const { data, error } = await safeQueryOrNull(
+    () => getIntegrationKeyRows(),
+    "creator-hub.settings.integrationKeys",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+
+  if (!data) {
+    return (
+      <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-muted-foreground">
+        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
+        <p>
+          {error
+            ? "Couldn't load the integration keys right now — the admin database was slow or unreachable. Refresh to retry."
+            : "No integration keys are available."}
+        </p>
+      </div>
+    );
+  }
+
+  return <IntegrationKeysForm rows={data} />;
+}
+
+// ─── Skeleton (in-boundary; mirrors the form shell) ─────────────────
+
+function IntegrationKeysSkeleton() {
+  return (
+    <div className="space-y-3 rounded-xl border bg-card p-4 sm:p-5">
+      {Array.from({ length: 2 }).map((_, i) => (
+        <div
+          key={i}
+          className="space-y-2 border-b pb-4 last:border-0 last:pb-0"
+        >
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-9 w-full rounded-md" />
+          <Skeleton className="h-3 w-48" />
+        </div>
+      ))}
     </div>
   );
 }

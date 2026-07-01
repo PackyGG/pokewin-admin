@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
 import {
   Bell,
   BellRing,
@@ -31,7 +30,6 @@ const PANEL_WIDTH_PX = 320;
 const REFRESH_INTERVAL_MS = 60_000;
 
 export function DockedAlerts() {
-  const router = useRouter();
   const { open, setOpen, allOpen, mounted } = useRailWidget("alerts");
   const [data, setData] = React.useState<CreatorAlertsResult | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -200,8 +198,14 @@ export function DockedAlerts() {
             alerts={data.alerts}
             syncError={data.syncError}
             onMutate={() => {
+              // Re-fetch ONLY the docked panel's own data via the server
+              // action — no `router.refresh()`. A full-route refresh here
+              // re-renders the whole hub page under the panel and dumps the
+              // user's scroll position (the scroll-jump bug). `load()` pulls
+              // fresh counts + alerts into this widget's local state, and
+              // `AlertsList` already applied the optimistic change, so the
+              // panel stays correct without touching the page below.
               void load();
-              router.refresh();
             }}
             compact
           />

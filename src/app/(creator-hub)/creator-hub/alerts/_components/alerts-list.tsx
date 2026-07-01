@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   BellOff,
@@ -78,54 +77,81 @@ export function AlertsList({
   onMutate?: () => void;
   compact?: boolean;
 }) {
-  const router = useRouter();
   const formatDateTime = useFormatDateTime();
   const [filter, setFilter] = React.useState<Filter>("all");
   const [pendingId, setPendingId] = React.useState<string | null>(null);
   const [bulkPending, setBulkPending] = React.useState(false);
 
+  // ── Optimistic local copy of the alert set ──────────────────────────
+  // Read / dismiss / mark-all flip or drop items INSTANTLY here (no reload),
+  // exactly the scroll-jump fix `useToggleAction` codifies: never
+  // `router.refresh()` for an in-place mutation (it re-renders the whole hub
+  // route under the panel and dumps the user's scroll position). Instead we
+  // mutate this local list, let the parent re-fetch server truth via
+  // `onMutate()`, and re-sync from the incoming prop below (guarded so an
+  // in-flight optimistic change is never clobbered). The server action already
+  // busts the narrow `creator-hub-alerts` tag, so server + local converge.
+  const [localAlerts, setLocalAlerts] = React.useState(alerts);
+  const anyPending = pendingId !== null || bulkPending;
+
+  React.useEffect(() => {
+    if (anyPending) return;
+    setLocalAlerts(alerts);
+  }, [alerts, anyPending]);
+
   const filtered = React.useMemo(() => {
-    if (filter === "unread") return alerts.filter((a) => a.isUnread);
+    if (filter === "unread") return localAlerts.filter((a) => a.isUnread);
     if (filter === "critical")
-      return alerts.filter((a) => a.severity === "critical");
-    return alerts;
-  }, [alerts, filter]);
+      return localAlerts.filter((a) => a.severity === "critical");
+    return localAlerts;
+  }, [localAlerts, filter]);
 
   async function handleRead(id: string) {
+    const prev = localAlerts;
+    // Optimistic: flip this alert to read instantly.
+    setLocalAlerts((list) =>
+      list.map((a) => (a.id === id ? { ...a, isUnread: false } : a)),
+    );
     setPendingId(id);
     const result = await markAlertRead(id);
     setPendingId(null);
     if (!result.success) {
+      setLocalAlerts(prev); // roll back to server truth
       toast.error(result.error);
       return;
     }
-    onMutate?.();
-    router.refresh();
+    onMutate?.(); // parent re-fetches server truth (narrow revalidate)
   }
 
   async function handleDismiss(id: string) {
+    const prev = localAlerts;
+    // Optimistic: drop this alert from the list instantly.
+    setLocalAlerts((list) => list.filter((a) => a.id !== id));
     setPendingId(id);
     const result = await dismissAlert(id);
     setPendingId(null);
     if (!result.success) {
+      setLocalAlerts(prev); // roll back to server truth
       toast.error(result.error);
       return;
     }
     onMutate?.();
-    router.refresh();
   }
 
   async function handleMarkAllRead() {
+    const prev = localAlerts;
+    // Optimistic: flip every alert to read instantly.
+    setLocalAlerts((list) => list.map((a) => ({ ...a, isUnread: false })));
     setBulkPending(true);
     const result = await markAllAlertsRead();
     setBulkPending(false);
     if (!result.success) {
+      setLocalAlerts(prev); // roll back to server truth
       toast.error(result.error);
       return;
     }
     toast.success("All alerts marked read");
     onMutate?.();
-    router.refresh();
   }
 
   return (
@@ -163,7 +189,7 @@ export function AlertsList({
           variant="outline"
           size="sm"
           className="ml-auto h-8 gap-1.5 text-xs"
-          disabled={bulkPending || alerts.every((a) => !a.isUnread)}
+          disabled={bulkPending || localAlerts.every((a) => !a.isUnread)}
           onClick={handleMarkAllRead}
         >
           <CheckCheck className="size-3.5" />
