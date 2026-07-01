@@ -1,6 +1,8 @@
 import "server-only";
 
 import { getDb } from "@/lib/db";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 
 /**
  * LIFETIME, ALL-CREATORS "Converted" total — the combined value of every
@@ -28,13 +30,31 @@ import { getDb } from "@/lib/db";
  * Shares its voucher set with `getWithdrawnFromConvertedTotal` (which sums
  * the subset of these vouchers that left the platform via a completed
  * withdrawal request), so the tile's invariant `withdrawn ≤ converted`
- * holds by construction.
+ * holds by construction. Both apply the SAME admin-managed `excluded_users`
+ * blacklist to `v.user_id` so the invariant holds on ONE population — the
+ * withdrawn (numerator) sibling already blacklists, so this converted
+ * (denominator) leg must too or a blacklisted creator's converted vouchers
+ * would inflate the total and understate the withdrawn %.
  *
  * Single round-trip, no bind parameters needed (no dynamic input — it is a
- * whole-table aggregate over a fixed origin enum literal).
+ * whole-table aggregate over a fixed origin enum literal + the inlined,
+ * pre-escaped blacklist id list).
  */
 export async function getConvertedFromVouchersTotal(): Promise<number> {
   const db = await getDb();
+
+  // Blacklist gate: drop excluded (owner-locked) creator ids from this
+  // identifiable lifetime converted total — mirrors the withdrawn sibling
+  // (`getWithdrawnFromConvertedTotal`) and the `/dashboard` "Creators Costs
+  // (today)" twin so a blacklisted recipient never appears ANYWHERE. Guarded
+  // for the empty set so the SQL stays valid when nothing is excluded;
+  // inlined via the canonical pre-escaped id list (whole-table aggregate, no
+  // bind params).
+  const excluded = await getExcludedUserIds();
+  const blacklistClause =
+    excluded.length > 0
+      ? `AND v.user_id NOT IN (${escapeBlacklistIds(excluded)})`
+      : "";
 
   // `origin` compared via ::text (NOT the bare enum): the generated Prisma
   // `voucher_origin` enum is AHEAD of live prod, which does not yet carry
@@ -42,11 +62,12 @@ export async function getConvertedFromVouchersTotal(): Promise<number> {
   // unknown label throws 22P02 at parse time (the ffa61b5c failure class)
   // and broke the /creators "Converted" KPI. ::text compares false instead,
   // so the tile shows an honest $0 until prod gains the label.
-  const rows = await db.$queryRaw<{ converted: string | null }[]>`
-    SELECT COALESCE(SUM(v.value::numeric), 0)::text AS converted
+  const rows = await db.$queryRawUnsafe<{ converted: string | null }[]>(
+    `SELECT COALESCE(SUM(v.value::numeric), 0)::text AS converted
     FROM vouchers v
     WHERE v.origin::text = 'creator_fill_conversion'
-  `;
+      ${blacklistClause}`,
+  );
 
   return Number(rows[0]?.converted ?? 0) || 0;
 }

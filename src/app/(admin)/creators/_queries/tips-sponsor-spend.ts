@@ -1,6 +1,8 @@
 import "server-only";
 
 import { getDb } from "@/lib/db";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 
 /**
  * LIFETIME house spend on creator-given TIPS + battle SPONSORSHIPS — the
@@ -34,11 +36,20 @@ import { getDb } from "@/lib/db";
  * additionally wrap this in `safeQueryOrNull` so any other failure degrades
  * to null (→ "$0") rather than crashing /creators.
  *
- * No bind parameters (the two type literals are fixed); single round-trip,
- * grouped by type so both legs come back in one pass. No staff/blacklist
- * scope: these are creator-fill spend legs (the receiving user is just
- * whoever the creator tipped/sponsored), so the gross house spend is the
- * honest figure — matching how the per-creator fill cost is summed.
+ * Single round-trip, grouped by type so both legs come back in one pass.
+ *
+ * ─── BLACKLIST SCOPE ─────────────────────────────────────────────────
+ *
+ * The admin-managed `excluded_users` blacklist is applied to the RECEIVING
+ * `lt.user_id` on both legs so a blacklisted recipient never appears
+ * ANYWHERE — matching the `/dashboard` "Creators Costs (today)" twin
+ * (`getCreatorCostsToday`, which blacklists the same `creator_fill_spend_tip`
+ * leg) so the lifetime roster tile and the today tile reconcile on ONE
+ * population. Staff/creator roles are NOT dropped: the spend leg's subject is
+ * the creator who funded it, and it is a real house outflow regardless of the
+ * recipient's role — only the blacklist is applied (matching the per-creator
+ * fill cost). Inlined via the canonical pre-escaped id list (whole-roster
+ * aggregate; the two type literals are fixed, no bind params).
  */
 export type TipsSponsorSpend = {
   /** Σ |amount| over `creator_fill_spend_tip`, status=completed (rose). */
@@ -52,16 +63,28 @@ export type TipsSponsorSpend = {
 export async function getTipsSponsorSpend(): Promise<TipsSponsorSpend> {
   const db = await getDb();
 
+  // Blacklist gate: drop excluded (owner-locked) recipient ids so a
+  // blacklisted user who received a creator-funded tip/sponsorship never
+  // contributes — mirrors the `/dashboard` "Creators Costs (today)" twin.
+  // Guarded for the empty set so the SQL stays valid when nothing is
+  // excluded; inlined via the canonical pre-escaped id list.
+  const excluded = await getExcludedUserIds();
+  const blacklistClause =
+    excluded.length > 0
+      ? `AND lt.user_id NOT IN (${escapeBlacklistIds(excluded)})`
+      : "";
+
   // `type::text IN (...)` — text comparison, never an enum-membership error
   // if a `creator_fill_*` member is absent from the prod enum (see header).
-  const rows = await db.$queryRaw<{ type: string; total: string | null }[]>`
-    SELECT lt.type::text AS type,
+  const rows = await db.$queryRawUnsafe<{ type: string; total: string | null }[]>(
+    `SELECT lt.type::text AS type,
            COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
       AND lt.type::text IN ('creator_fill_spend_tip', 'creator_fill_spend_battle')
-    GROUP BY lt.type::text
-  `;
+      ${blacklistClause}
+    GROUP BY lt.type::text`,
+  );
 
   let tipSpendUsd = 0;
   let sponsorSpendUsd = 0;
