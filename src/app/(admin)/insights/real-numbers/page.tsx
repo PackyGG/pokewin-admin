@@ -1,6 +1,7 @@
 import {
   Sigma,
   PieChart,
+  LineChart,
   Coins,
   TrendingUp,
   TrendingDown,
@@ -84,8 +85,9 @@ import {
 import { SEMANTIC_TONES, type SemanticTone } from "../cost-breakdown/tones";
 import { RealNumbersTabNav, type RealNumbersTab } from "./tab-nav";
 import { CrmTab } from "./crm-tab";
+import { AnalyticsTab } from "./analytics-tab";
 
-export const metadata = { title: "Real Numbers" };
+export const metadata = { title: "Analytics" };
 
 /**
  * /insights/real-numbers — the SOURCE OF TRUTH page.
@@ -120,16 +122,30 @@ export default async function RealNumbersPage({
   await requirePageAccess("/insights/real-numbers");
 
   const params = await searchParams;
-  // Player CRM is folded in as a second tab (the former standalone /crm page,
-  // which now 308-redirects here). Default to the Real Numbers source-of-truth
-  // view; only the active tab's body streams (active-tab-only).
-  const tab: RealNumbersTab = params.tab === "crm" ? "crm" : "real-numbers";
+  // Three tabs on the Insights Overview: Analytics (the LANDING / default —
+  // deposit-cadence figures moved off the dashboard), Real Numbers (the
+  // source-of-truth reconciled headline, demoted from the landing to a tab),
+  // and Player CRM (the former standalone /crm page, which now 308-redirects
+  // here). Only the active tab's body streams (active-tab-only).
+  const tab: RealNumbersTab =
+    params.tab === "crm"
+      ? "crm"
+      : params.tab === "real-numbers"
+        ? "real-numbers"
+        : "analytics";
   const asOf = formatDateTime(new Date());
 
   return (
     <div className="space-y-6">
       <PageHero>
-        {tab === "crm" ? (
+        {tab === "analytics" ? (
+          <PageHeroIdentity
+            icon={LineChart}
+            accent="blue"
+            title="Analytics"
+            subtitle="Insights overview — deposit cadence & platform analytics. Real customers only (staff, creators & blacklisted users excluded)."
+          />
+        ) : tab === "crm" ? (
           <PageHeroIdentity
             icon={PieChart}
             accent="purple"
@@ -182,7 +198,19 @@ export default async function RealNumbersPage({
 
       <RealNumbersTabNav />
 
-      {tab === "crm" ? (
+      {tab === "analytics" ? (
+        <Suspense
+          key="analytics"
+          fallback={
+            <div className="space-y-5">
+              <SectionHeadingSkeleton titleWidth={180} />
+              <KpiStripSkeleton count={3} />
+            </div>
+          }
+        >
+          <AnalyticsTab />
+        </Suspense>
+      ) : tab === "crm" ? (
         <Suspense
           key="crm"
           fallback={

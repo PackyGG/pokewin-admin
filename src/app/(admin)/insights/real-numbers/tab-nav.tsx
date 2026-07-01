@@ -2,13 +2,18 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Sigma, PieChart } from "lucide-react";
+import { Sigma, PieChart, LineChart } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LinkPendingShell } from "@/components/ux";
 
-export type RealNumbersTab = "real-numbers" | "crm";
+export type RealNumbersTab = "analytics" | "real-numbers" | "crm";
 
 const TABS: { value: RealNumbersTab; label: string; icon: typeof Sigma }[] = [
+  // Analytics — the LANDING view (default). Carries the deposit-cadence
+  // figures (Avg Deposit + Deposits / Hour) moved off the dashboard KPI strip.
+  { value: "analytics", label: "Analytics", icon: LineChart },
+  // Real Numbers — the source-of-truth reconciled headline (wager / GGR /
+  // reward cost / NGR / realized P&L), demoted from the landing to a tab.
   { value: "real-numbers", label: "Real Numbers", icon: Sigma },
   // Player CRM — folded out of the former standalone /crm page so the
   // lifecycle / VIP / win-back segmentation shares the Insights Overview
@@ -24,7 +29,7 @@ const TABS: { value: RealNumbersTab; label: string; icon: typeof Sigma }[] = [
 export function RealNumbersTabNav() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const current = (searchParams.get("tab") ?? "real-numbers") as RealNumbersTab;
+  const current = (searchParams.get("tab") ?? "analytics") as RealNumbersTab;
 
   function hrefFor(tab: RealNumbersTab): string {
     const p = new URLSearchParams(searchParams.toString());

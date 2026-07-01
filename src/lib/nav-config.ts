@@ -266,18 +266,21 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
 
   // ── Insights (sidebar-only; absent from palette today) ─────────────────
   {
-    // Insights Overview — the source-of-truth "Real Numbers" page is now the
-    // Insights landing. The former standalone /insights hub page was removed;
-    // /insights 308-redirects here (next.config.ts). Labeled "Overview" in the
-    // sidebar (it's the section landing) but keeps its own /insights/real-numbers
-    // route + permission key. Icon `Sigma` is registered in the ICONS map in
-    // `src/components/app-sidebar.tsx` (no React #130 risk). Sits first in the
-    // group so the section landing is reachable directly from the sidebar. The
-    // Cost Breakdown page (route kept) is reachable via a link on this page; it
-    // no longer has its own sidebar entry.
+    // Insights Overview — a tabbed page: Analytics (the landing tab, deposit
+    // cadence & platform analytics) + Real Numbers (the source-of-truth
+    // headline, demoted to a tab) + Player CRM. The former standalone /insights
+    // hub page was removed; /insights 308-redirects here (next.config.ts).
+    // Labeled "Analytics" in the sidebar (Analytics is now the landing tab) but
+    // keeps its own /insights/real-numbers route + permission key. Icon stays
+    // `Sigma` (registered in the ICONS map in `src/components/app-sidebar.tsx`)
+    // — using an unregistered icon string (e.g. LineChart) would trip React
+    // #130 at runtime. Sits first in the group so the section landing is
+    // reachable directly from the sidebar. The Cost Breakdown page (route kept)
+    // is reachable via a link on this page; it no longer has its own sidebar
+    // entry.
     id: "nav.insights.real-numbers",
     group: "Insights",
-    label: "Overview",
+    label: "Analytics",
     href: "/insights/real-numbers",
     pageKey: "/insights/real-numbers",
     icon: "Sigma",
