@@ -25,6 +25,7 @@ import type {
 
 type VerifyState = {
   error?: string;
+  redirectTo?: string;
 };
 
 // Per-admin-user failure counter. Same in-memory caveat as the login
@@ -304,13 +305,22 @@ export async function verifyPasskeyLogin(
   });
 
   clearVerifyFailures(pending.adminUserId);
-  await finalizePasskeyLogin(pending.adminUserId, pending.email, pending.username, pending.role);
-  // finalizePasskeyLogin redirects, so this is never reached.
-  return {};
+  const redirectTo = await finalizePasskeyLogin(
+    pending.adminUserId,
+    pending.email,
+    pending.username,
+    pending.role,
+  );
+  // Return the landing route so the client navigates. We deliberately do NOT
+  // call redirect() here: this action is invoked imperatively from a click
+  // handler (not a form action / useActionState), where a server-side
+  // redirect() throws NEXT_REDIRECT that surfaces to the client try/catch as
+  // an error instead of navigating. Mirrors the login flow (router.push).
+  return { redirectTo };
 }
 
 /**
- * Mint the real admin session for a passkey-verified login and redirect to the
+ * Mint the real admin session for a passkey-verified login and return the
  * user's landing route. Mirrors the TOTP success tail in verify2FA: re-reads the
  * effective role set from the DB, writes the `admin_login` audit event + an
  * `admin_sessions` row (auth_method "passkey"), clears the pending cookie.
@@ -320,7 +330,7 @@ async function finalizePasskeyLogin(
   email: string,
   username: string,
   fallbackRole: string,
-): Promise<never> {
+): Promise<string> {
   const adminUser = await readAdminUserWithRoles(
     () =>
       adminDb.admin_users.findUnique({
@@ -367,5 +377,5 @@ async function finalizePasskeyLogin(
 
   await deletePendingSession();
 
-  redirect(await getDefaultRouteForUser(adminUserId, fallbackRole));
+  return getDefaultRouteForUser(adminUserId, fallbackRole);
 }
