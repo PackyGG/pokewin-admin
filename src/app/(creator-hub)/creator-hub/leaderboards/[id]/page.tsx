@@ -137,7 +137,7 @@ export default async function CreatorHubLeaderboardDetailPage({
                         <ArrowLeft className="size-4" />
                     </Link>
                     <div className="min-w-0 flex-1">
-                        <h1 className="text-2xl font-bold leading-tight">{lb.title}</h1>
+                        <h1 className="text-2xl font-bold leading-tight tracking-tight">{lb.title}</h1>
                         <div className="mt-1 flex items-center gap-2 flex-wrap">
                             <Badge
                                 variant="outline"
@@ -172,7 +172,7 @@ export default async function CreatorHubLeaderboardDetailPage({
             </PageHero>
 
             <FadeIn>
-                <div className="rounded-lg border p-5 space-y-3">
+                <div className="rounded-2xl border bg-card p-5 space-y-3">
                     <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
                         Summary
                     </h2>
