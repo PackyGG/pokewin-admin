@@ -768,6 +768,29 @@ const CLEAN_LADDER: readonly number[] = (() => {
 })();
 
 /**
+ * Whether a probability percentage (in PERCENT units, 0..100] sits ON the
+ * clean ladder — i.e. equals a {@link CLEAN_LADDER} rung up to floating-point
+ * noise. Uses the SAME log10-distance metric the snap uses to pick rungs
+ * (nearest-rung argmin over `|log10(rung) − log10(pct)|`), accepting only a
+ * hair's width (1e-9 in log10 space ≈ 2.3e-9 relative) — tight enough that a
+ * pct reconstructed from snapped integer weights (`weight / Σweight × 100`)
+ * still reads true, while the snap's un-snapped buffer-card residual (or any
+ * precise-fallback weight) reads false. Pure + sync — lets the retune
+ * workspace flag per-card off-ladder rows (`PackTunePlan.offLadderCards`)
+ * without shipping the solver to the client.
+ */
+export function isOnCleanLadderPct(pct: number): boolean {
+  if (!Number.isFinite(pct) || !(pct > 0) || pct > 100) return false;
+  const logP = Math.log10(pct);
+  let bestDist = Math.abs(Math.log10(CLEAN_LADDER[0]!) - logP);
+  for (let k = 1; k < CLEAN_LADDER.length; k++) {
+    const d = Math.abs(Math.log10(CLEAN_LADDER[k]!) - logP);
+    if (d < bestDist) bestDist = d;
+  }
+  return bestDist < 1e-9;
+}
+
+/**
  * Snap each weight in `input.weights` to the nearest clean-ladder probability
  * percentage (log-distance argmin), using a **buffer-card residual** scheme to
  * keep the total at exactly 100% without re-normalizing every rung. Pure: no

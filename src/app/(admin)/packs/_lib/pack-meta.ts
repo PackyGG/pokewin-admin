@@ -16,6 +16,13 @@ export type PackMeta = {
   price: number;
   packType: string;
   active: boolean;
+  /**
+   * The pack's DB tag list (`packs.tags`, e.g. `"%1"` / `"%5"` / `"%10"`) —
+   * the authoritative source for the intended hit-rate
+   * (`resolveIntendedHitRate(name, tags)`: DB tags first, name-prefix
+   * fallback). Rides the same single PK probe; null when the column is empty.
+   */
+  tags: string[] | null;
 };
 
 /**
@@ -43,9 +50,11 @@ export async function getPackMetaByIds(
       price: string;
       pack_type: string;
       active: boolean;
+      tags: string[] | null;
     }[]
   >(
-    `SELECT id, name, slug, price::text AS price, pack_type, active
+    `SELECT id, name, slug, price::text AS price, pack_type, active,
+            tags::text[] AS tags
      FROM packs
      WHERE id = ANY($1::uuid[])`,
     packIds,
@@ -58,6 +67,7 @@ export async function getPackMetaByIds(
       price: toNumber(r.price),
       packType: r.pack_type,
       active: r.active,
+      tags: r.tags ?? null,
     });
   }
   return out;
