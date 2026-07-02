@@ -41,12 +41,29 @@ import { PromoBalanceCreditClaimants } from "./reward-cost-promo-claimants";
  * with no overlap with any other line — the displayed TOTAL is the
  * straight sum of `lines` (the query asserts this invariant). The
  * breakdown popover renders the lines as a sorted list; the card face
- * surfaces the two largest as chips.
+ * surfaces a fixed roster of programs as chips (see `PINNED_CHIP_KEYS`),
+ * not just whichever happen to be largest that day.
  *
  * All props are serializable primitives — no function props cross the RSC
  * boundary (`AnimatedNumber` takes the `format` string-enum, not a
  * formatter fn) per CLAUDE.md / Next 15.
  */
+/**
+ * Fixed set of programs promoted to always-visible card-face chips, in
+ * display order — owner-requested (2026-07-02) so daily/free packs, rain,
+ * rakeback, deposit bonuses, and affiliate (creator affiliate-code
+ * earnings) always headline the card, not just whichever two happen to be
+ * largest that day. A chip still renders at $0 (muted, not rose) so the
+ * card doesn't reshuffle day to day.
+ */
+const PINNED_CHIP_KEYS = [
+  "daily_packs",
+  "rain",
+  "rakeback",
+  "deposit_bonus",
+  "affiliate",
+] as const;
+
 export function RewardCostsTodayCard({
   total,
   lines,
@@ -61,8 +78,13 @@ export function RewardCostsTodayCard({
   /** Hours elapsed since UTC midnight — surfaced in the rain line note. */
   hoursElapsed: number;
 }) {
-  // The two loudest non-zero lines headline the card face as chips.
-  const topLines = lines.filter((l) => l.amount > 0).slice(0, 2);
+  // Fixed roster of programs the owner wants ALWAYS visible on the card
+  // face — regardless of whether they happen to rank in the top-N by
+  // magnitude that day — so the box doesn't visually reshuffle. Falls back
+  // to omitting a key if the query ever stops returning that line.
+  const pinned = PINNED_CHIP_KEYS.map((key) => lines.find((l) => l.key === key)).filter(
+    (l): l is { key: string; label: string; amount: number } => l != null,
+  );
 
   return (
     <Card className="bg-rose-500/10">
@@ -93,11 +115,12 @@ export function RewardCostsTodayCard({
             −<AnimatedNumber value={total} format="currency" />
           </span>
         </div>
-        {/* Top-two line chips. Empty state (a quiet day) shows a single
-            neutral chip so the card never collapses. */}
-        {topLines.length > 0 ? (
-          <div className="grid grid-cols-2 gap-1.5 -mx-0.5">
-            {topLines.map((l) => (
+        {/* Pinned-program chips (always the same five, same order) — a
+            quiet $0 day still shows the full roster, just muted instead of
+            rose, so the box never visually reshuffles or collapses. */}
+        {pinned.length > 0 ? (
+          <div className="grid grid-cols-2 gap-1.5 -mx-0.5 sm:grid-cols-3">
+            {pinned.map((l) => (
               <RewardCostChip key={l.key} label={l.label} value={l.amount} />
             ))}
           </div>
@@ -112,17 +135,32 @@ export function RewardCostsTodayCard({
 }
 
 /**
- * Small chip showing one reward-cost line on the card face. Always rose —
- * every line is a house cost (money paid out to users) per House-POV.
- * Mirrors the TodayComponentChip on the P&L Today tile.
+ * Small chip showing one reward-cost line on the card face. Rose whenever
+ * there's actual spend — every non-zero line is a house cost (money paid
+ * out to users) per House-POV. A $0 line (a program with no spend yet
+ * today) renders muted instead of rose so a quiet day doesn't read as
+ * alarming — the chip still holds its place in the fixed roster. Mirrors
+ * the TodayComponentChip on the P&L Today tile.
  */
 function RewardCostChip({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-md border border-rose-500/15 bg-background/40 px-2 py-1.5 min-w-0">
+    <div
+      className={cn(
+        "rounded-md border bg-background/40 px-2 py-1.5 min-w-0",
+        value > 0 ? "border-rose-500/15" : "border-border/60",
+      )}
+    >
       <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground truncate">
         {label}
       </p>
-      <p className="text-xs font-semibold tabular-nums truncate text-rose-600 dark:text-rose-400">
+      <p
+        className={cn(
+          "text-xs font-semibold tabular-nums truncate",
+          value > 0
+            ? "text-rose-600 dark:text-rose-400"
+            : "text-muted-foreground",
+        )}
+      >
         <AnimatedNumber value={value} format="currency" />
       </p>
     </div>
