@@ -418,13 +418,33 @@ export function PoolEditor({
   // Live sum of the per-card odds-% inputs. Mirrors `approve`'s pre-scale view
   // (`rows.map((r) => r.odds)`) so what the owner sees matches what
   // `oddsToWeights` then turns into the integer weights for `applyPackEdit`.
-  // The auto-retune renormalizes, but inputs should sum to ~100% so the owner
-  // can reason about each row as a true probability.
   const oddsTotal = React.useMemo(
     () =>
       rows.reduce((s, r) => s + (Number.isFinite(r.odds) ? r.odds : 0), 0),
     [rows],
   );
+  // VERBATIM-approve gate: the verbatim write turns each typed odd into a
+  // weight SHARE — at a sum of 102% every row is silently rescaled by 100/102
+  // (2.5% → 2.45098%), so what lands is NOT what the owner typed. The
+  // verbatim button stays blocked until the sum is 100% (same ±0.005
+  // print-tolerance as the chip); "Renormalize to 100%" below applies the
+  // rescale EXPLICITLY into the inputs so the owner sees the real values
+  // before approving. Auto-tune is unaffected (the server re-shapes the odds
+  // from scratch; typed odds don't bind it).
+  const oddsExact = Math.abs(oddsTotal - 100) <= 0.005;
+  const renormalizeOdds = React.useCallback(() => {
+    setRows((prev) => {
+      const total = prev.reduce(
+        (s, r) => s + (Number.isFinite(r.odds) ? r.odds : 0),
+        0,
+      );
+      if (!(total > 0)) return prev;
+      return prev.map((r) => ({
+        ...r,
+        odds: round4(((Number.isFinite(r.odds) ? r.odds : 0) * 100) / total),
+      }));
+    });
+  }, []);
 
   // ── Table handlers (mirror the Builder) ─────────────────────────────
   const onReorder = React.useCallback((next: SortableCard[]) => {
@@ -682,8 +702,10 @@ export function PoolEditor({
   );
 
   // ── Approve the explicit edited pool (VERBATIM — advanced) ───────────
+  // Refuses while the odds sum is off 100% (`oddsExact`) — the write would
+  // silently rescale every typed odd; renormalize explicitly first.
   const approve = React.useCallback(() => {
-    if (!feasible || !priceValid || applying) return;
+    if (!feasible || !priceValid || applying || !oddsExact) return;
     const weights = oddsToWeights(rows.map((r) => r.odds));
     onApprove({
       mode: "verbatim",
@@ -702,6 +724,7 @@ export function PoolEditor({
     feasible,
     priceValid,
     applying,
+    oddsExact,
     rows,
     onApprove,
     priceChanged,
@@ -874,10 +897,16 @@ export function PoolEditor({
       )}
 
       {/* Live total of the per-card odds inputs — placed right above the
-          action buttons so it's visible at decision time. Owner sets the per-
-          row odds by hand; renormalization happens on apply, but a visible
-          total prevents accidental 102% / 98% mistakes. */}
-      <OddsTotalChip total={oddsTotal} hasRows={rows.length > 0} />
+          action buttons so it's visible at decision time. An off-100% total
+          BLOCKS the verbatim approve (the write would silently rescale every
+          typed odd); the chip offers an explicit "Renormalize to 100%" that
+          applies the rescale visibly into the inputs instead. */}
+      <OddsTotalChip
+        total={oddsTotal}
+        hasRows={rows.length > 0}
+        onRenormalize={renormalizeOdds}
+        disabled={applying}
+      />
 
       {/* Price-search opt-in — when checked, the auto-tune action sweeps a
           ±25% price band (cent-stepped) on the server and picks the candidate
@@ -938,7 +967,9 @@ export function PoolEditor({
             Cancel edit
           </Button>
           {/* VERBATIM (advanced) — outline + warning tooltip. Writes the owner's
-              exact odds to MAIN; no shaping. Kept as an escape hatch. */}
+              exact odds to MAIN; no shaping. Kept as an escape hatch. BLOCKED
+              while the odds total is off 100% — verbatim means "exactly as
+              typed", and an off-total would be silently rescaled on write. */}
           <TooltipProvider delay={150}>
             <Tooltip>
               <TooltipTrigger
@@ -947,7 +978,9 @@ export function PoolEditor({
                     size="sm"
                     variant="outline"
                     onClick={approve}
-                    disabled={!feasible || !priceValid || applying}
+                    disabled={
+                      !feasible || !priceValid || applying || !oddsExact
+                    }
                   >
                     {applying ? (
                       <Loader2 className="mr-1 size-3.5 animate-spin" />
@@ -959,9 +992,21 @@ export function PoolEditor({
                 }
               />
               <TooltipContent side="top" className="max-w-xs text-xs">
-                Advanced: writes your exact weights verbatim. Does NOT optimize.
-                Use Auto-tune for the safe path — it lets the server pick weights
-                that clear the pack&apos;s targets.
+                {oddsExact ? (
+                  <>
+                    Advanced: writes your exact weights verbatim. Does NOT
+                    optimize. Use Auto-tune for the safe path — it lets the
+                    server pick weights that clear the pack&apos;s targets.
+                  </>
+                ) : (
+                  <>
+                    Blocked: the odds sum to {oddsTotal.toFixed(2)}%, and a
+                    verbatim write would silently rescale every row to force
+                    100% (e.g. 2.5% → 2.45% at a 102% total) — what lands
+                    wouldn&apos;t be what you typed. Use &quot;Renormalize to
+                    100%&quot; above or fix the rows first.
+                  </>
+                )}
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -1043,23 +1088,35 @@ function sortByPriceDesc<T extends { priceUsd: number }>(rows: T[]): T[] {
  * was distracting and the bottom placement is what matters). Three states:
  *
  * - Exactly 100% (±0.005)    → emerald, check icon — input matches a probability.
- * - Below 100%                → amber, info icon — informational under-total.
+ * - Below 100%                → amber, info icon — verbatim approve blocked.
  * - Above 100%                → rose, BOLD + LARGER, triangle-alert — over-total,
  *                               the case the owner just hit (102%) without
- *                               noticing. Approve is NOT disabled (the
- *                               auto-retune renormalizes), but the chip makes
- *                               the mistake impossible to miss.
+ *                               noticing. Verbatim approve is BLOCKED.
+ *
+ * MODE-AWARE copy: the two Approve paths treat the typed odds differently —
+ * VERBATIM writes each row exactly as typed (so an off-100% total would be
+ * silently rescaled: 2.5% → 2.45098% at 102%; blocked instead), while
+ * AUTO-TUNE re-shapes the odds from scratch (the total doesn't bind it). An
+ * off-total chip offers "Renormalize to 100%" — the explicit version of the
+ * rescale a verbatim write used to do silently, applied into the visible
+ * inputs so what the owner approves is what lands.
  */
 function OddsTotalChip({
   total,
   hasRows,
+  onRenormalize,
+  disabled,
 }: {
   total: number;
   hasRows: boolean;
+  /** Rescales every row's odds by 100/total, visibly, into the inputs. */
+  onRenormalize: () => void;
+  disabled: boolean;
 }) {
   if (!hasRows) return null;
   // ±0.005 tolerance — anything that prints "100.00%" at two decimals counts
-  // as exactly 100, so the chip and the displayed number agree.
+  // as exactly 100, so the chip and the displayed number agree. MUST match
+  // the `oddsExact` gate on the verbatim Approve.
   const exact = Math.abs(total - 100) <= 0.005;
   const over = !exact && total > 100;
   const tone = exact
@@ -1071,8 +1128,8 @@ function OddsTotalChip({
   const label = exact
     ? "Total odds match 100%"
     : over
-      ? "Over 100% — fix this before approving"
-      : "Under 100%";
+      ? "Over 100% — verbatim approve blocked"
+      : "Under 100% — verbatim approve blocked";
   return (
     <div
       className={cn(
@@ -1082,7 +1139,7 @@ function OddsTotalChip({
       role="status"
       aria-live="polite"
     >
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Icon
           className={cn("shrink-0", over ? "size-4" : "size-3.5")}
           aria-hidden
@@ -1103,10 +1160,34 @@ function OddsTotalChip({
         >
           {label}
         </span>
+        {!exact && (
+          <button
+            type="button"
+            onClick={onRenormalize}
+            disabled={disabled}
+            className="rounded-full border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-50"
+            title="Rescale every row by 100 ÷ total so the odds sum to exactly 100% — the same rescale a verbatim write would otherwise apply silently, made visible in the inputs first."
+          >
+            Renormalize to 100%
+          </button>
+        )}
       </div>
       <p className="basis-full text-[11px] opacity-75">
-        Odds must sum to 100% — the auto-retune will renormalize, but your
-        inputs should reflect what you want.
+        {exact ? (
+          <>
+            Verbatim (&quot;Approve edited pool&quot;) writes each row exactly
+            as typed. Auto-tune re-shapes the odds from scratch — your typed
+            odds don&apos;t bind it.
+          </>
+        ) : (
+          <>
+            Verbatim approve stays blocked until the total is exactly 100% —
+            it writes each row as typed, and an off-total would silently
+            rescale every odd (2.5% → 2.45% at 102%). Renormalize above to
+            apply that rescale visibly, or fix the rows. Auto-tune is
+            unaffected — the server re-shapes the odds from scratch.
+          </>
+        )}
       </p>
     </div>
   );
