@@ -451,7 +451,7 @@ export function PackEditForm({
                 Total odds: {totalOdds.toFixed(6)}%
               </p>
               <p className="text-muted-foreground">EV/card: {formatCurrency(evPerCard)} · EV/open: {formatCurrency(expectedPayout)}</p>
-              {!isShardMode && (
+              {!isShardMode && packType !== "reward" && (
               <p className={houseEdge < 0 ? "text-rose-600" : houseEdge < 5 ? "text-yellow-500" : "text-emerald-600"}>
                 House edge: {houseEdge.toFixed(6)}%
               </p>
