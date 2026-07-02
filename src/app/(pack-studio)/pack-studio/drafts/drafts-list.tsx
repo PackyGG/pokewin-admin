@@ -729,8 +729,8 @@ export function DraftsList({ rows }: { rows: PendingDraftRow[] }) {
         </div>
         <h3 className="mt-3 text-base font-semibold">No pending drafts</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Seed a pack from Pack Doctor or Bulk Retune to stage a change here
-          without touching MAIN.
+          Seed a pack from Pack Doctor or the Retune workspace to stage a
+          change here without touching MAIN.
         </p>
       </div>
     );

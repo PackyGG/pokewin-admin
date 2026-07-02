@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import {
   type ColumnDef,
   flexRender,
@@ -25,7 +26,6 @@ import { DataTableColumnHeader } from "@/components/data-table/data-table-column
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import type { PackRiskRow } from "../_queries/doctor";
-import { RetuneDrawer } from "./retune-drawer";
 import { BulkRetuneButton } from "./bulk-retune-button";
 
 /**
@@ -108,6 +108,7 @@ type OwnerControls = {
   toggle: (packId: string) => void;
   toggleAll: (packIds: string[], on: boolean) => void;
   allOnPage: string[];
+  /** Deep-links into the Retune workspace (`/pack-studio/retune?pack=<id>`). */
   onRetune: (packId: string) => void;
 };
 
@@ -308,9 +309,8 @@ export function DoctorTable({
   /** Owner-only: renders the selection column, the per-row + bulk re-tune UI. */
   isOwner?: boolean;
 }) {
+  const router = useRouter();
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
-  const [retuneId, setRetuneId] = React.useState<string | null>(null);
-  const [drawerOpen, setDrawerOpen] = React.useState(false);
 
   const nameById = React.useMemo(() => {
     const m = new Map<string, string>();
@@ -348,10 +348,15 @@ export function DoctorTable({
     });
   }, []);
 
-  const onRetune = React.useCallback((packId: string) => {
-    setRetuneId(packId);
-    setDrawerOpen(true);
-  }, []);
+  // Per-row "Re-tune" deep-links into the Retune workspace: the drawer's
+  // lever form died with V2 — the workspace's `planPackTune` plan is the one
+  // brain, and `?pack=<id>` selects + plans the pack on arrival.
+  const onRetune = React.useCallback(
+    (packId: string) => {
+      router.push(`/pack-studio/retune?pack=${packId}`);
+    },
+    [router],
+  );
 
   const allOnPage = React.useMemo(() => rows.map((r) => r.packId), [rows]);
 
@@ -437,17 +442,6 @@ export function DoctorTable({
         </TableBody>
       </Table>
       </div>
-
-      {isOwner && (
-        <RetuneDrawer
-          packId={retuneId}
-          open={drawerOpen}
-          onOpenChange={(o) => {
-            setDrawerOpen(o);
-            if (!o) setRetuneId(null);
-          }}
-        />
-      )}
     </div>
   );
 }
