@@ -34,6 +34,7 @@
 import {
   searchBestPriceForCleanSnap,
   RETUNE_MAX_PRICE_CHANGE_PCT,
+  TAGGED_WINRATE_TOLERANCE,
 } from "../../insights/edge-calc/risk";
 
 /** Which solve arm the params are for (anchor semantics live at the caller). */
@@ -68,6 +69,11 @@ export function buildRetuneSearchParams(
   arm: RetuneArm,
   i: RetuneSearchInputs,
 ): Parameters<typeof searchBestPriceForCleanSnap>[0] {
+  // Tagged gate: active iff the resolved target IS the tag (value equality) —
+  // an operator-pinned rate away from the tag never silently runs tagged mode.
+  const tagged =
+    i.intendedHitRate !== null &&
+    Math.abs(i.intendedHitRate - i.targetWinRate) < 1e-9;
   return {
     cards: i.cards,
     basePrice: i.basePrice,
@@ -75,18 +81,18 @@ export function buildRetuneSearchParams(
     targetWinRate: i.targetWinRate,
     maxWinCap: i.maxWinCap,
     nearMissMin: i.nearMissMin,
-    winRateTol: i.winRateTol,
+    // LAW 15 (ruleset §0): a tagged solve carries the STRICT solver tolerance
+    // (0.01pp) — the clean-snap acceptance gate reads `winRateTol`, and under
+    // the loose 0.02 default it legally drifted a 1% tag to 1.072%. Enforced
+    // HERE (the one shared constructor) so all four solve sites — both plans,
+    // both writes — inherit it and preview ≡ write stays unconstructible skew.
+    winRateTol: tagged ? TAGGED_WINRATE_TOLERANCE : i.winRateTol,
     currentWeights: i.currentWeights,
     // The ONE shared retune band, both arms (staged: ±25% → ±60%, owner-
     // sanctioned — price is a free lever; clean odds are a MUST).
     maxPriceChangePct: RETUNE_MAX_PRICE_CHANGE_PCT,
     upwardPriceExtensionPct: 0,
-    // Tagged gate: strict 0.01pp win-rate accuracy scoring is active iff the
-    // resolved target IS the tag (value equality) — an operator-pinned rate
-    // away from the tag never silently runs tagged mode.
-    ...(i.intendedHitRate !== null &&
-    Math.abs(i.intendedHitRate - i.targetWinRate) < 1e-9
-      ? { taggedWinRate: i.targetWinRate }
-      : {}),
+    // Tagged win-rate accuracy scoring (0.01pp) — see the gate above.
+    ...(tagged ? { taggedWinRate: i.targetWinRate } : {}),
   };
 }

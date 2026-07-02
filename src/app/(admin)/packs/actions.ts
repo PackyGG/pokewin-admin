@@ -50,6 +50,8 @@ import {
   searchBestPriceForCleanSnap,
   computePackRisk,
   computePackRiskFromAggregates,
+  TAGGED_WINRATE_TOLERANCE,
+  ONE_SIDED_EDGE_EXCESS_TOL,
   type PackRisk,
 } from "@/app/(admin)/insights/edge-calc/risk";
 import { TARGET_HOUSE_EDGE } from "@/app/(admin)/insights/edge-calc/math";
@@ -63,6 +65,7 @@ import {
   autoRetuneTargets,
   resolveIntendedHitRate,
   TAGGED_WRITE_WINRATE_TOLERANCE,
+  TAGGED_NEAR_MISS_MIN,
   autoTargetEdge,
   buildPackCompliance,
   DEFAULT_EDGE_CURVE,
@@ -821,6 +824,10 @@ async function refreshPackRiskScore(
   packId: string,
   risk: PackRisk,
   maxWinCap: number,
+  // TRUE for a pct-tagged lottery pack — zero near-miss is the genre there,
+  // never a compliance defect. Optional; omitted = legacy untagged judgment
+  // (the next snapshot run reconciles the flag with full tag context).
+  tagged?: boolean,
 ): Promise<void> {
   try {
     const riskRow = {
@@ -832,7 +839,7 @@ async function refreshPackRiskScore(
       max_mult: risk.maxMult,
       risk_score: risk.riskScore0to100,
       tier: risk.tier,
-      compliance: buildPackCompliance(risk, maxWinCap),
+      compliance: buildPackCompliance(risk, maxWinCap, { tagged }),
       computed_at: new Date(),
     };
     await adminDb.pack_risk_scores.upsert({
@@ -1757,10 +1764,12 @@ export async function applyPackRetune(
   // ~20% winners); the drawer seeded its lever from the DRIFTED current
   // win-rate. Operators who truly want a different rate must untag the pack
   // (name prefix + tags column) first.
+  // Tolerance 1e-6 (ruleset §0): the tag is exact — any real divergence is a
+  // contradiction, not a rounding allowance; float round-trips of the tag
+  // itself are lossless.
   if (
     resolved.intendedHitRate !== null &&
-    Math.abs(resolved.targetWinRate - resolved.intendedHitRate) >
-      TAGGED_WRITE_WINRATE_TOLERANCE
+    Math.abs(resolved.targetWinRate - resolved.intendedHitRate) > 1e-6
   ) {
     throw new Error(
       `Refused: this pack is tagged ${(resolved.intendedHitRate * 100).toFixed(2)}% — the requested win-rate ${(resolved.targetWinRate * 100).toFixed(2)}% contradicts the tag. Leave the win-rate on auto (tag-aware), or untag the pack first.`,
@@ -1805,6 +1814,15 @@ export async function applyPackRetune(
     cards: pool.map((c) => ({ value: c.value, weight: c.weight })),
     price,
   });
+
+  // TAGGED near-miss seed (ruleset §1.2) for callers that left nearMissMin on
+  // auto: no default floor — a lottery is binary — but a live pool that
+  // GENUINELY carries near-miss mass keeps its designed band. The V2 client
+  // threads the plan's seeded value explicitly, so this only fires for legacy
+  // callers (doctor drawer) and keeps them consistent with the plan.
+  if (targets.nearMissMin === undefined && resolved.intendedHitRate !== null) {
+    resolved.nearMissMin = Math.max(TAGGED_NEAR_MISS_MIN, before.nearMiss);
+  }
 
   // Price-search lever (chip-strip path opts in):
   //   • allowPriceSearch off → legacy: hold price fixed, raw `shapeWeights`.
@@ -1880,6 +1898,14 @@ export async function applyPackRetune(
     shaped = search.bestResult;
     priceAfter = search.bestPrice;
   } else {
+    // Search-off solve (legacy drawer path). EVERY tagged path — search on or
+    // off — carries the hard-tag contract (winRateIsHard + the strict 0.01pp
+    // solver tolerance + the live-weight anchor), mirroring what the shared
+    // builder bakes into the search branch (ruleset: no tagged path may run
+    // soft).
+    const taggedHere =
+      resolved.intendedHitRate !== null &&
+      Math.abs(resolved.intendedHitRate - resolved.targetWinRate) < 1e-9;
     shaped = shapeWeights({
       cards: pool.map((c) => ({ value: c.value })),
       price,
@@ -1888,7 +1914,13 @@ export async function applyPackRetune(
       maxWinCap: resolved.maxWinCap,
       floorRatioMin: resolved.floorRatioMin,
       nearMissMin: resolved.nearMissMin,
-      winRateTol,
+      winRateTol: taggedHere ? TAGGED_WINRATE_TOLERANCE : winRateTol,
+      ...(taggedHere
+        ? {
+            winRateIsHard: true,
+            currentWeights: pool.map((c) => c.weight),
+          }
+        : {}),
     });
   }
 
@@ -1918,6 +1950,18 @@ export async function applyPackRetune(
   if (after.edge < targetEdge - 1e-9) {
     throw new Error(
       `Refused: resulting edge ${(after.edge * 100).toFixed(2)}% is below the target ${(targetEdge * 100).toFixed(2)}%.`,
+    );
+  }
+  // TAGGED upper band (ruleset write assert): the one-sided-up acceptance may
+  // legally land a pinned pool up to 0.25pp ABOVE the target — beyond that is
+  // a solver/param anomaly, refused fail-closed. Untagged packs keep their
+  // float-up semantics (no upper assert).
+  if (
+    resolved.intendedHitRate !== null &&
+    after.edge > targetEdge + ONE_SIDED_EDGE_EXCESS_TOL + 1e-9
+  ) {
+    throw new Error(
+      `Refused: resulting edge ${(after.edge * 100).toFixed(3)}% sits more than ${(ONE_SIDED_EDGE_EXCESS_TOL * 100).toFixed(2)}pp above the ${(targetEdge * 100).toFixed(2)}% target — outside the accepted one-sided band for a tagged pack.`,
     );
   }
   if (after.maxWin > resolved.maxWinCap + 1e-9) {
@@ -2079,7 +2123,12 @@ export async function applyPackRetune(
   // contract: the MAIN odds change has already committed, so an ADMIN-side
   // failure must NOT fail this retune — the helper swallows + logs it and the
   // next snapshot run reconciles the row.
-  await refreshPackRiskScore(packId, after, resolved.maxWinCap);
+  await refreshPackRiskScore(
+    packId,
+    after,
+    resolved.maxWinCap,
+    resolved.intendedHitRate !== null,
+  );
 
   reloadPacks();
   // Invalidate this pack's cached V2 plan so the next `planPackTune` reflects

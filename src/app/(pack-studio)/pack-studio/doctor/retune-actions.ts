@@ -25,10 +25,17 @@ import {
   shapeWeights,
   searchBestPriceForCleanSnap,
   isOnCleanLadderPct,
+  isOnPer100kGridPct,
+  TAGGED_WINRATE_TOLERANCE,
+  ONE_SIDED_EDGE_EXCESS_TOL,
   type PackRisk,
   type ShapeWeightsRelaxation,
   type ShapeWeightsLimit,
 } from "@/app/(admin)/insights/edge-calc/risk";
+import {
+  computeTagGuidance,
+  type TagGuidance,
+} from "@/app/(admin)/insights/edge-calc/tag-guidance";
 import {
   planPackReprice,
   clampRepriceTarget,
@@ -40,6 +47,7 @@ import {
   autoRetuneTargets,
   resolveIntendedHitRate,
   TAGGED_WRITE_WINRATE_TOLERANCE,
+  TAGGED_NEAR_MISS_MIN,
   autoTargetEdge,
   DEFAULT_EDGE_CURVE,
   EDIT_EDGE_FLOOR,
@@ -743,6 +751,10 @@ async function refreshEditedPackRiskScore(
   packId: string,
   risk: PackRisk,
   maxWinCapOverride?: number,
+  // TRUE for a pct-tagged lottery pack — zero near-miss is the genre there,
+  // never a compliance defect. Optional; omitted = legacy untagged judgment
+  // (the next snapshot run reconciles the flag with full tag context).
+  tagged?: boolean,
 ): Promise<void> {
   try {
     const maxWinCap = maxWinCapOverride ?? (await readMaxWinCap());
@@ -755,7 +767,7 @@ async function refreshEditedPackRiskScore(
       max_mult: risk.maxMult,
       risk_score: risk.riskScore0to100,
       tier: risk.tier,
-      compliance: buildPackCompliance(risk, maxWinCap),
+      compliance: buildPackCompliance(risk, maxWinCap, { tagged }),
       computed_at: new Date(),
     };
     await adminDb.pack_risk_scores.upsert({
@@ -866,6 +878,7 @@ type StagedRefusalCode =
   | "tag-contradiction"
   | "infeasible"
   | "edge-below-target"
+  | "edge-above-band"
   | "max-win-above-cap"
   | "win-rate-miss"
   | "tag-accuracy-miss"
@@ -1090,16 +1103,32 @@ async function resolveAndShapeStagedPool(
     maxMultCeiling: await readMaxMultCeiling(),
     edgeCurve: await readEdgeCurveConfig(),
   };
+  // The STAGED pool's top card value — the pool is fully known here, so the
+  // edge-curve premium prices the pool's ACTUAL jackpot exposure, not the
+  // loosened theoretical cap (ruleset: no phantom premium on tagged packs).
+  let stagedTopValue = 0;
+  for (const c of input.cards) {
+    const v = cardMetaById.get(c.cardId)!.value;
+    if (v > stagedTopValue) stagedTopValue = v;
+  }
   const auto = autoRetuneTargets(
     priceStaged,
     cfg,
     // DB `tags` column first (authoritative), name-prefix tag as fallback.
     resolveIntendedHitRate(pack.name, pack.tags) ?? undefined,
+    stagedTopValue,
   );
   const targetEdge = targets.targetEdge ?? auto.targetEdge;
   const targetWinRate = targets.targetWinRate ?? auto.targetWinRate;
   const maxWinCap = targets.maxWinCap ?? auto.maxWinCap;
-  const nearMissMin = targets.nearMissMin ?? auto.nearMissMin;
+  // TAGGED near-miss seed (ruleset §1.2): no default floor — a lottery is
+  // binary — but a live pool that GENUINELY carries near-miss mass (e.g.
+  // Divine Order's designed 20% band) keeps it. Untagged keeps the 0.1 floor.
+  const nearMissMin =
+    targets.nearMissMin ??
+    (auto.intendedHitRate !== null
+      ? Math.max(TAGGED_NEAR_MISS_MIN, before.nearMiss)
+      : auto.nearMissMin);
   const winRateTol = 0.02; // matches shapeWeights' default + applyPackRetune.
 
   const resolved: StagedShapeResolution["resolved"] = {
@@ -1128,11 +1157,13 @@ async function resolveAndShapeStagedPool(
   // A pct-tagged pack's win-rate is a design CONTRACT — a pinned target that
   // contradicts the tag is refused (mirrors `applyPackRetune`). Reported as a
   // structured refusal so the dry-run can render the verdict; the write throws
-  // this exact message.
+  // this exact message. Tolerance 1e-6 (ruleset §0): the tag is exact — any
+  // real divergence is a contradiction, not a rounding allowance (the old
+  // 0.1pp window let RC2-style sentinel defeats slip through as "close
+  // enough"); float round-trips of the tag itself are lossless.
   if (
     auto.intendedHitRate !== null &&
-    Math.abs(targetWinRate - auto.intendedHitRate) >
-      TAGGED_WRITE_WINRATE_TOLERANCE
+    Math.abs(targetWinRate - auto.intendedHitRate) > 1e-6
   ) {
     return {
       ...base,
@@ -1226,6 +1257,14 @@ async function resolveAndShapeStagedPool(
       taggedAccuracyHit: search.taggedAccuracyHit,
     };
   } else {
+    // Pinned-price solve (the V2 `pinPrice` escape hatch). EVERY tagged path
+    // — plan AND write, search on or off — carries the hard-tag contract
+    // (ruleset: `winRateIsHard` + the strict 0.01pp solver tolerance),
+    // mirroring what `buildRetuneSearchParams` bakes into the search branch;
+    // gating it on the search flag was exactly the RC2 sentinel defeat.
+    const taggedHere =
+      intendedHitRate !== null &&
+      Math.abs(intendedHitRate - targetWinRate) < 1e-9;
     shaped = shapeWeights({
       cards: stagedValues,
       price: priceAfter,
@@ -1233,9 +1272,10 @@ async function resolveAndShapeStagedPool(
       targetWinRate,
       maxWinCap,
       nearMissMin,
-      winRateTol,
+      winRateTol: taggedHere ? TAGGED_WINRATE_TOLERANCE : winRateTol,
       // Anti-inflation anchor (no win/grail card's odds exceed its current odds).
       currentWeights: stagedCurrentWeights,
+      ...(taggedHere ? { winRateIsHard: true } : {}),
     });
   }
 
@@ -1291,6 +1331,19 @@ async function resolveAndShapeStagedPool(
     return refuse(
       "edge-below-target",
       `Refused: resulting edge ${(after.edge * 100).toFixed(2)}% is below the target ${(targetEdge * 100).toFixed(2)}%.`,
+    );
+  }
+  // TAGGED upper band (ruleset write assert): the one-sided-up acceptance may
+  // legally land a pinned pool up to 0.25pp ABOVE the curve target — anything
+  // beyond that is a solver/param anomaly, refused fail-closed. Untagged packs
+  // keep their float-up semantics (no upper assert).
+  if (
+    intendedHitRate !== null &&
+    after.edge > targetEdge + ONE_SIDED_EDGE_EXCESS_TOL + 1e-9
+  ) {
+    return refuse(
+      "edge-above-band",
+      `Refused: resulting edge ${(after.edge * 100).toFixed(3)}% sits more than ${(ONE_SIDED_EDGE_EXCESS_TOL * 100).toFixed(2)}pp above the ${(targetEdge * 100).toFixed(2)}% target — outside the accepted one-sided band for a tagged pack.`,
     );
   }
   if (after.maxWin > maxWinCap + 1e-9) {
@@ -1587,7 +1640,12 @@ export async function applyStagedPackEditAndRetune(
   // Refresh the ADMIN-side risk row from the shaped pool (ADMIN write only).
   // The cap here is the RESOLVED target cap (the same cap `shapeWeights` shaped
   // against), so compliance is judged against the budget the auto-tune ran on.
-  await refreshEditedPackRiskScore(packId, after, r.resolved.maxWinCap);
+  await refreshEditedPackRiskScore(
+    packId,
+    after,
+    r.resolved.maxWinCap,
+    r.resolved.intendedHitRate !== null,
+  );
 
   reloadPacks();
   // Invalidate this pack's cached V2 plan so the next `planPackTune` reflects
@@ -1709,6 +1767,15 @@ export type PackTunePlan = {
   };
   taggedAccuracyHit: boolean | null;
   searchMeta: { candidates: number; fellBackToBase: boolean } | null;
+  /**
+   * The tag-guidance verdict (ruleset §2) — populated for TAGGED packs when
+   * the plan is infeasible, off-tag, or dirty-odds: the LAW-1 feasibility
+   * interval + a RANKED list of typed, engine-proven suggestions
+   * (`price-move` / `price-edge-exact` / `add-card` with a $ band /
+   * `edge-bump` / `raise-cap` / `repair-monotone` / `retag` / dead-card
+   * hints). `null` for untagged packs and for clean feasible plans.
+   */
+  guidance: TagGuidance | null;
 };
 
 /**
@@ -1743,11 +1810,18 @@ export async function planPackTune(
   )();
 }
 
-/** Shared per-card projection: weights vector → planned rows + off-ladder ids. */
+/**
+ * Shared per-card projection: weights vector → planned rows + off-ladder ids.
+ * `tagged` switches the "clean" definition: an UNTAGGED pack is clean on the
+ * log-ladder rungs ({@link isOnCleanLadderPct}); a TAGGED pack is clean on the
+ * per-100k integer grid ({@link isOnPer100kGridPct}) — the house ladder the
+ * tagged snap targets (log rungs are unreachable under the 0.01pp tag gate).
+ */
 function projectPlannedVector(
   cardIds: string[],
   weights: number[],
   livePctByCardId: Map<string, number>,
+  tagged: boolean,
 ): {
   planned: PackTunePlan["planned"];
   offLadderCards: string[];
@@ -1764,8 +1838,9 @@ function projectPlannedVector(
       livePct: livePctByCardId.get(cardId) ?? null,
     };
   });
+  const cleanPct = tagged ? isOnPer100kGridPct : isOnCleanLadderPct;
   const offLadderCards = planned
-    .filter((row) => !isOnCleanLadderPct(row.pct))
+    .filter((row) => row.pct > 0 && !cleanPct(row.pct))
     .map((row) => row.cardId);
   return { planned, offLadderCards };
 }
@@ -1841,22 +1916,33 @@ async function planPackTuneLiveUncached(
     weight: Number(r.weight),
   }));
 
-  const autoTargets = autoRetuneTargets(
-    p.price,
-    cfg,
-    resolveIntendedHitRate(p.name, p.tags) ?? undefined,
-  );
   const poolFingerprint = computePoolFingerprint(p.price, cards);
   const before = computePackRisk({
     cards: cards.map((c) => ({ value: c.value, weight: c.weight })),
     price: p.price,
   });
+  // Pool-aware curve input: the pool is fully known on the live arm, so the
+  // edge premium prices the ACTUAL top card, not the loosened theoretical cap
+  // (no phantom premium — ruleset §1.2 edge-target rule).
+  const poolTopValue = cards.reduce((m, c) => (c.value > m ? c.value : m), 0);
+  const autoTargets = autoRetuneTargets(
+    p.price,
+    cfg,
+    resolveIntendedHitRate(p.name, p.tags) ?? undefined,
+    poolTopValue,
+  );
+  // TAGGED near-miss seed (ruleset §1.2): zero floor — binary lottery — but a
+  // live pool that genuinely carries near-miss mass keeps its designed band.
+  const nearMissMin =
+    autoTargets.intendedHitRate !== null
+      ? Math.max(TAGGED_NEAR_MISS_MIN, before.nearMiss)
+      : autoTargets.nearMissMin;
   const computedAtIso = new Date().toISOString();
   const targets = {
     targetEdge: autoTargets.targetEdge,
     targetWinRate: autoTargets.targetWinRate,
     maxWinCap: autoTargets.maxWinCap,
-    nearMissMin: autoTargets.nearMissMin,
+    nearMissMin,
   };
   const base = {
     packId: p.id,
@@ -1893,6 +1979,7 @@ async function planPackTuneLiveUncached(
       topInflationUnavoidable: null,
       taggedAccuracyHit: null,
       searchMeta: null,
+      guidance: null,
     };
   }
 
@@ -1905,9 +1992,11 @@ async function planPackTuneLiveUncached(
       targetEdge: autoTargets.targetEdge,
       targetWinRate: autoTargets.targetWinRate,
       maxWinCap: autoTargets.maxWinCap,
-      nearMissMin: autoTargets.nearMissMin,
+      nearMissMin,
       // The solver's default win-rate tolerance, pinned explicitly so the
       // plan's params deep-equal the write's (`applyPackRetune` sends 0.02).
+      // (For a TAGGED pack the shared builder tightens this to the strict
+      // 0.01pp solver tolerance — LAW 15 — on plan AND write alike.)
       winRateTol: 0.02,
       // Anti-inflation anchor: no win/grail card's odds may exceed its
       // current odds (the jackpot stays rare; raising the edge only trims
@@ -1921,6 +2010,34 @@ async function planPackTuneLiveUncached(
     candidates: search.searched,
     fellBackToBase: search.fellBackToBase,
   };
+  const tagged =
+    autoTargets.intendedHitRate !== null &&
+    Math.abs(autoTargets.intendedHitRate - autoTargets.targetWinRate) < 1e-9;
+
+  // Tag guidance (ruleset §2): whenever a TAGGED plan fails, misses the tag,
+  // or ships dirty odds, compute the LAW-1 feasibility verdict + the ranked,
+  // engine-proven fix list — no tagged pack is ever told "infeasible" without
+  // a concrete suggestion.
+  const guidanceFor = (needed: boolean): TagGuidance | null =>
+    tagged && needed
+      ? computeTagGuidance({
+          cards: cards.map((c) => ({ value: c.value })),
+          currentWeights: cards.map((c) => c.weight),
+          cardIds: cards.map((c) => c.cardId),
+          price: p.price,
+          targetEdge: autoTargets.targetEdge,
+          tag: autoTargets.targetWinRate,
+          nearMissMin,
+          maxWinCap: autoTargets.maxWinCap,
+          cfg: {
+            globalCap: cfg.globalCap,
+            maxMultCeiling: cfg.maxMultCeiling,
+            ...(cfg.edgeCurve ? { edgeCurve: cfg.edgeCurve } : {}),
+          },
+          liveWinRate: before.winRate,
+          liveNearMiss: before.nearMiss,
+        })
+      : null;
 
   if ("error" in shaped) {
     return {
@@ -1936,6 +2053,7 @@ async function planPackTuneLiveUncached(
       topInflationUnavoidable: null,
       taggedAccuracyHit: search.taggedAccuracyHit,
       searchMeta,
+      guidance: guidanceFor(true),
     };
   }
 
@@ -1943,6 +2061,7 @@ async function planPackTuneLiveUncached(
     cards.map((c) => c.cardId),
     shaped.weights,
     livePctMap(cards),
+    tagged,
   );
 
   return {
@@ -1958,6 +2077,9 @@ async function planPackTuneLiveUncached(
     topInflationUnavoidable: shaped.topInflationUnavoidable ?? false,
     taggedAccuracyHit: search.taggedAccuracyHit,
     searchMeta,
+    guidance: guidanceFor(
+      shaped.snapped !== true || search.taggedAccuracyHit === false,
+    ),
   };
 }
 
@@ -2008,13 +2130,54 @@ async function planPackTuneStagedUncached(
     .filter((c) => !stagedIds.has(c.cardId))
     .map((c) => c.cardId);
 
+  const taggedStaged =
+    r.resolved.intendedHitRate !== null &&
+    Math.abs(r.resolved.intendedHitRate - r.resolved.targetWinRate) < 1e-9;
+
   const { planned, offLadderCards } = outcome.ok
     ? projectPlannedVector(
         input.cards.map((c) => c.cardId),
         outcome.weights,
         livePcts,
+        taggedStaged,
       )
     : { planned: [], offLadderCards: [] };
+
+  // Tag guidance for the STAGED pool: same trigger as the live arm (failed /
+  // off-tag / dirty), computed over the staged identities at the staged price
+  // with the live-weight anchor (added cards ride a 0 → uncapped, LAW 6).
+  const stagedNeedsGuidance =
+    !outcome.ok ||
+    outcome.snapped !== true ||
+    r.priceSearch?.taggedAccuracyHit === false;
+  let guidance: TagGuidance | null = null;
+  const isTagContradiction = !outcome.ok && outcome.code === "tag-contradiction";
+  if (taggedStaged && stagedNeedsGuidance && !isTagContradiction) {
+    const liveWeightByCardId = new Map<string, number>();
+    for (const c of r.livePool) liveWeightByCardId.set(c.cardId, c.weight);
+    guidance = computeTagGuidance({
+      cards: input.cards.map((c) => ({
+        value: r.cardMetaById.get(c.cardId)?.value ?? 0,
+      })),
+      currentWeights: input.cards.map(
+        (c) => liveWeightByCardId.get(c.cardId) ?? 0,
+      ),
+      cardIds: input.cards.map((c) => c.cardId),
+      price: r.priceStaged,
+      targetEdge: r.resolved.targetEdge,
+      tag: r.resolved.targetWinRate,
+      nearMissMin: r.resolved.nearMissMin,
+      maxWinCap: r.resolved.maxWinCap,
+      cfg: {
+        globalCap: await readMaxWinCap(),
+        maxMultCeiling: await readMaxMultCeiling(),
+        edgeCurve: await readEdgeCurveConfig(),
+      },
+      pinPrice: staged.pinPrice === true,
+      liveWinRate: r.before.winRate,
+      liveNearMiss: r.before.nearMiss,
+    });
+  }
 
   return {
     packId,
@@ -2054,5 +2217,6 @@ async function planPackTuneStagedUncached(
           fellBackToBase: r.priceSearch.fellBackToBase,
         }
       : null,
+    guidance,
   };
 }
