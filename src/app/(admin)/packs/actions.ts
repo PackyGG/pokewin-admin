@@ -2201,7 +2201,8 @@ export type BuildPackResult =
  * win-rate. Owner-only. Validates input with Zod, resolves each card's VALUE
  * (read fresh from `cards.price` when a cardId is given), runs `shapeWeights`
  * for feasibility (returns `{ok:false,error}` and creates NOTHING if infeasible),
- * then creates the pack (active:false) reusing createPack's transaction shape.
+ * then creates the pack (`official`, active:false — the type every Pack-Studio
+ * tool scopes to) reusing createPack's transaction shape.
  */
 export async function buildPack(input: BuildPackInput): Promise<BuildPackResult> {
   const session = await requirePageAccess("/packs");
@@ -2288,7 +2289,12 @@ export async function buildPack(input: BuildPackInput): Promise<BuildPackResult>
         image_url: data.imageUrl ?? null,
         price: data.price,
         cards_per_open: data.cardsPerOpen ?? 1,
-        pack_type: "custom",
+        // "official" — the entire cash-pack tooling scope (reprice, retune,
+        // Doctor risk scoring, Overview KPIs) covers pack_type "official" only
+        // (REPRICE_INCLUDED_PACK_TYPES / REPRICE_OR_RETUNE_PACK_TYPES /
+        // PACK_STUDIO_CASH_PACK_TYPES); any other type would orphan the new
+        // pack from all of it. Created inactive, so nothing goes live.
+        pack_type: "official",
         active: false,
       },
     });
