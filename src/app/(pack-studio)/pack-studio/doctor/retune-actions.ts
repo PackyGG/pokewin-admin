@@ -25,6 +25,7 @@ import {
   computePackRiskFromAggregates,
   shapeWeights,
   searchBestPriceForCleanSnap,
+  isOnCleanLadderPct,
   RETUNE_MAX_PRICE_CHANGE_PCT,
   type PackRisk,
   type ShapeWeightsRelaxation,
@@ -52,6 +53,7 @@ import {
   type ResolvedAutoTargetCfg,
 } from "@/app/(admin)/packs/_lib/risk-config";
 import { computePoolFingerprint } from "@/app/(admin)/packs/_lib/pool-fingerprint";
+import { buildRetuneSearchParams } from "@/app/(admin)/packs/_lib/retune-params";
 import {
   computePortfolioProfile,
   derivePortfolioTargets,
@@ -63,7 +65,10 @@ import {
   type PortfolioPackTargets,
 } from "@/app/(admin)/packs/_lib/portfolio";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
-import { PACK_STUDIO_RETUNE_CACHE_TAG } from "../_actions/retune-cache-tag";
+import {
+  PACK_STUDIO_RETUNE_CACHE_TAG,
+  packRetunePlanTag,
+} from "../_actions/retune-cache-tag";
 
 /**
  * Read-only helpers backing the Pack Doctor re-tune UI. The authoritative WRITE
@@ -1491,6 +1496,17 @@ export type EditPoolInput = {
   cards: EditPoolInputCard[];
   /** Optional new pack price (USD). When omitted, the price is left unchanged. */
   price?: number;
+  /**
+   * RC1 pool-freshness token — the fingerprint of the LIVE pool (price +
+   * sorted (cardId, weight) pairs) the operator's edit was seeded/reviewed
+   * from ({@link computePoolFingerprint}). When set, the write recomputes the
+   * fingerprint over the FRESH live pool and REFUSES on mismatch ("pool
+   * changed since the preview") instead of silently rewriting a pool the
+   * operator never saw — identical fail-closed pattern as
+   * `applyStagedPackEditAndRetune` / `applyPackRetune`. Optional — legacy
+   * callers (e.g. the drafts push) pass nothing and are unaffected.
+   */
+  approvedPoolFingerprint?: string | null;
 };
 
 export type ApplyPackEditResult = {
@@ -1655,6 +1671,26 @@ export async function applyPackEdit(
   const pool = await getPackCardValues(packId);
   const valueByCard = new Map(pool.map((c) => [c.cardId, c.value]));
 
+  // ── RC1 pool-freshness gate (fail closed BEFORE snapshot/write) ─────────
+  // Identical pattern to `applyStagedPackEditAndRetune` / `applyPackRetune`:
+  // when the caller pinned the fingerprint of the pool it reviewed, refuse
+  // the verbatim write if the LIVE pool/price drifted in between instead of
+  // silently overwriting state the operator never saw. Absent for legacy
+  // callers (drafts push).
+  const approvedPoolFingerprint =
+    typeof input.approvedPoolFingerprint === "string" &&
+    input.approvedPoolFingerprint.length > 0
+      ? input.approvedPoolFingerprint
+      : null;
+  if (
+    approvedPoolFingerprint !== null &&
+    computePoolFingerprint(priceBefore, pool) !== approvedPoolFingerprint
+  ) {
+    throw new Error(
+      "Refused: this pack's live pool or price changed since the reviewed proposal was computed — refresh the proposals and re-review this pack before approving.",
+    );
+  }
+
   const before = computePackRisk({
     cards: pool.map((c) => ({ value: c.value, weight: c.weight })),
     price: priceBefore,
@@ -1764,7 +1800,9 @@ export async function applyPackEdit(
   reloadPacks();
   // Invalidate the cached retune-review proposal blob so the next render of
   // /pack-studio/retune reflects this edit instead of a 60s-stale dry-run.
+  // Per-pack: ONLY this pack's V2 plan is busted (never the other 182).
   revalidateTag(PACK_STUDIO_RETUNE_CACHE_TAG);
+  revalidateTag(packRetunePlanTag(packId));
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
 
@@ -1988,11 +2026,12 @@ async function resolveAndShapeStagedPool(
     nearMissMin?: number;
     /**
      * When TRUE the server runs `searchBestPriceForCleanSnap` around the staged
-     * price (default ±25%, cent-stepped, max 50 candidates) and picks the
-     * candidate whose `shapeWeights` result keeps `snapped=true` while staying
-     * closest to the staged price. The chosen candidate becomes the final
-     * `priceAfter` written to `packs.price` (so the writer's `priceProvided`
-     * path applies it cleanly). Defaults to FALSE — current behavior unchanged.
+     * price (the shared ±60% retune band via `buildRetuneSearchParams`,
+     * cent-stepped) and picks the candidate whose `shapeWeights` result keeps
+     * `snapped=true` while staying closest to the staged price. The chosen
+     * candidate becomes the final `priceAfter` written to `packs.price` (so
+     * the writer's `priceProvided` path applies it cleanly). Defaults to
+     * FALSE — current behavior unchanged.
      */
     allowPriceSearch?: boolean;
     /**
@@ -2064,8 +2103,9 @@ async function resolveAndShapeStagedPool(
 
   const priceBefore = Number(pack.price.toString());
   // The staged price the operator approved. The price-search lever (below) may
-  // bump this by up to ±25% to land cleaner odds; the FINAL `priceAfter` is
-  // assigned after the shape step, and is what gets written to `packs.price`.
+  // move it within the shared ±60% retune band to land cleaner odds; the FINAL
+  // `priceAfter` is assigned after the shape step, and is what gets written to
+  // `packs.price`.
   const priceStaged = priceProvided ? input.price! : priceBefore;
   if (!(priceStaged > 0)) throw new Error("Refused: pack has no valid price.");
   let priceAfter = priceStaged;
@@ -2216,10 +2256,10 @@ async function resolveAndShapeStagedPool(
 
   // ── Optional price-search lever ───────────────────────────────────────
   // When the operator opts in (`allowPriceSearch: true`), the server sweeps
-  // cent-stepped candidate prices around the staged price (default ±25%, max
-  // 50 candidates) and picks the one whose `shapeWeights` result lands every
-  // card on a clean ladder rung (snapped=true) while staying closest to the
-  // staged price.
+  // cent-stepped candidate prices around the staged price (the shared ±60%
+  // retune band via `buildRetuneSearchParams`) and picks the one whose
+  // `shapeWeights` result lands every card on a clean ladder rung
+  // (snapped=true) while staying closest to the staged price.
   //
   // TAGGED LOTTERY PACKS: when the pack name carries an "X%" tag (e.g.
   // "1% 18 PLUS") AND the caller hasn't pinned a custom win-rate target, the
@@ -2236,31 +2276,34 @@ async function resolveAndShapeStagedPool(
   const allowPriceSearch = targets.allowPriceSearch === true;
   const intendedHitRate = auto.intendedHitRate;
   // Tagged-pack mode triggers whenever the RESOLVED targetWinRate equals the
-  // tag — same value-equality gate as `applyPackRetune`. (The review client
-  // always sends the resolved target explicitly, so the old
+  // tag — the value-equality gate now lives INSIDE `buildRetuneSearchParams`,
+  // shared with `applyPackRetune` + both `planPackTune` arms. (The review
+  // client always sends the resolved target explicitly, so the old
   // `!callerPinnedWinRate` condition silently turned tagged mode OFF on every
   // UI approve while the approved preview ran WITH it — preview ≠ write. An
   // operator who adjusts the win-rate AWAY from the tag is refused above.)
-  const taggedSearchActive =
-    allowPriceSearch &&
-    intendedHitRate !== null &&
-    Math.abs(intendedHitRate - targetWinRate) < 1e-6;
   let shaped;
   let priceSearchMeta: ApplyStagedRetuneResult["priceSearch"] = null;
   if (allowPriceSearch) {
-    const search = searchBestPriceForCleanSnap({
-      cards: stagedValues,
-      basePrice: priceStaged,
-      targetEdge,
-      targetWinRate,
-      maxWinCap,
-      nearMissMin,
-      winRateTol,
-      // Anti-inflation anchor (same as the dry-run preview): the WRITTEN odds may
-      // never let a win/grail card exceed its CURRENT (live-pool) odds.
-      currentWeights: stagedCurrentWeights,
-      ...(taggedSearchActive ? { taggedWinRate: targetWinRate } : {}),
-    });
+    // params come from buildRetuneSearchParams — the tolerance-0
+    // approvedPriceAfter pin depends on all four sites sharing it. NOTE: the
+    // builder widens this staged search from the old silent ±25% default to
+    // the shared ±60% retune band (owner-sanctioned: price is a free lever).
+    const search = searchBestPriceForCleanSnap(
+      buildRetuneSearchParams("staged", {
+        cards: stagedValues,
+        basePrice: priceStaged,
+        targetEdge,
+        targetWinRate,
+        maxWinCap,
+        nearMissMin,
+        winRateTol,
+        // Anti-inflation anchor (same as the dry-run preview): the WRITTEN odds
+        // may never let a win/grail card exceed its CURRENT (live-pool) odds.
+        currentWeights: stagedCurrentWeights,
+        intendedHitRate,
+      }),
+    );
     shaped = search.bestResult;
     priceAfter = search.bestPrice;
     priceSearchMeta = {
@@ -2433,11 +2476,12 @@ export async function applyStagedPackEditAndRetune(
     nearMissMin?: number;
     /**
      * When TRUE the server runs `searchBestPriceForCleanSnap` around the staged
-     * price (default ±25%, cent-stepped, max 50 candidates) and picks the
-     * candidate whose `shapeWeights` result keeps `snapped=true` while staying
-     * closest to the staged price. The chosen candidate becomes the final
-     * `priceAfter` written to `packs.price` (so the writer's `priceProvided`
-     * path applies it cleanly). Defaults to FALSE — current behavior unchanged.
+     * price (the shared ±60% retune band via `buildRetuneSearchParams`,
+     * cent-stepped) and picks the candidate whose `shapeWeights` result keeps
+     * `snapped=true` while staying closest to the staged price. The chosen
+     * candidate becomes the final `priceAfter` written to `packs.price` (so
+     * the writer's `priceProvided` path applies it cleanly). Defaults to
+     * FALSE — current behavior unchanged.
      */
     allowPriceSearch?: boolean;
     /**
@@ -2637,7 +2681,9 @@ export async function applyStagedPackEditAndRetune(
   reloadPacks();
   // Invalidate the cached retune-review proposal blob so the next render of
   // /pack-studio/retune reflects this auto-tune instead of a 60s-stale dry-run.
+  // Per-pack: ONLY this pack's V2 plan is busted (never the other 182).
   revalidateTag(PACK_STUDIO_RETUNE_CACHE_TAG);
+  revalidateTag(packRetunePlanTag(packId));
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
 
@@ -2727,8 +2773,8 @@ const STAGED_PLAN_TIMEOUT_MS = 30_000;
 /**
  * READ-ONLY dry-run twin of {@link applyStagedPackEditAndRetune}: resolve +
  * shape the STAGED pool via the SAME `resolveAndShapeStagedPool` pass the write
- * runs (fresh MAIN reads, tag-aware auto-targets, optional ±25% price search,
- * every fail-closed assert) and return the VERDICT instead of writing.
+ * runs (fresh MAIN reads, tag-aware auto-targets, optional shared-band price
+ * search, every fail-closed assert) and return the VERDICT instead of writing.
  *
  * This is what lets the retune review judge feasibility off the pool the
  * operator has STAGED in the inline editor rather than the LIVE pool — the
@@ -2850,5 +2896,441 @@ async function planStagedRetuneUncached(
       nearMissMin: r.resolved.nearMissMin,
       intendedHitRate: r.resolved.intendedHitRate,
     },
+  };
+}
+
+// ─── planPackTune — THE Retune V2 single plan entry (one brain) ─────────────
+//
+// ONE read-only server plan for ONE pack, live or staged: the result is the
+// ONLY source of every number the V2 workspace shows AND the EXACT artifact
+// the Push button writes (pinned by `approvedPriceAfter` tolerance 0 +
+// `approvedPoolFingerprint`, both fail-closed server-side). Plan ≡ write is
+// STRUCTURAL: both arms and both MAIN write actions construct their solver
+// params through the shared `buildRetuneSearchParams`.
+//
+//   • Live arm (`staged` null) — absorbs `planSingleRetuneUncached`'s body
+//     (fresh pack row, tag-aware auto targets, anchored shared-band search),
+//     cached 60s per pack under `packRetunePlanTag(packId)` so ONE approve
+//     invalidates ONE pack's plan (never the other 182 — the old global tag
+//     busted the whole proposal blob).
+//   • Staged arm — the READ phase of `applyStagedPackEditAndRetune` via the
+//     SAME `resolveAndShapeStagedPool` pass the write runs (staged validation,
+//     REAL card-value lookup, live-pool read, targets off the STAGED price,
+//     `stagedCurrentWeights` anti-inflation anchor, shared-band search; when
+//     `pinPrice`, the write's anchored `shapeWeights` else-branch verbatim).
+//     Never cached (the staged key space is unique per call).
+//
+// Refusals are DATA, never throws: tag contradiction comes back as
+// `tagContradiction`, solver infeasibility as `limit`, out-of-scope packs
+// (inactive / price ≤ 0 / not found) as `null` — the workspace renders
+// plain-words copy + a fix loop instead of an error boundary.
+
+/**
+ * Staged input for {@link planPackTune} — pool IDENTITY only. NO weights (the
+ * server shapes them — hand-typed odds live in the Drafts flow), NO cosmetics
+ * (color/animation ride the push payload only; they never affect the solve).
+ */
+export type PackTuneStagedInput = {
+  cards: { cardId: string; order: number }[];
+  /** Staged ticket price (USD). Omitted = live price. */
+  price?: number;
+  /** Escape hatch: solve odds-only AT the staged price (no price search). */
+  pinPrice?: boolean;
+};
+
+export type PackTunePlan = {
+  packId: string;
+  name: string;
+  slug: string;
+  arm: "live" | "staged";
+  /** Wall-clock stamp of the solve (cached live plans age up to 60s). */
+  computedAtIso: string;
+  /**
+   * `computePoolFingerprint(livePrice, livePool)` at solve time — THE write
+   * pin (`approvedPoolFingerprint`), always over the LIVE pool (both writes
+   * verify against live state, staged or not).
+   */
+  poolFingerprint: string;
+  /** LIVE ticket price (USD). */
+  price: number;
+  /** The staged price the operator typed, or null (live arm / not staged). */
+  stagedPrice: number | null;
+  /** The price the write would persist (the search's pick). */
+  priceAfter: number;
+  /**
+   * FULL after-vector in staged order (pool order on the live arm):
+   * `pct` = the planned draw probability in percent; `livePct` = the card's
+   * CURRENT live probability, null for a staged-in (added) card. Empty when
+   * the plan is infeasible/refused (no shaped vector exists).
+   */
+  planned: { cardId: string; pct: number; livePct: number | null }[];
+  /** Live-pool cards the staged pool removes (staged arm; empty on live). */
+  removedCardIds: string[];
+  /** Risk AS IT IS NOW (live pool at the live price). */
+  before: PackRisk;
+  /**
+   * Risk after the plan. Non-null even for some staged refusals (shaping
+   * succeeded but a fail-closed assert would refuse the write) so the UI can
+   * show WHAT would be refused; null when shaping itself failed.
+   */
+  after: PackRisk | null;
+  feasible: boolean;
+  relaxations: ShapeWeightsRelaxation[];
+  /** Structured hard limit when genuinely infeasible (else null). */
+  limit: ShapeWeightsLimit | null;
+  /**
+   * The staged arm's tag-contradiction refusal returned as DATA (the write
+   * throws this exact message) — null when no contradiction.
+   */
+  tagContradiction: string | null;
+  snapped: boolean | null;
+  /** cardIds whose planned pct is NOT on the clean ladder (amber dots). */
+  offLadderCards: string[];
+  topInflationUnavoidable: boolean | null;
+  intendedHitRate: number | null;
+  /** RESOLVED targets — the client threads these verbatim to the write. */
+  targets: {
+    targetEdge: number;
+    targetWinRate: number;
+    maxWinCap: number;
+    nearMissMin: number;
+  };
+  taggedAccuracyHit: boolean | null;
+  searchMeta: { candidates: number; fellBackToBase: boolean } | null;
+};
+
+/**
+ * Plan ONE pack's tune (live pool, or a staged pool). Owner + Pack-Studio
+ * operator gated (auth OUTSIDE the cache). READ-ONLY — writes nothing.
+ * Returns `null` when the pack is out of scope (inactive / price ≤ 0 / not
+ * found). `opts.fresh` bypasses the 60s live-arm cache (the manual Re-plan
+ * recovery path); staged calls are always uncached.
+ */
+export async function planPackTune(
+  packId: string,
+  staged?: PackTuneStagedInput | null,
+  opts?: { fresh?: boolean } | null,
+): Promise<PackTunePlan | null> {
+  await requireRetuneOwner();
+  if (!isUuid(packId)) throw new Error("Invalid pack id");
+
+  if (staged != null) {
+    return planPackTuneStagedUncached(packId, staged);
+  }
+  if (opts?.fresh === true) {
+    return planPackTuneLiveUncached(packId);
+  }
+  // Per-pack cache: keyed on the packId, tagged with the PER-PACK tag only —
+  // every write site revalidates `packRetunePlanTag(id)`, so approving one
+  // pack re-plans ONE pack. (The wrapper is created per call so the tag can
+  // carry the dynamic packId; `unstable_cache` still dedupes by keyParts.)
+  return unstable_cache(
+    () => planPackTuneLiveUncached(packId),
+    ["pack-studio.retune.plan-pack.v1", packId],
+    { revalidate: 60, tags: [packRetunePlanTag(packId)] },
+  )();
+}
+
+/** Shared per-card projection: weights vector → planned rows + off-ladder ids. */
+function projectPlannedVector(
+  cardIds: string[],
+  weights: number[],
+  livePctByCardId: Map<string, number>,
+): {
+  planned: PackTunePlan["planned"];
+  offLadderCards: string[];
+} {
+  let total = 0;
+  for (const w of weights) {
+    if (Number.isFinite(w) && w > 0) total += w;
+  }
+  const planned = cardIds.map((cardId, i) => {
+    const w = weights[i] ?? 0;
+    return {
+      cardId,
+      pct: total > 0 && w > 0 ? (w / total) * 100 : 0,
+      livePct: livePctByCardId.get(cardId) ?? null,
+    };
+  });
+  const offLadderCards = planned
+    .filter((row) => !isOnCleanLadderPct(row.pct))
+    .map((row) => row.cardId);
+  return { planned, offLadderCards };
+}
+
+/** Live-pool probabilities in percent, keyed by cardId (null-safe totals). */
+function livePctMap(
+  pool: readonly { cardId: string; weight: number }[],
+): Map<string, number> {
+  let total = 0;
+  for (const c of pool) {
+    if (Number.isFinite(c.weight) && c.weight > 0) total += c.weight;
+  }
+  const out = new Map<string, number>();
+  for (const c of pool) {
+    out.set(c.cardId, total > 0 && c.weight > 0 ? (c.weight / total) * 100 : 0);
+  }
+  return out;
+}
+
+/**
+ * The LIVE arm — `planSingleRetuneUncached`'s read/solve body (fresh identity
+ * + scope from the composition view, one-pack batched pool read, tag-aware
+ * auto targets) with the solve routed through the shared
+ * `buildRetuneSearchParams` and the result mapped to {@link PackTunePlan}.
+ * NOT gated (the public `planPackTune` gates before dispatch); NOT exported.
+ */
+async function planPackTuneLiveUncached(
+  packId: string,
+): Promise<PackTunePlan | null> {
+  const cfg: ResolvedAutoTargetCfg = {
+    globalCap: await readMaxWinCap(),
+    maxMultCeiling: await readMaxMultCeiling(),
+    edgeCurve: await readEdgeCurveConfig(),
+  };
+
+  // Fresh identity + scope from the same composition view the legacy sweep
+  // uses, so the scope predicate stays in lockstep.
+  const comps = await getPacksPoolComposition({ packIds: [packId] });
+  const p = comps[0];
+  if (!p || !p.active || !(p.price > 0)) return null;
+
+  // One-pack pool read (same composite-index probe as the legacy single arm).
+  const db = await getDb();
+  const rows = await db.$queryRawUnsafe<BatchedPoolRow[]>(
+    `
+      SELECT
+        pc.pack_id      AS pack_id,
+        pc.card_id      AS card_id,
+        c.price::text   AS value,
+        pc.weight       AS weight,
+        c.name          AS name,
+        c.image_url     AS image_url
+      FROM pack_cards pc
+      JOIN cards c ON c.id = pc.card_id
+      WHERE pc.pack_id = $1::uuid
+      ORDER BY pc.order ASC
+    `,
+    packId,
+  );
+  const cards = rows.map((r) => ({
+    cardId: r.card_id,
+    value: Number(r.value ?? 0),
+    weight: Number(r.weight),
+  }));
+
+  const autoTargets = autoRetuneTargets(
+    p.price,
+    cfg,
+    resolveIntendedHitRate(p.name, p.tags) ?? undefined,
+  );
+  const poolFingerprint = computePoolFingerprint(p.price, cards);
+  const before = computePackRisk({
+    cards: cards.map((c) => ({ value: c.value, weight: c.weight })),
+    price: p.price,
+  });
+  const computedAtIso = new Date().toISOString();
+  const targets = {
+    targetEdge: autoTargets.targetEdge,
+    targetWinRate: autoTargets.targetWinRate,
+    maxWinCap: autoTargets.maxWinCap,
+    nearMissMin: autoTargets.nearMissMin,
+  };
+  const base = {
+    packId: p.id,
+    name: p.name,
+    slug: p.slug,
+    arm: "live" as const,
+    computedAtIso,
+    poolFingerprint,
+    price: p.price,
+    stagedPrice: null,
+    removedCardIds: [] as string[],
+    before,
+    tagContradiction: null,
+    intendedHitRate: autoTargets.intendedHitRate,
+    targets,
+  };
+
+  if (cards.length === 0) {
+    return {
+      ...base,
+      priceAfter: p.price,
+      planned: [],
+      after: null,
+      feasible: false,
+      relaxations: [],
+      limit: {
+        kind: "empty-pool",
+        detail:
+          "This pack has no cards in its pool, so there is nothing to retune.",
+        suggestion: "Add cards to the pack in the Builder before retuning it.",
+      },
+      snapped: null,
+      offLadderCards: [],
+      topInflationUnavoidable: null,
+      taggedAccuracyHit: null,
+      searchMeta: null,
+    };
+  }
+
+  // params come from buildRetuneSearchParams — the tolerance-0
+  // approvedPriceAfter pin depends on all four sites sharing it.
+  const search = searchBestPriceForCleanSnap(
+    buildRetuneSearchParams("live", {
+      cards: cards.map((c) => ({ value: c.value })),
+      basePrice: p.price,
+      targetEdge: autoTargets.targetEdge,
+      targetWinRate: autoTargets.targetWinRate,
+      maxWinCap: autoTargets.maxWinCap,
+      nearMissMin: autoTargets.nearMissMin,
+      // The solver's default win-rate tolerance, pinned explicitly so the
+      // plan's params deep-equal the write's (`applyPackRetune` sends 0.02).
+      winRateTol: 0.02,
+      // Anti-inflation anchor: no win/grail card's odds may exceed its
+      // current odds (the jackpot stays rare; raising the edge only trims
+      // the expensive tail).
+      currentWeights: cards.map((c) => c.weight),
+      intendedHitRate: autoTargets.intendedHitRate,
+    }),
+  );
+  const shaped = search.bestResult;
+  const searchMeta = {
+    candidates: search.searched,
+    fellBackToBase: search.fellBackToBase,
+  };
+
+  if ("error" in shaped) {
+    return {
+      ...base,
+      priceAfter: p.price,
+      planned: [],
+      after: null,
+      feasible: false,
+      relaxations: [],
+      limit: shaped.limit,
+      snapped: null,
+      offLadderCards: [],
+      topInflationUnavoidable: null,
+      taggedAccuracyHit: search.taggedAccuracyHit,
+      searchMeta,
+    };
+  }
+
+  const { planned, offLadderCards } = projectPlannedVector(
+    cards.map((c) => c.cardId),
+    shaped.weights,
+    livePctMap(cards),
+  );
+
+  return {
+    ...base,
+    priceAfter: search.bestPrice,
+    planned,
+    after: shaped.risk,
+    feasible: true,
+    relaxations: shaped.relaxations,
+    limit: null,
+    snapped: shaped.snapped ?? false,
+    offLadderCards,
+    topInflationUnavoidable: shaped.topInflationUnavoidable ?? false,
+    taggedAccuracyHit: search.taggedAccuracyHit,
+    searchMeta,
+  };
+}
+
+/**
+ * The STAGED arm — the write's read/solve phase via the SAME
+ * `resolveAndShapeStagedPool` pass `applyStagedPackEditAndRetune` runs, with
+ * its solve already routed through the shared `buildRetuneSearchParams` (or,
+ * when `pinPrice`, the write's anchored `shapeWeights` else-branch verbatim).
+ * NOT gated (the public `planPackTune` gates before dispatch); NOT exported.
+ * NO payload fat: no card names/images/currentWeights — the client already
+ * holds the pool from `getPackEditPool`.
+ */
+async function planPackTuneStagedUncached(
+  packId: string,
+  staged: PackTuneStagedInput,
+): Promise<PackTunePlan | null> {
+  // Scope probe (indexed PK read): a plan for an inactive / unpriced /
+  // deleted pack is out of scope — return null (data, not a throw) so the
+  // workspace renders the neutral out-of-scope state. Also carries the slug
+  // the resolver doesn't read.
+  const db = await getDb();
+  const pack = await db.packs.findUnique({
+    where: { id: packId },
+    select: { slug: true, active: true, price: true },
+  });
+  if (!pack || !pack.active || !(Number(pack.price.toString()) > 0)) {
+    return null;
+  }
+
+  const input: StagedPoolInput = {
+    cards: staged.cards.map((c) => ({ cardId: c.cardId, order: c.order })),
+    ...(staged.price !== undefined ? { price: staged.price } : {}),
+  };
+  const r = await resolveAndShapeStagedPool(packId, input, {
+    // Price search is ALWAYS ON (owner directive: price is a free lever);
+    // `pinPrice` is the rare odds-only escape hatch — the write's anchored
+    // no-search branch.
+    allowPriceSearch: staged.pinPrice !== true,
+  });
+  const outcome = r.outcome;
+
+  // THE write pin: always the LIVE pool at the LIVE price — both writes
+  // verify their `approvedPoolFingerprint` against live state.
+  const poolFingerprint = computePoolFingerprint(r.priceBefore, r.livePool);
+  const livePcts = livePctMap(r.livePool);
+  const stagedIds = new Set(input.cards.map((c) => c.cardId));
+  const removedCardIds = r.livePool
+    .filter((c) => !stagedIds.has(c.cardId))
+    .map((c) => c.cardId);
+
+  const { planned, offLadderCards } = outcome.ok
+    ? projectPlannedVector(
+        input.cards.map((c) => c.cardId),
+        outcome.weights,
+        livePcts,
+      )
+    : { planned: [], offLadderCards: [] };
+
+  return {
+    packId,
+    name: r.packName,
+    slug: pack.slug,
+    arm: "staged",
+    computedAtIso: new Date().toISOString(),
+    poolFingerprint,
+    price: r.priceBefore,
+    stagedPrice: staged.price ?? null,
+    priceAfter: r.priceAfter,
+    planned,
+    removedCardIds,
+    before: r.before,
+    after: outcome.after,
+    feasible: outcome.ok,
+    relaxations: outcome.ok ? outcome.relaxations : [],
+    limit: outcome.ok ? null : outcome.limit,
+    tagContradiction:
+      !outcome.ok && outcome.code === "tag-contradiction"
+        ? outcome.message
+        : null,
+    snapped: outcome.ok ? outcome.snapped : null,
+    offLadderCards,
+    topInflationUnavoidable: outcome.ok ? outcome.topInflationUnavoidable : null,
+    intendedHitRate: r.resolved.intendedHitRate,
+    targets: {
+      targetEdge: r.resolved.targetEdge,
+      targetWinRate: r.resolved.targetWinRate,
+      maxWinCap: r.resolved.maxWinCap,
+      nearMissMin: r.resolved.nearMissMin,
+    },
+    taggedAccuracyHit: r.priceSearch?.taggedAccuracyHit ?? null,
+    searchMeta: r.priceSearch
+      ? {
+          candidates: r.priceSearch.candidates,
+          fellBackToBase: r.priceSearch.fellBackToBase,
+        }
+      : null,
   };
 }

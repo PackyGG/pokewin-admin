@@ -24,7 +24,11 @@ import {
   type PackSetFilter,
   type PackStats,
 } from "@/lib/queries/packs";
-import { PACK_STUDIO_RETUNE_CACHE_TAG } from "@/app/(pack-studio)/pack-studio/_actions/retune-cache-tag";
+import {
+  PACK_STUDIO_RETUNE_CACHE_TAG,
+  packRetunePlanTag,
+} from "@/app/(pack-studio)/pack-studio/_actions/retune-cache-tag";
+import { buildRetuneSearchParams } from "@/app/(admin)/packs/_lib/retune-params";
 import {
   planPackReprice,
   repriceEdgeWithinHardBand,
@@ -47,7 +51,6 @@ import { getPackCardValues } from "@/lib/queries/pack-card-values";
 import {
   shapeWeights,
   searchBestPriceForCleanSnap,
-  RETUNE_MAX_PRICE_CHANGE_PCT,
   computePackRisk,
   computePackRiskFromAggregates,
   type PackRisk,
@@ -768,8 +771,10 @@ export async function quickUpdatePack(
   reloadPacks();
 
   // Builder edits can re-shape the pool / change the price → the retune-review
-  // proposals depend on both, so invalidate the cached blob too.
+  // proposals depend on both, so invalidate the cached blob too. Per-pack:
+  // ONLY this pack's V2 plan is busted (never the other 182).
   revalidateTag(PACK_STUDIO_RETUNE_CACHE_TAG);
+  revalidateTag(packRetunePlanTag(packId));
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
 }
@@ -1255,8 +1260,10 @@ export async function repricePackToTargetEdge(
 
     reloadPacks();
     // Re-price changes a pack's price → the retune-review proposals shape
-    // off that price, so invalidate the cached blob too.
+    // off that price, so invalidate the cached blob too. Per-pack: ONLY this
+    // pack's V2 plan is busted (never the other 182).
     revalidateTag(PACK_STUDIO_RETUNE_CACHE_TAG);
+    revalidateTag(packRetunePlanTag(packId));
     revalidatePath("/packs");
     revalidatePath(`/packs/${packId}`);
 
@@ -1838,43 +1845,42 @@ export async function applyPackRetune(
   // with the on-screen preview produced by `planAllRetunes`.
   const preferHigherEdge = upwardExtension > 0 || priceAnchor !== null;
   // Tagged lottery packs get the strict 0.01pp win-rate accuracy gate (the
-  // tag IS the contract). Active whenever the RESOLVED targetWinRate equals
-  // the name tag — the same gate `planAllRetunes` uses, so the write's tagged
-  // mode matches the preview's. (The review client always sends the resolved
-  // target explicitly, so gating on `targets.targetWinRate === undefined`
-  // would silently turn tagged mode OFF at write time while the approved
-  // preview ran WITH it — preview ≠ write. An operator who adjusts the
-  // win-rate AWAY from the tag still disables the gate via the mismatch.)
-  const taggedWinRate =
-    resolved.intendedHitRate !== null &&
-    Math.abs(resolved.intendedHitRate - resolved.targetWinRate) < 1e-9
-      ? resolved.intendedHitRate
-      : undefined;
+  // tag IS the contract). The gate now lives INSIDE `buildRetuneSearchParams`
+  // (active whenever the RESOLVED targetWinRate value-equals the tag), so the
+  // write's tagged mode matches the plan's by construction — gating on
+  // `targets.targetWinRate === undefined` would silently turn tagged mode OFF
+  // at write time while the approved preview ran WITH it (preview ≠ write).
+  // An operator who adjusts the win-rate AWAY from the tag still disables the
+  // gate via the value mismatch.
 
   let priceAfter = price;
   let shaped;
   if (allowPriceSearch) {
     const searchBasePrice = priceAnchor ?? price;
+    // params come from buildRetuneSearchParams — the tolerance-0
+    // approvedPriceAfter pin depends on all four sites sharing it.
     const search = searchBestPriceForCleanSnap({
-      cards: pool.map((c) => ({ value: c.value })),
-      basePrice: searchBasePrice,
-      targetEdge,
-      targetWinRate: resolved.targetWinRate,
-      maxWinCap: resolved.maxWinCap,
-      nearMissMin: resolved.nearMissMin,
-      winRateTol,
-      // Anti-inflation anchor: the pack's CURRENT weights (pool order), same
-      // as the planner preview passes — no win/grail card's odds may exceed
-      // its current odds, so the WRITTEN odds match the anchored preview
-      // instead of falling back to the legacy value-only shape.
-      currentWeights: pool.map((c) => c.weight),
-      // The SHARED ±60% retune band — must equal the planner's + the client
-      // confirm mirrors' band, or a snap that needed a >25% price move would
-      // land on a different price here than the preview showed.
-      maxPriceChangePct: RETUNE_MAX_PRICE_CHANGE_PCT,
-      upwardPriceExtensionPct: upwardExtension,
-      preferHigherEdge,
-      ...(taggedWinRate !== undefined ? { taggedWinRate } : {}),
+      ...buildRetuneSearchParams("live", {
+        cards: pool.map((c) => ({ value: c.value })),
+        basePrice: searchBasePrice,
+        targetEdge,
+        targetWinRate: resolved.targetWinRate,
+        maxWinCap: resolved.maxWinCap,
+        nearMissMin: resolved.nearMissMin,
+        winRateTol,
+        // Anti-inflation anchor: the pack's CURRENT weights (pool order), same
+        // as the planner preview passes — no win/grail card's odds may exceed
+        // its current odds, so the WRITTEN odds match the anchored preview
+        // instead of falling back to the legacy value-only shape.
+        currentWeights: pool.map((c) => c.weight),
+        intendedHitRate: resolved.intendedHitRate,
+      }),
+      // Legacy chip-strip levers (old review route / doctor drawer only) —
+      // spread AFTER the builder so a caller that sends none (V2 sends
+      // upwardPriceExtensionPct 0 and no anchor) gets the builder's shared
+      // params byte-identically.
+      ...(upwardExtension > 0 ? { upwardPriceExtensionPct: upwardExtension } : {}),
+      ...(preferHigherEdge ? { preferHigherEdge: true } : {}),
     });
     shaped = search.bestResult;
     priceAfter = search.bestPrice;
@@ -2083,7 +2089,9 @@ export async function applyPackRetune(
   reloadPacks();
   // Invalidate the cached retune-review proposal blob so the next render of
   // /pack-studio/retune reflects this retune instead of a 60s-stale dry-run.
+  // Per-pack: ONLY this pack's V2 plan is busted (never the other 182).
   revalidateTag(PACK_STUDIO_RETUNE_CACHE_TAG);
+  revalidateTag(packRetunePlanTag(packId));
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
 
@@ -2281,6 +2289,12 @@ export async function revertPackToSnapshot(
   }
 
   reloadPacks();
+  // Revert-gap fix (Retune V2): a revert rewrites price + weights but used to
+  // revalidate NO retune/overview tag — the rail snapshot cache and this
+  // pack's V2 plan kept serving pre-revert numbers for up to 60s. Bust both
+  // (per-pack plan tag + the doctor/rail snapshot tag).
+  revalidateTag(packRetunePlanTag(packId));
+  revalidateTag("pack-studio-overview");
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
 
