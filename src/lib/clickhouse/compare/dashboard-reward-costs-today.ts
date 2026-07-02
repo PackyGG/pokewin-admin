@@ -15,9 +15,11 @@ import { computeDrift, logComparison, timeCh } from "./_core";
  *
  * Compares only the DATABASE-DERIVED lines cent-exact, over the SAME window
  * start the PG path computed (today 00:00 UTC, carried as `dayStartIso`):
- * deposit_bonus, daily_packs, signup_balance, rakeback, affiliate, promo_gift,
- * race, raffles, motha, manual_voucher, counted_adjustments — plus the DB
- * sub-total `dbTotal` (the PG card `total` minus its non-DB rain line).
+ * deposit_bonus, daily_packs, signup_balance, rakeback, promo_gift, race,
+ * raffles, motha, manual_voucher, counted_adjustments — plus the DB sub-total
+ * `dbTotal` (the PG card `total` minus its non-DB rain line). `affiliate_claim`
+ * is NOT compared here — it was MOVED WHOLESALE to the Creators Costs box
+ * (owner, 2026-07-02); see `compare/dashboard-creator-costs-today.ts`.
  *
  * The RAIN line stays 100% Postgres: it is a flat NON-DB `$2 × hoursElapsed`
  * the operator passes through unchanged, with no DB source to mirror, so it is
@@ -53,7 +55,6 @@ export async function compareDashboardRewardCostsToday(pgValues: {
         dailyPacks: pgLine("daily_packs"),
         signupBalance: pgLine("signup_balance"),
         rakeback: pgLine("rakeback"),
-        affiliate: pgLine("affiliate"),
         promoGift: pgLine("promo_gift"),
         race: pgLine("race"),
         raffles: pgLine("raffles"),
@@ -67,7 +68,6 @@ export async function compareDashboardRewardCostsToday(pgValues: {
         dailyPacks: ch.dailyPacks,
         signupBalance: ch.signupBalance,
         rakeback: ch.rakeback,
-        affiliate: ch.affiliate,
         promoGift: ch.promoGift,
         race: ch.race,
         raffles: ch.raffles,
@@ -82,7 +82,6 @@ export async function compareDashboardRewardCostsToday(pgValues: {
         "dailyPacks",
         "signupBalance",
         "rakeback",
-        "affiliate",
         "promoGift",
         "race",
         "raffles",

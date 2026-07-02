@@ -81,11 +81,6 @@ const MOTHA_USERNAME = "motha";
  * operator wants to see broken out per program (rather than lumped or
  * hidden):
  *
- *   • AFFILIATE — `affiliate_claim` ledger sum today. Surfaced here so the
- *     operator sees the affiliate-commission spend alongside the other
- *     reward lines (`affiliate_claim` IS in `REWARD_PAYOUT_TYPES`, so this
- *     line is canonical reward cost — previously suppressed for layout
- *     reasons; now shown to match the system-edge-plan breakdown).
  *   • RAFFLES — today-window RECONSTRUCTED raffle prize cost. Raffles pay
  *     pack/card items via a `prizes` JSON (NOT a ledger money leg), so the
  *     cost is reconstructed by valuing each completed-today raffle's prizes
@@ -156,10 +151,14 @@ const RAIN_USD_PER_HOUR = 2;
  *   signup_balance           → balance_reward_claim, waitlist_prize
  *   manual_voucher           → voucher_redeemed (origin='manual' carve-out)
  *   counted_adjustments      → admin_balance_adjustment (counted credits)
- *   affiliate                → affiliate_claim (now surfaced as its own
- *                              line — matches the system-edge-plan breakdown)
  *
  * DELIBERATELY NOT covered:
+ *   affiliate_claim          → MOVED WHOLESALE to the Creators Costs box
+ *                              (owner decision, 2026-07-02): affiliate-code
+ *                              earners are creator-program recipients, same
+ *                              reasoning as the other Creators Costs lines.
+ *                              This box counts $0 of it — no double-count,
+ *                              Creators Costs now counts the full sum.
  *   affiliate_leaderboard_prize → creator-run leaderboard payout, counted
  *                              wholly (full gross) in the Creators Costs box,
  *                              EXCLUDED from this box (owner, 2026-06-04)
@@ -218,7 +217,6 @@ const cachedLedgerAndPacks = unstable_cache(
             { key: "daily_packs", label: "Daily / free packs", amount: c.dailyPacks },
             { key: "signup_balance", label: "Signup / balance rewards", amount: c.signupBalance },
             { key: "rakeback", label: "Rakeback claims", amount: c.rakeback },
-            { key: "affiliate", label: "Affiliate commissions", amount: c.affiliate },
             { key: "promo_gift", label: "Promo / gift cards", amount: c.promoGift },
             { key: "race", label: "Race wins", amount: c.race },
             { key: "raffles", label: "Raffle prizes", amount: c.raffles },
@@ -231,8 +229,10 @@ const cachedLedgerAndPacks = unstable_cache(
       },
     );
   },
-  // v2: split race/raffle, surface affiliate + motha as their own lines.
-  ["dashboard-reward-costs-today-v2"],
+  // v3: affiliate line MOVED WHOLESALE to Creators Costs (owner, 2026-07-02) —
+  // no longer read/surfaced here. v2: split race/raffle, surface affiliate +
+  // motha as their own lines.
+  ["dashboard-reward-costs-today-v3"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 
@@ -245,8 +245,8 @@ async function rewardCostsTodayLinesFromPg(
 
       // ── Ledger reward legs (today) ───────────────────────────────────
       // SAME canonical scope + SAME carve-outs as getRewardCost, broken
-      // out per operator-friendly category. affiliate_claim is now its own
-      // line (matches the system-edge-plan per-lever breakdown);
+      // out per operator-friendly category. affiliate_claim MOVED WHOLESALE
+      // to the Creators Costs box (owner, 2026-07-02) — not read here.
       // rain_win/rain_tip are NOT summed (flat $2/h model handled at the
       // wrapper).
       const scope = await getMetricsScope();
@@ -260,7 +260,6 @@ async function rewardCostsTodayLinesFromPg(
         signup_balance: string;
         manual_voucher: string;
         counted_adjustments: string;
-        affiliate: string;
       };
       const ledgerRows = await db.$queryRawUnsafe<LedgerRow[]>(
         `WITH ${scope.sessionWindowsCte}
@@ -271,8 +270,7 @@ async function rewardCostsTodayLinesFromPg(
            COALESCE(SUM(CASE WHEN type::text = 'race_prize' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS race,
            COALESCE(SUM(CASE WHEN type::text IN ('balance_reward_claim','waitlist_prize') THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS signup_balance,
            COALESCE(SUM(CASE WHEN type::text = 'voucher_redeemed' AND metadata->>'origin' = 'manual' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS manual_voucher,
-           COALESCE(SUM(CASE WHEN (${countedAdj}) THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS counted_adjustments,
-           COALESCE(SUM(CASE WHEN type::text = 'affiliate_claim' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS affiliate
+           COALESCE(SUM(CASE WHEN (${countedAdj}) THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS counted_adjustments
          FROM ledger_transactions
          WHERE status = 'completed'
            AND user_id IN ${scope.userScopeSql}
@@ -459,11 +457,6 @@ async function rewardCostsTodayLinesFromPg(
           key: "rakeback",
           label: "Rakeback claims",
           amount: toNumber(lr?.rakeback),
-        },
-        {
-          key: "affiliate",
-          label: "Affiliate commissions",
-          amount: toNumber(lr?.affiliate),
         },
         {
           key: "promo_gift",

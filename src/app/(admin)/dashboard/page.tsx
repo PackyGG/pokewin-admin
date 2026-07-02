@@ -608,6 +608,7 @@ async function DashboardCreatorCostsToday() {
     creatorWithdrawals: data.creatorWithdrawals,
     tips: data.tips,
     leaderboardGross: data.leaderboardGross,
+    affiliate: data.affiliate,
     dayStartIso: data.dayStartIso,
   });
   if (pnlResult.data) {

@@ -17,8 +17,11 @@ import { CH_DB, chDateTime, customerScopeCte, toNumber } from "../_shared";
  *     `getMetricsScope` population; the creator-on-session predicate is a no-op
  *     once creators are dropped wholesale, so it is omitted): deposit_bonus,
  *     rakeback, promo_gift, race, signup_balance, manual_voucher (origin=manual),
- *     counted_adjustments (counted admin_balance_adjustment credits), affiliate.
- *     Each Σ |amount| over completed rows in the window.
+ *     counted_adjustments (counted admin_balance_adjustment credits).
+ *     Each Σ |amount| over completed rows in the window. `affiliate_claim` is
+ *     NOT twinned here — it was MOVED WHOLESALE to the Creators Costs box
+ *     (owner, 2026-07-02); see the CH twin at
+ *     `clickhouse/queries/dashboard/creator-costs-today.ts`.
  *   • MOTHA — founder account outflows (NO scope): creator_tip +
  *     battle_sponsorship debits + motha-funded rain_tips today.
  *   • RAFFLES — today-window completed raffles' prize JSON reconstructed at LIVE
@@ -49,7 +52,6 @@ export type RewardCostsTodayDbCh = {
   dailyPacks: number;
   signupBalance: number;
   rakeback: number;
-  affiliate: number;
   promoGift: number;
   race: number;
   raffles: number;
@@ -90,7 +92,6 @@ type LedgerRow = {
   signup_balance: string;
   manual_voucher: string;
   counted_adjustments: string;
-  affiliate: string;
 };
 type MothaLedgerRow = { motha_ledger: string };
 type MothaRainRow = { motha_rain: string };
@@ -116,8 +117,7 @@ export async function getRewardCostsTodayDbFromClickHouse(
       toString(sumIf(abs(lt.amount), lt.type = 'race_prize'))                                       AS race,
       toString(sumIf(abs(lt.amount), lt.type IN ('balance_reward_claim','waitlist_prize')))         AS signup_balance,
       toString(sumIf(abs(lt.amount), lt.type = 'voucher_redeemed' AND JSONExtractString(lt.metadata, 'origin') = 'manual')) AS manual_voucher,
-      toString(sumIf(abs(lt.amount), lt.type = 'admin_balance_adjustment' AND lt.amount > 0 AND JSONExtractString(lt.metadata, 'adjustment_category') IN ${COUNTED_ADJ_CATEGORIES_SQL})) AS counted_adjustments,
-      toString(sumIf(abs(lt.amount), lt.type = 'affiliate_claim'))                                  AS affiliate
+      toString(sumIf(abs(lt.amount), lt.type = 'admin_balance_adjustment' AND lt.amount > 0 AND JSONExtractString(lt.metadata, 'adjustment_category') IN ${COUNTED_ADJ_CATEGORIES_SQL})) AS counted_adjustments
     FROM ${CH_DB}.public_ledger_transactions AS lt FINAL
     WHERE lt._peerdb_is_deleted = 0
       AND lt.status = 'completed'
@@ -251,7 +251,6 @@ export async function getRewardCostsTodayDbFromClickHouse(
   const signupBalance = toNumber(lr?.signup_balance);
   const manualVoucher = toNumber(lr?.manual_voucher);
   const countedAdjustments = toNumber(lr?.counted_adjustments);
-  const affiliate = toNumber(lr?.affiliate);
   const dailyPacks = toNumber(packRows[0]?.giveaway_payout);
   const raffles = toNumber(raffleRows[0]?.cost);
 
@@ -260,7 +259,6 @@ export async function getRewardCostsTodayDbFromClickHouse(
     dailyPacks +
     signupBalance +
     rakeback +
-    affiliate +
     promoGift +
     race +
     raffles +
@@ -273,7 +271,6 @@ export async function getRewardCostsTodayDbFromClickHouse(
     dailyPacks,
     signupBalance,
     rakeback,
-    affiliate,
     promoGift,
     race,
     raffles,

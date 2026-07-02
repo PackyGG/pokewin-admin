@@ -25,9 +25,10 @@ import { PromoBalanceCreditClaimants } from "./reward-cost-promo-claimants";
  * chips; the Info popover (styled exactly like the P&L Today / GGR
  * breakdown popover) spells out every line so the owner sees where it went
  * — deposit bonuses, daily/free packs, signup/balance rewards, rakeback,
- * affiliate commissions, promo/gift cards, race wins, raffle prizes,
- * motha (founder-account) giveaways, manual vouchers, promo balance
- * credits, and the flat rain line ($2/hr).
+ * promo/gift cards, race wins, raffle prizes, motha (founder-account)
+ * giveaways, manual vouchers, promo balance credits, and the flat rain line
+ * ($2/hr). Affiliate commissions MOVED WHOLESALE to the sibling Creators
+ * Costs card (owner decision, 2026-07-02) — there is no affiliate line here.
  *
  * Rain is the OWNER-CONFIRMED flat model: $2 × hours elapsed since UTC
  * midnight ("we don't pay anything else for it") — NOT the summed rain
@@ -51,17 +52,19 @@ import { PromoBalanceCreditClaimants } from "./reward-cost-promo-claimants";
 /**
  * Fixed set of programs promoted to always-visible card-face chips, in
  * display order — owner-requested (2026-07-02) so daily/free packs, rain,
- * rakeback, deposit bonuses, and affiliate (creator affiliate-code
- * earnings) always headline the card, not just whichever two happen to be
- * largest that day. A chip still renders at $0 (muted, not rose) so the
- * card doesn't reshuffle day to day.
+ * rakeback, and deposit bonuses always headline the card, not just whichever
+ * two happen to be largest that day. A chip still renders at $0 (muted, not
+ * rose) so the card doesn't reshuffle day to day.
+ *
+ * `affiliate` was REMOVED (2026-07-02): the affiliate-commission line moved
+ * wholesale to the Creators Costs card (owner decision) — it no longer
+ * exists on this card's `lines`, so it can't be pinned here either.
  */
 const PINNED_CHIP_KEYS = [
   "daily_packs",
   "rain",
   "rakeback",
   "deposit_bonus",
-  "affiliate",
 ] as const;
 
 export function RewardCostsTodayCard({

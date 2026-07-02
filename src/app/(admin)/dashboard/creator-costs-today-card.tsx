@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Info, Trophy, HandCoins, Gift, ArrowUpFromLine } from "lucide-react";
+import { Info, Trophy, HandCoins, Gift, ArrowUpFromLine, Percent } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Popover,
@@ -21,21 +21,30 @@ import { CreatorWithdrawalsDrilldown } from "./creator-cost-withdrawals-drilldow
  *
  * Every line is money the house paid OUT on creator activity → a house COST
  * → rose per CLAUDE.md's House-POV rule. Lines:
- *   • Converted payouts — deal-payout vouchers minted today (session convert).
- *   • Tips                — house-funded creator tips handed to users today.
- *   • Leaderboard prizes  — the FULL gross of today's leaderboard prizes.
- *                           Every affiliate leaderboard is a creator-run event
- *                           (owner, 2026-06-04), so its whole gross is a
- *                           creator cost counted here — no sponsored-% split.
- *                           The sibling Reward Costs box counts $0 of it.
+ *   • Converted payouts     — deal-payout vouchers minted today (session convert).
+ *   • Tips                  — house-funded creator tips handed to users today.
+ *   • Leaderboard prizes    — the FULL gross of today's leaderboard prizes.
+ *                             Every affiliate leaderboard is a creator-run event
+ *                             (owner, 2026-06-04), so its whole gross is a
+ *                             creator cost counted here — no sponsored-% split.
+ *                             The sibling Reward Costs box counts $0 of it.
+ *   • Affiliate commissions — `affiliate_claim` ledger sum today. MOVED
+ *                             WHOLESALE here from the Reward Costs box (owner,
+ *                             2026-07-02): affiliate-code earners are
+ *                             creator-program recipients. Scoped with this
+ *                             box's own blacklist-only convention (NOT the
+ *                             Reward Costs box's full customer-scope drop).
+ *                             The sibling Reward Costs box counts $0 of it now.
  *
- * The card face shows the rose total + the two largest lines as chips; the
- * Info popover (styled exactly like the Reward Costs / GGR breakdown popover)
- * spells out every line. The leaderboard line carries a click-to-reveal
- * per-claimant drilldown (`LeaderboardGrossClaimants`); the creator-
- * withdrawals line carries a sibling drilldown (`CreatorWithdrawalsDrilldown`).
- * Both reconcile to their line amounts and load lazily on click (server
- * actions), never on the dashboard's initial render.
+ * The card face shows the rose total + a FIXED set of chips covering all four
+ * lines (see `PINNED_CHIP_KEYS`), always visible regardless of magnitude — the
+ * same pattern already established on the Reward Costs card. The Info popover
+ * (styled exactly like the Reward Costs / GGR breakdown popover) spells out
+ * every line. The leaderboard line carries a click-to-reveal per-claimant
+ * drilldown (`LeaderboardGrossClaimants`); the creator-withdrawals line
+ * carries a sibling drilldown (`CreatorWithdrawalsDrilldown`). Both reconcile
+ * to their line amounts and load lazily on click (server actions), never on
+ * the dashboard's initial render.
  *
  * The header's top-right corner also carries a SMALL aggregate-P&L badge
  * (`affiliateReferredPnl`) — house P&L on affiliate-referred players for the
@@ -48,6 +57,20 @@ import { CreatorWithdrawalsDrilldown } from "./creator-cost-withdrawals-drilldow
  * boundary (`AnimatedNumber` takes the `format` string-enum, not a formatter
  * fn) per CLAUDE.md / Next 15.
  */
+/**
+ * Fixed set of ALL FOUR lines promoted to always-visible card-face chips, in
+ * display order — mirrors the pinned-chip pattern already established on the
+ * Reward Costs card (`PINNED_CHIP_KEYS` there) so the box doesn't visually
+ * reshuffle day to day. A chip still renders at $0 (muted, not rose) so a
+ * quiet day doesn't drop a line from view.
+ */
+const PINNED_CHIP_KEYS = [
+  "creator_withdrawals",
+  "tips",
+  "leaderboard",
+  "affiliate",
+] as const;
+
 export function CreatorCostsTodayCard({
   total,
   lines,
@@ -67,8 +90,13 @@ export function CreatorCostsTodayCard({
    */
   affiliateReferredPnl?: number | null;
 }) {
-  // The two loudest non-zero lines headline the card face as chips.
-  const topLines = lines.filter((l) => l.amount > 0).slice(0, 2);
+  // Fixed roster of all four lines the owner wants ALWAYS visible on the
+  // card face — regardless of magnitude — so the box doesn't visually
+  // reshuffle. Falls back to omitting a key if the query ever stops
+  // returning that line. Mirrors the Reward Costs card's PINNED_CHIP_KEYS.
+  const pinned = PINNED_CHIP_KEYS.map((key) => lines.find((l) => l.key === key)).filter(
+    (l): l is { key: string; label: string; amount: number } => l != null,
+  );
 
   return (
     <Card className="bg-rose-500/10">
@@ -107,11 +135,12 @@ export function CreatorCostsTodayCard({
             −<AnimatedNumber value={total} format="currency" />
           </span>
         </div>
-        {/* Top-two line chips. Empty state (a quiet day) shows a single
-            neutral note so the card never collapses. */}
-        {topLines.length > 0 ? (
-          <div className="grid grid-cols-2 gap-1.5 -mx-0.5">
-            {topLines.map((l) => (
+        {/* Pinned-line chips (always the same four, same order) — a quiet
+            $0 day still shows the full roster, just muted instead of rose,
+            so the box never visually reshuffles or collapses. */}
+        {pinned.length > 0 ? (
+          <div className="grid grid-cols-2 gap-1.5 -mx-0.5 sm:grid-cols-4">
+            {pinned.map((l) => (
               <CreatorCostChip key={l.key} label={l.label} value={l.amount} />
             ))}
           </div>
@@ -126,17 +155,31 @@ export function CreatorCostsTodayCard({
 }
 
 /**
- * Small chip showing one creator-cost line on the card face. Always rose —
- * the chip's figure is a house cost (money paid out on creator activity) per
- * House-POV. Mirrors the RewardCostChip on the Reward Costs tile.
+ * Small chip showing one creator-cost line on the card face. Rose whenever
+ * there's actual spend — every non-zero line is a house cost (money paid out
+ * on creator activity) per House-POV. A $0 line renders muted instead of rose
+ * so a quiet day doesn't read as alarming — the chip still holds its place in
+ * the fixed roster. Mirrors the RewardCostChip on the Reward Costs tile.
  */
 function CreatorCostChip({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-md border border-rose-500/15 bg-background/40 px-2 py-1.5 min-w-0">
+    <div
+      className={cn(
+        "rounded-md border bg-background/40 px-2 py-1.5 min-w-0",
+        value > 0 ? "border-rose-500/15" : "border-border/60",
+      )}
+    >
       <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground truncate">
         {label}
       </p>
-      <p className="text-xs font-semibold tabular-nums truncate text-rose-600 dark:text-rose-400">
+      <p
+        className={cn(
+          "text-xs font-semibold tabular-nums truncate",
+          value > 0
+            ? "text-rose-600 dark:text-rose-400"
+            : "text-muted-foreground",
+        )}
+      >
         <AnimatedNumber value={value} format="currency" />
       </p>
     </div>
@@ -199,6 +242,8 @@ function lineIcon(key: string) {
       return Gift;
     case "leaderboard":
       return Trophy;
+    case "affiliate":
+      return Percent;
     default:
       return HandCoins;
   }
@@ -211,7 +256,8 @@ function lineIcon(key: string) {
  * The leaderboard row carries a click-to-reveal per-claimant drilldown; the
  * creator-withdrawals row carries a per-creator / per-request drilldown.
  * Both reconcile to their line amounts. The total at the bottom equals
- * creator withdrawals + tips + the full leaderboard gross.
+ * creator withdrawals + tips + the full leaderboard gross + affiliate
+ * commissions.
  */
 function CreatorCostsInfoPopover({
   total,
@@ -249,11 +295,13 @@ function CreatorCostsInfoPopover({
             House spend on creator activity since 00:00 today (UTC) —{" "}
             <strong>{dayLabel}</strong> — not a rolling 24h window. Every line
             is money paid out (a house cost): deal payouts converted from
-            sessions (voucher minted), house-funded tips, and leaderboard
-            prizes.
+            sessions (voucher minted), house-funded tips, leaderboard prizes,
+            and affiliate commissions.
             Every affiliate leaderboard is a creator-run event, so its{" "}
             <strong>full prize gross</strong> is counted here as a creator cost
-            (the Reward Costs box counts $0 of it).
+            (the Reward Costs box counts $0 of it). Affiliate commissions
+            moved here wholesale from the Reward Costs box too — affiliate-code
+            earners are creator-program recipients.
           </p>
         </div>
 

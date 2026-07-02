@@ -8,7 +8,7 @@ import { CH_DB, chDateTime, toNumber } from "../_shared";
  * prod game mirror (`packy_prod`, PeerDB CDC).
  *
  * Twin of the canonical Postgres `getCreatorCostsToday`
- * (src/lib/queries/dashboard-creator-costs-today.ts). Mirrors the SAME four
+ * (src/lib/queries/dashboard-creator-costs-today.ts). Mirrors the SAME five
  * money figures the card surfaces, over the SAME window `[since, now)` (today
  * 00:00 UTC — the PG path's `utcStartOfDay`, passed in as `since`):
  *
@@ -21,16 +21,22 @@ import { CH_DB, chDateTime, toNumber } from "../_shared";
  *                          AND status='completed', created_at >= since.
  *   • leaderboardGross = Σ |ledger.amount| WHERE type='affiliate_leaderboard_prize'
  *                          AND status='completed', created_at >= since (FULL gross).
- *   • total            = creatorWithdrawals + tips + leaderboardGross.
+ *   • affiliate        = Σ |ledger.amount| WHERE type='affiliate_claim'
+ *                          AND status='completed', created_at >= since. MOVED
+ *                          WHOLESALE here from the Reward Costs twin (owner,
+ *                          2026-07-02) — see reward-costs-today.ts.
+ *   • total            = creatorWithdrawals + tips + leaderboardGross + affiliate.
  *
  * ─── Scope (mirrors the PG twin EXACTLY — blacklist ONLY) ─────────────
  *
  * The PG twin applies the admin-managed `excluded_users` BLACKLIST to the
  * receiving `user_id` on every line (so a blacklisted recipient never appears)
  * but does NOT drop staff/creator roles — creators are the legitimate subject
- * of creator costs. This twin mirrors that exactly: no real-customer CTE, just
- * the blacklist passed IN by the caller as a `NOT IN` residual filter on each
- * read's `user_id` (empty list → no clause, matching PG's empty-list behavior).
+ * of creator costs (and, per the 2026-07-02 move, affiliate-code earners are
+ * treated the same way). This twin mirrors that exactly: no real-customer CTE,
+ * just the blacklist passed IN by the caller as a `NOT IN` residual filter on
+ * each read's `user_id` (empty list → no clause, matching PG's empty-list
+ * behavior).
  *
  * ClickHouse correctness (PeerDB / SharedReplacingMergeTree mirrors):
  *   • FINAL + `_peerdb_is_deleted = 0` on every mirrored table.
@@ -47,10 +53,15 @@ export type CreatorCostsTodayCh = {
   creatorWithdrawals: number;
   tips: number;
   leaderboardGross: number;
+  affiliate: number;
 };
 
 type VoucherRow = { fill_converted: string; multiplier_payouts: string };
-type LedgerRow = { tips: string; leaderboard_gross: string };
+type LedgerRow = {
+  tips: string;
+  leaderboard_gross: string;
+  affiliate: string;
+};
 
 export async function getCreatorCostsTodayFromClickHouse(
   since: Date,
@@ -80,17 +91,19 @@ export async function getCreatorCostsTodayFromClickHouse(
       AND v.origin IN ('creator_fill_conversion','creator_multiplier_payout')
       ${voucherBlacklistClause}`;
 
-  // Tips (creator-funded fill-spend tips) + the FULL leaderboard prize gross,
-  // both as Σ |amount| over completed ledger rows in the window.
+  // Tips (creator-funded fill-spend tips) + the FULL leaderboard prize gross +
+  // affiliate commissions, all as Σ |amount| over completed ledger rows in the
+  // window. `affiliate_claim` MOVED WHOLESALE here (owner, 2026-07-02).
   const ledgerSql = `
     SELECT
       toString(sumIf(abs(lt.amount), lt.type = 'creator_fill_spend_tip'))     AS tips,
-      toString(sumIf(abs(lt.amount), lt.type = 'affiliate_leaderboard_prize')) AS leaderboard_gross
+      toString(sumIf(abs(lt.amount), lt.type = 'affiliate_leaderboard_prize')) AS leaderboard_gross,
+      toString(sumIf(abs(lt.amount), lt.type = 'affiliate_claim'))            AS affiliate
     FROM ${CH_DB}.public_ledger_transactions AS lt FINAL
     WHERE lt._peerdb_is_deleted = 0
       AND lt.status = 'completed'
       AND lt.created_at >= {cutoff:DateTime64(6)}
-      AND lt.type IN ('creator_fill_spend_tip','affiliate_leaderboard_prize')
+      AND lt.type IN ('creator_fill_spend_tip','affiliate_leaderboard_prize','affiliate_claim')
       ${ledgerBlacklistClause}`;
 
   const [vch, led] = await Promise.all([
@@ -110,7 +123,8 @@ export async function getCreatorCostsTodayFromClickHouse(
     toNumber(vch[0]?.fill_converted) + toNumber(vch[0]?.multiplier_payouts);
   const tips = toNumber(led[0]?.tips);
   const leaderboardGross = toNumber(led[0]?.leaderboard_gross);
-  const total = creatorWithdrawals + tips + leaderboardGross;
+  const affiliate = toNumber(led[0]?.affiliate);
+  const total = creatorWithdrawals + tips + leaderboardGross + affiliate;
 
-  return { total, creatorWithdrawals, tips, leaderboardGross };
+  return { total, creatorWithdrawals, tips, leaderboardGross, affiliate };
 }
