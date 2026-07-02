@@ -14,15 +14,21 @@ import {
  * Fixed set of programs promoted to always-visible chips on the Reward Costs
  * half, in display order — mirrors the standalone card's former
  * `PINNED_CHIP_KEYS` (owner-requested, 2026-07-02) so daily/free packs,
- * rain, rakeback, and deposit bonuses always headline the card face, not
- * just whichever two happen to be largest that day. A chip still renders at
- * $0 (muted, not rose) so the card doesn't reshuffle day to day.
+ * rain, rakeback, deposit bonuses, and promo balance credits always
+ * headline the card face, not just whichever two happen to be largest that
+ * day. `counted_adjustments` ("Promo balance credits" — counted
+ * `admin_balance_adjustment` credits: giveaway / bonus / reload / lossback
+ * / deposit-fix) added 2026-07-02 (owner request) — it already existed as
+ * a line in `getRewardCostsToday()` and in the Info popover breakdown, just
+ * wasn't pinned to a face chip yet. A chip still renders at $0 (muted, not
+ * rose) so the card doesn't reshuffle day to day.
  */
 const REWARD_PINNED_CHIP_KEYS = [
   "daily_packs",
   "rain",
   "rakeback",
   "deposit_bonus",
+  "counted_adjustments",
 ] as const;
 
 /**
@@ -153,8 +159,8 @@ export function RewardCreatorCostsTodayCard({
  * (`rounded-md border`, `px-2 py-1.5`, `text-[10px]` label, `-mx-0.5` grid
  * bleed, no leading minus on the chip value — only the hero total gets the
  * minus) so restoring the roster didn't change the chip's own footprint.
- * `sm:grid-cols-3` wraps both the 4-item (Reward) and 5-item (Creators)
- * roster cleanly (3+1 / 3+2) without a lone orphan chip.
+ * `sm:grid-cols-3` wraps both 5-item rosters (Reward, Creators) cleanly
+ * (3+2) without a lone orphan chip.
  */
 function CostChipGrid({
   lines,
