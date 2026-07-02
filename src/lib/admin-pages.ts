@@ -13,11 +13,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   // /map was folded into /analytics as a tab — its permission inherits
   // from /analytics. The standalone page no longer exists.
   { group: "Navigation", label: "Users", key: "/users" },
-  // Player CRM was folded into the owner-only Insights Overview as a tab,
-  // then DROPPED ENTIRELY in the 2026-07 Real Numbers merge (owner: "remove
-  // CRM, its useless" — not migrated anywhere). /crm now 308-redirects to
-  // plain /analytics; the standalone /crm page key was retired (mirrors how
-  // /map dropped its key into /analytics).
+  // Player CRM was folded into the owner-only Insights Overview as a tab
+  // (/insights/real-numbers?tab=crm); /crm now 308-redirects there and its
+  // permission inherits from /insights/real-numbers, so the standalone /crm
+  // page key was retired (mirrors how /map dropped its key into /analytics).
   { group: "Navigation", label: "Creators", key: "/creators" },
   // XP Sales was merged into the /rewards tab hub (XP Sales tab); the page
   // now gates on /rewards, so the standalone /xp-sales key was retired. The
@@ -37,11 +36,17 @@ export const ADMIN_PAGES: AdminPage[] = [
   // group sitting directly below Overview. Separate from the per-feature
   // analytics keys (e.g. /rewards/analytics) so role grants can be
   // managed independently.
-  // The "Analytics (Real Numbers)" / "/insights/real-numbers" page key was
-  // REMOVED here (2026-07): the page was merged into /analytics's Overview
-  // tab (owner-only sections there) and the route itself was deleted
-  // (next.config.ts 308-redirects /insights/real-numbers → /analytics). No
-  // replacement key is needed — /analytics already grants via its own key.
+  // Insights Overview — a tabbed page: Analytics (the landing tab, deposit
+  // cadence & platform analytics) + Real Numbers (the source-of-truth headline,
+  // demoted to a tab) + Player CRM. Sidebar label "Analytics". Reads the
+  // canonical corrected metric layer (creators + staff + blacklist excluded;
+  // borrow-net basis) and shows the reconciled lifetime headline (wager / GGR /
+  // reward cost / NGR / realized P&L), a per-game GGR split, both the
+  // gaming-margin and balance-sheet waterfalls, the GGR↔P&L reconciliation, and
+  // plain-language definitions. The former standalone /insights hub page was
+  // removed; /insights now 308-redirects here (next.config.ts). Own grantable
+  // key (route + permission unchanged).
+  { group: "Insights", label: "Analytics (Real Numbers)", key: "/insights/real-numbers" },
   // Cost Breakdown — the full wager → P&L leakage waterfall (every cost
   // category itemized). Route is KEPT and reachable via a link on the
   // Insights Overview page, but it no longer has its own sidebar nav entry.

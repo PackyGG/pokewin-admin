@@ -83,10 +83,9 @@ export const metadata = { title: "Cost Breakdown" };
  *
  *   0. The LIFETIME REALIZED P&L reference — the canonical balance-sheet
  *      snapshot (`getRealizedPnlSnapshot`), the SAME figure the /insights
- *      hub, the /analytics Overview owner-only lifetime section and
- *      /dashboard show. This is the real "what's our actual bottom line"
- *      answer and stays constant across the period chip. Everything below it
- *      is the PER-PERIOD breakdown.
+ *      hub, /insights/real-numbers and /dashboard show. This is the real
+ *      "what's our actual bottom line" answer and stays constant across
+ *      the period chip. Everything below it is the PER-PERIOD breakdown.
  *   1. A plain-language STORY LEAD (the period's headline flow + biggest
  *      leak + the realized-vs-held distinction, chunked into scannable
  *      lines).
@@ -189,9 +188,9 @@ async function CostBreakdownBody({
     ),
     // Lifetime realized P&L — the canonical balance-sheet snapshot
     // (deposits − withdrawals − on-site balance − inventory − unclaimed
-    // vouchers/rakeback), the SAME source the /analytics Overview owner-only
-    // lifetime section, the /insights hub P&L tile and the dashboard read, so
-    // the four can never drift. React-cached + 5-min cached → cheap. It is NOT the windowed
+    // vouchers/rakeback), the SAME source /insights/real-numbers, the
+    // /insights hub P&L tile and the dashboard read, so the four can never
+    // drift. React-cached + 5-min cached → cheap. It is NOT the windowed
     // `getCostBreakdown(...).pnl`, which is a per-period gaming→cash FLOW
     // that, on the unbounded lifetime scan, diverges from this snapshot
     // (it omits the unclaimed-rakeback liability and treats in-flight
@@ -342,8 +341,8 @@ function CostBreakdownBodySkeleton() {
  * the canonical lifetime balance-sheet snapshot from
  * `getRealizedPnlSnapshot` — deposits − withdrawals − on-site balance −
  * inventory − unclaimed vouchers − unclaimed rakeback. This is the SAME
- * figure the /insights hub P&L tile, the /analytics Overview owner-only
- * lifetime section and the dashboard render, so the four can never drift. It is intentionally
+ * figure the /insights hub P&L tile, /insights/real-numbers and the
+ * dashboard render, so the four can never drift. It is intentionally
  * separate from (and a constant reference for) the windowed cost-breakdown
  * P&L below, which on the unbounded lifetime scan diverges from this
  * snapshot — see the "Net result (this period)" tile.
@@ -460,7 +459,7 @@ function LifetimePnlReference({
               deposits − withdrawals − holdings − unclaimed rakeback; the real
               bottom line — see{" "}
               <Link
-                href="/analytics"
+                href="/insights/real-numbers"
                 className="font-medium text-foreground underline decoration-dotted underline-offset-2 hover:decoration-solid"
               >
                 Real Numbers

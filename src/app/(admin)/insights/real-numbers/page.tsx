@@ -1,5 +1,6 @@
 import {
   Sigma,
+  PieChart,
   LineChart,
   Coins,
   TrendingUp,
@@ -17,18 +18,32 @@ import {
   PiggyBank,
   Banknote,
   Landmark,
+  ScrollText,
   Layers,
   Receipt,
   HandCoins,
   Sparkles,
-  BadgeDollarSign,
-  Percent,
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { Suspense } from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
-import { SectionHeading, KpiTile } from "@/components/modern-panels";
+import { requirePageAccess } from "@/lib/dal";
+import {
+  PageHero,
+  PageHeroIdentity,
+  KpiTile,
+} from "@/components/modern-panels";
+import { CollapsibleSection } from "./collapsible-section";
+import { FadeIn } from "@/components/fade-in";
+import {
+  KpiStripSkeleton,
+  SectionHeadingSkeleton,
+  ChartRowSkeleton,
+} from "@/components/loading-skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SkeletonText } from "@/components/ux";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
@@ -59,253 +74,233 @@ import {
   getRealizedPnlSnapshot,
   type RealizedPnlSnapshot,
 } from "@/lib/queries/_realized-pnl";
-import { getDashboardKpiStats } from "@/lib/queries/dashboard";
-import { getAvgPnl7d } from "@/lib/queries/dashboard-avg-pnl-7d";
 import { compareRealNumbers } from "@/lib/clickhouse/compare/insights-real-numbers";
 import { formatDateTime } from "@/lib/utils/format";
 // Reuse the cost-breakdown waterfall primitives + the directive-free
-// semantic-tone vocabulary (server-safe) — same components
-// /insights/real-numbers used before this section moved here.
+// semantic-tone vocabulary (server-safe — see ../cost-breakdown/tones.ts).
 import {
   WaterfallRow,
   WaterfallBand,
-} from "../insights/cost-breakdown/waterfall-row";
-import { SEMANTIC_TONES, type SemanticTone } from "../insights/cost-breakdown/tones";
+} from "../cost-breakdown/waterfall-row";
+import { SEMANTIC_TONES, type SemanticTone } from "../cost-breakdown/tones";
+import { RealNumbersTabNav, type RealNumbersTab } from "./tab-nav";
+import { CrmTab } from "./crm-tab";
+import { AnalyticsTab } from "./analytics-tab";
+
+export const metadata = { title: "Analytics" };
 
 /**
- * House-POV signed currency string, e.g. `+$1,234.56` / `−$1,234.56`.
+ * /insights/real-numbers — the SOURCE OF TRUTH page.
+ *
+ * The owner's ask: "a page that shows our REAL data — accurate, reconciled,
+ * not inflated/obsolete/guessed." So every figure here is READ from the
+ * canonical corrected metric layer (creators + staff + blacklisted users
+ * fully excluded; borrow plays counted at their real net basis), never
+ * hardcoded and never re-derived locally:
+ *
+ *   • Wager (turnover)        ← getInsightsHubWager() (borrow-net, creator-
+ *                                sessions excluded, sponsored + upgrader in)
+ *   • GGR / NGR / reward cost  ← getCostBreakdown(all, 365d) (assembly of
+ *                                getWindowMetrics — the inventory-delta GGR)
+ *   • Realized P&L + bridge    ← getRealizedPnlSnapshot() (the balance-sheet
+ *                                truth: deposits − withdrawals − balance −
+ *                                inventory − vouchers − unclaimed rakeback)
+ *   • Per-game GGR split       ← getRealNumbersGameSplit() (the SAME
+ *                                WAGER_LEG_FILTER / PAYOUT_LEG_FILTER the
+ *                                headline uses → sums to headline GGR)
+ *
+ * Lifetime only (365d-capped, the same cap /ggr + the insights hub use).
+ * No period selector — one window, one truth. House-POV colours throughout
+ * (CLAUDE.md): user gains → rose, user loses / house up → emerald, neutral
+ * turnover / cash-in → blue.
  */
-function signedCurrency(value: number): string {
-  const isProfit = value >= 0;
-  return `${isProfit ? "+" : "−"}${formatCurrency(Math.abs(value))}`;
-}
+export default async function RealNumbersPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
+  await requirePageAccess("/insights/real-numbers");
 
-/**
- * Owner-only lifetime section — merged into the Analytics Overview tab from
- * the former /insights/real-numbers page (2026-07, owner-approved). Two
- * pieces, both LIFETIME / 365d-capped (NOT period-scoped, unlike everything
- * above this section on the Overview tab):
- *
- *   1. Deposit-cadence + acquisition figures (formerly the "Analytics" tab
- *      on /insights/real-numbers) — FTDs, Depositors, Avg RTP, Avg Deposit,
- *      Deposits/Hour, Total P&L (lifetime + avg-daily-7d).
- *   2. The full Real Numbers waterfall — GGR/NGR/reward-cost breakdown,
- *      per-game split, balance-sheet P&L, the closing GGR→P&L bridge,
- *      creator program cost, and the definitions reference.
- *
- * SECURITY: this whole section is rendered ONLY when the caller has already
- * verified `canAccessInsights(userId)` — see `tab-overview.tsx`. It must
- * never be reachable by a non-owner. The Player CRM tab from the source page
- * was dropped entirely per the owner ("remove CRM, its useless") — not
- * migrated here or anywhere else.
- *
- * All read paths are reused VERBATIM from the source page — no new queries,
- * no re-derived math. The "Cost Breakdown" outbound link is preserved.
- */
-export async function RealNumbersLifetimeSection() {
+  const params = await searchParams;
+  // Three tabs on the Insights Overview: Analytics (the LANDING / default —
+  // deposit-cadence figures moved off the dashboard), Real Numbers (the
+  // source-of-truth reconciled headline, demoted from the landing to a tab),
+  // and Player CRM (the former standalone /crm page, which now 308-redirects
+  // here). Only the active tab's body streams (active-tab-only).
+  const tab: RealNumbersTab =
+    params.tab === "crm"
+      ? "crm"
+      : params.tab === "real-numbers"
+        ? "real-numbers"
+        : "analytics";
   const asOf = formatDateTime(new Date());
 
   return (
     <div className="space-y-6">
-      <SectionHeading
-        icon={Sigma}
-        title="Lifetime real numbers — owner only"
-        action={
-          <Link
-            href="/insights/cost-breakdown"
-            className={cn(
-              "group/cb inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground shadow-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring",
-            )}
-          >
-            <TrendingDown className="size-4 text-rose-500" />
-            <span>Cost Breakdown</span>
-            <ArrowRight className="size-3.5 text-muted-foreground transition-transform motion-safe:group-hover/cb:translate-x-0.5" />
-          </Link>
-        }
-      />
-      <p className="-mt-3 text-[11px] leading-snug text-muted-foreground">
-        Lifetime, {INSIGHTS_HUB_WAGER_LOOKBACK_DAYS}d-capped — NOT controlled
-        by the period selector above. Source of truth · real customers only
-        (staff, creators &amp; blacklisted users excluded) · reconciled to the
-        ledger &amp; balances. As of {asOf}.
-      </p>
+      <PageHero>
+        {tab === "analytics" ? (
+          <PageHeroIdentity
+            icon={LineChart}
+            accent="blue"
+            title="Analytics"
+            subtitle="Insights overview — deposit cadence & platform analytics. Real customers only (staff, creators & blacklisted users excluded)."
+          />
+        ) : tab === "crm" ? (
+          <PageHeroIdentity
+            icon={PieChart}
+            accent="purple"
+            title="Player CRM"
+            subtitle="Lifecycle, value tiers & win-back targets — real customers, last 365 days (borrow-corrected, House POV)"
+          />
+        ) : (
+          <>
+            <PageHeroIdentity
+              icon={Sigma}
+              accent="emerald"
+              title="Real Numbers"
+              subtitle="Source of truth · lifetime · real customers only (staff, creators & blacklisted users excluded) · reconciled to the ledger & balances"
+              action={
+                <Link
+                  href="/insights/cost-breakdown"
+                  className={cn(
+                    // Outline-button look without calling the client-only
+                    // buttonVariants() from this Server Component (that crashes
+                    // the RSC render). Mirrors button.tsx variant="outline"
+                    // size="sm": bordered, subtle hover, focus ring.
+                    "group/cb inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground shadow-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring",
+                  )}
+                >
+                  <TrendingDown className="size-4 text-rose-500" />
+                  <span>Cost Breakdown</span>
+                  <ArrowRight className="size-3.5 text-muted-foreground transition-transform motion-safe:group-hover/cb:translate-x-0.5" />
+                </Link>
+              }
+            />
+            <div className="mt-3 flex flex-col gap-1.5 border-t border-border/50 pt-3 text-[11px] leading-snug text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <p className="flex min-w-0 items-center gap-1.5">
+                <ScrollText className="size-3.5 shrink-0 text-muted-foreground/70" />
+                <span className="min-w-0">
+                  Sourced from the canonical metric layer (
+                  <span className="font-medium text-foreground/80">getCostBreakdown</span>
+                  {" · "}
+                  <span className="font-medium text-foreground/80">getInsightsHubWager</span>
+                  {" · "}
+                  <span className="font-medium text-foreground/80">getRealizedPnlSnapshot</span>
+                  ) — GGR is the verified inventory-delta model; borrow plays
+                  count at their real net basis.
+                </span>
+              </p>
+              <p className="shrink-0 tabular-nums">As of {asOf} · last {INSIGHTS_HUB_WAGER_LOOKBACK_DAYS}d</p>
+            </div>
+          </>
+        )}
+      </PageHero>
 
-      <DepositCadenceSection />
-      <RealNumbersBody />
+      <RealNumbersTabNav />
+
+      {tab === "analytics" ? (
+        <Suspense
+          key="analytics"
+          fallback={
+            // Mirrors the AnalyticsTab layout: Profit & loss (1 tile) +
+            // Acquisition & funding (3 tiles) + Deposit cadence (3 tiles),
+            // each under its own section heading, so the skeleton→content
+            // swap is shift-free.
+            <div className="space-y-6">
+              <div className="space-y-5">
+                <SectionHeadingSkeleton titleWidth={140} />
+                <KpiStripSkeleton count={3} />
+              </div>
+              <div className="space-y-5">
+                <SectionHeadingSkeleton titleWidth={200} />
+                <KpiStripSkeleton count={3} />
+              </div>
+              <div className="space-y-5">
+                <SectionHeadingSkeleton titleWidth={180} />
+                <KpiStripSkeleton count={3} />
+              </div>
+            </div>
+          }
+        >
+          <AnalyticsTab />
+        </Suspense>
+      ) : tab === "crm" ? (
+        <Suspense
+          key="crm"
+          fallback={
+            <div className="space-y-5">
+              <KpiStripSkeleton count={6} />
+              <ChartRowSkeleton count={2} height={260} />
+              <ChartRowSkeleton count={2} height={260} />
+            </div>
+          }
+        >
+          <CrmTab />
+        </Suspense>
+      ) : (
+        <Suspense key="real-numbers" fallback={<RealNumbersBodySkeleton />}>
+          <RealNumbersBody />
+        </Suspense>
+      )}
     </div>
   );
 }
-
-// ─── Deposit-cadence / acquisition section (formerly the Analytics tab) ──
 
 /**
- * Lifetime / fixed-window snapshot figures — moved here from the former
- * /insights/real-numbers "Analytics" tab (which itself carried figures
- * moved off the dashboard KPI strip). Read paths are REUSED verbatim:
- *   • FTDs / Depositors / Avg RTP / Avg Deposit / Deposits per Hour come off
- *     `getDashboardKpiStats("today")`.
- *   • Total P&L (lifetime) ← `getRealizedPnlSnapshot()`; Avg Daily P&L (7d)
- *     ← `getAvgPnl7d()`.
+ * Body-only fallback for the streamed `<RealNumbersBody>` boundary. The shell
+ * (PageHero) is already painted by the page above, so this mirrors only the
+ * data body below the hero — the 6-tile KPI strip + the first section
+ * silhouettes — using the same layout-matching shapes as `loading.tsx` so
+ * nothing jumps when the 9 heavy lifetime reads land.
  */
-async function DepositCadenceSection() {
-  const [statsResult, avgPnl7dResult, lifetimePnlResult] = await Promise.all([
-    safeQuery(
-      () => getDashboardKpiStats("today"),
-      null,
-      "analytics.overview.lifetime.snapshot",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => getAvgPnl7d(),
-      null,
-      "analytics.overview.lifetime.avgPnl7d",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => getRealizedPnlSnapshot(),
-      null,
-      "analytics.overview.lifetime.pnl",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-  ]);
-
-  const { data: stats, error, kind } = statsResult;
-
-  // Defensive against a stale-shape `unstable_cache` entry — same guard the
-  // source AnalyticsTab used.
-  if (error || !stats || !stats.financials) {
-    return (
-      <TileErrorFallback
-        label="Deposit cadence"
-        hint="The analytics aggregate failed to load — refresh to retry."
-        kind={kind ?? undefined}
-        size="panel"
-      />
-    );
-  }
-
-  const avgDeposit = stats.financials.avgDeposit ?? 0;
-  const depositsPerHour24h = (stats.depositCount24h ?? 0) / 24;
-  const depositsPerHour7d = (stats.depositCount7d ?? 0) / (7 * 24);
-
-  const ftds24h = stats.financials.ftds24h ?? 0;
-  const ftdTotal24h = stats.financials.ftdTotal24h ?? 0;
-  const ftdAvg24h = stats.financials.ftdAvg24h ?? 0;
-
-  const uniqueDepositors = stats.financials.uniqueDepositors ?? 0;
-  const usersTotal = stats.users?.total ?? 0;
-  const depositorsPctOfUsers =
-    usersTotal > 0 ? (uniqueDepositors / usersTotal) * 100 : null;
-
-  const totalWagered = stats.financials.totalWagered ?? 0;
-  const totalWon = stats.financials.totalWon ?? 0;
-  const avgRtp = totalWagered > 0 ? (totalWon / totalWagered) * 100 : 0;
-
-  const lifetimePnl = lifetimePnlResult.data;
-  const avgPnl7d = avgPnl7dResult.data;
-  const pnlAvailable = lifetimePnl != null && avgPnl7d != null;
-  const totalPnlLifetime = lifetimePnl?.pnl ?? 0;
-  const totalPnl7d = avgPnl7d?.totalPnl7d ?? 0;
-  const avgDailyPnl7d = avgPnl7d?.avgDailyPnl ?? 0;
-  const pnlIsProfit = totalPnlLifetime >= 0;
-
+function RealNumbersBodySkeleton() {
   return (
     <div className="space-y-6">
-      <div className="space-y-5">
-        <SectionHeading icon={TrendingUp} title="Profit & loss (lifetime)" />
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {pnlAvailable ? (
-            <KpiTile
-              label="Total P&L"
-              value={signedCurrency(totalPnlLifetime)}
-              sub={`${signedCurrency(avgDailyPnl7d)} / day · ${signedCurrency(
-                totalPnl7d,
-              )} rolling 7d`}
-              icon={pnlIsProfit ? TrendingUp : TrendingDown}
-              accent={pnlIsProfit ? "emerald" : "rose"}
-            />
-          ) : (
-            <TileErrorFallback
-              label="Total P&L"
-              hint="The lifetime / 7d P&L scan timed out — refresh to retry."
-              kind={lifetimePnlResult.kind ?? avgPnl7dResult.kind ?? undefined}
-              size="compact"
-            />
-          )}
+      <KpiStripSkeleton count={6} />
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={240} />
+        <div className="rounded-2xl border bg-card p-4 ring-1 ring-foreground/10 sm:p-5">
+          <SkeletonText lines={5} />
         </div>
       </div>
-
-      <div className="space-y-5">
-        <SectionHeading icon={BadgeDollarSign} title="Acquisition & funding" />
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <KpiTile
-            label="FTDs"
-            value={formatNumber(ftds24h)}
-            sub={`24h · ${formatCurrency(ftdTotal24h)} total · ${formatCurrency(
-              ftdAvg24h,
-            )} avg`}
-            icon={HandCoins}
-            accent="amber"
-          />
-          <KpiTile
-            label="Depositors"
-            value={formatNumber(uniqueDepositors)}
-            sub={
-              depositorsPctOfUsers != null
-                ? `${depositorsPctOfUsers.toFixed(1)}% of users have funded`
-                : "Unique players who funded at least once"
-            }
-            icon={BadgeDollarSign}
-            accent="purple"
-          />
-          <KpiTile
-            label="Avg RTP"
-            value={`${avgRtp.toFixed(2)}%`}
-            sub="Lifetime · payouts ÷ wagered"
-            icon={Percent}
-            accent="pink"
-          />
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={280} />
+        <div className="rounded-xl border bg-card p-3 ring-1 ring-foreground/10 sm:p-4">
+          <SkeletonText lines={10} />
         </div>
       </div>
-
-      <div className="space-y-5">
-        <SectionHeading icon={Wallet} title="Deposit cadence" />
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <KpiTile
-            label="Avg Deposit"
-            value={formatCurrency(avgDeposit)}
-            sub="Σ deposited ÷ lifetime deposit count"
-            icon={Wallet}
-            accent="emerald"
-          />
-          <KpiTile
-            label="Deposits / Hour"
-            value={`${formatNumber(Math.round(depositsPerHour24h * 10) / 10)}/h`}
-            sub="Rolling 24h average"
-            icon={Coins}
-            accent="blue"
-          />
-          <KpiTile
-            label="Deposits / Hour"
-            value={`${formatNumber(Math.round(depositsPerHour7d * 10) / 10)}/h`}
-            sub="Rolling 7d baseline"
-            icon={Coins}
-            accent="blue"
-          />
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={220} />
+        <div className="rounded-xl border bg-card p-3 ring-1 ring-foreground/10 sm:p-4">
+          <Skeleton className="h-40 w-full rounded-lg" />
         </div>
       </div>
     </div>
   );
 }
-
-// ─── Real Numbers waterfall body ────────────────────────────────────
 
 /**
  * The data body — the 9 heavy lifetime reads + the full waterfall/bridge UI.
- * Moved verbatim from /insights/real-numbers/page.tsx's `RealNumbersBody`.
- * Math, shapes and House-POV colours are unchanged.
+ *
+ * Split out of the page shell so the PageHero streams to first paint
+ * immediately (active-timeframe-only spirit: the shell is not gated on the
+ * lifetime aggregates). All 9 reads stay in ONE `Promise.all` (so they still
+ * run concurrently, and the shared `cost`/`snapshot`/`wager` values are fetched
+ * exactly once and threaded into every section) — only the FIRST-PAINT gate
+ * moved off the hero. Each read is still cached (`unstable_cache`, 365d-capped
+ * lifetime) and `safeQuery`-timeout-wrapped, so a slow leg degrades to its
+ * fallback instead of hanging the boundary. Math, shapes and House-POV colours
+ * are unchanged.
  */
 async function RealNumbersBody() {
+  // Lifetime, 365d-capped — the same window the insights hub + /ggr use.
+  // PERF/CH-CANDIDATE: 6 of these 9 lifetime aggregates are heavy PG-only reads
+  // with NO ClickHouse twin yet — getRewardSpendItemization, getCreatorNetCashDetail,
+  // getCreatorProgramCost, getCustomerRecyclingDetail, getRealNumbersGameSplit,
+  // getInsightsHubWager. They should get CH twins in a later cutover wave (wired
+  // through resolveAdminRead + compareRealNumbers, parity-proven before cutover).
+  // Until then each stays safeQuery-wrapped so a pool-timeout degrades one
+  // section, never the whole route. Do not change their logic here.
   const [
     { data: cost, error: costErr },
     { data: wager },
@@ -317,64 +312,80 @@ async function RealNumbersBody() {
     { data: customerCash },
     { data: recycling },
   ] = await Promise.all([
+    // Lifetime cost-breakdown via the SHARED cross-render cache (the same
+    // `getCostBreakdown("all", "Lifetime", 0, 365)` assembly as before — the
+    // figures are byte-identical). Reading it here also warms the admin top-bar
+    // pills' cache, since they read the same key.
     safeQuery(
       () => getCostBreakdownLifetimeCached(),
       null,
-      "analytics.overview.lifetime.cost",
+      "insights.realNumbers.cost",
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getInsightsHubWager(),
       0,
-      "analytics.overview.lifetime.wager",
+      "insights.realNumbers.wager",
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getRealNumbersGameSplit(),
       null,
-      "analytics.overview.lifetime.split",
+      "insights.realNumbers.split",
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getRealizedPnlSnapshot(),
       null,
-      "analytics.overview.lifetime.snapshotPnl",
+      "insights.realNumbers.pnl",
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getRewardSpendItemization(),
       null,
-      "analytics.overview.lifetime.rewardSpend",
+      "insights.realNumbers.rewardSpend",
       REWARD_QUERY_TIMEOUT_MS,
     ),
+    // Creator net-cash detail (deposited / withdrew / hold) — the
+    // reconciliation note in the "Creator program cost" panel below.
     safeQuery(
       () => getCreatorNetCashDetail(),
       null,
-      "analytics.overview.lifetime.creatorNetCash",
+      "insights.realNumbers.creatorNetCash",
       REWARD_QUERY_TIMEOUT_MS,
     ),
+    // Creator program cost (gross house-funded: session tips + conversion
+    // vouchers + leaderboard) — informational, shown in its own panel.
     safeQuery(
       () => getCreatorProgramCost(),
       null,
-      "analytics.overview.lifetime.creatorProgramCost",
+      "insights.realNumbers.creatorProgramCost",
       REWARD_QUERY_TIMEOUT_MS,
     ),
+    // Realized P&L on the customers-only scope (creators EXCLUDED) — the
+    // "customer cash margin" the closing waterfall lands on after the
+    // turnover→cash conversion line. Same balance-sheet arithmetic as the
+    // snapshot, just dropping creators, so the conversion + creator legs both
+    // close by construction (see GgrToNgrBridge).
     safeQuery(
       () => getRealizedPnlCustomersExclCreators(),
       null,
-      "analytics.overview.lifetime.customerCash",
+      "insights.realNumbers.customerCash",
       REWARD_QUERY_TIMEOUT_MS,
     ),
+    // Recycling evidence (customer deposits + card sell-backs) for the
+    // turnover→cash conversion line's inline proof (the ~3.5× re-wager).
     safeQuery(
       () => getCustomerRecyclingDetail(),
       null,
-      "analytics.overview.lifetime.recycling",
+      "insights.realNumbers.recycling",
       REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
 
-  // Comparison-mode CH twin (fire-and-forget) — unchanged from the source
-  // page. No-op unless `insights_real_numbers` is in comparison mode.
+  // Comparison-mode CH twin (Phase 2B) — fire-and-forget after the PG values
+  // are computed. No-op unless `insights_real_numbers` is in comparison mode;
+  // never affects the served Postgres payload.
   void compareRealNumbers({
     hubWager: wager ?? 0,
     split,
@@ -385,132 +396,139 @@ async function RealNumbersBody() {
     recycling,
   });
 
-  if (costErr || !cost) {
-    return (
-      <TileErrorFallback
-        label="Real Numbers"
-        hint="The canonical cost-breakdown helper failed. Server logs hold the digest."
-        size="panel"
-      />
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      <KpiStrip cost={cost} wager={wager ?? 0} snapshot={snapshot} />
-
-      <div className="space-y-3">
-        <SectionHeading
-          icon={Layers}
-          title="GGR by game — packs · battles · upgrader"
+  return costErr || !cost ? (
+        <TileErrorFallback
+          label="Real Numbers"
+          hint="The canonical cost-breakdown helper failed. Server logs hold the digest."
+          size="panel"
         />
-        {split ? (
-          <GameSplitPanel split={split} headlineGgr={cost.ggr} />
-        ) : (
-          <TileErrorFallback
-            label="Per-game GGR"
-            hint="The per-game split failed to load. The headline GGR above is unaffected."
-            size="panel"
-          />
-        )}
-      </div>
+      ) : (
+        <FadeIn>
+          <div className="space-y-6">
+            <KpiStrip cost={cost} wager={wager ?? 0} snapshot={snapshot} />
 
-      <div className="space-y-3">
-        <SectionHeading
-          icon={Scale}
-          title="Gaming-margin waterfall — wager → GGR → NGR"
-        />
-        <GamingWaterfall
-          cost={cost}
-          wager={wager ?? 0}
-          netRain={rewardSpend?.netRain ?? null}
-        />
-      </div>
+            <CollapsibleSection
+              icon="layers"
+              title="GGR by game — packs · battles · upgrader"
+            >
+              {split ? (
+                <GameSplitPanel split={split} headlineGgr={cost.ggr} />
+              ) : (
+                <TileErrorFallback
+                  label="Per-game GGR"
+                  hint="The per-game split failed to load. The headline GGR above is unaffected."
+                  size="panel"
+                />
+              )}
+            </CollapsibleSection>
 
-      <div className="space-y-3">
-        <SectionHeading
-          icon={Receipt}
-          title="Reward & bonus spend — itemized · every penny, where & why"
-        />
-        {rewardSpend ? (
-          <RewardSpendPanel
-            itemization={rewardSpend}
-            headlineRewardCost={cost.rewardPayouts}
-          />
-        ) : (
-          <TileErrorFallback
-            label="Reward-spend itemization"
-            hint="The itemized reward-spend breakdown failed to load. The headline reward cost above is unaffected."
-            size="panel"
-          />
-        )}
-      </div>
+            <CollapsibleSection
+              icon="scale"
+              title="Gaming-margin waterfall — wager → GGR → NGR"
+            >
+              <GamingWaterfall
+                cost={cost}
+                wager={wager ?? 0}
+                netRain={rewardSpend?.netRain ?? null}
+              />
+            </CollapsibleSection>
 
-      {snapshot && (
-        <div className="space-y-3">
-          <SectionHeading
-            icon={Banknote}
-            title="Balance-sheet P&L — the cash-basis bottom line"
-          />
-          <BalanceSheetWaterfall snapshot={snapshot} />
-        </div>
-      )}
+            <CollapsibleSection
+              icon="receipt"
+              title="Reward & bonus spend — itemized · every penny, where & why"
+              defaultOpen={false}
+            >
+              {rewardSpend ? (
+                <RewardSpendPanel
+                  itemization={rewardSpend}
+                  headlineRewardCost={cost.rewardPayouts}
+                />
+              ) : (
+                <TileErrorFallback
+                  label="Reward-spend itemization"
+                  hint="The itemized reward-spend breakdown failed to load. The headline reward cost above is unaffected."
+                  size="panel"
+                />
+              )}
+            </CollapsibleSection>
 
-      {snapshot && (
-        <div className="space-y-3">
-          <SectionHeading
-            icon={PiggyBank}
-            title="Why GGR ≠ realized P&L — two different scoreboards"
-          />
-          <ReconciliationCallout cost={cost} snapshot={snapshot} />
-        </div>
-      )}
+            {snapshot && (
+              <CollapsibleSection
+                icon="banknote"
+                title="Balance-sheet P&L — the cash-basis bottom line"
+              >
+                <BalanceSheetWaterfall snapshot={snapshot} />
+              </CollapsibleSection>
+            )}
 
-      <div className="space-y-3">
-        <SectionHeading
-          icon={Scale}
-          title="GGR → realized P&L — the complete closing waterfall"
-        />
-        <GgrToNgrBridge
-          cost={cost}
-          snapshot={snapshot}
-          wager={wager ?? 0}
-          split={split}
-          rewardSpend={rewardSpend}
-          customerCashMargin={customerCash?.pnl ?? null}
-          recycling={recycling}
-        />
-      </div>
+            {snapshot && (
+              <CollapsibleSection
+                icon="piggyBank"
+                title="Why GGR ≠ realized P&L — two different scoreboards"
+                defaultOpen={false}
+              >
+                <ReconciliationCallout cost={cost} snapshot={snapshot} />
+              </CollapsibleSection>
+            )}
 
-      <div className="space-y-3">
-        <SectionHeading
-          icon={Sparkles}
-          title="Creator program cost — what the house actually funds"
-        />
-        {creatorProgram ? (
-          <CreatorProgramCostPanel
-            program={creatorProgram}
-            creatorNetCash={creatorDetail?.netCash ?? null}
-          />
-        ) : (
-          <TileErrorFallback
-            label="Creator program cost"
-            hint="The creator-program cost breakdown failed to load. The bridge above is unaffected."
-            size="panel"
-          />
-        )}
-      </div>
+            <CollapsibleSection
+              icon="scale"
+              title="GGR → realized P&L — the complete closing waterfall 2.0"
+            >
+              <GgrToNgrBridge
+                cost={cost}
+                snapshot={snapshot}
+                wager={wager ?? 0}
+                split={split}
+                rewardSpend={rewardSpend}
+                customerCashMargin={customerCash?.pnl ?? null}
+                recycling={recycling}
+              />
+            </CollapsibleSection>
 
-      <div className="space-y-3">
-        <SectionHeading icon={LineChart} title="Definitions — what each number means" />
-        <Definitions cost={cost} snapshot={snapshot} />
-      </div>
-    </div>
-  );
+            <CollapsibleSection
+              icon="sparkles"
+              title="Creator program cost — what the house actually funds"
+              defaultOpen={false}
+            >
+              {creatorProgram ? (
+                <CreatorProgramCostPanel
+                  program={creatorProgram}
+                  creatorNetCash={creatorDetail?.netCash ?? null}
+                />
+              ) : (
+                <TileErrorFallback
+                  label="Creator program cost"
+                  hint="The creator-program cost breakdown failed to load. The bridge above is unaffected."
+                  size="panel"
+                />
+              )}
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              icon="info"
+              title="Definitions — what each number means"
+              defaultOpen={false}
+            >
+              <Definitions cost={cost} snapshot={snapshot} />
+            </CollapsibleSection>
+          </div>
+        </FadeIn>
+      );
 }
 
 // ─── KPI strip ──────────────────────────────────────────────────────
 
+/**
+ * The five headline numbers, House-POV (STRICT):
+ *   • Wager        — blue (turnover / neutral, not a P&L sign)
+ *   • GGR          — emerald (house up) / rose (house down)
+ *   • Reward cost  — rose (every reward dollar is a payout to users)
+ *   • NGR          — emerald / rose
+ *   • Realized P&L — emerald / rose (the balance-sheet snapshot)
+ * Plus an optional "Customers hold (owed)" tile — rose, since it's value
+ * users hold = money we owe them.
+ */
 function KpiStrip({
   cost,
   wager,
@@ -522,9 +540,15 @@ function KpiStrip({
 }) {
   const ggrPos = cost.ggr >= 0;
   const ngrPos = cost.ngr >= 0;
+  // Realized P&L: prefer the balance-sheet snapshot (the +$45k figure incl.
+  // unclaimed rakeback). Fall back to the cost-breakdown windowed P&L only if
+  // the snapshot read failed.
   const pnl = snapshot ? snapshot.pnl : cost.pnl;
   const pnlPos = pnl >= 0;
 
+  // "Customers hold (owed)" = on-site balance + inventory + unclaimed
+  // vouchers + unclaimed rakeback — the value customers still hold that the
+  // house owes. This is the bridge between GGR and realized P&L.
   const held = snapshot
     ? snapshot.userBalance +
       snapshot.inventory +
@@ -605,6 +629,11 @@ const GAME_VISUAL: Record<
   upgrader: { icon: ArrowUpCircle, accent: "base" },
 };
 
+/**
+ * Per-product GGR table: wager · gaming payout · GGR · RTP · house edge.
+ * GGR / house edge are emerald when the house is up on that line, rose when
+ * down. The footer asserts the split reconciles with the headline GGR.
+ */
 function GameSplitPanel({
   split,
   headlineGgr,
@@ -612,12 +641,16 @@ function GameSplitPanel({
   split: RealNumbersGameSplit;
   headlineGgr: number;
 }) {
+  // Reconciliation residual: Σ per-game GGR vs the headline GGR. They are
+  // built from the same canonical legs so this should be ~0; surfaced
+  // honestly rather than hidden.
   const residual = split.totalGgr - headlineGgr;
-  const reconciles = Math.abs(residual) < 1;
+  const reconciles = Math.abs(residual) < 1; // sub-dollar = exact
 
   return (
     <Card>
       <CardContent className="p-0">
+        {/* Header row */}
         <div className="grid grid-cols-[1fr_repeat(2,_minmax(0,_5rem))] items-center gap-2 border-b bg-muted/30 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:grid-cols-[1.4fr_repeat(4,_minmax(0,_7rem))] sm:gap-3 sm:px-4">
           <span>Game</span>
           <span className="hidden text-right sm:block">Wager</span>
@@ -676,6 +709,7 @@ function GameSplitPanel({
               </li>
             );
           })}
+          {/* Total row */}
           <li className="grid grid-cols-[1fr_repeat(2,_minmax(0,_5rem))] items-center gap-2 bg-muted/30 px-3 py-2.5 text-xs font-semibold sm:grid-cols-[1.4fr_repeat(4,_minmax(0,_7rem))] sm:gap-3 sm:px-4">
             <span>Total (all games)</span>
             <span className="hidden text-right font-mono tabular-nums sm:block">
@@ -726,6 +760,17 @@ function GameSplitPanel({
 
 // ─── Reward-spend itemization ───────────────────────────────────────
 
+/**
+ * The itemized reward-spend table — every house-funded reward dollar split by
+ * source, directly below the reward-spend line in the waterfall above.
+ *
+ * Columns: Category · Amount · Count · % of reward spend · Why. House-POV is
+ * ROSE throughout — every row is money the house GAVE users (a cost). Rows are
+ * pre-sorted by amount desc. The footer total equals the page's headline
+ * reward cost (`cost.rewardPayouts` = GGR − NGR) because the itemization
+ * mirrors `getRewardCost`'s exact predicates; the reconciliation is asserted
+ * live in-render (within $1), the same way the per-game GGR panel asserts it.
+ */
 function RewardSpendPanel({
   itemization,
   headlineRewardCost,
@@ -733,13 +778,16 @@ function RewardSpendPanel({
   itemization: RewardSpendItemization;
   headlineRewardCost: number;
 }) {
+  // Reconciliation: Σ itemized rows vs the headline reward cost. Built from
+  // the same canonical predicates, so this should be ~0 — surfaced honestly.
   const residual = itemization.total - headlineRewardCost;
-  const reconciles = Math.abs(residual) < 1;
+  const reconciles = Math.abs(residual) < 1; // sub-dollar = exact
   const denom = itemization.total;
 
   return (
     <Card>
       <CardContent className="p-0">
+        {/* Header row */}
         <div className="grid grid-cols-[1fr_minmax(0,_5.5rem)_minmax(0,_3rem)] items-center gap-2 border-b bg-muted/30 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:grid-cols-[1.6fr_minmax(0,_7rem)_minmax(0,_4.5rem)_minmax(0,_5rem)] sm:gap-3 sm:px-4">
           <span>Category</span>
           <span className="text-right">Amount</span>
@@ -777,6 +825,7 @@ function RewardSpendPanel({
               </li>
             );
           })}
+          {/* Total row — the reconciling reward-cost subtotal (= GGR − NGR). */}
           <li className="grid grid-cols-[1fr_minmax(0,_5.5rem)_minmax(0,_3rem)] items-center gap-2 bg-muted/30 px-3 py-2.5 text-xs font-semibold sm:grid-cols-[1.6fr_minmax(0,_7rem)_minmax(0,_4.5rem)_minmax(0,_5rem)] sm:gap-3 sm:px-4">
             <span>Total reward &amp; bonus spend</span>
             <span className="text-right font-mono tabular-nums text-rose-600 dark:text-rose-400">
@@ -787,6 +836,15 @@ function RewardSpendPanel({
               {denom > 0 ? "100%" : "—"}
             </span>
           </li>
+          {/* ── Daily / free packs — addendum BELOW the reconciling total ──
+              Daily-pack cards are a real house giveaway, but they are NOT a
+              REWARD_PAYOUT ledger type: their value lives in user_inventory and
+              is excluded from GGR's gaming payout, so it is NOT part of the
+              reward cost (GGR − NGR) the total above reconciles to. It is
+              captured instead in the realized-P&L bottom line via held
+              inventory. Shown here as a clearly-separated line (House-POV rose)
+              so the owner sees it, WITHOUT inflating the reconciling subtotal —
+              folding it in would double-count it against GGR's gaming payout. */}
           <li className="grid grid-cols-[1fr_minmax(0,_5.5rem)_minmax(0,_3rem)] items-start gap-2 border-t border-dashed border-border/70 px-3 py-3 text-xs sm:grid-cols-[1.6fr_minmax(0,_7rem)_minmax(0,_4.5rem)_minmax(0,_5rem)] sm:gap-3 sm:px-4">
             <span className="flex min-w-0 flex-col gap-0.5">
               <span className="flex items-center gap-2">
@@ -819,6 +877,11 @@ function RewardSpendPanel({
               —
             </span>
           </li>
+          {/* Memo: reward & bonus spend INCLUDING the daily-pack giveaway. A
+              memo line (not a new reconciling subtotal) — it is the sum of two
+              figures measured on different bases (ledger reward cost + the
+              inventory-based daily-pack giveaway), shown for the owner's
+              "every penny" ask. */}
           <li className="grid grid-cols-[1fr_minmax(0,_5.5rem)_minmax(0,_3rem)] items-center gap-2 bg-muted/20 px-3 py-2 text-[11px] font-medium text-muted-foreground sm:grid-cols-[1.6fr_minmax(0,_7rem)_minmax(0,_4.5rem)_minmax(0,_5rem)] sm:gap-3 sm:px-4">
             <span>Total incl. daily-pack giveaway (memo)</span>
             <span className="text-right font-mono tabular-nums text-rose-600 dark:text-rose-400">
@@ -865,6 +928,26 @@ function RewardSpendPanel({
 
 // ─── Gaming-margin waterfall ────────────────────────────────────────
 
+/**
+ * Wager → −Gaming payout → GGR → −Reward cost → NGR.
+ *
+ * Reuses the cost-breakdown WaterfallRow / WaterfallBand + the semantic tone
+ * vocabulary. House-POV tones: the base wager is blue; gaming payout + the
+ * reward giveback are realized costs (rose); the GGR / NGR checkpoints are
+ * emerald when positive, rose when negative. The wager here is the canonical
+ * GGR-basis wager (cost.totalWager) so the arithmetic ties out to GGR — the
+ * blue headline wager tile above is the broader hub turnover (borrow-net,
+ * includes the organic-stake definition), noted in the footer.
+ *
+ * The reward giveback ALWAYS sums to the canonical reward cost
+ * (`cost.rewardPayouts` = GGR − NGR), so GGR − reward = NGR holds visibly.
+ * When the reward itemization is available we split it into its real non-rain
+ * leg + the net house slice of rain (both sourced from the same canonical
+ * itemization the table below uses — `netRain`); otherwise we show a single
+ * clean "Reward & bonus cost" line (the itemized split lives in the table
+ * directly below either way). It is NEVER re-derived from ggr/ngr/reward
+ * (those are linearly dependent → always 0).
+ */
 function GamingWaterfall({
   cost,
   wager,
@@ -872,11 +955,20 @@ function GamingWaterfall({
 }: {
   cost: CostBreakdown;
   wager: number;
+  /**
+   * The net house slice of rain (max(0, rain_win − rain_tip)) from the
+   * canonical reward-spend itemization, or null when that read failed. When
+   * present and ≤ the total reward cost it lets us show the excl-rain / net-
+   * rain split; otherwise the reward cost renders as one line.
+   */
   netRain: number | null;
 }) {
   const ggrPos = cost.ggr >= 0;
   const ngrPos = cost.ngr >= 0;
 
+  // Show the rain split only when the itemized net-rain value is available
+  // AND fits inside the total reward cost (so the two legs both stay ≥ 0 and
+  // sum to exactly cost.rewardPayouts). Otherwise fall back to one line.
   const splitRain =
     netRain !== null && netRain >= 0 && netRain <= cost.rewardPayouts;
 
@@ -982,6 +1074,7 @@ function GamingWaterfall({
         {lines.map((l) => {
           const colors = SEMANTIC_TONES[l.tone] ?? SEMANTIC_TONES.muted;
           const Icon = l.icon;
+          // Band header ahead of the first reward line.
           const band =
             l.key === "reward"
               ? { label: "Less reward & marketing", hint: "house-funded giveaways" }
@@ -1018,6 +1111,15 @@ function GamingWaterfall({
 
 // ─── Balance-sheet P&L waterfall ────────────────────────────────────
 
+/**
+ * Deposits → −Withdrawals → −On-site balance → −Inventory value →
+ * −Unclaimed vouchers → −Unclaimed rakeback → Realized P&L.
+ *
+ * House-POV tones: deposits in = blue (neutral cash-in that funds the
+ * house); every subtraction is value owed to / held by users = a liability
+ * that erodes our realized P&L (rose); the realized P&L result is emerald
+ * when positive. All terms read from the canonical getRealizedPnlSnapshot.
+ */
 function BalanceSheetWaterfall({ snapshot }: { snapshot: RealizedPnlSnapshot }) {
   const pnlPos = snapshot.pnl >= 0;
   const lines: Array<{
@@ -1130,6 +1232,13 @@ function BalanceSheetWaterfall({ snapshot }: { snapshot: RealizedPnlSnapshot }) 
 
 // ─── Reconciliation callout ─────────────────────────────────────────
 
+/**
+ * One labelled step in a mini-bridge column. House-POV tones:
+ *   • base  — neutral cash-in / turnover entering the column (blue)
+ *   • cost  — money that flowed back / is owed to users (rose)
+ *   • keep  — a positive house margin / result (emerald)
+ * `emphasis: "result"` renders the loud final-result row.
+ */
 function BridgeStep({
   label,
   value,
@@ -1177,6 +1286,32 @@ function BridgeStep({
   );
 }
 
+/**
+ * "Why GGR ≠ realized P&L" — the corrected explanation.
+ *
+ * GGR/NGR and realized P&L are TWO DIFFERENT SCOREBOARDS measured on different
+ * bases; you CANNOT subtract a list of costs to get from one to the other.
+ * (The old copy claimed the gap WAS the value customers still hold — that is
+ * mathematically false: GGR − P&L is ~hundreds of thousands, while held value
+ * is only a few thousand.)
+ *
+ * So we show them as two side-by-side mini-bridges, each internally exact:
+ *   • Gaming margin (edge on play): wager → GGR → −reward → NGR. Booked on
+ *     EVERY dollar wagered, valuing won cards at sticker. Customers re-wager
+ *     winnings, so the multi-million turnover came from far less real cash.
+ *   • Cash — the real money: deposits − withdrawals − customers-hold =
+ *     realized P&L. This column reconciles exactly (the P&L formula is
+ *     deposits − withdrawals − balance − inventory − vouchers − rakeback, and
+ *     "customers hold" = balance + inventory + vouchers + rakeback).
+ *
+ * The honest caveat (stated plainly, not hidden): NGR sits far above realized
+ * cash NOT because of extra spending but because gaming margin is booked on
+ * re-wagered turnover at card-sticker values while realized cash is bounded by
+ * deposits − withdrawals. That gaming-vs-cash gap does NOT decompose into clean
+ * line items (the /insights/cost-breakdown page carries an "unexplained
+ * residual" for exactly this reason). The trustworthy bottom line is the cash
+ * P&L. All values are read live from `cost` + `snapshot`.
+ */
 function ReconciliationCallout({
   cost,
   snapshot,
@@ -1184,6 +1319,9 @@ function ReconciliationCallout({
   cost: CostBreakdown;
   snapshot: RealizedPnlSnapshot;
 }) {
+  // Cash column: deposits − withdrawals − held = realized P&L, exactly (the
+  // P&L formula minus the held terms is the identity). "held" is the value
+  // customers still hold = money the house owes.
   const held =
     snapshot.userBalance +
     snapshot.inventory +
@@ -1211,7 +1349,9 @@ function ReconciliationCallout({
         </div>
       </div>
 
+      {/* Two side-by-side mini-bridges, each internally exact. */}
       <div className="grid gap-px bg-border/60 sm:grid-cols-2">
+        {/* Gaming margin — edge on play (turnover basis). */}
         <div className="space-y-1 bg-card p-4 sm:p-5">
           <div className="mb-1 flex items-center gap-2">
             <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-blue-500/10 text-blue-500">
@@ -1253,6 +1393,7 @@ function ReconciliationCallout({
           </p>
         </div>
 
+        {/* Cash — the real money (deposits − withdrawals − held). */}
         <div className="space-y-1 bg-card p-4 sm:p-5">
           <div className="mb-1 flex items-center gap-2">
             <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-blue-500/10 text-blue-500">
@@ -1297,6 +1438,7 @@ function ReconciliationCallout({
         </div>
       </div>
 
+      {/* Plain-language explainer + honest caveat. */}
       <div className="space-y-2.5 border-t bg-muted/20 p-4 text-sm leading-relaxed sm:p-5">
         <p>
           GGR is a gaming-margin number measured on{" "}
@@ -1361,6 +1503,18 @@ function ReconciliationCallout({
 
 // ─── GGR → realized P&L bridge (the full waterfall) ─────────────────
 
+/**
+ * One indented sub-row inside a bridge step's drill-down. House-POV tones:
+ *   • base  — neutral cash-in / turnover (blue)
+ *   • cost  — money that flowed back / is owed to users (rose)
+ *   • keep  — a positive house margin / result (emerald)
+ *   • muted — a neutral conversion / reconciliation (no P&L sign)
+ *
+ * `sign` is the leading glyph (so a "+" can sit on an emerald amount even when
+ * the raw delta is negative). `pct` is an optional share chip (e.g. % of the
+ * parent step). Server component — plain serializable props, lucide pre-
+ * rendered as `iconNode` (no function props across the RSC boundary).
+ */
 function BridgeSubRow({
   label,
   sub,
@@ -1424,6 +1578,12 @@ function BridgeSubRow({
   );
 }
 
+/**
+ * The indented drill-down container shown directly beneath a bridge step.
+ * A thin left-border rail + a caption sets it apart as "this step, broken
+ * down". `children` is a <BridgeSubRow> list; `note` is an optional plain-
+ * language footnote.
+ */
 function BridgeSubTable({
   caption,
   children,
@@ -1448,6 +1608,62 @@ function BridgeSubTable({
   );
 }
 
+/**
+ * The COMPLETE, CLOSING waterfall — every dollar from GGR down to realized
+ * cash P&L accounted for, with NO plug / residual / "whatever's left to force
+ * the total" line. Each step is either a directly MEASURED value or the
+ * EXPLICIT difference of two independently-measured values — and because every
+ * line is a measured difference, the running total closes to the penny at
+ * realized P&L by construction.
+ *
+ * The five anchors (all read live, never hardcoded):
+ *
+ *   Wager (GGR basis)                                       (turnover, blue)
+ *     − Gaming payout (won & paid back)  → GGR              (measured → checkpoint)
+ *     − Reward & bonus spend             → NGR              (measured cost → checkpoint)
+ *     − Turnover→cash conversion         → customer cash    (= NGR − customerCash)
+ *     − Creator net cash                 → Realized P&L     (= customerCash − pnlInclCreators)
+ *
+ * Why each leg closes:
+ *   • Wager − payout = GGR and GGR − reward = NGR — all four terms are the
+ *     same canonical legs (`cost.totalWager`, `cost.gamingPayouts`,
+ *     `cost.rewardPayouts`, `cost.ggr`, `cost.ngr`), so they tie out exactly.
+ *   • Turnover→cash conversion VALUE = NGR − customerCashMargin, where
+ *     customerCashMargin = `getRealizedPnlCustomersExclCreators().pnl` (the
+ *     realized P&L of customers-only, creators dropped — measured on the
+ *     balance sheet). It is NOT a plug: it is the explicit difference of two
+ *     independently-measured numbers (gaming margin vs customer cash margin),
+ *     and the running total after it lands EXACTLY on customerCashMargin. The
+ *     recycling evidence (deposits, wager, the re-wager ×multiple, card
+ *     sell-backs) is shown inline so it reads as the real basis conversion it
+ *     is — NGR is gaming margin on re-wagered turnover at card-sticker values;
+ *     customers deposited far less and recycled winnings.
+ *   • Creator net cash VALUE = customerCashMargin − pnlInclCreators =
+ *     `creatorEffect` (creators are out of GGR/NGR but IN the balance-sheet
+ *     snapshot, so moving from the customers-only margin to the full snapshot
+ *     adds back exactly the creators' net cash). This equals
+ *     `creatorDetail.netCash` by the balance-sheet identity (verified $0 drift)
+ *     — the NET real crypto creators took out, NOT the gross program funding
+ *     (which is mostly fake/recycled session money, shown separately below and
+ *     already inside these cash flows, so NOT subtracted again here).
+ *   • The result lands on `getRealizedPnlSnapshot().pnl` — measured separately
+ *     on the balance sheet — to the penny.
+ *
+ * Both difference legs are computed from MEASURED endpoints, not as
+ * `ngr − creatorEffect − pnl` (the old plug form): the conversion line =
+ * NGR − customerCashMargin, the creator line = customerCashMargin −
+ * pnlInclCreators. Each closes by construction.
+ *
+ * The GGR step drills into the per-game split, the reward line drills into the
+ * itemized reward categories — both already fetched and both reconciling to
+ * their parent. The conversion line drills into the recycling evidence.
+ *
+ * When the customer-cash-margin read fails (null), the waterfall gracefully
+ * ends at NGR with an honest note (no fabricated terminus) rather than guessing
+ * the closing legs. House-POV tones: wager blue; payout + reward + conversion +
+ * creator are subtractions (rose); GGR / NGR / customer-cash checkpoints
+ * emerald when positive; the realized-P&L result is the loudest row.
+ */
 function GgrToNgrBridge({
   cost,
   snapshot,
@@ -1458,17 +1674,34 @@ function GgrToNgrBridge({
   recycling,
 }: {
   cost: CostBreakdown;
+  /** Balance-sheet snapshot — the realized-P&L terminus (incl. creators). */
   snapshot: RealizedPnlSnapshot | null;
+  /** Hub wager (customer turnover) — the re-wager-multiple numerator. */
   wager: number;
+  /** Per-game GGR split — the GGR step's sub-breakdown (null on read fail). */
   split: RealNumbersGameSplit | null;
+  /** Reward itemization — the reward step's sub-breakdown (null on read fail). */
   rewardSpend: RewardSpendItemization | null;
+  /**
+   * Realized P&L of customers-only (creators excluded) =
+   * `getRealizedPnlCustomersExclCreators().pnl`. The "customer cash margin"
+   * the waterfall lands on after the turnover→cash conversion line. `null` on
+   * read fail → the waterfall ends at NGR with an honest note.
+   */
   customerCashMargin: number | null;
+  /** Recycling evidence for the conversion line's inline proof (null on fail). */
   recycling: CustomerRecyclingDetail | null;
 }) {
   const ngrPos = cost.ngr >= 0;
   const ggrPos = cost.ggr >= 0;
 
+  // The closing legs need BOTH the customers-only margin AND the snapshot
+  // (incl-creators) terminus. When either read failed we can't honestly close
+  // the waterfall — it ends at NGR with a note, no fabricated terminus.
   const canClose = customerCashMargin !== null && snapshot !== null;
+  // Conversion line VALUE = NGR − customer cash margin (difference of two
+  // measured numbers). Creator line VALUE = customer cash margin − realized P&L
+  // incl creators (= creatorEffect). Both close by construction.
   const conversionValue = canClose ? cost.ngr - customerCashMargin : 0;
   const creatorNetCash = canClose
     ? customerCashMargin - snapshot.pnl
@@ -1477,6 +1710,12 @@ function GgrToNgrBridge({
   const customerCashPos = (customerCashMargin ?? 0) >= 0;
   const realizedPos = realizedPnl !== null && realizedPnl >= 0;
 
+  // ── Sub-breakdown rows per bridge step (visible drill-down) ────────
+  // Each step's sub-table is built from already-fetched page data and
+  // reconciles to that step's headline by construction (GGR split → GGR;
+  // reward itemization → reward cost).
+
+  // GGR → by game (reuse getRealNumbersGameSplit; same legs as the table above).
   const ggrSubRows: ReactNode = split ? (
     <BridgeSubTable caption="By game — wager → payout = GGR (RTP)">
       {split.games.map((g) => {
@@ -1502,6 +1741,9 @@ function GgrToNgrBridge({
     </BridgeSubTable>
   ) : null;
 
+  // Reward → itemized categories (reuse getRewardSpendItemization). Show the
+  // top categories inline; roll the long tail into one "+N more" row so the
+  // bridge stays scannable (the full 15-row table lives in the section above).
   const REWARD_INLINE = 6;
   const rewardSubRows: ReactNode = rewardSpend ? (
     <BridgeSubTable caption="Itemized — top reward & bonus categories">
@@ -1543,8 +1785,27 @@ function GgrToNgrBridge({
     </BridgeSubTable>
   ) : null;
 
+  // Conversion → the EXACT measured decomposition of NGR − customer cash
+  // margin, then the recycling MECHANISM that explains the residual.
+  //
+  // The conversion is the difference of two independently-MEASURED anchors:
+  // NGR (gaming margin booked on all turnover at card-sticker values) and the
+  // customer cash margin (the balance-sheet realized P&L of customers only).
+  // Only ONE clean cash term is isolable inside that gap: the daily / free-pack
+  // card giveaway — a real house cost that lands in the cash P&L (via held
+  // inventory) but is NOT a REWARD_PAYOUT ledger type and so is NOT in NGR's
+  // reward cost. Everything else is the BASIS residual: NGR values won cards at
+  // sticker on re-wagered turnover, while customer cash is bounded by deposits −
+  // withdrawals. That residual does not itemize into clean cash line items (the
+  // same "unexplained residual" /insights/cost-breakdown carries) — we surface
+  // it honestly as one measured remainder, never a plug, and prove it with the
+  // recycling evidence below.
   const reWagerMultiple =
     recycling && recycling.deposits > 0 ? wager / recycling.deposits : null;
+  // The one isolable cash term inside the conversion: the daily/free-pack
+  // giveaway (canonical getDailyPacksTotalCost via the reward itemization).
+  // Clamp into [0, conversionValue] so the basis-residual remainder stays ≥ 0
+  // and the two sum to exactly conversionValue (closes by construction).
   const dailyPackCost = rewardSpend?.dailyPacks.cost ?? 0;
   const dailyPackInConversion = Math.min(
     Math.max(0, dailyPackCost),
@@ -1554,6 +1815,7 @@ function GgrToNgrBridge({
   const conversionSubRows: ReactNode =
     canClose ? (
       <>
+        {/* The exact, measured decomposition of the conversion value. */}
         <BridgeSubTable
           caption="Exact decomposition — NGR → customer cash margin (both measured)"
           note={
@@ -1631,6 +1893,9 @@ function GgrToNgrBridge({
             }
           />
         </BridgeSubTable>
+        {/* The recycling MECHANISM — proof of WHY the basis remainder exists.
+            Neutral conversions (card/voucher exchange is a normal user action,
+            never a house cost) — shown only as proof, never added to any cost. */}
         {recycling && (
           <BridgeSubTable
             caption="Recycling evidence — why gaming margin ≠ customer cash"
@@ -1678,6 +1943,11 @@ function GgrToNgrBridge({
       </>
     ) : null;
 
+  // Each row is the SIGNED effect on the running total (House-POV), plus its
+  // visible sub-breakdown rendered directly beneath it. Every value is either a
+  // direct measured field (getCostBreakdown / getRealizedPnlSnapshot) or the
+  // EXPLICIT difference of two measured values (the conversion + creator legs).
+  // There is NO derived/plug line — each difference closes by construction.
   const lines: Array<{
     key: string;
     label: string;
@@ -1733,6 +2003,7 @@ function GgrToNgrBridge({
       icon: ngrPos ? TrendingUp : TrendingDown,
       emphasis: "subtotal",
     },
+    // ── Closing legs (only when both reads succeeded) ───────────────────
     ...(canClose
       ? [
           {
@@ -1779,6 +2050,9 @@ function GgrToNgrBridge({
 
   const maxMag = Math.max(...lines.map((l) => Math.abs(l.signed)), 1);
 
+  // Live "ties out exactly" check: walk the running total through every leg
+  // and confirm it lands on the measured realized P&L within a penny. Pure
+  // arithmetic on measured values — not used to derive any line.
   const runningTotal = lines
     .filter((l) => l.sign !== "=")
     .reduce((s, l) => s + l.signed, 0);
@@ -1816,6 +2090,7 @@ function GgrToNgrBridge({
         {lines.map((l) => {
           const colors = SEMANTIC_TONES[l.tone] ?? SEMANTIC_TONES.muted;
           const Icon = l.icon;
+          // Band headers segment the waterfall into chapters.
           const band =
             l.key === "reward"
               ? {
@@ -1849,16 +2124,21 @@ function GgrToNgrBridge({
                 emphasis={l.emphasis ?? "normal"}
                 iconNode={<Icon className={cn("size-3.5", colors.icon)} />}
               />
+              {/* The sub-text under difference lines (what the value equals). */}
               {l.sub && (
                 <p className="px-2 pb-0.5 pl-[2.85rem] text-[10px] leading-snug text-muted-foreground sm:pl-[3.1rem]">
                   {l.sub}
                 </p>
               )}
+              {/* Visible per-line drill-down, directly beneath the step. */}
               {l.subRows}
             </div>
           );
         })}
 
+        {/* The turnover→cash conversion narrative — stated honestly: the value
+            is the difference of two measured numbers, with the recycling proof
+            inline. Only shown when the waterfall closes. */}
         {canClose && (
           <div className="mt-3 rounded-xl border border-border/70 bg-muted/20 p-3 sm:p-4">
             <div className="flex items-start gap-2.5">
@@ -1955,6 +2235,7 @@ function GgrToNgrBridge({
           </div>
         )}
 
+        {/* Live ties-out assertion — pure arithmetic on the measured legs. */}
         {tieOutDelta !== null && (
           <p
             className={cn(
@@ -1995,6 +2276,12 @@ function GgrToNgrBridge({
 
 // ─── Creator program cost panel ─────────────────────────────────────
 
+/**
+ * One cost row in the Creator program cost panel. House-POV ROSE for the real
+ * costs; the leaderboard row is the same rose value but visually muted +
+ * footnoted because it is ALREADY inside the reward & bonus cost line (so it is
+ * NOT additional and is excluded from the creator-specific subtotal).
+ */
 function ProgramCostRow({
   icon: Icon,
   label,
@@ -2049,16 +2336,38 @@ function ProgramCostRow({
   );
 }
 
+/**
+ * "Creator program cost — what the house actually funds."
+ *
+ * The GROSS, house-funded creator-program spend, kept DELIBERATELY SEPARATE
+ * from the GGR → P&L cash bridge above. The owner's real creator costs are the
+ * house-funded program (session tips, the session fake-money → voucher
+ * conversions, leaderboard payments) — NOT the bridge's −$52.9k "creator net
+ * cash" (which is the NET real crypto creators personally withdrew, a
+ * balance-sheet effect on realized P&L).
+ *
+ * House-POV: every program cost is money the house GAVE (rose). The fill
+ * context block is blue/muted — it is fake "monopoly money" for content, not a
+ * real cost. Leaderboard payments are shown for completeness but flagged
+ * "already in reward cost" (a REWARD_PAYOUT member) so they are NOT double-
+ * counted into the creator-specific subtotal.
+ *
+ * All values read live from `getCreatorProgramCost()`; `creatorNetCash` is the
+ * bridge's already-fetched creator net-cash figure, surfaced here ONLY in the
+ * reconciliation note so the two views are explicitly tied together.
+ */
 function CreatorProgramCostPanel({
   program,
   creatorNetCash,
 }: {
   program: CreatorProgramCost;
+  /** The bridge's "creator net cash" (creatorDetail.netCash) — for the note. */
   creatorNetCash: number | null;
 }) {
   return (
     <Card>
       <CardContent className="p-0">
+        {/* Header */}
         <div className="flex items-start gap-3 border-b bg-muted/30 px-4 py-3 sm:px-5">
           <div className="shrink-0 rounded-lg border border-rose-500/30 bg-rose-500/10 p-2">
             <Sparkles className="size-4 text-rose-500" />
@@ -2075,6 +2384,7 @@ function CreatorProgramCostPanel({
           </div>
         </div>
 
+        {/* Gross cost rows (House-POV rose). */}
         <ul>
           <ProgramCostRow
             icon={HandCoins}
@@ -2102,6 +2412,7 @@ function CreatorProgramCostPanel({
             alreadyCounted
             footnote="Already counted in reward & bonus cost — not additional."
           />
+          {/* Subtotal: creator-SPECIFIC program cost NOT already in reward. */}
           <li className="grid grid-cols-[1fr_auto] items-center gap-2 bg-rose-500/[0.05] px-3 py-2.5 text-xs font-semibold sm:gap-3 sm:px-4">
             <span className="min-w-0">
               <span className="block">
@@ -2118,6 +2429,7 @@ function CreatorProgramCostPanel({
           </li>
         </ul>
 
+        {/* Fill context — fake money for content, NOT a cost (blue / muted). */}
         <div className="space-y-2 border-t bg-blue-500/[0.03] p-4 sm:p-5">
           <div className="flex items-center gap-2">
             <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-blue-500/10 text-blue-500">
@@ -2168,6 +2480,7 @@ function CreatorProgramCostPanel({
           </p>
         </div>
 
+        {/* Reconciliation note tying back to the bridge. */}
         <p className="border-t bg-muted/20 px-4 py-3 text-[11px] leading-snug text-muted-foreground sm:px-5">
           These are GROSS program costs. The bridge&apos;s{" "}
           <span className="font-medium text-foreground">
@@ -2190,6 +2503,12 @@ function CreatorProgramCostPanel({
 
 // ─── Definitions ────────────────────────────────────────────────────
 
+/**
+ * One StatPanel-style card per headline metric: plain language + the exact
+ * formula + which ledger legs are in/out + the scope + the borrow-net note.
+ * Kept as plain bordered cards (not the accent StatPanel hero — these are
+ * reference text, not KPIs) so the reading stays calm.
+ */
 function Definitions({
   snapshot,
 }: {
@@ -2276,6 +2595,7 @@ function Definitions({
           </div>
         );
       })}
+      {/* Scope card — applies to everything above. */}
       <div className="surface-sheen relative overflow-hidden rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] p-4 ring-1 ring-inset ring-emerald-500/10 sm:p-5 lg:col-span-2">
         <div className="flex items-center gap-2">
           <span className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-emerald-500/20 bg-emerald-500/10">

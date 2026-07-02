@@ -6,7 +6,6 @@ import {
   UserPlus,
   Package,
   Swords,
-  Gift,
 } from "lucide-react";
 import { getAnalyticsData } from "@/lib/queries/analytics";
 import { compareAnalyticsOverview } from "@/lib/clickhouse/compare/analytics-overview";
@@ -28,20 +27,6 @@ import { PnlBreakdown } from "@/components/pnl-breakdown";
 import { PeriodPnlBreakdown } from "@/components/period-pnl-breakdown";
 import { PackBattlePurePnl } from "@/components/pack-battle-pure-pnl";
 import type { AnalyticsPeriod } from "./types";
-import { verifySession } from "@/lib/dal";
-import { canAccessInsights } from "@/lib/insights/motha-gate";
-import { KpiStripSkeleton, SectionHeadingSkeleton } from "@/components/loading-skeletons";
-import { RealNumbersLifetimeSection } from "./real-numbers-lifetime";
-
-/** Short human label for the active period, used on the period-scoped
- * reward-cost tile so it reads as distinct from the lifetime figure below. */
-const PERIOD_LABEL: Record<AnalyticsPeriod, string> = {
-  today: "today",
-  "7d": "last 7d",
-  "30d": "last 30d",
-  "90d": "last 90d",
-  all: "all-time",
-};
 
 /**
  * Default tab — renders the headline KPIs and the daily chart grid.
@@ -129,14 +114,6 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
           color={data.ngr >= 0 ? "emerald" : "rose"}
         />
         <StatCard
-          title="Reward & Bonus Cost"
-          animatedValue={data.ggr - data.ngr}
-          formatKind="currency"
-          subtitle={`GGR − NGR · ${PERIOD_LABEL[period]}, always a cost`}
-          icon={Gift}
-          color="rose"
-        />
-        <StatCard
           title="Unique Visitors"
           animatedValue={data.uniqueVisitors}
           formatKind="number"
@@ -210,59 +187,6 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
       <FadeIn>
         <AnalyticsCharts data={data.daily} />
       </FadeIn>
-
-      {/* Owner-only lifetime section — merged in from the former
-          /insights/real-numbers page (2026-07). Rendered ONLY for owners
-          (canAccessInsights), invisible for everyone else — never gates the
-          rest of this tab, which every /analytics-permitted role keeps
-          seeing unchanged. See OverviewLifetimeGate below. */}
-      <Suspense fallback={null}>
-        <OverviewLifetimeGate />
-      </Suspense>
-    </div>
-  );
-}
-
-/**
- * Owner-only gate for the lifetime Real Numbers section. `/analytics` is
- * reachable by any role holding the `/analytics` permission key (broader
- * than owner); the merged Real Numbers content is sensitive lifetime
- * financial data that was previously visible ONLY to owners on the
- * owner-gated /insights/** tree. This checks ownership explicitly (NOT via
- * requirePageAccess/requireInsightsOwner, which would redirect — this must
- * degrade to "render nothing" for a non-owner, not bounce them off the page
- * they're otherwise allowed to see) and renders the section only when true.
- * A failed session read fails CLOSED (no section), never open.
- */
-async function OverviewLifetimeGate() {
-  let isOwner = false;
-  try {
-    const session = await verifySession();
-    isOwner = await canAccessInsights(session.userId);
-  } catch {
-    isOwner = false;
-  }
-  if (!isOwner) return null;
-
-  return (
-    <Suspense fallback={<LifetimeSectionSkeleton />}>
-      <RealNumbersLifetimeSection />
-    </Suspense>
-  );
-}
-
-/**
- * Footprint-matched fallback for the heavy owner-only lifetime section —
- * mirrors the shape of `RealNumbersBodySkeleton` from the former
- * /insights/real-numbers page (a section heading + KPI strip + one
- * placeholder block) so the swap into real content doesn't jump the layout.
- */
-function LifetimeSectionSkeleton() {
-  return (
-    <div className="space-y-6">
-      <SectionHeadingSkeleton titleWidth={260} />
-      <KpiStripSkeleton count={6} />
-      <Skeleton className="h-48 w-full rounded-2xl" />
     </div>
   );
 }

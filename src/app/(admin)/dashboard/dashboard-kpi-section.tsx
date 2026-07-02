@@ -279,10 +279,10 @@ function StaticWindowLabel({ label }: { label: string }) {
  * merged box], Deposits/Withdrawals [merged into one single tile]) with a
  * per-box today/24h toggle, plus the anchored Crypto Fee counter. This is now
  * a live-ops board only — the window-independent snapshot boxes (FTDs,
- * Depositors, Avg RTP, Avg P&L 7d, Total P&L lifetime) MOVED to the owner-only
- * lifetime section on `/analytics` (Overview tab), where Total P&L + Avg P&L
- * are folded into a single box. (Total Users moved to the top-bar pill; Avg
- * Deposit + Deposits/Hour also live in that Overview-tab section.)
+ * Depositors, Avg RTP, Avg P&L 7d, Total P&L lifetime) MOVED to the Insights
+ * Overview Analytics tab (`/insights/real-numbers?tab=analytics`), where Total
+ * P&L + Avg P&L are folded into a single box. (Total Users moved to the
+ * top-bar pill; Avg Deposit + Deposits/Hour also live on the Analytics tab.)
  *
  * The "today" payload is rendered eagerly (the active default window). The
  * rolling 24h payload is fetched LAZILY (one server action) the first time
@@ -582,14 +582,14 @@ export function DashboardKpiSection({
       </div>
 
       {/* The window-independent SNAPSHOT boxes (FTDs, Depositors, Avg RTP, Avg
-          P&L 7d, Total P&L lifetime) were MOVED to the owner-only lifetime
-          section on `/analytics` (Overview tab) — the dashboard is now a
-          live-ops board (period-bound GGR / Wager / Deposits-Withdrawals +
-          the Crypto Fee counter above), while the lifetime / cadence
-          aggregates live on that Overview-tab section. The Total P&L + Avg
-          P&L boxes were folded into a single "Total P&L" box there (lifetime
-          headline + avg-daily-7d sub-line). See
-          `src/app/(admin)/analytics/real-numbers-lifetime.tsx`. */}
+          P&L 7d, Total P&L lifetime) were MOVED to the Insights Overview
+          Analytics tab (`/insights/real-numbers?tab=analytics`) — the
+          dashboard is now a live-ops board (period-bound GGR / Wager /
+          Deposits-Withdrawals + the Crypto Fee counter above), while the
+          lifetime / cadence aggregates live on the Analytics tab. The Total
+          P&L + Avg P&L boxes were folded into a single "Total P&L" box there
+          (lifetime headline + avg-daily-7d sub-line). See
+          `src/app/(admin)/insights/real-numbers/analytics-tab.tsx`. */}
     </div>
   );
 }
