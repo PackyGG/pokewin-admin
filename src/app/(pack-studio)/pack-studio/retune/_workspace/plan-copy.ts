@@ -109,6 +109,8 @@ export function suggestionKindLabel(kind: string): string {
       return "Retag";
     case "remove-dead-card":
       return "Dead card";
+    case "accept-as-is":
+      return "Accept as-is";
     case "no-fix-under-constraints":
       return "No fix available";
     default:
@@ -118,6 +120,22 @@ export function suggestionKindLabel(kind: string): string {
 
 /** Badge shown when the top suggestion round-tripped the real solver. */
 export const SOLVER_VERIFIED_BADGE = "solver-verified";
+
+// ─── Untagged degenerate loss ladder (the owner's "Captive" case) ────────────
+
+/**
+ * Banner headline for a FEASIBLE untagged plan whose loss ladder collapsed
+ * onto one carrier card (cards pinned at the 0.0001% odds floor, win-rate
+ * floated up). The plan is valid — the accept-as-is suggestion carries the
+ * full numeric WHY; this line just names the situation.
+ */
+export const DEGENERATE_LADDER_BANNER =
+  "Some loss cards are pinned at the minimum odds — at this price the edge math parks the whole loss mass on one card and floats the win rate up. The plan is still sound; the fixes below spread the ladder (or accept as-is).";
+
+/** The per-row pinned-at-floor chip (pool table, planned-% cell). */
+export const FLOOR_PIN_CHIP = "min";
+export const FLOOR_PIN_TOOLTIP =
+  "Pinned at minimum odds — the edge target needs the loss mass on richer cards; see fixes.";
 
 /** One-shot emerald flip after the fix loop lands feasible. */
 export const FIX_LOOP_SUCCESS = "That did it — this pack is tunable now.";

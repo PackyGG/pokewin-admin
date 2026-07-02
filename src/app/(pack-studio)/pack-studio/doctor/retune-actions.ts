@@ -34,6 +34,7 @@ import {
 } from "@/app/(admin)/insights/edge-calc/risk";
 import {
   computeTagGuidance,
+  computeUntaggedGuidance,
   type TagGuidance,
 } from "@/app/(admin)/insights/edge-calc/tag-guidance";
 import {
@@ -1768,12 +1769,16 @@ export type PackTunePlan = {
   taggedAccuracyHit: boolean | null;
   searchMeta: { candidates: number; fellBackToBase: boolean } | null;
   /**
-   * The tag-guidance verdict (ruleset §2) — populated for TAGGED packs when
-   * the plan is infeasible, off-tag, or dirty-odds: the LAW-1 feasibility
+   * The guidance verdict (ruleset §2) — populated for TAGGED packs when the
+   * plan is infeasible, off-tag, or dirty-odds: the LAW-1 feasibility
    * interval + a RANKED list of typed, engine-proven suggestions
    * (`price-move` / `price-edge-exact` / `add-card` with a $ band /
    * `edge-bump` / `raise-cap` / `repair-monotone` / `retag` / dead-card
-   * hints). `null` for untagged packs and for clean feasible plans.
+   * hints). ALSO populated for UNTAGGED packs whose FEASIBLE plan carries a
+   * degenerate loss ladder (cards pinned at the 0.0001% quantization floor /
+   * win-rate float onto a single carrier card — the owner's "Captive" case):
+   * `add-card` (mid, with the spread band + fix price), `remove-dead-card`
+   * per pinned card, and `accept-as-is`. `null` otherwise.
    */
   guidance: TagGuidance | null;
 };
@@ -2067,6 +2072,37 @@ async function planPackTuneLiveUncached(
     tagged,
   );
 
+  // UNTAGGED degenerate-loss-ladder guidance (the owner's "Captive" case):
+  // a FEASIBLE untagged plan whose loss mass collapsed onto one carrier card
+  // (floor-pinned cards / forced loss average / win-rate float) gets the
+  // ranked add-mid-card / remove-dead-cards / accept-as-is verdict. Returns
+  // null for healthy plans — most packs pay nothing here.
+  let untaggedGuidance: TagGuidance | null = null;
+  if (!tagged) {
+    const shapedTotal = shaped.weights.reduce(
+      (a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0),
+      0,
+    );
+    untaggedGuidance =
+      shapedTotal > 0
+        ? computeUntaggedGuidance({
+            cards: cards.map((c) => ({ value: c.value })),
+            currentWeights: cards.map((c) => c.weight),
+            cardIds: cards.map((c) => c.cardId),
+            livePrice: p.price,
+            price: search.bestPrice,
+            targetEdge: autoTargets.targetEdge,
+            targetWinRate: autoTargets.targetWinRate,
+            nearMissMin,
+            maxWinCap: autoTargets.maxWinCap,
+            plannedShares: shaped.weights.map((w) =>
+              Number.isFinite(w) && w > 0 ? w / shapedTotal : 0,
+            ),
+            relaxations: shaped.relaxations,
+          })
+        : null;
+  }
+
   return {
     ...base,
     priceAfter: search.bestPrice,
@@ -2080,9 +2116,9 @@ async function planPackTuneLiveUncached(
     topInflationUnavoidable: shaped.topInflationUnavoidable ?? false,
     taggedAccuracyHit: search.taggedAccuracyHit,
     searchMeta,
-    guidance: guidanceFor(
-      shaped.snapped !== true || search.taggedAccuracyHit === false,
-    ),
+    guidance: tagged
+      ? guidanceFor(shaped.snapped !== true || search.taggedAccuracyHit === false)
+      : untaggedGuidance,
   };
 }
 
@@ -2155,7 +2191,40 @@ async function planPackTuneStagedUncached(
     r.priceSearch?.taggedAccuracyHit === false;
   let guidance: TagGuidance | null = null;
   const isTagContradiction = !outcome.ok && outcome.code === "tag-contradiction";
-  if (taggedStaged && stagedNeedsGuidance && !isTagContradiction) {
+  if (!taggedStaged && outcome.ok) {
+    // UNTAGGED degenerate-loss-ladder guidance on the staged arm — the fix
+    // loop's re-plan (add a mid card / type the suggested price) flows through
+    // here, so the banner clears the moment the ladder actually spreads.
+    const stagedTotal = outcome.weights.reduce(
+      (a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0),
+      0,
+    );
+    const liveWeightByCardId = new Map<string, number>();
+    for (const c of r.livePool) liveWeightByCardId.set(c.cardId, c.weight);
+    guidance =
+      stagedTotal > 0
+        ? computeUntaggedGuidance({
+            cards: input.cards.map((c) => ({
+              value: r.cardMetaById.get(c.cardId)?.value ?? 0,
+            })),
+            currentWeights: input.cards.map(
+              (c) => liveWeightByCardId.get(c.cardId) ?? 0,
+            ),
+            cardIds: input.cards.map((c) => c.cardId),
+            livePrice: r.priceBefore,
+            price: r.priceAfter,
+            targetEdge: r.resolved.targetEdge,
+            targetWinRate: r.resolved.targetWinRate,
+            nearMissMin: r.resolved.nearMissMin,
+            maxWinCap: r.resolved.maxWinCap,
+            plannedShares: outcome.weights.map((w) =>
+              Number.isFinite(w) && w > 0 ? w / stagedTotal : 0,
+            ),
+            relaxations: outcome.relaxations,
+            pinPrice: staged.pinPrice === true,
+          })
+        : null;
+  } else if (taggedStaged && stagedNeedsGuidance && !isTagContradiction) {
     const liveWeightByCardId = new Map<string, number>();
     for (const c of r.livePool) liveWeightByCardId.set(c.cardId, c.weight);
     guidance = computeTagGuidance({

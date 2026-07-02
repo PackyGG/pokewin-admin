@@ -37,6 +37,7 @@ import type { PushedInfo, StagedPool, WorkspaceStatus } from "./plan-state";
 import {
   CLEAN_BANNER,
   COPY_DETAILS,
+  DEGENERATE_LADDER_BANNER,
   F7_DRIFTED,
   F8_REBASED,
   F17_DISCARD,
@@ -493,6 +494,25 @@ export function PlanPanel({
               onAddCardRange={onAddCardRange}
             />
           )}
+        </Banner>
+      );
+    }
+    if (
+      plan.feasible &&
+      tag === null &&
+      plan.guidance != null &&
+      plan.guidance.suggestions.length > 0
+    ) {
+      // Untagged degenerate loss ladder (the "Captive" case): the plan is
+      // valid and pushable — the banner answers WHY cards sit at the odds
+      // floor and offers the engine-proven spread fixes.
+      return (
+        <Banner tone="amber" icon={TriangleAlert}>
+          <p>{DEGENERATE_LADDER_BANNER}</p>
+          <GuidanceSuggestions
+            guidance={plan.guidance}
+            onAddCardRange={onAddCardRange}
+          />
         </Banner>
       );
     }

@@ -29,6 +29,12 @@
  *
  * NEVER emit an unproven suggestion; every infeasible verdict carries ≥ 1
  * suggestion or an explicit `no-fix-under-constraints` with the reason.
+ *
+ * ALSO hosts the UNTAGGED degenerate-loss-ladder guidance
+ * ({@link computeUntaggedGuidance}) — same `TagGuidance` shape, same proof
+ * discipline, for feasible untagged plans whose loss ladder collapsed onto a
+ * single carrier card (floor-pinned cards / win-rate float — see the section
+ * comment below).
  */
 
 import {
@@ -41,6 +47,7 @@ import {
   bandEvForBeta,
   waterFillWinEv,
   shapeWeights,
+  type ShapeWeightsRelaxation,
 } from "./risk";
 import {
   DEFAULT_EDGE_CURVE,
@@ -62,6 +69,7 @@ export type TuneSuggestionKind =
   | "repair-monotone"
   | "retag"
   | "remove-dead-card"
+  | "accept-as-is"
   | "no-fix-under-constraints";
 
 export type TuneSuggestion = {
@@ -311,6 +319,25 @@ function engineAccepts(
 const round2 = (v: number): number => Math.round(v * 100) / 100;
 const pp = (frac: number): string => (frac * 100).toFixed(2);
 const usd = (v: number): string => `$${v.toFixed(2)}`;
+
+/**
+ * Fixed suggestion ranking (LAW 12, extended): price levers → add-card →
+ * edge-bump → raise-cap → repair-monotone → loosen-cheapest-winner → retag;
+ * informational entries (dead cards, accept-as-is, no-fix) last.
+ */
+const SUGGESTION_RANK: Record<TuneSuggestionKind, number> = {
+  "price-edge-exact": 0,
+  "price-move": 0,
+  "add-card": 1,
+  "edge-bump": 2,
+  "raise-cap": 3,
+  "repair-monotone": 4,
+  "loosen-cheapest-winner": 5,
+  retag: 6,
+  "remove-dead-card": 8,
+  "accept-as-is": 9,
+  "no-fix-under-constraints": 10,
+};
 
 export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
   const { price, targetEdge, tag } = input;
@@ -763,19 +790,7 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
 
   // ── Ranking (LAW 12, fixed): price levers → add-card → edge-bump →
   //    raise-cap → repair-monotone → retag; informational entries last. ──────
-  const RANK: Record<TuneSuggestionKind, number> = {
-    "price-edge-exact": 0,
-    "price-move": 0,
-    "add-card": 1,
-    "edge-bump": 2,
-    "raise-cap": 3,
-    "repair-monotone": 4,
-    "loosen-cheapest-winner": 5,
-    retag: 6,
-    "remove-dead-card": 8,
-    "no-fix-under-constraints": 9,
-  };
-  suggestions.sort((a, b) => RANK[a.kind] - RANK[b.kind]);
+  suggestions.sort((a, b) => SUGGESTION_RANK[a.kind] - SUGGESTION_RANK[b.kind]);
 
   // ── Emission guarantee: no bare infeasible verdicts. ──────────────────────
   const actionable = suggestions.filter(
@@ -903,4 +918,528 @@ function solverRoundTrip(input: TagGuidanceInput, s: TuneSuggestion): boolean {
   });
   if ("error" in r) return false;
   return Math.abs(r.risk.winRate - tag) <= TAGGED_WINRATE_TOLERANCE + 1e-9;
+}
+
+// ═══ UNTAGGED degenerate-loss-ladder guidance (the owner's "Captive" case) ═══
+//
+// An UNTAGGED plan can be perfectly feasible — edge on target, price snapped —
+// and still carry a degenerate loss ladder: the win-rate float-up (owner rule
+// #2) bisects the win mass to the EXACT point where the loss side's maximum
+// EV reaches the target, which lands the loss-band skew at its endpoint
+// (β = BETA_LO) — ALL loss mass parks on the single richest loss card and
+// every cheaper loss card gets pinned at the integer-quantization odds floor
+// (weight 1 in 1e6 = 0.0001%). Verified reproduction: pack "Captive" — price
+// $485.50 → $435.43, loss side must average ≈$80.50 over 70.7% of opens, only
+// the $80.28 card can carry it, the $33.95/$18.23 cards pin at 0.0001% and the
+// win-rate floats to 29.3%.
+//
+// This module answers the owner's WHY and emits the same ranked, PROVEN
+// suggestion shape the tagged engine uses:
+//   • `add-card` (mid) — the value band (near-miss band first, upper-dust as
+//     the fallback) + the price at which the loss mass provably spreads,
+//     solver-round-tripped before emission (the SAME mixing/no-float math as
+//     the tagged add-dust law, applied to the float-up condition).
+//   • `remove-dead-card` — the pinned-at-floor cards (harmless: ~0 EV each;
+//     the removal is re-solved through the real engine before emission).
+//   • `accept-as-is` — the plan is sound; the pins are the pool's structure.
+
+/**
+ * The solver's integer-quantization odds floor in PERCENT units: the precise
+ * solve quantizes fractional weights at 1e6 with `Math.max(1, …)`, so a card
+ * whose solved share is ~0 lands at weight 1 in ~1,000,000 = 0.0001% (the
+ * gcd-reduce can't shrink a vector containing a weight of 1).
+ */
+export const FLOOR_PINNED_MAX_PCT = 0.0001;
+
+/**
+ * TRUE when a planned per-card probability (PERCENT units, e.g. `planned.pct`
+ * on a `PackTunePlan`) sits at the quantization floor — the "pinned" signature.
+ * Only meaningful for LOSS-band cards (a designed 1-in-a-million jackpot rung
+ * is legitimate); callers gate on `value < price`.
+ */
+export function isFloorPinnedPct(pct: number): boolean {
+  return pct > 0 && pct <= FLOOR_PINNED_MAX_PCT + 1e-9;
+}
+
+export type UntaggedPlanGuidanceInput = {
+  /** Pool card values, aligned with `currentWeights` / `plannedShares`. */
+  cards: { value: number }[];
+  /** LIVE pool weights aligned to `cards`; a staged-in card carries 0. */
+  currentWeights: number[];
+  /** Optional cardIds aligned to `cards` — threaded into per-card params. */
+  cardIds?: string[] | null;
+  /** The pack's LIVE ticket price (band anchor for the suggestion copy). */
+  livePrice: number;
+  /** The PLAN's landed price (`priceAfter` — the retune search's pick). */
+  price: number;
+  /** The plan's resolved targets (held fixed across the retune price search). */
+  targetEdge: number;
+  /** The soft design win-rate (0.20 for untagged packs). */
+  targetWinRate: number;
+  /** The untagged near-miss floor (0.10 default). */
+  nearMissMin: number;
+  maxWinCap: number;
+  /** The plan's per-card probabilities as FRACTIONS of 1, aligned to `cards`. */
+  plannedShares: number[];
+  /** The solver's relaxations from the accepted plan (win-rate float, etc.). */
+  relaxations: readonly Pick<
+    ShapeWeightsRelaxation,
+    "lever" | "requested" | "applied"
+  >[];
+  /** TRUE when the operator pinned the price — price-moving fixes are off. */
+  pinPrice?: boolean;
+};
+
+/** Soft-mode (untagged) never-inflate caps at a price: existing win/grail
+ * cards cap at live odds, grail monotone running-min, cheapest winner EXEMPT
+ * (the float-up's sink — its cap is lifted, exactly like the solver). */
+function softBandsAt(
+  cards: readonly { value: number }[],
+  currentWeights: readonly number[],
+  price: number,
+  cap: number,
+): { winValues: number[]; winCaps: number[]; nmValues: number[]; dustValues: number[] } {
+  let curTotal = 0;
+  for (const w of currentWeights) {
+    if (Number.isFinite(w) && w > 0) curTotal += w;
+  }
+  const winValues: number[] = [];
+  const winCaps: number[] = [];
+  const nmValues: number[] = [];
+  const dustValues: number[] = [];
+  cards.forEach((c, idx) => {
+    const v = c.value;
+    if (!(v > 0) || v > cap) return;
+    if (v >= price) {
+      winValues.push(v);
+      const w = currentWeights[idx];
+      winCaps.push(
+        curTotal > 0 && Number.isFinite(w) && (w as number) > 0
+          ? (w as number) / curTotal
+          : Infinity,
+      );
+    } else if (v >= 0.5 * price) {
+      nmValues.push(v);
+    } else {
+      dustValues.push(v);
+    }
+  });
+  // Grail monotone running-min (value-ascending, ≥ 5·price).
+  const grailAsc = winValues
+    .map((v, i) => ({ i, v }))
+    .filter((x) => x.v >= 5 * price)
+    .sort((a, b) => a.v - b.v);
+  let runningMin = Infinity;
+  for (const { i } of grailAsc) {
+    runningMin = Math.min(runningMin, winCaps[i]!);
+    winCaps[i] = runningMin;
+  }
+  // Cheapest-winner exemption (SOFT mode only — the EV-balance sink).
+  if (winValues.length > 0) {
+    let cheapIdx = 0;
+    for (let i = 1; i < winValues.length; i++) {
+      if (winValues[i]! < winValues[cheapIdx]!) cheapIdx = i;
+    }
+    winCaps[cheapIdx] = Infinity;
+  }
+  return { winValues, winCaps, nmValues, dustValues };
+}
+
+/**
+ * Detect a degenerate loss ladder on an accepted UNTAGGED plan and, when
+ * found, emit the ranked/proven guidance. Returns `null` for a healthy plan.
+ *
+ * Detection (any of):
+ *   1. a LOSS-band card pinned at the quantization floor (0.0001%),
+ *   2. the planned dust-band average forced to within a few percent of the
+ *      max dust value (≥ 2 dust values — the β endpoint signature),
+ *   3. an empty near-miss band together with a win-rate FLOAT-UP relaxation.
+ */
+export function computeUntaggedGuidance(
+  input: UntaggedPlanGuidanceInput,
+): TagGuidance | null {
+  const { price, targetEdge, targetWinRate } = input;
+  if (
+    !(price > 0) ||
+    input.cards.length === 0 ||
+    input.plannedShares.length !== input.cards.length
+  ) {
+    return null;
+  }
+
+  // ── Planned aggregates at the landed price ────────────────────────────────
+  const pinnedIdx: number[] = [];
+  let winMassPlanned = 0;
+  let winEvPlanned = 0;
+  let lossMassPlanned = 0;
+  let dustMassPlanned = 0;
+  let dustEvPlanned = 0;
+  let dustCount = 0;
+  let dustMaxValue = 0;
+  let nmCount = 0;
+  // The CARRIER: the loss card the endpoint skew parks the mass on (richest
+  // dust in the Captive/high-EV case, cheapest in the low-EV case) — named in
+  // the copy so the WHY reads off the actual ladder.
+  let carrierValue = 0;
+  let carrierShare = 0;
+  input.cards.forEach((c, i) => {
+    const v = c.value;
+    const share = input.plannedShares[i] ?? 0;
+    if (!(v > 0)) return;
+    if (v >= price) {
+      winMassPlanned += share;
+      winEvPlanned += share * v;
+      return;
+    }
+    lossMassPlanned += share;
+    if (share > carrierShare) {
+      carrierShare = share;
+      carrierValue = v;
+    }
+    if (v >= 0.5 * price) {
+      nmCount += 1;
+    } else {
+      dustCount += 1;
+      dustMassPlanned += share;
+      dustEvPlanned += share * v;
+      if (v > dustMaxValue) dustMaxValue = v;
+    }
+    if (isFloorPinnedPct(share * 100)) pinnedIdx.push(i);
+  });
+
+  const dustAvg = dustMassPlanned > 1e-9 ? dustEvPlanned / dustMassPlanned : 0;
+  const winFloated = input.relaxations.some(
+    (r) => r.lever === "winRate" && r.applied > r.requested + 1e-9,
+  );
+  // "Forced to the max" only counts as degenerate when the win-rate float
+  // actually fired (the float bisects to the point where the loss side's MAX
+  // EV meets the target — the β-endpoint signature). A no-float plan whose
+  // dust average merely sits high is the pool paying what it was designed to.
+  const lossAvgForced =
+    winFloated &&
+    dustCount >= 2 &&
+    dustMaxValue > 0 &&
+    dustAvg >= 0.95 * dustMaxValue;
+  const degenerate =
+    pinnedIdx.length > 0 || lossAvgForced || (nmCount === 0 && winFloated);
+  if (!degenerate) return null;
+
+  // ── Feasibility payload: the no-float interval at the DESIGN win-rate ─────
+  // evMax = the most the pool can pay at 20% wins without inflating anything
+  // (win fill at the baseline decay + loss bands skewed expensive). The plan's
+  // evTarget above it ⇒ the float-up fired ⇒ the ladder degenerated.
+  const base = softBandsAt(input.cards, input.currentWeights, price, input.maxWinCap);
+  const nmMass = base.nmValues.length > 0 ? input.nearMissMin : 0;
+  const dm = Math.max(0, 1 - targetWinRate - nmMass);
+  const evTarget = price * (1 - targetEdge);
+  const evMax =
+    waterFillWinEv(base.winValues, base.winCaps, targetWinRate, BETA_WIN_FLOOR) +
+    nmMass * bandEvForBeta(base.nmValues, BETA_LO) +
+    dm * bandEvForBeta(base.dustValues, BETA_LO);
+  const evMin =
+    waterFillWinEv(base.winValues, base.winCaps, targetWinRate, BETA_WIN_MAX) +
+    nmMass * bandEvForBeta(base.nmValues, BETA_HI) +
+    dm * bandEvForBeta(base.dustValues, BETA_HI);
+
+  const suggestions: TuneSuggestion[] = [];
+  const lossAvgNeeded =
+    lossMassPlanned > 1e-9 ? (evTarget - winEvPlanned) / lossMassPlanned : 0;
+
+  // ── 1. add-card (mid) — the spread lever, solver-round-tripped ────────────
+  // The float-up fires at price P′ iff  evT(P′) > W(0.2) + nm·X + dm·D_hi —
+  // so a mid card of value X kills the float (and the ladder spreads) exactly
+  // when X clears the analytic bound. The near-miss band is tried FIRST (the
+  // added card becomes the NM band and carries exactly the nearMissMin mass);
+  // upper-dust is the fallback. Every candidate is verified through the REAL
+  // solver (no float relaxation, no floor pins) before emission.
+  const nmSeed = input.nearMissMin > 0 ? input.nearMissMin : 0.1;
+  {
+    // The scan starts AT the landed price and walks the price band downward;
+    // when the price is pinned it is restricted to the single landed-price
+    // candidate — the analytic bound then almost never clears, which is
+    // honest: this fix needs the price lever.
+    const pStart = round2(Math.min(price, input.livePrice));
+    const pFloor = Math.max(0.01, 0.4 * input.livePrice);
+    const step = Math.max(0.01, round2(input.livePrice * 0.005));
+    // Round-trip a candidate (pool + new card, pinned price) through the REAL
+    // solver; accept only a solve that holds the DESIGN win-rate (no float)
+    // with the whole loss ladder spread (no floor pins). Returns the solve's
+    // `snapped` flag so the copy can be honest about clean vs exact odds.
+    const solveSpreads = (
+      cards: { value: number }[],
+      weights: number[],
+      pCand: number,
+      nearMiss: number,
+    ): { ok: boolean; snapped: boolean } => {
+      const r = shapeWeights({
+        cards,
+        price: pCand,
+        targetEdge,
+        targetWinRate,
+        maxWinCap: input.maxWinCap,
+        nearMissMin: nearMiss,
+        winRateTol: 0.02,
+        currentWeights: weights,
+      });
+      if ("error" in r) return { ok: false, snapped: false };
+      if (r.risk.edge < targetEdge - 1e-9) return { ok: false, snapped: false };
+      if (Math.abs(r.risk.winRate - targetWinRate) > 0.02 + 1e-9) {
+        return { ok: false, snapped: false };
+      }
+      let total = 0;
+      for (const w of r.weights) if (w > 0) total += w;
+      if (!(total > 0)) return { ok: false, snapped: false };
+      for (let i = 0; i < cards.length; i++) {
+        const v = cards[i]!.value;
+        if (!(v > 0) || v >= pCand) continue;
+        if (isFloorPinnedPct(((r.weights[i] ?? 0) / total) * 100)) {
+          return { ok: false, snapped: false };
+        }
+      }
+      return { ok: true, snapped: r.snapped === true };
+    };
+
+    let verifies = 0;
+    const MAX_VERIFIES = 8;
+    let emitted = false;
+    for (
+      let pCand = pStart;
+      pCand >= pFloor - 1e-9 && verifies < MAX_VERIFIES && !emitted;
+      pCand = round2(pCand - step)
+    ) {
+      if (input.pinPrice === true && Math.abs(pCand - price) > 1e-9) break;
+      const bands = softBandsAt(
+        input.cards,
+        input.currentWeights,
+        pCand,
+        input.maxWinCap,
+      );
+      if (bands.winValues.length === 0 || bands.dustValues.length === 0) continue;
+      const evT = pCand * (1 - targetEdge);
+      const w02 = waterFillWinEv(
+        bands.winValues,
+        bands.winCaps,
+        targetWinRate,
+        BETA_WIN_FLOOR,
+      );
+      const dHi = bandEvForBeta(bands.dustValues, BETA_LO);
+      // Near-miss route: the new card becomes the NM band (mass = nmSeed).
+      const dmWith = Math.max(0, 1 - targetWinRate - nmSeed);
+      const xLo = (evT - w02 - dmWith * dHi) / nmSeed;
+      // The band shown to the operator: a near-miss at BOTH the fix price and
+      // the live price (so the picked card stays mid-band wherever the price
+      // finally lands), above the analytic bound with a small spread margin.
+      const xMin = round2(
+        Math.max(0.5 * pCand, 0.5 * input.livePrice, xLo * 1.02, 0.01),
+      );
+      const xMax = round2(0.95 * pCand);
+      // Require a real band (≥ 10% of the price wide), not a knife's edge — a
+      // slightly lower price buys a much wider card choice AND a comfortably
+      // interior loss skew (more spread margin past the analytic bound).
+      if (!(xMax - xMin >= Math.max(0.5, 0.1 * pCand))) continue;
+      const xSuggest = round2(Math.min(xMax, Math.max(xMin, 0.9 * pCand)));
+      verifies += 1;
+      const rt = solveSpreads(
+        [...input.cards.map((c) => ({ value: c.value })), { value: xSuggest }],
+        [...input.currentWeights, 0],
+        pCand,
+        nmSeed,
+      );
+      if (!rt.ok) continue;
+      const evMaxAfter = w02 + nmSeed * xSuggest + dmWith * dHi;
+      const evMinAfter =
+        waterFillWinEv(bands.winValues, bands.winCaps, targetWinRate, BETA_WIN_MAX) +
+        nmSeed * xSuggest +
+        dmWith * bandEvForBeta(bands.dustValues, BETA_HI);
+      suggestions.push({
+        kind: "add-card",
+        params: {
+          band: "near-miss",
+          valueMin: xMin,
+          valueMax: xMax,
+          suggestedValue: xSuggest,
+          expectedShare: nmSeed,
+          price: pCand,
+        },
+        humanCopy: `Add a mid-value card between ${usd(xMin)} and ${usd(xMax)} (suggest ${usd(xSuggest)} — it becomes the near-miss band and carries ≈${(nmSeed * 100).toFixed(0)}% of opens) and set the price to ≈${usd(pCand)}, pinned (the free price search drifts back to the degenerate ladder): the loss ladder then spreads across the cheap cards and the win rate lands back at ${(targetWinRate * 100).toFixed(0)}%.${rt.snapped ? "" : " Odds land exact but off the clean ladder."}`,
+        proof: {
+          evMinAfter,
+          evMaxAfter,
+          feasibleAfter: true,
+          solverVerified: true,
+        },
+      });
+      emitted = true;
+    }
+
+    // Upper-dust fallback: no near-miss value can clear the bound anywhere in
+    // the band — try a rich dust card (just under 0.5·P′) instead.
+    if (!emitted) {
+      for (
+        let pCand = pStart;
+        pCand >= pFloor - 1e-9 && verifies < MAX_VERIFIES && !emitted;
+        pCand = round2(pCand - step)
+      ) {
+        if (input.pinPrice === true && Math.abs(pCand - price) > 1e-9) break;
+        const bands = softBandsAt(
+          input.cards,
+          input.currentWeights,
+          pCand,
+          input.maxWinCap,
+        );
+        if (bands.winValues.length === 0) continue;
+        const evT = pCand * (1 - targetEdge);
+        const w02 = waterFillWinEv(
+          bands.winValues,
+          bands.winCaps,
+          targetWinRate,
+          BETA_WIN_FLOOR,
+        );
+        const nmHere = bands.nmValues.length > 0 ? nmSeed : 0;
+        const dmHere = Math.max(0, 1 - targetWinRate - nmHere);
+        if (!(dmHere > 1e-9)) continue;
+        const nmEv = nmHere * bandEvForBeta(bands.nmValues, BETA_LO);
+        // With the new card X as the richest dust value, the loss side's max
+        // EV is ≈ dm·X — the no-float bound solves to X ≥ (evT − W − nmEv)/dm.
+        const xLo = (evT - w02 - nmEv) / dmHere;
+        const xMin = round2(Math.max(xLo * 1.02, dustMaxValue * 1.05, 0.01));
+        const xMax = round2(0.5 * pCand - 0.01);
+        if (!(xMax - xMin >= Math.max(0.25, 0.005 * pCand))) continue;
+        const xSuggest = round2(Math.min(xMax, Math.max(xMin, 0.45 * pCand)));
+        verifies += 1;
+        const rt = solveSpreads(
+          [...input.cards.map((c) => ({ value: c.value })), { value: xSuggest }],
+          [...input.currentWeights, 0],
+          pCand,
+          nmHere,
+        );
+        if (!rt.ok) continue;
+        // Mixing estimate for the copy: the new card must lift the dust band's
+        // EV from the rest-average to the required average.
+        const dReq = (evT - w02 - nmEv) / dmHere;
+        const dRest = bandEvForBeta(bands.dustValues, 0); // uniform approx
+        const share =
+          xSuggest - dRest > 1e-9
+            ? Math.min(dmHere, Math.max(0, (dmHere * (dReq - dRest)) / (xSuggest - dRest)))
+            : dmHere;
+        suggestions.push({
+          kind: "add-card",
+          params: {
+            band: "dust-upper",
+            valueMin: xMin,
+            valueMax: xMax,
+            suggestedValue: xSuggest,
+            expectedShare: share,
+            price: pCand,
+          },
+          humanCopy: `No single near-miss card can carry enough here — add a rich loss card between ${usd(xMin)} and ${usd(xMax)} (suggest ${usd(xSuggest)} — it would carry ≈${(share * 100).toFixed(1)}% of opens) and set the price to ≈${usd(pCand)}, pinned: the loss ladder then spreads and the win rate lands back at ${(targetWinRate * 100).toFixed(0)}%.${rt.snapped ? "" : " Odds land exact but off the clean ladder."}`,
+          proof: {
+            evMinAfter: evMin,
+            evMaxAfter: w02 + nmEv + dmHere * xSuggest,
+            feasibleAfter: true,
+            solverVerified: true,
+          },
+        });
+        emitted = true;
+      }
+    }
+  }
+
+  // ── 2. remove-dead-card — the floor-pinned cards (harmless, ~0 EV) ────────
+  if (pinnedIdx.length > 0) {
+    // One re-solve WITHOUT the pinned cards proves the removal is a no-op.
+    const keepCards: { value: number }[] = [];
+    const keepWeights: number[] = [];
+    const pinnedSet = new Set(pinnedIdx);
+    input.cards.forEach((c, i) => {
+      if (pinnedSet.has(i)) return;
+      keepCards.push({ value: c.value });
+      keepWeights.push(input.currentWeights[i] ?? 0);
+    });
+    let removalOk = false;
+    try {
+      const r = shapeWeights({
+        cards: keepCards,
+        price,
+        targetEdge,
+        targetWinRate,
+        maxWinCap: input.maxWinCap,
+        nearMissMin: input.nearMissMin,
+        winRateTol: 0.02,
+        currentWeights: keepWeights,
+      });
+      removalOk = !("error" in r) && r.risk.edge >= targetEdge - 1e-9;
+    } catch {
+      removalOk = false;
+    }
+    for (const i of pinnedIdx) {
+      const v = input.cards[i]!.value;
+      suggestions.push({
+        kind: "remove-dead-card",
+        params: {
+          ...(input.cardIds ? { cardId: input.cardIds[i]! } : {}),
+          cardValue: v,
+          plannedPct: (input.plannedShares[i] ?? 0) * 100,
+        },
+        humanCopy: `${usd(v)} is pinned at the ${FLOOR_PINNED_MAX_PCT}% odds floor — the edge target parks the loss mass on the ${usd(carrierValue)} card, so this one carries ~0% of opens and ~$0 of EV. Removing it changes nothing (the plan re-solves the same without it).`,
+        proof: {
+          evMinAfter: evMin,
+          evMaxAfter: evMax,
+          feasibleAfter: removalOk,
+        },
+      });
+    }
+  }
+
+  // ── 3. accept-as-is — the plan is sound; this is the pool's structure ─────
+  suggestions.push({
+    kind: "accept-as-is",
+    params: {
+      winRatePct: winMassPlanned * 100,
+      lossMassPct: lossMassPlanned * 100,
+      lossAvgNeeded: round2(lossAvgNeeded),
+      carrierValue,
+      maxLossValue: dustMaxValue,
+    },
+    humanCopy: `This plan is sound — the pins are the pool's structure, not an error. At ${usd(price)} the losing ${(lossMassPlanned * 100).toFixed(1)}% of opens must average ≈${usd(lossAvgNeeded)}, and only the ${usd(carrierValue)} card can carry that — so the other loss cards sit at the minimum odds${winFloated ? ` and the win rate floats to ${(winMassPlanned * 100).toFixed(1)}%` : ""}. Fine to push as-is.`,
+    proof: {
+      evMinAfter: evMin,
+      evMaxAfter: evMax,
+      feasibleAfter: true,
+    },
+  });
+
+  suggestions.sort((a, b) => SUGGESTION_RANK[a.kind] - SUGGESTION_RANK[b.kind]);
+
+  return {
+    feasibility: {
+      evTarget,
+      evMin,
+      evMax,
+      // The PLAN is feasible (it solved) — the interval reports the no-float
+      // window at the DESIGN win-rate, whose miss is what degenerated the
+      // ladder (direction need-ev-up = the float-up signature).
+      feasible: true,
+      saturated: false,
+      direction: evTarget > evMax + 1e-9 ? "need-ev-up" : "ok",
+      components: {
+        winEvMin: waterFillWinEv(
+          base.winValues,
+          base.winCaps,
+          targetWinRate,
+          BETA_WIN_MAX,
+        ),
+        winEvMax: waterFillWinEv(
+          base.winValues,
+          base.winCaps,
+          targetWinRate,
+          BETA_WIN_FLOOR,
+        ),
+        nmMass,
+        dustMass: dm,
+        capSum: -1,
+      },
+    },
+    suggestions,
+  };
 }

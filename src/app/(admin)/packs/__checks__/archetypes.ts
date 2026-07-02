@@ -38,6 +38,15 @@
  *       true; infeasible guidance NEVER comes back bare (≥ 1 suggestion or an
  *       explicit no-fix-under-constraints).
  *   11. Perf: full guidance ≪ 10 ms/pack.
+ *   12. UNTAGGED degenerate loss ladder (the owner-found "Captive" case):
+ *       the plan reproduces (price moves down, two loss cards pinned at the
+ *       0.0001% quantization floor, win-rate floats to ~29.3%), the
+ *       degenerate detection fires, add-card emits a near-miss band inside
+ *       [242.75, 485.50) + a solver-verified fix price, remove-dead-card
+ *       lists exactly the two pinned cards, accept-as-is carries the WHY —
+ *       and the enriched pool (one ~$300 mid card at the fix price) plans
+ *       with NO floor-pinned cards and the win rate back at ~20%. A healthy
+ *       untagged plan returns NO guidance.
  *
  * Exit code 0 = all passed; 1 = at least one failure (printed).
  */
@@ -59,12 +68,18 @@ import {
 import {
   ONE_SIDED_EDGE_EXCESS_TOL,
   TAGGED_WINRATE_TOLERANCE,
+  searchBestPriceForCleanSnap,
   shapeWeights,
   waterFillBandProbs,
   type ShapeWeightsSuccess,
   type ShapeWeightsResult,
 } from "../../insights/edge-calc/risk";
-import { computeTagGuidance } from "../../insights/edge-calc/tag-guidance";
+import {
+  computeTagGuidance,
+  computeUntaggedGuidance,
+  isFloorPinnedPct,
+} from "../../insights/edge-calc/tag-guidance";
+import { buildRetuneSearchParams } from "../_lib/retune-params";
 
 let passes = 0;
 const failures: string[] = [];
@@ -614,6 +629,243 @@ check("perf: full guidance well under 10 ms/pack", () => {
   const perPack = (performance.now() - t0) / N;
   assert(perPack < 10, `guidance must stay under 10 ms/pack (got ${perPack.toFixed(2)} ms)`);
   console.log(`      [guidance ≈ ${perPack.toFixed(2)} ms/pack]`);
+});
+
+// ── 12. UNTAGGED degenerate loss ladder — the owner-found "Captive" case ──
+// Pack "Captive", $485.50, untagged. The plan is EV-forced: at the landed
+// price the anchored win band delivers ≈$330.28 against an EV target of
+// ≈$387.19, so the loss side must average ≈$80.50 over 70.7% of opens — only
+// the $80.28 card can carry that, the $33.95 / $18.23 cards get pinned at the
+// 0.0001% quantization floor, the near-miss band [242.75, 485.50) is EMPTY,
+// and the win rate floats to 29.3% on the two cheapest winners. The owner
+// asked WHY two cards sit at 0.0001% — the guidance must answer it itself.
+const CAPTIVE = {
+  price: 485.5,
+  values: [9100, 3247.24, 2040, 1080, 635.14, 80.28, 33.95, 18.23],
+  weights: [5000, 40000, 50000, 70000, 85000, 150000, 200000, 400000],
+};
+const CAPTIVE_IDS = CAPTIVE.values.map((v) => `captive-${v}`);
+const captiveTargets = autoRetuneTargets(
+  CAPTIVE.price,
+  CFG,
+  undefined,
+  Math.max(...CAPTIVE.values),
+);
+// The EXACT solve path `planPackTune`'s live arm runs (shared param builder).
+const captiveSearch = searchBestPriceForCleanSnap(
+  buildRetuneSearchParams("live", {
+    cards: CAPTIVE.values.map((v) => ({ value: v })),
+    basePrice: CAPTIVE.price,
+    targetEdge: captiveTargets.targetEdge,
+    targetWinRate: captiveTargets.targetWinRate,
+    maxWinCap: captiveTargets.maxWinCap,
+    nearMissMin: captiveTargets.nearMissMin,
+    winRateTol: 0.02,
+    currentWeights: CAPTIVE.weights,
+    intendedHitRate: null,
+  }),
+);
+const captiveShares: number[] = (() => {
+  const r = captiveSearch.bestResult;
+  if (!isSuccess(r)) return [];
+  const total = r.weights.reduce((a, b) => a + (b > 0 ? b : 0), 0);
+  return r.weights.map((w) => (total > 0 && w > 0 ? w / total : 0));
+})();
+const captiveGuidance = isSuccess(captiveSearch.bestResult)
+  ? computeUntaggedGuidance({
+      cards: CAPTIVE.values.map((v) => ({ value: v })),
+      currentWeights: CAPTIVE.weights,
+      cardIds: CAPTIVE_IDS,
+      livePrice: CAPTIVE.price,
+      price: captiveSearch.bestPrice,
+      targetEdge: captiveTargets.targetEdge,
+      targetWinRate: captiveTargets.targetWinRate,
+      nearMissMin: captiveTargets.nearMissMin,
+      maxWinCap: captiveTargets.maxWinCap,
+      plannedShares: captiveShares,
+      relaxations: (captiveSearch.bestResult as ShapeWeightsSuccess).relaxations,
+    })
+  : null;
+
+check("Captive reproduces: price moves down (snapped), two loss cards pinned at 0.0001%, win-rate floats to ~29.3%", () => {
+  const r = captiveSearch.bestResult;
+  assert(isSuccess(r), `Captive must plan: ${!isSuccess(r) ? r.error : ""}`);
+  assert(
+    captiveSearch.bestPrice < CAPTIVE.price,
+    `price moves DOWN (got $${captiveSearch.bestPrice})`,
+  );
+  approx(captiveSearch.bestPrice, 435.43, 1, "landed price ≈ $435.43");
+  assert(r.snapped === true, "the landed plan is clean-snapped");
+  approx(r.risk.winRate, 0.293, 0.01, "win-rate floats to ≈29.3%");
+  assert(
+    r.relaxations.some((x) => x.lever === "winRate" && x.applied > x.requested),
+    "the win-rate FLOAT-UP relaxation is recorded",
+  );
+  // The two cheapest loss cards sit at the quantization floor; the $80.28
+  // carrier and every winner do not.
+  const pinned = CAPTIVE.values.filter(
+    (v, i) =>
+      v < captiveSearch.bestPrice && isFloorPinnedPct(captiveShares[i]! * 100),
+  );
+  assert(
+    pinned.length === 2 && pinned.includes(33.95) && pinned.includes(18.23),
+    `exactly the $33.95/$18.23 cards are floor-pinned (got ${JSON.stringify(pinned)})`,
+  );
+  // The forcing arithmetic: the loss side's required average sits within a
+  // few percent of the max dust value ($80.28) — the degeneracy's cause.
+  let winEv = 0;
+  let lossMass = 0;
+  CAPTIVE.values.forEach((v, i) => {
+    if (v >= captiveSearch.bestPrice) winEv += captiveShares[i]! * v;
+    else lossMass += captiveShares[i]!;
+  });
+  const evTarget = captiveSearch.bestPrice * (1 - captiveTargets.targetEdge);
+  const lossAvgNeeded = (evTarget - winEv) / lossMass;
+  approx(lossAvgNeeded, 80.5, 1, "loss side must average ≈$80.50");
+  assert(
+    lossAvgNeeded >= 0.95 * 80.28,
+    "…which is within a few percent of the $80.28 max dust value",
+  );
+});
+
+check("Captive guidance: detection fires; add-card band inside [242.75, 485.50) with a solver-verified fix price", () => {
+  assert(captiveGuidance !== null, "degenerate detection must fire");
+  const g = captiveGuidance!;
+  assert(
+    g.feasibility.direction === "need-ev-up",
+    "the no-float window at 20% wins sits below the EV target (the float's cause)",
+  );
+  const add = g.suggestions.find((s) => s.kind === "add-card");
+  assert(add !== undefined, "an add-card (mid) suggestion is emitted");
+  assert(add!.params.band === "near-miss", "near-miss band tried (and provable) first");
+  const vMin = Number(add!.params.valueMin);
+  const vMax = Number(add!.params.valueMax);
+  const vSug = Number(add!.params.suggestedValue);
+  const pFix = Number(add!.params.price);
+  // The band sits inside the LIVE near-miss band [0.5·485.50, 485.50).
+  assert(vMin >= 242.75 - 1e-9, `band floor ≥ $242.75 (got $${vMin})`);
+  assert(vMax < 485.5, `band ceiling < $485.50 (got $${vMax})`);
+  assert(vSug >= vMin && vSug <= vMax, "suggested value inside the band");
+  assert(vSug >= 250 && vSug <= 350, `suggested value ≈ $300 (got $${vSug})`);
+  assert(
+    Number.isFinite(pFix) && pFix < CAPTIVE.price && pFix > 0.4 * CAPTIVE.price,
+    `a concrete fix price rides along (got $${pFix})`,
+  );
+  assert(add!.proof.feasibleAfter === true, "proven");
+  assert(add!.proof.solverVerified === true, "round-tripped through the real solver");
+  approx(Number(add!.params.expectedShare), 0.1, 1e-9, "carries the 10% near-miss mass");
+});
+
+check("Captive guidance: remove-dead-cards lists exactly the two pinned cards (harmless); accept-as-is carries the WHY", () => {
+  const g = captiveGuidance!;
+  const dead = g.suggestions.filter((s) => s.kind === "remove-dead-card");
+  assert(dead.length === 2, `exactly two dead-card entries (got ${dead.length})`);
+  const deadValues = dead.map((s) => Number(s.params.cardValue)).sort((a, b) => a - b);
+  assert(
+    Math.abs(deadValues[0]! - 18.23) < 1e-9 && Math.abs(deadValues[1]! - 33.95) < 1e-9,
+    `the $18.23 and $33.95 cards (got ${JSON.stringify(deadValues)})`,
+  );
+  for (const s of dead) {
+    assert(typeof s.params.cardId === "string", "cardId threaded for the row action");
+    assert(s.proof.feasibleAfter === true, "removal re-solved through the engine (harmless)");
+  }
+  const acceptIdx = g.suggestions.findIndex((s) => s.kind === "accept-as-is");
+  assert(acceptIdx >= 0, "accept-as-is is present");
+  const accept = g.suggestions[acceptIdx]!;
+  assert(accept.proof.feasibleAfter === true, "the plan IS sound");
+  approx(Number(accept.params.lossAvgNeeded), 80.5, 1, "the WHY: loss side must average ≈$80.50");
+  approx(Number(accept.params.carrierValue), 80.28, 1e-9, "…and only the $80.28 card can carry it");
+  // Ranking: add-card first, dead cards next, accept-as-is last.
+  assert(g.suggestions[0]!.kind === "add-card", "add-card ranks first");
+  assert(acceptIdx === g.suggestions.length - 1, "accept-as-is ranks last");
+});
+
+check("Captive enriched: one ~$300 mid card at the (pinned) fix price → NO floor pins, win-rate back at ~20%; guidance clears", () => {
+  const add = captiveGuidance!.suggestions.find((s) => s.kind === "add-card")!;
+  const pFix = Number(add.params.price);
+  const xVal = Number(add.params.suggestedValue); // ≈ $300, inside the band
+  const values2 = [...CAPTIVE.values, xVal];
+  const weights2 = [...CAPTIVE.weights, 0]; // staged-in card
+  // The pinned-price staged plan path (`pinPrice: true` — the suggestion says
+  // to pin: the free search prefers snap-closeness and drifts back to the
+  // degenerate ladder).
+  const r = shapeWeights({
+    cards: values2.map((v) => ({ value: v })),
+    currentWeights: weights2,
+    price: pFix,
+    targetEdge: captiveTargets.targetEdge,
+    targetWinRate: captiveTargets.targetWinRate,
+    maxWinCap: captiveTargets.maxWinCap,
+    nearMissMin: captiveTargets.nearMissMin,
+    winRateTol: 0.02,
+  });
+  assert(isSuccess(r), `enriched pool must solve at $${pFix}: ${!isSuccess(r) ? r.error : ""}`);
+  assert(r.risk.edge >= captiveTargets.targetEdge - 1e-9, "edge ≥ target");
+  approx(r.risk.winRate, 0.2, 0.021, "win rate back at ~20% (was 29.3%)");
+  const total = r.weights.reduce((a, b) => a + (b > 0 ? b : 0), 0);
+  const shares2 = r.weights.map((w) => (w > 0 ? w / total : 0));
+  const pins = values2.filter(
+    (v, i) => v < pFix && isFloorPinnedPct(shares2[i]! * 100),
+  );
+  assert(pins.length === 0, `NO floor-pinned cards (got ${JSON.stringify(pins)})`);
+  // The fix loop's re-plan detection: the enriched plan is HEALTHY → null.
+  const g2 = computeUntaggedGuidance({
+    cards: values2.map((v) => ({ value: v })),
+    currentWeights: weights2,
+    livePrice: CAPTIVE.price,
+    price: pFix,
+    targetEdge: captiveTargets.targetEdge,
+    targetWinRate: captiveTargets.targetWinRate,
+    nearMissMin: captiveTargets.nearMissMin,
+    maxWinCap: captiveTargets.maxWinCap,
+    plannedShares: shares2,
+    relaxations: r.relaxations,
+    pinPrice: true,
+  });
+  assert(g2 === null, "degenerate detection clears on the enriched plan");
+});
+
+check("healthy untagged plan: no pins, no float → guidance is null (no banner noise)", () => {
+  // Interior loss skew: winners carry ≈52% of the EV at 20% wins, the dust
+  // band [3.4, 4.2, 4.8] spreads (no endpoint), win-rate lands ON 20%.
+  const values = [40, 30, 20, 4.8, 4.2, 3.4];
+  const weights = [3000, 6000, 11000, 30000, 25000, 25000];
+  const t = autoRetuneTargets(10, CFG, undefined, 40);
+  const r = shapeWeights({
+    cards: values.map((v) => ({ value: v })),
+    currentWeights: weights,
+    price: 10,
+    targetEdge: t.targetEdge,
+    targetWinRate: t.targetWinRate,
+    maxWinCap: t.maxWinCap,
+    nearMissMin: t.nearMissMin,
+    winRateTol: 0.02,
+  });
+  assert(isSuccess(r), `healthy control must solve: ${!isSuccess(r) ? r.error : ""}`);
+  approx(r.risk.winRate, 0.2, 0.021, "win-rate ON the 20% design (no float)");
+  const total = r.weights.reduce((a, b) => a + (b > 0 ? b : 0), 0);
+  const shares = r.weights.map((w) => (w > 0 ? w / total : 0));
+  values.forEach((v, i) => {
+    if (v < 10) {
+      assert(
+        !isFloorPinnedPct(shares[i]! * 100),
+        `no loss card at the floor ($${v} → ${(shares[i]! * 100).toFixed(4)}%)`,
+      );
+    }
+  });
+  const g = computeUntaggedGuidance({
+    cards: values.map((v) => ({ value: v })),
+    currentWeights: weights,
+    livePrice: 10,
+    price: 10,
+    targetEdge: t.targetEdge,
+    targetWinRate: t.targetWinRate,
+    nearMissMin: t.nearMissMin,
+    maxWinCap: t.maxWinCap,
+    plannedShares: shares,
+    relaxations: r.relaxations,
+  });
+  assert(g === null, "healthy plan → no guidance");
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────

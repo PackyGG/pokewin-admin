@@ -31,9 +31,11 @@ import { AnimatedNumber } from "@/components/animated-number";
 import { CardImage } from "@/components/card-image";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { isFloorPinnedPct } from "@/app/(admin)/insights/edge-calc/tag-guidance";
 import type { EditPool, PackTunePlan } from "../../doctor/retune-actions";
 
 import { formatDeltaPp, formatPercent } from "../format-percent";
+import { FLOOR_PIN_CHIP, FLOOR_PIN_TOOLTIP } from "./plan-copy";
 import type { StagedPool } from "./plan-state";
 
 /**
@@ -308,6 +310,26 @@ export function CardDiffTable({
                               Off the clean ladder — this chance is not a round
                               number.
                             </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
+                      {/* Pinned at the quantization floor (LOSS-band cards
+                          only — a designed 1-in-a-million jackpot is not a
+                          pin): muted "min" chip, tooltip says why. */}
+                      {!winBand && isFloorPinnedPct(row.plannedPct) && (
+                        <TooltipProvider delay={150}>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Badge
+                                  variant="outline"
+                                  className="h-4 border-border bg-muted/40 px-1 text-[10px] font-normal text-muted-foreground"
+                                >
+                                  {FLOOR_PIN_CHIP}
+                                </Badge>
+                              }
+                            />
+                            <TooltipContent>{FLOOR_PIN_TOOLTIP}</TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
                       )}
