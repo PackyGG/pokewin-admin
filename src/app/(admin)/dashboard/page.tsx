@@ -37,7 +37,6 @@ import {
   WagerAttributionChart,
   DepositsChart,
   SignupsChart,
-  PnlChart,
   CashPnlChart,
   ActiveDepositorsChart,
 } from "./charts";
@@ -158,24 +157,26 @@ export default async function DashboardPage() {
         <DashboardKpiBoxes />
       </Suspense>
 
-      {/* Upgrader Stats + Wager Attribution — paired 50/50 row that
-          sits between the KPI strips and the trend graphs. Each
-          streams behind its own Suspense:
-            • Upgrader Stats is a separate query (getUpgraderStats),
-              so its scan never blocks the headline KPIs.
-            • Wager Attribution shares the cached getDashboardStats
-              with the KPI strips + charts — the call dedupes
-              cross-segment, so it's a free render.
-          Stacks single-column on smaller screens so each card keeps
-          a usable width. */}
-      {/* Both Suspense fallbacks use the SAME height so the grid row
-          stays stable while one side loads ahead of the other —
-          previously the row jumped from the shorter skeleton up to
-          the chart's natural height when the chart resolved, which
-          briefly cropped the upgrader content. The shared
-          `min-h-[400px]` on the row guarantees the layout reserves
-          the chart's natural height from the first paint, regardless
-          of which side resolves first. */}
+      {/* Upgrader Stats + Double Down — paired 50/50 row that sits
+          between the KPI strips and the trend graphs. Each streams
+          behind its own Suspense (both are their own standalone
+          lifetime-aggregate queries — getUpgraderStats /
+          getDoubleDownDashboardStats — so neither scan blocks the
+          headline KPIs). Stacks single-column on smaller screens so
+          each card keeps a usable width.
+
+          Wager Attribution (previously the right half of this row)
+          moved into the Trends grid, replacing the removed Daily P&L
+          chart slot — it reads from the same cached getDashboardStats
+          the trend charts already use, so it fits there for free. */}
+      {/* Both Suspense fallbacks use the SAME `UpgraderPanelSkeleton`
+          shape so the grid row stays stable while one side loads ahead
+          of the other — previously the row jumped from the shorter
+          skeleton up to the panel's natural height when it resolved,
+          which briefly cropped the upgrader content. The shared
+          `min-h-[400px]` on the row guarantees the layout reserves the
+          panel's natural height from the first paint, regardless of
+          which side resolves first. */}
       <div className="grid min-h-[400px] gap-3 sm:gap-4 lg:grid-cols-2 lg:items-stretch">
         {/* Upgrader Stats is a lifetime aggregate (period-independent), so it
             never re-suspends on a chip click — its skeleton only shows on the
@@ -186,28 +187,11 @@ export default async function DashboardPage() {
         <Suspense fallback={<UpgraderPanelSkeleton />}>
           <DashboardUpgraderSection />
         </Suspense>
-        {/* Wager Attribution — always 30-day daily buckets (same as Trends). */}
-        <Suspense
-          fallback={
-            <SkeletonChart
-              height={400}
-              className="h-full min-h-[400px] rounded-xl"
-            />
-          }
-        >
-          <DashboardWagerAttribution />
-        </Suspense>
-      </div>
-
-      {/* Double Down — gamble-your-battle-winnings game-type. Counted the
-          DEV's canonical way (game_sessions game_type='battle_double_down'
-          JOINed to battle_double_down_offers = PLAYED rounds), surfaced the
-          same way the Upgrader panel surfaces its game-type: a lifetime,
-          5-min-cached, House-POV panel that streams behind its own Suspense
-          so its scan never blocks the headline KPIs. Half-width to match the
-          Upgrader panel; left-aligned in a 2-up row (the right cell is free
-          headroom for a future paired panel, same as Upgrader started). */}
-      <div className="grid gap-3 sm:gap-4 lg:grid-cols-2 lg:items-stretch">
+        {/* Double Down — gamble-your-battle-winnings game-type. Counted the
+            DEV's canonical way (game_sessions game_type='battle_double_down'
+            JOINed to battle_double_down_offers = PLAYED rounds), surfaced the
+            same way the Upgrader panel surfaces its game-type: a lifetime,
+            5-min-cached, House-POV panel. */}
         <Suspense fallback={<UpgraderPanelSkeleton />}>
           <DashboardDoubleDownSection />
         </Suspense>
@@ -657,33 +641,31 @@ async function DashboardActiveRain() {
 /**
  * Trend charts in two 3-up rows:
  *   Row 1: Wagers · Deposits · Signups & FTDs (merged) — cached getDashboardStats
- *   Row 2: Daily P&L · Daily Cash P&L · Active Depositors
+ *   Row 2: Wager Attribution · Daily Cash P&L (merged) · Active Depositors
  *
- * The cached-stats charts (Wagers, Deposits, Signups&FTDs, Active Depositors)
- * read from the React-cached getDashboardStats the KPI strips already
- * triggered — so this component awaits ONLY that (the call dedupes; it's
- * effectively free here) and paints them as soon as it's ready. The two
- * Daily-P&L charts (canonical P&L + Cash P&L) BOTH derive from the one heavy
- * lifetime-scan getDailyPnl, so they stream together behind a single nested
- * <Suspense> (DashboardDailyPnlChart, which emits a 2-cell Fragment) inside
- * row 2's grid — the slow P&L scan can't hold back the cached charts beside
- * it. Active Depositors is also cached-stats and renders immediately as the
- * third cell of row 2, while the two P&L cells show chart skeletons until the
- * lifetime scan resolves. Cash P&L is a derived view of the same DailyPnlPoint
- * rows (deposits − withdrawals per day), so it adds NO extra query — same
- * canonical formula as the "P&L Today" tile's Cash-P&L badge.
+ * The cached-stats charts (Wagers, Deposits, Signups&FTDs, Wager Attribution,
+ * Active Depositors) read from the React-cached getDashboardStats the KPI
+ * strips already triggered — so this component awaits ONLY that (the call
+ * dedupes; it's effectively free here) and paints them as soon as it's
+ * ready. Daily Cash P&L derives from the one heavy lifetime-scan
+ * getDailyPnl, so it streams behind its own nested <Suspense>
+ * (DashboardCashPnlChart) inside row 2's grid — the slow scan can't hold
+ * back the cached charts beside it. The former standalone "Daily P&L" chart
+ * was removed and its canonical breakdown merged into Daily Cash P&L's hover
+ * (see `CashPnlChart` / `CashPnlTooltip` in `charts.tsx`) — the bars
+ * themselves stay deposits − withdrawals only.
  *
- * The Wager Attribution chart used to live as a third full-width row here; it
- * was promoted next to the Upgrader Stats section.
+ * Wager Attribution used to live in a 50/50 row next to Upgrader Stats; it
+ * now fills the slot the removed Daily P&L chart occupied here.
  */
 async function DashboardCharts() {
-  // getDashboardStats backs the wager/deposit/ftds/signup/depositor charts.
-  // Always 30-day daily buckets — NOT tied to any global period selector.
-  // Wrapped in safeQuery so a throw degrades to a fallback instead of
-  // escaping to the route error boundary (which would white-screen the
-  // whole dashboard — the failure mode this page hit in prod). getDailyPnl
-  // is intentionally NOT awaited here anymore — the Daily P&L cell owns its
-  // own fetch + Suspense below so it can stream independently.
+  // getDashboardStats backs the wager/deposit/ftds/signup/attribution/
+  // depositor charts. Always 30-day daily buckets — NOT tied to any global
+  // period selector. Wrapped in safeQuery so a throw degrades to a fallback
+  // instead of escaping to the route error boundary (which would
+  // white-screen the whole dashboard — the failure mode this page hit in
+  // prod). getDailyPnl is intentionally NOT awaited here — the Cash P&L cell
+  // owns its own fetch + Suspense below so it can stream independently.
   const statsResult = await safeQuery(
     () => getDashboardStats(DASHBOARD_CHART_PERIOD),
     null,
@@ -725,30 +707,17 @@ async function DashboardCharts() {
         <SignupsChart data={signupsAndFtdsSeries} />
       </div>
       <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {/* Daily P&L (canonical) + Daily Cash P&L (raw deposits −
-            withdrawals) — its own nested Suspense so the heavy getDailyPnl
-            lifetime scan streams independently of the cached-stats charts.
-            Both bars come from the SAME getDailyPnl rows (cached via
-            unstable_cache), so no extra query is added by the second chart
-            — it's a derived view. The Suspense returns a 2-cell Fragment,
-            so the first two cells of this row paint side-by-side once the
-            P&L scan resolves; the fallback mirrors that with two chart
-            skeletons so the grid never shifts. Not period-keyed
-            (getDailyPnl is period-independent), so neither chart re-
-            suspends on a chip change.
-
-            Active Depositors fills the third cell of the row — it's
-            cached-stats, so it paints immediately without waiting on the
-            P&L lifetime scan beside it. */}
+        {/* Wager Attribution — cached-stats, paints immediately without
+            waiting on the Cash P&L lifetime scan beside it. */}
+        <WagerAttributionChart data={stats.dailyWagerAttribution} />
+        {/* Daily Cash P&L — its own nested Suspense so the heavy
+            getDailyPnl lifetime scan streams independently of the
+            cached-stats charts beside it. Not period-keyed (getDailyPnl is
+            period-independent), so it doesn't re-suspend on a chip change. */}
         <Suspense
-          fallback={
-            <>
-              <SkeletonChart height={300} className="rounded-xl" />
-              <SkeletonChart height={300} className="rounded-xl" />
-            </>
-          }
+          fallback={<SkeletonChart height={300} className="rounded-xl" />}
         >
-          <DashboardDailyPnlChart />
+          <DashboardCashPnlChart />
         </Suspense>
         <ActiveDepositorsChart data={stats.dailyActiveDepositors} />
       </div>
@@ -757,21 +726,25 @@ async function DashboardCharts() {
 }
 
 /**
- * Daily P&L chart cell — streams behind its OWN nested Suspense inside the
- * Trends grid so its heavy lifetime-scan getDailyPnl never blocks the five
- * cached-stats charts beside it. Period-independent (lifetime), so it doesn't
- * re-key on the global period selector. safeQuery degrades a slow/failed scan
- * to a single-cell TileErrorFallback (the other charts still render).
+ * Daily Cash P&L chart cell — streams behind its OWN nested Suspense inside
+ * the Trends grid so its heavy lifetime-scan getDailyPnl never blocks the
+ * cached-stats charts beside it. Period-independent (lifetime), so it
+ * doesn't re-key on the global period selector. safeQuery degrades a
+ * slow/failed scan to a single-cell TileErrorFallback (the other charts
+ * still render).
+ *
+ * The bars stay deposits − withdrawals only (cash flow); the FULL canonical
+ * house-P&L breakdown that used to be its own "Daily P&L" chart is merged
+ * into this chart's hover instead (see `CashPnlChart` / `CashPnlTooltip` in
+ * `charts.tsx`) — no separate chart, no extra query.
  */
-async function DashboardDailyPnlChart() {
-  // P&L (the bars) and the informational per-day creator cost (the hover-only
-  // line) are independent reads — fetch them in parallel. Creator cost is a
-  // SEPARATE series merged here at the page level; it never touches
-  // DailyPnlPoint or the dashboard_daily_pnl ClickHouse twin (so the P&L
-  // parity harness is unaffected) and is NOT summed into the P&L total.
-  //
-  // Cash P&L (deposits − withdrawals) is derived inline in the tooltip from
-  // DailyPnlPoint.deposits / .withdrawals — no extra fetch needed.
+async function DashboardCashPnlChart() {
+  // P&L (for the merged hover breakdown) and the informational per-day
+  // creator cost (also hover-only) are independent reads — fetch them in
+  // parallel. Creator cost is a SEPARATE series merged here at the page
+  // level; it never touches DailyPnlPoint or the dashboard_daily_pnl
+  // ClickHouse twin (so the P&L parity harness is unaffected) and is NOT
+  // summed into the P&L total.
   const [
     { data, error, kind },
     { data: creatorCostPoints },
@@ -787,7 +760,7 @@ async function DashboardDailyPnlChart() {
   if (error) {
     return (
       <TileErrorFallback
-        label="Daily P&L"
+        label="Daily Cash P&L"
         hint="The lifetime P&L scan timed out — other charts still rendered. Refresh to retry."
         kind={kind ?? undefined}
         size="panel"
@@ -801,60 +774,22 @@ async function DashboardDailyPnlChart() {
   const creatorCostByDate = new Map(
     creatorCostPoints.map((p) => [p.date, p.creatorCost]),
   );
-  const merged = data.map((d) => ({
-    ...d,
-    creatorCost: creatorCostByDate.get(d.date) ?? 0,
-  }));
   // Cash P&L = deposits − withdrawals per day (raw crypto cash flow only —
-  // same canonical formula as the "P&L Today" tile's `rawCashPnl`). Derived
-  // from the same DailyPnlPoint rows so no extra query is needed; the
-  // CashPnlChart sits beside Daily P&L in the Trends grid as a separate cell.
+  // same canonical formula as the "P&L Today" tile's `rawCashPnl`). The bars
+  // use this; the rest of each row (pnl, balanceChange, inventoryChange,
+  // voucherChange, creatorCost) rides along for the merged hover breakdown.
   const cash = data.map((d) => ({
     date: d.date,
     deposits: d.deposits,
     withdrawals: d.withdrawals,
     cashPnl: d.deposits - d.withdrawals,
+    pnl: d.pnl,
+    balanceChange: d.balanceChange,
+    inventoryChange: d.inventoryChange,
+    voucherChange: d.voucherChange,
+    creatorCost: creatorCostByDate.get(d.date) ?? 0,
   }));
-  return (
-    <>
-      <PnlChart data={merged} />
-      <CashPnlChart data={cash} />
-    </>
-  );
-}
-
-/**
- * Wager Attribution chart, hoisted into its own server component so it
- * can render alongside the Upgrader Stats panel in the 50/50 row above
- * the Trends grid. Reads from the React-cached getDashboardStats — the
- * call dedupes against the KPI strips + charts within the same render,
- * so this segment adds no extra query.
- */
-async function DashboardWagerAttribution() {
-  // Wrapped in safeQuery so a failing stats aggregate degrades this chart
-  // (the right half of the Upgrader/Attribution row) to a fallback panel
-  // instead of escaping to the route error boundary and white-screening
-  // the whole dashboard.
-  const { data: stats, error, kind } = await safeQuery(
-    () => getDashboardStats(DASHBOARD_CHART_PERIOD),
-    null,
-    "dashboard.wagerAttribution",
-    REWARD_QUERY_TIMEOUT_MS,
-  );
-  if (error || !stats) {
-    return (
-      <TileErrorFallback
-        label="Wager Attribution"
-        hint="The wager-attribution series failed to load — other sections still rendered. Refresh to retry."
-        kind={kind ?? undefined}
-        size="panel"
-        className="h-full min-h-[400px]"
-      />
-    );
-  }
-  // The chart card is itself `h-full`, so it fills the 50/50 cell and aligns
-  // with the Upgrader panel at the bottom.
-  return <WagerAttributionChart data={stats.dailyWagerAttribution} />;
+  return <CashPnlChart data={cash} />;
 }
 
 // `DashboardActivityFeed` was removed when the Recent Activity card moved

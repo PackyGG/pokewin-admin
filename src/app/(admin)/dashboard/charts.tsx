@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis, Cell } from "recharts";
 import {
   ArrowDownToLine,
@@ -26,7 +25,6 @@ import {
 } from "@/components/ui/chart";
 import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
-import { DailyPnlBreakdownModal } from "./daily-pnl-breakdown-modal";
 
 const wagerConfig = {
   packs: {
@@ -91,13 +89,8 @@ const activeDepositorsConfig = {
   },
 } satisfies ChartConfig;
 
-// P&L bars are colored per-day by sign (House-POV): house up = emerald,
-// house down = rose. Cell fills override the config, but ChartContainer
-// still needs a config entry for the dataKey.
-const pnlConfig = {
-  pnl: { label: "P&L" },
-} satisfies ChartConfig;
-
+// Cash P&L bars are colored per-day by sign (House-POV): house up =
+// emerald, house down = rose.
 const PNL_UP = "#10b981"; // emerald-500 — house in profit that day
 const PNL_DOWN = "#f43f5e"; // rose-500 — house down that day
 
@@ -607,141 +600,6 @@ function PnlBreakdownTooltipRow({
 }
 
 /**
- * Hover for the daily P&L chart — full House-POV breakdown of where the
- * day's money went. The day's net deposit inflow (deposits − withdrawals)
- * mostly flows into GROWTH of user balance + inventory + voucher liability
- * (things we owe users), so a big "752 in / 233 out" day can still net only
- * a small realized P&L — these rows show exactly that.
- *
- * Each row carries its SIGNED contribution to house P&L per the canonical
- * formula  pnl = deposits − withdrawals − balanceΔ − inventoryΔ − voucherΔ:
- * deposits add; withdrawals and the three liability deltas subtract (a
- * SHRINKING liability is a negative delta → a positive contribution → reads
- * emerald). The five contributions sum to the P&L on the bottom line, so the
- * tooltip reconciles by construction with the bar height. Same component
- * set + coloring as the "P&L Today" tile.
- */
-function PnlTooltip({
-  active,
-  payload,
-}: {
-  active?: boolean;
-  payload?: Array<{
-    payload: {
-      date: string;
-      pnl: number;
-      deposits: number;
-      withdrawals: number;
-      balanceChange: number;
-      inventoryChange: number;
-      voucherChange: number;
-      creatorCost?: number;
-    };
-  }>;
-}) {
-  if (!active || !payload?.length) return null;
-  const p = payload[0].payload;
-  const up = p.pnl >= 0;
-  const creatorCost = p.creatorCost ?? 0;
-  // Cash P&L = deposits − withdrawals (raw crypto cash flow only, no
-  // balance / inventory / voucher terms). Mirrors the dashboard "P&L Today"
-  // tile's RawCashPnlBadge / TodayPnlInfoPopover wording — same definition,
-  // bucketed per day. House-POV: positive = house cash in → emerald;
-  // negative = house cash out → rose.
-  const cashPnl = p.deposits - p.withdrawals;
-  // Signed contribution to house P&L. Deposits add; every other term
-  // subtracts (so a positive liability delta — a liability that GREW —
-  // becomes a negative contribution, and a shrinking liability a positive
-  // one). These five sum to `pnl`.
-  const rows: Array<{ label: string; contribution: number; icon: LucideIcon }> =
-    [
-      { label: "Deposits", contribution: p.deposits, icon: ArrowDownToLine },
-      {
-        label: "Withdrawals",
-        contribution: -p.withdrawals,
-        icon: ArrowUpFromLine,
-      },
-      {
-        label: "User Balance change",
-        contribution: -p.balanceChange,
-        icon: Wallet,
-      },
-      { label: "Inventory change", contribution: -p.inventoryChange, icon: Box },
-      { label: "Voucher change", contribution: -p.voucherChange, icon: Ticket },
-    ];
-  return (
-    <div className="grid min-w-52 gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs shadow-xl">
-      <span className="font-medium text-foreground">{p.date}</span>
-      <div className="grid gap-1">
-        {rows.map((r) => (
-          <PnlBreakdownTooltipRow
-            key={r.label}
-            label={r.label}
-            contribution={r.contribution}
-            icon={r.icon}
-          />
-        ))}
-      </div>
-      {/* Bottom line: the five contributions above sum to this P&L —
-          House-POV colored (house up → emerald, house down → rose). */}
-      <div className="mt-0.5 flex items-center justify-between gap-3 border-t border-border/50 pt-1.5">
-        <span className="font-semibold text-foreground">P&amp;L</span>
-        <span
-          className={cn(
-            "font-mono font-bold tabular-nums",
-            up
-              ? "text-emerald-600 dark:text-emerald-400"
-              : "text-rose-600 dark:text-rose-400",
-          )}
-        >
-          {up ? "+" : "−"}
-          {formatCurrency(Math.abs(p.pnl))}
-        </span>
-      </div>
-      {/* Informational only — Cash P&L = deposits − withdrawals (raw crypto
-          cash flow only). Same definition as the dashboard's "P&L Today" tile
-          Cash-P&L badge / popover, bucketed per day. Sits ALONGSIDE the
-          canonical P&L (which adds balance / inventory / voucher terms on
-          top), not inside it. House-POV: positive = cash flowed INTO the
-          house → emerald; negative = cash flowed OUT → rose. Rendered ABOVE
-          the creator-cost row per the dashboard ordering. Hidden on
-          zero-cash-flow days to keep the tooltip terse. */}
-      {cashPnl !== 0 && (
-        <div className="flex items-center justify-between gap-3 border-t border-dashed border-border/40 pt-1.5 text-[11px]">
-          <span className="flex items-center gap-1 text-muted-foreground">
-            <Coins className="size-3 shrink-0" />
-            Cash P&amp;L
-          </span>
-          <span
-            className={cn(
-              "font-mono tabular-nums",
-              cashPnl > 0
-                ? "text-emerald-600 dark:text-emerald-400"
-                : "text-rose-600 dark:text-rose-400",
-            )}
-          >
-            {cashPnl > 0 ? "+" : "−"}
-            {formatCurrency(Math.abs(cashPnl))}
-          </span>
-        </div>
-      )}
-      {/* Informational only — creator cost (converted payouts + leaderboard
-          prizes) is ALREADY inside the balance/voucher deltas above, so it is
-          NOT re-subtracted here. The "(in P&L)" note flags that. House-POV:
-          money paid out → house cost → rose. Shown only on days with spend. */}
-      {creatorCost > 0 && (
-        <div className="flex items-center justify-between gap-3 border-t border-dashed border-border/40 pt-1.5 text-[11px]">
-          <span className="text-muted-foreground">Creator cost (in P&amp;L)</span>
-          <span className="font-mono tabular-nums text-rose-600 dark:text-rose-400">
-            {formatCurrency(creatorCost)}
-          </span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
  * Tooltip for the Wager Attribution chart — same shape as the Wagers
  * tooltip (per-segment row + Total row below the divider). Each row
  * shows the segment's dollar value AND its share of the day's total
@@ -938,109 +796,24 @@ export function WagerAttributionChart({
   );
 }
 
-export function PnlChart({
-  data,
-}: {
-  data: {
-    date: string;
-    pnl: number;
-    deposits: number;
-    withdrawals: number;
-    balanceChange: number;
-    inventoryChange: number;
-    voucherChange: number;
-    /** Informational per-day creator cost (already inside P&L; hover-only). */
-    creatorCost?: number;
-  }[];
-}) {
-  // The clicked day's YYYY-MM-DD key — drives the drilldown modal. null when
-  // closed. The day's full breakdown is fetched lazily INSIDE the modal (a
-  // server action on first open), so the dashboard's initial render never
-  // loads it — only the click does (CLAUDE.md active-timeframe / lazy rule).
-  const [openDay, setOpenDay] = useState<string | null>(null);
-
-  // Recharts hands the Bar's click handler the bar datum; its `payload`
-  // carries the row we render (`{ date, pnl, … }`). Pull the day key off it
-  // and open the modal. Defensive: only open when a string date is present.
-  const handleBarClick = (entry: unknown) => {
-    const date =
-      entry && typeof entry === "object" && "payload" in entry
-        ? (entry as { payload?: { date?: unknown } }).payload?.date
-        : (entry as { date?: unknown })?.date;
-    if (typeof date === "string" && date.length > 0) setOpenDay(date);
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm font-medium">
-          Daily P&amp;L (30 days)
-        </CardTitle>
-        <CardDescription className="text-xs">
-          Click a bar for that day&apos;s full breakdown.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <ChartContainer config={pnlConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
-          <BarChart data={data} accessibilityLayer>
-            <CartesianGrid vertical={false} />
-            <XAxis
-              dataKey="date"
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              tickFormatter={(v) => v.slice(5)}
-            />
-            <YAxis
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              width={70}
-              tickFormatter={formatCompactUsd}
-            />
-            <ChartTooltip content={<PnlTooltip />} />
-            {/* Clickable bars — onClick opens the per-day drilldown modal.
-                `cursor-pointer` on each Cell is the affordance; the shared
-                ChartTooltip already provides the hover highlight. Reduced-
-                motion is unaffected (no extra animation introduced). */}
-            <Bar
-              dataKey="pnl"
-              radius={[4, 4, 0, 0]}
-              animationDuration={700}
-              animationEasing="ease-out"
-              onClick={handleBarClick}
-              className="cursor-pointer"
-            >
-              {data.map((d) => (
-                <Cell
-                  key={d.date}
-                  fill={d.pnl >= 0 ? PNL_UP : PNL_DOWN}
-                  className="cursor-pointer transition-opacity hover:opacity-80"
-                />
-              ))}
-            </Bar>
-          </BarChart>
-        </ChartContainer>
-      </CardContent>
-      <DailyPnlBreakdownModal day={openDay} onClose={() => setOpenDay(null)} />
-    </Card>
-  );
-}
-
-// Same ChartContainer config shape as `pnlConfig` — cells override the per-bar
-// fill by sign, but ChartContainer still requires a config entry for the
-// `cashPnl` dataKey so the legend / tooltip context wire up cleanly.
+// Same ChartContainer config shape the removed Daily-P&L chart used — cells
+// override the per-bar fill by sign, but ChartContainer still requires a
+// config entry for the `cashPnl` dataKey so the legend / tooltip context
+// wire up cleanly.
 const cashPnlConfig = {
   cashPnl: { label: "Cash P&L" },
 } satisfies ChartConfig;
 
 /**
- * Hover for the Daily Cash P&L chart — per-day deposits, withdrawals, and the
- * resulting Cash P&L (deposits − withdrawals). This is the same canonical
- * `rawCashPnl` formula the "P&L Today" tile surfaces (today-pnl-stat-card.tsx),
- * bucketed per day. Mirrors the Deposits/Wager tooltip styling so the dashboard
- * tooltips stay visually consistent. House-POV coloring on the Cash P&L line:
- * cash flowed INTO the house → emerald, OUT → rose.
+ * Hover for the Daily Cash P&L chart — leads with the chart's own metric
+ * (deposits − withdrawals, the bars' basis), then appends the FULL canonical
+ * house-P&L breakdown that used to live in the standalone "Daily P&L" chart's
+ * tooltip (Deposits/Withdrawals/Balance/Inventory/Voucher contributions +
+ * the reconciling P&L line + informational creator cost). That chart was
+ * removed and its data merged into this hover — the bars themselves stay
+ * deposits − withdrawals only; the extra rows are additional context.
+ * House-POV coloring throughout: cash flowed INTO the house / a shrinking
+ * liability → emerald, the opposite → rose.
  */
 function CashPnlTooltip({
   active,
@@ -1053,6 +826,11 @@ function CashPnlTooltip({
       deposits: number;
       withdrawals: number;
       cashPnl: number;
+      pnl: number;
+      balanceChange: number;
+      inventoryChange: number;
+      voucherChange: number;
+      creatorCost?: number;
     };
   }>;
 }) {
@@ -1060,30 +838,31 @@ function CashPnlTooltip({
   const p = payload[0].payload;
   const up = p.cashPnl > 0;
   const down = p.cashPnl < 0;
+  const pnlUp = p.pnl >= 0;
+  const creatorCost = p.creatorCost ?? 0;
+  // Signed contribution to the canonical house P&L (deposits add; every
+  // other term subtracts) — same rows the removed Daily P&L chart showed.
+  const rows: Array<{ label: string; contribution: number; icon: LucideIcon }> =
+    [
+      { label: "Deposits", contribution: p.deposits, icon: ArrowDownToLine },
+      {
+        label: "Withdrawals",
+        contribution: -p.withdrawals,
+        icon: ArrowUpFromLine,
+      },
+      {
+        label: "User Balance change",
+        contribution: -p.balanceChange,
+        icon: Wallet,
+      },
+      { label: "Inventory change", contribution: -p.inventoryChange, icon: Box },
+      { label: "Voucher change", contribution: -p.voucherChange, icon: Ticket },
+    ];
   return (
-    <div className="grid min-w-48 gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs shadow-xl">
+    <div className="grid min-w-52 gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs shadow-xl">
       <span className="font-medium text-foreground">{p.date}</span>
-      <div className="grid gap-1">
-        <div className="flex items-center justify-between gap-3">
-          <span className="flex items-center gap-1.5 text-muted-foreground">
-            <ArrowDownToLine className="size-3 shrink-0" />
-            Deposits
-          </span>
-          <span className="font-mono font-medium tabular-nums text-foreground">
-            {formatCurrency(p.deposits)}
-          </span>
-        </div>
-        <div className="flex items-center justify-between gap-3">
-          <span className="flex items-center gap-1.5 text-muted-foreground">
-            <ArrowUpFromLine className="size-3 shrink-0" />
-            Withdrawals
-          </span>
-          <span className="font-mono font-medium tabular-nums text-foreground">
-            {formatCurrency(p.withdrawals)}
-          </span>
-        </div>
-      </div>
-      <div className="mt-0.5 flex items-center justify-between gap-3 border-t border-border/50 pt-1.5">
+      {/* Primary line — the chart's own metric (deposits − withdrawals). */}
+      <div className="flex items-center justify-between gap-3">
         <span className="flex items-center gap-1.5 font-semibold text-foreground">
           <Coins className="size-3 shrink-0" />
           Cash P&amp;L
@@ -1100,26 +879,72 @@ function CashPnlTooltip({
           {formatCurrency(Math.abs(p.cashPnl))}
         </span>
       </div>
+      {/* Merged from the removed Daily P&L chart — the full canonical
+          breakdown, as additional hover context. */}
+      <div className="mt-0.5 grid gap-1 border-t border-border/50 pt-1.5">
+        {rows.map((r) => (
+          <PnlBreakdownTooltipRow
+            key={r.label}
+            label={r.label}
+            contribution={r.contribution}
+            icon={r.icon}
+          />
+        ))}
+      </div>
+      <div className="flex items-center justify-between gap-3 border-t border-border/50 pt-1.5">
+        <span className="font-semibold text-foreground">P&amp;L</span>
+        <span
+          className={cn(
+            "font-mono font-bold tabular-nums",
+            pnlUp
+              ? "text-emerald-600 dark:text-emerald-400"
+              : "text-rose-600 dark:text-rose-400",
+          )}
+        >
+          {pnlUp ? "+" : "−"}
+          {formatCurrency(Math.abs(p.pnl))}
+        </span>
+      </div>
+      {creatorCost > 0 && (
+        <div className="flex items-center justify-between gap-3 border-t border-dashed border-border/40 pt-1.5 text-[11px]">
+          <span className="text-muted-foreground">Creator cost (in P&amp;L)</span>
+          <span className="font-mono tabular-nums text-rose-600 dark:text-rose-400">
+            {formatCurrency(creatorCost)}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
 
 /**
- * Daily Cash P&L (30 days) — STANDALONE chart that visualizes the per-day
- * raw crypto cash flow (deposits − withdrawals). Separate from the canonical
- * Daily P&L chart (which adds balance/inventory/voucher terms on top). House-
- * POV per-bar coloring: emerald when we actually made real crypto money that
- * day, rose when more cash flowed out than in, muted on zero-flow days.
+ * Daily Cash P&L (30 days) — visualizes the per-day raw crypto cash flow
+ * (deposits − withdrawals) via the bars, House-POV per-bar colored (emerald
+ * when we actually made real crypto money that day, rose when more cash
+ * flowed out than in, muted on zero-flow days). The hover ALSO carries the
+ * full canonical house-P&L breakdown (merged from the removed standalone
+ * "Daily P&L" chart — see `CashPnlTooltip`), so this one chart now surfaces
+ * both figures: the bars stay cash-flow-only, the breakdown is hover-only.
  *
- * Reuses the same getDailyPnl data the Daily P&L chart consumes — no new
+ * Reuses the same getDailyPnl data the removed chart consumed — no new
  * query — by deriving `cashPnl = deposits - withdrawals` on the page before
- * handing the rows down. Sizing/animation mirror PnlChart so the two charts
- * read as a pair when placed beside each other in the Trends grid.
+ * handing the rows down.
  */
 export function CashPnlChart({
   data,
 }: {
-  data: { date: string; deposits: number; withdrawals: number; cashPnl: number }[];
+  data: {
+    date: string;
+    deposits: number;
+    withdrawals: number;
+    cashPnl: number;
+    pnl: number;
+    balanceChange: number;
+    inventoryChange: number;
+    voucherChange: number;
+    /** Informational per-day creator cost (already inside P&L; hover-only). */
+    creatorCost?: number;
+  }[];
 }) {
   return (
     <Card>
