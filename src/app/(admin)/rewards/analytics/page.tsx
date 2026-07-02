@@ -1,7 +1,7 @@
 import { Sparkles } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
-import { PageHero } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Spinner } from "@/components/ux";
 
 import { RewardsAnalyticsClientRedirect } from "./_components/client-redirect";
@@ -69,18 +69,17 @@ export default async function RewardsAnalyticsRedirect({
     <div className="space-y-6">
       <RewardsAnalyticsClientRedirect dest={dest} />
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-cyan-500/10">
-            <Sparkles className="size-5 text-cyan-500" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">Reward analytics</h1>
-            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <PageHeroIdentity
+          icon={Sparkles}
+          accent="cyan"
+          title="Reward analytics"
+          subtitle={
+            <span className="flex items-center gap-2">
               <Spinner size={14} label="Redirecting…" />
               Redirecting to the latest insights…
-            </p>
-          </div>
-        </div>
+            </span>
+          }
+        />
       </PageHero>
     </div>
   );

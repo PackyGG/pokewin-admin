@@ -89,7 +89,7 @@ async function RakebackConfigContent() {
                   className={
                     config.enabled
                       ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                      : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
+                      : "bg-muted text-muted-foreground border-border"
                   }
                 >
                   {config.enabled ? "Enabled" : "Disabled"}
