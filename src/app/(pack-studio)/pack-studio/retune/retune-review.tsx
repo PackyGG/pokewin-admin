@@ -379,7 +379,8 @@ export function RetuneReview({
   // `priceOverride` opt AND `buildTargets`'s `priceOverride` field so both
   // the dry-run preview (chip-strip table) and the eventual server write
   // (`applyPackRetune`) share the same anchor. Same UX pattern as the
-  // chip-strip: re-running on change, reset on system-balance toggle.
+  // chip-strip: re-runs on change and SURVIVES a system-balance toggle (the
+  // toggle threads it through the reload).
   //
   // SAFETY: when an anchor is active, the search runs in `preferHigherEdge`
   // mode so a lower anchor doesn't silently give up edge — the scorer will
@@ -449,12 +450,15 @@ export function RetuneReview({
   }, [total]);
 
   // ── System-balance toggle ───────────────────────────────────────────
-  // Re-load every proposal in the requested mode. Approved/declined verdicts and
-  // any local adjustments are reset (the underlying auto-targets change), so we
-  // confirm-via-toast and rebuild the queue from the fresh proposals. READ-ONLY:
-  // `planAllRetunes` writes nothing — it's a dry-run, like the initial load.
-  // The active `edgeOverride` is threaded through so toggling system-balance
-  // doesn't silently revert the operator's chip-strip nudge.
+  // Re-load every proposal in the requested mode. Per-pack VERDICTS are
+  // PRESERVED across the reload (keyed by packId) — an already-approved pack
+  // was already WRITTEN to MAIN, and resetting it to "pending" made it
+  // re-approvable (double write). Local adjustments ARE reset: the underlying
+  // auto-targets change with the mode, so a lever tweak shaped against the
+  // old targets no longer applies. READ-ONLY: `planAllRetunes` writes
+  // nothing — it's a dry-run, like the initial load. The active
+  // `edgeOverride` + `priceOverride` are threaded through so toggling
+  // system-balance doesn't silently revert the operator's nudges.
   const onToggleSystemBalance = React.useCallback(
     async (next: boolean) => {
       if (reloading) return;
@@ -464,13 +468,16 @@ export function RetuneReview({
           edgeFloorOverride: edgeOverride,
           priceOverride,
         });
-        setItems(
-          res.proposals.map((p) => ({
+        setItems((prev) => {
+          const prevById = new Map(prev.map((it) => [it.proposal.packId, it]));
+          return res.proposals.map((p) => ({
             proposal: p,
-            status: "pending" as ReviewStatus,
+            // Keep the operator's verdict for a pack they already decided on;
+            // only packs new to the queue start pending.
+            status: prevById.get(p.packId)?.status ?? ("pending" as ReviewStatus),
             adjusted: null,
-          })),
-        );
+          }));
+        });
         setSystemPlan(res.systemPlan);
         setPortfolioMode(next);
         setIndex(0);
@@ -1186,8 +1193,8 @@ export function RetuneReview({
               targetEdge (plain retune + edit-and-retune) and the locally
               shaped "after" preview. Baseline = 11.02% (the live auto-target
               floor today); the higher presets are pure nudges. Persists for
-              the whole session until reset; resets on a system-balance
-              toggle (the proposals reload). */}
+              the whole session until reset — a system-balance toggle threads
+              it through the reload, so the nudge survives. */}
           <EdgeTargetChipStrip
             edgeOverride={edgeOverride}
             onChange={(v) => void onSelectEdgeTarget(v)}
@@ -1199,8 +1206,9 @@ export function RetuneReview({
               clean-snap price search. When set, every pack re-anchors on
               this price instead of its live ticket. Same UX pattern as the
               chip strip (re-runs on commit; reset = clear input + Apply).
-              Persists for the whole session; resets on a system-balance
-              toggle. SAFETY: when an anchor is active the search runs in
+              Persists for the whole session — a system-balance toggle
+              threads it through the reload, so the anchor survives.
+              SAFETY: when an anchor is active the search runs in
               `preferHigherEdge` mode so an anchor that lowers the price
               doesn't silently give up house edge. */}
           <TargetPriceInput
@@ -1591,8 +1599,8 @@ function TargetPriceInput({
   const [raw, setRaw] = React.useState<string>(
     priceOverride !== null ? priceOverride.toFixed(2) : "",
   );
-  // Re-seed when the parent clears the override (e.g. a system-balance toggle
-  // reset). Avoid clobbering operator-in-progress typing by only re-syncing
+  // Re-seed when the parent clears the override (e.g. the Reset button).
+  // Avoid clobbering operator-in-progress typing by only re-syncing
   // when the parent's value differs from the parsed input value.
   React.useEffect(() => {
     const current = parseFloat(raw);
