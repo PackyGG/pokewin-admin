@@ -311,6 +311,10 @@ _Creator Hub plan closed. Pick up deferred items below when owner prioritizes._
 4. Bulk delete `/gift-cards` + `/vouchers` — **BLOCKED** (MAIN DB write forbidden)
 5. Fold durable reward findings into `ONBOARDING.md` (affiliate commission basis; signup $5.71 clarification)
 6. Add `/creator-hub/tips-sponsors` to responsive matrix (codes-ads + hub ad detail verified on prod 2026-06-06)
+7. **Pack-system findings from 2026-07-02 read-only learning pass (no code touched):**
+   - **`buildPack` writes `pack_type:"custom"`** (`src/app/(admin)/packs/actions.ts:2292`) while reprice/retune/risk scope is `["official"]` (and the same file + `risk-config.ts:59-63` assert no custom type exists; prod probe: 0 custom rows) — builder-created packs are invisible to reprice/retune/Doctor/Overview until manually re-typed. Fix candidate: create as `official`.
+   - **Retune price-search band mismatch:** dry-run/preview (`planAllRetunes`/`planSingleRetune`, `doctor/retune-actions.ts:836`) sweeps `maxPriceChangePct: 0.6` but the write (`applyPackRetune`, `packs/actions.ts:1775`) sweeps `0.25` — a proposal whose clean snap needed a >25% price move can land differently on write than previewed.
+   - Stale in-code copy: `retune-guide.tsx:140-146` + `retune/page.tsx:43-47` still describe a 2FA "Start review" (actual: `authorizePackRetuneForReview` mints WITHOUT TOTP); `doctor/page.tsx:30-33` still claims "read-only grid + snapshot only"; several "owner-gated" comments where the real gate is operator (owners + demee).
 
 ---
 
