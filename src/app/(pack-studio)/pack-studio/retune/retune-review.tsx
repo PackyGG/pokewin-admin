@@ -40,6 +40,7 @@ import { DEFAULT_MAX_MULT_CEILING } from "@/app/(admin)/packs/_lib/auto-targets"
 import {
   computePackRisk,
   searchBestPriceForCleanSnap,
+  RETUNE_MAX_PRICE_CHANGE_PCT,
   type PackRisk,
   type ShapeWeightsLimit,
   type ShapeWeightsRelaxation,
@@ -226,7 +227,8 @@ function effectiveTargetEdge(
  * (raised edge + clean ladder odds + tag/default win-rate) simultaneously —
  * matching the owner's spec: "u can change the price of the pack to keep the
  * edge better or chances". A local adjust resets `edgeOverride` semantics: it
- * still uses the price-search, but only at the symmetric ±25% band.
+ * still uses the price-search, but only at the symmetric ±60% retune band
+ * (`RETUNE_MAX_PRICE_CHANGE_PCT` — shared with the planner and the write).
  */
 function buildTargets(
   item: ReviewItem,
@@ -632,6 +634,14 @@ export function RetuneReview({
             ? priceOverride
             : null;
         const preferHigherEdge = edgeRaised || priceAnchor !== null;
+        // Tagged strict win-rate gate — same condition the server applies on
+        // approve (`applyPackRetune`): the resolved target IS the name tag.
+        // Moving the win-rate lever off the tag disables it on both sides.
+        const taggedWinRate =
+          proposal.intendedHitRate !== null &&
+          Math.abs(proposal.intendedHitRate - levers.targetWinRate) < 1e-9
+            ? proposal.intendedHitRate
+            : undefined;
         const search = searchBestPriceForCleanSnap({
           cards: proposal.cards.map((c) => ({ value: c.value })),
           // Re-anchor the search on the operator's pinned target price when
@@ -644,9 +654,15 @@ export function RetuneReview({
           targetWinRate: levers.targetWinRate,
           maxWinCap: levers.maxWinCap,
           nearMissMin: levers.nearMissMin,
-          maxPriceChangePct: 0.25,
+          // Anti-inflation anchor — the pack's CURRENT weights, exactly what
+          // the planner passed, so this local re-shape matches the server's.
+          currentWeights: proposal.cards.map((c) => c.weight),
+          // The SHARED ±60% retune band (planner + write + mirrors must agree
+          // or the approved odds would differ from this preview).
+          maxPriceChangePct: RETUNE_MAX_PRICE_CHANGE_PCT,
           upwardPriceExtensionPct: edgeRaised ? 2.0 : 0,
           preferHigherEdge,
+          ...(taggedWinRate !== undefined ? { taggedWinRate } : {}),
         });
         const shaped = search.bestResult;
         let adjusted: AdjustedState;
@@ -1733,17 +1749,31 @@ function buildConfirmSummary(
       feasible = item.adjusted.feasible;
     } else if (edgeOverride !== null || priceAnchor !== null) {
       const auto = proposal.autoTargets;
+      // Tagged strict win-rate gate — same condition the server applies on
+      // approve (the resolved target IS the name tag).
+      const taggedWinRate =
+        proposal.intendedHitRate !== null &&
+        Math.abs(proposal.intendedHitRate - auto.targetWinRate) < 1e-9
+          ? proposal.intendedHitRate
+          : undefined;
       const search = searchBestPriceForCleanSnap({
         cards: proposal.cards.map((c) => ({ value: c.value })),
         // Same anchor as `onAdjust` + the server: pinned override OR pack price.
         basePrice: priceAnchor ?? proposal.price,
-        targetEdge: edgeOverride ?? auto.targetEdge,
+        // Same edge resolution as `buildTargets` sends the server (max of the
+        // pack's auto-target and the nudge — never below the pack's curve).
+        targetEdge: effectiveTargetEdge(item, edgeOverride),
         targetWinRate: auto.targetWinRate,
         maxWinCap: auto.maxWinCap,
         nearMissMin: auto.nearMissMin,
-        maxPriceChangePct: 0.25,
+        // Anti-inflation anchor — matches the planner + `applyPackRetune`.
+        currentWeights: proposal.cards.map((c) => c.weight),
+        // The SHARED ±60% retune band (planner + write + mirrors must agree
+        // or the gate would show a different price/odds than the write lands).
+        maxPriceChangePct: RETUNE_MAX_PRICE_CHANGE_PCT,
         upwardPriceExtensionPct: edgeOverride !== null ? 2.0 : 0,
         preferHigherEdge: true,
+        ...(taggedWinRate !== undefined ? { taggedWinRate } : {}),
       });
       const reshaped = search.bestResult;
       priceAfter = search.bestPrice;

@@ -47,6 +47,7 @@ import { getPackCardValues } from "@/lib/queries/pack-card-values";
 import {
   shapeWeights,
   searchBestPriceForCleanSnap,
+  RETUNE_MAX_PRICE_CHANGE_PCT,
   computePackRisk,
   computePackRiskFromAggregates,
   type PackRisk,
@@ -1319,8 +1320,9 @@ export type PackRetuneTargets = {
   nearMissMin?: number;
   /**
    * When TRUE, run `searchBestPriceForCleanSnap` around the live ticket price
-   * (default ±25% band) and pick the candidate whose `shapeWeights` result
-   * lands every card on a clean ladder rung. When the operator nudged the
+   * (the shared ±60% retune band, `RETUNE_MAX_PRICE_CHANGE_PCT` — same band
+   * the planner preview searched) and pick the candidate whose `shapeWeights`
+   * result lands every card on a clean ladder rung. When the operator nudged the
    * edge target UP via the chip-strip (`targetEdge` > pack baseline), the
    * search ALSO extends the upward band so the ticket can RISE as far as
    * needed to simultaneously hit (raised edge + clean odds + win-rate).
@@ -1333,8 +1335,8 @@ export type PackRetuneTargets = {
    * Upward price-search extension as a fraction of the live ticket price
    * (e.g. `2.0` = up to 3× base) — only used when `allowPriceSearch` is true.
    * Owner's chip-strip path passes a non-zero value when the edge floor is
-   * nudged above baseline so the solver can climb past the +25% ceiling.
-   * Defaults to 0 (use only the symmetric ±25% band).
+   * nudged above baseline so the solver can climb past the +60% ceiling.
+   * Defaults to 0 (use only the symmetric ±60% retune band).
    */
   upwardPriceExtensionPct?: number;
   /**
@@ -1342,7 +1344,7 @@ export type PackRetuneTargets = {
    * price search. When set (non-null, > 0), the search re-centers around this
    * absolute USD anchor rather than the pack's live price, so the operator
    * can opt: "shape this pack to a $X ticket". The chosen `priceAfter` will
-   * cluster near the anchor (still nudged ±25% / +200% in the chip-strip-
+   * cluster near the anchor (still nudged ±60% / +200% in the chip-strip-
    * nudged case to land a clean snap that satisfies edge + win-rate). Only
    * meaningful when `allowPriceSearch` is true; ignored otherwise. Null /
    * undefined = use the live `packs.price` (default).
@@ -1726,11 +1728,14 @@ export async function applyPackRetune(
   //     The owner explicitly asked for this:
   //       "u can change the price of the pack to keep the edge better or
   //        chances … none of these odds is clean, all dirty shit numbers"
-  //     The default ±25% band catches the small "price nudge for clean odds"
-  //     case. When the operator raised the edge target via the chip-strip
-  //     (`upwardPriceExtensionPct` > 0), the search also extends UPWARD past
-  //     +25% so the ticket can RISE as far as needed to simultaneously hit
-  //     (raised edge target + clean ladder odds + tag/default win-rate).
+  //     The band is the SHARED ±60% retune band (`RETUNE_MAX_PRICE_CHANGE_PCT`)
+  //     — the same band `planAllRetunes` / `planSingleRetune` searched to
+  //     produce the preview the operator approved, so this write re-runs the
+  //     SAME search and lands on the SAME price/odds. When the operator raised
+  //     the edge target via the chip-strip (`upwardPriceExtensionPct` > 0),
+  //     the search also extends UPWARD past the band so the ticket can RISE as
+  //     far as needed to simultaneously hit (raised edge target + clean ladder
+  //     odds + tag/default win-rate).
   //     The chosen price becomes the FINAL `priceAfter` written below.
   const allowPriceSearch = targets.allowPriceSearch === true;
   const upwardExtension = Math.max(0, targets.upwardPriceExtensionPct ?? 0);
@@ -1751,11 +1756,15 @@ export async function applyPackRetune(
   // with the on-screen preview produced by `planAllRetunes`.
   const preferHigherEdge = upwardExtension > 0 || priceAnchor !== null;
   // Tagged lottery packs get the strict 0.01pp win-rate accuracy gate (the
-  // tag IS the contract). Only active when the operator didn't pin an
-  // explicit `targetWinRate` AND the resolved targetWinRate matches the tag.
+  // tag IS the contract). Active whenever the RESOLVED targetWinRate equals
+  // the name tag — the same gate `planAllRetunes` uses, so the write's tagged
+  // mode matches the preview's. (The review client always sends the resolved
+  // target explicitly, so gating on `targets.targetWinRate === undefined`
+  // would silently turn tagged mode OFF at write time while the approved
+  // preview ran WITH it — preview ≠ write. An operator who adjusts the
+  // win-rate AWAY from the tag still disables the gate via the mismatch.)
   const taggedWinRate =
     resolved.intendedHitRate !== null &&
-    targets.targetWinRate === undefined &&
     Math.abs(resolved.intendedHitRate - resolved.targetWinRate) < 1e-9
       ? resolved.intendedHitRate
       : undefined;
@@ -1772,7 +1781,15 @@ export async function applyPackRetune(
       maxWinCap: resolved.maxWinCap,
       nearMissMin: resolved.nearMissMin,
       winRateTol,
-      maxPriceChangePct: 0.25,
+      // Anti-inflation anchor: the pack's CURRENT weights (pool order), same
+      // as the planner preview passes — no win/grail card's odds may exceed
+      // its current odds, so the WRITTEN odds match the anchored preview
+      // instead of falling back to the legacy value-only shape.
+      currentWeights: pool.map((c) => c.weight),
+      // The SHARED ±60% retune band — must equal the planner's + the client
+      // confirm mirrors' band, or a snap that needed a >25% price move would
+      // land on a different price here than the preview showed.
+      maxPriceChangePct: RETUNE_MAX_PRICE_CHANGE_PCT,
       upwardPriceExtensionPct: upwardExtension,
       preferHigherEdge,
       ...(taggedWinRate !== undefined ? { taggedWinRate } : {}),

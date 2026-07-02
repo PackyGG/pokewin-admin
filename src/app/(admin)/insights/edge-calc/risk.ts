@@ -2389,6 +2389,18 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
  */
 export const TAGGED_WINRATE_TOLERANCE = 0.0001;
 
+/**
+ * The ONE retune price-search band: ±60% of the anchor price. INVARIANT: the
+ * planner dry-runs (`planAllRetunes` / `planSingleRetune`), the write
+ * (`applyPackRetune`) and the client confirm/adjust mirrors (`retune-review`)
+ * MUST all pass this same value as `maxPriceChangePct` so preview = confirm
+ * summary = write by construction — a proposal whose clean snap needs a >25%
+ * price move must land at write time on the SAME price the review showed.
+ * (The `maxPriceChangePct` default below stays ±25% for other/legacy callers,
+ * e.g. the staged pool-editor lever, which previews and writes at the default.)
+ */
+export const RETUNE_MAX_PRICE_CHANGE_PCT = 0.6;
+
 export type SearchBestPriceResult = {
   bestPrice: number;
   bestResult: ShapeWeightsResult;

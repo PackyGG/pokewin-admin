@@ -25,6 +25,7 @@ import {
   computePackRiskFromAggregates,
   shapeWeights,
   searchBestPriceForCleanSnap,
+  RETUNE_MAX_PRICE_CHANGE_PCT,
   type PackRisk,
   type ShapeWeightsRelaxation,
   type ShapeWeightsLimit,
@@ -735,8 +736,9 @@ async function planAllRetunesUncached(
   //    also none of these odds is clean, all dirty shit numbers. i said clean
   //    and easy, change the price to get it done if needed"
   // So every proposal now routes through `searchBestPriceForCleanSnap`:
-  //   • ±25% default band → catches the "small price nudge for clean odds" case
-  //     (e.g. $1.25 → $1.27) that holds the staged price near the original.
+  //   • the shared ±60% retune band (`RETUNE_MAX_PRICE_CHANGE_PCT`) → catches
+  //     the "price nudge for clean odds" case (e.g. $1.25 → $1.27) while
+  //     keeping the staged price near the original (closer prices score first).
   //   • When the operator has nudged the edge floor UP (`edgeFloorOverride`),
   //     extend the upward search WAY past +25% so the solver can RAISE the
   //     ticket price as far as needed to simultaneously hit (the raised edge,
@@ -828,12 +830,13 @@ async function planAllRetunesUncached(
       // anchor (no win/grail card's odds may exceed its current odds — the
       // jackpot stays rare and raising the edge only trims the expensive tail).
       currentWeights: currentWeights.map((c) => c.weight),
-      // Wider price band (±60%) so the exact-edge + clean-odds snap lands far more
-      // often — the owner's "change the price to get clean odds" lever. The higher-
-      // edge guard (`preferHigherEdge`/`upwardPriceExtensionPct`) still gates any
-      // upward push; this only widens the room the snap-search has to find a clean
-      // price near the base.
-      maxPriceChangePct: 0.6,
+      // The SHARED ±60% retune band — the write (`applyPackRetune`) and the
+      // client confirm mirrors re-run this exact search, so all call sites must
+      // pass the same constant or the written price/odds diverge from this
+      // preview. The higher-edge guard (`preferHigherEdge`/
+      // `upwardPriceExtensionPct`) still gates any upward push; the band only
+      // widens the room the snap-search has to find a clean price near the base.
+      maxPriceChangePct: RETUNE_MAX_PRICE_CHANGE_PCT,
       upwardPriceExtensionPct: upwardExtension,
       preferHigherEdge,
       ...(taggedWinRate !== undefined ? { taggedWinRate } : {}),
@@ -1088,8 +1091,9 @@ async function planSingleRetuneUncached(
     // Anti-inflation anchor: never let a win/grail card's odds exceed its current
     // odds (jackpot stays rare; raising edge only trims the expensive tail).
     currentWeights: currentWeights.map((c) => c.weight),
-    // Wider ±60% band so the exact-edge + clean-odds snap lands far more often.
-    maxPriceChangePct: 0.6,
+    // The SHARED ±60% retune band (must match `applyPackRetune` + the client
+    // confirm mirrors so this preview equals the write).
+    maxPriceChangePct: RETUNE_MAX_PRICE_CHANGE_PCT,
     upwardPriceExtensionPct: upwardExtension,
     preferHigherEdge,
     ...(taggedWinRate !== undefined ? { taggedWinRate } : {}),
