@@ -114,9 +114,12 @@ export type AdjustedState = AdjustedTargets & {
   weightDiff: PlanAllWeightDiff[] | null;
   /**
    * The price the adjusted search landed on (`search.bestPrice`) — the FINAL
-   * price an Approve of this adjustment will write. Threaded into the write
-   * as `approvedPriceAfter` (RC1 approved-artifact contract) and shown by the
-   * confirm gate so gate == write. Null when the local re-shape errored.
+   * price an Approve of this adjustment will write. The search picks (price,
+   * weights) as a PAIR, so `after` is scored AT this price (scoring at the
+   * stale proposal price skewed the after-KPIs by up to 3.56pp of edge).
+   * Threaded into the write as `approvedPriceAfter` (RC1 approved-artifact
+   * contract) and shown by the confirm gate so preview == gate == write.
+   * Null when the local re-shape errored.
    */
   priceAfter: number | null;
   /** Soft targets the local solver relaxed (empty when nothing relaxed). */
@@ -829,14 +832,16 @@ export function RetuneReview({
           const weightDiff = proposal.cards
             .map((c, idx) => ({ cardId: c.cardId, from: c.weight, to: shaped.weights[idx]! }))
             .filter((d) => d.from !== d.to);
-          // Score from the freshly shaped weights so `after` is internally
-          // consistent with `weightDiff` (same engine the server uses).
+          // Score from the freshly shaped weights AT THE SEARCHED PRICE —
+          // the search picks (price, weights) as a pair; scoring at the stale
+          // proposal price detached the after-KPIs from the weights (edge off
+          // by up to 3.56pp, "below target" shown when the engine hit target).
           const after = computePackRisk({
             cards: proposal.cards.map((c, idx) => ({
               value: c.value,
               weight: shaped.weights[idx]!,
             })),
-            price: proposal.price,
+            price: search.bestPrice,
           });
           adjusted = {
             ...levers,

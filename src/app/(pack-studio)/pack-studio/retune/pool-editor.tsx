@@ -204,7 +204,13 @@ function previewRisk(rows: EditRow[], price: number): PackRisk | null {
  */
 export type EditPreview = {
   after: PackRisk | null;
-  /** New pack price when the owner changed it, else null. */
+  /**
+   * The PENDING ticket price the write is expected to land, when it differs
+   * from the live pack price — the owner-staged price, or (auto-tune with the
+   * price-search opt-in) the clean-snap search's `bestPrice` that `after` is
+   * scored at. Null = price unchanged. The confirm gate shows this as the
+   * price the push will write.
+   */
   newPrice: number | null;
   cards: {
     cardId: string;
@@ -515,7 +521,7 @@ export function PoolEditor({
     if (rows.length === 0) return;
     setReshaping(true);
     try {
-      const shaped = allowPriceSearch
+      const search = allowPriceSearch
         ? searchBestPriceForCleanSnap({
             cards: rows.map((r) => ({ value: r.priceUsd })),
             basePrice: price,
@@ -523,7 +529,10 @@ export function PoolEditor({
             targetWinRate: targets.targetWinRate,
             maxWinCap: targets.maxWinCap,
             nearMissMin: targets.nearMissMin,
-          }).bestResult
+          })
+        : null;
+      const shaped = search
+        ? search.bestResult
         : shapeWeights({
             cards: rows.map((r) => ({ value: r.priceUsd })),
             price,
@@ -536,6 +545,16 @@ export function PoolEditor({
         toast.error(shaped.limit?.detail ?? shaped.error);
         return;
       }
+      // ADOPT the searched price into the editable price field. The search
+      // picks (price, weights) as a PAIR — the shaped odds are only clean and
+      // on-target at `bestPrice`. Dropping it scored the live KPI strip (and
+      // the verbatim write, and the staged-price anchor the server searches
+      // around) at the stale field price: KPI edge measured up to 3.56pp off,
+      // showing "below target" when the engine actually hit target. Writing
+      // it into the field keeps it visible AND editable.
+      const priceMoved =
+        search !== null && Math.abs(search.bestPrice - price) > 1e-9;
+      if (priceMoved) setPriceText(search.bestPrice.toFixed(2));
       // Convert the shaped integer weights to odds % (share of total · 100).
       const total = shaped.weights.reduce((s, w) => s + w, 0) || 1;
       setRows((prev) =>
@@ -546,10 +565,13 @@ export function PoolEditor({
         })),
       );
       const relaxed = shaped.relaxations.length;
+      const priceNote = priceMoved
+        ? ` at ${formatCurrency(search.bestPrice)} — the clean-odds search moved the price (adopted into the field above)`
+        : "";
       toast.success(
         relaxed > 0
-          ? `Re-shaped to targets (${relaxed} soft target${relaxed === 1 ? "" : "s"} relaxed to stay feasible).`
-          : "Re-shaped the odds onto the pack's targets.",
+          ? `Re-shaped to targets${priceNote} (${relaxed} soft target${relaxed === 1 ? "" : "s"} relaxed to stay feasible).`
+          : `Re-shaped the odds onto the pack's targets${priceNote}.`,
       );
     } finally {
       setReshaping(false);
@@ -568,16 +590,22 @@ export function PoolEditor({
     (mode: "verbatim" | "auto-tune"): EditPreview => {
       const baseline = baselineRef.current ?? new Map();
       let toWeights: number[];
+      // The price the preview's `after` is scored at AND the pending price the
+      // confirm gate shows. Starts at the staged field price; the auto-tune
+      // price search may move it (the search picks (price, weights) as a pair
+      // — scoring its weights at the staged price detached the gate KPIs from
+      // the write, up to 3.56pp of edge).
+      let previewPrice = price;
       if (mode === "auto-tune") {
         // Mirror what the server will write: shape locally against the SAME
         // targets `applyStagedPackEditAndRetune` uses. When the owner has
         // `allowPriceSearch` on (the default) we route through the same
-        // price-search wrapper the server uses, so the preview weights match
-        // what `applyStagedPackEditAndRetune` will pick — clean ladder odds
-        // at the nearby ±25% price. On a (rare) infeasible local shape, fall
-        // back to the owner's odds so the gate still renders — the server
-        // will error out itself if it's truly infeasible.
-        const shaped = allowPriceSearch
+        // price-search wrapper the server uses, so the preview weights AND
+        // price match what `applyStagedPackEditAndRetune` will pick — clean
+        // ladder odds at the nearby ±25% price. On a (rare) infeasible local
+        // shape, fall back to the owner's odds so the gate still renders —
+        // the server will error out itself if it's truly infeasible.
+        const search = allowPriceSearch
           ? searchBestPriceForCleanSnap({
               cards: rows.map((r) => ({ value: r.priceUsd })),
               basePrice: price,
@@ -585,7 +613,10 @@ export function PoolEditor({
               targetWinRate: targets.targetWinRate,
               maxWinCap: targets.maxWinCap,
               nearMissMin: targets.nearMissMin,
-            }).bestResult
+            })
+          : null;
+        const shaped = search
+          ? search.bestResult
           : shapeWeights({
               cards: rows.map((r) => ({ value: r.priceUsd })),
               price,
@@ -594,9 +625,12 @@ export function PoolEditor({
               maxWinCap: targets.maxWinCap,
               nearMissMin: targets.nearMissMin,
             });
-        toWeights = "error" in shaped
-          ? oddsToWeights(rows.map((r) => r.odds))
-          : shaped.weights;
+        if ("error" in shaped) {
+          toWeights = oddsToWeights(rows.map((r) => r.odds));
+        } else {
+          toWeights = shaped.weights;
+          if (search) previewPrice = search.bestPrice;
+        }
       } else {
         toWeights = oddsToWeights(rows.map((r) => r.odds));
       }
@@ -606,7 +640,7 @@ export function PoolEditor({
               value: r.priceUsd,
               weight: toWeights[i]!,
             })),
-            price,
+            price: previewPrice,
           })
         : null;
       const cards = rows.map((r, i) => {
@@ -634,12 +668,17 @@ export function PoolEditor({
       }
       return {
         after: afterRisk,
-        newPrice: priceChanged ? price : null,
+        // Pending price measured against the LIVE pack price (not the staged
+        // field) — one expression covers both the owner-staged change and the
+        // search-adopted price. For verbatim `previewPrice === price`, so this
+        // reduces to the old `priceChanged ? price : null`.
+        newPrice:
+          Math.abs(previewPrice - packPrice) > 1e-9 ? previewPrice : null,
         cards,
         removed,
       };
     },
-    [rows, price, priceChanged, targets, allowPriceSearch],
+    [rows, price, packPrice, targets, allowPriceSearch],
   );
 
   // ── Approve the explicit edited pool (VERBATIM — advanced) ───────────

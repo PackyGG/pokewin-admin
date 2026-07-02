@@ -373,6 +373,15 @@ export function ReviewCard({
     ? rawRelaxations.filter((r) => r.lever !== "nearMiss")
     : rawRelaxations;
   const weightDiff = active ? active.weightDiff : proposal.weightDiff;
+  // The ticket price the pending write is expected to land. An active local
+  // adjustment carries its OWN searched price (its `after` is scored at it) —
+  // showing the superseded proposal's priceAfter next to adjusted weights
+  // mixed two different searches. Null (infeasible) → dashed price tile.
+  const priceAfter = active
+    ? active.priceAfter
+    : feasible && after != null
+      ? proposal.priceAfter
+      : null;
   const canApprove = feasible && after != null && item.status !== "approved";
 
   // Display-only hypothetical preview when the strict retune is infeasible —
@@ -470,11 +479,11 @@ export function ReviewCard({
           </div>
           <div className="shrink-0 text-right text-xs text-muted-foreground">
             {/* Header price chip — shows the live price PLUS a small "→ $X" hint
-                when the auto-search would move the ticket. Per-pack so the
+                when the auto-search would move the ticket (the adjusted
+                search's price when an Adjust is active). Per-pack so the
                 operator sees per-pack price drift during a batched review. */}
-            {feasible &&
-            after != null &&
-            Math.abs(proposal.priceAfter - proposal.price) > 1e-9 ? (
+            {priceAfter != null &&
+            Math.abs(priceAfter - proposal.price) > 1e-9 ? (
               <p className="font-medium tabular-nums">
                 <span className="text-muted-foreground">
                   {formatCurrency(proposal.price)}
@@ -482,12 +491,12 @@ export function ReviewCard({
                 <span className="mx-1 text-muted-foreground">→</span>
                 <span
                   className={cn(
-                    proposal.priceAfter > proposal.price
+                    priceAfter > proposal.price
                       ? "text-emerald-600 dark:text-emerald-400"
                       : "text-rose-600 dark:text-rose-400",
                   )}
                 >
-                  {formatCurrency(proposal.priceAfter)}
+                  {formatCurrency(priceAfter)}
                 </span>
               </p>
             ) : (
@@ -666,10 +675,7 @@ export function ReviewCard({
               </span>
             }
           />
-          <PriceCompare
-            priceBefore={proposal.price}
-            priceAfter={feasible && after != null ? proposal.priceAfter : null}
-          />
+          <PriceCompare priceBefore={proposal.price} priceAfter={priceAfter} />
         </section>
 
         {/* ── Risk profile: the "new risk system", made unmissable ────── */}
