@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { getEffectiveRoles, type AdminRole } from "@/lib/admin-roles";
 import type { SessionPayload } from "@/lib/session";
 import { getAdminSetting, setAdminSetting } from "@/lib/admin-settings";
@@ -68,18 +69,24 @@ function parseBool(value: string | null): boolean {
  * `admin_settings` table to `null` — so a pre-migration DB yields all
  * toggles OFF (fail-closed) rather than throwing. Server-side only
  * (touches `adminDb`); never call from a Client Component.
+ *
+ * `React.cache`-wrapped: the pack-studio access trio is read up to 3× per
+ * request (layout gate, page gate, `requireRetuneOwner` action gate) — the
+ * request-scoped memo collapses those onto ONE ADMIN read each.
  */
-export async function getPackStudioAccessSettings(): Promise<PackStudioAccessSettings> {
-  const entries = await Promise.all(
-    PACK_STUDIO_TOGGLE_ROLES.map(
-      async (role): Promise<[PackStudioToggleRole, boolean]> => [
-        role,
-        parseBool(await getAdminSetting(packStudioToggleKey(role))),
-      ],
-    ),
-  );
-  return Object.fromEntries(entries) as PackStudioAccessSettings;
-}
+export const getPackStudioAccessSettings = cache(
+  async (): Promise<PackStudioAccessSettings> => {
+    const entries = await Promise.all(
+      PACK_STUDIO_TOGGLE_ROLES.map(
+        async (role): Promise<[PackStudioToggleRole, boolean]> => [
+          role,
+          parseBool(await getAdminSetting(packStudioToggleKey(role))),
+        ],
+      ),
+    );
+    return Object.fromEntries(entries) as PackStudioAccessSettings;
+  },
+);
 
 /**
  * THE access decision. Pure + synchronous so it can be unit-reasoned and
@@ -166,17 +173,22 @@ function serializeUsernameList(list: readonly string[]): string {
  * Load the per-username Pack-Studio access overrides from the ADMIN DB.
  * Resilient: a missing `admin_settings` table degrades to empty lists (the
  * role-based default still applies). Server-side only.
+ *
+ * `React.cache`-wrapped (see {@link getPackStudioAccessSettings}): one ADMIN
+ * read per request no matter how many gates re-check access.
  */
-export async function getPackStudioUserAccess(): Promise<PackStudioUserAccess> {
-  const [allowRaw, denyRaw] = await Promise.all([
-    getAdminSetting(PACK_STUDIO_USER_ALLOWLIST_KEY),
-    getAdminSetting(PACK_STUDIO_USER_DENYLIST_KEY),
-  ]);
-  return {
-    allowlist: parseUsernameList(allowRaw),
-    denylist: parseUsernameList(denyRaw),
-  };
-}
+export const getPackStudioUserAccess = cache(
+  async (): Promise<PackStudioUserAccess> => {
+    const [allowRaw, denyRaw] = await Promise.all([
+      getAdminSetting(PACK_STUDIO_USER_ALLOWLIST_KEY),
+      getAdminSetting(PACK_STUDIO_USER_DENYLIST_KEY),
+    ]);
+    return {
+      allowlist: parseUsernameList(allowRaw),
+      denylist: parseUsernameList(denyRaw),
+    };
+  },
+);
 
 /**
  * Persist one per-username Pack-Studio override list. Stores the normalized

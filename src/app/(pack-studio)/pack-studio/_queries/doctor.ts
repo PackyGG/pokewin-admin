@@ -22,6 +22,14 @@ export type PackRiskRow = {
   packType: string;
   /** Current sticker price (USD) from MAIN. */
   price: number;
+  /** Whether the pack is live on MAIN (`packs.active`) — from the meta join. */
+  active: boolean;
+  /**
+   * The pack's DB tag list (`packs.tags`, e.g. `"%1"`) from the meta join —
+   * source for the intended hit-rate (`resolveIntendedHitRate(name, tags)`),
+   * used by the Retune V2 rail's tag badge + off-tag warning.
+   */
+  tags: string[] | null;
   edge: number;
   /**
    * This pack's OWN target house edge from the per-pack edge curve
@@ -107,7 +115,7 @@ function compareRows(
  */
 type CachedScore = Omit<
   PackRiskRow,
-  "name" | "slug" | "packType" | "price" | "targetEdge"
+  "name" | "slug" | "packType" | "price" | "targetEdge" | "active" | "tags"
 >;
 
 /**
@@ -176,6 +184,8 @@ export async function getPackRiskRows(
           slug: m.slug,
           packType: m.packType,
           price: m.price,
+          active: m.active,
+          tags: m.tags,
           // Per-pack target from the curve: max-win $ exposure (primary driver)
           // + price (secondary), floor 10.99%, capped 11.50%.
           targetEdge: autoTargetEdge(
