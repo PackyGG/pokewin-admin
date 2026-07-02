@@ -39,10 +39,11 @@ import {
 } from "@/app/(admin)/insights/edge-calc/math";
 import {
   autoRetuneTargets,
+  resolveIntendedHitRate,
+  TAGGED_WRITE_WINRATE_TOLERANCE,
   autoTargetEdge,
   DEFAULT_EDGE_CURVE,
   EDIT_EDGE_FLOOR,
-  parsePackHitRate,
   readEdgeCurveConfig,
   readMaxWinCap,
   readMaxMultCeiling,
@@ -705,7 +706,7 @@ async function planAllRetunesUncached(
   // portfolio mode the system balancer overrides the offenders' targets so the
   // WHOLE catalog lands inside the system bounds; `systemPlan` explains it.
   let targetsByPack: Map<string, PortfolioPackTargets> = new Map(
-    inScope.map((p) => [p.id, autoRetuneTargets(p.price, cfg, p.name)]),
+    inScope.map((p) => [p.id, autoRetuneTargets(p.price, cfg, resolveIntendedHitRate(p.name, p.tags) ?? undefined)]),
   );
   let systemPlan: PortfolioSystemPlan | null = null;
 
@@ -771,7 +772,7 @@ async function planAllRetunesUncached(
   const proposals: PlanAllProposal[] = inScope.map((p) => {
     const cards = cardsByPack.get(p.id) ?? [];
     const autoTargets: PortfolioPackTargets =
-      targetsByPack.get(p.id) ?? autoRetuneTargets(p.price, cfg, p.name);
+      targetsByPack.get(p.id) ?? autoRetuneTargets(p.price, cfg, resolveIntendedHitRate(p.name, p.tags) ?? undefined);
     const currentWeights = cards.map((c) => ({ cardId: c.cardId, weight: c.weight }));
 
     const before = beforeByPack.get(p.id)!;
@@ -1025,7 +1026,7 @@ async function planSingleRetuneUncached(
     imageUrl: r.image_url ?? "",
   }));
 
-  const autoTargets: PortfolioPackTargets = autoRetuneTargets(p.price, cfg, p.name);
+  const autoTargets: PortfolioPackTargets = autoRetuneTargets(p.price, cfg, resolveIntendedHitRate(p.name, p.tags) ?? undefined);
   const currentWeights = cards.map((c) => ({ cardId: c.cardId, weight: c.weight }));
   const before = computePackRisk({
     cards: cards.map((c) => ({ value: c.value, weight: c.weight })),
@@ -1578,6 +1579,7 @@ export async function applyPackEdit(
       active: true,
       pack_type: true,
       name: true,
+      tags: true,
       pack_cards: { select: { card_id: true } },
     },
   });
@@ -1953,6 +1955,7 @@ export async function applyStagedPackEditAndRetune(
       active: true,
       pack_type: true,
       name: true,
+      tags: true,
       pack_cards: { select: { card_id: true } },
     },
   });
@@ -2017,12 +2020,29 @@ export async function applyStagedPackEditAndRetune(
     maxMultCeiling: await readMaxMultCeiling(),
     edgeCurve: await readEdgeCurveConfig(),
   };
-  const auto = autoRetuneTargets(priceStaged, cfg, pack.name);
+  const auto = autoRetuneTargets(
+    priceStaged,
+    cfg,
+    // DB `tags` column first (authoritative), name-prefix tag as fallback.
+    resolveIntendedHitRate(pack.name, pack.tags) ?? undefined,
+  );
   const targetEdge = targets.targetEdge ?? auto.targetEdge;
   const targetWinRate = targets.targetWinRate ?? auto.targetWinRate;
   const maxWinCap = targets.maxWinCap ?? auto.maxWinCap;
   const nearMissMin = targets.nearMissMin ?? auto.nearMissMin;
   const winRateTol = 0.02; // matches shapeWeights' default + applyPackRetune.
+
+  // A pct-tagged pack's win-rate is a design CONTRACT — refuse a pinned
+  // target that contradicts the tag (mirrors `applyPackRetune`).
+  if (
+    auto.intendedHitRate !== null &&
+    Math.abs(targetWinRate - auto.intendedHitRate) >
+      TAGGED_WRITE_WINRATE_TOLERANCE
+  ) {
+    throw new Error(
+      `Refused: this pack is tagged ${(auto.intendedHitRate * 100).toFixed(2)}% — the requested win-rate ${(targetWinRate * 100).toFixed(2)}% contradicts the tag. Leave the win-rate on auto (tag-aware), or untag the pack first.`,
+    );
+  }
 
   // The staged value vector in input ORDER. The shaper picks one weight per slot.
   const stagedValues = input.cards.map((c) => ({
@@ -2061,16 +2081,16 @@ export async function applyStagedPackEditAndRetune(
   // `priceBefore`). Defaults to disabled — current behavior is byte-for-byte
   // unchanged.
   const allowPriceSearch = targets.allowPriceSearch === true;
-  const intendedHitRate = parsePackHitRate(pack.name);
-  const callerPinnedWinRate = targets.targetWinRate !== undefined;
-  // Tagged-pack mode triggers only when the parsed name tag matches the
-  // resolved targetWinRate (the auto-resolved target IS the tag) AND the
-  // caller hasn't pinned an override — otherwise we'd hold the wrong target
-  // to the 0.01pp accuracy gate.
+  const intendedHitRate = auto.intendedHitRate;
+  // Tagged-pack mode triggers whenever the RESOLVED targetWinRate equals the
+  // tag — same value-equality gate as `applyPackRetune`. (The review client
+  // always sends the resolved target explicitly, so the old
+  // `!callerPinnedWinRate` condition silently turned tagged mode OFF on every
+  // UI approve while the approved preview ran WITH it — preview ≠ write. An
+  // operator who adjusts the win-rate AWAY from the tag is refused above.)
   const taggedSearchActive =
     allowPriceSearch &&
     intendedHitRate !== null &&
-    !callerPinnedWinRate &&
     Math.abs(intendedHitRate - targetWinRate) < 1e-6;
   let shaped;
   let priceSearchMeta: ApplyStagedRetuneResult["priceSearch"] = null;
@@ -2130,6 +2150,17 @@ export async function applyStagedPackEditAndRetune(
   if (Math.abs(after.winRate - targetWinRate) > winRateTol + 1e-9) {
     throw new Error(
       `Refused: resulting win-rate ${(after.winRate * 100).toFixed(2)}% misses target ${(targetWinRate * 100).toFixed(2)}% (±${(winRateTol * 100).toFixed(2)}%).`,
+    );
+  }
+  // Tagged packs get a 20x tighter acceptance vs their TAG (0.1pp) — mirrors
+  // `applyPackRetune`; the flat ±2pp band would let a "1%" pack ship at 3%.
+  if (
+    intendedHitRate !== null &&
+    Math.abs(after.winRate - intendedHitRate) >
+      TAGGED_WRITE_WINRATE_TOLERANCE + 1e-9
+  ) {
+    throw new Error(
+      `Refused: resulting win-rate ${(after.winRate * 100).toFixed(3)}% misses the pack tag ${(intendedHitRate * 100).toFixed(2)}% by more than ${(TAGGED_WRITE_WINRATE_TOLERANCE * 100).toFixed(1)}pp.`,
     );
   }
   // Belt-and-suspenders backstop — mirrors `applyPackEdit` + `applyPackRetune`.

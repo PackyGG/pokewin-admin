@@ -233,6 +233,58 @@ export function resolveTargetWinRate(
 }
 
 /**
+ * The DB `pack_tag` percent tags mapped to their designed hit-rate. Prisma
+ * returns the TS enum names (`pct1`), raw SQL returns the mapped DB strings
+ * (`"%1"`) — both notations are accepted so every read path can share this.
+ */
+const TAG_HIT_RATES: Readonly<Record<string, number>> = {
+  pct1: 0.01,
+  "%1": 0.01,
+  pct5: 0.05,
+  "%5": 0.05,
+  pct10: 0.1,
+  "%10": 0.1,
+};
+
+/** The designed hit-rate carried by the DB `packs.tags` column, or `null`. */
+export function hitRateFromTags(
+  tags: readonly string[] | null | undefined,
+): number | null {
+  if (!tags) return null;
+  for (const tag of tags) {
+    const hitRate = TAG_HIT_RATES[tag];
+    if (hitRate !== undefined) return hitRate;
+  }
+  return null;
+}
+
+/**
+ * The pack's intended hit-rate from BOTH tag systems: the DB `packs.tags`
+ * column first (authoritative — the owner categorized the pack there), the
+ * name-prefix tag ({@link parsePackHitRate}) as fallback. `null` = untagged.
+ *
+ * Fixes the audit finding that DB-tagged packs whose name lacks a leading
+ * "X%" prefix (prod: "Heavy Hitters" %1, "Legendary Showcase" %5,
+ * "Molten Crown" / "Trainers Tale" %10) were silently retuned as 20% packs
+ * with the tight untagged jackpot cap.
+ */
+export function resolveIntendedHitRate(
+  name: string | null | undefined,
+  tags: readonly string[] | null | undefined,
+): number | null {
+  return hitRateFromTags(tags) ?? (name ? parsePackHitRate(name) : null);
+}
+
+/**
+ * Write-time acceptance for a pct-tagged pack's achieved win-rate vs its TAG
+ * (0.1pp). The generic ±2pp solver tolerance would let a "1%" pack ship
+ * anywhere in [0%, 3%] — 3x its designed winner share. Slightly looser than
+ * the price-search's 0.01pp scoring gate so clean-snap rounding never trips
+ * a false refusal.
+ */
+export const TAGGED_WRITE_WINRATE_TOLERANCE = 0.001;
+
+/**
  * Default minimum near-miss probability mass for an auto-retune (cards in
  * `[0.5·price, price)`). 10% mirrors `shapeWeights`' own `nearMissMin` default,
  * keeping the auto-targets consistent with the solver's built-in fallback.

@@ -90,7 +90,12 @@ export function RetuneDrawer({
 
   // Retune levers (percent strings for edge/win-rate/near-miss, USD for cap).
   const [targetEdgePct, setTargetEdgePct] = React.useState("10.99");
-  const [targetWinRatePct, setTargetWinRatePct] = React.useState("20");
+  // Empty = tag-aware AUTO (the server resolves the pack's own target: a
+  // 1%/5%/10% pack keeps its tag, an untagged pack gets the 20% default).
+  // The lever used to be seeded from the pack's CURRENT (drifted) win-rate —
+  // re-tuning a tagged pack from the drawer perpetuated its drift, and the
+  // server now refuses a pinned value that contradicts the tag.
+  const [targetWinRatePct, setTargetWinRatePct] = React.useState("");
   const [nearMissMinPct, setNearMissMinPct] = React.useState("10");
 
   // Max-win cap is auto by default (server fills it from autoRetuneTargets(price)).
@@ -122,9 +127,9 @@ export function RetuneDrawer({
         // Seed the (collapsed) override field from the auto cap so, if the owner
         // flips override on, it starts from the auto value they'd otherwise get.
         setMaxWinCapUsd(String(p.maxWinCap));
-        // Seed the win-rate lever from the pack's current win-rate so the first
-        // preview is a near-no-op the operator can nudge from.
-        setTargetWinRatePct((p.risk.winRate * 100).toFixed(0));
+        // Win-rate lever stays EMPTY (= tag-aware auto). Seeding it from the
+        // current drifted win-rate pinned the drift back onto tagged packs.
+        setTargetWinRatePct("");
         setPhase("idle");
       } catch (err) {
         if (cancelled) return;
@@ -138,6 +143,7 @@ export function RetuneDrawer({
   }, [open, packId]);
 
   const targetEdge = parsePct(targetEdgePct);
+  const winRateIsAuto = targetWinRatePct.trim() === "";
   const targetWinRate = parsePct(targetWinRatePct);
   const maxWinCap = parseUsd(maxWinCapUsd);
   const nearMissMin = parsePct(nearMissMinPct);
@@ -146,13 +152,15 @@ export function RetuneDrawer({
   // Otherwise it stays undefined and the server fills the auto cap.
   const overrideCapValid = !capOverride || maxWinCap != null;
 
+  const winRateValid =
+    winRateIsAuto ||
+    (targetWinRate != null && targetWinRate >= 0 && targetWinRate < 1);
+
   const targetsValid =
     targetEdge != null &&
     targetEdge > 0 &&
     targetEdge < 1 &&
-    targetWinRate != null &&
-    targetWinRate >= 0 &&
-    targetWinRate < 1 &&
+    winRateValid &&
     overrideCapValid &&
     nearMissMin != null &&
     nearMissMin >= 0 &&
@@ -161,7 +169,8 @@ export function RetuneDrawer({
   function buildTargets(): PackRetuneTargets {
     return {
       targetEdge: targetEdge ?? undefined,
-      targetWinRate: targetWinRate!,
+      // Omit on auto → the server resolves the tag (or the 20% default).
+      ...(winRateIsAuto ? {} : { targetWinRate: targetWinRate! }),
       // Omit the cap unless overriding → server defaults to the auto cap.
       maxWinCap: capOverride ? (maxWinCap ?? undefined) : undefined,
       nearMissMin: nearMissMin ?? undefined,
@@ -286,12 +295,10 @@ export function RetuneDrawer({
                 />
                 <LeverInput
                   id="rt-win"
-                  label="Target win-rate (%)"
+                  label="Target win-rate (%) — empty = tag-aware auto"
                   value={targetWinRatePct}
                   onChange={setTargetWinRatePct}
-                  invalid={
-                    targetWinRate == null || targetWinRate < 0 || targetWinRate >= 1
-                  }
+                  invalid={!winRateValid}
                 />
                 <LeverInput
                   id="rt-nm"

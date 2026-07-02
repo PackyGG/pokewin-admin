@@ -66,7 +66,12 @@ export function BulkRetuneButton({
   const [progressOpen, setProgressOpen] = React.useState(false);
 
   const [targetEdgePct, setTargetEdgePct] = React.useState("10.99");
-  const [targetWinRatePct, setTargetWinRatePct] = React.useState("20");
+  // Empty = tag-aware AUTO (the server resolves each pack's own target:
+  // 1%/5%/10% packs keep their tag, untagged packs get the 20% default).
+  // The old flat "20" default silently overrode every selected pack's tag —
+  // a "1%" pack was bulk-written to ~20% winners; the server now REFUSES a
+  // pinned value that contradicts a pack's tag, so auto is the safe default.
+  const [targetWinRatePct, setTargetWinRatePct] = React.useState("");
   const [maxWinCapUsd, setMaxWinCapUsd] = React.useState("");
   const [nearMissMinPct, setNearMissMinPct] = React.useState("10");
   const [confirmText, setConfirmText] = React.useState("");
@@ -83,16 +88,18 @@ export function BulkRetuneButton({
   const count = selected.length;
 
   const targetEdge = parsePct(targetEdgePct);
+  const winRateIsAuto = targetWinRatePct.trim() === "";
   const targetWinRate = parsePct(targetWinRatePct);
   const maxWinCap = parseUsd(maxWinCapUsd);
   const nearMissMin = parsePct(nearMissMinPct);
+  const winRateValid =
+    winRateIsAuto ||
+    (targetWinRate != null && targetWinRate >= 0 && targetWinRate < 1);
   const targetsValid =
     targetEdge != null &&
     targetEdge > 0 &&
     targetEdge < 1 &&
-    targetWinRate != null &&
-    targetWinRate >= 0 &&
-    targetWinRate < 1 &&
+    winRateValid &&
     (maxWinCapUsd.trim() === "" || maxWinCap != null) &&
     nearMissMin != null &&
     nearMissMin >= 0 &&
@@ -116,7 +123,8 @@ export function BulkRetuneButton({
   function buildTargets(): PackRetuneTargets {
     return {
       targetEdge: targetEdge ?? undefined,
-      targetWinRate: targetWinRate!,
+      // Omit on auto → the server resolves per-pack (tag or 20% default).
+      ...(winRateIsAuto ? {} : { targetWinRate: targetWinRate! }),
       maxWinCap: maxWinCap ?? undefined,
       nearMissMin: nearMissMin ?? undefined,
     };
@@ -245,7 +253,7 @@ export function BulkRetuneButton({
 
           <div className="grid grid-cols-2 gap-3 text-sm">
             <LeverInput id="brt-edge" label="Target edge (%)" value={targetEdgePct} onChange={setTargetEdgePct} invalid={targetEdge == null || targetEdge <= 0 || targetEdge >= 1} />
-            <LeverInput id="brt-win" label="Target win-rate (%)" value={targetWinRatePct} onChange={setTargetWinRatePct} invalid={targetWinRate == null || targetWinRate < 0 || targetWinRate >= 1} />
+            <LeverInput id="brt-win" label="Target win-rate (%) — empty = tag-aware auto" value={targetWinRatePct} onChange={setTargetWinRatePct} invalid={!winRateValid} />
             <LeverInput id="brt-cap" label="Max-win cap ($, optional)" value={maxWinCapUsd} onChange={setMaxWinCapUsd} invalid={maxWinCapUsd.trim() !== "" && maxWinCap == null} />
             <LeverInput id="brt-nm" label="Near-miss floor (%)" value={nearMissMinPct} onChange={setNearMissMinPct} invalid={nearMissMin == null || nearMissMin < 0 || nearMissMin >= 1} />
 

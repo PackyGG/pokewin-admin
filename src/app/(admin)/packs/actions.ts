@@ -61,6 +61,8 @@ import { getCards, getRarities, getSets } from "@/lib/queries/cards";
 import { reloadPacks } from "@/app/(admin)/rewards/actions";
 import {
   autoRetuneTargets,
+  resolveIntendedHitRate,
+  TAGGED_WRITE_WINRATE_TOLERANCE,
   autoTargetEdge,
   buildPackCompliance,
   DEFAULT_EDGE_CURVE,
@@ -1386,9 +1388,12 @@ function resolveRetuneTargets(
   price: number,
   cfg: ResolvedAutoTargetCfg,
   targets: PackRetuneTargets,
-  name?: string,
+  // The pack name (parsed for a leading "X%" tag) OR a pre-resolved intended
+  // hit-rate fraction (callers resolve the DB `tags` column first via
+  // `resolveIntendedHitRate` and pass the number through).
+  nameOrHitRate?: string | number,
 ): ResolvedRetuneTargets {
-  const auto = autoRetuneTargets(price, cfg, name);
+  const auto = autoRetuneTargets(price, cfg, nameOrHitRate);
   return {
     targetWinRate: targets.targetWinRate ?? auto.targetWinRate,
     nearMissMin: targets.nearMissMin ?? auto.nearMissMin,
@@ -1480,7 +1485,7 @@ export async function planPackRetune(
   const db = await getDb();
   const pack = await db.packs.findUnique({
     where: { id: packId },
-    select: { price: true, name: true },
+    select: { price: true, name: true, tags: true },
   });
   if (!pack) throw new Error("Pack not found");
   const price = Number(pack.price.toString());
@@ -1492,7 +1497,15 @@ export async function planPackRetune(
     globalCap: await readMaxWinCap(),
     maxMultCeiling: await readMaxMultCeiling(),
   };
-  const resolved = resolveRetuneTargets(price, cfg, targets, pack.name);
+  const resolved = resolveRetuneTargets(
+    price,
+    cfg,
+    targets,
+    // DB `tags` column first (authoritative), name-prefix tag as fallback —
+    // a "%1"-tagged pack whose name lacks the "1%" prefix must NOT fall back
+    // to the untagged 20% default.
+    resolveIntendedHitRate(pack.name, pack.tags) ?? undefined,
+  );
 
   const pool = await getPackCardValues(packId);
   const before = computePackRisk({
@@ -1682,6 +1695,7 @@ export async function applyPackRetune(
       active: true,
       pack_type: true,
       name: true,
+      tags: true,
       pack_cards: {
         select: { card_id: true, color: true, animation: true, order: true },
       },
@@ -1703,7 +1717,31 @@ export async function applyPackRetune(
     globalCap: await readMaxWinCap(),
     maxMultCeiling: await readMaxMultCeiling(),
   };
-  const resolved = resolveRetuneTargets(price, cfg, targets, pack.name);
+  const resolved = resolveRetuneTargets(
+    price,
+    cfg,
+    targets,
+    // DB `tags` column first (authoritative), name-prefix tag as fallback —
+    // a "%1"-tagged pack whose name lacks the "1%" prefix must NOT fall back
+    // to the untagged 20% default.
+    resolveIntendedHitRate(pack.name, pack.tags) ?? undefined,
+  );
+
+  // A pct-tagged pack's win-rate is a design CONTRACT — refuse a pinned
+  // target that contradicts the tag. The doctor bulk dialog used to pin a
+  // flat 20% over every selected pack (a "1%" pack was empirically written to
+  // ~20% winners); the drawer seeded its lever from the DRIFTED current
+  // win-rate. Operators who truly want a different rate must untag the pack
+  // (name prefix + tags column) first.
+  if (
+    resolved.intendedHitRate !== null &&
+    Math.abs(resolved.targetWinRate - resolved.intendedHitRate) >
+      TAGGED_WRITE_WINRATE_TOLERANCE
+  ) {
+    throw new Error(
+      `Refused: this pack is tagged ${(resolved.intendedHitRate * 100).toFixed(2)}% — the requested win-rate ${(resolved.targetWinRate * 100).toFixed(2)}% contradicts the tag. Leave the win-rate on auto (tag-aware), or untag the pack first.`,
+    );
+  }
 
   // pack_creator live-pack carve-out (same gate updatePack enforces).
   const editedLivePackUnderCapability = await enforcePackCreatorLiveGate(
@@ -1827,6 +1865,18 @@ export async function applyPackRetune(
   if (Math.abs(after.winRate - resolved.targetWinRate) > winRateTol + 1e-9) {
     throw new Error(
       `Refused: resulting win-rate ${(after.winRate * 100).toFixed(2)}% misses target ${(resolved.targetWinRate * 100).toFixed(2)}% (±${(winRateTol * 100).toFixed(2)}%).`,
+    );
+  }
+  // Tagged packs get a 20x tighter acceptance vs their TAG (0.1pp): the flat
+  // ±2pp tolerance above would let a "1%" pack legally ship anywhere in
+  // [0%, 3%] — 3x its designed winner share.
+  if (
+    resolved.intendedHitRate !== null &&
+    Math.abs(after.winRate - resolved.intendedHitRate) >
+      TAGGED_WRITE_WINRATE_TOLERANCE + 1e-9
+  ) {
+    throw new Error(
+      `Refused: resulting win-rate ${(after.winRate * 100).toFixed(3)}% misses the pack tag ${(resolved.intendedHitRate * 100).toFixed(2)}% by more than ${(TAGGED_WRITE_WINRATE_TOLERANCE * 100).toFixed(1)}pp.`,
     );
   }
   // Belt-and-suspenders: `shapeWeights` already fails closed below `targetEdge`,

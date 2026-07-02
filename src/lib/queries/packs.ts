@@ -480,6 +480,12 @@ export type PackPoolComposition = {
   slug: string;
   packType: string;
   active: boolean;
+  /**
+   * DB `pack_tag` values as their mapped strings (`"%1"` / `"%5"` / `"%10"` /
+   * `"50/50"` / `"onepiece"`) — the retune targets resolve the intended
+   * hit-rate from these FIRST (name prefix as fallback).
+   */
+  tags: string[];
   /** Current sticker price (USD). */
   price: number;
   cardsPerOpen: number;
@@ -546,6 +552,7 @@ export async function getPacksPoolComposition(opts?: {
       slug: string;
       pack_type: string;
       active: boolean;
+      tags: string[] | null;
       price: string;
       cards_per_open: number;
       total_weight: string;
@@ -564,6 +571,7 @@ export async function getPacksPoolComposition(opts?: {
         p.slug,
         p.pack_type,
         p.active,
+        p.tags::text[]                                  AS tags,
         p.price::text                                   AS price,
         p.cards_per_open,
         COALESCE(SUM(pc.weight), 0)::text               AS total_weight,
@@ -587,7 +595,7 @@ export async function getPacksPoolComposition(opts?: {
       LEFT JOIN pack_cards pc ON pc.pack_id = p.id
       LEFT JOIN cards c ON c.id = pc.card_id
       WHERE ${whereClause}
-      GROUP BY p.id, p.name, p.slug, p.pack_type, p.active, p.price, p.cards_per_open
+      GROUP BY p.id, p.name, p.slug, p.pack_type, p.active, p.tags, p.price, p.cards_per_open
       ORDER BY p.name ASC
     `,
     ...params,
@@ -599,6 +607,7 @@ export async function getPacksPoolComposition(opts?: {
     slug: r.slug,
     packType: r.pack_type,
     active: r.active,
+    tags: r.tags ?? [],
     price: Number(r.price),
     cardsPerOpen: Number(r.cards_per_open),
     totalWeight: Number(r.total_weight),

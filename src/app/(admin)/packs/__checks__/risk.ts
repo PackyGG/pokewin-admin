@@ -44,7 +44,9 @@ import {
   autoMaxWinCap,
   autoRetuneTargets,
   autoTargetEdge,
+  hitRateFromTags,
   parsePackHitRate,
+  resolveIntendedHitRate,
   resolveTargetWinRate,
   TARGET_PACK_EDGE,
   DEFAULT_TARGET_WIN_RATE,
@@ -2290,6 +2292,39 @@ check("price-search early-stop: near clean snap settles cheaply without sweeping
   assert(
     search.searched <= 15,
     `early-stop should keep the near case cheap (searched=${search.searched})`,
+  );
+});
+
+// ── SECTION 19: DB-tag hit-rate resolution (tags-column fix, 2026-07-02) ──
+// The retune paths used to parse ONLY the pack name; DB-tagged packs whose
+// name lacks a leading "X%" prefix ran at the untagged 20% default (prod:
+// Heavy Hitters %1, Legendary Showcase %5, Molten Crown / Trainers Tale %10).
+check("resolveIntendedHitRate: DB tags column first (both notations), name fallback, null when untagged", () => {
+  // Raw-SQL notation (mapped DB strings).
+  assert(hitRateFromTags(["%1"]) === 0.01, "%1 → 0.01");
+  assert(hitRateFromTags(["50/50", "%5"]) === 0.05, "%5 among other tags → 0.05");
+  assert(hitRateFromTags(["%10"]) === 0.1, "%10 → 0.10");
+  // Prisma notation (TS enum names).
+  assert(hitRateFromTags(["pct1"]) === 0.01, "pct1 → 0.01");
+  assert(hitRateFromTags(["onepiece", "pct10"]) === 0.1, "pct10 among other tags → 0.10");
+  assert(hitRateFromTags(["fifty50"]) === null, "50/50 tag carries no hit-rate");
+  assert(hitRateFromTags([]) === null && hitRateFromTags(null) === null, "empty/null → null");
+  // DB tag wins; name is the fallback; both absent → null.
+  assert(
+    resolveIntendedHitRate("Heavy Hitters", ["%1"]) === 0.01,
+    "DB-tagged, unparseable name → the DB tag (was: 20% default)",
+  );
+  assert(
+    resolveIntendedHitRate("1% 18 PLUS", []) === 0.01,
+    "name-tagged, no DB tag → parsed name",
+  );
+  assert(
+    resolveIntendedHitRate("10% Divine Order", ["pct10"]) === 0.1,
+    "both agree → 0.10",
+  );
+  assert(
+    resolveIntendedHitRate("Plain Pack", []) === null,
+    "untagged → null (caller falls back to the 20% default)",
   );
 });
 
