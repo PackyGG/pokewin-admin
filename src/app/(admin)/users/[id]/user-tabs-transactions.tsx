@@ -20,7 +20,7 @@ import {
   Trophy,
   X,
 } from "lucide-react";
-import { revealBattlePassword } from "@/app/(admin)/battles/actions";
+import { revealBattlePassword } from "@/lib/actions/battle-password";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

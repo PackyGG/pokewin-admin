@@ -309,23 +309,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: false,
   },
   {
-    // Affiliate Codes — read-only lookup of an affiliate code or its owner
-    // (earnings / claimable balance / referrals) + two audited admin-only
-    // write actions. Icon `Ticket` is already registered in the ICONS map
-    // in `src/components/app-sidebar.tsx` (no React #130 risk).
-    id: "nav.insights.affiliate-codes",
-    group: "Insights",
-    label: "Affiliate Codes",
-    href: "/insights/affiliate-codes",
-    pageKey: "/insights/affiliate-codes",
-    icon: "Ticket",
-    description: "Look up an affiliate code or its owner",
-    keywords: ["affiliate", "code", "referral", "promo", "owner", "claim"],
-    isNew: true,
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
     // Double Down — read-only tracking of the gamble-your-battle-winnings
     // feature (accept rate, win/lose, House-POV P&L + full audit log). Icon
     // `Dices` is registered in the ICONS map in
@@ -469,19 +452,9 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
   // next.config.ts). Their permission keys (/transactions/packs,
   // /transactions/upgrader) are PRESERVED and now gate the Transactions tab.
   //
-  // Battles and Reward Transactions have NO catalog counterpart in Content, so
-  // they stay as their own standalone Content sidebar entries.
-  {
-    id: "nav.battles",
-    group: "Content",
-    label: "Battles",
-    href: "/battles",
-    pageKey: "/battles",
-    icon: "Swords",
-    description: "Pack battle directory",
-    inSidebar: true,
-    inPalette: true,
-  },
+  // Battles admin page (/battles) was removed as a standalone admin surface
+  // (2026-07) — battle data itself is untouched and still shown elsewhere
+  // (user-detail history, dashboard KPIs, creators pages, insights-games).
 
   // ── Creator Portal (creator-only group) ────────────────────────────────
   {
@@ -650,7 +623,6 @@ const PALETTE_ORDER: string[] = [
   "nav.creators.analytics",
   "nav.packs",
   "nav.cards",
-  "nav.battles",
   "nav.my-profile",
   "nav.admin-users",
   "nav.security",

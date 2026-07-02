@@ -53,12 +53,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   // Active grantable key (the page still gates on it).
   { group: "Insights", label: "Cost Breakdown", key: "/insights/cost-breakdown" },
   { group: "Insights", label: "Rewards", key: "/insights/rewards" },
-  // Affiliate Codes — read-only lookup of an affiliate code or its owner
-  // (earnings / claimable balance / referrals) + two audited admin-only
-  // write actions (zero claimable balance, transfer code to @motha). Own
-  // grantable key so it can be managed independently of the rewards
-  // rollup; the whole /insights tree is additionally owner-gated.
-  { group: "Insights", label: "Affiliate Codes", key: "/insights/affiliate-codes" },
+  // Affiliate Codes lookup page (/insights/affiliate-codes) was removed as a
+  // standalone admin surface (2026-07); the page key was retired. The
+  // affiliate code data model and the /insights/rewards?tab=affiliate
+  // analytics tab are unaffected.
   // Double Down — read-only tracking of the gamble-your-battle-winnings
   // feature: global House-POV KPI strip + the full round-by-round audit log
   // (who won / lost, staked, paid out, house cut). Own grantable key so it
@@ -112,7 +110,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   // under Content too — routes, pageKeys and permission boundaries are
   // unchanged; this is a display-grouping label only.
   { group: "Content", label: "Pack Transactions", key: "/transactions/packs" },
-  { group: "Content", label: "Battles", key: "/battles" },
+  // Battles admin page (/battles) was removed as a standalone admin surface
+  // (2026-07); the page key was retired. Battle data itself is untouched and
+  // still shown elsewhere (user-detail history, dashboard KPIs, creators
+  // pages, insights-games).
   { group: "Content", label: "Upgrader Transactions", key: "/transactions/upgrader" },
   // Rewards
   { group: "Rewards", label: "Rewards", key: "/rewards" },

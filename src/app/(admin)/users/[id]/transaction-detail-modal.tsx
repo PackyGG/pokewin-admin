@@ -49,8 +49,7 @@ import { BattlePasswordReveal } from "@/components/battle-password-reveal";
 import type { WagerRequirementSummary } from "@/lib/queries/users-wager-progress-shared";
 import type { Transaction, GameSessionDetails } from "./user-tabs-types";
 
-// Readable labels for the battle_mode enum — kept in sync with the battles
-// list filter (src/app/(admin)/battles/page.tsx) so the admin sees the same
+// Readable labels for the battle_mode enum so the admin sees consistent
 // mode names everywhere. Unknown values fall back to the raw enum string.
 const BATTLE_MODE_LABELS: Record<string, string> = {
   normal: "Normal",

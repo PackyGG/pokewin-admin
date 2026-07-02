@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Check, Copy, Eye, EyeOff, Loader2, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { revealBattlePassword } from "@/app/(admin)/battles/actions";
+import { revealBattlePassword } from "@/lib/actions/battle-password";
 
 /**
  * Inline reveal for the plaintext password an owner set on a private
