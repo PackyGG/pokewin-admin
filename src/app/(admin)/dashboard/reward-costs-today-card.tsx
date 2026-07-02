@@ -2,187 +2,47 @@
 
 import type { ReactNode } from "react";
 import { Info, Gift, CloudRain } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { RaceWinClaimants } from "./reward-cost-race-claimants";
 import { PromoBalanceCreditClaimants } from "./reward-cost-promo-claimants";
 
 /**
- * "Reward Costs (today)" dashboard tile — what the house SPENT on rewards
- * for the CURRENT CALENDAR DAY since 00:00 UTC (NOT a rolling past-24h
- * window — the same boundary as the P&L Today tile).
+ * Reward-cost breakdown popover — what the house SPENT on rewards for the
+ * CURRENT CALENDAR DAY since 00:00 UTC (NOT a rolling past-24h window — the
+ * same boundary as the P&L Today tile).
  *
  * Every line is money the house paid OUT to users → a house COST → rose
  * per CLAUDE.md's House-POV rule (a reward we pay a user is a dollar we
- * spent). The card face shows the rose total + the two largest lines as
- * chips; the Info popover (styled exactly like the P&L Today / GGR
- * breakdown popover) spells out every line so the owner sees where it went
- * — deposit bonuses, daily/free packs, signup/balance rewards, rakeback,
- * promo/gift cards, race wins, raffle prizes, motha (founder-account)
- * giveaways, manual vouchers, promo balance credits, and the flat rain line
- * ($2/hr). Affiliate commissions MOVED WHOLESALE to the sibling Creators
- * Costs card (owner decision, 2026-07-02) — there is no affiliate line here.
+ * spent): deposit bonuses, daily/free packs, signup/balance rewards,
+ * rakeback, promo/gift cards, race wins, raffle prizes, motha
+ * (founder-account) giveaways, manual vouchers, promo balance credits, and
+ * the flat rain line ($2/hr). Affiliate commissions MOVED WHOLESALE to the
+ * sibling Creators Costs breakdown (owner decision, 2026-07-02) — there is
+ * no affiliate line here.
  *
  * Rain is the OWNER-CONFIRMED flat model: $2 × hours elapsed since UTC
  * midnight ("we don't pay anything else for it") — NOT the summed rain
  * payouts. Leaderboard prizes are excluded entirely (owner decision,
  * 2026-06-04): every `affiliate_leaderboard_prize` is a creator-run-event
- * cost counted in FULL by the sibling Creators Costs box, so $0 of it
- * lands here — there is no leaderboard line on this card, and its
- * per-claimant drilldown now lives on the Creators Costs card.
+ * cost counted in FULL by the sibling Creators Costs breakdown, so $0 of it
+ * lands here.
  *
- * Per-program named lines: every line in `lines` comes from one program,
- * with no overlap with any other line — the displayed TOTAL is the
- * straight sum of `lines` (the query asserts this invariant). The
- * breakdown popover renders the lines as a sorted list; the card face
- * surfaces a fixed roster of programs as chips (see `PINNED_CHIP_KEYS`),
- * not just whichever happen to be largest that day.
+ * Consumed by `RewardCreatorCostsTodayCard` (the merged Reward + Creators
+ * Costs tile, owner request 2026-07-02: "move reward cost and creators
+ * costs into one box like deposits / withdrawals") — the card face now only
+ * shows the rose total per line-group; every itemized line lives behind
+ * this popover.
  *
  * All props are serializable primitives — no function props cross the RSC
- * boundary (`AnimatedNumber` takes the `format` string-enum, not a
- * formatter fn) per CLAUDE.md / Next 15.
+ * boundary per CLAUDE.md / Next 15.
  */
-/**
- * Fixed set of programs promoted to always-visible card-face chips, in
- * display order — owner-requested (2026-07-02) so daily/free packs, rain,
- * rakeback, and deposit bonuses always headline the card, not just whichever
- * two happen to be largest that day. A chip still renders at $0 (muted, not
- * rose) so the card doesn't reshuffle day to day.
- *
- * `affiliate` was REMOVED (2026-07-02): the affiliate-commission line moved
- * wholesale to the Creators Costs card (owner decision) — it no longer
- * exists on this card's `lines`, so it can't be pinned here either.
- */
-const PINNED_CHIP_KEYS = [
-  "daily_packs",
-  "rain",
-  "rakeback",
-  "deposit_bonus",
-] as const;
-
-export function RewardCostsTodayCard({
-  total,
-  lines,
-  dayLabel,
-  hoursElapsed,
-}: {
-  total: number;
-  /** Itemized lines, largest magnitude first. */
-  lines: Array<{ key: string; label: string; amount: number }>;
-  /** YYYY-MM-DD (UTC) — the calendar day this cost covers. */
-  dayLabel: string;
-  /** Hours elapsed since UTC midnight — surfaced in the rain line note. */
-  hoursElapsed: number;
-}) {
-  // Fixed roster of programs the owner wants ALWAYS visible on the card
-  // face — regardless of whether they happen to rank in the top-N by
-  // magnitude that day — so the box doesn't visually reshuffle. Falls back
-  // to omitting a key if the query ever stops returning that line.
-  const pinned = PINNED_CHIP_KEYS.map((key) => lines.find((l) => l.key === key)).filter(
-    (l): l is { key: string; label: string; amount: number } => l != null,
-  );
-
-  return (
-    <Card className="bg-rose-500/10">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
-          <CardTitle className="text-card-title text-muted-foreground inline-flex items-center gap-1">
-            Reward Costs
-            <RewardCostsInfoPopover
-              total={total}
-              lines={lines}
-              dayLabel={dayLabel}
-              hoursElapsed={hoursElapsed}
-            />
-          </CardTitle>
-          {/* Calendar date the figure covers — anchors the "since 00:00
-              today" semantic, matching the P&L Today tile. */}
-          <span className="text-tiny text-muted-foreground tabular-nums">
-            {dayLabel}
-          </span>
-        </div>
-        <Gift className="size-4 shrink-0 text-rose-400" />
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {/* Total — a house COST, so always rose with a leading minus to
-            read as money out (House-POV). */}
-        <div className="text-stat-value truncate">
-          <span className="text-rose-400">
-            −<AnimatedNumber value={total} format="currency" />
-          </span>
-        </div>
-        {/* Pinned-program chips (always the same five, same order) — a
-            quiet $0 day still shows the full roster, just muted instead of
-            rose, so the box never visually reshuffles or collapses. */}
-        {pinned.length > 0 ? (
-          <div className="grid grid-cols-2 gap-1.5 -mx-0.5 sm:grid-cols-3">
-            {pinned.map((l) => (
-              <RewardCostChip key={l.key} label={l.label} value={l.amount} />
-            ))}
-          </div>
-        ) : (
-          <p className="text-tiny text-muted-foreground">
-            No reward spend yet today.
-          </p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-/**
- * Small chip showing one reward-cost line on the card face. Rose whenever
- * there's actual spend — every non-zero line is a house cost (money paid
- * out to users) per House-POV. A $0 line (a program with no spend yet
- * today) renders muted instead of rose so a quiet day doesn't read as
- * alarming — the chip still holds its place in the fixed roster. Mirrors
- * the TodayComponentChip on the P&L Today tile.
- */
-function RewardCostChip({ label, value }: { label: string; value: number }) {
-  return (
-    <div
-      className={cn(
-        "rounded-md border bg-background/40 px-2 py-1.5 min-w-0",
-        value > 0 ? "border-rose-500/15" : "border-border/60",
-      )}
-    >
-      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground truncate">
-        {label}
-      </p>
-      <p
-        className={cn(
-          "text-xs font-semibold tabular-nums truncate",
-          value > 0
-            ? "text-rose-600 dark:text-rose-400"
-            : "text-muted-foreground",
-        )}
-      >
-        <AnimatedNumber value={value} format="currency" />
-      </p>
-    </div>
-  );
-}
-
-/**
- * Info popover styled exactly like the P&L Today / GGR breakdown button
- * (Popover + render-prop trigger + Info icon + small PopoverContent). Lists
- * every reward-cost line with its magnitude (rose — all are house costs),
- * with the rain line annotated as the flat $2/hr model and the total at the
- * bottom (the lines sum to the total).
- *
- * Leaderboard prizes are NOT a line here (owner decision, 2026-06-04) — the
- * full gross of every `affiliate_leaderboard_prize` is a creator-run-event
- * cost counted in the sibling Creators Costs box, which now hosts the
- * per-claimant leaderboard drilldown.
- */
-function RewardCostsInfoPopover({
+export function RewardCostsInfoPopover({
   total,
   lines,
   dayLabel,

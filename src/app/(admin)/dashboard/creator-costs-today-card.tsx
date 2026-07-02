@@ -10,7 +10,6 @@ import {
   Percent,
   Swords,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Popover,
   PopoverContent,
@@ -23,9 +22,9 @@ import { LeaderboardGrossClaimants } from "./creator-cost-leaderboard-claimants"
 import { CreatorWithdrawalsDrilldown } from "./creator-cost-withdrawals-drilldown";
 
 /**
- * "Creators Costs (today)" dashboard tile — what CREATORS cost the house for
- * the CURRENT CALENDAR DAY since 00:00 UTC (NOT a rolling past-24h window —
- * the same boundary as the Reward Costs Today + P&L Today tiles).
+ * Creators-cost breakdown popover — what CREATORS cost the house for the
+ * CURRENT CALENDAR DAY since 00:00 UTC (NOT a rolling past-24h window — the
+ * same boundary as the Reward Costs Today + P&L Today tiles).
  *
  * Every line is money the house paid OUT on creator activity → a house COST
  * → rose per CLAUDE.md's House-POV rule. Lines:
@@ -40,167 +39,31 @@ import { CreatorWithdrawalsDrilldown } from "./creator-cost-withdrawals-drilldow
  *                             Every affiliate leaderboard is a creator-run event
  *                             (owner, 2026-06-04), so its whole gross is a
  *                             creator cost counted here — no sponsored-% split.
- *                             The sibling Reward Costs box counts $0 of it.
+ *                             The sibling Reward Costs breakdown counts $0 of it.
  *   • Affiliate commissions — `affiliate_claim` ledger sum today. MOVED
- *                             WHOLESALE here from the Reward Costs box (owner,
- *                             2026-07-02): affiliate-code earners are
+ *                             WHOLESALE here from the Reward Costs breakdown
+ *                             (owner, 2026-07-02): affiliate-code earners are
  *                             creator-program recipients. Scoped with this
- *                             box's own blacklist-only convention (NOT the
- *                             Reward Costs box's full customer-scope drop).
- *                             The sibling Reward Costs box counts $0 of it now.
+ *                             breakdown's own blacklist-only convention (NOT
+ *                             the Reward Costs breakdown's full
+ *                             customer-scope drop).
  *
- * The card face shows the rose total + a FIXED set of chips covering all five
- * lines (see `PINNED_CHIP_KEYS`), always visible regardless of magnitude — the
- * same pattern already established on the Reward Costs card. The Info popover
- * (styled exactly like the Reward Costs / GGR breakdown popover) spells out
- * every line. The leaderboard line carries a click-to-reveal per-claimant
- * drilldown (`LeaderboardGrossClaimants`); the creator-withdrawals line
- * carries a sibling drilldown (`CreatorWithdrawalsDrilldown`). Both reconcile
- * to their line amounts and load lazily on click (server actions), never on
- * the dashboard's initial render.
+ * The leaderboard line carries a click-to-reveal per-claimant drilldown
+ * (`LeaderboardGrossClaimants`); the creator-withdrawals line carries a
+ * sibling drilldown (`CreatorWithdrawalsDrilldown`). Both reconcile to their
+ * line amounts and load lazily on click (server actions), never on the
+ * dashboard's initial render.
  *
- * The header's top-right corner also carries a SMALL aggregate-P&L badge
- * (`affiliateReferredPnl`) — house P&L on affiliate-referred players for the
- * same "today" window — tucked beside the Trophy icon. House-POV color
- * (emerald = house up, rose = house down). It is purely additive: it sits in
- * the existing header flex row and never grows the card or shifts the title /
- * total / chips. `null` ⇒ the badge is omitted entirely (graceful degrade).
+ * Consumed by `RewardCreatorCostsTodayCard` (the merged Reward + Creators
+ * Costs tile, owner request 2026-07-02: "move reward cost and creators
+ * costs into one box like deposits / withdrawals") alongside
+ * `AffiliateReferredPnlBadge` — the card face now only shows the rose total
+ * per line-group; every itemized line lives behind this popover.
  *
  * All props are serializable primitives — no function props cross the RSC
  * boundary (`AnimatedNumber` takes the `format` string-enum, not a formatter
  * fn) per CLAUDE.md / Next 15.
  */
-/**
- * Fixed set of ALL FIVE lines promoted to always-visible card-face chips, in
- * display order — mirrors the pinned-chip pattern already established on the
- * Reward Costs card (`PINNED_CHIP_KEYS` there) so the box doesn't visually
- * reshuffle day to day. A chip still renders at $0 (muted, not rose) so a
- * quiet day doesn't drop a line from view.
- */
-const PINNED_CHIP_KEYS = [
-  "creator_withdrawals",
-  "tips",
-  "sponsored_battles",
-  "leaderboard",
-  "affiliate",
-] as const;
-
-export function CreatorCostsTodayCard({
-  total,
-  lines,
-  dayLabel,
-  affiliateReferredPnl,
-}: {
-  total: number;
-  /** Itemized lines, largest magnitude first (leaderboard = full gross). */
-  lines: Array<{ key: string; label: string; amount: number }>;
-  /** YYYY-MM-DD (UTC) — the calendar day this cost covers. */
-  dayLabel: string;
-  /**
-   * Aggregate house P&L on affiliate-referred players for today's window
-   * (House-POV: positive = house up). `null` when the figure is unavailable
-   * (query failed / degraded) — the badge is then omitted so the card layout
-   * is unchanged.
-   */
-  affiliateReferredPnl?: number | null;
-}) {
-  // Fixed roster of all four lines the owner wants ALWAYS visible on the
-  // card face — regardless of magnitude — so the box doesn't visually
-  // reshuffle. Falls back to omitting a key if the query ever stops
-  // returning that line. Mirrors the Reward Costs card's PINNED_CHIP_KEYS.
-  const pinned = PINNED_CHIP_KEYS.map((key) => lines.find((l) => l.key === key)).filter(
-    (l): l is { key: string; label: string; amount: number } => l != null,
-  );
-
-  return (
-    <Card className="bg-rose-500/10">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
-          <CardTitle className="text-card-title text-muted-foreground inline-flex items-center gap-1">
-            Creators Costs
-            <CreatorCostsInfoPopover
-              total={total}
-              lines={lines}
-              dayLabel={dayLabel}
-            />
-          </CardTitle>
-          {/* Calendar date the figure covers — anchors the "since 00:00
-              today" semantic, matching the Reward Costs tile. */}
-          <span className="text-tiny text-muted-foreground tabular-nums">
-            {dayLabel}
-          </span>
-        </div>
-        {/* Top-right cluster: the small affiliate-referred P&L badge (when
-            available) + the Trophy icon. `shrink-0` + the compact badge keep
-            this within the existing header height — it never grows the card
-            or pushes the title row. */}
-        <div className="flex shrink-0 items-center gap-1.5">
-          {affiliateReferredPnl != null && (
-            <AffiliateReferredPnlBadge pnl={affiliateReferredPnl} />
-          )}
-          <Trophy className="size-4 shrink-0 text-rose-400" />
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {/* Total — a house COST, so always rose with a leading minus to read
-            as money out (House-POV). Includes the full leaderboard gross. */}
-        <div className="text-stat-value truncate">
-          <span className="text-rose-400">
-            −<AnimatedNumber value={total} format="currency" />
-          </span>
-        </div>
-        {/* Pinned-line chips (always the same five, same order) — a quiet
-            $0 day still shows the full roster, just muted instead of rose,
-            so the box never visually reshuffles or collapses. sm:grid-cols-3
-            wraps five chips cleanly (3 + 2) instead of leaving a lone
-            orphan chip on its own row at sm:grid-cols-4. */}
-        {pinned.length > 0 ? (
-          <div className="grid grid-cols-2 gap-1.5 -mx-0.5 sm:grid-cols-3">
-            {pinned.map((l) => (
-              <CreatorCostChip key={l.key} label={l.label} value={l.amount} />
-            ))}
-          </div>
-        ) : (
-          <p className="text-tiny text-muted-foreground">
-            No creator spend yet today.
-          </p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-/**
- * Small chip showing one creator-cost line on the card face. Rose whenever
- * there's actual spend — every non-zero line is a house cost (money paid out
- * on creator activity) per House-POV. A $0 line renders muted instead of rose
- * so a quiet day doesn't read as alarming — the chip still holds its place in
- * the fixed roster. Mirrors the RewardCostChip on the Reward Costs tile.
- */
-function CreatorCostChip({ label, value }: { label: string; value: number }) {
-  return (
-    <div
-      className={cn(
-        "rounded-md border bg-background/40 px-2 py-1.5 min-w-0",
-        value > 0 ? "border-rose-500/15" : "border-border/60",
-      )}
-    >
-      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground truncate">
-        {label}
-      </p>
-      <p
-        className={cn(
-          "text-xs font-semibold tabular-nums truncate",
-          value > 0
-            ? "text-rose-600 dark:text-rose-400"
-            : "text-muted-foreground",
-        )}
-      >
-        <AnimatedNumber value={value} format="currency" />
-      </p>
-    </div>
-  );
-}
 
 /**
  * Small top-right corner badge showing the aggregate house P&L on
@@ -212,7 +75,7 @@ function CreatorCostChip({ label, value }: { label: string; value: number }) {
  * existing header height beside the Trophy icon without growing the card.
  * The `title` spells out the meaning + window on hover.
  */
-function AffiliateReferredPnlBadge({ pnl }: { pnl: number }) {
+export function AffiliateReferredPnlBadge({ pnl }: { pnl: number }) {
   const up = pnl > 0;
   const down = pnl < 0;
   // Render the magnitude with an explicit House-POV sign. AnimatedNumber's
@@ -277,7 +140,7 @@ function lineIcon(key: string) {
  * creator withdrawals + tips + sponsored battles + the full leaderboard
  * gross + affiliate commissions.
  */
-function CreatorCostsInfoPopover({
+export function CreatorCostsInfoPopover({
   total,
   lines,
   dayLabel,

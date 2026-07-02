@@ -29,8 +29,8 @@ import {
 } from "./dashboard-kpi-section";
 import { buildKpiWindowPayload } from "./kpi-window-data";
 import { TodayPnlStatCard } from "./today-pnl-stat-card";
-import { RewardCostsTodayCard } from "./reward-costs-today-card";
-import { CreatorCostsTodayCard } from "./creator-costs-today-card";
+import { RewardCreatorCostsTodayCard } from "./reward-creator-costs-today-card";
+import { UpgraderDoubleDownTodayCard } from "./upgrader-double-down-today-card";
 import { AutoRefresh } from "./auto-refresh";
 import {
   WagerChart,
@@ -44,8 +44,6 @@ import {
 // The widget now docks on every admin page so the dashboard body no longer
 // renders the in-page Activity card.
 // LiveMoneyChat also lives in the admin shell layout (same dock pattern).
-import { UpgraderStatsSection } from "./upgrader-stats";
-import { DoubleDownStatsSection } from "./double-down-stats";
 import { ActiveRainChip } from "./active-rain-chip";
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -56,7 +54,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ChartRowSkeleton,
-  UpgraderPanelSkeleton,
   TodayTileSkeleton,
 } from "./dashboard-skeletons";
 
@@ -120,20 +117,28 @@ export default async function DashboardPage() {
         />
       </PageHero>
 
-      {/* TODAY BOXES — P&L Today + Reward Costs + Creators Costs, in that
-          order, at the top. All three use the CURRENT CALENDAR DAY since
-          00:00 UTC (NOT a rolling past-24h window) and share the same
-          UTC-midnight boundary. Each streams behind its OWN Suspense +
-          safeQuery. Full-width on mobile, 2-up at sm, 3-up at xl. */}
+      {/* TODAY BOXES — P&L Today · Reward + Creators Costs (merged) ·
+          Upgrader + Double Down (merged), in that order, at the top.
+          P&L Today and Reward + Creators Costs use the CURRENT CALENDAR DAY
+          since 00:00 UTC (NOT a rolling past-24h window) and share the same
+          UTC-midnight boundary. Upgrader + Double Down are LIFETIME
+          aggregates (period-independent) — they moved up into this row from
+          the old 50/50 panel row below the KPI strip (owner request,
+          2026-07-02: merge the two panels into one box "like deposits /
+          withdrawals" and drop it into the slot the standalone Creators
+          Costs card used to occupy, now that Creators Costs merged into the
+          Reward Costs card). Each of the three streams behind its OWN
+          Suspense + safeQuery. Full-width on mobile, 2-up at sm, 3-up at
+          xl. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3">
         <Suspense fallback={<TodayTileSkeleton />}>
           <DashboardTodayPnl />
         </Suspense>
         <Suspense fallback={<TodayTileSkeleton />}>
-          <DashboardRewardCostsToday />
+          <DashboardRewardAndCreatorCostsToday />
         </Suspense>
         <Suspense fallback={<TodayTileSkeleton />}>
-          <DashboardCreatorCostsToday />
+          <DashboardUpgraderDoubleDownToday />
         </Suspense>
       </div>
 
@@ -157,52 +162,15 @@ export default async function DashboardPage() {
         <DashboardKpiBoxes />
       </Suspense>
 
-      {/* Upgrader Stats + Double Down — paired 50/50 row that sits
-          between the KPI strips and the trend graphs. Each streams
-          behind its own Suspense (both are their own standalone
-          lifetime-aggregate queries — getUpgraderStats /
-          getDoubleDownDashboardStats — so neither scan blocks the
-          headline KPIs). Stacks single-column on smaller screens so
-          each card keeps a usable width.
-
-          Wager Attribution (previously the right half of this row)
-          moved into the Trends grid, replacing the removed Daily P&L
-          chart slot — it reads from the same cached getDashboardStats
-          the trend charts already use, so it fits there for free. */}
-      {/* Both Suspense fallbacks use the SAME `UpgraderPanelSkeleton`
-          shape so the grid row stays stable while one side loads ahead
-          of the other — previously the row jumped from the shorter
-          skeleton up to the panel's natural height when it resolved,
-          which briefly cropped the upgrader content. The shared
-          `min-h-[400px]` on the row guarantees the layout reserves the
-          panel's natural height from the first paint, regardless of
-          which side resolves first. */}
-      <div className="grid min-h-[400px] gap-3 sm:gap-4 lg:grid-cols-2 lg:items-stretch">
-        {/* Upgrader Stats is a lifetime aggregate (period-independent), so it
-            never re-suspends on a chip click — its skeleton only shows on the
-            cold load. The fallback mirrors the panel's real internal layout
-            (hero / volume / activity rows + hit-rate band) so the swap is
-            shift-free instead of a flat grey block snapping into a dense
-            panel. */}
-        <Suspense fallback={<UpgraderPanelSkeleton />}>
-          <DashboardUpgraderSection />
-        </Suspense>
-        {/* Double Down — gamble-your-battle-winnings game-type. Counted the
-            DEV's canonical way (game_sessions game_type='battle_double_down'
-            JOINed to battle_double_down_offers = PLAYED rounds), surfaced the
-            same way the Upgrader panel surfaces its game-type: a lifetime,
-            5-min-cached, House-POV panel. */}
-        <Suspense fallback={<UpgraderPanelSkeleton />}>
-          <DashboardDoubleDownSection />
-        </Suspense>
-      </div>
-
       {/* Charts. Three-up at lg+ but stacks to a single column on
           phones so each chart keeps a readable height (Recharts crushes
           when forced into a tight grid cell). At md we go 2-up so the
-          row stays balanced before we have room for the third. The
-          Wager Attribution chart moved up next to the Upgrader Stats
-          section, so Trends is now two 3-up rows. */}
+          row stays balanced before we have room for the third. Wager
+          Attribution used to live in a 50/50 row next to Upgrader Stats
+          (that row is gone — both panels merged into the
+          `UpgraderDoubleDownTodayCard` Today-row tile); Wager Attribution
+          now fills the slot the removed Daily P&L chart used to occupy
+          here, so Trends is two 3-up rows. */}
       <div className="space-y-3">
         <SectionHeading icon={LineChart} title="Trends" />
         {/* Row 1 (3-up): Wagers · Deposits · Signups & FTDs (merged).
@@ -361,38 +329,58 @@ async function DashboardKpiBoxes() {
 }
 
 /**
- * Upgrader stats section — wager / payouts / P&L / edge / bets / avg
- * bet / unique players. Its own query (separate from
- * getDashboardStats) so the headline KPI strips don't pay for the
- * upgrader scan. The query is per-request cached via `cache()` so
- * mounting the section twice in one render is free.
+ * Upgrader + Double Down — MERGED Today-row tile (owner request,
+ * 2026-07-02: merge the two lifetime game-type panels into one box "like
+ * deposits / withdrawals" and move it into the Today boxes row, in the slot
+ * the standalone Creators Costs card used to occupy). Both stats are their
+ * own standalone lifetime-aggregate queries (getUpgraderStats /
+ * getDoubleDownDashboardStats), fetched in parallel so neither scan blocks
+ * the other or the headline KPIs. Both are period-independent, so this tile
+ * never re-suspends on a chip click — its skeleton only shows on the cold
+ * load. Either query failing degrades the WHOLE tile to a fallback (a
+ * half-rendered merged card would look broken) instead of crashing the
+ * route.
  */
-async function DashboardUpgraderSection() {
-  // getUpgraderStats is already to_regclass-guarded (it returns zeroed
-  // stats on a pre-upgrader DB rather than throwing 42P01), but wrap it
-  // in safeQuery anyway so ANY other failure (a slow scan, a connection
-  // blip) degrades this panel to a fallback instead of crashing the
-  // route. Panel-size fallback fills the 50/50 row slot.
-  const { data: stats, error, kind } = await safeQuery(
-    () => getUpgraderStats(),
-    null,
-    "dashboard.upgrader",
-    REWARD_QUERY_TIMEOUT_MS,
-  );
-  if (error || !stats) {
+async function DashboardUpgraderDoubleDownToday() {
+  const [upgraderResult, doubleDownResult] = await Promise.all([
+    // getUpgraderStats is already to_regclass-guarded (it returns zeroed
+    // stats on a pre-upgrader DB rather than throwing 42P01), but wrap it in
+    // safeQuery anyway so ANY other failure (a slow scan, a connection blip)
+    // degrades this tile to a fallback instead of crashing the route.
+    safeQuery(
+      () => getUpgraderStats(),
+      null,
+      "dashboard.upgrader",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    // Double Down — lifetime aggregate over the battle_double_down game-type
+    // (DEV's canonical game_sessions JOIN), 5-min cached + to_regclass guarded.
+    safeQuery(
+      () => getDoubleDownDashboardStats(),
+      null,
+      "dashboard.doubleDown",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+  ]);
+  if (
+    upgraderResult.error ||
+    !upgraderResult.data ||
+    doubleDownResult.error ||
+    !doubleDownResult.data
+  ) {
     return (
       <TileErrorFallback
-        label="Upgrader Stats"
-        hint="The upgrader aggregate failed to load — other sections still rendered. Refresh to retry."
-        kind={kind ?? undefined}
-        size="panel"
-        className="h-full min-h-[400px]"
+        label="Upgrader + Double Down"
+        hint="A game-type aggregate failed to load — other sections still rendered. Refresh to retry."
+        kind={upgraderResult.kind ?? doubleDownResult.kind ?? undefined}
+        size="compact"
       />
     );
   }
+  const stats = upgraderResult.data;
   // CQRS rollout: in `comparison` mode, run the ClickHouse upgrader-stats path
   // side-by-side and LOG drift. Fire-and-forget + never-throwing — the served
-  // panel below stays 100% Postgres. No-op unless the flag is `comparison`.
+  // tile below stays 100% Postgres. No-op unless the flag is `comparison`.
   void compareDashboardUpgraderStats({
     wager: stats.wager,
     payouts: stats.payouts,
@@ -402,38 +390,15 @@ async function DashboardUpgraderSection() {
     wins: stats.wins,
     losses: stats.losses,
   });
-  // The panel is itself `h-full`, so it stretches to fill the 50/50 row cell.
-  return <UpgraderStatsSection stats={stats} />;
-}
-
-/**
- * Double Down stats panel — lifetime aggregate over the
- * battle_double_down game-type (DEV's canonical game_sessions JOIN). Its own
- * standalone query (getDoubleDownDashboardStats, 5-min cached + to_regclass
- * guarded), wrapped in safeQuery so a slow/failed scan degrades this panel to
- * a fallback instead of crashing the route. Lives in its own Suspense row
- * below the Upgrader / Wager-Attribution pair so its scan never blocks the
- * headline KPIs. House-POV money throughout.
- */
-async function DashboardDoubleDownSection() {
-  const { data: stats, error, kind } = await safeQuery(
-    () => getDoubleDownDashboardStats(),
-    null,
-    "dashboard.doubleDown",
-    REWARD_QUERY_TIMEOUT_MS,
+  return (
+    <UpgraderDoubleDownTodayCard
+      upgrader={{ pnl: stats.pnl, edge: stats.edge }}
+      doubleDown={{
+        netHousePnl: doubleDownResult.data.netHousePnl,
+        winRate: doubleDownResult.data.winRate,
+      }}
+    />
   );
-  if (error || !stats) {
-    return (
-      <TileErrorFallback
-        label="Double Down"
-        hint="The Double Down aggregate failed to load — other sections still rendered. Refresh to retry."
-        kind={kind ?? undefined}
-        size="panel"
-        className="h-full min-h-[400px]"
-      />
-    );
-  }
-  return <DoubleDownStatsSection stats={stats} />;
 }
 
 /**
@@ -491,76 +456,31 @@ async function DashboardTodayPnl() {
 }
 
 /**
- * Reward Costs Today tile — house reward/retention spend for the current
- * calendar day since 00:00 UTC (NOT a rolling past-24h window). Its own
- * standalone query (getRewardCostsToday, cached 60s + keyed on the UTC day
- * boundary), wrapped in safeQuery so a slow today-window scan degrades to a
- * tile fallback instead of crashing the dashboard. Reuses the canonical
- * reward-cost definitions (REWARD_PAYOUT_TYPES + the manual-voucher /
- * counted-adjustment carve-outs + the daily-pack giveaway), with rain as
- * the owner-confirmed flat $2/hr model and affiliate commissions excluded.
+ * Reward + Creators Costs Today tile — MERGED (owner request, 2026-07-02:
+ * "move reward cost and creators costs into one box like deposits /
+ * withdrawals"). Both legs cover the current calendar day since 00:00 UTC
+ * (NOT a rolling past-24h window), share the same UTC-midnight boundary, and
+ * run as three independent queries in parallel:
+ *   • getRewardCostsToday          — reward/retention spend (REWARD_PAYOUT_TYPES
+ *     + manual-voucher / counted-adjustment carve-outs + daily-pack giveaway,
+ *     rain as the owner-confirmed flat $2/hr model, affiliate excluded).
+ *   • getCreatorCostsToday         — creator-activity spend (Creator Deal
+ *     Payouts, both legs of tips-sponsor-spend, full leaderboard gross,
+ *     affiliate_claim commissions moved wholesale from Reward Costs).
+ *   • getAffiliateReferredPnlToday — an INDEPENDENT corner indicator (house
+ *     P&L on affiliate-referred players); a failing/slow scan only drops the
+ *     small badge (passed as null), it never takes the merged tile down.
+ * Reward Costs and Creators Costs failing/degrading DOES take the whole tile
+ * down to a fallback — a half-rendered merged card would look broken.
  */
-async function DashboardRewardCostsToday() {
-  const { data, error, kind } = await safeQuery(
-    () => getRewardCostsToday(),
-    null,
-    "dashboard.rewardCostsToday",
-    REWARD_QUERY_TIMEOUT_MS,
-  );
-  if (error || !data) {
-    return (
-      <TileErrorFallback
-        label="Reward Costs"
-        hint="The today-window reward-cost scan timed out — refresh to retry."
-        kind={kind ?? undefined}
-        size="compact"
-      />
-    );
-  }
-  // CQRS rollout: in `comparison` mode, run the ClickHouse DB-derived reward-cost
-  // lines side-by-side and LOG drift. Fire-and-forget + never-throwing — the
-  // served tile below stays 100% Postgres. The non-DB rain line ($2/hr) has no
-  // DB source and is EXCLUDED from the comparison (the CH twin compares the DB
-  // sub-total = total − rainCost). No-op unless the flag is `comparison`.
-  void compareDashboardRewardCostsToday({
-    lines: data.lines.map((l) => ({ key: l.key, amount: l.amount })),
-    total: data.total,
-    rainCost: data.rainCost,
-    dayStartIso: data.dayStartIso,
-  });
-  // dayStartIso is "YYYY-MM-DDT00:00:00.000Z"; the YYYY-MM-DD slice is the
-  // UTC calendar day this cost covers (matches the window boundary exactly).
-  const dayLabel = data.dayStartIso.slice(0, 10);
-  return (
-    <RewardCostsTodayCard
-      total={data.total}
-      lines={data.lines}
-      dayLabel={dayLabel}
-      hoursElapsed={data.hoursElapsed}
-    />
-  );
-}
-
-/**
- * Creators Costs Today tile — house spend on CREATOR activity for the
- * current calendar day since 00:00 UTC (NOT a rolling past-24h window;
- * shares the boundary with the Reward Costs / P&L Today tiles). Its own
- * standalone query (getCreatorCostsToday, cached 60s + keyed on the UTC day
- * boundary), wrapped in safeQuery so a slow today-window scan degrades to a
- * tile fallback instead of crashing the dashboard. Reuses the canonical
- * creator-cost definitions: the Creator Deal Payouts withdrawal CTE, BOTH legs
- * of tips-sponsor-spend (tip + battle-sponsorship), the FULL gross of
- * affiliate_leaderboard_prize payouts (no sponsored-% split, owner 2026-06-04),
- * and affiliate_claim commissions (moved wholesale from Reward Costs, owner
- * 2026-07-02).
- */
-async function DashboardCreatorCostsToday() {
-  // The creator-cost figures drive the card; the affiliate-referred-players
-  // P&L is an INDEPENDENT corner indicator. Both are today-windowed + cached
-  // 60s and run in parallel, each behind its own safeQuery so they fail
-  // independently: a failing/slow P&L scan only drops the small corner badge
-  // (passed as null), it never takes the cost card down.
-  const [costsResult, pnlResult] = await Promise.all([
+async function DashboardRewardAndCreatorCostsToday() {
+  const [rewardResult, creatorsResult, pnlResult] = await Promise.all([
+    safeQuery(
+      () => getRewardCostsToday(),
+      null,
+      "dashboard.rewardCostsToday",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
     safeQuery(
       () => getCreatorCostsToday(),
       null,
@@ -574,29 +494,42 @@ async function DashboardCreatorCostsToday() {
       REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
-  if (costsResult.error || !costsResult.data) {
+  if (
+    rewardResult.error ||
+    !rewardResult.data ||
+    creatorsResult.error ||
+    !creatorsResult.data
+  ) {
     return (
       <TileErrorFallback
-        label="Creators Costs"
-        hint="The today-window creator-cost scan timed out — refresh to retry."
-        kind={costsResult.kind ?? undefined}
+        label="Reward + Creators Costs"
+        hint="A today-window cost scan timed out — refresh to retry."
+        kind={rewardResult.kind ?? creatorsResult.kind ?? undefined}
         size="compact"
       />
     );
   }
-  const data = costsResult.data;
+  const reward = rewardResult.data;
+  const creators = creatorsResult.data;
   // CQRS rollout: in `comparison` mode, run the ClickHouse twins side-by-side
-  // and LOG drift. Fire-and-forget + never-throwing — the served card below
-  // stays 100% Postgres. No-op unless each flag is `comparison`. The
-  // affiliate-referred badge is an independent surface keyed off its own flag.
+  // and LOG drift. Fire-and-forget + never-throwing — the served tile below
+  // stays 100% Postgres. No-op unless each flag is `comparison`. The non-DB
+  // rain line ($2/hr) has no DB source and is EXCLUDED from the reward-cost
+  // comparison (the CH twin compares the DB sub-total = total − rainCost).
+  void compareDashboardRewardCostsToday({
+    lines: reward.lines.map((l) => ({ key: l.key, amount: l.amount })),
+    total: reward.total,
+    rainCost: reward.rainCost,
+    dayStartIso: reward.dayStartIso,
+  });
   void compareDashboardCreatorCostsToday({
-    total: data.total,
-    creatorWithdrawals: data.creatorWithdrawals,
-    tips: data.tips,
-    sponsoredBattles: data.sponsoredBattles,
-    leaderboardGross: data.leaderboardGross,
-    affiliate: data.affiliate,
-    dayStartIso: data.dayStartIso,
+    total: creators.total,
+    creatorWithdrawals: creators.creatorWithdrawals,
+    tips: creators.tips,
+    sponsoredBattles: creators.sponsoredBattles,
+    leaderboardGross: creators.leaderboardGross,
+    affiliate: creators.affiliate,
+    dayStartIso: creators.dayStartIso,
   });
   if (pnlResult.data) {
     void compareDashboardAffiliateReferredPnlToday({
@@ -605,16 +538,26 @@ async function DashboardCreatorCostsToday() {
     });
   }
   // dayStartIso is "YYYY-MM-DDT00:00:00.000Z"; the YYYY-MM-DD slice is the
-  // UTC calendar day this cost covers (matches the window boundary exactly).
-  const dayLabel = data.dayStartIso.slice(0, 10);
+  // UTC calendar day this cost covers (matches the window boundary exactly,
+  // identical on both legs since they share the same "today" boundary).
+  const dayLabel = reward.dayStartIso.slice(0, 10);
   return (
-    <CreatorCostsTodayCard
-      total={data.total}
-      lines={data.lines}
-      dayLabel={dayLabel}
-      // Aggregate house P&L on affiliate-referred players for the same "today"
-      // window — null when the scan failed/degraded (badge then omitted).
-      affiliateReferredPnl={pnlResult.data?.pnl ?? null}
+    <RewardCreatorCostsTodayCard
+      reward={{
+        total: reward.total,
+        lines: reward.lines,
+        dayLabel,
+        hoursElapsed: reward.hoursElapsed,
+      }}
+      creators={{
+        total: creators.total,
+        lines: creators.lines,
+        dayLabel,
+        // Aggregate house P&L on affiliate-referred players for the same
+        // "today" window — null when the scan failed/degraded (badge then
+        // omitted).
+        affiliateReferredPnl: pnlResult.data?.pnl ?? null,
+      }}
     />
   );
 }
