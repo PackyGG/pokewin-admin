@@ -2328,6 +2328,223 @@ check("resolveIntendedHitRate: DB tags column first (both notations), name fallb
   );
 });
 
+// ── SECTION 20: saturated hard-tag EV knob + tagged snap mode (RC4/RC5b/c) ──
+// The audit's RC4 wall: an ANCHORED + HARD-TAG lottery pool has every winner
+// capped at its current odds and the tag pins the win mass, so the reachable
+// EV collapsed to a point and 28/37 tagged prod packs errored
+// `ev-unreachable-for-split` (re-measured 2026-07-02 post-RC3: 30/41 — the
+// wider price band alone healed nothing). The RC4 knob interpolates the capped
+// win shares toward the CHEAPEST winner (t ∈ [0,1]): win mass stays pinned at
+// the tag, every non-cheapest winner's odds only ever DROP, and the solve
+// regains exactly one EV degree of freedom that cannot inflate the tail.
+//
+// Fixture = the audit-documented "1% 18 PLUS" prod pool ($1.25, 7 grails, one
+// $1.30 win-band card, 3 dust cards; live weights sum 1,000,000 with the win
+// band at exactly the 1% tag — the fully SATURATED case).
+const SATURATED_1PCT_POOL = [
+  { value: 810.07, weight: 200 },
+  { value: 508.45, weight: 300 },
+  { value: 118.21, weight: 3000 },
+  { value: 114.0, weight: 3000 },
+  { value: 75.47, weight: 1500 },
+  { value: 64.76, weight: 1000 },
+  { value: 60.25, weight: 900 },
+  { value: 1.3, weight: 100 },
+  { value: 0.08, weight: 800000 },
+  { value: 0.05, weight: 150000 },
+  { value: 0.02, weight: 40000 },
+];
+
+// The saturated pinch has TWO sides. At the live $1.25 the monotone grail-cap
+// tightening (the non-monotone live profile: $114/$118 at 0.30% get capped to
+// the cheapest grail's 0.09%) guts the win pool's EV ceiling, so the failure
+// is `evTarget > evMax` — EV cannot be LIFTED without inflating the tail, and
+// the sanctioned remedy is the ±60% price search (pinned end-to-end below).
+// At a LOWER price the same pool flips to the knob's side: `evTarget < evMin`
+// (the capped win pool alone carries more EV than the target allows). $0.80
+// sits firmly on that side — pre-knob this errored `ev-unreachable-for-split`;
+// the knob must now solve it with the tag pinned and the tail never inflated.
+check("RC4 knob: saturated anchored+hard-tag pool solves on the evMin side, tag + never-inflate held", () => {
+  const price = 0.8;
+  const cards = SATURATED_1PCT_POOL.map((c) => ({ value: c.value }));
+  const currentWeights = SATURATED_1PCT_POOL.map((c) => c.weight);
+  const curTotal = currentWeights.reduce((a, b) => a + b, 0);
+  const r = shapeWeights({
+    cards,
+    price,
+    targetEdge: 0.1099,
+    targetWinRate: 0.01,
+    currentWeights,
+    winRateIsHard: true,
+  });
+  assert(
+    isSuccess(r),
+    `saturated hard-tag pool must now solve on the evMin side (was ev-unreachable-for-split): ${"error" in r ? r.error : ""}`,
+  );
+  if (!isSuccess(r)) return;
+  // Edge lands one-sided in the precise window.
+  assert(r.edge >= 0.1099 - 1e-9, `edge ≥ target (${r.edge})`);
+  assert(r.edge <= 0.1099 + 0.001 + 1e-9, `edge ≤ target+0.001 (${r.edge})`);
+  // The tag holds: win-rate within 0.01pp of 1%.
+  assert(
+    Math.abs(r.risk.winRate - 0.01) <= TAGGED_WINRATE_TOLERANCE + 1e-12,
+    `win-rate pinned at the 1% tag (got ${(r.risk.winRate * 100).toFixed(4)}%)`,
+  );
+  // NEVER-INFLATE: every non-cheapest winner's odds ≤ its current odds (the
+  // knob may only raise the CHEAPEST winner — the $1.30 card). Allow the snap
+  // guard's 0.002pp + integer-quantization slack.
+  const total = r.weights.reduce((a, b) => a + b, 0);
+  const cheapestWinnerValue = 1.3;
+  for (let i = 0; i < cards.length; i++) {
+    const v = cards[i]!.value;
+    if (v < price || v === cheapestWinnerValue) continue;
+    const after = r.weights[i]! / total;
+    const before = currentWeights[i]! / curTotal;
+    assert(
+      after <= before + 2.5e-5,
+      `non-cheapest winner $${v} must not inflate: ${(after * 100).toFixed(4)}% > current ${(before * 100).toFixed(4)}%`,
+    );
+  }
+  // Knob signature / fixture-drift guard: in hard-tag mode NO winner may rise
+  // above its current odds except through the knob's cheapest-winner
+  // concentration. If the $1.30 card did NOT rise, the pool wasn't saturated
+  // on the evMin side here and the fixture drifted — pick a new price.
+  const cheapIdx = cards.findIndex((c) => c.value === cheapestWinnerValue);
+  const cheapAfter = r.weights[cheapIdx]! / total;
+  const cheapBefore = currentWeights[cheapIdx]! / curTotal;
+  assert(
+    cheapAfter > cheapBefore,
+    `fixture precondition drifted: the cheapest winner did not rise (after ${(cheapAfter * 100).toFixed(4)}% ≤ current ${(cheapBefore * 100).toFixed(4)}%) — the knob did not fire`,
+  );
+  // GRAIL tail monotone (ties allowed — the $118.21/$114.00 pair shares its
+  // current odds) + the top jackpot strictly the rarest winner.
+  const grail = cards
+    .map((c, i) => ({ v: c.value, pct: (r.weights[i]! / total) * 100 }))
+    .filter((x) => x.v >= 5 * price)
+    .sort((a, b) => a.v - b.v);
+  for (let i = 1; i < grail.length; i++) {
+    assert(
+      grail[i]!.pct <= grail[i - 1]!.pct + 1e-9,
+      `grail non-increasing in value: $${grail[i]!.v} ${grail[i]!.pct.toFixed(5)}% > $${grail[i - 1]!.v} ${grail[i - 1]!.pct.toFixed(5)}%`,
+    );
+  }
+  const top = grail[grail.length - 1]!;
+  const second = grail[grail.length - 2]!;
+  assert(top.pct < second.pct + 1e-12, `top jackpot strictly rarest (${top.pct} vs ${second.pct})`);
+  console.log(
+    `      [saturated 1% — knob solved $${price.toFixed(2)}: wr=${(r.risk.winRate * 100).toFixed(4)}% edge=${(r.edge * 100).toFixed(3)}% snapped=${r.snapped === true}]`,
+  );
+});
+
+check("RC4/RC5b end-to-end: tagged search on the saturated pool hits the tag (taggedAccuracyHit)", () => {
+  const price = 1.25;
+  const cards = SATURATED_1PCT_POOL.map((c) => ({ value: c.value }));
+  const currentWeights = SATURATED_1PCT_POOL.map((c) => c.weight);
+  const search = searchBestPriceForCleanSnap({
+    cards,
+    basePrice: price,
+    targetEdge: 0.1099,
+    targetWinRate: 0.01,
+    nearMissMin: 0.1,
+    currentWeights,
+    maxPriceChangePct: 0.6,
+    taggedWinRate: 0.01,
+  });
+  assert(
+    isSuccess(search.bestResult),
+    `search must succeed (was 28/37 error wall): ${"error" in search.bestResult ? search.bestResult.error : ""}`,
+  );
+  if (!isSuccess(search.bestResult)) return;
+  assert(
+    search.taggedAccuracyHit === true,
+    `taggedAccuracyHit must be true (wr=${(search.bestResult.risk.winRate * 100).toFixed(4)}%)`,
+  );
+  assert(search.bestResult.edge >= 0.1099 - 1e-9, `edge ≥ target (${search.bestResult.edge})`);
+  // RC5b: a SNAPPED winner must still hold the tag — clean and tag-accurate
+  // are no longer mutually exclusive by construction.
+  if (search.bestResult.snapped === true) {
+    assert(
+      Math.abs(search.bestResult.risk.winRate - 0.01) <= TAGGED_WINRATE_TOLERANCE + 1e-12,
+      `snapped winner must keep the tag (wr=${(search.bestResult.risk.winRate * 100).toFixed(4)}%)`,
+    );
+  }
+  console.log(
+    `      [saturated 1% search — $${search.bestPrice.toFixed(2)} wr=${(search.bestResult.risk.winRate * 100).toFixed(4)}% edge=${(search.bestResult.edge * 100).toFixed(3)}% snapped=${search.bestResult.snapped === true} searched=${search.searched}]`,
+  );
+});
+
+check("RC5b: hard-tag run that snaps keeps the WIN-band rung sum on the tag", () => {
+  // The 16c-style designed 1% pool (3 grails + a 30-card dust ladder) snaps
+  // readily. In HARD-tag mode the precise solve lands ON the tag, so RC5b
+  // requires any accepted snap to hold it within 0.01pp — pre-fix the snap
+  // only checked the soft ±2pp vs the precise result and traded the tag away.
+  const pool: { value: number }[] = [
+    { value: 100 },
+    { value: 200 },
+    { value: 500 },
+    ...Array.from({ length: 30 }, (_, i) => ({ value: 0.5 - i * 0.015 })).filter(
+      (c) => c.value > 0,
+    ),
+  ];
+  const r = shapeWeights({
+    cards: pool,
+    price: 1.25,
+    targetEdge: 0.1099,
+    targetWinRate: 0.01,
+    nearMissMin: 0.05,
+    winRateIsHard: true,
+  });
+  assert(isSuccess(r), `hard-tag designed pool must solve: ${"error" in r ? r.error : ""}`);
+  if (!isSuccess(r)) return;
+  assert(r.edge >= 0.1099 - 1e-9, `edge ≥ target (${r.edge})`);
+  if (r.snapped === true) {
+    assert(
+      Math.abs(r.risk.winRate - 0.01) <= TAGGED_WINRATE_TOLERANCE + 1e-12,
+      `snapped hard-tag result must hold the tag (wr=${(r.risk.winRate * 100).toFixed(4)}%)`,
+    );
+  }
+  console.log(
+    `      [RC5b designed 1% — wr=${(r.risk.winRate * 100).toFixed(4)}% edge=${(r.edge * 100).toFixed(3)}% snapped=${r.snapped === true}]`,
+  );
+});
+
+check("RC5c: off-ladder cards after a snap are dust-band only (buffer polish never dirties winners)", () => {
+  // The polish moves the residual off the buffer onto the 2–3 largest OTHER
+  // dust cards. Whatever the adoption outcome, a snapped result may only ever
+  // carry off-ladder pcts on DUST-band cards (the buffer or its receivers) —
+  // never on a win/grail/near-miss card — and at most 3 of them. Same
+  // evMin-side price as the knob check so the pool actually solves.
+  const price = 0.8;
+  const cards = SATURATED_1PCT_POOL.map((c) => ({ value: c.value }));
+  const currentWeights = SATURATED_1PCT_POOL.map((c) => c.weight);
+  const r = shapeWeights({
+    cards,
+    price,
+    targetEdge: 0.1099,
+    targetWinRate: 0.01,
+    currentWeights,
+    winRateIsHard: true,
+  });
+  assert(isSuccess(r), `saturated pool must solve: ${"error" in r ? r.error : ""}`);
+  if (!isSuccess(r)) return;
+  if (r.snapped !== true) {
+    console.log("      [RC5c — pool did not snap; polish not exercised here (fleet re-measure covers it)]");
+    return;
+  }
+  const total = r.weights.reduce((a, b) => a + b, 0);
+  const offLadder: number[] = [];
+  for (let i = 0; i < cards.length; i++) {
+    if (r.weights[i]! > 0 && !isOnLadder((r.weights[i]! / total) * 100)) offLadder.push(i);
+  }
+  assert(offLadder.length <= 3, `at most 3 off-ladder cards after polish; got ${offLadder.length}`);
+  for (const i of offLadder) {
+    assert(
+      cards[i]!.value < 0.5 * price,
+      `off-ladder card must be DUST (value $${cards[i]!.value})`,
+    );
+  }
+});
+
 // ── Summary ─────────────────────────────────────────────────────────
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} risk check(s) failed:`);
