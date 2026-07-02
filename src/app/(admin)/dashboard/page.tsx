@@ -142,11 +142,15 @@ export default async function DashboardPage() {
         </Suspense>
       </div>
 
-      {/* KPI boxes — period-bound only now (GGR, Wager [Total + Organic merged
+      {/* KPI boxes — period-bound only now (Wager [Total + Organic merged
           into one box], Deposits/Withdrawals [merged], plus the anchored Crypto
-          Fee counter) with a per-box today/24h toggle. DEFAULTS to "today"
-          (loaded eagerly here); the rolling 24h window is fetched lazily on the
-          first toggle inside the client section (active-timeframe-only).
+          Fee counter) with a per-box today/24h toggle. GGR MOVED into the
+          "P&L Today" tile above (owner request, 2026-07-02: that tile had
+          empty space once its siblings grew back their full data sets) —
+          this strip is down to THREE boxes, widened to fill the space the
+          removed GGR box left behind. DEFAULTS to "today" (loaded eagerly
+          here); the rolling 24h window is fetched lazily on the first
+          toggle inside the client section (active-timeframe-only).
 
           The window-independent snapshot boxes (FTDs, Depositors, Avg RTP, Avg
           P&L 7d, Total P&L lifetime) MOVED to the owner-only lifetime section
@@ -157,8 +161,8 @@ export default async function DashboardPage() {
           NOT keyed on any global selector — these boxes own their own today/24h
           window via the toggle next to each title. Streams behind its own Suspense
           so the today-window aggregate never blocks the 3 cost cards above;
-          the skeleton mirrors the single 4-up period strip. */}
-      <Suspense fallback={<SkeletonKpiStrip count={4} />}>
+          the skeleton mirrors the single 3-up period strip. */}
+      <Suspense fallback={<SkeletonKpiStrip count={3} />}>
         <DashboardKpiBoxes />
       </Suspense>
 
@@ -420,14 +424,31 @@ async function DashboardUpgraderDoubleDownToday() {
  * instead of crashing the dashboard. The query reuses the canonical
  * windowed-delta P&L formula (calculateWindowedPnl), so this reconciles
  * with the period-P&L card + daily-P&L chart.
+ *
+ * Also fetches the "today" GGR payload (owner request, 2026-07-02: fill the
+ * P&L Today tile's empty space with GGR at the bottom, P&L stays at the
+ * top) via the SAME `buildKpiWindowPayload("today")` the KPI strip's own
+ * `DashboardKpiBoxes()` calls — `getDashboardKpiStats` is React
+ * `cache()`-wrapped and the GGR legs are `unstable_cache`-backed, so this
+ * second call dedupes/hits cache rather than re-running the heavy
+ * aggregate. Runs in its own `safeQuery` so a failed GGR fetch only omits
+ * that section instead of taking the whole P&L tile down.
  */
 async function DashboardTodayPnl() {
-  const { data, error, kind } = await safeQuery(
-    () => getTodayPnl(),
-    null,
-    "dashboard.todayPnl",
-    REWARD_QUERY_TIMEOUT_MS,
-  );
+  const [{ data, error, kind }, ggrResult] = await Promise.all([
+    safeQuery(
+      () => getTodayPnl(),
+      null,
+      "dashboard.todayPnl",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => buildKpiWindowPayload("today"),
+      null,
+      "dashboard.todayPnlGgr",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+  ]);
   if (error || !data) {
     return (
       <TileErrorFallback
@@ -438,6 +459,7 @@ async function DashboardTodayPnl() {
       />
     );
   }
+  const ggrPayload = ggrResult.data;
   // CQRS rollout: in `comparison` mode, run the ClickHouse windowed-P&L path
   // side-by-side and LOG drift. Fire-and-forget + never-throwing — the served
   // tile below stays 100% Postgres. No-op unless the flag is `comparison`.
@@ -462,6 +484,17 @@ async function DashboardTodayPnl() {
       inventoryChange={data.inventoryChange}
       voucherChange={data.voucherChange}
       dayLabel={dayLabel}
+      ggr={
+        ggrPayload
+          ? {
+              value: ggrPayload.ggr,
+              cashGgr: ggrPayload.cashGgr,
+              deposits: ggrPayload.deposits,
+              withdrawals: ggrPayload.withdrawals,
+              breakdown: ggrPayload.ggrBreakdown,
+            }
+          : null
+      }
     />
   );
 }

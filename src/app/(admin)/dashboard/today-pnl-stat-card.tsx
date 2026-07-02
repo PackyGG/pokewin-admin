@@ -21,6 +21,8 @@ import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { TodayNetHoldingsHoldersChip } from "./today-net-holdings-holders";
+import { GgrBreakdownPopover } from "./revenue-stat-card";
+import type { GgrBreakdown } from "@/lib/queries/dashboard";
 
 /**
  * "P&L Today" dashboard tile — house P&L for the CURRENT CALENDAR DAY
@@ -40,10 +42,39 @@ import { TodayNetHoldingsHoldersChip } from "./today-net-holdings-holders";
  * (styled exactly like the GGR breakdown button) spells out every
  * component with its signed contribution to house P&L.
  *
+ * The tile also carries an optional GGR section at the BOTTOM (owner
+ * request, 2026-07-02: "the P&L today window is 50% empty now — fill it
+ * with GGR, GGR at bottom and P&L stuff at top"), reusing the exact
+ * `getDashboardKpiStats("today")` payload the KPI strip's GGR box used to
+ * render (that box was removed from the strip) and the SAME
+ * `GgrBreakdownPopover` for the info breakdown, so the figure and its
+ * popover are byte-identical to what the strip used to show — just
+ * relocated. `ggr` is optional/nullable so a failed GGR fetch degrades to
+ * omitting that section instead of taking the whole P&L tile down.
+ *
  * All props are serializable primitives — no function props cross the RSC
  * boundary (AnimatedNumber takes the `format` string-enum, not a
  * formatter fn) per CLAUDE.md / Next 15.
  */
+/**
+ * GGR section payload — identical shape to the fields the KPI strip's old
+ * GGR box read off `KpiWindowPayload` for the "today" window. Kept as its
+ * own small type here (rather than importing `KpiWindowPayload` wholesale)
+ * since this card only needs the GGR-specific slice, not the wager/cashflow
+ * fields the strip also carries.
+ */
+export type TodayGgrPayload = {
+  /** Dashboard-local "deposit-funded" headline GGR for today. */
+  value: number;
+  /** Cash P&L (deposits − withdrawals) — secondary figure inside the popover. */
+  cashGgr: number;
+  /** Window's deposit/withdrawal dollars — drive the popover's cash-P&L math. */
+  deposits: number;
+  withdrawals: number;
+  /** Industry-GGR breakdown legs for the popover. */
+  breakdown: GgrBreakdown;
+};
+
 export function TodayPnlStatCard({
   pnl,
   deposits,
@@ -53,6 +84,7 @@ export function TodayPnlStatCard({
   voucherChange,
   /** YYYY-MM-DD (UTC) — the calendar day this P&L covers. */
   dayLabel,
+  ggr,
 }: {
   pnl: number;
   deposits: number;
@@ -61,6 +93,8 @@ export function TodayPnlStatCard({
   inventoryChange: number;
   voucherChange: number;
   dayLabel: string;
+  /** Bottom-of-tile GGR section payload — omitted (null) on a failed fetch. */
+  ggr?: TodayGgrPayload | null;
 }) {
   const isProfit = pnl >= 0;
   const rawCashPnl = deposits - withdrawals;
@@ -158,8 +192,60 @@ export function TodayPnlStatCard({
           </span>{" "}
           is deposits − withdrawals only (raw crypto cash flow).
         </p>
+        {/* GGR — moved down here from the KPI strip (owner request,
+            2026-07-02) so the P&L Today tile fills the space the strip's
+            other boxes reclaimed once they grew their full data sets back.
+            Same dashboard-local "deposit-funded" headline + the same
+            `GgrBreakdownPopover` the strip used, scoped to "today" (this
+            tile never toggles to 24h). Omitted entirely when the fetch
+            failed (`ggr` is null) rather than showing a broken section. */}
+        {ggr && <TodayGgrSection ggr={ggr} />}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Bottom-of-tile GGR block — mirrors the KPI strip's former GGR box body
+ * (title + Info popover + house-POV trend icon, hero value, subtitle) inside
+ * a compact section instead of a full standalone `KpiPanel`, separated from
+ * the P&L content above by a hairline divider (same pattern the merged
+ * Reward+Creators / Upgrader+DoubleDown tiles use between their halves).
+ */
+function TodayGgrSection({ ggr }: { ggr: TodayGgrPayload }) {
+  const isProfit = ggr.value >= 0;
+  return (
+    <div className="border-t border-border/50 pt-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="flex min-w-0 items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-cyan-600 dark:text-cyan-400">
+          <span className="truncate">GGR</span>
+          <GgrBreakdownPopover
+            breakdown={ggr.breakdown}
+            periodLabel="Today"
+            contributorScope={{ kind: "kpi", value: "today" }}
+            headlineGgr={ggr.value}
+            cashGgr={ggr.cashGgr}
+            deposits={ggr.deposits}
+            withdrawals={ggr.withdrawals}
+          />
+        </p>
+        {isProfit ? (
+          <TrendingUp className="size-4 shrink-0 text-emerald-400" />
+        ) : (
+          <TrendingDown className="size-4 shrink-0 text-rose-400" />
+        )}
+      </div>
+      <div className="truncate text-lg font-bold tabular-nums sm:text-xl">
+        <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>
+          {isProfit ? "+" : "−"}
+          <AnimatedNumber value={Math.abs(ggr.value)} format="currency" />
+        </span>
+      </div>
+      <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+        deposit-funded gaming margin — only wagers traceable to today&apos;s
+        own deposits. Industry GGR shown in the info popover.
+      </p>
+    </div>
   );
 }
 

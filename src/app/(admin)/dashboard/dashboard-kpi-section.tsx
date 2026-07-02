@@ -3,8 +3,6 @@
 import { useCallback, useState, useTransition } from "react";
 import {
   Coins,
-  TrendingUp,
-  TrendingDown,
   Loader2,
   type LucideIcon,
 } from "lucide-react";
@@ -12,7 +10,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { AnimatedNumber, type AnimatedNumberFormat } from "@/components/animated-number";
 import { formatNumber } from "@/lib/utils/format";
-import { GgrBreakdownPopover } from "./revenue-stat-card";
 import {
   DASHBOARD_KPI_WINDOWS,
   DASHBOARD_KPI_WINDOW_LABELS,
@@ -161,19 +158,6 @@ function KpiPanel({
   );
 }
 
-/** Hero currency value with a House-POV sign + emerald/rose color. */
-function SignedHero({ value }: { value: number }) {
-  const isProfit = value >= 0;
-  return (
-    <div className="text-stat-value truncate">
-      <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>
-        {isProfit ? "+" : "−"}
-        <AnimatedNumber value={Math.abs(value)} format="currency" />
-      </span>
-    </div>
-  );
-}
-
 /**
  * One of two side-by-side headline figures inside the merged Wager box
  * (Total + Organic). A small uppercase label sits above a currency value
@@ -275,14 +259,16 @@ function StaticWindowLabel({ label }: { label: string }) {
 /**
  * Client KPI section for /dashboard.
  *
- * Renders the period-bound KPI boxes (GGR, Wager [Total + Organic in one
- * merged box], Deposits/Withdrawals [merged into one single tile]) with a
- * per-box today/24h toggle, plus the anchored Crypto Fee counter. This is now
- * a live-ops board only — the window-independent snapshot boxes (FTDs,
- * Depositors, Avg RTP, Avg P&L 7d, Total P&L lifetime) MOVED to the owner-only
- * lifetime section on `/analytics` (Overview tab), where Total P&L + Avg P&L
- * are folded into a single box. (Total Users moved to the top-bar pill; Avg
- * Deposit + Deposits/Hour also live in that Overview-tab section.)
+ * Renders the period-bound KPI boxes (Wager [Total + Organic in one merged
+ * box], Deposits/Withdrawals [merged into one single tile]) with a per-box
+ * today/24h toggle, plus the anchored Crypto Fee counter. GGR MOVED into the
+ * "P&L Today" tile above (owner request, 2026-07-02) — this strip no longer
+ * renders a GGR box. This is now a live-ops board only — the
+ * window-independent snapshot boxes (FTDs, Depositors, Avg RTP, Avg P&L 7d,
+ * Total P&L lifetime) MOVED to the owner-only lifetime section on
+ * `/analytics` (Overview tab), where Total P&L + Avg P&L are folded into a
+ * single box. (Total Users moved to the top-bar pill; Avg Deposit +
+ * Deposits/Hour also live in that Overview-tab section.)
  *
  * The "today" payload is rendered eagerly (the active default window). The
  * rolling 24h payload is fetched LAZILY (one server action) the first time
@@ -291,7 +277,7 @@ function StaticWindowLabel({ label }: { label: string }) {
  * state so subsequent toggles are instant, and EVERY period-bound box that
  * is on "24h" reads from the one shared payload (no per-box re-fetch).
  *
- * Each box keeps its OWN window mode, so the admin can compare e.g. GGR
+ * Each box keeps its OWN window mode, so the admin can compare e.g. Wager
  * today against Deposits 24h side by side.
  */
 /**
@@ -362,69 +348,20 @@ export function DashboardKpiSection({
 
   return (
     <div className="space-y-6">
-      {/* Period-bound boxes — each with a today/24h toggle. FOUR boxes now:
-          GGR, Deposits/Withdrawals (merged into one single tile), Wager
-          (Total + Organic merged), and the Crypto Fee counter (anchored
-          monotonic estimate — NOT period-bound, carries a static "since"
-          label instead of a toggle). Mobile-first: one column at <sm so the
-          hero value + toggle never crush; 2-up at sm; 4 across at xl where
-          there's width for all four without crushing. */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-        {/* GGR — DASHBOARD-LOCAL "deposit-funded" definition (owner request,
-            2026-07-02): only wagering traceable to THIS window's own
-            deposits counts (FIFO per user, see
-            `dashboard-deposit-funded-ggr.ts`). Every other GGR surface
-            (`/ggr`, insights, edge-plan, ClickHouse twin) is UNCHANGED and
-            still uses the industry definition (`wager − payouts`), which is
-            preserved as a reference figure in the Info popover. Cyan
-            identity; Info popover surfaces the headline + the industry
-            reference breakdown + lazy top-contributors + a secondary
-            "Cash P&L" (deposits − withdrawals) reference, scoped to the
-            box's active window. House-POV: positive → house gain →
-            emerald; negative → house loss → rose (handled by SignedHero). */}
-        {(() => {
-          const p = payloadFor("ggr");
-          const mode = modeFor("ggr");
-          const isProfit = p.ggr >= 0;
-          return (
-            <KpiPanel
-              title="GGR"
-              tint="cyan"
-              titleAdornment={
-                <GgrBreakdownPopover
-                  breakdown={p.ggrBreakdown}
-                  periodLabel={p.windowLabel}
-                  contributorScope={{ kind: "kpi", value: mode }}
-                  headlineGgr={p.ggr}
-                  cashGgr={p.cashGgr}
-                  deposits={p.deposits}
-                  withdrawals={p.withdrawals}
-                />
-              }
-              headerRight={
-                <WindowToggle
-                  active={mode}
-                  loading={loading}
-                  onPick={(w) => pick("ggr", w)}
-                />
-              }
-              icon={isProfit ? TrendingUp : TrendingDown}
-            >
-              <SignedHero value={p.ggr} />
-              {/* Subtitle/tooltip — dashboard-local "deposit-funded" GGR
-                  (owner request, 2026-07-02): only wagering traceable to
-                  THIS window's own deposits counts (FIFO per user). The
-                  industry definition (wager − payouts) is preserved as a
-                  reference figure in the Info popover. */}
-              <p className="text-tiny text-muted-foreground leading-snug">
-                deposit-funded gaming margin — only wagers traceable to this
-                window&apos;s own deposits. Industry GGR shown in the info
-                popover.
-              </p>
-            </KpiPanel>
-          );
-        })()}
-
+      {/* Period-bound boxes — each with a today/24h toggle. THREE boxes now:
+          Wager (Total + Organic merged), Deposits/Withdrawals (merged into
+          one single tile), and the Crypto Fee counter (anchored monotonic
+          estimate — NOT period-bound, carries a static "since" label
+          instead of a toggle). GGR MOVED into the "P&L Today" tile above
+          (owner request, 2026-07-02: the P&L Today tile had empty space
+          once its siblings grew their full data sets back — GGR now sits
+          at the bottom of that tile via the same `GgrBreakdownPopover`, P&L
+          stays at the top). With only three boxes left, this strip drops
+          the `xl:grid-cols-4` step entirely so each box gets MORE width at
+          wide viewports instead of making room for a fourth column.
+          Mobile-first: one column at <sm so the hero value + toggle never
+          crush; 2-up at sm; 3 across at lg. */}
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
         {/* Wager — MERGED box. Shows total customer wager (creator-on-stream
             sessions excluded) AND organic wager (no creator-code users) as two
             headline figures, with the Packs/Battles/Upgrader split (of the
