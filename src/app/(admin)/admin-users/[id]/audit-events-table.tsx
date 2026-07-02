@@ -54,10 +54,10 @@ const EVENT_TYPE_COLORS: Record<string, string> = {
   withdrawal_processed: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
   withdrawal_shipped: "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
   withdrawal_completed: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
-  withdrawal_cancelled: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
+  withdrawal_cancelled: "bg-muted text-muted-foreground border-border",
   withdrawal_failed: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
   pack_activated: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
-  pack_deactivated: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
+  pack_deactivated: "bg-muted text-muted-foreground border-border",
   pack_update_approved: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
   pack_update_rejected: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
   card_update_approved: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
@@ -73,7 +73,7 @@ const EVENT_TYPE_COLORS: Record<string, string> = {
   country_restriction_updated: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
   chat_message_deleted: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
   chat_message_pinned: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-  chat_message_unpinned: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
+  chat_message_unpinned: "bg-muted text-muted-foreground border-border",
   chat_muted: "bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/30",
   chat_unmuted: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
   admin_note_created: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
@@ -439,7 +439,7 @@ export function AuditEventsTable({
                 <div className="flex items-start justify-between gap-2">
                   <Badge
                     variant="outline"
-                    className={`text-[10px] h-5 px-1.5 ${EVENT_TYPE_COLORS[e.eventType] ?? "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"}`}
+                    className={`text-[10px] h-5 px-1.5 ${EVENT_TYPE_COLORS[e.eventType] ?? "bg-muted text-muted-foreground border-border"}`}
                   >
                     {EVENT_TYPE_LABELS[e.eventType] ?? e.eventType}
                   </Badge>
@@ -509,7 +509,7 @@ export function AuditEventsTable({
                 <TableCell>
                   <Badge
                     variant="outline"
-                    className={`text-xs ${EVENT_TYPE_COLORS[e.eventType] ?? "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"}`}
+                    className={`text-xs ${EVENT_TYPE_COLORS[e.eventType] ?? "bg-muted text-muted-foreground border-border"}`}
                   >
                     {EVENT_TYPE_LABELS[e.eventType] ?? e.eventType}
                   </Badge>

@@ -117,7 +117,7 @@ export function PermissionPicker({
       <div className="space-y-6">
         {sections.map((section) => (
           <div key={section.title} className="space-y-3">
-            <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+            <h3 className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
               {section.title}
             </h3>
             <div className="space-y-2.5">
@@ -145,7 +145,7 @@ export function PermissionPicker({
     <div className="space-y-6">
       {sections.map((section) => (
         <div key={section.title} className="space-y-3">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+          <h3 className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
             {section.title}
           </h3>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">

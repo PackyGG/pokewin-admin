@@ -528,7 +528,7 @@ function EditableRoleEditor({ data }: { data: RoleEditorData }) {
       {/* ── Pages + Capabilities ─────────────────────────────────────── */}
       <div>
         <div className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
             Access
           </h2>
           <Badge variant="outline" className="text-xs">

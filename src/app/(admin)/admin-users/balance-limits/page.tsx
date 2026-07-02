@@ -1,13 +1,11 @@
-import Link from "next/link";
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
-import { ArrowLeft, Wallet } from "lucide-react";
+import { Wallet } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { adminDb } from "@/lib/admin-db";
-import { PageHero, KpiTile } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { TableSkeleton } from "@/components/loading-skeletons";
-import { Button } from "@/components/ui/button";
 import { BalanceLimitsOverview } from "./balance-limits-overview";
 import type { limit_period_type } from "@/generated/admin-prisma/client";
 
@@ -128,33 +126,13 @@ export default async function BalanceLimitsOverviewPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-9"
-              nativeButton={false}
-              render={
-                <Link href="/admin-users" aria-label="Back to admin users">
-                  <ArrowLeft className="size-4" />
-                </Link>
-              }
-            />
-            <div className="flex size-10 items-center justify-center rounded-xl bg-amber-500/10">
-              <Wallet className="size-5 text-amber-500" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">
-                Balance Limits
-              </h1>
-              <p className="text-sm text-muted-foreground">
-                Per-admin caps on how much they can adjust user balances
-                within a period. Add, edit, or remove any cap here.
-              </p>
-            </div>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Wallet}
+          title="Balance Limits"
+          subtitle="Per-admin caps on how much they can adjust user balances within a period. Add, edit, or remove any cap here."
+          accent="amber"
+          backHref="/admin-users"
+        />
       </PageHero>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">

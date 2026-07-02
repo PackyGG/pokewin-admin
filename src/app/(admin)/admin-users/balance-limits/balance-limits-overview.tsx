@@ -246,7 +246,7 @@ function LimitRow({
   const [pending, startTransition] = useTransition();
   const roleColor =
     ROLE_COLORS[row.adminRole as keyof typeof ROLE_COLORS] ??
-    "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30";
+    "bg-muted text-muted-foreground border-border";
 
   function handleSave() {
     const amount = parseFloat(value);
@@ -392,7 +392,7 @@ function LimitMobileCard({
   const [pending, startTransition] = useTransition();
   const roleColor =
     ROLE_COLORS[row.adminRole as keyof typeof ROLE_COLORS] ??
-    "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30";
+    "bg-muted text-muted-foreground border-border";
 
   function handleSave() {
     const amount = parseFloat(value);
