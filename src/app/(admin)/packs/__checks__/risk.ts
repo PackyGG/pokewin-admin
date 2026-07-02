@@ -2192,6 +2192,107 @@ check("anti-inflation (c): accepted snap is clean with ≤1 dust-buffer; tail ne
   assert(r.edge >= 0.1099 - 1e-9, `edge ≥ target (${r.edge})`);
 });
 
+// ── SECTION 18: price-search band reachability (RC3 fix, 2026-07-02) ──
+// Pre-fix, searchBestPriceForCleanSnap walked ±1¢ outward and STOPPED at the
+// candidate cap, so a 50-candidate budget only ever explored ±25 CENTS of the
+// requested band — clean-snap prices provably sat inside the allowance but
+// were never evaluated (audit: 174/183 prod sweeps clipped, 27/40 dirty packs
+// had an unexplored in-band clean price). The phased sweep (fine → coarse →
+// refine → offset passes) must reach the WHOLE band, and the early-stop must
+// keep the common near-snap case cheap.
+//
+// Fixture = the REAL prod "Refresh" pool (fleet dump 2026-07-02, $1.77):
+// under the anti-inflation anchor it admits EXACTLY ONE clean-snap price in
+// the whole ±60% band (+100¢ from base) — unreachable pre-fix.
+const REFRESH_POOL = [
+  { value: 67.73, weight: 1500 },
+  { value: 41.15, weight: 2500 },
+  { value: 36.02, weight: 3500 },
+  { value: 20.41, weight: 8000 },
+  { value: 13.4, weight: 15500 },
+  { value: 9.79, weight: 30000 },
+  { value: 4.09, weight: 50000 },
+  { value: 2.28, weight: 89000 },
+  { value: 0.96, weight: 100000 },
+  { value: 0.65, weight: 100000 },
+  { value: 0.06, weight: 100000 },
+  { value: 0.02, weight: 500000 },
+];
+
+check("price-search reachability: anchored far-only snap needle is found under band 0.6", () => {
+  const cards = REFRESH_POOL.map((c) => ({ value: c.value }));
+  const currentWeights = REFRESH_POOL.map((c) => c.weight);
+  const basePrice = 1.77;
+  // Ground truth at 1¢ so the fixture can't silently rot: collect every
+  // snapped price across the band and assert the far-only shape still holds.
+  const bandCents = Math.floor(basePrice * 0.6 * 100);
+  let nearSnaps = 0;
+  const farSnaps: number[] = [];
+  for (let d = -bandCents; d <= bandCents; d++) {
+    const price = (177 + d) / 100;
+    if (price <= 0) continue;
+    const r = shapeWeights({
+      cards,
+      price,
+      targetEdge: 0.1099,
+      targetWinRate: 0.2,
+      currentWeights,
+    });
+    if ("weights" in r && r.snapped === true) {
+      if (Math.abs(d) <= 25) nearSnaps += 1;
+      else farSnaps.push(price);
+    }
+  }
+  assert(
+    nearSnaps === 0 && farSnaps.length >= 1,
+    `fixture precondition drifted: near=${nearSnaps} far=${farSnaps.length} — pick a new far-only pool`,
+  );
+  const search = searchBestPriceForCleanSnap({
+    cards,
+    basePrice,
+    targetEdge: 0.1099,
+    targetWinRate: 0.2,
+    maxPriceChangePct: 0.6,
+    currentWeights,
+  });
+  assert("weights" in search.bestResult, "search must succeed");
+  assert(
+    "weights" in search.bestResult && search.bestResult.snapped === true,
+    `search must find the in-band clean snap (got bestPrice=$${search.bestPrice.toFixed(2)}, snapped=false)`,
+  );
+  assert(
+    Math.abs(Math.round(search.bestPrice * 100) - 177) > 25,
+    "the found snap must lie beyond the pre-fix ±25c window",
+  );
+  assert(search.searched <= 120, `budget respected (searched=${search.searched})`);
+});
+
+check("price-search early-stop: near clean snap settles cheaply without sweeping the band", () => {
+  // Same pool UNANCHORED admits snaps at ±1¢ of base — the sweep must settle
+  // on a near hit quickly instead of burning the whole budget.
+  const cards = REFRESH_POOL.map((c) => ({ value: c.value }));
+  const search = searchBestPriceForCleanSnap({
+    cards,
+    basePrice: 1.77,
+    targetEdge: 0.1099,
+    targetWinRate: 0.2,
+    maxPriceChangePct: 0.6,
+  });
+  assert("weights" in search.bestResult, "search must succeed");
+  assert(
+    "weights" in search.bestResult && search.bestResult.snapped === true,
+    "near snap must be found",
+  );
+  assert(
+    Math.abs(Math.round(search.bestPrice * 100) - 177) <= 5,
+    `near snap should win on centsDist (got $${search.bestPrice.toFixed(2)})`,
+  );
+  assert(
+    search.searched <= 15,
+    `early-stop should keep the near case cheap (searched=${search.searched})`,
+  );
+});
+
 // ── Summary ─────────────────────────────────────────────────────────
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} risk check(s) failed:`);

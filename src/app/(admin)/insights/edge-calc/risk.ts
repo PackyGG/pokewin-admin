@@ -2539,55 +2539,39 @@ export function searchBestPriceForCleanSnap(input: {
     };
   }
 
-  // ── Build the candidate list ────────────────────────────────────────
-  // basePrice first, then ±1¢, ±2¢, ... up to ±(basePrice · maxPriceChangePct).
-  // Each candidate is cent-rounded. Deduplicate via a Set keyed on cents.
+  // ── Evaluation budget ───────────────────────────────────────────────
+  // `MAX_CANDIDATES` is the TOTAL evaluation budget (each candidate runs a
+  // full `shapeWeights`, so cost is bounded by this number, not by the band):
+  //   • Default mode (legacy clean-snap): 50.
+  //   • TAGGED MODE: 320 — the strict 0.01pp accuracy gate needs headroom.
+  //   • Upward-boosted (chip-strip edge nudge): 800.
   //
-  // Cap-per-mode:
-  //   • Default mode (legacy clean-snap): 50 candidates — bounded cost; the
-  //     densest coverage near the base price is what matters for an "ugly
-  //     odds → clean odds" nudge.
-  //   • TAGGED MODE: the Owner spec is explicit ±25% of basePrice, so the
-  //     cap is raised to cover the full requested band even for expensive
-  //     packs (e.g. $5 base → 125¢ deviation → ~250 candidates). The strict
-  //     win-rate accuracy gate is the whole point of tagged mode; clipping
-  //     the band would silently fail the accuracy requirement on costly
-  //     packs.
-  // When an upward price extension is active (operator nudging edge UP via the
-  // chip-strip), we widen the candidate cap so the upward search has room to
-  // climb past +25% and still leave budget for the snap+win-rate trade-off.
+  // HOW THE BUDGET IS SPENT — three phases, all inside the requested band
+  // (fixes the owner-reported band truncation: the old builder walked ±1¢
+  // outward and STOPPED at the cap, so a 50-candidate budget only ever
+  // explored ±25 CENTS of the requested band — on a $10+ pack clean-snap
+  // prices provably sat inside the allowance but were never evaluated):
+  //   1. FINE (~50%): 1¢ outward walk around base — densest where the
+  //      "tiny nudge for clean odds" snaps live.
+  //   2. COARSE (~30%): even-stride grid across the WHOLE remaining band,
+  //      band endpoints always included — every part of the requested
+  //      allowance is reachable regardless of pack price.
+  //   3. REFINE: 1¢ sweep around the best hit beyond the fine zone,
+  //      polishing a coarse hit to its exact best cent.
+  //   4. OFFSET passes: any leftover budget re-walks the grid at halved
+  //      offsets, densifying coverage until the budget is spent (cheap packs
+  //      end up with full 1¢ coverage; expensive packs keep a bounded grid).
   const upwardBoosted = upwardPriceExtensionPct > 0;
-  const MAX_CANDIDATES = upwardBoosted ? 800 : tagged ? 320 : 50;
+  const MAX_CANDIDATES = upwardBoosted ? 800 : tagged ? 320 : 120;
   const centsAtBase = Math.round(basePrice * 100);
   const downCents = Math.max(0, Math.floor(basePrice * maxPriceChangePct * 100));
   // Upward span = the LARGER of the symmetric ±maxPriceChangePct band and the
   // operator's explicit upwardPriceExtensionPct (a chip-strip nudge can push
-  // far past +25% to land both clean odds AND the raised edge target).
+  // far past the band to land both clean odds AND the raised edge target).
   const upCents = Math.max(
     downCents,
     Math.floor(basePrice * upwardPriceExtensionPct * 100),
   );
-  const seenCents = new Set<number>();
-  const candidates: number[] = [];
-  const pushCents = (cents: number): void => {
-    if (cents <= 0) return;
-    if (seenCents.has(cents)) return;
-    if (candidates.length >= MAX_CANDIDATES) return;
-    seenCents.add(cents);
-    candidates.push(Math.round(cents) / 100);
-  };
-  pushCents(centsAtBase);
-  const maxDelta = Math.max(downCents, upCents);
-  for (let d = 1; d <= maxDelta; d++) {
-    if (d <= upCents) {
-      pushCents(centsAtBase + d);
-      if (candidates.length >= MAX_CANDIDATES) break;
-    }
-    if (d <= downCents) {
-      pushCents(centsAtBase - d);
-      if (candidates.length >= MAX_CANDIDATES) break;
-    }
-  }
 
   // ── Evaluate the base price first (anchor for the "prefer base" rule) ──
   const baseResult = runAt(basePrice);
@@ -2675,6 +2659,25 @@ export function searchBestPriceForCleanSnap(input: {
     };
   };
 
+  // Lexicographic comparator: winRateTier < edgeBand < snapPriority <
+  // centsDist < edgeDrift. In default mode winRateTier + edgeBand are always
+  // 0 → effectively starts at snapPriority.
+  const lexBetter = (a: Scored, b: Scored): boolean =>
+    a.winRateTier < b.winRateTier ||
+    (a.winRateTier === b.winRateTier && a.edgeBand < b.edgeBand) ||
+    (a.winRateTier === b.winRateTier &&
+      a.edgeBand === b.edgeBand &&
+      a.snapPriority < b.snapPriority) ||
+    (a.winRateTier === b.winRateTier &&
+      a.edgeBand === b.edgeBand &&
+      a.snapPriority === b.snapPriority &&
+      a.centsDist < b.centsDist) ||
+    (a.winRateTier === b.winRateTier &&
+      a.edgeBand === b.edgeBand &&
+      a.snapPriority === b.snapPriority &&
+      a.centsDist === b.centsDist &&
+      a.edgeDrift < b.edgeDrift);
+
   let best: Scored = scoreOf(basePrice, baseResult);
 
   // ── Base-prefer early return ─────────────────────────────────────────
@@ -2700,35 +2703,95 @@ export function searchBestPriceForCleanSnap(input: {
     };
   }
 
-  // Evaluate the remaining candidates (skip the base, already scored). The
-  // candidate list is built deterministically (basePrice, then ±1¢, ±2¢, ...)
-  // so iteration order is stable across runs.
-  for (let i = 0; i < candidates.length; i++) {
-    const price = candidates[i]!;
-    if (Math.abs(Math.round(price * 100) - centsAtBase) === 0) continue; // already done
-    const result = runAt(price);
+  // ── Phased evaluation (fine → coarse grid → refine) ─────────────────
+  // Deterministic: fixed phase order, fixed walk order inside each phase.
+  // All phases draw from the ONE `MAX_CANDIDATES` budget (base used 1).
+  const seenCents = new Set<number>([centsAtBase]);
+  const loCents = centsAtBase - downCents;
+  const hiCents = centsAtBase + upCents;
+  const evaluateCents = (cents: number): boolean => {
+    if (cents <= 0 || cents < loCents || cents > hiCents) return false;
+    if (seenCents.has(cents) || searched >= MAX_CANDIDATES) return false;
+    seenCents.add(cents);
+    const price = cents / 100;
+    const scored = scoreOf(price, runAt(price));
     searched += 1;
-    const scored = scoreOf(price, result);
-    // Lexicographic comparator: winRateTier < edgeBand < snapPriority < centsDist < edgeDrift.
-    // In default mode winRateTier + edgeBand are always 0 → effectively starts at snapPriority.
-    if (
-      scored.winRateTier < best.winRateTier ||
-      (scored.winRateTier === best.winRateTier &&
-        scored.edgeBand < best.edgeBand) ||
-      (scored.winRateTier === best.winRateTier &&
-        scored.edgeBand === best.edgeBand &&
-        scored.snapPriority < best.snapPriority) ||
-      (scored.winRateTier === best.winRateTier &&
-        scored.edgeBand === best.edgeBand &&
-        scored.snapPriority === best.snapPriority &&
-        scored.centsDist < best.centsDist) ||
-      (scored.winRateTier === best.winRateTier &&
-        scored.edgeBand === best.edgeBand &&
-        scored.snapPriority === best.snapPriority &&
-        scored.centsDist === best.centsDist &&
-        scored.edgeDrift < best.edgeDrift)
+    if (lexBetter(scored, best)) best = scored;
+    return true;
+  };
+
+  // Once a top-tier hit (clean snap, matching skew, within-tol win-rate for
+  // tagged) exists at distance k and every cent ≤ k has been evaluated, no
+  // farther candidate can beat it — centsDist is the deciding tier from there.
+  // Exception: preferHigherEdge keeps hunting (edgeBand outranks centsDist).
+  const topTierAt = (d: number): boolean =>
+    !preferHigherEdge &&
+    best.winRateTier === 0 &&
+    best.snapPriority === 0 &&
+    best.centsDist <= d;
+
+  // Phase 1 — FINE: 1¢ outward walk (densest near base).
+  const fineBudget = Math.max(10, Math.floor((MAX_CANDIDATES - 1) * 0.5));
+  const maxDelta = Math.max(downCents, upCents);
+  let fineUsed = 0;
+  let fineRadius = 0;
+  for (let d = 1; d <= maxDelta && fineUsed < fineBudget; d++) {
+    if (evaluateCents(centsAtBase + d)) fineUsed += 1;
+    if (fineUsed < fineBudget && evaluateCents(centsAtBase - d)) fineUsed += 1;
+    fineRadius = d;
+    if (topTierAt(d)) break;
+  }
+  const settledNear = topTierAt(fineRadius);
+
+  // Phase 2 — COARSE: even-stride grid across the rest of the band; the band
+  // endpoints are evaluated first so the edges of the allowance are always
+  // reachable no matter the pack price.
+  const remainingSpan =
+    Math.max(0, upCents - fineRadius) + Math.max(0, downCents - fineRadius);
+  let stride = 0;
+  if (!settledNear && remainingSpan > 0 && searched < MAX_CANDIDATES) {
+    evaluateCents(hiCents);
+    evaluateCents(loCents);
+    const coarseBudget = Math.max(2, Math.floor((MAX_CANDIDATES - 1) * 0.3));
+    stride = Math.max(1, Math.ceil(remainingSpan / coarseBudget));
+    for (
+      let g = fineRadius + stride;
+      g <= maxDelta && searched < MAX_CANDIDATES;
+      g += stride
     ) {
-      best = scored;
+      evaluateCents(centsAtBase + g);
+      evaluateCents(centsAtBase - g);
+    }
+  }
+
+  // Phase 3 — REFINE: 1¢ sweep around the best hit beyond the fine zone (a
+  // coarse grid point rarely sits on the exact best cent).
+  const bestCents = Math.round(best.price * 100);
+  if (stride > 1 && Math.abs(bestCents - centsAtBase) > fineRadius) {
+    for (let r = 1; r < stride && searched < MAX_CANDIDATES; r++) {
+      evaluateCents(bestCents + r);
+      evaluateCents(bestCents - r);
+    }
+  }
+
+  // Phase 4 — OFFSET passes: spend any remaining budget densifying the grid,
+  // one residue class per pass (offset 1, 2, … stride−1). Snap-capable cents
+  // can be isolated needles (the anchored path may admit exactly ONE clean
+  // price in the whole band), so leftover budget shrinks the grid gap until
+  // either the budget or the offsets run out — cheap packs end up with full
+  // 1¢ coverage of the entire band.
+  for (
+    let offset = 1;
+    offset < stride && searched < MAX_CANDIDATES && !settledNear;
+    offset++
+  ) {
+    for (
+      let g = fineRadius + offset;
+      g <= maxDelta && searched < MAX_CANDIDATES;
+      g += stride
+    ) {
+      evaluateCents(centsAtBase + g);
+      evaluateCents(centsAtBase - g);
     }
   }
 
