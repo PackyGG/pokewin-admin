@@ -422,7 +422,7 @@ export function PlanPanel({
     if (!plan) return null;
     if (plan.limit !== null) {
       const hasGuidance =
-        plan.guidance !== null && plan.guidance.suggestions.length > 0;
+        plan.guidance != null && plan.guidance.suggestions.length > 0;
       return (
         <Banner tone="rose" icon={TriangleAlert}>
           <p className="font-medium">
@@ -467,7 +467,7 @@ export function PlanPanel({
       return (
         <Banner tone="rose" icon={TriangleAlert}>
           <p>{tagSaturatedBanner(tag)}</p>
-          {plan.guidance !== null && plan.guidance.suggestions.length > 0 && (
+          {plan.guidance != null && plan.guidance.suggestions.length > 0 && (
             <GuidanceSuggestions
               guidance={plan.guidance}
               onAddCardRange={onAddCardRange}
@@ -487,7 +487,7 @@ export function PlanPanel({
       return (
         <Banner tone="amber" icon={TriangleAlert}>
           <p>{dirtyOddsBanner(plan.offLadderCards.length, plan.planned.length)}</p>
-          {plan.guidance !== null && plan.guidance.suggestions.length > 0 && (
+          {plan.guidance != null && plan.guidance.suggestions.length > 0 && (
             <GuidanceSuggestions
               guidance={plan.guidance}
               onAddCardRange={onAddCardRange}

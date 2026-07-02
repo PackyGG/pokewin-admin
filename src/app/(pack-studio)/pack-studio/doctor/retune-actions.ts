@@ -1803,9 +1803,12 @@ export async function planPackTune(
   // every write site revalidates `packRetunePlanTag(id)`, so approving one
   // pack re-plans ONE pack. (The wrapper is created per call so the tag can
   // carry the dynamic packId; `unstable_cache` still dedupes by keyParts.)
+  // v2: the plan shape gained `guidance` (+ tagged targets/seeds changed) —
+  // key bumped so persisted v1 entries (the data cache survives deploys)
+  // can never surface a shape-mismatched plan.
   return unstable_cache(
     () => planPackTuneLiveUncached(packId),
-    ["pack-studio.retune.plan-pack.v1", packId],
+    ["pack-studio.retune.plan-pack.v2", packId],
     { revalidate: 60, tags: [packRetunePlanTag(packId)] },
   )();
 }
