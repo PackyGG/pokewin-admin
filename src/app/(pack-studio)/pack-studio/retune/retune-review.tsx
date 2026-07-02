@@ -112,6 +112,13 @@ export type AdjustedState = AdjustedTargets & {
   feasible: boolean;
   after: PackRisk | null;
   weightDiff: PlanAllWeightDiff[] | null;
+  /**
+   * The price the adjusted search landed on (`search.bestPrice`) — the FINAL
+   * price an Approve of this adjustment will write. Threaded into the write
+   * as `approvedPriceAfter` (RC1 approved-artifact contract) and shown by the
+   * confirm gate so gate == write. Null when the local re-shape errored.
+   */
+  priceAfter: number | null;
   /** Soft targets the local solver relaxed (empty when nothing relaxed). */
   relaxations: ShapeWeightsRelaxation[];
   error?: string;
@@ -238,6 +245,21 @@ function buildTargets(
   const { autoTargets } = item.proposal;
   const a = item.adjusted;
   const edgeRaised = edgeOverride !== null && Number.isFinite(edgeOverride);
+  // RC1 approved-artifact contract: pin the previewed FINAL price so the
+  // server refuses (no write) if its re-solve lands anywhere else. With an
+  // active Adjust the artifact is the adjust panel's own re-solve (it ran the
+  // search with the adjusted levers — the server will too); otherwise it's
+  // the server proposal's `priceAfter`. A STALE proposal (override changed,
+  // nav-lazy recompute not landed yet) pins its pre-override price — the
+  // server's mismatch refusal is exactly the fail-closed behavior we want
+  // there. NOTE: an Adjust artifact is solved in the BROWSER's JS engine; the
+  // search is integer/IEEE-arithmetic-deterministic, so a cross-engine
+  // divergence would itself be a nondeterminism bug the refusal must surface.
+  const approvedPriceAfter = a
+    ? a.priceAfter
+    : item.proposal.feasible
+      ? item.proposal.priceAfter
+      : null;
   return {
     targetEdge: effectiveTargetEdge(item, edgeOverride),
     targetWinRate: a ? a.targetWinRate : autoTargets.targetWinRate,
@@ -247,6 +269,15 @@ function buildTargets(
     upwardPriceExtensionPct: edgeRaised ? 2.0 : 0,
     ...(priceOverride !== null && Number.isFinite(priceOverride) && priceOverride > 0
       ? { priceOverride }
+      : {}),
+    ...(approvedPriceAfter !== null && Number.isFinite(approvedPriceAfter)
+      ? { approvedPriceAfter }
+      : {}),
+    // RC1 pool-freshness token — the fingerprint of the pool the proposal was
+    // solved from; the write recomputes it over the fresh pool and refuses on
+    // drift. Guarded truthy for safety against a pre-fingerprint blob.
+    ...(item.proposal.poolFingerprint
+      ? { approvedPoolFingerprint: item.proposal.poolFingerprint }
       : {}),
   };
 }
@@ -276,14 +307,36 @@ function buildStagedTargets(
   maxWinCap: number | undefined;
   nearMissMin: number;
   allowPriceSearch: boolean;
+  approvedPriceAfter?: number;
+  approvedPoolFingerprint?: string;
 } {
   const t = buildTargets(item, edgeOverride, priceOverride);
+  const allowPriceSearch = payload.allowPriceSearch === true;
+  // RC1 approved-artifact contract (staged flavor): the staged pool identity
+  // travels verbatim, so only price + pool-freshness need pinning.
+  //  • Price — authoritative ONLY when the search lever is OFF (the server
+  //    then writes the staged price exactly: `payload.price`, or the live
+  //    price when unchanged). With the lever ON the server legitimately picks
+  //    the final price and the editor preview carries no expectation to pin
+  //    (it previews at the staged price — see the audit's RC5 note).
+  //  • Fingerprint — always: the staged solve still anchors on the LIVE pool
+  //    (anti-inflation weights + live price), so live-state drift between
+  //    plan and approve must refuse.
+  const approvedPriceAfter = allowPriceSearch
+    ? null
+    : payload.price ?? item.proposal.price;
   return {
     targetEdge: t.targetEdge!,
     targetWinRate: t.targetWinRate!,
     maxWinCap: t.maxWinCap,
     nearMissMin: t.nearMissMin!,
-    allowPriceSearch: payload.allowPriceSearch === true,
+    allowPriceSearch,
+    ...(approvedPriceAfter !== null && Number.isFinite(approvedPriceAfter)
+      ? { approvedPriceAfter }
+      : {}),
+    ...(item.proposal.poolFingerprint
+      ? { approvedPoolFingerprint: item.proposal.poolFingerprint }
+      : {}),
   };
 }
 
@@ -715,6 +768,7 @@ export function RetuneReview({
             feasible: false,
             after: null,
             weightDiff: null,
+            priceAfter: null,
             relaxations: [],
             error: shaped.error,
             limit: shaped.limit,
@@ -740,6 +794,9 @@ export function RetuneReview({
             feasible: true,
             after,
             weightDiff,
+            // The artifact price this adjustment will write on Approve — the
+            // server re-runs the SAME search and must land exactly here.
+            priceAfter: search.bestPrice,
             relaxations: shaped.relaxations,
             error: undefined,
             limit: null,
@@ -1803,6 +1860,10 @@ function buildConfirmSummary(
       after = item.adjusted.after;
       weightDiff = item.adjusted.weightDiff;
       feasible = item.adjusted.feasible;
+      // The adjusted search's own landing price IS the write artifact (it is
+      // pinned as `approvedPriceAfter` on Approve) — show it, not the stale
+      // pre-adjust proposal price.
+      priceAfter = item.adjusted.priceAfter ?? priceAfter;
     } else if (edgeOverride !== null || priceAnchor !== null) {
       const auto = proposal.autoTargets;
       // Tagged strict win-rate gate — same condition the server applies on

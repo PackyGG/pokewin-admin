@@ -79,6 +79,7 @@ import {
   getPackSnapshot,
   type SnapshotCard,
 } from "@/app/(admin)/packs/_lib/pack-history";
+import { computePoolFingerprint } from "@/app/(admin)/packs/_lib/pool-fingerprint";
 
 /**
  * Persists a pack's `shard_cost` via raw SQL. The column is on the dev schema
@@ -1356,6 +1357,27 @@ export type PackRetuneTargets = {
    * edge (the scorer ranks higher achieved edge above cleaner snap).
    */
   priceOverride?: number | null;
+  /**
+   * RC1 approved-artifact contract — the previewed `priceAfter` the operator
+   * approved (`PlanAllProposal.priceAfter`, or the Adjust panel's re-solve).
+   * When set, the write REFUSES (no write) if its own re-solve lands on ANY
+   * other price (tolerance 0): with `approvedPoolFingerprint` verified fresh,
+   * a differing price can only be a preview↔write parameter skew or a
+   * nondeterminism bug — surfaced honestly instead of silently writing a
+   * price/odds the operator never saw (the audit's fleet mirror measured 112/
+   * 183 price and 175/183 weight divergences before the band/anchor share).
+   * Optional — legacy callers (doctor drawer/bulk) are unaffected.
+   */
+  approvedPriceAfter?: number | null;
+  /**
+   * RC1 pool-freshness token — `PlanAllProposal.poolFingerprint`, the
+   * fingerprint of the LIVE pool (price + sorted (cardId, weight) pairs) the
+   * approved proposal was solved from. When set, the write recomputes the
+   * fingerprint over the FRESH pool and REFUSES on mismatch ("pool changed
+   * since the preview — refresh") instead of silently re-solving different
+   * inputs. Optional — legacy callers are unaffected.
+   */
+  approvedPoolFingerprint?: string | null;
 };
 
 /** Target set with the auto-defaults applied (used internally by plan/apply). */
@@ -1755,6 +1777,28 @@ export async function applyPackRetune(
   const pool = await getPackCardValues(packId);
   if (pool.length === 0) throw new Error("Pack has no cards to retune.");
 
+  // ── RC1 pool-freshness gate (fail closed BEFORE solving) ────────────────
+  // The review client stamps its Approve with the fingerprint of the pool the
+  // approved proposal was solved from (`PlanAllProposal.poolFingerprint`).
+  // The proposal blob is cached up to 60s and the operator can sit on a card
+  // far longer — if ANOTHER edit landed in between (price change, card
+  // added/removed, weights rewritten), this write would silently re-solve
+  // DIFFERENT inputs than the operator approved. Refuse instead; the operator
+  // refreshes and re-reviews. Absent for legacy callers (doctor drawer/bulk).
+  const approvedPoolFingerprint =
+    typeof targets.approvedPoolFingerprint === "string" &&
+    targets.approvedPoolFingerprint.length > 0
+      ? targets.approvedPoolFingerprint
+      : null;
+  if (
+    approvedPoolFingerprint !== null &&
+    computePoolFingerprint(price, pool) !== approvedPoolFingerprint
+  ) {
+    throw new Error(
+      "Refused: this pack's pool or price changed since the approved proposal was computed — refresh the proposals and re-review this pack before approving.",
+    );
+  }
+
   const before = computePackRisk({
     cards: pool.map((c) => ({ value: c.value, weight: c.weight })),
     price,
@@ -1850,6 +1894,24 @@ export async function applyPackRetune(
   // ── FAIL-CLOSED asserts (throw → no write) ──────────────────────────
   if ("error" in shaped) {
     throw new Error(`Retune infeasible: ${shaped.error}`);
+  }
+  // RC1 approved-artifact gate: the write must land EXACTLY the price the
+  // operator approved. Preview and write now solve the SAME problem (shared
+  // band/anchor/tagged gate) over a fingerprint-verified pool, so the
+  // re-solved price can only differ on a preview↔write parameter skew or a
+  // nondeterminism bug — surface it honestly (tolerance 0), never write it.
+  const approvedPriceAfter =
+    targets.approvedPriceAfter != null && Number.isFinite(targets.approvedPriceAfter)
+      ? targets.approvedPriceAfter
+      : null;
+  if (approvedPriceAfter !== null && priceAfter !== approvedPriceAfter) {
+    throw new Error(
+      `Refused: this write would set the price to $${priceAfter.toFixed(2)}, but the approved preview showed $${approvedPriceAfter.toFixed(2)}${
+        approvedPoolFingerprint !== null
+          ? " even though the pool is unchanged — this is a preview/write parameter-skew or nondeterminism bug; please report it"
+          : " — the proposal is likely stale"
+      }. Refresh the proposals and re-review before approving.`,
+    );
   }
   const after = shaped.risk;
   if (after.edge < targetEdge - 1e-9) {
@@ -1983,6 +2045,15 @@ export async function applyPackRetune(
           before: price,
           after: priceAfter,
           allowed_extension_pct: upwardExtension,
+        },
+      }),
+      // RC1 trace: which approved-artifact guards this write passed (absent
+      // on legacy calls) — lets an audit review split fingerprint-verified
+      // approves from unguarded ones.
+      ...((approvedPoolFingerprint !== null || approvedPriceAfter !== null) && {
+        approved_artifact: {
+          pool_fingerprint_verified: approvedPoolFingerprint !== null,
+          price_after_verified: approvedPriceAfter !== null,
         },
       }),
       ...(editedLivePackUnderCapability && { edited_live_pack_under_capability: true }),

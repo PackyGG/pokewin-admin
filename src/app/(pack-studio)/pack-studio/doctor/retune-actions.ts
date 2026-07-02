@@ -51,6 +51,7 @@ import {
   type EdgeCurveConfig,
   type ResolvedAutoTargetCfg,
 } from "@/app/(admin)/packs/_lib/risk-config";
+import { computePoolFingerprint } from "@/app/(admin)/packs/_lib/pool-fingerprint";
 import {
   computePortfolioProfile,
   derivePortfolioTargets,
@@ -391,6 +392,16 @@ export type PlanAllProposal = {
    * price of the pack to keep the edge better or chances".
    */
   priceAfter: number;
+  /**
+   * Freshness fingerprint of the LIVE pool this proposal was solved from —
+   * {@link computePoolFingerprint} over the live price + sorted
+   * (cardId, weight) pairs. The review client threads it back on Approve
+   * (`approvedPoolFingerprint` on `applyPackRetune` /
+   * `applyStagedPackEditAndRetune`) so the write can refuse when the pool
+   * changed between plan and approve instead of silently re-solving different
+   * inputs (RC1: write-the-approved-artifact).
+   */
+  poolFingerprint: string;
   /** Pool cards (id/value/current weight), pool order. */
   cards: PlanAllCard[];
   /** Current weights, mirrored out for convenient client re-shaping. */
@@ -602,7 +613,10 @@ const planAllRetunesCached = unstable_cache(
   async (mode: PlanAllMode): Promise<PlanAllRetunesResult> => {
     return planAllRetunesUncached(mode, undefined);
   },
-  ["pack-studio.retune.plan-all.v1"],
+  // v2: proposals carry `poolFingerprint` — the bump makes pre-fingerprint
+  // cached blobs (which persist across deploys) unreachable, so every
+  // proposal the review renders can thread a freshness token to Approve.
+  ["pack-studio.retune.plan-all.v2"],
   {
     revalidate: 60,
     tags: [PACK_STUDIO_RETUNE_CACHE_TAG],
@@ -774,6 +788,9 @@ async function planAllRetunesUncached(
     const autoTargets: PortfolioPackTargets =
       targetsByPack.get(p.id) ?? autoRetuneTargets(p.price, cfg, resolveIntendedHitRate(p.name, p.tags) ?? undefined);
     const currentWeights = cards.map((c) => ({ cardId: c.cardId, weight: c.weight }));
+    // Freshness token for the approve round-trip: fingerprints the exact live
+    // pool (price + card weights) THIS proposal is about to be solved from.
+    const poolFingerprint = computePoolFingerprint(p.price, cards);
 
     const before = beforeByPack.get(p.id)!;
 
@@ -786,6 +803,7 @@ async function planAllRetunesUncached(
         slug: p.slug,
         price: p.price,
         priceAfter: p.price,
+        poolFingerprint,
         cards,
         currentWeights,
         autoTargets,
@@ -852,6 +870,7 @@ async function planAllRetunesUncached(
         slug: p.slug,
         price: p.price,
         priceAfter: p.price,
+        poolFingerprint,
         cards,
         currentWeights,
         autoTargets,
@@ -879,6 +898,7 @@ async function planAllRetunesUncached(
       slug: p.slug,
       price: p.price,
       priceAfter,
+      poolFingerprint,
       cards,
       currentWeights,
       autoTargets,
@@ -964,7 +984,8 @@ const planSingleRetuneCached = unstable_cache(
       priceOverride,
     });
   },
-  ["pack-studio.retune.plan-single.v1"],
+  // v2: proposals carry `poolFingerprint` (see the plan-all key note).
+  ["pack-studio.retune.plan-single.v2"],
   {
     revalidate: 60,
     tags: [PACK_STUDIO_RETUNE_CACHE_TAG],
@@ -1028,6 +1049,8 @@ async function planSingleRetuneUncached(
 
   const autoTargets: PortfolioPackTargets = autoRetuneTargets(p.price, cfg, resolveIntendedHitRate(p.name, p.tags) ?? undefined);
   const currentWeights = cards.map((c) => ({ cardId: c.cardId, weight: c.weight }));
+  // Freshness token for the approve round-trip (same stamp as the sweep arm).
+  const poolFingerprint = computePoolFingerprint(p.price, cards);
   const before = computePackRisk({
     cards: cards.map((c) => ({ value: c.value, weight: c.weight })),
     price: p.price,
@@ -1040,6 +1063,7 @@ async function planSingleRetuneUncached(
       slug: p.slug,
       price: p.price,
       priceAfter: p.price,
+      poolFingerprint,
       cards,
       currentWeights,
       autoTargets,
@@ -1109,6 +1133,7 @@ async function planSingleRetuneUncached(
       slug: p.slug,
       price: p.price,
       priceAfter: p.price,
+      poolFingerprint,
       cards,
       currentWeights,
       autoTargets,
@@ -1136,6 +1161,7 @@ async function planSingleRetuneUncached(
     slug: p.slug,
     price: p.price,
     priceAfter,
+    poolFingerprint,
     cards,
     currentWeights,
     autoTargets,
@@ -1915,6 +1941,26 @@ export async function applyStagedPackEditAndRetune(
      * path applies it cleanly). Defaults to FALSE — current behavior unchanged.
      */
     allowPriceSearch?: boolean;
+    /**
+     * RC1 approved-artifact contract — the FINAL price the operator's preview
+     * showed as "will be written". When set, the write REFUSES (no write) if
+     * the price it is about to persist differs (tolerance 0). The review
+     * client sends it only when `allowPriceSearch` is off (the staged price IS
+     * the artifact); with the search on, the server legitimately picks the
+     * price, so no client-side expectation exists to verify. Optional —
+     * legacy callers are unaffected.
+     */
+    approvedPriceAfter?: number | null;
+    /**
+     * RC1 pool-freshness token — `PlanAllProposal.poolFingerprint`, the
+     * fingerprint of the LIVE pool (price + sorted (cardId, weight) pairs)
+     * the reviewed proposal was solved from. When set, the write recomputes
+     * the fingerprint over the FRESH live pool and REFUSES on mismatch
+     * ("pool changed since the preview") instead of silently anchoring the
+     * staged solve on drifted live state. Optional — legacy callers are
+     * unaffected.
+     */
+    approvedPoolFingerprint?: string | null;
   },
 ): Promise<ApplyStagedRetuneResult> {
   const session = await requireRetuneOwner();
@@ -2005,6 +2051,28 @@ export async function applyStagedPackEditAndRetune(
   // BEFORE risk uses the LIVE pool (fresh) so the audit + return reflect the
   // actual prior state — never the staged identities.
   const livePool = await getPackCardValues(packId);
+
+  // ── RC1 pool-freshness gate (fail closed BEFORE solving) ────────────────
+  // The staged pool identity travels verbatim in `input.cards`, but the solve
+  // still anchors on LIVE state: `stagedCurrentWeights` (anti-inflation
+  // anchor) and `priceBefore` both come from the live pack. If another edit
+  // landed between the reviewed preview and this approve, those anchors are
+  // no longer what the operator saw — refuse and ask for a refresh instead of
+  // silently solving against drifted inputs. Absent for legacy callers.
+  const approvedPoolFingerprint =
+    typeof targets.approvedPoolFingerprint === "string" &&
+    targets.approvedPoolFingerprint.length > 0
+      ? targets.approvedPoolFingerprint
+      : null;
+  if (
+    approvedPoolFingerprint !== null &&
+    computePoolFingerprint(priceBefore, livePool) !== approvedPoolFingerprint
+  ) {
+    throw new Error(
+      "Refused: this pack's live pool or price changed since the reviewed proposal was computed — refresh the proposals and re-review this pack before approving.",
+    );
+  }
+
   const before = computePackRisk({
     cards: livePool.map((c) => ({ value: c.value, weight: c.weight })),
     price: priceBefore,
@@ -2136,6 +2204,24 @@ export async function applyStagedPackEditAndRetune(
   if ("error" in shaped) {
     throw new Error(`Auto-tune infeasible: ${shaped.error}`);
   }
+  // RC1 approved-artifact gate: when the caller pinned the previewed final
+  // price, the write must land EXACTLY it (tolerance 0). With the pool
+  // fingerprint above verified fresh, a differing price means a
+  // preview↔write parameter skew or a nondeterminism bug — surface it
+  // honestly instead of writing a price the operator never saw.
+  const approvedPriceAfter =
+    targets.approvedPriceAfter != null && Number.isFinite(targets.approvedPriceAfter)
+      ? targets.approvedPriceAfter
+      : null;
+  if (approvedPriceAfter !== null && priceAfter !== approvedPriceAfter) {
+    throw new Error(
+      `Refused: this write would set the price to $${priceAfter.toFixed(2)}, but the approved preview showed $${approvedPriceAfter.toFixed(2)}${
+        approvedPoolFingerprint !== null
+          ? " even though the pool is unchanged — this is a preview/write parameter-skew or nondeterminism bug; please report it"
+          : " — the preview is likely stale"
+      }. Refresh the proposals and re-review before approving.`,
+    );
+  }
   const after = shaped.risk;
   if (after.edge < targetEdge - 1e-9) {
     throw new Error(
@@ -2264,6 +2350,15 @@ export async function applyStagedPackEditAndRetune(
         // Tagged-pack accuracy: null = tagged-mode not active; true/false =
         // whether the chosen candidate landed within 0.01pp of the tag.
         price_search_tagged_accuracy_hit: priceSearchMeta.taggedAccuracyHit,
+      }),
+      // RC1 trace: which approved-artifact guards this write passed (absent on
+      // legacy calls) — lets an audit review split fingerprint-verified
+      // approves from unguarded ones.
+      ...((approvedPoolFingerprint !== null || approvedPriceAfter !== null) && {
+        approved_artifact: {
+          pool_fingerprint_verified: approvedPoolFingerprint !== null,
+          price_after_verified: approvedPriceAfter !== null,
+        },
       }),
       before: { edge: before.edge, winRate: before.winRate, maxWin: before.maxWin },
       after: { edge: after.edge, winRate: after.winRate, maxWin: after.maxWin },
