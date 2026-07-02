@@ -263,12 +263,22 @@
   .surface-sheen {
     box-shadow:
       inset 0 0 0 1px color-mix(in oklch, var(--border) 70%, transparent),
-      inset 0 1px 0 0 color-mix(in oklch, white 8%, transparent);
+      inset 0 1px 0 0 color-mix(in oklch, white 10%, transparent);
   }
+  /* NOTE: .surface-raise INCLUDES the sheen's inset shadows. box-shadow is
+     a single property, so when an element carries BOTH classes the later
+     rule (.surface-raise) wins outright — previously that silently killed
+     the sheen on every PageHero/StatPanel that combined the two classes.
+     Folding the inset hairline + top light-catch into the raise keeps both
+     effects alive, and the elevation itself is now a richer 3-layer float
+     so panels clearly lift off the page in both themes. */
   .surface-raise {
     box-shadow:
-      0 1px 2px -1px color-mix(in oklch, black 30%, transparent),
-      0 8px 24px -12px color-mix(in oklch, black 45%, transparent);
+      inset 0 0 0 1px color-mix(in oklch, var(--border) 70%, transparent),
+      inset 0 1px 0 0 color-mix(in oklch, white 10%, transparent),
+      0 1px 2px -1px color-mix(in oklch, black 25%, transparent),
+      0 6px 16px -6px color-mix(in oklch, black 25%, transparent),
+      0 20px 48px -20px color-mix(in oklch, black 50%, transparent);
   }
 }
 
@@ -293,6 +303,21 @@
    afterglow. */
 [data-zebra="true"] tbody [data-slot="table-row"]:nth-child(odd) {
   background-color: color-mix(in oklch, var(--muted) 30%, transparent);
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Ambient depth glow (admin content region)
+   ──────────────────────────────────────────────────────────────
+   Two large, viewport-fixed radial washes of the primary hue give the
+   scroll region gentle atmospheric depth instead of a dead-flat fill.
+   Fixed attachment keeps the glow anchored while content scrolls. Uses
+   the primary token so both themes stay on-brand, at whisper opacity so
+   data surfaces never compete with it. */
+[data-admin-scroll] {
+  background-image:
+    radial-gradient(80rem 44rem at 88% -12%, color-mix(in oklch, var(--primary) 8%, transparent), transparent 62%),
+    radial-gradient(64rem 36rem at -12% 112%, color-mix(in oklch, var(--primary) 5%, transparent), transparent 60%);
+  background-attachment: fixed, fixed;
 }
 
 /* react-datasheet-grid theme overrides */

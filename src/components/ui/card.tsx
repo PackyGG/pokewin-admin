@@ -12,9 +12,12 @@ function Card({
       data-slot="card"
       data-size={size}
       className={cn(
-        // Liquid-Glass: cards are rounded-2xl with a hairline ring — depth
-        // comes from surface layering, not thick borders.
-        "group/card flex flex-col gap-4 overflow-hidden rounded-2xl bg-card py-4 text-sm text-card-foreground ring-1 ring-foreground/10 has-data-[slot=card-footer]:pb-0 has-[>img:first-child]:pt-0 data-[size=sm]:gap-3 data-[size=sm]:py-3 data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-2xl *:[img:last-child]:rounded-b-2xl",
+        // Liquid-Glass v3: cards are rounded-2xl with a hairline ring PLUS a
+        // soft layered elevation (`surface-raise`) so panels visibly float
+        // off the page instead of reading flat. `surface-sheen` adds the crisp
+        // inner top-edge light catch. Depth now comes from layering + a tuned
+        // soft shadow, not thick borders.
+        "group/card surface-sheen surface-raise flex flex-col gap-4 overflow-hidden rounded-2xl bg-card py-4 text-sm text-card-foreground ring-1 ring-foreground/10 has-data-[slot=card-footer]:pb-0 has-[>img:first-child]:pt-0 data-[size=sm]:gap-3 data-[size=sm]:py-3 data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-2xl *:[img:last-child]:rounded-b-2xl",
         className
       )}
       {...props}
