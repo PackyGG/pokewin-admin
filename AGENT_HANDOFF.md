@@ -8,8 +8,12 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `origin/main @ a7cecc3c` · **Updated:** 2026-07-01 · **Active focus:** SHIPPED — full-app perf/crash/UI audit + fix (owner brief: "crashes/loading on the WHOLE webapp"). ~30 parallel worktree units, all gated (tsc+lint+build) + pushed to `main`; **final composed-`main` build verified GREEN** at `a7cecc3c`.
+- **HEAD:** `origin/main @ 5579176c` · **Updated:** 2026-07-02 · **Active focus:** pack-system follow-ups from the 2026-07-02 learning pass — buildPack pack_type fix SHIPPED (`5579176c`); retune band mismatch + stale retune/doctor copy still open (Open/next #7). Prior focus (full-app perf/crash/UI audit, composed-`main` build GREEN at `a7cecc3c`) lives in the SESSION 2026-07-01 block.
 - **Creator-hub + pack-studio passes (owner explicitly named these):** creator-hub was already extensively hardened — closed 2 gaps (`settings/page.tsx` shell-first + guarded `899cfe3a`; docked Alerts panel de-jumped/optimistic). Pack-studio got its FIRST error boundaries (7 new `error.tsx`) + read crash-proofing `a7cecc3c`; its sanctioned MAIN-writers (push-to-prod/retune/snapshot/apply-edit) were left strictly untouched + never run.
+
+### SESSION 2026-07-02 — pack-system learning-pass fix #1 (buildPack pack_type)
+
+- **SHIPPED `5579176c`:** Pack Studio Builder `buildPack` (`src/app/(admin)/packs/actions.ts`) now creates `pack_type:"official"` (was `"custom"`). A `"custom"` pack was orphaned from the ENTIRE official-only cash-pack tooling scope (`REPRICE_INCLUDED_PACK_TYPES` / `REPRICE_OR_RETUNE_PACK_TYPES` / `PACK_STUDIO_CASH_PACK_TYPES`) — invisible to reprice, retune, Doctor risk scoring and Overview KPIs until manually re-typed. Still created `active:false`, so nothing goes live. Verified nothing keys off `custom` for builder provenance (that's the `pack_created` audit event `via:"pack_builder"`); the manual `custom` option in create/edit forms is untouched. Gates: tsc + lint + `npm run build` green. Remaining learning-pass findings (retune band mismatch, stale 2FA/doctor copy) → Open/next #7.
 
 ### SESSION 2026-07-01 — full-app perf/crash/UI audit (~20 units, all live on `main`)
 
@@ -311,8 +315,7 @@ _Creator Hub plan closed. Pick up deferred items below when owner prioritizes._
 4. Bulk delete `/gift-cards` + `/vouchers` — **BLOCKED** (MAIN DB write forbidden)
 5. Fold durable reward findings into `ONBOARDING.md` (affiliate commission basis; signup $5.71 clarification)
 6. Add `/creator-hub/tips-sponsors` to responsive matrix (codes-ads + hub ad detail verified on prod 2026-06-06)
-7. **Pack-system findings from 2026-07-02 read-only learning pass (no code touched):**
-   - **`buildPack` writes `pack_type:"custom"`** (`src/app/(admin)/packs/actions.ts:2292`) while reprice/retune/risk scope is `["official"]` (and the same file + `risk-config.ts:59-63` assert no custom type exists; prod probe: 0 custom rows) — builder-created packs are invisible to reprice/retune/Doctor/Overview until manually re-typed. Fix candidate: create as `official`.
+7. **Pack-system findings from 2026-07-02 learning pass (buildPack pack_type fix SHIPPED `5579176c` — see CURRENT STATE; remaining):**
    - **Retune price-search band mismatch:** dry-run/preview (`planAllRetunes`/`planSingleRetune`, `doctor/retune-actions.ts:836`) sweeps `maxPriceChangePct: 0.6` but the write (`applyPackRetune`, `packs/actions.ts:1775`) sweeps `0.25` — a proposal whose clean snap needed a >25% price move can land differently on write than previewed.
    - Stale in-code copy: `retune-guide.tsx:140-146` + `retune/page.tsx:43-47` still describe a 2FA "Start review" (actual: `authorizePackRetuneForReview` mints WITHOUT TOTP); `doctor/page.tsx:30-33` still claims "read-only grid + snapshot only"; several "owner-gated" comments where the real gate is operator (owners + demee).
 
