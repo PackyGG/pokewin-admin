@@ -14,6 +14,22 @@ import { EmptyState } from "@/components/empty-state";
 import { EditRewardButton } from "../edit-reward-button";
 import { DeleteRewardButton } from "../delete-reward-button";
 
+/**
+ * Re-unlock threshold display. `dailyUnlockPercentage` is a fraction
+ * (0.01 = 1%) stored on the reward row; `null` means the documented 1%
+ * default applies (see `RewardItem.dailyUnlockPercentage` doc comment in
+ * `src/lib/queries/rewards.ts`). Renders whole percents as-is ("2%") and
+ * only shows decimals when the fraction doesn't land on a whole percent
+ * (avoids floating-point tails like "2.0000000001%").
+ */
+function formatReunlockPct(pct: number | null): string {
+  const value = pct ?? 0.01;
+  const asPercent = value * 100;
+  const rounded = Math.round(asPercent * 100) / 100; // guard fp noise
+  const decimals = Number.isInteger(rounded) ? 0 : 2;
+  return `${rounded.toFixed(decimals)}%`;
+}
+
 function LevelUpMobileCard({ r }: { r: RewardItem }) {
   return (
     <div className="border-b border-border/60 last:border-b-0 px-3 py-3">
@@ -52,8 +68,13 @@ function LevelUpMobileCard({ r }: { r: RewardItem }) {
               ))}
             </div>
           )}
-          <div className="mt-1 text-[10px] text-muted-foreground">
-            {formatRelative(r.createdAt)}
+          <div className="mt-1 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+            <span>{formatRelative(r.createdAt)}</span>
+            <span aria-hidden="true">&middot;</span>
+            <span>
+              Re-unlock:{" "}
+              <span className="tabular-nums">{formatReunlockPct(r.dailyUnlockPercentage)}</span>
+            </span>
           </div>
         </div>
         <div className="shrink-0 text-right space-y-1">
@@ -104,6 +125,7 @@ export function LevelUpTable({ data }: { data: RewardItem[] }) {
               <TableHead>Name</TableHead>
               <TableHead>Type</TableHead>
               <TableHead>Cash Amount</TableHead>
+              <TableHead>Re-unlock</TableHead>
               <TableHead>Packs</TableHead>
               <TableHead>Created</TableHead>
               <TableHead className="w-[80px]" />
@@ -123,6 +145,9 @@ export function LevelUpTable({ data }: { data: RewardItem[] }) {
                 </TableCell>
                 <TableCell>
                   {r.cashAmount != null ? formatCurrency(r.cashAmount) : "—"}
+                </TableCell>
+                <TableCell className="tabular-nums">
+                  {formatReunlockPct(r.dailyUnlockPercentage)}
                 </TableCell>
                 <TableCell>
                   {r.packs.length > 0 ? (
@@ -159,7 +184,7 @@ export function LevelUpTable({ data }: { data: RewardItem[] }) {
             ))}
             {data.length === 0 && (
               <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={7} className="p-0">
+                <TableCell colSpan={8} className="p-0">
                   <EmptyState
                     icon={TrendingUp}
                     title="No level-up rewards found"
