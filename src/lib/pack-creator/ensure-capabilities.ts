@@ -35,7 +35,6 @@ export const PACK_CREATOR_DEFAULT_PAGES: readonly string[] = [
   // Pages — needed both for the sidebar (built from allowed_pages) and
   // for requirePageAccess on each page to pass.
   "/packs",
-  "/rewards/shards",
   "/cards",
   "/sets",
   "/upgrader",

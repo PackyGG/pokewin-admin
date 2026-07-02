@@ -55,7 +55,6 @@ const PACK_CREATOR_BASELINE_TOKENS: readonly PermissionToken[] = [
   "/cards",
   "/sets",
   "/upgrader",
-  "/rewards/shards",
   // Packs
   "__can_create_pack",
   "__can_update_pack",

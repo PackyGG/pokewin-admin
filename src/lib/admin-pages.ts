@@ -100,9 +100,9 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Transactions", label: "Transactions", key: "/transactions/deposits" },
   // Content
   { group: "Content", label: "Packs", key: "/packs" },
-  // Shard packs — packs bought & opened with shards (a wager-earned
-  // currency). Backed by MAIN `packs` rows with pack_type='shard'.
-  { group: "Content", label: "Shard Packs", key: "/rewards/shards" },
+  // Shard Packs (/rewards/shards) — the shard-pack system was disabled at
+  // the backend/DB level by the owner (2026-07) and the dedicated admin
+  // surface was removed; the page key was retired.
   { group: "Content", label: "Cards", key: "/cards" },
   { group: "Content", label: "Sets", key: "/sets" },
   { group: "Content", label: "Upgrader", key: "/upgrader" },
