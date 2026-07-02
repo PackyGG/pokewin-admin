@@ -320,8 +320,11 @@ function buildStagedTargets(
   //  • Price — authoritative ONLY when the search lever is OFF (the server
   //    then writes the staged price exactly: `payload.price`, or the live
   //    price when unchanged). With the lever ON the server legitimately picks
-  //    the final price and the editor preview carries no expectation to pin
-  //    (it previews at the staged price — see the audit's RC5 note).
+  //    the final price, so nothing is pinned: the editor preview DOES show
+  //    its own search's expected price (EditPreview.newPrice, C2-F5), but
+  //    that client mirror omits the server's currentWeights/winRateTol/
+  //    taggedWinRate params and may legitimately land elsewhere — pinning it
+  //    would refuse valid approves. The fingerprint still guards freshness.
   //  • Fingerprint — always: the staged solve still anchors on the LIVE pool
   //    (anti-inflation weights + live price), so live-state drift between
   //    plan and approve must refuse.
