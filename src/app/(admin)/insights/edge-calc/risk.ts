@@ -370,6 +370,15 @@ export type ShapeWeightsSuccess = {
    * normal case), or the anchor wasn't requested.
    */
   topInflationUnavoidable?: boolean;
+  /**
+   * ONE-SIDED-UP acceptance outcome (hard-tag solves only): when the pool's
+   * never-inflate caps + hard tag pinned the reachable EV BELOW the target EV
+   * (achieved edge lands ABOVE the target — house-favorable), the solve was
+   * accepted with this edge excess (≤ {@link ONE_SIDED_EDGE_EXCESS_TOL},
+   * 0.25pp) instead of hard-erroring. `undefined` = the normal exact landing.
+   * Surfaces as "edge landed +X.XXpp above target (pool-pinned)" in plans.
+   */
+  oneSidedEdgeExcess?: number;
 };
 
 /**
@@ -450,8 +459,12 @@ type Band = "GRAIL" | "WIN" | "NEARMISS" | "DUST";
  * Expected value of a single power-law-weighted band: w_i ∝ value_i^(−beta).
  * The SAME mechanism `computeOddsForTargetEv` uses, replicated locally so it can
  * run per band on raw values (not prices). Returns 0 for an empty band.
+ *
+ * EXPORTED for the tag-guidance engine (`tag-guidance.ts`), which rebuilds the
+ * solver's exact feasibility interval (LAW 1) outside a solve — sharing this
+ * implementation is what makes the interval identity a structural fact.
  */
-function bandEvForBeta(values: readonly number[], beta: number): number {
+export function bandEvForBeta(values: readonly number[], beta: number): number {
   if (values.length === 0) return 0;
   const w = values.map((v) => Math.pow(v, -beta));
   const sumW = w.reduce((a, b) => a + b, 0);
@@ -466,8 +479,8 @@ function bandEvForBeta(values: readonly number[], beta: number): number {
  * so the up-front win-rate-vs-EV feasibility bound and the in-solver bisection
  * use the SAME endpoints (the bound must match what the solver can actually do).
  */
-const BETA_LO = -20; // skew expensive → max EV
-const BETA_HI = 50; // skew cheap → min EV
+export const BETA_LO = -20; // skew expensive → max EV
+export const BETA_HI = 50; // skew cheap → min EV
 
 /**
  * Hard FLOOR on the beta used to lay out the WIN+GRAIL pool (cards worth
@@ -496,7 +509,112 @@ const BETA_HI = 50; // skew cheap → min EV
  * lottery packs steepen FURTHER via `applyLotterySkew` (β=2); this floor is the
  * baseline rarity every pack's win pool must clear.
  */
-const BETA_WIN_FLOOR = 1.5;
+export const BETA_WIN_FLOOR = 1.5;
+
+/**
+ * Hard CEILING on the win-pool steepening beta (the EV-lowering knob): the
+ * solver may steepen the win pool from {@link BETA_WIN_FLOOR} up to this to
+ * pull a too-high capped win EV down toward a low target. Module-level (and
+ * exported) so the tag-guidance engine's LAW-1 EVmin — `W(BETA_WIN_MAX)` —
+ * uses the SAME endpoint the solver's own steepening bisection can reach.
+ */
+export const BETA_WIN_MAX = 12;
+
+/**
+ * One-sided-UP edge acceptance for HARD-TAGGED solves (ruleset §1.2
+ * saturation acceptance, [math LAW 9] companion — kills the RC4 1e-6 equality
+ * wall): when a tagged pool's reachable EV maximum sits BELOW the target EV —
+ * i.e. the pool lands HOUSE-FAVORABLE, achieved edge ABOVE the target — the
+ * solve is accepted as long as the excess `(1 − evMax/price) − targetEdge` is
+ * at most this (0.25pp). The edge floor stays sacred (the `evTarget < evMin`
+ * side — achieved edge BELOW target — still hard-errors); this only ever
+ * accepts extra house margin on a pool whose never-inflate caps + hard tag pin
+ * the EV to (nearly) a point. Fleet-verified: two-sided 0.25pp accepts 23/33
+ * stuck tagged pools; one-sided-up keeps the floor while unlocking the same.
+ */
+export const ONE_SIDED_EDGE_EXCESS_TOL = 0.0025;
+
+/**
+ * Water-fill a probability MASS over a band's values by a `value^(−beta)`
+ * power-law, capping each card at `caps[i]` (absolute pool-odds) and
+ * re-distributing the overflow onto the still-uncapped cards. Returns the
+ * per-card probabilities plus how much of the mass fit under the caps
+ * (`placed < mass` ⇒ the caps saturate — the caller decides how to spill the
+ * residual). Pure; `caps[i] = Infinity` means uncapped.
+ *
+ * This is THE anchored win-pool layout `shapeWeights` uses (extracted so the
+ * tag-guidance engine can rebuild the solver's exact feasibility interval —
+ * one implementation, no drift).
+ */
+export function waterFillBandProbs(
+  values: readonly number[],
+  caps: readonly number[],
+  mass: number,
+  beta: number,
+): { probs: number[]; placed: number } {
+  const n = values.length;
+  const raw = values.map((v) => Math.pow(v, -beta));
+  const probs = new Array<number>(n).fill(0);
+  const capped = new Array<boolean>(n).fill(false);
+  let remaining = mass;
+  for (let round = 0; round < n + 1; round++) {
+    let rawSum = 0;
+    for (let i = 0; i < n; i++) if (!capped[i]) rawSum += raw[i]!;
+    if (!(rawSum > 0) || !(remaining > 1e-15)) break;
+    let cappedThisRound = false;
+    for (let i = 0; i < n; i++) {
+      if (capped[i]) continue;
+      const want = probs[i]! + (raw[i]! / rawSum) * remaining;
+      const cap = caps[i]!;
+      if (want > cap + 1e-15) {
+        remaining -= cap - probs[i]!;
+        probs[i] = cap;
+        capped[i] = true;
+        cappedThisRound = true;
+      }
+    }
+    if (!cappedThisRound) {
+      for (let i = 0; i < n; i++) {
+        if (capped[i]) continue;
+        probs[i] = probs[i]! + (raw[i]! / rawSum) * remaining;
+      }
+      remaining = 0;
+      break;
+    }
+  }
+  const placed = probs.reduce((a, b) => a + b, 0);
+  return { probs, placed };
+}
+
+/**
+ * The win-band EV of a water-filled mass INCLUDING the proportional spill of
+ * any residual the caps couldn't hold (spill ∝ v^−β — exactly how the solver
+ * spills unavoidable inflation). This is the `W(β)` of the LAW-1 feasibility
+ * interval:  EVmin = W(BETA_WIN_MAX) + loss-cheap,  EVmax = W(BETA_WIN_FLOOR)
+ * + loss-expensive. Exported for `tag-guidance.ts`.
+ */
+export function waterFillWinEv(
+  values: readonly number[],
+  caps: readonly number[],
+  mass: number,
+  beta: number,
+): number {
+  if (values.length === 0 || !(mass > 0)) return 0;
+  const { probs, placed } = waterFillBandProbs(values, caps, mass, beta);
+  let ev = 0;
+  for (let i = 0; i < values.length; i++) ev += probs[i]! * values[i]!;
+  if (placed < mass - 1e-12) {
+    const residual = mass - placed;
+    const raw = values.map((v) => Math.pow(v, -beta));
+    const rawSum = raw.reduce((a, b) => a + b, 0);
+    if (rawSum > 0) {
+      for (let i = 0; i < values.length; i++) {
+        ev += (raw[i]! / rawSum) * residual * values[i]!;
+      }
+    }
+  }
+  return ev;
+}
 
 /** Power-law weight template for a band, normalized to sum to `mass`. */
 function bandWeights(values: readonly number[], beta: number, mass: number): number[] {
@@ -788,6 +906,21 @@ export function isOnCleanLadderPct(pct: number): boolean {
     if (d < bestDist) bestDist = d;
   }
   return bestDist < 1e-9;
+}
+
+/**
+ * Is a probability (percent units) on the TAGGED per-100k integer grid — an
+ * exact integer count of 0.001% rungs? This is what "clean odds" means for a
+ * tagged lottery pack (ruleset §1.2 / [fleet HOUSE LADDER]: the owner's
+ * hand-tuned pools are integer weights per 100,000 — e.g. '1% 18 PLUS' win
+ * band cum EXACTLY 1.0000%), where the log-ladder rungs of
+ * {@link isOnCleanLadderPct} are unreachable without breaking the 0.01pp tag.
+ * Tolerant of float division noise from reconstructed integer weights.
+ */
+export function isOnPer100kGridPct(pct: number): boolean {
+  if (!Number.isFinite(pct) || !(pct > 0) || pct > 100) return false;
+  const units = pct * 1000; // 0.001% rungs
+  return Math.abs(units - Math.round(units)) <= 1e-6 * Math.max(1, units);
 }
 
 /**
@@ -1412,6 +1545,196 @@ function snapLocalSearchRefine(input: {
   return null;
 }
 
+// ─── Tagged per-100k house-ladder snap (ruleset §1.2 / CLEAN-XOR-TAG fix) ────
+//
+// The generic clean-ladder snap NEVER passed in tagged mode (fleet: 0/8 — the
+// 0.01pp tag gate outranks ladder rungs, so "clean odds" and "tag-accurate"
+// were mutually exclusive and every tagged retune shipped dirty precise
+// weights). The house's own hand-tuned ladder shows what "clean" means for a
+// lottery pack ('1% 18 PLUS' verbatim): INTEGER weights per 100,000 (0.001%
+// rungs), the win band summing to EXACTLY tag·100,000, ONE dust card absorbing
+// the residual, and the jackpot on a round 1-in-N ticket count. This snap
+// targets that ladder DIRECTLY: the tag is held exactly by construction
+// (win-band integer sum = round(t·100000)), the dust buffer eats all rounding,
+// and the edge is landed inside the acceptance window by an analytic integer
+// transfer within the dust band.
+
+/**
+ * Round 1-in-N jackpot menu expressed in per-100k weight units (ruleset §1.2:
+ * all 147 rain.gg lottery top odds are round ticket counts — 1-in-2000 /
+ * 1-in-1000 / 1-in-10000 dominate). 1-in-100 → 1000 units … 1-in-100000 → 1
+ * unit (finer rungs are unrepresentable on the per-100k grid).
+ */
+const JACKPOT_MENU_PER_100K: readonly number[] = [
+  1000, 500, 250, 200, 150, 100, 50, 25, 20, 10, 5, 2, 1,
+];
+
+/**
+ * Snap a HARD-TAGGED solve onto the per-100k integer house ladder. Pure.
+ * Returns the snapped weights + risk, or `null` when the ladder can't hold the
+ * acceptance stack (caller falls back to the generic snap → precise weights).
+ *
+ * Guarantees on success:
+ *   • total weight EXACTLY 100,000 (every pct is an integer count of 0.001%),
+ *   • win-band (value ≥ price) weight EXACTLY `round(tag·100000)` — the
+ *     snapped win-rate differs from the tag by < 0.0005pp,
+ *   • win+grail ladder odds non-increasing in card value,
+ *   • the jackpot prefers a round 1-in-N menu rung, and is never rounded UP
+ *     beyond the precise solve (never-inflate),
+ *   • ONE dust card (the largest-mass one) carries the residual buffer,
+ *   • edge ∈ [targetEdge, targetEdge + edgeTolAbove] (landed via an analytic
+ *     integer mass transfer inside the dust band when the pool has ≥ 2 dust
+ *     values),
+ *   • `grailGuard` (the caller's anti-inflation check vs the precise weights)
+ *     holds.
+ */
+function snapTaggedPer100k(input: {
+  values: readonly number[];
+  weights: readonly number[];
+  price: number;
+  tag: number;
+  targetEdge: number;
+  /** Acceptance ceiling above target (SNAP window + any one-sided excess). */
+  edgeTolAbove: number;
+  grailGuard: (cand: number[]) => boolean;
+}): { weights: number[]; risk: PackRisk } | null {
+  const { values, price, tag, targetEdge, edgeTolAbove } = input;
+  const n = values.length;
+  if (!(price > 0) || !(tag > 0) || tag >= 1) return null;
+  let total = 0;
+  for (const w of input.weights) if (Number.isFinite(w) && w > 0) total += w;
+  if (!(total > 0)) return null;
+
+  const SCALE = 100_000;
+  const W = Math.round(tag * SCALE);
+  if (W < 1) return null; // tag below 0.001% — unrepresentable on this grid
+
+  const winIdx: number[] = [];
+  const nmIdx: number[] = [];
+  const dustIdx: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const w = input.weights[i]!;
+    const v = values[i]!;
+    if (!(w > 0) || !(v > 0)) continue; // cap-dropped / zeroed slots stay 0
+    if (v >= price) winIdx.push(i);
+    else if (v >= 0.5 * price) nmIdx.push(i);
+    else dustIdx.push(i);
+  }
+  if (winIdx.length === 0 || dustIdx.length === 0) return null;
+
+  const pctUnits = (i: number): number => (input.weights[i]! / total) * SCALE;
+  const u = new Array<number>(n).fill(0);
+
+  // ── Win ladder (value-DESC): jackpot on the 1-in-N menu, others rounded,
+  //    odds non-increasing in value (cheaper card ⇒ ≥ weight). ──
+  const winDesc = [...winIdx].sort((a, b) => values[b]! - values[a]!);
+  const jack = winDesc[0]!;
+  {
+    const p = pctUnits(jack);
+    // Prefer the largest 1-in-N menu rung that does NOT exceed the precise
+    // share (the snap may round the jackpot DOWN to a round ticket count,
+    // never up) — but ONLY in the rare-jackpot regime (≤ 1%, where the rain
+    // menu lives) and only when the rung keeps ≥ 70% of the precise odds
+    // (never silently halve an advertised jackpot). Else the plain grid
+    // round; the grid minimum (1 unit = 0.001%) applies last.
+    let pick = Math.max(1, Math.round(p));
+    if (p <= 1000) {
+      let menuPick = 0;
+      for (const m of JACKPOT_MENU_PER_100K) {
+        if (m <= p + 1e-9 && m > menuPick) menuPick = m;
+      }
+      if (menuPick >= 0.7 * p) pick = menuPick;
+      else if (menuPick === 0) pick = Math.max(1, Math.floor(p));
+    }
+    u[jack] = pick;
+  }
+  for (let k = 1; k < winDesc.length; k++) {
+    const i = winDesc[k]!;
+    u[i] = Math.max(1, Math.round(pctUnits(i)));
+    const prev = winDesc[k - 1]!;
+    if (u[i]! < u[prev]!) u[i] = u[prev]!; // repair: cheaper never rarer
+  }
+  // Land the win-band sum EXACTLY on W via the cheapest winner (the
+  // anti-jackpot — the same card the solver's RC4 knob privileges).
+  {
+    const cheapest = winDesc[winDesc.length - 1]!;
+    let sumWin = 0;
+    for (const i of winIdx) sumWin += u[i]!;
+    const adjusted = u[cheapest]! + (W - sumWin);
+    const floorForCheapest =
+      winDesc.length >= 2 ? u[winDesc[winDesc.length - 2]!]! : 1;
+    if (adjusted < Math.max(1, floorForCheapest)) return null;
+    u[cheapest] = adjusted;
+  }
+
+  // ── Near-miss band: rounded verbatim (dead-for-tag cards keep the 1-unit
+  //    grid minimum — 0.001%, the "~zero mass" the ruleset assigns them). ──
+  for (const i of nmIdx) u[i] = Math.max(1, Math.round(pctUnits(i)));
+
+  // ── Dust: the largest-mass dust card is THE residual buffer. ──
+  let buffer = dustIdx[0]!;
+  for (const i of dustIdx) {
+    if (input.weights[i]! > input.weights[buffer]!) buffer = i;
+  }
+  for (const i of dustIdx) {
+    if (i !== buffer) u[i] = Math.max(1, Math.round(pctUnits(i)));
+  }
+  let nonBuffer = 0;
+  for (let i = 0; i < n; i++) if (i !== buffer) nonBuffer += u[i]!;
+  const residual = SCALE - nonBuffer;
+  if (residual < 1) return null;
+  u[buffer] = residual;
+
+  const riskOf = (cand: readonly number[]): PackRisk =>
+    computePackRisk({
+      cards: values.map((v, i) => ({ value: v, weight: cand[i]! })),
+      price,
+    });
+
+  // ── Edge landing: analytic integer transfer inside the dust band. ──
+  // EV is linear in a mass transfer x between two dust values (total + win
+  // band unchanged): moving x units from the most expensive dust card to the
+  // cheapest lowers EV by x·(v_hi − v_lo)/SCALE ⇒ raises edge. Solve the
+  // integer x landing edge ∈ [target, target + tol]; pools with a single dust
+  // value have zero freedom (accept only if already inside the window).
+  let cand = u;
+  let r = riskOf(cand);
+  const eLo = targetEdge - 1e-9;
+  const eHi = targetEdge + edgeTolAbove + 1e-9;
+  if (r.edge < eLo || r.edge > eHi) {
+    const dustAsc = [...dustIdx].sort((a, b) => values[a]! - values[b]!);
+    const lo = dustAsc[0]!;
+    const hi = dustAsc[dustAsc.length - 1]!;
+    const spread = values[hi]! - values[lo]!;
+    if (!(spread > 0)) return null;
+    // Current EV → the transfer window [xMin, xMax] in integer units.
+    const evHiBound = price * (1 - targetEdge); // EV must be ≤ this (edge ≥ target)
+    const evLoBound = price * (1 - targetEdge - edgeTolAbove); // and ≥ this
+    const xMin = Math.ceil(((r.ev - evHiBound) * SCALE) / spread - 1e-9);
+    const xMax = Math.floor(((r.ev - evLoBound) * SCALE) / spread + 1e-9);
+    // Keep both cards on the grid (≥ 1 unit).
+    const xFloor = -(cand[lo]! - 1);
+    const xCeil = cand[hi]! - 1;
+    const a = Math.max(xMin, xFloor);
+    const b = Math.min(xMax, xCeil);
+    if (a > b) return null;
+    const x = a <= 0 && 0 <= b ? 0 : Math.abs(a) < Math.abs(b) ? a : b;
+    if (x !== 0) {
+      const next = cand.slice();
+      next[lo] = next[lo]! + x;
+      next[hi] = next[hi]! - x;
+      cand = next;
+      r = riskOf(cand);
+    }
+    if (r.edge < eLo || r.edge > eHi) return null;
+  }
+
+  // ── Final acceptance stack. ──
+  if (Math.abs(r.winRate - tag) > TAGGED_WINRATE_TOLERANCE + 1e-12) return null;
+  if (!input.grailGuard(cand as number[])) return null;
+  return { weights: cand.slice(), risk: r };
+}
+
 /**
  * Design a per-card weight vector so a pack lands on a target edge + win-rate.
  *
@@ -1834,10 +2157,19 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   const anchorActive = curTotal > 0 && winPoolSlots.length >= 1;
   // CURRENT odds (fraction of the WHOLE pool) per win-pool card. The per-card
   // cap: a win card's final pool-odds must not exceed this.
+  //
+  // NEW-CARD ANCHOR EXEMPTION ([math LAW 6]): a card with ZERO/absent current
+  // weight — a card being staged INTO the pool — has no advertised odds to
+  // protect, so it enters UNCAPPED (`Infinity`), not capped at 0. The old
+  // `: 0` made "add a win/grail card" a structural no-op under a hard tag
+  // (the new card's cap pinned it at zero mass — verified D3). Never-inflate
+  // still protects every EXISTING card verbatim, and the grail monotone
+  // running-min below still bounds a NEW grail at the next-cheaper EXISTING
+  // grail's odds (an `Infinity` never tightens a neighbor).
   const beforeOddsWin = anchorActive
     ? winPoolSlots.map((slot) => {
         const w = cur![slot.idx];
-        return Number.isFinite(w) && w! > 0 ? w! / curTotal : 0;
+        return Number.isFinite(w) && w! > 0 ? w! / curTotal : Infinity;
       })
     : winPoolSlots.map(() => Infinity); // no anchor ⇒ no caps
 
@@ -1914,53 +2246,22 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // STEEPEN it (raise β) to LOWER the win-pool EV when the fixed capped EV
   // overshoots a low evTarget. Steepening only ever makes the jackpot RARER
   // (more mass on the cheapest winners), so it never violates owner rule #1 —
-  // it's the one EV knob that's safe to keep. The cap on how steep: BETA_WIN_MAX.
-  const BETA_WIN_MAX = 12;
+  // it's the one EV knob that's safe to keep. The cap on how steep: the
+  // module-level BETA_WIN_MAX (shared with the tag-guidance interval).
   let winBeta = BETA_WIN_FLOOR;
 
   // Distribute `wm` (the win mass) across the win pool by a value^(−β) power-law
   // (β = `betaArg`), capping each card at its monotone cap (absolute pool-odds)
-  // and WATER-FILLING the overflow onto uncapped cards. Returns absolute per-card
-  // probabilities (summing to ≤ wm; any residual that can't fit under the caps is
-  // reported via `placed < wm` so the caller can flag unavoidable spillover).
+  // and WATER-FILLING the overflow onto uncapped cards (module-level
+  // `waterFillBandProbs` — shared with the tag-guidance interval). Any residual
+  // that can't fit under the caps is reported via `placed < wm` so the caller
+  // can flag unavoidable spillover.
   let topInflationUnavoidable = false;
   const winPoolProbsForBeta = (
     wm: number,
     betaArg: number,
-  ): { probs: number[]; placed: number } => {
-    const n = winPoolValues.length;
-    const raw = winPoolValues.map((v) => Math.pow(v, -betaArg));
-    const probs = new Array<number>(n).fill(0);
-    const capped = new Array<boolean>(n).fill(false);
-    let remaining = wm;
-    for (let round = 0; round < n + 1; round++) {
-      let rawSum = 0;
-      for (let i = 0; i < n; i++) if (!capped[i]) rawSum += raw[i]!;
-      if (!(rawSum > 0) || !(remaining > 1e-15)) break;
-      let cappedThisRound = false;
-      for (let i = 0; i < n; i++) {
-        if (capped[i]) continue;
-        const want = probs[i]! + (raw[i]! / rawSum) * remaining;
-        const cap = monoCap[i]!;
-        if (want > cap + 1e-15) {
-          remaining -= cap - probs[i]!;
-          probs[i] = cap;
-          capped[i] = true;
-          cappedThisRound = true;
-        }
-      }
-      if (!cappedThisRound) {
-        for (let i = 0; i < n; i++) {
-          if (capped[i]) continue;
-          probs[i] = probs[i]! + (raw[i]! / rawSum) * remaining;
-        }
-        remaining = 0;
-        break;
-      }
-    }
-    const placed = probs.reduce((a, b) => a + b, 0);
-    return { probs, placed };
-  };
+  ): { probs: number[]; placed: number } =>
+    waterFillBandProbs(winPoolValues, monoCap, wm, betaArg);
   const winPoolProbsFor = (wm: number) => winPoolProbsForBeta(wm, winBeta);
 
   // EV from the win pool at win mass `wm` and steepness `winBeta`.
@@ -2210,7 +2511,26 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     }
   }
 
-  if (evTarget < evMin - 1e-6 || evTarget > evMax + 1e-6) {
+  // ── One-sided-UP acceptance (hard tags only — kills the RC4 error wall) ──
+  // `evTarget > evMax` means the pool's reachable EV tops out BELOW the target
+  // EV, i.e. the achieved edge at β = BETA_LO lands ABOVE the target — the
+  // HOUSE-FAVORABLE side. For an anchored hard-tag pool (caps + tag pin the EV
+  // to nearly a point) this was a hard error even when the miss was fractions
+  // of a cent. Accept it when the edge excess is within
+  // {@link ONE_SIDED_EDGE_EXCESS_TOL} (0.25pp): the β bisection below then
+  // converges to BETA_LO (EV = evMax), the bump loop has nothing to do (edge
+  // already ≥ target), and the excess is reported on the success result. The
+  // `evTarget < evMin` side (edge would land BELOW target) still errors — the
+  // floor is sacred.
+  const oneSidedEdgeExcess =
+    winRateIsHard && evTarget > evMax + 1e-6 && evMax > 0
+      ? 1 - evMax / price - targetEdge
+      : null;
+  const oneSidedAccepted =
+    oneSidedEdgeExcess !== null &&
+    oneSidedEdgeExcess <= ONE_SIDED_EDGE_EXCESS_TOL + 1e-12;
+
+  if ((evTarget < evMin - 1e-6 || evTarget > evMax + 1e-6) && !oneSidedAccepted) {
     return {
       error: `Edge target needs EV $${evTarget.toFixed(4)} but this band split can only reach $${evMin.toFixed(4)}–$${evMax.toFixed(4)}.`,
       feasibility: {
@@ -2494,110 +2814,144 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // measured 9/21 basic snaps rejected purely for edge drift in
   // (0.05pp, 0.1pp] — the owner got dirty odds for no protective reason.
   const SNAP_EDGE_TOLERANCE = 0.001;
+  // When the one-sided-up acceptance fired, the PRECISE result itself sits up
+  // to `oneSidedEdgeExcess` above target — the snap window extends by exactly
+  // that much so a clean ladder near the accepted landing isn't rejected for a
+  // drift the precise result already carries. Byte-identical otherwise.
+  const snapEdgeTol =
+    oneSidedAccepted && oneSidedEdgeExcess !== null
+      ? SNAP_EDGE_TOLERANCE + oneSidedEdgeExcess
+      : SNAP_EDGE_TOLERANCE;
 
-  const snap = snapWeightsToCleanLadder({ weights, price });
-  // Apply within-band monotonicity repair (owner invariants — see
-  // `repairSnapMonotonicity`). If the basic snap can't be made monotonic
-  // within the ladder bounds, treat as failed and fall through to local-search
-  // refinement (which retries with different ladder positions).
-  const snapRepaired = repairSnapMonotonicity({ weights: snap.weights, values, price });
-  const snapCandidate = snapRepaired.ok ? snapRepaired.weights : snap.weights;
-  const snapCandidateRisk = computePackRisk({
-    cards: input.cards.map((c, i) => ({ value: c.value, weight: snapCandidate[i]! })),
-    price,
-  });
-  const snapDrift = Math.abs(snapCandidateRisk.edge - targetEdge);
-  const snapWinRateDrift = Math.abs(snapCandidateRisk.winRate - preciseWinRate);
-  // Tier 1: accept the basic buffer-residual snap when edge stays within
-  // +0.1pp of target AND ≥ target (one-sided-up invariant) AND win-rate
-  // stays within the soft tolerance of the precise solver's win-rate AND the
-  // monotonicity repair succeeded.
-  if (
-    snapRepaired.ok &&
-    snapDrift <= SNAP_EDGE_TOLERANCE &&
-    snapCandidateRisk.edge >= targetEdge - 1e-9 &&
-    snapWinRateDrift <= winRateTol + 1e-9 &&
-    snapKeepsTag(snapCandidateRisk.winRate) &&
-    snapGrailNotInflated(snapCandidate)
-  ) {
-    for (let i = 0; i < weights.length; i++) weights[i] = snapCandidate[i]!;
-    risk = snapCandidateRisk;
-    snapped = true;
-  } else {
-    // Tier 2: local-search refinement. Wiggle the top-5 EV-impact cards by
-    // ±1 ladder rung; recompute the buffer residual for each combo; pick the
-    // combo whose edge lands closest to target while still ≥ target and
-    // win-rate stays within tol of the precise win-rate.
-    // Try escalating searches: 3^5=243 → 5^4=625 → 3^7=2187. Cheap-then-broad
-    // keeps the common case fast while still catching pools where the rungs
-    // are far from the precise pcts.
-    let refined = snapLocalSearchRefine({
-      weights,
+  // ── Tagged per-100k house-ladder snap (tried FIRST for on-tag solves) ────
+  // The generic rung snap never passes the 0.01pp tag gate (CLEAN-XOR-TAG:
+  // 0/8 on the live fleet) — for a hard-tag solve that landed ON the tag, snap
+  // onto the integer per-100k ladder instead: win band EXACTLY round(t·1e5),
+  // dust buffer absorbs the residual, jackpot on the 1-in-N menu.
+  let taggedSnapApplied = false;
+  if (snapTagTarget !== undefined) {
+    const taggedSnap = snapTaggedPer100k({
       values,
+      weights,
       price,
+      tag: snapTagTarget,
       targetEdge,
-      tolerance: SNAP_EDGE_TOLERANCE,
-      searchTop: 5,
-      searchRadius: 1,
-      preciseWinRate,
-      winRateTol,
-      taggedWinRate: snapTagTarget,
+      edgeTolAbove: snapEdgeTol,
+      grailGuard: snapGrailNotInflated,
     });
-    if (refined === null) {
-      refined = snapLocalSearchRefine({
-        weights,
-        values,
-        price,
-        targetEdge,
-        tolerance: SNAP_EDGE_TOLERANCE,
-        searchTop: 4,
-        searchRadius: 2,
-        preciseWinRate,
-        winRateTol,
-        taggedWinRate: snapTagTarget,
-      });
+    if (taggedSnap !== null) {
+      for (let i = 0; i < weights.length; i++) weights[i] = taggedSnap.weights[i]!;
+      risk = taggedSnap.risk;
+      snapped = true;
+      taggedSnapApplied = true;
     }
-    if (refined === null) {
-      refined = snapLocalSearchRefine({
+  }
+
+  if (!taggedSnapApplied) {
+    const snap = snapWeightsToCleanLadder({ weights, price });
+    // Apply within-band monotonicity repair (owner invariants — see
+    // `repairSnapMonotonicity`). If the basic snap can't be made monotonic
+    // within the ladder bounds, treat as failed and fall through to local-search
+    // refinement (which retries with different ladder positions).
+    const snapRepaired = repairSnapMonotonicity({ weights: snap.weights, values, price });
+    const snapCandidate = snapRepaired.ok ? snapRepaired.weights : snap.weights;
+    const snapCandidateRisk = computePackRisk({
+      cards: input.cards.map((c, i) => ({ value: c.value, weight: snapCandidate[i]! })),
+      price,
+    });
+    const snapDrift = Math.abs(snapCandidateRisk.edge - targetEdge);
+    const snapWinRateDrift = Math.abs(snapCandidateRisk.winRate - preciseWinRate);
+    // Tier 1: accept the basic buffer-residual snap when edge stays within
+    // +0.1pp of target AND ≥ target (one-sided-up invariant) AND win-rate
+    // stays within the soft tolerance of the precise solver's win-rate AND the
+    // monotonicity repair succeeded.
+    if (
+      snapRepaired.ok &&
+      snapDrift <= snapEdgeTol &&
+      snapCandidateRisk.edge >= targetEdge - 1e-9 &&
+      snapWinRateDrift <= winRateTol + 1e-9 &&
+      snapKeepsTag(snapCandidateRisk.winRate) &&
+      snapGrailNotInflated(snapCandidate)
+    ) {
+      for (let i = 0; i < weights.length; i++) weights[i] = snapCandidate[i]!;
+      risk = snapCandidateRisk;
+      snapped = true;
+    } else {
+      // Tier 2: local-search refinement. Wiggle the top-5 EV-impact cards by
+      // ±1 ladder rung; recompute the buffer residual for each combo; pick the
+      // combo whose edge lands closest to target while still ≥ target and
+      // win-rate stays within tol of the precise win-rate.
+      // Try escalating searches: 3^5=243 → 5^4=625 → 3^7=2187. Cheap-then-broad
+      // keeps the common case fast while still catching pools where the rungs
+      // are far from the precise pcts.
+      let refined = snapLocalSearchRefine({
         weights,
         values,
         price,
         targetEdge,
-        tolerance: SNAP_EDGE_TOLERANCE,
-        searchTop: 7,
+        tolerance: snapEdgeTol,
+        searchTop: 5,
         searchRadius: 1,
         preciseWinRate,
         winRateTol,
         taggedWinRate: snapTagTarget,
       });
-    }
-    if (refined !== null) {
-      // Apply monotonicity repair to the local-search winner, then re-verify
-      // edge + win-rate tolerance. If the repair pushes the result out of
-      // tolerance — or fails outright — fall back to precise weights instead
-      // of accepting an ordering that violates the owner invariants.
-      const refinedRepaired = repairSnapMonotonicity({
-        weights: refined.weights,
-        values,
-        price,
-      });
-      if (refinedRepaired.ok) {
-        const refinedRisk = computePackRisk({
-          cards: input.cards.map((c, i) => ({ value: c.value, weight: refinedRepaired.weights[i]! })),
+      if (refined === null) {
+        refined = snapLocalSearchRefine({
+          weights,
+          values,
+          price,
+          targetEdge,
+          tolerance: snapEdgeTol,
+          searchTop: 4,
+          searchRadius: 2,
+          preciseWinRate,
+          winRateTol,
+          taggedWinRate: snapTagTarget,
+        });
+      }
+      if (refined === null) {
+        refined = snapLocalSearchRefine({
+          weights,
+          values,
+          price,
+          targetEdge,
+          tolerance: snapEdgeTol,
+          searchTop: 7,
+          searchRadius: 1,
+          preciseWinRate,
+          winRateTol,
+          taggedWinRate: snapTagTarget,
+        });
+      }
+      if (refined !== null) {
+        // Apply monotonicity repair to the local-search winner, then re-verify
+        // edge + win-rate tolerance. If the repair pushes the result out of
+        // tolerance — or fails outright — fall back to precise weights instead
+        // of accepting an ordering that violates the owner invariants.
+        const refinedRepaired = repairSnapMonotonicity({
+          weights: refined.weights,
+          values,
           price,
         });
-        const refinedDrift = Math.abs(refinedRisk.edge - targetEdge);
-        const refinedWinRateDrift = Math.abs(refinedRisk.winRate - preciseWinRate);
-        if (
-          refinedDrift <= SNAP_EDGE_TOLERANCE &&
-          refinedRisk.edge >= targetEdge - 1e-9 &&
-          refinedWinRateDrift <= winRateTol + 1e-9 &&
-          snapKeepsTag(refinedRisk.winRate) &&
-          snapGrailNotInflated(refinedRepaired.weights)
-        ) {
-          for (let i = 0; i < weights.length; i++) weights[i] = refinedRepaired.weights[i]!;
-          risk = refinedRisk;
-          snapped = true;
+        if (refinedRepaired.ok) {
+          const refinedRisk = computePackRisk({
+            cards: input.cards.map((c, i) => ({ value: c.value, weight: refinedRepaired.weights[i]! })),
+            price,
+          });
+          const refinedDrift = Math.abs(refinedRisk.edge - targetEdge);
+          const refinedWinRateDrift = Math.abs(refinedRisk.winRate - preciseWinRate);
+          if (
+            refinedDrift <= snapEdgeTol &&
+            refinedRisk.edge >= targetEdge - 1e-9 &&
+            refinedWinRateDrift <= winRateTol + 1e-9 &&
+            snapKeepsTag(refinedRisk.winRate) &&
+            snapGrailNotInflated(refinedRepaired.weights)
+          ) {
+            for (let i = 0; i < weights.length; i++) weights[i] = refinedRepaired.weights[i]!;
+            risk = refinedRisk;
+            snapped = true;
+          }
         }
       }
     }
@@ -2608,14 +2962,16 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // number) off-ladder by design. Try to land IT on a rung too, spreading the
   // residual over the 2–3 largest OTHER dust cards. Adopt ONLY when the full
   // acceptance stack still holds — otherwise keep the accepted snap unchanged
-  // (this step can never regress a result).
-  if (snapped) {
+  // (this step can never regress a result). SKIPPED after the tagged per-100k
+  // snap: there the buffer IS on the grid by construction, and re-spreading it
+  // over generic rungs would break the exact win-band tag sum.
+  if (snapped && !taggedSnapApplied) {
     const polished = trySnapBufferToRung({
       weights,
       values,
       price,
       accept: (r, cand) =>
-        Math.abs(r.edge - targetEdge) <= SNAP_EDGE_TOLERANCE &&
+        Math.abs(r.edge - targetEdge) <= snapEdgeTol &&
         r.edge >= targetEdge - 1e-9 &&
         Math.abs(r.winRate - preciseWinRate) <= winRateTol + 1e-9 &&
         snapKeepsTag(r.winRate) &&
@@ -2651,6 +3007,9 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     snapped,
     lotterySkewApplied,
     topInflationUnavoidable,
+    ...(oneSidedAccepted && oneSidedEdgeExcess !== null
+      ? { oneSidedEdgeExcess }
+      : {}),
   };
 }
 
