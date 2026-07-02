@@ -1980,9 +1980,17 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
         kind: "ev-unreachable-for-split",
         detail: `The ${(targetEdge * 100).toFixed(2)}% edge needs EV $${evTarget.toFixed(2)}, but at the chosen win/near-miss split this pool can only produce EV $${evMin.toFixed(2)}–$${evMax.toFixed(2)}.`,
         suggestion:
-          evTarget > evMax
-            ? `Add a higher-value card in the WIN band ($${winLo.toFixed(2)}–$${winHi.toFixed(2)}) or GRAIL band (≥ $${winHi.toFixed(2)}) so EV can reach $${evTarget.toFixed(2)} — or lower the edge target.`
-            : `Add a cheaper card in the DUST band (< $${dustHi.toFixed(2)}) so EV can drop to $${evTarget.toFixed(2)} — or raise the edge target.`,
+          anchorActive && winRateIsHard
+            ? // Saturated anchored+hard-tag pools have (near) ZERO EV freedom —
+              // the win pool is pinned at current odds and the tag pins the win
+              // mass, so "add a card" advice was misdiagnosing packs that were
+              // 0.1–0.3pp of edge away. The real remedies: a price move
+              // (changes the EV target — the retune price search tries this
+              // automatically across the ±60% band) or a different edge target.
+              `This tagged pack's win pool is pinned at its current odds (never-inflate) and the tag fixes the win mass, so EV has (almost) no freedom at this price. Let the retune price search pick a different price, or adjust the edge target — adding cards rarely helps here.`
+            : evTarget > evMax
+              ? `Add a higher-value card in the WIN band ($${winLo.toFixed(2)}–$${winHi.toFixed(2)}) or GRAIL band (≥ $${winHi.toFixed(2)}) so EV can reach $${evTarget.toFixed(2)} — or lower the edge target.`
+              : `Add a cheaper card in the DUST band (< $${dustHi.toFixed(2)}) so EV can drop to $${evTarget.toFixed(2)} — or raise the edge target.`,
       },
     };
   }
@@ -2211,6 +2219,14 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     return true;
   };
 
+  // Snap acceptance window vs the target edge: the SAME [target, target+0.001]
+  // window the PRECISE result itself lands in (the one-sided-up bump stops
+  // inside it) — a snap the precise path would have accepted must not be
+  // rejected for cleanliness. Was 0.0005 (HALF the precise window): the audit
+  // measured 9/21 basic snaps rejected purely for edge drift in
+  // (0.05pp, 0.1pp] — the owner got dirty odds for no protective reason.
+  const SNAP_EDGE_TOLERANCE = 0.001;
+
   const snap = snapWeightsToCleanLadder({ weights, price });
   // Apply within-band monotonicity repair (owner invariants — see
   // `repairSnapMonotonicity`). If the basic snap can't be made monotonic
@@ -2225,12 +2241,12 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   const snapDrift = Math.abs(snapCandidateRisk.edge - targetEdge);
   const snapWinRateDrift = Math.abs(snapCandidateRisk.winRate - preciseWinRate);
   // Tier 1: accept the basic buffer-residual snap when edge stays within
-  // ±0.05pp of target AND ≥ target (one-sided-up invariant) AND win-rate
+  // +0.1pp of target AND ≥ target (one-sided-up invariant) AND win-rate
   // stays within the soft tolerance of the precise solver's win-rate AND the
   // monotonicity repair succeeded.
   if (
     snapRepaired.ok &&
-    snapDrift <= 0.0005 &&
+    snapDrift <= SNAP_EDGE_TOLERANCE &&
     snapCandidateRisk.edge >= targetEdge - 1e-9 &&
     snapWinRateDrift <= winRateTol + 1e-9 &&
     snapGrailNotInflated(snapCandidate)
@@ -2251,7 +2267,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
       values,
       price,
       targetEdge,
-      tolerance: 0.0005,
+      tolerance: SNAP_EDGE_TOLERANCE,
       searchTop: 5,
       searchRadius: 1,
       preciseWinRate,
@@ -2263,7 +2279,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
         values,
         price,
         targetEdge,
-        tolerance: 0.0005,
+        tolerance: SNAP_EDGE_TOLERANCE,
         searchTop: 4,
         searchRadius: 2,
         preciseWinRate,
@@ -2276,7 +2292,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
         values,
         price,
         targetEdge,
-        tolerance: 0.0005,
+        tolerance: SNAP_EDGE_TOLERANCE,
         searchTop: 7,
         searchRadius: 1,
         preciseWinRate,
@@ -2301,7 +2317,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
         const refinedDrift = Math.abs(refinedRisk.edge - targetEdge);
         const refinedWinRateDrift = Math.abs(refinedRisk.winRate - preciseWinRate);
         if (
-          refinedDrift <= 0.0005 &&
+          refinedDrift <= SNAP_EDGE_TOLERANCE &&
           refinedRisk.edge >= targetEdge - 1e-9 &&
           refinedWinRateDrift <= winRateTol + 1e-9 &&
           snapGrailNotInflated(refinedRepaired.weights)
