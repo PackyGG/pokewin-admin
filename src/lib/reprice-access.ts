@@ -31,8 +31,8 @@ export function isRepriceOwner(
  * Operators in this list:
  *   • pass `isPackStudioRetuneOperator` exactly like an owner — they can reach
  *     the read-only Pack-Studio retune dry-runs (`planPackRetune`,
- *     `planAllRetunes`, `planCustomRepin`, `getPortfolioProfile`,
- *     `getPackRetunePool`, `getPackEditPool`, `getRetunePickerFilters`);
+ *     `planPackTune`, `planCustomRepin`, `getPackEditPool`,
+ *     `getRetunePickerFilters`);
  *   • can MINT a retune / re-price token via `authorizePackRetune` /
  *     `authorizeReprice` WITHOUT proving 2FA (owners still have to);
  *   • can run every authoritative write that gates on this predicate

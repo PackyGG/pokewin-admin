@@ -22,11 +22,9 @@ import { capturePackSnapshot } from "@/app/(admin)/packs/_lib/pack-history";
 import { buildPackCompliance } from "@/app/(admin)/packs/_lib/risk-config";
 import {
   computePackRisk,
-  computePackRiskFromAggregates,
   shapeWeights,
   searchBestPriceForCleanSnap,
   isOnCleanLadderPct,
-  RETUNE_MAX_PRICE_CHANGE_PCT,
   type PackRisk,
   type ShapeWeightsRelaxation,
   type ShapeWeightsLimit,
@@ -48,46 +46,33 @@ import {
   readEdgeCurveConfig,
   readMaxWinCap,
   readMaxMultCeiling,
-  readPackSystemConfig,
   type EdgeCurveConfig,
   type ResolvedAutoTargetCfg,
 } from "@/app/(admin)/packs/_lib/risk-config";
 import { computePoolFingerprint } from "@/app/(admin)/packs/_lib/pool-fingerprint";
 import { buildRetuneSearchParams } from "@/app/(admin)/packs/_lib/retune-params";
-import {
-  computePortfolioProfile,
-  derivePortfolioTargets,
-  resolvePortfolioSystemConfig,
-  type PortfolioProfile,
-  type PortfolioSystemConfig,
-  type PortfolioSystemPlan,
-  type PortfolioPackInput,
-  type PortfolioPackTargets,
-} from "@/app/(admin)/packs/_lib/portfolio";
-import { safeQueryOrNull } from "@/lib/errors/safe-query";
-import {
-  PACK_STUDIO_RETUNE_CACHE_TAG,
-  packRetunePlanTag,
-} from "../_actions/retune-cache-tag";
+import { packRetunePlanTag } from "../_actions/retune-cache-tag";
 
 /**
- * Read-only helpers backing the Pack Doctor re-tune UI. The authoritative WRITE
- * path is the existing pack server actions (`planPackRetune` /
+ * Read-only plan surfaces + staged-write actions backing the Pack Doctor and
+ * the Retune V2 workspace. The authoritative pool/price WRITE path for the
+ * live arm is the existing pack server actions (`planPackRetune` /
  * `authorizePackRetune` / `applyPackRetune` and `authorizeReprice` /
  * `repricePackToTargetEdge` in `src/app/(admin)/packs/actions.ts`) — this file
- * adds ONLY the owner-gated READ surfaces the doctor drawer + dialogs need that
- * aren't already exported:
+ * adds the operator-gated READ surfaces those don't export plus the staged
+ * writers:
  *
- *   • getPackRetunePool — a pack's card pool (id/name/value/weight) joined to
- *     fresh identity, plus the current `computePackRisk` breakdown and the
- *     resolved max-win cap, for the re-tune drawer's "card pool + risk" view.
  *   • planCustomRepin   — a READ-ONLY dry-run for the "Re-pin below-target packs
  *     to ≥ target" action: re-derives each below-target pack's round-up
  *     price/edge via the SAME `planPackReprice` the global re-price uses.
+ *   • planPackTune      — THE Retune V2 single-pack plan (live or staged arm);
+ *     the workspace's one brain (see the section near the end of this file).
+ *   • getPackEditPool / applyPackEdit / applyStagedPackEditAndRetune — the
+ *     inline pool read + the verbatim / server-shaped staged writers.
  *
- * Both are owner-gated AND Pack-Studio-gated, READ-ONLY (MAIN is read-only here;
- * they only SELECT), and write nothing. The matching mutations stay in the
- * existing, paranoid, 2FA-token-guarded pack actions.
+ * Reads are owner-gated AND Pack-Studio-gated, READ-ONLY (MAIN is read-only
+ * here; they only SELECT), and write nothing. The mutations stay paranoid and
+ * token-guarded (same RETUNE scope `authorizePackRetune` mints).
  */
 
 /**
@@ -106,91 +91,6 @@ async function requireRetuneOwner() {
     throw new Error("The pack re-tune tools are restricted to authorized operators.");
   }
   return session;
-}
-
-export type RetunePoolCard = {
-  cardId: string;
-  name: string;
-  value: number;
-  weight: number;
-  /** weight / Σweight — the current draw probability (0..1). */
-  prob: number;
-};
-
-export type RetunePool = {
-  packId: string;
-  name: string;
-  slug: string;
-  packType: string;
-  active: boolean;
-  price: number;
-  /** Resolved jackpot cap (USD) so the drawer can pre-fill the cap lever. */
-  maxWinCap: number;
-  /** The pack's risk AS IT IS NOW (same engine the snapshot scores with). */
-  risk: PackRisk;
-  /** Pool cards, ordered by current weight desc (most-likely first). */
-  cards: RetunePoolCard[];
-};
-
-/**
- * Read a pack's full card pool + current risk for the re-tune drawer. Owner-only,
- * READ-ONLY: a fresh MAIN read of the pool values/weights (`getPackCardValues`),
- * the card display names (one `id = ANY(...)` PK probe), and the pack identity —
- * then the pure `computePackRisk` breakdown. Writes nothing.
- */
-export async function getPackRetunePool(packId: string): Promise<RetunePool> {
-  await requireRetuneOwner();
-  if (!isUuid(packId)) throw new Error("Invalid pack id");
-
-  const db = await getDb();
-  const pack = await db.packs.findUnique({
-    where: { id: packId },
-    select: { name: true, slug: true, price: true, active: true, pack_type: true },
-  });
-  if (!pack) throw new Error("Pack not found");
-
-  const price = Number(pack.price.toString());
-  const pool = await getPackCardValues(packId);
-
-  // Card display names (read-only PK probe). Absent ids fall back to a short id.
-  const nameById = new Map<string, string>();
-  if (pool.length > 0) {
-    const cardRows = await db.cards.findMany({
-      where: { id: { in: pool.map((c) => c.cardId) } },
-      select: { id: true, name: true },
-    });
-    for (const r of cardRows) nameById.set(r.id, r.name);
-  }
-
-  const risk = computePackRisk({
-    cards: pool.map((c) => ({ value: c.value, weight: c.weight })),
-    price,
-  });
-
-  const totalWeight = pool.reduce((s, c) => s + (c.weight > 0 ? c.weight : 0), 0);
-  const cards: RetunePoolCard[] = pool
-    .map((c) => ({
-      cardId: c.cardId,
-      name: nameById.get(c.cardId) ?? `${c.cardId.slice(0, 8)}…`,
-      value: c.value,
-      weight: c.weight,
-      prob: totalWeight > 0 ? c.weight / totalWeight : 0,
-    }))
-    .sort((a, b) => b.weight - a.weight);
-
-  const maxWinCap = await readMaxWinCap();
-
-  return {
-    packId,
-    name: pack.name,
-    slug: pack.slug,
-    packType: pack.pack_type,
-    active: pack.active,
-    price,
-    maxWinCap,
-    risk,
-    cards,
-  };
 }
 
 export type CustomRepinRow = {
@@ -348,994 +248,6 @@ export async function planCustomRepin(
     unchanged,
     skipped,
   };
-}
-
-// ─── Plan-all auto-retune (READ-ONLY dry-run for EVERY in-scope pack) ──────
-//
-// The "re-tune everything to the house auto-targets" preview: for ALL active
-// official packs, compute the CURRENT risk and the proposed shaped weights at
-// the auto-targets (house edge + default win-rate/near-miss + price-relative
-// jackpot cap). One batched MAIN read of every in-scope pack's card values
-// (a single SELECT joining pack_cards->cards for all in-scope pack_ids — NOT an
-// N+1 per pack), then pure compute per pack. Writes NOTHING — the owner reviews,
-// then the per-pack apply loop (`authorizePackRetune` + `applyPackRetune`) does
-// the 2FA-guarded writes. Card values + current weights are returned so the
-// client can re-shape locally during an "Adjust" pass without a round-trip
-// (card values are public sticker prices, not secret).
-
-/** One pool card of a plan-all proposal: id + value + the CURRENT weight. */
-export type PlanAllCard = {
-  cardId: string;
-  /** `cards.price` (the item value; a voucher is the same as a card). */
-  value: number;
-  /** Current `pack_cards.weight`. */
-  weight: number;
-  /** `cards.name` — surfaced so the review UI can label each row by item. */
-  name: string;
-  /** `cards.image_url` — surfaced so the review UI can show a thumbnail. */
-  imageUrl: string;
-};
-
-/** Per-card weight change a plan-all proposal would apply (only changed cards). */
-export type PlanAllWeightDiff = {
-  cardId: string;
-  from: number;
-  to: number;
-};
-
-export type PlanAllProposal = {
-  packId: string;
-  name: string;
-  slug: string;
-  price: number;
-  /**
-   * The PRICE the proposal would write (USD). Equals `price` when the clean-
-   * snap price-search didn't move the ticket. When the chip-strip edge override
-   * is active (or the snap needed a nearby price to land clean odds), the
-   * solver may PUSH THE TICKET PRICE UP to satisfy the (edge_target +
-   * clean_odds + win_rate) trio simultaneously — `priceAfter` is the new
-   * ticket. `applyPackRetune` writes this verbatim. Owner asked: "change the
-   * price of the pack to keep the edge better or chances".
-   */
-  priceAfter: number;
-  /**
-   * Freshness fingerprint of the LIVE pool this proposal was solved from —
-   * {@link computePoolFingerprint} over the live price + sorted
-   * (cardId, weight) pairs. The review client threads it back on Approve
-   * (`approvedPoolFingerprint` on `applyPackRetune` /
-   * `applyStagedPackEditAndRetune`) so the write can refuse when the pool
-   * changed between plan and approve instead of silently re-solving different
-   * inputs (RC1: write-the-approved-artifact).
-   */
-  poolFingerprint: string;
-  /** Pool cards (id/value/current weight), pool order. */
-  cards: PlanAllCard[];
-  /** Current weights, mirrored out for convenient client re-shaping. */
-  currentWeights: { cardId: string; weight: number }[];
-  /**
-   * The targets this proposal was shaped to. In "per-pack" mode these are the
-   * pack's independent `autoRetuneTargets`; in "portfolio" mode they are the
-   * system-balanced targets (may carry a tightened cap / nudged win-rate).
-   */
-  autoTargets: PortfolioPackTargets;
-  /**
-   * The INTENDED hit-rate parsed from the pack NAME (its leading `X%` tag, e.g.
-   * "10% Divine Order" → 0.10), or `null` for an untagged pack. Surfaced at the
-   * top level so the UI can show "1% pack → targeting 1% win-rate" without
-   * reaching into `autoTargets`. Mirrors `autoTargets.intendedHitRate`.
-   */
-  intendedHitRate: number | null;
-  /**
-   * The win-rate this proposal was actually shaped to. For a TAGGED pack this is
-   * its tag hit-rate; for an untagged pack the default 20%; in portfolio mode a
-   * possibly-nudged value. Equals `autoTargets.targetWinRate`.
-   */
-  targetWinRate: number;
-  /** Risk AS IT IS NOW. */
-  before: PackRisk;
-  /** Risk the pack WOULD have after the auto-retune (null when infeasible). */
-  after: PackRisk | null;
-  /** Per-card weight change (null when infeasible). */
-  weightDiff: PlanAllWeightDiff[] | null;
-  /** Whether `shapeWeights` produced a usable vector at the auto-targets. */
-  feasible: boolean;
-  /**
-   * Soft targets the solver had to RELAX to reach this (feasible) result —
-   * empty when nothing was relaxed. Only present on a feasible proposal; an
-   * infeasible one carries a `limit` instead. Each entry says which lever was
-   * loosened, what was requested, what was applied, and why — so the UI can
-   * show a friendly "near-miss relaxed 10% → 0% — this pool has no near-miss
-   * cards" banner instead of silently dropping the target.
-   */
-  relaxations: ShapeWeightsRelaxation[];
-  /** The solver's error verbatim when infeasible. */
-  error?: string;
-  /**
-   * Structured HARD limit when the pack is genuinely infeasible (the error
-   * arm): a kind + human-readable detail + a concrete suggestion, so an
-   * infeasible pack shows a clear "why + how to fix" message rather than a dead
-   * end. Null on a feasible proposal.
-   */
-  limit: ShapeWeightsLimit | null;
-  /**
-   * Whether the proposed odds snapped to the clean ladder (human-readable round
-   * numbers like 0.05% / 10% / 25%) or fell back to the precise (ugly) weights.
-   * `true` = "odds snapped to clean ladder"; `false` = "couldn't fully snap —
-   * showing exact odds". A serializable boolean (NOT a function) for the review
-   * badge. Null on an infeasible proposal.
-   */
-  snapped: boolean | null;
-  /**
-   * Whether a win/grail card's odds had to rise above its CURRENT odds because
-   * its current rarity is so extreme no feasible decay matches it (mathematically
-   * unavoidable for this pool). `true` = the review surfaces "jackpot odds rose
-   * (unavoidable)"; `false`/null = the expensive tail stayed at/below its current
-   * odds (the normal case). Serializable boolean for the badge.
-   */
-  topInflationUnavoidable: boolean | null;
-};
-
-/**
- * Mode for {@link planAllRetunes}:
- *   • "per-pack"  — current behavior: every pack shaped to its INDEPENDENT
- *                   `autoRetuneTargets` (flat house edge + default win-rate + auto
- *                   cap). `systemPlan` is null.
- *   • "portfolio" — system-level: targets are derived by `derivePortfolioTargets`
- *                   so the WHOLE catalog lands inside the system bounds (spicy
- *                   share + jackpot exposure). Each pack is shaped to its
- *                   system-target; `systemPlan` explains what was tightened + why.
- */
-export type PlanAllMode = "per-pack" | "portfolio";
-
-/**
- * Options for {@link planAllRetunes}. Currently only carries the operator's
- * optional house-edge floor nudge from the Retune Review chip strip (presets
- * 11.02 / 11.10 / 11.20 / 11.25 / 11.30 %). When set, the edge curve's floor
- * (and, if needed, its ceiling) is raised to this value for the run — every
- * pack's per-pack target lands ≥ the override. Null/undefined → baseline curve.
- *
- * SAFETY: the override is clamped into `[DEFAULT_EDGE_FLOOR, EDGE_TARGET_NUDGE_MAX]`
- * (1.0% headroom above the 11.50% ceiling) before being applied; an out-of-range
- * value falls back to the baseline. Read-only — this only changes the targets
- * the dry-run shapes against; nothing is written to MAIN.
- */
-export type PlanAllOpts = {
-  edgeFloorOverride?: number | null;
-  /**
-   * Operator-pinned target ticket price (USD) — ANCHOR for the clean-snap price
-   * search. When set (non-null, > 0), the search re-centers around this anchor
-   * rather than the live pack price, so the operator can say "shape every pack
-   * to land at $X" and have `priceAfter` cluster around that value (the search
-   * still nudges ±25% / +200% in the chip-strip-nudged case to find a clean
-   * snap that satisfies edge + win-rate). Per-pack ticket-price differences
-   * (a $1.25 pack and a $5 pack in the same review session) are preserved
-   * relative to their own anchor — this is a per-pack absolute anchor, not a
-   * batch override. Null/undefined = use each pack's live `price` (default).
-   *
-   * SAFETY: when an anchor is active, the search runs in `preferHigherEdge`
-   * mode (edge ranks above snap-cleanness) so an anchor that lowers the price
-   * doesn't silently give up house edge.
-   */
-  priceOverride?: number | null;
-};
-
-/** Hard ceiling on the operator's edge nudge — caps the chip strip presets. */
-const EDGE_TARGET_NUDGE_MAX = 0.125;
-
-/**
- * Overlay an optional operator edge-floor nudge onto the resolved edge curve.
- * Pure + sync. When `override` is null/undefined/non-finite/out-of-range, the
- * curve is returned unchanged. When set, the floor is raised to the override
- * (clamped into `[base.edgeFloor, EDGE_TARGET_NUDGE_MAX]`) AND the ceiling is
- * pushed up to be ≥ the new floor so the invariant `edgeFloor ≤ edgeCeiling`
- * the pure helpers rely on still holds. The premium-driven part of the curve
- * (coefficients / bases / refs) is untouched — only the floor/ceiling band
- * shifts up, so every pack still gets its tiny risk premium on top of the
- * raised floor.
- */
-function applyEdgeFloorOverride(
-  base: EdgeCurveConfig,
-  override: number | null | undefined,
-): EdgeCurveConfig {
-  if (override == null || !Number.isFinite(override)) return base;
-  if (!(override > base.edgeFloor)) return base; // nudging DOWN is not allowed.
-  const clamped = Math.min(EDGE_TARGET_NUDGE_MAX, override);
-  return {
-    ...base,
-    edgeFloor: clamped,
-    edgeCeiling: Math.max(base.edgeCeiling, clamped),
-  };
-}
-
-export type PlanAllRetunesResult = {
-  /** The auto-target config resolved once for this run (for the header UI). */
-  cfg: ResolvedAutoTargetCfg;
-  /** Which targeting mode produced these proposals. */
-  mode: PlanAllMode;
-  /**
-   * The system-level plan (before/after profile + tightened packs + why) when
-   * `mode === "portfolio"`; null in "per-pack" mode.
-   */
-  systemPlan: PortfolioSystemPlan | null;
-  proposals: PlanAllProposal[];
-};
-
-/** One batched MAIN read of every in-scope pack's card values + weights. */
-type BatchedPoolRow = {
-  pack_id: string;
-  card_id: string;
-  value: string | null;
-  weight: number;
-  name: string;
-  image_url: string;
-};
-
-/**
- * READ-ONLY: for ALL active official packs, return the retune proposal (current
- * vs. proposed risk + weight diff). Owner + Pack-Studio gated. One batched
- * card-values read (no N+1), then pure compute. Writes nothing.
- *
- *   • mode "per-pack" (default) — each pack shaped to its INDEPENDENT
- *     `autoRetuneTargets`; `systemPlan` null (the current behavior, unchanged).
- *   • mode "portfolio" — `derivePortfolioTargets` sets per-pack targets so the
- *     WHOLE catalog lands inside the system bounds; each pack is shaped to its
- *     system-target and `systemPlan` explains what was tightened + why.
- */
-export async function planAllRetunes(
-  mode: PlanAllMode = "per-pack",
-  opts?: PlanAllOpts,
-): Promise<PlanAllRetunesResult> {
-  // Auth FIRST — keep the session check OUTSIDE the cache (a cached `requireRetuneOwner`
-  // would skip the session lookup for the next caller). Cache scope is per-mode/opts,
-  // shared across operators since the dry-run is operator-agnostic once gated.
-  await requireRetuneOwner();
-
-  // Default-opts loads (the page's initial render + any later refresh that
-  // doesn't carry chip-strip nudges) hit the shared 60s cache, so the heavy
-  // per-pack `searchBestPriceForCleanSnap` × N sweep (the page's dominant cost)
-  // only runs on a true cache miss. Operator nudge calls (a non-null
-  // `edgeFloorOverride` or `priceOverride`) bypass the cache entirely — they
-  // are interactive, per-operator, and infrequent.
-  const hasNudge =
-    (opts?.edgeFloorOverride != null && Number.isFinite(opts.edgeFloorOverride)) ||
-    (opts?.priceOverride != null && Number.isFinite(opts.priceOverride));
-  if (!hasNudge) {
-    return planAllRetunesCached(mode);
-  }
-  return planAllRetunesUncached(mode, opts);
-}
-
-/**
- * Cached entry-point for the page's default render. Keyed on `mode` only (the
- * uncached arm handles every nudged call), tagged so the retune/edit write paths
- * can invalidate the proposal blob the moment a pack's pool / price changes.
- *
- * TTL 60s + tag-based invalidation: a stale proposal between writes can't show
- * an edit that already shipped, because every write path calls
- * `revalidateTag(PACK_STUDIO_RETUNE_CACHE_TAG)` (see `applyPackRetune`,
- * `applyPackEdit`, `applyStagedPackEditAndRetune`).
- */
-const planAllRetunesCached = unstable_cache(
-  async (mode: PlanAllMode): Promise<PlanAllRetunesResult> => {
-    return planAllRetunesUncached(mode, undefined);
-  },
-  // v2: proposals carry `poolFingerprint` — the bump makes pre-fingerprint
-  // cached blobs (which persist across deploys) unreachable, so every
-  // proposal the review renders can thread a freshness token to Approve.
-  ["pack-studio.retune.plan-all.v2"],
-  {
-    revalidate: 60,
-    tags: [PACK_STUDIO_RETUNE_CACHE_TAG],
-  },
-);
-
-/**
- * The actual `planAllRetunes` work — extracted so the cached wrapper can call
- * it without an auth check (the public `planAllRetunes` already gated the
- * caller). Unchanged behavior vs. the previous inline implementation.
- */
-async function planAllRetunesUncached(
-  mode: PlanAllMode,
-  opts: PlanAllOpts | undefined,
-): Promise<PlanAllRetunesResult> {
-  // Resolve the auto-target config ONCE for the whole run.
-  // `edgeCurve` is always populated (using the DB blob + curve-overlay logic
-  // below) so `autoTargetEdge` shapes against a single source-of-truth curve
-  // — not the silent `DEFAULT_EDGE_CURVE` fallback inside the pure helper.
-  const baseEdgeCurve = await readEdgeCurveConfig();
-  const edgeCurve = applyEdgeFloorOverride(baseEdgeCurve, opts?.edgeFloorOverride);
-  const cfg: ResolvedAutoTargetCfg = {
-    globalCap: await readMaxWinCap(),
-    maxMultCeiling: await readMaxMultCeiling(),
-    edgeCurve,
-  };
-
-  // In-scope set: ACTIVE official packs with price > 0 (same scope the global
-  // re-price dry-run sweeps). Gives us id/name/slug/price per pack.
-  const comps = await getPacksPoolComposition();
-  const inScope = comps.filter((p) => p.active && p.price > 0);
-  if (inScope.length === 0) {
-    return { cfg, mode, systemPlan: null, proposals: [] };
-  }
-
-  const packIds = inScope.map((p) => p.id);
-
-  // ── ONE batched read of every in-scope pack's card values + weights ──────
-  // Single SELECT joining pack_cards -> cards for ALL in-scope pack_ids (no
-  // N+1). The `pack_id = ANY(...)` predicate is served by the existing
-  // `pack_cards_pack_id_card_id_unique` composite index (leading column
-  // pack_id, Bitmap Index Scan — verified for the per-pack lookup in
-  // prisma/recommended-indexes.sql); `cards` is joined on its PK. Decimals cast
-  // to text and re-parsed for serializable, JS-arithmetic-safe numbers.
-  const db = await getDb();
-  // SAFE: the ONLY runtime value in this query is `packIds`, bound via the
-  // parameterized `$1::uuid[]` placeholder (each id is `isUuid`-filtered above).
-  // No string is interpolated into the SQL text — keep it that way.
-  const rows = await db.$queryRawUnsafe<BatchedPoolRow[]>(
-    `
-      SELECT
-        pc.pack_id      AS pack_id,
-        pc.card_id      AS card_id,
-        c.price::text   AS value,
-        pc.weight       AS weight,
-        c.name          AS name,
-        c.image_url     AS image_url
-      FROM pack_cards pc
-      JOIN cards c ON c.id = pc.card_id
-      WHERE pc.pack_id = ANY($1::uuid[])
-      ORDER BY pc.pack_id, pc.order ASC
-    `,
-    packIds,
-  );
-
-  // Group rows by pack, preserving pool order.
-  const cardsByPack = new Map<string, PlanAllCard[]>();
-  for (const r of rows) {
-    let list = cardsByPack.get(r.pack_id);
-    if (!list) {
-      list = [];
-      cardsByPack.set(r.pack_id, list);
-    }
-    list.push({
-      cardId: r.card_id,
-      value: Number(r.value ?? 0),
-      weight: Number(r.weight),
-      name: r.name ?? "",
-      imageUrl: r.image_url ?? "",
-    });
-  }
-
-  // ── Resolve the per-pack TARGETS for this run ───────────────────────────
-  // "before" risk per pack first (shared by both modes + needed by the
-  // portfolio balancer), then the target set each pack will be shaped to.
-  const beforeByPack = new Map<string, PackRisk>();
-  for (const p of inScope) {
-    const cards = cardsByPack.get(p.id) ?? [];
-    beforeByPack.set(
-      p.id,
-      computePackRisk({
-        cards: cards.map((c) => ({ value: c.value, weight: c.weight })),
-        price: p.price,
-      }),
-    );
-  }
-
-  // Default: every pack on its INDEPENDENT auto-targets. TAG-AWARE — a pack whose
-  // NAME starts with `X%` (e.g. "10% Divine Order") targets THAT hit-rate as its
-  // win-rate (`parsePackHitRate`); untagged packs keep the default 20%. In
-  // portfolio mode the system balancer overrides the offenders' targets so the
-  // WHOLE catalog lands inside the system bounds; `systemPlan` explains it.
-  let targetsByPack: Map<string, PortfolioPackTargets> = new Map(
-    inScope.map((p) => [p.id, autoRetuneTargets(p.price, cfg, resolveIntendedHitRate(p.name, p.tags) ?? undefined)]),
-  );
-  let systemPlan: PortfolioSystemPlan | null = null;
-
-  if (mode === "portfolio") {
-    const sysCfg = await readPortfolioSystemConfigResolved(cfg);
-    const balancerInput: PortfolioPackInput[] = inScope.map((p) => ({
-      packId: p.id,
-      price: p.price,
-      name: p.name,
-      cards: (cardsByPack.get(p.id) ?? []).map((c) => ({ value: c.value })),
-      currentRisk: beforeByPack.get(p.id)!,
-    }));
-    const derived = derivePortfolioTargets(balancerInput, sysCfg);
-    targetsByPack = derived.targetsByPack;
-    systemPlan = derived.systemPlan;
-  }
-
-  // Per-pack price-search policy.
-  //
-  // The dry-run must show the OWNER what approve will actually write — the
-  // chip-strip table the owner sees is the AUTHORITATIVE preview. The legacy
-  // path called `shapeWeights` directly, which produced "dirty" odds like
-  // 0.0142% / 0.0656% (no clean-snap convergence) AND held the ticket price
-  // fixed even when the operator raised the edge target. The owner's explicit
-  // ask:
-  //   "i want the option to change the house edge … u can change the price of
-  //    the pack to keep the edge better or chances. last time i will say this
-  //    also none of these odds is clean, all dirty shit numbers. i said clean
-  //    and easy, change the price to get it done if needed"
-  // So every proposal now routes through `searchBestPriceForCleanSnap`:
-  //   • the shared ±60% retune band (`RETUNE_MAX_PRICE_CHANGE_PCT`) → catches
-  //     the "price nudge for clean odds" case (e.g. $1.25 → $1.27) while
-  //     keeping the staged price near the original (closer prices score first).
-  //   • When the operator has nudged the edge floor UP (`edgeFloorOverride`),
-  //     extend the upward search WAY past +25% so the solver can RAISE the
-  //     ticket price as far as needed to simultaneously hit (the raised edge,
-  //     clean ladder odds, the tag/default win-rate). The downward band stays
-  //     ±25%. Upper bound = +200% (3× basePrice) so a $1.25 lottery pack can
-  //     climb to ~$3.75 if that's what hits 11.20% + clean.
-  // The chosen price becomes `priceAfter` and is what `applyPackRetune` writes.
-  const edgeRaised =
-    opts?.edgeFloorOverride != null &&
-    Number.isFinite(opts.edgeFloorOverride) &&
-    opts.edgeFloorOverride > baseEdgeCurve.edgeFloor;
-  // Operator-pinned price anchor (optional). When set, every pack's search
-  // re-centers on this absolute USD anchor instead of the pack's live price.
-  // We also activate `preferHigherEdge` whenever an anchor OR an edge-floor
-  // nudge is active so the scorer ranks higher achieved edge above cleaner
-  // snap — the owner's report on a 1%-tagged pack ($1.25 → $1.00 search)
-  // showed snap-first scoring giving away edge when the operator wanted the
-  // opposite. Anchors that lower the price still must clear the targetEdge
-  // hard floor inside `shapeWeights`; the preferHigherEdge bias picks the
-  // candidate that BEATS target by the most.
-  const priceAnchor =
-    opts?.priceOverride != null &&
-    Number.isFinite(opts.priceOverride) &&
-    opts.priceOverride > 0
-      ? opts.priceOverride
-      : null;
-  const upwardExtension = edgeRaised ? 2.0 : 0; // up to +200% when chip-strip nudged
-  const preferHigherEdge = edgeRaised || priceAnchor !== null;
-
-  const proposals: PlanAllProposal[] = inScope.map((p) => {
-    const cards = cardsByPack.get(p.id) ?? [];
-    const autoTargets: PortfolioPackTargets =
-      targetsByPack.get(p.id) ?? autoRetuneTargets(p.price, cfg, resolveIntendedHitRate(p.name, p.tags) ?? undefined);
-    const currentWeights = cards.map((c) => ({ cardId: c.cardId, weight: c.weight }));
-    // Freshness token for the approve round-trip: fingerprints the exact live
-    // pool (price + card weights) THIS proposal is about to be solved from.
-    const poolFingerprint = computePoolFingerprint(p.price, cards);
-
-    const before = beforeByPack.get(p.id)!;
-
-    // A pack with no cards can't be shaped — surface it as infeasible, never
-    // throw (one bad pack must not sink the whole plan).
-    if (cards.length === 0) {
-      return {
-        packId: p.id,
-        name: p.name,
-        slug: p.slug,
-        price: p.price,
-        priceAfter: p.price,
-        poolFingerprint,
-        cards,
-        currentWeights,
-        autoTargets,
-        intendedHitRate: autoTargets.intendedHitRate,
-        targetWinRate: autoTargets.targetWinRate,
-        before,
-        after: null,
-        weightDiff: null,
-        feasible: false,
-        relaxations: [],
-        error: "Pack has no cards to retune.",
-        limit: {
-          kind: "empty-pool",
-          detail: "This pack has no cards in its pool, so there is nothing to retune.",
-          suggestion: "Add cards to the pack in the Builder before retuning it.",
-        },
-        snapped: null,
-        topInflationUnavoidable: null,
-      };
-    }
-
-    // Tagged lottery packs (untagged hit-rate === null) get the strict
-    // win-rate accuracy gate so 1%/5% packs land within 0.01pp of their tag.
-    const taggedWinRate =
-      autoTargets.intendedHitRate !== null &&
-      Math.abs(autoTargets.intendedHitRate - autoTargets.targetWinRate) < 1e-9
-        ? autoTargets.intendedHitRate
-        : undefined;
-
-    // Anchor the search on the operator's pinned target price when set; else
-    // on the pack's current live price. `preferHigherEdge` is on whenever an
-    // anchor OR an edge nudge is active so the scorer prefers higher achieved
-    // edge over snap-cleanness (owner-reported $1.25 → $1.00 regression).
-    const searchBasePrice = priceAnchor ?? p.price;
-    const search = searchBestPriceForCleanSnap({
-      cards: cards.map((c) => ({ value: c.value })),
-      basePrice: searchBasePrice,
-      targetEdge: autoTargets.targetEdge,
-      targetWinRate: autoTargets.targetWinRate,
-      maxWinCap: autoTargets.maxWinCap,
-      nearMissMin: autoTargets.nearMissMin,
-      // Pass the pack's CURRENT weights so the engine enforces the anti-inflation
-      // anchor (no win/grail card's odds may exceed its current odds — the
-      // jackpot stays rare and raising the edge only trims the expensive tail).
-      currentWeights: currentWeights.map((c) => c.weight),
-      // The SHARED ±60% retune band — the write (`applyPackRetune`) and the
-      // client confirm mirrors re-run this exact search, so all call sites must
-      // pass the same constant or the written price/odds diverge from this
-      // preview. The higher-edge guard (`preferHigherEdge`/
-      // `upwardPriceExtensionPct`) still gates any upward push; the band only
-      // widens the room the snap-search has to find a clean price near the base.
-      maxPriceChangePct: RETUNE_MAX_PRICE_CHANGE_PCT,
-      upwardPriceExtensionPct: upwardExtension,
-      preferHigherEdge,
-      ...(taggedWinRate !== undefined ? { taggedWinRate } : {}),
-    });
-    const shaped = search.bestResult;
-    const priceAfter = search.bestPrice;
-
-    if ("error" in shaped) {
-      return {
-        packId: p.id,
-        name: p.name,
-        slug: p.slug,
-        price: p.price,
-        priceAfter: p.price,
-        poolFingerprint,
-        cards,
-        currentWeights,
-        autoTargets,
-        intendedHitRate: autoTargets.intendedHitRate,
-        targetWinRate: autoTargets.targetWinRate,
-        before,
-        after: null,
-        weightDiff: null,
-        feasible: false,
-        relaxations: [],
-        error: shaped.error,
-        limit: shaped.limit,
-        snapped: null,
-        topInflationUnavoidable: null,
-      };
-    }
-
-    const weightDiff = cards
-      .map((c, i) => ({ cardId: c.cardId, from: c.weight, to: shaped.weights[i]! }))
-      .filter((d) => d.from !== d.to);
-
-    return {
-      packId: p.id,
-      name: p.name,
-      slug: p.slug,
-      price: p.price,
-      priceAfter,
-      poolFingerprint,
-      cards,
-      currentWeights,
-      autoTargets,
-      intendedHitRate: autoTargets.intendedHitRate,
-      targetWinRate: autoTargets.targetWinRate,
-      before,
-      after: shaped.risk,
-      weightDiff,
-      feasible: true,
-      relaxations: shaped.relaxations,
-      limit: null,
-      snapped: shaped.snapped ?? false,
-      topInflationUnavoidable: shaped.topInflationUnavoidable ?? false,
-    };
-  });
-
-  return { cfg, mode, systemPlan, proposals };
-}
-
-// ─── Single-pack retune (chip-strip on-demand recompute) ──────────────────
-//
-// The chip-strip (edge floor nudge) and target-price input both used to call
-// `planAllRetunes` with the new override on every click. That re-runs the
-// per-pack `searchBestPriceForCleanSnap` × N=183 packs — at 800 candidates per
-// pack under an edge nudge, that's ~146k shapeWeights calls and times out at
-// the Vercel gateway. The fix: recompute ONLY the pack the operator is
-// currently reviewing on click; lazily recompute the others as the operator
-// navigates to them. The other 182 proposals keep their pre-nudge values until
-// approached — they're stale-but-displayable, and the chip-strip preset is
-// per-session state that follows the operator across packs.
-
-/**
- * READ-ONLY single-pack version of {@link planAllRetunes}. Computes the
- * proposal for ONE pack with the supplied nudge options (edge floor / price
- * anchor). Owner-gated + Pack-Studio-gated. Writes nothing.
- *
- * Used by the Retune Review chip-strip + target-price input so a click
- * recomputes only the pack the operator is reviewing (≈ 100ms) instead of all
- * 183 packs (≈ 3 min, gateway timeout). Cached per (packId, mode, nudge) so
- * navigating back to a previously-recomputed pack is instant; the same write
- * paths that invalidate `planAllRetunes` (via PACK_STUDIO_RETUNE_CACHE_TAG)
- * invalidate this too.
- *
- * `mode` is accepted for parity with `planAllRetunes` but only "per-pack" is
- * meaningful for a single pack — portfolio mode is a cross-pack balance that
- * can't be derived from one pack in isolation, so the single-pack flow always
- * computes per-pack targets and the portfolio-mode tightenings fall through
- * the next `planAllRetunes` reload. Callers should leave `mode` at "per-pack".
- */
-export async function planSingleRetune(
-  packId: string,
-  opts?: PlanAllOpts,
-): Promise<PlanAllProposal | null> {
-  await requireRetuneOwner();
-  if (!isUuid(packId)) throw new Error("Invalid pack id");
-
-  return planSingleRetuneCached(
-    packId,
-    opts?.edgeFloorOverride ?? null,
-    opts?.priceOverride ?? null,
-  );
-}
-
-/**
- * Cached single-pack proposal compute. Keyed on the cache-key tuple
- * `(packId, edgeFloorOverride, priceOverride)` so navigating back to a
- * previously-recomputed pack is an instant cache hit. Invalidated by the same
- * tag as `planAllRetunes` — any write that affects the proposal blob clears
- * this too.
- *
- * The cache key MUST be plain JSON-serializable scalars (`unstable_cache`
- * hashes its key array). Bools/nulls/numbers are fine; we never put the full
- * `opts` object in to keep the key bounded.
- */
-const planSingleRetuneCached = unstable_cache(
-  async (
-    packId: string,
-    edgeFloorOverride: number | null,
-    priceOverride: number | null,
-  ): Promise<PlanAllProposal | null> => {
-    return planSingleRetuneUncached(packId, {
-      edgeFloorOverride,
-      priceOverride,
-    });
-  },
-  // v2: proposals carry `poolFingerprint` (see the plan-all key note).
-  ["pack-studio.retune.plan-single.v2"],
-  {
-    revalidate: 60,
-    tags: [PACK_STUDIO_RETUNE_CACHE_TAG],
-  },
-);
-
-/**
- * The actual single-pack work. Same compute shape as one iteration of
- * `planAllRetunesUncached` — but reads ONE pack's composition (one batched
- * read with `pack_id = $1`) and runs one `searchBestPriceForCleanSnap` call.
- * Returns null when the pack is out of scope (inactive / no price / not
- * found), so the client can keep the existing proposal instead of replacing
- * it with garbage.
- */
-async function planSingleRetuneUncached(
-  packId: string,
-  opts: PlanAllOpts,
-): Promise<PlanAllProposal | null> {
-  const baseEdgeCurve = await readEdgeCurveConfig();
-  const edgeCurve = applyEdgeFloorOverride(baseEdgeCurve, opts.edgeFloorOverride);
-  const cfg: ResolvedAutoTargetCfg = {
-    globalCap: await readMaxWinCap(),
-    maxMultCeiling: await readMaxMultCeiling(),
-    edgeCurve,
-  };
-
-  // Read ONE pack's identity + scope from the same composition view the
-  // sweep uses, so the scope predicate stays in lockstep.
-  const comps = await getPacksPoolComposition({ packIds: [packId] });
-  const p = comps[0];
-  if (!p || !p.active || !(p.price > 0)) return null;
-
-  // ── Read this pack's card values + weights (one row per card) ───────────
-  // Same SELECT shape as the batched sweep, just narrowed to one packId. The
-  // `pack_id = $1` predicate hits the same composite index as `= ANY($1)`.
-  const db = await getDb();
-  const rows = await db.$queryRawUnsafe<BatchedPoolRow[]>(
-    `
-      SELECT
-        pc.pack_id      AS pack_id,
-        pc.card_id      AS card_id,
-        c.price::text   AS value,
-        pc.weight       AS weight,
-        c.name          AS name,
-        c.image_url     AS image_url
-      FROM pack_cards pc
-      JOIN cards c ON c.id = pc.card_id
-      WHERE pc.pack_id = $1::uuid
-      ORDER BY pc.order ASC
-    `,
-    packId,
-  );
-
-  const cards: PlanAllCard[] = rows.map((r) => ({
-    cardId: r.card_id,
-    value: Number(r.value ?? 0),
-    weight: Number(r.weight),
-    name: r.name ?? "",
-    imageUrl: r.image_url ?? "",
-  }));
-
-  const autoTargets: PortfolioPackTargets = autoRetuneTargets(p.price, cfg, resolveIntendedHitRate(p.name, p.tags) ?? undefined);
-  const currentWeights = cards.map((c) => ({ cardId: c.cardId, weight: c.weight }));
-  // Freshness token for the approve round-trip (same stamp as the sweep arm).
-  const poolFingerprint = computePoolFingerprint(p.price, cards);
-  const before = computePackRisk({
-    cards: cards.map((c) => ({ value: c.value, weight: c.weight })),
-    price: p.price,
-  });
-
-  if (cards.length === 0) {
-    return {
-      packId: p.id,
-      name: p.name,
-      slug: p.slug,
-      price: p.price,
-      priceAfter: p.price,
-      poolFingerprint,
-      cards,
-      currentWeights,
-      autoTargets,
-      intendedHitRate: autoTargets.intendedHitRate,
-      targetWinRate: autoTargets.targetWinRate,
-      before,
-      after: null,
-      weightDiff: null,
-      feasible: false,
-      relaxations: [],
-      error: "Pack has no cards to retune.",
-      limit: {
-        kind: "empty-pool",
-        detail: "This pack has no cards in its pool, so there is nothing to retune.",
-        suggestion: "Add cards to the pack in the Builder before retuning it.",
-      },
-      snapped: null,
-      topInflationUnavoidable: null,
-    };
-  }
-
-  // Same single-pack search policy as the sweep arm. When the edge floor is
-  // raised, the upward search extension is on; price anchor + edge nudge both
-  // enable `preferHigherEdge` (edge ranks above snap-cleanness).
-  const edgeRaised =
-    opts.edgeFloorOverride != null &&
-    Number.isFinite(opts.edgeFloorOverride) &&
-    opts.edgeFloorOverride > baseEdgeCurve.edgeFloor;
-  const priceAnchor =
-    opts.priceOverride != null &&
-    Number.isFinite(opts.priceOverride) &&
-    opts.priceOverride > 0
-      ? opts.priceOverride
-      : null;
-  const upwardExtension = edgeRaised ? 2.0 : 0;
-  const preferHigherEdge = edgeRaised || priceAnchor !== null;
-  const taggedWinRate =
-    autoTargets.intendedHitRate !== null &&
-    Math.abs(autoTargets.intendedHitRate - autoTargets.targetWinRate) < 1e-9
-      ? autoTargets.intendedHitRate
-      : undefined;
-
-  const search = searchBestPriceForCleanSnap({
-    cards: cards.map((c) => ({ value: c.value })),
-    basePrice: priceAnchor ?? p.price,
-    targetEdge: autoTargets.targetEdge,
-    targetWinRate: autoTargets.targetWinRate,
-    maxWinCap: autoTargets.maxWinCap,
-    nearMissMin: autoTargets.nearMissMin,
-    // Anti-inflation anchor: never let a win/grail card's odds exceed its current
-    // odds (jackpot stays rare; raising edge only trims the expensive tail).
-    currentWeights: currentWeights.map((c) => c.weight),
-    // The SHARED ±60% retune band (must match `applyPackRetune` + the client
-    // confirm mirrors so this preview equals the write).
-    maxPriceChangePct: RETUNE_MAX_PRICE_CHANGE_PCT,
-    upwardPriceExtensionPct: upwardExtension,
-    preferHigherEdge,
-    ...(taggedWinRate !== undefined ? { taggedWinRate } : {}),
-  });
-  const shaped = search.bestResult;
-  const priceAfter = search.bestPrice;
-
-  if ("error" in shaped) {
-    return {
-      packId: p.id,
-      name: p.name,
-      slug: p.slug,
-      price: p.price,
-      priceAfter: p.price,
-      poolFingerprint,
-      cards,
-      currentWeights,
-      autoTargets,
-      intendedHitRate: autoTargets.intendedHitRate,
-      targetWinRate: autoTargets.targetWinRate,
-      before,
-      after: null,
-      weightDiff: null,
-      feasible: false,
-      relaxations: [],
-      error: shaped.error,
-      limit: shaped.limit,
-      snapped: null,
-      topInflationUnavoidable: null,
-    };
-  }
-
-  const weightDiff = cards
-    .map((c, i) => ({ cardId: c.cardId, from: c.weight, to: shaped.weights[i]! }))
-    .filter((d) => d.from !== d.to);
-
-  return {
-    packId: p.id,
-    name: p.name,
-    slug: p.slug,
-    price: p.price,
-    priceAfter,
-    poolFingerprint,
-    cards,
-    currentWeights,
-    autoTargets,
-    intendedHitRate: autoTargets.intendedHitRate,
-    targetWinRate: autoTargets.targetWinRate,
-    before,
-    after: shaped.risk,
-    weightDiff,
-    feasible: true,
-    relaxations: shaped.relaxations,
-    limit: null,
-    snapped: shaped.snapped ?? false,
-    topInflationUnavoidable: shaped.topInflationUnavoidable ?? false,
-  };
-}
-
-// ─── System-level portfolio profile (read-only header action) ─────────────
-
-/**
- * Resolve the {@link PortfolioSystemConfig} for a run: read the raw config blob
- * (ADMIN-DB, cookie-free) and fold in the already-resolved auto-target config.
- * The blob's `reserves` drives the default exposure cap; explicit `maxSpicyShare`
- * / `exposureCapUsd` / `defaultWinRate` override the documented defaults. Pure
- * `resolvePortfolioSystemConfig` does the actual resolution so it stays testable.
- */
-async function readPortfolioSystemConfigResolved(
-  autoCfg: ResolvedAutoTargetCfg,
-): Promise<PortfolioSystemConfig> {
-  const raw = await readPackSystemConfig();
-  if (!raw) return resolvePortfolioSystemConfig(null, autoCfg);
-
-  // `PackSystemConfig` types only the fields risk-config reads; the blob MAY
-  // carry the portfolio system-target fields too. Read them defensively as
-  // optional numbers (the pure resolver validates each one) without widening
-  // the shared `PackSystemConfig` type.
-  const blob = raw as Record<string, unknown>;
-  const num = (v: unknown): number | undefined =>
-    typeof v === "number" && Number.isFinite(v) ? v : undefined;
-
-  return resolvePortfolioSystemConfig(
-    {
-      defaultWinRate: num(blob.defaultWinRate),
-      maxSpicyShare: num(blob.maxSpicyShare),
-      exposureCapUsd: num(blob.exposureCapUsd),
-      reserves: num(raw.reserves),
-    },
-    autoCfg,
-  );
-}
-
-export type PortfolioProfileResult = {
-  /** The resolved system-target config (bounds the profile is judged against). */
-  cfg: PortfolioSystemConfig;
-  /** The current catalog profile (every active official pack scored as-is). */
-  profile: PortfolioProfile;
-  /** True when the catalog is already inside BOTH system bounds. */
-  withinBounds: boolean;
-};
-
-/**
- * READ-ONLY owner-gated header action: profile the WHOLE active-official-pack
- * catalog (tier distribution, total jackpot exposure, aggregate CV, over-cap /
- * below-target counts, spicy share) against the resolved system bounds. Reuses
- * the SAME aggregated composition read as the re-price dry-run (`computePackRisk
- * FromAggregates` over `getPacksPoolComposition` — no per-card read needed), then
- * pure compute. Writes nothing.
- */
-export async function getPortfolioProfile(): Promise<PortfolioProfileResult> {
-  // Auth OUTSIDE the cache (same pattern as `planAllRetunes`). The portfolio
-  // profile is operator-agnostic once gated, so a single shared cache entry
-  // serves every operator without leaking access.
-  await requireRetuneOwner();
-  return getPortfolioProfileCached();
-}
-
-/**
- * Cached entry-point for the System Balance header. Pure DB-aggregate read
- * (no `searchBestPriceForCleanSnap`-style sweep) but it still issues the same
- * `getPacksPoolComposition` query as `planAllRetunes` — caching here drops
- * the duplicate ~90ms DB hit per page render, and the same `revalidateTag`
- * call on writes keeps the profile in sync with the proposal blob.
- *
- * NOTE: the retune review page now derives the System Balance profile from the
- * proposals it already loaded via {@link getPortfolioProfileFromProposals} (no
- * second scan at all). This cached aggregate path is retained for any direct
- * `getPortfolioProfile()` caller (operator allowlist surface contract) where the
- * proposals aren't already in hand.
- */
-const getPortfolioProfileCached = unstable_cache(
-  async (): Promise<PortfolioProfileResult> => {
-    const cfg: ResolvedAutoTargetCfg = {
-      globalCap: await readMaxWinCap(),
-      maxMultCeiling: await readMaxMultCeiling(),
-    };
-    const sysCfg = await readPortfolioSystemConfigResolved(cfg);
-
-    // Aggregated composition is enough for the profile — score each pack via the
-    // aggregate path (same engine, no per-card materialization).
-    const comps = await getPacksPoolComposition();
-    const inScope = comps.filter((p) => p.active && p.price > 0);
-
-    const packRisks = inScope.map((p) => ({
-      price: p.price,
-      risk: computePackRiskFromAggregates({
-        price: p.price,
-        totalWeight: p.totalWeight,
-        weightedPriceSum: p.weightedPriceSum,
-        weightedSqSum: p.weightedSqSum,
-        winWeight: p.winWeight,
-        nearMissWeight: p.nearMissWeight,
-        maxValue: p.maxValue,
-        floorValue: p.floorValue,
-      }),
-    }));
-
-    const profile = computePortfolioProfile(packRisks, cfg);
-    const withinBounds =
-      profile.spicyShare <= sysCfg.maxSpicyShare &&
-      profile.totalMaxWinExposure <= sysCfg.exposureCapUsd;
-
-    return { cfg: sysCfg, profile, withinBounds };
-  },
-  ["pack-studio.retune.portfolio-profile.v1"],
-  {
-    revalidate: 60,
-    tags: [PACK_STUDIO_RETUNE_CACHE_TAG],
-  },
-);
-
-/**
- * READ-ONLY owner-gated header action, derived from an ALREADY-COMPUTED
- * {@link planAllRetunes} result — NO extra DB read.
- *
- * The retune review loads `planAllRetunes()` (which already reads every in-scope
- * pack's composition and scores each pack's CURRENT `before` risk via
- * `computePackRisk`) AND `getPortfolioProfile()` (which independently re-ran the
- * SAME heavy `getPacksPoolComposition` MAIN scan + the SAME config blob reads
- * just to score the catalog). That double scan is pure waste on first paint.
- *
- * This helper computes the identical {@link PortfolioProfileResult} from the
- * proposals' per-pack `before` risks + prices — `computePortfolioProfile` takes
- * exactly `{ price, risk }[]`, and the per-pack `before` IS the authoritative
- * current risk (the same value each review card displays), so the System Balance
- * header now agrees to the cent with the cards instead of drifting between the
- * aggregate and per-card engines. The only DB touches are the two cheap ADMIN
- * config reads (`readMaxWinCap`/`readMaxMultCeiling` via the system-config
- * resolver), which the request-scoped `readPackSystemConfig` cache collapses onto
- * the one round-trip `planAllRetunes` already paid for. Writes nothing.
- */
-export async function getPortfolioProfileFromProposals(
-  proposals: Pick<PlanAllProposal, "price" | "before">[],
-): Promise<PortfolioProfileResult> {
-  await requireRetuneOwner();
-
-  const cfg: ResolvedAutoTargetCfg = {
-    globalCap: await readMaxWinCap(),
-    maxMultCeiling: await readMaxMultCeiling(),
-  };
-  const sysCfg = await readPortfolioSystemConfigResolved(cfg);
-
-  const packRisks = proposals.map((p) => ({ price: p.price, risk: p.before }));
-
-  const profile = computePortfolioProfile(packRisks, cfg);
-  const withinBounds =
-    profile.spicyShare <= sysCfg.maxSpicyShare &&
-    profile.totalMaxWinExposure <= sysCfg.exposureCapUsd;
-
-  return { cfg: sysCfg, profile, withinBounds };
 }
 
 // ─── Card-picker filters for the inline pool editor (read-only) ───────────
@@ -1565,7 +477,7 @@ async function enforcePackCreatorLiveGate(
  *   • every edited cardId must exist in the pack's CURRENT live pool — an edit
  *     can re-weight / remove / reorder existing cards, but cannot inject a card
  *     the pool never had (adding a brand-new card belongs in the full Builder,
- *     which validates card identity; this keeps the retune-review edit honest
+ *     which validates card identity; this keeps the verbatim edit honest
  *     and read-verified against fresh MAIN truth).
  *
  * Captures an "edit" snapshot of the CURRENT state FIRST (revertable), then
@@ -1798,10 +710,9 @@ export async function applyPackEdit(
   await refreshEditedPackRiskScore(packId, after);
 
   reloadPacks();
-  // Invalidate the cached retune-review proposal blob so the next render of
-  // /pack-studio/retune reflects this edit instead of a 60s-stale dry-run.
-  // Per-pack: ONLY this pack's V2 plan is busted (never the other 182).
-  revalidateTag(PACK_STUDIO_RETUNE_CACHE_TAG);
+  // Invalidate this pack's cached V2 plan so the next `planPackTune` reflects
+  // this edit instead of a 60s-stale solve. Per-pack: ONLY this pack's plan
+  // is busted (never the other 182).
   revalidateTag(packRetunePlanTag(packId));
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
@@ -1940,9 +851,9 @@ export type ApplyStagedRetuneResult = {
 //   • `applyStagedPackEditAndRetune` (the WRITE) — throws the refusal message
 //     for every non-ok outcome (byte-identical to the pre-refactor asserts),
 //     then persists the shaped pool.
-//   • `planStagedRetune` (the READ-ONLY dry-run) — returns the outcome as a
-//     verdict so the retune review can judge the STAGED pool's feasibility
-//     without writing anything.
+//   • `planPackTune`'s STAGED arm (the READ-ONLY dry-run) — returns the
+//     outcome as a verdict so the workspace can judge the STAGED pool's
+//     feasibility without writing anything.
 // One resolver is the point: the owner-reported bug behind it was the review
 // card judging feasibility off the LIVE pool while the editor had already
 // staged the fix — the preview and the write must derive identically or the
@@ -2045,7 +956,7 @@ async function resolveAndShapeStagedPool(
      */
     approvedPriceAfter?: number | null;
     /**
-     * RC1 pool-freshness token — `PlanAllProposal.poolFingerprint`, the
+     * RC1 pool-freshness token — `PackTunePlan.poolFingerprint`, the
      * fingerprint of the LIVE pool (price + sorted (cardId, weight) pairs)
      * the reviewed proposal was solved from. When set, the write recomputes
      * the fingerprint over the FRESH live pool and REFUSES on mismatch
@@ -2445,8 +1356,8 @@ async function resolveAndShapeStagedPool(
  * odds to land on prod with bad weights from this entry point.
  *
  * FAILS CLOSED before any write (all evaluated by the SHARED
- * `resolveAndShapeStagedPool` — the same pass `planStagedRetune` dry-runs, so
- * the staged preview and this write cannot drift):
+ * `resolveAndShapeStagedPool` — the same pass `planPackTune`'s staged arm
+ * dry-runs, so the staged plan and this write cannot drift):
  *   • token / owner / capability / scope (`official`) gate,
  *   • non-empty pool, no duplicate cardId, every cardId a valid uuid, every
  *     `order` a non-negative integer, optional price > 0,
@@ -2496,7 +1407,7 @@ export async function applyStagedPackEditAndRetune(
      */
     approvedPriceAfter?: number | null;
     /**
-     * RC1 pool-freshness token — `PlanAllProposal.poolFingerprint`, the
+     * RC1 pool-freshness token — `PackTunePlan.poolFingerprint`, the
      * fingerprint of the LIVE pool (price + sorted (cardId, weight) pairs)
      * the reviewed proposal was solved from. When set, the write recomputes
      * the fingerprint over the FRESH live pool and REFUSES on mismatch
@@ -2529,8 +1440,8 @@ export async function applyStagedPackEditAndRetune(
 
   // ONE shared resolution + shape pass (fresh MAIN reads, tag-aware auto-
   // targets, optional price search, assert evaluation, RC1 freshness/price
-  // pins) — the exact pass `planStagedRetune` dry-runs, so the staged plan
-  // the operator approved and this write derive identically.
+  // pins) — the exact pass `planPackTune`'s staged arm dry-runs, so the
+  // staged plan the operator approved and this write derive identically.
   const r = await resolveAndShapeStagedPool(packId, input, targets);
 
   // pack_creator live-pack carve-out (same gate `applyPackEdit` enforces).
@@ -2679,10 +1590,9 @@ export async function applyStagedPackEditAndRetune(
   await refreshEditedPackRiskScore(packId, after, r.resolved.maxWinCap);
 
   reloadPacks();
-  // Invalidate the cached retune-review proposal blob so the next render of
-  // /pack-studio/retune reflects this auto-tune instead of a 60s-stale dry-run.
-  // Per-pack: ONLY this pack's V2 plan is busted (never the other 182).
-  revalidateTag(PACK_STUDIO_RETUNE_CACHE_TAG);
+  // Invalidate this pack's cached V2 plan so the next `planPackTune` reflects
+  // this auto-tune instead of a 60s-stale solve. Per-pack: ONLY this pack's
+  // plan is busted (never the other 182).
   revalidateTag(packRetunePlanTag(packId));
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
@@ -2701,204 +1611,6 @@ export async function applyStagedPackEditAndRetune(
   };
 }
 
-// ─── Staged-pool dry-run (READ-ONLY twin of the staged write) ──────────────
-
-/** One staged card of a {@link StagedRetunePlan}, aligned to the staged order. */
-export type StagedPlanCardRow = {
-  cardId: string;
-  name: string;
-  imageUrl: string;
-  /** `cards.price` (fresh MAIN read — never the client's copy). */
-  value: number;
-  /** This card's weight in the CURRENT live pool; null = newly added. */
-  fromWeight: number | null;
-  /** The server-shaped weight the write would persist; null when refused. */
-  toWeight: number | null;
-  order: number;
-};
-
-/** A live-pool card the staged pool REMOVES. */
-export type StagedPlanRemovedRow = {
-  cardId: string;
-  name: string;
-  imageUrl: string;
-  value: number;
-  fromWeight: number;
-};
-
-export type StagedRetunePlan = {
-  packId: string;
-  name: string;
-  priceBefore: number;
-  /** The staged price the plan anchored on (operator's price, else live). */
-  priceStaged: number;
-  /** The price the write would persist (search's pick, else the staged price). */
-  priceAfter: number;
-  cardCountBefore: number;
-  cardCountAfter: number;
-  /** Risk AS IT IS NOW (live pool at the live price — fresh read). */
-  before: PackRisk;
-  /**
-   * Risk the STAGED pool would have after the server-shaped write. Non-null
-   * even for some refusals (shaping succeeded but a fail-closed assert would
-   * refuse the write) so the review can show WHAT would be refused; null when
-   * shaping itself failed.
-   */
-  after: PackRisk | null;
-  /** True iff `applyStagedPackEditAndRetune` would accept this staged pool. */
-  feasible: boolean;
-  /** The write's EXACT refusal/infeasibility message when `feasible` is false. */
-  error?: string;
-  /** Structured hard limit for the solver's infeasible arm (else null). */
-  limit: ShapeWeightsLimit | null;
-  relaxations: ShapeWeightsRelaxation[];
-  snapped: boolean | null;
-  topInflationUnavoidable: boolean | null;
-  cards: StagedPlanCardRow[];
-  removed: StagedPlanRemovedRow[];
-  priceSearch: ApplyStagedRetuneResult["priceSearch"];
-  /** The targets the staged pool was shaped against (post-resolution). */
-  resolved: {
-    targetEdge: number;
-    targetWinRate: number;
-    maxWinCap: number;
-    nearMissMin: number;
-    intendedHitRate: number | null;
-  };
-};
-
-/** Wall-clock cap for ONE staged dry-run (one pack, one bounded price search). */
-const STAGED_PLAN_TIMEOUT_MS = 30_000;
-
-/**
- * READ-ONLY dry-run twin of {@link applyStagedPackEditAndRetune}: resolve +
- * shape the STAGED pool via the SAME `resolveAndShapeStagedPool` pass the write
- * runs (fresh MAIN reads, tag-aware auto-targets, optional shared-band price
- * search, every fail-closed assert) and return the VERDICT instead of writing.
- *
- * This is what lets the retune review judge feasibility off the pool the
- * operator has STAGED in the inline editor rather than the LIVE pool — the
- * owner-reported failure ("1% 18 PLUS") was staging exactly the cards that fix
- * an `ev-unreachable-for-split` pack and still being told "infeasible" because
- * the review card kept scoring the live pool (`planAllRetunes` /
- * `planSingleRetune` know nothing about staged edits).
- *
- * Owner + Pack-Studio-operator gated, NO 2FA token (writes nothing — MAIN is
- * only SELECTed). Wrapped in the standard `safeQueryOrNull` timeout so a
- * pathological search degrades to a thrown, user-visible error instead of
- * hanging the action. Not cached: the (pool identity + price + levers) key
- * space is effectively unique per call and the client already debounces +
- * dedupes by key.
- */
-export async function planStagedRetune(
-  packId: string,
-  input: StagedPoolInput,
-  targets: {
-    targetEdge?: number;
-    targetWinRate?: number;
-    maxWinCap?: number;
-    nearMissMin?: number;
-    allowPriceSearch?: boolean;
-  },
-): Promise<StagedRetunePlan> {
-  await requireRetuneOwner();
-
-  const { data, error } = await safeQueryOrNull(
-    () => planStagedRetuneUncached(packId, input, targets),
-    "pack-studio.retune.plan-staged",
-    STAGED_PLAN_TIMEOUT_MS,
-  );
-  if (error || !data) {
-    throw new Error(error ?? "Staged dry-run failed.");
-  }
-  return data;
-}
-
-/** The actual staged dry-run work (gated by the public wrapper above). */
-async function planStagedRetuneUncached(
-  packId: string,
-  input: StagedPoolInput,
-  targets: {
-    targetEdge?: number;
-    targetWinRate?: number;
-    maxWinCap?: number;
-    nearMissMin?: number;
-    allowPriceSearch?: boolean;
-  },
-): Promise<StagedRetunePlan> {
-  const r = await resolveAndShapeStagedPool(packId, input, targets);
-  const outcome = r.outcome;
-
-  // Live weights by card for the per-card from→to rows.
-  const liveWeightByCardId = new Map<string, number>();
-  for (const c of r.livePool) liveWeightByCardId.set(c.cardId, c.weight);
-
-  const stagedIds = new Set(input.cards.map((c) => c.cardId));
-  const cards: StagedPlanCardRow[] = input.cards.map((c, i) => {
-    const meta = r.cardMetaById.get(c.cardId)!;
-    const fromWeight = liveWeightByCardId.get(c.cardId);
-    return {
-      cardId: c.cardId,
-      name: meta.name,
-      imageUrl: meta.imageUrl,
-      value: meta.value,
-      fromWeight: fromWeight ?? null,
-      toWeight: outcome.ok ? outcome.weights[i]! : null,
-      order: c.order,
-    };
-  });
-
-  // Cards the staged pool REMOVES — name/image probe only for ids the staged
-  // card read didn't cover (READ-ONLY PK probe on `cards`).
-  const removedPool = r.livePool.filter((c) => !stagedIds.has(c.cardId));
-  const removedMeta = new Map<string, { name: string; imageUrl: string }>();
-  if (removedPool.length > 0) {
-    const db = await getDb();
-    const metaRows = await db.cards.findMany({
-      where: { id: { in: removedPool.map((c) => c.cardId) } },
-      select: { id: true, name: true, image_url: true },
-    });
-    for (const row of metaRows) {
-      removedMeta.set(row.id, { name: row.name, imageUrl: row.image_url ?? "" });
-    }
-  }
-  const removed: StagedPlanRemovedRow[] = removedPool.map((c) => ({
-    cardId: c.cardId,
-    name: removedMeta.get(c.cardId)?.name ?? `${c.cardId.slice(0, 8)}…`,
-    imageUrl: removedMeta.get(c.cardId)?.imageUrl ?? "",
-    value: c.value,
-    fromWeight: c.weight,
-  }));
-
-  return {
-    packId,
-    name: r.packName,
-    priceBefore: r.priceBefore,
-    priceStaged: r.priceStaged,
-    priceAfter: r.priceAfter,
-    cardCountBefore: r.liveCardIds.size,
-    cardCountAfter: input.cards.length,
-    before: r.before,
-    after: outcome.after,
-    feasible: outcome.ok,
-    ...(outcome.ok ? {} : { error: outcome.message }),
-    limit: outcome.ok ? null : outcome.limit,
-    relaxations: outcome.ok ? outcome.relaxations : [],
-    snapped: outcome.ok ? outcome.snapped : null,
-    topInflationUnavoidable: outcome.ok ? outcome.topInflationUnavoidable : null,
-    cards,
-    removed,
-    priceSearch: r.priceSearch,
-    resolved: {
-      targetEdge: r.resolved.targetEdge,
-      targetWinRate: r.resolved.targetWinRate,
-      maxWinCap: r.resolved.maxWinCap,
-      nearMissMin: r.resolved.nearMissMin,
-      intendedHitRate: r.resolved.intendedHitRate,
-    },
-  };
-}
-
 // ─── planPackTune — THE Retune V2 single plan entry (one brain) ─────────────
 //
 // ONE read-only server plan for ONE pack, live or staged: the result is the
@@ -2908,8 +1620,8 @@ async function planStagedRetuneUncached(
 // STRUCTURAL: both arms and both MAIN write actions construct their solver
 // params through the shared `buildRetuneSearchParams`.
 //
-//   • Live arm (`staged` null) — absorbs `planSingleRetuneUncached`'s body
-//     (fresh pack row, tag-aware auto targets, anchored shared-band search),
+//   • Live arm (`staged` null) — absorbed the legacy single-pack planner's
+//     body (fresh pack row, tag-aware auto targets, anchored shared-band search),
 //     cached 60s per pack under `packRetunePlanTag(packId)` so ONE approve
 //     invalidates ONE pack's plan (never the other 182 — the old global tag
 //     busted the whole proposal blob).
@@ -3073,10 +1785,20 @@ function livePctMap(
   return out;
 }
 
+/** One-pack pool read row (pack_cards ⋈ cards; Decimals cast to text). */
+type BatchedPoolRow = {
+  pack_id: string;
+  card_id: string;
+  value: string | null;
+  weight: number;
+  name: string;
+  image_url: string;
+};
+
 /**
- * The LIVE arm — `planSingleRetuneUncached`'s read/solve body (fresh identity
- * + scope from the composition view, one-pack batched pool read, tag-aware
- * auto targets) with the solve routed through the shared
+ * The LIVE arm — the legacy single-pack planner's read/solve body (fresh
+ * identity + scope from the composition view, one-pack batched pool read,
+ * tag-aware auto targets) with the solve routed through the shared
  * `buildRetuneSearchParams` and the result mapped to {@link PackTunePlan}.
  * NOT gated (the public `planPackTune` gates before dispatch); NOT exported.
  */

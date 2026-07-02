@@ -24,10 +24,7 @@ import {
   type PackSetFilter,
   type PackStats,
 } from "@/lib/queries/packs";
-import {
-  PACK_STUDIO_RETUNE_CACHE_TAG,
-  packRetunePlanTag,
-} from "@/app/(pack-studio)/pack-studio/_actions/retune-cache-tag";
+import { packRetunePlanTag } from "@/app/(pack-studio)/pack-studio/_actions/retune-cache-tag";
 import { buildRetuneSearchParams } from "@/app/(admin)/packs/_lib/retune-params";
 import {
   planPackReprice,
@@ -770,10 +767,9 @@ export async function quickUpdatePack(
 
   reloadPacks();
 
-  // Builder edits can re-shape the pool / change the price → the retune-review
-  // proposals depend on both, so invalidate the cached blob too. Per-pack:
-  // ONLY this pack's V2 plan is busted (never the other 182).
-  revalidateTag(PACK_STUDIO_RETUNE_CACHE_TAG);
+  // Builder edits can re-shape the pool / change the price → the V2 retune
+  // plan depends on both, so invalidate it. Per-pack: ONLY this pack's plan
+  // is busted (never the other 182).
   revalidateTag(packRetunePlanTag(packId));
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
@@ -1259,10 +1255,9 @@ export async function repricePackToTargetEdge(
     await refreshPackRiskScore(packId, repricedRisk, await readMaxWinCap());
 
     reloadPacks();
-    // Re-price changes a pack's price → the retune-review proposals shape
-    // off that price, so invalidate the cached blob too. Per-pack: ONLY this
-    // pack's V2 plan is busted (never the other 182).
-    revalidateTag(PACK_STUDIO_RETUNE_CACHE_TAG);
+    // Re-price changes a pack's price → the V2 retune plan shapes off that
+    // price, so invalidate it. Per-pack: ONLY this pack's plan is busted
+    // (never the other 182).
     revalidateTag(packRetunePlanTag(packId));
     revalidatePath("/packs");
     revalidatePath(`/packs/${packId}`);
@@ -2087,10 +2082,9 @@ export async function applyPackRetune(
   await refreshPackRiskScore(packId, after, resolved.maxWinCap);
 
   reloadPacks();
-  // Invalidate the cached retune-review proposal blob so the next render of
-  // /pack-studio/retune reflects this retune instead of a 60s-stale dry-run.
-  // Per-pack: ONLY this pack's V2 plan is busted (never the other 182).
-  revalidateTag(PACK_STUDIO_RETUNE_CACHE_TAG);
+  // Invalidate this pack's cached V2 plan so the next `planPackTune` reflects
+  // this retune instead of a 60s-stale solve. Per-pack: ONLY this pack's plan
+  // is busted (never the other 182).
   revalidateTag(packRetunePlanTag(packId));
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
