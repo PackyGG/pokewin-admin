@@ -6,7 +6,7 @@ import { requirePageAccess } from "@/lib/dal";
 import { FadeIn } from "@/components/fade-in";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { PageHero, KpiTile } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import { creatorsApi, type CreatorSocialStatus } from "@/lib/backend-api";
 
 import { SocialsQueueTabs } from "./tabs";
@@ -17,7 +17,7 @@ export const metadata = { title: "Creator Socials" };
 const STATUS_TONES: Record<CreatorSocialStatus, string> = {
   pending: "bg-amber-500/10 text-amber-600 dark:text-amber-300",
   approved: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300",
-  rejected: "bg-red-500/10 text-red-600 dark:text-red-300",
+  rejected: "bg-rose-500/10 text-rose-600 dark:text-rose-300",
 };
 
 const PLATFORM_LABEL: Record<string, string> = {
@@ -74,26 +74,19 @@ export default async function CreatorSocialsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-emerald-500/10">
-              <ShieldCheck className="size-5 text-emerald-500" />
-            </div>
-            <div>
-              <h1 className="text-xl font-semibold">Creator Socials</h1>
-              <p className="text-sm text-muted-foreground">
-                Approve or reject social accounts submitted by creators.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
+        <PageHeroIdentity
+          icon={ShieldCheck}
+          accent="emerald"
+          title="Creator Socials"
+          subtitle="Approve or reject social accounts submitted by creators."
+          action={
             <KpiTile
               label="Total in queue"
               value={status === "pending" ? String(total) : "—"}
               icon={Inbox}
             />
-          </div>
-        </div>
+          }
+        />
       </PageHero>
 
       <FadeIn>
@@ -185,7 +178,7 @@ export default async function CreatorSocialsPage({
                             </span>
                           ) : null}
                           {row.rejection_reason ? (
-                            <span className="text-red-500">
+                            <span className="text-rose-500">
                               · Reason: {row.rejection_reason}
                             </span>
                           ) : null}

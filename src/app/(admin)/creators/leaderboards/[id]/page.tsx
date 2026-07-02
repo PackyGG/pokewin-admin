@@ -1,7 +1,6 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
-import Link from "next/link";
-import { AlertTriangle, ArrowLeft, Trophy } from "lucide-react";
+import { AlertTriangle, Trophy } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
 import { isUuid } from "@/lib/utils/ids";
@@ -13,7 +12,7 @@ import {
     type LeaderboardAdminRow,
 } from "@/lib/backend-api/affiliate-leaderboards";
 import { BackendApiError } from "@/lib/backend-api/errors";
-import { PageHero } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
@@ -92,22 +91,13 @@ export default async function AffiliateLeaderboardDetailPage({
         return (
             <div className="space-y-6">
                 <PageHero>
-                    <div className="flex items-start gap-3">
-                        <Link
-                            href="/creators/leaderboards"
-                            className="mt-1 flex size-9 items-center justify-center rounded-lg border hover:bg-muted"
-                        >
-                            <ArrowLeft className="size-4" />
-                        </Link>
-                        <div>
-                            <h1 className="text-2xl font-bold leading-tight">
-                                Affiliate leaderboard
-                            </h1>
-                            <p className="mt-1 text-sm text-muted-foreground">
-                                Couldn&apos;t load this leaderboard.
-                            </p>
-                        </div>
-                    </div>
+                    <PageHeroIdentity
+                        icon={AlertTriangle}
+                        accent="rose"
+                        backHref="/creators/leaderboards"
+                        title="Affiliate leaderboard"
+                        subtitle="Couldn't load this leaderboard."
+                    />
                 </PageHero>
                 <TileErrorFallback
                     label="Leaderboard unavailable"
@@ -145,48 +135,43 @@ export default async function AffiliateLeaderboardDetailPage({
     return (
         <div className="space-y-6">
             <PageHero>
-                <div className="flex items-center justify-between gap-4 flex-wrap">
-                    <div className="flex items-start gap-3">
-                        <Link
-                            href="/creators/leaderboards"
-                            className="mt-1 flex size-9 items-center justify-center rounded-lg border hover:bg-muted"
-                        >
-                            <ArrowLeft className="size-4" />
-                        </Link>
-                        <div>
-                            <h1 className="text-2xl font-bold leading-tight">{lb.title}</h1>
-                            <div className="mt-1 flex items-center gap-2 flex-wrap">
-                                <Badge variant="outline" className={APPROVAL_COLORS[lb.approval_status]}>
-                                    {lb.approval_status}
+                {/* Actions render off the definition alone. The admin-side
+                    sponsored % (a single-row admin-DB read that only pre-fills
+                    the Edit dialog) streams in the body; until then the Edit
+                    dialog defaults to 100% — the same fallback the sponsorship
+                    query already documents. Keeping it off the hero critical
+                    path is what lets the hero paint instantly. */}
+                <PageHeroIdentity
+                    icon={Trophy}
+                    accent="amber"
+                    backHref="/creators/leaderboards"
+                    title={lb.title}
+                    badges={
+                        <>
+                            <Badge variant="outline" className={APPROVAL_COLORS[lb.approval_status]}>
+                                {lb.approval_status}
+                            </Badge>
+                            <Badge variant="outline" className={TIME_COLORS[lb.time_status]}>
+                                {lb.time_status}
+                            </Badge>
+                            {lb.is_sponsored && <Badge variant="outline">sponsored</Badge>}
+                            {lb.paid_manually && (
+                                <Badge
+                                    variant="outline"
+                                    className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                                >
+                                    paid manually
                                 </Badge>
-                                <Badge variant="outline" className={TIME_COLORS[lb.time_status]}>
-                                    {lb.time_status}
+                            )}
+                            {lb.cancelled_at && (
+                                <Badge variant="outline" className="bg-zinc-500/15 text-zinc-600 border-zinc-500/30">
+                                    cancelled
                                 </Badge>
-                                {lb.is_sponsored && <Badge variant="outline">sponsored</Badge>}
-                                {lb.paid_manually && (
-                                    <Badge
-                                        variant="outline"
-                                        className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                                    >
-                                        paid manually
-                                    </Badge>
-                                )}
-                                {lb.cancelled_at && (
-                                    <Badge variant="outline" className="bg-zinc-500/15 text-zinc-600 border-zinc-500/30">
-                                        cancelled
-                                    </Badge>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                    {/* Actions render off the definition alone. The admin-side
-                        sponsored % (a single-row admin-DB read that only pre-fills
-                        the Edit dialog) streams in the body; until then the Edit
-                        dialog defaults to 100% — the same fallback the sponsorship
-                        query already documents. Keeping it off the hero critical
-                        path is what lets the hero paint instantly. */}
-                    <DetailActions row={lb} currentSponsoredPct={null} />
-                </div>
+                            )}
+                        </>
+                    }
+                    action={<DetailActions row={lb} currentSponsoredPct={null} />}
+                />
             </PageHero>
 
             <Suspense fallback={<LeaderboardDetailBodySkeleton />}>
