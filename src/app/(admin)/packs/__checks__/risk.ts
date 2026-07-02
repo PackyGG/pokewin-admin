@@ -2517,12 +2517,14 @@ check("RC5b: hard-tag run that snaps keeps the WIN-band rung sum on the tag", ()
   );
 });
 
-check("RC5c: off-ladder cards after a snap are dust-band only (buffer polish never dirties winners)", () => {
-  // The polish moves the residual off the buffer onto the 2–3 largest OTHER
-  // dust cards. Whatever the adoption outcome, a snapped result may only ever
-  // carry off-ladder pcts on DUST-band cards (the buffer or its receivers) —
-  // never on a win/grail/near-miss card — and at most 3 of them. Same
-  // evMin-side price as the knob check so the pool actually solves.
+check("RC5c: a snapped tagged result is clean on ITS ladder (per-100k grid, tag-exact) — a generic snap keeps off-ladder to dust only", () => {
+  // RETUNE V2 UPDATE: a HARD-TAG snap now targets the per-100k integer house
+  // ladder (ruleset §1.2 / CLEAN-XOR-TAG fix) — "clean" for a tagged pack
+  // means integer 0.001% rungs with the win band summing EXACTLY to
+  // round(t·100000) and ONE dust buffer, NOT the log-ladder rungs (which are
+  // unreachable under the 0.01pp tag gate; that was exactly the audit's 0/8).
+  // The legacy log-ladder + buffer-polish assertions still apply when the
+  // GENERIC snap produced the result (total ≠ 100000).
   const price = 0.8;
   const cards = SATURATED_1PCT_POOL.map((c) => ({ value: c.value }));
   const currentWeights = SATURATED_1PCT_POOL.map((c) => c.weight);
@@ -2541,6 +2543,29 @@ check("RC5c: off-ladder cards after a snap are dust-band only (buffer polish nev
     return;
   }
   const total = r.weights.reduce((a, b) => a + b, 0);
+  if (total === 100_000) {
+    // Tagged per-100k snap: every weight IS the pct in 0.001% units — the
+    // whole vector is on the tagged clean grid by construction; pin the
+    // win-band tag sum + integer grid + edge invariant instead.
+    assert(
+      r.weights.every((w) => Number.isInteger(w) && w >= 0),
+      "per-100k ladder weights are integers",
+    );
+    let winUnits = 0;
+    for (let i = 0; i < cards.length; i++) {
+      if (cards[i]!.value >= price) winUnits += r.weights[i]!;
+    }
+    assert(
+      winUnits === Math.round(0.01 * 100_000),
+      `win band sums EXACTLY to round(t·1e5) (got ${winUnits})`,
+    );
+    assert(
+      Math.abs(r.risk.winRate - 0.01) <= TAGGED_WINRATE_TOLERANCE + 1e-12,
+      `tag exact on the snapped ladder (wr=${(r.risk.winRate * 100).toFixed(4)}%)`,
+    );
+    console.log("      [RC5c — tagged per-100k snap: integer grid + exact tag sum verified]");
+    return;
+  }
   const offLadder: number[] = [];
   for (let i = 0; i < cards.length; i++) {
     if (r.weights[i]! > 0 && !isOnLadder((r.weights[i]! / total) * 100)) offLadder.push(i);
