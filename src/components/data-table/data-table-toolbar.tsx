@@ -174,7 +174,9 @@ export function DataTableToolbar({
             placeholder={searchPlaceholder}
             value={searchValue}
             onChange={(e) => handleSearchChange(e.target.value)}
-            className="pl-8"
+            // h-9 aligns the search box with the h-9 filter selects +
+            // toolbar buttons so the whole toolbar shares one control height.
+            className="h-9 rounded-lg pl-8"
           />
         </div>
       )}

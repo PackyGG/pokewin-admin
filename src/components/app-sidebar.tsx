@@ -391,7 +391,7 @@ export function AppSidebar({
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader className="border-b border-border px-4 h-14 flex items-center justify-center group-data-[collapsible=icon]:px-0">
+      <SidebarHeader className="border-b border-sidebar-border/60 px-4 h-14 flex items-center justify-center group-data-[collapsible=icon]:px-0">
         <Link
           href={getDefaultRoute(role, allowedPages)}
           onClick={handleNavTap}
@@ -534,7 +534,15 @@ export function AppSidebar({
                       // re-includes the primitive's own width/height/padding so
                       // the collapse animation is unchanged. Reduced-motion
                       // users get none of this (no tween, no scale).
-                      className="h-11 md:h-9 group-data-[collapsible=icon]:h-8! motion-safe:transition-[color,background-color,width,height,padding,transform] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-[0.98]"
+                      //
+                      // Liquid-Glass active treatment: the active row is a
+                      // soft primary pill (primary/10 wash + primary text via
+                      // the primitive) with a small rounded left indicator
+                      // bar drawn by the ::before pseudo-element. Both are
+                      // pure CSS state styles — nav logic untouched. The
+                      // indicator hides in icon-collapsed mode (the 32px
+                      // square button leaves no gutter for it).
+                      className="relative h-11 rounded-lg md:h-9 group-data-[collapsible=icon]:h-8! data-active:bg-primary/10 before:pointer-events-none before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-primary before:opacity-0 data-active:before:opacity-100 group-data-[collapsible=icon]:before:hidden motion-safe:transition-[color,background-color,width,height,padding,transform] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-[0.98]"
                     >
                       <Icon className={cn("size-4", isActive ? "text-primary" : "text-muted-foreground")} />
                       <span>{item.label}</span>
@@ -595,7 +603,10 @@ export function AppSidebar({
                     // get the transform class) and the transition now covers
                     // colors + transform so both ease. Collapse toggle
                     // behaviour itself is unchanged.
-                    "flex h-11 w-full shrink-0 cursor-pointer select-none items-center justify-between rounded-md px-2 text-xs font-semibold uppercase tracking-wider transition-[color,background-color,transform] hover:bg-sidebar-accent/50 hover:text-sidebar-foreground md:h-9 motion-safe:active:scale-95",
+                    // Group label: canonical micro-caps rhythm (11px /
+                    // medium / 0.14em) so section labels read as quiet
+                    // chrome, not competing nav items.
+                    "flex h-11 w-full shrink-0 cursor-pointer select-none items-center justify-between rounded-md px-2 text-[11px] font-medium uppercase tracking-[0.14em] transition-[color,background-color,transform] hover:bg-sidebar-accent/50 hover:text-sidebar-foreground md:h-9 motion-safe:active:scale-95",
                     group.label === activeGroupLabel
                       ? "bg-sidebar-accent text-sidebar-foreground"
                       : "text-sidebar-foreground/50",
@@ -617,7 +628,7 @@ export function AppSidebar({
           );
         })}
       </SidebarContent>
-      <SidebarFooter className="border-t border-border">
+      <SidebarFooter className="border-t border-sidebar-border/60">
         {visibleFooterItems.length > 0 && (
           <SidebarMenu>
             {visibleFooterItems.map((item) => {
@@ -637,7 +648,9 @@ export function AppSidebar({
                     tooltip={item.label}
                     render={<Link href={item.href} />}
                     onClick={handleNavTap}
-                    className="h-11 md:h-9 group-data-[collapsible=icon]:h-8! motion-safe:transition-[color,background-color,width,height,padding,transform] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-[0.98]"
+                    // Same Liquid-Glass active pill + left indicator as the
+                    // main nav rows above.
+                    className="relative h-11 rounded-lg md:h-9 group-data-[collapsible=icon]:h-8! data-active:bg-primary/10 before:pointer-events-none before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-primary before:opacity-0 data-active:before:opacity-100 group-data-[collapsible=icon]:before:hidden motion-safe:transition-[color,background-color,width,height,padding,transform] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-[0.98]"
                   >
                     <Icon
                       className={cn(
@@ -665,7 +678,7 @@ export function AppSidebar({
           </SidebarMenu>
         )}
         <div className="flex items-center justify-between px-2 group-data-[collapsible=icon]:justify-center">
-          <span className="text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">Theme</span>
+          <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground group-data-[collapsible=icon]:hidden">Theme</span>
           <ThemeToggle />
         </div>
       </SidebarFooter>

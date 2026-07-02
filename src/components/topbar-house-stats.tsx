@@ -25,10 +25,10 @@ import { cn } from "@/lib/utils";
  *     real amounts, creator sessions excluded, sponsored battles + upgrader
  *     included).
  *   • GGR / Deposits / Withdrawals ← `getCostBreakdownLifetimeCached` — the
- *     ONE shared lifetime cost-breakdown cache the /insights hub AND
- *     /insights/real-numbers also read (same `getCostBreakdown("all", …, 365)`
- *     assembly). GGR = `.ggr`; Deposits = the `residual:deposit` bridge row;
- *     Withdrawals = `.cardWithdrawals`.
+ *     ONE shared lifetime cost-breakdown cache the /insights hub AND the
+ *     /analytics Overview owner-only lifetime section also read (same
+ *     `getCostBreakdown("all", …, 365)` assembly). GGR = `.ggr`; Deposits =
+ *     the `residual:deposit` bridge row; Withdrawals = `.cardWithdrawals`.
  *   • Users ← `getTotalUserCount` — reuses the dashboard's indexed,
  *     5-min-cached `cachedUserCounts` (COUNT(*) FROM "user", staff + blacklist
  *     excluded), so the pill equals the dashboard's old "Total Users" box BY
@@ -41,8 +41,9 @@ import { cn } from "@/lib/utils";
  * /insights pages. Opening /insights (which the owner does constantly) never
  * warmed the pills, so the heavy assembly re-ran inside the 15s budget and
  * degraded. Now both call the SAME `getCostBreakdownLifetimeCached` key
- * (revalidate 900s), so rendering /insights or /insights/real-numbers warms the
- * exact entry the pills read — they reliably show the numbers.
+ * (revalidate 900s), so rendering /insights or the /analytics Overview
+ * owner-only lifetime section warms the exact entry the pills read — they
+ * reliably show the numbers.
  *
  * PERF: both helpers are 365d-capped + `unstable_cache`d, so the lifetime read
  * is bounded (never an unbounded full-history scan) and a hit is cheap.

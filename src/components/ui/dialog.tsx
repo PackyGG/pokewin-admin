@@ -61,7 +61,7 @@ function DialogContent({
           // on small/landscape phones.
           "inset-x-0 bottom-0 top-auto w-full max-w-none max-h-[90vh] rounded-b-none rounded-t-2xl px-4 pt-[max(env(safe-area-inset-top),1rem)] pb-[max(env(safe-area-inset-bottom),1rem)]",
           // Desktop (sm+): centered floating modal, capped at 85vh
-          "sm:inset-auto sm:top-1/2 sm:left-1/2 sm:bottom-auto sm:-translate-x-1/2 sm:-translate-y-1/2 sm:max-h-[85vh] sm:max-w-sm sm:w-[calc(100%-2rem)] sm:rounded-xl sm:p-4",
+          "sm:inset-auto sm:top-1/2 sm:left-1/2 sm:bottom-auto sm:-translate-x-1/2 sm:-translate-y-1/2 sm:max-h-[85vh] sm:max-w-sm sm:w-[calc(100%-2rem)] sm:rounded-2xl sm:p-4",
           // Animations: bottom slide on phone, zoom+fade on desktop
           "data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
           "data-open:slide-in-from-bottom-8 data-closed:slide-out-to-bottom-8",
@@ -123,7 +123,7 @@ function DialogFooter({
         // Full-bleed via negative margins so the bordered footer spans edge-to-edge.
         "sticky bottom-[calc(-1*max(env(safe-area-inset-bottom),1rem))] -mx-4 -mb-[max(env(safe-area-inset-bottom),1rem)] mt-auto flex shrink-0 flex-col-reverse gap-2 border-t bg-muted/50 px-4 pt-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] backdrop-blur-sm",
         // Desktop: side-by-side, justified end, snug to corners
-        "sm:bottom-[-1rem] sm:-mb-4 sm:flex-row sm:justify-end sm:rounded-b-xl sm:px-4 sm:py-3",
+        "sm:bottom-[-1rem] sm:-mb-4 sm:flex-row sm:justify-end sm:rounded-b-2xl sm:px-4 sm:py-3",
         className
       )}
       {...props}

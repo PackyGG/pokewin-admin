@@ -49,23 +49,29 @@
 
 :root {
   color-scheme: light;
-  --background: oklch(0.98 0.005 250);
-  --foreground: oklch(0.15 0.02 250);
-  --card: oklch(0.995 0.002 250);
-  --card-foreground: oklch(0.15 0.02 250);
-  --popover: oklch(0.995 0.002 250);
-  --popover-foreground: oklch(0.15 0.02 250);
+  /* Light mode — "Packy Liquid Glass": airy, near-white layered surfaces.
+     Chroma is deliberately dialled DOWN across the neutral ramp (0.01 →
+     0.003-0.008) so light mode reads crisp paper-white instead of muddy
+     blue-gray. Layering: background (faintly cool) < muted/secondary <
+     card (near pure white) — cards visibly float on the page. Borders are
+     crisp hairlines one clear step below the muted surfaces. */
+  --background: oklch(0.985 0.003 250);
+  --foreground: oklch(0.145 0.02 250);
+  --card: oklch(0.998 0.001 250);
+  --card-foreground: oklch(0.145 0.02 250);
+  --popover: oklch(0.998 0.001 250);
+  --popover-foreground: oklch(0.145 0.02 250);
   --primary: oklch(0.55 0.19 250);
   --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.95 0.01 250);
+  --secondary: oklch(0.955 0.005 250);
   --secondary-foreground: oklch(0.20 0.02 250);
-  --muted: oklch(0.95 0.01 250);
-  --muted-foreground: oklch(0.45 0.02 250);
-  --accent: oklch(0.94 0.015 250);
+  --muted: oklch(0.955 0.005 250);
+  --muted-foreground: oklch(0.47 0.018 250);
+  --accent: oklch(0.945 0.007 250);
   --accent-foreground: oklch(0.20 0.02 250);
   --destructive: oklch(0.55 0.24 27);
-  --border: oklch(0.90 0.01 250);
-  --input: oklch(0.90 0.01 250);
+  --border: oklch(0.915 0.005 250);
+  --input: oklch(0.905 0.006 250);
   --ring: oklch(0.55 0.19 250);
   --chart-1: oklch(0.55 0.19 250);
   --chart-2: oklch(0.50 0.16 150);
@@ -73,20 +79,25 @@
   --chart-4: oklch(0.50 0.15 280);
   --chart-5: oklch(0.45 0.18 310);
   --radius: 0.625rem;
-  --sidebar: oklch(0.96 0.01 250);
-  --sidebar-foreground: oklch(0.15 0.02 250);
+  --sidebar: oklch(0.975 0.004 250);
+  --sidebar-foreground: oklch(0.145 0.02 250);
   --sidebar-primary: oklch(0.55 0.19 250);
   --sidebar-primary-foreground: oklch(0.99 0 0);
-  --sidebar-accent: oklch(0.92 0.015 250);
+  --sidebar-accent: oklch(0.935 0.007 250);
   --sidebar-accent-foreground: oklch(0.20 0.02 250);
-  --sidebar-border: oklch(0.88 0.015 250);
+  --sidebar-border: oklch(0.91 0.005 250);
   --sidebar-ring: oklch(0.55 0.19 250);
 }
 
 .dark {
   color-scheme: dark;
-  /* Packy.gg dark navy theme */
-  --background: oklch(0.13 0.02 250);
+  /* Packy.gg dark navy theme.
+     Liquid-glass pass: background deepened a hair (0.13 → 0.125) so cards
+     sit exactly ONE clear step above the page, and the border hairline
+     eased (0.30 → 0.285, ~white 8-12% over a card) so panel edges read as
+     crisp hairlines instead of thick frames. The brand navy hue (250) and
+     every variable name are unchanged. */
+  --background: oklch(0.125 0.02 250);
   --foreground: oklch(0.97 0 0);
 
   --card: oklch(0.17 0.025 250);
@@ -115,7 +126,7 @@
 
   --destructive: oklch(0.65 0.22 25);
 
-  --border: oklch(0.30 0.025 250);
+  --border: oklch(0.285 0.024 250);
   --input: oklch(0.24 0.025 250);
   --ring: oklch(0.65 0.19 250);
 
@@ -132,7 +143,7 @@
   --sidebar-primary-foreground: oklch(0.99 0 0);
   --sidebar-accent: oklch(0.21 0.025 250);
   --sidebar-accent-foreground: oklch(0.97 0 0);
-  --sidebar-border: oklch(0.30 0.025 250);
+  --sidebar-border: oklch(0.285 0.024 250);
   --sidebar-ring: oklch(0.65 0.19 250);
 }
 
@@ -194,6 +205,37 @@
      legible without zoom. Only 11 sites use this utility so the visual
      diff is contained and intentional. */
   .text-tiny { @apply text-[11px] text-muted-foreground; }
+
+  /* ── Liquid Glass v3 additive utilities ────────────────────────────
+     New, opt-in helpers — nothing existing changes unless a component
+     adopts them.
+
+     .micro-caps    — the canonical eyebrow / section-label / table-header
+         treatment: 11px, medium weight, uppercase, wide 0.14em tracking,
+         muted color. One class so every caps label in the app tracks the
+         same rhythm.
+     .tnum          — tabular (fixed-width) numerals for any numeric value
+         so digits align vertically in tiles, tables and tickers.
+     .glass-chrome  — layered translucency for app chrome (header /
+         sidebar / docked rails): the surface's own background token at
+         ~85% plus a backdrop blur. Uses --background by default; chrome
+         that sits on the sidebar token can override via .glass-sidebar. */
+  .micro-caps {
+    @apply text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground;
+  }
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+  .glass-chrome {
+    background-color: color-mix(in oklch, var(--background) 85%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .glass-sidebar {
+    background-color: color-mix(in oklch, var(--sidebar) 85%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
 }
 
 /* ──────────────────────────────────────────────────────────────

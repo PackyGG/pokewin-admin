@@ -52,7 +52,11 @@ export function DataTableColumnHeader({
       variant="ghost"
       size="sm"
       className={cn(
-        "-ml-3 h-8 motion-safe:transition-opacity motion-safe:duration-200",
+        // micro-caps: sortable headers now match plain <TableHead> labels
+        // (11px / medium / 0.14em caps / muted) instead of resetting to the
+        // button's text-sm — headers read as one consistent chrome row.
+        "-ml-3 h-8 px-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground hover:text-foreground",
+        "motion-safe:transition-opacity motion-safe:duration-200",
         isPending && "opacity-60",
       )}
       onClick={handleSort}

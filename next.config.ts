@@ -64,10 +64,11 @@ const nextConfig: NextConfig = {
       {
         // System Edge Plan v1 was replaced by Edge Plan 2.0, which was itself
         // removed in the 2026-06-15 Insights IA restructure. Point the legacy
-        // v1 bookmark straight at the new Insights Overview (avoids a 308→308
-        // double hop through the now-removed /insights/edge-plan-2).
+        // v1 bookmark straight at /analytics (the merged Insights Overview
+        // content — see the 2026-07 Real Numbers merge note below), avoiding
+        // a double hop through the now-removed /insights/edge-plan-2.
         source: "/insights/system-edge-plan",
-        destination: "/insights/real-numbers",
+        destination: "/analytics",
         permanent: true,
       },
       // ── Retired-route legacy bookmarks (in-render redirect() → HTTP 308) ──
@@ -105,13 +106,13 @@ const nextConfig: NextConfig = {
       {
         // Legacy games insights — superseded by /ggr.
         source: "/insights/games",
-        destination: "/insights/real-numbers",
+        destination: "/analytics",
         permanent: true,
       },
       {
         // Legacy balance-adjustments insights — removed from the dashboard.
         source: "/insights/balance-adjustments",
-        destination: "/insights/real-numbers",
+        destination: "/analytics",
         permanent: true,
       },
       // ── Insights IA restructure (2026-06-15) ──────────────────────────────
@@ -126,38 +127,55 @@ const nextConfig: NextConfig = {
       // replayed by the App Router and crashes it (see the retired-route note
       // above). All have FIXED destinations, so the static config form is
       // correct here.
+      //
+      // ── Real Numbers merge (2026-07) ──────────────────────────────────────
+      // /insights/real-numbers itself was then merged into /analytics's
+      // Overview tab (owner-approved): the GGR/NGR/reward-cost waterfall +
+      // the deposit-cadence "Analytics" tab content now live there
+      // (owner-only), and the Player CRM tab was dropped entirely ("remove
+      // CRM, its useless" — not migrated anywhere). Every redirect below that
+      // used to target /insights/real-numbers now targets /analytics
+      // directly, and the old route itself 308s there too.
       {
-        // Old Insights hub page → new Insights landing (Real Numbers).
+        // Old Insights hub page → /analytics (the merged Insights Overview
+        // content now lives in the Overview tab there).
         source: "/insights",
-        destination: "/insights/real-numbers",
+        destination: "/analytics",
         permanent: true,
       },
       {
         source: "/insights/analytics",
-        destination: "/insights/real-numbers",
+        destination: "/analytics",
         permanent: true,
       },
       {
         // GGR breakdown page removed.
         source: "/ggr",
-        destination: "/insights/real-numbers",
+        destination: "/analytics",
         permanent: true,
       },
       {
         // Insights challenges analytics removed (the CRUD /challenges page
         // under Rewards is unaffected).
         source: "/insights/challenges",
-        destination: "/insights/real-numbers",
+        destination: "/analytics",
         permanent: true,
       },
       {
         source: "/insights/edge-plan-2",
-        destination: "/insights/real-numbers",
+        destination: "/analytics",
         permanent: true,
       },
       {
         source: "/insights/wager-liability",
-        destination: "/insights/real-numbers",
+        destination: "/analytics",
+        permanent: true,
+      },
+      {
+        // /insights/real-numbers itself was deleted (merged into /analytics's
+        // Overview tab, 2026-07) — 308 old bookmarks/links straight there.
+        source: "/insights/real-numbers",
+        destination: "/analytics",
         permanent: true,
       },
       {
@@ -242,14 +260,15 @@ const nextConfig: NextConfig = {
       },
       {
         // Player CRM was folded into the (owner-only) Insights Overview as a
-        // tab ("Real Numbers" | "Player CRM"). The old standalone /crm page is
-        // gone — forward bookmarks to the tab. HTTP 308 (config redirect), NOT
-        // an in-render redirect(): an unconditional in-render redirect on the
-        // initial document load is replayed by the App Router and crashes it
-        // (see the retired-route note above). Non-owners hitting this are then
-        // bounced to /dashboard by the Insights layout's owner gate.
+        // tab, then DROPPED ENTIRELY in the 2026-07 Real Numbers merge (owner:
+        // "remove CRM, its useless" — not migrated anywhere). The old
+        // standalone /crm page and the ?tab=crm param are both gone — forward
+        // bookmarks to plain /analytics rather than a dead param. HTTP 308
+        // (config redirect), NOT an in-render redirect(): an unconditional
+        // in-render redirect on the initial document load is replayed by the
+        // App Router and crashes it (see the retired-route note above).
         source: "/crm",
-        destination: "/insights/real-numbers?tab=crm",
+        destination: "/analytics",
         permanent: true,
       },
     ];

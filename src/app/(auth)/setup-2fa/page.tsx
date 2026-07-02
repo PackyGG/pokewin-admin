@@ -21,14 +21,21 @@ export default async function Setup2FAPage() {
     const session = await getSession();
     if (!session) redirect("/login");
     return (
-      <div className="w-[520px] max-w-full rounded-2xl border border-white/10 bg-white/5 p-12 shadow-2xl shadow-black/30 backdrop-blur-xl">
-        <div className="mb-8 text-center">
-          <h1 className="text-xl font-semibold text-foreground">Set up Two-Factor Authentication</h1>
+      <div className="relative w-[520px] max-w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6 sm:rounded-3xl sm:p-12 shadow-2xl shadow-black/30 backdrop-blur-xl">
+        {/* Hairline top light-catch — crisp lifted glass edge. Decorative. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"
+        />
+        <div className="relative mb-8 text-center">
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">Set up Two-Factor Authentication</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Two-factor authentication is required. Finishing setup…
           </p>
         </div>
-        <SetupBootstrap />
+        <div className="relative">
+          <SetupBootstrap />
+        </div>
       </div>
     );
   }
@@ -45,14 +52,21 @@ export default async function Setup2FAPage() {
   const qrCodeDataUrl = await generateQRCode(uri);
 
   return (
-    <div className="w-[520px] max-w-full rounded-2xl border border-white/10 bg-white/5 p-12 shadow-2xl shadow-black/30 backdrop-blur-xl">
-      <div className="mb-8 text-center">
-        <h1 className="text-xl font-semibold text-foreground">Set up Two-Factor Authentication</h1>
+    <div className="relative w-[520px] max-w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6 sm:rounded-3xl sm:p-12 shadow-2xl shadow-black/30 backdrop-blur-xl">
+      {/* Hairline top light-catch — crisp lifted glass edge. Decorative. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"
+      />
+      <div className="relative mb-8 text-center">
+        <h1 className="text-xl font-semibold tracking-tight text-foreground">Set up Two-Factor Authentication</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.)
         </p>
       </div>
-      <SetupForm qrCodeDataUrl={qrCodeDataUrl} />
+      <div className="relative">
+        <SetupForm qrCodeDataUrl={qrCodeDataUrl} />
+      </div>
     </div>
   );
 }

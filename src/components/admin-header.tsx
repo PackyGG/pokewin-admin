@@ -321,7 +321,11 @@ export function AdminHeader({
     roles && roles.length > 0 ? [...new Set(roles)] : [role];
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-1.5 border-b border-border bg-background/95 px-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:gap-3 sm:px-4">
+    // Glass chrome: layered translucency (background token ~85% +
+    // backdrop blur) with a hairline divider, per the Liquid-Glass spec.
+    // The /95 fallback keeps the header legible when backdrop-filter is
+    // unsupported.
+    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-1.5 border-b border-border/60 bg-background/95 px-2 backdrop-blur-xl supports-[backdrop-filter]:bg-background/85 sm:gap-3 sm:px-4">
       {/* SidebarTrigger renders a 44×44 hit-target on mobile (full
           touch-target spec) but stays visually compact via the inner
           icon. Margin -ml-1 lets it hug the left edge while keeping the

@@ -217,27 +217,10 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inSidebar: true,
     inPalette: true,
   },
-  {
-    // Player CRM — palette-only. /crm was folded into the (owner-only)
-    // Insights Overview as a tab; the standalone /crm route now 308-redirects
-    // to ?tab=crm and the sidebar dropped the standalone link. href carries
-    // the tab; permission INHERITS from /insights/real-numbers — which is
-    // owner-only (the Insights layout enforces requireInsightsOwner), so the
-    // palette filters this entry out for non-owners by pageKey. Icon string
-    // `PieChart` MUST be registered in the ICONS map in
-    // `src/components/app-sidebar.tsx` (React #130) and, since
-    // `inPalette: true`, the id MUST also appear in PALETTE_ORDER (lockstep).
-    id: "nav.crm",
-    group: "Overview",
-    label: "Player CRM",
-    href: "/insights/real-numbers?tab=crm",
-    pageKey: "/insights/real-numbers",
-    icon: "PieChart",
-    description: "Lifecycle, value tiers & win-back targets",
-    keywords: ["crm", "segment", "segmentation", "lifecycle", "vip", "whale", "retention", "cohort"],
-    inSidebar: false,
-    inPalette: true,
-  },
+  // Player CRM nav entry REMOVED (2026-07 Real Numbers merge) — the CRM tab
+  // was dropped entirely, not migrated ("remove CRM, its useless" — owner).
+  // /crm now 308-redirects to plain /analytics (next.config.ts); no nav
+  // entry replaces it. Removed in lockstep with its PALETTE_ORDER id below.
   {
     // Sidebar label is "Transactions" (the unified deposits+withdrawals
     // surface); palette label is "Deposits". Same href/pageKey.
@@ -274,29 +257,13 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
   },
 
   // ── Insights (sidebar-only; absent from palette today) ─────────────────
-  {
-    // Insights Overview — a tabbed page: Analytics (the landing tab, deposit
-    // cadence & platform analytics) + Real Numbers (the source-of-truth
-    // headline, demoted to a tab) + Player CRM. The former standalone /insights
-    // hub page was removed; /insights 308-redirects here (next.config.ts).
-    // Labeled "Analytics" in the sidebar (Analytics is now the landing tab) but
-    // keeps its own /insights/real-numbers route + permission key. Icon stays
-    // `Sigma` (registered in the ICONS map in `src/components/app-sidebar.tsx`)
-    // — using an unregistered icon string (e.g. LineChart) would trip React
-    // #130 at runtime. Sits first in the group so the section landing is
-    // reachable directly from the sidebar. The Cost Breakdown page (route kept)
-    // is reachable via a link on this page; it no longer has its own sidebar
-    // entry.
-    id: "nav.insights.real-numbers",
-    group: "Insights",
-    label: "Analytics",
-    href: "/insights/real-numbers",
-    pageKey: "/insights/real-numbers",
-    icon: "Sigma",
-    isNew: true,
-    inSidebar: true,
-    inPalette: false,
-  },
+  // The former "Analytics" (Insights Overview / Real Numbers) sidebar entry
+  // was REMOVED here (2026-07): /insights/real-numbers was merged into the
+  // existing /analytics page's Overview tab (owner-only sections there) and
+  // the standalone route was deleted (next.config.ts 308-redirects
+  // /insights/real-numbers → /analytics). No replacement entry is added —
+  // /analytics already has its own nav-config entry (`nav.analytics`) in the
+  // Navigation group above.
   {
     id: "nav.insights.rewards",
     group: "Insights",
@@ -616,7 +583,6 @@ const PALETTE_ORDER: string[] = [
   "nav.map",
   "nav.users",
   "nav.rewards",
-  "nav.crm",
   "nav.deposits",
   "nav.withdrawals",
   "nav.creators",

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { pressable } from "@/components/ux/motion";
+import { SparkleField } from "@/components/decor";
 
 /**
  * Shared modern UI primitives. Extracted so every admin page can apply
@@ -126,13 +127,19 @@ export function PageHero({
         aria-hidden
         className="pointer-events-none absolute left-1/2 -top-32 size-64 -translate-x-1/2 rounded-full bg-cyan-500/[0.04] blur-3xl motion-reduce:opacity-0 motion-safe:opacity-100"
       />
+      {/* Sparkle texture — the owner-supplied 4-point-star ornament,
+          tucked into the top-right corner and fading out radially. Warm
+          champagne at a whisper on dark; a faint primary tint on light.
+          Pattern-based single <svg>, aria-hidden, pointer-events-none —
+          pure texture, never behind dense data. */}
+      <SparkleField className="inset-y-0 right-0 w-72 text-primary/[0.05] sm:w-96 dark:text-amber-100/[0.09]" />
       {/* Hairline top highlight — a crisp light catch along the very top
           edge that makes the panel feel lifted on the dark theme. */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent"
       />
-      <div className="relative p-4 sm:p-5">{children}</div>
+      <div className="relative p-5 sm:p-6">{children}</div>
     </div>
   );
 }
@@ -206,7 +213,7 @@ export function PageHeroIdentity({
         {backNode}
         <div
           className={cn(
-            "flex size-9 shrink-0 items-center justify-center rounded-xl border shadow-sm ring-1 ring-inset ring-white/5 sm:size-10",
+            "flex size-9 shrink-0 items-center justify-center rounded-xl border shadow-sm ring-1 ring-inset ring-white/10 sm:size-10",
             colors ? colors.bg : "border-primary/20 bg-primary/10",
           )}
         >
@@ -236,7 +243,7 @@ export function PageHeroIdentity({
           ) : (
             <h1
               className={cn(
-                "text-lg font-bold leading-tight sm:text-xl md:text-2xl",
+                "text-lg font-bold leading-tight tracking-tight sm:text-xl md:text-2xl",
                 titleClassName,
               )}
             >
@@ -281,7 +288,9 @@ export function SectionHeading({
   return (
     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
       <div className="flex min-w-0 items-center gap-2.5">
-        <div className="shrink-0 rounded-lg border border-primary/20 bg-primary/10 p-1.5 shadow-sm ring-1 ring-inset ring-white/5">
+        {/* Refined icon chip — gradient wash + slightly brighter inner
+            hairline so the chip reads as a tiny glass tile in both themes. */}
+        <div className="shrink-0 rounded-lg border border-primary/20 bg-gradient-to-br from-primary/15 to-primary/5 p-1.5 shadow-sm ring-1 ring-inset ring-white/10">
           <Icon className="size-4 text-primary" />
         </div>
         {/* Rendered as <h2> so the page ladder is h1 (PageHero) → h2
@@ -390,7 +399,8 @@ export function KpiTile({
       <div className="relative flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
           <Icon className={cn("size-3.5 shrink-0 sm:size-4", colors.icon)} />
-          <span className="truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {/* micro-caps eyebrow — the canonical 11px/0.14em label rhythm */}
+          <span className="truncate text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
             {label}
           </span>
         </div>
@@ -467,7 +477,8 @@ export function MetricTile({
       />
       <div className="relative flex items-center gap-1.5 sm:gap-2">
         <Icon className={cn("size-3.5 shrink-0 sm:size-4", colors.icon)} />
-        <span className="truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {/* micro-caps eyebrow — matches KpiTile so mixed grids read as one family */}
+        <span className="truncate text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
           {label}
         </span>
       </div>
@@ -538,7 +549,7 @@ export function StatPanel({
           <div className="flex min-w-0 items-center gap-2">
             <div
               className={cn(
-                "flex size-7 shrink-0 items-center justify-center rounded-lg border shadow-sm ring-1 ring-inset ring-white/5",
+                "flex size-7 shrink-0 items-center justify-center rounded-lg border shadow-sm ring-1 ring-inset ring-white/10",
                 colors.bg,
               )}
             >
@@ -549,7 +560,7 @@ export function StatPanel({
                 so this small uppercase label is intra-panel chrome — not
                 another level in the document outline. Visual styling
                 unchanged. */}
-            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
               {title}
             </div>
           </div>

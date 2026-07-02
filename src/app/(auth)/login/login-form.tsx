@@ -21,13 +21,18 @@ export function LoginForm() {
   }, [state, router]);
 
   return (
-    <div className="w-full sm:w-[520px] max-w-full rounded-2xl border border-white/10 bg-white/5 p-6 sm:p-12 shadow-2xl shadow-black/30 backdrop-blur-xl">
+    <div className="relative w-full sm:w-[520px] max-w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6 sm:rounded-3xl sm:p-12 shadow-2xl shadow-black/30 backdrop-blur-xl">
+      {/* Hairline top light-catch — crisp lifted glass edge. Decorative. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"
+      />
       {/* Logo */}
-      <div className="mb-10 text-center">
+      <div className="relative mb-10 text-center">
         <div className="mb-4 flex justify-center">
           <Image src="/logo.png" alt="Pokewin" width={200} height={36} priority />
         </div>
-        <h1 className="text-page-title text-foreground">Welcome back</h1>
+        <h1 className="text-page-title tracking-tight text-foreground">Welcome back</h1>
       </div>
 
       <form action={formAction} className="space-y-6">

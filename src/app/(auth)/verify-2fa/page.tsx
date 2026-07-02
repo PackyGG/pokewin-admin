@@ -23,14 +23,21 @@ export default async function Verify2FAPage() {
   }
 
   return (
-    <div className="w-[520px] max-w-full rounded-2xl border border-white/10 bg-white/5 p-12 shadow-2xl shadow-black/30 backdrop-blur-xl">
-      <div className="mb-8 text-center">
-        <h1 className="text-xl font-semibold text-foreground">Two-Factor Authentication</h1>
+    <div className="relative w-[520px] max-w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6 sm:rounded-3xl sm:p-12 shadow-2xl shadow-black/30 backdrop-blur-xl">
+      {/* Hairline top light-catch — crisp lifted glass edge. Decorative. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"
+      />
+      <div className="relative mb-8 text-center">
+        <h1 className="text-xl font-semibold tracking-tight text-foreground">Two-Factor Authentication</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Enter the 6-digit code from your authenticator app
         </p>
       </div>
-      <VerifyForm hasPasskeys={hasPasskeys} />
+      <div className="relative">
+        <VerifyForm hasPasskeys={hasPasskeys} />
+      </div>
     </div>
   );
 }

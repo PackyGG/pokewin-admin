@@ -72,7 +72,9 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
     <tr
       data-slot="table-row"
       className={cn(
-        "border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted",
+        // Row hover eased to muted/40 so it reads as a soft sweep rather
+        // than a hard highlight; selection still wins with the full token.
+        "border-b transition-colors hover:bg-muted/40 data-[state=selected]:bg-muted",
         className
       )}
       {...props}
@@ -90,7 +92,10 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
       // this widens the visual gap between header and body without
       // adding a separate header tint that could clash with `data-zebra`.
       className={cn(
-        "h-10 px-2 text-left align-middle text-[11px] font-semibold uppercase tracking-wider whitespace-nowrap text-muted-foreground [&:has([role=checkbox])]:pr-0",
+        // micro-caps header rhythm: 11px / medium / 0.14em tracking —
+        // matches the DataTableColumnHeader sort buttons and every other
+        // caps label in the design system.
+        "h-10 px-2 text-left align-middle text-[11px] font-medium uppercase tracking-[0.14em] whitespace-nowrap text-muted-foreground [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}
