@@ -68,7 +68,7 @@ export function DataTablePagination({
       )}
       aria-busy={isPending || undefined}
     >
-      <p className="text-xs sm:text-sm text-muted-foreground">
+      <p className="text-xs sm:text-sm text-muted-foreground tabular-nums">
         {degraded
           ? "Results unavailable"
           : `${total} result${total !== 1 ? "s" : ""}`}
@@ -102,7 +102,11 @@ export function DataTablePagination({
       {/* Desktop: full controls (rows-per-page, jump-to-first/last) */}
       <div className="hidden flex-wrap items-center gap-x-4 gap-y-2 sm:flex">
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Rows</span>
+          {/* micro-caps — pagination chrome labels follow the canonical
+              11px/0.14em rhythm used by table headers above them. */}
+          <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+            Rows
+          </span>
           <Select
             value={String(perPage)}
             onValueChange={(v) => navigate(1, Number(v))}
@@ -119,7 +123,7 @@ export function DataTablePagination({
             </SelectContent>
           </Select>
         </div>
-        <span className="text-sm text-muted-foreground">
+        <span className="text-sm text-muted-foreground tabular-nums">
           Page {page} of {totalPages || 1}
         </span>
         <div className="flex items-center gap-1">

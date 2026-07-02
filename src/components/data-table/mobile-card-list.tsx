@@ -85,7 +85,9 @@ export function MobileCard({
             )}
           </div>
           {trailing && (
-            <div className="shrink-0 text-right text-xs">
+            // tabular-nums: the trailing slot is almost always an amount /
+            // count, so digits align vertically down a card list.
+            <div className="shrink-0 text-right text-xs tabular-nums">
               {trailing}
             </div>
           )}

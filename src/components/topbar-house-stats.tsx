@@ -193,16 +193,21 @@ function HouseStatPill({
   className?: string;
 }) {
   return (
+    // Liquid-Glass chip: fixed h-7 (28px) so all pills share one height in
+    // the h-14 header, hairline tone border, micro-caps label + tabular
+    // value. Static on hover — these are data chips, not controls.
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-medium",
+        "inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[10px] font-medium",
         TONE_CLASSES[tone],
         className,
       )}
       title={title}
     >
       {icon}
-      <span className="hidden text-muted-foreground xl:inline">{label}</span>
+      <span className="hidden font-medium uppercase tracking-[0.12em] text-muted-foreground xl:inline">
+        {label}
+      </span>
       <span className="tabular-nums font-semibold text-foreground">{value}</span>
     </span>
   );
@@ -231,7 +236,8 @@ function SkeletonPill({ className }: { className?: string }) {
   return (
     <span
       className={cn(
-        "h-[26px] w-16 animate-pulse rounded-full border border-border/60 bg-muted/40",
+        // h-7 mirrors the live HouseStatPill height exactly (zero CLS).
+        "h-7 w-16 animate-pulse rounded-full border border-border/60 bg-muted/40",
         className,
       )}
     />
