@@ -279,10 +279,10 @@ function StaticWindowLabel({ label }: { label: string }) {
  * merged box], Deposits/Withdrawals [merged into one single tile]) with a
  * per-box today/24h toggle, plus the anchored Crypto Fee counter. This is now
  * a live-ops board only — the window-independent snapshot boxes (FTDs,
- * Depositors, Avg RTP, Avg P&L 7d, Total P&L lifetime) MOVED to the Insights
- * Overview Analytics tab (`/insights/real-numbers?tab=analytics`), where Total
- * P&L + Avg P&L are folded into a single box. (Total Users moved to the
- * top-bar pill; Avg Deposit + Deposits/Hour also live on the Analytics tab.)
+ * Depositors, Avg RTP, Avg P&L 7d, Total P&L lifetime) MOVED to the owner-only
+ * lifetime section on `/analytics` (Overview tab), where Total P&L + Avg P&L
+ * are folded into a single box. (Total Users moved to the top-bar pill; Avg
+ * Deposit + Deposits/Hour also live in that Overview-tab section.)
  *
  * The "today" payload is rendered eagerly (the active default window). The
  * rolling 24h payload is fetched LAZILY (one server action) the first time
@@ -370,13 +370,18 @@ export function DashboardKpiSection({
           hero value + toggle never crush; 2-up at sm; 4 across at xl where
           there's width for all four without crushing. */}
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-        {/* GGR — industry definition (`wager − payouts`): what we won from
-            the games today (packs, battles, upgrader), pre-rewards,
-            pre-promo. Cyan identity; Info popover surfaces the per-leg
-            breakdown + lazy top-contributors + a secondary "Cash P&L"
-            (deposits − withdrawals) reference, scoped to the box's active
-            window. House-POV: positive → house gain → emerald; negative →
-            house loss → rose (handled by SignedHero). */}
+        {/* GGR — DASHBOARD-LOCAL "deposit-funded" definition (owner request,
+            2026-07-02): only wagering traceable to THIS window's own
+            deposits counts (FIFO per user, see
+            `dashboard-deposit-funded-ggr.ts`). Every other GGR surface
+            (`/ggr`, insights, edge-plan, ClickHouse twin) is UNCHANGED and
+            still uses the industry definition (`wager − payouts`), which is
+            preserved as a reference figure in the Info popover. Cyan
+            identity; Info popover surfaces the headline + the industry
+            reference breakdown + lazy top-contributors + a secondary
+            "Cash P&L" (deposits − withdrawals) reference, scoped to the
+            box's active window. House-POV: positive → house gain →
+            emerald; negative → house loss → rose (handled by SignedHero). */}
         {(() => {
           const p = payloadFor("ggr");
           const mode = modeFor("ggr");
@@ -390,6 +395,7 @@ export function DashboardKpiSection({
                   breakdown={p.ggrBreakdown}
                   periodLabel={p.windowLabel}
                   contributorScope={{ kind: "kpi", value: mode }}
+                  headlineGgr={p.ggr}
                   cashGgr={p.cashGgr}
                   deposits={p.deposits}
                   withdrawals={p.withdrawals}
@@ -405,12 +411,15 @@ export function DashboardKpiSection({
               icon={isProfit ? TrendingUp : TrendingDown}
             >
               <SignedHero value={p.ggr} />
-              {/* Subtitle/tooltip — restates the industry GGR definition so
-                  the headline number is unambiguous next to the popover's
-                  secondary Cash P&L figure. */}
+              {/* Subtitle/tooltip — dashboard-local "deposit-funded" GGR
+                  (owner request, 2026-07-02): only wagering traceable to
+                  THIS window's own deposits counts (FIFO per user). The
+                  industry definition (wager − payouts) is preserved as a
+                  reference figure in the Info popover. */}
               <p className="text-tiny text-muted-foreground leading-snug">
-                gross gaming margin (wager − payouts on packs, battles,
-                upgrader, double down). Pre-rewards, pre-promo.
+                deposit-funded gaming margin — only wagers traceable to this
+                window&apos;s own deposits. Industry GGR shown in the info
+                popover.
               </p>
             </KpiPanel>
           );
@@ -582,14 +591,14 @@ export function DashboardKpiSection({
       </div>
 
       {/* The window-independent SNAPSHOT boxes (FTDs, Depositors, Avg RTP, Avg
-          P&L 7d, Total P&L lifetime) were MOVED to the Insights Overview
-          Analytics tab (`/insights/real-numbers?tab=analytics`) — the
-          dashboard is now a live-ops board (period-bound GGR / Wager /
-          Deposits-Withdrawals + the Crypto Fee counter above), while the
-          lifetime / cadence aggregates live on the Analytics tab. The Total
-          P&L + Avg P&L boxes were folded into a single "Total P&L" box there
-          (lifetime headline + avg-daily-7d sub-line). See
-          `src/app/(admin)/insights/real-numbers/analytics-tab.tsx`. */}
+          P&L 7d, Total P&L lifetime) were MOVED to the owner-only lifetime
+          section on `/analytics` (Overview tab) — the dashboard is now a
+          live-ops board (period-bound GGR / Wager / Deposits-Withdrawals +
+          the Crypto Fee counter above), while the lifetime / cadence
+          aggregates live on that Overview-tab section. The Total P&L + Avg
+          P&L boxes were folded into a single "Total P&L" box there (lifetime
+          headline + avg-daily-7d sub-line). See
+          `src/app/(admin)/analytics/real-numbers-lifetime.tsx`. */}
     </div>
   );
 }

@@ -14,6 +14,7 @@ import {
 } from "@/lib/clickhouse/queries/dashboard-cashflow";
 import { getDashboardCashflowFromPostgres } from "@/lib/queries/dashboard-cashflow-pg";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { getDepositFundedGgrForWindow } from "@/lib/queries/dashboard-deposit-funded-ggr";
 
 /**
  * Serializable snapshot of every dashboard KPI box for ONE window
@@ -40,10 +41,19 @@ export type KpiWindowPayload = {
 
   // ---- Period-bound box values ----
   /**
-   * HEADLINE GGR — industry definition (`wager − payouts`, inventory-delta
-   * sourced). "What we won from the games today (packs, battles, upgrader)" —
-   * the gaming margin, pre-rewards, pre-promo. Positive → house up → emerald;
-   * negative → house down → rose.
+   * HEADLINE GGR — DASHBOARD-LOCAL "deposit-funded" definition (owner
+   * request, 2026-07-02; see `dashboard-deposit-funded-ggr.ts` for the full
+   * algorithm). Per real customer, chronologically traces how much of their
+   * window wagering was fundable by money THEY deposited IN THIS SAME
+   * WINDOW (FIFO pool, never replenished by wins), then apportions their
+   * payout to that funded share proportionally. Summed across users. This
+   * intentionally EXCLUDES wagering funded by balance carried over from a
+   * prior window, so headline GGR can no longer exceed what a "just this
+   * window's money" reading would expect. Every OTHER GGR consumer
+   * (`/ggr`, insights, edge-plan, ClickHouse twin) is UNCHANGED and still
+   * reads the industry definition (`wager − payouts`) via `getWindowMetrics`
+   * — that figure is preserved in `ggrBreakdown` below as a reference.
+   * Positive → house up → emerald; negative → house down → rose.
    */
   ggr: number;
   /**
@@ -83,7 +93,7 @@ export type KpiWindowPayload = {
 export async function buildKpiWindowPayload(
   window: DashboardKpiWindow,
 ): Promise<KpiWindowPayload> {
-  const [stats, ggrBreakdown] = await Promise.all([
+  const [stats, ggrBreakdown, depositFundedGgr] = await Promise.all([
     getDashboardKpiStats(window),
     getGgrBreakdownForKpiWindow(window).catch(() => ({
       wagers: [],
@@ -92,6 +102,11 @@ export async function buildKpiWindowPayload(
       payoutsTotal: 0,
       ggr: 0,
     })),
+    // Dashboard-local headline override (owner request, 2026-07-02) — see
+    // dashboard-deposit-funded-ggr.ts. Falls back to the industry figure
+    // (stats.ggr, via ggrBreakdown once resolved below) if this read fails,
+    // so the tile never goes blank on a transient error.
+    getDepositFundedGgrForWindow(window).catch(() => null),
   ]);
 
   // CQRS serve path for the `dashboard_cashflow` surface — a SUBSET cutover.
@@ -141,7 +156,7 @@ export async function buildKpiWindowPayload(
   return {
     window,
     windowLabel: stats.periodLabel,
-    ggr: stats.ggr,
+    ggr: depositFundedGgr ?? stats.ggr,
     cashGgr,
     wager: stats.wagers,
     wagerBreakdown: stats.wagersBreakdown,

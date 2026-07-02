@@ -61,6 +61,7 @@ export function GgrBreakdownPopover({
   breakdown,
   periodLabel,
   contributorScope,
+  headlineGgr,
   cashGgr,
   deposits,
   withdrawals,
@@ -69,10 +70,18 @@ export function GgrBreakdownPopover({
   periodLabel: string;
   contributorScope: GgrContributorScope;
   /**
+   * The tile's actual headline number — dashboard-local "deposit-funded"
+   * GGR (owner request, 2026-07-02; see `dashboard-deposit-funded-ggr.ts`).
+   * Shown FIRST so the popover matches the tile. `breakdown.ggr` below is
+   * the industry definition (`wager − payouts`) and is now a REFERENCE
+   * figure, not the headline — the two can legitimately differ.
+   */
+  headlineGgr: number;
+  /**
    * Cash P&L (`deposits − withdrawals`) for the window. Surfaced as a
    * SECONDARY figure inside the popover so an operator can see net cash
    * kept (crypto-flow tracking) without leaving the tile — NOT the headline
-   * number (the tile's headline is the industry GGR).
+   * number (the tile's headline is deposit-funded GGR).
    */
   cashGgr: number;
   /** Window's deposit dollars — drives the secondary `deposits − withdrawals` math. */
@@ -81,6 +90,7 @@ export function GgrBreakdownPopover({
   withdrawals: number;
 }) {
   const cashIsProfit = cashGgr >= 0;
+  const headlineIsProfit = headlineGgr >= 0;
   const ggrIsProfit = breakdown.ggr >= 0;
   // Hide zero-total rows so the list stays readable on quiet windows
   // (e.g. last 1h with no upgrader plays / battles). The headline
@@ -145,14 +155,41 @@ export function GgrBreakdownPopover({
         sideOffset={6}
         className="w-[360px] max-w-[calc(100vw-2rem)] space-y-2 p-3"
       >
-        {/* Headline industry GGR — what the tile's headline number reflects.
-            Wager − (pack/battle wins + battle refunds + upgrader payout).
-            Shown FIRST so the popover header matches the tile. House-POV
-            colour on the final line (positive → emerald, negative → rose)
-            per CLAUDE.md. */}
+        {/* Headline — dashboard-local "deposit-funded" GGR (owner request,
+            2026-07-02). Shown FIRST so the popover matches the tile.
+            House-POV colour (positive → emerald, negative → rose). */}
         <div>
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              GGR · {periodLabel}
+            </p>
+            <span
+              className={cn(
+                "font-bold tabular-nums text-sm",
+                headlineIsProfit ? "text-emerald-400" : "text-rose-400",
+              )}
+            >
+              {headlineIsProfit ? "+" : "−"}
+              {formatCurrency(Math.abs(headlineGgr))}
+            </span>
+          </div>
+          <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+            Deposit-funded gaming margin — per real customer, traces
+            chronologically how much of their wagering in this window was
+            fundable by deposits made IN THIS SAME WINDOW (FIFO, never
+            replenished by wins); payouts are apportioned to that funded
+            share. Excludes wagering funded by balance carried over from a
+            prior window.
+          </p>
+        </div>
+
+        {/* Industry GGR — REFERENCE figure only (wager − payouts on packs,
+            battles, upgrader, double down). This is what every other GGR
+            surface (`/ggr`, insights, edge-plan) still uses; it is NOT this
+            tile's headline. */}
+        <div className="border-t border-border/60 pt-2">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            GGR · {periodLabel}
+            Industry GGR (reference)
           </p>
           <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
             Gross gaming margin (wager − payouts on packs, battles,
@@ -184,15 +221,15 @@ export function GgrBreakdownPopover({
           tone="payout"
         />
 
-        {/* Bottom math: wagersTotal − payoutsTotal = ggr. House-POV
-            colour on the final line (positive → emerald, negative →
-            rose) per CLAUDE.md. The breakdown's ggr is used directly
-            (not the headline `ggr` prop) so this number matches the
-            row totals above by construction. */}
+        {/* Bottom math: wagersTotal − payoutsTotal = breakdown.ggr — the
+            industry REFERENCE figure (not the tile's headline anymore).
+            House-POV colour on the final line (positive → emerald,
+            negative → rose) per CLAUDE.md. Matches the row totals above
+            by construction. */}
         <div className="border-t border-border/60 pt-2">
           <div className="flex items-center justify-between text-xs">
             <span className="font-semibold uppercase tracking-wider">
-              GGR
+              Industry GGR
             </span>
             <span
               className={cn(
