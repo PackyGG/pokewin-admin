@@ -53,13 +53,20 @@ import {
 import {
   planAllRetunes,
   planSingleRetune,
+  planStagedRetune,
   applyPackEdit,
   applyStagedPackEditAndRetune,
   type PlanAllProposal,
   type PlanAllWeightDiff,
   type PortfolioProfileResult,
+  type StagedRetunePlan,
 } from "../doctor/retune-actions";
-import type { EditorTargets, EditPreview } from "./pool-editor";
+import type {
+  EditorTargets,
+  EditPreview,
+  PoolEditorSnapshot,
+  StagedPoolSignature,
+} from "./pool-editor";
 import type { PortfolioSystemPlan } from "@/app/(admin)/packs/_lib/portfolio";
 
 import { ReviewCard } from "./review-card";
@@ -285,58 +292,86 @@ function buildTargets(
   };
 }
 
-/** Build the `targets` payload for `applyStagedPackEditAndRetune` (the staged
- * edit-and-retune Approve). Shares the lever resolution with `buildTargets`
- * (effective edge + adjusted-or-auto win-rate/cap/near-miss) but deliberately
- * DOES NOT forward the plain-path price-search levers:
+/** Build the SHARED staged lever set — the write
+ * (`applyStagedPackEditAndRetune`, via `buildStagedTargets` below) AND the
+ * read-only dry-run (`planStagedRetune`) resolve their targets from THIS
+ * builder, so the staged plan the operator reviews and the eventual push
+ * shape against identical targets. Same lever resolution as `buildTargets`
+ * (effective edge + adjusted-or-auto win-rate/cap/near-miss), deliberately
+ * WITHOUT the plain-path price-search levers:
  *
  *  • `allowPriceSearch` comes STRICTLY from the editor's "Allow price
- *    adjustment" checkbox (the payload). `buildTargets` pins it `true` for the
- *    plain Approve — spreading that over the staged call made the checkbox
- *    dead (an unticked box still price-searched on the server while the gate
+ *    adjustment" checkbox. `buildTargets` pins it `true` for the plain
+ *    Approve — spreading that over the staged call made the checkbox dead
+ *    (an unticked box still price-searched on the server while the gate
  *    showed no price warning).
  *  • `upwardPriceExtensionPct` / `priceOverride` are chip-strip levers of the
- *    PLAIN `applyPackRetune` path; the staged action doesn't accept them —
- *    its search always anchors on the staged price at the default ±25% band.
+ *    PLAIN `applyPackRetune` path; the staged actions don't accept them —
+ *    their search always anchors on the staged price at the default ±25% band.
+ *
+ * The RC1 approved-artifact pins are NOT set here — the dry-run deliberately
+ * sends none (it IS the preview being generated); the write-side wrapper
+ * `buildStagedTargets` adds them.
  */
-function buildStagedTargets(
+function buildStagedPlanTargets(
   item: ReviewItem,
   edgeOverride: number | null,
   priceOverride: number | null,
-  payload: Extract<EditApprovePayload, { mode: "auto-tune" }>,
+  allowPriceSearch: boolean,
 ): {
   targetEdge: number;
   targetWinRate: number;
   maxWinCap: number | undefined;
   nearMissMin: number;
   allowPriceSearch: boolean;
-  approvedPriceAfter?: number;
-  approvedPoolFingerprint?: string;
 } {
   const t = buildTargets(item, edgeOverride, priceOverride);
-  const allowPriceSearch = payload.allowPriceSearch === true;
-  // RC1 approved-artifact contract (staged flavor): the staged pool identity
-  // travels verbatim, so only price + pool-freshness need pinning.
-  //  • Price — authoritative ONLY when the search lever is OFF (the server
-  //    then writes the staged price exactly: `payload.price`, or the live
-  //    price when unchanged). With the lever ON the server legitimately picks
-  //    the final price, so nothing is pinned: the editor preview DOES show
-  //    its own search's expected price (EditPreview.newPrice, C2-F5), but
-  //    that client mirror omits the server's currentWeights/winRateTol/
-  //    taggedWinRate params and may legitimately land elsewhere — pinning it
-  //    would refuse valid approves. The fingerprint still guards freshness.
-  //  • Fingerprint — always: the staged solve still anchors on the LIVE pool
-  //    (anti-inflation weights + live price), so live-state drift between
-  //    plan and approve must refuse.
-  const approvedPriceAfter = allowPriceSearch
-    ? null
-    : payload.price ?? item.proposal.price;
   return {
     targetEdge: t.targetEdge!,
     targetWinRate: t.targetWinRate!,
     maxWinCap: t.maxWinCap,
     nearMissMin: t.nearMissMin!,
     allowPriceSearch,
+  };
+}
+
+/** The WRITE-side staged targets: the shared levers + the RC1
+ * approved-artifact pins. The staged pool identity travels verbatim, so only
+ * price + pool-freshness need pinning:
+ *
+ *  • Price — authoritative ONLY when the search lever is OFF (the server
+ *    then writes the staged price exactly: `payload.price`, or the live
+ *    price when unchanged). With the lever ON the server legitimately picks
+ *    the final price, so nothing is pinned: the editor preview DOES show
+ *    its own search's expected price (EditPreview.newPrice, C2-F5), but
+ *    that client mirror omits the server's currentWeights/winRateTol/
+ *    taggedWinRate params and may legitimately land elsewhere — pinning it
+ *    would refuse valid approves. The fingerprint still guards freshness.
+ *  • Fingerprint — always: the staged solve still anchors on the LIVE pool
+ *    (anti-inflation weights + live price), so live-state drift between
+ *    plan and approve must refuse.
+ */
+function buildStagedTargets(
+  item: ReviewItem,
+  edgeOverride: number | null,
+  priceOverride: number | null,
+  payload: Extract<EditApprovePayload, { mode: "auto-tune" }>,
+): ReturnType<typeof buildStagedPlanTargets> & {
+  approvedPriceAfter?: number;
+  approvedPoolFingerprint?: string;
+} {
+  const allowPriceSearch = payload.allowPriceSearch === true;
+  const t = buildStagedPlanTargets(
+    item,
+    edgeOverride,
+    priceOverride,
+    allowPriceSearch,
+  );
+  const approvedPriceAfter = allowPriceSearch
+    ? null
+    : payload.price ?? item.proposal.price;
+  return {
+    ...t,
     ...(approvedPriceAfter !== null && Number.isFinite(approvedPriceAfter)
       ? { approvedPriceAfter }
       : {}),
@@ -344,6 +379,79 @@ function buildStagedTargets(
       ? { approvedPoolFingerprint: item.proposal.poolFingerprint }
       : {}),
   };
+}
+
+// ─── Staged-edit persistence (per pack, per browser tab) ────────────────
+// The pool editor's staged state must survive closing the edit section, rail
+// navigation AND the router.refresh() remount (which resets ALL client state
+// in this tree) — the owner's "i have to redo this over and over". Persisted
+// per pack in sessionStorage: an entry exists ⟺ dirty staged edits exist (a
+// clean editor clears its entry). Tab-scoped by design — staged edits are a
+// working session, not durable config.
+const STAGED_SESSION_PREFIX = "pack-studio.retune.staged-pool.v1:";
+
+type PersistedStagedSession = {
+  snapshot: PoolEditorSnapshot;
+  staged: StagedPoolSignature;
+};
+
+function readStagedSession(packId: string): PersistedStagedSession | null {
+  try {
+    const raw = window.sessionStorage.getItem(STAGED_SESSION_PREFIX + packId);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PersistedStagedSession;
+    if (
+      !parsed ||
+      !parsed.staged ||
+      !Array.isArray(parsed.staged.cards) ||
+      !parsed.snapshot ||
+      !Array.isArray(parsed.snapshot.rows)
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeStagedSession(
+  packId: string,
+  session: PersistedStagedSession,
+): void {
+  try {
+    window.sessionStorage.setItem(
+      STAGED_SESSION_PREFIX + packId,
+      JSON.stringify(session),
+    );
+  } catch {
+    /* quota/serialization failures degrade to non-persisted staged state */
+  }
+}
+
+function clearStagedSession(packId: string): void {
+  try {
+    window.sessionStorage.removeItem(STAGED_SESSION_PREFIX + packId);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** All persisted staged signatures — seeds the reactive map after (re)mount. */
+function readAllStagedSignatures(): Record<string, StagedPoolSignature> {
+  const out: Record<string, StagedPoolSignature> = {};
+  try {
+    for (let i = 0; i < window.sessionStorage.length; i++) {
+      const key = window.sessionStorage.key(i);
+      if (!key || !key.startsWith(STAGED_SESSION_PREFIX)) continue;
+      const packId = key.slice(STAGED_SESSION_PREFIX.length);
+      const session = readStagedSession(packId);
+      if (session) out[packId] = session.staged;
+    }
+  } catch {
+    /* ignore */
+  }
+  return out;
 }
 
 /** Detect the retune-token-expiry error so we can re-prompt 2FA + retry. */
@@ -393,8 +501,113 @@ export function RetuneReview({
   const [index, setIndex] = React.useState(0);
   const [started, setStarted] = React.useState(false);
   const [applying, setApplying] = React.useState(false);
-  // The index whose inline pool editor is open (null = none). Reset on navigate.
+  // The index whose inline pool editor is open (null = none). Reset on navigate
+  // — the STAGED editor state survives anyway (persisted per pack below), so
+  // closing/reopening or hopping the rail restores the staged pool.
   const [editingIndex, setEditingIndex] = React.useState<number | null>(null);
+
+  // ── Staged pool edits (persist per pack; drive the staged dry-run) ───
+  // `stagedByPack[packId]` = the editor's staged signature (present ⟺ the
+  // editor differs from the live pool). Mirrored to sessionStorage so it
+  // survives the router.refresh() remount. `stagedPlans[packId]` = the latest
+  // read-only `planStagedRetune` verdict for that staged pool, keyed on
+  // (signature + resolved targets) so a change invalidates it.
+  const [stagedByPack, setStagedByPack] = React.useState<
+    Record<string, StagedPoolSignature>
+  >({});
+  type StagedPlanState = {
+    plan: StagedRetunePlan | null;
+    planning: boolean;
+    error: string | null;
+    key: string;
+  };
+  const [stagedPlans, setStagedPlans] = React.useState<
+    Record<string, StagedPlanState>
+  >({});
+  // Last staged-signature JSON per pack — dedupes the editor's per-keystroke
+  // session reports into state updates only when the signature truly changed.
+  const lastStagedJsonRef = React.useRef<Record<string, string | null>>({});
+  // The (packId → plan key) currently in flight — prevents double-firing the
+  // identical dry-run when the debounce and a manual recheck overlap.
+  const stagedPlanInFlightRef = React.useRef<Record<string, string>>({});
+
+  // Re-hydrate the staged signatures from sessionStorage after (re)mount —
+  // this is what makes staged edits survive router.refresh() (the refresh
+  // remounts this client tree and resets all React state).
+  React.useEffect(() => {
+    const all = readAllStagedSignatures();
+    if (Object.keys(all).length === 0) return;
+    for (const [packId, staged] of Object.entries(all)) {
+      lastStagedJsonRef.current[packId] = JSON.stringify(staged);
+    }
+    setStagedByPack(all);
+  }, []);
+
+  // Drop every trace of a pack's staged session (sessionStorage + reactive
+  // state + plan) — on discard and after a successful staged/edit write.
+  const clearStagedFor = React.useCallback((packId: string) => {
+    clearStagedSession(packId);
+    lastStagedJsonRef.current[packId] = null;
+    setStagedByPack((prev) => {
+      if (!(packId in prev)) return prev;
+      const next = { ...prev };
+      delete next[packId];
+      return next;
+    });
+    setStagedPlans((prev) => {
+      if (!(packId in prev)) return prev;
+      const next = { ...prev };
+      delete next[packId];
+      return next;
+    });
+  }, []);
+
+  // The pool editor reports (snapshot, staged) on every change. Persist the
+  // snapshot; lift the signature into state only when it actually changed
+  // (odds keystrokes update the snapshot but usually not the signature).
+  const onEditorSessionChange = React.useCallback(
+    (
+      packId: string,
+      snapshot: PoolEditorSnapshot,
+      staged: StagedPoolSignature | null,
+    ) => {
+      if (staged) {
+        writeStagedSession(packId, { snapshot, staged });
+        const json = JSON.stringify(staged);
+        if (lastStagedJsonRef.current[packId] !== json) {
+          lastStagedJsonRef.current[packId] = json;
+          setStagedByPack((prev) => ({ ...prev, [packId]: staged }));
+        }
+      } else {
+        clearStagedSession(packId);
+        if (lastStagedJsonRef.current[packId] !== null) {
+          lastStagedJsonRef.current[packId] = null;
+          setStagedByPack((prev) => {
+            if (!(packId in prev)) return prev;
+            const next = { ...prev };
+            delete next[packId];
+            return next;
+          });
+          setStagedPlans((prev) => {
+            if (!(packId in prev)) return prev;
+            const next = { ...prev };
+            delete next[packId];
+            return next;
+          });
+        }
+      }
+    },
+    [],
+  );
+
+  // "Discard edits" in the editor: clear the persisted session + close.
+  const onEditorDiscard = React.useCallback(
+    (packId: string) => {
+      clearStagedFor(packId);
+      setEditingIndex(null);
+    },
+    [clearStagedFor],
+  );
 
   // ── Two-step confirm gate before any prod write ─────────────────────
   // Both Approve paths (plain retune + edited-pool) route through this gate: a
@@ -763,6 +976,112 @@ export function RetuneReview({
     };
   }, [index, items, staleIds, recomputingSingle, edgeOverride, priceOverride, recomputeOne]);
 
+  // ── Staged dry-run (read-only `planStagedRetune`) ───────────────────
+  // While the inline editor has staged edits for the CURRENT pack, the review
+  // card's verdict is driven by this dry-run of the STAGED pool (same server
+  // resolution the push runs) instead of the live-pool proposal. Debounced so
+  // price typing doesn't spam the server; keyed on (signature + resolved
+  // targets) so a stale verdict is never presented as settled. Odds typing
+  // never re-triggers it — the staged signature carries identity/price only
+  // (the server shapes weights itself).
+  const currentPackId = current?.proposal.packId ?? null;
+  const currentStaged = currentPackId ? stagedByPack[currentPackId] : undefined;
+  const stagedPlanKey = React.useMemo(() => {
+    if (!current || !currentStaged) return null;
+    return JSON.stringify({
+      sig: currentStaged,
+      targets: buildStagedPlanTargets(
+        current,
+        edgeOverride,
+        priceOverride,
+        currentStaged.allowPriceSearch,
+      ),
+    });
+  }, [current, currentStaged, edgeOverride, priceOverride]);
+
+  const runStagedPlan = React.useCallback(
+    async (packId: string, key: string) => {
+      const item = items.find((it) => it.proposal.packId === packId);
+      const stagedSig = stagedByPack[packId];
+      if (!item || !stagedSig) return;
+      // The identical run is already in flight (debounce + manual recheck
+      // overlap) — let it land instead of double-firing.
+      if (stagedPlanInFlightRef.current[packId] === key) return;
+      stagedPlanInFlightRef.current[packId] = key;
+      setStagedPlans((prev) => ({
+        ...prev,
+        [packId]: {
+          plan: prev[packId]?.plan ?? null,
+          planning: true,
+          error: null,
+          key,
+        },
+      }));
+      try {
+        const plan = await planStagedRetune(
+          packId,
+          {
+            cards: stagedSig.cards,
+            ...(stagedSig.price !== undefined ? { price: stagedSig.price } : {}),
+          },
+          buildStagedPlanTargets(
+            item,
+            edgeOverride,
+            priceOverride,
+            stagedSig.allowPriceSearch,
+          ),
+        );
+        setStagedPlans((prev) => {
+          const cur = prev[packId];
+          if (!cur || cur.key !== key) return prev; // superseded — drop
+          return {
+            ...prev,
+            [packId]: { plan, planning: false, error: null, key },
+          };
+        });
+      } catch (err) {
+        setStagedPlans((prev) => {
+          const cur = prev[packId];
+          if (!cur || cur.key !== key) return prev;
+          return {
+            ...prev,
+            [packId]: {
+              plan: cur.plan,
+              planning: false,
+              error:
+                err instanceof Error ? err.message : "Staged dry-run failed.",
+              key,
+            },
+          };
+        });
+      } finally {
+        if (stagedPlanInFlightRef.current[packId] === key) {
+          delete stagedPlanInFlightRef.current[packId];
+        }
+      }
+    },
+    [items, stagedByPack, edgeOverride, priceOverride],
+  );
+
+  // Debounced auto-refresh: add/remove/price/lever changes re-key the plan
+  // and (600ms later) re-run it. A sticky error for the SAME key does not
+  // auto-retry — the manual Recheck button re-runs it.
+  React.useEffect(() => {
+    if (!currentPackId || !stagedPlanKey) return;
+    const existing = stagedPlans[currentPackId];
+    if (existing && existing.key === stagedPlanKey) return;
+    const timer = setTimeout(() => {
+      void runStagedPlan(currentPackId, stagedPlanKey);
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [currentPackId, stagedPlanKey, stagedPlans, runStagedPlan]);
+
+  // Manual recheck (banner/limit button + editor picker-close auto-recheck).
+  const onStagedRecheck = React.useCallback(() => {
+    if (!currentPackId || !stagedPlanKey) return;
+    void runStagedPlan(currentPackId, stagedPlanKey);
+  }, [currentPackId, stagedPlanKey, runStagedPlan]);
+
   // ── Local re-shape (Adjust) ─────────────────────────────────────────
   // Routes through `searchBestPriceForCleanSnap` so the locally-previewed
   // weights match what the server will (re-)shape against on approve — the
@@ -969,12 +1288,22 @@ export function RetuneReview({
   // pending retune write only fires from the gate's final "Push to production".
   // Refused while the current proposal is stale / recomputing (see
   // `approveBlocked`): the gate summary and the write targets would be built
-  // from numbers the operator isn't looking at.
+  // from numbers the operator isn't looking at. ALSO blocked while staged pool
+  // edits exist for the pack: the plain retune writes the LIVE pool and would
+  // silently ignore the staged edits (this guards the "A" keyboard shortcut
+  // too, which bypasses the disabled button).
   const onApprove = React.useCallback(() => {
     if (applying || approveBlocked) return;
+    const packId = items[index]?.proposal.packId;
+    if (packId && stagedByPack[packId]) {
+      toast.error(
+        "You have staged pool edits for this pack — use “Auto-tune & push to production” in the editor, or discard the edits first.",
+      );
+      return;
+    }
     setPendingWrite({ kind: "retune", index });
     setConfirmStep(1);
-  }, [applying, approveBlocked, index]);
+  }, [applying, approveBlocked, index, items, stagedByPack]);
 
   const onDecline = React.useCallback(() => {
     if (applying) return;
@@ -1011,6 +1340,9 @@ export function RetuneReview({
           return next;
         });
         setEditingIndex(null);
+        // The staged edits just landed — drop the persisted session so the
+        // pack's card returns to the (now-updated) live-pool proposal.
+        clearStagedFor(item.proposal.packId);
         toast.success(
           `Edited ${res.name}: edge ${(res.after.edge * 100).toFixed(2)}% · win ${(res.after.winRate * 100).toFixed(2)}% · ${res.cardCountAfter} cards.`,
         );
@@ -1032,6 +1364,7 @@ export function RetuneReview({
               return next;
             });
             setEditingIndex(null);
+            clearStagedFor(item.proposal.packId);
             toast.success(
               `Edited ${retry.name}: edge ${(retry.after.edge * 100).toFixed(2)}% · win ${(retry.after.winRate * 100).toFixed(2)}% · ${retry.cardCountAfter} cards.`,
             );
@@ -1051,7 +1384,7 @@ export function RetuneReview({
     },
     // Verbatim edit: the server writes operator-typed weights as-is — the
     // per-session edge-target override doesn't apply (no shaping happens).
-    [items, router, advance],
+    [items, router, advance, clearStagedFor],
   );
 
   // ── Approve a STAGED pool with SERVER-SIDE auto-tune (SAFE PATH) ─────
@@ -1096,6 +1429,9 @@ export function RetuneReview({
           return next;
         });
         setEditingIndex(null);
+        // The staged pool just landed — drop the persisted session so the
+        // pack's card returns to the (now-updated) live-pool proposal.
+        clearStagedFor(item.proposal.packId);
         // Surface the price adjustment when the server moved off the staged
         // price (owner opted-in to the search AND it landed on a non-base
         // candidate). Otherwise the standard auto-tune confirmation only.
@@ -1133,6 +1469,7 @@ export function RetuneReview({
               return next;
             });
             setEditingIndex(null);
+            clearStagedFor(item.proposal.packId);
             const retryAdjusted =
               retry.priceSearch?.attempted === true &&
               retry.priceSearch.chosen !== retry.priceSearch.base;
@@ -1158,7 +1495,7 @@ export function RetuneReview({
         setApplying(false);
       }
     },
-    [items, router, advance, edgeOverride, priceOverride],
+    [items, router, advance, edgeOverride, priceOverride, clearStagedFor],
   );
 
   // Edit-approve also opens the two-step confirm gate — the pending edit write
@@ -1232,6 +1569,36 @@ export function RetuneReview({
   }, [started, confirmStep, applying, advance, goTo, index, onApprove, onDecline]);
 
   const progressPct = total > 0 ? Math.round(((approved + declined) / total) * 100) : 0;
+
+  // ── Staged state for the current card ───────────────────────────────
+  // A plan computed for an OLDER key (signature/targets changed, debounce
+  // pending) is stale — presented as still-planning, never as settled.
+  const currentPlanState = currentPackId ? stagedPlans[currentPackId] : undefined;
+  const planIsCurrent =
+    currentPlanState != null && currentPlanState.key === stagedPlanKey;
+  const stagedForCard =
+    currentStaged && currentPackId
+      ? {
+          dirty: true,
+          plan: planIsCurrent ? currentPlanState.plan : null,
+          planning:
+            (currentPlanState?.planning ?? false) ||
+            (currentPlanState != null && !planIsCurrent),
+          planError: planIsCurrent ? currentPlanState.error : null,
+          onRecheck: onStagedRecheck,
+        }
+      : null;
+
+  // The persisted editor snapshot for the CURRENT pack, read once per editor
+  // open — close/reopen and rail navigation restore the staged rows instead
+  // of re-seeding from the live pool. Safe during render: `editingIndex` only
+  // becomes non-null through user interaction, so this never runs on the
+  // server (and the storage helpers swallow any access failure).
+  const editorSnapshot = React.useMemo<PoolEditorSnapshot | null>(() => {
+    if (editingIndex === null || editingIndex !== index) return null;
+    if (!currentPackId) return null;
+    return readStagedSession(currentPackId)?.snapshot ?? null;
+  }, [editingIndex, index, currentPackId]);
 
   return (
     <div className="space-y-6">
@@ -1364,6 +1731,16 @@ export function RetuneReview({
                   onApplyEdit={onApplyEdit}
                   onReload={onReload}
                   reloadPending={reloadPending}
+                  staged={stagedForCard}
+                  editorInitialSnapshot={editorSnapshot}
+                  onEditorSessionChange={(snapshot, stagedSig) => {
+                    if (currentPackId) {
+                      onEditorSessionChange(currentPackId, snapshot, stagedSig);
+                    }
+                  }}
+                  onEditorDiscard={() => {
+                    if (currentPackId) onEditorDiscard(currentPackId);
+                  }}
                 />
               </FadeIn>
             ) : null}

@@ -76,9 +76,45 @@ import {
  */
 
 /** A row in the editor: identity + value + an editable odds % (display unit). */
-type EditRow = SortableCard & {
+export type EditRow = SortableCard & {
   /** True for a card pulled in via the picker (not in the live pool). */
   added: boolean;
+};
+
+/**
+ * A serializable snapshot of the editor's session state. The parent persists
+ * it (sessionStorage, keyed per pack) so staged edits survive closing the edit
+ * section, rail navigation, and the `router.refresh()` remount — the owner's
+ * "i have to redo this over and over" complaint. Restored via the
+ * `initialSnapshot` prop; the live pool is STILL fetched on every open so the
+ * baseline/dirty math always diffs against fresh production truth.
+ */
+export type PoolEditorSnapshot = {
+  rows: EditRow[];
+  priceText: string;
+  allowPriceSearch: boolean;
+};
+
+/**
+ * The staged-pool signature the parent needs while edits are staged: it (a)
+ * demotes the plain Approve (which would retune the LIVE pool and ignore the
+ * staged edits), and (b) drives the read-only `planStagedRetune` dry-run that
+ * replaces the review card's live-pool verdict. `null` = the editor currently
+ * matches the live pool (no staged edits). The `cards`/`price` shape mirrors
+ * the auto-tune approve payload EXACTLY so the dry-run and the eventual write
+ * receive the same pool.
+ */
+export type StagedPoolSignature = {
+  cards: {
+    cardId: string;
+    color?: string;
+    animation?: boolean;
+    order: number;
+  }[];
+  /** Staged price (USD) — present only when it differs from the live price. */
+  price?: number;
+  allowPriceSearch: boolean;
+  hasAddedCards: boolean;
 };
 
 /**
@@ -274,6 +310,8 @@ export function PoolEditor({
   pickerInitialPriceMin,
   pickerInitialPriceMax,
   onCardsAdded,
+  initialSnapshot,
+  onSessionChange,
 }: {
   packId: string;
   /** The pack's current price (USD) — the editable starting price. */
@@ -281,6 +319,11 @@ export function PoolEditor({
   /** Targets for the "Re-shape to targets" auto-distribute button. */
   targets: EditorTargets;
   applying: boolean;
+  /**
+   * DISCARD the staged edits and close the editor. The parent clears the
+   * persisted per-pack session — use the card's "Hide editor" toggle to close
+   * WITHOUT discarding (the session is restored on reopen).
+   */
   onCancel: () => void;
   /**
    * Approve the VERBATIM edited pool (advanced — writes the owner's exact
@@ -311,11 +354,28 @@ export function PoolEditor({
   /**
    * Fires once after the picker dialog closes if the operator added at least
    * one card during that picker session. Used by the parent to re-run the
-   * server `planAllRetunes` dry-run so the infeasibility banner reflects the
-   * latest live pool (auto-recheck). No-ops when the picker is closed without
-   * additions.
+   * STAGED dry-run immediately (`planStagedRetune`) so the feasibility verdict
+   * reflects the staged pool without waiting for the debounce. No-ops when the
+   * picker is closed without additions.
    */
   onCardsAdded?: () => void;
+  /**
+   * A previously-persisted editor session to restore INSTEAD of seeding the
+   * rows from the live pool. The live pool is still fetched on open — the
+   * baseline (diff/dirty math) always comes from fresh production truth.
+   */
+  initialSnapshot?: PoolEditorSnapshot | null;
+  /**
+   * Reports the editor session upward on every state change: a serializable
+   * snapshot (for persistence) + the staged-pool signature (`null` when the
+   * editor matches the live pool). The parent persists the snapshot, demotes
+   * the plain Approve while staged edits exist, and feeds the signature to the
+   * read-only staged dry-run.
+   */
+  onSessionChange?: (
+    snapshot: PoolEditorSnapshot,
+    staged: StagedPoolSignature | null,
+  ) => void;
 }) {
   const [loading, setLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState<string | null>(null);
@@ -356,6 +416,21 @@ export function PoolEditor({
     { weight: number; name: string; value: number }
   > | null>(null);
 
+  // The rows exactly as a fresh seed would produce them + the LIVE price —
+  // the structural comparison base for "does the editor differ from the live
+  // pool?" (drives the staged-signature report below). Undoing every edit by
+  // hand returns the editor to a clean state.
+  const seedRowsRef = React.useRef<EditRow[] | null>(null);
+  const [basePrice, setBasePrice] = React.useState(packPrice);
+
+  // Latest restore-snapshot / session-report callbacks without effect churn —
+  // the seed effect must stay keyed on `packId` only, and the report effect
+  // must not re-fire because the parent re-created a closure.
+  const initialSnapshotRef = React.useRef(initialSnapshot);
+  initialSnapshotRef.current = initialSnapshot;
+  const onSessionChangeRef = React.useRef(onSessionChange);
+  onSessionChangeRef.current = onSessionChange;
+
   // Seed the editor from a fresh read of the pack's current pool on first open.
   React.useEffect(() => {
     let cancelled = false;
@@ -383,8 +458,22 @@ export function PoolEditor({
           });
         }
         baselineRef.current = baseline;
-        setRows(seedRows(pool));
-        setPriceText(String(pool.price));
+        const seeded = seedRows(pool);
+        seedRowsRef.current = seeded;
+        setBasePrice(pool.price);
+        const snap = initialSnapshotRef.current;
+        if (snap && Array.isArray(snap.rows) && snap.rows.length > 0) {
+          // Restore a persisted editor session — staged edits survive closing
+          // the section, rail navigation and router.refresh(). The BASELINE
+          // above still comes from the fresh LIVE pool, so the dirty/diff
+          // math is judged against production truth, never the snapshot.
+          setRows(snap.rows.map((r) => ({ ...r })));
+          setPriceText(snap.priceText);
+          setAllowPriceSearch(snap.allowPriceSearch);
+        } else {
+          setRows(seeded);
+          setPriceText(String(pool.price));
+        }
         setFilters(picker);
       } catch (err) {
         if (cancelled) return;
@@ -408,7 +497,68 @@ export function PoolEditor({
     const n = parseFloat(priceText.trim());
     return Number.isFinite(n) && n > 0;
   })();
-  const priceChanged = Math.abs(price - packPrice) > 1e-9;
+  // "Changed" is judged against the LIVE pool price fetched at seed (not the
+  // possibly-stale proposal prop), so a stale proposal can't mark a pristine
+  // editor as price-edited. Falls back to the prop until the seed lands.
+  const priceChanged = Math.abs(price - basePrice) > 1e-9;
+
+  // ── Report the session upward (persistence + staged dry-run) ─────────
+  // Fires on every editable-state change once the seed landed: hands the
+  // parent a serializable snapshot (persisted per pack) + the staged-pool
+  // signature. The signature is `null` when the editor structurally matches
+  // the live pool — undoing all edits clears the staged state. Odds edits
+  // mark the session dirty (the plain Approve must be demoted — it would
+  // ignore them) but the signature deliberately carries NO odds: the staged
+  // write path (`applyStagedPackEditAndRetune`) shapes weights server-side
+  // from identity + price only, so odds typing never re-triggers the
+  // server dry-run.
+  React.useEffect(() => {
+    if (loading || loadError) return;
+    const report = onSessionChangeRef.current;
+    if (!report) return;
+    const seeded = seedRowsRef.current;
+    const dirty = (() => {
+      if (!seeded) return false;
+      if (rows.length !== seeded.length) return true;
+      for (let i = 0; i < rows.length; i++) {
+        const a = rows[i]!;
+        const b = seeded[i]!;
+        if (
+          a.cardId !== b.cardId ||
+          Math.abs((Number.isFinite(a.odds) ? a.odds : 0) - b.odds) > 1e-9 ||
+          (a.color ?? null) !== (b.color ?? null) ||
+          a.animation !== b.animation
+        ) {
+          return true;
+        }
+      }
+      if (priceValid && priceChanged) return true;
+      return false;
+    })();
+    const staged: StagedPoolSignature | null = dirty
+      ? {
+          cards: rows.map((r, i) => ({
+            cardId: r.cardId,
+            color: r.color ?? undefined,
+            animation: r.animation,
+            order: i,
+          })),
+          ...(priceValid && priceChanged ? { price } : {}),
+          allowPriceSearch,
+          hasAddedCards: rows.some((r) => r.added),
+        }
+      : null;
+    report({ rows, priceText, allowPriceSearch }, staged);
+  }, [
+    rows,
+    priceText,
+    allowPriceSearch,
+    loading,
+    loadError,
+    price,
+    priceValid,
+    priceChanged,
+  ]);
 
   const after = React.useMemo(() => previewRisk(rows, price), [rows, price]);
   const hasWinCard = rows.some((r) => r.priceUsd >= price);
@@ -962,9 +1112,10 @@ export function PoolEditor({
             variant="ghost"
             onClick={onCancel}
             disabled={applying}
+            title="Throws the staged changes away and re-seeds from the live pool. Use “Hide editor” above to close while KEEPING the staged edits."
           >
             <X className="mr-1 size-3.5" />
-            Cancel edit
+            Discard edits
           </Button>
           {/* VERBATIM (advanced) — outline + warning tooltip. Writes the owner's
               exact odds to MAIN; no shaping. Kept as an escape hatch. BLOCKED

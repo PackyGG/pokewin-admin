@@ -62,6 +62,7 @@ import {
   type PortfolioPackInput,
   type PortfolioPackTargets,
 } from "@/app/(admin)/packs/_lib/portfolio";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { PACK_STUDIO_RETUNE_CACHE_TAG } from "../_actions/retune-cache-tag";
 
 /**
@@ -1892,40 +1893,93 @@ export type ApplyStagedRetuneResult = {
   } | null;
 };
 
+// ─── Shared staged-pool resolution (the write + the dry-run must not drift) ─
+//
+// `resolveAndShapeStagedPool` is the ONE implementation of "take a staged pool
+// (identity + optional price) + target levers, resolve everything against
+// FRESH MAIN truth (never client-supplied values), and shape the weights".
+// Used by BOTH:
+//   • `applyStagedPackEditAndRetune` (the WRITE) — throws the refusal message
+//     for every non-ok outcome (byte-identical to the pre-refactor asserts),
+//     then persists the shaped pool.
+//   • `planStagedRetune` (the READ-ONLY dry-run) — returns the outcome as a
+//     verdict so the retune review can judge the STAGED pool's feasibility
+//     without writing anything.
+// One resolver is the point: the owner-reported bug behind it was the review
+// card judging feasibility off the LIVE pool while the editor had already
+// staged the fix — the preview and the write must derive identically or the
+// verdict lies. Malformed input / unknown pack / out-of-scope pack type THROW
+// in both paths; solver + assert outcomes come back as a structured refusal so
+// the dry-run can render them as a verdict.
+
+/** Why the write path would refuse a staged pool (mirrors its throw sites). */
+type StagedRefusalCode =
+  | "tag-contradiction"
+  | "infeasible"
+  | "edge-below-target"
+  | "max-win-above-cap"
+  | "win-rate-miss"
+  | "tag-accuracy-miss"
+  | "edge-floor";
+
+type StagedShapeOutcome =
+  | {
+      ok: true;
+      /** Server-shaped weights aligned to the staged input card order. */
+      weights: number[];
+      after: PackRisk;
+      relaxations: ShapeWeightsRelaxation[];
+      snapped: boolean | null;
+      topInflationUnavoidable: boolean | null;
+    }
+  | {
+      ok: false;
+      code: StagedRefusalCode;
+      /** The EXACT message the write path throws for this refusal. */
+      message: string;
+      /** Structured hard limit for the solver's infeasible arm (else null). */
+      limit: ShapeWeightsLimit | null;
+      /** The shaped risk when shaping succeeded but an assert refused it. */
+      after: PackRisk | null;
+    };
+
+type StagedShapeResolution = {
+  packName: string;
+  packActive: boolean;
+  priceBefore: number;
+  priceStaged: number;
+  priceProvided: boolean;
+  /** The price the write would persist (the search's pick, else the staged price). */
+  priceAfter: number;
+  liveCardIds: Set<string>;
+  /** The CURRENT live pool (fresh `getPackCardValues` read). */
+  livePool: { cardId: string; value: number; weight: number }[];
+  /** Risk of the pack AS IT IS NOW (live pool at the live price). */
+  before: PackRisk;
+  /** Fresh identity + value for every STAGED card (never client-trusted). */
+  cardMetaById: Map<string, { value: number; name: string; imageUrl: string }>;
+  /** The targets the pool was shaped against (auto-resolved + caller pins). */
+  resolved: {
+    targetEdge: number;
+    targetWinRate: number;
+    maxWinCap: number;
+    nearMissMin: number;
+    winRateTol: number;
+    intendedHitRate: number | null;
+  };
+  priceSearch: ApplyStagedRetuneResult["priceSearch"];
+  outcome: StagedShapeOutcome;
+};
+
 /**
- * Write a STAGED card pool to MAIN with SERVER-SHAPED weights — the safe inline
- * editor approve path. Owner-only AND requires a valid RETUNE token from
- * `authorizePackRetune` (the SAME 2FA scope every retune/edit carries) +
- * `__can_update_pack` + the pack_creator live-pack carve-out.
- *
- * The owner picks the pool IDENTITY (cards + order + color/animation + optional
- * new price); the SERVER picks the WEIGHTS via `shapeWeights` against the pack's
- * auto-targets (edge curve + tag-aware win-rate + near-miss + cap), so the
- * shipped pool is guaranteed to clear targets — there is no path for hand-typed
- * odds to land on prod with bad weights from this entry point.
- *
- * FAILS CLOSED before any write:
- *   • token / owner / capability / scope (`official`) gate,
- *   • non-empty pool, no duplicate cardId, every cardId a valid uuid, every
- *     `order` a non-negative integer, optional price > 0,
- *   • REAL-card identity check: every cardId must exist in `cards` (so the
- *     pack_cards.card_id FK holds — but a brand-new real card can be added,
- *     exactly how an infeasible no-win pack gets fixed inline),
- *   • `shapeWeights` error arm,
- *   • resulting edge below target, max-win above cap, win-rate outside tol,
- *   • resulting edge below `EDIT_EDGE_FLOOR` (mirror of the `applyPackEdit`
- *     backstop — practically unreachable because the asserts above are tighter,
- *     kept as belt-and-suspenders so a future refactor can't sneak past).
- *
- * Captures an "edit" snapshot of the CURRENT state FIRST (revertable), then
- * writes via the SAME delete-all-then-createMany `pack_cards` transaction
- * `updatePack` / `applyPackRetune` / `applyPackEdit` use, audits
- * `pack_edited_and_retuned` with before/after card counts + a risk summary, and
- * refreshes the ADMIN risk row.
+ * Resolve + shape a staged pool against fresh MAIN truth. READ-ONLY — writes
+ * nothing; the caller decides whether to persist (write) or report (dry-run).
+ * NOT exported: this lives in a "use server" module, so exporting it would
+ * mint a public server-action endpoint without an auth gate. Both callers
+ * gate BEFORE calling it.
  */
-export async function applyStagedPackEditAndRetune(
+async function resolveAndShapeStagedPool(
   packId: string,
-  token: string,
   input: StagedPoolInput,
   targets: {
     targetEdge?: number;
@@ -1962,12 +2016,7 @@ export async function applyStagedPackEditAndRetune(
      */
     approvedPoolFingerprint?: string | null;
   },
-): Promise<ApplyStagedRetuneResult> {
-  const session = await requireRetuneOwner();
-  await requireCapability(session, "__can_update_pack", "edit packs");
-  if (!(await verifyRetuneToken(token, session.userId))) {
-    throw new Error("2FA authorization expired or missing — re-confirm to continue.");
-  }
+): Promise<StagedShapeResolution> {
   if (!isUuid(packId)) throw new Error("Invalid pack id");
 
   // ── Validate the staged input (fail-closed BEFORE any read/write) ────────
@@ -2021,27 +2070,29 @@ export async function applyStagedPackEditAndRetune(
   if (!(priceStaged > 0)) throw new Error("Refused: pack has no valid price.");
   let priceAfter = priceStaged;
 
-  // pack_creator live-pack carve-out (same gate `applyPackEdit` enforces).
-  const editedLivePackUnderCapability = await enforcePackCreatorLiveGate(
-    session,
-    pack.active,
-  );
-
   const liveCardIds = new Set(pack.pack_cards.map((pc) => pc.card_id));
 
   // REAL-card identity check + fresh value lookup in ONE select (we need both
   // here — `getPackCardValues` only returns cards already in the live pool,
-  // which a staged pool may extend with brand-new cards).
+  // which a staged pool may extend with brand-new cards). Name + image ride
+  // along so the dry-run can label its per-card plan without a second probe.
   const editedIds = [...seen];
   const cardRows = await db.cards.findMany({
     where: { id: { in: editedIds } },
-    select: { id: true, price: true },
+    select: { id: true, price: true, name: true, image_url: true },
   });
-  const cardValueById = new Map<string, number>();
+  const cardMetaById = new Map<
+    string,
+    { value: number; name: string; imageUrl: string }
+  >();
   for (const r of cardRows) {
-    cardValueById.set(r.id, Number(r.price.toString()));
+    cardMetaById.set(r.id, {
+      value: Number(r.price.toString()),
+      name: r.name,
+      imageUrl: r.image_url ?? "",
+    });
   }
-  const unknown = input.cards.filter((c) => !cardValueById.has(c.cardId));
+  const unknown = input.cards.filter((c) => !cardMetaById.has(c.cardId));
   if (unknown.length > 0) {
     throw new Error(
       `Refused: ${unknown.length} staged card(s) do not exist as real cards.`,
@@ -2100,21 +2151,55 @@ export async function applyStagedPackEditAndRetune(
   const nearMissMin = targets.nearMissMin ?? auto.nearMissMin;
   const winRateTol = 0.02; // matches shapeWeights' default + applyPackRetune.
 
-  // A pct-tagged pack's win-rate is a design CONTRACT — refuse a pinned
-  // target that contradicts the tag (mirrors `applyPackRetune`).
+  const resolved: StagedShapeResolution["resolved"] = {
+    targetEdge,
+    targetWinRate,
+    maxWinCap,
+    nearMissMin,
+    winRateTol,
+    intendedHitRate: auto.intendedHitRate,
+  };
+  // Shared partial for every return arm — only the outcome (+ the price the
+  // search may still move) varies below.
+  const base = {
+    packName: pack.name,
+    packActive: pack.active,
+    priceBefore,
+    priceStaged,
+    priceProvided,
+    liveCardIds,
+    livePool,
+    before,
+    cardMetaById,
+    resolved,
+  };
+
+  // A pct-tagged pack's win-rate is a design CONTRACT — a pinned target that
+  // contradicts the tag is refused (mirrors `applyPackRetune`). Reported as a
+  // structured refusal so the dry-run can render the verdict; the write throws
+  // this exact message.
   if (
     auto.intendedHitRate !== null &&
     Math.abs(targetWinRate - auto.intendedHitRate) >
       TAGGED_WRITE_WINRATE_TOLERANCE
   ) {
-    throw new Error(
-      `Refused: this pack is tagged ${(auto.intendedHitRate * 100).toFixed(2)}% — the requested win-rate ${(targetWinRate * 100).toFixed(2)}% contradicts the tag. Leave the win-rate on auto (tag-aware), or untag the pack first.`,
-    );
+    return {
+      ...base,
+      priceAfter,
+      priceSearch: null,
+      outcome: {
+        ok: false,
+        code: "tag-contradiction",
+        message: `Refused: this pack is tagged ${(auto.intendedHitRate * 100).toFixed(2)}% — the requested win-rate ${(targetWinRate * 100).toFixed(2)}% contradicts the tag. Leave the win-rate on auto (tag-aware), or untag the pack first.`,
+        limit: null,
+        after: null,
+      },
+    };
   }
 
   // The staged value vector in input ORDER. The shaper picks one weight per slot.
   const stagedValues = input.cards.map((c) => ({
-    value: cardValueById.get(c.cardId)!,
+    value: cardMetaById.get(c.cardId)!.value,
   }));
 
   // CURRENT weights aligned to the staged card ORDER — the anti-inflation anchor
@@ -2200,9 +2285,25 @@ export async function applyStagedPackEditAndRetune(
     });
   }
 
-  // ── FAIL-CLOSED asserts (throw → no write) ──
+  const priceSearch = priceSearchMeta;
+
+  // ── The write's FAIL-CLOSED asserts, evaluated as a VERDICT ──
+  // Same checks, same order, byte-identical messages as the pre-refactor
+  // throws — the write raises the message; the dry-run renders it. A refusal
+  // here means "approve WOULD be refused with exactly this error".
   if ("error" in shaped) {
-    throw new Error(`Auto-tune infeasible: ${shaped.error}`);
+    return {
+      ...base,
+      priceAfter,
+      priceSearch,
+      outcome: {
+        ok: false,
+        code: "infeasible",
+        message: `Auto-tune infeasible: ${shaped.error}`,
+        limit: shaped.limit,
+        after: null,
+      },
+    };
   }
   // RC1 approved-artifact gate: when the caller pinned the previewed final
   // price, the write must land EXACTLY it (tolerance 0). With the pool
@@ -2223,18 +2324,30 @@ export async function applyStagedPackEditAndRetune(
     );
   }
   const after = shaped.risk;
+  const refuse = (
+    code: StagedRefusalCode,
+    message: string,
+  ): StagedShapeResolution => ({
+    ...base,
+    priceAfter,
+    priceSearch,
+    outcome: { ok: false, code, message, limit: null, after },
+  });
   if (after.edge < targetEdge - 1e-9) {
-    throw new Error(
+    return refuse(
+      "edge-below-target",
       `Refused: resulting edge ${(after.edge * 100).toFixed(2)}% is below the target ${(targetEdge * 100).toFixed(2)}%.`,
     );
   }
   if (after.maxWin > maxWinCap + 1e-9) {
-    throw new Error(
+    return refuse(
+      "max-win-above-cap",
       `Refused: resulting max win $${after.maxWin.toFixed(2)} exceeds the cap $${maxWinCap.toFixed(2)}.`,
     );
   }
   if (Math.abs(after.winRate - targetWinRate) > winRateTol + 1e-9) {
-    throw new Error(
+    return refuse(
+      "win-rate-miss",
       `Refused: resulting win-rate ${(after.winRate * 100).toFixed(2)}% misses target ${(targetWinRate * 100).toFixed(2)}% (±${(winRateTol * 100).toFixed(2)}%).`,
     );
   }
@@ -2245,35 +2358,179 @@ export async function applyStagedPackEditAndRetune(
     Math.abs(after.winRate - intendedHitRate) >
       TAGGED_WRITE_WINRATE_TOLERANCE + 1e-9
   ) {
-    throw new Error(
+    return refuse(
+      "tag-accuracy-miss",
       `Refused: resulting win-rate ${(after.winRate * 100).toFixed(3)}% misses the pack tag ${(intendedHitRate * 100).toFixed(2)}% by more than ${(TAGGED_WRITE_WINRATE_TOLERANCE * 100).toFixed(1)}pp.`,
     );
   }
   // Belt-and-suspenders backstop — mirrors `applyPackEdit` + `applyPackRetune`.
   // Cannot trip if the asserts above hold (targetEdge ≥ EDIT_EDGE_FLOOR per the
-  // edge-curve floor), kept for refactor safety + uniform refusal audit.
+  // edge-curve floor), kept for refactor safety + uniform refusal audit (the
+  // write audits this refusal before throwing).
   if (after.edge < EDIT_EDGE_FLOOR) {
-    try {
-      await createAdminAuditEvent({
-        adminUserId: session.userId,
-        eventType: "pack_edit_refused_edge_floor",
-        metadata: {
-          pack_id: packId,
-          name: pack.name,
-          source: "applyStagedPackEditAndRetune",
-          attempted_edge: after.edge,
-          floor: EDIT_EDGE_FLOOR,
-          attempted_max_win: after.maxWin,
-          target_edge: targetEdge,
-        },
-      });
-    } catch {
-      /* best-effort — never block the refusal */
-    }
-    throw new Error(
+    return refuse(
+      "edge-floor",
       `Refused: shaped pool produces ${(after.edge * 100).toFixed(2)}% house edge, below the ${(EDIT_EDGE_FLOOR * 100).toFixed(0)}% safety floor.`,
     );
   }
+
+  return {
+    ...base,
+    priceAfter,
+    priceSearch,
+    outcome: {
+      ok: true,
+      weights: shaped.weights,
+      after,
+      relaxations: shaped.relaxations,
+      snapped: shaped.snapped ?? false,
+      topInflationUnavoidable: shaped.topInflationUnavoidable ?? false,
+    },
+  };
+}
+
+/**
+ * Write a STAGED card pool to MAIN with SERVER-SHAPED weights — the safe inline
+ * editor approve path. Owner-only AND requires a valid RETUNE token from
+ * `authorizePackRetune` (the SAME 2FA scope every retune/edit carries) +
+ * `__can_update_pack` + the pack_creator live-pack carve-out.
+ *
+ * The owner picks the pool IDENTITY (cards + order + color/animation + optional
+ * new price); the SERVER picks the WEIGHTS via `shapeWeights` against the pack's
+ * auto-targets (edge curve + tag-aware win-rate + near-miss + cap), so the
+ * shipped pool is guaranteed to clear targets — there is no path for hand-typed
+ * odds to land on prod with bad weights from this entry point.
+ *
+ * FAILS CLOSED before any write (all evaluated by the SHARED
+ * `resolveAndShapeStagedPool` — the same pass `planStagedRetune` dry-runs, so
+ * the staged preview and this write cannot drift):
+ *   • token / owner / capability / scope (`official`) gate,
+ *   • non-empty pool, no duplicate cardId, every cardId a valid uuid, every
+ *     `order` a non-negative integer, optional price > 0,
+ *   • REAL-card identity check: every cardId must exist in `cards` (so the
+ *     pack_cards.card_id FK holds — but a brand-new real card can be added,
+ *     exactly how an infeasible no-win pack gets fixed inline),
+ *   • `shapeWeights` error arm,
+ *   • resulting edge below target, max-win above cap, win-rate outside tol,
+ *   • resulting edge below `EDIT_EDGE_FLOOR` (mirror of the `applyPackEdit`
+ *     backstop — practically unreachable because the asserts above are tighter,
+ *     kept as belt-and-suspenders so a future refactor can't sneak past).
+ *
+ * Captures an "edit" snapshot of the CURRENT state FIRST (revertable), then
+ * writes via the SAME delete-all-then-createMany `pack_cards` transaction
+ * `updatePack` / `applyPackRetune` / `applyPackEdit` use, audits
+ * `pack_edited_and_retuned` with before/after card counts + a risk summary, and
+ * refreshes the ADMIN risk row.
+ */
+export async function applyStagedPackEditAndRetune(
+  packId: string,
+  token: string,
+  input: StagedPoolInput,
+  targets: {
+    targetEdge?: number;
+    targetWinRate?: number;
+    maxWinCap?: number;
+    nearMissMin?: number;
+    /**
+     * When TRUE the server runs `searchBestPriceForCleanSnap` around the staged
+     * price (default ±25%, cent-stepped, max 50 candidates) and picks the
+     * candidate whose `shapeWeights` result keeps `snapped=true` while staying
+     * closest to the staged price. The chosen candidate becomes the final
+     * `priceAfter` written to `packs.price` (so the writer's `priceProvided`
+     * path applies it cleanly). Defaults to FALSE — current behavior unchanged.
+     */
+    allowPriceSearch?: boolean;
+    /**
+     * RC1 approved-artifact contract — the FINAL price the operator's preview
+     * showed as "will be written". When set, the write REFUSES (no write) if
+     * the price it is about to persist differs (tolerance 0). The review
+     * client sends it only when `allowPriceSearch` is off (the staged price IS
+     * the artifact); with the search on, the server legitimately picks the
+     * price, so no client-side expectation exists to verify. Optional —
+     * legacy callers are unaffected. Enforced inside the shared
+     * `resolveAndShapeStagedPool` pass.
+     */
+    approvedPriceAfter?: number | null;
+    /**
+     * RC1 pool-freshness token — `PlanAllProposal.poolFingerprint`, the
+     * fingerprint of the LIVE pool (price + sorted (cardId, weight) pairs)
+     * the reviewed proposal was solved from. When set, the write recomputes
+     * the fingerprint over the FRESH live pool and REFUSES on mismatch
+     * ("pool changed since the preview") instead of silently anchoring the
+     * staged solve on drifted live state. Optional — legacy callers are
+     * unaffected. Enforced inside the shared `resolveAndShapeStagedPool` pass.
+     */
+    approvedPoolFingerprint?: string | null;
+  },
+): Promise<ApplyStagedRetuneResult> {
+  const session = await requireRetuneOwner();
+  await requireCapability(session, "__can_update_pack", "edit packs");
+  if (!(await verifyRetuneToken(token, session.userId))) {
+    throw new Error("2FA authorization expired or missing — re-confirm to continue.");
+  }
+
+  // RC1 audit-trace mirror of the guards `resolveAndShapeStagedPool` enforces
+  // for this call (same normalization the resolver applies) — records which
+  // approved-artifact pins were ACTIVE on this write.
+  const approvedPoolFingerprint =
+    typeof targets.approvedPoolFingerprint === "string" &&
+    targets.approvedPoolFingerprint.length > 0
+      ? targets.approvedPoolFingerprint
+      : null;
+  const approvedPriceAfter =
+    targets.approvedPriceAfter != null &&
+    Number.isFinite(targets.approvedPriceAfter)
+      ? targets.approvedPriceAfter
+      : null;
+
+  // ONE shared resolution + shape pass (fresh MAIN reads, tag-aware auto-
+  // targets, optional price search, assert evaluation, RC1 freshness/price
+  // pins) — the exact pass `planStagedRetune` dry-runs, so the staged plan
+  // the operator approved and this write derive identically.
+  const r = await resolveAndShapeStagedPool(packId, input, targets);
+
+  // pack_creator live-pack carve-out (same gate `applyPackEdit` enforces).
+  // Enforced right after the shared resolution — a request failing BOTH this
+  // gate and a resolution-level check now surfaces the resolution error first
+  // (pre-refactor the gate ran before the card-identity read). The gate still
+  // runs strictly BEFORE any write.
+  const editedLivePackUnderCapability = await enforcePackCreatorLiveGate(
+    session,
+    r.packActive,
+  );
+
+  // ── FAIL-CLOSED refusals (throw → no write) ──
+  // Byte-identical messages to the pre-refactor asserts; the edge-floor
+  // backstop keeps its refusal audit.
+  const outcome = r.outcome;
+  if (!outcome.ok) {
+    if (outcome.code === "edge-floor") {
+      try {
+        await createAdminAuditEvent({
+          adminUserId: session.userId,
+          eventType: "pack_edit_refused_edge_floor",
+          metadata: {
+            pack_id: packId,
+            name: r.packName,
+            source: "applyStagedPackEditAndRetune",
+            attempted_edge: outcome.after?.edge ?? null,
+            floor: EDIT_EDGE_FLOOR,
+            attempted_max_win: outcome.after?.maxWin ?? null,
+            target_edge: r.resolved.targetEdge,
+          },
+        });
+      } catch {
+        /* best-effort — never block the refusal */
+      }
+    }
+    throw new Error(outcome.message);
+  }
+
+  const before = r.before;
+  const after = outcome.after;
+  const priceBefore = r.priceBefore;
+  const priceAfter = r.priceAfter;
+  const priceSearchMeta = r.priceSearch;
 
   // The rows to write — server-shaped weights paired with the OWNER's chosen
   // color/animation/order for each staged slot (NOT the live pack_cards row
@@ -2281,7 +2538,7 @@ export async function applyStagedPackEditAndRetune(
   const rows = input.cards.map((c, i) => ({
     pack_id: packId,
     card_id: c.cardId,
-    weight: shaped.weights[i]!,
+    weight: outcome.weights[i]!,
     color: c.color ?? null,
     animation: c.animation ?? false,
     order: c.order,
@@ -2301,9 +2558,10 @@ export async function applyStagedPackEditAndRetune(
   // Whether the writer should persist a new price: either the operator
   // explicitly supplied one, OR the price search nudged it off the staged
   // price (in which case the nudge is meaningless unless it lands in the DB).
-  const shouldWritePrice = priceProvided || priceAfter !== priceBefore;
+  const shouldWritePrice = r.priceProvided || priceAfter !== priceBefore;
 
   // SAME delete-all-then-createMany pattern used by every other writer.
+  const db = await getDb();
   await db.$transaction(async (tx) => {
     await tx.packs.update({
       where: { id: packId },
@@ -2323,17 +2581,17 @@ export async function applyStagedPackEditAndRetune(
     eventType: "pack_edited_and_retuned",
     metadata: {
       pack_id: packId,
-      name: pack.name,
-      card_count_before: liveCardIds.size,
+      name: r.packName,
+      card_count_before: r.liveCardIds.size,
       card_count_after: rows.length,
       price_before: priceBefore,
       price_after: priceAfter,
       price_changed: priceAfter !== priceBefore,
       target: {
-        targetEdge,
-        targetWinRate,
-        maxWinCap,
-        nearMissMin,
+        targetEdge: r.resolved.targetEdge,
+        targetWinRate: r.resolved.targetWinRate,
+        maxWinCap: r.resolved.maxWinCap,
+        nearMissMin: r.resolved.nearMissMin,
       },
       auto_targets: {
         targetEdge: targets.targetEdge === undefined,
@@ -2374,7 +2632,7 @@ export async function applyStagedPackEditAndRetune(
   // Refresh the ADMIN-side risk row from the shaped pool (ADMIN write only).
   // The cap here is the RESOLVED target cap (the same cap `shapeWeights` shaped
   // against), so compliance is judged against the budget the auto-tune ran on.
-  await refreshEditedPackRiskScore(packId, after, maxWinCap);
+  await refreshEditedPackRiskScore(packId, after, r.resolved.maxWinCap);
 
   reloadPacks();
   // Invalidate the cached retune-review proposal blob so the next render of
@@ -2385,14 +2643,212 @@ export async function applyStagedPackEditAndRetune(
 
   return {
     packId,
-    name: pack.name,
+    name: r.packName,
     status: "edited_and_retuned",
-    cardCountBefore: liveCardIds.size,
+    cardCountBefore: r.liveCardIds.size,
     cardCountAfter: rows.length,
     priceBefore,
     priceAfter,
     before: { edge: before.edge, winRate: before.winRate, maxWin: before.maxWin },
     after: { edge: after.edge, winRate: after.winRate, maxWin: after.maxWin },
     priceSearch: priceSearchMeta,
+  };
+}
+
+// ─── Staged-pool dry-run (READ-ONLY twin of the staged write) ──────────────
+
+/** One staged card of a {@link StagedRetunePlan}, aligned to the staged order. */
+export type StagedPlanCardRow = {
+  cardId: string;
+  name: string;
+  imageUrl: string;
+  /** `cards.price` (fresh MAIN read — never the client's copy). */
+  value: number;
+  /** This card's weight in the CURRENT live pool; null = newly added. */
+  fromWeight: number | null;
+  /** The server-shaped weight the write would persist; null when refused. */
+  toWeight: number | null;
+  order: number;
+};
+
+/** A live-pool card the staged pool REMOVES. */
+export type StagedPlanRemovedRow = {
+  cardId: string;
+  name: string;
+  imageUrl: string;
+  value: number;
+  fromWeight: number;
+};
+
+export type StagedRetunePlan = {
+  packId: string;
+  name: string;
+  priceBefore: number;
+  /** The staged price the plan anchored on (operator's price, else live). */
+  priceStaged: number;
+  /** The price the write would persist (search's pick, else the staged price). */
+  priceAfter: number;
+  cardCountBefore: number;
+  cardCountAfter: number;
+  /** Risk AS IT IS NOW (live pool at the live price — fresh read). */
+  before: PackRisk;
+  /**
+   * Risk the STAGED pool would have after the server-shaped write. Non-null
+   * even for some refusals (shaping succeeded but a fail-closed assert would
+   * refuse the write) so the review can show WHAT would be refused; null when
+   * shaping itself failed.
+   */
+  after: PackRisk | null;
+  /** True iff `applyStagedPackEditAndRetune` would accept this staged pool. */
+  feasible: boolean;
+  /** The write's EXACT refusal/infeasibility message when `feasible` is false. */
+  error?: string;
+  /** Structured hard limit for the solver's infeasible arm (else null). */
+  limit: ShapeWeightsLimit | null;
+  relaxations: ShapeWeightsRelaxation[];
+  snapped: boolean | null;
+  topInflationUnavoidable: boolean | null;
+  cards: StagedPlanCardRow[];
+  removed: StagedPlanRemovedRow[];
+  priceSearch: ApplyStagedRetuneResult["priceSearch"];
+  /** The targets the staged pool was shaped against (post-resolution). */
+  resolved: {
+    targetEdge: number;
+    targetWinRate: number;
+    maxWinCap: number;
+    nearMissMin: number;
+    intendedHitRate: number | null;
+  };
+};
+
+/** Wall-clock cap for ONE staged dry-run (one pack, one bounded price search). */
+const STAGED_PLAN_TIMEOUT_MS = 30_000;
+
+/**
+ * READ-ONLY dry-run twin of {@link applyStagedPackEditAndRetune}: resolve +
+ * shape the STAGED pool via the SAME `resolveAndShapeStagedPool` pass the write
+ * runs (fresh MAIN reads, tag-aware auto-targets, optional ±25% price search,
+ * every fail-closed assert) and return the VERDICT instead of writing.
+ *
+ * This is what lets the retune review judge feasibility off the pool the
+ * operator has STAGED in the inline editor rather than the LIVE pool — the
+ * owner-reported failure ("1% 18 PLUS") was staging exactly the cards that fix
+ * an `ev-unreachable-for-split` pack and still being told "infeasible" because
+ * the review card kept scoring the live pool (`planAllRetunes` /
+ * `planSingleRetune` know nothing about staged edits).
+ *
+ * Owner + Pack-Studio-operator gated, NO 2FA token (writes nothing — MAIN is
+ * only SELECTed). Wrapped in the standard `safeQueryOrNull` timeout so a
+ * pathological search degrades to a thrown, user-visible error instead of
+ * hanging the action. Not cached: the (pool identity + price + levers) key
+ * space is effectively unique per call and the client already debounces +
+ * dedupes by key.
+ */
+export async function planStagedRetune(
+  packId: string,
+  input: StagedPoolInput,
+  targets: {
+    targetEdge?: number;
+    targetWinRate?: number;
+    maxWinCap?: number;
+    nearMissMin?: number;
+    allowPriceSearch?: boolean;
+  },
+): Promise<StagedRetunePlan> {
+  await requireRetuneOwner();
+
+  const { data, error } = await safeQueryOrNull(
+    () => planStagedRetuneUncached(packId, input, targets),
+    "pack-studio.retune.plan-staged",
+    STAGED_PLAN_TIMEOUT_MS,
+  );
+  if (error || !data) {
+    throw new Error(error ?? "Staged dry-run failed.");
+  }
+  return data;
+}
+
+/** The actual staged dry-run work (gated by the public wrapper above). */
+async function planStagedRetuneUncached(
+  packId: string,
+  input: StagedPoolInput,
+  targets: {
+    targetEdge?: number;
+    targetWinRate?: number;
+    maxWinCap?: number;
+    nearMissMin?: number;
+    allowPriceSearch?: boolean;
+  },
+): Promise<StagedRetunePlan> {
+  const r = await resolveAndShapeStagedPool(packId, input, targets);
+  const outcome = r.outcome;
+
+  // Live weights by card for the per-card from→to rows.
+  const liveWeightByCardId = new Map<string, number>();
+  for (const c of r.livePool) liveWeightByCardId.set(c.cardId, c.weight);
+
+  const stagedIds = new Set(input.cards.map((c) => c.cardId));
+  const cards: StagedPlanCardRow[] = input.cards.map((c, i) => {
+    const meta = r.cardMetaById.get(c.cardId)!;
+    const fromWeight = liveWeightByCardId.get(c.cardId);
+    return {
+      cardId: c.cardId,
+      name: meta.name,
+      imageUrl: meta.imageUrl,
+      value: meta.value,
+      fromWeight: fromWeight ?? null,
+      toWeight: outcome.ok ? outcome.weights[i]! : null,
+      order: c.order,
+    };
+  });
+
+  // Cards the staged pool REMOVES — name/image probe only for ids the staged
+  // card read didn't cover (READ-ONLY PK probe on `cards`).
+  const removedPool = r.livePool.filter((c) => !stagedIds.has(c.cardId));
+  const removedMeta = new Map<string, { name: string; imageUrl: string }>();
+  if (removedPool.length > 0) {
+    const db = await getDb();
+    const metaRows = await db.cards.findMany({
+      where: { id: { in: removedPool.map((c) => c.cardId) } },
+      select: { id: true, name: true, image_url: true },
+    });
+    for (const row of metaRows) {
+      removedMeta.set(row.id, { name: row.name, imageUrl: row.image_url ?? "" });
+    }
+  }
+  const removed: StagedPlanRemovedRow[] = removedPool.map((c) => ({
+    cardId: c.cardId,
+    name: removedMeta.get(c.cardId)?.name ?? `${c.cardId.slice(0, 8)}…`,
+    imageUrl: removedMeta.get(c.cardId)?.imageUrl ?? "",
+    value: c.value,
+    fromWeight: c.weight,
+  }));
+
+  return {
+    packId,
+    name: r.packName,
+    priceBefore: r.priceBefore,
+    priceStaged: r.priceStaged,
+    priceAfter: r.priceAfter,
+    cardCountBefore: r.liveCardIds.size,
+    cardCountAfter: input.cards.length,
+    before: r.before,
+    after: outcome.after,
+    feasible: outcome.ok,
+    ...(outcome.ok ? {} : { error: outcome.message }),
+    limit: outcome.ok ? null : outcome.limit,
+    relaxations: outcome.ok ? outcome.relaxations : [],
+    snapped: outcome.ok ? outcome.snapped : null,
+    topInflationUnavoidable: outcome.ok ? outcome.topInflationUnavoidable : null,
+    cards,
+    removed,
+    priceSearch: r.priceSearch,
+    resolved: {
+      targetEdge: r.resolved.targetEdge,
+      targetWinRate: r.resolved.targetWinRate,
+      maxWinCap: r.resolved.maxWinCap,
+      nearMissMin: r.resolved.nearMissMin,
+      intendedHitRate: r.resolved.intendedHitRate,
+    },
   };
 }

@@ -42,9 +42,31 @@ import {
 } from "@/app/(admin)/insights/edge-calc/risk";
 import { DEFAULT_MAX_MULT_CEILING } from "@/app/(admin)/packs/_lib/auto-targets";
 
+import type { StagedRetunePlan } from "../doctor/retune-actions";
 import type { EditApprovePayload, ReviewItem } from "./retune-review";
-import { PoolEditor, type EditorTargets } from "./pool-editor";
+import {
+  PoolEditor,
+  type EditorTargets,
+  type PoolEditorSnapshot,
+  type StagedPoolSignature,
+} from "./pool-editor";
 import { formatDeltaPp, formatPercent } from "./format-percent";
+
+/**
+ * Staged-plan state the parent threads in while the inline editor has staged
+ * edits for THIS pack. `plan` is the read-only `planStagedRetune` dry-run of
+ * the staged pool (same server resolution the push runs); `planning` while a
+ * (re)compute is in flight; `planError` when the last run failed. While
+ * `dirty`, the card's verdict/After tiles/weight panel are driven by the plan
+ * (badged "Staged — not pushed") and the plain Approve is disabled.
+ */
+export type StagedCardState = {
+  dirty: boolean;
+  plan: StagedRetunePlan | null;
+  planning: boolean;
+  planError: string | null;
+  onRecheck: () => void;
+};
 
 /**
  * The single review card — ONE pack's full BEFORE→AFTER comparison. A complete
@@ -226,6 +248,10 @@ export function ReviewCard({
   onApplyEdit,
   onReload,
   reloadPending,
+  staged,
+  editorInitialSnapshot,
+  onEditorSessionChange,
+  onEditorDiscard,
 }: {
   item: ReviewItem;
   index: number;
@@ -261,11 +287,22 @@ export function ReviewCard({
   onApplyEdit: (payload: EditApprovePayload) => void;
   /** Re-fetch the server proposals (clears the infeasibility banner if the
    *  operator's edits resolved the limit). Triggered manually via the
-   *  "Recheck pool" button on the error AND automatically when the editor's
-   *  card picker closes after cards were added during the session. */
+   *  "Recheck pool" button on the error — while edits are STAGED, the staged
+   *  dry-run recheck takes its place. */
   onReload: () => void;
   /** True while a `onReload` re-fetch is in-flight (drives the spinner). */
   reloadPending: boolean;
+  /** Staged-plan state while the editor has staged edits for this pack. */
+  staged?: StagedCardState | null;
+  /** Persisted editor session to restore when the editor (re)opens. */
+  editorInitialSnapshot?: PoolEditorSnapshot | null;
+  /** Forwarded to the editor — persists the session + staged signature. */
+  onEditorSessionChange?: (
+    snapshot: PoolEditorSnapshot,
+    staged: StagedPoolSignature | null,
+  ) => void;
+  /** DISCARD the staged edits (clear persistence) and close the editor. */
+  onEditorDiscard?: () => void;
 }) {
   const [showAdjust, setShowAdjust] = React.useState(false);
 
@@ -361,28 +398,123 @@ export function ReviewCard({
   // for these packs because relaxing to 0 is expected behavior, not noise.
   const isLotteryTag = intendedHitRate !== null && intendedHitRate <= 0.10;
 
-  const before = proposal.before;
-  // The active "after": a local adjustment supersedes the server proposal.
-  const after = active ? active.after : proposal.after;
-  const feasible = active ? active.feasible : proposal.feasible;
-  const limit = active ? active.limit : proposal.limit;
-  const rawRelaxations = active ? active.relaxations : proposal.relaxations;
+  // ── Staged-plan mode ───────────────────────────────────────────────
+  // While the inline editor has STAGED edits for this pack, the verdict +
+  // After tiles + weight-changes panel are driven by the read-only
+  // `planStagedRetune` dry-run (the staged pool scored by the SAME server
+  // resolution the push runs) instead of the live-pool proposal — the
+  // owner-reported failure ("1% 18 PLUS") was staging exactly the cards that
+  // fix an infeasible pack and still reading the live pool's "can't retune".
+  // Until the plan lands (debounce + server pass) the live-pool figures stay
+  // visible, explicitly labeled by the staged banner — never silently stale.
+  const stagedActive = staged?.dirty === true;
+  const stagedPlan = stagedActive ? (staged?.plan ?? null) : null;
+  const usingStagedPlan = stagedPlan != null;
+
+  const before = usingStagedPlan ? stagedPlan.before : proposal.before;
+  // The active "after": the staged plan supersedes everything; else a local
+  // adjustment supersedes the server proposal.
+  const after = usingStagedPlan
+    ? stagedPlan.after
+    : active
+      ? active.after
+      : proposal.after;
+  const feasible = usingStagedPlan
+    ? stagedPlan.feasible
+    : active
+      ? active.feasible
+      : proposal.feasible;
+  const limit = usingStagedPlan
+    ? stagedPlan.limit
+    : active
+      ? active.limit
+      : proposal.limit;
+  const rawRelaxations = usingStagedPlan
+    ? stagedPlan.relaxations
+    : active
+      ? active.relaxations
+      : proposal.relaxations;
   // Drop the near-miss banner entirely on lottery-tagged packs (see comment
   // above on `isLotteryTag`). Other levers (winRate, floor) still surface.
   const relaxations = isLotteryTag
     ? rawRelaxations.filter((r) => r.lever !== "nearMiss")
     : rawRelaxations;
   const weightDiff = active ? active.weightDiff : proposal.weightDiff;
-  // The ticket price the pending write is expected to land. An active local
-  // adjustment carries its OWN searched price (its `after` is scored at it) —
-  // showing the superseded proposal's priceAfter next to adjusted weights
-  // mixed two different searches. Null (infeasible) → dashed price tile.
-  const priceAfter = active
-    ? active.priceAfter
-    : feasible && after != null
-      ? proposal.priceAfter
-      : null;
-  const canApprove = feasible && after != null && item.status !== "approved";
+  // The ticket price the pending write is expected to land. The STAGED plan
+  // supersedes everything (its own server-searched price); else an active
+  // local adjustment carries its OWN searched price (its `after` is scored at
+  // it) — showing the superseded proposal's priceAfter next to adjusted
+  // weights mixed two different searches. Null (infeasible) → dashed tile.
+  const priceAfter = usingStagedPlan
+    ? after != null
+      ? stagedPlan.priceAfter
+      : null
+    : active
+      ? active.priceAfter
+      : feasible && after != null
+        ? proposal.priceAfter
+        : null;
+  // Plain Approve retunes the LIVE pool — while staged edits exist it must
+  // not fire (the operator would push a proposal that ignores their edits).
+  const canApprove =
+    feasible && after != null && item.status !== "approved" && !stagedActive;
+
+  // Snap/top-inflation badges + target figures follow the staged plan when it
+  // drives the card.
+  const snappedShown = usingStagedPlan ? stagedPlan.snapped : proposal.snapped;
+  const topInflationShown = usingStagedPlan
+    ? stagedPlan.topInflationUnavoidable
+    : proposal.topInflationUnavoidable;
+  const effTargetEdge = usingStagedPlan
+    ? stagedPlan.resolved.targetEdge
+    : targetEdge;
+  // Recheck routing: while staged, the banner/limit "Recheck" re-runs the
+  // STAGED dry-run (no router.refresh — local state survives); otherwise the
+  // classic full-proposal reload.
+  const recheckPending = stagedActive
+    ? staged?.planning === true
+    : reloadPending;
+  const onRecheckClick = stagedActive && staged ? staged.onRecheck : onReload;
+
+  // Weight-changes input while the staged plan drives the card: the staged
+  // pool (kept + added rows) plus the live cards the staged pool removes —
+  // from = live weight (0 for added), to = server-shaped weight (0 for
+  // removed). The diff deliberately carries EVERY staged card (no from!==to
+  // filter): the shaped total differs from the live total, so even a card
+  // whose absolute weight is unchanged moves in probability — `AllCardChanges`
+  // normalizes per side from these entries.
+  const stagedPanel = React.useMemo(() => {
+    if (!usingStagedPlan || !stagedPlan || !stagedPlan.feasible) return null;
+    const cards = [
+      ...stagedPlan.cards.map((c) => ({
+        cardId: c.cardId,
+        value: c.value,
+        weight: c.fromWeight ?? 0,
+        name: c.name,
+        imageUrl: c.imageUrl,
+      })),
+      ...stagedPlan.removed.map((c) => ({
+        cardId: c.cardId,
+        value: c.value,
+        weight: c.fromWeight,
+        name: c.name,
+        imageUrl: c.imageUrl,
+      })),
+    ];
+    const diff = [
+      ...stagedPlan.cards.map((c) => ({
+        cardId: c.cardId,
+        from: c.fromWeight ?? 0,
+        to: c.toWeight ?? 0,
+      })),
+      ...stagedPlan.removed.map((c) => ({
+        cardId: c.cardId,
+        from: c.fromWeight,
+        to: 0,
+      })),
+    ];
+    return { cards, diff };
+  }, [usingStagedPlan, stagedPlan]);
 
   // Display-only hypothetical preview when the strict retune is infeasible —
   // re-shape with the soft levers fully relaxed so the owner sees a number
@@ -392,7 +524,9 @@ export function ReviewCard({
   const hypotheticalActiveWinRate =
     active?.targetWinRate ?? proposal.autoTargets.targetWinRate;
   const hypothetical = React.useMemo<PackRisk | null>(() => {
-    if (after != null) return null;
+    // While staged edits drive the card, the staged verdict carries its own
+    // message — a relaxed re-shape of the LIVE pool would mislead here.
+    if (after != null || stagedActive) return null;
     return hypotheticalAfter(
       proposal.cards.map((c) => ({ value: c.value, weight: c.weight })),
       proposal.price,
@@ -404,6 +538,7 @@ export function ReviewCard({
     );
   }, [
     after,
+    stagedActive,
     proposal.cards,
     proposal.price,
     proposal.autoTargets.maxWinCap,
@@ -431,6 +566,15 @@ export function ReviewCard({
                   Adjusted
                 </Badge>
               )}
+              {stagedActive && (
+                <Badge
+                  variant="outline"
+                  className="h-5 shrink-0 border-amber-500/40 bg-amber-500/15 px-1.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300"
+                  title="The inline editor has staged pool edits for this pack. The card shows the STAGED plan; the plain Approve is disabled until you push via Auto-tune or discard the edits."
+                >
+                  Staged — not pushed
+                </Badge>
+              )}
               {portfolioMode && (
                 <Badge
                   variant="outline"
@@ -443,7 +587,7 @@ export function ReviewCard({
                   landed on the clean ladder (round numbers) or fell back to the
                   precise (ugly) weights. Serializable booleans on the proposal —
                   no function props cross the RSC boundary. */}
-              {feasible && proposal.snapped === true && (
+              {feasible && snappedShown === true && (
                 <Badge
                   variant="outline"
                   className="h-5 shrink-0 border-emerald-500/30 bg-emerald-500/15 px-1.5 text-[10px] text-emerald-600 dark:text-emerald-400"
@@ -452,7 +596,7 @@ export function ReviewCard({
                   Clean odds
                 </Badge>
               )}
-              {feasible && proposal.snapped === false && (
+              {feasible && snappedShown === false && (
                 <Badge
                   variant="outline"
                   className="h-5 shrink-0 border-muted-foreground/30 bg-muted/40 px-1.5 text-[10px] text-muted-foreground"
@@ -461,7 +605,7 @@ export function ReviewCard({
                   Exact odds
                 </Badge>
               )}
-              {feasible && proposal.topInflationUnavoidable === true && (
+              {feasible && topInflationShown === true && (
                 <Badge
                   variant="outline"
                   className="h-5 shrink-0 border-rose-500/30 bg-rose-500/15 px-1.5 text-[10px] text-rose-600 dark:text-rose-400"
@@ -504,7 +648,12 @@ export function ReviewCard({
                 {formatCurrency(proposal.price)}
               </p>
             )}
-            <p className="tabular-nums">{proposal.cards.length} cards</p>
+            <p className="tabular-nums">
+              {usingStagedPlan &&
+              stagedPlan.cardCountAfter !== proposal.cards.length
+                ? `${proposal.cards.length} → ${stagedPlan.cardCountAfter} cards`
+                : `${proposal.cards.length} cards`}
+            </p>
             <p className="tabular-nums">
               {index + 1} / {total}
             </p>
@@ -539,12 +688,14 @@ export function ReviewCard({
               <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
               <div className="space-y-1">
                 <p className="font-medium">
-                  Can&apos;t retune this pack
+                  {usingStagedPlan
+                    ? "Staged pool would be refused"
+                    : "Can't retune this pack"}
                   {limit ? ` (${limit.kind})` : ""}
                 </p>
                 <p className="text-rose-600/90 dark:text-rose-400/90">
                   {limit?.detail ??
-                    item.proposal.error ??
+                    (usingStagedPlan ? stagedPlan.error : item.proposal.error) ??
                     "This pool can't hit the requested targets."}
                 </p>
               </div>
@@ -598,19 +749,36 @@ export function ReviewCard({
             <Button
               variant="outline"
               size="sm"
-              onClick={onReload}
-              disabled={reloadPending || applying}
+              onClick={onRecheckClick}
+              disabled={recheckPending || applying}
               className="mt-0.5"
-              aria-label="Recheck pool"
+              aria-label={stagedActive ? "Recheck staged pool" : "Recheck pool"}
             >
-              {reloadPending ? (
+              {recheckPending ? (
                 <Loader2 className="mr-1 size-3.5 animate-spin" />
               ) : (
                 <RefreshCw className="mr-1 size-3.5" />
               )}
-              {reloadPending ? "Re-checking…" : "Recheck pool"}
+              {recheckPending
+                ? "Re-checking…"
+                : stagedActive
+                  ? "Recheck staged pool"
+                  : "Recheck pool"}
             </Button>
           </div>
+        )}
+
+        {/* ── Staged-edits banner — the card is judging (or about to judge)
+            the STAGED pool, clearly badged "not pushed" so the dry-run can't
+            be mistaken for a landed write. */}
+        {stagedActive && staged && (
+          <StagedPlanBanner
+            plan={stagedPlan}
+            planning={staged.planning}
+            planError={staged.planError}
+            onRecheck={staged.onRecheck}
+            applying={applying}
+          />
         )}
 
         {/* Relaxation banners — feasible-but-relaxed: friendly per-lever info.
@@ -652,7 +820,7 @@ export function ReviewCard({
             before={before}
             after={after}
             hypothetical={hypothetical}
-            targetEdge={targetEdge}
+            targetEdge={effTargetEdge}
           />
         </section>
 
@@ -692,7 +860,7 @@ export function ReviewCard({
           <RiskProfile
             before={before}
             after={after}
-            price={proposal.price}
+            price={usingStagedPlan ? stagedPlan.priceAfter : proposal.price}
             intendedHitRate={intendedHitRate}
           />
         </section>
@@ -717,23 +885,36 @@ export function ReviewCard({
         </section>
 
         {/* ── All card weight changes (no truncation) ──────────────────
-            HIDDEN while the inline pool editor is open: this panel describes
-            the AUTO-RETUNE PROPOSAL's weight moves, but an editor approve
-            writes the STAGED pool instead — showing the proposal diff next to
-            a different pending write read as "this is what will land". The
-            editor's live preview + the confirm gate's per-card diff are the
-            truthful surfaces for the staged pool. */}
+            With STAGED edits whose dry-run has landed, this panel shows the
+            STAGED pool's server-shaped moves (added cards enter at 0%,
+            removed cards drop to 0%) — the truthful "what an editor approve
+            writes". While the editor is open WITHOUT a landed staged plan
+            (pristine editor, or the dry-run still computing/refused), the
+            proposal's moves stay hidden — they describe the plain-Approve
+            write, not the staged pool (F12). */}
         <section className="space-y-3">
           <SectionHeading
             icon={Layers}
             title={
               <span className="flex items-center gap-1.5">
                 Card weight changes
-                <InfoHint text="Every card's draw probability, before → after, for the AUTO-RETUNE proposal (the plain Approve). While the pool editor is open this list is hidden — an editor approve writes the staged pool, not this proposal. Rose = the change makes the player win more (worse for the house); emerald = better for the house." />
+                <InfoHint text="Every card's draw probability, before → after. With staged edits this shows YOUR STAGED pool's server-shaped moves (added cards enter at 0%, removed cards drop to 0%); otherwise the auto-retune proposal's moves (the plain Approve). Rose = the change makes the player win more (worse for the house); emerald = better for the house." />
               </span>
             }
           />
-          {editing ? (
+          {stagedPanel && usingStagedPlan ? (
+            <AllCardChanges
+              cards={stagedPanel.cards}
+              weightDiff={stagedPanel.diff}
+              price={stagedPlan.priceAfter}
+            />
+          ) : stagedActive ? (
+            <p className="rounded-lg border border-dashed bg-muted/20 px-3 py-4 text-center text-xs text-muted-foreground">
+              No weight changes to show — the staged pool is infeasible or the
+              staged dry-run is still computing (see above). The staged moves
+              appear here once the dry-run lands.
+            </p>
+          ) : editing ? (
             <p className="rounded-lg border border-dashed bg-muted/20 px-3 py-4 text-center text-xs text-muted-foreground">
               Hidden while the pool editor is open — these are the auto-retune
               proposal&apos;s moves, not your staged pool&apos;s. The editor
@@ -748,8 +929,8 @@ export function ReviewCard({
             />
           ) : (
             <p className="rounded-lg border border-dashed bg-muted/20 px-3 py-4 text-center text-xs text-muted-foreground">
-              No weight changes to show — this pack is infeasible (see the limit
-              above).
+              No weight changes to show — this pack is infeasible (see the
+              limit above).
             </p>
           )}
         </section>
@@ -879,14 +1060,16 @@ export function ReviewCard({
                 price={proposal.price}
                 targets={editorTargets}
                 applying={applying}
-                onCancel={onCloseEditor}
+                onCancel={onEditorDiscard ?? onCloseEditor}
                 onApprove={onApplyEdit}
                 onApproveAutoTune={onApplyEdit}
                 pickerOpen={pickerOpen}
                 onPickerOpenChange={setPickerOpen}
                 pickerInitialPriceMin={pickerRange?.min}
                 pickerInitialPriceMax={pickerRange?.max}
-                onCardsAdded={onReload}
+                onCardsAdded={staged ? staged.onRecheck : onReload}
+                initialSnapshot={editorInitialSnapshot}
+                onSessionChange={onEditorSessionChange}
               />
             </section>
           </>
@@ -898,6 +1081,20 @@ export function ReviewCard({
 
       {/* ── Card-local controls (Back / Adjust / Decline / Approve) ──── */}
       <div className="flex flex-wrap items-center gap-2 border-t px-4 py-3 sm:px-5">
+        {/* Staged-edits demotion note — the plain Approve retunes the LIVE
+            pool and would silently ignore the staged edits, so it's disabled
+            with an explicit pointer to the staged push (or discard). */}
+        {stagedActive && (
+          <p className="basis-full text-[11px] font-medium text-amber-700 dark:text-amber-300">
+            You have staged pool edits — plain Approve is disabled (it would
+            re-tune the LIVE pool and ignore them). Push them via{" "}
+            <span className="font-semibold">
+              “Auto-tune &amp; push to production”
+            </span>{" "}
+            in the editor, or discard the edits to approve the live-pool
+            proposal.
+          </p>
+        )}
         <Button
           variant="outline"
           size="sm"
@@ -943,9 +1140,11 @@ export function ReviewCard({
             onClick={onApprove}
             disabled={!canApprove || applying || recomputing}
             title={
-              recomputing
-                ? "This proposal is being re-shaped at the current targets — Approve unlocks when the fresh numbers land."
-                : undefined
+              stagedActive
+                ? "Disabled: you have staged pool edits — use “Auto-tune & push to production” in the editor, or discard the edits."
+                : recomputing
+                  ? "This proposal is being re-shaped at the current targets — Approve unlocks when the fresh numbers land."
+                  : undefined
             }
           >
             {applying || recomputing ? (
@@ -964,6 +1163,88 @@ export function ReviewCard({
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The staged-edits banner: badges the card "Staged — not pushed", narrates
+ * whether the staged dry-run is computing / landed / failed, surfaces the
+ * card-count + price move the push would make, and hosts the manual Recheck.
+ * Amber = advisory state (staged work in progress), never a landed write.
+ */
+function StagedPlanBanner({
+  plan,
+  planning,
+  planError,
+  onRecheck,
+  applying,
+}: {
+  plan: StagedRetunePlan | null;
+  planning: boolean;
+  planError: string | null;
+  onRecheck: () => void;
+  applying: boolean;
+}) {
+  const priceMoved =
+    plan != null && Math.abs(plan.priceAfter - plan.priceStaged) > 1e-9;
+  return (
+    <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-700 dark:text-amber-300">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge
+          variant="outline"
+          className="h-5 shrink-0 border-amber-500/40 bg-amber-500/15 px-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300"
+        >
+          Staged — not pushed
+        </Badge>
+        {planning ? (
+          <span className="flex items-center gap-1.5">
+            <Loader2 className="size-3.5 animate-spin" />
+            Re-checking the staged pool on the server…
+          </span>
+        ) : plan ? (
+          <span className="tabular-nums">
+            {plan.cardCountBefore} → {plan.cardCountAfter} cards ·{" "}
+            {formatCurrency(plan.priceBefore)}
+            {Math.abs(plan.priceAfter - plan.priceBefore) > 1e-9 ? (
+              <> → {formatCurrency(plan.priceAfter)}</>
+            ) : null}
+          </span>
+        ) : (
+          <span>Waiting for the staged dry-run…</span>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onRecheck}
+          disabled={planning || applying}
+          className="ml-auto h-6 px-2 text-[11px]"
+        >
+          {planning ? (
+            <Loader2 className="mr-1 size-3 animate-spin" />
+          ) : (
+            <RefreshCw className="mr-1 size-3" />
+          )}
+          Recheck
+        </Button>
+      </div>
+      <p className="leading-relaxed">
+        {plan
+          ? "The verdict, After tiles and card changes below show YOUR STAGED pool — scored by the exact server pass “Auto-tune & push” runs. Nothing is written until you push."
+          : "The figures below still show the LIVE pool until the staged dry-run lands."}
+      </p>
+      {priceMoved && plan && (
+        <p className="leading-relaxed tabular-nums">
+          Price search would adjust the staged{" "}
+          {formatCurrency(plan.priceStaged)} to {formatCurrency(plan.priceAfter)}{" "}
+          for cleaner odds.
+        </p>
+      )}
+      {planError && !planning && (
+        <p className="font-medium text-rose-600 dark:text-rose-400">
+          Staged dry-run failed: {planError}
+        </p>
+      )}
     </div>
   );
 }
