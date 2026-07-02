@@ -43,6 +43,7 @@ import {
 } from "../_lib/retune-params";
 import {
   RETUNE_MAX_PRICE_CHANGE_PCT,
+  TAGGED_WINRATE_TOLERANCE,
   isOnCleanLadderPct,
 } from "../../insights/edge-calc/risk";
 
@@ -154,10 +155,16 @@ const stagedTagged: RetuneSearchInputs = {
  * send into `searchBestPriceForCleanSnap` — the write-arm contract this
  * harness pins the builder against. Replicates the write sites' construction
  * semantics: base fields verbatim, the SHARED ±60% band, upward extension 0,
- * NO preferHigherEdge, and `taggedWinRate` present iff the resolved target
- * value-equals the tag.
+ * NO preferHigherEdge, `taggedWinRate` present iff the resolved target
+ * value-equals the tag, and — LAW 15 (ruleset §0) — the STRICT solver
+ * tolerance ({@link TAGGED_WINRATE_TOLERANCE}, 0.01pp) whenever the tagged
+ * gate is active (the loose 0.02 default legally drifted a 1% tag to 1.072%
+ * through the clean-snap acceptance gate).
  */
 function writeArmSends(i: RetuneSearchInputs): Record<string, unknown> {
+  const tagged =
+    i.intendedHitRate !== null &&
+    Math.abs(i.intendedHitRate - i.targetWinRate) < 1e-9;
   return {
     cards: i.cards,
     basePrice: i.basePrice,
@@ -165,14 +172,11 @@ function writeArmSends(i: RetuneSearchInputs): Record<string, unknown> {
     targetWinRate: i.targetWinRate,
     maxWinCap: i.maxWinCap,
     nearMissMin: i.nearMissMin,
-    winRateTol: i.winRateTol,
+    winRateTol: tagged ? TAGGED_WINRATE_TOLERANCE : i.winRateTol,
     currentWeights: i.currentWeights,
     maxPriceChangePct: RETUNE_MAX_PRICE_CHANGE_PCT,
     upwardPriceExtensionPct: 0,
-    ...(i.intendedHitRate !== null &&
-    Math.abs(i.intendedHitRate - i.targetWinRate) < 1e-9
-      ? { taggedWinRate: i.targetWinRate }
-      : {}),
+    ...(tagged ? { taggedWinRate: i.targetWinRate } : {}),
   };
 }
 
@@ -253,6 +257,29 @@ check("builder never emits preferHigherEdge and pins upward extension to 0", () 
       `${arm}: upwardPriceExtensionPct must be 0`,
     );
   }
+});
+
+// ── 7b. LAW 15 — the tagged gate carries the STRICT solver tolerance ────
+check("tagged gate forces winRateTol = TAGGED_WINRATE_TOLERANCE (LAW 15); untagged keeps 0.02", () => {
+  const taggedBuilt = buildRetuneSearchParams("live", liveTagged);
+  assert(
+    taggedBuilt.winRateTol === TAGGED_WINRATE_TOLERANCE,
+    `tagged solve must carry the strict 0.01pp solver tolerance (got ${taggedBuilt.winRateTol})`,
+  );
+  const untaggedBuilt = buildRetuneSearchParams("live", liveUntagged);
+  assert(
+    untaggedBuilt.winRateTol === 0.02,
+    `untagged solve keeps the caller's 0.02 (got ${untaggedBuilt.winRateTol})`,
+  );
+  // Pinned-away-from-tag disables the gate AND the tolerance tighten.
+  const pinnedAway = buildRetuneSearchParams("live", {
+    ...liveTagged,
+    targetWinRate: 0.2,
+  });
+  assert(
+    pinnedAway.winRateTol === 0.02,
+    "pinned-away-from-tag keeps the soft tolerance (tagged mode fully off)",
+  );
 });
 
 // ── 8. isOnCleanLadderPct — the offLadderCards brain ────────────────────

@@ -1244,10 +1244,19 @@ check("autoMaxWinCap is hit-rate-aware: loosens for lottery packs, unchanged for
   approx(autoMaxWinCap(1.25, cfg), 125, 1e-9, "undefined hitRate → plain 100× ($125)");
   approx(autoMaxWinCap(1.25, cfg, DEFAULT_TARGET_WIN_RATE), 125, 1e-9, "hitRate=default → plain 100×");
 
-  // (b) Scale is max(1, default/hitRate): 4× at 5%, 20× at 1%.
-  approx(autoMaxWinCap(1.25, cfg, 0.05), 500, 1e-9, "5% → 4× → $500");
-  approx(autoMaxWinCap(1.25, cfg, 0.01), 2500, 1e-9, "1% → 20× → $2500 (admits an $810 card)");
+  // (b) Scale is (default/hitRate)·TAG_CAP_HEADROOM for below-default tags
+  //     (ruleset §1.2 CAP-STRIP): 4×·1.15 at 5%, 20×·1.15 at 1%, 2×·1.15 at
+  //     10% — so the owner's deliberately-run 202–207× 10% jackpots survive.
+  approx(autoMaxWinCap(1.25, cfg, 0.05), 575, 1e-9, "5% → 4.6× → $575");
+  approx(autoMaxWinCap(1.25, cfg, 0.01), 2875, 1e-9, "1% → 23× → $2875 (admits an $810 card)");
   assert(autoMaxWinCap(1.25, cfg, 0.01) >= 810, "1% cap admits the $810 jackpot");
+  // CAP-STRIP regression: a 10% pack's cap is 230×price — Bling Bling's
+  // deliberately-run 202.5× ($2,400 @ $11.85) and Chaos' 206.8× survive.
+  approx(autoMaxWinCap(11.85, cfg, 0.1), 11.85 * 230, 1e-9, "10% → 230×price");
+  assert(
+    autoMaxWinCap(11.85, cfg, 0.1) >= 2400,
+    "10% cap admits Bling Bling's $2,400 jackpot (202.5×)",
+  );
 
   // (c) NEVER tighter than 100× for a higher-than-default hit-rate (scale clamps ≥ 1).
   approx(autoMaxWinCap(1.25, cfg, 0.5), 125, 1e-9, "50% hitRate → still 100× (never tighter)");
@@ -1271,7 +1280,7 @@ check("autoMaxWinCap is hit-rate-aware: loosens for lottery packs, unchanged for
   ];
   const t = autoRetuneTargets(1.25, cfg, "1% 18 PLUS");
   approx(t.targetWinRate, 0.01, 1e-12, "1% pack targets 1% win-rate");
-  approx(t.maxWinCap, 2500, 1e-9, "1% pack auto cap = $2500 (loosened)");
+  approx(t.maxWinCap, 2875, 1e-9, "1% pack auto cap = $2875 (loosened, incl. headroom)");
   assert(t.targetEdge <= DEFAULT_EDGE_CEILING + 1e-12, "edge target stays under the ceiling");
 
   const shaped = shapeWeights({
