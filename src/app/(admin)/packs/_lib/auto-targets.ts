@@ -246,6 +246,27 @@ const TAG_HIT_RATES: Readonly<Record<string, number>> = {
   "%10": 0.1,
 };
 
+/**
+ * ARBITRARY hit-rate tag notation (retune V2 ruleset §0 / TAG-TRUTH): the
+ * `%1 / %5 / %10` enum stays the PRODUCT tier, but the ENGINE accepts any
+ * fraction in `(0, 0.5]` — prod runs pools at 0.2% and 4.9% that the enum
+ * cannot represent. This parses the generalized `%X` / `pctX` notations
+ * (integer or decimal) so a retag-to-live-rate can round-trip through the
+ * same tag plumbing. The fixed map above stays FIRST (byte-identical for the
+ * three product tiers); this is the fallback for everything else.
+ */
+function parseArbitraryTag(tag: string): number | null {
+  const m = /^(?:%|pct)(\d+(?:\.\d+)?)$/.exec(tag);
+  if (!m) return null;
+  const pct = Number(m[1]);
+  if (!Number.isFinite(pct)) return null;
+  const frac = pct / 100;
+  // Arbitrary tags are valid in (0, 0.5] — a "tag" above 50% winners is not a
+  // lottery product and is rejected (null → untagged fallback).
+  if (!(frac > 0) || frac > 0.5) return null;
+  return frac;
+}
+
 /** The designed hit-rate carried by the DB `packs.tags` column, or `null`. */
 export function hitRateFromTags(
   tags: readonly string[] | null | undefined,
@@ -254,6 +275,11 @@ export function hitRateFromTags(
   for (const tag of tags) {
     const hitRate = TAG_HIT_RATES[tag];
     if (hitRate !== undefined) return hitRate;
+  }
+  // Arbitrary-fraction fallback (ruleset §0): "%4.9" / "pct0.2" etc.
+  for (const tag of tags) {
+    const hitRate = parseArbitraryTag(tag);
+    if (hitRate !== null) return hitRate;
   }
   return null;
 }
@@ -275,6 +301,42 @@ export function resolveIntendedHitRate(
   return hitRateFromTags(tags) ?? (name ? parsePackHitRate(name) : null);
 }
 
+/** {@link resolveIntendedHitRateDetailed} result — tag + provenance + conflict. */
+export type ResolvedHitRateDetail = {
+  /** The resolved intended hit-rate (DB-first, name fallback), or null. */
+  hitRate: number | null;
+  /** Which tag system supplied the rate (null when untagged). */
+  source: "db" | "name" | null;
+  /**
+   * TRUE when BOTH tag systems carry a rate and they disagree (> 1e-6) — e.g.
+   * a "%5"-tagged pack named "10% …". The DB tag wins (authoritative), but the
+   * disagreement is surfaced so an operator can repair the mislabel instead of
+   * silently trusting one side.
+   */
+  conflict: boolean;
+};
+
+/**
+ * Detailed variant of {@link resolveIntendedHitRate} (ruleset §0): same DB-
+ * first resolution, plus WHICH system supplied the tag and whether the two
+ * systems disagree. `resolveIntendedHitRate` stays the compact primitive every
+ * existing call site uses; this feeds surfaces that render tag provenance /
+ * mislabel warnings (workspace rail, guidance engine, fleet audits).
+ */
+export function resolveIntendedHitRateDetailed(
+  name: string | null | undefined,
+  tags: readonly string[] | null | undefined,
+): ResolvedHitRateDetail {
+  const db = hitRateFromTags(tags);
+  const fromName = name ? parsePackHitRate(name) : null;
+  const hitRate = db ?? fromName;
+  const source: "db" | "name" | null =
+    db !== null ? "db" : fromName !== null ? "name" : null;
+  const conflict =
+    db !== null && fromName !== null && Math.abs(db - fromName) > 1e-6;
+  return { hitRate, source, conflict };
+}
+
 /**
  * Write-time acceptance for a pct-tagged pack's achieved win-rate vs its TAG
  * (0.1pp). The generic ±2pp solver tolerance would let a "1%" pack ship
@@ -288,8 +350,39 @@ export const TAGGED_WRITE_WINRATE_TOLERANCE = 0.001;
  * Default minimum near-miss probability mass for an auto-retune (cards in
  * `[0.5·price, price)`). 10% mirrors `shapeWeights`' own `nearMissMin` default,
  * keeping the auto-targets consistent with the solver's built-in fallback.
+ *
+ * UNTAGGED PACKS ONLY — a tagged lottery pack uses {@link TAGGED_NEAR_MISS_MIN}.
  */
 export const DEFAULT_NEAR_MISS_MIN = 0.1;
+
+/**
+ * Near-miss floor for a TAGGED lottery pack: ZERO, for ALL tags (ruleset §1.2,
+ * THE near-miss decision). The lottery product is binary — win ≥ ~breakeven or
+ * dust; teaser cards below price are not in the genre:
+ *   • rain.gg corpus: mass in [0.5·price, price) is exactly 0 in ALL 104
+ *     exact-spec lottery cases across all three tiers;
+ *   • prod fleet: 39/41 live tagged pools carry zero near-miss cards, and the
+ *     forced 0.10 floor only produced noise relaxations — or flipped
+ *     solver-verified on-tag packs infeasible ([math LAW 14]).
+ * Callers SEED upward from the live pool: when the live pool genuinely carries
+ * near-miss mass (e.g. Divine Order's designed 20% band), pass
+ * `max(TAGGED_NEAR_MISS_MIN, live near-miss mass)` so the designed structure
+ * is preserved rather than deleted.
+ */
+export const TAGGED_NEAR_MISS_MIN = 0;
+
+/**
+ * Headroom multiplier on the hit-rate-aware jackpot cap for TAGGED packs
+ * (ruleset §1.2, [fleet CAP-STRIP]): the owner deliberately runs 10% packs
+ * with 202–207× jackpots (Bling Bling $2,400 = 202.5×, Chaos $905.83 =
+ * 206.8×) — the exact 200× cap silently deleted those jackpots in the cap
+ * pre-filter and made the target EV unreachable. 1.15 lifts the tagged caps to
+ * 230×/460×/2300× (10%/5%/1%), inside which every real rain.gg tier envelope
+ * fits (1% median 326×, p90 1018×, max ~1443×) — the headroom binds nothing
+ * real while no deliberately-run jackpot is stripped. UNTAGGED packs carry NO
+ * headroom (byte-identical plain cap).
+ */
+export const TAG_CAP_HEADROOM = 1.15;
 
 /** Resolved pack-system config the pure auto-target helpers operate on. */
 export type ResolvedAutoTargetCfg = {
@@ -322,13 +415,19 @@ export type ResolvedAutoTargetCfg = {
  * with the intended hit-rate, anchored at the default win-rate (0.20) so a
  * normal pack is UNCHANGED:
  *
- *   scale = max(1, DEFAULT_TARGET_WIN_RATE / hitRate)
- *           → 1 at the default (0.20), 4 at 5%, 20 at 1%
+ *   scale = max(1, DEFAULT_TARGET_WIN_RATE / hitRate) · TAG_CAP_HEADROOM
+ *           → 1 untagged, 2.3 at 10%, 4.6 at 5%, 23 at 1%
  *
  * `Math.max(1, …)` is the load-bearing guard: a pack with a HIGHER-than-default
  * hit-rate never gets a TIGHTER cap than the plain 100×. The cap is only ever
  * LOOSENED for low hit-rate, never tightened. The absolute `globalCap` clamp is
  * preserved, so the loosened multiplier can never breach the absolute ceiling.
+ *
+ * TAGGED packs additionally carry {@link TAG_CAP_HEADROOM} (×1.15) on the
+ * scaled multiplier ([fleet CAP-STRIP]: the exact 200× cap on a 10% tag
+ * silently deleted the owner's deliberately-run 202–207× jackpots and made the
+ * EV unreachable). The headroom applies ONLY when a below-default hit-rate is
+ * supplied — the untagged path stays byte-for-byte identical (scale 1).
  *
  * `hitRate` is the pack's INTENDED hit-rate (a fraction in (0,1], e.g. from
  * {@link parsePackHitRate}). Omitted / non-positive ⇒ the default win-rate ⇒ no
@@ -342,7 +441,12 @@ export function autoMaxWinCap(
   const effHitRate = hitRate && hitRate > 0 ? hitRate : DEFAULT_TARGET_WIN_RATE;
   // scale ≥ 1 always: 1 at the default win-rate, larger as hit-rate drops below
   // it. NEVER below 1 — a higher-than-default hit-rate keeps the plain 100×.
-  const scale = Math.max(1, DEFAULT_TARGET_WIN_RATE / effHitRate);
+  // A tagged (below-default) hit-rate carries the CAP-STRIP headroom so the
+  // owner's deliberately-run just-over-the-line jackpots survive the pre-filter.
+  const scale =
+    effHitRate < DEFAULT_TARGET_WIN_RATE
+      ? (DEFAULT_TARGET_WIN_RATE / effHitRate) * TAG_CAP_HEADROOM
+      : 1;
   const multBound = price * cfg.maxMultCeiling * scale;
   const cap = Math.min(cfg.globalCap, multBound);
   // Never cap below the ticket price (would strip all win/grail cards).
@@ -394,11 +498,28 @@ export type AutoRetuneTargets = {
  * also returned verbatim as `intendedHitRate` (null when untagged) so callers /
  * the UI can show "1% pack → targeting 1% win-rate". Omitting the argument keeps
  * the legacy behavior (default win-rate, `intendedHitRate: null`).
+ *
+ * ARCHETYPE SPLIT (ruleset §1): a TAGGED pack is a binary lottery product —
+ * its `nearMissMin` is {@link TAGGED_NEAR_MISS_MIN} (0; callers seed upward
+ * from the live pool's real near-miss mass), while an untagged pack keeps
+ * {@link DEFAULT_NEAR_MISS_MIN} (0.1).
+ *
+ * POOL-AWARE EDGE PREMIUM (`poolMaxWin`, optional 4th arg): when the caller
+ * KNOWS the pool (planPackTune, staged solves), pass the pool's actual top
+ * card value — `targetEdge` is then computed with
+ * `maxWin = min(poolMaxWin, maxWinCap)` instead of the theoretical cap.
+ * Feeding the LOOSENED tagged cap into the curve charged a phantom risk
+ * premium (~+0.04pp on a typical 1% pack) for jackpot exposure the pool does
+ * not actually carry, worsening the below-floor squeeze ([fleet
+ * PREMIUM-KILLS]; [rain]: lottery edge equals the house standard, never
+ * higher). Omitted / non-positive ⇒ the legacy cap-proxy (existing callers
+ * byte-identical).
  */
 export function autoRetuneTargets(
   price: number,
   cfg: ResolvedAutoTargetCfg,
   nameOrHitRate?: string | number | null,
+  poolMaxWin?: number | null,
 ): AutoRetuneTargets {
   const intendedHitRate =
     typeof nameOrHitRate === "string"
@@ -413,13 +534,21 @@ export function autoRetuneTargets(
   // ceiling so its big top card survives the shaper (a low hit-rate needs a big
   // jackpot to hold the edge). Untagged ⇒ intendedHitRate null ⇒ the plain cap.
   const maxWinCap = autoMaxWinCap(price, cfg, intendedHitRate ?? undefined);
+  // Edge-curve input: the pool's ACTUAL top-card exposure when known (never
+  // above the cap the shaper will enforce), else the cap as the deterministic
+  // pre-shape proxy (legacy).
+  const curveMaxWin =
+    typeof poolMaxWin === "number" && Number.isFinite(poolMaxWin) && poolMaxWin > 0
+      ? Math.min(poolMaxWin, maxWinCap)
+      : maxWinCap;
   return {
     targetEdge: autoTargetEdge(
-      { price, maxWin: maxWinCap },
+      { price, maxWin: curveMaxWin },
       cfg.edgeCurve ?? DEFAULT_EDGE_CURVE,
     ),
     targetWinRate: intendedHitRate ?? DEFAULT_TARGET_WIN_RATE,
-    nearMissMin: DEFAULT_NEAR_MISS_MIN,
+    nearMissMin:
+      intendedHitRate !== null ? TAGGED_NEAR_MISS_MIN : DEFAULT_NEAR_MISS_MIN,
     maxWinCap,
     intendedHitRate,
   };

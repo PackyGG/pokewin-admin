@@ -14,6 +14,7 @@ import {
   readMaxWinCap,
   autoTargetEdge,
   readEdgeCurveConfig,
+  resolveIntendedHitRate,
 } from "@/app/(admin)/packs/_lib/risk-config";
 
 // NOTE: `export const maxDuration = …` is NOT valid in a `"use server"` file —
@@ -130,8 +131,12 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
       // pack's own risk; it uses the flat floor for that one. Override it here with
       // the PER-PACK curve target so a pack is "below target" only when it falls
       // below ITS OWN `autoTargetEdge(price, maxWin)` — not the flat 10.99% floor.
+      // TAGGED packs (DB tags first, name-prefix fallback) are binary lottery
+      // products — zero near-miss is the genre, so `zeroNearMiss` never flags.
       compliance: {
-        ...buildPackCompliance(risk, maxWinCap),
+        ...buildPackCompliance(risk, maxWinCap, {
+          tagged: resolveIntendedHitRate(c.name, c.tags) !== null,
+        }),
         belowTargetEdge:
           risk.edge <
           autoTargetEdge(

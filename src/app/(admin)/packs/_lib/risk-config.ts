@@ -10,6 +10,8 @@ import {
   DEFAULT_MAX_MULT_CEILING,
   DEFAULT_TARGET_WIN_RATE,
   DEFAULT_NEAR_MISS_MIN,
+  TAGGED_NEAR_MISS_MIN,
+  TAG_CAP_HEADROOM,
   DEFAULT_EDGE_FLOOR,
   DEFAULT_EDGE_CEILING,
   DEFAULT_EDGE_CURVE,
@@ -19,10 +21,12 @@ import {
   hitRateFromTags,
   parsePackHitRate,
   resolveIntendedHitRate,
+  resolveIntendedHitRateDetailed,
   TAGGED_WRITE_WINRATE_TOLERANCE,
   type ResolvedAutoTargetCfg,
   type AutoRetuneTargets,
   type EdgeCurveConfig,
+  type ResolvedHitRateDetail,
 } from "./auto-targets";
 
 /**
@@ -42,6 +46,8 @@ export {
   DEFAULT_MAX_MULT_CEILING,
   DEFAULT_TARGET_WIN_RATE,
   DEFAULT_NEAR_MISS_MIN,
+  TAGGED_NEAR_MISS_MIN,
+  TAG_CAP_HEADROOM,
   DEFAULT_EDGE_FLOOR,
   DEFAULT_EDGE_CEILING,
   DEFAULT_EDGE_CURVE,
@@ -51,10 +57,12 @@ export {
   hitRateFromTags,
   parsePackHitRate,
   resolveIntendedHitRate,
+  resolveIntendedHitRateDetailed,
   TAGGED_WRITE_WINRATE_TOLERANCE,
   type ResolvedAutoTargetCfg,
   type AutoRetuneTargets,
   type EdgeCurveConfig,
+  type ResolvedHitRateDetail,
 };
 
 /**
@@ -123,15 +131,22 @@ export type PackComplianceFlags = {
  * house-edge target + zero-near-miss floor are module constants; the win-cap is
  * resolved by the caller via `readMaxWinCap`; everything else is derived from
  * the computed {@link PackRisk}.
+ *
+ * `opts.tagged` (ruleset §1.2 / archetype split): a TAGGED lottery pack is a
+ * binary win-or-dust product — zero near-miss mass IS the genre, not a
+ * dullness defect — so `zeroNearMiss` is never flagged for it. Optional so
+ * legacy callers without tag context keep the old (untagged) behavior.
  */
 export function buildPackCompliance(
   risk: PackRisk,
   maxWinCap: number,
+  opts?: { tagged?: boolean },
 ): PackComplianceFlags {
+  const tagged = opts?.tagged === true;
   return {
     belowTargetEdge: risk.edge < TARGET_PACK_EDGE,
     overMaxWinCap: risk.maxWin > maxWinCap,
-    zeroNearMiss: risk.nearMiss < ZERO_NEAR_MISS_FLOOR,
+    zeroNearMiss: !tagged && risk.nearMiss < ZERO_NEAR_MISS_FLOOR,
     overTier: risk.tier === "T5",
   };
 }
