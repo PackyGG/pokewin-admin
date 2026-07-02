@@ -28,6 +28,7 @@ import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { TAGGED_WRITE_WINRATE_TOLERANCE } from "@/app/(admin)/packs/_lib/auto-targets";
 import type { PackRisk } from "@/app/(admin)/insights/edge-calc/risk";
+import type { TagGuidance } from "@/app/(admin)/insights/edge-calc/tag-guidance";
 
 import type { RetuneRailRow } from "../_queries/rail";
 import type { PackTunePlan } from "../../doctor/retune-actions";
@@ -55,10 +56,13 @@ import {
   STATUS_BADGE,
   WIN_RATE_ON_TAG,
   WIN_RATE_OVER_TAG,
+  GUIDANCE_HEADING,
+  SOLVER_VERIFIED_BADGE,
   addCardCtaLabel,
   dirtyOddsBanner,
   edgeTargetSub,
   limitHeadline,
+  suggestionKindLabel,
   offTagStrip,
   priceMoveSub,
   PRICE_PINNED_SUB,
@@ -193,6 +197,79 @@ function Banner({
     >
       <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
       <div className="min-w-0 flex-1 space-y-1 text-sm">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * The guidance engine's ranked, engine-proven fix list (ruleset §2). Each row
+ * is plain-words copy with the exact numbers baked in; an `add-card`
+ * suggestion carries its computed $ band and seeds the existing
+ * `BuilderCardPicker` price pre-filter via `onAddCardRange` (the same
+ * one-click fix loop the legacy `suggestedRange` used).
+ */
+function GuidanceSuggestions({
+  guidance,
+  onAddCardRange,
+}: {
+  guidance: TagGuidance;
+  onAddCardRange: (range: { min: number; max: number }) => void;
+}) {
+  const rows = guidance.suggestions;
+  if (rows.length === 0) return null;
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+        {GUIDANCE_HEADING}
+      </p>
+      <ul className="space-y-1.5">
+        {rows.map((s, i) => {
+          const isAddCard =
+            s.kind === "add-card" &&
+            typeof s.params.valueMin === "number" &&
+            typeof s.params.valueMax === "number";
+          return (
+            <li key={`${s.kind}-${i}`} className="space-y-1">
+              <p className="text-xs">
+                <Badge
+                  variant="outline"
+                  className="mr-1.5 border-current/30 px-1.5 py-0 align-middle text-[10px] font-medium"
+                >
+                  {suggestionKindLabel(s.kind)}
+                </Badge>
+                <span className="text-foreground/90">{s.humanCopy}</span>
+                {s.proof.solverVerified === true && (
+                  <Badge
+                    variant="outline"
+                    className="ml-1.5 border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0 align-middle text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+                  >
+                    {SOLVER_VERIFIED_BADGE}
+                  </Badge>
+                )}
+              </p>
+              {isAddCard && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    onAddCardRange({
+                      min: s.params.valueMin as number,
+                      max: s.params.valueMax as number,
+                    })
+                  }
+                >
+                  <Plus className="size-3.5" />
+                  {addCardCtaLabel({
+                    min: s.params.valueMin as number,
+                    max: s.params.valueMax as number,
+                  })}
+                </Button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
@@ -344,23 +421,37 @@ export function PlanPanel({
     }
     if (!plan) return null;
     if (plan.limit !== null) {
+      const hasGuidance =
+        plan.guidance !== null && plan.guidance.suggestions.length > 0;
       return (
         <Banner tone="rose" icon={TriangleAlert}>
           <p className="font-medium">
             {limitHeadline(plan.limit, { price: plan.priceAfter || plan.price, tag })}
           </p>
           <p className="text-xs text-muted-foreground">{plan.limit.detail}</p>
-          <p className="text-xs">{plan.limit.suggestion}</p>
-          {plan.limit.suggestedRange && (
-            <Button
-              type="button"
-              size="sm"
-              className="mt-1"
-              onClick={() => onAddCardRange(plan.limit!.suggestedRange!)}
-            >
-              <Plus className="size-3.5" />
-              {addCardCtaLabel(plan.limit.suggestedRange)}
-            </Button>
+          {hasGuidance ? (
+            // The guidance engine's ranked, proven fixes replace the limit's
+            // static one-liner (ruleset: no infeasible verdict without a
+            // computed suggestion).
+            <GuidanceSuggestions
+              guidance={plan.guidance!}
+              onAddCardRange={onAddCardRange}
+            />
+          ) : (
+            <>
+              <p className="text-xs">{plan.limit.suggestion}</p>
+              {plan.limit.suggestedRange && (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="mt-1"
+                  onClick={() => onAddCardRange(plan.limit!.suggestedRange!)}
+                >
+                  <Plus className="size-3.5" />
+                  {addCardCtaLabel(plan.limit.suggestedRange)}
+                </Button>
+              )}
+            </>
           )}
         </Banner>
       );
@@ -376,6 +467,12 @@ export function PlanPanel({
       return (
         <Banner tone="rose" icon={TriangleAlert}>
           <p>{tagSaturatedBanner(tag)}</p>
+          {plan.guidance !== null && plan.guidance.suggestions.length > 0 && (
+            <GuidanceSuggestions
+              guidance={plan.guidance}
+              onAddCardRange={onAddCardRange}
+            />
+          )}
         </Banner>
       );
     }
@@ -390,6 +487,12 @@ export function PlanPanel({
       return (
         <Banner tone="amber" icon={TriangleAlert}>
           <p>{dirtyOddsBanner(plan.offLadderCards.length, plan.planned.length)}</p>
+          {plan.guidance !== null && plan.guidance.suggestions.length > 0 && (
+            <GuidanceSuggestions
+              guidance={plan.guidance}
+              onAddCardRange={onAddCardRange}
+            />
+          )}
         </Banner>
       );
     }

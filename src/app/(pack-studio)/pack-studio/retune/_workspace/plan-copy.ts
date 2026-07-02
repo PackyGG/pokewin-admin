@@ -84,6 +84,41 @@ export function addCardCtaLabel(range: { min: number; max: number }): string {
   return `Add a card between ${formatCurrency(range.min)}–${formatCurrency(range.max)}`;
 }
 
+// ─── Guidance engine (ruleset §2 — ranked, proven suggestions) ──────────────
+
+export const GUIDANCE_HEADING = "Computed fixes (ranked, engine-proven)";
+
+/** Short chip label per suggestion kind (`TuneSuggestionKind`). */
+export function suggestionKindLabel(kind: string): string {
+  switch (kind) {
+    case "price-move":
+      return "Price move";
+    case "price-edge-exact":
+      return "Price + edge";
+    case "add-card":
+      return "Add a card";
+    case "edge-bump":
+      return "Edge target";
+    case "raise-cap":
+      return "Raise cap";
+    case "repair-monotone":
+      return "Fix ladder rung";
+    case "loosen-cheapest-winner":
+      return "Loosen floor winner";
+    case "retag":
+      return "Retag";
+    case "remove-dead-card":
+      return "Dead card";
+    case "no-fix-under-constraints":
+      return "No fix available";
+    default:
+      return kind;
+  }
+}
+
+/** Badge shown when the top suggestion round-tripped the real solver. */
+export const SOLVER_VERIFIED_BADGE = "solver-verified";
+
 /** One-shot emerald flip after the fix loop lands feasible. */
 export const FIX_LOOP_SUCCESS = "That did it — this pack is tunable now.";
 
