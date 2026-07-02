@@ -8,8 +8,15 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `origin/main @ 5579176c` · **Updated:** 2026-07-02 · **Active focus:** pack-system follow-ups from the 2026-07-02 learning pass — buildPack pack_type fix SHIPPED (`5579176c`); retune band mismatch + stale retune/doctor copy still open (Open/next #7). Prior focus (full-app perf/crash/UI audit, composed-`main` build GREEN at `a7cecc3c`) lives in the SESSION 2026-07-01 block.
+- **HEAD:** `origin/main @ fc3c2d89` · **Updated:** 2026-07-02 · **⛔ UI REDESIGN HALTED BY OWNER (2026-07-02): do NOT continue the "Packy Liquid Glass v3" restyle.** See the SESSION block below. · **Active focus:** pack-system follow-ups from the 2026-07-02 learning pass — buildPack pack_type fix SHIPPED (`5579176c`); retune band mismatch + stale retune/doctor copy still open (Open/next #7). Prior focus (full-app perf/crash/UI audit, composed-`main` build GREEN at `a7cecc3c`) lives in the SESSION 2026-07-01 block.
 - **Creator-hub + pack-studio passes (owner explicitly named these):** creator-hub was already extensively hardened — closed 2 gaps (`settings/page.tsx` shell-first + guarded `899cfe3a`; docked Alerts panel de-jumped/optimistic). Pack-studio got its FIRST error boundaries (7 new `error.tsx`) + read crash-proofing `a7cecc3c`; its sanctioned MAIN-writers (push-to-prod/retune/snapshot/apply-edit) were left strictly untouched + never run.
+
+### SESSION 2026-07-02 — UI redesign "Liquid Glass v3" sweeps + HALT (owner order)
+
+- **⛔ HALTED:** After the surface sweeps below, a bold global-chrome experiment (`e3c63287`: card elevation shadows + sheen/raise composition fix + ambient primary depth glow on `[data-admin-scroll]`) was **rejected by the owner** ("worst shit i ever saw") and **fully reverted in `fc3c2d89`** (byte-identical restore of `globals.css` + `ui/card.tsx`). Owner then ordered: **"stop the update after this"** — no further UI redesign work without a fresh explicit owner request. A prepared dashboard recolor (flat full-card `bg-{color}-500/10` washes → corner gradients on the KPI strip/cost tiles, local commit `27c20947` in the `pokewin-foundation-gate` worktree) was **never pushed and is discarded**.
+- **Shipped earlier this session (all build-gated, live on main):** foundation-remainder push `febb8267`; sweep commits `902c0194` (analytics hero), `f12217af` (rewards), `846a9412` (money-ops badge tokens), `347902d6` (ui primitives polish: button/input/select/badge/tabs), `29c32450` (my-profile hero), `75c321fa` (creators/chat), `d6ed1845` (admin-users/settings), `cbbeedba` (portals). These are small presentational-only changes the owner did NOT object to; they remain live.
+- **Durable learnings:** (1) `.surface-sheen` + `.surface-raise` on the same element conflict — `box-shadow` is one property, the later rule wins and kills the sheen (PageHero/StatPanel carry both; still true after the revert). (2) Owner rejected: heavy card drop-shadows, viewport-fixed background glows. Owner's taste = keep the existing flat, restrained look. (3) Dashboard dark-mode complaint about "wrong color scheme" referred (at least partly) to the then-deployed glow/shadow chrome — resolved by the revert.
+- **Untracked scratch doc `UI_REDESIGN_HANDOFF.md` deleted** (redesign cancelled; do not resurrect it).
 
 ### SESSION 2026-07-02 — pack-system learning-pass fix #1 (buildPack pack_type)
 
