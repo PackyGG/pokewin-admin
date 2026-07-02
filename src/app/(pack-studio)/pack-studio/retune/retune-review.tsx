@@ -482,11 +482,60 @@ export function RetuneReview({
   // True while the "Start review" mint or a silent token re-mint is in flight.
   const [authBusy, setAuthBusy] = React.useState(false);
 
+  // ── Re-seed on fresh server proposals (post-write router.refresh()) ──
+  // `items` is seeded once from the initial `proposals` prop and the component
+  // is never re-keyed — so a post-approve `router.refresh()` used to stream
+  // FRESH proposals into a client that kept showing (and approving!) the old
+  // ones. React's derived-state-from-props pattern: compare the prop identity
+  // during render and merge the fresh proposals in, preserving each pack's
+  // VERDICT (status keyed by packId — an approved pack was already written,
+  // it must not become re-approvable). Local adjustments are reset: they were
+  // shaped against the superseded pool. With an active edge/price override
+  // the fresh baseline proposals are immediately marked stale so the nav-lazy
+  // effect re-shapes each one at the operator's nudge on approach.
+  //
+  // Skipped in portfolio mode: the refreshed prop payload is the PER-PACK
+  // dry-run (the server page always loads per-pack), so seeding it while the
+  // system-balance toggle is on would silently flip every card's targeting.
+  // Portfolio proposals only ever come from the toggle's own reload path.
+  const [seededProposals, setSeededProposals] = React.useState(proposals);
+  if (proposals !== seededProposals) {
+    setSeededProposals(proposals);
+    if (!portfolioMode) {
+      setItems((prev) => {
+        const prevById = new Map(prev.map((it) => [it.proposal.packId, it]));
+        return proposals.map((p) => ({
+          proposal: p,
+          status: prevById.get(p.packId)?.status ?? ("pending" as ReviewStatus),
+          adjusted: null,
+        }));
+      });
+      setIndex((i) => Math.min(i, Math.max(0, proposals.length - 1)));
+      setStaleIds(
+        edgeOverride !== null || priceOverride !== null
+          ? new Set(proposals.map((p) => p.packId))
+          : new Set(),
+      );
+    }
+  }
+
   const total = items.length;
   const approved = items.filter((i) => i.status === "approved").length;
   const declined = items.filter((i) => i.status === "declined").length;
   const pending = total - approved - declined;
   const current = items[index];
+
+  // ── Approve staleness gate ──────────────────────────────────────────
+  // The displayed proposal is NOT what an Approve would act on while (a) the
+  // current pack is marked stale (shaped against a superseded edge/price
+  // override), (b) a single-pack recompute is in flight, or (c) a full
+  // system-balance reload is replacing the queue. Approving in any of those
+  // windows writes from numbers the operator isn't looking at — so the
+  // Approve button AND the keyboard "A" shortcut are disabled until the
+  // fresh proposal lands (the review card shows a small recomputing note).
+  const currentStale =
+    current != null && staleIds.has(current.proposal.packId);
+  const approveBlocked = currentStale || recomputingSingle || reloading;
 
   // ── Navigation ──────────────────────────────────────────────────────
   const goTo = React.useCallback(
@@ -910,11 +959,14 @@ export function RetuneReview({
 
   // Approve opens the two-step confirm gate instead of writing directly — the
   // pending retune write only fires from the gate's final "Push to production".
+  // Refused while the current proposal is stale / recomputing (see
+  // `approveBlocked`): the gate summary and the write targets would be built
+  // from numbers the operator isn't looking at.
   const onApprove = React.useCallback(() => {
-    if (applying) return;
+    if (applying || approveBlocked) return;
     setPendingWrite({ kind: "retune", index });
     setConfirmStep(1);
-  }, [applying, index]);
+  }, [applying, approveBlocked, index]);
 
   const onDecline = React.useCallback(() => {
     if (applying) return;
@@ -1290,6 +1342,7 @@ export function RetuneReview({
                   index={index}
                   total={total}
                   applying={applying}
+                  recomputing={approveBlocked}
                   portfolioMode={portfolioMode}
                   editorTargets={editorTargetsFor(current, edgeOverride)}
                   editing={editingIndex === index}

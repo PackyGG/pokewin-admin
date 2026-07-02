@@ -212,6 +212,7 @@ export function ReviewCard({
   index,
   total,
   applying,
+  recomputing,
   portfolioMode,
   editorTargets,
   editing,
@@ -230,6 +231,13 @@ export function ReviewCard({
   index: number;
   total: number;
   applying: boolean;
+  /**
+   * True while THIS pack's displayed proposal is stale or being re-shaped
+   * (chip-strip nudge / target-price change / system-balance reload in
+   * flight). Approve is disabled — the numbers on screen are not the numbers
+   * a write would act on — and a small note explains the lock.
+   */
+  recomputing: boolean;
   /** True when system-balance mode is on (proposals are portfolio-targeted). */
   portfolioMode: boolean;
   /** Targets the inline pool editor's "Re-shape to targets" shapes onto. */
@@ -914,9 +922,14 @@ export function ReviewCard({
           <Button
             size="sm"
             onClick={onApprove}
-            disabled={!canApprove || applying}
+            disabled={!canApprove || applying || recomputing}
+            title={
+              recomputing
+                ? "This proposal is being re-shaped at the current targets — Approve unlocks when the fresh numbers land."
+                : undefined
+            }
           >
-            {applying ? (
+            {applying || recomputing ? (
               <Loader2 className="mr-1 size-3.5 animate-spin" />
             ) : (
               <Check className="mr-1 size-3.5" />
@@ -924,6 +937,13 @@ export function ReviewCard({
             Approve
           </Button>
         </div>
+        {recomputing && (
+          <p className="flex basis-full items-center justify-end gap-1.5 text-[11px] text-muted-foreground">
+            <Loader2 className="size-3 animate-spin" aria-hidden />
+            Re-computing this proposal at the current targets — the numbers
+            above may be stale; Approve unlocks when the fresh shape lands.
+          </p>
+        )}
       </div>
     </div>
   );
