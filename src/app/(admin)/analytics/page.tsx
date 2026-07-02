@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { requirePageAccess } from "@/lib/dal";
 import { AutoRefresh } from "../dashboard/auto-refresh";
 import { PeriodFilter } from "./period-filter";
-import { PageHero } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { AnalyticsTabNav, type AnalyticsTab } from "./tab-nav";
 import { parsePeriod } from "./types";
 import { OverviewTab } from "./tab-overview";
@@ -96,21 +96,15 @@ export default async function AnalyticsPage({
         {/* Identity + period filter stack vertically on phones — the
             5-chip filter would otherwise wrap awkwardly under the
             icon. At sm+ they go side-by-side so the hero scans cleanly
-            on tablets and desktops. */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-              <BarChart3 className="size-5 text-primary" />
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-xl font-bold leading-tight sm:text-2xl">Analytics</h1>
-              <p className="text-xs text-muted-foreground sm:text-sm">
-                Revenue, acquisition, and gameplay metrics over time.
-              </p>
-            </div>
-          </div>
-          <PeriodFilter />
-        </div>
+            on tablets and desktops. Shared PageHeroIdentity primitive so
+            the icon chip, title ladder, and action slot match every
+            other admin hero. */}
+        <PageHeroIdentity
+          icon={BarChart3}
+          title="Analytics"
+          subtitle="Revenue, acquisition, and gameplay metrics over time."
+          action={<PeriodFilter />}
+        />
       </PageHero>
 
       <AnalyticsTabNav />
