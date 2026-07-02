@@ -1,7 +1,15 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Info, Trophy, HandCoins, Gift, ArrowUpFromLine, Percent } from "lucide-react";
+import {
+  Info,
+  Trophy,
+  HandCoins,
+  Gift,
+  ArrowUpFromLine,
+  Percent,
+  Swords,
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Popover,
@@ -23,6 +31,11 @@ import { CreatorWithdrawalsDrilldown } from "./creator-cost-withdrawals-drilldow
  * → rose per CLAUDE.md's House-POV rule. Lines:
  *   • Converted payouts     — deal-payout vouchers minted today (session convert).
  *   • Tips                  — house-funded creator tips handed to users today.
+ *   • Sponsored battles     — house-funded battle sponsorships handed to users
+ *                             today (`creator_fill_spend_battle`), the sibling
+ *                             leg of Tips from the SAME house-funded
+ *                             tips/sponsor pool (owner, 2026-07-02) — see
+ *                             `creators/_queries/tips-sponsor-spend.ts`.
  *   • Leaderboard prizes    — the FULL gross of today's leaderboard prizes.
  *                             Every affiliate leaderboard is a creator-run event
  *                             (owner, 2026-06-04), so its whole gross is a
@@ -36,7 +49,7 @@ import { CreatorWithdrawalsDrilldown } from "./creator-cost-withdrawals-drilldow
  *                             Reward Costs box's full customer-scope drop).
  *                             The sibling Reward Costs box counts $0 of it now.
  *
- * The card face shows the rose total + a FIXED set of chips covering all four
+ * The card face shows the rose total + a FIXED set of chips covering all five
  * lines (see `PINNED_CHIP_KEYS`), always visible regardless of magnitude — the
  * same pattern already established on the Reward Costs card. The Info popover
  * (styled exactly like the Reward Costs / GGR breakdown popover) spells out
@@ -58,7 +71,7 @@ import { CreatorWithdrawalsDrilldown } from "./creator-cost-withdrawals-drilldow
  * fn) per CLAUDE.md / Next 15.
  */
 /**
- * Fixed set of ALL FOUR lines promoted to always-visible card-face chips, in
+ * Fixed set of ALL FIVE lines promoted to always-visible card-face chips, in
  * display order — mirrors the pinned-chip pattern already established on the
  * Reward Costs card (`PINNED_CHIP_KEYS` there) so the box doesn't visually
  * reshuffle day to day. A chip still renders at $0 (muted, not rose) so a
@@ -67,6 +80,7 @@ import { CreatorWithdrawalsDrilldown } from "./creator-cost-withdrawals-drilldow
 const PINNED_CHIP_KEYS = [
   "creator_withdrawals",
   "tips",
+  "sponsored_battles",
   "leaderboard",
   "affiliate",
 ] as const;
@@ -135,11 +149,13 @@ export function CreatorCostsTodayCard({
             −<AnimatedNumber value={total} format="currency" />
           </span>
         </div>
-        {/* Pinned-line chips (always the same four, same order) — a quiet
+        {/* Pinned-line chips (always the same five, same order) — a quiet
             $0 day still shows the full roster, just muted instead of rose,
-            so the box never visually reshuffles or collapses. */}
+            so the box never visually reshuffles or collapses. sm:grid-cols-3
+            wraps five chips cleanly (3 + 2) instead of leaving a lone
+            orphan chip on its own row at sm:grid-cols-4. */}
         {pinned.length > 0 ? (
-          <div className="grid grid-cols-2 gap-1.5 -mx-0.5 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-1.5 -mx-0.5 sm:grid-cols-3">
             {pinned.map((l) => (
               <CreatorCostChip key={l.key} label={l.label} value={l.amount} />
             ))}
@@ -240,6 +256,8 @@ function lineIcon(key: string) {
       return ArrowUpFromLine;
     case "tips":
       return Gift;
+    case "sponsored_battles":
+      return Swords;
     case "leaderboard":
       return Trophy;
     case "affiliate":
@@ -256,8 +274,8 @@ function lineIcon(key: string) {
  * The leaderboard row carries a click-to-reveal per-claimant drilldown; the
  * creator-withdrawals row carries a per-creator / per-request drilldown.
  * Both reconcile to their line amounts. The total at the bottom equals
- * creator withdrawals + tips + the full leaderboard gross + affiliate
- * commissions.
+ * creator withdrawals + tips + sponsored battles + the full leaderboard
+ * gross + affiliate commissions.
  */
 function CreatorCostsInfoPopover({
   total,
@@ -295,8 +313,10 @@ function CreatorCostsInfoPopover({
             House spend on creator activity since 00:00 today (UTC) —{" "}
             <strong>{dayLabel}</strong> — not a rolling 24h window. Every line
             is money paid out (a house cost): deal payouts converted from
-            sessions (voucher minted), house-funded tips, leaderboard prizes,
-            and affiliate commissions.
+            sessions (voucher minted), house-funded tips, house-funded battle
+            sponsorships, leaderboard prizes, and affiliate commissions.
+            Sponsored battles are the sibling leg of Tips from the same
+            house-funded tips/sponsor pool.
             Every affiliate leaderboard is a creator-run event, so its{" "}
             <strong>full prize gross</strong> is counted here as a creator cost
             (the Reward Costs box counts $0 of it). Affiliate commissions

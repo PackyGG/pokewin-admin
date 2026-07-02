@@ -145,10 +145,10 @@ export default async function DashboardPage() {
           first toggle inside the client section (active-timeframe-only).
 
           The window-independent snapshot boxes (FTDs, Depositors, Avg RTP, Avg
-          P&L 7d, Total P&L lifetime) MOVED to the Insights Overview Analytics
-          tab (`/insights/real-numbers?tab=analytics`) — the dashboard is a
-          live-ops board, the lifetime / cadence aggregates live there. Total
-          P&L + Avg P&L were folded into a single box on that tab.
+          P&L 7d, Total P&L lifetime) MOVED to the owner-only lifetime section
+          on `/analytics` (Overview tab) — the dashboard is a live-ops board,
+          the lifetime / cadence aggregates live there. Total P&L + Avg P&L
+          were folded into a single box in that section.
 
           NOT keyed on any global selector — these boxes own their own today/24h
           window via the toggle next to each title. Streams behind its own Suspense
@@ -307,9 +307,9 @@ async function DashboardLoadTime() {
  * toggle (active-timeframe-only — the 24h aggregate never runs here).
  *
  * The window-independent snapshot boxes (FTDs, Depositors, Avg RTP, Avg P&L
- * 7d, Total P&L lifetime) that used to live here MOVED to the Insights
- * Overview Analytics tab (`/insights/real-numbers?tab=analytics`), so this
- * component no longer reads `getDashboardKpiStats` / `getAvgPnl7d` /
+ * 7d, Total P&L lifetime) that used to live here MOVED to the owner-only
+ * lifetime section on `/analytics` (Overview tab), so this component no
+ * longer reads `getDashboardKpiStats` / `getAvgPnl7d` /
  * `getRealizedPnlSnapshot` — the dashboard is now a live-ops board only.
  *
  * Wrapped in safeQuery so a failing today-window aggregate degrades to a
@@ -564,9 +564,11 @@ async function DashboardRewardCostsToday() {
  * standalone query (getCreatorCostsToday, cached 60s + keyed on the UTC day
  * boundary), wrapped in safeQuery so a slow today-window scan degrades to a
  * tile fallback instead of crashing the dashboard. Reuses the canonical
- * creator-cost definitions: the Creator Deal Payouts withdrawal CTE, the
- * tips-sponsor-spend tip leg, and affiliate_leaderboard_prize payouts split
- * by the same sponsored-% house-share logic as creators/leaderboard-cost.
+ * creator-cost definitions: the Creator Deal Payouts withdrawal CTE, BOTH legs
+ * of tips-sponsor-spend (tip + battle-sponsorship), the FULL gross of
+ * affiliate_leaderboard_prize payouts (no sponsored-% split, owner 2026-06-04),
+ * and affiliate_claim commissions (moved wholesale from Reward Costs, owner
+ * 2026-07-02).
  */
 async function DashboardCreatorCostsToday() {
   // The creator-cost figures drive the card; the affiliate-referred-players
@@ -607,6 +609,7 @@ async function DashboardCreatorCostsToday() {
     total: data.total,
     creatorWithdrawals: data.creatorWithdrawals,
     tips: data.tips,
+    sponsoredBattles: data.sponsoredBattles,
     leaderboardGross: data.leaderboardGross,
     affiliate: data.affiliate,
     dayStartIso: data.dayStartIso,

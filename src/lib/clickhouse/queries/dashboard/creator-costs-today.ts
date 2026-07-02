@@ -8,7 +8,7 @@ import { CH_DB, chDateTime, toNumber } from "../_shared";
  * prod game mirror (`packy_prod`, PeerDB CDC).
  *
  * Twin of the canonical Postgres `getCreatorCostsToday`
- * (src/lib/queries/dashboard-creator-costs-today.ts). Mirrors the SAME five
+ * (src/lib/queries/dashboard-creator-costs-today.ts). Mirrors the SAME six
  * money figures the card surfaces, over the SAME window `[since, now)` (today
  * 00:00 UTC — the PG path's `utcStartOfDay`, passed in as `since`):
  *
@@ -19,13 +19,18 @@ import { CH_DB, chDateTime, toNumber } from "../_shared";
  *                          (multiplier deal payouts), both by created_at >= since.
  *   • tips             = Σ |ledger.amount| WHERE type='creator_fill_spend_tip'
  *                          AND status='completed', created_at >= since.
+ *   • sponsoredBattles = Σ |ledger.amount| WHERE type='creator_fill_spend_battle'
+ *                          AND status='completed', created_at >= since. Sibling
+ *                          leg of `tips` from the same house-funded tips/sponsor
+ *                          pool (owner, 2026-07-02) — see tips-sponsor-spend.ts.
  *   • leaderboardGross = Σ |ledger.amount| WHERE type='affiliate_leaderboard_prize'
  *                          AND status='completed', created_at >= since (FULL gross).
  *   • affiliate        = Σ |ledger.amount| WHERE type='affiliate_claim'
  *                          AND status='completed', created_at >= since. MOVED
  *                          WHOLESALE here from the Reward Costs twin (owner,
  *                          2026-07-02) — see reward-costs-today.ts.
- *   • total            = creatorWithdrawals + tips + leaderboardGross + affiliate.
+ *   • total            = creatorWithdrawals + tips + sponsoredBattles
+ *                          + leaderboardGross + affiliate.
  *
  * ─── Scope (mirrors the PG twin EXACTLY — blacklist ONLY) ─────────────
  *
@@ -52,6 +57,7 @@ export type CreatorCostsTodayCh = {
   total: number;
   creatorWithdrawals: number;
   tips: number;
+  sponsoredBattles: number;
   leaderboardGross: number;
   affiliate: number;
 };
@@ -59,6 +65,7 @@ export type CreatorCostsTodayCh = {
 type VoucherRow = { fill_converted: string; multiplier_payouts: string };
 type LedgerRow = {
   tips: string;
+  sponsored_battles: string;
   leaderboard_gross: string;
   affiliate: string;
 };
@@ -91,19 +98,22 @@ export async function getCreatorCostsTodayFromClickHouse(
       AND v.origin IN ('creator_fill_conversion','creator_multiplier_payout')
       ${voucherBlacklistClause}`;
 
-  // Tips (creator-funded fill-spend tips) + the FULL leaderboard prize gross +
+  // Tips (creator-funded fill-spend tips) + sponsored battles (creator-funded
+  // fill-spend battle sponsorships — sibling leg of tips from the same
+  // house-funded tips/sponsor pool) + the FULL leaderboard prize gross +
   // affiliate commissions, all as Σ |amount| over completed ledger rows in the
   // window. `affiliate_claim` MOVED WHOLESALE here (owner, 2026-07-02).
   const ledgerSql = `
     SELECT
       toString(sumIf(abs(lt.amount), lt.type = 'creator_fill_spend_tip'))     AS tips,
+      toString(sumIf(abs(lt.amount), lt.type = 'creator_fill_spend_battle'))  AS sponsored_battles,
       toString(sumIf(abs(lt.amount), lt.type = 'affiliate_leaderboard_prize')) AS leaderboard_gross,
       toString(sumIf(abs(lt.amount), lt.type = 'affiliate_claim'))            AS affiliate
     FROM ${CH_DB}.public_ledger_transactions AS lt FINAL
     WHERE lt._peerdb_is_deleted = 0
       AND lt.status = 'completed'
       AND lt.created_at >= {cutoff:DateTime64(6)}
-      AND lt.type IN ('creator_fill_spend_tip','affiliate_leaderboard_prize','affiliate_claim')
+      AND lt.type IN ('creator_fill_spend_tip','creator_fill_spend_battle','affiliate_leaderboard_prize','affiliate_claim')
       ${ledgerBlacklistClause}`;
 
   const [vch, led] = await Promise.all([
@@ -122,9 +132,18 @@ export async function getCreatorCostsTodayFromClickHouse(
   const creatorWithdrawals =
     toNumber(vch[0]?.fill_converted) + toNumber(vch[0]?.multiplier_payouts);
   const tips = toNumber(led[0]?.tips);
+  const sponsoredBattles = toNumber(led[0]?.sponsored_battles);
   const leaderboardGross = toNumber(led[0]?.leaderboard_gross);
   const affiliate = toNumber(led[0]?.affiliate);
-  const total = creatorWithdrawals + tips + leaderboardGross + affiliate;
+  const total =
+    creatorWithdrawals + tips + sponsoredBattles + leaderboardGross + affiliate;
 
-  return { total, creatorWithdrawals, tips, leaderboardGross, affiliate };
+  return {
+    total,
+    creatorWithdrawals,
+    tips,
+    sponsoredBattles,
+    leaderboardGross,
+    affiliate,
+  };
 }
