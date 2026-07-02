@@ -19,8 +19,7 @@ const RAIN_STATUS_COLORS: Record<string, string> = {
   drawing:
     "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
   completed: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-  cancelled:
-    "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
+  cancelled: "bg-muted text-muted-foreground border-border",
 };
 
 type RainRow = {

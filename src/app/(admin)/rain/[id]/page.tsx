@@ -57,7 +57,7 @@ const STATUS_COLORS: Record<string, string> = {
   active: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
   drawing: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
   completed: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-  cancelled: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
+  cancelled: "bg-muted text-muted-foreground border-border",
 };
 
 const SECTION_TIMEOUT_MS = 10_000;

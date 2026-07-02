@@ -76,7 +76,7 @@ function TransactionMobileCard({ tx }: { tx: TransactionListItem }) {
             className={
               "h-4 px-1.5 text-[9px] capitalize " +
               (TYPE_COLORS[tx.type] ??
-                "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30")
+                "bg-muted text-muted-foreground border-border")
             }
           >
             {typeLabel}

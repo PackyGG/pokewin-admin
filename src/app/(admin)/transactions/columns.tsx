@@ -78,7 +78,7 @@ export const columns: ColumnDef<TransactionListItem>[] = [
           <div className="flex items-center gap-1.5">
             <Badge
               variant="outline"
-              className={TYPE_COLORS[row.original.type] ?? "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"}
+              className={TYPE_COLORS[row.original.type] ?? "bg-muted text-muted-foreground border-border"}
               title={row.original.type}
             >
               {ledgerTypeLabel(row.original.type)}
