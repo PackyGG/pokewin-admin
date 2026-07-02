@@ -251,6 +251,42 @@ function buildTargets(
   };
 }
 
+/** Build the `targets` payload for `applyStagedPackEditAndRetune` (the staged
+ * edit-and-retune Approve). Shares the lever resolution with `buildTargets`
+ * (effective edge + adjusted-or-auto win-rate/cap/near-miss) but deliberately
+ * DOES NOT forward the plain-path price-search levers:
+ *
+ *  • `allowPriceSearch` comes STRICTLY from the editor's "Allow price
+ *    adjustment" checkbox (the payload). `buildTargets` pins it `true` for the
+ *    plain Approve — spreading that over the staged call made the checkbox
+ *    dead (an unticked box still price-searched on the server while the gate
+ *    showed no price warning).
+ *  • `upwardPriceExtensionPct` / `priceOverride` are chip-strip levers of the
+ *    PLAIN `applyPackRetune` path; the staged action doesn't accept them —
+ *    its search always anchors on the staged price at the default ±25% band.
+ */
+function buildStagedTargets(
+  item: ReviewItem,
+  edgeOverride: number | null,
+  priceOverride: number | null,
+  payload: Extract<EditApprovePayload, { mode: "auto-tune" }>,
+): {
+  targetEdge: number;
+  targetWinRate: number;
+  maxWinCap: number | undefined;
+  nearMissMin: number;
+  allowPriceSearch: boolean;
+} {
+  const t = buildTargets(item, edgeOverride, priceOverride);
+  return {
+    targetEdge: t.targetEdge!,
+    targetWinRate: t.targetWinRate!,
+    maxWinCap: t.maxWinCap,
+    nearMissMin: t.nearMissMin!,
+    allowPriceSearch: payload.allowPriceSearch === true,
+  };
+}
+
 /** Detect the retune-token-expiry error so we can re-prompt 2FA + retry. */
 function isTokenExpired(message: string): boolean {
   return message.includes("authorization expired");
@@ -914,10 +950,13 @@ export function RetuneReview({
       try {
         // Send the pack's auto-targets (the same ones the per-pack Approve
         // path uses) so the server shapes against the SAME goals the review
-        // card explains. `allowPriceSearch` is the owner's explicit opt-in for
-        // the ±25% price-search lever; it flows from the editor checkbox
-        // through the gate and lands on the server action's `targets` param.
-        const t = buildTargets(item, edgeOverride, priceOverride);
+        // card explains. The price-search lever is NOT spread from
+        // `buildTargets` — that helper is the PLAIN-retune payload and pins
+        // `allowPriceSearch: true` (+ the chip-strip's upward extension and
+        // price anchor) unconditionally, which used to silently override the
+        // editor's "Allow price adjustment" checkbox. The staged path takes
+        // `allowPriceSearch` STRICTLY from the editor checkbox payload: an
+        // unticked box means the server holds the staged price exactly.
         const res = await applyStagedPackEditAndRetune(
           item.proposal.packId,
           token,
@@ -925,12 +964,7 @@ export function RetuneReview({
             cards: payload.cards,
             ...(payload.price !== undefined ? { price: payload.price } : {}),
           },
-          {
-            ...t,
-            ...(payload.allowPriceSearch === true
-              ? { allowPriceSearch: true }
-              : {}),
-          },
+          buildStagedTargets(item, edgeOverride, priceOverride, payload),
         );
         setItems((prev) => {
           const next = [...prev];
@@ -960,7 +994,6 @@ export function RetuneReview({
           try {
             const { token: fresh } = await authorizePackRetuneForReview();
             tokenRef.current = fresh;
-            const t = buildTargets(item, edgeOverride, priceOverride);
             const retry = await applyStagedPackEditAndRetune(
               item.proposal.packId,
               fresh,
@@ -968,12 +1001,7 @@ export function RetuneReview({
                 cards: payload.cards,
                 ...(payload.price !== undefined ? { price: payload.price } : {}),
               },
-              {
-                ...t,
-                ...(payload.allowPriceSearch === true
-                  ? { allowPriceSearch: true }
-                  : {}),
-              },
+              buildStagedTargets(item, edgeOverride, priceOverride, payload),
             );
             setItems((prev) => {
               const next = [...prev];
@@ -1259,13 +1287,19 @@ export function RetuneReview({
           priceOverride,
         );
         const isAutoTune = pendingWrite.kind === "edit-and-retune";
-        // The owner only sees the "price may shift" note when the editor
-        // checkbox flowed through into the pending payload — pure UI surface
-        // of the same `allowPriceSearch` flag the server reads.
+        // Truthful price-search notes — one per write path, shown exactly when
+        // a search will actually run at write time:
+        //  • staged auto-tune: only when the editor checkbox flowed into the
+        //    payload (`buildStagedTargets` sends exactly this flag — an
+        //    unticked box holds the staged price, so no note).
+        //  • plain retune: ALWAYS — `buildTargets` opts every plain Approve
+        //    into the clean-snap search (shared ±60% band; extended upward
+        //    when the chip-strip edge target is raised).
         const willSearchPrice =
           isAutoTune &&
           pendingWrite.kind === "edit-and-retune" &&
           pendingWrite.payload.allowPriceSearch === true;
+        const isPlainRetune = pendingWrite.kind === "retune";
         const title1 = isAutoTune
           ? "Auto-tune and push to production?"
           : "Push this pack live?";
@@ -1311,8 +1345,22 @@ export function RetuneReview({
 
                 {willSearchPrice && (
                   <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                    Server may adjust price by up to ±25% to clean the odds.
-                    Final price will be shown below after auto-tune.
+                    Server may adjust price by up to ±25% around the staged
+                    price to clean the odds. The expected final price is shown
+                    below.
+                  </div>
+                )}
+                {isPlainRetune && (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                    This write re-runs the clean-snap price search (±60% band
+                    around the{" "}
+                    {priceOverride !== null
+                      ? "pinned target price"
+                      : "live price"}
+                    {edgeOverride !== null
+                      ? ", extended upward for the raised edge target"
+                      : ""}
+                    ) — the expected final price is shown below.
                   </div>
                 )}
 
