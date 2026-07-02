@@ -392,10 +392,21 @@ async function DashboardUpgraderDoubleDownToday() {
   });
   return (
     <UpgraderDoubleDownTodayCard
-      upgrader={{ pnl: stats.pnl, edge: stats.edge }}
+      upgrader={{
+        pnl: stats.pnl,
+        edge: stats.edge,
+        wager: stats.wager,
+        payouts: stats.payouts,
+        bets: stats.bets,
+        avgBet: stats.avgBet,
+        uniquePlayers: stats.uniquePlayers,
+        hitRate: stats.hitRate,
+      }}
       doubleDown={{
         netHousePnl: doubleDownResult.data.netHousePnl,
         winRate: doubleDownResult.data.winRate,
+        rounds: doubleDownResult.data.rounds,
+        staked: doubleDownResult.data.staked,
       }}
     />
   );

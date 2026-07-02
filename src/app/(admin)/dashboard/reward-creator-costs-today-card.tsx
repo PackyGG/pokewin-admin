@@ -3,6 +3,7 @@
 import { Gift, Trophy } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AnimatedNumber } from "@/components/animated-number";
+import { cn } from "@/lib/utils";
 import { RewardCostsInfoPopover } from "./reward-costs-today-card";
 import {
   CreatorCostsInfoPopover,
@@ -10,21 +11,49 @@ import {
 } from "./creator-costs-today-card";
 
 /**
+ * Fixed set of programs promoted to always-visible chips on the Reward Costs
+ * half, in display order — mirrors the standalone card's former
+ * `PINNED_CHIP_KEYS` (owner-requested, 2026-07-02) so daily/free packs,
+ * rain, rakeback, and deposit bonuses always headline the card face, not
+ * just whichever two happen to be largest that day. A chip still renders at
+ * $0 (muted, not rose) so the card doesn't reshuffle day to day.
+ */
+const REWARD_PINNED_CHIP_KEYS = [
+  "daily_packs",
+  "rain",
+  "rakeback",
+  "deposit_bonus",
+] as const;
+
+/**
+ * Fixed set of all five lines promoted to always-visible chips on the
+ * Creators Costs half, in display order — mirrors the standalone card's
+ * former `PINNED_CHIP_KEYS`.
+ */
+const CREATOR_PINNED_CHIP_KEYS = [
+  "creator_withdrawals",
+  "tips",
+  "sponsored_battles",
+  "leaderboard",
+  "affiliate",
+] as const;
+
+/**
  * "Reward + Creators Costs (today)" — MERGED dashboard tile (owner request,
  * 2026-07-02: "move reward cost and creators costs into one box like
  * deposits / withdrawals"). Replaces the two separate "Reward Costs" /
  * "Creators Costs" cards that used to sit side by side in the Today boxes
- * row with ONE card, mirroring the Deposits/Withdrawals merged-tile pattern
- * on the KPI strip below: two compact stacked halves (label + hero rose
- * total) separated by a hairline divider, held to a single tile footprint.
+ * row with ONE card, mirroring the Deposits/Withdrawals merged-tile pattern:
+ * two stacked halves (label + hero rose total + pinned line chips)
+ * separated by a hairline divider.
  *
  * Both legs are house COSTS → always rose per CLAUDE.md's House-POV rule.
- * The per-line itemization that used to render as card-face chips now lives
- * entirely behind each half's Info popover (`RewardCostsInfoPopover` /
- * `CreatorCostsInfoPopover`, unchanged breakdown logic, just no longer
- * wrapped in their own standalone cards) — nothing was dropped, it's one
- * click away instead of always-on chips, which is what makes the merged
- * tile fit a single compact footprint.
+ * Each half keeps its FULL pinned chip roster (owner request, 2026-07-02:
+ * "i need all of them as before") — same chip sizing as the former
+ * standalone cards, just stacked under one shared header instead of two.
+ * The full per-line breakdown (every program, not just the pinned roster)
+ * still lives behind each half's Info popover (`RewardCostsInfoPopover` /
+ * `CreatorCostsInfoPopover`, unchanged breakdown logic).
  *
  * Both halves share the same "today" UTC-midnight boundary, so `dayLabel` is
  * identical on both — shown once in the card header instead of twice.
@@ -85,6 +114,7 @@ export function RewardCreatorCostsTodayCard({
           <div className="truncate text-lg font-bold tabular-nums text-rose-600 dark:text-rose-400 sm:text-xl">
             −<AnimatedNumber value={reward.total} format="currency" />
           </div>
+          <CostChipGrid lines={reward.lines} pinnedKeys={REWARD_PINNED_CHIP_KEYS} />
         </div>
 
         <div className="border-t border-border/50" />
@@ -108,8 +138,61 @@ export function RewardCreatorCostsTodayCard({
           <div className="truncate text-lg font-bold tabular-nums text-rose-600 dark:text-rose-400 sm:text-xl">
             −<AnimatedNumber value={creators.total} format="currency" />
           </div>
+          <CostChipGrid lines={creators.lines} pinnedKeys={CREATOR_PINNED_CHIP_KEYS} />
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Pinned-roster chip grid — renders one small chip per key in `pinnedKeys`,
+ * in that fixed order, pulling label + amount from `lines` (falling back to
+ * a $0 muted chip if a line is absent for the window). Byte-for-byte the
+ * former standalone cards' `RewardCostChip`/`CreatorCostChip` markup
+ * (`rounded-md border`, `px-2 py-1.5`, `text-[10px]` label, `-mx-0.5` grid
+ * bleed, no leading minus on the chip value — only the hero total gets the
+ * minus) so restoring the roster didn't change the chip's own footprint.
+ * `sm:grid-cols-3` wraps both the 4-item (Reward) and 5-item (Creators)
+ * roster cleanly (3+1 / 3+2) without a lone orphan chip.
+ */
+function CostChipGrid({
+  lines,
+  pinnedKeys,
+}: {
+  lines: Array<{ key: string; label: string; amount: number }>;
+  pinnedKeys: readonly string[];
+}) {
+  const byKey = new Map(lines.map((line) => [line.key, line]));
+  return (
+    <div className="mt-1.5 -mx-0.5 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+      {pinnedKeys.map((key) => {
+        const line = byKey.get(key);
+        const amount = line?.amount ?? 0;
+        return (
+          <div
+            key={key}
+            className={cn(
+              "min-w-0 rounded-md border bg-background/40 px-2 py-1.5",
+              amount > 0 ? "border-rose-500/15" : "border-border/60",
+            )}
+          >
+            <p className="truncate text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              {line?.label ?? key}
+            </p>
+            <p
+              className={cn(
+                "truncate text-xs font-semibold tabular-nums",
+                amount > 0
+                  ? "text-rose-600 dark:text-rose-400"
+                  : "text-muted-foreground",
+              )}
+            >
+              <AnimatedNumber value={amount} format="currency" />
+            </p>
+          </div>
+        );
+      })}
+    </div>
   );
 }
