@@ -31,7 +31,12 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatCurrency, formatDateTime, formatNumber } from "@/lib/utils/format";
 import { AFFILIATE_LEVEL_COLORS, AFFILIATE_LEVEL_LABELS } from "@/lib/constants";
-import { PageHero, KpiTile, SectionHeading } from "@/components/modern-panels";
+import {
+  PageHero,
+  PageHeroIdentity,
+  KpiTile,
+  SectionHeading,
+} from "@/components/modern-panels";
 import {
   KpiStripSkeleton,
   SectionHeadingSkeleton,
@@ -68,17 +73,12 @@ export default async function MyProfilePage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-cyan-500/10">
-            <User className="size-5 text-cyan-500" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">My Profile</h1>
-            <p className="text-sm text-muted-foreground">
-              Creator affiliate profile
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={User}
+          accent="cyan"
+          title="My Profile"
+          subtitle="Creator affiliate profile"
+        />
       </PageHero>
 
       {isCreator ? (
