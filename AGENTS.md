@@ -226,6 +226,8 @@ Always watch for new inputs, merge them into the active workflow, use parallel a
 
 ## 🔒 Browser-Verifikation & Done-Kriterien (CRITICAL)
 
+> **Owner-Override (2026-07-02, gilt für alle Agents/Modelle in diesem Repo):** Keine Browser-Verifikation nötig, bevor gepusht wird — einfach pushen. Und nach dem Push muss NICHT bestätigt werden, ob der Push/Deploy live gegangen ist oder sonst irgendwas dazu nachgeprüft werden. `tsc` + `lint` grün (+ `npm run build` wo praktikabel) reichen als Gate; Punkt 5 ("Bei UI-/Admin-Aufgaben: Browser-Verifikation erfolgt") in der Done-Checkliste unten ist damit ausgesetzt. Der Rest der Sektion (Definition of Done Punkte 1–4/6, Regression-Sweep, Incident-Modus, Honest Reporting) bleibt unverändert gültig.
+
 Für jede Aufgabe, die UI, Routing, Rendering, Interaktionen, Filter, Search, Pagination, Tabs, Drawers, Modals, Charts, KPI-Panels oder sichtbare Daten im Admin betrifft, gilt:
 
 ### 1. Browser-Verifikation ist Pflicht
