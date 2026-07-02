@@ -22,14 +22,18 @@ import { DoctorTable } from "./doctor-table";
 import { RepinCustomButton } from "./repin-custom-button";
 
 /**
- * Pack Studio — Pack Doctor. Read-only scored grid of every active cash pack's
- * persisted risk profile (`pack_risk_scores`, ADMIN DB) joined to live pack
- * identity (MAIN, read-only). Shell-first: the hero + snapshot action + filter
- * bar paint immediately while the grid streams behind a `<Suspense>` boundary
- * keyed on the active filter set (see `loading.tsx` for the matching skeleton).
+ * Pack Studio — Pack Doctor. Scored grid of every active cash pack's persisted
+ * risk profile (`pack_risk_scores`, ADMIN DB) joined to live pack identity
+ * (MAIN, read-only) — PLUS the operator write tools that grew on top of the
+ * grid: "Snapshot now" (re-scores the fleet, ADMIN-DB upsert), the owner-only
+ * "Re-pin below-target packs" hero action, and the per-row re-tune drawer /
+ * bulk re-tune in `DoctorTable` (TOTP-gated MAIN writes via the retune
+ * actions). The GRID RENDER itself stays read-only; every write goes through
+ * its own confirm + TOTP + audit path.
  *
- * The per-pack re-tune / 2FA write flow is intentionally NOT here — this
- * milestone is the read-only grid plus the snapshot button only. No MAIN writes.
+ * Shell-first: the hero + actions + filter bar paint immediately while the
+ * grid streams behind a `<Suspense>` boundary keyed on the active filter set
+ * (see `loading.tsx` for the matching skeleton).
  */
 
 // The "Snapshot now" server action (POST handled by this route's function)

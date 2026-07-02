@@ -137,12 +137,14 @@ export function RetuneGuide() {
           <Step
             icon={KeyRound}
             tint="bg-blue-500/15 text-blue-600 dark:text-blue-400"
-            title="1 · Start review (2FA)"
+            title="1 · Start review"
           >
-            Enter your 2FA code once to authorize the session. This mints a
-            single token that authorizes every Approve below — it does not write
-            anything by itself. If it expires mid-review, you&apos;re asked to
-            re-confirm and the same Approve is retried.
+            Mints a single operator session token — no 2FA prompt on this flow
+            (the owner removed it; the operator, capability, and audit checks
+            on every write still hold, and other retune tools keep their TOTP
+            dialogs). The token authorizes every Approve below and writes
+            nothing by itself. If it expires mid-review, a fresh token is
+            minted silently and the same Approve is retried.
           </Step>
           <Step
             icon={ListChecks}

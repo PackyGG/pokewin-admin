@@ -1804,8 +1804,8 @@ function TargetPriceInput({
         )}
       </div>
       <span className="text-[10px] text-muted-foreground">
-        Solver anchors every pack on this price (still searches ±25% for a
-        clean snap; higher price = higher edge).
+        Solver anchors every pack on this price (still searches the shared
+        ±60% retune band for a clean snap; higher price = higher edge).
       </span>
     </div>
   );

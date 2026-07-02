@@ -40,11 +40,14 @@ export const maxDuration = 120;
  * (`planAllRetunes`, a READ-ONLY dry-run of every in-scope pack) stream behind a
  * `<Suspense>` boundary (see `loading.tsx` for the matching skeleton).
  *
- * NOTHING is persisted until the owner Approves a pack. The 2FA "Start review"
- * gate mints a single retune token (`authorizePackRetune`) that authorizes every
- * approve-write for the session; an expired token re-prompts inline. Each
- * Approve calls the existing paranoid `applyPackRetune` (re-shapes fresh +
- * writes server-side) — the only authoritative MAIN write path.
+ * NOTHING is persisted until the owner Approves a pack. The "Start review"
+ * gate mints a single retune token via `authorizePackRetuneForReview`
+ * (operator + capability check — NO TOTP; the owner removed the 2FA prompt
+ * from this flow, other retune entry points keep theirs) that authorizes
+ * every approve-write for the session; an expired token is re-minted
+ * silently and the same approve retried. Each Approve calls the existing
+ * paranoid `applyPackRetune` (re-shapes fresh + writes server-side) — the
+ * only authoritative MAIN write path.
  */
 
 async function ReviewLoader() {

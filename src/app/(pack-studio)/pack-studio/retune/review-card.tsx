@@ -716,18 +716,31 @@ export function ReviewCard({
           />
         </section>
 
-        {/* ── All card weight changes (no truncation) ────────────────── */}
+        {/* ── All card weight changes (no truncation) ──────────────────
+            HIDDEN while the inline pool editor is open: this panel describes
+            the AUTO-RETUNE PROPOSAL's weight moves, but an editor approve
+            writes the STAGED pool instead — showing the proposal diff next to
+            a different pending write read as "this is what will land". The
+            editor's live preview + the confirm gate's per-card diff are the
+            truthful surfaces for the staged pool. */}
         <section className="space-y-3">
           <SectionHeading
             icon={Layers}
             title={
               <span className="flex items-center gap-1.5">
                 Card weight changes
-                <InfoHint text="Every card's draw probability, before → after. The probability is the card's weight divided by the pool's total weight. Sorted by the biggest move. Rose = the change makes the player win more (worse for the house); emerald = better for the house." />
+                <InfoHint text="Every card's draw probability, before → after, for the AUTO-RETUNE proposal (the plain Approve). While the pool editor is open this list is hidden — an editor approve writes the staged pool, not this proposal. Rose = the change makes the player win more (worse for the house); emerald = better for the house." />
               </span>
             }
           />
-          {feasible && after != null ? (
+          {editing ? (
+            <p className="rounded-lg border border-dashed bg-muted/20 px-3 py-4 text-center text-xs text-muted-foreground">
+              Hidden while the pool editor is open — these are the auto-retune
+              proposal&apos;s moves, not your staged pool&apos;s. The editor
+              preview above and the confirm gate&apos;s card-level diff show
+              what an editor approve would actually write.
+            </p>
+          ) : feasible && after != null ? (
             <AllCardChanges
               cards={proposal.cards}
               weightDiff={weightDiff}
