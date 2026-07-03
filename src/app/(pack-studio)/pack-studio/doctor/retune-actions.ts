@@ -59,7 +59,11 @@ import {
   type ResolvedAutoTargetCfg,
 } from "@/app/(admin)/packs/_lib/risk-config";
 import { computePoolFingerprint } from "@/app/(admin)/packs/_lib/pool-fingerprint";
-import { buildRetuneSearchParams } from "@/app/(admin)/packs/_lib/retune-params";
+import {
+  buildRetuneSearchParams,
+  mapPinnedOddsToShares,
+  type RetunePinnedOdds,
+} from "@/app/(admin)/packs/_lib/retune-params";
 import { packRetunePlanTag } from "../_actions/retune-cache-tag";
 
 /**
@@ -819,6 +823,16 @@ export type StagedPoolInput = {
   cards: StagedPoolInputCard[];
   /** Optional new pack price (USD). When omitted, the price is left unchanged. */
   price?: number;
+  /**
+   * Owner-pinned EXACT per-card odds (Retune V2 pins) — the typed percent per
+   * pinned card, held verbatim through the server solve (plan AND write run
+   * the same shared `resolveAndShapeStagedPool` pass, so preview ≡ write
+   * includes the pins). Every pinned cardId MUST be one of `cards` (validated
+   * fail-closed); feasibility (cap-dropped pin, tag/EV overshoot, edge band)
+   * is judged by the solver and surfaces as the `pins-infeasible` limit.
+   * Omitted / empty ⇒ legacy behavior, byte-identical.
+   */
+  pinnedOdds?: RetunePinnedOdds[];
 };
 
 export type ApplyStagedRetuneResult = {
@@ -1002,6 +1016,35 @@ async function resolveAndShapeStagedPool(
   if (priceProvided && (!Number.isFinite(input.price) || input.price! <= 0)) {
     throw new Error("Refused: price must be greater than 0.");
   }
+  // Owner pins (Retune V2) — STRUCTURAL validation only, fail-closed like the
+  // staged-input checks above (malformed pins = a client construction bug →
+  // throw). Whether the pinned VALUES are feasible is the SOLVER's verdict
+  // and comes back as data (`pins-infeasible` limit), never a throw — the
+  // dry-run renders it, the write refuses with the same message.
+  const pinnedOdds =
+    Array.isArray(input.pinnedOdds) && input.pinnedOdds.length > 0
+      ? input.pinnedOdds
+      : null;
+  if (pinnedOdds !== null) {
+    const pinSeen = new Set<string>();
+    for (const p of pinnedOdds) {
+      if (!isUuid(p.cardId)) {
+        throw new Error("Refused: a pinned card id is invalid.");
+      }
+      if (!seen.has(p.cardId)) {
+        throw new Error("Refused: a pinned card is not in the staged pool.");
+      }
+      if (pinSeen.has(p.cardId)) {
+        throw new Error("Refused: a card carries two pinned values.");
+      }
+      pinSeen.add(p.cardId);
+      if (!Number.isFinite(p.pct) || !(p.pct > 0) || p.pct > 100) {
+        throw new Error(
+          "Refused: a pinned chance must be a number above 0% and at most 100%.",
+        );
+      }
+    }
+  }
 
   const db = await getDb();
 
@@ -1180,9 +1223,12 @@ async function resolveAndShapeStagedPool(
     };
   }
 
-  // The staged value vector in input ORDER. The shaper picks one weight per slot.
+  // The staged value vector in input ORDER (cardId rides along so the shared
+  // builder can resolve owner pins to indices). The shaper picks one weight
+  // per slot.
   const stagedValues = input.cards.map((c) => ({
     value: cardMetaById.get(c.cardId)!.value,
+    cardId: c.cardId,
   }));
 
   // CURRENT weights aligned to the staged card ORDER — the anti-inflation anchor
@@ -1245,6 +1291,9 @@ async function resolveAndShapeStagedPool(
         // may never let a win/grail card exceed its CURRENT (live-pool) odds.
         currentWeights: stagedCurrentWeights,
         intendedHitRate,
+        // Owner pins — held EXACT at every candidate price; plan and write
+        // thread them through this SAME builder (preview ≡ write incl. pins).
+        ...(pinnedOdds !== null ? { pinnedOdds } : {}),
       }),
     );
     shaped = search.bestResult;
@@ -1277,6 +1326,11 @@ async function resolveAndShapeStagedPool(
       // Anti-inflation anchor (no win/grail card's odds exceed its current odds).
       currentWeights: stagedCurrentWeights,
       ...(taggedHere ? { winRateIsHard: true } : {}),
+      // Owner pins — the SAME index mapping the shared builder uses, so the
+      // pinned-price plan and this write solve one identical problem.
+      ...(pinnedOdds !== null
+        ? { pinnedShares: mapPinnedOddsToShares(stagedValues, pinnedOdds) }
+        : {}),
     });
   }
 
@@ -1596,6 +1650,10 @@ export async function applyStagedPackEditAndRetune(
       price_before: priceBefore,
       price_after: priceAfter,
       price_changed: priceAfter !== priceBefore,
+      // Owner pins this write held exact (Retune V2) — absent on pin-less writes.
+      ...(input.pinnedOdds !== undefined && input.pinnedOdds.length > 0
+        ? { pinned_odds: input.pinnedOdds }
+        : {}),
       target: {
         targetEdge: r.resolved.targetEdge,
         targetWinRate: r.resolved.targetWinRate,
@@ -1707,6 +1765,16 @@ export type PackTuneStagedInput = {
   price?: number;
   /** Escape hatch: solve odds-only AT the staged price (no price search). */
   pinPrice?: boolean;
+  /**
+   * Owner-pinned EXACT per-card odds ({cardId, typed percent}) — held
+   * verbatim through the solve (and through the snap: pins are exempt from
+   * ladder membership). The write receives the SAME pins via
+   * `StagedPoolInput.pinnedOdds` and both run the shared
+   * `resolveAndShapeStagedPool` pass, so preview ≡ write includes the pins.
+   * A pin the pool can't honour comes back as `limit.kind =
+   * "pins-infeasible"` with a computed suggestion — data, never a throw.
+   */
+  pinnedOdds?: RetunePinnedOdds[];
 };
 
 export type PackTunePlan = {
@@ -1769,6 +1837,14 @@ export type PackTunePlan = {
   taggedAccuracyHit: boolean | null;
   searchMeta: { candidates: number; fellBackToBase: boolean } | null;
   /**
+   * The owner pins this plan was solved WITH, echoed verbatim (staged arm
+   * only — the live arm never carries pins). Part of the frozen artifact:
+   * the client threads the SAME pins into the write, and the plan payload
+   * carrying them makes the artifact self-describing for the parity harness
+   * and the F9 "Copy details" dump. `null` = no pins.
+   */
+  pinnedOdds: RetunePinnedOdds[] | null;
+  /**
    * The guidance verdict (ruleset §2) — populated for TAGGED packs when the
    * plan is infeasible, off-tag, or dirty-odds: the LAW-1 feasibility
    * interval + a RANKED list of typed, engine-proven suggestions
@@ -1808,12 +1884,13 @@ export async function planPackTune(
   // every write site revalidates `packRetunePlanTag(id)`, so approving one
   // pack re-plans ONE pack. (The wrapper is created per call so the tag can
   // carry the dynamic packId; `unstable_cache` still dedupes by keyParts.)
-  // v2: the plan shape gained `guidance` (+ tagged targets/seeds changed) —
-  // key bumped so persisted v1 entries (the data cache survives deploys)
-  // can never surface a shape-mismatched plan.
+  // v2: the plan shape gained `guidance` (+ tagged targets/seeds changed).
+  // v3: the plan shape gained `pinnedOdds` — key bumped so persisted older
+  // entries (the data cache survives deploys) can never surface a
+  // shape-mismatched plan.
   return unstable_cache(
     () => planPackTuneLiveUncached(packId),
-    ["pack-studio.retune.plan-pack.v2", packId],
+    ["pack-studio.retune.plan-pack.v3", packId],
     { revalidate: 60, tags: [packRetunePlanTag(packId)] },
   )();
 }
@@ -1830,6 +1907,12 @@ function projectPlannedVector(
   weights: number[],
   livePctByCardId: Map<string, number>,
   tagged: boolean,
+  /**
+   * Owner-pinned cardIds — EXEMPT from the off-ladder flag: a pin is an
+   * owner-chosen number, not a dirty residual (its row renders a pin chip,
+   * never the amber dot, and it must not count toward the dirty-odds banner).
+   */
+  pinnedCardIds?: ReadonlySet<string>,
 ): {
   planned: PackTunePlan["planned"];
   offLadderCards: string[];
@@ -1848,7 +1931,12 @@ function projectPlannedVector(
   });
   const cleanPct = tagged ? isOnPer100kGridPct : isOnCleanLadderPct;
   const offLadderCards = planned
-    .filter((row) => row.pct > 0 && !cleanPct(row.pct))
+    .filter(
+      (row) =>
+        row.pct > 0 &&
+        !cleanPct(row.pct) &&
+        !(pinnedCardIds?.has(row.cardId) ?? false),
+    )
     .map((row) => row.cardId);
   return { planned, offLadderCards };
 }
@@ -1966,6 +2054,9 @@ async function planPackTuneLiveUncached(
     tagContradiction: null,
     intendedHitRate: autoTargets.intendedHitRate,
     targets,
+    // The live arm never carries owner pins (pins are staged edits by
+    // construction — any pin flips the workspace to the staged arm).
+    pinnedOdds: null,
   };
 
   if (cards.length === 0) {
@@ -2151,6 +2242,10 @@ async function planPackTuneStagedUncached(
   const input: StagedPoolInput = {
     cards: staged.cards.map((c) => ({ cardId: c.cardId, order: c.order })),
     ...(staged.price !== undefined ? { price: staged.price } : {}),
+    // Owner pins ride the SAME resolver input shape the write receives.
+    ...(staged.pinnedOdds !== undefined && staged.pinnedOdds.length > 0
+      ? { pinnedOdds: staged.pinnedOdds }
+      : {}),
   };
   const r = await resolveAndShapeStagedPool(packId, input, {
     // Price search is ALWAYS ON (owner directive: price is a free lever);
@@ -2179,6 +2274,10 @@ async function planPackTuneStagedUncached(
         outcome.weights,
         livePcts,
         taggedStaged,
+        // Pinned rows are exempt from the off-ladder flag (owner numbers).
+        input.pinnedOdds !== undefined
+          ? new Set(input.pinnedOdds.map((p) => p.cardId))
+          : undefined,
       )
     : { planned: [], offLadderCards: [] };
 
@@ -2289,6 +2388,8 @@ async function planPackTuneStagedUncached(
           fellBackToBase: r.priceSearch.fellBackToBase,
         }
       : null,
+    // Echo the pins the solve ran WITH (frozen-artifact self-description).
+    pinnedOdds: input.pinnedOdds ?? null,
     guidance,
   };
 }

@@ -35,14 +35,28 @@ import {
   searchBestPriceForCleanSnap,
   RETUNE_MAX_PRICE_CHANGE_PCT,
   TAGGED_WINRATE_TOLERANCE,
+  type ShapeWeightsPinnedShare,
 } from "../../insights/edge-calc/risk";
 
 /** Which solve arm the params are for (anchor semantics live at the caller). */
 export type RetuneArm = "live" | "staged";
 
+/**
+ * One owner-pinned card odds (Retune V2 pins): the typed PERCENT the plan —
+ * and therefore the write — must hold this card at EXACTLY. Serializable
+ * (rides `PackTuneStagedInput`, the staged sessionStorage payload and the
+ * frozen push artifact verbatim).
+ */
+export type RetunePinnedOdds = { cardId: string; pct: number };
+
 export type RetuneSearchInputs = {
-  /** Pool card values — solve order = pool order (live) / staged order (staged). */
-  cards: { value: number }[];
+  /**
+   * Pool card values — solve order = pool order (live) / staged order
+   * (staged). `cardId` is OPTIONAL (legacy callers pass values only) but
+   * REQUIRED on every card whenever `pinnedOdds` is non-empty — the builder
+   * resolves each pin to its card index by id.
+   */
+  cards: { value: number; cardId?: string }[];
   /** Live price (live arm) / staged price (staged arm). */
   basePrice: number;
   targetEdge: number;
@@ -57,7 +71,45 @@ export type RetuneSearchInputs = {
   currentWeights: number[];
   /** `resolveIntendedHitRate(name, tags)` — null for an untagged pack. */
   intendedHitRate: number | null;
+  /**
+   * Owner-pinned EXACT per-card odds. The caller (action) validates the pins
+   * STRUCTURALLY against its pool (real cards, no dupes, pct > 0) BEFORE the
+   * builder; feasibility (cap-dropped pin, tag/EV overshoot, edge band) is
+   * judged by the solver and comes back as the `pins-infeasible` limit —
+   * data, never a throw. Omit / empty ⇒ legacy params, byte-identical.
+   */
+  pinnedOdds?: RetunePinnedOdds[];
 };
+
+/**
+ * Map owner pins ({cardId, pct} — percent) onto solver pin shares
+ * ({index, share} — fraction), resolved against the SAME `cards` array the
+ * solve receives and sorted by index so plan and write emit an identical
+ * vector (the parity harness deep-equals it). Throws on an unmatched cardId —
+ * the calling action validates pins against its pool FIRST, so a throw here
+ * is an invariant violation (a plan/write construction bug), never
+ * user-reachable input.
+ */
+export function mapPinnedOddsToShares(
+  cards: { value: number; cardId?: string }[],
+  pinnedOdds: RetunePinnedOdds[],
+): ShapeWeightsPinnedShare[] {
+  const idxByCardId = new Map<string, number>();
+  cards.forEach((c, i) => {
+    if (c.cardId !== undefined) idxByCardId.set(c.cardId, i);
+  });
+  return pinnedOdds
+    .map((p) => {
+      const index = idxByCardId.get(p.cardId);
+      if (index === undefined) {
+        throw new Error(
+          "Retune pin references a card that is not part of the solve pool — plan/write construction bug.",
+        );
+      }
+      return { index, share: p.pct / 100 };
+    })
+    .sort((a, b) => a.index - b.index);
+}
 
 /**
  * Build the FULL `searchBestPriceForCleanSnap` argument object for a retune
@@ -74,6 +126,14 @@ export function buildRetuneSearchParams(
   const tagged =
     i.intendedHitRate !== null &&
     Math.abs(i.intendedHitRate - i.targetWinRate) < 1e-9;
+  // Owner pins ride the SAME shared constructor as everything else, so the
+  // pinned solve the operator previews is byte-identically the pinned solve
+  // the write re-runs (preview ≡ write including pins). Key ABSENT when no
+  // pins exist — legacy callers' param objects stay byte-identical.
+  const pinnedShares =
+    i.pinnedOdds !== undefined && i.pinnedOdds.length > 0
+      ? mapPinnedOddsToShares(i.cards, i.pinnedOdds)
+      : null;
   return {
     cards: i.cards,
     basePrice: i.basePrice,
@@ -94,5 +154,6 @@ export function buildRetuneSearchParams(
     upwardPriceExtensionPct: 0,
     // Tagged win-rate accuracy scoring (0.01pp) — see the gate above.
     ...(tagged ? { taggedWinRate: i.targetWinRate } : {}),
+    ...(pinnedShares !== null ? { pinnedShares } : {}),
   };
 }
