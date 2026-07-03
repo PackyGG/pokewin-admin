@@ -1796,6 +1796,9 @@ model pack_state_snapshots {
   note        String?
 
   @@index([pack_id, captured_at(sort: Desc)], map: "pack_state_snapshots_pack_captured_idx")
+  // Serves the persistent "Tuned: X / N" workspace counter — a distinct
+  // pack_id count filtered by action IN ('edit','retune') (getTunedPackCount).
+  @@index([action, pack_id], map: "pack_state_snapshots_action_pack_idx")
 }
 
 // ─── Pack Studio — Retune / Edit / Reprice DRAFTS (staging layer) ─────────

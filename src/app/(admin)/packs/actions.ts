@@ -2164,6 +2164,9 @@ export async function applyPackRetune(
   // this retune instead of a 60s-stale solve. Per-pack: ONLY this pack's plan
   // is busted (never the other 182).
   revalidateTag(packRetunePlanTag(packId));
+  // The persistent "Tuned: X / N" workspace counter reads the distinct
+  // edit/retune snapshot count — this retune just captured one, so bust it.
+  revalidateTag("pack-studio-tuned-count");
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
 

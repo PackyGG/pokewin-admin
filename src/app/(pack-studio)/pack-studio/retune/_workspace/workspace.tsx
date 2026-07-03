@@ -141,11 +141,20 @@ function priceInputText(n: number): string {
 export function RetuneWorkspace({
   rows,
   railError,
+  tunedCount,
   initialPackId,
   initialBulk,
 }: {
   rows: RetuneRailRow[];
   railError: string | null;
+  /**
+   * Persistent, server-derived count of DISTINCT packs that have a workspace
+   * push recorded (edit/retune snapshots) — survives sessions/browsers. Drives
+   * the "Tuned: X / N · M remaining" KPI. Packs pushed THIS session that the
+   * server count hasn't picked up yet (pre-`router.refresh`) are unioned in
+   * client-side so the tile can never read lower than reality.
+   */
+  tunedCount: number;
   /** `?pack=<id>` deep link (selected + scrolled into view on mount). */
   initialPackId: string | null;
   /** `?bulk=<id,id,…>` or `?bulk=session` (sessionStorage handoff). */
@@ -1373,7 +1382,17 @@ export function RetuneWorkspace({
 
   return (
     <div className="space-y-4">
-      <PortfolioStrip rows={patchedRows} pushedCount={pushedByPack.size} />
+      <PortfolioStrip
+        rows={patchedRows}
+        pushedThisSession={pushedByPack.size}
+        serverTunedCount={tunedCount}
+        // Packs pushed THIS session may not yet be in the server count (it is
+        // 60s-cached + re-read on the debounced refresh) — union their ids in so
+        // the counter never under-reports. The rail row set defines the fleet
+        // size (183 active/priced packs); a pushed id outside it still counts as
+        // tuned but is clamped so "remaining" never goes negative.
+        sessionPushedIds={pushedIds}
+      />
 
       <BulkBar
         checkedIds={orderedChecked}

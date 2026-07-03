@@ -744,6 +744,9 @@ export async function applyPackEdit(
   // this edit instead of a 60s-stale solve. Per-pack: ONLY this pack's plan
   // is busted (never the other 182).
   revalidateTag(packRetunePlanTag(packId));
+  // The persistent "Tuned: X / N" counter reads the distinct edit/retune
+  // snapshot count — this edit just captured one, so bust its 60s cache.
+  revalidateTag("pack-studio-tuned-count");
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
 
@@ -1777,6 +1780,9 @@ export async function applyStagedPackEditAndRetune(
   // this auto-tune instead of a 60s-stale solve. Per-pack: ONLY this pack's
   // plan is busted (never the other 182).
   revalidateTag(packRetunePlanTag(packId));
+  // The persistent "Tuned: X / N" counter reads the distinct edit/retune
+  // snapshot count — this write just captured one, so bust its 60s cache.
+  revalidateTag("pack-studio-tuned-count");
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
 

@@ -10,6 +10,7 @@ import { getDefaultRouteForRoles } from "@/lib/admin-roles";
 import { getUserPermissions, sessionRoles } from "@/lib/dal";
 
 import { getRetuneRailRows } from "./_queries/rail";
+import { getTunedPackCount } from "./_queries/tuned-count";
 import { RetuneWorkspace } from "./_workspace/workspace";
 import { WorkspaceSkeleton } from "./loading";
 
@@ -35,7 +36,12 @@ async function RailLoader({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
-  const { rows, error } = await getRetuneRailRows();
+  // Both cheap ADMIN reads run in parallel: the rail seed (risk snapshot) and
+  // the persistent distinct-tuned-pack count.
+  const [{ rows, error }, tunedCount] = await Promise.all([
+    getRetuneRailRows(),
+    getTunedPackCount(),
+  ]);
   const pack = typeof sp.pack === "string" ? sp.pack : null;
   const bulk = typeof sp.bulk === "string" ? sp.bulk : null;
   return (
@@ -43,6 +49,7 @@ async function RailLoader({
       <RetuneWorkspace
         rows={rows}
         railError={error}
+        tunedCount={tunedCount}
         initialPackId={pack}
         initialBulk={bulk}
       />
