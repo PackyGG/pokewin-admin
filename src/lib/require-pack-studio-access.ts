@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { redirect } from "next/navigation";
 
 import {
@@ -61,22 +62,33 @@ async function loadUserAccessFailClosed(): Promise<PackStudioUserAccess> {
   }
 }
 
-async function resolveLiveSession(): Promise<{
-  session: SessionPayload;
-  username: string | null;
-  active: boolean;
-}> {
-  const session = await verifySession();
-  const user = await adminDb.admin_users.findUnique({
-    where: { id: session.userId },
-    select: { username: true, is_active: true },
-  });
-  return {
-    session,
-    username: user?.username ?? null,
-    active: user?.is_active === true,
-  };
-}
+/**
+ * `React.cache`-wrapped (PERF, R3): a single request can hit this up to 3×
+ * (page gate → `requirePackStudioAccess` inside a data helper →
+ * `requireRetuneOwner`), and each call was paying its own DB-fresh username
+ * read. The request-scoped memo collapses those onto ONE read;
+ * `verifySession` inside is already React-cached the same way. Server
+ * actions run as their own request, so every action still re-verifies
+ * against the DB — no cross-request staleness is introduced.
+ */
+const resolveLiveSession = cache(
+  async (): Promise<{
+    session: SessionPayload;
+    username: string | null;
+    active: boolean;
+  }> => {
+    const session = await verifySession();
+    const user = await adminDb.admin_users.findUnique({
+      where: { id: session.userId },
+      select: { username: true, is_active: true },
+    });
+    return {
+      session,
+      username: user?.username ?? null,
+      active: user?.is_active === true,
+    };
+  },
+);
 
 async function isPackStudioAllowed(
   session: SessionPayload,

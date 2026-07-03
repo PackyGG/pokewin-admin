@@ -204,33 +204,57 @@ export default async function PackStudioLayout({
 }) {
   const session = await safeVerifySession();
 
+  // PERF (R3): every remaining layout read is STARTED here, in ONE parallel
+  // wave immediately after the session resolves — previously the access-gate
+  // pair and the shell reads ran as two further serial admin-DB waves (4
+  // round-trip waves total before any pixel). Kicking all of them off
+  // together collapses that to session → one parallel wave. All of these
+  // loaders resolve (never reject): each catches non-control-flow errors
+  // internally and returns a safe fallback, so leaving them in flight on the
+  // deny/redirect path below cannot produce an unhandled rejection.
+  const studioAccessSettingsP = loadPackStudioAccessSettings();
+  const studioUserAccessP = loadPackStudioUserAccess();
+  const allowedPagesP = loadUserPermissions(session.userId);
+  const profileP = loadHeaderProfile(session.userId);
+  const preferencesP = loadPreferences(session.userId);
+  const dbEnvP = readDbEnvFromCookie();
+  const tzCookieP = readTzCookie();
+  // Open dock keys from the `admin_rail` cookie — seeds the rail so SSR +
+  // first client paint match the admin's saved layout (no open/close
+  // flip). Shared 1:1 with the main (admin) shell.
+  const railOpenOrderP = readRailOpenOrder();
+
   // Studio access gate (security-sensitive): an owner OR a per-role toggle
   // (ADMIN DB, default OFF) enabled for one of the viewer's effective roles —
   // see `canAccessPackStudio`. With the toggle off ONLY owners reach the
   // Studio; everyone else (incl. non-owner admins) is bounced to their normal
   // landing route. We resolve the redirect the same way the DAL does so a
   // non-eligible user lands somewhere they can actually use.
+  //
+  // SECURITY: the gate awaits ONLY its own dependencies (session + settings +
+  // user overrides) and is still decided BEFORE any JSX is returned — the
+  // other reads merely run concurrently; nothing renders and nothing is sent
+  // to the client until this check passes. On denial the in-flight reads are
+  // discarded (they are the viewer's OWN profile/prefs/permission rows — the
+  // same rows the main (admin) shell reads for them anyway).
   const roles = sessionRoles(session);
   const [studioAccessSettings, studioUserAccess] = await Promise.all([
-    loadPackStudioAccessSettings(),
-    loadPackStudioUserAccess(),
+    studioAccessSettingsP,
+    studioUserAccessP,
   ]);
   if (!canAccessPackStudio(session, studioAccessSettings, studioUserAccess)) {
-    const allowedPages = await loadUserPermissions(session.userId);
+    const allowedPages = await allowedPagesP;
     redirect(getDefaultRouteForRoles(roles, allowedPages));
   }
 
   const [allowedPages, profile, preferences, dbEnv, tzCookie, railOpenOrder] =
     await Promise.all([
-      loadUserPermissions(session.userId),
-      loadHeaderProfile(session.userId),
-      loadPreferences(session.userId),
-      readDbEnvFromCookie(),
-      readTzCookie(),
-      // Open dock keys from the `admin_rail` cookie — seeds the rail so SSR +
-      // first client paint match the admin's saved layout (no open/close
-      // flip). Shared 1:1 with the main (admin) shell.
-      readRailOpenOrder(),
+      allowedPagesP,
+      profileP,
+      preferencesP,
+      dbEnvP,
+      tzCookieP,
+      railOpenOrderP,
     ]);
 
   const canSwitchDbEnv = session.role === "admin" && isDevDbConfigured();

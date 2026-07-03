@@ -65,59 +65,94 @@ export const verifySession = cache(async (): Promise<SessionPayload> => {
   // — relying on the JWT alone would let a demoted admin keep full access
   // until their session expires (up to 12h).
   //
-  // This runs in the ROOT LAYOUT on every request, so it must NEVER throw
-  // because the additive `roles` column hasn't been migrated yet. The
-  // resilient read degrades to `roles: []` when the column is missing,
-  // which `getEffectiveRoles` collapses to the legacy `[role]` — identical
-  // behaviour to before multi-role shipped.
-  const adminUser = await readAdminUserWithRoles(
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id: session.userId },
-        select: { is_active: true, role: true, roles: true },
-      }),
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id: session.userId },
-        select: { is_active: true, role: true },
-      }),
-  );
-  if (!adminUser?.is_active) {
-    redirect("/login");
-  }
-
-  // ── Phase D safety guards (session revocation + mandatory 2FA) ──────────────
-  // Read the two guard columns SEPARATELY from the role read above so a
-  // missing column can't perturb the (already battle-tested) role/active path.
-  // Both columns exist on prod, but if either is absent on some DB the read
-  // degrades to the SAFE no-op (no revocation, treat 2FA as satisfied) so the
-  // gate can NEVER lock out a normal enrolled admin because of a schema gap.
-  // This runs in the root layout on every request — it must not throw on the
-  // happy path.
+  // PERF (R3): this runs in the ROOT LAYOUTS on every request, so the
+  // role/active columns AND the Phase-D guard columns (sessions_valid_after /
+  // totp_enabled / is_owner) are read in ONE findUnique on the happy path —
+  // the previous two serial reads cost a full extra admin-DB round-trip per
+  // page load. The resilience contract is unchanged: if ANY of the additive
+  // columns is missing (P2022 — e.g. `roles` or a guard column not migrated
+  // on some DB), we fall back to the EXACT legacy two-step read below, which
+  // degrades each column independently (`roles` → `[]` → legacy `[role]`;
+  // guard columns → safe no-op defaults). A transient non-schema fault
+  // re-throws, exactly like the old role read did (the layouts' JWT
+  // fallback catches it), so no failure mode is widened.
+  let adminUser: {
+    is_active: boolean;
+    role: string;
+    roles?: readonly string[] | null;
+  } | null = null;
   let sessionsValidAfter: Date | null = null;
   let totpEnabled = true; // safe default: never bounce on a read failure
   // OWNER / ULTRA-ADMIN flag, read DB-fresh (NOT from the JWT) so a promote /
   // demote takes effect on the very next request — exactly like the role
-  // re-read below. Defaults to false (fail-closed): a missing `is_owner` column
+  // re-read. Defaults to false (fail-closed): a missing `is_owner` column
   // (could ship ahead of code on some deploy) or any read failure degrades to
   // non-owner here, and the permanent `motha` bypass is applied separately on
   // the username (DB-independent) so the root owner can never be locked out.
   let isOwnerFlag = false;
   try {
-    const guardRow = await adminDb.admin_users.findUnique({
+    const row = await adminDb.admin_users.findUnique({
       where: { id: session.userId },
-      select: { sessions_valid_after: true, totp_enabled: true, is_owner: true },
+      select: {
+        is_active: true,
+        role: true,
+        roles: true,
+        sessions_valid_after: true,
+        totp_enabled: true,
+        is_owner: true,
+      },
     });
-    sessionsValidAfter = guardRow?.sessions_valid_after ?? null;
-    totpEnabled = guardRow?.totp_enabled ?? true;
-    isOwnerFlag = guardRow?.is_owner ?? false;
+    adminUser = row;
+    sessionsValidAfter = row?.sessions_valid_after ?? null;
+    totpEnabled = row?.totp_enabled ?? true;
+    isOwnerFlag = row?.is_owner ?? false;
   } catch (err) {
-    // P2022 (column missing) → degrade to the no-op defaults above. Any OTHER
-    // error is also swallowed to the safe defaults: the role/active checks
-    // already passed, so a transient blip here must not white-screen the shell.
-    if (!isMissingColumnError(err)) {
-      console.error("[dal] verifySession guard-column read failed:", err);
+    if (!isMissingColumnError(err)) throw err;
+
+    // ── Legacy fallback (some additive column not migrated on this DB) ──────
+    // Byte-equivalent to the pre-merge behaviour: the resilient role read
+    // degrades a missing `roles` column to `roles: []` (which
+    // `getEffectiveRoles` collapses to the legacy `[role]`), and the guard
+    // columns are read SEPARATELY so a missing guard column can't perturb the
+    // battle-tested role/active path.
+    adminUser = await readAdminUserWithRoles(
+      () =>
+        adminDb.admin_users.findUnique({
+          where: { id: session.userId },
+          select: { is_active: true, role: true, roles: true },
+        }),
+      () =>
+        adminDb.admin_users.findUnique({
+          where: { id: session.userId },
+          select: { is_active: true, role: true },
+        }),
+    );
+
+    // ── Phase D safety guards (session revocation + mandatory 2FA) ──────────
+    // If either guard column is absent the read degrades to the SAFE no-op
+    // (no revocation, treat 2FA as satisfied) so the gate can NEVER lock out
+    // a normal enrolled admin because of a schema gap. It must not throw on
+    // this path.
+    try {
+      const guardRow = await adminDb.admin_users.findUnique({
+        where: { id: session.userId },
+        select: { sessions_valid_after: true, totp_enabled: true, is_owner: true },
+      });
+      sessionsValidAfter = guardRow?.sessions_valid_after ?? null;
+      totpEnabled = guardRow?.totp_enabled ?? true;
+      isOwnerFlag = guardRow?.is_owner ?? false;
+    } catch (guardErr) {
+      // P2022 (column missing) → degrade to the no-op defaults above. Any
+      // OTHER error is also swallowed to the safe defaults: the role/active
+      // read already succeeded, so a blip here must not white-screen the shell.
+      if (!isMissingColumnError(guardErr)) {
+        console.error("[dal] verifySession guard-column read failed:", guardErr);
+      }
     }
+  }
+
+  if (!adminUser?.is_active) {
+    redirect("/login");
   }
 
   // Guard 3 — real session revocation. If the account has a watermark and this
