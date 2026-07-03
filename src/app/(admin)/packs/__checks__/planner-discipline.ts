@@ -32,6 +32,8 @@ import {
 import {
   ladderShape,
   LADDER_DEGENERATE_THRESHOLD,
+  buildWidePriceProbeSuggestion,
+  type ProbeOutcome,
 } from "../../insights/edge-calc/tag-guidance";
 import {
   packRiskBand,
@@ -322,6 +324,125 @@ check("risk band: NaN/degenerate CV is exit-safe (never a false badge)", () => {
   const noLive = packRiskBand({ tag: 0.05, price: 20, liveCv: 0 });
   assert(Number.isFinite(noLive.lo) && Number.isFinite(noLive.hi), "band stays finite with no live CV");
   assert(!noLive.widenedToLive, "no live CV → not widened");
+});
+
+// ── 7. Wide-price probe suggestion (owner-lens §1.4) ────────────────────
+const CLEAN: ProbeOutcome = {
+  feasible: true,
+  price: 100,
+  allNice: true,
+  snapped: true,
+  taggedAccuracyHit: true,
+  shapeDegenerate: false,
+};
+
+check("wide probe: infeasible default → feasible wide emits a beyond-budget price-move", () => {
+  const def: ProbeOutcome = {
+    feasible: false,
+    price: 100,
+    allNice: null,
+    snapped: null,
+    taggedAccuracyHit: null,
+    shapeDegenerate: null,
+  };
+  const wide: ProbeOutcome = { ...CLEAN, price: 159.5 };
+  const s = buildWidePriceProbeSuggestion({
+    livePrice: 100,
+    tagged: true,
+    tag: 0.1,
+    def,
+    wide,
+    wideEdge: 0.11,
+    wideWinRate: 0.1,
+  });
+  assert(s !== null, "infeasible→feasible is a rung crossing → suggestion emitted");
+  assert(s!.kind === "price-move", "the suggestion is a price-move");
+  assert(s!.params.price === 159.5, "carries the exact far price");
+  assert(s!.params.beyondBudget === 1, "flagged beyond-budget");
+  assert(Math.abs(Number(s!.params.deltaPct) - 59.5) < 0.05, "signed delta +59.5%");
+  assert(s!.proof.solverVerified === true, "the probe is a full solve (solver-verified)");
+  assert(/outside the ±10% budget/.test(s!.humanCopy), "copy names the budget");
+});
+
+check("wide probe: a COUNT-only improvement does NOT qualify (Bidoof class)", () => {
+  // Default is feasible+snapped but off-nice; wide is ALSO off-nice (fewer
+  // off-nice cards is a count gain, not a rung crossing).
+  const def: ProbeOutcome = { ...CLEAN, allNice: false };
+  const wide: ProbeOutcome = { ...CLEAN, price: 59, allNice: false };
+  const s = buildWidePriceProbeSuggestion({
+    livePrice: 100,
+    tagged: true,
+    tag: 0.01,
+    def,
+    wide,
+    wideEdge: 0.11,
+    wideWinRate: 0.01,
+  });
+  assert(s === null, "off-nice → off-nice is a count gain, not a crossing → no suggestion");
+});
+
+check("wide probe: an already-clean default yields no suggestion", () => {
+  const s = buildWidePriceProbeSuggestion({
+    livePrice: 100,
+    tagged: true,
+    tag: 0.1,
+    def: CLEAN,
+    wide: { ...CLEAN, price: 60 },
+    wideEdge: 0.11,
+    wideWinRate: 0.1,
+  });
+  assert(s === null, "no rung to cross when the default is already clean");
+});
+
+check("wide probe: off-nice→all-nice crossing (tagged) emits; snapped→snapped alone does not", () => {
+  // Rung 4: tagged off-nice → all-nice.
+  const niceCross = buildWidePriceProbeSuggestion({
+    livePrice: 100,
+    tagged: true,
+    tag: 0.1,
+    def: { ...CLEAN, allNice: false },
+    wide: { ...CLEAN, price: 40, allNice: true },
+    wideEdge: 0.11,
+    wideWinRate: 0.1,
+  });
+  assert(niceCross !== null, "off-nice→all-nice is a crossing");
+  assert(/round number/.test(niceCross!.humanCopy), "copy names the all-nice benefit");
+  // An infeasible wide can never be a suggestion.
+  const wideInfeasible = buildWidePriceProbeSuggestion({
+    livePrice: 100,
+    tagged: false,
+    tag: 0.2,
+    def: { feasible: false, price: 100, allNice: null, snapped: null, taggedAccuracyHit: null, shapeDegenerate: null },
+    wide: { feasible: false, price: 0, allNice: null, snapped: null, taggedAccuracyHit: null, shapeDegenerate: null },
+    wideEdge: 0,
+    wideWinRate: 0,
+  });
+  assert(wideInfeasible === null, "an infeasible wide probe never emits");
+});
+
+check("wide probe: untagged unsnapped→snapped and degenerate→healthy both cross", () => {
+  const snapCross = buildWidePriceProbeSuggestion({
+    livePrice: 100,
+    tagged: false,
+    tag: 0.2,
+    def: { feasible: true, price: 100, allNice: null, snapped: false, taggedAccuracyHit: null, shapeDegenerate: false },
+    wide: { feasible: true, price: 90, allNice: null, snapped: true, taggedAccuracyHit: null, shapeDegenerate: false },
+    wideEdge: 0.11,
+    wideWinRate: 0.2,
+  });
+  assert(snapCross !== null, "untagged unsnapped→snapped is a crossing");
+  assert(snapCross!.params.allNice === -1, "untagged allNice param is -1 (n/a)");
+  const shapeCross = buildWidePriceProbeSuggestion({
+    livePrice: 100,
+    tagged: false,
+    tag: 0.2,
+    def: { feasible: true, price: 100, allNice: null, snapped: true, taggedAccuracyHit: null, shapeDegenerate: true },
+    wide: { feasible: true, price: 70, allNice: null, snapped: true, taggedAccuracyHit: null, shapeDegenerate: false },
+    wideEdge: 0.11,
+    wideWinRate: 0.2,
+  });
+  assert(shapeCross !== null, "degenerate→healthy is a crossing");
+  assert(/ladder stays healthy/.test(shapeCross!.humanCopy), "copy names the shape benefit");
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────

@@ -1110,6 +1110,114 @@ export function ladderShape(
   };
 }
 
+// ── WIDE-PRICE PROBE SUGGESTION (owner-lens §1.4) ───────────────────────
+//
+// The DEFAULT plan is constrained to the ±10% price budget; the full ±60% band
+// survives ONLY as a bounded SUGGESTION probe. When the in-budget plan is not
+// materially clean (infeasible / off-tag / unsnapped / degenerate) AND a single
+// ±60% probe solve improves the highest differing rung of the quality ladder,
+// the planner appends ONE `price-move` suggestion carrying the exact far price —
+// ranked first, flagged `beyondBudget`, NEVER silently applied. Count-only
+// improvements (fewer off-nice cards, more snaps at the same rung) do NOT
+// qualify — only a rung CROSSING (infeasible→feasible, tag miss→hit, unsnapped→
+// snapped, off-nice→all-nice, degenerate→healthy) is "materially better".
+
+/** A minimal quality summary of a solve outcome — the probe compares two. */
+export type ProbeOutcome = {
+  /** Did the solve produce a vector at all? */
+  feasible: boolean;
+  /** The landed price (only meaningful when feasible). */
+  price: number;
+  /** Every non-exempt planned odds landed on the human-nice grid (tagged). */
+  allNice: boolean | null;
+  /** The clean-snap gate was satisfied. */
+  snapped: boolean | null;
+  /** Tagged strict-accuracy gate (null in untagged mode). */
+  taggedAccuracyHit: boolean | null;
+  /** The plan-vs-live shape guard verdict (null when infeasible / not scored). */
+  shapeDegenerate: boolean | null;
+};
+
+/**
+ * Decide whether the wide (±60%) probe is MATERIALLY BETTER than the default
+ * (±10%) plan, and if so build the ranked `price-move` suggestion (owner-lens
+ * §1.4). Pure — the caller runs the two solves and passes their summaries.
+ *
+ * Materially better ⟺ the wide result crosses the HIGHEST differing rung of:
+ *   1. infeasible → feasible
+ *   2. (tagged) tag miss → hit
+ *   3. unsnapped → snapped
+ *   4. (tagged) off-nice → all-nice
+ *   5. degenerate → healthy shape
+ * A count-only gain at an already-equal rung never qualifies (the Bidoof case:
+ * 1 off-nice → 2 off-nice is not a crossing).
+ *
+ * Returns `null` when the wide probe is infeasible, not better, or the plan is
+ * already clean (the caller gates on "default not materially clean" first — but
+ * this is defensive: an already-clean default yields no crossing here either).
+ */
+export function buildWidePriceProbeSuggestion(args: {
+  livePrice: number;
+  tagged: boolean;
+  tag: number;
+  def: ProbeOutcome;
+  wide: ProbeOutcome;
+  /** Wide solve's landed edge / win-rate (for the params payload). */
+  wideEdge: number;
+  wideWinRate: number;
+}): TuneSuggestion | null {
+  const { livePrice, tagged, tag, def, wide } = args;
+  if (!wide.feasible) return null;
+
+  // Rung crossings the wide probe achieves that the default did not.
+  const feasCross = !def.feasible && wide.feasible;
+  const tagCross =
+    tagged && def.taggedAccuracyHit === false && wide.taggedAccuracyHit === true;
+  const snapCross = def.snapped !== true && wide.snapped === true;
+  const niceCross = tagged && def.allNice === false && wide.allNice === true;
+  const shapeCross =
+    def.shapeDegenerate === true && wide.shapeDegenerate === false;
+
+  if (!(feasCross || tagCross || snapCross || niceCross || shapeCross)) {
+    return null;
+  }
+
+  const deltaPct = ((wide.price - livePrice) / livePrice) * 100;
+  const benefit = feasCross
+    ? "the plan becomes solvable"
+    : tagCross
+      ? "the tag lands exactly"
+      : niceCross
+        ? "every chance lands on a round number"
+        : snapCross
+          ? "every chance lands on a round number"
+          : "the ladder stays healthy";
+  const sign = deltaPct >= 0 ? "+" : "−";
+  const humanCopy = `Move the price to ${usd(wide.price)} (${sign}${Math.abs(deltaPct).toFixed(1)}%, outside the ±10% budget) — ${benefit}.`;
+
+  return {
+    kind: "price-move",
+    params: {
+      price: wide.price,
+      deltaPct: Math.round(deltaPct * 10) / 10,
+      beyondBudget: 1,
+      edge: args.wideEdge,
+      winRate: args.wideWinRate,
+      snapped: wide.snapped === true ? 1 : 0,
+      allNice: tagged ? (wide.allNice === true ? 1 : 0) : -1,
+      tag: tagged ? tag : -1,
+    },
+    humanCopy,
+    proof: {
+      // The probe IS a full engine solve — solver-verified is honest.
+      evMinAfter: wide.price * (1 - args.wideEdge),
+      evMaxAfter: wide.price * (1 - args.wideEdge),
+      feasibleAfter: true,
+      solverVerified: true,
+    },
+  };
+}
+
 export type UntaggedPlanGuidanceInput = {
   /** Pool card values, aligned with `currentWeights` / `plannedShares`. */
   cards: { value: number }[];

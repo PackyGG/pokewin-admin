@@ -28,6 +28,7 @@ import {
   isOnNiceGridPct,
   TAGGED_WINRATE_TOLERANCE,
   ONE_SIDED_EDGE_EXCESS_TOL,
+  RETUNE_MAX_PRICE_CHANGE_PCT,
   type PackRisk,
   type ShapeWeightsRelaxation,
   type ShapeWeightsLimit,
@@ -36,8 +37,10 @@ import {
   computeTagGuidance,
   computeUntaggedGuidance,
   ladderShape,
+  buildWidePriceProbeSuggestion,
   type TagGuidance,
   type LadderShape,
+  type TuneSuggestion,
 } from "@/app/(admin)/insights/edge-calc/tag-guidance";
 import {
   planPackReprice,
@@ -2074,6 +2077,44 @@ function projectPlannedVector(
   return { planned, offLadderCards };
 }
 
+/**
+ * §1.4 wide-probe: merge a beyond-budget `price-move` suggestion into a plan's
+ * guidance. When the plan already has guidance, prepend the suggestion (it is
+ * rank-0 by construction) unless an EQUAL price-move is already present (dedupe
+ * within 1¢ — the guidance's own price-move stays, the probe's is redundant).
+ * When guidance is null, wrap the suggestion in a passthrough `TagGuidance`
+ * with a `direction: "ok"` feasibility stub (the probe found a solvable far
+ * price; the default plan's own feasibility is carried elsewhere).
+ */
+function mergeWideProbeSuggestion(
+  guidance: TagGuidance | null,
+  suggestion: TuneSuggestion | null,
+): TagGuidance | null {
+  if (suggestion === null) return guidance;
+  if (guidance === null) {
+    return {
+      feasibility: {
+        evTarget: 0,
+        evMin: 0,
+        evMax: 0,
+        feasible: true,
+        saturated: false,
+        direction: "ok",
+        components: { winEvMin: 0, winEvMax: 0, nmMass: 0, dustMass: 0, capSum: 0 },
+      },
+      suggestions: [suggestion],
+    };
+  }
+  const probePrice = Number(suggestion.params.price);
+  const dupe = guidance.suggestions.some(
+    (s) =>
+      (s.kind === "price-move" || s.kind === "price-edge-exact") &&
+      Math.abs(Number(s.params.price) - probePrice) <= 0.01 + 1e-9,
+  );
+  if (dupe) return guidance;
+  return { ...guidance, suggestions: [suggestion, ...guidance.suggestions] };
+}
+
 /** Live-pool probabilities in percent, keyed by cardId (null-safe totals). */
 function livePctMap(
   pool: readonly { cardId: string; weight: number }[],
@@ -2295,6 +2336,110 @@ async function planPackTuneLiveUncached(
         })
       : null;
 
+  // ── §1.4 WIDE-PRICE PROBE ────────────────────────────────────────────────
+  // The DEFAULT plan is constrained to ±priceBudgetPct; the full ±60% band
+  // survives only as a bounded SUGGESTION. When the in-budget plan is NOT
+  // materially clean, run ONE ±60% probe solve — if it crosses a quality rung
+  // (infeasible→feasible / tag miss→hit / unsnapped→snapped / off-nice→
+  // all-nice / degenerate→healthy), emit a ranked, beyond-budget `price-move`
+  // suggestion carrying the exact far price (NEVER auto-applied). The live arm
+  // is cached 60s so probing on every not-clean state is cheap.
+  const defaultFeasible = !("error" in shaped);
+  // Default plan's shape (computed inline — the feasible-path `shape` var below
+  // is derived the same way; this keeps the probe self-contained).
+  let defaultShapeDegenerate: boolean | null = null;
+  if (defaultFeasible) {
+    const dt = shaped.weights.reduce(
+      (a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0),
+      0,
+    );
+    defaultShapeDegenerate =
+      dt > 0
+        ? ladderShape(
+            cards.map((c) => c.value),
+            cards.map((c) => (livePctMap(cards).get(c.cardId) ?? 0) / 100),
+            shaped.weights.map((w) =>
+              Number.isFinite(w) && w > 0 ? w / dt : 0,
+            ),
+            search.bestPrice,
+          ).degenerate
+        : null;
+  }
+  const defaultNotMateriallyClean = defaultFeasible
+    ? tagged
+      ? search.taggedAccuracyHit === false ||
+        shaped.snapped !== true ||
+        shaped.allNice === false ||
+        defaultShapeDegenerate === true
+      : shaped.snapped !== true || defaultShapeDegenerate === true
+    : true; // infeasible default → always probe
+  let wideProbeSuggestion: TuneSuggestion | null = null;
+  if (defaultNotMateriallyClean && priceBudgetPct < RETUNE_MAX_PRICE_CHANGE_PCT) {
+    const wideSearch = searchBestPriceForCleanSnap({
+      ...buildRetuneSearchParams("live", {
+        cards: cards.map((c) => ({ value: c.value })),
+        basePrice: p.price,
+        targetEdge: autoTargets.targetEdge,
+        targetWinRate: autoTargets.targetWinRate,
+        maxWinCap: autoTargets.maxWinCap,
+        nearMissMin,
+        winRateTol: 0.02,
+        currentWeights: cards.map((c) => c.weight),
+        intendedHitRate: autoTargets.intendedHitRate,
+        priceBudgetPct,
+      }),
+      // Spread-override the band to the full ±60% SUGGESTION band — the probe
+      // is NOT a plan and never becomes the write artifact.
+      maxPriceChangePct: RETUNE_MAX_PRICE_CHANGE_PCT,
+    });
+    const wideShaped = wideSearch.bestResult;
+    let wideShapeDegenerate: boolean | null = null;
+    let wideEdge = 0;
+    let wideWinRate = 0;
+    if (!("error" in wideShaped)) {
+      wideEdge = wideShaped.risk.edge;
+      wideWinRate = wideShaped.risk.winRate;
+      const wt = wideShaped.weights.reduce(
+        (a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0),
+        0,
+      );
+      wideShapeDegenerate =
+        wt > 0
+          ? ladderShape(
+              cards.map((c) => c.value),
+              cards.map((c) => (livePctMap(cards).get(c.cardId) ?? 0) / 100),
+              wideShaped.weights.map((w) =>
+                Number.isFinite(w) && w > 0 ? w / wt : 0,
+              ),
+              wideSearch.bestPrice,
+            ).degenerate
+          : null;
+    }
+    wideProbeSuggestion = buildWidePriceProbeSuggestion({
+      livePrice: p.price,
+      tagged,
+      tag: autoTargets.targetWinRate,
+      def: {
+        feasible: defaultFeasible,
+        price: search.bestPrice,
+        allNice: defaultFeasible ? (shaped.allNice ?? null) : null,
+        snapped: defaultFeasible ? (shaped.snapped ?? false) : null,
+        taggedAccuracyHit: search.taggedAccuracyHit,
+        shapeDegenerate: defaultShapeDegenerate,
+      },
+      wide: {
+        feasible: !("error" in wideShaped),
+        price: wideSearch.bestPrice,
+        allNice: !("error" in wideShaped) ? (wideShaped.allNice ?? null) : null,
+        snapped: !("error" in wideShaped) ? (wideShaped.snapped ?? false) : null,
+        taggedAccuracyHit: wideSearch.taggedAccuracyHit,
+        shapeDegenerate: wideShapeDegenerate,
+      },
+      wideEdge,
+      wideWinRate,
+    });
+  }
+
   if ("error" in shaped) {
     return {
       ...base,
@@ -2310,7 +2455,7 @@ async function planPackTuneLiveUncached(
       topInflationUnavoidable: null,
       taggedAccuracyHit: search.taggedAccuracyHit,
       searchMeta,
-      guidance: guidanceFor(true),
+      guidance: mergeWideProbeSuggestion(guidanceFor(true), wideProbeSuggestion),
       shape: null,
       riskBand: null,
       riskBandExit: false,
@@ -2402,14 +2547,18 @@ async function planPackTuneLiveUncached(
     searchMeta,
     // §niceness: a pinned-but-valid plan (exact grid, not pretty) gets the
     // ranked fixes too — add-dust frees exactly the freedom the nice grid
-    // needs.
-    guidance: tagged
-      ? guidanceFor(
-          shaped.snapped !== true ||
-            search.taggedAccuracyHit === false ||
-            shaped.allNice === false,
-        )
-      : untaggedGuidance,
+    // needs. §1.4: a materially-better beyond-budget far price rides as a
+    // ranked `price-move` SUGGESTION on top (never auto-applied).
+    guidance: mergeWideProbeSuggestion(
+      tagged
+        ? guidanceFor(
+            shaped.snapped !== true ||
+              search.taggedAccuracyHit === false ||
+              shaped.allNice === false,
+          )
+        : untaggedGuidance,
+      wideProbeSuggestion,
+    ),
     shape,
     riskBand,
     riskBandExit,
