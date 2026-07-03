@@ -384,6 +384,40 @@ export const TAGGED_NEAR_MISS_MIN = 0;
  */
 export const TAG_CAP_HEADROOM = 1.15;
 
+/**
+ * UNTAGGED win-rate is LIVE-ANCHORED (owner-lens Pattern 3, 2026-07-03): the
+ * flat 20% recipe ({@link DEFAULT_TARGET_WIN_RATE}) is fiction — it rewrote
+ * ~61% of the untagged fleet's designed win-rate upward (a deliberate 8.5%
+ * pack floated to 21%; a 50/50 pack to 55%). When the caller passes the live
+ * pool's actual win-rate, an untagged retune targets THAT rate (the pack's own
+ * designed character), clamped only to a sane product band. The 20% default
+ * survives ONLY for a pack with no live pool (a brand-new pack).
+ */
+export const UNTAGGED_WINRATE_LIVE_MIN = 0.02;
+export const UNTAGGED_WINRATE_LIVE_MAX = 0.95;
+
+/**
+ * UNTAGGED near-miss is SEEDED FROM LIVE (owner-lens Pattern 3 sub-pattern):
+ * the flat 0.1 floor ({@link DEFAULT_NEAR_MISS_MIN}) legally drained designed
+ * 40–70% near-miss bands down to 10%. Seed the floor up from the live pool's
+ * real near-miss mass (×0.8, mirroring the tagged arm's live seed) so a
+ * deliberately teasy pack keeps its "almost!" band. Never LOWERS the floor
+ * below the 0.1 default — only raises it toward the live design.
+ */
+export const UNTAGGED_NEAR_MISS_LIVE_FACTOR = 0.8;
+
+/**
+ * EDGE NEVER-BELOW-LIVE (owner-lens Pattern 7, 2026-07-03): the curve target is
+ * a setpoint the solver pulls DOWN to when the live edge sits above it — a pure
+ * margin refund the owner already banks (Amazon 11.30% → 10.99%). When the live
+ * edge is at/above the curve target, the retune targets `max(curveTarget,
+ * liveEdge − slack)` (still clamped under the ceiling) — plans may HOLD or
+ * RAISE edge vs live, never give it back. A below-target pack is untouched: it
+ * still lifts to the curve target. The 0.05pp slack absorbs snap rounding so a
+ * held-edge plan never trips a false "below live" flag.
+ */
+export const EDGE_NEVER_BELOW_LIVE_SLACK = 0.0005;
+
 /** Resolved pack-system config the pure auto-target helpers operate on. */
 export type ResolvedAutoTargetCfg = {
   /** Absolute single-win cap in USD (from `readMaxWinCap`). */
@@ -453,6 +487,31 @@ export function autoMaxWinCap(
   return Math.max(cap, price);
 }
 
+/**
+ * The pack's LIVE-pool anchors (owner-lens live-anchored targets, 2026-07-03).
+ * When the caller KNOWS the live pool (both `planPackTune` arms + the staged
+ * resolver), it passes these so the retune targets the pack's OWN designed
+ * character instead of a fleet recipe:
+ *   • `winRate` — untagged win-rate is anchored here (kills the 20% fiction).
+ *   • `nearMiss` — untagged near-miss floor is seeded up from here.
+ *   • `edge` — the retune's edge is never pulled below this when live ≥ target.
+ *   • `topValue` — a live over-cap card is grandfathered (cap stops NEW
+ *     escalation, never deletes a running product — Pattern 5).
+ * Omitted ⇒ every field falls back to the legacy fleet default (existing
+ * callers byte-identical). Each field is independently optional so a caller
+ * that only knows some anchors can pass a partial object.
+ */
+export type LiveTargetAnchors = {
+  /** Live pool win-rate (fraction) — untagged target anchor. */
+  winRate?: number;
+  /** Live pool near-miss mass (fraction) — untagged near-miss seed. */
+  nearMiss?: number;
+  /** Live pool house edge (fraction) — never-below-live edge floor. */
+  edge?: number;
+  /** Live pool top card value (USD) — over-cap grandfather. */
+  topValue?: number;
+};
+
 /** The full auto-retune target set for a pack at `price`. */
 export type AutoRetuneTargets = {
   targetEdge: number;
@@ -514,12 +573,33 @@ export type AutoRetuneTargets = {
  * PREMIUM-KILLS]; [rain]: lottery edge equals the house standard, never
  * higher). Omitted / non-positive ⇒ the legacy cap-proxy (existing callers
  * byte-identical).
+ *
+ * LIVE-ANCHORED TARGETS (`live`, optional 5th arg — owner-lens 2026-07-03):
+ * when the caller knows the LIVE pool, pass {@link LiveTargetAnchors} so the
+ * retune targets the pack's OWN designed character rather than a fleet recipe:
+ *   • UNTAGGED win-rate is anchored to `live.winRate` (kills the flat-20%
+ *     fiction that rewrote ~61% of the untagged fleet upward), clamped into
+ *     `[UNTAGGED_WINRATE_LIVE_MIN, UNTAGGED_WINRATE_LIVE_MAX]`. TAGGED packs
+ *     keep their exact tag — untouched.
+ *   • UNTAGGED near-miss floor is seeded up from `live.nearMiss × 0.8`
+ *     (`max` with the 0.1 default) so a designed teaser band survives.
+ *   • `targetEdge` is floored at `live.edge − EDGE_NEVER_BELOW_LIVE_SLACK`
+ *     when live ≥ curve target — plans HOLD or RAISE edge vs live, never
+ *     refund it (Pattern 7). A below-target pack still lifts to the curve.
+ *   • the jackpot cap GRANDFATHERS a live over-cap card (`max(autoCap,
+ *     live.topValue)`) so a deliberately-run running product isn't deleted —
+ *     the cap stops NEW escalation only (Pattern 5). This applies whether or
+ *     not the pack is tagged (a tagged pack already gets the headroom cap;
+ *     the grandfather is a further `max` that only ever LOOSENS).
+ * Omitted / partial ⇒ each missing anchor falls back to the legacy default
+ * (existing callers byte-identical).
  */
 export function autoRetuneTargets(
   price: number,
   cfg: ResolvedAutoTargetCfg,
   nameOrHitRate?: string | number | null,
   poolMaxWin?: number | null,
+  live?: LiveTargetAnchors | null,
 ): AutoRetuneTargets {
   const intendedHitRate =
     typeof nameOrHitRate === "string"
@@ -533,7 +613,18 @@ export function autoRetuneTargets(
   // HIT-RATE-AWARE cap: a tagged lottery pack ("1% …") gets a LOOSENED jackpot
   // ceiling so its big top card survives the shaper (a low hit-rate needs a big
   // jackpot to hold the edge). Untagged ⇒ intendedHitRate null ⇒ the plain cap.
-  const maxWinCap = autoMaxWinCap(price, cfg, intendedHitRate ?? undefined);
+  const autoCap = autoMaxWinCap(price, cfg, intendedHitRate ?? undefined);
+  // GRANDFATHER (Pattern 5): a card the owner already runs live ABOVE the auto
+  // cap is kept — the cap should stop NEW escalation, not delete a running
+  // product. Only ever loosens the cap (a live top BELOW the auto cap changes
+  // nothing). Applies to tagged + untagged alike.
+  const liveTop =
+    typeof live?.topValue === "number" &&
+    Number.isFinite(live.topValue) &&
+    live.topValue > 0
+      ? live.topValue
+      : 0;
+  const maxWinCap = liveTop > autoCap ? liveTop : autoCap;
   // Edge-curve input: the pool's ACTUAL top-card exposure when known (never
   // above the cap the shaper will enforce), else the cap as the deterministic
   // pre-shape proxy (legacy).
@@ -541,14 +632,66 @@ export function autoRetuneTargets(
     typeof poolMaxWin === "number" && Number.isFinite(poolMaxWin) && poolMaxWin > 0
       ? Math.min(poolMaxWin, maxWinCap)
       : maxWinCap;
+  const curveEdge = autoTargetEdge(
+    { price, maxWin: curveMaxWin },
+    cfg.edgeCurve ?? DEFAULT_EDGE_CURVE,
+  );
+  const edgeCeiling = (cfg.edgeCurve ?? DEFAULT_EDGE_CURVE).edgeCeiling;
+  // NEVER-BELOW-LIVE EDGE (Pattern 7): when the live edge is at/above the curve
+  // target, floor the retune's edge at `liveEdge − slack` (still under the
+  // ceiling) so a retune can only HOLD or RAISE the edge the owner already
+  // banks — never refund it. A below-target pack keeps the curve target (its
+  // liveEdge is below curveEdge, so the max is a no-op).
+  const liveEdge =
+    typeof live?.edge === "number" && Number.isFinite(live.edge) && live.edge > 0
+      ? live.edge
+      : 0;
+  const targetEdge =
+    liveEdge > 0
+      ? Math.min(
+          edgeCeiling,
+          Math.max(curveEdge, liveEdge - EDGE_NEVER_BELOW_LIVE_SLACK),
+        )
+      : curveEdge;
+  // UNTAGGED WIN-RATE (Pattern 3): anchor to the pack's OWN live win-rate, not
+  // the flat 20% recipe — clamped only to a sane product band. TAGGED packs
+  // target their exact tag (untouched). No live pool (brand-new pack) ⇒ the
+  // 20% default survives.
+  const liveWinRate =
+    typeof live?.winRate === "number" &&
+    Number.isFinite(live.winRate) &&
+    live.winRate > 0
+      ? live.winRate
+      : null;
+  const targetWinRate =
+    intendedHitRate !== null
+      ? intendedHitRate
+      : liveWinRate !== null
+        ? Math.min(
+            UNTAGGED_WINRATE_LIVE_MAX,
+            Math.max(UNTAGGED_WINRATE_LIVE_MIN, liveWinRate),
+          )
+        : DEFAULT_TARGET_WIN_RATE;
+  // UNTAGGED NEAR-MISS (Pattern 3 sub-pattern): seed the floor UP from the live
+  // pool's real near-miss mass (×0.8) so a designed teaser band survives the
+  // retune instead of draining to the flat 0.1 floor. Never lowers the floor.
+  const liveNearMiss =
+    typeof live?.nearMiss === "number" &&
+    Number.isFinite(live.nearMiss) &&
+    live.nearMiss > 0
+      ? live.nearMiss
+      : 0;
+  const nearMissMin =
+    intendedHitRate !== null
+      ? TAGGED_NEAR_MISS_MIN
+      : Math.max(
+          DEFAULT_NEAR_MISS_MIN,
+          liveNearMiss * UNTAGGED_NEAR_MISS_LIVE_FACTOR,
+        );
   return {
-    targetEdge: autoTargetEdge(
-      { price, maxWin: curveMaxWin },
-      cfg.edgeCurve ?? DEFAULT_EDGE_CURVE,
-    ),
-    targetWinRate: intendedHitRate ?? DEFAULT_TARGET_WIN_RATE,
-    nearMissMin:
-      intendedHitRate !== null ? TAGGED_NEAR_MISS_MIN : DEFAULT_NEAR_MISS_MIN,
+    targetEdge,
+    targetWinRate,
+    nearMissMin,
     maxWinCap,
     intendedHitRate,
   };

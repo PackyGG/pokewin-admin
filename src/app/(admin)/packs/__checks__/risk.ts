@@ -54,6 +54,10 @@ import {
   DEFAULT_EDGE_FLOOR,
   DEFAULT_EDGE_CEILING,
   DEFAULT_EDGE_CURVE,
+  UNTAGGED_WINRATE_LIVE_MIN,
+  UNTAGGED_WINRATE_LIVE_MAX,
+  UNTAGGED_NEAR_MISS_LIVE_FACTOR,
+  EDGE_NEVER_BELOW_LIVE_SLACK,
 } from "../_lib/auto-targets";
 
 let passes = 0;
@@ -1017,6 +1021,137 @@ check("autoRetuneTargets = {per-pack edge, default win-rate/near-miss, autoMaxWi
   // ⇒ both drivers 0 ⇒ exactly the floor (= TARGET_PACK_EDGE = TARGET_HOUSE_EDGE).
   approx(calm.targetEdge, TARGET_PACK_EDGE, 1e-12, "calm cheap pack → floor");
   approx(calm.targetEdge, TARGET_HOUSE_EDGE, 1e-12, "floor = house edge identity");
+});
+
+// ── 9b. LIVE-ANCHORED targets (owner-lens patterns 3, 5, 7) ─────────────
+// The 5th `live` arg (present on both planPackTune arms + the staged resolver)
+// makes an UNTAGGED retune target the pack's OWN designed character instead of
+// the fleet recipe. Every check pins the PURE derivation (no engine solve).
+
+check("live-anchored: omitting `live` is byte-identical to the legacy default", () => {
+  const cfg = { globalCap: 25000, maxMultCeiling: 100 };
+  for (const price of [1, 5, 25, 100, 1000]) {
+    const legacy = autoRetuneTargets(price, cfg, undefined, 300);
+    const noLive = autoRetuneTargets(price, cfg, undefined, 300, undefined);
+    const partialEmpty = autoRetuneTargets(price, cfg, undefined, 300, {});
+    for (const t of [noLive, partialEmpty]) {
+      approx(t.targetEdge, legacy.targetEdge, 1e-12, "targetEdge unchanged");
+      approx(t.targetWinRate, legacy.targetWinRate, 1e-12, "targetWinRate unchanged");
+      approx(t.nearMissMin, legacy.nearMissMin, 1e-12, "nearMissMin unchanged");
+      approx(t.maxWinCap, legacy.maxWinCap, 1e-9, "maxWinCap unchanged");
+    }
+    // The legacy untagged default IS the 20% recipe (the fiction) — pinned so
+    // the "no live pool ⇒ 20% survives" contract is explicit.
+    approx(legacy.targetWinRate, DEFAULT_TARGET_WIN_RATE, 1e-12, "no-live ⇒ 20%");
+  }
+});
+
+check("Pattern 3: untagged win-rate is anchored to live (kills the 20% fiction)", () => {
+  const cfg = { globalCap: 25000, maxMultCeiling: 100 };
+  // A deliberately brutal 8.5%-winner pack (the "Like a Boss" class): the
+  // legacy default rewrites it to 20%; live-anchored keeps 8.5%.
+  const brutal = autoRetuneTargets(10, cfg, undefined, 250, {
+    winRate: 0.085,
+    nearMiss: 0.12,
+    edge: 0.11,
+    topValue: 250,
+  });
+  approx(brutal.targetWinRate, 0.085, 1e-12, "untagged targets its LIVE 8.5%, not 20%");
+  // A soft 50/50-ish pack solved untagged: anchored to its live ~50%.
+  const soft = autoRetuneTargets(20, cfg, undefined, 100, { winRate: 0.5 });
+  approx(soft.targetWinRate, 0.5, 1e-12, "untagged targets its LIVE 50%");
+  // Clamped into the sane product band at the extremes.
+  const tiny = autoRetuneTargets(10, cfg, undefined, 250, { winRate: 0.001 });
+  approx(tiny.targetWinRate, UNTAGGED_WINRATE_LIVE_MIN, 1e-12, "clamped up to the min");
+  const huge = autoRetuneTargets(10, cfg, undefined, 250, { winRate: 0.999 });
+  approx(huge.targetWinRate, UNTAGGED_WINRATE_LIVE_MAX, 1e-12, "clamped down to the max");
+  // Executable-check spec: |target − live| ≤ 0 by construction inside the band.
+  for (const wr of [0.05, 0.085, 0.2, 0.35, 0.55, 0.8]) {
+    const t = autoRetuneTargets(10, cfg, undefined, 250, { winRate: wr });
+    assert(Math.abs(t.targetWinRate - wr) < 1e-12, `in-band winRate ${wr} anchored exactly`);
+  }
+});
+
+check("Pattern 3: a TAGGED pack's win-rate stays its EXACT tag (live anchor ignored)", () => {
+  const cfg = { globalCap: 25000, maxMultCeiling: 100 };
+  // Even with a drifted live win-rate, a "1%" pack still targets 1%.
+  const tagged = autoRetuneTargets(0.95, cfg, 0.01, 2507.35, {
+    winRate: 0.198, // drifted live rate — must be IGNORED
+    nearMiss: 0,
+    edge: 0.09,
+    topValue: 2507.35,
+  });
+  approx(tagged.targetWinRate, 0.01, 1e-12, "tagged targets its tag, not the drifted live rate");
+  approx(tagged.nearMissMin, 0, 1e-12, "tagged near-miss floor stays 0 (binary lottery)");
+  assert(tagged.intendedHitRate === 0.01, "intendedHitRate is the tag");
+});
+
+check("Pattern 3 sub: untagged near-miss floor seeds UP from live (×0.8)", () => {
+  const cfg = { globalCap: 25000, maxMultCeiling: 100 };
+  // A designed 40% near-miss band survives (0.40 × 0.8 = 0.32 > the 0.1 floor).
+  const teasy = autoRetuneTargets(10, cfg, undefined, 250, {
+    winRate: 0.2,
+    nearMiss: 0.4,
+  });
+  approx(teasy.nearMissMin, 0.4 * UNTAGGED_NEAR_MISS_LIVE_FACTOR, 1e-12, "0.40 live → 0.32 floor");
+  assert(teasy.nearMissMin >= 0.3, "designed teaser band survives (≥30%)");
+  // A pack with little live near-miss keeps the 0.1 default (never LOWERED).
+  const flat = autoRetuneTargets(10, cfg, undefined, 250, {
+    winRate: 0.2,
+    nearMiss: 0.05,
+  });
+  approx(flat.nearMissMin, DEFAULT_NEAR_MISS_MIN, 1e-12, "small live near-miss → 0.1 default");
+  // Executable-check spec: nearMiss ≥ min(live.nearMiss, 0.10) × 0.75.
+  for (const nm of [0.02, 0.1, 0.25, 0.5, 0.7]) {
+    const t = autoRetuneTargets(10, cfg, undefined, 250, { winRate: 0.2, nearMiss: nm });
+    assert(
+      t.nearMissMin >= Math.min(nm, 0.1) * 0.75 - 1e-12,
+      `near-miss preserve holds for live ${nm} (got ${t.nearMissMin})`,
+    );
+  }
+});
+
+check("Pattern 7: the retune never refunds an above-target live edge", () => {
+  const cfg = { globalCap: 25000, maxMultCeiling: 100 };
+  // Amazon class: live edge 11.30% sits above the curve target — the plan must
+  // hold it (target ≥ liveEdge − slack), never pull it down to the floor.
+  const amazon = autoRetuneTargets(20, cfg, undefined, 500, {
+    winRate: 0.2,
+    edge: 0.113,
+  });
+  assert(
+    amazon.targetEdge >= 0.113 - EDGE_NEVER_BELOW_LIVE_SLACK - 1e-12,
+    `above-target live edge held (target ${amazon.targetEdge}, live 0.113)`,
+  );
+  assert(amazon.targetEdge <= DEFAULT_EDGE_CEILING + 1e-12, "still under the ceiling");
+  // An extreme live edge clamps at the ceiling, never above it.
+  const extreme = autoRetuneTargets(10, cfg, undefined, 250, { winRate: 0.085, edge: 0.5 });
+  approx(extreme.targetEdge, DEFAULT_EDGE_CEILING, 1e-12, "extreme live edge → ceiling (not above)");
+  // A BELOW-target pack is untouched: it still lifts to the curve target
+  // (never dragged DOWN toward its low live edge).
+  const below = autoRetuneTargets(20, cfg, undefined, 500, { winRate: 0.2, edge: 0.09 });
+  const curveOnly = autoRetuneTargets(20, cfg, undefined, 500);
+  approx(below.targetEdge, curveOnly.targetEdge, 1e-12, "below-target pack lifts to the curve (unchanged)");
+  assert(below.targetEdge > 0.09, "below-target edge is RAISED, not held at the low live edge");
+});
+
+check("Pattern 5: a live over-cap card is grandfathered (cap stops NEW escalation only)", () => {
+  const cfg = { globalCap: 25000, maxMultCeiling: 100 };
+  // Trash class: a $0.15 micro-pack whose live top ($306) is 2040× — far above
+  // the untagged 100× cap ($15). The auto cap would DELETE it; grandfather keeps
+  // it (the owner already runs it live).
+  const autoCap = autoMaxWinCap(0.15, cfg); // = max($15, price) = $15
+  assert(autoCap < 306, `auto cap deletes the $306 top (cap $${autoCap.toFixed(2)})`);
+  const grandfathered = autoRetuneTargets(0.15, cfg, undefined, 306, { topValue: 306 });
+  approx(grandfathered.maxWinCap, 306, 1e-9, "cap grandfathers the live $306 top");
+  // A live top BELOW the auto cap changes nothing (grandfather only loosens).
+  const under = autoRetuneTargets(0.15, cfg, undefined, 5, { topValue: 5 });
+  approx(under.maxWinCap, autoCap, 1e-9, "live top under the cap → cap unchanged");
+  // Grandfather applies to a TAGGED pack too (a further max that only loosens).
+  const taggedAuto = autoMaxWinCap(0.95, cfg, 0.01); // %1 headroom cap ≈ $2185
+  const taggedGf = autoRetuneTargets(0.95, cfg, 0.01, 2507.35, { topValue: 2507.35 });
+  assert(taggedGf.maxWinCap >= 2507.35 - 1e-9, "tagged live over-cap card grandfathered");
+  assert(taggedGf.maxWinCap >= taggedAuto - 1e-9, "grandfather never TIGHTENS the tagged cap");
 });
 
 // ── 10. autoTargetEdge: floor / ceiling / monotonicity / calibration ────

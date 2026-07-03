@@ -1166,12 +1166,28 @@ async function resolveAndShapeStagedPool(
     const v = cardMetaById.get(c.cardId)!.value;
     if (v > stagedTopValue) stagedTopValue = v;
   }
+  // LIVE top card value — a live over-cap card the owner already runs is
+  // grandfathered (Pattern 5). Deliberately the LIVE top, NOT the staged top:
+  // grandfathering must not bless a NEWLY-staged over-cap card (the cap stops
+  // new escalation). The edge curve still prices the STAGED exposure below.
+  let liveTopValue = 0;
+  for (const c of livePool) if (c.value > liveTopValue) liveTopValue = c.value;
   const auto = autoRetuneTargets(
     priceStaged,
     cfg,
     // DB `tags` column first (authoritative), name-prefix tag as fallback.
     resolveIntendedHitRate(pack.name, pack.tags) ?? undefined,
     stagedTopValue,
+    // LIVE-ANCHORED targets (owner-lens 2026-07-03) — anchored to the LIVE
+    // pool's designed character (win-rate/near-miss/edge from `before`), with
+    // the over-cap grandfather keyed on the LIVE top only. The write shares
+    // THIS resolver, so plan ≡ write by construction.
+    {
+      winRate: before.winRate,
+      nearMiss: before.nearMiss,
+      edge: before.edge,
+      topValue: liveTopValue,
+    },
   );
   const targetEdge = targets.targetEdge ?? auto.targetEdge;
   const targetWinRate = targets.targetWinRate ?? auto.targetWinRate;
@@ -2113,6 +2129,17 @@ async function planPackTuneLiveUncached(
     cfg,
     resolveIntendedHitRate(p.name, p.tags) ?? undefined,
     poolTopValue,
+    // LIVE-ANCHORED targets (owner-lens 2026-07-03): an UNTAGGED pack targets
+    // its OWN live win-rate/near-miss (not the flat 20% recipe), the retune
+    // never refunds an above-target live edge, and a live over-cap card is
+    // grandfathered. TAGGED packs are unaffected (tag stays exact). Passed on
+    // the PLAN path → the write inherits these via the frozen `plan.targets`.
+    {
+      winRate: before.winRate,
+      nearMiss: before.nearMiss,
+      edge: before.edge,
+      topValue: poolTopValue,
+    },
   );
   // TAGGED near-miss seed (ruleset §1.2): zero floor — binary lottery — but a
   // live pool that genuinely carries near-miss mass keeps its designed band.
