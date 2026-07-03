@@ -410,6 +410,24 @@ export type ShapeWeightsSuccess = {
    * Surfaces as "edge landed +X.XXpp above target (pool-pinned)" in plans.
    */
   oneSidedEdgeExcess?: number;
+  /**
+   * Tagged per-100k snap only: every non-exempt card landed on the human-nice
+   * rung grid ({@link isOnNiceGridPct} — 0.05% / 0.25% / 0.35% / 2.5% …).
+   * `false` = the accepted snap is per-100k-exact but still carries ≥ 1
+   * non-exempt off-nice card (the pool is too pinned for round numbers at any
+   * in-band price — the plan surfaces the honesty banner). `undefined` for
+   * untagged / unsnapped results — untagged behavior is byte-identical.
+   */
+  allNice?: boolean;
+  /**
+   * Tagged per-100k snap only: indexes EXEMPT from the niceness ACCOUNTING
+   * (the dust residual buffer, owner-pinned cards, a forced single free
+   * winner). The partial-tier absorber is construction-exempt but COUNTS —
+   * the owner reads its odds too. The plan projection skips these when
+   * flagging off-nice rows so the engine and the workspace can never
+   * disagree.
+   */
+  niceExemptIdx?: number[];
 };
 
 /**
@@ -478,6 +496,14 @@ export type ShapeWeightsLimit = {
    * this `undefined`.
    */
   suggestedRange?: { min: number; max: number };
+  /**
+   * TRUE when no price change can clear this limit (e.g. no-dust-cards with
+   * 2·minValue ≥ maxValue): the cheapest card is worth more than half the
+   * priciest, so every price either strips all winners or leaves no losers.
+   * The price search short-circuits on it (searched = 1) and the plan copy
+   * says "no price works — edit the pool" instead of suggesting price moves.
+   */
+  priceIndependent?: boolean;
 };
 
 export type ShapeWeightsError = {
@@ -957,6 +983,81 @@ export function isOnPer100kGridPct(pct: number): boolean {
   if (!Number.isFinite(pct) || !(pct > 0) || pct > 100) return false;
   const units = pct * 1000; // 0.001% rungs
   return Math.abs(units - Math.round(units)) <= 1e-6 * Math.max(1, units);
+}
+
+/**
+ * HUMAN-NICE mantissas for TAGGED rungs: the {@link CLEAN_LADDER_BASE}
+ * mantissa set (1/1.5/2/2.5/3/4/5/7.5) PLUS 3.5 — owner-named ("0.35%",
+ * "3.5%") and absent from the log ladder. INTENTIONALLY not added to
+ * `CLEAN_LADDER_BASE` itself: extending the untagged ladder would silently
+ * shift every untagged snap's nearest-rung mapping and break the pinned
+ * untagged goldens ("untagged targets byte-identical"). The two grids diverge
+ * by exactly this one mantissa, and the divergence is tagged-only by design.
+ */
+const NICE_MANTISSAS = [1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 7.5] as const;
+
+/**
+ * The tagged HUMAN-NICE rung grid, in per-100k integer units:
+ * `{ b · 10^k : b ∈ NICE_MANTISSAS, k ∈ 0..5 } ∩ ℤ ∩ [1, 100000]` — the exact
+ * 42-element set of the snap-niceness spec §1.1 (0.001% … 100%). Non-integer
+ * combinations (1.5/2.5/3.5/7.5 at k=0) are excluded on purpose: 0.0015% is
+ * not representable on the per-100k grid anyway. The round 1-in-N jackpot
+ * menu ({@link JACKPOT_MENU_PER_100K}) is a strict subset of this grid
+ * (1-in-100 … 1-in-100000), so the menu survives as a tie-break preference
+ * inside the nice tiers — no separate grid is needed.
+ */
+const NICE_UNITS: readonly number[] = (() => {
+  const out = new Set<number>();
+  for (let k = 0; k <= 5; k++) {
+    for (const b of NICE_MANTISSAS) {
+      const u = b * Math.pow(10, k);
+      if (Number.isInteger(u) && u >= 1 && u <= 100_000) out.add(u);
+    }
+  }
+  return [...out].sort((a, b) => a - b);
+})();
+
+/** Module-scope membership set for {@link isOnNiceGridPct} — built once. */
+const NICE_UNITS_SET: ReadonlySet<number> = new Set(NICE_UNITS);
+
+/**
+ * Human-nice tagged rung: an integer per-100k count that is also a round
+ * {1,1.5,2,2.5,3,3.5,4,5,7.5}×10^k number. What the OWNER reads as clean
+ * (0.05%, 0.25%, 0.35%, 2.5%, 1-in-N jackpots) — vs
+ * {@link isOnPer100kGridPct}, which accepts ANY integer 0.001% count, so
+ * 0.047% / 0.234% read "clean" there while a human sees dirty decimals.
+ */
+export function isOnNiceGridPct(pct: number): boolean {
+  if (!Number.isFinite(pct) || !(pct > 0) || pct > 100) return false;
+  const units = pct * 1000;
+  const u = Math.round(units);
+  if (Math.abs(units - u) > 1e-6 * Math.max(1, units)) return false;
+  return NICE_UNITS_SET.has(u);
+}
+
+/**
+ * Count the planned cards OFF the human-nice grid: positive-weight cards,
+ * minus the exempt indexes (dust buffer / owner pins / forced single free
+ * winner), whose probability fails {@link isOnNiceGridPct}. THE shared
+ * definition — the tagged snap's `allNice`, the price search's niceness tier
+ * and the plan projection's tagged `offLadderCards` all count with this one
+ * grid so they can never disagree.
+ */
+export function countOffNicePct(
+  weights: readonly number[],
+  niceExemptIdx?: readonly number[] | null,
+): number {
+  let total = 0;
+  for (const w of weights) if (Number.isFinite(w) && w > 0) total += w;
+  if (!(total > 0)) return 0;
+  const exempt = new Set(niceExemptIdx ?? []);
+  let off = 0;
+  for (let i = 0; i < weights.length; i++) {
+    const w = weights[i]!;
+    if (!(w > 0) || exempt.has(i)) continue;
+    if (!isOnNiceGridPct((w / total) * 100)) off += 1;
+  }
+  return off;
 }
 
 /**
@@ -1610,19 +1711,42 @@ const JACKPOT_MENU_PER_100K: readonly number[] = [
  * Returns the snapped weights + risk, or `null` when the ladder can't hold the
  * acceptance stack (caller falls back to the generic snap → precise weights).
  *
- * Guarantees on success:
- *   • total weight EXACTLY 100,000 (every pct is an integer count of 0.001%),
- *   • win-band (value ≥ price) weight EXACTLY `round(tag·100000)` — the
- *     snapped win-rate differs from the tag by < 0.0005pp,
+ * THREE-TIER search (snap-niceness spec §2) — first tier that produces an
+ * accepted vector wins:
+ *   • Tier N — ALL-NICE: bounded DFS placing every FREE win card on a
+ *     HUMAN-NICE rung ({@link NICE_UNITS}: 0.05% / 0.25% / 0.35% / 2.5% …),
+ *     win-band unit sum EXACTLY `W = round(tag·SCALE)`, monotone across the
+ *     FULL ladder (pins interleaved as immovable fixed points), live-basis
+ *     never-inflate caps (`liveCapUnits`; the cheapest FREE winner — the
+ *     anti-jackpot absorber — is exempt), NM + non-buffer dust on nice rungs
+ *     with the largest non-buffer dust rung ENUMERATED (EV freedom), buffer =
+ *     exact residual, edge window unchanged. No dust transfer here — the
+ *     price sweep supplies that freedom.
+ *   • Tier P — PARTIALLY-NICE: same DFS excluding the cheapest FREE winner,
+ *     which absorbs `W − Σothers` (any integer); the shipped analytic dust
+ *     transfer lands the edge window when the as-is vector misses it.
+ *   • Tier G — the shipped per-100k grid snap, byte-identical (nearest-rung
+ *     rounding, 1-in-N jackpot down-rounding, cheapest-winner win-sum
+ *     adjustment, buffer residual, dust transfer, `grailGuard` vs precise).
+ *
+ * Guarantees on success (all tiers):
+ *   • total weight EXACTLY `SCALE` (every pct is an integer count of rungs),
+ *   • win-band (value ≥ price) weight EXACTLY `round(tag·SCALE)`,
  *   • win+grail ladder odds non-increasing in card value,
- *   • the jackpot prefers a round 1-in-N menu rung, and is never rounded UP
- *     beyond the precise solve (never-inflate),
- *   • ONE dust card (the largest-mass one) carries the residual buffer,
- *   • edge ∈ [targetEdge, targetEdge + edgeTolAbove] (landed via an analytic
- *     integer mass transfer inside the dust band when the pool has ≥ 2 dust
- *     values),
- *   • `grailGuard` (the caller's anti-inflation check vs the precise weights)
- *     holds.
+ *   • ONE FREE dust card (the largest-mass one) carries the residual buffer,
+ *   • edge ∈ [targetEdge, targetEdge + edgeTolAbove],
+ *   • pins verbatim (never rounded / transferred / buffered / capped),
+ *   • `grailGuard` (precise-based anti-inflation) holds on tier G; tiers N/P
+ *     enforce the live-cap constraint instead (the owner rule is "never above
+ *     CURRENT advertised odds" — capping nice rungs at the intermediate
+ *     precise vector would make the owner's own round-number ask impossible;
+ *     house safety is preserved by the unchanged edge window).
+ *
+ * `allNice` reports whether every non-exempt card landed on the nice grid
+ * (computed honestly on the final vector, whatever tier produced it);
+ * `niceExemptIdx` lists the ACCOUNTING-exempt indexes (buffer, pins, the
+ * forced single free winner — the P/G absorber is construction-exempt but
+ * counts, since the owner reads its odds too).
  */
 function snapTaggedPer100k(input: {
   values: readonly number[];
@@ -1648,7 +1772,21 @@ function snapTaggedPer100k(input: {
    * pins keep their exact sub-rung values.
    */
   scale?: number;
-}): { weights: number[]; risk: PackRisk } | null {
+  /**
+   * Live anchor caps in the SAME units as `scale`, parallel to `values` —
+   * the never-inflate ceiling for nice rungs (§2.1, live basis):
+   * `capUnits[i] = (currentWeights[i] / Σ positive currentWeights) · scale`.
+   * `Infinity` = uncapped (zero/absent current weight — LAW-6 new cards);
+   * `null`/omitted = no anchor (legacy value-only path: no inflation guard,
+   * mirroring the shipped rule for the generic snap).
+   */
+  liveCapUnits?: readonly number[] | null;
+}): {
+  weights: number[];
+  risk: PackRisk;
+  allNice: boolean;
+  niceExemptIdx: number[];
+} | null {
   const { values, price, tag, targetEdge, edgeTolAbove } = input;
   const n = values.length;
   if (!(price > 0) || !(tag > 0) || tag >= 1) return null;
@@ -1697,9 +1835,404 @@ function snapTaggedPer100k(input: {
   const u = new Array<number>(n).fill(0);
   for (const [i, units] of pinnedUnitsByIdx) u[i] = units;
 
+  // ─── Shared ladder geometry (all tiers) ────────────────────────────────
+  // FREE win ladder value-DESC (stable sort: ties keep index order) and the
+  // FULL ladder with pinned winners interleaved — the monotone axis for the
+  // nice tiers (pins are immovable fixed points on it).
+  const winDesc = [...winIdx].sort((a, b) => values[b]! - values[a]!);
+  const pinnedWinIdx: number[] = [];
+  for (const [i] of pinnedUnitsByIdx) {
+    if (input.weights[i]! > 0 && values[i]! > 0 && values[i]! >= price) {
+      pinnedWinIdx.push(i);
+    }
+  }
+  const fullWinDesc = [...winIdx, ...pinnedWinIdx].sort(
+    (a, b) => values[b]! - values[a]!,
+  );
+  // Buffer = the largest PRECISE-mass FREE dust card (same argmax all tiers).
+  let buffer = dustIdx[0]!;
+  for (const i of dustIdx) {
+    if (input.weights[i]! > input.weights[buffer]!) buffer = i;
+  }
+
+  const riskOf = (cand: readonly number[]): PackRisk =>
+    computePackRisk({
+      cards: values.map((v, i) => ({ value: v, weight: cand[i]! })),
+      price,
+    });
+
+  const eLo = targetEdge - 1e-9;
+  const eHi = targetEdge + edgeTolAbove + 1e-9;
+
+  // ─── Tiers N/P — the HUMAN-NICE rung search (snap-niceness spec §2) ─────
+  // Tier N places EVERY free win card on a nice rung (all-nice); tier P lets
+  // the cheapest free winner absorb the win-band residual (partially-nice).
+  // Exactness stays the gate: win sum EXACTLY W by construction, edge window
+  // unchanged, live-basis never-inflate caps on every non-absorber free win
+  // card. The precise-based `grailGuard` is NOT applied here (it would re-ban
+  // the owner's round-number ask); tier G below keeps it verbatim.
+  const nice = ((): {
+    weights: number[];
+    risk: PackRisk;
+    allNice: boolean;
+    niceExemptIdx: number[];
+  } | null => {
+    const caps = input.liveCapUnits ?? null;
+    const capOf = (i: number): number => {
+      if (caps === null) return Infinity; // legacy value-only path: uncapped
+      const c = caps[i];
+      return c === undefined || !Number.isFinite(c) ? Infinity : c;
+    };
+
+    // Nice rungs in SCALE units, ascending.
+    const rungs: number[] = NICE_UNITS.map((r) => r * RUNG);
+    // Nearest nice rung by log distance (ties → the smaller rung: the
+    // ascending walk keeps the first minimum).
+    const niceNearest = (preciseUnits: number): number => {
+      const logP = Math.log(Math.max(preciseUnits, 1e-9));
+      let best = rungs[0]!;
+      let bestDist = Math.abs(Math.log(best) - logP);
+      for (let k = 1; k < rungs.length; k++) {
+        const d = Math.abs(Math.log(rungs[k]!) - logP);
+        if (d < bestDist) {
+          bestDist = d;
+          best = rungs[k]!;
+        }
+      }
+      return best;
+    };
+
+    // FIXED (candidate-independent) assignments: pins verbatim; NM cards on
+    // their nearest nice rung (dead-for-tag cards land on the 1-unit grid
+    // floor — itself a nice rung); free non-buffer dust beyond the enumerated
+    // one on nearest nice rungs.
+    const fixedU = new Map<number, number>();
+    for (const [i, units] of pinnedUnitsByIdx) fixedU.set(i, units);
+    for (const i of nmIdx) {
+      fixedU.set(i, Math.max(RUNG, niceNearest(pctUnits(i))));
+    }
+    // The ENUMERATED non-buffer dust card = the largest PRECISE mass among
+    // the remaining free dust (it is EV freedom, not noise — spec §2.1).
+    let dustEnum = -1;
+    for (const i of dustIdx) {
+      if (i === buffer) continue;
+      if (dustEnum === -1 || input.weights[i]! > input.weights[dustEnum]!) {
+        dustEnum = i;
+      }
+    }
+    for (const i of dustIdx) {
+      if (i === buffer || i === dustEnum) continue;
+      fixedU.set(i, Math.max(RUNG, niceNearest(pctUnits(i))));
+    }
+    // Enumerated dust rung options: NICE_UNITS ∩ [1, 60000] per-100k units
+    // (sentinel single option when no non-buffer dust card exists).
+    const dustOptions: number[] =
+      dustEnum === -1 ? [0] : rungs.filter((r) => r <= 60_000 * RUNG);
+
+    let fixedUnits = 0;
+    let fixedEvUnits = 0;
+    for (const [i, units] of fixedU) {
+      fixedUnits += units;
+      fixedEvUnits += units * values[i]!;
+    }
+
+    const freeWinTarget = W - pinnedWinUnits; // the FREE win band's exact sum
+    if (winDesc.length > 0 && freeWinTarget < winDesc.length) return null;
+    const vBuffer = values[buffer]!;
+    const vDustEnum = dustEnum === -1 ? 0 : values[dustEnum]!;
+
+    // FREE dust transfer endpoints (tier P edge landing — the shipped
+    // analytic integer transfer, cheapest-value ↔ most-expensive-value).
+    const dustAsc = [...dustIdx].sort((a, b) => values[a]! - values[b]!);
+    const dustLo = dustAsc[0]!;
+    const dustHi = dustAsc[dustAsc.length - 1]!;
+    const dustSpread = values[dustHi]! - values[dustLo]!;
+
+    // Work bound — ONE budget shared across tiers N and P per snap call. On
+    // breach each tier keeps the best candidate found so far (if any) and
+    // otherwise falls through (N → P → G).
+    // NOTE (measured delta vs the spec's 50k): the Lucky Pond fixture's own
+    // all-nice enumeration needs ~112k nodes per tier even with the
+    // solve-last-card optimization + the strongest sound prune (naive
+    // last-level enumeration is ~1.1M) — a 50k cap would starve the spec's
+    // own F1/F2 fixtures. 400k covers both tiers with headroom while keeping
+    // the per-candidate work bounded (a few ms).
+    const NODE_CAP = 400_000;
+    const COMPLETION_CAP = 5_000;
+    let nodes = 0;
+    let completions = 0;
+    // FREE cards remaining at/after each ladder position (incl. current) —
+    // powers the strong partial-sum prune (monotone ⇒ every remaining free
+    // card, absorber included, needs ≥ the current rung).
+    const freeLeftAt: number[] = new Array<number>(fullWinDesc.length + 1).fill(0);
+    for (let k = fullWinDesc.length - 1; k >= 0; k--) {
+      freeLeftAt[k] =
+        freeLeftAt[k + 1]! +
+        (pinnedUnitsByIdx.has(fullWinDesc[k]!) ? 0 : 1);
+    }
+
+    const jack = winDesc.length > 0 ? winDesc[0]! : -1;
+    const cheapestFree =
+      winDesc.length > 0 ? winDesc[winDesc.length - 1]! : -1;
+    // A single free winner is FORCED (= W − Σ pinned wins): zero freedom, so
+    // it is niceness-exempt in EVERY tier (spec §1.3).
+    const forcedSingle = winDesc.length === 1;
+
+    type NiceCand = {
+      dist: number;
+      jackOff: number;
+      edgeExcess: number;
+      lex: number[];
+      u: number[];
+    };
+    // Deterministic total order (spec §2.2): shape distance → jackpot on the
+    // 1-in-N menu → smallest house-favorable edge excess → lexicographically
+    // smallest (win units value-DESC…, dust rung).
+    const betterCand = (a: NiceCand, b: NiceCand): boolean => {
+      if (a.dist < b.dist - 1e-12) return true;
+      if (a.dist > b.dist + 1e-12) return false;
+      if (a.jackOff !== b.jackOff) return a.jackOff < b.jackOff;
+      if (a.edgeExcess < b.edgeExcess - 1e-12) return true;
+      if (a.edgeExcess > b.edgeExcess + 1e-12) return false;
+      for (let k = 0; k < a.lex.length; k++) {
+        if (a.lex[k]! !== b.lex[k]!) return a.lex[k]! < b.lex[k]!;
+      }
+      return false;
+    };
+
+    const runTier = (tier: "N" | "P"): NiceCand | null => {
+      let best: NiceCand | null = null;
+      // Which free win cards enumerate nice rungs: tier N = all free winners
+      // (a single free winner is forced at the residual instead); tier P =
+      // all but the cheapest free winner (the absorber).
+      const absorb = tier === "P" || forcedSingle;
+      const winU = new Map<number, number>();
+
+      // Assemble the full unit vector for one (win assignment, dust rung).
+      const assemble = (dustRung: number): number[] | null => {
+        const cand = new Array<number>(n).fill(0);
+        for (const [i, units] of fixedU) cand[i] = units;
+        for (const [i, units] of winU) cand[i] = units;
+        if (dustEnum !== -1) cand[dustEnum] = dustRung;
+        let nonBuffer = 0;
+        for (let i = 0; i < n; i++) if (i !== buffer) nonBuffer += cand[i]!;
+        const residual = SCALE - nonBuffer;
+        if (residual < 1) return null;
+        cand[buffer] = residual;
+        return cand;
+      };
+
+      // One completed win assignment × the enumerated dust rungs.
+      const complete = (
+        freeSum: number,
+        dist: number,
+        winEvUnits: number,
+      ): void => {
+        completions += 1;
+        for (const dustRung of dustOptions) {
+          const nonBufferUnits =
+            fixedUnits + freeSum + (dustEnum === -1 ? 0 : dustRung);
+          const residual = SCALE - nonBufferUnits;
+          if (residual < 1) continue;
+          const evUnits =
+            fixedEvUnits +
+            winEvUnits +
+            (dustEnum === -1 ? 0 : dustRung * vDustEnum) +
+            residual * vBuffer;
+          let ev = evUnits / SCALE;
+          let edge = 1 - ev / price;
+          let transferX = 0;
+          if (edge < eLo || edge > eHi) {
+            // Tier N never transfers (a transfer would knock a nice dust
+            // card off its rung — the price sweep supplies that freedom);
+            // tier P applies the SHIPPED analytic integer dust transfer.
+            if (tier === "N" || !(dustSpread > 0)) continue;
+            const evHiBound = price * (1 - targetEdge);
+            const evLoBound = price * (1 - targetEdge - edgeTolAbove);
+            const xMin = Math.ceil(((ev - evHiBound) * SCALE) / dustSpread - 1e-9);
+            const xMax = Math.floor(((ev - evLoBound) * SCALE) / dustSpread + 1e-9);
+            const loUnits =
+              dustLo === buffer
+                ? residual
+                : dustLo === dustEnum
+                  ? dustRung
+                  : fixedU.get(dustLo)!;
+            const hiUnits =
+              dustHi === buffer
+                ? residual
+                : dustHi === dustEnum
+                  ? dustRung
+                  : fixedU.get(dustHi)!;
+            const xFloor = -(loUnits - 1);
+            const xCeil = hiUnits - 1;
+            const a = Math.max(xMin, xFloor);
+            const b = Math.min(xMax, xCeil);
+            if (a > b) continue;
+            let x = a <= 0 && 0 <= b ? 0 : Math.abs(a) < Math.abs(b) ? a : b;
+            if (x !== 0 && RUNG > 1) {
+              x = x > 0 ? Math.ceil(a / RUNG) * RUNG : Math.floor(b / RUNG) * RUNG;
+              if (x < a || x > b) continue;
+            }
+            transferX = x;
+            ev = ev - (x * dustSpread) / SCALE;
+            edge = 1 - ev / price;
+            if (edge < eLo || edge > eHi) continue;
+          }
+          const jackRung = jack === -1 ? 0 : (winU.get(jack) ?? 0);
+          const jackOff =
+            jack === -1 || JACKPOT_MENU_PER_100K.includes(jackRung / RUNG)
+              ? 0
+              : 1;
+          const lex: number[] = [];
+          for (const i of winDesc) lex.push(winU.get(i) ?? 0);
+          lex.push(dustEnum === -1 ? 0 : dustRung);
+          const cand: NiceCand = {
+            dist,
+            jackOff,
+            edgeExcess: edge - targetEdge,
+            lex,
+            u: [],
+          };
+          if (best === null || betterCand(cand, best)) {
+            const assembled = assemble(dustRung);
+            if (assembled === null) continue;
+            if (transferX !== 0) {
+              assembled[dustLo] = assembled[dustLo]! + transferX;
+              assembled[dustHi] = assembled[dustHi]! - transferX;
+            }
+            cand.u = assembled;
+            best = cand;
+          }
+        }
+      };
+
+      // DFS over the FULL win ladder (value-DESC): pinned entries are fixed
+      // points (monotone-checked, never enumerated); free entries walk the
+      // nice rungs ascending with monotone / live-cap / partial-sum pruning.
+      // The LAST free card (the cheapest — the absorber slot) is SOLVED
+      // exactly rather than enumerated: tier P (and the forced single) takes
+      // any integer residual; tier N requires the solved residual to sit ON
+      // a nice rung. Semantically identical to enumerating it (the DFS only
+      // ever accepted the exact-sum completion) at 1/28th the node count.
+      const walk = (
+        pos: number,
+        prevUnits: number,
+        freeSum: number,
+        dist: number,
+        winEvUnits: number,
+      ): void => {
+        if (nodes >= NODE_CAP || completions >= COMPLETION_CAP) return;
+        nodes += 1;
+        if (pos === fullWinDesc.length) {
+          // Completion: the FREE win sum landed EXACTLY (tag by
+          // construction — the solved absorber slot guarantees it). With no
+          // free winners the pinned sum already passed the tolerance gate.
+          complete(freeSum, dist, winEvUnits);
+          return;
+        }
+        const i = fullWinDesc[pos]!;
+        const pinnedHere = pinnedUnitsByIdx.get(i);
+        if (pinnedHere !== undefined) {
+          // Immovable fixed point: a candidate that cannot satisfy
+          // monotonicity around a pin dies here.
+          if (pinnedHere < prevUnits) return;
+          walk(pos + 1, pinnedHere, freeSum, dist, winEvUnits);
+          return;
+        }
+        if (i === cheapestFree) {
+          // The solved slot: exact residual so the win sum is EXACTLY W.
+          const units = freeWinTarget - freeSum;
+          if (units < Math.max(1, prevUnits)) return;
+          if (!absorb) {
+            // Tier N: the cheapest free winner must ITSELF be nice (that is
+            // the whole point of N; it stays live-cap-exempt).
+            if (units % RUNG !== 0 || !NICE_UNITS_SET.has(units / RUNG)) return;
+            const precise = Math.max(pctUnits(i), 1e-9);
+            dist += Math.abs(Math.log(units / precise));
+          }
+          winU.set(i, units);
+          walk(pos + 1, units, freeSum + units, dist, winEvUnits + units * values[i]!);
+          winU.delete(i);
+          return;
+        }
+        // The cheapest free winner is exempt from the live cap (the
+        // anti-jackpot — the card the shipped snap already lets absorb
+        // above live); every other free win card is capped.
+        const cap = capOf(i);
+        const precise = Math.max(pctUnits(i), 1e-9);
+        const freeRemaining = freeLeftAt[pos]!;
+        for (const rung of rungs) {
+          if (rung < prevUnits) continue;
+          if (rung > cap + 1e-9) break;
+          // Strong partial-sum prune: monotone ⇒ every remaining free card
+          // (absorber included) needs ≥ this rung; ascending rungs ⇒ break.
+          if (freeSum + rung * freeRemaining > freeWinTarget) break;
+          winU.set(i, rung);
+          walk(
+            pos + 1,
+            rung,
+            freeSum + rung,
+            dist + Math.abs(Math.log(rung / precise)),
+            winEvUnits + rung * values[i]!,
+          );
+          if (nodes >= NODE_CAP || completions >= COMPLETION_CAP) {
+            winU.delete(i);
+            return;
+          }
+        }
+        winU.delete(i);
+      };
+
+      walk(0, 0, 0, 0, 0);
+      return best;
+    };
+
+    // Verify the selected candidate on the REAL risk math (float-safety: the
+    // per-candidate edge is analytic; the acceptance stack is re-asserted on
+    // `computePackRisk` before adoption — a miss falls through, never ships).
+    const finish = (
+      cand: NiceCand | null,
+      exempt: number[],
+    ): {
+      weights: number[];
+      risk: PackRisk;
+      allNice: boolean;
+      niceExemptIdx: number[];
+    } | null => {
+      if (cand === null || cand.u.length === 0) return null;
+      const r = riskOf(cand.u);
+      if (r.edge < eLo || r.edge > eHi) return null;
+      if (Math.abs(r.winRate - tag) > TAGGED_WINRATE_TOLERANCE + 1e-12) {
+        return null;
+      }
+      return {
+        weights: cand.u.slice(),
+        risk: r,
+        allNice: countOffNicePct(cand.u, exempt) === 0,
+        niceExemptIdx: exempt,
+      };
+    };
+
+    // Niceness-ACCOUNTING exemptions: the dust buffer, owner pins and a
+    // FORCED single free winner (zero freedom — its units are the tag
+    // arithmetic itself). The P-tier absorber is construction-exempt (the
+    // DFS never requires it nice) but COUNTS toward `allNice`/off-nice —
+    // the owner reads its odds too (his complaint screenshot included the
+    // 3.476% absorber), and fixture F4's honesty banner + the
+    // `allNice === (offLadderCards.length === 0)` consistency pin both
+    // require the absorber to be counted.
+    const exemptAcct = forcedSingle
+      ? [buffer, ...pinnedUnitsByIdx.keys(), cheapestFree]
+      : [buffer, ...pinnedUnitsByIdx.keys()];
+    const nRes = finish(runTier("N"), exemptAcct);
+    if (nRes !== null) return nRes;
+    return finish(runTier("P"), exemptAcct);
+  })();
+  if (nice !== null) return nice;
+
+  // ── Tier G — the shipped per-100k grid snap (byte-identical fallback) ──
   // ── Win ladder (value-DESC, FREE winners): jackpot on the 1-in-N menu,
   //    others rounded to the rung grid, odds non-increasing in value. ──
-  const winDesc = [...winIdx].sort((a, b) => values[b]! - values[a]!);
   if (winDesc.length > 0) {
     const jack = winDesc[0]!;
     // The menu styles the HEADLINE jackpot — only when no pinned win card is
@@ -1752,11 +2285,8 @@ function snapTaggedPer100k(input: {
   //    grid minimum — 0.001%, the "~zero mass" the ruleset assigns them). ──
   for (const i of nmIdx) u[i] = Math.max(RUNG, Math.round(pctUnits(i) / RUNG) * RUNG);
 
-  // ── Dust: the largest-mass FREE dust card is THE residual buffer. ──
-  let buffer = dustIdx[0]!;
-  for (const i of dustIdx) {
-    if (input.weights[i]! > input.weights[buffer]!) buffer = i;
-  }
+  // ── Dust: the largest-mass FREE dust card is THE residual buffer
+  //    (`buffer` — the shared argmax hoisted above). ──
   for (const i of dustIdx) {
     if (i !== buffer) u[i] = Math.max(RUNG, Math.round(pctUnits(i) / RUNG) * RUNG);
   }
@@ -1765,12 +2295,6 @@ function snapTaggedPer100k(input: {
   const residual = SCALE - nonBuffer;
   if (residual < 1) return null;
   u[buffer] = residual;
-
-  const riskOf = (cand: readonly number[]): PackRisk =>
-    computePackRisk({
-      cards: values.map((v, i) => ({ value: v, weight: cand[i]! })),
-      price,
-    });
 
   // ── Edge landing: analytic integer transfer inside the FREE dust band. ──
   // EV is linear in a mass transfer x between two dust values (total + win
@@ -1782,8 +2306,6 @@ function snapTaggedPer100k(input: {
   // (identical to the legacy unit transfer on the per-100k grid).
   let cand = u;
   let r = riskOf(cand);
-  const eLo = targetEdge - 1e-9;
-  const eHi = targetEdge + edgeTolAbove + 1e-9;
   if (r.edge < eLo || r.edge > eHi) {
     const dustAsc = [...dustIdx].sort((a, b) => values[a]! - values[b]!);
     const lo = dustAsc[0]!;
@@ -1821,7 +2343,18 @@ function snapTaggedPer100k(input: {
   // ── Final acceptance stack. ──
   if (Math.abs(r.winRate - tag) > TAGGED_WINRATE_TOLERANCE + 1e-12) return null;
   if (!input.grailGuard(cand as number[])) return null;
-  return { weights: cand.slice(), risk: r };
+  // Niceness verdict on the G vector, honestly computed (a grid snap CAN
+  // land all-nice by luck). Accounting exemptions = buffer + pins + a
+  // FORCED single free winner; the cheapest-winner absorber COUNTS (same
+  // accounting as tiers N/P — see the note there).
+  const exemptG = [buffer, ...pinnedUnitsByIdx.keys()];
+  if (winDesc.length === 1) exemptG.push(winDesc[0]!);
+  return {
+    weights: cand.slice(),
+    risk: r,
+    allNice: countOffNicePct(cand, exemptG) === 0,
+    niceExemptIdx: exemptG,
+  };
 }
 
 /**
@@ -2515,14 +3048,22 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // The one-sided-up edge enforcement nudges the cheapest DUST card, so a dust
   // card must exist to carry the losing mass and the post-quantize EV slack.
   if (dust.length === 0) {
+    // Price-independent variant (§Rule Set fix): a dust card demands
+    // `price > 2·minValue` while a winner demands `price ≤ maxValue` — when
+    // `2·minValue ≥ maxValue` the two demands are disjoint at EVERY price, so
+    // no price move can ever clear this limit. Only a pool edit fixes it.
+    const priceFree = 2 * minValue >= maxValue;
     return {
       error: "No dust cards (value < 0.5·price): nothing to carry the losing mass / EV slack.",
       feasibility,
       limit: {
         kind: "no-dust-cards",
-        detail: `Pool has no DUST card (< $${dustHi.toFixed(2)}, half the $${price.toFixed(2)} price). The losing mass has nowhere to sit, so the house edge can't be shaped.`,
+        detail: priceFree
+          ? `Pool has no DUST card (< $${dustHi.toFixed(2)}, half the $${price.toFixed(2)} price) — and no price can create one: the cheapest card ($${minValue.toFixed(2)}) is worth more than half the priciest ($${maxValue.toFixed(2)}), so every price either strips all winners or leaves no losers. Only a pool edit fixes this.`
+          : `Pool has no DUST card (< $${dustHi.toFixed(2)}, half the $${price.toFixed(2)} price). The losing mass has nowhere to sit, so the house edge can't be shaped.`,
         suggestion: `Add one or more low-value cards priced under $${dustHi.toFixed(2)} (Builder/card editor) so the house edge has somewhere to sit.`,
         suggestedRange: { min: 0, max: dustHi },
+        ...(priceFree ? { priceIndependent: true } : {}),
       },
     };
   }
@@ -3478,7 +4019,26 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // exact tag sum. The pinned grid (PIN_SCALE) hosts both — every per-100k
   // rung and every clean-ladder rung is an integer number of its units.
   let taggedSnapApplied = false;
+  let taggedSnapAllNice: boolean | undefined;
+  let taggedSnapNiceExemptIdx: number[] | undefined;
   if (snapTagTarget !== undefined) {
+    // §niceness live-basis never-inflate caps: current odds on the snap grid
+    // (the owner rule is "never above CURRENT advertised odds" — the precise
+    // vector is an intermediate artifact and capping nice rungs at it would
+    // make the owner's own round-number ask impossible). Zero/absent current
+    // weight ⇒ uncapped (LAW-6 new cards); no anchor ⇒ null (the legacy
+    // value-only path keeps no inflation guard, mirroring the generic snap).
+    const snapScale = hasPins ? PIN_SCALE : 100_000;
+    const curForCaps = cur;
+    const liveCapUnits =
+      anchorActive && curForCaps !== undefined
+        ? values.map((_, i) => {
+            const cw = curForCaps[i];
+            return cw !== undefined && Number.isFinite(cw) && cw > 0
+              ? (cw / curTotal) * snapScale
+              : Infinity;
+          })
+        : null;
     const taggedSnap = snapTaggedPer100k({
       values,
       weights,
@@ -3487,6 +4047,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
       targetEdge,
       edgeTolAbove: snapEdgeTol,
       grailGuard: snapGrailNotInflated,
+      liveCapUnits,
       ...(hasPins
         ? {
             pins: [...pinnedShareByIdx.keys()].map((index) => ({
@@ -3502,6 +4063,8 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
       risk = taggedSnap.risk;
       snapped = true;
       taggedSnapApplied = true;
+      taggedSnapAllNice = taggedSnap.allNice;
+      taggedSnapNiceExemptIdx = taggedSnap.niceExemptIdx;
     }
   }
 
@@ -3718,6 +4281,15 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     ...(oneSidedAccepted && oneSidedEdgeExcess !== null
       ? { oneSidedEdgeExcess }
       : {}),
+    // Tagged per-100k snap only (§niceness): the human-nice verdict + the
+    // exempt indexes. The gcd-reduce above preserves proportions, so the
+    // verdict computed on the snap vector stays valid. Untagged / unsnapped
+    // results never set these — untagged behavior is byte-identical.
+    ...(taggedSnapApplied &&
+    taggedSnapAllNice !== undefined &&
+    taggedSnapNiceExemptIdx !== undefined
+      ? { allNice: taggedSnapAllNice, niceExemptIdx: taggedSnapNiceExemptIdx }
+      : {}),
   };
 }
 
@@ -3933,6 +4505,41 @@ export function searchBestPriceForCleanSnap(input: {
     };
   }
 
+  // ── Price-independent no-dust pre-check (§Rule Set fix) ──────────────
+  // Over the USABLE cards (positive value, under the max-win cap — both
+  // price-independent facts), a dust card demands `price > 2·min` while a
+  // winner demands `price ≤ max`. When `2·min ≥ max` the demands are
+  // disjoint at EVERY price: the sweep would burn its whole budget
+  // re-proving the same `no-dust-cards` refusal at every cent. Evaluate the
+  // base ONCE and return the disabled-path shape (`searched: 1`); the base
+  // result carries the `priceIndependent` limit for the honest plan copy.
+  // (`targetWinRate > 0` guard: with a zero win target no winner is needed,
+  // so a high enough price CAN still shape the pool.)
+  if (targetWinRate > 0) {
+    let usableMin = Infinity;
+    let usableMax = -Infinity;
+    for (const c of cards) {
+      const v = c.value;
+      if (!(v > 0) || !Number.isFinite(v)) continue;
+      if (maxWinCap !== undefined && v > maxWinCap) continue;
+      if (v < usableMin) usableMin = v;
+      if (v > usableMax) usableMax = v;
+    }
+    if (usableMax > 0 && 2 * usableMin >= usableMax) {
+      const baseResult = runAt(basePrice);
+      const baseSnapped =
+        isShapeWeightsSuccess(baseResult) && baseResult.snapped === true;
+      const baseAccuracy = tagged ? isWithinTaggedTol(baseResult) : true;
+      return {
+        bestPrice: basePrice,
+        bestResult: baseResult,
+        searched: 1,
+        fellBackToBase: !(baseSnapped && baseAccuracy),
+        taggedAccuracyHit: tagged ? baseAccuracy : null,
+      };
+    }
+  }
+
   // ── Evaluation budget ───────────────────────────────────────────────
   // `MAX_CANDIDATES` is the TOTAL evaluation budget (each candidate runs a
   // full `shapeWeights`, so cost is bounded by this number, not by the band):
@@ -4013,6 +4620,15 @@ export function searchBestPriceForCleanSnap(input: {
     winRateTier: number; // tagged mode only; always 0 in default mode
     edgeBand: number; // preferHigherEdge only; always 0 otherwise. Smaller = higher edge.
     snapPriority: number; // 0 = snapped + skew matches base, 1 = snapped wrong skew, 2 = not snapped, 3 = error
+    /**
+     * §niceness: tagged mode, snapped successes only — the count of
+     * non-exempt planned cards OFF the human-nice grid (0 = all nice).
+     * 0 for untagged / unsnapped / error candidates (inert — those are
+     * already outranked by the earlier tiers). Sits BELOW tag accuracy and
+     * snappedness and ABOVE price distance: "all-nice > partially-nice >
+     * per-100k-exact", never overriding tag exactness / edge window / caps.
+     */
+    niceTier: number;
     centsDist: number;
     edgeDrift: number;
   };
@@ -4021,6 +4637,7 @@ export function searchBestPriceForCleanSnap(input: {
     let edgeDrift: number;
     let winRateTier: number;
     let edgeBand: number;
+    let niceTier: number;
     if (isShapeWeightsSuccess(result)) {
       const isSnapped = result.snapped === true;
       const skewMatchesBase =
@@ -4034,6 +4651,12 @@ export function searchBestPriceForCleanSnap(input: {
       // Edge band: bucketize achieved edge in 0.1pp bins; negate so higher
       // edge = lower (better) score. Only active under preferHigherEdge.
       edgeBand = preferHigherEdge ? -Math.floor(result.edge * 1000) : 0;
+      // Niceness (shared helper — the engine's `allNice` and the plan
+      // projection count with the same grid, so they can never disagree).
+      niceTier =
+        tagged && isSnapped
+          ? countOffNicePct(result.weights, result.niceExemptIdx)
+          : 0;
     } else {
       snapPriority = 3;
       edgeDrift = Infinity;
@@ -4041,6 +4664,7 @@ export function searchBestPriceForCleanSnap(input: {
       // Failed candidates land in the worst (largest positive) band so they
       // lose to every success.
       edgeBand = preferHigherEdge ? Number.MAX_SAFE_INTEGER : 0;
+      niceTier = 0;
     }
     return {
       price,
@@ -4048,14 +4672,16 @@ export function searchBestPriceForCleanSnap(input: {
       winRateTier,
       edgeBand,
       snapPriority,
+      niceTier,
       centsDist: Math.abs(Math.round(price * 100) - centsAtBase),
       edgeDrift,
     };
   };
 
   // Lexicographic comparator: winRateTier < edgeBand < snapPriority <
-  // centsDist < edgeDrift. In default mode winRateTier + edgeBand are always
-  // 0 → effectively starts at snapPriority.
+  // niceTier < centsDist < edgeDrift. In default mode winRateTier + edgeBand
+  // are always 0 → effectively starts at snapPriority (and niceTier is always
+  // 0 untagged — ordering byte-identical to the pre-niceness comparator).
   const lexBetter = (a: Scored, b: Scored): boolean =>
     a.winRateTier < b.winRateTier ||
     (a.winRateTier === b.winRateTier && a.edgeBand < b.edgeBand) ||
@@ -4065,10 +4691,16 @@ export function searchBestPriceForCleanSnap(input: {
     (a.winRateTier === b.winRateTier &&
       a.edgeBand === b.edgeBand &&
       a.snapPriority === b.snapPriority &&
+      a.niceTier < b.niceTier) ||
+    (a.winRateTier === b.winRateTier &&
+      a.edgeBand === b.edgeBand &&
+      a.snapPriority === b.snapPriority &&
+      a.niceTier === b.niceTier &&
       a.centsDist < b.centsDist) ||
     (a.winRateTier === b.winRateTier &&
       a.edgeBand === b.edgeBand &&
       a.snapPriority === b.snapPriority &&
+      a.niceTier === b.niceTier &&
       a.centsDist === b.centsDist &&
       a.edgeDrift < b.edgeDrift);
 
@@ -4077,7 +4709,9 @@ export function searchBestPriceForCleanSnap(input: {
   // ── Base-prefer early return ─────────────────────────────────────────
   // DEFAULT MODE: if the base price already produced a snapped (and
   // skew-matching) result, prefer it — never deviate without reason.
-  // TAGGED MODE: ALSO require base to satisfy the 0.01pp win-rate gate.
+  // TAGGED MODE: ALSO require base to satisfy the 0.01pp win-rate gate AND
+  //   land ALL-NICE (§niceness: a merely per-100k-exact base must not stop
+  //   the hunt for round numbers elsewhere in the band).
   // PREFER-HIGHER-EDGE MODE: the sweep MUST run — even if base snaps cleanly,
   //   a HIGHER-priced candidate may give the operator the edge they asked for.
   // Otherwise the sweep MUST run — the owner's accuracy requirement is
@@ -4085,7 +4719,7 @@ export function searchBestPriceForCleanSnap(input: {
   const baseQualifiesForEarlyReturn = preferHigherEdge
     ? false
     : tagged
-      ? best.winRateTier === 0 && best.snapPriority === 0
+      ? best.winRateTier === 0 && best.snapPriority === 0 && best.niceTier === 0
       : best.snapPriority === 0;
   if (baseQualifiesForEarlyReturn) {
     return {
@@ -4115,13 +4749,17 @@ export function searchBestPriceForCleanSnap(input: {
   };
 
   // Once a top-tier hit (clean snap, matching skew, within-tol win-rate for
-  // tagged) exists at distance k and every cent ≤ k has been evaluated, no
-  // farther candidate can beat it — centsDist is the deciding tier from there.
+  // tagged — and ALL-NICE for tagged, §niceness) exists at distance k and
+  // every cent ≤ k has been evaluated, no farther candidate can beat it —
+  // centsDist is the deciding tier from there. Without the niceTier guard the
+  // tagged sweep would settle at the nearest per-100k-exact cent and never
+  // reach the round-number assignment farther out (fixture F2: Δ71¢).
   // Exception: preferHigherEdge keeps hunting (edgeBand outranks centsDist).
   const topTierAt = (d: number): boolean =>
     !preferHigherEdge &&
     best.winRateTier === 0 &&
     best.snapPriority === 0 &&
+    (!tagged || best.niceTier === 0) &&
     best.centsDist <= d;
 
   // Phase 1 — FINE: 1¢ outward walk (densest near base).
