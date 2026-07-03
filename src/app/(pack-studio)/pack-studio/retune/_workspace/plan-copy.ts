@@ -247,6 +247,30 @@ export function clearAllPinsLabel(count: number): string {
   return `Clear ${count} pin${count === 1 ? "" : "s"}`;
 }
 
+// ─── Pending edits (batch multiple Planned % edits before applying) ──────────
+//
+// A pending edit is a typed-but-not-yet-committed pin: it sits in a client-side
+// buffer, re-plans NOTHING, and renders in a distinct amber PENDING style until
+// the operator applies the batch. Apply commits ALL pending edits at once as
+// pins into the staged pool → exactly ONE re-plan; Discard drops them with no
+// re-plan. This lets the owner edit several chances, then save once.
+
+/** aria/tooltip for the hover pencil while pending edits are supported. */
+export const PENDING_EDIT_HINT = "Type a chance, then Apply — batch several first";
+/** aria-label prefix on a cell that holds a pending (uncommitted) edit. */
+export const PENDING_EDIT_ARIA = "Pending edit";
+/** Action-bar count label ("3 pending edits"). */
+export function pendingEditsLabel(count: number): string {
+  return `${count} pending edit${count === 1 ? "" : "s"}`;
+}
+/** Action-bar Apply button — commits every pending edit as a pin (one re-plan). */
+export const PENDING_APPLY = "Apply";
+/** Action-bar Discard button — drops every pending edit, no re-plan. */
+export const PENDING_DISCARD = "Discard";
+/** One-line explainer under the action bar. */
+export const PENDING_EDITS_NOTE =
+  "Typed but not saved yet — nothing re-plans until you apply. Apply pins them all at once (one re-plan); Discard reverts.";
+
 export function tagSaturatedBanner(tag: number): string {
   return `No price in the search band hits the ${pctBody(tag)}% tag exactly — closest achievable shown. Pushing is blocked.`;
 }

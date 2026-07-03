@@ -1,7 +1,16 @@
 "use client";
 
 import * as React from "react";
-import { Check, Info, Lock, LockOpen, Plus, TriangleAlert } from "lucide-react";
+import {
+  Check,
+  Info,
+  Lock,
+  LockOpen,
+  Pencil,
+  Plus,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +20,13 @@ import { cn } from "@/lib/utils";
 import { BuilderCardPicker } from "../../builder/builder-card-picker";
 import type { BuilderCardItem } from "../../builder/actions";
 import type { RetunePickerFilters } from "../../doctor/retune-actions";
-import { PRICE_INPUT_HINT } from "./plan-copy";
+import {
+  PENDING_APPLY,
+  PENDING_DISCARD,
+  PENDING_EDITS_NOTE,
+  PRICE_INPUT_HINT,
+  pendingEditsLabel,
+} from "./plan-copy";
 import { CardDiffTable, type CardDiffRow } from "./card-diff-table";
 
 /**
@@ -182,6 +197,77 @@ function OddsTotalChip({
   );
 }
 
+/**
+ * Pending-edits action bar (§ "edit several % before saving"). Appears only
+ * when the buffer is non-empty. It reports the count, shows the live total-%
+ * the pending+committed odds would land at, and offers the two batch actions:
+ * APPLY commits every buffered edit as a pin in ONE re-plan; DISCARD drops the
+ * whole buffer with no re-plan. Amber, matching the pending cell styling.
+ */
+function PendingEditsBar({
+  count,
+  pendingTotal,
+  onApply,
+  onDiscard,
+  disabled,
+}: {
+  count: number;
+  /** Total odds % across the pending+committed set (see `pendingOddsTotal`). */
+  pendingTotal: number;
+  onApply: () => void;
+  onDiscard: () => void;
+  disabled: boolean;
+}) {
+  if (count === 0) return null;
+  // ±0.005 tolerance so the readout agrees with what prints at 2 decimals.
+  const exact = Math.abs(pendingTotal - 100) <= 0.005;
+  const totalTone = exact
+    ? "text-emerald-600 dark:text-emerald-400"
+    : pendingTotal > 100
+      ? "text-rose-600 dark:text-rose-400"
+      : "text-amber-600 dark:text-amber-400";
+  return (
+    <div
+      className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex items-center gap-2">
+        <Pencil
+          className="size-4 shrink-0 text-amber-600 dark:text-amber-400"
+          aria-hidden
+        />
+        <span className="text-sm font-semibold text-amber-700 dark:text-amber-300">
+          {pendingEditsLabel(count)}
+        </span>
+      </div>
+      <span className={cn("text-xs font-medium tabular-nums", totalTone)}>
+        Total odds: {pendingTotal.toFixed(2)}% / 100%
+      </span>
+      <div className="ml-auto flex items-center gap-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onDiscard}
+          disabled={disabled}
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <X className="size-3.5" />
+          {PENDING_DISCARD}
+        </Button>
+        <Button type="button" size="sm" onClick={onApply} disabled={disabled}>
+          <Check className="size-3.5" />
+          {PENDING_APPLY}
+        </Button>
+      </div>
+      <p className="basis-full text-[11px] text-amber-700/80 dark:text-amber-300/80">
+        {PENDING_EDITS_NOTE}
+      </p>
+    </div>
+  );
+}
+
 export function PoolTable({
   rows,
   contextPrice,
@@ -190,6 +276,8 @@ export function PoolTable({
   priceText,
   pinPrice,
   disabled,
+  pendingCount,
+  pendingTotal,
   pickerOpen,
   pickerRange,
   pickerFilters,
@@ -200,8 +288,11 @@ export function PoolTable({
   onUndoRemove,
   onColorChange,
   onAnimationChange,
-  onPinCard,
+  onPendingEdit,
+  onPendingClear,
   onPinClear,
+  onApplyPending,
+  onDiscardPending,
   onPriceTextChange,
   onPriceCommit,
   onPinToggle,
@@ -217,6 +308,10 @@ export function PoolTable({
   pinPrice: boolean;
   /** Blocks edits while a push is in flight. */
   disabled: boolean;
+  /** Number of typed-but-not-yet-applied edits in the buffer (0 hides the bar). */
+  pendingCount: number;
+  /** Live total-% the pending+committed odds land at (100% = clean). */
+  pendingTotal: number;
   pickerOpen: boolean;
   pickerRange: { min?: number; max?: number } | null;
   pickerFilters: RetunePickerFilters | null;
@@ -227,9 +322,16 @@ export function PoolTable({
   onUndoRemove: (cardId: string) => void;
   onColorChange: (cardId: string, color: string | null) => void;
   onAnimationChange: (cardId: string, animation: boolean) => void;
-  /** Owner pins: click-to-edit Planned % (Enter pins, Escape cancels). */
-  onPinCard: (cardId: string, pct: number) => void;
+  /** Buffer a typed Planned % edit (no re-plan) — Enter/Tab advance. */
+  onPendingEdit: (cardId: string, pct: number) => void;
+  /** Drop one card's pending (not-yet-applied) edit. */
+  onPendingClear: (cardId: string) => void;
+  /** Clear a card's already-committed pin (the pin chip's X). */
   onPinClear: (cardId: string) => void;
+  /** Commit ALL pending edits as pins → exactly one re-plan. */
+  onApplyPending: () => void;
+  /** Drop the whole pending buffer — no re-plan. */
+  onDiscardPending: () => void;
   onPriceTextChange: (text: string) => void;
   /** Enter/blur — commit the typed price immediately (flushes the debounce). */
   onPriceCommit: () => void;
@@ -247,8 +349,17 @@ export function PoolTable({
         onUndoRemove={disabled ? undefined : onUndoRemove}
         onColorChange={disabled ? undefined : onColorChange}
         onAnimationChange={disabled ? undefined : onAnimationChange}
-        onPinCard={disabled ? undefined : onPinCard}
+        onPendingEdit={disabled ? undefined : onPendingEdit}
+        onPendingClear={disabled ? undefined : onPendingClear}
         onPinClear={disabled ? undefined : onPinClear}
+      />
+
+      <PendingEditsBar
+        count={pendingCount}
+        pendingTotal={pendingTotal}
+        onApply={onApplyPending}
+        onDiscard={onDiscardPending}
+        disabled={disabled}
       />
 
       <OddsTotalChip

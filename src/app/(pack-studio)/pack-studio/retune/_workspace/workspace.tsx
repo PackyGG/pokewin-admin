@@ -54,6 +54,8 @@ import {
   isPriceSkewRefusal,
   isPushEnabled,
   isTokenExpired,
+  mergePendingIntoPins,
+  pendingOddsTotal,
   reanchorStagedPool,
   seedStagedPool,
   stagedPlanInput,
@@ -64,6 +66,7 @@ import {
   type StagedCard,
   type StagedPool,
 } from "./plan-state";
+import type { RetunePinnedOdds } from "@/app/(admin)/packs/_lib/retune-params";
 import { PoolTable, autoColorAndAnimation, describeAutoPick } from "./pool-table";
 import { PortfolioStrip } from "./portfolio-strip";
 import { PushConfirm, type PendingPush } from "./push-confirm";
@@ -96,6 +99,9 @@ const PLAN_CONTEXT = "pack-studio.retune.plan-pack";
 const PLAN_TIMEOUT_MS = 20_000;
 const PRICE_DEBOUNCE_MS = 500;
 const BULK_HANDOFF_KEY = "pack-studio.retune.bulk-handoff";
+
+/** Stable empty pending-buffer reference (avoids per-render array identity churn). */
+const EMPTY_PENDING: RetunePinnedOdds[] = [];
 
 function setMap<K, V>(map: Map<K, V>, key: K, value: V): Map<K, V> {
   const next = new Map(map);
@@ -518,35 +524,97 @@ export function RetuneWorkspace({
         // input refuses pins on cards outside the staged pool).
         pinnedOdds: sp.pinnedOdds.filter((p) => p.cardId !== cardId),
       });
+      // A pending edit on the removed card has nothing left to bind — drop it.
+      const buffer = stagedApi.getPending(packId);
+      if (buffer.some((p) => p.cardId === cardId)) {
+        stagedApi.setPending(
+          packId,
+          buffer.filter((p) => p.cardId !== cardId),
+        );
+      }
       void requestPlan(packId);
     },
     [ensureStaged, stagedApi, requestPlan],
   );
 
-  // ── Owner pins: Enter on the Planned % cell pins, X clears (§ pins) ─────
-  // Pin edits re-plan through the SAME staged path as add/remove/price —
-  // committed pins are solve-relevant (stagedKey), so the plan re-fires
-  // immediately (a pin commit is an explicit Enter, like a price commit).
-  const pinCard = React.useCallback(
+  // ── Owner pins (§ pins) + PENDING edits (batch several before applying) ──
+  //
+  // The Planned % cells now write to a client-side PENDING buffer instead of
+  // pinning immediately: typing + Enter/Tab buffers the value and moves to the
+  // next cell (no re-plan). APPLY commits the whole buffer as pins in ONE
+  // staged call (one re-plan); DISCARD drops it. A COMMITTED pin (the amber pin
+  // chip) is still solve-relevant and its X clears it immediately (below).
+
+  // Buffer a typed Planned % edit — no staged mutation, no re-plan. Only cards
+  // currently in the pool (staged pool if one exists, else the live pool) are
+  // valid targets; a value on a card outside the pool is ignored.
+  const addPendingEdit = React.useCallback(
     (cardId: string, pct: number) => {
       const packId = selectedRef.current;
       if (!packId) return;
-      const sp = ensureStaged(packId);
-      if (!sp) return;
-      if (!sp.cards.some((c) => c.cardId === cardId)) return;
-      const existing = sp.pinnedOdds.find((p) => p.cardId === cardId);
-      if (existing && existing.pct === pct) return; // no-op re-commit
-      stagedApi.setStaged(packId, {
-        ...sp,
-        pinnedOdds: [
-          ...sp.pinnedOdds.filter((p) => p.cardId !== cardId),
-          { cardId, pct },
-        ],
-      });
-      void requestPlan(packId);
+      const sp = stagedApi.getStaged(packId);
+      const inPool = sp
+        ? sp.cards.some((c) => c.cardId === cardId)
+        : (poolByPackRef.current.get(packId)?.cards.some(
+            (c) => c.cardId === cardId,
+          ) ?? false);
+      if (!inPool) return;
+      const buffer = stagedApi.getPending(packId);
+      const existing = buffer.find((p) => p.cardId === cardId);
+      if (existing && existing.pct === pct) return; // no-op
+      stagedApi.setPending(packId, [
+        ...buffer.filter((p) => p.cardId !== cardId),
+        { cardId, pct },
+      ]);
     },
-    [ensureStaged, stagedApi, requestPlan],
+    [stagedApi],
   );
+
+  // Drop one card's pending edit (its cell reverts to planned/pinned). No re-plan.
+  const clearPendingEdit = React.useCallback(
+    (cardId: string) => {
+      const packId = selectedRef.current;
+      if (!packId) return;
+      const buffer = stagedApi.getPending(packId);
+      if (!buffer.some((p) => p.cardId === cardId)) return;
+      stagedApi.setPending(
+        packId,
+        buffer.filter((p) => p.cardId !== cardId),
+      );
+    },
+    [stagedApi],
+  );
+
+  // APPLY: commit EVERY buffered edit as a pin into the staged pool in ONE
+  // setStaged → the plan re-fires ONCE with the full pinnedOdds set. This is the
+  // same staged path a single pin used before — just carrying N pins at once.
+  const applyPending = React.useCallback(() => {
+    const packId = selectedRef.current;
+    if (!packId) return;
+    const buffer = stagedApi.getPending(packId);
+    if (buffer.length === 0) return;
+    const sp = ensureStaged(packId);
+    if (!sp) return;
+    // Only pins on cards still in the staged pool bind (mirrors pinCard's guard);
+    // a pending edit on a card that was removed since typing is dropped.
+    const inPool = new Set(sp.cards.map((c) => c.cardId));
+    const validPending = buffer.filter((p) => inPool.has(p.cardId));
+    stagedApi.clearPending(packId);
+    if (validPending.length === 0) return;
+    const nextPins: RetunePinnedOdds[] = mergePendingIntoPins(
+      sp.pinnedOdds,
+      validPending,
+    );
+    stagedApi.setStaged(packId, { ...sp, pinnedOdds: nextPins });
+    void requestPlan(packId); // ONE re-plan for the whole batch
+  }, [ensureStaged, stagedApi, requestPlan]);
+
+  // DISCARD: drop the whole buffer — cells revert to planned/pinned, no re-plan.
+  const discardPending = React.useCallback(() => {
+    const packId = selectedRef.current;
+    if (!packId) return;
+    stagedApi.clearPending(packId);
+  }, [stagedApi]);
 
   const clearPin = React.useCallback(
     (cardId: string) => {
@@ -647,6 +715,7 @@ export function RetuneWorkspace({
   const resetToLive = React.useCallback(
     (packId: string) => {
       stagedApi.clearStaged(packId);
+      stagedApi.clearPending(packId); // drop any un-applied typed edits too
       setDriftPrompts((prev) => delSet(prev, packId));
       setRebasedPacks((prev) => delSet(prev, packId));
       setFixLoopPacks((prev) => delSet(prev, packId));
@@ -803,6 +872,9 @@ export function RetuneWorkspace({
   const handleWriteSuccess = React.useCallback(
     (pp: PendingPush, result: WriteResult) => {
       stagedApi.clearStaged(pp.packId);
+      // A successful push clears the pending-edits buffer too — the batch it
+      // would have pinned is now moot (the pool was written).
+      stagedApi.clearPending(pp.packId);
       setDriftPrompts((prev) => delSet(prev, pp.packId));
       applyPushBookkeeping(pp.packId, pp.frozen, result);
       // "Next: {name} →" — the next Attention-ordered row still needing work.
@@ -1004,6 +1076,16 @@ export function RetuneWorkspace({
   const selectedStaged = selectedPackId
     ? (stagedApi.stagedByPack.get(selectedPackId) ?? null)
     : null;
+  // Stable identity: the map entry itself is a stable array reference between
+  // renders (only replaced on a real buffer change), so memoizing on the map +
+  // selection keeps `diffRows` / `pendingTotal` from re-computing every render.
+  const selectedPending = React.useMemo(
+    () =>
+      selectedPackId
+        ? (stagedApi.pendingByPack.get(selectedPackId) ?? EMPTY_PENDING)
+        : EMPTY_PENDING,
+    [selectedPackId, stagedApi.pendingByPack],
+  );
   const selectedEntry = selectedPackId
     ? planByPack.get(selectedPackId)
     : undefined;
@@ -1063,8 +1145,17 @@ export function RetuneWorkspace({
         pool: selectedPool,
         staged: selectedStaged,
         plan: planForBasis,
+        pending: selectedPending,
       }),
-    [selectedPool, selectedStaged, planForBasis],
+    [selectedPool, selectedStaged, planForBasis, selectedPending],
+  );
+
+  // Live total-% the pending+committed odds would land at (the readout the
+  // owner watches before Apply). Base = the plan's planned odds (committed pins
+  // already folded in); each pending edit overrides its card's share.
+  const pendingTotal = React.useMemo(
+    () => pendingOddsTotal(planForBasis?.planned ?? null, selectedPending),
+    [planForBasis, selectedPending],
   );
 
   const oddsTotal = React.useMemo(() => {
@@ -1429,6 +1520,8 @@ export function RetuneWorkspace({
                       priceText={priceText}
                       pinPrice={selectedStaged?.pinPrice ?? false}
                       disabled={pushing}
+                      pendingCount={selectedPending.length}
+                      pendingTotal={pendingTotal}
                       pickerOpen={pickerOpen}
                       pickerRange={pickerRange}
                       pickerFilters={pickerFilters}
@@ -1447,8 +1540,11 @@ export function RetuneWorkspace({
                       onAnimationChange={(cardId, animation) =>
                         changeCosmetic(cardId, { animation })
                       }
-                      onPinCard={pinCard}
+                      onPendingEdit={addPendingEdit}
+                      onPendingClear={clearPendingEdit}
                       onPinClear={clearPin}
+                      onApplyPending={applyPending}
+                      onDiscardPending={discardPending}
                       onPriceTextChange={(text) => {
                         setPriceText(text);
                         commitPrice(text, false);

@@ -42,7 +42,8 @@ import {
   CRUSH_CHIP,
   CRUSH_TOOLTIP,
   PIN_CHIP,
-  PIN_EDIT_HINT,
+  PENDING_EDIT_ARIA,
+  PENDING_EDIT_HINT,
   PIN_INPUT_PLACEHOLDER,
   PIN_TOOLTIP,
   capRemovedBadgeLabel,
@@ -92,6 +93,13 @@ export type CardDiffRow = {
    */
   pinnedPct: number | null;
   /**
+   * PENDING (typed-but-not-yet-applied) chance for this card — non-null renders
+   * the amber PENDING style (dashed outline + dot). It has NOT been committed as
+   * a pin and has NOT re-planned; Apply promotes the whole buffer to pins at
+   * once. Overrides the pinned/planned display in the cell while it exists.
+   */
+  pendingPct: number | null;
+  /**
    * §3.3 crush chip: TRUE when the plan's shape guard flagged this card as
    * crushed (planned odds ≥100x below its live odds — the fixed-pool math parked
    * the mass elsewhere). From `plan.shape.crushedCardIds` — zero client
@@ -125,8 +133,17 @@ export function buildCardDiffRows(args: {
   pool: EditPool | null;
   staged: StagedPool | null;
   plan: PackTunePlan | null;
+  /**
+   * The typed-but-not-yet-applied pending edits for this pack, keyed later by
+   * cardId. Optional — the push-confirm frozen render passes none (a frozen
+   * artifact never carries a live buffer), so those rows read `pendingPct: null`.
+   */
+  pending?: { cardId: string; pct: number }[];
 }): CardDiffRow[] {
   const { pool, staged, plan } = args;
+  const pendingByCard = new Map<string, number>(
+    (args.pending ?? []).map((p) => [p.cardId, p.pct]),
+  );
   const plannedByCard = new Map<string, { pct: number; livePct: number | null }>();
   if (plan) {
     for (const p of plan.planned) {
@@ -184,6 +201,9 @@ export function buildCardDiffRows(args: {
         // covers the brief staged window before the pinned plan lands.
         offLadder: pinnedPct === null && offLadder.has(c.cardId),
         pinnedPct,
+        // A cap-removed row can't hold a pending edit (it's a removal, not a
+        // chance); otherwise the pending buffer overrides the cell.
+        pendingPct: capRemoved ? null : (pendingByCard.get(c.cardId) ?? null),
         crushed: !capRemoved && crushedCards.has(c.cardId),
         color: c.color,
         animation: c.animation,
@@ -202,6 +222,7 @@ export function buildCardDiffRows(args: {
         capRemovedUsd: null,
         offLadder: false,
         pinnedPct: null,
+        pendingPct: null,
         crushed: false,
         color: c.color,
         animation: c.animation,
@@ -225,6 +246,7 @@ export function buildCardDiffRows(args: {
         capRemovedUsd: capRemoved ? capUsd : null,
         offLadder: offLadder.has(c.cardId),
         pinnedPct: null,
+        pendingPct: capRemoved ? null : (pendingByCard.get(c.cardId) ?? null),
         crushed: !capRemoved && crushedCards.has(c.cardId),
         color: c.color,
         animation: c.animation,
@@ -257,7 +279,8 @@ export function CardDiffTable({
   onUndoRemove,
   onColorChange,
   onAnimationChange,
-  onPinCard,
+  onPendingEdit,
+  onPendingClear,
   onPinClear,
 }: {
   rows: CardDiffRow[];
@@ -272,23 +295,102 @@ export function CardDiffTable({
   onColorChange?: (cardId: string, color: string | null) => void;
   onAnimationChange?: (cardId: string, animation: boolean) => void;
   /**
-   * Owner pins (Retune V2): click-to-edit on the Planned % cell — typing a
-   * percent + Enter pins the card (the typed value binds the plan; re-plans
-   * through the same staged path as add/remove/price), Escape cancels.
+   * Pending edits (Retune V2 "edit several % before saving"): click-to-edit on
+   * the Planned % cell — typing a percent + Enter/Tab writes it to the PENDING
+   * buffer (no pin, no re-plan) and advances focus to the next editable Planned %
+   * cell; Escape cancels just that cell. Applying the buffer (in the action bar)
+   * is what commits the batch as pins with ONE re-plan.
    * Absent (confirm dialog / read-only) ⇒ the cell renders as before.
    */
-  onPinCard?: (cardId: string, pct: number) => void;
+  onPendingEdit?: (cardId: string, pct: number) => void;
+  /** Drop a single card's pending (not-yet-applied) edit. */
+  onPendingClear?: (cardId: string) => void;
+  /** Clear a card's already-COMMITTED pin (the amber pin chip's X). */
   onPinClear?: (cardId: string) => void;
 }) {
   // ONE cell edits at a time; draft lives here (cancelled on Escape/blur).
   const [editingCardId, setEditingCardId] = React.useState<string | null>(null);
   const [draft, setDraft] = React.useState("");
-  const commitPin = (cardId: string) => {
+  // Per-cardId input refs so Enter/Tab can move focus to the NEXT editable
+  // Planned % cell without leaving the keyboard (fast multi-entry).
+  const inputRefs = React.useRef<Map<string, HTMLInputElement>>(new Map());
+
+  // The editable Planned % cells in display order (value-DESC, same as `rows`):
+  // a row is editable iff it isn't a removal/cap-removal. Enter/Tab step through
+  // this list.
+  const editableIds = React.useMemo(
+    () =>
+      rows
+        .filter((r) => !r.removed && r.capRemovedUsd === null)
+        .map((r) => r.cardId),
+    [rows],
+  );
+
+  /** Parse the draft; null = invalid (out of (0,100] or non-finite). */
+  const parseDraft = (): number | null => {
     const pct = Number.parseFloat(draft);
-    setEditingCardId(null);
-    if (!Number.isFinite(pct) || !(pct > 0) || pct > 100) return;
-    onPinCard?.(cardId, pct);
+    if (!Number.isFinite(pct) || !(pct > 0) || pct > 100) return null;
+    return pct;
   };
+
+  /** The next editable cardId after `cardId` (wraps to null at the end). */
+  const nextEditableId = (cardId: string): string | null => {
+    const idx = editableIds.indexOf(cardId);
+    if (idx === -1) return null;
+    return editableIds[idx + 1] ?? null;
+  };
+
+  const openEditor = (row: CardDiffRow) => {
+    setDraft(
+      row.pendingPct !== null
+        ? String(Number(row.pendingPct.toPrecision(7)))
+        : row.pinnedPct !== null
+          ? String(Number(row.pinnedPct.toPrecision(7)))
+          : row.plannedPct !== null
+            ? String(Number(row.plannedPct.toPrecision(6)))
+            : "",
+    );
+    setEditingCardId(row.cardId);
+  };
+
+  // Set for the duration of an Enter/Tab hop so the OLD input's unmount-blur
+  // (which fires synchronously during React's commit) is a no-op — it must not
+  // re-commit or clear the newly-focused cell. Cleared by the focus effect.
+  const advancingRef = React.useRef(false);
+
+  /** Enter/Tab: write the draft to the pending buffer, then advance focus. */
+  const commitAndAdvance = (cardId: string) => {
+    const pct = parseDraft();
+    if (pct !== null) onPendingEdit?.(cardId, pct);
+    const nextId = nextEditableId(cardId);
+    if (nextId !== null) {
+      // Re-open the next cell's editor; focus is applied once its input mounts
+      // (the row re-renders into edit mode — an effect keyed on editingCardId
+      // focuses it). Seed its draft from that row's current display value.
+      const nextRow = rows.find((r) => r.cardId === nextId);
+      if (nextRow) {
+        advancingRef.current = true;
+        openEditor(nextRow);
+        return;
+      }
+    }
+    setEditingCardId(null);
+  };
+
+  // Focus the active editor's input whenever the edited cell changes (drives
+  // the Enter/Tab hop between cells). `autoFocus` covers the first open; this
+  // covers every subsequent hop where the input was already mounted-then-swapped.
+  // Clearing `advancingRef` here (post-commit) re-arms the genuine-blur path for
+  // the newly-focused cell.
+  React.useEffect(() => {
+    advancingRef.current = false;
+    if (editingCardId === null) return;
+    const el = inputRefs.current.get(editingCardId);
+    if (el) {
+      el.focus();
+      el.select();
+    }
+  }, [editingCardId]);
   return (
     <div className="overflow-x-auto rounded-md border">
       <Table>
@@ -406,10 +508,15 @@ export function CardDiffTable({
                 <TableCell className="text-right text-sm font-medium tabular-nums">
                   {inactive ? (
                     <span className="text-muted-foreground">—</span>
-                  ) : editable && onPinCard && editingCardId === row.cardId ? (
-                    // ── Pin editor: Enter pins, Escape/blur cancels (§ pins) ──
+                  ) : editable && onPendingEdit && editingCardId === row.cardId ? (
+                    // ── Pending editor: Enter/Tab buffers + advances, Escape
+                    //    cancels this cell, blur commits without advancing. ──
                     <span className="inline-flex items-center gap-1">
                       <Input
+                        ref={(el) => {
+                          if (el) inputRefs.current.set(row.cardId, el);
+                          else inputRefs.current.delete(row.cardId);
+                        }}
                         autoFocus
                         type="text"
                         inputMode="decimal"
@@ -422,40 +529,62 @@ export function CardDiffTable({
                           }
                         }}
                         onKeyDown={(e) => {
-                          if (e.key === "Enter") commitPin(row.cardId);
-                          else if (e.key === "Escape") setEditingCardId(null);
+                          if (e.key === "Enter" || e.key === "Tab") {
+                            // Tab must NOT also move DOM focus — we drive the hop.
+                            e.preventDefault();
+                            commitAndAdvance(row.cardId);
+                          } else if (e.key === "Escape") {
+                            setEditingCardId(null);
+                          }
                         }}
-                        onBlur={() => setEditingCardId(null)}
-                        className="h-6 w-24 text-right text-xs tabular-nums"
-                        aria-label={`Pin chance for ${row.name} (percent)`}
+                        onBlur={() => {
+                          // A blur triggered BY the Enter/Tab advance-hop is a
+                          // no-op — the value is already buffered and the next
+                          // cell is opening; touching state here would clobber it.
+                          if (advancingRef.current) return;
+                          // A genuine blur (click elsewhere) commits the current
+                          // cell to the buffer without advancing — never silently
+                          // discards a typed value — then closes the editor.
+                          const pct = parseDraft();
+                          if (pct !== null) onPendingEdit?.(row.cardId, pct);
+                          setEditingCardId(null);
+                        }}
+                        className={cn(
+                          "h-6 w-24 rounded-md text-right text-xs tabular-nums",
+                          "border-amber-500/60 focus-visible:ring-amber-500/40",
+                        )}
+                        aria-label={`${PENDING_EDIT_ARIA}: chance for ${row.name} (percent)`}
                       />
                       <span className="text-xs text-muted-foreground">%</span>
                     </span>
                   ) : (
                     <span className="group/pin inline-flex items-center gap-1.5">
-                      {row.offLadder && row.pinnedPct === null && (
-                        <TooltipProvider delay={150}>
-                          <Tooltip>
-                            <TooltipTrigger
-                              render={
-                                <span
-                                  aria-label="Off the clean ladder"
-                                  className="inline-block size-1.5 rounded-full bg-amber-500"
-                                />
-                              }
-                            />
-                            <TooltipContent>
-                              Off the clean ladder — this chance is not a round
-                              number.
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      )}
+                      {row.offLadder &&
+                        row.pinnedPct === null &&
+                        row.pendingPct === null && (
+                          <TooltipProvider delay={150}>
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <span
+                                    aria-label="Off the clean ladder"
+                                    className="inline-block size-1.5 rounded-full bg-amber-500"
+                                  />
+                                }
+                              />
+                              <TooltipContent>
+                                Off the clean ladder — this chance is not a round
+                                number.
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
                       {/* Pinned at the quantization floor (LOSS-band cards
                           only — a designed 1-in-a-million jackpot is not a
                           pin): muted "min" chip, tooltip says why. */}
                       {!winBand &&
                         row.pinnedPct === null &&
+                        row.pendingPct === null &&
                         row.plannedPct !== null &&
                         isFloorPinnedPct(row.plannedPct) && (
                           <TooltipProvider delay={150}>
@@ -494,8 +623,10 @@ export function CardDiffTable({
                           </Tooltip>
                         </TooltipProvider>
                       )}
-                      {/* Owner pin chip (amber): the typed value binds the plan. */}
-                      {row.pinnedPct !== null && (
+                      {/* Owner pin chip (amber): the typed value binds the plan.
+                          Hidden while a PENDING edit overrides this card (the
+                          pending chip is what's shown until Apply). */}
+                      {row.pinnedPct !== null && row.pendingPct === null && (
                         <TooltipProvider delay={150}>
                           <Tooltip>
                             <TooltipTrigger
@@ -525,33 +656,58 @@ export function CardDiffTable({
                           </Tooltip>
                         </TooltipProvider>
                       )}
-                      {editable && onPinCard ? (
-                        // Click-to-edit (pencil affordance on hover).
-                        <button
-                          type="button"
-                          title={PIN_EDIT_HINT}
-                          className="inline-flex items-center gap-1 rounded px-0.5 tabular-nums hover:bg-muted/50"
-                          onClick={() => {
-                            setDraft(
-                              row.pinnedPct !== null
-                                ? String(row.pinnedPct)
-                                : row.plannedPct !== null
-                                  ? String(Number(row.plannedPct.toPrecision(6)))
-                                  : "",
-                            );
-                            setEditingCardId(row.cardId);
-                          }}
-                        >
-                          {row.plannedPct !== null ? (
-                            <PlannedPct pct={row.plannedPct} />
-                          ) : (
-                            <span className="text-muted-foreground">—</span>
-                          )}
-                          <Pencil
-                            aria-hidden
-                            className="size-3 text-muted-foreground opacity-0 transition-opacity group-hover/pin:opacity-100"
-                          />
-                        </button>
+                      {editable && onPendingEdit ? (
+                        // Click-to-edit (pencil affordance on hover). A PENDING
+                        // edit renders the typed value in a distinct amber, dashed
+                        // "pending" pill with its own clear-X — visually apart from
+                        // a committed pin chip and from the plain planned number.
+                        row.pendingPct !== null ? (
+                          <span className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              title={PENDING_EDIT_HINT}
+                              onClick={() => openEditor(row)}
+                              className="inline-flex items-center gap-1 rounded-md border border-dashed border-amber-500/70 bg-amber-500/10 px-1.5 py-0.5 text-amber-700 tabular-nums hover:bg-amber-500/20 dark:text-amber-300"
+                            >
+                              <span
+                                aria-hidden
+                                className="inline-block size-1.5 rounded-full bg-amber-500"
+                              />
+                              {formatPercent(row.pendingPct)}
+                              <Pencil aria-hidden className="size-3 opacity-70" />
+                            </button>
+                            {onPendingClear && (
+                              <button
+                                type="button"
+                                aria-label={`Cancel pending edit on ${row.name}`}
+                                className="rounded-full text-amber-600 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-200"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onPendingClear(row.cardId);
+                                }}
+                              >
+                                <X className="size-3" />
+                              </button>
+                            )}
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            title={PENDING_EDIT_HINT}
+                            className="inline-flex items-center gap-1 rounded px-0.5 tabular-nums hover:bg-muted/50"
+                            onClick={() => openEditor(row)}
+                          >
+                            {row.plannedPct !== null ? (
+                              <PlannedPct pct={row.plannedPct} />
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                            <Pencil
+                              aria-hidden
+                              className="size-3 text-muted-foreground opacity-0 transition-opacity group-hover/pin:opacity-100"
+                            />
+                          </button>
+                        )
                       ) : row.plannedPct !== null ? (
                         <PlannedPct pct={row.plannedPct} />
                       ) : (
