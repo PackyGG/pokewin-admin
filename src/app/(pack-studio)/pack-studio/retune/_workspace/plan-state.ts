@@ -63,6 +63,16 @@ export type StagedPool = {
    * verbatim into both the plan and the write.
    */
   pinnedOdds: RetunePinnedOdds[];
+  /**
+   * Manual row reordering (owner feature, 2026-07-04): TRUE once the operator
+   * has moved a row with the pool table's UP/DOWN buttons. The `cards` array
+   * order then IS the intended `pack_cards.order` at push time, and the display
+   * preserves it instead of the default value-DESC view sort. Reordering is
+   * NOT solve-relevant — it never touches `stagedKey`, never re-plans, and
+   * never changes which card gets which planned %; it only sets the persisted
+   * `order` column. `false` ⇒ the default value-DESC seed order.
+   */
+  manualOrder: boolean;
   /** `computePoolFingerprint` of the LIVE pool this staged pool was seeded from. */
   baseFingerprint: string;
 };
@@ -229,6 +239,7 @@ export function seedStagedPool(pool: EditPool): StagedPool {
     livePrice: pool.price,
     pinPrice: false,
     pinnedOdds: [],
+    manualOrder: false,
     baseFingerprint: computePoolFingerprint(
       pool.price,
       pool.cards.map((c) => ({ cardId: c.cardId, weight: c.weight })),
@@ -291,6 +302,10 @@ export function reanchorStagedPool(
     // Pins survive the re-base for cards still in the staged pool; a pin on a
     // card that no longer exists anywhere is dropped (nothing to bind).
     pinnedOdds: staged.pinnedOdds.filter((p) => keptIds.has(p.cardId)),
+    // Manual-order flag survives a re-base: the operator's chosen row order is
+    // an identity choice (like adds/removes/cosmetics), so it's preserved. A
+    // re-base only re-anchors live weights + the fingerprint, never the order.
+    manualOrder: staged.manualOrder,
     baseFingerprint: computePoolFingerprint(
       freshPool.price,
       freshPool.cards.map((c) => ({ cardId: c.cardId, weight: c.weight })),

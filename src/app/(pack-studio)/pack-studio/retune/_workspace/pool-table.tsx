@@ -297,6 +297,7 @@ export function PoolTable({
   onPriceCommit,
   onPinToggle,
   onOpenPicker,
+  onMoveCard,
 }: {
   rows: CardDiffRow[];
   /** Ticket price the win-band coloring is judged against. */
@@ -337,6 +338,8 @@ export function PoolTable({
   onPriceCommit: () => void;
   onPinToggle: () => void;
   onOpenPicker: () => void;
+  /** Move a card one step up/down in the display order (sets pack_cards.order). */
+  onMoveCard: (cardId: string, direction: "up" | "down") => void;
 }) {
   return (
     <div className="space-y-3">
@@ -352,6 +355,7 @@ export function PoolTable({
         onPendingEdit={disabled ? undefined : onPendingEdit}
         onPendingClear={disabled ? undefined : onPendingClear}
         onPinClear={disabled ? undefined : onPinClear}
+        onMoveCard={disabled ? undefined : onMoveCard}
       />
 
       <PendingEditsBar

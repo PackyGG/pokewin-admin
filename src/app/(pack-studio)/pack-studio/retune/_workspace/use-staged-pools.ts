@@ -79,11 +79,14 @@ function readStorage(): PersistedPayload {
       ? (obj.staged as Record<string, StagedPool>)
       : (parsed as Record<string, StagedPool>);
     const staged: Record<string, StagedPool> = { ...stagedRaw };
-    // Shape normalization for entries persisted BEFORE the pins feature: a
-    // v1 payload has no `pinnedOdds` — normalize to [] so `stagedKey` and the
-    // plan/write builders never see undefined.
+    // Shape normalization for entries persisted BEFORE later features:
+    //   • `pinnedOdds` (pins) — normalize to [] so `stagedKey` / the builders
+    //     never see undefined.
+    //   • `manualOrder` (row reorder) — default false so the display sort and
+    //     the write-order logic never read undefined.
     for (const pool of Object.values(staged)) {
       if (pool && !Array.isArray(pool.pinnedOdds)) pool.pinnedOdds = [];
+      if (pool && typeof pool.manualOrder !== "boolean") pool.manualOrder = false;
     }
     const pending: PendingMap = {};
     if (hasWrapper && obj.pending && typeof obj.pending === "object") {

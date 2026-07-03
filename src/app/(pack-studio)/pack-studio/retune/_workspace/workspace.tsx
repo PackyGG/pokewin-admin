@@ -688,6 +688,43 @@ export function RetuneWorkspace({
     [ensureStaged, stagedApi, requestPlan],
   );
 
+  // ── Manual row reorder (owner feature, 2026-07-04) ───────────────────────
+  // Move ONE card one step up/down in the DISPLAY order — which becomes
+  // `pack_cards.order` at push time. Reordering is NOT solve-relevant: it never
+  // touches `stagedKey` (the plan cache keys on the SORTED card-id set), never
+  // re-plans, and never changes which card gets which planned % (the solver
+  // assigns odds by value/target and the display maps them by cardId). It only
+  // sets the persisted order. The FIRST move snapshots the current value-DESC
+  // display order into the staged `cards` array (so array order == what the
+  // operator sees) and flips `manualOrder` on; later moves shuffle that array.
+  const moveCard = React.useCallback(
+    (cardId: string, direction: "up" | "down") => {
+      const packId = selectedRef.current;
+      if (!packId) return;
+      const sp = ensureStaged(packId);
+      if (!sp) return;
+      // The array the display shows: already the staged order once manual, else
+      // the value-DESC view sort (a stable copy — never mutate state in place).
+      const ordered = sp.manualOrder
+        ? [...sp.cards]
+        : [...sp.cards].sort((a, b) => b.value - a.value);
+      const idx = ordered.findIndex((c) => c.cardId === cardId);
+      if (idx === -1) return;
+      const target = direction === "up" ? idx - 1 : idx + 1;
+      if (target < 0 || target >= ordered.length) return; // clamped at the ends
+      // Swap the two adjacent rows.
+      [ordered[idx], ordered[target]] = [ordered[target]!, ordered[idx]!];
+      stagedApi.setStaged(packId, {
+        ...sp,
+        cards: ordered,
+        manualOrder: true,
+      });
+      // NO requestPlan — `stagedKey` is unchanged, so the landed plan stays
+      // valid and every card keeps its planned %.
+    },
+    [ensureStaged, stagedApi],
+  );
+
   const commitPrice = React.useCallback(
     (raw: string, immediate: boolean) => {
       const packId = selectedRef.current;
@@ -1571,6 +1608,7 @@ export function RetuneWorkspace({
                       onPriceCommit={() => commitPrice(priceText, true)}
                       onPinToggle={togglePin}
                       onOpenPicker={() => openPicker(null)}
+                      onMoveCard={moveCard}
                     />
                   ) : (
                     <TableSkeleton rows={6} columns={5} />

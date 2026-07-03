@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Pencil, Undo2, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Pencil, Undo2, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -178,13 +178,17 @@ export function buildCardDiffRows(args: {
     return row ? (row.weight / liveTotal) * 100 : null;
   };
 
-  const rows: CardDiffRow[] = [];
+  // Active (non-removed) rows and removed rows are built separately: the
+  // display sort applies to the ACTIVE rows only, and removed/cap-removed
+  // strike-through rows always trail after them.
+  const activeRows: CardDiffRow[] = [];
+  const removedRows: CardDiffRow[] = [];
   if (staged) {
     for (const c of staged.cards) {
       const planned = plannedByCard.get(c.cardId);
       const pinnedPct = pinnedByCard.get(c.cardId) ?? null;
       const capRemoved = capDropped.has(c.cardId) && capUsd !== null;
-      rows.push({
+      activeRows.push({
         cardId: c.cardId,
         name: c.name,
         value: c.value,
@@ -210,7 +214,7 @@ export function buildCardDiffRows(args: {
       });
     }
     for (const c of staged.removed) {
-      rows.push({
+      removedRows.push({
         cardId: c.cardId,
         name: c.name,
         value: c.value,
@@ -232,7 +236,7 @@ export function buildCardDiffRows(args: {
     for (const c of pool.cards) {
       const planned = plannedByCard.get(c.cardId);
       const capRemoved = capDropped.has(c.cardId) && capUsd !== null;
-      rows.push({
+      activeRows.push({
         cardId: c.cardId,
         name: c.name,
         value: c.value,
@@ -253,8 +257,15 @@ export function buildCardDiffRows(args: {
       });
     }
   }
-  rows.sort((a, b) => b.value - a.value);
-  return rows;
+  // Display order: value-DESC by default (a VIEW sort — the staged solve order
+  // is untouched). BUT once the operator manually reordered rows
+  // (`staged.manualOrder`), the staged `cards` array order IS the intended
+  // display + `pack_cards.order`, so it is preserved verbatim (no view sort).
+  // Manual order only exists on the staged arm; the live pool always sorts.
+  if (!(staged?.manualOrder === true)) {
+    activeRows.sort((a, b) => b.value - a.value);
+  }
+  return [...activeRows, ...removedRows];
 }
 
 /**
@@ -282,6 +293,7 @@ export function CardDiffTable({
   onPendingEdit,
   onPendingClear,
   onPinClear,
+  onMoveCard,
 }: {
   rows: CardDiffRow[];
   /** Ticket price the win-band coloring is judged against (plan `priceAfter` when available). */
@@ -294,6 +306,13 @@ export function CardDiffTable({
   onUndoRemove?: (cardId: string) => void;
   onColorChange?: (cardId: string, color: string | null) => void;
   onAnimationChange?: (cardId: string, animation: boolean) => void;
+  /**
+   * Manual row reordering (owner feature, 2026-07-04): move a card one step up
+   * or down in the DISPLAY order — which becomes `pack_cards.order` on push.
+   * Absent ⇒ no reorder controls (confirm dialog / read-only). Reordering only
+   * sets the persisted order; it never changes which card gets which planned %.
+   */
+  onMoveCard?: (cardId: string, direction: "up" | "down") => void;
   /**
    * Pending edits (Retune V2 "edit several % before saving"): click-to-edit on
    * the Planned % cell — typing a percent + Enter/Tab writes it to the PENDING
@@ -325,6 +344,21 @@ export function CardDiffTable({
         .map((r) => r.cardId),
     [rows],
   );
+
+  // The reorderable (active, non-removed) rows in DISPLAY order — a card may
+  // move up unless it's first, down unless it's last. Cap-removed / removed
+  // rows never carry reorder controls (they trail after the active rows and
+  // aren't written). `firstActiveId` / `lastActiveId` bound the arrows.
+  const activeOrderedIds = React.useMemo(
+    () =>
+      rows
+        .filter((r) => !r.removed && r.capRemovedUsd === null)
+        .map((r) => r.cardId),
+    [rows],
+  );
+  const firstActiveId = activeOrderedIds[0] ?? null;
+  const lastActiveId = activeOrderedIds[activeOrderedIds.length - 1] ?? null;
+  const showReorder = editable && onMoveCard !== undefined;
 
   /** Parse the draft; null = invalid (out of (0,100] or non-finite). */
   const parseDraft = (): number | null => {
@@ -396,6 +430,7 @@ export function CardDiffTable({
       <Table>
         <TableHeader>
           <TableRow>
+            {showReorder && <TableHead className="w-[52px]" aria-label="Reorder" />}
             <TableHead className="min-w-[180px]">Card</TableHead>
             <TableHead className="text-right">Value</TableHead>
             <TableHead className="text-right">Live %</TableHead>
@@ -434,6 +469,36 @@ export function CardDiffTable({
                 key={row.cardId}
                 className={cn(inactive && "opacity-60")}
               >
+                {showReorder && (
+                  <TableCell className="pr-0 align-middle">
+                    {/* Reorder is for ACTIVE rows only — a removed/cap-removed
+                        row isn't written, so it carries no arrows. */}
+                    {!inactive && (
+                      <div className="flex flex-col items-center gap-0.5">
+                        <button
+                          type="button"
+                          aria-label={`Move ${row.name} up`}
+                          title="Move up (sets card order — does not change odds)"
+                          disabled={row.cardId === firstActiveId}
+                          onClick={() => onMoveCard?.(row.cardId, "up")}
+                          className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+                        >
+                          <ChevronUp className="size-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Move ${row.name} down`}
+                          title="Move down (sets card order — does not change odds)"
+                          disabled={row.cardId === lastActiveId}
+                          onClick={() => onMoveCard?.(row.cardId, "down")}
+                          className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+                        >
+                          <ChevronDown className="size-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </TableCell>
+                )}
                 <TableCell>
                   <div className="flex items-center gap-2">
                     <CardImage
@@ -797,7 +862,7 @@ export function CardDiffTable({
           {rows.length === 0 && (
             <TableRow>
               <TableCell
-                colSpan={editable ? 8 : 5}
+                colSpan={editable ? (showReorder ? 9 : 8) : 5}
                 className="py-8 text-center text-sm text-muted-foreground"
               >
                 No cards in this pool.
