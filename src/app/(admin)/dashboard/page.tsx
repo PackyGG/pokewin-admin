@@ -10,6 +10,7 @@ import { getDailyPnl } from "@/lib/queries/pnl";
 import { getDailyCreatorCost } from "@/lib/queries/dashboard-daily-creator-cost";
 import { getTodayPnl } from "@/lib/queries/dashboard-today-pnl";
 import { getRewardCostsToday } from "@/lib/queries/dashboard-reward-costs-today";
+import { getRakebackFromTodayWager } from "@/lib/queries/dashboard-rakeback-same-day";
 import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-today";
 import { getAffiliateReferredPnlToday } from "@/lib/queries/dashboard-affiliate-referred-pnl-today";
 import { getCryptoFeeProfitCounter } from "@/lib/queries/dashboard-crypto-fee-counter";
@@ -518,7 +519,7 @@ async function DashboardTodayPnl() {
  * down to a fallback — a half-rendered merged card would look broken.
  */
 async function DashboardRewardAndCreatorCostsToday() {
-  const [rewardResult, creatorsResult, pnlResult] = await Promise.all([
+  const [rewardResult, creatorsResult, pnlResult, rakebackSameDayResult] = await Promise.all([
     safeQuery(
       () => getRewardCostsToday(),
       null,
@@ -535,6 +536,16 @@ async function DashboardRewardAndCreatorCostsToday() {
       () => getAffiliateReferredPnlToday(),
       null,
       "dashboard.affiliateReferredPnlToday",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    // Independent overlay figure for the "Rakeback claims" chip — a failed/
+    // slow scan only drops the sub-line (passed as null), it never takes
+    // the merged tile down (same posture as the affiliate-referred P&L
+    // corner indicator above).
+    safeQuery(
+      () => getRakebackFromTodayWager(),
+      null,
+      "dashboard.rakebackFromTodayWager",
       REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
@@ -592,6 +603,7 @@ async function DashboardRewardAndCreatorCostsToday() {
         lines: reward.lines,
         dayLabel,
         hoursElapsed: reward.hoursElapsed,
+        rakebackFromTodayWager: rakebackSameDayResult.data ?? null,
       }}
       creators={{
         total: creators.total,

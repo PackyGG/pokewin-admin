@@ -76,6 +76,17 @@ export function RewardCreatorCostsTodayCard({
     lines: Array<{ key: string; label: string; amount: number }>;
     dayLabel: string;
     hoursElapsed: number;
+    /**
+     * Sum of rakeback claimed today whose underlying wager ALSO happened
+     * today (daily-cadence claims only, `period_start` = today — see
+     * `dashboard-rakeback-same-day.ts`). A SUBSET of the "rakeback" line's
+     * amount, rendered as a small second line under that chip so an
+     * operator can see how much of today's claimed rakeback is NOT from
+     * carried-over accrual (yesterday's daily period, or a weekly/monthly
+     * period). `null` when the scan failed/degraded — the sub-line is then
+     * omitted, the chip itself is unaffected.
+     */
+    rakebackFromTodayWager: number | null;
   };
   creators: {
     total: number;
@@ -120,7 +131,15 @@ export function RewardCreatorCostsTodayCard({
           <div className="truncate text-lg font-bold tabular-nums text-rose-600 dark:text-rose-400 sm:text-xl">
             −<AnimatedNumber value={reward.total} format="currency" />
           </div>
-          <CostChipGrid lines={reward.lines} pinnedKeys={REWARD_PINNED_CHIP_KEYS} />
+          <CostChipGrid
+            lines={reward.lines}
+            pinnedKeys={REWARD_PINNED_CHIP_KEYS}
+            subLines={
+              reward.rakebackFromTodayWager != null
+                ? { rakeback: reward.rakebackFromTodayWager }
+                : undefined
+            }
+          />
         </div>
 
         <div className="border-t border-border/50" />
@@ -165,9 +184,17 @@ export function RewardCreatorCostsTodayCard({
 function CostChipGrid({
   lines,
   pinnedKeys,
+  subLines,
 }: {
   lines: Array<{ key: string; label: string; amount: number }>;
   pinnedKeys: readonly string[];
+  /**
+   * Optional per-key secondary figure rendered as a small extra line under
+   * a chip's amount (e.g. the "rakeback" chip's same-day-wager-funded
+   * subset). Absent keys render no sub-line — every other chip is
+   * byte-for-byte unaffected.
+   */
+  subLines?: Record<string, number>;
 }) {
   const byKey = new Map(lines.map((line) => [line.key, line]));
   return (
@@ -175,6 +202,7 @@ function CostChipGrid({
       {pinnedKeys.map((key) => {
         const line = byKey.get(key);
         const amount = line?.amount ?? 0;
+        const subAmount = subLines?.[key];
         return (
           <div
             key={key}
@@ -196,6 +224,12 @@ function CostChipGrid({
             >
               <AnimatedNumber value={amount} format="currency" />
             </p>
+            {subAmount != null && (
+              <p className="truncate text-[9px] tabular-nums text-muted-foreground/70">
+                <AnimatedNumber value={subAmount} format="currency" /> from
+                today&apos;s wager
+              </p>
+            )}
           </div>
         );
       })}
