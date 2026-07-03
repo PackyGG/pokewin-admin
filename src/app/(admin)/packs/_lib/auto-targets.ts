@@ -244,6 +244,16 @@ const TAG_HIT_RATES: Readonly<Record<string, number>> = {
   "%5": 0.05,
   pct10: 0.1,
   "%10": 0.1,
+  // The 50/50 coin-flip tier — BOTH notations, like the pct tiers: the Prisma
+  // enum NAME (`fifty50`, read on the staged arm) AND the DB-string label
+  // (`50/50`, read via raw SQL on the live arm) resolve to 0.5. Previously only
+  // the DB string matched (via parseArbitraryTag's ratio arm) while the enum
+  // name fell through to null → a 50/50 pack read on the staged arm resolved
+  // UNTAGGED while the live arm targeted 0.5 (plan≠write on the two arms). Now
+  // both arms agree. (0.5 > LOTTERY_MAX_HIT_RATE so it still takes the fast
+  // standard snap, not the lottery DFS — no perf regression.)
+  fifty50: 0.5,
+  "50/50": 0.5,
 };
 
 /**

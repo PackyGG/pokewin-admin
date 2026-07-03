@@ -462,24 +462,23 @@ check("tag override: the pct tags round-trip through hitRateFromTags (DB label)"
   // label resolves back to the SAME hit-rate the override solved against — so a
   // pushed tag and a later untagged-read win-rate target agree.
   //
-  // ASYMMETRY (pinned deliberately): the `50/50` DB label resolves (via
-  // parseArbitraryTag's ratio arm), but the `fifty50` ENUM name does NOT
-  // (hitRateFromTags returns null — see risk.ts). The tag control never relies
-  // on the enum-name read: it solves from the override's own hitRate, and the
-  // raw-SQL live path reads the DB label. So the DB-label round-trip is the
-  // contract that matters.
+  // BOTH notations resolve for EVERY tier (pct1/5/10 AND fifty50): the DB-string
+  // label (raw-SQL live arm) and the Prisma enum name (staged arm) both map to
+  // the same hit-rate, so a 50/50 pack targets 0.5 on both arms (plan == write).
+  // (The `fifty50` enum name used to fall through to null while `50/50` resolved
+  // — that asymmetry made a staged 50/50 re-read plan UNTAGGED; now fixed.)
   for (const t of SELECTABLE_TAG_HIT_RATES) {
     const fromDb = hitRateFromTags([t.dbLabel]);
+    const fromEnum = hitRateFromTags([t.tag]);
     assert(
       fromDb !== null && Math.abs(fromDb - t.hitRate) < 1e-12,
       `hitRateFromTags(["${t.dbLabel}"]) = ${fromDb} != ${t.hitRate}`,
     );
+    assert(
+      fromEnum !== null && Math.abs(fromEnum - t.hitRate) < 1e-12,
+      `hitRateFromTags(["${t.tag}"]) = ${fromEnum} != ${t.hitRate} (enum name must match the DB label)`,
+    );
   }
-  // The pct enum names ALSO resolve (both notations share the map); the fifty50
-  // enum name is the sole exception (raw-SQL label only).
-  assert(hitRateFromTags(["pct1"]) === 0.01, "pct1 enum name → 0.01");
-  assert(hitRateFromTags(["pct5"]) === 0.05, "pct5 enum name → 0.05");
-  assert(hitRateFromTags(["pct10"]) === 0.1, "pct10 enum name → 0.10");
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────

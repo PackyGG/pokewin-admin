@@ -2446,12 +2446,13 @@ check("price-search early-stop: near clean snap settles cheaply without sweeping
 check("resolveIntendedHitRate: DB tags column first (both notations), name fallback, null when untagged", () => {
   // Raw-SQL notation (mapped DB strings).
   assert(hitRateFromTags(["%1"]) === 0.01, "%1 → 0.01");
-  assert(hitRateFromTags(["50/50", "%5"]) === 0.05, "%5 among other tags → 0.05");
+  assert(hitRateFromTags(["onepiece", "%5"]) === 0.05, "%5 among a non-hit-rate tag → 0.05");
   assert(hitRateFromTags(["%10"]) === 0.1, "%10 → 0.10");
   // Prisma notation (TS enum names).
   assert(hitRateFromTags(["pct1"]) === 0.01, "pct1 → 0.01");
   assert(hitRateFromTags(["onepiece", "pct10"]) === 0.1, "pct10 among other tags → 0.10");
-  assert(hitRateFromTags(["fifty50"]) === null, "50/50 tag carries no hit-rate");
+  assert(hitRateFromTags(["fifty50"]) === 0.5, "fifty50 enum name → 0.5 (both notations, matches the '50/50' DB string)");
+  assert(hitRateFromTags(["50/50"]) === 0.5, "'50/50' DB string → 0.5");
   assert(hitRateFromTags([]) === null && hitRateFromTags(null) === null, "empty/null → null");
   // DB tag wins; name is the fallback; both absent → null.
   assert(
