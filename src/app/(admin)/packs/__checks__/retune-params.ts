@@ -49,6 +49,10 @@ import {
   TAGGED_WINRATE_TOLERANCE,
   isOnCleanLadderPct,
 } from "../../insights/edge-calc/risk";
+import {
+  SELECTABLE_TAG_HIT_RATES,
+  hitRateFromTags,
+} from "../_lib/auto-targets";
 
 let passes = 0;
 const failures: string[] = [];
@@ -419,6 +423,63 @@ check("isOnCleanLadderPct: rungs true, residuals false, degenerates false", () =
   for (const bad of [0, -1, 100.0001, Number.NaN, Number.POSITIVE_INFINITY]) {
     assert(!isOnCleanLadderPct(bad), `${bad} must read OFF-ladder`);
   }
+});
+
+// ── 9. Tag control (owner feature, 2026-07-04) — tag → hit-rate mapping ──
+// The workspace tag control stages an override carrying {tag, hitRate}; the
+// write path RE-DERIVES hitRate from the tag (never trusts the client), then
+// resolves the plan's intended hit-rate the SAME way the untouched-tag path
+// does (hitRateFromTags). This pins that the two derivations agree, so the tag
+// a push writes to packs.tags and the win-rate the plan solved against can't
+// drift. Also guards the selectable set against a typo'd mapping.
+check("selectable tag table: tag → hitRate is internally consistent", () => {
+  const expected: Record<string, number> = {
+    pct1: 0.01,
+    pct5: 0.05,
+    pct10: 0.1,
+    fifty50: 0.5,
+  };
+  assert(
+    SELECTABLE_TAG_HIT_RATES.length === 4,
+    `expected 4 selectable tags, got ${SELECTABLE_TAG_HIT_RATES.length}`,
+  );
+  for (const t of SELECTABLE_TAG_HIT_RATES) {
+    assert(
+      expected[t.tag] !== undefined,
+      `unexpected selectable tag "${t.tag}"`,
+    );
+    assert(
+      Math.abs(t.hitRate - expected[t.tag]!) < 1e-12,
+      `tag ${t.tag}: hitRate ${t.hitRate} !== ${expected[t.tag]}`,
+    );
+  }
+});
+
+check("tag override: the pct tags round-trip through hitRateFromTags (DB label)", () => {
+  // The tag control writes the enum NAME to packs.tags; the LIVE/plan read path
+  // (getPacksPoolComposition) reads it back as the DB-string label via raw SQL
+  // and resolves it with hitRateFromTags. Pin that every selectable tag's DB
+  // label resolves back to the SAME hit-rate the override solved against — so a
+  // pushed tag and a later untagged-read win-rate target agree.
+  //
+  // ASYMMETRY (pinned deliberately): the `50/50` DB label resolves (via
+  // parseArbitraryTag's ratio arm), but the `fifty50` ENUM name does NOT
+  // (hitRateFromTags returns null — see risk.ts). The tag control never relies
+  // on the enum-name read: it solves from the override's own hitRate, and the
+  // raw-SQL live path reads the DB label. So the DB-label round-trip is the
+  // contract that matters.
+  for (const t of SELECTABLE_TAG_HIT_RATES) {
+    const fromDb = hitRateFromTags([t.dbLabel]);
+    assert(
+      fromDb !== null && Math.abs(fromDb - t.hitRate) < 1e-12,
+      `hitRateFromTags(["${t.dbLabel}"]) = ${fromDb} != ${t.hitRate}`,
+    );
+  }
+  // The pct enum names ALSO resolve (both notations share the map); the fifty50
+  // enum name is the sole exception (raw-SQL label only).
+  assert(hitRateFromTags(["pct1"]) === 0.01, "pct1 enum name → 0.01");
+  assert(hitRateFromTags(["pct5"]) === 0.05, "pct5 enum name → 0.05");
+  assert(hitRateFromTags(["pct10"]) === 0.1, "pct10 enum name → 0.10");
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────

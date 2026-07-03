@@ -308,6 +308,30 @@ export function hitRateFromTags(
 }
 
 /**
+ * The selectable product tags the Retune workspace tag control offers, each
+ * paired with its designed hit-rate. These are the `pack_tag` enum members the
+ * owner categorizes packs with — the DB-string notations (`"%1"` etc., what
+ * Prisma persists / raw SQL returns) plus the enum names Prisma's typed client
+ * uses. The tag control writes the ENUM NAME to `packs.tags` (a `pack_tag[]`).
+ *
+ * `onepiece` is deliberately omitted — it is a themed collection tag, not a
+ * hit-rate product tier, so it carries no intended win-rate.
+ */
+export const SELECTABLE_TAG_HIT_RATES: ReadonlyArray<{
+  /** The `pack_tag` enum NAME written to `packs.tags` (e.g. "pct1"). */
+  tag: "pct1" | "pct5" | "pct10" | "fifty50";
+  /** The DB-mapped string (e.g. "%1") — for display + raw-SQL notation. */
+  dbLabel: string;
+  /** The designed hit-rate this tag pins the win-rate to. */
+  hitRate: number;
+}> = [
+  { tag: "pct1", dbLabel: "%1", hitRate: 0.01 },
+  { tag: "pct5", dbLabel: "%5", hitRate: 0.05 },
+  { tag: "pct10", dbLabel: "%10", hitRate: 0.1 },
+  { tag: "fifty50", dbLabel: "50/50", hitRate: 0.5 },
+];
+
+/**
  * The pack's intended hit-rate from BOTH tag systems: the DB `packs.tags`
  * column first (authoritative — the owner categorized the pack there), the
  * name-prefix tag ({@link parsePackHitRate}) as fallback. `null` = untagged.

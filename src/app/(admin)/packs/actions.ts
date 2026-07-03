@@ -82,7 +82,7 @@ import {
   type EdgeCurveConfig,
   type ResolvedAutoTargetCfg,
 } from "@/app/(admin)/packs/_lib/risk-config";
-import type { pack_tag } from "@/generated/prisma/enums";
+import { pack_tag } from "@/generated/prisma/enums";
 import {
   capturePackSnapshot,
   getPackSnapshot,
@@ -2338,12 +2338,28 @@ export async function revertPackToSnapshot(
     order: typeof c.order === "number" ? c.order : i,
   }));
 
+  // Tag revert (tag control, 2026-07-04): a snapshot taken AFTER the tag column
+  // shipped carries the pack's tags at capture time (enum-name strings, e.g.
+  // ["pct5"]). Restore them so a tag-control change is undoable. Null (legacy
+  // snapshots) ⇒ leave the live tag untouched (we can't fabricate a prior tag
+  // we never captured). Only known enum members are written (fail-closed).
+  const validTagNames = new Set<string>(Object.values(pack_tag));
+  const restoreTags =
+    Array.isArray(snapshot.tags) &&
+    snapshot.tags.every((t) => validTagNames.has(t))
+      ? (snapshot.tags as pack_tag[])
+      : null;
+
   // SAME delete-all-then-createMany pattern updatePack / applyPackRetune use,
   // plus the snapshot price.
   await db.$transaction(async (tx) => {
     await tx.packs.update({
       where: { id: packId },
-      data: { price: snapshotPrice, updated_at: new Date() },
+      data: {
+        price: snapshotPrice,
+        ...(restoreTags !== null ? { tags: restoreTags } : {}),
+        updated_at: new Date(),
+      },
     });
     await tx.pack_cards.deleteMany({ where: { pack_id: packId } });
     if (rows.length > 0) {
@@ -2364,6 +2380,9 @@ export async function revertPackToSnapshot(
       price_after: snapshotPrice,
       restored_card_count: rows.length,
       skipped_card_ids: skippedCardIds,
+      // Tag revert (tag control): the snapshot's tags this revert restored,
+      // absent when the snapshot recorded none (legacy) — nothing was touched.
+      ...(restoreTags !== null && { tags_restored: restoreTags }),
       ...(editedLivePackUnderCapability && { edited_live_pack_under_capability: true }),
       ...(isPackStudioRetuneOperatorNonOwner(session) && {
         via_no_2fa_allowlist: true,

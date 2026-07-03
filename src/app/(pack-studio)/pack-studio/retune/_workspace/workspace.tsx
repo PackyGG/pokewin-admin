@@ -31,6 +31,7 @@ import {
   type EditPool,
   type PackTunePlan,
   type RetunePickerFilters,
+  type StagedTagOverride,
 } from "../../doctor/retune-actions";
 import type { BuilderCardItem } from "../../builder/actions";
 import type { RetuneRailRow } from "../_queries/rail";
@@ -723,6 +724,39 @@ export function RetuneWorkspace({
       // valid and every card keeps its planned %.
     },
     [ensureStaged, stagedApi],
+  );
+
+  // ── Owner tag override (tag control, 2026-07-04) ─────────────────────────
+  // Change or remove the pack's product tag from the workspace header. Setting
+  // it flips the pack to the staged arm and re-plans IMMEDIATELY (a tag change
+  // is solve-relevant — the owner said "when i remove replan"): removing the
+  // tag makes the plan UNTAGGED (fast, live-anchored); a tag pins the plan to
+  // its designed win-rate. On push the change is written to `packs.tags`.
+  // `override === undefined` clears any override (revert to the live tag).
+  const changeTagOverride = React.useCallback(
+    (override: StagedTagOverride | undefined) => {
+      const packId = selectedRef.current;
+      if (!packId) return;
+      const sp = ensureStaged(packId);
+      if (!sp) return;
+      // No-op guard: same override already staged → don't re-plan.
+      const sameKind =
+        (sp.tagOverride?.kind ?? "live") === (override?.kind ?? "live");
+      const sameTag =
+        sp.tagOverride?.kind === "tag" && override?.kind === "tag"
+          ? sp.tagOverride.tag === override.tag
+          : true;
+      if (sameKind && sameTag) return;
+      const next = { ...sp };
+      if (override === undefined) {
+        delete next.tagOverride;
+      } else {
+        next.tagOverride = override;
+      }
+      stagedApi.setStaged(packId, next);
+      void requestPlan(packId); // tag change → immediate re-plan (staged arm)
+    },
+    [ensureStaged, stagedApi, requestPlan],
   );
 
   const commitPrice = React.useCallback(
@@ -1510,6 +1544,8 @@ export function RetuneWorkspace({
                 fixLoopSuccess={fixLoopPacks.has(selectedRow.packId)}
                 driftPrompt={driftPrompts.has(selectedRow.packId)}
                 tagSource={tagSource}
+                tagOverride={selectedStaged?.tagOverride}
+                onChangeTag={changeTagOverride}
                 nextSuggestion={
                   nextSuggestionByPack.get(selectedRow.packId) ?? null
                 }

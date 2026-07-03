@@ -1792,6 +1792,12 @@ model pack_state_snapshots {
   // absent if risk couldn't be computed). Lets the history UI show the
   // pack's edge/CV/win-rate at each point without recomputing.
   risk        Json?    @db.JsonB
+  // The pack's `packs.tags` (pack_tag[] as DB strings, e.g. ["%5"]) at capture
+  // time — captured so a revert restores the tag the tag-control write may have
+  // changed. Nullable: snapshots taken before the tag control shipped have no
+  // recorded tags, and a revert leaves the tag untouched in that case (it can't
+  // fabricate a prior tag it never captured).
+  tags        Json?    @db.JsonB
   // Optional free-text note (e.g. the revert target id, or operator context).
   note        String?
 

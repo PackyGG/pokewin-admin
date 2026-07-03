@@ -24,16 +24,29 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { AnimatedNumber } from "@/components/animated-number";
 import { SectionHeading, TILE_COLORS, type AccentColor } from "@/components/modern-panels";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
-import { TAGGED_WRITE_WINRATE_TOLERANCE } from "@/app/(admin)/packs/_lib/auto-targets";
+import {
+  SELECTABLE_TAG_HIT_RATES,
+  TAGGED_WRITE_WINRATE_TOLERANCE,
+} from "@/app/(admin)/packs/_lib/auto-targets";
 import type { PackRisk } from "@/app/(admin)/insights/edge-calc/risk";
 import type { TagGuidance } from "@/app/(admin)/insights/edge-calc/tag-guidance";
 
 import type { RetuneRailRow } from "../_queries/rail";
-import type { PackTunePlan } from "../../doctor/retune-actions";
+import type {
+  PackTunePlan,
+  StagedTagOverride,
+} from "../../doctor/retune-actions";
 import { LegendPopover } from "./legend-popover";
 import type { PushedInfo, StagedPool, WorkspaceStatus } from "./plan-state";
 import {
@@ -343,6 +356,71 @@ function PoolEditPrimary({
   );
 }
 
+/**
+ * Tag control (owner feature, 2026-07-04): a compact Select in the plan header
+ * letting the operator REMOVE or CHANGE the pack's product tag. Selecting a
+ * value stages a tag override and re-plans immediately (a tag change is
+ * solve-relevant); the push writes it to `packs.tags`.
+ *
+ *   • "Live tag" — no override (use the pack's DB / name tag as-is).
+ *   • "None (untag)" — force the pack UNTAGGED (fast, live-anchored plan).
+ *   • %1 / %5 / %10 / 50/50 — pin the plan to that tag's designed win-rate.
+ *
+ * The current value reflects the STAGED override when present, else "live".
+ */
+function TagControl({
+  tagOverride,
+  onChangeTag,
+  disabled,
+}: {
+  tagOverride: StagedTagOverride | undefined;
+  onChangeTag: (override: StagedTagOverride | undefined) => void;
+  disabled: boolean;
+}) {
+  const value =
+    tagOverride === undefined
+      ? "live"
+      : tagOverride.kind === "untag"
+        ? "untag"
+        : tagOverride.tag;
+  const handleChange = (v: string | null) => {
+    if (v === null || v === "live") {
+      onChangeTag(undefined);
+      return;
+    }
+    if (v === "untag") {
+      onChangeTag({ kind: "untag" });
+      return;
+    }
+    const match = SELECTABLE_TAG_HIT_RATES.find((t) => t.tag === v);
+    if (match) onChangeTag({ kind: "tag", tag: match.tag, hitRate: match.hitRate });
+  };
+  return (
+    <div className="inline-flex items-center gap-1">
+      <Tag className="size-3.5 text-muted-foreground" aria-hidden />
+      <Select value={value} onValueChange={handleChange} disabled={disabled}>
+        <SelectTrigger
+          size="sm"
+          className="h-6 gap-1 px-1.5 text-[11px]"
+          aria-label="Change or remove the pack tag"
+          title="Change or remove the pack's product tag — re-plans immediately and writes on push"
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="live">Live tag</SelectItem>
+          <SelectItem value="untag">None (untag)</SelectItem>
+          {SELECTABLE_TAG_HIT_RATES.map((t) => (
+            <SelectItem key={t.tag} value={t.tag}>
+              {t.dbLabel}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
 export type PlanRefusal = {
   kind: "skew" | "invariant";
   message: string;
@@ -364,6 +442,8 @@ export function PlanPanel({
   fixLoopSuccess,
   driftPrompt,
   tagSource,
+  tagOverride,
+  onChangeTag,
   nextSuggestion,
   pushEnabled,
   pushing,
@@ -399,6 +479,16 @@ export function PlanPanel({
   fixLoopSuccess: boolean;
   driftPrompt: boolean;
   tagSource: "db" | "name" | null;
+  /**
+   * The staged tag override (tag control) — `undefined` when the plan uses the
+   * pack's LIVE tag. Drives the tag control's selected value.
+   */
+  tagOverride: StagedTagOverride | undefined;
+  /**
+   * Change/remove the pack's product tag (tag control): pass the new override,
+   * or `undefined` to revert to the live tag. Triggers an immediate re-plan.
+   */
+  onChangeTag: (override: StagedTagOverride | undefined) => void;
   /** Post-push "Next: {name} →" suggestion (a button, never auto-nav). */
   nextSuggestion: { packId: string; name: string } | null;
   pushEnabled: boolean;
@@ -430,7 +520,16 @@ export function PlanPanel({
     (status === "planning" || status === "stale");
   const afterRisk = after ?? (showEstimate ? estimate : null);
   const before = plan?.before ?? lastPlanBefore;
-  const tag = row.tag;
+  // The EFFECTIVE tag the plan is solving against: when the operator staged a
+  // tag override, the plan's `intendedHitRate` reflects it (a number = the
+  // overridden tag, null = untagged). Otherwise it's the pack's live tag. All
+  // PLAN-facing displays (KPI win-rate tile, tag banners) use this so they
+  // match what the plan actually solved. The off-tag LIVE strip below stays on
+  // `row.tag` (it's about live truth, not the staged override).
+  const tag =
+    tagOverride !== undefined
+      ? (plan?.intendedHitRate ?? null)
+      : row.tag;
 
   // ── Status badge (§5a) ────────────────────────────────────────────────────
   const badge = ((): { label: string; className: string; spin?: boolean } => {
@@ -748,7 +847,7 @@ export function PlanPanel({
           >
             {row.tier}
           </Badge>
-          {tag !== null && (
+          {tag !== null && tagOverride === undefined && (
             <Badge
               variant="outline"
               className="h-5 px-1.5 text-[10px] tabular-nums"
@@ -757,6 +856,13 @@ export function PlanPanel({
               {tagBadgeLabel(tag)}
             </Badge>
           )}
+          {/* Tag control (owner feature): change/remove the pack tag → re-plan
+              immediately; the push writes it to packs.tags. */}
+          <TagControl
+            tagOverride={tagOverride}
+            onChangeTag={onChangeTag}
+            disabled={pushing}
+          />
           <span className="text-sm tabular-nums text-muted-foreground">
             {formatCurrency(row.price)}
           </span>
@@ -880,9 +986,11 @@ export function PlanPanel({
       )}
 
       {/* ── Off-tag live strip (independent, ABOVE the banner slot) ──────── */}
-      {row.offTagLive && tag !== null && (
+      {/* Uses the LIVE tag (row.tag), not the effective/override tag — it
+          reports live truth (live win-rate vs the pack's actual live tag). */}
+      {row.offTagLive && row.tag !== null && (
         <Banner tone="amber" icon={Tag}>
-          <p>{offTagStrip(row.winRate, tag)}</p>
+          <p>{offTagStrip(row.winRate, row.tag)}</p>
         </Banner>
       )}
 

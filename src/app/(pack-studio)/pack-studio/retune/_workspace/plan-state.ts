@@ -23,6 +23,7 @@ import type {
   PackTunePlan,
   PackTuneStagedInput,
   StagedPoolInput,
+  StagedTagOverride,
 } from "../../doctor/retune-actions";
 import type { RetunePinnedOdds } from "@/app/(admin)/packs/_lib/retune-params";
 import { computePoolFingerprint } from "@/app/(admin)/packs/_lib/pool-fingerprint";
@@ -73,6 +74,15 @@ export type StagedPool = {
    * `order` column. `false` ⇒ the default value-DESC seed order.
    */
   manualOrder: boolean;
+  /**
+   * Owner tag override (tag control, 2026-07-04): the operator REMOVED or
+   * CHANGED the pack's product tag from the workspace header. When set, the
+   * staged plan resolves its intended hit-rate from this override instead of
+   * the pack's live `packs.tags`, and the push writes it to `packs.tags`.
+   * Solve-relevant (part of `stagedKey` — a tag change MUST re-plan). `undefined`
+   * ⇒ the pack's live tag is used (no override). See {@link StagedTagOverride}.
+   */
+  tagOverride?: StagedTagOverride;
   /** `computePoolFingerprint` of the LIVE pool this staged pool was seeded from. */
   baseFingerprint: string;
 };
@@ -119,6 +129,15 @@ export function stagedKey(pool: StagedPool): string {
     pins: [...pool.pinnedOdds]
       .sort((a, b) => (a.cardId < b.cardId ? -1 : a.cardId > b.cardId ? 1 : 0))
       .map((p) => `${p.cardId}:${p.pct}`),
+    // The tag override is solve-relevant: changing/removing the tag changes the
+    // intended hit-rate the server solves against, so it MUST stale the plan.
+    // (Row order / cosmetics are NOT solve-relevant and stay out of the key.)
+    tag:
+      pool.tagOverride === undefined
+        ? "live"
+        : pool.tagOverride.kind === "untag"
+          ? "untag"
+          : pool.tagOverride.tag,
   });
 }
 
@@ -306,6 +325,11 @@ export function reanchorStagedPool(
     // an identity choice (like adds/removes/cosmetics), so it's preserved. A
     // re-base only re-anchors live weights + the fingerprint, never the order.
     manualOrder: staged.manualOrder,
+    // The tag override is an operator choice (like adds/removes) — it survives a
+    // re-base onto the fresh live pool unchanged.
+    ...(staged.tagOverride !== undefined
+      ? { tagOverride: staged.tagOverride }
+      : {}),
     baseFingerprint: computePoolFingerprint(
       freshPool.price,
       freshPool.cards.map((c) => ({ cardId: c.cardId, weight: c.weight })),
@@ -325,6 +349,9 @@ export function stagedPlanInput(staged: StagedPool): PackTuneStagedInput {
     ...(staged.price !== staged.livePrice ? { price: staged.price } : {}),
     ...(staged.pinPrice ? { pinPrice: true } : {}),
     ...(staged.pinnedOdds.length > 0 ? { pinnedOdds: staged.pinnedOdds } : {}),
+    ...(staged.tagOverride !== undefined
+      ? { tagOverride: staged.tagOverride }
+      : {}),
   };
 }
 
@@ -344,6 +371,11 @@ export function stagedWriteInput(staged: StagedPool): StagedPoolInput {
     ...(staged.price !== staged.livePrice ? { price: staged.price } : {}),
     // The SAME pins the plan solved with — preview ≡ write includes pins.
     ...(staged.pinnedOdds.length > 0 ? { pinnedOdds: staged.pinnedOdds } : {}),
+    // The SAME tag override the plan solved with — preview ≡ write includes the
+    // tag change (the write persists it to packs.tags).
+    ...(staged.tagOverride !== undefined
+      ? { tagOverride: staged.tagOverride }
+      : {}),
   };
 }
 

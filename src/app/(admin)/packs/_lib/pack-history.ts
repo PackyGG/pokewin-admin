@@ -56,12 +56,15 @@ export type SnapshotCard = {
 async function readCurrentPackState(packId: string): Promise<{
   price: number;
   cards: SnapshotCard[];
+  /** `packs.tags` (pack_tag[] → DB strings) at capture time — for tag revert. */
+  tags: string[];
 } | null> {
   const db = await getDb();
   const pack = await db.packs.findUnique({
     where: { id: packId },
     select: {
       price: true,
+      tags: true,
       pack_cards: {
         select: {
           card_id: true,
@@ -78,6 +81,7 @@ async function readCurrentPackState(packId: string): Promise<{
 
   return {
     price: Number(pack.price.toString()),
+    tags: Array.isArray(pack.tags) ? pack.tags.map((t) => String(t)) : [],
     cards: pack.pack_cards.map((pc) => ({
       card_id: pc.card_id,
       weight: pc.weight,
@@ -156,6 +160,9 @@ export async function capturePackSnapshot(
         action: input.action,
         price: state.price,
         cards: state.cards as unknown as Prisma.InputJsonValue,
+        // The pack's tags at capture time — a revert restores them so the tag
+        // control's write is undoable like every other pack mutation.
+        tags: state.tags as unknown as Prisma.InputJsonValue,
         risk: (risk ?? undefined) as Prisma.InputJsonValue | undefined,
         note: input.note ?? null,
       },
@@ -177,6 +184,12 @@ export type PackSnapshot = {
   action: string;
   price: number;
   cards: SnapshotCard[];
+  /**
+   * `packs.tags` (DB strings, e.g. ["%5"]) captured with this snapshot, or null
+   * for snapshots taken before the tag column shipped. A revert restores these
+   * when non-null; null ⇒ the revert leaves the live tag untouched.
+   */
+  tags: string[] | null;
   risk: PackRisk | null;
   note: string | null;
 };
@@ -192,6 +205,7 @@ function mapSnapshotRow(r: {
   action: string;
   price: Prisma.Decimal;
   cards: Prisma.JsonValue;
+  tags: Prisma.JsonValue | null;
   risk: Prisma.JsonValue | null;
   note: string | null;
 }): PackSnapshot {
@@ -203,6 +217,11 @@ function mapSnapshotRow(r: {
     action: r.action,
     price: Number(r.price.toString()),
     cards: (Array.isArray(r.cards) ? r.cards : []) as unknown as SnapshotCard[],
+    // null (not []) for legacy snapshots so a revert can tell "no tag recorded"
+    // (leave live tag alone) from "recorded an empty tag set" (an untag revert).
+    tags: Array.isArray(r.tags)
+      ? (r.tags as unknown[]).map((t) => String(t))
+      : null,
     risk: (r.risk ?? null) as unknown as PackRisk | null,
     note: r.note,
   };

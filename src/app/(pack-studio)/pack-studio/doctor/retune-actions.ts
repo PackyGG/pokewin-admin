@@ -2,6 +2,7 @@
 
 import { revalidatePath, revalidateTag, unstable_cache } from "next/cache";
 import { isUuid } from "@/lib/utils/ids";
+import type { pack_tag } from "@/generated/prisma/enums";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { sessionHasRole } from "@/lib/dal";
@@ -56,6 +57,7 @@ import {
 import {
   autoRetuneTargets,
   resolveIntendedHitRate,
+  SELECTABLE_TAG_HIT_RATES,
   TAGGED_WRITE_WINRATE_TOLERANCE,
   TAGGED_NEAR_MISS_MIN,
   autoTargetEdge,
@@ -839,6 +841,26 @@ export type StagedPoolInputCard = {
   order: number;
 };
 
+/**
+ * Owner tag override (Retune workspace tag control, 2026-07-04). The operator
+ * may REMOVE or CHANGE a pack's product tag from the workspace header and the
+ * staged plan (and, on push, the write) uses the OVERRIDDEN tag instead of the
+ * pack's live `packs.tags`:
+ *   • `{ kind: "untag" }` — treat the pack as UNTAGGED regardless of its DB
+ *     tags AND its name-prefix tag (the fast, live-anchored plan). On push,
+ *     `packs.tags` is cleared to `[]`.
+ *   • `{ kind: "tag"; tag; hitRate }` — pin the plan to `hitRate` (the tag's
+ *     designed win-rate) and, on push, write `[tag]` to `packs.tags`.
+ * Omitted ⇒ the pack's live tag is used (byte-identical legacy behavior).
+ *
+ * `tag` is the `pack_tag` enum NAME (validated fail-closed against the
+ * selectable set); `hitRate` is echoed for the solve and re-derived + checked
+ * server-side so a client can't smuggle a mismatched pair.
+ */
+export type StagedTagOverride =
+  | { kind: "untag" }
+  | { kind: "tag"; tag: "pct1" | "pct5" | "pct10" | "fifty50"; hitRate: number };
+
 export type StagedPoolInput = {
   cards: StagedPoolInputCard[];
   /** Optional new pack price (USD). When omitted, the price is left unchanged. */
@@ -853,6 +875,14 @@ export type StagedPoolInput = {
    * Omitted / empty ⇒ legacy behavior, byte-identical.
    */
   pinnedOdds?: RetunePinnedOdds[];
+  /**
+   * Owner tag override (tag control) — see {@link StagedTagOverride}. When set,
+   * the solve resolves its intended hit-rate from THIS override instead of the
+   * pack's live `packs.tags` (plan) and the write persists the override to
+   * `packs.tags` (following `updatePack`'s tags-write pattern). Omitted ⇒ the
+   * pack's live tag is used.
+   */
+  tagOverride?: StagedTagOverride;
 };
 
 export type ApplyStagedRetuneResult = {
@@ -968,6 +998,17 @@ type StagedShapeResolution = {
     winRateTol: number;
     intendedHitRate: number | null;
   };
+  /**
+   * Owner tag override → `packs.tags` write directive (tag control). `null`
+   * when NO override was passed (the write leaves `packs.tags` untouched);
+   * `[]` for "untag" (clears the tag); `[tag]` for a set tag. The write path
+   * (`applyStagedPackEditAndRetune`) applies this to `packs.tags` following
+   * `updatePack`'s tags-write pattern; the plan path ignores it (nothing is
+   * written). `priorTags` is the pack's live tag set at read time — captured so
+   * the write audit + the History snapshot can record what was replaced.
+   */
+  tagWrite: ("pct1" | "pct5" | "pct10" | "fifty50")[] | null;
+  priorTags: string[];
   priceSearch: ApplyStagedRetuneResult["priceSearch"];
   outcome: StagedShapeOutcome;
 };
@@ -1067,6 +1108,28 @@ async function resolveAndShapeStagedPool(
           "Refused: a pinned chance must be a number above 0% and at most 100%.",
         );
       }
+    }
+  }
+  // Owner tag override (tag control) — STRUCTURAL validation, fail-closed. When
+  // set, it authoritatively decides the pack's intended hit-rate for the solve
+  // (below) and, on the write path, the `packs.tags` value. `hitRate` is
+  // re-derived from the selectable-tag table (never trusted from the client) so
+  // a mismatched {tag, hitRate} pair can't smuggle a bad target.
+  const tagOverride = input.tagOverride ?? null;
+  let overrideIntendedHitRate: number | null | undefined;
+  if (tagOverride !== null) {
+    if (tagOverride.kind === "untag") {
+      overrideIntendedHitRate = null; // force UNTAGGED (ignore DB + name tag)
+    } else if (tagOverride.kind === "tag") {
+      const match = SELECTABLE_TAG_HIT_RATES.find(
+        (t) => t.tag === tagOverride.tag,
+      );
+      if (!match) {
+        throw new Error("Refused: unknown pack tag in the tag override.");
+      }
+      overrideIntendedHitRate = match.hitRate;
+    } else {
+      throw new Error("Refused: invalid tag override.");
     }
   }
 
@@ -1192,8 +1255,14 @@ async function resolveAndShapeStagedPool(
   const auto = autoRetuneTargets(
     priceStaged,
     cfg,
-    // DB `tags` column first (authoritative), name-prefix tag as fallback.
-    resolveIntendedHitRate(pack.name, pack.tags) ?? undefined,
+    // Owner tag override (tag control) wins when set: a number pins the tag,
+    // `null` forces UNTAGGED (ignoring BOTH the DB tag AND the name-prefix tag —
+    // the owner said "let me remove the tags... when i remove replan" makes the
+    // pack plan untagged). No override ⇒ the pack's live tag: DB `tags` column
+    // first (authoritative), name-prefix tag as fallback.
+    overrideIntendedHitRate !== undefined
+      ? (overrideIntendedHitRate ?? undefined)
+      : (resolveIntendedHitRate(pack.name, pack.tags) ?? undefined),
     stagedTopValue,
     // LIVE-ANCHORED targets (owner-lens 2026-07-03) — anchored to the LIVE
     // pool's designed character (win-rate/near-miss/edge from `before`), with
@@ -1227,6 +1296,19 @@ async function resolveAndShapeStagedPool(
     winRateTol,
     intendedHitRate: auto.intendedHitRate,
   };
+  // Tag-write directive (tag control): `null` when NO override (leave
+  // `packs.tags` untouched); `[]` for "untag" (clear it); `[tag]` for a set
+  // tag. The plan path ignores this; the write path persists it. `priorTags`
+  // is the live tag set (for the write's audit + the revert snapshot).
+  const priorTags: string[] = Array.isArray(pack.tags)
+    ? pack.tags.map((t) => String(t))
+    : [];
+  const tagWrite: StagedShapeResolution["tagWrite"] =
+    tagOverride === null
+      ? null
+      : tagOverride.kind === "untag"
+        ? []
+        : [tagOverride.tag];
   // Shared partial for every return arm — only the outcome (+ the price the
   // search may still move) varies below.
   const base = {
@@ -1240,6 +1322,8 @@ async function resolveAndShapeStagedPool(
     before,
     cardMetaById,
     resolved,
+    tagWrite,
+    priorTags,
   };
 
   // A pct-tagged pack's win-rate is a design CONTRACT — a pinned target that
@@ -1686,6 +1770,17 @@ export async function applyStagedPackEditAndRetune(
   // price (in which case the nudge is meaningless unless it lands in the DB).
   const shouldWritePrice = r.priceProvided || priceAfter !== priceBefore;
 
+  // Owner tag override (tag control): when the operator changed/removed the
+  // tag, `r.tagWrite` is the new `packs.tags` value (`[]` = untag, `[tag]` =
+  // set) — persisted alongside the pool write, following `updatePack`'s
+  // existing `packs.tags` write pattern EXACTLY (an already-sanctioned pack
+  // mutation the /packs edit form performs). `null` = no override → tags left
+  // untouched. Skip a no-op write (the override equals the live tag set).
+  const priorTagSet = [...r.priorTags].sort().join(",");
+  const nextTagSet =
+    r.tagWrite !== null ? [...r.tagWrite].sort().join(",") : null;
+  const shouldWriteTags = r.tagWrite !== null && nextTagSet !== priorTagSet;
+
   // SAME delete-all-then-createMany pattern used by every other writer.
   const db = await getDb();
   await db.$transaction(async (tx) => {
@@ -1693,6 +1788,9 @@ export async function applyStagedPackEditAndRetune(
       where: { id: packId },
       data: {
         ...(shouldWritePrice ? { price: priceAfter } : {}),
+        // packs.tags is a pack_tag[] enum column (updatePack writes it the same
+        // way). r.tagWrite is validated fail-closed to the selectable enum set.
+        ...(shouldWriteTags ? { tags: r.tagWrite as pack_tag[] } : {}),
         updated_at: new Date(),
       },
     });
@@ -1713,6 +1811,11 @@ export async function applyStagedPackEditAndRetune(
       price_before: priceBefore,
       price_after: priceAfter,
       price_changed: priceAfter !== priceBefore,
+      // Owner tag override (tag control): the tag change this write persisted —
+      // absent unless the tag actually changed.
+      ...(shouldWriteTags
+        ? { tags_before: r.priorTags, tags_after: r.tagWrite }
+        : {}),
       // Owner pins this write held exact (Retune V2) — absent on pin-less writes.
       ...(input.pinnedOdds !== undefined && input.pinnedOdds.length > 0
         ? { pinned_odds: input.pinnedOdds }
@@ -1847,6 +1950,14 @@ export type PackTuneStagedInput = {
    * "pins-infeasible"` with a computed suggestion — data, never a throw.
    */
   pinnedOdds?: RetunePinnedOdds[];
+  /**
+   * Owner tag override (tag control) — see {@link StagedTagOverride}. Threaded
+   * verbatim to the SAME `resolveAndShapeStagedPool` pass the write runs, so
+   * the staged plan the operator reviews and the write derive the intended
+   * hit-rate from the SAME overridden tag (plan ≡ write). Omitted ⇒ the pack's
+   * live tag is used.
+   */
+  tagOverride?: StagedTagOverride;
 };
 
 export type PackTunePlan = {
@@ -2672,6 +2783,12 @@ async function planPackTuneStagedUncached(
     // Owner pins ride the SAME resolver input shape the write receives.
     ...(staged.pinnedOdds !== undefined && staged.pinnedOdds.length > 0
       ? { pinnedOdds: staged.pinnedOdds }
+      : {}),
+    // Owner tag override rides the SAME resolver input the write receives, so
+    // the plan resolves its intended hit-rate from the overridden tag exactly
+    // as the write will (plan ≡ write).
+    ...(staged.tagOverride !== undefined
+      ? { tagOverride: staged.tagOverride }
       : {}),
   };
   const r = await resolveAndShapeStagedPool(packId, input, {
