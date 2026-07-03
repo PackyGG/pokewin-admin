@@ -328,6 +328,34 @@ export type ShapeWeightsInput = {
    */
   winRateIsHard?: boolean;
   /**
+   * WIN-RATE HOLD (owner-lens item 4): when TRUE (the untagged RETUNE path), the
+   * SOFT win-rate float-up is capped at `targetWinRate + WINRATE_HOLD_BAND`
+   * (+5pp) so the achieved win-rate holds within the band of the pack's
+   * live-anchored design instead of floating far above it (Three Blades
+   * 30%→37.5%). The float can still rise toward the band to reach the edge; when
+   * the pool genuinely needs MORE than the band's winners to hit the edge at a
+   * given price, the solve errors at THAT price and the retune's price search
+   * moves the ticket to a price where the band-held win-rate reaches the edge
+   * (a clean plan) — or, if no in-budget price admits it, the pack honestly
+   * surfaces as the wide-probe / pool-edit path. Default FALSE: the float is
+   * UNBOUNDED (the legacy behavior every direct `shapeWeights` caller — the
+   * scenario builder, the anti-inflation harness — keeps byte-identical). No-op
+   * when `winRateIsHard` (tagged packs never float).
+   */
+  holdWinRate?: boolean;
+  /**
+   * LOSS-MASS DISPERSION (owner-lens item 10): when TRUE (the RETUNE path), the
+   * free-dust loss band is RE-SPREAD after the single-β layout — the min-L2
+   * (affine-in-value) distribution at the SAME band mass + EV, so edge / win-rate
+   * / tag / every anti-inflation cap are byte-for-byte preserved while the loss
+   * mass stops piling on a single carrier (the crush ladder). No-op when the band
+   * has < 2 distinct values or the required average is EV-forced near the band
+   * max (Captive — the pool-edit path is the real fix there). Default FALSE: the
+   * legacy single-β loss layout (every direct `shapeWeights` caller — the
+   * scenario builder, the anti-inflation / niceness harnesses — byte-identical).
+   */
+  disperseLoss?: boolean;
+  /**
    * Owner-pinned EXACT per-card odds (Retune V2 pins). Each entry holds the
    * card at `cards[index]` at EXACTLY `share` (a fraction of the TOTAL pool
    * mass) through the whole pipeline — solve, quantize AND the clean-ladder
@@ -597,6 +625,30 @@ export const BETA_WIN_MAX = 12;
 export const ONE_SIDED_EDGE_EXCESS_TOL = 0.0025;
 
 /**
+ * POST-SOLVE WIN-RATE HOLD band for SOFT (untagged) packs (owner-lens
+ * build-order item 4, 2026-07-03). The live-anchored `targetWinRate` sets the
+ * pack's designed win-rate, but the anchored EV solve still FLOATS the win-rate
+ * UP without bound (the cheapest winner is EV-exempt at `Infinity` cap, so the
+ * float ceiling `winMassCeil` collapses to the structural dust margin — the
+ * float ran to 37%+ on a 30%-designed pack). The fleet re-run measured 38
+ * untagged plans whose achieved win-rate floated MORE than this band above
+ * their live-anchored target (Three Blades 30.0%→37.5%, Trash 33.2%→40.2% among
+ * them), rewriting the pack's designed hit-rate.
+ *
+ * The HOLD caps the float ceiling at `targetWinRate + this band` (SOFT +
+ * anchored only), so the achieved win-rate lands within +5pp of the designed
+ * rate. It only ever LOWERS the ceiling toward the design — it never floats
+ * BELOW `targetWinRate` (that stays the floor) and it never inflates a jackpot
+ * (the never-inflate caps are untouched). When the pool genuinely needs MORE
+ * than `target + band` winners to reach the edge target, the float saturates at
+ * the cap and the achieved edge lands ABOVE target — house-favorable, accepted
+ * within {@link ONE_SIDED_EDGE_EXCESS_TOL} or surfaced honestly as the
+ * ev-unreachable limit (the pool-edit / retag path). TAGGED packs are untouched
+ * (`winRateIsHard` already pins the win-rate to the tag exactly).
+ */
+export const WINRATE_HOLD_BAND = 0.05;
+
+/**
  * Water-fill a probability MASS over a band's values by a `value^(−beta)`
  * power-law, capping each card at `caps[i]` (absolute pool-odds) and
  * re-distributing the overflow onto the still-uncapped cards. Returns the
@@ -685,6 +737,128 @@ function bandWeights(values: readonly number[], beta: number, mass: number): num
   const sumW = w.reduce((a, b) => a + b, 0);
   if (!(sumW > 0)) return values.map(() => mass / values.length);
   return w.map((wi) => (wi / sumW) * mass);
+}
+
+/**
+ * LOSS-MASS DISPERSION (owner-lens build-order item 10, 2026-07-03).
+ *
+ * The loss band is laid out by ONE shared power-law β chosen to hit the exact EV
+ * target — which pins the band's MEAN but is indifferent between a live-like
+ * spread and a single-carrier collapse. On ~60 fleet packs that produced a crush
+ * ladder: one card carries almost all the loss mass while its siblings sit at the
+ * quantization floor (a live-≥5% card planned ≤0.005%). This pass RE-SPREADS the
+ * loss mass across the band WITHOUT changing the band's mass or EV — so the pack's
+ * edge, win-rate, tag and every anti-inflation cap are byte-for-byte preserved
+ * (the loss band has no never-inflate cap; only its mass + EV are load-bearing,
+ * and both are held exactly).
+ *
+ * THE MATH — the minimum-concentration distribution at fixed (mass, EV) is AFFINE
+ * in value. Minimizing the L2 norm `½·Σ wᵢ²` (the standard "spread the mass out"
+ * objective — L2 is minimized by the flattest vector) subject to `Σ wᵢ = mass`
+ * and `Σ wᵢ·vᵢ = EV` has the Lagrangian stationary point `wᵢ = a + b·vᵢ` — a
+ * straight line in value. Solve `a`, `b` from the two constraints:
+ *   b = (mass·Σv·v̄ − EV·Σv) / (mass·Σv² − (Σv)²)   [ = Cov-form ]
+ *   a = (mass − b·Σv) / n
+ * (denominator = mass·n·Var(v) > 0 whenever ≥ 2 DISTINCT values exist).
+ *
+ * NON-NEGATIVITY (the EV-forced case): when the required mean sits at/near the
+ * band's MAX value (Captive's loss side must average ≈$80 across $80/$34/$18 —
+ * only the $80 card can carry it), the affine solution puts NEGATIVE weight on
+ * the cheap cards. That is the honest signal that the crush is EV-FORCED, not a
+ * layout artifact — dispersion can't help and the pool-edit path is the real fix.
+ * We active-set clamp: drop the most-negative card to 0 and re-solve on the rest,
+ * repeating until all weights are ≥ 0 (mass + EV still held exactly on the
+ * survivors). If fewer than 2 free cards remain, we stop — a single carrier is
+ * unavoidable and the input weights are returned unchanged.
+ *
+ * ONLY DISPERSES (never concentrates): the affine result is adopted ONLY when it
+ * strictly LOWERS the band's max single-card share vs the input (Σw² is a proxy;
+ * we check the max share directly) — so a band the β-layout already spread well
+ * is left byte-identical. Pure; returns the input array unchanged when there is
+ * no room to disperse (< 2 distinct values, degenerate variance, or no
+ * improvement).
+ */
+export function disperseLossBand(
+  values: readonly number[],
+  weights: readonly number[],
+  mass: number,
+): number[] {
+  const n = values.length;
+  if (n < 2 || !(mass > 0)) return weights.slice();
+  // The band's current EV (the invariant we hold exactly).
+  let ev = 0;
+  for (let i = 0; i < n; i++) ev += weights[i]! * values[i]!;
+  if (!(ev > 0)) return weights.slice();
+
+  // Active-set solve of the affine (min-L2) distribution `w = a + b·v` on the
+  // set of cards allowed positive mass; drop the most-negative card and re-solve
+  // until all survivors are ≥ 0 (mass + EV held exactly on the survivors).
+  const active = new Array<boolean>(n).fill(true);
+  const out = new Array<number>(n).fill(0);
+  for (let iter = 0; iter < n; iter++) {
+    let k = 0;
+    let sumV = 0;
+    let sumV2 = 0;
+    for (let i = 0; i < n; i++) {
+      if (!active[i]) continue;
+      k += 1;
+      sumV += values[i]!;
+      sumV2 += values[i]! * values[i]!;
+    }
+    if (k < 2) return weights.slice(); // one carrier left — nothing to disperse
+    const denom = k * sumV2 - sumV * sumV; // = k²·Var(v) ≥ 0
+    if (!(denom > 1e-12)) return weights.slice(); // all-equal values on the active set
+    // Solve the 2×2 system exactly:
+    //   a·k    + b·Σv   = mass
+    //   a·Σv   + b·Σv²  = ev
+    // ⇒ b = (mass·Σv − ev·k) / (Σv² · … ) — via Cramer's rule (det = Σv² − k·… );
+    // written with det = (sumV² − k·sumV2) = −denom so the signs stay explicit.
+    const det = sumV * sumV - k * sumV2; // = −denom < 0
+    const bSolved = (mass * sumV - ev * k) / det;
+    const aSolved = (mass - bSolved * sumV) / k;
+    let anyNeg = false;
+    let mostNegIdx = -1;
+    let mostNegVal = 0;
+    for (let i = 0; i < n; i++) {
+      if (!active[i]) {
+        out[i] = 0;
+        continue;
+      }
+      const w = aSolved + bSolved * values[i]!;
+      out[i] = w;
+      if (w < -1e-12 && w < mostNegVal) {
+        mostNegVal = w;
+        mostNegIdx = i;
+        anyNeg = true;
+      }
+    }
+    if (!anyNeg) break;
+    active[mostNegIdx] = false; // drop the most-negative card, re-solve
+  }
+
+  // Guard: mass + EV must still match (numerical safety), and the result must
+  // actually DISPERSE (lower the max single-card share) — else keep the input.
+  let outMass = 0;
+  let outEv = 0;
+  let outMax = 0;
+  let inMax = 0;
+  for (let i = 0; i < n; i++) {
+    const w = out[i]! > 0 ? out[i]! : 0;
+    out[i] = w;
+    outMass += w;
+    outEv += w * values[i]!;
+    if (w > outMax) outMax = w;
+    if (weights[i]! > inMax) inMax = weights[i]!;
+  }
+  if (
+    !(outMass > 0) ||
+    Math.abs(outMass - mass) > 1e-6 * Math.max(1, mass) ||
+    Math.abs(outEv - ev) > 1e-6 * Math.max(1, ev) ||
+    outMax >= inMax - 1e-12 // no improvement — the layout was already spread
+  ) {
+    return weights.slice();
+  }
+  return out;
 }
 
 /** Greatest common divisor of two non-negative integers. */
@@ -2593,6 +2767,14 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   }
 
   const winRateIsHard = input.winRateIsHard === true;
+  // WIN-RATE HOLD (owner-lens item 4): opt-in on the untagged RETUNE path only.
+  // No-op for a tagged pack (it never floats) and for every legacy direct caller
+  // that doesn't set the flag (behavior byte-identical).
+  const holdWinRate = input.holdWinRate === true && !winRateIsHard;
+  // LOSS-MASS DISPERSION (owner-lens item 10): opt-in on the RETUNE path. Pure
+  // shape improvement at fixed band mass + EV; legacy direct callers (flag unset)
+  // keep the single-β loss layout byte-identical.
+  const disperseLoss = input.disperseLoss === true;
 
   // ── Owner-pinned per-card odds (Retune V2 pins) ─────────────────────────
   // Validated FIRST, fail-closed AS DATA: every refusal is the structured
@@ -3328,8 +3510,33 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // jackpot AND blow up win EV). Unanchored ⇒ the structural ceiling (legacy).
   let capSum = 0;
   if (anchorActive) for (const c of monoCap) capSum += c;
+  // POST-SOLVE WIN-RATE HOLD (owner-lens item 4): for a SOFT (untagged) anchored
+  // pack the cheapest winner is EV-exempt (`monoCap` Infinity), so `capSum` is
+  // Infinity and the float ceiling collapses to the structural dust margin — the
+  // win-rate floats far above the pack's live-anchored design (30%→37.5% on Three
+  // Blades). Cap the float ceiling at `targetWinRate + WINRATE_HOLD_BAND` (+5pp)
+  // so the shaped win mass holds within the band of the design. Never below
+  // `winMass` (the requested target stays the FLOOR — the float can still rise
+  // toward the band to reach the edge). TAGGED packs (`winRateIsHard`) don't
+  // float, so the hold is a no-op there; the clamp only ever LOWERS the ceiling.
+  //
+  // FEASIBILITY-SAFE via the price search, NOT a per-price yield: at a single
+  // price a pool may need MORE than `band` winners to hit the edge (Three Blades
+  // at $113.52 needs 37.5% — the 28% near-miss band on the cheap $80.72 card
+  // starves the EV). Holding there makes the edge unreachable ⇒ the solve
+  // errors at THAT price. `searchBestPriceForCleanSnap` then moves the ticket a
+  // few cents (Three Blades → $108.83, held 34.3%) where the band-held win-rate
+  // DOES reach the edge — a clean plan. When NO in-budget price admits a
+  // band-held solve (Trash / Echoes / Snack Time — the loss side is a single
+  // near-zero carrier), every candidate errors and the pack surfaces as the
+  // wide-probe price-move / pool-edit path (owner-lens item 4's "coherent
+  // pool-edit path" for a truly-infeasible dead-end) — never a floated-up plan.
+  const winHoldCeil =
+    anchorActive && holdWinRate
+      ? Math.max(winMass, targetWinRate + WINRATE_HOLD_BAND)
+      : Infinity;
   const winMassCeil = anchorActive
-    ? Math.min(structuralCeil, Math.max(winMass, capSum))
+    ? Math.min(structuralCeil, Math.max(winMass, capSum), winHoldCeil)
     : Math.max(winMass, structuralCeil);
 
   // The win pool's steepness β. Baseline `BETA_WIN_FLOOR`; the EV solve may
@@ -3376,7 +3583,8 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // Float the win-rate UP until the max (non-inflating) EV reaches the FREE
   // pool's budget (`evTargetFree` — legacy-identical to evTarget without pins).
   // EV is monotone increasing in win mass (winners pay ≥ price > the dust they
-  // displace), so bisect. Capped at `winMassCeil` (2% dust margin). ONLY on the
+  // displace), so bisect. Capped at `winMassCeil` (2% dust margin, and — for a
+  // SOFT anchored pack — the WIN-RATE HOLD band; see `winHoldCeil`). ONLY on the
   // ANCHORED path (`anchorActive`) and when the win-rate is SOFT — the legacy
   // value-only path keeps the original single-β solve (no float-up); tagged packs
   // hit EV via their big jackpots at the tag rate, never by adding winners.
@@ -3725,6 +3933,51 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     frac[slotPos.get(floorSlot)!] = floorMass;
   }
 
+  // ── LOSS-MASS DISPERSION (owner-lens item 10) ───────────────────────────
+  // The single-β loss layout hits the exact EV but is indifferent between a
+  // live-like spread and a one-carrier crush: on ~60 fleet packs it parks a
+  // live-≥5% loss card at the quantization floor while one carrier absorbs
+  // (nearly) all the loss mass. Re-spread the WHOLE loss band — every card BELOW
+  // price (near-miss + free dust + the reserved floor modal) — at the SAME
+  // combined mass + EV: `disperseLossBand` returns the min-L2 (affine-in-value)
+  // vector, the flattest layout keeping those two invariants.
+  //
+  // WHY the WHOLE band (not per-band): the crush routinely spans the near-miss /
+  // dust boundary (a live-≥5% near-miss card starved while the dust carrier
+  // absorbs, and vice versa), so a per-band spread leaves 24 of the 25 fixable
+  // crushes untouched. Dispersing the whole loss band at once is what actually
+  // loosens them.
+  //
+  // EDGE + WIN-RATE ARE PRESERVED: the loss band's TOTAL mass AND TOTAL EV are
+  // held exactly, so at a FIXED price the pack's EV — and therefore its edge —
+  // is unchanged, and the WIN mass (win-rate) is untouched (only loss cards
+  // move). The downstream integer quantize + one-sided-up edge bump may re-land
+  // the edge a hair differently (always ≥ target, within the snap tolerance) and
+  // the price search may then pick a different — but equally valid, edge ≥ target
+  // AND ≥ live-slack — clean price; both are the existing acceptance envelope,
+  // not a new skew. Where the loss average is EV-forced near the band max
+  // (Captive), the affine solution clamps to the same one-carrier shape and this
+  // is a no-op — the pool-edit path owns that case. Opt-in (`disperseLoss`); every
+  // legacy direct caller stays byte-identical.
+  if (disperseLoss) {
+    const lossSlots: Slot[] = [];
+    for (const s of slots) {
+      if (s.value > 0 && s.value < price && frac[slotPos.get(s)!]! > 0) {
+        lossSlots.push(s);
+      }
+    }
+    if (lossSlots.length >= 2) {
+      const lossValues = lossSlots.map((s) => s.value);
+      const lossW = lossSlots.map((s) => frac[slotPos.get(s)!]!);
+      let lossMassSum = 0;
+      for (const w of lossW) lossMassSum += w;
+      const dispersed = disperseLossBand(lossValues, lossW, lossMassSum);
+      lossSlots.forEach((s, i) => {
+        frac[slotPos.get(s)!] = dispersed[i]!;
+      });
+    }
+  }
+
   const weights = new Array<number>(input.cards.length).fill(0);
   const cardsForRisk = (): CardLite[] =>
     input.cards.map((c, i) => ({ value: c.value, weight: weights[i]! }));
@@ -3987,6 +4240,35 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     snapTagTarget === undefined ||
     Math.abs(wr - snapTagTarget) <= TAGGED_WINRATE_TOLERANCE + 1e-12;
 
+  // ── Soft win-rate HOLD on the snap (owner-lens item 4 companion) ──────
+  // The float ceiling above holds the PRE-SNAP win mass within
+  // `WINRATE_HOLD_BAND` of the live-anchored design WHEN the edge is reachable
+  // there; the clean-ladder snap can still round the win-band mass UP a hair
+  // past that. So a soft (untagged) anchored solve additionally requires every
+  // accepted snap candidate to keep the achieved win-rate at/below the snap
+  // ceiling. The ceiling is the LARGER of the design band and the PRECISE
+  // pre-snap win-rate (+ the soft `winRateTol` the snap already allows vs
+  // precise): when the float legitimately ran PAST the band to reach the edge
+  // (Charizard-class), the precise rate is above the band and the snap must be
+  // allowed to match it — the hold only ever prevents the snap ROUNDING from
+  // pushing the win-rate ABOVE what the precise (feasibility-respecting) solve
+  // produced, never blocks a solve the pool genuinely needs. This is one-sided
+  // (the snap may lower the win-rate freely). When no clean snap fits under the
+  // ceiling the precise weights survive, so the SHIPPED number never exceeds it.
+  // No-op for tagged packs (the tight `snapKeepsTag` binds) and the legacy
+  // value-only path (no anchor ⇒ no float ⇒ nothing to hold).
+  const softWinRateHoldBand = Math.min(1, requestedWinRate + WINRATE_HOLD_BAND);
+  const softWinRateCeil =
+    anchorActive && holdWinRate
+      ? // Held within the band → the band is the ceiling (no snap drift past it).
+        // Legitimately floated PAST the band (edge needed it) → allow the snap to
+        // match the precise rate (+ the tol the snap already allows vs precise).
+        preciseWinRate > softWinRateHoldBand + 1e-9
+        ? preciseWinRate + winRateTol
+        : softWinRateHoldBand
+      : Infinity;
+  const snapHoldsWinRate = (wr: number): boolean => wr <= softWinRateCeil + 1e-9;
+
   // ── Snap anti-inflation guard (expensive tail) ───────────────────────
   // The precise solver weights never inflate a grail card above its current
   // odds. The clean-ladder snap, however, rounds each card to the NEAREST rung —
@@ -4120,6 +4402,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
         candRisk.edge >= targetEdge - 1e-9 &&
         Math.abs(candRisk.winRate - preciseWinRate) <= winRateTol + 1e-9 &&
         snapKeepsTag(candRisk.winRate) &&
+        snapHoldsWinRate(candRisk.winRate) &&
         snapGrailNotInflated(pinnedSnap)
       ) {
         for (let i = 0; i < weights.length; i++) weights[i] = pinnedSnap[i]!;
@@ -4157,6 +4440,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
       snapCandidateRisk.edge >= targetEdge - 1e-9 &&
       snapWinRateDrift <= winRateTol + 1e-9 &&
       snapKeepsTag(snapCandidateRisk.winRate) &&
+      snapHoldsWinRate(snapCandidateRisk.winRate) &&
       snapGrailNotInflated(snapCandidate)
     ) {
       for (let i = 0; i < weights.length; i++) weights[i] = snapCandidate[i]!;
@@ -4232,6 +4516,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
             refinedRisk.edge >= targetEdge - 1e-9 &&
             refinedWinRateDrift <= winRateTol + 1e-9 &&
             snapKeepsTag(refinedRisk.winRate) &&
+            snapHoldsWinRate(refinedRisk.winRate) &&
             snapGrailNotInflated(refinedRepaired.weights)
           ) {
             for (let i = 0; i < weights.length; i++) weights[i] = refinedRepaired.weights[i]!;
@@ -4263,6 +4548,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
         r.edge >= targetEdge - 1e-9 &&
         Math.abs(r.winRate - preciseWinRate) <= winRateTol + 1e-9 &&
         snapKeepsTag(r.winRate) &&
+        snapHoldsWinRate(r.winRate) &&
         snapGrailNotInflated(cand),
     });
     if (polished !== null) {
@@ -4484,6 +4770,26 @@ export function searchBestPriceForCleanSnap(input: {
    * error result. Omit for the legacy behavior — byte-identical.
    */
   pinnedShares?: ShapeWeightsPinnedShare[];
+  /**
+   * WIN-RATE HOLD (owner-lens item 4): when TRUE, forwarded to
+   * {@link shapeWeights} at every candidate price so an UNTAGGED (soft) retune
+   * holds the achieved win-rate within `WINRATE_HOLD_BAND` (+5pp) of the design.
+   * When holding makes a given price's edge unreachable, THAT price errors and
+   * the search moves on to one where the band-held win-rate reaches the edge (a
+   * clean plan). Set by the untagged retune arm (`buildRetuneSearchParams`);
+   * omit for the legacy unbounded float (existing callers byte-identical). No-op
+   * in tagged mode (a tagged pack never floats).
+   */
+  holdWinRate?: boolean;
+  /**
+   * LOSS-MASS DISPERSION (owner-lens item 10): when TRUE, forwarded to
+   * {@link shapeWeights} at every candidate price so the free-dust loss band is
+   * re-spread at fixed band mass + EV (edge/win-rate/tag unchanged) — the crush
+   * ladder's single-carrier collapse is loosened where the pool has room. Set by
+   * the retune arm (`buildRetuneSearchParams`); omit for the legacy single-β
+   * layout (existing callers byte-identical).
+   */
+  disperseLoss?: boolean;
 }): SearchBestPriceResult {
   const {
     cards,
@@ -4501,6 +4807,8 @@ export function searchBestPriceForCleanSnap(input: {
   const taggedWinRate = input.taggedWinRate;
   const tagged = typeof taggedWinRate === "number" && Number.isFinite(taggedWinRate);
   const preferHigherEdge = input.preferHigherEdge === true;
+  const holdWinRate = input.holdWinRate === true;
+  const disperseLoss = input.disperseLoss === true;
 
   // Single-call passthrough for the degenerate / disabled cases. Mirrors the
   // backward-compat contract: callers can wire this in unconditionally and
@@ -4524,6 +4832,12 @@ export function searchBestPriceForCleanSnap(input: {
       // the tag rather than drifting up while the price search hunts for a price
       // that hits BOTH the tag win-rate and clean odds.
       ...(tagged ? { winRateIsHard: true } : {}),
+      // Untagged WIN-RATE HOLD (owner-lens item 4): cap the soft float at
+      // design + 5pp at every candidate price (no-op in tagged mode).
+      ...(holdWinRate && !tagged ? { holdWinRate: true } : {}),
+      // LOSS-MASS DISPERSION (owner-lens item 10): re-spread the free-dust band
+      // at fixed mass + EV at every candidate price (edge/win-rate untouched).
+      ...(disperseLoss ? { disperseLoss: true } : {}),
     });
 
   // Tagged-mode helper: did this shape land within 0.01pp of the tag?

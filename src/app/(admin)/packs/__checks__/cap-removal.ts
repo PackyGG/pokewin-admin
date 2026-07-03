@@ -267,12 +267,17 @@ check("pins: pinning the cap-dropped Machamp is still the pins-infeasible + rais
 // ── 5. No false positives (under-cap pool) ──────────────────────────────
 
 check("under-cap pack: zero classifications and the write vector keeps every row", () => {
-  // The pins.ts untagged anchored fixture — everything far under the cap.
+  // An untagged anchored pool, everything far under the $250 cap. Its live
+  // win-rate (mass on the $4.2 + $120 winners) sits at ≈20% — matching the
+  // targetWinRate below — so the WIN-RATE HOLD (owner-lens item 4) is a no-op
+  // float here and the solve lands cleanly with every row kept (the property
+  // this cap-removal test actually asserts). Sibling shape of the pins.ts
+  // untagged fixture, weighted so the held retune is feasible in-band.
   const pool = [
-    { cardId: "u-dust", value: 0.35, weight: 880000 },
-    { cardId: "u-near", value: 1.8, weight: 90000 },
-    { cardId: "u-win", value: 4.2, weight: 29900 },
-    { cardId: "u-grail", value: 120, weight: 100 },
+    { cardId: "u-dust", value: 0.35, weight: 640000 },
+    { cardId: "u-near", value: 1.8, weight: 160000 },
+    { cardId: "u-win", value: 4.2, weight: 195000 },
+    { cardId: "u-grail", value: 120, weight: 5000 },
   ];
   const classified = computeCapDroppedCardIds(
     pool.map((c) => ({ cardId: c.cardId, value: c.value })),

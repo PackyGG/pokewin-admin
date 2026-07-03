@@ -28,6 +28,7 @@ import {
   computePackRisk,
   RETUNE_PRICE_BUDGET_DEFAULT_PCT,
   RETUNE_MAX_PRICE_CHANGE_PCT,
+  WINRATE_HOLD_BAND,
 } from "../../insights/edge-calc/risk";
 import {
   ladderShape,
@@ -111,6 +112,46 @@ const HEAVY_HITTERS: Pool = {
   tag: 0.01,
 };
 
+// ── Win-rate HOLD fixtures (owner-lens item 4) — untagged floaters ────────
+// Two of these are the named DEAD-ENDS (monotone ladders the shape guard
+// misses, guidance returns null): the float used to push their achieved
+// win-rate far above the live-anchored design (Three Blades 30.0%→37.5%, Trash
+// 33.2%→40.2%). The HOLD caps the untagged float at design + WINRATE_HOLD_BAND
+// (+5pp); a price where the held win-rate can't reach the edge errors and the
+// search moves to one where it can (a clean plan) — Three Blades gains a clean
+// $108.83 plan at 34.3%; Trash / Snack Time have no in-budget held price and
+// surface as the wide-probe / pool-edit path (feasible at ±60%, honestly
+// infeasible at ±10%). All are untagged (`tag: null`), snapshots from the fleet
+// dump (values + live weights).
+const THREE_BLADES: Pool = {
+  name: "Three Blades",
+  price: 113.5,
+  values: [2600, 987.06, 764.51, 323.8, 244.57, 126.37, 80.72, 12.55],
+  livePcts: [0.05, 0.5, 0.75, 3.5, 11.2, 14, 35, 35],
+  tag: null,
+};
+const TRASH: Pool = {
+  name: "Trash",
+  price: 0.15,
+  values: [306, 25.16, 1.56, 1.25, 0.8, 0.52, 0.35, 0.23, 0.18, 0.08, 0.01],
+  livePcts: [0.005, 0.02, 0.245, 0.25, 0.8, 1.65, 8.03, 10, 12.2, 16.8, 50],
+  tag: null,
+};
+const PROFIT_NINJA: Pool = {
+  name: "Profit Ninja",
+  price: 65.25,
+  values: [1199.99, 332.28, 233.99, 71.28, 59.7, 39.19, 24.74, 20.34, 0.3],
+  livePcts: [2, 1, 1, 8, 13, 15, 20, 20, 20],
+  tag: null,
+};
+const SNACK_TIME: Pool = {
+  name: "Snack Time",
+  price: 0.45,
+  values: [12.32, 7.55, 4.54, 2.28, 1.52, 0.96, 0.78, 0.5, 0.02],
+  livePcts: [0.5, 0.75, 1, 1.25, 2.5, 4, 6.6, 13.4, 70],
+  tag: null,
+};
+
 function toWeights(pcts: number[]): number[] {
   return pcts.map((p) => Math.round(p * 10000));
 }
@@ -118,8 +159,13 @@ function toShares(pcts: number[]): number[] {
   return pcts.map((p) => p / 100);
 }
 
-/** Run the EXACT live-arm solve `planPackTuneLiveUncached` runs, at `band`. */
-function solve(p: Pool, band: number) {
+/**
+ * Run the EXACT live-arm solve `planPackTuneLiveUncached` runs, at `band`.
+ * `disperse` (default true, mirroring the real retune) toggles the loss-mass
+ * dispersion pass — set false to inspect the RAW fixed-pool layout the shape
+ * guard classifies BEFORE the dispersion fix.
+ */
+function solve(p: Pool, band: number, disperse = true) {
   const weights = toWeights(p.livePcts);
   const before = computePackRisk({
     cards: p.values.map((v, i) => ({ value: v, weight: weights[i]! })),
@@ -146,7 +192,8 @@ function solve(p: Pool, band: number) {
     currentWeights: weights,
     maxPriceChangePct: band,
     upwardPriceExtensionPct: 0,
-    ...(p.tag !== null ? { taggedWinRate: t.targetWinRate } : {}),
+    ...(disperse ? { disperseLoss: true } : {}),
+    ...(p.tag !== null ? { taggedWinRate: t.targetWinRate } : { holdWinRate: true }),
   });
   const r = search.bestResult;
   if ("error" in r) {
@@ -159,6 +206,47 @@ function solve(p: Pool, band: number) {
 
 function shapeOf(p: Pool, planned: number[], price: number) {
   return ladderShape(p.values, toShares(p.livePcts), planned, price);
+}
+
+/**
+ * The live-anchored target win-rate + the ACHIEVED (post-solve) win-rate for an
+ * untagged pack at `band` — the two numbers the win-rate HOLD check pins.
+ * `feasible` is false when the held solve can't reach the edge at any in-band
+ * price (the pack becomes a pool-edit / wide-probe path — exempt from the
+ * hold-window check, which only governs FEASIBLE plans).
+ */
+function solveHold(p: Pool, band: number): {
+  targetWinRate: number;
+  achievedWinRate: number | null;
+  feasible: boolean;
+  price: number | null;
+} {
+  const weights = toWeights(p.livePcts);
+  const before = computePackRisk({
+    cards: p.values.map((v, i) => ({ value: v, weight: weights[i]! })),
+    price: p.price,
+  });
+  const top = Math.max(...p.values);
+  const t = autoRetuneTargets(p.price, CFG, p.tag ?? undefined, top, {
+    winRate: before.winRate,
+    nearMiss: before.nearMiss,
+    edge: before.edge,
+    topValue: top,
+  });
+  const out = solve(p, band);
+  if (out.price === null || out.planned === null) {
+    return { targetWinRate: t.targetWinRate, achievedWinRate: null, feasible: false, price: null };
+  }
+  const after = computePackRisk({
+    cards: p.values.map((v, i) => ({ value: v, weight: (out.r as { weights: number[] }).weights[i]! })),
+    price: out.price,
+  });
+  return {
+    targetWinRate: t.targetWinRate,
+    achievedWinRate: after.winRate,
+    feasible: true,
+    price: out.price,
+  };
 }
 
 // ── 0. Threshold + no-op contract ──────────────────────────────────────
@@ -204,14 +292,44 @@ check("Chaos ±60% ($1.84, the owner-hated crush): DEGENERATE with ≥5 crushed 
   );
 });
 
-// ── 2. Tails? (complaint B) — ±10% DEGENERATE (inversion + absorber) ────
-check("Tails? ±10%: DEGENERATE (loss ladder inverted, carrier absorbs)", () => {
-  const out = solve(TAILS, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
+// ── 2. Tails? (complaint B) — RAW crush is DEGENERATE; dispersion FIXES it ─
+check("Tails? ±10%: the RAW fixed-pool layout is DEGENERATE (loss ladder inverted, carrier absorbs)", () => {
+  // Without the dispersion pass, the shape guard must classify complaint B's
+  // crush ladder DEGENERATE — the guard's teeth on the raw layout.
+  const out = solve(TAILS, RETUNE_PRICE_BUDGET_DEFAULT_PCT, /* disperse */ false);
   assert(out.price !== null, "Tails? ±10% must be feasible");
   const s = shapeOf(TAILS, out.planned!, out.price!);
   assert(s.lossInvArea >= 0.1, `loss ladder is inverted (lossInvArea ${s.lossInvArea})`);
   assert(s.absorberExcess >= 0.25, `a carrier absorbs the loss mass (+${(s.absorberExcess * 100).toFixed(1)}pp)`);
-  assert(s.degenerate, `complaint B is DEGENERATE (score ${s.score})`);
+  assert(s.degenerate, `complaint B's raw layout is DEGENERATE (score ${s.score})`);
+});
+
+check("Tails? ±10%: loss-mass DISPERSION turns complaint B HEALTHY (the fix), edge held ≥ live", () => {
+  // With dispersion (the real retune path), complaint B's loss mass spreads off
+  // the $194.10 carrier and the ladder reads HEALTHY (< 0.25) — the crush was a
+  // layout artifact, not EV-forced. The edge is never refunded below live.
+  const raw = solve(TAILS, RETUNE_PRICE_BUDGET_DEFAULT_PCT, false);
+  const fixed = solve(TAILS, RETUNE_PRICE_BUDGET_DEFAULT_PCT, true);
+  assert(raw.price !== null && fixed.price !== null, "Tails? feasible both ways");
+  const sRaw = shapeOf(TAILS, raw.planned!, raw.price!);
+  const sFixed = shapeOf(TAILS, fixed.planned!, fixed.price!);
+  assert(sRaw.degenerate, "the raw layout is degenerate");
+  assert(
+    !sFixed.degenerate && sFixed.score < LADDER_DEGENERATE_THRESHOLD,
+    `dispersion makes complaint B healthy (score ${sRaw.score.toFixed(2)} → ${sFixed.score.toFixed(2)})`,
+  );
+  const beforeTails = computePackRisk({
+    cards: TAILS.values.map((v, i) => ({ value: v, weight: toWeights(TAILS.livePcts)[i]! })),
+    price: TAILS.price,
+  });
+  const afterTails = computePackRisk({
+    cards: TAILS.values.map((v, i) => ({ value: v, weight: (fixed.r as { weights: number[] }).weights[i]! })),
+    price: fixed.price!,
+  });
+  assert(
+    afterTails.edge >= beforeTails.edge - 0.0006 - 1e-9,
+    `dispersion never drops edge below live (${(afterTails.edge * 100).toFixed(3)}% vs live ${(beforeTails.edge * 100).toFixed(3)}%)`,
+  );
 });
 
 // ── 3. Captive — DEGENERATE at the default budget (floor pins) ──────────
@@ -273,6 +391,87 @@ check("a live card crushed 100×+ under 0.002% IS a crush", () => {
   assert(s.crushedCount === 1, `the crushed card is counted (got ${s.crushedCount})`);
   assert(s.crushedIdx[0] === 0, "the $100 card is flagged");
   assert(s.crushedLiveMass >= 0.05 - 1e-9, "its live mass is accumulated");
+});
+
+// ── 5b. WIN-RATE HOLD (owner-lens item 4) — untagged float capped at design+band ─
+check("win-rate hold: WINRATE_HOLD_BAND is 0.05 (+5pp)", () => {
+  assert(
+    Math.abs(WINRATE_HOLD_BAND - 0.05) < 1e-12,
+    `the hold band must be +5pp (got ${WINRATE_HOLD_BAND})`,
+  );
+});
+
+check("win-rate hold: EVERY feasible untagged plan lands within +5pp of its design (Three Blades, Profit Ninja, Snack Time)", () => {
+  // The findings' executable check: |after.winRate − target| ≤ 0.05 for every
+  // untagged FEASIBLE plan. Three Blades was the named dead-end (30.0%→37.5%
+  // before the hold — a monotone ladder the shape guard misses). The float now
+  // holds inside the band. Trash is the OTHER named dead-end; it has no in-band
+  // held price (checked separately below) so it is exempt here.
+  for (const p of [THREE_BLADES, PROFIT_NINJA, SNACK_TIME]) {
+    const h = solveHold(p, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
+    if (!h.feasible) continue; // an infeasible pack is a pool-edit path, not a floated plan
+    // The findings' executable check: |after.winRate − target| ≤ 0.05. The float
+    // is one-sided UP (the target is the design floor), so the interesting bound
+    // is the +band ceiling; the lower side only ever moves by snap/quantization
+    // noise (≤ 0.1pp), well inside the two-sided window.
+    assert(
+      Math.abs(h.achievedWinRate! - h.targetWinRate) <= WINRATE_HOLD_BAND + 1e-6,
+      `${p.name}: achieved ${(h.achievedWinRate! * 100).toFixed(2)}% must land within ±${(WINRATE_HOLD_BAND * 100).toFixed(0)}pp of design ${(h.targetWinRate * 100).toFixed(2)}%`,
+    );
+    // And the hold NEVER floats the win-rate DOWN meaningfully — the design rate
+    // is the floor (only snap rounding of ≤ 0.1pp may dip below it).
+    assert(
+      h.achievedWinRate! >= h.targetWinRate - 0.001,
+      `${p.name}: the design win-rate is the FLOOR (got ${(h.achievedWinRate! * 100).toFixed(3)}% vs ${(h.targetWinRate * 100).toFixed(3)}%)`,
+    );
+  }
+});
+
+check("win-rate hold: Three Blades — the named dead-end gains a CLEAN in-band plan (was 30%→37.5%)", () => {
+  // Before the hold Three Blades floated to 37.5% (a +7.5pp rewrite of its
+  // designed 30% win-rate) at the live price. The hold caps the float; the price
+  // search moves the ticket a few cents to a price where the band-held win-rate
+  // reaches the edge — a clean, in-band plan with ZERO pathless residual.
+  const h = solveHold(THREE_BLADES, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
+  assert(h.feasible, "Three Blades must gain a feasible in-band plan (not a dead-end)");
+  assert(
+    h.achievedWinRate! <= h.targetWinRate + WINRATE_HOLD_BAND + 1e-6,
+    `held within band (got ${(h.achievedWinRate! * 100).toFixed(2)}%, design ${(h.targetWinRate * 100).toFixed(2)}%)`,
+  );
+  // Concretely the achieved win-rate is well below the pre-hold 37.5% float.
+  assert(
+    h.achievedWinRate! < 0.355,
+    `the float is suppressed below the old 37.5% (got ${(h.achievedWinRate! * 100).toFixed(2)}%)`,
+  );
+});
+
+check("win-rate hold: Trash — no in-band held price → the pool-edit path (feasible only at ±60%)", () => {
+  // Trash's loss side is a single near-zero carrier ($0.01); holding the
+  // win-rate at design+band leaves the edge unreachable at every ±10% price, so
+  // it honestly surfaces as infeasible-in-band (the wide-probe / pool-edit path)
+  // — never a floated-up plan. It IS feasible at the ±60% suggestion band (a
+  // price move), so it is not pathless.
+  const def = solveHold(TRASH, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
+  assert(!def.feasible, "Trash has no in-band held price (dead-end → pool-edit path)");
+  const wide = solve(TRASH, RETUNE_MAX_PRICE_CHANGE_PCT);
+  assert(
+    wide.price !== null,
+    "Trash IS feasible at ±60% — the wide-probe price-move is its coherent path (not pathless)",
+  );
+});
+
+check("win-rate hold: does NOT fire on TAGGED packs (Chaos/Bidoof keep their exact tag)", () => {
+  // The hold is untagged-only (a tagged pack never floats — the tag pins the
+  // win-rate). Chaos (10% tag) and Bidoof (1% tag) must still land ON their tag,
+  // untouched by the hold band.
+  for (const p of [CHAOS, BIDOOF]) {
+    const h = solveHold(p, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
+    if (!h.feasible) continue;
+    assert(
+      Math.abs(h.achievedWinRate! - p.tag!) <= 1e-3,
+      `${p.name}: tagged win-rate holds at the exact ${(p.tag! * 100).toFixed(0)}% tag (got ${(h.achievedWinRate! * 100).toFixed(3)}%)`,
+    );
+  }
 });
 
 // ── 6. Risk leverage bands (owner-lens §4 / Pattern 6) ──────────────────

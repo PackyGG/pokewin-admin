@@ -29,6 +29,7 @@ import {
   searchBestPriceForCleanSnap,
   computePackRisk,
   snapWeightsToCleanLadder,
+  disperseLossBand,
   RETUNE_PRICE_BUDGET_DEFAULT_PCT,
   RETUNE_MAX_PRICE_CHANGE_PCT,
 } from "../../insights/edge-calc/risk";
@@ -108,6 +109,34 @@ const BIDOOF: Pool = {
   tag: 0.01,
 };
 
+// ── Loss-mass DISPERSION fixtures (owner-lens item 10) — crush ladders ────
+// Untagged packs whose fixed-pool default plan CRUSHES a live-≥5% loss card to
+// the quantization floor while one carrier absorbs the loss mass (a crush
+// ladder). The dispersion pass re-spreads the loss band at the SAME mass + EV,
+// so these become HEALTHY (shape < 0.25) after dispersion — the crush is a
+// LAYOUT artifact here, not EV-forced. Snapshots from the fleet dump.
+const NINE_FIVE: Pool = {
+  name: "9-5",
+  price: 4.61,
+  values: [195.85, 107.1, 51.34, 41.15, 33, 26.23, 12.2, 11.03, 7.15, 5.14, 2.44, 0.59, 0.05],
+  livePcts: [0.1, 0.25, 0.5, 0.75, 1, 2, 3.5, 5, 7, 9.9, 5, 15, 50],
+  tag: null,
+};
+const BEST_FRIENDS: Pool = {
+  name: "Best Friends",
+  price: 1.44,
+  values: [80.28, 43.45, 24.19, 11.57, 5.93, 2.32, 2.2, 1.96, 1.4, 0.84, 0.02],
+  livePcts: [0.01, 0.25, 0.5, 1, 3, 6, 8, 9.8, 10, 11.44, 50],
+  tag: null,
+};
+const HIGH_TIDES: Pool = {
+  name: "High Tides",
+  price: 262.4,
+  values: [5000, 1191.96, 839.94, 491.32, 372.18, 194.1, 94.97, 57.35],
+  livePcts: [0.5, 3.5, 3.8, 4.2, 8, 20, 30, 30],
+  tag: null,
+};
+
 function toWeights(pcts: number[]): number[] {
   return pcts.map((p) => Math.round(p * 10000));
 }
@@ -130,7 +159,7 @@ type SolveOut = {
  * Run the EXACT live-arm solve `planPackTuneLiveUncached` runs, at `band`,
  * with a resolved intended hit-rate (DB tag or name) exactly as the plan does.
  */
-function solve(p: Pool, band: number): SolveOut {
+function solve(p: Pool, band: number, disperse = true): SolveOut {
   const weights = toWeights(p.livePcts);
   const before = computePackRisk({
     cards: p.values.map((v, i) => ({ value: v, weight: weights[i]! })),
@@ -157,7 +186,8 @@ function solve(p: Pool, band: number): SolveOut {
     currentWeights: weights,
     maxPriceChangePct: band,
     upwardPriceExtensionPct: 0,
-    ...(tagged ? { taggedWinRate: t.targetWinRate } : {}),
+    ...(disperse ? { disperseLoss: true } : {}),
+    ...(tagged ? { taggedWinRate: t.targetWinRate } : { holdWinRate: true }),
   });
   const r = search.bestResult;
   if ("error" in r) {
@@ -241,26 +271,44 @@ function carrierExcessPp(p: Pool, planned: number[], price: number): number {
   return max;
 }
 
-check("P1 detection: the owner's degenerate pools (Captive, Tails?) read DEGENERATE at ±10%", () => {
+check("P1 detection: the owner's crush pools (Captive, Tails?) read DEGENERATE in the RAW layout", () => {
+  // The shape guard's teeth are on the RAW fixed-pool layout (disperse=false):
+  // both the owner's flagged pools classify DEGENERATE before the dispersion
+  // pass. Captive stays degenerate even after dispersion (EV-forced — pool-edit
+  // path); Tails? is a layout crush that dispersion FIXES (pinned separately).
   for (const p of [CAPTIVE, TAILS]) {
-    const out = solve(p, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
+    const out = solve(p, RETUNE_PRICE_BUDGET_DEFAULT_PCT, false);
     assert(out.price !== null && out.planned !== null, `${p.name} must be feasible in-band`);
     const s = ladderShape(p.values, toShares(p.livePcts), out.planned!, out.price!);
-    assert(s.degenerate, `${p.name}: the shape guard must flag the collapse (score ${s.score.toFixed(3)})`);
+    assert(s.degenerate, `${p.name}: the shape guard must flag the raw collapse (score ${s.score.toFixed(3)})`);
   }
 });
 
-check("P1 detection: a degenerate plan trips crush-guard OR carrier-guard (the flag has teeth)", () => {
+check("P1 detection: the RAW crush layout trips crush-guard OR carrier-guard (the flag has teeth)", () => {
   for (const p of [CAPTIVE, TAILS]) {
-    const out = solve(p, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
+    const out = solve(p, RETUNE_PRICE_BUDGET_DEFAULT_PCT, false);
     assert(out.planned !== null && out.price !== null, `${p.name} feasible`);
     const crushed = crushGuardViolations(p, out.planned!);
     const carrier = carrierExcessPp(p, out.planned!, out.price!);
     assert(
       crushed > 0 || carrier > 25,
-      `${p.name}: degenerate plan must violate crush (${crushed}) or carrier (+${carrier.toFixed(1)}pp) guard`,
+      `${p.name}: raw crush layout must violate crush (${crushed}) or carrier (+${carrier.toFixed(1)}pp) guard`,
     );
   }
+});
+
+check("P1 fix: dispersion resolves the Tails? layout crush (healthy) but not the EV-forced Captive", () => {
+  // Tails? — a layout crush → dispersion spreads the loss mass and it reads
+  // HEALTHY. Captive — EV-forced onto the single $80.28 carrier → dispersion is
+  // a no-op and it stays degenerate (the pool-edit path is its fix).
+  const tailsFixed = solve(TAILS, RETUNE_PRICE_BUDGET_DEFAULT_PCT, true);
+  assert(tailsFixed.planned !== null && tailsFixed.price !== null, "Tails? feasible");
+  const sTails = ladderShape(TAILS.values, toShares(TAILS.livePcts), tailsFixed.planned!, tailsFixed.price!);
+  assert(!sTails.degenerate, `dispersion resolves Tails? (score ${sTails.score.toFixed(3)})`);
+  const captiveFixed = solve(CAPTIVE, RETUNE_PRICE_BUDGET_DEFAULT_PCT, true);
+  assert(captiveFixed.planned !== null && captiveFixed.price !== null, "Captive feasible");
+  const sCap = ladderShape(CAPTIVE.values, toShares(CAPTIVE.livePcts), captiveFixed.planned!, captiveFixed.price!);
+  assert(sCap.degenerate, `Captive's EV-forced crush stays degenerate (score ${sCap.score.toFixed(3)})`);
 });
 
 check("P1 pool-edits-first: a degenerate plan yields a non-null poolEditPlan (the escape)", () => {
@@ -283,6 +331,73 @@ check("P1 pool-edits-first: a degenerate plan yields a non-null poolEditPlan (th
   assert(g !== null, "Captive degenerate → guidance non-null");
   const pe = derivePoolEditPlan(g, "degenerate-shape", CAPTIVE.price, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
   assert(pe !== null, "a degenerate plan must carry a pool-edit escape");
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// PATTERN 1 (fix) — LOSS-MASS DISPERSION (owner-lens item 10)
+// ════════════════════════════════════════════════════════════════════════
+// The dispersion pass turns a crush ladder HEALTHY where the crush is a layout
+// artifact (the loss average leaves room to spread), and is a NO-OP where the
+// crush is EV-forced (the pool-edit path owns those). It holds the band mass +
+// EV, so edge / win-rate / tag are preserved.
+check("disperseLossBand: min-L2 spread holds mass + EV exactly and lowers the max share", () => {
+  // A concentrated 3-card loss band with the mean in range → the affine spread
+  // moves mass off the carrier, keeping mass + EV to floating point.
+  const values = [10, 20, 30];
+  const w = [0.001, 0.001, 0.6];
+  const mass = w.reduce((a, b) => a + b, 0);
+  const ev0 = w.reduce((a, x, i) => a + x * values[i]!, 0);
+  const out = disperseLossBand(values, w, mass);
+  const outMass = out.reduce((a, b) => a + b, 0);
+  const outEv = out.reduce((a, x, i) => a + x * values[i]!, 0);
+  assert(Math.abs(outMass - mass) < 1e-9, `mass held (${outMass} vs ${mass})`);
+  assert(Math.abs(outEv - ev0) < 1e-9, `EV held (${outEv} vs ${ev0})`);
+  assert(Math.max(...out) < Math.max(...w) - 1e-9, "the carrier's share is lowered (dispersed)");
+});
+
+check("disperseLossBand: EV-forced band (avg near the max) is a no-op; single value is a no-op", () => {
+  // Captive's loss side: avg ≈ $61 across $80/$34/$18 → only $80 can carry it →
+  // the affine solution clamps to the same one-carrier shape (no dispersion).
+  const evForced = disperseLossBand([18.23, 33.95, 80.28], [0.0001, 0.0001, 0.76], 0.7602);
+  assert(evForced[2]! >= 0.76 - 1e-3, "the EV-forced carrier keeps (nearly) all its mass");
+  // A single-value band can't be dispersed — returned unchanged.
+  const single = disperseLossBand([10], [0.5], 0.5);
+  assert(single.length === 1 && Math.abs(single[0]! - 0.5) < 1e-12, "single card → unchanged");
+});
+
+check("dispersion: crush ladders become HEALTHY (9-5, Best Friends, High Tides) with edge/wr held", () => {
+  // Each of these crushes a live-≥5% loss card to the quantization floor in the
+  // fixed-pool default; the dispersion pass re-spreads the loss band and the
+  // shape guard reads HEALTHY (< 0.25) — without dropping edge below live.
+  for (const p of [NINE_FIVE, BEST_FRIENDS, HIGH_TIDES]) {
+    const off = solve(p, RETUNE_PRICE_BUDGET_DEFAULT_PCT, false);
+    const on = solve(p, RETUNE_PRICE_BUDGET_DEFAULT_PCT, true);
+    assert(off.price !== null && off.planned !== null, `${p.name} feasible (no disperse)`);
+    assert(on.price !== null && on.planned !== null, `${p.name} feasible (disperse)`);
+    const sOff = ladderShape(p.values, toShares(p.livePcts), off.planned!, off.price!);
+    const sOn = ladderShape(p.values, toShares(p.livePcts), on.planned!, on.price!);
+    assert(sOff.degenerate, `${p.name}: the fixed-pool default is a crush ladder (shape ${sOff.score.toFixed(2)})`);
+    assert(
+      !sOn.degenerate && sOn.score < 0.25,
+      `${p.name}: dispersion makes the ladder HEALTHY (shape ${sOff.score.toFixed(2)} → ${sOn.score.toFixed(2)})`,
+    );
+    // Edge held ≥ live (never refunded) and win-rate unchanged within tolerance.
+    assert(
+      on.after!.edge >= off.before.edge - 0.0006 - 1e-9,
+      `${p.name}: dispersion never drops edge below live (${(on.after!.edge * 100).toFixed(3)}% vs live ${(off.before.edge * 100).toFixed(3)}%)`,
+    );
+  }
+});
+
+check("dispersion: an EV-forced crush (Captive) stays degenerate — the pool-edit path owns it", () => {
+  // Captive's loss average is EV-forced onto the single $80.28 carrier; there is
+  // no room to spread, so dispersion is a no-op and the plan stays degenerate
+  // (its fix is the pool edit, not a re-spread).
+  const off = solve(CAPTIVE, RETUNE_PRICE_BUDGET_DEFAULT_PCT, false);
+  const on = solve(CAPTIVE, RETUNE_PRICE_BUDGET_DEFAULT_PCT, true);
+  assert(off.planned !== null && on.planned !== null, "Captive feasible both ways");
+  const sOn = ladderShape(CAPTIVE.values, toShares(CAPTIVE.livePcts), on.planned!, on.price!);
+  assert(sOn.degenerate, `Captive's EV-forced crush stays degenerate (shape ${sOn.score.toFixed(2)})`);
 });
 
 // ════════════════════════════════════════════════════════════════════════

@@ -188,6 +188,12 @@ function writeArmSends(i: RetuneSearchInputs): Record<string, unknown> {
     ),
     upwardPriceExtensionPct: 0,
     ...(tagged ? { taggedWinRate: i.targetWinRate } : {}),
+    // WIN-RATE HOLD (owner-lens item 4): untagged retunes hold the achieved
+    // win-rate within +5pp of the design (no-op / absent in tagged mode).
+    ...(tagged ? {} : { holdWinRate: true }),
+    // LOSS-MASS DISPERSION (owner-lens item 10): every retune re-spreads the
+    // free-dust loss band at fixed mass + EV (present on both tagged + untagged).
+    disperseLoss: true,
     // Owner pins (Retune V2): the write threads {cardId, pct} pins through the
     // SAME builder as the plan; the emitted solver vector is {index, share},
     // resolved against the SAME cards array and sorted by index.

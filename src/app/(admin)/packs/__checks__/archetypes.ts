@@ -638,13 +638,16 @@ check("perf: full guidance well under 10 ms/pack", () => {
 });
 
 // ── 12. UNTAGGED degenerate loss ladder — the owner-found "Captive" case ──
-// Pack "Captive", $485.50, untagged. The plan is EV-forced: at the landed
-// price the anchored win band delivers ≈$330.28 against an EV target of
-// ≈$387.19, so the loss side must average ≈$80.50 over 70.7% of opens — only
-// the $80.28 card can carry that, the $33.95 / $18.23 cards get pinned at the
-// 0.0001% quantization floor, the near-miss band [242.75, 485.50) is EMPTY,
-// and the win rate floats to 29.3% on the two cheapest winners. The owner
-// asked WHY two cards sit at 0.0001% — the guidance must answer it itself.
+// Pack "Captive", $485.50, untagged. The plan is EV-forced: the anchored win
+// band can't carry the EV target at the live 20% win-rate, so the win mass
+// floats UP onto the two cheapest winners — but the WIN-RATE HOLD (owner-lens
+// item 4) caps that float at the design + 5pp band, so the achieved win-rate
+// holds at ≈24.0% (was an unbounded 29.3% before the hold). The loss side must
+// still average ≈$80 over the remaining opens — only the $80.28 card can carry
+// that, the $33.95 / $18.23 cards get pinned at the 0.0001% quantization floor,
+// and the near-miss band [242.75, 485.50) is EMPTY. The degeneracy remains (the
+// single carrier absorbs ≈76%); the owner asked WHY two cards sit at 0.0001% —
+// the guidance must answer it, and the pool-edit path is the true fix.
 const CAPTIVE = {
   price: 485.5,
   values: [9100, 3247.24, 2040, 1080, 635.14, 80.28, 33.95, 18.23],
@@ -697,19 +700,26 @@ const captiveGuidance = isSuccess(captiveSearch.bestResult)
     })
   : null;
 
-check("Captive reproduces: price moves down (snapped), two loss cards pinned at 0.0001%, win-rate floats to ~29.3%", () => {
+check("Captive reproduces: price moves down, two loss cards pinned at 0.0001%, win-rate HELD to ~24% (was 29.3%)", () => {
   const r = captiveSearch.bestResult;
   assert(isSuccess(r), `Captive must plan: ${!isSuccess(r) ? r.error : ""}`);
   assert(
     captiveSearch.bestPrice < CAPTIVE.price,
     `price moves DOWN (got $${captiveSearch.bestPrice})`,
   );
-  approx(captiveSearch.bestPrice, 435.43, 1, "landed price ≈ $435.43");
-  assert(r.snapped === true, "the landed plan is clean-snapped");
-  approx(r.risk.winRate, 0.293, 0.01, "win-rate floats to ≈29.3%");
+  // WIN-RATE HOLD (owner-lens item 4): the float is capped at design (20%) + 5pp,
+  // so the achieved win-rate lands at ≈24.0% instead of the unbounded 29.3% — and
+  // holding the winners down forces the ticket LOWER (≈$368.91, −24%) and the loss
+  // mass onto the single $80.28 carrier (the degeneracy the pool-edit path fixes).
+  approx(captiveSearch.bestPrice, 368.91, 1.5, "landed price ≈ $368.91");
+  approx(r.risk.winRate, 0.24, 0.01, "win-rate HELD to ≈24% (design 20% + hold band)");
+  assert(
+    r.risk.winRate <= 0.2 + 0.05 + 1e-6,
+    `win-rate must not float past the +5pp hold band (got ${(r.risk.winRate * 100).toFixed(2)}%)`,
+  );
   assert(
     r.relaxations.some((x) => x.lever === "winRate" && x.applied > x.requested),
-    "the win-rate FLOAT-UP relaxation is recorded",
+    "the win-rate FLOAT-UP relaxation is recorded (bounded to the hold band)",
   );
   // The two cheapest loss cards sit at the quantization floor; the $80.28
   // carrier and every winner do not.
