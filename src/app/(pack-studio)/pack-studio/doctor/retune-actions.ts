@@ -2554,6 +2554,7 @@ async function planPackTuneLiveUncached(
             Number.isFinite(w) && w > 0 ? w / shapeTotal : 0,
           ),
           search.bestPrice,
+          cards.map((c) => c.cardId),
         )
       : null;
 
@@ -2590,7 +2591,12 @@ async function planPackTuneLiveUncached(
       ? ("degenerate-shape" as const)
       : riskBandExit && tierFlip
         ? ("risk-band-exit" as const)
-        : null;
+        : // Pattern 10: a feasible-but-dirty plan that fell back after the full
+          // sweep is a dead end — no clean value exists in-band. Lead with the
+          // pool edit that makes one exist, never "nudge the price".
+          shaped.snapped !== true && searchMeta.fellBackToBase
+          ? ("dirty-dead-end" as const)
+          : null;
   const poolEditPlan =
     poolEditReason !== null
       ? derivePoolEditPlan(
@@ -2716,6 +2722,7 @@ async function planPackTuneStagedUncached(
           planned.map((row) => (row.livePct ?? 0) / 100),
           planned.map((row) => row.pct / 100),
           r.priceAfter,
+          planned.map((row) => row.cardId),
         )
       : null;
   const stagedShapeDegenerate: boolean = stagedShape?.degenerate === true;
@@ -2807,7 +2814,10 @@ async function planPackTuneStagedUncached(
       ? "degenerate-shape"
       : stagedRiskBandExit && stagedTierFlip
         ? "risk-band-exit"
-        : null;
+        : // Pattern 10: dirty dead end after the full sweep — pool edit first.
+          outcome.snapped !== true && r.priceSearch?.fellBackToBase === true
+          ? "dirty-dead-end"
+          : null;
   const stagedPoolEditPlan =
     stagedPoolEditReason !== null
       ? derivePoolEditPlan(

@@ -39,6 +39,8 @@ import { formatDeltaPp, formatPercent } from "../format-percent";
 import {
   FLOOR_PIN_CHIP,
   FLOOR_PIN_TOOLTIP,
+  CRUSH_CHIP,
+  CRUSH_TOOLTIP,
   PIN_CHIP,
   PIN_EDIT_HINT,
   PIN_INPUT_PLACEHOLDER,
@@ -89,6 +91,13 @@ export type CardDiffRow = {
    * number, not a dirty residual).
    */
   pinnedPct: number | null;
+  /**
+   * §3.3 crush chip: TRUE when the plan's shape guard flagged this card as
+   * crushed (planned odds ≥100x below its live odds — the fixed-pool math parked
+   * the mass elsewhere). From `plan.shape.crushedCardIds` — zero client
+   * recompute. Renders a "crushed" chip pointing at the recommended pool edit.
+   */
+  crushed: boolean;
   color: string | null;
   animation: boolean;
 };
@@ -125,6 +134,12 @@ export function buildCardDiffRows(args: {
     }
   }
   const offLadder = new Set(plan?.offLadderCards ?? []);
+  // §3.3: the shape guard's crushed cards (server-computed cardIds — zero
+  // recompute). Only a degenerate plan surfaces the chip (a healthy plan may
+  // still carry a rare card at legitimately low odds).
+  const crushedCards = new Set(
+    plan?.shape?.degenerate === true ? plan.shape.crushedCardIds : [],
+  );
   // Cap removals: only a FEASIBLE plan's verdict marks rows (an infeasible
   // plan writes nothing, so no row should read "removed").
   const capDropped = new Set(
@@ -169,6 +184,7 @@ export function buildCardDiffRows(args: {
         // covers the brief staged window before the pinned plan lands.
         offLadder: pinnedPct === null && offLadder.has(c.cardId),
         pinnedPct,
+        crushed: !capRemoved && crushedCards.has(c.cardId),
         color: c.color,
         animation: c.animation,
       });
@@ -186,6 +202,7 @@ export function buildCardDiffRows(args: {
         capRemovedUsd: null,
         offLadder: false,
         pinnedPct: null,
+        crushed: false,
         color: c.color,
         animation: c.animation,
       });
@@ -208,6 +225,7 @@ export function buildCardDiffRows(args: {
         capRemovedUsd: capRemoved ? capUsd : null,
         offLadder: offLadder.has(c.cardId),
         pinnedPct: null,
+        crushed: !capRemoved && crushedCards.has(c.cardId),
         color: c.color,
         animation: c.animation,
       });
@@ -456,6 +474,26 @@ export function CardDiffTable({
                             </Tooltip>
                           </TooltipProvider>
                         )}
+                      {/* §3.3 crush chip (amber): the shape guard flagged this
+                          card crushed ≥100x below live — points at the pool
+                          edit. Only on degenerate plans (server-gated). */}
+                      {row.crushed && (
+                        <TooltipProvider delay={150}>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Badge
+                                  variant="outline"
+                                  className="h-4 border-amber-500/30 bg-amber-500/10 px-1 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                                >
+                                  {CRUSH_CHIP}
+                                </Badge>
+                              }
+                            />
+                            <TooltipContent>{CRUSH_TOOLTIP}</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
                       {/* Owner pin chip (amber): the typed value binds the plan. */}
                       {row.pinnedPct !== null && (
                         <TooltipProvider delay={150}>

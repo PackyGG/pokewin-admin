@@ -28,6 +28,7 @@ export function tagBadgeLabel(tag: number): string {
 export const STATUS_BADGE = {
   plannedClean: "Planned · clean",
   plannedDirty: "Planned · dirty odds",
+  plannedDegenerate: "Planned · degenerate ladder",
   relaxed: "Relaxed",
   infeasible: "Infeasible",
   planning: "Planning…",
@@ -145,6 +146,88 @@ export const FLOOR_PIN_CHIP = "min";
 export const FLOOR_PIN_TOOLTIP =
   "Pinned at minimum odds — the edge target needs the loss mass on richer cards; see fixes.";
 
+// ─── Pool-edits-first (owner-lens §3 / Patterns 1, 10) ───────────────────────
+//
+// When the fixed-pool plan is DEGENERATE, INFEASIBLE, exits its risk band with a
+// tier flip, or is a dirty dead-end after the full sweep, the PRIMARY
+// recommendation is a solver-verified POOL EDIT (add a mid card / remove dead
+// cards / pin the price). The workspace leads with this card and demotes the
+// fixed-pool plan to the explicit secondary.
+
+export const POOL_EDIT_PRIMARY_HEADING = "Recommended: edit the pool";
+export const AS_IS_SECONDARY_HEADING = "As-is plan (fixed pool)";
+export const DEGENERATE_BADGE = "degenerate ladder";
+export const CRUSH_CHIP = "crushed";
+export const CRUSH_TOOLTIP =
+  "Planned odds are 100x or more below this card's live odds — the fixed-pool math parks the mass elsewhere. See the recommended pool edit.";
+
+/**
+ * The one-line WHY the pool edit fires — degenerate / infeasible / risk-flip /
+ * dirty dead-end. Rendered above the summary so the operator reads the cause.
+ */
+export function poolEditReasonLine(
+  reason: "degenerate-shape" | "infeasible" | "risk-band-exit" | "dirty-dead-end",
+): string {
+  switch (reason) {
+    case "degenerate-shape":
+      return "At this price the fixed pool collapses onto one carrier card. A pool edit is the real fix — a price move alone can't spread the ladder.";
+    case "infeasible":
+      return "No clean plan exists for the pool as-is. This pool edit makes one exist.";
+    case "risk-band-exit":
+      return "The fixed-pool plan would flip this pack's risk tier out of its band. Edit the pool to hold the leverage.";
+    case "dirty-dead-end":
+      return "The search swept the whole price band and found no clean value for this pool. Editing the pool — not nudging the price — is the way out.";
+    default:
+      return "";
+  }
+}
+
+/**
+ * The primary pool-edit summary (§3.4): add-card band + removals + price +
+ * predicted landing. `predicted` may be null when the derived plan carried no
+ * accompanying solve landing (add-card only supplies a band, not a full solve
+ * — the round-trip landing rides `predicted` when the guidance computed it).
+ */
+export function poolEditSummary(pe: {
+  addCard: {
+    valueMin: number;
+    valueMax: number;
+    suggestedValue: number;
+    expectedShare: number;
+  } | null;
+  removeCount: number;
+  price: number | null;
+  beyondBudget: boolean;
+}): string {
+  const parts: string[] = [];
+  if (pe.addCard) {
+    const share = Math.round(pe.addCard.expectedShare * 100);
+    parts.push(
+      `Add a card between ${formatCurrency(pe.addCard.valueMin)} and ${formatCurrency(pe.addCard.valueMax)} (suggest ${formatCurrency(pe.addCard.suggestedValue)}${share > 0 ? ` — it carries ≈${share}% of opens` : ""})`,
+    );
+  }
+  if (pe.removeCount > 0) {
+    parts.push(
+      `remove ${pe.removeCount} dead card${pe.removeCount === 1 ? "" : "s"}`,
+    );
+  }
+  if (pe.price !== null) {
+    parts.push(
+      `price ${formatCurrency(pe.price)}${pe.beyondBudget ? " (outside the ±10% budget — shown, never auto-applied)" : ""}`,
+    );
+  }
+  const lead = parts.length > 0 ? parts.join(", ") : "Adjust the pool";
+  return `${lead} → the ladder spreads. Solver-verified.`;
+}
+
+/** CTA label on the pool-edit primary card. */
+export function stagePoolEditCta(hasAdd: boolean): string {
+  return hasAdd ? "Stage this fix — pick the card" : "Stage this fix";
+}
+
+/** Collapsed disclosure that reveals the plain guidance list under the primary. */
+export const POOL_EDIT_MORE_FIXES = "More fixes";
+
 /** One-shot emerald flip after the fix loop lands feasible. */
 export const FIX_LOOP_SUCCESS = "That did it — this pack is tunable now.";
 
@@ -168,8 +251,21 @@ export function tagSaturatedBanner(tag: number): string {
   return `No price in the search band hits the ${pctBody(tag)}% tag exactly — closest achievable shown. Pushing is blocked.`;
 }
 
-export function dirtyOddsBanner(offLadderCount: number, cardCount: number): string {
-  return `Odds are exact but not round numbers — ${offLadderCount} of ${cardCount} cards are off the clean ladder (amber dots below). Nudge the price or swap a card; clean odds are required to push.`;
+/**
+ * Dirty-odds banner (§5c). Pattern 9g / 10: when the search EXHAUSTED the whole
+ * price band and fell back (`deadEnd`), "nudge the price" is wrong advice — the
+ * engine already proved no clean value exists in the band, so the copy points at
+ * the pool edit instead. A non-dead-end dirty plan keeps the price/swap hint.
+ */
+export function dirtyOddsBanner(
+  offLadderCount: number,
+  cardCount: number,
+  deadEnd = false,
+): string {
+  const head = `Odds are exact but not round numbers — ${offLadderCount} of ${cardCount} cards are off the clean ladder (amber dots below).`;
+  return deadEnd
+    ? `${head} No price in the band lands clean odds for this pool — edit the pool (add or remove a card) to make a clean plan exist. Clean odds are required to push.`
+    : `${head} Nudge the price or swap a card; clean odds are required to push.`;
 }
 
 /** Feasible + exact on the per-100k grid, but the pool is too pinned to land

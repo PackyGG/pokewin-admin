@@ -44,6 +44,8 @@ import {
   F2_RAIL_FAILED_TITLE,
   F3_PACK_GONE,
   F4_OUT_OF_SCOPE,
+  AS_IS_SECONDARY_HEADING,
+  DEGENERATE_BADGE,
 } from "./plan-copy";
 import {
   basisKey,
@@ -704,6 +706,47 @@ export function RetuneWorkspace({
     [pickerFilters],
   );
 
+  // ── §3 pool-edits-first: one-click stage the plan's poolEditPlan ─────────
+  // Applies the pool edit's removals + price + pinPrice in ONE setStaged, then
+  // (when it carries an add-card lever) opens the picker pre-filtered to its
+  // value band — the owner picks a REAL card, which flows through the existing
+  // add-card staging → re-plan. When there's no add-card, re-plan directly.
+  // NEVER writes — staging only; push stays behind the two-step confirm.
+  const stagePoolEdit = React.useCallback(() => {
+    const packId = selectedRef.current;
+    if (!packId) return;
+    const entry = planByPackRef.current.get(packId);
+    const pe = entry?.plan?.poolEditPlan ?? null;
+    if (!pe) return;
+    const sp = ensureStaged(packId);
+    if (!sp) return;
+    const removeSet = new Set(pe.removeCardIds);
+    // Live cards → removed (Undo); added cards just dropped; their pins dropped
+    // (same rules as removeCard). Only cards currently in the staged pool.
+    const removedNow = sp.cards.filter(
+      (c) => removeSet.has(c.cardId) && !c.added,
+    );
+    const nextCards = sp.cards.filter((c) => !removeSet.has(c.cardId));
+    const nextRemoved = [...sp.removed, ...removedNow];
+    const droppedIds = new Set(pe.removeCardIds);
+    stagedApi.setStaged(packId, {
+      ...sp,
+      cards: nextCards,
+      removed: nextRemoved,
+      pinnedOdds: sp.pinnedOdds.filter((p) => !droppedIds.has(p.cardId)),
+      ...(pe.price !== null ? { price: pe.price } : {}),
+      // An add-card fix pins the price so the free search can't drift the
+      // spread back (the untagged spread-fix contract); a pure-removal / price
+      // fix respects whatever the derived plan carried.
+      ...(pe.addCard !== null && pe.price !== null ? { pinPrice: true } : {}),
+    });
+    if (pe.addCard !== null) {
+      openPicker({ min: pe.addCard.valueMin, max: pe.addCard.valueMax });
+    } else {
+      void requestPlan(packId);
+    }
+  }, [ensureStaged, stagedApi, openPicker, requestPlan]);
+
   // ── Token mint (lazy at first confirm-open; silent re-mint on expiry) ───
   const getToken = React.useCallback(async (): Promise<string> => {
     if (tokenRef.current) return tokenRef.current;
@@ -1334,6 +1377,7 @@ export function RetuneWorkspace({
                   void requestPlan(selectedRow.packId, { fresh: true })
                 }
                 onAddCardRange={(range) => openPicker(range)}
+                onStagePoolEdit={stagePoolEdit}
                 onKeepRehydrated={() => keepRehydrated(selectedRow.packId)}
                 onDiscardRehydrated={() =>
                   discardRehydrated(selectedRow.packId)
@@ -1349,14 +1393,27 @@ export function RetuneWorkspace({
                 <div className="space-y-3">
                   <SectionHeading
                     icon={Layers}
-                    title="Pool"
+                    // §3.3: when the fixed-pool plan degenerated, the pool table
+                    // IS the demoted secondary — label it so, with the badge.
+                    title={
+                      planForBasis?.shape?.degenerate === true
+                        ? AS_IS_SECONDARY_HEADING
+                        : "Pool"
+                    }
                     action={
-                      <Link
-                        href="/pack-studio/drafts"
-                        className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                      >
-                        Hand-typed odds → Drafts
-                      </Link>
+                      <div className="flex items-center gap-2">
+                        {planForBasis?.shape?.degenerate === true && (
+                          <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                            {DEGENERATE_BADGE}
+                          </span>
+                        )}
+                        <Link
+                          href="/pack-studio/drafts"
+                          className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                        >
+                          Hand-typed odds → Drafts
+                        </Link>
+                      </div>
                     }
                   />
                   {selectedPool ? (

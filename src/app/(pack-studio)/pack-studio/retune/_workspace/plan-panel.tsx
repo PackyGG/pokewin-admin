@@ -19,6 +19,7 @@ import {
   TriangleAlert,
   Trophy,
   Check,
+  Wrench,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -60,12 +61,17 @@ import {
   WIN_RATE_OVER_TAG,
   GUIDANCE_HEADING,
   SOLVER_VERIFIED_BADGE,
+  POOL_EDIT_PRIMARY_HEADING,
+  POOL_EDIT_MORE_FIXES,
   addCardCtaLabel,
   clearAllPinsLabel,
   dirtyOddsBanner,
   edgeTargetSub,
   limitHeadline,
   nicePinnedBanner,
+  poolEditReasonLine,
+  poolEditSummary,
+  stagePoolEditCta,
   suggestionKindLabel,
   offTagStrip,
   priceMoveSub,
@@ -278,6 +284,65 @@ function GuidanceSuggestions({
   );
 }
 
+/**
+ * Pool-edits-first PRIMARY card (owner-lens §3 / Patterns 1, 10). Renders when
+ * the plan carries a `poolEditPlan`: the solver-verified pool edit is THE
+ * recommendation (heading + reason line + summary + one-click stage CTA), with
+ * the plain guidance list demoted under a collapsed "More fixes" disclosure.
+ * The as-is fixed-pool plan stays fully rendered BELOW (it is the secondary).
+ */
+function PoolEditPrimary({
+  poolEdit,
+  guidance,
+  onStagePoolEdit,
+  onAddCardRange,
+}: {
+  poolEdit: NonNullable<PackTunePlan["poolEditPlan"]>;
+  guidance: TagGuidance | null;
+  onStagePoolEdit: () => void;
+  onAddCardRange: (range: { min: number; max: number }) => void;
+}) {
+  const hasAdd = poolEdit.addCard !== null;
+  return (
+    <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
+      <div className="flex items-center gap-2">
+        <Wrench className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+        <p className="font-medium text-amber-700 dark:text-amber-300">
+          {POOL_EDIT_PRIMARY_HEADING}
+        </p>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {poolEditReasonLine(poolEdit.reason)}
+      </p>
+      <p className="text-sm text-foreground/90">
+        {poolEditSummary({
+          addCard: poolEdit.addCard,
+          removeCount: poolEdit.removeCardIds.length,
+          price: poolEdit.price,
+          beyondBudget: poolEdit.beyondBudget,
+        })}
+      </p>
+      <Button type="button" size="sm" onClick={onStagePoolEdit}>
+        <Wrench className="size-3.5" />
+        {stagePoolEditCta(hasAdd)}
+      </Button>
+      {guidance != null && guidance.suggestions.length > 0 && (
+        <details className="group pt-1">
+          <summary className="cursor-pointer list-none text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground hover:text-foreground">
+            {POOL_EDIT_MORE_FIXES}
+          </summary>
+          <div className="pt-2">
+            <GuidanceSuggestions
+              guidance={guidance}
+              onAddCardRange={onAddCardRange}
+            />
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
 export type PlanRefusal = {
   kind: "skew" | "invariant";
   message: string;
@@ -307,6 +372,7 @@ export function PlanPanel({
   onPush,
   onRetryPlan,
   onAddCardRange,
+  onStagePoolEdit,
   onKeepRehydrated,
   onDiscardRehydrated,
   onSelectPack,
@@ -342,6 +408,12 @@ export function PlanPanel({
   onPush: () => void;
   onRetryPlan: () => void;
   onAddCardRange: (range: { min: number; max: number }) => void;
+  /**
+   * §3 pool-edits-first: stage the plan's `poolEditPlan` into the staged pool
+   * (remove its dead cards, pin its price, then open the picker pre-filtered to
+   * its add-card band). One-click; never writes.
+   */
+  onStagePoolEdit: () => void;
   onKeepRehydrated: () => void;
   onDiscardRehydrated: () => void;
   onSelectPack: (packId: string) => void;
@@ -382,6 +454,10 @@ export function PlanPanel({
       case "planned":
         if (plan?.snapped === false)
           return { label: STATUS_BADGE.plannedDirty, className: BANNER_TONES.amber };
+        // §3.3: a feasible-but-degenerate ladder is badged (between dirty and
+        // relaxed in precedence) — it is pushable but demoted.
+        if (plan?.shape?.degenerate === true)
+          return { label: STATUS_BADGE.plannedDegenerate, className: BANNER_TONES.amber };
         if (plan && plan.relaxations.length > 0)
           return { label: STATUS_BADGE.relaxed, className: BANNER_TONES.amber };
         return { label: STATUS_BADGE.plannedClean, className: BANNER_TONES.emerald };
@@ -427,6 +503,36 @@ export function PlanPanel({
       );
     }
     if (!plan) return null;
+    // §3 pool-edits-first (owner-lens): whenever the server attached a
+    // solver-verified `poolEditPlan` — infeasible, degenerate, risk-flip, or a
+    // dirty dead-end — the PRIMARY recommendation is the pool edit. The limit's
+    // own detail line stays as the WHY on infeasible; on a feasible-but-
+    // degenerate plan the reason line inside the card carries the WHY.
+    if (plan.poolEditPlan !== null) {
+      return (
+        <Banner tone={plan.limit !== null ? "rose" : "amber"} icon={TriangleAlert}>
+          {plan.limit !== null && (
+            <>
+              <p className="font-medium">
+                {limitHeadline(plan.limit, {
+                  price: plan.priceAfter || plan.price,
+                  tag,
+                })}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {plan.limit.detail}
+              </p>
+            </>
+          )}
+          <PoolEditPrimary
+            poolEdit={plan.poolEditPlan}
+            guidance={plan.guidance}
+            onStagePoolEdit={onStagePoolEdit}
+            onAddCardRange={onAddCardRange}
+          />
+        </Banner>
+      );
+    }
     if (plan.limit !== null) {
       const hasGuidance =
         plan.guidance != null && plan.guidance.suggestions.length > 0;
@@ -491,9 +597,20 @@ export function PlanPanel({
       );
     }
     if (plan.feasible && plan.snapped === false) {
+      // A dirty plan that swept the whole band + fell back is a dead end —
+      // "nudge the price" is wrong advice (Pattern 9g/10). Dead ends normally
+      // carry a poolEditPlan (handled above); this dirty banner only renders
+      // for the residual dirty-but-not-dead-end case.
+      const deadEnd = plan.searchMeta?.fellBackToBase === true;
       return (
         <Banner tone="amber" icon={TriangleAlert}>
-          <p>{dirtyOddsBanner(plan.offLadderCards.length, plan.planned.length)}</p>
+          <p>
+            {dirtyOddsBanner(
+              plan.offLadderCards.length,
+              plan.planned.length,
+              deadEnd,
+            )}
+          </p>
           {plan.guidance != null && plan.guidance.suggestions.length > 0 && (
             <GuidanceSuggestions
               guidance={plan.guidance}

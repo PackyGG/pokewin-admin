@@ -995,8 +995,14 @@ export type LadderShape = {
   crushedCount: number;
   /** Live share (fraction) sitting on crushed cards. */
   crushedLiveMass: number;
-  /** cardIds/indices — the crushed cards, in pool order (for UI chips). */
+  /** Indices — the crushed cards, in pool order (for UI chips). */
   crushedIdx: number[];
+  /**
+   * cardIds of the crushed cards (owner-lens §3.3): the UI renders a "crushed"
+   * chip on these rows with ZERO client recompute. Empty when the caller passed
+   * no `cardIds` (e.g. the pure-math harness). Aligned to `crushedIdx`.
+   */
+  crushedCardIds: string[];
   /** ½·Σ|planned − live| — total probability mass relocated. */
   liveL1: number;
   /** The composite score (see the formula below). */
@@ -1036,6 +1042,9 @@ export function ladderShape(
   liveShares: readonly number[],
   plannedShares: readonly number[],
   price: number,
+  /** Optional cardIds aligned to `values` — populates `crushedCardIds` for the
+   * UI's crush chips. Omit in pure-math contexts (harness). */
+  cardIds?: readonly string[] | null,
 ): LadderShape {
   const n = values.length;
   const num = (x: number | undefined): number =>
@@ -1098,12 +1107,20 @@ export function ladderShape(
     0.06 * crushedCount +
     0.5 * Math.max(0, liveL1 - 0.25);
 
+  const crushedCardIds =
+    cardIds != null
+      ? crushedIdx
+          .map((i) => cardIds[i])
+          .filter((id): id is string => typeof id === "string")
+      : [];
+
   return {
     lossInvArea,
     absorberExcess,
     crushedCount,
     crushedLiveMass,
     crushedIdx,
+    crushedCardIds,
     liveL1,
     score,
     degenerate: score >= LADDER_DEGENERATE_THRESHOLD,
@@ -1228,7 +1245,16 @@ export function buildWidePriceProbeSuggestion(args: {
 // the plan can lead with it (and the workspace can one-click stage it). Pure —
 // derived entirely from an already-computed `TagGuidance`; never re-solves.
 
-export type PoolEditReason = "degenerate-shape" | "infeasible" | "risk-band-exit";
+export type PoolEditReason =
+  | "degenerate-shape"
+  | "infeasible"
+  | "risk-band-exit"
+  // Pattern 10: a FEASIBLE plan that stayed dirty (snapped=false) after the
+  // search exhausted its whole candidate budget (fellBackToBase) — no clean
+  // value exists at any in-band price. The escape hatch is a pool edit that
+  // MAKES a clean solve exist, never "nudge the price" (which the engine just
+  // proved has no clean value in the band).
+  | "dirty-dead-end";
 
 export type PoolEditPlan = {
   /** Why the pool edit is the primary recommendation. */
