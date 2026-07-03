@@ -61,7 +61,9 @@ import {
 import { computePoolFingerprint } from "@/app/(admin)/packs/_lib/pool-fingerprint";
 import {
   buildRetuneSearchParams,
+  computeCapDroppedCardIds,
   mapPinnedOddsToShares,
+  omitZeroWeightRows,
   type RetunePinnedOdds,
 } from "@/app/(admin)/packs/_lib/retune-params";
 import { packRetunePlanTag } from "../_actions/retune-cache-tag";
@@ -1604,14 +1606,30 @@ export async function applyStagedPackEditAndRetune(
   // The rows to write — server-shaped weights paired with the OWNER's chosen
   // color/animation/order for each staged slot (NOT the live pack_cards row
   // metadata, since a staged pool may include brand-new cards).
-  const rows = input.cards.map((c, i) => ({
-    pack_id: packId,
-    card_id: c.cardId,
-    weight: outcome.weights[i]!,
-    color: c.color ?? null,
-    animation: c.animation ?? false,
-    order: c.order,
-  }));
+  //
+  // Cap removals (owner rule, 2026-07-03): slots the solver's cap pre-filter
+  // dropped carry a shaped weight of 0 — those rows are OMITTED, so the card
+  // is truly removed from the pack instead of persisting as a dead 0%-odds
+  // row (recoverable via the History snapshot revert below). The plan the
+  // operator approved surfaces exactly these ids as `capDroppedCardIds`.
+  const rows = omitZeroWeightRows(
+    input.cards.map((c, i) => ({
+      pack_id: packId,
+      card_id: c.cardId,
+      weight: outcome.weights[i]!,
+      color: c.color ?? null,
+      animation: c.animation ?? false,
+      order: c.order,
+    })),
+  );
+  // Audit trace of the omission — the engine predicate over the staged pool.
+  const capRemovedCardIds = computeCapDroppedCardIds(
+    input.cards.map((c) => ({
+      cardId: c.cardId,
+      value: r.cardMetaById.get(c.cardId)?.value ?? 0,
+    })),
+    r.resolved.maxWinCap,
+  );
 
   // Capture the PRIOR state into the ADMIN change history BEFORE the write.
   // The action label is "edit" (same as `applyPackEdit`) — the snapshot
@@ -1660,6 +1678,12 @@ export async function applyStagedPackEditAndRetune(
       ...(input.pinnedOdds !== undefined && input.pinnedOdds.length > 0
         ? { pinned_odds: input.pinnedOdds }
         : {}),
+      // Cap removals (owner rule, 2026-07-03): staged cards whose value
+      // exceeded the resolved max-win cap — their rows were OMITTED from the
+      // write (true removal). Absent when none were dropped.
+      ...(capRemovedCardIds.length > 0 && {
+        cap_removed_card_ids: capRemovedCardIds,
+      }),
       target: {
         targetEdge: r.resolved.targetEdge,
         targetWinRate: r.resolved.targetWinRate,
@@ -1811,6 +1835,24 @@ export type PackTunePlan = {
   planned: { cardId: string; pct: number; livePct: number | null }[];
   /** Live-pool cards the staged pool removes (staged arm; empty on live). */
   removedCardIds: string[];
+  /**
+   * Cards the solver's max-win-cap pre-filter DROPS (value > the resolved
+   * `targets.maxWinCap` — the strict engine predicate, shared via
+   * `computeCapDroppedCardIds`). Populated on BOTH arms. These are true
+   * REMOVALS (owner rule, 2026-07-03): the write omits their rows from the
+   * `pack_cards` createMany, so pushing removes the card from the pack
+   * (recoverable via the History snapshot revert). Kept SEPARATE from
+   * `removedCardIds`, which means "the operator staged this card out" — a
+   * cap drop is the engine's verdict over cards still IN the staged pool,
+   * and merging the two would break the staged-identity round-trip
+   * (`buildCardDiffRows` sources staged removals from the staged pool state,
+   * and the write payload still carries the cap-dropped card's identity —
+   * the omission is re-derived server-side from the re-solved weights, never
+   * client-trusted). `maxWin`/tiles already reflect the drop (risk is
+   * computed over positive-weight cards only). The pool fingerprint is over
+   * the LIVE pool and is unaffected.
+   */
+  capDroppedCardIds: string[];
   /** Risk AS IT IS NOW (live pool at the live price). */
   before: PackRisk;
   /**
@@ -1909,9 +1951,11 @@ export async function planPackTune(
   // shape-mismatched plan.
   // v4: the plan shape gained `allNice` (§niceness) + tagged offLadderCards
   // switched to the human-nice grid — key bumped for the same reason.
+  // v5: the plan shape gained `capDroppedCardIds` (cap removals) — key bumped
+  // for the same reason.
   return unstable_cache(
     () => planPackTuneLiveUncached(packId),
-    ["pack-studio.retune.plan-pack.v4", packId],
+    ["pack-studio.retune.plan-pack.v5", packId],
     { revalidate: 60, tags: [packRetunePlanTag(packId)] },
   )();
 }
@@ -2082,6 +2126,9 @@ async function planPackTuneLiveUncached(
     price: p.price,
     stagedPrice: null,
     removedCardIds: [] as string[],
+    // Cap removals (both arms): the strict engine predicate over the SOLVE
+    // pool — the write omits exactly these rows (weight 0 by construction).
+    capDroppedCardIds: computeCapDroppedCardIds(cards, targets.maxWinCap),
     before,
     tagContradiction: null,
     intendedHitRate: autoTargets.intendedHitRate,
@@ -2409,6 +2456,15 @@ async function planPackTuneStagedUncached(
     priceAfter: r.priceAfter,
     planned,
     removedCardIds,
+    // Cap removals over the STAGED identities at the resolved cap — the same
+    // predicate the write's row filter enforces (weight 0 by construction).
+    capDroppedCardIds: computeCapDroppedCardIds(
+      input.cards.map((c) => ({
+        cardId: c.cardId,
+        value: r.cardMetaById.get(c.cardId)?.value ?? 0,
+      })),
+      r.resolved.maxWinCap,
+    ),
     before: r.before,
     after: outcome.after,
     feasible: outcome.ok,

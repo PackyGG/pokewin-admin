@@ -248,6 +248,18 @@ export const PRICE_PINNED_SUB = "price pinned — odds only";
 export const PRICE_INPUT_HINT =
   "the planner may move it within the allowed band to land clean odds";
 
+// ─── Cap removals (owner rule, 2026-07-03) ──────────────────────────────────
+
+/** Badge on a pool/confirm row the cap pre-filter drops (a true removal). */
+export function capRemovedBadgeLabel(capUsd: number): string {
+  return `removed — over max-win cap $${capUsd.toFixed(2)}`;
+}
+
+/** Tooltip on the cap-removed badge: why + both ways out. */
+export function capRemovedTooltip(valueUsd: number, capUsd: number): string {
+  return `This card's value $${valueUsd.toFixed(2)} exceeds the pack's max-win cap $${capUsd.toFixed(2)}, so the plan drops it — pushing removes it from the pack (no dead 0%-odds row is written). Revert from History to bring it back, or raise the pack's max-win cap so it can stay.`;
+}
+
 // ─── Push row + confirm (§5e / §6) ──────────────────────────────────────────
 
 export function pushSubLine(args: {

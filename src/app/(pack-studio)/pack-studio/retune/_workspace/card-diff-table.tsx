@@ -43,6 +43,8 @@ import {
   PIN_EDIT_HINT,
   PIN_INPUT_PLACEHOLDER,
   PIN_TOOLTIP,
+  capRemovedBadgeLabel,
+  capRemovedTooltip,
 } from "./plan-copy";
 import type { StagedPool } from "./plan-state";
 
@@ -70,6 +72,15 @@ export type CardDiffRow = {
   plannedPct: number | null;
   added: boolean;
   removed: boolean;
+  /**
+   * Non-null when the plan's cap pre-filter DROPS this card (value > the
+   * resolved max-win cap — `plan.capDroppedCardIds`): the value is the cap in
+   * USD for the badge copy. Renders like a staged removal (strike-through +
+   * rose badge, no odds, no cosmetics), but with the cap reason and WITHOUT
+   * an Undo (the way to keep the card is raising the cap, covered by the
+   * plan's raise-cap guidance). Pushing omits the row — a true removal.
+   */
+  capRemovedUsd: number | null;
   /** Planned pct is NOT on the clean ladder (amber dot). */
   offLadder: boolean;
   /**
@@ -114,6 +125,12 @@ export function buildCardDiffRows(args: {
     }
   }
   const offLadder = new Set(plan?.offLadderCards ?? []);
+  // Cap removals: only a FEASIBLE plan's verdict marks rows (an infeasible
+  // plan writes nothing, so no row should read "removed").
+  const capDropped = new Set(
+    plan && plan.feasible ? plan.capDroppedCardIds : [],
+  );
+  const capUsd = plan ? plan.targets.maxWinCap : null;
   const pinnedByCard = new Map<string, number>(
     (staged?.pinnedOdds ?? []).map((p) => [p.cardId, p.pct]),
   );
@@ -134,15 +151,19 @@ export function buildCardDiffRows(args: {
     for (const c of staged.cards) {
       const planned = plannedByCard.get(c.cardId);
       const pinnedPct = pinnedByCard.get(c.cardId) ?? null;
+      const capRemoved = capDropped.has(c.cardId) && capUsd !== null;
       rows.push({
         cardId: c.cardId,
         name: c.name,
         value: c.value,
         imageUrl: c.imageUrl,
         livePct: planned ? planned.livePct : c.added ? null : livePctOf(c.cardId),
-        plannedPct: planned ? planned.pct : null,
+        // A cap-removed row renders exactly like a staged removal: no planned
+        // odds (the plan's 0 is the drop verdict, not a chance).
+        plannedPct: capRemoved ? null : planned ? planned.pct : null,
         added: c.added,
         removed: false,
+        capRemovedUsd: capRemoved ? capUsd : null,
         // Pinned rows are exempt (owner-chosen number, never a dirty dot);
         // the server-side offLadderCards already excludes them — this guard
         // covers the brief staged window before the pinned plan lands.
@@ -162,6 +183,7 @@ export function buildCardDiffRows(args: {
         plannedPct: null,
         added: false,
         removed: true,
+        capRemovedUsd: null,
         offLadder: false,
         pinnedPct: null,
         color: c.color,
@@ -171,15 +193,19 @@ export function buildCardDiffRows(args: {
   } else if (pool) {
     for (const c of pool.cards) {
       const planned = plannedByCard.get(c.cardId);
+      const capRemoved = capDropped.has(c.cardId) && capUsd !== null;
       rows.push({
         cardId: c.cardId,
         name: c.name,
         value: c.value,
         imageUrl: c.imageUrl,
         livePct: planned ? planned.livePct : livePctOf(c.cardId),
-        plannedPct: planned ? planned.pct : null,
+        // Same rule as the staged arm: a cap-removed row carries no planned
+        // odds — the drop verdict renders as a removal, not a 0% chance.
+        plannedPct: capRemoved ? null : planned ? planned.pct : null,
         added: false,
         removed: false,
+        capRemovedUsd: capRemoved ? capUsd : null,
         offLadder: offLadder.has(c.cardId),
         pinnedPct: null,
         color: c.color,
@@ -262,6 +288,10 @@ export function CardDiffTable({
         </TableHeader>
         <TableBody>
           {rows.map((row) => {
+            // A cap-removed row renders with the SAME inactive treatment as a
+            // staged removal (strike-through, no odds/cosmetics) — only the
+            // badge copy and the missing Undo differ.
+            const inactive = row.removed || row.capRemovedUsd !== null;
             const delta =
               row.plannedPct !== null && row.livePct !== null
                 ? row.plannedPct - row.livePct
@@ -282,7 +312,7 @@ export function CardDiffTable({
             return (
               <TableRow
                 key={row.cardId}
-                className={cn(row.removed && "opacity-60")}
+                className={cn(inactive && "opacity-60")}
               >
                 <TableCell>
                   <div className="flex items-center gap-2">
@@ -296,7 +326,7 @@ export function CardDiffTable({
                         <span
                           className={cn(
                             "truncate text-sm font-medium",
-                            row.removed &&
+                            inactive &&
                               "text-rose-600 line-through dark:text-rose-400",
                           )}
                         >
@@ -318,8 +348,30 @@ export function CardDiffTable({
                             removed
                           </Badge>
                         )}
+                        {/* Cap removal (owner rule, 2026-07-03): the plan's
+                            cap pre-filter drops this card — pushing removes
+                            it from the pack (no dead 0%-odds row). */}
+                        {row.capRemovedUsd !== null && (
+                          <TooltipProvider delay={150}>
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <Badge
+                                    variant="outline"
+                                    className="h-4 border-rose-500/30 bg-rose-500/10 px-1 text-[10px] text-rose-600 dark:text-rose-400"
+                                  >
+                                    {capRemovedBadgeLabel(row.capRemovedUsd)}
+                                  </Badge>
+                                }
+                              />
+                              <TooltipContent className="max-w-72">
+                                {capRemovedTooltip(row.value, row.capRemovedUsd)}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
                       </div>
-                      {hint && !row.removed && (
+                      {hint && !inactive && (
                         <p className="truncate text-[10px] text-muted-foreground">
                           {hint}
                         </p>
@@ -334,7 +386,7 @@ export function CardDiffTable({
                   {row.livePct !== null ? formatPercent(row.livePct) : "—"}
                 </TableCell>
                 <TableCell className="text-right text-sm font-medium tabular-nums">
-                  {row.removed ? (
+                  {inactive ? (
                     <span className="text-muted-foreground">—</span>
                   ) : editable && onPinCard && editingCardId === row.cardId ? (
                     // ── Pin editor: Enter pins, Escape/blur cancels (§ pins) ──
@@ -479,7 +531,7 @@ export function CardDiffTable({
                 </TableCell>
                 {editable && (
                   <TableCell>
-                    {!row.removed && (
+                    {!inactive && (
                       <Select
                         value={row.color ?? ""}
                         onValueChange={(v) =>
@@ -502,7 +554,7 @@ export function CardDiffTable({
                 )}
                 {editable && (
                   <TableCell>
-                    {!row.removed && (
+                    {!inactive && (
                       <Switch
                         checked={row.animation}
                         onCheckedChange={(v) =>
@@ -526,6 +578,11 @@ export function CardDiffTable({
                         <Undo2 className="size-3.5" />
                         Undo
                       </Button>
+                    ) : row.capRemovedUsd !== null ? (
+                      // A cap removal has no Undo — the plan drops it; the way
+                      // to keep the card is raising the cap (see the badge
+                      // tooltip + the plan's raise-cap guidance).
+                      null
                     ) : (
                       <Button
                         type="button"

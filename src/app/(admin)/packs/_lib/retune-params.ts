@@ -112,6 +112,55 @@ export function mapPinnedOddsToShares(
 }
 
 /**
+ * Cap-removal classification (owner rule, 2026-07-03): a card whose value
+ * exceeds the resolved max-win cap is DROPPED by the solver's cap pre-filter
+ * (`shapeWeights` assigns it weight 0 before any odds exist) — and the owner
+ * wants that surfaced and persisted as a true REMOVAL, not a silent 0% row.
+ *
+ * This is THE one predicate both plans and both writes classify with: it
+ * mirrors the engine pre-filter exactly (strict `value > maxWinCap`; the
+ * `!(value > 0)` arm of the pre-filter is a degenerate-value drop, NOT a cap
+ * removal, and is deliberately excluded here). Only cards that carry a
+ * `cardId` can be reported (value-only design slots have no identity).
+ *
+ * Kept HERE (pure, dep-free) so the `packs/__checks__/` harness can pin that
+ * plan classification ≡ write omission on the same fixture.
+ */
+export function computeCapDroppedCardIds(
+  cards: readonly { cardId?: string; value: number }[],
+  maxWinCap: number,
+): string[] {
+  if (!Number.isFinite(maxWinCap)) return [];
+  const out: string[] = [];
+  for (const c of cards) {
+    if (
+      c.cardId !== undefined &&
+      Number.isFinite(c.value) &&
+      c.value > maxWinCap
+    ) {
+      out.push(c.cardId);
+    }
+  }
+  return out;
+}
+
+/**
+ * THE one write-vector filter (owner rule, 2026-07-03): no MAIN retune write
+ * ever persists a `pack_cards` row with weight ≤ 0. A shaped weight of 0 only
+ * exists for slots the solver's pre-filter dropped (over-cap, or a
+ * non-positive value) — persisting such a row used to leave a dead 0%-odds
+ * card in the pack; the owner wants the card truly removed (recoverable via
+ * the History snapshot revert). Verbatim paths (`applyPackEdit`, pins) keep
+ * refusing an explicit typed 0 as a VALIDATION ERROR — this filter is for
+ * SERVER-shaped vectors only, where 0 is the engine's removal verdict.
+ */
+export function omitZeroWeightRows<T extends { weight: number }>(
+  rows: readonly T[],
+): T[] {
+  return rows.filter((r) => Number.isFinite(r.weight) && r.weight > 0);
+}
+
+/**
  * Build the FULL `searchBestPriceForCleanSnap` argument object for a retune
  * solve. Consumed by four call sites: `applyPackRetune`'s solve,
  * `applyStagedPackEditAndRetune`'s solve, and both `planPackTune` arms — the

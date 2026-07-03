@@ -569,15 +569,28 @@ export function PlanPanel({
   })();
 
   // ── Push row facts (§5e) ──────────────────────────────────────────────────
+  // Cap-removed cards are counted as removals below, never as odds changes
+  // (their planned 0 is the drop verdict, not a chance).
+  const capDropped = new Set(plan?.capDroppedCardIds ?? []);
   const oddsChanges = plan
     ? plan.planned.filter(
-        (p) => p.livePct !== null && Math.abs(p.pct - p.livePct) > 1e-9,
+        (p) =>
+          !capDropped.has(p.cardId) &&
+          p.livePct !== null &&
+          Math.abs(p.pct - p.livePct) > 1e-9,
       ).length
     : 0;
   const addedCount = plan
-    ? plan.planned.filter((p) => p.livePct === null).length
+    ? plan.planned.filter(
+        (p) => !capDropped.has(p.cardId) && p.livePct === null,
+      ).length
     : 0;
-  const removedCount = plan ? plan.removedCardIds.length : 0;
+  // Staged removals + cap removals (owner rule, 2026-07-03): both are true
+  // removals the write persists — the "Will write … removed" line counts both.
+  const removedCount = plan
+    ? plan.removedCardIds.length +
+      (plan.feasible ? plan.capDroppedCardIds.length : 0)
+    : 0;
 
   const pushDisabledLabel = ((): string | null => {
     if (pushEnabled) return null;

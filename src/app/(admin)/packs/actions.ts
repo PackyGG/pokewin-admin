@@ -25,7 +25,12 @@ import {
   type PackStats,
 } from "@/lib/queries/packs";
 import { packRetunePlanTag } from "@/app/(pack-studio)/pack-studio/_actions/retune-cache-tag";
-import { buildRetuneSearchParams } from "@/app/(admin)/packs/_lib/retune-params";
+import {
+  buildRetuneSearchParams,
+  computeCapDroppedCardIds,
+  omitZeroWeightRows,
+} from "@/app/(admin)/packs/_lib/retune-params";
+import { partitionSnapshotRestore } from "@/app/(admin)/packs/_lib/snapshot-restore";
 import {
   planPackReprice,
   repriceEdgeWithinHardBand,
@@ -2021,17 +2026,28 @@ export async function applyPackRetune(
       { color: pc.color, animation: pc.animation, order: pc.order },
     ]),
   );
-  const rows = pool.map((c, i) => {
-    const meta = metaByCard.get(c.cardId);
-    return {
-      pack_id: packId,
-      card_id: c.cardId,
-      weight: shaped.weights[i]!,
-      color: meta?.color ?? null,
-      animation: meta?.animation ?? false,
-      order: meta?.order ?? i,
-    };
-  });
+  // Cap removals (owner rule, 2026-07-03): slots the solver's cap pre-filter
+  // dropped carry a shaped weight of 0 — those rows are OMITTED, so the card
+  // is truly removed from the pack instead of persisting as a dead 0%-odds
+  // row (recoverable via the History snapshot revert captured below).
+  const rows = omitZeroWeightRows(
+    pool.map((c, i) => {
+      const meta = metaByCard.get(c.cardId);
+      return {
+        pack_id: packId,
+        card_id: c.cardId,
+        weight: shaped.weights[i]!,
+        color: meta?.color ?? null,
+        animation: meta?.animation ?? false,
+        order: meta?.order ?? i,
+      };
+    }),
+  );
+  // Audit trace of the omission — the engine predicate over the solve pool.
+  const capRemovedCardIds = computeCapDroppedCardIds(
+    pool.map((c) => ({ cardId: c.cardId, value: c.value })),
+    resolved.maxWinCap,
+  );
 
   // Capture the PRIOR state (price + every card weight) into the ADMIN change
   // history BEFORE the weight write below — so this snapshot is the state the
@@ -2082,6 +2098,12 @@ export async function applyPackRetune(
       },
       before: { edge: before.edge, winRate: before.winRate, maxWin: before.maxWin },
       after: { edge: after.edge, winRate: after.winRate, maxWin: after.maxWin },
+      // Cap removals (owner rule, 2026-07-03): pool cards whose value
+      // exceeded the resolved max-win cap — their rows were OMITTED from the
+      // write (true removal). Absent when none were dropped.
+      ...(capRemovedCardIds.length > 0 && {
+        cap_removed_card_ids: capRemovedCardIds,
+      }),
       // Price-search trace — present only when the lever actually moved the
       // ticket. Lets an audit review distinguish a fixed-price retune from a
       // chip-strip nudge that raised the price for clean odds.
@@ -2160,9 +2182,13 @@ export async function applyPackRetune(
 //     CURRENT state (so the revert is itself undoable), then writes the
 //     snapshot's price + weights back via the SAME delete-all-then-createMany
 //     pack_cards transaction updatePack/applyPackRetune use.
-//   - Only re-creates cards that STILL EXIST in the pack's live pool; any card
-//     in the snapshot that no longer exists is skipped and reported (never
-//     silently dropped, never re-inserted into a pool it left).
+//   - Re-creates every snapshot card that still exists in the CARDS CATALOG
+//     (the pack_cards FK target) with a positive captured weight — including
+//     cards no longer in the live pool. That is the point of the revert: a
+//     retune push truly REMOVES cap-dropped cards (owner rule, 2026-07-03),
+//     and the snapshot is the recovery path. Catalog-deleted cards and legacy
+//     weight-0 snapshot rows are skipped and reported (never silently
+//     dropped, never guessed).
 //   - Audits "pack_reverted"; refreshes the ADMIN risk row. FAIL-CLOSED.
 
 export type RevertPackResult = {
@@ -2173,9 +2199,13 @@ export type RevertPackResult = {
   snapshotId: string;
   priceBefore: number;
   priceAfter: number;
-  /** Cards from the snapshot that were restored (still exist in the pool). */
+  /** Cards from the snapshot that were restored (exist in the cards catalog). */
   restoredCardCount: number;
-  /** Card ids in the snapshot that no longer exist in the live pool (skipped). */
+  /**
+   * Card ids in the snapshot that were NOT restored: the card no longer
+   * exists in the cards catalog (FK target gone), or the snapshot row carried
+   * a legacy weight ≤ 0 (odds-identical to omission; never re-written).
+   */
   skippedCardIds: string[];
 };
 
@@ -2185,8 +2215,11 @@ export type RevertPackResult = {
  * (the same 2FA scope a retune carries — a revert is a weight write).
  *
  * Fail-closed: every auth/scope/integrity failure THROWS before any MAIN write.
- * Only cards that still exist in the live pool are restored; cards removed from
- * the pool since the snapshot are skipped and returned in `skippedCardIds`.
+ * Restores every snapshot card that still exists in the CARDS CATALOG with a
+ * positive captured weight — including cards a retune push removed from the
+ * pool (cap removals, owner rule 2026-07-03: the snapshot revert is their
+ * recovery path). Catalog-deleted cards + legacy weight-0 snapshot rows are
+ * skipped and returned in `skippedCardIds`.
  */
 export async function revertPackToSnapshot(
   snapshotId: string,
@@ -2210,8 +2243,7 @@ export async function revertPackToSnapshot(
 
   const db = await getDb();
 
-  // Fresh pack row: scope + name + the CURRENT live pool (so we only restore
-  // cards that still exist, and can detect price/scope drift since capture).
+  // Fresh pack row: scope + name + price (drift detection since capture).
   const pack = await db.packs.findUnique({
     where: { id: packId },
     select: {
@@ -2219,7 +2251,6 @@ export async function revertPackToSnapshot(
       active: true,
       pack_type: true,
       name: true,
-      pack_cards: { select: { card_id: true } },
     },
   });
   if (!pack) throw new Error("Pack not found.");
@@ -2243,20 +2274,35 @@ export async function revertPackToSnapshot(
     pack.active,
   );
 
-  // Restore ONLY cards that still exist in the live pool. A card removed from the
-  // pool since the snapshot is skipped + reported (never silently re-inserted).
-  const liveCardIds = new Set(pack.pack_cards.map((pc) => pc.card_id));
+  // Restore every snapshot card that still exists in the CARDS CATALOG (the
+  // pack_cards.card_id FK target — indexed PK read) with a positive captured
+  // weight. Membership in the LIVE pool is deliberately NOT required: a
+  // retune push truly removes cap-dropped cards (owner rule, 2026-07-03) and
+  // this revert is their recovery path — the old live-pool filter would have
+  // silently skipped exactly the card being recovered. Catalog-deleted cards
+  // + legacy weight-0 rows are skipped + reported (pure partition, harness-
+  // pinned in packs/__checks__/).
   const snapshotCards: SnapshotCard[] = Array.isArray(snapshot.cards)
     ? snapshot.cards
     : [];
-  const restorable = snapshotCards.filter((c) => liveCardIds.has(c.card_id));
-  const skippedCardIds = snapshotCards
-    .filter((c) => !liveCardIds.has(c.card_id))
-    .map((c) => c.card_id);
+  const snapshotCardIds = [
+    ...new Set(snapshotCards.map((c) => c.card_id).filter((id) => isUuid(id))),
+  ];
+  const existingCards =
+    snapshotCardIds.length > 0
+      ? await db.cards.findMany({
+          where: { id: { in: snapshotCardIds } },
+          select: { id: true },
+        })
+      : [];
+  const { restorable, skippedCardIds } = partitionSnapshotRestore(
+    snapshotCards,
+    new Set(existingCards.map((c) => c.id)),
+  );
 
   if (restorable.length === 0) {
     throw new Error(
-      "Refused: none of the snapshot's cards still exist in the pack's pool — nothing to restore.",
+      "Refused: none of the snapshot's cards still exist in the cards catalog (or every captured weight was 0) — nothing to restore.",
     );
   }
 
@@ -2464,8 +2510,14 @@ export async function buildPack(input: BuildPackInput): Promise<BuildPackResult>
         "Pack builder needs real card ids to create a pack — value-only slots carried weight and cannot be persisted.",
     };
   }
+  // No weight-0 rows (owner rule, 2026-07-03): a slot the shaper zeroed (cap
+  // pre-filter / non-positive value) is omitted — same rule as both retune
+  // write arms; a dead 0%-odds row must never be persisted.
   const cardRows = persistable
-    .filter((s): s is { cardId: string; value: number; weight: number } => s.cardId !== null)
+    .filter(
+      (s): s is { cardId: string; value: number; weight: number } =>
+        s.cardId !== null && s.weight > 0,
+    )
     .map((s, i) => ({
       pack_id: "", // filled per-tx below
       card_id: s.cardId,
