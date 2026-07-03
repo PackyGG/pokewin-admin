@@ -35,7 +35,9 @@ import {
 import {
   computeTagGuidance,
   computeUntaggedGuidance,
+  ladderShape,
   type TagGuidance,
+  type LadderShape,
 } from "@/app/(admin)/insights/edge-calc/tag-guidance";
 import {
   planPackReprice,
@@ -1940,6 +1942,15 @@ export type PackTunePlan = {
    * per pinned card, and `accept-as-is`. `null` otherwise.
    */
   guidance: TagGuidance | null;
+  /**
+   * §shape-guard (owner-lens §2 / Pattern 1): the plan-vs-live ladder quality
+   * of a FEASIBLE plan. `degenerate === true` when the planned ladder collapsed
+   * onto one carrier / crushed healthy live cards (the owner's flagged
+   * screenshot) — the plan stays feasible + pushable (it is mathematically
+   * sound), but the UI demotes + badges it and leads with pool edits. `null`
+   * when the plan is infeasible (no vector to score). A no-op replan scores 0.
+   */
+  shape: LadderShape | null;
 };
 
 /**
@@ -1975,9 +1986,12 @@ export async function planPackTune(
   // switched to the human-nice grid — key bumped for the same reason.
   // v5: the plan shape gained `capDroppedCardIds` (cap removals) — key bumped
   // for the same reason.
+  // v6: the plan shape gained `shape` (§shape-guard) + the default price budget
+  // changed to ±10% (targets are now live-anchored) — persisted v5 entries must
+  // never surface.
   return unstable_cache(
     () => planPackTuneLiveUncached(packId),
-    ["pack-studio.retune.plan-pack.v5", packId],
+    ["pack-studio.retune.plan-pack.v6", packId],
     { revalidate: 60, tags: [packRetunePlanTag(packId)] },
   )();
 }
@@ -2197,6 +2211,7 @@ async function planPackTuneLiveUncached(
       taggedAccuracyHit: null,
       searchMeta: null,
       guidance: null,
+      shape: null,
     };
   }
 
@@ -2273,6 +2288,7 @@ async function planPackTuneLiveUncached(
       taggedAccuracyHit: search.taggedAccuracyHit,
       searchMeta,
       guidance: guidanceFor(true),
+      shape: null,
     };
   }
 
@@ -2316,6 +2332,26 @@ async function planPackTuneLiveUncached(
         : null;
   }
 
+  // §shape-guard: score the FEASIBLE plan's ladder against the live pool. Live
+  // shares from the live pool (`livePctMap` is in percent → fractions); planned
+  // shares from the shaped weights. Pure post-check — never a solver input.
+  const shapeTotal = shaped.weights.reduce(
+    (a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0),
+    0,
+  );
+  const livePcts = livePctMap(cards);
+  const shape: LadderShape | null =
+    shapeTotal > 0
+      ? ladderShape(
+          cards.map((c) => c.value),
+          cards.map((c) => (livePcts.get(c.cardId) ?? 0) / 100),
+          shaped.weights.map((w) =>
+            Number.isFinite(w) && w > 0 ? w / shapeTotal : 0,
+          ),
+          search.bestPrice,
+        )
+      : null;
+
   return {
     ...base,
     priceAfter: search.bestPrice,
@@ -2340,6 +2376,7 @@ async function planPackTuneLiveUncached(
             shaped.allNice === false,
         )
       : untaggedGuidance,
+    shape,
   };
 }
 
@@ -2483,6 +2520,20 @@ async function planPackTuneStagedUncached(
     });
   }
 
+  // §shape-guard: score the FEASIBLE staged plan against the live pool. The
+  // `planned` rows already carry per-card pct + livePct (null for a staged-in
+  // card → live share 0), aligned to the staged pool order — exactly the shape
+  // inputs. Values come from the resolved card meta.
+  const stagedShape: LadderShape | null =
+    outcome.ok && planned.length > 0
+      ? ladderShape(
+          input.cards.map((c) => r.cardMetaById.get(c.cardId)?.value ?? 0),
+          planned.map((row) => (row.livePct ?? 0) / 100),
+          planned.map((row) => row.pct / 100),
+          r.priceAfter,
+        )
+      : null;
+
   return {
     packId,
     name: r.packName,
@@ -2534,5 +2585,6 @@ async function planPackTuneStagedUncached(
     // Echo the pins the solve ran WITH (frozen-artifact self-description).
     pinnedOdds: input.pinnedOdds ?? null,
     guidance,
+    shape: stagedShape,
   };
 }

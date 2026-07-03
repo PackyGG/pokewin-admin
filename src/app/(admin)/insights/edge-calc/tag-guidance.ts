@@ -961,6 +961,155 @@ export function isFloorPinnedPct(pct: number): boolean {
   return pct > 0 && pct <= FLOOR_PINNED_MAX_PCT + 1e-9;
 }
 
+// ── SHAPE GUARD (owner-lens §2 / Pattern 1) ─────────────────────────────
+//
+// A pure, computable metric of how much a PLANNED ladder deviates from the
+// pack's LIVE shape in the ways the owner reads as broken: a rich loss card
+// more likely than a cheaper one (inversion), one carrier card absorbing the
+// loss mass, and healthy live cards crushed 100×+ below their live odds. The
+// solver has no dispersion / live-shape objective, so ~half the untagged fleet
+// replans into a one-carrier degenerate ladder (the owner's flagged screenshot).
+// This metric DETECTS that so the planner can demote + badge it and lead with
+// pool edits. It is a POST-CHECK — never a solver constraint.
+//
+// All inputs are plain arrays aligned to pool order; SHARES are fractions of 1
+// (a staged-in card carries live share 0). The metric NEVER looks at the win
+// band's ordering (legitimate win-band non-monotonicity makes a third of the
+// catalog infeasible — audit-protected); win cards enter only via the crush
+// terms.
+
+/** A card whose planned share sits at/below this (fraction) is "crushed-low". */
+const CRUSH_PLANNED_MAX = 0.00002; // 0.002% as a fraction
+/** A live/planned ratio at/above this is a 100×+ relative crush. */
+const CRUSH_RATIO_MIN = 100;
+
+/** The composite score at/above which a planned ladder is DEGENERATE. */
+export const LADDER_DEGENERATE_THRESHOLD = 0.25;
+
+export type LadderShape = {
+  /** Intrinsic planned-ladder inversion (rich loss card likelier than cheaper). */
+  lossInvArea: number;
+  /** Largest single LOSS card's (planned − live) share gain (the absorber). */
+  absorberExcess: number;
+  /** Count of cards relative-crushed ≥100× and under 0.002% planned. */
+  crushedCount: number;
+  /** Live share (fraction) sitting on crushed cards. */
+  crushedLiveMass: number;
+  /** cardIds/indices — the crushed cards, in pool order (for UI chips). */
+  crushedIdx: number[];
+  /** ½·Σ|planned − live| — total probability mass relocated. */
+  liveL1: number;
+  /** The composite score (see the formula below). */
+  score: number;
+  /** score ≥ {@link LADDER_DEGENERATE_THRESHOLD}. */
+  degenerate: boolean;
+};
+
+/**
+ * Compute the {@link LadderShape} of a planned vector vs the live pool (owner-
+ * lens §2). Pure, dep-free, side-effect-free.
+ *
+ * A live pool scored against ITSELF is 0 by construction (all plan-vs-live
+ * terms vanish) — a no-op replan is never degenerate. The threshold 0.25 sits
+ * ~3× above the worst live pool's intrinsic inversion (fleet max 0.0755), so no
+ * legitimately-shaped pool can flag.
+ *
+ * Components (engine-verified calibration in the planner-discipline harness):
+ *   • lossInvArea — over LOSS cards (0 < value < price) sorted ascending by
+ *     value, for each adjacent (cheap→rich) pair where the rich card is planned
+ *     MORE likely, add `(planned[rich] − planned[cheap]) · max(0.05,
+ *     log10(v_rich / v_cheap))`. House style: odds rise as value falls.
+ *   • absorberExcess — max over LOSS cards of `max(0, planned − live)`.
+ *   • crush — a card with `live > 0`, `planned > 0`, `planned ≤ 0.00002` and
+ *     `live/planned ≥ 100`. A card planned to exactly 0 is a CAP event (its own
+ *     surface), not a crush.
+ *   • liveL1 — ½·Σ|planned − live|.
+ *
+ *   score = lossInvArea
+ *         + max(0, absorberExcess − 0.10)
+ *         + 2·min(crushedLiveMass, 0.5)
+ *         + 0.06·crushedCount
+ *         + 0.5·max(0, liveL1 − 0.25)
+ */
+export function ladderShape(
+  values: readonly number[],
+  liveShares: readonly number[],
+  plannedShares: readonly number[],
+  price: number,
+): LadderShape {
+  const n = values.length;
+  const num = (x: number | undefined): number =>
+    typeof x === "number" && Number.isFinite(x) && x > 0 ? x : 0;
+
+  // ── loss inversion area (planned ladder shape over LOSS cards) ──────────
+  const lossCards: { value: number; planned: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const v = values[i] ?? 0;
+    if (v > 0 && v < price) {
+      lossCards.push({ value: v, planned: num(plannedShares[i]) });
+    }
+  }
+  lossCards.sort((a, b) => a.value - b.value); // cheap → rich
+  let lossInvArea = 0;
+  for (let i = 1; i < lossCards.length; i++) {
+    const cheap = lossCards[i - 1]!;
+    const rich = lossCards[i]!;
+    if (rich.planned > cheap.planned) {
+      const ratio = rich.value / Math.max(cheap.value, 0.0001);
+      const w = Math.max(0.05, Math.log10(ratio > 0 ? ratio : 1));
+      lossInvArea += (rich.planned - cheap.planned) * w;
+    }
+  }
+
+  // ── absorber / crush / L1 (per-card, aligned to pool order) ─────────────
+  let absorberExcess = 0;
+  let crushedCount = 0;
+  let crushedLiveMass = 0;
+  const crushedIdx: number[] = [];
+  let l1 = 0;
+  for (let i = 0; i < n; i++) {
+    const v = values[i] ?? 0;
+    const live = num(liveShares[i]);
+    const planned = num(plannedShares[i]);
+    l1 += Math.abs(planned - live);
+    // absorber: only LOSS cards (win-band gains are governed by never-inflate).
+    if (v > 0 && v < price) {
+      const excess = planned - live;
+      if (excess > absorberExcess) absorberExcess = excess;
+    }
+    // crush: a live card the plan parks ~0 mass on, 100×+ below live.
+    if (
+      live > 0 &&
+      planned > 0 &&
+      planned <= CRUSH_PLANNED_MAX &&
+      live / planned >= CRUSH_RATIO_MIN
+    ) {
+      crushedCount += 1;
+      crushedLiveMass += live;
+      crushedIdx.push(i);
+    }
+  }
+  const liveL1 = l1 / 2;
+
+  const score =
+    lossInvArea +
+    Math.max(0, absorberExcess - 0.1) +
+    2 * Math.min(crushedLiveMass, 0.5) +
+    0.06 * crushedCount +
+    0.5 * Math.max(0, liveL1 - 0.25);
+
+  return {
+    lossInvArea,
+    absorberExcess,
+    crushedCount,
+    crushedLiveMass,
+    crushedIdx,
+    liveL1,
+    score,
+    degenerate: score >= LADDER_DEGENERATE_THRESHOLD,
+  };
+}
+
 export type UntaggedPlanGuidanceInput = {
   /** Pool card values, aligned with `currentWeights` / `plannedShares`. */
   cards: { value: number }[];
