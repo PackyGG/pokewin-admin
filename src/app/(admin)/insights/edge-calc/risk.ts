@@ -1104,9 +1104,21 @@ export function countOffNicePct(
 export function snapWeightsToCleanLadder(input: {
   weights: number[];
   price: number;
+  /**
+   * Optional LIVE weights aligned to `weights` (owner-lens Pattern 11 — dust
+   * tie-break). When two cards tie for the argmax buffer pct (the modal card
+   * that absorbs the residual — e.g. two equal-value dust cards the water-fill
+   * split evenly), the tie is broken toward the card whose LIVE weight is
+   * larger, so the card that was modal in the live pool stays modal instead of
+   * flipping to a sibling by array index. Pure tie-break: changes only WHICH of
+   * two equal-pct cards is the buffer — never the group total, EV, edge,
+   * win-rate, or cleanness. Omit for the legacy index-order tie-break.
+   */
+  tieBreakWeights?: readonly number[] | null;
 }): { weights: number[]; edgeDelta: number } {
   const original = input.weights;
   const price = input.price;
+  const tieBreak = input.tieBreakWeights ?? null;
 
   let totalWeight = 0;
   for (const w of original) {
@@ -1123,6 +1135,11 @@ export function snapWeightsToCleanLadder(input: {
   const pcts = new Array<number>(original.length).fill(0);
   let bufferIdx = -1;
   let bufferPct = -Infinity;
+  const tieBreakOf = (i: number): number => {
+    if (tieBreak === null) return -Infinity;
+    const t = tieBreak[i];
+    return typeof t === "number" && Number.isFinite(t) && t > 0 ? t : -Infinity;
+  };
   for (let i = 0; i < original.length; i++) {
     const w = original[i]!;
     if (!Number.isFinite(w) || w <= 0) continue;
@@ -1131,6 +1148,18 @@ export function snapWeightsToCleanLadder(input: {
     if (p > bufferPct) {
       bufferPct = p;
       bufferIdx = i;
+    } else if (
+      // Pattern 11 dust tie-break: an argmax TIE (equal buffer pct, e.g. two
+      // equal-value cards the water-fill split evenly) resolves toward the
+      // higher LIVE weight, so the modal live card stays the buffer instead of
+      // flipping by array index. Pure — never changes the group total, EV,
+      // edge, win-rate, or cleanness.
+      bufferIdx >= 0 &&
+      Math.abs(p - bufferPct) <= 1e-9 &&
+      tieBreakOf(i) > tieBreakOf(bufferIdx)
+    ) {
+      bufferIdx = i;
+      bufferPct = p;
     }
   }
   if (bufferIdx < 0) {
@@ -4099,7 +4128,13 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
       }
     }
   } else if (!taggedSnapApplied) {
-    const snap = snapWeightsToCleanLadder({ weights, price });
+    // Pattern 11: pass the live weights so the buffer tie-break keeps the modal
+    // live card modal among equal-value dust (deterministic, EV-preserving).
+    const snap = snapWeightsToCleanLadder({
+      weights,
+      price,
+      tieBreakWeights: input.currentWeights ?? null,
+    });
     // Apply within-band monotonicity repair (owner invariants — see
     // `repairSnapMonotonicity`). If the basic snap can't be made monotonic
     // within the ladder bounds, treat as failed and fall through to local-search

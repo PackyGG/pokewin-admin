@@ -39,6 +39,7 @@ import {
   ladderShape,
   buildWidePriceProbeSuggestion,
   derivePoolEditPlan,
+  pruneNoOpSuggestions,
   type TagGuidance,
   type LadderShape,
   type TuneSuggestion,
@@ -2570,16 +2571,20 @@ async function planPackTuneLiveUncached(
 
   // §niceness: a pinned-but-valid plan (exact grid, not pretty) gets the ranked
   // fixes too. §1.4: a materially-better beyond-budget far price rides as a
-  // ranked `price-move` SUGGESTION on top (never auto-applied).
-  const feasibleGuidance = mergeWideProbeSuggestion(
-    tagged
-      ? guidanceFor(
-          shaped.snapped !== true ||
-            search.taggedAccuracyHit === false ||
-            shaped.allNice === false,
-        )
-      : untaggedGuidance,
-    wideProbeSuggestion,
+  // ranked `price-move` SUGGESTION on top (never auto-applied). Pattern 9h: drop
+  // any price suggestion equal to the plan's OWN landed price (a no-op "move").
+  const feasibleGuidance = pruneNoOpSuggestions(
+    mergeWideProbeSuggestion(
+      tagged
+        ? guidanceFor(
+            shaped.snapped !== true ||
+              search.taggedAccuracyHit === false ||
+              shaped.allNice === false,
+          )
+        : untaggedGuidance,
+      wideProbeSuggestion,
+    ),
+    search.bestPrice,
   );
 
   // §3 pool-edits-first: a FEASIBLE-but-degenerate plan (or one that exits its
@@ -2786,6 +2791,9 @@ async function planPackTuneStagedUncached(
       liveNearMiss: r.before.nearMiss,
     });
   }
+  // Pattern 9h: drop any staged price suggestion equal to the plan's own landed
+  // price (a no-op "move").
+  guidance = pruneNoOpSuggestions(guidance, r.priceAfter);
 
   // §risk-leverage: the CV band (widened to the live CV) + landed-CV exit. Band
   // is over the LIVE pack (tag + live price + live CV); the exit is judged

@@ -339,6 +339,19 @@ const SUGGESTION_RANK: Record<TuneSuggestionKind, number> = {
   "no-fix-under-constraints": 10,
 };
 
+/**
+ * Absurdity ceiling on an "accept this edge as the target" (edge-bump)
+ * suggestion (owner-lens Pattern 9f / rule 4). The edge-bump lifts the target
+ * to whatever a saturated pool CAN pay, but on a badly mis-tagged pool that
+ * ceiling is a house edge so high it is not a real product option — e.g. Divine
+ * Order (a %10-tagged pool actually paying 30%) topped out at a ~59% edge, and
+ * the guidance ranked "Accept 58.859%" as suggestion #1. Beyond this ceiling the
+ * edge-bump is SUPPRESSED — the retag / restructure path is the honest fix, not
+ * a rigged 59%-house-edge product. (Chosen at 0.25: 25% is already a very high
+ * house edge for a lottery pack; the real fleet targets sit around 11%.)
+ */
+const MAX_ACCEPT_EDGE = 0.25;
+
 export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
   const { price, targetEdge, tag } = input;
   const cfg = input.cfg ?? null;
@@ -642,7 +655,10 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
   if (direction === "need-ev-up" && base.evMax > 0) {
     const ePrime = 1 - base.evMax / price;
     const excess = ePrime - targetEdge;
-    if (excess > ONE_SIDED_EDGE_EXCESS_TOL && ePrime < 1) {
+    // Pattern 9f: suppress an absurd "accept X% edge" on a badly mis-tagged
+    // pool — a 25%+ house edge is not a real product option; the retag path is
+    // the honest fix.
+    if (excess > ONE_SIDED_EDGE_EXCESS_TOL && ePrime < 1 && ePrime <= MAX_ACCEPT_EDGE) {
       suggestions.push({
         kind: "edge-bump",
         params: { edgeTarget: ePrime },
@@ -1331,6 +1347,33 @@ export function derivePoolEditPlan(
     beyondBudget,
     solverVerified: true,
   };
+}
+
+/**
+ * Drop NO-OP price suggestions (owner-lens Pattern 9h): a `price-move` /
+ * `price-edge-exact` whose price equals the plan's OWN landed price within 1¢
+ * is telling the owner to "move" to the price the plan already picked — noise
+ * that erodes trust in the whole guidance list. Pure — returns a new guidance
+ * (or the same object when nothing was pruned; null passes through).
+ *
+ * `priceAfter` is the plan's landed price (`PackTunePlan.priceAfter`). The
+ * caller applies this AFTER the wide-probe merge so a beyond-budget far price
+ * (which by construction differs from the in-budget landed price) is never
+ * pruned.
+ */
+export function pruneNoOpSuggestions(
+  guidance: TagGuidance | null,
+  priceAfter: number,
+): TagGuidance | null {
+  if (guidance === null || !(priceAfter > 0)) return guidance;
+  const kept = guidance.suggestions.filter((s) => {
+    if (s.kind !== "price-move" && s.kind !== "price-edge-exact") return true;
+    const p = Number(s.params.price);
+    if (!Number.isFinite(p)) return true;
+    return Math.abs(p - priceAfter) > 0.01 + 1e-9;
+  });
+  if (kept.length === guidance.suggestions.length) return guidance;
+  return { ...guidance, suggestions: kept };
 }
 
 export type UntaggedPlanGuidanceInput = {
