@@ -482,6 +482,11 @@ export type ShapeWeightsSuccess = {
  *                             (cap-dropped pin, tag/EV over- or undershoot,
  *                             edge out of the accepted band, malformed pin);
  *                             the suggestion quantifies the miss.
+ * - `loss-nonmonotone`      — no monotone-non-increasing layout of the FREE
+ *                             below-price loss band exists at the required loss
+ *                             mass + EV (the pins / added cards force a rich
+ *                             loss card likelier than a cheaper one). The plan
+ *                             would be garbage-ordered; the pool edit is the fix.
  */
 export type ShapeWeightsLimitKind =
   | "invalid-price"
@@ -496,7 +501,8 @@ export type ShapeWeightsLimitKind =
   | "no-dust-mass"
   | "ev-unreachable-for-split"
   | "edge-unreachable"
-  | "pins-infeasible";
+  | "pins-infeasible"
+  | "loss-nonmonotone";
 
 /**
  * Structured description of the HARD limit that made the request genuinely
@@ -871,6 +877,190 @@ function gcd(a: number, b: number): number {
     x = t;
   }
   return x === 0 ? 1 : x;
+}
+
+/**
+ * THE LOSS/SUB-PRICE MONOTONICITY INVARIANT (owner rule, universal, 2026-07-03).
+ *
+ * Among the FREE (non-pinned) cards priced BELOW the pack price — the NEARMISS +
+ * DUST loss bands — probability must be MONOTONICALLY NON-INCREASING in card
+ * value: the CHEAPEST card always carries the HIGHEST odds, no inversions. This
+ * is the invariant the "10% Divine Order" pinned+added-card scramble broke
+ * (562.22→20%, 299.99→30%, 111.02→0.001% — a rich loss card likelier than a
+ * cheap one). The WIN band (value ≥ price) is DELIBERATELY non-monotone (a cheap
+ * featured winner can be rarer) and is NOT touched here.
+ *
+ * BUFFER EXEMPTION — the ONE residual-absorber card (the argmax loss weight, the
+ * engine's mass sink that keeps the total at 100%) is EXEMPT from the monotone
+ * chain, exactly as {@link repairSnapMonotonicity} exempts it. This is not a
+ * loophole: it is the same design the whole fleet already respects (a survey of
+ * every fleet plan shows 0 buffer-exempt violations — the buffer sitting above a
+ * cheaper card is the intended residual layout; an ASCENDING NON-BUFFER CHAIN is
+ * the actual defect). The invariant asserted here and by the plan-quality gate
+ * is: no NON-BUFFER free below-price card is planned with LOWER odds than a
+ * strictly-cheaper NON-BUFFER free below-price card.
+ *
+ * REPAIR (feasible case) — when the non-buffer chain has an inversion, project it
+ * onto the monotone-non-increasing cone by a pool-adjacent-violators (PAV) sweep
+ * on the value-sorted non-buffer weights (the standard isotonic regression), then
+ * fold the mass delta into the BUFFER so the loss band's TOTAL MASS is preserved
+ * EXACTLY (an integer re-distribution within the fixed loss-band budget). The
+ * caller re-checks edge ≥ target within tolerance after applying — the loss band
+ * carries the house edge, so a repair that would push edge below target is
+ * treated as INFEASIBLE (see below), never silently shipped off-target.
+ *
+ * INFEASIBLE case — when no monotone non-buffer layout exists at the required
+ * loss mass + EV (e.g. the pins force a loss mean above what any monotone
+ * distribution can reach — the Divine Order pool-edit case), the repair cannot
+ * hold both the invariant and the edge. `ok: false` is returned so the caller
+ * flags it honestly (the pool-edit / degenerate path) instead of shipping the
+ * garbage ordering.
+ *
+ * Pure, dep-free, integer-in / integer-out (operates on the FINAL committed
+ * weight vector so it runs on EVERY path — snapped, precise-fallback, dispersed,
+ * pinned, tagged). `pinnedIdx` names the owner-pinned cards, which are hard fixed
+ * points excluded from the chain (they may sit anywhere the owner set them).
+ * Returns `changed: false` (weights byte-identical) when the chain is already
+ * monotone — so a healthy plan is never perturbed.
+ */
+export function enforceLossMonotone(input: {
+  values: readonly number[];
+  weights: readonly number[];
+  price: number;
+  pinnedIdx?: ReadonlySet<number>;
+}): { ok: boolean; weights: number[]; changed: boolean } {
+  const { values, weights, price } = input;
+  const pinnedIdx = input.pinnedIdx ?? new Set<number>();
+  const n = weights.length;
+  const out = weights.slice();
+  if (!(price > 0)) return { ok: true, weights: out, changed: false };
+
+  // Free below-price loss cards (non-pinned, positive weight, value in (0, price)).
+  const loss: { idx: number; v: number; w: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    if (pinnedIdx.has(i)) continue;
+    const v = values[i]!;
+    const w = weights[i]!;
+    if (!Number.isFinite(v) || !(v > 0) || v >= price) continue;
+    if (!Number.isFinite(w) || !(w > 0)) continue;
+    loss.push({ idx: i, v, w });
+  }
+  if (loss.length < 2) return { ok: true, weights: out, changed: false };
+
+  // Buffer = the single largest-weight loss card (the residual absorber). Ties
+  // break to the CHEAPEST card so the exemption never lands on the expensive
+  // tail (deterministic — mirrors the snap's argmax-then-cheapest tie-break).
+  let bufPos = 0;
+  for (let i = 1; i < loss.length; i++) {
+    const cur = loss[i]!;
+    const best = loss[bufPos]!;
+    if (cur.w > best.w || (cur.w === best.w && cur.v < best.v)) bufPos = i;
+  }
+  const bufferIdx = loss[bufPos]!.idx;
+
+  // The NON-BUFFER chain, sorted by value ASCENDING (cheapest first). The
+  // invariant: weight non-increasing as value rises.
+  const chain = loss.filter((_, i) => i !== bufPos).sort((a, b) => a.v - b.v);
+  if (chain.length < 2) return { ok: true, weights: out, changed: false };
+
+  // Already monotone? → byte-identical no-op (a healthy plan is never perturbed).
+  let hasInversion = false;
+  for (let k = 0; k + 1 < chain.length; k++) {
+    if (chain[k]!.w < chain[k + 1]!.w - 1e-9) {
+      hasInversion = true;
+      break;
+    }
+  }
+  if (!hasInversion) return { ok: true, weights: out, changed: false };
+
+  // ── PAV (pool-adjacent-violators) isotonic projection ────────────────────
+  // Force the value-ascending chain weights non-increasing by averaging adjacent
+  // violating blocks. Integer-weighted PAV: each block tracks its integer sum +
+  // count; the block's level is the (real) mean, but we lay INTEGER weights back
+  // out so the total is preserved to the unit. This preserves total non-buffer
+  // mass exactly; the buffer then absorbs any rounding delta so the WHOLE loss
+  // band mass is byte-preserved.
+  const blocks: { sum: number; count: number; members: number[] }[] = [];
+  for (let k = 0; k < chain.length; k++) {
+    blocks.push({ sum: chain[k]!.w, count: 1, members: [k] });
+    // Merge while the last block's level EXCEEDS the previous (violates
+    // non-increasing: a cheaper block must be ≥ a pricier one).
+    while (
+      blocks.length >= 2 &&
+      blocks[blocks.length - 2]!.sum / blocks[blocks.length - 2]!.count <
+        blocks[blocks.length - 1]!.sum / blocks[blocks.length - 1]!.count - 1e-12
+    ) {
+      const b = blocks.pop()!;
+      const a = blocks.pop()!;
+      blocks.push({
+        sum: a.sum + b.sum,
+        count: a.count + b.count,
+        members: [...a.members, ...b.members],
+      });
+    }
+  }
+
+  // Lay integer weights back out: each member of a block gets floor(level); the
+  // block's rounding remainder is dribbled onto its CHEAPEST members first (they
+  // may carry ≥, never < a pricier sibling — keeps the chain non-increasing).
+  const repairedChainW = new Array<number>(chain.length).fill(0);
+  for (const b of blocks) {
+    const level = b.sum / b.count;
+    const base = Math.max(1, Math.floor(level));
+    let rem = b.sum - base * b.count;
+    // members are already value-ascending within the block (chain order).
+    for (const m of b.members) repairedChainW[m] = base;
+    // Dribble the positive remainder onto the cheapest members first.
+    let mi = 0;
+    while (rem > 0 && mi < b.members.length) {
+      repairedChainW[b.members[mi]!] = repairedChainW[b.members[mi]!]! + 1;
+      rem -= 1;
+      mi += 1;
+    }
+    // A negative remainder (base·count > sum) can't happen: base = floor(level)
+    // and level·count = sum, so base·count ≤ sum. The `max(1, …)` floor could
+    // over-allocate only for a block whose level < 1 — guard by trimming from
+    // the PRICIEST members down (keeps non-increasing) but never below 1.
+    let mj = b.members.length - 1;
+    while (rem < 0 && mj >= 0) {
+      if (repairedChainW[b.members[mj]!]! > 1) {
+        repairedChainW[b.members[mj]!] = repairedChainW[b.members[mj]!]! - 1;
+        rem += 1;
+      }
+      mj -= 1;
+      if (mj < 0 && rem < 0) break; // cannot trim below 1 — infeasible on ints
+    }
+    if (rem < 0) return { ok: false, weights: weights.slice(), changed: false };
+  }
+
+  // Verify the repaired chain is genuinely non-increasing in value.
+  for (let k = 0; k + 1 < chain.length; k++) {
+    if (repairedChainW[k]! < repairedChainW[k + 1]! - 1e-9) {
+      return { ok: false, weights: weights.slice(), changed: false };
+    }
+  }
+
+  // Apply the repaired chain; fold the mass delta into the buffer so the loss
+  // band's TOTAL mass is preserved exactly.
+  let chainDelta = 0; // new − old on the chain cards
+  for (let k = 0; k < chain.length; k++) {
+    chainDelta += repairedChainW[k]! - chain[k]!.w;
+    out[chain[k]!.idx] = repairedChainW[k]!;
+  }
+  const newBuffer = out[bufferIdx]! - chainDelta;
+  // The buffer must remain the argmax loss card (still the residual absorber)
+  // AND stay ≥ 1. If restoring mass would push it below the chain's top weight
+  // (it stops being the buffer) or below 1, the monotone layout is infeasible at
+  // this mass — flag it.
+  if (newBuffer < 1) return { ok: false, weights: weights.slice(), changed: false };
+  const chainTop = repairedChainW[0]!; // cheapest non-buffer card (highest chain odds)
+  if (newBuffer < chainTop - 1e-9) {
+    // The buffer would drop below a non-buffer card — it is no longer the
+    // largest, so the exemption is invalid and the layout can't stay monotone.
+    return { ok: false, weights: weights.slice(), changed: false };
+  }
+  out[bufferIdx] = newBuffer;
+  return { ok: true, weights: out, changed: true };
 }
 
 // ─── Lottery skew (steep grail-band redistribution for tagged 1%/5% packs) ──
@@ -2795,6 +2985,21 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     error: `Pinned odds are infeasible: ${detail}`,
     limit: { kind: "pins-infeasible", detail, suggestion },
   });
+  // Honest refusal when the loss/sub-price monotonicity invariant (cheapest
+  // carries the highest odds, buffer exempt) cannot hold at the required loss
+  // mass — the pins / added cards force a rich loss card likelier than a cheaper
+  // one and no re-ordering of the fixed loss budget fixes it (the pool-edit
+  // case). Never ship the garbage ordering; surface the pool edit instead.
+  const lossMonotoneRefusal = (p: number): ShapeWeightsError => ({
+    error:
+      "Loss-band odds can't be laid out cleanly: a cheaper card would end up rarer than a pricier one and no re-ordering fixes it at this price.",
+    limit: {
+      kind: "loss-nonmonotone",
+      detail: `With these pins / added cards, the sub-$${p.toFixed(2)} (loss) cards can't be ordered so the cheapest carries the highest odds — the required loss average sits too high for any monotone layout. Shipping it would put a pricier loss card above a cheaper one.`,
+      suggestion:
+        "Edit the pool — add a cheaper loss card (or lower a pinned chance / drop an expensive added card) so the sub-price band can carry the loss mass with the cheapest card the most likely.",
+    },
+  });
   const pinnedShareByIdx = new Map<number, number>();
   if (hasPins) {
     for (const p of pinsIn) {
@@ -4572,10 +4777,69 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     });
   }
 
+  // ── LOSS/SUB-PRICE MONOTONICITY INVARIANT (owner rule, universal) ────────
+  // The single-β loss layout, the affine dispersion AND the snap can all leave
+  // an INVERSION in the free below-price loss band — a rich loss card planned
+  // likelier than a cheaper one (the "10% Divine Order" pinned+added-card
+  // scramble: 562.22→20%, 299.99→30%, 111.02→0.001%). The owner rule is
+  // universal: among the FREE (non-pinned) cards priced BELOW the pack price,
+  // probability must be NON-INCREASING in value (the cheapest carries the
+  // highest odds), with the single residual-buffer card exempt (the same
+  // exemption `repairSnapMonotonicity` uses). This runs on the FINAL committed
+  // vector so EVERY path is covered — snapped, precise-fallback, dispersed,
+  // pinned, tagged. Gated on the RETUNE path (`disperseLoss`); legacy direct
+  // callers (scenario builder, anti-inflation / niceness harnesses) stay
+  // byte-identical.
+  //
+  // When the non-buffer chain is already monotone the enforce is a byte-for-byte
+  // no-op (a healthy plan is never perturbed). When it repairs, the loss band's
+  // total mass is preserved exactly (an integer re-distribution within the fixed
+  // budget); we then re-check edge ≥ target within the snap tolerance — the loss
+  // band carries the house edge, so a repair that would drop edge below target
+  // (or a pool where no monotone layout exists at the required loss mean — the
+  // pins/added cards force it, the pool-edit case) is treated as INFEASIBLE and
+  // surfaced HONESTLY as the `loss-nonmonotone` limit instead of shipping the
+  // garbage ordering.
+  if (disperseLoss) {
+    const pinnedIdxSet = hasPins ? new Set(pinnedShareByIdx.keys()) : undefined;
+    const mono = enforceLossMonotone({
+      values: input.cards.map((c) => c.value),
+      weights,
+      price,
+      pinnedIdx: pinnedIdxSet,
+    });
+    if (!mono.ok) {
+      return lossMonotoneRefusal(price);
+    }
+    if (mono.changed) {
+      const monoRisk = computePackRisk({
+        cards: input.cards.map((c, i) => ({ value: c.value, weight: mono.weights[i]! })),
+        price,
+      });
+      // The repair holds the loss band's mass; edge may shift a hair. Accept it
+      // only when edge stays ≥ target within the SAME window the snap accepts
+      // (extended by any one-sided-up excess the precise result already carried).
+      const monoEdgeHi =
+        targetEdge +
+        0.001 +
+        (oneSidedAccepted && oneSidedEdgeExcess !== null ? oneSidedEdgeExcess : 0);
+      if (monoRisk.edge >= targetEdge - 1e-9 && monoRisk.edge <= monoEdgeHi + 1e-9) {
+        for (let i = 0; i < weights.length; i++) weights[i] = mono.weights[i]!;
+        risk = monoRisk;
+      } else {
+        // The only monotone layout the repair could build drops edge off the
+        // accepted window — the invariant and the edge are jointly infeasible at
+        // this mass/price. Refuse honestly rather than ship the inversion.
+        return lossMonotoneRefusal(price);
+      }
+    }
+  }
+
   // ── gcd-reduce the pinned grid (ratios — and pins — are unchanged) ────
   // The legacy path gcd-reduced before its snap; the pinned path works on the
   // fixed PIN_SCALE total throughout (transfers + snaps), so the reduction
-  // runs once at the very end.
+  // runs once at the very end. Runs AFTER the monotone enforce so its integer
+  // re-distribution is reduced too (ratios — and the invariant — are unchanged).
   if (hasPins) {
     const presentPinned = weights.filter((w) => w > 0);
     if (presentPinned.length > 0) {

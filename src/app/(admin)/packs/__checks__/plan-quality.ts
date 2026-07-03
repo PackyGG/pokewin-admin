@@ -27,9 +27,11 @@ import {
 } from "../_lib/auto-targets";
 import {
   searchBestPriceForCleanSnap,
+  shapeWeights,
   computePackRisk,
   snapWeightsToCleanLadder,
   disperseLossBand,
+  enforceLossMonotone,
   RETUNE_PRICE_BUDGET_DEFAULT_PCT,
   RETUNE_MAX_PRICE_CHANGE_PCT,
 } from "../../insights/edge-calc/risk";
@@ -847,6 +849,197 @@ check("P11 tie-break is deterministic (byte-identical on a re-run)", () => {
     a.weights.every((w, i) => w === b.weights[i]),
     "the snap tie-break must be deterministic",
   );
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// PATTERN 12 — LOSS/SUB-PRICE MONOTONICITY INVARIANT (owner rule, universal)
+// ════════════════════════════════════════════════════════════════════════
+// THE invariant (owner, 2026-07-03): among the FREE (non-pinned) cards priced
+// BELOW the pack price — the NEARMISS + DUST loss bands — probability must be
+// MONOTONICALLY NON-INCREASING in card value: the CHEAPEST card always carries
+// the HIGHEST odds, no inversions. Pinned cards are fixed exceptions (excluded
+// from the chain). The single residual-BUFFER card (argmax loss weight) is
+// exempt — the same exemption `repairSnapMonotonicity` uses and the whole fleet
+// already respects (survey: 0 buffer-exempt violations). The WIN band (value ≥
+// price) is DELIBERATELY non-monotone and is NOT asserted here.
+//
+// This encodes the "10% Divine Order" defect: the owner staged 3 added sub-price
+// cards + 3 pins and the plan scrambled the loss band ascending in value
+// (562.22→20%, 299.99→30%, 111.02→0.001% — a rich loss card likelier than a
+// cheap one). The engine now REPAIRS a fixable inversion (mass held) and REFUSES
+// (`loss-nonmonotone`) when no monotone layout exists at the required loss mean —
+// never ships the garbage ordering.
+
+/**
+ * Count buffer-exempt monotone violations in a planned vector: among free
+ * (non-pinned) below-price loss cards, EXCLUDING the single argmax buffer, the
+ * number of adjacent (cheap→rich) pairs where the pricier card is MORE likely.
+ * This is EXACTLY the invariant the gate asserts (== 0) and the engine enforces.
+ */
+function lossMonotoneViolations(
+  values: number[],
+  weights: number[],
+  price: number,
+  pinnedIdx: ReadonlySet<number> = new Set(),
+): number {
+  const total = weights.reduce((a, b) => a + (b > 0 ? b : 0), 0);
+  if (!(total > 0)) return 0;
+  const loss = values
+    .map((v, i) => ({ i, v, w: weights[i]! }))
+    .filter((x) => !pinnedIdx.has(x.i) && x.v > 0 && x.v < price && x.w > 0);
+  if (loss.length < 2) return 0;
+  // buffer = argmax weight (ties → cheapest), the residual absorber.
+  let buf = 0;
+  for (let k = 1; k < loss.length; k++) {
+    if (loss[k]!.w > loss[buf]!.w || (loss[k]!.w === loss[buf]!.w && loss[k]!.v < loss[buf]!.v)) buf = k;
+  }
+  const chain = loss.filter((_, k) => k !== buf).sort((a, b) => a.v - b.v);
+  let viol = 0;
+  for (let k = 0; k + 1 < chain.length; k++) {
+    if (chain[k]!.w < chain[k + 1]!.w - 1e-9) viol += 1;
+  }
+  return viol;
+}
+
+// The full fleet used elsewhere in this suite + the planner-discipline suite.
+const P12_FLEET: Pool[] = [
+  CHAOS, TAILS, CAPTIVE, BIDOOF, NINE_FIVE, BEST_FRIENDS, HIGH_TIDES,
+];
+
+check("P12 invariant: EVERY feasible fleet plan obeys the loss-monotone rule (0 violations)", () => {
+  let violatingPlans = 0;
+  const detail: string[] = [];
+  for (const p of P12_FLEET) {
+    for (const band of [RETUNE_PRICE_BUDGET_DEFAULT_PCT, RETUNE_MAX_PRICE_CHANGE_PCT]) {
+      const out = solve(p, band);
+      if (out.weights === null || out.price === null) continue; // infeasible = honest, no plan
+      const viol = lossMonotoneViolations(p.values, out.weights, out.price);
+      if (viol > 0) {
+        violatingPlans += 1;
+        detail.push(`${p.name}@±${(band * 100).toFixed(0)}%: ${viol} inversion(s)`);
+      }
+    }
+  }
+  assert(
+    violatingPlans === 0,
+    `every feasible fleet plan must obey the loss-monotone invariant; ${violatingPlans} violate: ${detail.join("; ")}`,
+  );
+});
+
+// ── Frozen Divine Order fixture (the owner's exact staged case) ──────────
+// Price $766.92, %10 tag, LIVE pool + 3 ADDED sub-price cards (Blastoise 299.99,
+// Aerodactyl V 111.02, Acerola's Mischief 38.18, all new ⇒ live weight 0) + 3
+// PINS (Shining Mewtwo 24265.42→0.015%, Lugia 11879.16→0.075%, Rayquaza
+// 8284.34→0.50%). The pins + added cards force a loss mean above what any
+// monotone layout can reach, so the plan must REFUSE (`loss-nonmonotone`) — never
+// ship the ascending scramble the owner screenshotted.
+const DIVINE_ORDER_VALUES = [
+  24265.42, 11879.16, 8284.34, 4800, 4052.25, 3247.24, 2092.74, 815.65, 562.22, 17.54,
+  299.99, 111.02, 38.18,
+];
+const DIVINE_ORDER_LIVE_W = [
+  300, 1200, 7500, 19500, 22000, 24500, 25000, 200000, 200000, 500000, 0, 0, 0,
+];
+const DIVINE_ORDER_PINS = [
+  { index: 0, share: 0.015 / 100 },
+  { index: 1, share: 0.075 / 100 },
+  { index: 2, share: 0.5 / 100 },
+];
+
+check("P12 Divine Order: the pinned+added scramble is REFUSED, never shipped ascending", () => {
+  const cards = DIVINE_ORDER_VALUES.map((v) => ({ value: v }));
+  // The retune runs a price search; every candidate must either be a clean plan
+  // OR the loss-nonmonotone refusal — NEVER a shipped ascending loss band. Probe
+  // the whole ±60% band the wide-probe uses.
+  const search = searchBestPriceForCleanSnap({
+    cards,
+    basePrice: 766.92,
+    targetEdge: 0.1099,
+    targetWinRate: 0.1,
+    winRateTol: 0.02,
+    currentWeights: DIVINE_ORDER_LIVE_W,
+    maxPriceChangePct: 0.6,
+    disperseLoss: true,
+    holdWinRate: true,
+    pinnedShares: DIVINE_ORDER_PINS,
+  } as Parameters<typeof searchBestPriceForCleanSnap>[0]);
+  const r = search.bestResult;
+  const pinnedIdx = new Set(DIVINE_ORDER_PINS.map((p) => p.index));
+  if (!("error" in r)) {
+    // If a plan came back at all, it MUST obey the invariant (0 inversions) —
+    // the engine must never ship the ascending scramble.
+    const viol = lossMonotoneViolations(DIVINE_ORDER_VALUES, r.weights, search.bestPrice, pinnedIdx);
+    assert(viol === 0, `a shipped Divine Order plan must be monotone; got ${viol} inversion(s) at $${search.bestPrice.toFixed(2)}`);
+  } else {
+    // The honest outcome for this pool: an HONEST refusal (a structured limit
+    // that routes to the pool-edit path) — never a shipped ascending band. Both
+    // `loss-nonmonotone` (a mid-band price whose loss layout can't be ordered)
+    // and `pins-infeasible` (the base price's EV wall) are honest refusals; the
+    // load-bearing assertion is that a refusal came back, not a scramble.
+    assert(
+      r.limit.kind === "loss-nonmonotone" || r.limit.kind === "pins-infeasible",
+      `Divine Order must refuse honestly (loss-nonmonotone / pins-infeasible); got '${r.limit.kind}'`,
+    );
+  }
+});
+
+check("P12 Divine Order (direct solve at base price): refuses loss-nonmonotone, never scrambles", () => {
+  const cards = DIVINE_ORDER_VALUES.map((v) => ({ value: v }));
+  const shaped = shapeWeights({
+    cards,
+    price: 819.66, // the price the search picked pre-fix — where the scramble surfaced
+    targetEdge: 0.1099,
+    targetWinRate: 0.1,
+    winRateTol: 0.02,
+    currentWeights: DIVINE_ORDER_LIVE_W,
+    disperseLoss: true,
+    holdWinRate: true,
+    pinnedShares: DIVINE_ORDER_PINS,
+  });
+  const pinnedIdx = new Set(DIVINE_ORDER_PINS.map((p) => p.index));
+  if (!("error" in shaped)) {
+    const viol = lossMonotoneViolations(DIVINE_ORDER_VALUES, shaped.weights, 819.66, pinnedIdx);
+    assert(viol === 0, `a shipped plan must be monotone; got ${viol} inversion(s)`);
+  } else {
+    assert(
+      shaped.limit.kind === "loss-nonmonotone",
+      `must refuse loss-nonmonotone; got '${shaped.limit.kind}'`,
+    );
+  }
+});
+
+check("P12 enforceLossMonotone: a healthy (already-monotone) plan is a byte-identical no-op", () => {
+  // 9-5's dispersed plan is monotone (fleet survey: 0 violations) — the enforce
+  // must not perturb it (changed === false, weights unchanged).
+  const out = solve(NINE_FIVE, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
+  assert(out.weights !== null && out.price !== null, "9-5 feasible");
+  const res = enforceLossMonotone({
+    values: NINE_FIVE.values,
+    weights: out.weights!,
+    price: out.price!,
+  });
+  assert(res.ok, "9-5 monotone layout is feasible");
+  assert(!res.changed, "a healthy plan is not perturbed by the enforce (byte-identical)");
+  assert(
+    res.weights.every((w, i) => w === out.weights![i]),
+    "the enforce returned the input weights unchanged",
+  );
+});
+
+check("P12 enforceLossMonotone: an ascending synthetic loss band is repaired to non-increasing (mass held)", () => {
+  // Values ascending, weights ascending (the scramble shape). The cheapest must
+  // end up ≥ the pricier ones (buffer exempt); total mass held to the unit.
+  const values = [10, 20, 30, 40, 50];
+  const weights = [100, 200, 300, 400, 900]; // 900 = buffer (argmax); 100..400 ascending (inverted)
+  const before = lossMonotoneViolations(values, weights, 1000);
+  assert(before > 0, "the synthetic band starts non-monotone");
+  const res = enforceLossMonotone({ values, weights, price: 1000 });
+  assert(res.ok && res.changed, "the band is repairable and was repaired");
+  const massBefore = weights.reduce((a, b) => a + b, 0);
+  const massAfter = res.weights.reduce((a, b) => a + b, 0);
+  assert(massBefore === massAfter, `loss-band mass held exactly (${massBefore} vs ${massAfter})`);
+  const after = lossMonotoneViolations(values, res.weights, 1000);
+  assert(after === 0, `repaired band is monotone (0 violations, was ${before})`);
 });
 
 // ════════════════════════════════════════════════════════════════════════

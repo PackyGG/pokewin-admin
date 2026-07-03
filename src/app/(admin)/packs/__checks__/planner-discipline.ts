@@ -26,6 +26,7 @@ import {
 import {
   searchBestPriceForCleanSnap,
   computePackRisk,
+  enforceLossMonotone,
   RETUNE_PRICE_BUDGET_DEFAULT_PCT,
   RETUNE_MAX_PRICE_CHANGE_PCT,
   WINRATE_HOLD_BAND,
@@ -330,6 +331,63 @@ check("Tails? ±10%: loss-mass DISPERSION turns complaint B HEALTHY (the fix), e
     afterTails.edge >= beforeTails.edge - 0.0006 - 1e-9,
     `dispersion never drops edge below live (${(afterTails.edge * 100).toFixed(3)}% vs live ${(beforeTails.edge * 100).toFixed(3)}%)`,
   );
+});
+
+// ── 2b. DISPERSE path never emits an ASCENDING loss band (owner rule) ─────
+// The disperse path was the culprit in the "10% Divine Order" scramble: the
+// affine min-L2 loss re-spread slopes UP in value (b>0) when the required loss
+// mean sits above the band's uniform mean, producing a rich loss card likelier
+// than a cheaper one. The engine now enforces the loss-monotone invariant on the
+// FINAL vector (buffer exempt), so EVERY disperse-path plan reads monotone or is
+// refused — never shipped ascending.
+function bufExemptLossViol(values: number[], weights: number[], price: number): number {
+  const total = weights.reduce((a, b) => a + (b > 0 ? b : 0), 0);
+  if (!(total > 0)) return 0;
+  const loss = values.map((v, i) => ({ v, w: weights[i]! })).filter((x) => x.v > 0 && x.v < price && x.w > 0);
+  if (loss.length < 2) return 0;
+  let buf = 0;
+  for (let k = 1; k < loss.length; k++) {
+    if (loss[k]!.w > loss[buf]!.w || (loss[k]!.w === loss[buf]!.w && loss[k]!.v < loss[buf]!.v)) buf = k;
+  }
+  const chain = loss.filter((_, k) => k !== buf).sort((a, b) => a.v - b.v);
+  let viol = 0;
+  for (let k = 0; k + 1 < chain.length; k++) if (chain[k]!.w < chain[k + 1]!.w - 1e-9) viol += 1;
+  return viol;
+}
+
+check("loss-monotone: the DISPERSE path never ships an ascending loss band (fleet, both bands)", () => {
+  const fleet = [CHAOS, TAILS, CAPTIVE, BIDOOF, HEAVY_HITTERS, THREE_BLADES, TRASH, PROFIT_NINJA, SNACK_TIME];
+  for (const p of fleet) {
+    for (const band of [RETUNE_PRICE_BUDGET_DEFAULT_PCT, RETUNE_MAX_PRICE_CHANGE_PCT]) {
+      const out = solve(p, band, true);
+      if (out.price === null || out.planned === null) continue; // refused = honest (no plan)
+      const weights = (out.r as { weights: number[] }).weights;
+      const viol = bufExemptLossViol(p.values, weights, out.price);
+      assert(viol === 0, `${p.name}@±${(band * 100).toFixed(0)}%: shipped ${viol} loss inversion(s)`);
+    }
+  }
+});
+
+check("enforceLossMonotone: EV-forced ascending band (no monotone layout) is refused, not shipped", () => {
+  // A synthetic loss band with a real inversion in the non-buffer chain: the
+  // ascending scramble the affine dispersion produces. With the buffer being the
+  // argmax ($40 at 500), the remaining chain [10:1, 20:5, 30:50] ASCENDS in
+  // value → an inversion the enforce must repair (mass held) or refuse.
+  const values = [10, 20, 30, 40];
+  const inverted = [1, 5, 50, 500]; // chain 10:1 20:5 30:50 ascends → inversion, buffer=40
+  const before = bufExemptLossViol(values, inverted, 1000);
+  assert(before > 0, "the synthetic band starts non-monotone");
+  const res = enforceLossMonotone({ values, weights: inverted, price: 1000 });
+  // Either a valid repair (monotone, mass held) OR an honest refusal — never
+  // returns the ascending input as "ok + unchanged".
+  if (res.ok && res.changed) {
+    assert(bufExemptLossViol(values, res.weights, 1000) === 0, "a repair must be monotone");
+    const m0 = inverted.reduce((a, b) => a + b, 0);
+    const m1 = res.weights.reduce((a, b) => a + b, 0);
+    assert(m0 === m1, `mass held (${m0} vs ${m1})`);
+  } else {
+    assert(!res.ok, "an unrepairable band is flagged ok:false, never silently shipped");
+  }
 });
 
 // ── 3. Captive — DEGENERATE at the default budget (floor pins) ──────────
