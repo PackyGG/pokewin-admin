@@ -2329,6 +2329,33 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     : requestedWinRate;
   const evTargetFree = evTarget - pinnedEv;
 
+  // ── Pins EV-bounds refusal (checked FIRST — before the band-structure
+  // errors, whose legacy kinds would mis-name a budget the PINS blew) ──────
+  // The free pool can only contribute `freeMass · [minValue, maxValue]` of
+  // EV; when the pin-adjusted budget falls outside that, no band structure
+  // could ever help — the pins over/under-shoot the EV budget and the
+  // refusal quantifies by how much.
+  if (
+    hasPins &&
+    (evTargetFree < freeMass * minValue - tol ||
+      evTargetFree > freeMass * maxValue + tol)
+  ) {
+    const tooLowFree = evTargetFree < freeMass * minValue;
+    const missEv = tooLowFree
+      ? freeMass * minValue - evTargetFree
+      : evTargetFree - freeMass * maxValue;
+    const missPp = (missEv / price) * 100;
+    return tooLowFree
+      ? pinsRefusal(
+          `the pins put too much value in the pool: even the cheapest layout of the unpinned cards leaves EV $${missEv.toFixed(4)} (≈${missPp.toFixed(3)}pp of edge) ABOVE the budget — the edge would land below the ${(targetEdge * 100).toFixed(2)}% target.`,
+          `Lower a pinned win-card chance (free ~$${missEv.toFixed(4)} of EV), raise the price — or build the below-target experiment deliberately in Drafts.`,
+        )
+      : pinsRefusal(
+          `the pins leave EV $${missEv.toFixed(4)} (≈${missPp.toFixed(3)}pp of edge) SHORT of the budget — the plan would land beyond the accepted margin above the ${(targetEdge * 100).toFixed(2)}% edge target.`,
+          `Shift ~$${missEv.toFixed(4)} of EV into the pins (raise a pinned winner's chance or lower a pinned dust chance), or lower the price.`,
+        );
+  }
+
   // ── HARD limit 1: need at least one win/grail card to make ANY win-rate ──
   if (grail.length + win.length === 0 && hasPins && pinnedWinShare > tol) {
     // The pins carry win mass, so the pack DOES have winners — the legacy
@@ -2439,30 +2466,13 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // ── HARD limit 3: required ev* must lie within the pool's value range ──
   // (Same bound logic as computeOddsForTargetEv: a normalized mix can only land
   // between the pool min and max — no choice of weights can escape that range.)
-  // With pins the FREE pool contributes `freeMass · [minValue, maxValue]` of
-  // EV toward the pin-adjusted budget `evTargetFree` (legacy-identical when no
-  // pins: freeMass 1, evTargetFree = evTarget) — and a miss is reported as the
-  // pins-infeasible arm with the over/undershoot quantified.
+  // With pins this can no longer be reached — the pin-adjusted bound check
+  // above already returned the pins-infeasible arm — so the legacy error
+  // below stays verbatim (freeMass 1, evTargetFree = evTarget without pins).
   if (
     evTargetFree < freeMass * minValue - tol ||
     evTargetFree > freeMass * maxValue + tol
   ) {
-    const tooLowFree = evTargetFree < freeMass * minValue;
-    if (hasPins) {
-      const missEv = tooLowFree
-        ? freeMass * minValue - evTargetFree
-        : evTargetFree - freeMass * maxValue;
-      const missPp = (missEv / price) * 100;
-      return tooLowFree
-        ? pinsRefusal(
-            `the pins put too much value in the pool: even the cheapest layout of the unpinned cards leaves EV $${missEv.toFixed(4)} (≈${missPp.toFixed(3)}pp of edge) ABOVE the budget — the edge would land below the ${(targetEdge * 100).toFixed(2)}% target.`,
-            `Lower a pinned win-card chance (free ~$${missEv.toFixed(4)} of EV), raise the price — or build the below-target experiment deliberately in Drafts.`,
-          )
-        : pinsRefusal(
-            `the pins leave EV $${missEv.toFixed(4)} (≈${missPp.toFixed(3)}pp of edge) SHORT of the budget — the plan would land beyond the accepted margin above the ${(targetEdge * 100).toFixed(2)}% edge target.`,
-            `Shift ~$${missEv.toFixed(4)} of EV into the pins (raise a pinned winner's chance or lower a pinned dust chance), or lower the price.`,
-          );
-    }
     const tooLow = evTarget < minValue;
     return {
       error: `Target EV $${evTarget.toFixed(4)} is out of range; pool values span $${minValue.toFixed(2)}–$${maxValue.toFixed(2)}.`,

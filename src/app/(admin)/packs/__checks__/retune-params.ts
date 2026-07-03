@@ -39,6 +39,7 @@
 
 import {
   buildRetuneSearchParams,
+  mapPinnedOddsToShares,
   type RetuneSearchInputs,
 } from "../_lib/retune-params";
 import {
@@ -177,6 +178,12 @@ function writeArmSends(i: RetuneSearchInputs): Record<string, unknown> {
     maxPriceChangePct: RETUNE_MAX_PRICE_CHANGE_PCT,
     upwardPriceExtensionPct: 0,
     ...(tagged ? { taggedWinRate: i.targetWinRate } : {}),
+    // Owner pins (Retune V2): the write threads {cardId, pct} pins through the
+    // SAME builder as the plan; the emitted solver vector is {index, share},
+    // resolved against the SAME cards array and sorted by index.
+    ...(i.pinnedOdds !== undefined && i.pinnedOdds.length > 0
+      ? { pinnedShares: mapPinnedOddsToShares(i.cards, i.pinnedOdds) }
+      : {}),
   };
 }
 
@@ -279,6 +286,62 @@ check("tagged gate forces winRateTol = TAGGED_WINRATE_TOLERANCE (LAW 15); untagg
   assert(
     pinnedAway.winRateTol === 0.02,
     "pinned-away-from-tag keeps the soft tolerance (tagged mode fully off)",
+  );
+});
+
+// ── 7c. Owner pins (Retune V2) — plan≡write INCLUDING the pin vector ─────
+check("pinned staged fixture: builder deep-equals the send incl. pinnedShares (sorted by index)", () => {
+  const pinnedStaged: RetuneSearchInputs = {
+    cards: [
+      { value: 0.4, cardId: "c-dust" },
+      { value: 3.1, cardId: "c-win" },
+      { value: 55, cardId: "c-grail" },
+    ],
+    basePrice: 3.33,
+    targetEdge: 0.1099,
+    targetWinRate: 0.2,
+    maxWinCap: 333,
+    nearMissMin: 0.1,
+    winRateTol: 0.02,
+    currentWeights: [910000, 89000, 0],
+    intendedHitRate: null,
+    // Deliberately UNSORTED input — the emitted vector must be index-sorted
+    // so plan and write are deep-equal regardless of pin insertion order.
+    pinnedOdds: [
+      { cardId: "c-grail", pct: 0.05 },
+      { cardId: "c-dust", pct: 40 },
+    ],
+  };
+  const built = buildRetuneSearchParams("staged", pinnedStaged);
+  deepEqual(built, writeArmSends(pinnedStaged));
+  const shares = (built as Record<string, unknown>).pinnedShares as {
+    index: number;
+    share: number;
+  }[];
+  assert(Array.isArray(shares) && shares.length === 2, "two pins emitted");
+  assert(
+    shares[0]!.index === 0 && shares[1]!.index === 2,
+    "pinnedShares must be sorted by card index",
+  );
+  assert(
+    shares[0]!.share === 0.4 && shares[1]!.share === 0.0005,
+    "pct → share is pct/100 exactly",
+  );
+});
+
+check("no pins → the pinnedShares key is ABSENT (legacy param objects byte-identical)", () => {
+  const built = buildRetuneSearchParams("live", liveUntagged);
+  assert(
+    !("pinnedShares" in built),
+    "pinnedShares must be absent when no pins exist",
+  );
+  const emptyPins = buildRetuneSearchParams("live", {
+    ...liveUntagged,
+    pinnedOdds: [],
+  });
+  assert(
+    !("pinnedShares" in emptyPins),
+    "an EMPTY pinnedOdds array must also emit no key",
   );
 });
 
