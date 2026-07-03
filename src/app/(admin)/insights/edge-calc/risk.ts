@@ -272,6 +272,14 @@ export function computePackRiskFromAggregates(input: {
 
 // ─── Weight shaping (inverse solver) ──────────────────────────────────
 
+/** One owner-pinned card-odds entry — see {@link ShapeWeightsInput.pinnedShares}. */
+export type ShapeWeightsPinnedShare = {
+  /** Index into `cards`. */
+  index: number;
+  /** EXACT probability share as a fraction of TOTAL pool mass (0 < share ≤ 1). */
+  share: number;
+};
+
 export type ShapeWeightsInput = {
   cards: { value: number }[];
   price: number;
@@ -319,6 +327,29 @@ export type ShapeWeightsInput = {
    * policy).
    */
   winRateIsHard?: boolean;
+  /**
+   * Owner-pinned EXACT per-card odds (Retune V2 pins). Each entry holds the
+   * card at `cards[index]` at EXACTLY `share` (a fraction of the TOTAL pool
+   * mass) through the whole pipeline — solve, quantize AND the clean-ladder
+   * snap: a pin is an owner-chosen number, exempt from ladder membership, so
+   * the snap only ever moves unpinned cards and picks its buffer among them.
+   * The pinned mass + EV are subtracted up-front and the residual pool solves
+   * to the residual EV target with all the existing machinery (bands,
+   * anti-inflation anchor, tag hardness, one-sided-up acceptance, quantize)
+   * operating on the remainder. On a hard-tag solve, pinned WIN-band shares
+   * count toward the tag sum and the remaining win cards absorb the residual
+   * so the tag stays exact.
+   *
+   * Pins that make the request impossible come back as the structured
+   * `pins-infeasible` limit (data, never a throw): a pin the max-win-cap
+   * pre-filter would drop (carries the raise-cap remedy), pins overshooting a
+   * hard tag, pins forcing the edge below target (deliberate below-target
+   * pools live in the Drafts flow) or above the accepted band, and pins
+   * pushing EV outside the residual pool's reach — each with a computable
+   * suggestion quantifying the over/undershoot. Omit (or pass an empty
+   * array) for the legacy behavior — byte-identical.
+   */
+  pinnedShares?: ShapeWeightsPinnedShare[];
 };
 
 /**
@@ -401,6 +432,10 @@ export type ShapeWeightsSuccess = {
  * - `no-dust-mass`          — win + near-miss allocation consumed all mass.
  * - `ev-unreachable-for-split` — target EV outside the chosen split's reachable range.
  * - `edge-unreachable`      — couldn't push edge to target within the bump budget.
+ * - `pins-infeasible`       — owner-pinned odds make the request impossible
+ *                             (cap-dropped pin, tag/EV over- or undershoot,
+ *                             edge out of the accepted band, malformed pin);
+ *                             the suggestion quantifies the miss.
  */
 export type ShapeWeightsLimitKind =
   | "invalid-price"
@@ -414,7 +449,8 @@ export type ShapeWeightsLimitKind =
   | "no-dust-cards"
   | "no-dust-mass"
   | "ev-unreachable-for-split"
-  | "edge-unreachable";
+  | "edge-unreachable"
+  | "pins-infeasible";
 
 /**
  * Structured description of the HARD limit that made the request genuinely
@@ -1597,6 +1633,21 @@ function snapTaggedPer100k(input: {
   /** Acceptance ceiling above target (SNAP window + any one-sided excess). */
   edgeTolAbove: number;
   grailGuard: (cand: number[]) => boolean;
+  /**
+   * Owner-pinned slots (Retune V2 pins): FROZEN at exactly `units` (on the
+   * caller's `scale` grid) — excluded from every ladder/rounding/repair pass
+   * and from buffer selection, while their units still count toward the band
+   * sums (a pinned WIN card's units are part of the exact tag total). Omit
+   * for the legacy per-100k behavior — byte-identical.
+   */
+  pins?: { index: number; units: number }[];
+  /**
+   * Total-weight grid (default 100,000 — the per-100k house ladder). Pinned
+   * solves pass the finer PIN grid (1e9); the 0.001% rung then spans
+   * `scale / 100_000` units so unpinned cards stay ON the house ladder while
+   * pins keep their exact sub-rung values.
+   */
+  scale?: number;
 }): { weights: number[]; risk: PackRisk } | null {
   const { values, price, tag, targetEdge, edgeTolAbove } = input;
   const n = values.length;
@@ -1605,60 +1656,90 @@ function snapTaggedPer100k(input: {
   for (const w of input.weights) if (Number.isFinite(w) && w > 0) total += w;
   if (!(total > 0)) return null;
 
-  const SCALE = 100_000;
+  const SCALE = input.scale ?? 100_000;
+  // Units per 0.001% rung (1 on the legacy per-100k grid).
+  const RUNG = SCALE / 100_000;
+  if (!Number.isInteger(RUNG) || RUNG < 1) return null;
+  const pinnedUnitsByIdx = new Map<number, number>(
+    (input.pins ?? []).map((p) => [p.index, p.units]),
+  );
   const W = Math.round(tag * SCALE);
-  if (W < 1) return null; // tag below 0.001% — unrepresentable on this grid
+  if (W < 1) return null; // tag below the grid resolution — unrepresentable
 
   const winIdx: number[] = [];
   const nmIdx: number[] = [];
   const dustIdx: number[] = [];
+  let pinnedWinUnits = 0;
   for (let i = 0; i < n; i++) {
     const w = input.weights[i]!;
     const v = values[i]!;
     if (!(w > 0) || !(v > 0)) continue; // cap-dropped / zeroed slots stay 0
+    if (pinnedUnitsByIdx.has(i)) {
+      if (v >= price) pinnedWinUnits += pinnedUnitsByIdx.get(i)!;
+      continue; // pinned slots are frozen — never laddered, never the buffer
+    }
     if (v >= price) winIdx.push(i);
     else if (v >= 0.5 * price) nmIdx.push(i);
     else dustIdx.push(i);
   }
-  if (winIdx.length === 0 || dustIdx.length === 0) return null;
+  // The buffer must be a FREE dust card; the win band needs a FREE winner to
+  // absorb the exact tag landing UNLESS pinned winners alone already sit on
+  // it (legacy no-pins behavior: an empty win band is always a null).
+  if (dustIdx.length === 0) return null;
+  if (winIdx.length === 0) {
+    if (pinnedUnitsByIdx.size === 0) return null;
+    if (Math.abs(pinnedWinUnits - W) > TAGGED_WINRATE_TOLERANCE * SCALE + 1e-9) {
+      return null;
+    }
+  }
 
   const pctUnits = (i: number): number => (input.weights[i]! / total) * SCALE;
   const u = new Array<number>(n).fill(0);
+  for (const [i, units] of pinnedUnitsByIdx) u[i] = units;
 
-  // ── Win ladder (value-DESC): jackpot on the 1-in-N menu, others rounded,
-  //    odds non-increasing in value (cheaper card ⇒ ≥ weight). ──
+  // ── Win ladder (value-DESC, FREE winners): jackpot on the 1-in-N menu,
+  //    others rounded to the rung grid, odds non-increasing in value. ──
   const winDesc = [...winIdx].sort((a, b) => values[b]! - values[a]!);
-  const jack = winDesc[0]!;
-  {
+  if (winDesc.length > 0) {
+    const jack = winDesc[0]!;
+    // The menu styles the HEADLINE jackpot — only when no pinned win card is
+    // pricier (a pinned pricier card IS the headline, owner-styled already).
+    const jackIsHeadline = ![...pinnedUnitsByIdx.keys()].some(
+      (i) =>
+        input.weights[i]! > 0 &&
+        values[i]! >= price &&
+        values[i]! > values[jack]!,
+    );
     const p = pctUnits(jack);
     // Prefer the largest 1-in-N menu rung that does NOT exceed the precise
     // share (the snap may round the jackpot DOWN to a round ticket count,
     // never up) — but ONLY in the rare-jackpot regime (≤ 1%, where the rain
     // menu lives) and only when the rung keeps ≥ 70% of the precise odds
     // (never silently halve an advertised jackpot). Else the plain grid
-    // round; the grid minimum (1 unit = 0.001%) applies last.
-    let pick = Math.max(1, Math.round(p));
-    if (p <= 1000) {
+    // round; the grid minimum (one rung) applies last.
+    let pick = Math.max(RUNG, Math.round(p / RUNG) * RUNG);
+    if (jackIsHeadline && p <= 1000 * RUNG) {
       let menuPick = 0;
       for (const m of JACKPOT_MENU_PER_100K) {
-        if (m <= p + 1e-9 && m > menuPick) menuPick = m;
+        const scaled = m * RUNG;
+        if (scaled <= p + 1e-9 && scaled > menuPick) menuPick = scaled;
       }
       if (menuPick >= 0.7 * p) pick = menuPick;
-      else if (menuPick === 0) pick = Math.max(1, Math.floor(p));
+      else if (menuPick === 0) pick = Math.max(RUNG, Math.floor(p / RUNG) * RUNG);
     }
     u[jack] = pick;
-  }
-  for (let k = 1; k < winDesc.length; k++) {
-    const i = winDesc[k]!;
-    u[i] = Math.max(1, Math.round(pctUnits(i)));
-    const prev = winDesc[k - 1]!;
-    if (u[i]! < u[prev]!) u[i] = u[prev]!; // repair: cheaper never rarer
-  }
-  // Land the win-band sum EXACTLY on W via the cheapest winner (the
-  // anti-jackpot — the same card the solver's RC4 knob privileges).
-  {
+    for (let k = 1; k < winDesc.length; k++) {
+      const i = winDesc[k]!;
+      u[i] = Math.max(RUNG, Math.round(pctUnits(i) / RUNG) * RUNG);
+      const prev = winDesc[k - 1]!;
+      if (u[i]! < u[prev]!) u[i] = u[prev]!; // repair: cheaper never rarer
+    }
+    // Land the win-band sum EXACTLY on W via the cheapest FREE winner (the
+    // anti-jackpot — the same card the solver's RC4 knob privileges). Pinned
+    // win units are part of the sum, so an off-rung pin makes this absorber
+    // carry the off-grid residual — the tag stays exact either way.
     const cheapest = winDesc[winDesc.length - 1]!;
-    let sumWin = 0;
+    let sumWin = pinnedWinUnits;
     for (const i of winIdx) sumWin += u[i]!;
     const adjusted = u[cheapest]! + (W - sumWin);
     const floorForCheapest =
@@ -1667,17 +1748,17 @@ function snapTaggedPer100k(input: {
     u[cheapest] = adjusted;
   }
 
-  // ── Near-miss band: rounded verbatim (dead-for-tag cards keep the 1-unit
+  // ── Near-miss band: rounded verbatim (dead-for-tag cards keep the one-rung
   //    grid minimum — 0.001%, the "~zero mass" the ruleset assigns them). ──
-  for (const i of nmIdx) u[i] = Math.max(1, Math.round(pctUnits(i)));
+  for (const i of nmIdx) u[i] = Math.max(RUNG, Math.round(pctUnits(i) / RUNG) * RUNG);
 
-  // ── Dust: the largest-mass dust card is THE residual buffer. ──
+  // ── Dust: the largest-mass FREE dust card is THE residual buffer. ──
   let buffer = dustIdx[0]!;
   for (const i of dustIdx) {
     if (input.weights[i]! > input.weights[buffer]!) buffer = i;
   }
   for (const i of dustIdx) {
-    if (i !== buffer) u[i] = Math.max(1, Math.round(pctUnits(i)));
+    if (i !== buffer) u[i] = Math.max(RUNG, Math.round(pctUnits(i) / RUNG) * RUNG);
   }
   let nonBuffer = 0;
   for (let i = 0; i < n; i++) if (i !== buffer) nonBuffer += u[i]!;
@@ -1691,12 +1772,14 @@ function snapTaggedPer100k(input: {
       price,
     });
 
-  // ── Edge landing: analytic integer transfer inside the dust band. ──
+  // ── Edge landing: analytic integer transfer inside the FREE dust band. ──
   // EV is linear in a mass transfer x between two dust values (total + win
   // band unchanged): moving x units from the most expensive dust card to the
   // cheapest lowers EV by x·(v_hi − v_lo)/SCALE ⇒ raises edge. Solve the
   // integer x landing edge ∈ [target, target + tol]; pools with a single dust
-  // value have zero freedom (accept only if already inside the window).
+  // value have zero freedom (accept only if already inside the window). The
+  // transfer moves whole RUNGs so both endpoints stay on the house ladder
+  // (identical to the legacy unit transfer on the per-100k grid).
   let cand = u;
   let r = riskOf(cand);
   const eLo = targetEdge - 1e-9;
@@ -1718,7 +1801,13 @@ function snapTaggedPer100k(input: {
     const a = Math.max(xMin, xFloor);
     const b = Math.min(xMax, xCeil);
     if (a > b) return null;
-    const x = a <= 0 && 0 <= b ? 0 : Math.abs(a) < Math.abs(b) ? a : b;
+    let x = a <= 0 && 0 <= b ? 0 : Math.abs(a) < Math.abs(b) ? a : b;
+    // Rung-align the chosen endpoint INWARD (no-op on the legacy grid where
+    // RUNG = 1); an empty rung-aligned window falls back to precise weights.
+    if (x !== 0 && RUNG > 1) {
+      x = x > 0 ? Math.ceil(a / RUNG) * RUNG : Math.floor(b / RUNG) * RUNG;
+      if (x < a || x > b) return null;
+    }
     if (x !== 0) {
       const next = cand.slice();
       next[lo] = next[lo]! + x;
@@ -1733,6 +1822,142 @@ function snapTaggedPer100k(input: {
   if (Math.abs(r.winRate - tag) > TAGGED_WINRATE_TOLERANCE + 1e-12) return null;
   if (!input.grailGuard(cand as number[])) return null;
   return { weights: cand.slice(), risk: r };
+}
+
+/**
+ * Pin-aware clean-ladder snap for UNTAGGED (or off-tag) pinned pools. Works on
+ * the PIN grid (`scale` units total): every FREE slot except the largest-mass
+ * free BUFFER is snapped to its log-nearest {@link CLEAN_LADDER} rung (every
+ * rung is an integer number of units on the pin grid by construction), the
+ * within-band monotonicity invariants are repaired among FREE slots only
+ * (pins are owner-chosen numbers — never moved, never compared), and the free
+ * buffer absorbs the residual so the total stays exactly `scale`. Returns the
+ * candidate weight vector or `null` when the ladder can't hold it (the caller
+ * keeps the precise weights — no regression possible). The CALLER runs the
+ * full acceptance stack (edge window, win-rate tolerance, tag gate, grail
+ * guard) before adopting.
+ */
+function snapPinnedFreeToCleanLadder(input: {
+  weights: readonly number[];
+  values: readonly number[];
+  price: number;
+  pinnedIdx: ReadonlySet<number>;
+  scale: number;
+}): number[] | null {
+  const { values, price, pinnedIdx, scale } = input;
+  const n = values.length;
+  if (!(price > 0) || !(scale > 0)) return null;
+  const unitsPerPct = scale / 100;
+
+  let pinnedUnits = 0;
+  const freeIdx: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const w = input.weights[i]!;
+    if (!(w > 0)) continue;
+    if (pinnedIdx.has(i)) {
+      pinnedUnits += w;
+      continue;
+    }
+    freeIdx.push(i);
+  }
+  if (freeIdx.length === 0) return null;
+
+  // Buffer = the largest-mass FREE slot (typically the dust card).
+  let buffer = freeIdx[0]!;
+  for (const i of freeIdx) {
+    if (input.weights[i]! > input.weights[buffer]!) buffer = i;
+  }
+
+  const nearestRungIdx = (pct: number): number => {
+    const logP = Math.log10(pct);
+    let best = 0;
+    let bestDist = Math.abs(Math.log10(CLEAN_LADDER[0]!) - logP);
+    for (let k = 1; k < CLEAN_LADDER.length; k++) {
+      const d = Math.abs(Math.log10(CLEAN_LADDER[k]!) - logP);
+      if (d < bestDist) {
+        bestDist = d;
+        best = k;
+      }
+    }
+    return best;
+  };
+
+  // Rung assignment for every free non-buffer slot.
+  const rungIdx = new Array<number>(n).fill(-1);
+  for (const i of freeIdx) {
+    if (i === buffer) continue;
+    const pct = (input.weights[i]! / scale) * 100;
+    if (!(pct > 0)) continue;
+    rungIdx[i] = nearestRungIdx(pct);
+  }
+
+  // Within-band monotonicity repair among FREE non-buffer slots (the same
+  // owner invariants `repairSnapMonotonicity` enforces): as value descends,
+  // probability never decreases; demote the pricier violator.
+  const grail: number[] = [];
+  const win: number[] = [];
+  const nearMiss: number[] = [];
+  const dustBand: number[] = [];
+  for (const i of freeIdx) {
+    if (i === buffer || rungIdx[i]! < 0) continue;
+    const v = values[i]!;
+    if (!(v > 0) || !Number.isFinite(v)) continue;
+    if (v >= 5 * price) grail.push(i);
+    else if (v >= price) win.push(i);
+    else if (v >= 0.5 * price) nearMiss.push(i);
+    else dustBand.push(i);
+  }
+  const byValueDesc = (a: number, b: number) => values[b]! - values[a]!;
+  grail.sort(byValueDesc);
+  win.sort(byValueDesc);
+  nearMiss.sort(byValueDesc);
+  dustBand.sort(byValueDesc);
+  for (const band of [grail, win, nearMiss, dustBand]) {
+    for (let i = band.length - 2; i >= 0; i--) {
+      const expensive = band[i]!;
+      const cheaper = band[i + 1]!;
+      while (rungIdx[expensive]! > rungIdx[cheaper]!) {
+        if (rungIdx[expensive]! === 0) return null;
+        rungIdx[expensive] = rungIdx[expensive]! - 1;
+      }
+    }
+  }
+  // Strict rarity at the grail top — ONLY when the two most-expensive grails
+  // are both free (a pinned top is the owner's number, exempt).
+  if (grail.length >= 2) {
+    const top = grail[0]!;
+    const second = grail[1]!;
+    const pinnedPricierGrail = [...pinnedIdx].some(
+      (i) => input.weights[i]! > 0 && values[i]! > values[top]!,
+    );
+    if (!pinnedPricierGrail) {
+      while (rungIdx[top]! >= rungIdx[second]!) {
+        if (rungIdx[top]! === 0) return null;
+        rungIdx[top] = rungIdx[top]! - 1;
+      }
+    }
+  }
+
+  // Assemble: pins verbatim, free non-buffer on rungs, buffer = residual.
+  const out = new Array<number>(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    if (pinnedIdx.has(i) && input.weights[i]! > 0) out[i] = input.weights[i]!;
+  }
+  let nonBufferSum = pinnedUnits;
+  for (const i of freeIdx) {
+    if (i === buffer) continue;
+    if (rungIdx[i]! < 0) {
+      out[i] = input.weights[i]!; // zero-pct defensive carry-over
+      nonBufferSum += out[i]!;
+      continue;
+    }
+    out[i] = Math.max(1, Math.round(CLEAN_LADDER[rungIdx[i]!]! * unitsPerPct));
+    nonBufferSum += out[i]!;
+  }
+  const residual = scale - nonBufferSum;
+  if (residual < 1) return null;
+  out[buffer] = residual;
+  return out;
 }
 
 /**
@@ -1805,10 +2030,215 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     };
   }
 
+  const winRateIsHard = input.winRateIsHard === true;
+
+  // ── Owner-pinned per-card odds (Retune V2 pins) ─────────────────────────
+  // Validated FIRST, fail-closed AS DATA: every refusal is the structured
+  // `pins-infeasible` limit so the workspace renders plain-words copy + a fix
+  // instead of an error boundary. A pin is an owner-chosen number — it is
+  // held EXACTLY through solve, quantize and snap (see the pinned integer
+  // grid below), and it is exempt from clean-ladder membership.
+  //
+  // PIN_SCALE — the pinned integer grid: 1 unit = 1e-7 % of the pool. Chosen
+  // so (a) any pin typed with ≤ 7 decimal places of percent is EXACT, (b)
+  // every CLEAN_LADDER rung (smallest 1e-6 %, finest base step 1.5e-6 %) is
+  // an integer number of units, and (c) the largest possible weight (< 1e9)
+  // stays under the int4 `pack_cards.weight` column bound.
+  const PIN_SCALE = 1_000_000_000;
+  const pinsIn = input.pinnedShares ?? [];
+  const hasPins = pinsIn.length > 0;
+  const pinsRefusal = (detail: string, suggestion: string): ShapeWeightsError => ({
+    error: `Pinned odds are infeasible: ${detail}`,
+    limit: { kind: "pins-infeasible", detail, suggestion },
+  });
+  const pinnedShareByIdx = new Map<number, number>();
+  if (hasPins) {
+    for (const p of pinsIn) {
+      if (
+        !Number.isInteger(p.index) ||
+        p.index < 0 ||
+        p.index >= input.cards.length
+      ) {
+        return pinsRefusal(
+          `a pin references card index ${String(p.index)}, outside this ${input.cards.length}-card pool.`,
+          "Clear the stale pin and re-plan.",
+        );
+      }
+      if (pinnedShareByIdx.has(p.index)) {
+        return pinsRefusal(
+          `card ${p.index + 1} carries two pinned values.`,
+          "Keep one pinned value per card.",
+        );
+      }
+      if (!Number.isFinite(p.share) || !(p.share > 0) || p.share > 1) {
+        return pinsRefusal(
+          `a pinned chance must sit between 0% and 100% (got ${String(
+            Number.isFinite(p.share) ? p.share * 100 : p.share,
+          )}%).`,
+          "Type a chance above 0% and at most 100%, or clear the pin.",
+        );
+      }
+      if (Math.round(p.share * PIN_SCALE) < 1) {
+        return pinsRefusal(
+          `a pinned chance of ${(p.share * 100).toExponential(2)}% is below the representable minimum (0.0000001%).`,
+          "Pin at least 0.0000001%, or clear the pin.",
+        );
+      }
+      const v = input.cards[p.index]!.value;
+      if (!(v > 0)) {
+        return pinsRefusal(
+          "the pinned card has no positive value, so it can never carry odds.",
+          "Clear the pin — the card is dropped from the solve either way.",
+        );
+      }
+      if (maxWinCap !== undefined && v > maxWinCap) {
+        // The cap pre-filter below would DROP this card before any odds are
+        // assigned — refused as data, carrying the SAME raise-cap remedy the
+        // no-win-cards cap arm suggests.
+        return pinsRefusal(
+          `the pinned $${v.toFixed(2)} card exceeds the $${maxWinCap.toFixed(2)} max-win cap — the cap filter drops it before any odds are assigned.`,
+          `Raise the pack's max-win cap above $${v.toFixed(2)} so the pinned card can stay, or clear the pin.`,
+        );
+      }
+      pinnedShareByIdx.set(p.index, p.share);
+    }
+  }
+  let pinnedMass = 0;
+  let pinnedEv = 0;
+  let pinnedWinShare = 0;
+  let pinnedNearMissShare = 0;
+  for (const [idx, share] of pinnedShareByIdx) {
+    const v = input.cards[idx]!.value;
+    pinnedMass += share;
+    pinnedEv += share * v;
+    if (v >= price) pinnedWinShare += share;
+    else if (v >= 0.5 * price) pinnedNearMissShare += share;
+  }
+  if (pinnedMass > 1 + 1e-9) {
+    return pinsRefusal(
+      `the pinned chances add up to ${(pinnedMass * 100).toFixed(4)}% — more than 100%.`,
+      "Lower the pinned values so they sum to at most 100%.",
+    );
+  }
+  // A hard tag is an exact promise about the WIN share — pins alone must not
+  // exceed it (the remaining win cards can only ADD win mass, never subtract).
+  if (winRateIsHard && pinnedWinShare > requestedWinRate + 1e-9) {
+    return pinsRefusal(
+      `the pinned win-card chances sum to ${(pinnedWinShare * 100).toFixed(4)}%, exceeding the ${(requestedWinRate * 100).toFixed(2)}% tag by ${((pinnedWinShare - requestedWinRate) * 100).toFixed(4)}pp — the tag is exact.`,
+      "Lower the pinned win-card chances so they fit inside the tag, or clear a pin.",
+    );
+  }
+  const freeMass = hasPins ? Math.max(0, 1 - pinnedMass) : 1;
+
+  // ── Fully-pinned pool: the pins ARE the plan (no residual solve) ─────────
+  // Accepted when the edge the pins produce lands in the accepted band
+  // [target, target + ONE_SIDED_EDGE_EXCESS_TOL]; refused honestly below the
+  // target (deliberate below-target pools live in the Drafts flow) or above
+  // the band. Nothing is snapped — every number is owner-chosen.
+  if (hasPins && freeMass <= 1e-9) {
+    const unpinnedEligible = input.cards.reduce((n, c, idx) => {
+      if (pinnedShareByIdx.has(idx)) return n;
+      if (!(c.value > 0)) return n;
+      if (maxWinCap !== undefined && c.value > maxWinCap) return n;
+      return n + 1;
+    }, 0);
+    if (unpinnedEligible > 0) {
+      return pinsRefusal(
+        `the pins allocate 100% of the odds but ${unpinnedEligible} unpinned card(s) remain — they would get zero odds.`,
+        "Lower a pinned chance to leave room, pin the remaining cards explicitly, or remove them from the pool.",
+      );
+    }
+    const fullWeights = new Array<number>(input.cards.length).fill(0);
+    let unitSum = 0;
+    let largestIdx = -1;
+    for (const [idx, share] of pinnedShareByIdx) {
+      const u = Math.round(share * PIN_SCALE);
+      fullWeights[idx] = u;
+      unitSum += u;
+      if (largestIdx < 0 || u > fullWeights[largestIdx]!) largestIdx = idx;
+    }
+    // Float-rounding residual (a few units at most, ≤ ~1e-9 of mass each)
+    // folds into the largest pin — under the pin-hold contract's tolerance.
+    const residualUnits = PIN_SCALE - unitSum;
+    if (largestIdx < 0 || fullWeights[largestIdx]! + residualUnits < 1) {
+      return pinsRefusal(
+        "the pinned chances could not be laid out on the odds grid.",
+        "Re-check the pinned values, or clear a pin.",
+      );
+    }
+    fullWeights[largestIdx] = fullWeights[largestIdx]! + residualUnits;
+    let pinnedRisk = computePackRisk({
+      cards: input.cards.map((c, i) => ({ value: c.value, weight: fullWeights[i]! })),
+      price,
+    });
+    if (pinnedRisk.edge < targetEdge - 1e-9) {
+      return pinsRefusal(
+        `the pinned odds land the house edge at ${(pinnedRisk.edge * 100).toFixed(3)}% — ${((targetEdge - pinnedRisk.edge) * 100).toFixed(3)}pp below the ${(targetEdge * 100).toFixed(2)}% target. A plan never ships below its curve target.`,
+        "Shift pinned chance from winners toward cheaper cards or raise the price — deliberate below-target experiments live in the Drafts flow (hand-typed odds).",
+      );
+    }
+    if (pinnedRisk.edge > targetEdge + ONE_SIDED_EDGE_EXCESS_TOL + 1e-9) {
+      return pinsRefusal(
+        `the pinned odds land the house edge at ${(pinnedRisk.edge * 100).toFixed(3)}% — ${((pinnedRisk.edge - targetEdge) * 100).toFixed(3)}pp above the ${(targetEdge * 100).toFixed(2)}% target (accepted band +${(ONE_SIDED_EDGE_EXCESS_TOL * 100).toFixed(2)}pp).`,
+        "Shift pinned chance toward winners or lower the price.",
+      );
+    }
+    const pinnedRelaxations: ShapeWeightsRelaxation[] = [];
+    if (winRateIsHard) {
+      if (
+        Math.abs(pinnedRisk.winRate - requestedWinRate) >
+        TAGGED_WINRATE_TOLERANCE + 1e-12
+      ) {
+        return pinsRefusal(
+          `the pinned odds produce a ${(pinnedRisk.winRate * 100).toFixed(4)}% win-rate — off the exact ${(requestedWinRate * 100).toFixed(2)}% tag by ${(Math.abs(pinnedRisk.winRate - requestedWinRate) * 100).toFixed(4)}pp.`,
+          "Adjust the pinned win-card chances so they total exactly the tag.",
+        );
+      }
+    } else if (Math.abs(pinnedRisk.winRate - requestedWinRate) > winRateTol) {
+      pinnedRelaxations.push({
+        lever: "winRate",
+        requested: requestedWinRate,
+        applied: pinnedRisk.winRate,
+        reason: `Every card is pinned — the win-rate is whatever the pinned odds produce (${(pinnedRisk.winRate * 100).toFixed(2)}%).`,
+      });
+    }
+    // gcd-reduce (ratios — and therefore the pinned shares — are unchanged).
+    const present = fullWeights.filter((w) => w > 0);
+    if (present.length > 0) {
+      let g = present[0]!;
+      for (let i = 1; i < present.length; i++) g = gcd(g, present[i]!);
+      if (g > 1) {
+        for (let i = 0; i < fullWeights.length; i++) {
+          if (fullWeights[i]! > 0) fullWeights[i] = Math.round(fullWeights[i]! / g);
+        }
+        pinnedRisk = computePackRisk({
+          cards: input.cards.map((c, i) => ({ value: c.value, weight: fullWeights[i]! })),
+          price,
+        });
+      }
+    }
+    const pinnedExcess = pinnedRisk.edge - targetEdge;
+    return {
+      weights: fullWeights,
+      risk: pinnedRisk,
+      ev: pinnedRisk.ev,
+      edge: pinnedRisk.edge,
+      relaxations: pinnedRelaxations,
+      // Owner-chosen numbers everywhere — nothing unpinned remains to snap.
+      snapped: true,
+      lotterySkewApplied: false,
+      topInflationUnavoidable: false,
+      ...(pinnedExcess > 1e-9 ? { oneSidedEdgeExcess: pinnedExcess } : {}),
+    };
+  }
+
   // Index-preserving pool: drop value ≤ 0 and (if capped) value > cap.
+  // Pinned cards are HELD VERBATIM — they are not part of the free solve, so
+  // they never enter the band lists / water-fills / snap below.
   type Slot = { idx: number; value: number; band: Band };
   const slots: Slot[] = [];
   input.cards.forEach((c, idx) => {
+    if (pinnedShareByIdx.has(idx)) return;
     const v = c.value;
     if (!(v > 0)) return;
     if (maxWinCap !== undefined && v > maxWinCap) return;
@@ -1820,6 +2250,14 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     slots.push({ idx, value: v, band });
   });
 
+  if (slots.length === 0 && hasPins) {
+    // Pins hold less than 100% but no unpinned card survives to carry the
+    // rest — the residual mass has nowhere to sit.
+    return pinsRefusal(
+      `the pins leave ${(freeMass * 100).toFixed(4)}% of the odds with no unpinned card to carry it.`,
+      "Pin every card explicitly (the pins must then total exactly 100%), or clear a pin.",
+    );
+  }
   if (slots.length === 0) {
     return {
       error: "No usable cards after dropping non-positive / over-cap values.",
@@ -1879,8 +2317,41 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
         )
       : 0;
 
+  // ── Pin-adjusted residual targets ────────────────────────────────────
+  // The FREE (unpinned) pool solves to the residual of every target: pinned
+  // WIN-band shares count toward the requested win-rate (on a hard tag they
+  // count toward the tag sum — the free winners absorb only the remainder),
+  // pinned near-miss shares count toward the near-miss floor, and the pinned
+  // EV is subtracted from the EV budget. With no pins every value below is
+  // byte-identical to the legacy quantities (freeMass 1, pinned* 0).
+  let freeWinTarget = hasPins
+    ? Math.max(0, requestedWinRate - pinnedWinShare)
+    : requestedWinRate;
+  const evTargetFree = evTarget - pinnedEv;
+
   // ── HARD limit 1: need at least one win/grail card to make ANY win-rate ──
-  if (grail.length + win.length === 0) {
+  if (grail.length + win.length === 0 && hasPins && pinnedWinShare > tol) {
+    // The pins carry win mass, so the pack DOES have winners — the legacy
+    // "no winners" hard error would be wrong. If the pins already cover the
+    // whole win target, nothing is missing; otherwise a SOFT win-rate relaxes
+    // down to the pinned share, while a HARD tag refuses (the tag is exact
+    // and no unpinned winner remains to absorb the shortfall).
+    if (freeWinTarget > tol) {
+      if (winRateIsHard) {
+        return pinsRefusal(
+          `the pinned winners carry only ${(pinnedWinShare * 100).toFixed(4)}% of the ${(requestedWinRate * 100).toFixed(2)}% tag and no unpinned winner remains to absorb the other ${(freeWinTarget * 100).toFixed(4)}pp.`,
+          "Raise a pinned win-card chance (the win pins must total the tag), clear a win pin, or add a win-band card.",
+        );
+      }
+      relaxations.push({
+        lever: "winRate",
+        requested: requestedWinRate,
+        applied: pinnedWinShare,
+        reason: `Every winner is pinned — the win-rate is the pinned ${(pinnedWinShare * 100).toFixed(2)}% (no unpinned winner left to host more).`,
+      });
+      freeWinTarget = 0;
+    }
+  } else if (grail.length + win.length === 0) {
     // Two distinct sub-cases: (a) the cap pre-filter stripped what would have
     // been win/grail cards, or (b) the pool intrinsically has no card ≥ price.
     if (maxWinCap !== undefined && capDroppedCount > 0) {
@@ -1929,17 +2400,20 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
       nonGrail.length > 0
         ? Math.min(...nonGrail.map((s) => s.value))
         : cheapestGrail; // pool is grail-only, no slack possible
+    // FREE-pool quantities (legacy-identical without pins): the free win mass
+    // on the cheapest free grail + the rest of the FREE mass on the cheapest
+    // free non-grail, compared against the pin-adjusted EV budget.
     const minEvAtWinRate =
-      requestedWinRate * cheapestGrail + (1 - requestedWinRate) * cheapestOther;
-    if (minEvAtWinRate > evTarget + tol) {
+      freeWinTarget * cheapestGrail + (freeMass - freeWinTarget) * cheapestOther;
+    if (minEvAtWinRate > evTargetFree + tol) {
       const exampleA = Math.max(price, 2 * price);
       const exampleB = Math.max(price, 4 * price);
       return {
-        error: `No WIN-band card: ${grail.length} jackpot card(s) ≥ $${winHi.toFixed(2)} but none in $${winLo.toFixed(2)}–$${winHi.toFixed(2)}. At ${(requestedWinRate * 100).toFixed(2)}% win-rate the min EV $${minEvAtWinRate.toFixed(2)} exceeds the target EV $${evTarget.toFixed(2)}.`,
+        error: `No WIN-band card: ${grail.length} jackpot card(s) ≥ $${winHi.toFixed(2)} but none in $${winLo.toFixed(2)}–$${winHi.toFixed(2)}. At ${(freeWinTarget * 100).toFixed(2)}% win-rate the min EV $${minEvAtWinRate.toFixed(2)} exceeds the target EV $${evTargetFree.toFixed(2)}.`,
         feasibility: { ...feasibility, minEvAtWinRate, cheapestGrail, cheapestOther },
         limit: {
           kind: "no-win-band-card",
-          detail: `Pool has ${grail.length} jackpot card(s) ≥ $${winHi.toFixed(2)} but no small-win card in $${winLo.toFixed(2)}–$${winHi.toFixed(2)}. With a ${(requestedWinRate * 100).toFixed(2)}% target win-rate, the math can't simultaneously hit the target edge ${(targetEdge * 100).toFixed(2)}% — even the cheapest jackpot (≈$${cheapestGrail.toFixed(2)}) carries too much value for the ${(requestedWinRate * 100).toFixed(2)}% win-rate.`,
+          detail: `Pool has ${grail.length} jackpot card(s) ≥ $${winHi.toFixed(2)} but no small-win card in $${winLo.toFixed(2)}–$${winHi.toFixed(2)}. With a ${(freeWinTarget * 100).toFixed(2)}% target win-rate, the math can't simultaneously hit the target edge ${(targetEdge * 100).toFixed(2)}% — even the cheapest jackpot (≈$${cheapestGrail.toFixed(2)}) carries too much value for the ${(freeWinTarget * 100).toFixed(2)}% win-rate.`,
           suggestion: `Add 1-2 cards priced between $${winLo.toFixed(2)} and $${winHi.toFixed(2)} (e.g. one around $${exampleA.toFixed(2)} and one around $${exampleB.toFixed(2)}). The retune will distribute weights for you.`,
           suggestedRange: { min: winLo, max: winHi },
         },
@@ -1965,7 +2439,30 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // ── HARD limit 3: required ev* must lie within the pool's value range ──
   // (Same bound logic as computeOddsForTargetEv: a normalized mix can only land
   // between the pool min and max — no choice of weights can escape that range.)
-  if (evTarget < minValue - tol || evTarget > maxValue + tol) {
+  // With pins the FREE pool contributes `freeMass · [minValue, maxValue]` of
+  // EV toward the pin-adjusted budget `evTargetFree` (legacy-identical when no
+  // pins: freeMass 1, evTargetFree = evTarget) — and a miss is reported as the
+  // pins-infeasible arm with the over/undershoot quantified.
+  if (
+    evTargetFree < freeMass * minValue - tol ||
+    evTargetFree > freeMass * maxValue + tol
+  ) {
+    const tooLowFree = evTargetFree < freeMass * minValue;
+    if (hasPins) {
+      const missEv = tooLowFree
+        ? freeMass * minValue - evTargetFree
+        : evTargetFree - freeMass * maxValue;
+      const missPp = (missEv / price) * 100;
+      return tooLowFree
+        ? pinsRefusal(
+            `the pins put too much value in the pool: even the cheapest layout of the unpinned cards leaves EV $${missEv.toFixed(4)} (≈${missPp.toFixed(3)}pp of edge) ABOVE the budget — the edge would land below the ${(targetEdge * 100).toFixed(2)}% target.`,
+            `Lower a pinned win-card chance (free ~$${missEv.toFixed(4)} of EV), raise the price — or build the below-target experiment deliberately in Drafts.`,
+          )
+        : pinsRefusal(
+            `the pins leave EV $${missEv.toFixed(4)} (≈${missPp.toFixed(3)}pp of edge) SHORT of the budget — the plan would land beyond the accepted margin above the ${(targetEdge * 100).toFixed(2)}% edge target.`,
+            `Shift ~$${missEv.toFixed(4)} of EV into the pins (raise a pinned winner's chance or lower a pinned dust chance), or lower the price.`,
+          );
+    }
     const tooLow = evTarget < minValue;
     return {
       error: `Target EV $${evTarget.toFixed(4)} is out of range; pool values span $${minValue.toFixed(2)}–$${maxValue.toFixed(2)}.`,
@@ -1989,7 +2486,11 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // Near-miss is a feel dial, not a hard constraint. If the pool has NO
   // near-miss cards [0.5·price, price), or the requested floor can't fit the
   // mass budget, relax it down to the achievable maximum (possibly 0).
-  let nearMissMin = requestedNearMissMin;
+  // Pinned near-miss shares count toward the floor — the free pool only owes
+  // the remainder (legacy-identical without pins).
+  let nearMissMin = hasPins
+    ? Math.max(0, requestedNearMissMin - pinnedNearMissShare)
+    : requestedNearMissMin;
   if (nearMissMin > tol && nearMiss.length === 0) {
     relaxations.push({
       lever: "nearMiss",
@@ -2021,16 +2522,21 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // + near-miss would consume (nearly) all the probability mass, the win-rate is
   // too high for this split — relax it DOWN to leave a small dust margin rather
   // than erroring.
-  const MIN_DUST_MARGIN = 0.02; // keep ≥2% dust mass for the edge
-  const winMassCeiling = 1 - nearMissMin - MIN_DUST_MARGIN;
-  let targetWinRate = requestedWinRate;
+  // The margin scales with the FREE mass (2% of it) so a nearly-fully-pinned
+  // pool isn't forced to reserve more dust than the remainder even holds —
+  // with no pins freeMass is 1 and this is the legacy 2% verbatim.
+  const MIN_DUST_MARGIN = 0.02 * freeMass; // keep ≥2% (of the free mass) dust for the edge
+  const winMassCeiling = freeMass - nearMissMin - MIN_DUST_MARGIN;
+  // From here on `targetWinRate` is the FREE pool's win target (the pinned win
+  // share rides on top; without pins it IS the requested target verbatim).
+  let targetWinRate = freeWinTarget;
   if (targetWinRate > winMassCeiling) {
     const applied = Math.max(0, winMassCeiling);
     relaxations.push({
       lever: "winRate",
       requested: requestedWinRate,
-      applied,
-      reason: `Win-rate ${requestedWinRate} + near-miss ${nearMissMin} leave no dust mass for the house edge; relaxed to ${applied.toFixed(4)}.`,
+      applied: applied + pinnedWinShare,
+      reason: `Win-rate ${requestedWinRate} + near-miss ${nearMissMin} leave no dust mass for the house edge; relaxed to ${(applied + pinnedWinShare).toFixed(4)}.`,
     });
     targetWinRate = applied;
   }
@@ -2054,21 +2560,24 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     const dustCheap = bandEvForBeta(dust.map((s) => s.value), BETA_HI);
     const denom = winCheap - dustCheap;
     if (denom > tol) {
+      // Pin-adjusted linear bound over the FREE mass:
+      //   evMinFree(wr) = wr·winCheap + nm·nmCheap + (freeMass−wr−nm)·dustCheap
+      // solved against the pin-adjusted budget (legacy-identical without pins).
       const wrMaxForEv =
-        (evTarget - nmMassForBound * nmCheap - (1 - nmMassForBound) * dustCheap) / denom;
+        (evTargetFree - nmMassForBound * nmCheap - (freeMass - nmMassForBound) * dustCheap) / denom;
       // Clamp into the valid range; the mass-budget ceiling already applied above.
       const wrCap = Math.max(0, Math.min(targetWinRate, wrMaxForEv));
       if (targetWinRate > wrCap + tol) {
         const existing = relaxations.find((r) => r.lever === "winRate");
         if (existing) {
-          existing.applied = wrCap;
-          existing.reason = `Win-rate relaxed to ${wrCap.toFixed(4)} (requested ${requestedWinRate}); a higher win mass would pin EV above the ${(targetEdge * 100).toFixed(2)}% edge target.`;
+          existing.applied = wrCap + pinnedWinShare;
+          existing.reason = `Win-rate relaxed to ${(wrCap + pinnedWinShare).toFixed(4)} (requested ${requestedWinRate}); a higher win mass would pin EV above the ${(targetEdge * 100).toFixed(2)}% edge target.`;
         } else {
           relaxations.push({
             lever: "winRate",
             requested: requestedWinRate,
-            applied: wrCap,
-            reason: `Win-rate relaxed to ${wrCap.toFixed(4)}; a higher win mass would pin EV above the ${(targetEdge * 100).toFixed(2)}% edge target.`,
+            applied: wrCap + pinnedWinShare,
+            reason: `Win-rate relaxed to ${(wrCap + pinnedWinShare).toFixed(4)}; a higher win mass would pin EV above the ${(targetEdge * 100).toFixed(2)}% edge target.`,
           });
         }
         targetWinRate = wrCap;
@@ -2083,7 +2592,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // odds (owner rule #2). `nearMissMass` stays fixed (it's a feel dial).
   let winMass = targetWinRate;
   const nearMissMass = nearMiss.length > 0 ? nearMissMin : 0;
-  let dustMass = 1 - winMass - nearMissMass;
+  let dustMass = freeMass - winMass - nearMissMass;
   // Backstop: after the win-rate relaxation above, dustMass ≥ MIN_DUST_MARGIN by
   // construction, so this never fires on the relaxed path — it's a NaN-safe guard.
   if (!(dustMass > tol)) {
@@ -2146,8 +2655,9 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // EV is reached by FLOATING THE WIN-RATE UP (owner rule #2): more cheap winners
   // raise EV without ever enlarging a jackpot's odds. We never skew the jackpot
   // expensive to hit EV — that knob is gone.
-  const MIN_DUST_MASS_FLOAT = 0.02; // never float win mass past leaving 2% dust
-  const structuralCeil = 1 - nearMissMass - MIN_DUST_MASS_FLOAT;
+  // Scaled by the FREE mass (legacy-identical without pins) — see MIN_DUST_MARGIN.
+  const MIN_DUST_MASS_FLOAT = 0.02 * freeMass; // never float win mass past leaving 2% dust
+  const structuralCeil = freeMass - nearMissMass - MIN_DUST_MASS_FLOAT;
 
   const cur = input.currentWeights;
   let curTotal = 0;
@@ -2216,8 +2726,8 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // and the float-up must stay off. Exempting + floating there would push a "5% …"
   // pack to ~25% wins. So tagged packs keep ALL caps (no exemption) and do NOT
   // float (see the float-up gate below). Owner-safe either way: the top card and
-  // every pricier card stay capped.
-  const winRateIsHard = input.winRateIsHard === true;
+  // every pricier card stay capped. (`winRateIsHard` is hoisted above the pin
+  // validation — the tag-overshoot refusal needs it before the slot pass.)
   if (anchorActive && winPoolSlots.length > 0 && !winRateIsHard) {
     let cheapestWinIdx = 0;
     let cheapestWinVal = Infinity;
@@ -2275,7 +2785,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // MAX EV the pool can produce at a given win mass without inflating the
   // jackpot: win pool capped-distributed + loss bands skewed EXPENSIVE (BETA_LO).
   const maxEvAtWinMass = (wm: number): number => {
-    const dm = 1 - wm - nearMissMass;
+    const dm = freeMass - wm - nearMissMass;
     return (
       winPoolEvAt(wm) +
       nearMissMass * bandEvForBeta(nearMissValues, BETA_LO) +
@@ -2283,33 +2793,34 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     );
   };
 
-  // Float the win-rate UP until the max (non-inflating) EV reaches evTarget.
+  // Float the win-rate UP until the max (non-inflating) EV reaches the FREE
+  // pool's budget (`evTargetFree` — legacy-identical to evTarget without pins).
   // EV is monotone increasing in win mass (winners pay ≥ price > the dust they
   // displace), so bisect. Capped at `winMassCeil` (2% dust margin). ONLY on the
   // ANCHORED path (`anchorActive`) and when the win-rate is SOFT — the legacy
   // value-only path keeps the original single-β solve (no float-up); tagged packs
   // hit EV via their big jackpots at the tag rate, never by adding winners.
-  if (anchorActive && !winRateIsHard && maxEvAtWinMass(winMass) < evTarget - 1e-9 && winMassCeil > winMass) {
-    if (maxEvAtWinMass(winMassCeil) < evTarget - 1e-9) {
+  if (anchorActive && !winRateIsHard && maxEvAtWinMass(winMass) < evTargetFree - 1e-9 && winMassCeil > winMass) {
+    if (maxEvAtWinMass(winMassCeil) < evTargetFree - 1e-9) {
       winMass = winMassCeil; // best effort; downstream feasibility check surfaces it
     } else {
       let wmLo = winMass;
       let wmHi = winMassCeil;
       for (let i = 0; i < 60; i++) {
         const mid = (wmLo + wmHi) / 2;
-        if (maxEvAtWinMass(mid) < evTarget) wmLo = mid;
+        if (maxEvAtWinMass(mid) < evTargetFree) wmLo = mid;
         else wmHi = mid;
       }
       winMass = wmHi;
     }
   }
-  dustMass = 1 - winMass - nearMissMass;
+  dustMass = freeMass - winMass - nearMissMass;
   if (winMass > targetWinRate + 1e-9) {
     relaxations.push({
       lever: "winRate",
       requested: requestedWinRate,
-      applied: winMass,
-      reason: `Win-rate floated UP to ${(winMass * 100).toFixed(2)}% so the edge target is met by adding cheap winners instead of inflating jackpot odds (owner rule: keep the expensive tail rare).`,
+      applied: winMass + pinnedWinShare,
+      reason: `Win-rate floated UP to ${((winMass + pinnedWinShare) * 100).toFixed(2)}% so the edge target is met by adding cheap winners instead of inflating jackpot odds (owner rule: keep the expensive tail rare).`,
     });
   }
 
@@ -2325,7 +2836,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     winPoolEvAt(winMass) +
     nearMissMass * bandEvForBeta(nearMissValues, BETA_HI) +
     Math.max(0, dustMass) * bandEvForBeta(dustValues, BETA_HI);
-  if (anchorActive && minTotalEvAt() > evTarget + 1e-9) {
+  if (anchorActive && minTotalEvAt() > evTargetFree + 1e-9) {
     // winPoolEvAt is monotone DECREASING in winBeta (steeper ⇒ cheaper winners).
     let bLo = BETA_WIN_FLOOR;
     let bHi = BETA_WIN_MAX;
@@ -2333,10 +2844,10 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
       winBeta = b;
       return minTotalEvAt();
     };
-    if (evAtBeta(BETA_WIN_MAX) <= evTarget + 1e-9) {
+    if (evAtBeta(BETA_WIN_MAX) <= evTargetFree + 1e-9) {
       for (let i = 0; i < 60; i++) {
         const mid = (bLo + bHi) / 2;
-        if (evAtBeta(mid) > evTarget) bLo = mid;
+        if (evAtBeta(mid) > evTargetFree) bLo = mid;
         else bHi = mid;
       }
       winBeta = bHi; // steepest needed to bring min EV down to target (from above)
@@ -2440,7 +2951,12 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     return ev;
   })();
   const floorEvFixed = floorSlot ? floorMass * floorSlot.value : 0;
+  // `pinnedEv` rides on top (0 without pins): evMin/evMax and the bisection
+  // below therefore operate on FULL-pool EV, so every downstream comparison
+  // against `evTarget` (the RC4 knob, the one-sided-up acceptance, the
+  // ev-unreachable window) is pin-aware without further changes.
   const totalEvForBeta = (beta: number): number =>
+    pinnedEv +
     (anchorActive
       ? winPoolEvFixed
       : winMassTotal * bandEvForBeta(winPoolValues, beta)) +
@@ -2531,6 +3047,33 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     oneSidedEdgeExcess <= ONE_SIDED_EDGE_EXCESS_TOL + 1e-12;
 
   if ((evTarget < evMin - 1e-6 || evTarget > evMax + 1e-6) && !oneSidedAccepted) {
+    if (hasPins) {
+      // Pins arm (ruleset: every pin error carries a computable suggestion —
+      // how much the pins over/under-shoot EV, in $ AND pp of edge).
+      const tooHigh = evTarget < evMin; // reachable EV floor sits ABOVE budget
+      const missEv = tooHigh ? evMin - evTarget : evTarget - evMax;
+      const missPp = (missEv / price) * 100;
+      return {
+        error: `Pinned odds are infeasible: with the pins held, this pool reaches EV $${evMin.toFixed(4)}–$${evMax.toFixed(4)} but the ${(targetEdge * 100).toFixed(2)}% edge target needs EV $${evTarget.toFixed(4)}.`,
+        feasibility: {
+          ...feasibility,
+          evReachable: { min: evMin, max: evMax },
+          bands: { winMass: winMassTotal, nearMissMass, dustMass, floorMass },
+          pinned: { pinnedMass, pinnedEv, pinnedWinShare },
+          dustMin,
+          dustMax,
+        },
+        limit: {
+          kind: "pins-infeasible",
+          detail: tooHigh
+            ? `The pins put too much chance on expensive cards: even the cheapest layout of the unpinned cards leaves EV $${missEv.toFixed(4)} (≈${missPp.toFixed(3)}pp of edge) above the budget — the edge would land BELOW the ${(targetEdge * 100).toFixed(2)}% target.`
+            : `The pins leave EV $${missEv.toFixed(4)} (≈${missPp.toFixed(3)}pp of edge) short of the budget — the plan would land beyond the accepted margin ABOVE the ${(targetEdge * 100).toFixed(2)}% edge target.`,
+          suggestion: tooHigh
+            ? `Lower a pinned win-card chance (free ~$${missEv.toFixed(4)} of EV), raise the price — or build the below-target experiment deliberately in Drafts.`
+            : `Shift ~$${missEv.toFixed(4)} of EV into the pins (raise a pinned winner's chance or lower a pinned dust chance), or lower the price.`,
+        },
+      };
+    }
     return {
       error: `Edge target needs EV $${evTarget.toFixed(4)} but this band split can only reach $${evMin.toFixed(4)}–$${evMax.toFixed(4)}.`,
       feasibility: {
@@ -2602,72 +3145,157 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     frac[slotPos.get(floorSlot)!] = floorMass;
   }
 
-  // ── Integer quantize ────────────────────────────────────────────────
-  // Scale ×1e6 (not ×1e4) so every weight is large: this makes the +1 edge-
-  // correction bump below a TINY relative step, so the one-sided-up loop can
-  // land the edge just above target without overshooting past target+0.001. A
-  // single +1 on a small pool would otherwise be a coarse jump. We gcd-reduce
-  // only at the very END (after bumping) to keep weights minimal.
-  const QUANT = 1_000_000;
   const weights = new Array<number>(input.cards.length).fill(0);
-  slots.forEach((s, i) => {
-    weights[s.idx] = Math.max(1, Math.round(frac[i]! * QUANT));
-  });
-
-  // ── One-sided-UP edge enforcement ───────────────────────────────────
-  // Quantization can nudge EV up (edge below target). Bumping the CHEAPEST dust
-  // card's weight is monotone: more mass on a cheap card lowers EV → raises edge.
-  // We step by an adaptive amount (halving on overshoot risk) so we converge to
-  // edge ∈ [target, target+0.001] quickly, capped at MAX_BUMPS iterations.
   const cardsForRisk = (): CardLite[] =>
     input.cards.map((c, i) => ({ value: c.value, weight: weights[i]! }));
+  let risk: PackRisk;
 
-  const cheapestDustIdx = dust.reduce(
-    (best, s) => (s.value < input.cards[best]!.value ? s.idx : best),
-    dust[0]!.idx,
-  );
+  if (!hasPins) {
+    // ── Integer quantize (legacy, no pins) ──────────────────────────────
+    // Scale ×1e6 (not ×1e4) so every weight is large: this makes the +1 edge-
+    // correction bump below a TINY relative step, so the one-sided-up loop can
+    // land the edge just above target without overshooting past target+0.001. A
+    // single +1 on a small pool would otherwise be a coarse jump. We gcd-reduce
+    // only at the very END (after bumping) to keep weights minimal.
+    const QUANT = 1_000_000;
+    slots.forEach((s, i) => {
+      weights[s.idx] = Math.max(1, Math.round(frac[i]! * QUANT));
+    });
 
-  let risk = computePackRisk({ cards: cardsForRisk(), price });
-  let bumps = 0;
-  const MAX_BUMPS = 5000;
-  // Adaptive step: start large to cross the target fast, shrink near it so the
-  // final landing sits inside the [target, target+0.001] window.
-  let step = Math.max(1, Math.round(weights[cheapestDustIdx]! * 0.5));
-  while (risk.edge < targetEdge - 1e-9 && bumps < MAX_BUMPS) {
-    const prev = weights[cheapestDustIdx]!;
-    weights[cheapestDustIdx] = prev + step;
-    bumps += 1;
-    const next = computePackRisk({ cards: cardsForRisk(), price });
-    if (next.edge > targetEdge + 0.001 && step > 1) {
-      // Overshot the upper bound — undo and halve the step to refine.
-      weights[cheapestDustIdx] = prev;
-      step = Math.max(1, Math.floor(step / 2));
-      continue;
-    }
-    risk = next;
-  }
-  if (risk.edge < targetEdge - 1e-9) {
-    return {
-      error: `Could not reach edge ≥ ${(targetEdge * 100).toFixed(2)}% within ${MAX_BUMPS} weight bumps (achieved ${(risk.edge * 100).toFixed(2)}%).`,
-      feasibility: { ...feasibility, achievedEdge: risk.edge, bumps },
-      limit: {
-        kind: "edge-unreachable",
-        detail: `Could not push the edge up to ${(targetEdge * 100).toFixed(2)}% within ${MAX_BUMPS} weight bumps (reached ${(risk.edge * 100).toFixed(2)}%).`,
-        suggestion: `Add a cheaper card in the DUST band (well below $${dustHi.toFixed(2)}) so weighting it down can lift the edge to target.`,
-      },
-    };
-  }
+    // ── One-sided-UP edge enforcement ───────────────────────────────────
+    // Quantization can nudge EV up (edge below target). Bumping the CHEAPEST dust
+    // card's weight is monotone: more mass on a cheap card lowers EV → raises edge.
+    // We step by an adaptive amount (halving on overshoot risk) so we converge to
+    // edge ∈ [target, target+0.001] quickly, capped at MAX_BUMPS iterations.
+    const cheapestDustIdx = dust.reduce(
+      (best, s) => (s.value < input.cards[best]!.value ? s.idx : best),
+      dust[0]!.idx,
+    );
 
-  // ── gcd-reduce the final vector (after all bumps) ───────────────────
-  const present = weights.filter((w) => w > 0);
-  if (present.length > 0) {
-    let g = present[0]!;
-    for (let i = 1; i < present.length; i++) g = gcd(g, present[i]!);
-    if (g > 1) {
-      for (let i = 0; i < weights.length; i++) {
-        if (weights[i]! > 0) weights[i] = Math.round(weights[i]! / g);
+    risk = computePackRisk({ cards: cardsForRisk(), price });
+    let bumps = 0;
+    const MAX_BUMPS = 5000;
+    // Adaptive step: start large to cross the target fast, shrink near it so the
+    // final landing sits inside the [target, target+0.001] window.
+    let step = Math.max(1, Math.round(weights[cheapestDustIdx]! * 0.5));
+    while (risk.edge < targetEdge - 1e-9 && bumps < MAX_BUMPS) {
+      const prev = weights[cheapestDustIdx]!;
+      weights[cheapestDustIdx] = prev + step;
+      bumps += 1;
+      const next = computePackRisk({ cards: cardsForRisk(), price });
+      if (next.edge > targetEdge + 0.001 && step > 1) {
+        // Overshot the upper bound — undo and halve the step to refine.
+        weights[cheapestDustIdx] = prev;
+        step = Math.max(1, Math.floor(step / 2));
+        continue;
       }
-      risk = computePackRisk({ cards: cardsForRisk(), price });
+      risk = next;
+    }
+    if (risk.edge < targetEdge - 1e-9) {
+      return {
+        error: `Could not reach edge ≥ ${(targetEdge * 100).toFixed(2)}% within ${MAX_BUMPS} weight bumps (achieved ${(risk.edge * 100).toFixed(2)}%).`,
+        feasibility: { ...feasibility, achievedEdge: risk.edge, bumps },
+        limit: {
+          kind: "edge-unreachable",
+          detail: `Could not push the edge up to ${(targetEdge * 100).toFixed(2)}% within ${MAX_BUMPS} weight bumps (reached ${(risk.edge * 100).toFixed(2)}%).`,
+          suggestion: `Add a cheaper card in the DUST band (well below $${dustHi.toFixed(2)}) so weighting it down can lift the edge to target.`,
+        },
+      };
+    }
+
+    // ── gcd-reduce the final vector (after all bumps) ───────────────────
+    const present = weights.filter((w) => w > 0);
+    if (present.length > 0) {
+      let g = present[0]!;
+      for (let i = 1; i < present.length; i++) g = gcd(g, present[i]!);
+      if (g > 1) {
+        for (let i = 0; i < weights.length; i++) {
+          if (weights[i]! > 0) weights[i] = Math.round(weights[i]! / g);
+        }
+        risk = computePackRisk({ cards: cardsForRisk(), price });
+      }
+    }
+  } else {
+    // ── Pinned integer grid (PIN_SCALE = 1e9, total EXACTLY PIN_SCALE) ───
+    // Pins are laid down as EXACT integer units; the free solve's fractional
+    // vector fills the remaining units, with the LARGEST free slot absorbing
+    // the rounding so the total stays exactly PIN_SCALE — a pinned share can
+    // therefore never drift (weight_i / Σweights ≡ share_i). The legacy bump
+    // loop would grow the total and dilute the pins, so edge landing happens
+    // via an integer mass TRANSFER inside the FREE dust band instead (the
+    // same analytic move the tagged per-100k snap uses): total, win mass and
+    // near-miss mass all stay fixed while EV moves by x·(vHi−vLo)/PIN_SCALE.
+    for (const [idx, share] of pinnedShareByIdx) {
+      weights[idx] = Math.round(share * PIN_SCALE);
+    }
+    let pinnedUnitsTotal = 0;
+    for (const [idx] of pinnedShareByIdx) pinnedUnitsTotal += weights[idx]!;
+    const freeUnitsTarget = PIN_SCALE - pinnedUnitsTotal;
+    let freeSum = 0;
+    let bufIdx = -1;
+    slots.forEach((s, i) => {
+      const u = Math.max(1, Math.round(frac[i]! * PIN_SCALE));
+      weights[s.idx] = u;
+      freeSum += u;
+      if (bufIdx < 0 || u > weights[bufIdx]!) bufIdx = s.idx;
+    });
+    const bufAdjusted = bufIdx >= 0 ? weights[bufIdx]! + (freeUnitsTarget - freeSum) : 0;
+    if (bufIdx < 0 || bufAdjusted < 1) {
+      return pinsRefusal(
+        `the pins leave too little room (${(freeMass * 100).toFixed(6)}%) for the ${slots.length} unpinned card(s) to keep non-zero odds.`,
+        "Lower a pinned chance, or clear a pin.",
+      );
+    }
+    weights[bufIdx] = bufAdjusted;
+    risk = computePackRisk({ cards: cardsForRisk(), price });
+
+    // Accepted landing window: the same [target, target+0.001] the legacy bump
+    // targets, extended by the one-sided-up excess when that acceptance fired.
+    const eLo = targetEdge - 1e-9;
+    const eHi =
+      targetEdge +
+      0.001 +
+      (oneSidedAccepted && oneSidedEdgeExcess !== null ? oneSidedEdgeExcess : 0);
+    if (risk.edge < eLo || risk.edge > eHi + 1e-9) {
+      const dustIdxAsc = dust
+        .map((s) => s.idx)
+        .sort((a, b) => input.cards[a]!.value - input.cards[b]!.value);
+      let landed = false;
+      if (dustIdxAsc.length >= 2) {
+        const loI = dustIdxAsc[0]!;
+        const hiI = dustIdxAsc[dustIdxAsc.length - 1]!;
+        const spread = input.cards[hiI]!.value - input.cards[loI]!.value;
+        if (spread > 0) {
+          // Transfer x units hi→lo lowers EV by x·spread/PIN_SCALE (negative x
+          // raises it); solve the window, keep both cards ≥ 1 unit.
+          const evHiBound = price * (1 - targetEdge);
+          const evLoBound = price * (1 - eHi);
+          const xMin = Math.ceil(((risk.ev - evHiBound) * PIN_SCALE) / spread - 1e-9);
+          const xMax = Math.floor(((risk.ev - evLoBound) * PIN_SCALE) / spread + 1e-9);
+          const a = Math.max(xMin, -(weights[loI]! - 1));
+          const b = Math.min(xMax, weights[hiI]! - 1);
+          if (a <= b) {
+            const x = a <= 0 && 0 <= b ? 0 : Math.abs(a) < Math.abs(b) ? a : b;
+            if (x !== 0) {
+              weights[loI] = weights[loI]! + x;
+              weights[hiI] = weights[hiI]! - x;
+              risk = computePackRisk({ cards: cardsForRisk(), price });
+            }
+            landed = risk.edge >= eLo && risk.edge <= eHi + 1e-9;
+          }
+        }
+      }
+      if (!landed) {
+        return risk.edge < targetEdge
+          ? pinsRefusal(
+              `with the pins held, the closest landing puts the edge at ${(risk.edge * 100).toFixed(3)}% — ${((targetEdge - risk.edge) * 100).toFixed(3)}pp below the ${(targetEdge * 100).toFixed(2)}% target.`,
+              "Lower a pinned win-card chance, raise the price — or build the below-target experiment deliberately in Drafts.",
+            )
+          : pinsRefusal(
+              `with the pins held, the closest landing puts the edge at ${(risk.edge * 100).toFixed(3)}% — ${((risk.edge - targetEdge) * 100).toFixed(3)}pp above the ${(targetEdge * 100).toFixed(2)}% target (accepted band +${((eHi - targetEdge) * 100).toFixed(2)}pp).`,
+              "Raise a pinned winner's chance or lower a pinned dust chance, or lower the price.",
+            );
+      }
     }
   }
 
@@ -2676,8 +3304,11 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // on it (the edge bumps moved mass around to keep edge ≥ target, or the pool
   // can't host the requested win mass), we RELAX to the achieved value and
   // record it rather than erroring. Edge ≥ target is already guaranteed above,
-  // so the result is still a valid, edge-correct pack.
-  if (Math.abs(risk.winRate - targetWinRate) > winRateTol) {
+  // so the result is still a valid, edge-correct pack. The comparison target is
+  // the TOTAL win share (free target + pinned win share — legacy-identical
+  // without pins).
+  const totalWinTarget = Math.min(1, targetWinRate + pinnedWinShare);
+  if (Math.abs(risk.winRate - totalWinTarget) > winRateTol) {
     const existing = relaxations.find((r) => r.lever === "winRate");
     if (existing) {
       // A win-rate relaxation was already recorded (mass-budget cap); refine its
@@ -2689,7 +3320,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
         lever: "winRate",
         requested: requestedWinRate,
         applied: risk.winRate,
-        reason: `Pool could not land win-rate ${(targetWinRate * 100).toFixed(2)}% within ±${(winRateTol * 100).toFixed(2)}% while keeping edge ≥ target; relaxed to the achievable ${(risk.winRate * 100).toFixed(2)}%.`,
+        reason: `Pool could not land win-rate ${(totalWinTarget * 100).toFixed(2)}% within ±${(winRateTol * 100).toFixed(2)}% while keeping edge ≥ target; relaxed to the achievable ${(risk.winRate * 100).toFixed(2)}%.`,
       });
     }
   }
@@ -2708,9 +3339,11 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // out strictly-decreasing AND never above each card's current odds. Re-running
   // the β=2 skew on top would re-INFLATE the rarest jackpots (their hand-tuned
   // current odds are far below a value^(-2) curve), violating owner rule #1. So
-  // the skew only runs when there's no current-odds anchor to honor.
+  // the skew only runs when there's no current-odds anchor to honor. ALSO
+  // gated off whenever pins exist: the skew redistributes the grail band and
+  // could move a pinned grail — pins are owner-chosen numbers, never moved.
   let lotterySkewApplied = false;
-  const lottery = anchorActive
+  const lottery = anchorActive || hasPins
     ? { weights, applied: false }
     : applyLotterySkew({
         cards: input.cards,
@@ -2828,6 +3461,12 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // 0/8 on the live fleet) — for a hard-tag solve that landed ON the tag, snap
   // onto the integer per-100k ladder instead: win band EXACTLY round(t·1e5),
   // dust buffer absorbs the residual, jackpot on the 1-in-N menu.
+  //
+  // PINNED pools run the SAME snaps in pin-aware mode: a pinned card NEVER
+  // moves (owner-chosen number, exempt from ladder membership), buffers are
+  // chosen among unpinned cards, and pinned win-band units count toward the
+  // exact tag sum. The pinned grid (PIN_SCALE) hosts both — every per-100k
+  // rung and every clean-ladder rung is an integer number of its units.
   let taggedSnapApplied = false;
   if (snapTagTarget !== undefined) {
     const taggedSnap = snapTaggedPer100k({
@@ -2838,6 +3477,15 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
       targetEdge,
       edgeTolAbove: snapEdgeTol,
       grailGuard: snapGrailNotInflated,
+      ...(hasPins
+        ? {
+            pins: [...pinnedShareByIdx.keys()].map((index) => ({
+              index,
+              units: weights[index]!,
+            })),
+            scale: PIN_SCALE,
+          }
+        : {}),
     });
     if (taggedSnap !== null) {
       for (let i = 0; i < weights.length; i++) weights[i] = taggedSnap.weights[i]!;
@@ -2847,7 +3495,37 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     }
   }
 
-  if (!taggedSnapApplied) {
+  if (!taggedSnapApplied && hasPins) {
+    // Pinned clean-ladder snap (untagged / off-tag pinned pools): snap the
+    // FREE slots onto the ladder, buffer = largest FREE mass, pins verbatim.
+    // Acceptance stack identical to the unpinned tier-1; on failure the
+    // precise weights stay (dirty odds surface honestly — no local search /
+    // buffer polish for pinned pools, the pins constrain the space anyway).
+    const pinnedSnap = snapPinnedFreeToCleanLadder({
+      weights,
+      values,
+      price,
+      pinnedIdx: new Set(pinnedShareByIdx.keys()),
+      scale: PIN_SCALE,
+    });
+    if (pinnedSnap !== null) {
+      const candRisk = computePackRisk({
+        cards: input.cards.map((c, i) => ({ value: c.value, weight: pinnedSnap[i]! })),
+        price,
+      });
+      if (
+        Math.abs(candRisk.edge - targetEdge) <= snapEdgeTol &&
+        candRisk.edge >= targetEdge - 1e-9 &&
+        Math.abs(candRisk.winRate - preciseWinRate) <= winRateTol + 1e-9 &&
+        snapKeepsTag(candRisk.winRate) &&
+        snapGrailNotInflated(pinnedSnap)
+      ) {
+        for (let i = 0; i < weights.length; i++) weights[i] = pinnedSnap[i]!;
+        risk = candRisk;
+        snapped = true;
+      }
+    }
+  } else if (!taggedSnapApplied) {
     const snap = snapWeightsToCleanLadder({ weights, price });
     // Apply within-band monotonicity repair (owner invariants — see
     // `repairSnapMonotonicity`). If the basic snap can't be made monotonic
@@ -2964,8 +3642,10 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // acceptance stack still holds — otherwise keep the accepted snap unchanged
   // (this step can never regress a result). SKIPPED after the tagged per-100k
   // snap: there the buffer IS on the grid by construction, and re-spreading it
-  // over generic rungs would break the exact win-band tag sum.
-  if (snapped && !taggedSnapApplied) {
+  // over generic rungs would break the exact win-band tag sum. ALSO skipped
+  // for pinned pools — the polish spreads residual over dust cards without
+  // knowing about pins and could move a pinned card.
+  if (snapped && !taggedSnapApplied && !hasPins) {
     const polished = trySnapBufferToRung({
       weights,
       values,
@@ -2996,6 +3676,24 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
       reason:
         "A win/grail card's current odds are so rare that no feasible decay matches them; its odds had to rise slightly (unavoidable for this pool).",
     });
+  }
+
+  // ── gcd-reduce the pinned grid (ratios — and pins — are unchanged) ────
+  // The legacy path gcd-reduced before its snap; the pinned path works on the
+  // fixed PIN_SCALE total throughout (transfers + snaps), so the reduction
+  // runs once at the very end.
+  if (hasPins) {
+    const presentPinned = weights.filter((w) => w > 0);
+    if (presentPinned.length > 0) {
+      let g = presentPinned[0]!;
+      for (let i = 1; i < presentPinned.length; i++) g = gcd(g, presentPinned[i]!);
+      if (g > 1) {
+        for (let i = 0; i < weights.length; i++) {
+          if (weights[i]! > 0) weights[i] = Math.round(weights[i]! / g);
+        }
+        risk = computePackRisk({ cards: cardsForRisk(), price });
+      }
+    }
   }
 
   return {
@@ -3144,6 +3842,15 @@ export function searchBestPriceForCleanSnap(input: {
    * inflate" guarantee across the whole price sweep. Omit to skip the anchor.
    */
   currentWeights?: number[];
+  /**
+   * Owner-pinned EXACT per-card odds (Retune V2 pins), forwarded verbatim to
+   * {@link shapeWeights} at EVERY candidate price — a pinned card is held at
+   * exactly its share at every price the sweep evaluates (its BAND may shift
+   * with the candidate price; the hold does not). A pin that is infeasible at
+   * every candidate (e.g. cap-dropped) surfaces as the `pins-infeasible`
+   * error result. Omit for the legacy behavior — byte-identical.
+   */
+  pinnedShares?: ShapeWeightsPinnedShare[];
 }): SearchBestPriceResult {
   const {
     cards,
@@ -3154,6 +3861,7 @@ export function searchBestPriceForCleanSnap(input: {
     nearMissMin,
     winRateTol,
     currentWeights,
+    pinnedShares,
   } = input;
   const maxPriceChangePct = input.maxPriceChangePct ?? 0.25;
   const upwardPriceExtensionPct = Math.max(0, input.upwardPriceExtensionPct ?? 0);
@@ -3174,6 +3882,10 @@ export function searchBestPriceForCleanSnap(input: {
       nearMissMin,
       winRateTol,
       ...(currentWeights !== undefined ? { currentWeights } : {}),
+      // Retune V2 pins: held exact at every candidate price.
+      ...(pinnedShares !== undefined && pinnedShares.length > 0
+        ? { pinnedShares }
+        : {}),
       // A tagged pack's win-rate is a HARD design target — pin it (no float-up,
       // no cheapest-winner cap exemption) so the achieved win-rate can land on
       // the tag rather than drifting up while the price search hunts for a price
