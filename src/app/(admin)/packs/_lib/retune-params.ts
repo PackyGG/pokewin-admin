@@ -45,6 +45,23 @@ import {
 /** Lower clamp on the price budget: a positive band the search can move within. */
 const MIN_PRICE_BUDGET_PCT = 0.0001;
 
+/**
+ * Max intended hit-rate that is a LOTTERY (rare-win) archetype eligible for the
+ * strict tagged clean-snap path (the per-100k jackpot-ladder DFS + 320-candidate
+ * accuracy search). The tags in play are 1% / 5% / 10% (all ≤ 0.12) plus the
+ * `50/50` coin-flip (0.50). The lottery snapper is DESIGNED for rare wins: at a
+ * high win-rate it must place a huge win mass across many win cards on clean
+ * rungs — a combinatorial blow-up (measured: a 9-card `50/50` pack = ~4.7s pure
+ * per solve → the ±10% price search ran it 320× → the route timed out → the
+ * MAIN max:3 pool got exhausted → the WHOLE admin timed out, the pool-stampede
+ * cascade). A coin-flip / high win-rate tag is NOT a lottery: it takes the
+ * standard clean-ladder snap (fast: ~0.36s) with `holdWinRate` keeping the
+ * achieved rate within +5pp of the tag — plenty exact for a "half the opens
+ * win" product (the 0.01pp tagged tolerance only ever mattered for a *rare*
+ * 1% tag). So tagged-lottery mode is gated to `intendedHitRate ≤ this`.
+ */
+const LOTTERY_MAX_HIT_RATE = 0.12;
+
 /** Which solve arm the params are for (anchor semantics live at the caller). */
 export type RetuneArm = "live" | "staged";
 
@@ -186,10 +203,17 @@ export function buildRetuneSearchParams(
   arm: RetuneArm,
   i: RetuneSearchInputs,
 ): Parameters<typeof searchBestPriceForCleanSnap>[0] {
-  // Tagged gate: active iff the resolved target IS the tag (value equality) —
-  // an operator-pinned rate away from the tag never silently runs tagged mode.
+  // Tagged gate: active iff (a) the tag is a LOTTERY (rare-win) archetype
+  // (`intendedHitRate ≤ LOTTERY_MAX_HIT_RATE` — the 1/5/10% tags) AND (b) the
+  // resolved target IS the tag (value equality) — an operator-pinned rate away
+  // from the tag never silently runs tagged mode. A high win-rate tag (the
+  // `50/50` coin-flip) is deliberately NOT tagged here: the lottery snapper
+  // blows up on it (see {@link LOTTERY_MAX_HIT_RATE}); it takes the fast
+  // standard snap + `holdWinRate` instead, which lands the rate within +5pp of
+  // the tag — exact enough for a half-the-opens-win product.
   const tagged =
     i.intendedHitRate !== null &&
+    i.intendedHitRate <= LOTTERY_MAX_HIT_RATE &&
     Math.abs(i.intendedHitRate - i.targetWinRate) < 1e-9;
   // Owner pins ride the SAME shared constructor as everything else, so the
   // pinned solve the operator previews is byte-identically the pinned solve
