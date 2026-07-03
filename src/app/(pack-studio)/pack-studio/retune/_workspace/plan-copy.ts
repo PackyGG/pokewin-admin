@@ -62,7 +62,9 @@ export function limitHeadline(
     case "ev-out-of-range":
       return "At this price the pool pays out either too much or too little overall, no matter the odds. Change the price or swap cards.";
     case "no-dust-cards":
-      return `There are no cheap cards to soak up the losing opens. Add a couple of cards under ${formatCurrency(0.5 * price)}.`;
+      return limit.priceIndependent
+        ? "No price works here — every card sits too close to the ticket. The pool needs a genuinely cheap card (under half the price) before it can be retuned; price moves can't fix it."
+        : `There are no cheap cards to soak up the losing opens. Add a couple of cards under ${formatCurrency(0.5 * price)}.`;
     case "no-dust-mass":
       return "Winners and near-misses use all the room — no space left for losing opens. Add cheaper cards or drop a winner.";
     case "ev-unreachable-for-split":
@@ -168,6 +170,12 @@ export function tagSaturatedBanner(tag: number): string {
 
 export function dirtyOddsBanner(offLadderCount: number, cardCount: number): string {
   return `Odds are exact but not round numbers — ${offLadderCount} of ${cardCount} cards are off the clean ladder (amber dots below). Nudge the price or swap a card; clean odds are required to push.`;
+}
+
+/** Feasible + exact on the per-100k grid, but the pool is too pinned to land
+ *  round numbers at any price in the band (§niceness). Plan stays pushable. */
+export function nicePinnedBanner(offCount: number, cardCount: number): string {
+  return `Exact but not pretty — ${offCount} of ${cardCount} odds can't land on round numbers at any price in the band: the tag and the never-inflate caps pin this pool too tightly. Fine to push — tag and edge are exact. To prettify: add a mid-value card to free up room, pin the odds you want by hand, or accept these numbers.`;
 }
 
 /** Per-lever relaxation explainer lines (§5c "Relaxed"). */

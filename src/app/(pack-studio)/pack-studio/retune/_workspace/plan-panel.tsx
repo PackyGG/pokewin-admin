@@ -65,6 +65,7 @@ import {
   dirtyOddsBanner,
   edgeTargetSub,
   limitHeadline,
+  nicePinnedBanner,
   suggestionKindLabel,
   offTagStrip,
   priceMoveSub,
@@ -493,6 +494,23 @@ export function PlanPanel({
       return (
         <Banner tone="amber" icon={TriangleAlert}>
           <p>{dirtyOddsBanner(plan.offLadderCards.length, plan.planned.length)}</p>
+          {plan.guidance != null && plan.guidance.suggestions.length > 0 && (
+            <GuidanceSuggestions
+              guidance={plan.guidance}
+              onAddCardRange={onAddCardRange}
+            />
+          )}
+        </Banner>
+      );
+    }
+    if (plan.feasible && tag !== null && plan.snapped === true && plan.allNice === false) {
+      // §niceness saturation-honesty: the tiered nice snap exhausted its
+      // bounded search at every in-band price and the best exact vector
+      // still carries off-nice odds — quantified, not vibed. Push stays
+      // ENABLED (tag + edge are exact); the banner carries the honesty.
+      return (
+        <Banner tone="amber" icon={TriangleAlert}>
+          <p>{nicePinnedBanner(plan.offLadderCards.length, plan.planned.length)}</p>
           {plan.guidance != null && plan.guidance.suggestions.length > 0 && (
             <GuidanceSuggestions
               guidance={plan.guidance}

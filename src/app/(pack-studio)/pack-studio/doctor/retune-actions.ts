@@ -25,7 +25,7 @@ import {
   shapeWeights,
   searchBestPriceForCleanSnap,
   isOnCleanLadderPct,
-  isOnPer100kGridPct,
+  isOnNiceGridPct,
   TAGGED_WINRATE_TOLERANCE,
   ONE_SIDED_EDGE_EXCESS_TOL,
   type PackRisk,
@@ -908,6 +908,10 @@ type StagedShapeOutcome =
       relaxations: ShapeWeightsRelaxation[];
       snapped: boolean | null;
       topInflationUnavoidable: boolean | null;
+      /** §niceness (tagged snap only): human-nice verdict; null otherwise. */
+      allNice: boolean | null;
+      /** §niceness: engine exempt indexes (staged card order); null otherwise. */
+      niceExemptIdx: number[] | null;
     }
   | {
       ok: false;
@@ -1447,6 +1451,8 @@ async function resolveAndShapeStagedPool(
       relaxations: shaped.relaxations,
       snapped: shaped.snapped ?? false,
       topInflationUnavoidable: shaped.topInflationUnavoidable ?? false,
+      allNice: shaped.allNice ?? null,
+      niceExemptIdx: shaped.niceExemptIdx ?? null,
     },
   };
 }
@@ -1823,8 +1829,21 @@ export type PackTunePlan = {
    */
   tagContradiction: string | null;
   snapped: boolean | null;
-  /** cardIds whose planned pct is NOT on the clean ladder (amber dots). */
+  /**
+   * cardIds whose planned pct is NOT clean (amber dots). UNTAGGED packs:
+   * off the log clean ladder. TAGGED packs (§niceness): off the HUMAN-NICE
+   * rung grid ({@link isOnNiceGridPct}) — exactly the cards the owner would
+   * complain about; the engine's exempt indexes (dust buffer, owner pins,
+   * forced single winner) are never flagged.
+   */
   offLadderCards: string[];
+  /**
+   * Tagged + snapped only (§niceness): all non-exempt planned odds landed on
+   * the human-nice rung grid. `false` = per-100k-exact but not pretty — the
+   * plan panel renders the honesty banner (push stays enabled). `null` =
+   * untagged pack, error, or unsnapped plan.
+   */
+  allNice: boolean | null;
   topInflationUnavoidable: boolean | null;
   intendedHitRate: number | null;
   /** RESOLVED targets — the client threads these verbatim to the write. */
@@ -1888,9 +1907,11 @@ export async function planPackTune(
   // v3: the plan shape gained `pinnedOdds` — key bumped so persisted older
   // entries (the data cache survives deploys) can never surface a
   // shape-mismatched plan.
+  // v4: the plan shape gained `allNice` (§niceness) + tagged offLadderCards
+  // switched to the human-nice grid — key bumped for the same reason.
   return unstable_cache(
     () => planPackTuneLiveUncached(packId),
-    ["pack-studio.retune.plan-pack.v3", packId],
+    ["pack-studio.retune.plan-pack.v4", packId],
     { revalidate: 60, tags: [packRetunePlanTag(packId)] },
   )();
 }
@@ -1898,9 +1919,12 @@ export async function planPackTune(
 /**
  * Shared per-card projection: weights vector → planned rows + off-ladder ids.
  * `tagged` switches the "clean" definition: an UNTAGGED pack is clean on the
- * log-ladder rungs ({@link isOnCleanLadderPct}); a TAGGED pack is clean on the
- * per-100k integer grid ({@link isOnPer100kGridPct}) — the house ladder the
- * tagged snap targets (log rungs are unreachable under the 0.01pp tag gate).
+ * log-ladder rungs ({@link isOnCleanLadderPct}); a TAGGED pack is clean on
+ * the HUMAN-NICE rung grid ({@link isOnNiceGridPct} — §niceness: 0.05% /
+ * 0.25% / 0.35% / 2.5% …, what the OWNER reads as clean; the previous
+ * per-100k-integer definition let 0.047% pass as "clean"). The engine's
+ * `niceExemptIdx` (dust buffer, pins, forced single winner) is threaded in so
+ * the projection and the engine's `allNice` can never disagree.
  */
 function projectPlannedVector(
   cardIds: string[],
@@ -1913,6 +1937,12 @@ function projectPlannedVector(
    * never the amber dot, and it must not count toward the dirty-odds banner).
    */
   pinnedCardIds?: ReadonlySet<string>,
+  /**
+   * The engine's niceness-exempt indexes (into `weights`/`cardIds` order) —
+   * dust buffer / pins / forced single winner. Never pushed into
+   * `offLadderCards`. Only set for tagged snapped plans.
+   */
+  niceExemptIdx?: readonly number[],
 ): {
   planned: PackTunePlan["planned"];
   offLadderCards: string[];
@@ -1929,12 +1959,14 @@ function projectPlannedVector(
       livePct: livePctByCardId.get(cardId) ?? null,
     };
   });
-  const cleanPct = tagged ? isOnPer100kGridPct : isOnCleanLadderPct;
+  const cleanPct = tagged ? isOnNiceGridPct : isOnCleanLadderPct;
+  const exemptIdx = new Set(niceExemptIdx ?? []);
   const offLadderCards = planned
     .filter(
-      (row) =>
+      (row, i) =>
         row.pct > 0 &&
         !cleanPct(row.pct) &&
+        !exemptIdx.has(i) &&
         !(pinnedCardIds?.has(row.cardId) ?? false),
     )
     .map((row) => row.cardId);
@@ -2075,6 +2107,7 @@ async function planPackTuneLiveUncached(
       },
       snapped: null,
       offLadderCards: [],
+      allNice: null,
       topInflationUnavoidable: null,
       taggedAccuracyHit: null,
       searchMeta: null,
@@ -2149,6 +2182,7 @@ async function planPackTuneLiveUncached(
       limit: shaped.limit,
       snapped: null,
       offLadderCards: [],
+      allNice: null,
       topInflationUnavoidable: null,
       taggedAccuracyHit: search.taggedAccuracyHit,
       searchMeta,
@@ -2161,6 +2195,8 @@ async function planPackTuneLiveUncached(
     shaped.weights,
     livePctMap(cards),
     tagged,
+    undefined,
+    shaped.niceExemptIdx,
   );
 
   // UNTAGGED degenerate-loss-ladder guidance (the owner's "Captive" case):
@@ -2204,11 +2240,19 @@ async function planPackTuneLiveUncached(
     limit: null,
     snapped: shaped.snapped ?? false,
     offLadderCards,
+    allNice: shaped.allNice ?? null,
     topInflationUnavoidable: shaped.topInflationUnavoidable ?? false,
     taggedAccuracyHit: search.taggedAccuracyHit,
     searchMeta,
+    // §niceness: a pinned-but-valid plan (exact grid, not pretty) gets the
+    // ranked fixes too — add-dust frees exactly the freedom the nice grid
+    // needs.
     guidance: tagged
-      ? guidanceFor(shaped.snapped !== true || search.taggedAccuracyHit === false)
+      ? guidanceFor(
+          shaped.snapped !== true ||
+            search.taggedAccuracyHit === false ||
+            shaped.allNice === false,
+        )
       : untaggedGuidance,
   };
 }
@@ -2278,6 +2322,7 @@ async function planPackTuneStagedUncached(
         input.pinnedOdds !== undefined
           ? new Set(input.pinnedOdds.map((p) => p.cardId))
           : undefined,
+        outcome.niceExemptIdx ?? undefined,
       )
     : { planned: [], offLadderCards: [] };
 
@@ -2287,7 +2332,9 @@ async function planPackTuneStagedUncached(
   const stagedNeedsGuidance =
     !outcome.ok ||
     outcome.snapped !== true ||
-    r.priceSearch?.taggedAccuracyHit === false;
+    r.priceSearch?.taggedAccuracyHit === false ||
+    // §niceness: exact-but-not-pretty plans get the ranked fixes too.
+    outcome.allNice === false;
   let guidance: TagGuidance | null = null;
   const isTagContradiction = !outcome.ok && outcome.code === "tag-contradiction";
   if (!taggedStaged && outcome.ok) {
@@ -2373,6 +2420,7 @@ async function planPackTuneStagedUncached(
         : null,
     snapped: outcome.ok ? outcome.snapped : null,
     offLadderCards,
+    allNice: outcome.ok ? outcome.allNice : null,
     topInflationUnavoidable: outcome.ok ? outcome.topInflationUnavoidable : null,
     intendedHitRate: r.resolved.intendedHitRate,
     targets: {
