@@ -1218,6 +1218,95 @@ export function buildWidePriceProbeSuggestion(args: {
   };
 }
 
+// ── POOL-EDITS-FIRST (owner-lens §3 / Pattern 1, 10) ────────────────────
+//
+// When the fixed-pool plan is DEGENERATE or INFEASIBLE, editing the POOL (add a
+// mid card / remove dead cards) is the real fix — a price move alone can't
+// spread a one-carrier ladder. The guidance engine already computes + solver-
+// round-trips these levers (`add-card`, `remove-dead-card`, `price-move`); this
+// derives the PRIMARY recommendation from them as a single structured object so
+// the plan can lead with it (and the workspace can one-click stage it). Pure —
+// derived entirely from an already-computed `TagGuidance`; never re-solves.
+
+export type PoolEditReason = "degenerate-shape" | "infeasible" | "risk-band-exit";
+
+export type PoolEditPlan = {
+  /** Why the pool edit is the primary recommendation. */
+  reason: PoolEditReason;
+  /** The add-one-card lever (null = pure-removal or price-only rec). */
+  addCard: {
+    band: string;
+    valueMin: number;
+    valueMax: number;
+    suggestedValue: number;
+    /** Predicted share of opens the new card carries (fraction). */
+    expectedShare: number;
+  } | null;
+  /** Dead cards to remove (crushed / floor-pinned; each removal-proven). */
+  removeCardIds: string[];
+  /** The verified price for the edited pool (from an accompanying price-*). */
+  price: number | null;
+  /** TRUE when `price` sits outside the ±budget of live. */
+  beyondBudget: boolean;
+  /** Never emitted unproven — the guidance suggestions are all solver-round-tripped. */
+  solverVerified: boolean;
+};
+
+/**
+ * Derive the PRIMARY {@link PoolEditPlan} from a plan's already-computed
+ * guidance (owner-lens §3). Picks the top `add-card` lever (else a pure-removal
+ * fix), collects every `remove-dead-card` id, and takes the price from an
+ * accompanying `price-move` / `price-edge-exact` suggestion. Returns `null` when
+ * the guidance carries no actionable pool lever (falls back to the plain
+ * suggestions banner). Pure + sync.
+ *
+ * `livePrice` + `priceBudgetPct` classify the recommended price as beyond-budget
+ * (shown, never auto-applied).
+ */
+export function derivePoolEditPlan(
+  guidance: TagGuidance | null,
+  reason: PoolEditReason,
+  livePrice: number,
+  priceBudgetPct: number,
+): PoolEditPlan | null {
+  if (guidance === null) return null;
+  const sugg = guidance.suggestions;
+  const add = sugg.find((s) => s.kind === "add-card") ?? null;
+  const removeCardIds = sugg
+    .filter((s) => s.kind === "remove-dead-card" && typeof s.params.cardId === "string")
+    .map((s) => String(s.params.cardId));
+  const priceSugg =
+    sugg.find((s) => s.kind === "price-edge-exact") ??
+    sugg.find((s) => s.kind === "price-move") ??
+    null;
+  // No actionable pool lever at all → let the caller fall back to the banner.
+  if (add === null && removeCardIds.length === 0) return null;
+
+  const addCard =
+    add !== null
+      ? {
+          band: String(add.params.band ?? ""),
+          valueMin: Number(add.params.valueMin ?? 0),
+          valueMax: Number(add.params.valueMax ?? 0),
+          suggestedValue: Number(add.params.suggestedValue ?? 0),
+          expectedShare: Number(add.params.expectedShare ?? 0),
+        }
+      : null;
+  const price = priceSugg !== null ? Number(priceSugg.params.price) : null;
+  const beyondBudget =
+    price !== null && livePrice > 0
+      ? Math.abs(price - livePrice) / livePrice > priceBudgetPct + 1e-9
+      : false;
+  return {
+    reason,
+    addCard,
+    removeCardIds,
+    price,
+    beyondBudget,
+    solverVerified: true,
+  };
+}
+
 export type UntaggedPlanGuidanceInput = {
   /** Pool card values, aligned with `currentWeights` / `plannedShares`. */
   cards: { value: number }[];

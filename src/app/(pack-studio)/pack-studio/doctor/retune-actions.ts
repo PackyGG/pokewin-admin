@@ -38,9 +38,12 @@ import {
   computeUntaggedGuidance,
   ladderShape,
   buildWidePriceProbeSuggestion,
+  derivePoolEditPlan,
   type TagGuidance,
   type LadderShape,
   type TuneSuggestion,
+  type PoolEditPlan,
+  type PoolEditReason,
 } from "@/app/(admin)/insights/edge-calc/tag-guidance";
 import {
   planPackReprice,
@@ -1973,6 +1976,17 @@ export type PackTunePlan = {
    * makes knowingly. `false` when infeasible or in-band.
    */
   riskBandExit: boolean;
+  /**
+   * §pool-edits-first (owner-lens §3 / Patterns 1, 10): the PRIMARY
+   * recommendation when the fixed-pool plan is DEGENERATE, INFEASIBLE, or exits
+   * its risk band WITH a tier flip — a solver-verified add-card / remove-dead-
+   * card / pinned-price pool edit derived from the plan's own guidance. The UI
+   * leads with this and demotes the fixed-pool plan to the secondary. Advisory
+   * payload only — it never changes `planned`/`priceAfter` (the write artifact
+   * stays the fixed-pool plan until the owner stages the edit). `null` when the
+   * plan is healthy or the guidance carries no actionable pool lever.
+   */
+  poolEditPlan: PoolEditPlan | null;
 };
 
 /**
@@ -2013,9 +2027,12 @@ export async function planPackTune(
   // never surface.
   // v7: the plan shape gained `riskBand` + `riskBandExit` (§risk-leverage) —
   // key bumped for the same reason.
+  // v8: the plan shape gained `poolEditPlan` (§pool-edits-first) + a
+  // §1.4 wide-probe `price-move` suggestion may now ride the guidance — key
+  // bumped so persisted v7 entries never surface.
   return unstable_cache(
     () => planPackTuneLiveUncached(packId),
-    ["pack-studio.retune.plan-pack.v7", packId],
+    ["pack-studio.retune.plan-pack.v8", packId],
     { revalidate: 60, tags: [packRetunePlanTag(packId)] },
   )();
 }
@@ -2276,6 +2293,7 @@ async function planPackTuneLiveUncached(
       shape: null,
       riskBand: null,
       riskBandExit: false,
+      poolEditPlan: null,
     };
   }
 
@@ -2441,6 +2459,12 @@ async function planPackTuneLiveUncached(
   }
 
   if ("error" in shaped) {
+    // §3 pool-edits-first: an INFEASIBLE default leads with the solver-verified
+    // pool edit (add/remove card) that makes a clean solve exist.
+    const infeasibleGuidance = mergeWideProbeSuggestion(
+      guidanceFor(true),
+      wideProbeSuggestion,
+    );
     return {
       ...base,
       priceAfter: p.price,
@@ -2455,10 +2479,16 @@ async function planPackTuneLiveUncached(
       topInflationUnavoidable: null,
       taggedAccuracyHit: search.taggedAccuracyHit,
       searchMeta,
-      guidance: mergeWideProbeSuggestion(guidanceFor(true), wideProbeSuggestion),
+      guidance: infeasibleGuidance,
       shape: null,
       riskBand: null,
       riskBandExit: false,
+      poolEditPlan: derivePoolEditPlan(
+        infeasibleGuidance,
+        "infeasible",
+        p.price,
+        priceBudgetPct,
+      ),
     };
   }
 
@@ -2530,6 +2560,41 @@ async function planPackTuneLiveUncached(
     liveCv: before.cv,
   });
   const riskBandExit = isRiskBandExit(shaped.risk.cv, riskBand);
+  const tierFlip = shaped.risk.tier !== before.tier;
+
+  // §niceness: a pinned-but-valid plan (exact grid, not pretty) gets the ranked
+  // fixes too. §1.4: a materially-better beyond-budget far price rides as a
+  // ranked `price-move` SUGGESTION on top (never auto-applied).
+  const feasibleGuidance = mergeWideProbeSuggestion(
+    tagged
+      ? guidanceFor(
+          shaped.snapped !== true ||
+            search.taggedAccuracyHit === false ||
+            shaped.allNice === false,
+        )
+      : untaggedGuidance,
+    wideProbeSuggestion,
+  );
+
+  // §3 pool-edits-first: a FEASIBLE-but-degenerate plan (or one that exits its
+  // risk band WITH a tier flip) leads with the solver-verified pool edit; the
+  // fixed-pool plan becomes the explicit secondary. Advisory only — the write
+  // artifact stays the fixed-pool plan until the owner stages the edit.
+  const poolEditReason =
+    shape?.degenerate === true
+      ? ("degenerate-shape" as const)
+      : riskBandExit && tierFlip
+        ? ("risk-band-exit" as const)
+        : null;
+  const poolEditPlan =
+    poolEditReason !== null
+      ? derivePoolEditPlan(
+          feasibleGuidance,
+          poolEditReason,
+          p.price,
+          priceBudgetPct,
+        )
+      : null;
 
   return {
     ...base,
@@ -2545,23 +2610,11 @@ async function planPackTuneLiveUncached(
     topInflationUnavoidable: shaped.topInflationUnavoidable ?? false,
     taggedAccuracyHit: search.taggedAccuracyHit,
     searchMeta,
-    // §niceness: a pinned-but-valid plan (exact grid, not pretty) gets the
-    // ranked fixes too — add-dust frees exactly the freedom the nice grid
-    // needs. §1.4: a materially-better beyond-budget far price rides as a
-    // ranked `price-move` SUGGESTION on top (never auto-applied).
-    guidance: mergeWideProbeSuggestion(
-      tagged
-        ? guidanceFor(
-            shaped.snapped !== true ||
-              search.taggedAccuracyHit === false ||
-              shaped.allNice === false,
-          )
-        : untaggedGuidance,
-      wideProbeSuggestion,
-    ),
+    guidance: feasibleGuidance,
     shape,
     riskBand,
     riskBandExit,
+    poolEditPlan,
   };
 }
 
@@ -2735,6 +2788,28 @@ async function planPackTuneStagedUncached(
       ? isRiskBandExit(outcome.after.cv, stagedRiskBand)
       : false;
 
+  // §3 pool-edits-first (staged arm): an infeasible / degenerate / risk-flip
+  // staged plan leads with the solver-verified pool edit derived from the
+  // staged guidance. `readRetunePriceBudgetPct` is request-cached (free here).
+  const stagedTierFlip =
+    outcome.ok && outcome.after !== null && outcome.after.tier !== r.before.tier;
+  const stagedPoolEditReason: PoolEditReason | null = !outcome.ok
+    ? "infeasible"
+    : stagedShape?.degenerate === true
+      ? "degenerate-shape"
+      : stagedRiskBandExit && stagedTierFlip
+        ? "risk-band-exit"
+        : null;
+  const stagedPoolEditPlan =
+    stagedPoolEditReason !== null
+      ? derivePoolEditPlan(
+          guidance,
+          stagedPoolEditReason,
+          r.priceBefore,
+          await readRetunePriceBudgetPct(),
+        )
+      : null;
+
   return {
     packId,
     name: r.packName,
@@ -2789,5 +2864,6 @@ async function planPackTuneStagedUncached(
     shape: stagedShape,
     riskBand: stagedRiskBand,
     riskBandExit: stagedRiskBandExit,
+    poolEditPlan: stagedPoolEditPlan,
   };
 }

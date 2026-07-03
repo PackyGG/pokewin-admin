@@ -33,7 +33,9 @@ import {
   ladderShape,
   LADDER_DEGENERATE_THRESHOLD,
   buildWidePriceProbeSuggestion,
+  derivePoolEditPlan,
   type ProbeOutcome,
+  type TagGuidance,
 } from "../../insights/edge-calc/tag-guidance";
 import {
   packRiskBand,
@@ -443,6 +445,86 @@ check("wide probe: untagged unsnapped→snapped and degenerate→healthy both cr
   });
   assert(shapeCross !== null, "degenerate→healthy is a crossing");
   assert(/ladder stays healthy/.test(shapeCross!.humanCopy), "copy names the shape benefit");
+});
+
+// ── 8. Pool-edits-first derivation (owner-lens §3) ──────────────────────
+function guidanceWith(suggestions: TagGuidance["suggestions"]): TagGuidance {
+  return {
+    feasibility: {
+      evTarget: 0,
+      evMin: 0,
+      evMax: 0,
+      feasible: true,
+      saturated: false,
+      direction: "ok",
+      components: { winEvMin: 0, winEvMax: 0, nmMass: 0, dustMass: 0, capSum: 0 },
+    },
+    suggestions,
+  };
+}
+const PROOF = { evMinAfter: 0, evMaxAfter: 0, feasibleAfter: true, solverVerified: true };
+
+check("pool-edit: derived from an add-card + remove-dead-card + price-move guidance", () => {
+  const g = guidanceWith([
+    {
+      kind: "add-card",
+      params: { band: "near-miss", valueMin: 281.79, valueMax: 327.39, suggestedValue: 310.16, expectedShare: 0.1 },
+      humanCopy: "",
+      proof: PROOF,
+    },
+    { kind: "remove-dead-card", params: { cardId: "c-3395", cardValue: 33.95 }, humanCopy: "", proof: PROOF },
+    { kind: "remove-dead-card", params: { cardId: "c-1823", cardValue: 18.23 }, humanCopy: "", proof: PROOF },
+    { kind: "price-move", params: { price: 344.62 }, humanCopy: "", proof: PROOF },
+  ]);
+  const pe = derivePoolEditPlan(g, "degenerate-shape", 485.5, 0.1);
+  assert(pe !== null, "an actionable pool lever → a poolEditPlan");
+  assert(pe!.reason === "degenerate-shape", "reason threaded");
+  assert(pe!.addCard !== null && pe!.addCard.suggestedValue === 310.16, "add-card carried verbatim");
+  assert(pe!.addCard!.expectedShare === 0.1, "expectedShare carried");
+  assert(
+    pe!.removeCardIds.length === 2 &&
+      pe!.removeCardIds.includes("c-3395") &&
+      pe!.removeCardIds.includes("c-1823"),
+    "both dead cards collected",
+  );
+  assert(pe!.price === 344.62, "price from the price-move suggestion");
+  assert(pe!.beyondBudget === true, "$344.62 is >10% below $485.50 → beyond budget");
+  assert(pe!.solverVerified === true, "guidance suggestions are solver-round-tripped");
+});
+
+check("pool-edit: a pure-removal fix (no add-card) still derives", () => {
+  const g = guidanceWith([
+    { kind: "remove-dead-card", params: { cardId: "c-dead", cardValue: 5 }, humanCopy: "", proof: PROOF },
+  ]);
+  const pe = derivePoolEditPlan(g, "infeasible", 100, 0.1);
+  assert(pe !== null, "a removal-only fix is still a poolEditPlan");
+  assert(pe!.addCard === null, "no add-card lever");
+  assert(pe!.removeCardIds.length === 1, "the dead card is collected");
+  assert(pe!.price === null, "no price suggestion → null price");
+  assert(pe!.beyondBudget === false, "no price → not beyond budget");
+});
+
+check("pool-edit: an in-budget price → beyondBudget false; a healthy guidance → null", () => {
+  const inBudget = derivePoolEditPlan(
+    guidanceWith([
+      { kind: "add-card", params: { band: "dust", valueMin: 1, valueMax: 2, suggestedValue: 1.5, expectedShare: 0.05 }, humanCopy: "", proof: PROOF },
+      { kind: "price-move", params: { price: 105 }, humanCopy: "", proof: PROOF },
+    ]),
+    "degenerate-shape",
+    100,
+    0.1,
+  );
+  assert(inBudget !== null && inBudget.beyondBudget === false, "$105 within ±10% of $100 → in budget");
+  // No actionable lever (only accept-as-is / price) → null (falls back to banner).
+  const noLever = derivePoolEditPlan(
+    guidanceWith([{ kind: "accept-as-is", params: {}, humanCopy: "", proof: PROOF }]),
+    "degenerate-shape",
+    100,
+    0.1,
+  );
+  assert(noLever === null, "no add/remove lever → null (banner fallback)");
+  // Null guidance → null.
+  assert(derivePoolEditPlan(null, "infeasible", 100, 0.1) === null, "null guidance → null");
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────
