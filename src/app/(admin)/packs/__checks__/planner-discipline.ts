@@ -33,6 +33,13 @@ import {
   ladderShape,
   LADDER_DEGENERATE_THRESHOLD,
 } from "../../insights/edge-calc/tag-guidance";
+import {
+  packRiskBand,
+  isRiskBandExit,
+  TAG_CV_K_LO,
+  TAG_CV_K_HI,
+  RISK_BAND_LIVE_HEADROOM,
+} from "../_lib/risk-bands";
 
 let passes = 0;
 const failures: string[] = [];
@@ -262,6 +269,59 @@ check("a live card crushed 100×+ under 0.002% IS a crush", () => {
   assert(s.crushedCount === 1, `the crushed card is counted (got ${s.crushedCount})`);
   assert(s.crushedIdx[0] === 0, "the $100 card is flagged");
   assert(s.crushedLiveMass >= 0.05 - 1e-9, "its live mass is accumulated");
+});
+
+// ── 6. Risk leverage bands (owner-lens §4 / Pattern 6) ──────────────────
+check("risk band: tag-law base = k·sqrt((1−t)/t), widened to a deliberate hot-runner", () => {
+  // Chaos: 10% tag, live CV 7.95 (way above the tag-law band) — the owner's
+  // deliberate leverage defines its OWN band (widened to live + 15% headroom).
+  const chaos = packRiskBand({ tag: 0.1, price: 4.38, liveCv: 7.95 });
+  const s = Math.sqrt((1 - 0.1) / 0.1);
+  assert(chaos.source === "tag-law", "a tagged pack uses the lottery CV law");
+  assert(Math.abs(chaos.lo - TAG_CV_K_LO * s) < 1e-9, `lo = k_lo·sqrt (got ${chaos.lo})`);
+  // Base hi would be k_hi·sqrt; the widen pushes it up to live·(1+headroom).
+  assert(TAG_CV_K_HI * s < 7.95 * (1 + RISK_BAND_LIVE_HEADROOM), "the hot-runner is above the base band");
+  assert(
+    Math.abs(chaos.hi - 7.95 * (1 + RISK_BAND_LIVE_HEADROOM)) < 1e-9,
+    `hi widened to live+${RISK_BAND_LIVE_HEADROOM * 100}% (got ${chaos.hi})`,
+  );
+  assert(chaos.widenedToLive, "the live CV sits outside the base band → widened");
+  // Chaos ±60% plan CV 8.66 is INSIDE its widened band → no badge (the crush
+  // there is the shape guard's catch, not the risk band's — complementary).
+  assert(!isRiskBandExit(8.66, chaos), "Chaos ±60% plan CV 8.66 is in-band (no risk badge)");
+  // A synthetic CV outside the band DOES exit.
+  assert(isRiskBandExit(1.0, chaos), "a CV below the band exits");
+  assert(isRiskBandExit(20, chaos), "a CV above the band exits");
+});
+
+check("risk band: untagged uses the fleet price bracket", () => {
+  // Tails: untagged, price 432.5 → the >$100 bracket [0.8, 2.5].
+  const tails = packRiskBand({ tag: null, price: 432.5, liveCv: 2.32 });
+  assert(tails.source === "fleet-bracket", "an untagged pack uses the price bracket");
+  assert(tails.lo <= 0.8 + 1e-9, "the >$100 bracket floor is 0.8");
+  // A cheap untagged pack uses the <$5 bracket.
+  const cheap = packRiskBand({ tag: null, price: 3, liveCv: 3 });
+  assert(cheap.source === "fleet-bracket", "cheap untagged → bracket");
+  assert(cheap.hi >= 5.7 - 1e-9, "the <$5 bracket ceiling is 5.7 (widest — spicy cheap packs)");
+});
+
+check("risk band: a marginal low-CV untagged pack exits its band (Pattern 6 badge)", () => {
+  // Combat-Ready class: live CV 1.0 in the <$5 bracket [1.1, 5.7], widened to
+  // [0.85, 5.7]; a plan landing at CV 0.8 exits (flattened below the band).
+  const combat = packRiskBand({ tag: null, price: 3, liveCv: 1.0 });
+  assert(isRiskBandExit(0.8, combat), "a plan CV 0.8 exits the widened band → badge");
+  assert(!isRiskBandExit(1.0, combat), "the live CV itself is always in-band (widen guarantee)");
+});
+
+check("risk band: NaN/degenerate CV is exit-safe (never a false badge)", () => {
+  const band = packRiskBand({ tag: null, price: 10, liveCv: 2 });
+  assert(!isRiskBandExit(Number.NaN, band), "NaN CV → no exit");
+  assert(!isRiskBandExit(0, band), "0 CV → no exit");
+  assert(!isRiskBandExit(-1, band), "negative CV → no exit");
+  // A non-finite live CV skips the widen (base band stands, no crash).
+  const noLive = packRiskBand({ tag: 0.05, price: 20, liveCv: 0 });
+  assert(Number.isFinite(noLive.lo) && Number.isFinite(noLive.hi), "band stays finite with no live CV");
+  assert(!noLive.widenedToLive, "no live CV → not widened");
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────

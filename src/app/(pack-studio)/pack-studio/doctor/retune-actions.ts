@@ -63,6 +63,11 @@ import {
 } from "@/app/(admin)/packs/_lib/risk-config";
 import { computePoolFingerprint } from "@/app/(admin)/packs/_lib/pool-fingerprint";
 import {
+  packRiskBand,
+  isRiskBandExit,
+  type RiskBand,
+} from "@/app/(admin)/packs/_lib/risk-bands";
+import {
   buildRetuneSearchParams,
   computeCapDroppedCardIds,
   mapPinnedOddsToShares,
@@ -1951,6 +1956,20 @@ export type PackTunePlan = {
    * when the plan is infeasible (no vector to score). A no-op replan scores 0.
    */
   shape: LadderShape | null;
+  /**
+   * §risk-leverage (owner-lens §4 / Pattern 6): the CV band this pack's retune
+   * should stay inside (tag-law for lottery packs, fleet price-bracket for
+   * standard, widened to the pack's live CV). A POST-CHECK — never a solver
+   * constraint. `null` when the plan is infeasible (no landed CV).
+   */
+  riskBand: RiskBand | null;
+  /**
+   * TRUE when the landed `after.cv` sits OUTSIDE {@link riskBand} — the UI
+   * badges a risk-delta warning (rose on a tier flip too, amber otherwise).
+   * Never blocks the push: the pack's risk tier is a product decision the owner
+   * makes knowingly. `false` when infeasible or in-band.
+   */
+  riskBandExit: boolean;
 };
 
 /**
@@ -1989,9 +2008,11 @@ export async function planPackTune(
   // v6: the plan shape gained `shape` (§shape-guard) + the default price budget
   // changed to ±10% (targets are now live-anchored) — persisted v5 entries must
   // never surface.
+  // v7: the plan shape gained `riskBand` + `riskBandExit` (§risk-leverage) —
+  // key bumped for the same reason.
   return unstable_cache(
     () => planPackTuneLiveUncached(packId),
-    ["pack-studio.retune.plan-pack.v6", packId],
+    ["pack-studio.retune.plan-pack.v7", packId],
     { revalidate: 60, tags: [packRetunePlanTag(packId)] },
   )();
 }
@@ -2212,6 +2233,8 @@ async function planPackTuneLiveUncached(
       searchMeta: null,
       guidance: null,
       shape: null,
+      riskBand: null,
+      riskBandExit: false,
     };
   }
 
@@ -2289,6 +2312,8 @@ async function planPackTuneLiveUncached(
       searchMeta,
       guidance: guidanceFor(true),
       shape: null,
+      riskBand: null,
+      riskBandExit: false,
     };
   }
 
@@ -2352,6 +2377,15 @@ async function planPackTuneLiveUncached(
         )
       : null;
 
+  // §risk-leverage: the CV band this pack should stay inside (widened to its
+  // live CV), and whether the landed CV exits it. Pure post-check.
+  const riskBand = packRiskBand({
+    tag: autoTargets.intendedHitRate,
+    price: p.price,
+    liveCv: before.cv,
+  });
+  const riskBandExit = isRiskBandExit(shaped.risk.cv, riskBand);
+
   return {
     ...base,
     priceAfter: search.bestPrice,
@@ -2377,6 +2411,8 @@ async function planPackTuneLiveUncached(
         )
       : untaggedGuidance,
     shape,
+    riskBand,
+    riskBandExit,
   };
 }
 
@@ -2534,6 +2570,22 @@ async function planPackTuneStagedUncached(
         )
       : null;
 
+  // §risk-leverage: the CV band (widened to the live CV) + landed-CV exit. Band
+  // is over the LIVE pack (tag + live price + live CV); the exit is judged
+  // against the staged plan's landed `after.cv`.
+  const stagedRiskBand: RiskBand | null =
+    outcome.ok && outcome.after !== null
+      ? packRiskBand({
+          tag: r.resolved.intendedHitRate,
+          price: r.priceBefore,
+          liveCv: r.before.cv,
+        })
+      : null;
+  const stagedRiskBandExit =
+    stagedRiskBand !== null && outcome.ok && outcome.after !== null
+      ? isRiskBandExit(outcome.after.cv, stagedRiskBand)
+      : false;
+
   return {
     packId,
     name: r.packName,
@@ -2586,5 +2638,7 @@ async function planPackTuneStagedUncached(
     pinnedOdds: input.pinnedOdds ?? null,
     guidance,
     shape: stagedShape,
+    riskBand: stagedRiskBand,
+    riskBandExit: stagedRiskBandExit,
   };
 }
