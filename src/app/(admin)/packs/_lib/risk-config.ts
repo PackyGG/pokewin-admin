@@ -1,6 +1,10 @@
 import { cache } from "react";
 import { getAdminSetting } from "@/lib/admin-settings";
 import type { PackRisk } from "@/app/(admin)/insights/edge-calc/risk";
+import {
+  RETUNE_MAX_PRICE_CHANGE_PCT,
+  RETUNE_PRICE_BUDGET_DEFAULT_PCT,
+} from "@/app/(admin)/insights/edge-calc/risk";
 // Pure auto-target API lives in the dep-free `./auto-targets` module (so the
 // no-DB risk-check harness can pin it). Imported locally (so `readMaxMultCeiling`
 // can reference the default) and re-exported below so existing import sites keep
@@ -189,6 +193,13 @@ export type PackSystemConfig = {
    * Read + validated by {@link readEdgeCurveConfig}.
    */
   edgeCurve?: Partial<EdgeCurveConfig>;
+  /**
+   * Optional override for the DEFAULT retune price budget (fraction of the live
+   * price the automatic plan may move the ticket). Unset →
+   * {@link RETUNE_PRICE_BUDGET_DEFAULT_PCT} (0.10). Read + clamped by
+   * {@link readRetunePriceBudgetPct} into `(0, RETUNE_MAX_PRICE_CHANGE_PCT]`.
+   */
+  retunePriceBudgetPct?: number;
 };
 
 /** ADMIN-DB settings key holding the pack-system config JSON blob. */
@@ -229,6 +240,26 @@ export async function readMaxWinCap(): Promise<number> {
   const cap = cfg?.maxWinCap;
   if (typeof cap === "number" && Number.isFinite(cap) && cap > 0) return cap;
   return DEFAULT_MAX_WIN_CAP;
+}
+
+/**
+ * Resolve the DEFAULT retune price budget (fraction of the live price the
+ * automatic plan may move the ticket): the `retunePriceBudgetPct` field of the
+ * pack-system config blob when present, finite and positive — clamped into
+ * `(0, RETUNE_MAX_PRICE_CHANGE_PCT]` (a config override may never exceed the
+ * ±60% hard cap) — else {@link RETUNE_PRICE_BUDGET_DEFAULT_PCT} (0.10).
+ *
+ * Resolved ONCE by the caller and threaded to plan AND write (via
+ * `buildRetuneSearchParams`'s required `priceBudgetPct`), so preview ≡ write
+ * stays unconstructible skew.
+ */
+export async function readRetunePriceBudgetPct(): Promise<number> {
+  const cfg = await readPackSystemConfig();
+  const v = cfg?.retunePriceBudgetPct;
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) {
+    return Math.min(v, RETUNE_MAX_PRICE_CHANGE_PCT);
+  }
+  return RETUNE_PRICE_BUDGET_DEFAULT_PCT;
 }
 
 /**

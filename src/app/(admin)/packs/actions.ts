@@ -78,6 +78,7 @@ import {
   readEdgeCurveConfig,
   readMaxWinCap,
   readMaxMultCeiling,
+  readRetunePriceBudgetPct,
   type EdgeCurveConfig,
   type ResolvedAutoTargetCfg,
 } from "@/app/(admin)/packs/_lib/risk-config";
@@ -1753,6 +1754,11 @@ export async function applyPackRetune(
     globalCap: await readMaxWinCap(),
     maxMultCeiling: await readMaxMultCeiling(),
   };
+  // The DEFAULT retune price budget (±10% unless configured) — resolved at
+  // WRITE time and threaded into the shared builder so the write re-solves the
+  // SAME band the plan previewed (the tolerance-0 approvedPriceAfter pin
+  // catches any band-induced divergence).
+  const priceBudgetPct = await readRetunePriceBudgetPct();
   const resolved = resolveRetuneTargets(
     price,
     cfg,
@@ -1892,6 +1898,7 @@ export async function applyPackRetune(
         // instead of falling back to the legacy value-only shape.
         currentWeights: pool.map((c) => c.weight),
         intendedHitRate: resolved.intendedHitRate,
+        priceBudgetPct,
       }),
       // Legacy chip-strip levers (old review route / doctor drawer only) —
       // spread AFTER the builder so a caller that sends none (V2 sends

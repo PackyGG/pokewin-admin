@@ -27,8 +27,9 @@
  *   3.  Staged untagged incl. a staged-IN card (anchor weight 0).
  *   4.  Staged tagged (5% pack): + `taggedWinRate`.
  *   5.  Tagged pack, win-rate pinned AWAY from the tag → NO `taggedWinRate`.
- *   6.  Both arms share the ±60% band (`RETUNE_MAX_PRICE_CHANGE_PCT`) — the
- *       staged arm's old silent ±25% default is DEAD (owner-sanctioned).
+ *   6.  Both arms carry the resolved `priceBudgetPct` as the search band
+ *       (default ±10% — `RETUNE_PRICE_BUDGET_DEFAULT_PCT`), NOT the flat ±60%
+ *       constant; a configured budget clamps into (0, ±60%].
  *   7.  Neither arm emits `preferHigherEdge` / a non-zero upward extension.
  *   8.  `isOnCleanLadderPct` (the `offLadderCards` brain): ladder rungs read
  *       true (incl. reconstructed integer-weight pcts), off-ladder residuals
@@ -44,6 +45,7 @@ import {
 } from "../_lib/retune-params";
 import {
   RETUNE_MAX_PRICE_CHANGE_PCT,
+  RETUNE_PRICE_BUDGET_DEFAULT_PCT,
   TAGGED_WINRATE_TOLERANCE,
   isOnCleanLadderPct,
 } from "../../insights/edge-calc/risk";
@@ -118,6 +120,7 @@ const liveUntagged: RetuneSearchInputs = {
   winRateTol: 0.02,
   currentWeights: [880000, 90000, 29900, 100],
   intendedHitRate: null,
+  priceBudgetPct: RETUNE_PRICE_BUDGET_DEFAULT_PCT,
 };
 
 /** Tagged live pool: a "1%" lottery pack — target win-rate IS the tag. */
@@ -142,6 +145,7 @@ const stagedUntagged: RetuneSearchInputs = {
   winRateTol: 0.02,
   currentWeights: [910000, 89000, 0], // last card staged-in → 0 anchor
   intendedHitRate: null,
+  priceBudgetPct: RETUNE_PRICE_BUDGET_DEFAULT_PCT,
 };
 
 /** Staged tagged pool: a "5%" pack, staged price, tag-exact target. */
@@ -175,7 +179,13 @@ function writeArmSends(i: RetuneSearchInputs): Record<string, unknown> {
     nearMissMin: i.nearMissMin,
     winRateTol: tagged ? TAGGED_WINRATE_TOLERANCE : i.winRateTol,
     currentWeights: i.currentWeights,
-    maxPriceChangePct: RETUNE_MAX_PRICE_CHANGE_PCT,
+    // The retune band is the caller's price budget, clamped into
+    // [0.0001, RETUNE_MAX_PRICE_CHANGE_PCT] — NOT the flat ±60% constant. The
+    // full ±60% survives only as the wide SUGGESTION probe.
+    maxPriceChangePct: Math.min(
+      Math.max(i.priceBudgetPct, 0.0001),
+      RETUNE_MAX_PRICE_CHANGE_PCT,
+    ),
     upwardPriceExtensionPct: 0,
     ...(tagged ? { taggedWinRate: i.targetWinRate } : {}),
     // Owner pins (Retune V2): the write threads {cardId, pct} pins through the
@@ -230,21 +240,58 @@ check("tagged pack with win-rate pinned away from the tag → NO taggedWinRate k
   deepEqual(built, writeArmSends(pinnedAway));
 });
 
-// ── 6. The ONE shared band on BOTH arms (staged ±25% default is dead) ───
-check("both arms carry the shared ±60% retune band", () => {
+// ── 6. The band IS the price budget on BOTH arms (default ±10%) ─────────
+check("both arms carry the resolved price budget as the band (default ±10%)", () => {
   const live = buildRetuneSearchParams("live", liveUntagged);
   const staged = buildRetuneSearchParams("staged", stagedUntagged);
   assert(
-    live.maxPriceChangePct === RETUNE_MAX_PRICE_CHANGE_PCT,
-    "live arm must carry RETUNE_MAX_PRICE_CHANGE_PCT",
+    live.maxPriceChangePct === RETUNE_PRICE_BUDGET_DEFAULT_PCT,
+    `live arm must carry the price budget (got ${live.maxPriceChangePct}, want ${RETUNE_PRICE_BUDGET_DEFAULT_PCT})`,
   );
   assert(
-    staged.maxPriceChangePct === RETUNE_MAX_PRICE_CHANGE_PCT,
-    "staged arm must carry RETUNE_MAX_PRICE_CHANGE_PCT (±25% default is dead)",
+    staged.maxPriceChangePct === RETUNE_PRICE_BUDGET_DEFAULT_PCT,
+    `staged arm must carry the price budget (got ${staged.maxPriceChangePct})`,
+  );
+  assert(
+    Math.abs(RETUNE_PRICE_BUDGET_DEFAULT_PCT - 0.1) < 1e-12,
+    "the default budget is ±10%",
   );
   assert(
     Math.abs(RETUNE_MAX_PRICE_CHANGE_PCT - 0.6) < 1e-12,
-    "the shared band is ±60%",
+    "the SUGGESTION-band hard cap is still ±60%",
+  );
+});
+
+// ── 6b. The budget is threaded verbatim, clamped into (0, ±60%] ────────
+check("price budget threads through as the band and clamps at the ±60% hard cap", () => {
+  // A pass-through mid budget survives verbatim on both arms.
+  const passThrough = buildRetuneSearchParams("live", {
+    ...liveUntagged,
+    priceBudgetPct: 0.25,
+  });
+  assert(
+    passThrough.maxPriceChangePct === 0.25,
+    `a 0.25 budget must pass through as the band (got ${passThrough.maxPriceChangePct})`,
+  );
+  // A configured budget above the ±60% cap clamps DOWN to the hard cap.
+  const overCap = buildRetuneSearchParams("staged", {
+    ...stagedUntagged,
+    priceBudgetPct: 0.9,
+  });
+  assert(
+    overCap.maxPriceChangePct === RETUNE_MAX_PRICE_CHANGE_PCT,
+    `a 0.9 budget must clamp to ±60% (got ${overCap.maxPriceChangePct})`,
+  );
+  // A non-positive/degenerate budget clamps UP to the positive floor (never 0
+  // or negative — the search needs a real band).
+  const zero = buildRetuneSearchParams("live", {
+    ...liveUntagged,
+    priceBudgetPct: 0,
+  });
+  const zeroBand = zero.maxPriceChangePct ?? -1;
+  assert(
+    zeroBand > 0 && zeroBand < 0.001,
+    `a 0 budget must clamp UP to the positive floor (got ${zero.maxPriceChangePct})`,
   );
 });
 
@@ -305,6 +352,7 @@ check("pinned staged fixture: builder deep-equals the send incl. pinnedShares (s
     winRateTol: 0.02,
     currentWeights: [910000, 89000, 0],
     intendedHitRate: null,
+    priceBudgetPct: RETUNE_PRICE_BUDGET_DEFAULT_PCT,
     // Deliberately UNSORTED input — the emitted vector must be index-sorted
     // so plan and write are deep-equal regardless of pin insertion order.
     pinnedOdds: [

@@ -13,11 +13,15 @@
  *
  * Contract (identical on BOTH arms — the arm only names which anchor semantics
  * the caller used: live pool/live price vs staged pool/staged price):
- *   • `maxPriceChangePct: RETUNE_MAX_PRICE_CHANGE_PCT` (±60%) — the ONE shared
- *     retune band. NOTE: this deliberately widens the staged write's search
- *     from its silent ±25% default to the shared ±60% band — owner-sanctioned
- *     ("price is a free lever", 2026-07-02) and required for the tolerance-0
- *     price pin to be skew-proof across arms.
+ *   • `maxPriceChangePct: priceBudgetPct` — the retune price budget the caller
+ *     resolves ONCE (via `readRetunePriceBudgetPct()`) and passes to plan AND
+ *     write, so preview ≡ write stays unconstructible skew. The DEFAULT budget
+ *     is ±10% ({@link RETUNE_PRICE_BUDGET_DEFAULT_PCT}); the full ±60% band
+ *     ({@link RETUNE_MAX_PRICE_CHANGE_PCT}) survives ONLY as the SUGGESTION
+ *     band — a bounded wide probe that PROPOSES beyond-budget prices, ranked
+ *     and never silently applied. The builder clamps the passed budget into
+ *     `[0.0001, RETUNE_MAX_PRICE_CHANGE_PCT]` so a mis-configured value can
+ *     never breach the ±60% hard cap.
  *   • `upwardPriceExtensionPct: 0` — no upward extension; legacy chip-strip
  *     callers may still override it AFTER the builder (V2 never does).
  *   • no `preferHigherEdge` — snap-first scoring (clean odds are a MUST).
@@ -37,6 +41,9 @@ import {
   TAGGED_WINRATE_TOLERANCE,
   type ShapeWeightsPinnedShare,
 } from "../../insights/edge-calc/risk";
+
+/** Lower clamp on the price budget: a positive band the search can move within. */
+const MIN_PRICE_BUDGET_PCT = 0.0001;
 
 /** Which solve arm the params are for (anchor semantics live at the caller). */
 export type RetuneArm = "live" | "staged";
@@ -71,6 +78,15 @@ export type RetuneSearchInputs = {
   currentWeights: number[];
   /** `resolveIntendedHitRate(name, tags)` — null for an untagged pack. */
   intendedHitRate: number | null;
+  /**
+   * The retune price budget (fraction of `basePrice`) — resolved ONCE by the
+   * caller via `readRetunePriceBudgetPct()` and passed to plan AND write so
+   * preview ≡ write stays unconstructible skew. REQUIRED (not optional): every
+   * call site must consciously pass it — a silently-defaulted band is exactly
+   * the class of skew the one-brain kills. The builder clamps it into
+   * `[MIN_PRICE_BUDGET_PCT, RETUNE_MAX_PRICE_CHANGE_PCT]`.
+   */
+  priceBudgetPct: number;
   /**
    * Owner-pinned EXACT per-card odds. The caller (action) validates the pins
    * STRUCTURALLY against its pool (real cards, no dupes, pct > 0) BEFORE the
@@ -197,9 +213,16 @@ export function buildRetuneSearchParams(
     // both writes — inherit it and preview ≡ write stays unconstructible skew.
     winRateTol: tagged ? TAGGED_WINRATE_TOLERANCE : i.winRateTol,
     currentWeights: i.currentWeights,
-    // The ONE shared retune band, both arms (staged: ±25% → ±60%, owner-
-    // sanctioned — price is a free lever; clean odds are a MUST).
-    maxPriceChangePct: RETUNE_MAX_PRICE_CHANGE_PCT,
+    // The retune price budget (both arms): the DEFAULT plan may move the ticket
+    // at most ±`priceBudgetPct` (default ±10%). Clamped into
+    // [MIN_PRICE_BUDGET_PCT, RETUNE_MAX_PRICE_CHANGE_PCT] so a mis-configured
+    // budget can never breach the ±60% hard cap. The full ±60% band survives
+    // only as the SUGGESTION probe (spread-override `maxPriceChangePct` at the
+    // call site — never the default plan / write artifact).
+    maxPriceChangePct: Math.min(
+      Math.max(i.priceBudgetPct, MIN_PRICE_BUDGET_PCT),
+      RETUNE_MAX_PRICE_CHANGE_PCT,
+    ),
     upwardPriceExtensionPct: 0,
     // Tagged win-rate accuracy scoring (0.01pp) — see the gate above.
     ...(tagged ? { taggedWinRate: i.targetWinRate } : {}),

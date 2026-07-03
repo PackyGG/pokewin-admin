@@ -4353,6 +4353,22 @@ export const TAGGED_WINRATE_TOLERANCE = 0.0001;
  */
 export const RETUNE_MAX_PRICE_CHANGE_PCT = 0.6;
 
+/**
+ * The DEFAULT retune price budget: the automatic plan may move the ticket at
+ * most ±10% of the live price (owner-approved default, 2026-07-03 — the ±60%
+ * band produced a −58% "so the odds land clean" move on a $4.38 pack, halving
+ * the ticket for cosmetics). Override via
+ * `pack_system_config.retunePriceBudgetPct`; hard-capped at
+ * {@link RETUNE_MAX_PRICE_CHANGE_PCT}. The full ±60% band remains the
+ * SUGGESTION band — a wide probe may PROPOSE prices beyond the budget, ranked
+ * and with exact numbers, but a beyond-budget price is NEVER silently applied
+ * as the default plan. The budget is a caller-side concern:
+ * `searchBestPriceForCleanSnap` already takes `maxPriceChangePct` as input;
+ * this constant is what the one-brain `buildRetuneSearchParams` threads as the
+ * default band when no config override exists.
+ */
+export const RETUNE_PRICE_BUDGET_DEFAULT_PCT = 0.1;
+
 export type SearchBestPriceResult = {
   bestPrice: number;
   bestResult: ShapeWeightsResult;

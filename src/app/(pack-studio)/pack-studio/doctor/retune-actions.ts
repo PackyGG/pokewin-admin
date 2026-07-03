@@ -55,6 +55,7 @@ import {
   readEdgeCurveConfig,
   readMaxWinCap,
   readMaxMultCeiling,
+  readRetunePriceBudgetPct,
   type EdgeCurveConfig,
   type ResolvedAutoTargetCfg,
 } from "@/app/(admin)/packs/_lib/risk-config";
@@ -1153,6 +1154,10 @@ async function resolveAndShapeStagedPool(
     maxMultCeiling: await readMaxMultCeiling(),
     edgeCurve: await readEdgeCurveConfig(),
   };
+  // The DEFAULT retune price budget (±10% unless configured) — resolved ONCE
+  // and threaded into the shared builder so the staged plan ≡ staged write
+  // (both run THIS resolver's search branch).
+  const priceBudgetPct = await readRetunePriceBudgetPct();
   // The STAGED pool's top card value — the pool is fully known here, so the
   // edge-curve premium prices the pool's ACTUAL jackpot exposure, not the
   // loosened theoretical cap (ruleset: no phantom premium on tagged packs).
@@ -1297,6 +1302,7 @@ async function resolveAndShapeStagedPool(
         // may never let a win/grail card exceed its CURRENT (live-pool) odds.
         currentWeights: stagedCurrentWeights,
         intendedHitRate,
+        priceBudgetPct,
         // Owner pins — held EXACT at every candidate price; plan and write
         // thread them through this SAME builder (preview ≡ write incl. pins).
         ...(pinnedOdds !== null ? { pinnedOdds } : {}),
@@ -2057,6 +2063,11 @@ async function planPackTuneLiveUncached(
     maxMultCeiling: await readMaxMultCeiling(),
     edgeCurve: await readEdgeCurveConfig(),
   };
+  // The DEFAULT retune price budget (±10% unless configured). Resolved ONCE
+  // here and threaded to the shared builder so plan ≡ write (the tolerance-0
+  // approvedPriceAfter pin depends on the same band on both sides).
+  // `readPackSystemConfig` is request-cached, so this is a free re-read.
+  const priceBudgetPct = await readRetunePriceBudgetPct();
 
   // Fresh identity + scope from the same composition view the legacy sweep
   // uses, so the scope predicate stays in lockstep.
@@ -2182,6 +2193,7 @@ async function planPackTuneLiveUncached(
       // the expensive tail).
       currentWeights: cards.map((c) => c.weight),
       intendedHitRate: autoTargets.intendedHitRate,
+      priceBudgetPct,
     }),
   );
   const shaped = search.bestResult;

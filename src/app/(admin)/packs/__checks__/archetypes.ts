@@ -67,6 +67,7 @@ import {
 } from "../_lib/auto-targets";
 import {
   ONE_SIDED_EDGE_EXCESS_TOL,
+  RETUNE_MAX_PRICE_CHANGE_PCT,
   TAGGED_WINRATE_TOLERANCE,
   searchBestPriceForCleanSnap,
   shapeWeights,
@@ -663,6 +664,10 @@ const captiveSearch = searchBestPriceForCleanSnap(
     winRateTol: 0.02,
     currentWeights: CAPTIVE.weights,
     intendedHitRate: null,
+    // This suite pins the ±60%-band degenerate-ladder archetype ($435.43,
+    // −10.3%); the ±10%-default landing ($446.68, still degenerate) is pinned
+    // in the planner-discipline harness.
+    priceBudgetPct: RETUNE_MAX_PRICE_CHANGE_PCT,
   }),
 );
 const captiveShares: number[] = (() => {

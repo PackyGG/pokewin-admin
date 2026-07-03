@@ -41,7 +41,10 @@
  * Exit code 0 = all passed; 1 = at least one failure (printed).
  */
 
-import { searchBestPriceForCleanSnap } from "../../insights/edge-calc/risk";
+import {
+  searchBestPriceForCleanSnap,
+  RETUNE_MAX_PRICE_CHANGE_PCT,
+} from "../../insights/edge-calc/risk";
 import {
   DEFAULT_MAX_MULT_CEILING,
   autoRetuneTargets,
@@ -125,6 +128,10 @@ function heavyHittersSolve() {
         winRateTol: 0.02,
         currentWeights: HEAVY_HITTERS.pool.map((c) => c.weight),
         intendedHitRate: targets.intendedHitRate,
+        // This suite pins cap-classification behavior at the full ±60% band
+        // (its design intent); the ±10% default lives in the parity + planner-
+        // discipline harnesses.
+        priceBudgetPct: RETUNE_MAX_PRICE_CHANGE_PCT,
       }),
     ),
   };
@@ -244,6 +251,7 @@ check("pins: pinning the cap-dropped Machamp is still the pins-infeasible + rais
       winRateTol: 0.02,
       currentWeights: HEAVY_HITTERS.pool.map((c) => c.weight),
       intendedHitRate: targets.intendedHitRate,
+      priceBudgetPct: RETUNE_MAX_PRICE_CHANGE_PCT,
       pinnedOdds: [{ cardId: "c-masaki-machamp", pct: 0.0005 }],
     }),
   );
@@ -282,6 +290,7 @@ check("under-cap pack: zero classifications and the write vector keeps every row
       winRateTol: 0.02,
       currentWeights: pool.map((c) => c.weight),
       intendedHitRate: null,
+      priceBudgetPct: RETUNE_MAX_PRICE_CHANGE_PCT,
     }),
   );
   const r = search.bestResult;

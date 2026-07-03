@@ -45,6 +45,7 @@
 
 import {
   ONE_SIDED_EDGE_EXCESS_TOL,
+  RETUNE_MAX_PRICE_CHANGE_PCT,
   TAGGED_WINRATE_TOLERANCE,
   searchBestPriceForCleanSnap,
   shapeWeights,
@@ -367,6 +368,7 @@ check("MASAKI fixture: pin 2507.35 @ 0.0005% at the live price → CAP-REFUSAL a
       winRateTol: 0.02,
       currentWeights: MASAKI.pool.map((c) => c.weight),
       intendedHitRate: targets.intendedHitRate,
+      priceBudgetPct: RETUNE_MAX_PRICE_CHANGE_PCT,
       pinnedOdds: [{ cardId: "c-masaki-machamp", pct: 0.0005 }],
     }),
   );
@@ -403,6 +405,7 @@ check("MASAKI counterfactual: cap raised above the Machamp → the pin itself is
       winRateTol: 0.02,
       currentWeights: MASAKI.pool.map((c) => c.weight),
       intendedHitRate: targets.intendedHitRate,
+      priceBudgetPct: RETUNE_MAX_PRICE_CHANGE_PCT,
       pinnedOdds: [{ cardId: "c-masaki-machamp", pct: 0.0005 }],
     }),
   );
