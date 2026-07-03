@@ -378,6 +378,14 @@ export type ShapeWeightsInput = {
    * array) for the legacy behavior — byte-identical.
    */
   pinnedShares?: ShapeWeightsPinnedShare[];
+  /**
+   * PLAN-WIDE tagged-snap DFS node budget (perf-incident fix). A MUTABLE shared
+   * counter threaded straight into {@link snapTaggedPer100k} so ALL of a plan's
+   * snaps share ONE bound on the all-nice enumeration (see the
+   * {@link snapTaggedPer100k} header). Set by {@link searchBestPriceForCleanSnap}
+   * in tagged mode; omit for the legacy per-snap-only cap (byte-identical).
+   */
+  nodeBudget?: SnapNodeBudget;
 };
 
 /**
@@ -2100,6 +2108,79 @@ const JACKPOT_MENU_PER_100K: readonly number[] = [
 ];
 
 /**
+ * Per-snap ceiling on the all-nice DFS (tiers N + P share it). Sized (measured,
+ * live-anchored fleet sweep 2026-07) so the WINNING all-nice snap of every fleet
+ * pack AND every spec fixture (Lucky Pond F1/F2 all-nice pairs, the Chaos wide-
+ * probe deep cut) is found within it, while a NON-winning snap gives up here
+ * instead of grinding the old 400k. Lowering 400k → 120k made each candidate ~3×
+ * cheaper (the waste was non-winning prices exploring the full old cap) with ZERO
+ * fixture regressions. A single snap that hits this cap keeps its best-so-far
+ * candidate and degrades N → P → G — never grinds. (Was the inline
+ * `NODE_CAP = 400_000`.)
+ */
+const TAGGED_SNAP_NODE_CAP = 120_000;
+
+/**
+ * PLAN-WIDE all-nice DFS node budget (perf-incident fix, 2026-07), PER UNIT of
+ * requested price band. The actual per-plan budget is this × `maxPriceChangePct`
+ * — see {@link tagggedPlanNodeBudget}. Shared across EVERY snap the tagged price
+ * search runs for one plan; this — not the per-snap cap — is what bounds a plan's
+ * total DFS work.
+ *
+ * THE INCIDENT: a lottery pack with many win cards used to run the tagged price
+ * search at 320 candidate prices, EACH free to spend the full 400k per-snap cap
+ * (≈128M nodes ⇒ multi-second plans that, a few concurrent, exhausted the MAIN
+ * max:3 pool and timed out the WHOLE admin — the pool-stampede cascade). With the
+ * shared budget the WHOLE plan's DFS is capped; once spent, remaining candidates
+ * snap via P/G (tag-exact, DFS-free) and only give up round numbers.
+ *
+ * WHY PER-BAND (not a flat constant): the concurrent-load path is the DEFAULT
+ * ±10% retune ({@link RETUNE_PRICE_BUDGET_DEFAULT_PCT}) — that is what stampedes
+ * the pool and MUST be tightly bounded (measured: 25M × 0.1 = 2.5M nodes ⇒ fleet
+ * max ~0.85s pure, 0 packs > 1.5s). The full ±60% band
+ * ({@link RETUNE_MAX_PRICE_CHANGE_PCT}) is only the MANUAL, single-pack SUGGESTION
+ * wide-probe (never runs concurrently across the fleet), so it earns a
+ * proportionally larger budget (25M × 0.6 = 15M nodes) that lets its deep all-nice
+ * / deep-crush search complete — keeping the spec + plan-quality wide-probe
+ * fixtures (Lucky Pond F2 +71¢ all-nice, Chaos ±60% → $1.84) green. Tying the
+ * compute budget to the search space the CALLER asked for is the principled knob:
+ * a narrow band searches a small space fast; a wide manual probe is allowed to
+ * work harder because it is rare and not on the stampede path.
+ *
+ * Deterministic (node count, not wall-clock — reproducible across runs/machines).
+ */
+const TAGGED_PLAN_NODE_BUDGET_PER_UNIT_BAND = 25_000_000;
+
+/** Floor so a tiny requested band still admits at least one full all-nice snap. */
+const TAGGED_PLAN_NODE_BUDGET_FLOOR = 1_000_000;
+
+/**
+ * The per-plan tagged-snap DFS node budget for a requested price band
+ * (`maxPriceChangePct`, e.g. 0.1 for the ±10% default). Proportional to the band
+ * with a floor — see {@link TAGGED_PLAN_NODE_BUDGET_PER_UNIT_BAND}. Exported so
+ * the `plan-quality.ts` permanent perf gate can assert every fleet pack's
+ * `snapNodesSpent` stays within it (the incident bound) and pin the constant.
+ */
+export function taggedPlanNodeBudget(maxPriceChangePct: number): number {
+  const band = Number.isFinite(maxPriceChangePct) && maxPriceChangePct > 0
+    ? maxPriceChangePct
+    : RETUNE_PRICE_BUDGET_DEFAULT_PCT;
+  return Math.max(
+    TAGGED_PLAN_NODE_BUDGET_FLOOR,
+    Math.round(TAGGED_PLAN_NODE_BUDGET_PER_UNIT_BAND * band),
+  );
+}
+
+/**
+ * Mutable shared DFS-node budget for ONE plan's tagged price search. `remaining`
+ * is decremented by each snap by the nodes it actually spent; when it reaches 0
+ * later snaps degrade to the DFS-free P/G tiers. Created by
+ * {@link searchBestPriceForCleanSnap} in tagged mode; threaded through
+ * {@link shapeWeights} into {@link snapTaggedPer100k}.
+ */
+export type SnapNodeBudget = { remaining: number };
+
+/**
  * Snap a HARD-TAGGED solve onto the per-100k integer house ladder. Pure.
  * Returns the snapped weights + risk, or `null` when the ladder can't hold the
  * acceptance stack (caller falls back to the generic snap → precise weights).
@@ -2140,6 +2221,24 @@ const JACKPOT_MENU_PER_100K: readonly number[] = [
  * `niceExemptIdx` lists the ACCOUNTING-exempt indexes (buffer, pins, the
  * forced single free winner — the P/G absorber is construction-exempt but
  * counts, since the owner reads its odds too).
+ *
+ * PLAN-WIDE NODE BUDGET (perf-incident fix): the all-nice DFS (tiers N/P) is a
+ * combinatorial rung enumeration whose per-snap ceiling is {@link TAGGED_SNAP_NODE_CAP}
+ * nodes. When the tagged price search runs this snap at HUNDREDS of candidate
+ * prices (lottery packs with many win cards), the sum of those per-snap caps is
+ * the incident — a plan grinds for seconds toward the route timeout. The optional
+ * `nodeBudget` is a MUTABLE shared counter (one per plan): each snap's effective
+ * DFS ceiling is `min(TAGGED_SNAP_NODE_CAP, budget.remaining)`, and the snap
+ * DECREMENTS the shared budget by the nodes it actually spent. Once the budget is
+ * exhausted, later snaps get a near-zero DFS ceiling and DEGRADE GRACEFULLY —
+ * N (all-nice) → P (cheapest-winner absorbs, still snapped + tag-exact) → G (the
+ * legacy O(n) per-100k grid snap, DFS-free, always tag-exact). Niceness is the
+ * ONLY thing sacrificed under budget pressure (the honesty banner already reports
+ * `allNice=false`); tag-exactness (1e-4), the edge window, never-inflate caps and
+ * loss-monotonicity are NEVER relaxed by the budget. The bound is a NODE count
+ * (deterministic across runs/machines), not wall-clock — reproducible by design.
+ * Omit `nodeBudget` to keep the legacy per-snap-only cap (every existing direct
+ * caller / harness fixture is byte-identical).
  */
 function snapTaggedPer100k(input: {
   values: readonly number[];
@@ -2174,6 +2273,13 @@ function snapTaggedPer100k(input: {
    * mirroring the shipped rule for the generic snap).
    */
   liveCapUnits?: readonly number[] | null;
+  /**
+   * Plan-wide shared DFS node budget (perf-incident fix). A MUTABLE counter
+   * threaded from the price search so the ALL of a plan's snaps share ONE bound
+   * on the combinatorial all-nice enumeration instead of each getting the full
+   * per-snap cap. See the header note. Omit for the legacy per-snap-only cap.
+   */
+  nodeBudget?: SnapNodeBudget;
 }): {
   weights: number[];
   risk: PackRisk;
@@ -2264,6 +2370,9 @@ function snapTaggedPer100k(input: {
   // unchanged, live-basis never-inflate caps on every non-absorber free win
   // card. The precise-based `grailGuard` is NOT applied here (it would re-ban
   // the owner's round-number ask); tier G below keeps it verbatim.
+  // `dfsNodesSpent` escapes the IIFE so the plan-wide budget can be debited by
+  // the exact DFS work this snap did (0 when the nice path is skipped entirely).
+  let dfsNodesSpent = 0;
   const nice = ((): {
     weights: number[];
     risk: PackRisk;
@@ -2350,7 +2459,19 @@ function snapTaggedPer100k(input: {
     // last-level enumeration is ~1.1M) — a 50k cap would starve the spec's
     // own F1/F2 fixtures. 400k covers both tiers with headroom while keeping
     // the per-candidate work bounded (a few ms).
-    const NODE_CAP = 400_000;
+    //
+    // PLAN-WIDE BUDGET: when the price search threads a shared `nodeBudget`, this
+    // snap's effective ceiling is the SMALLER of the per-snap cap and what the
+    // plan has left — so the sum of all a plan's snaps is bounded by
+    // TAGGED_PLAN_NODE_BUDGET, not (candidates × per-snap cap). The nodes spent
+    // here are charged back to the shared budget after both tiers run. Once the
+    // plan budget is spent, `NODE_CAP` here is 0 ⇒ the DFS returns immediately
+    // and the snap degrades to the DFS-free P/G tiers (still tag-exact).
+    const sharedBudget = input.nodeBudget;
+    const NODE_CAP =
+      sharedBudget !== undefined
+        ? Math.max(0, Math.min(TAGGED_SNAP_NODE_CAP, sharedBudget.remaining))
+        : TAGGED_SNAP_NODE_CAP;
     const COMPLETION_CAP = 5_000;
     let nodes = 0;
     let completions = 0;
@@ -2617,10 +2738,29 @@ function snapTaggedPer100k(input: {
     const exemptAcct = forcedSingle
       ? [buffer, ...pinnedUnitsByIdx.keys(), cheapestFree]
       : [buffer, ...pinnedUnitsByIdx.keys()];
-    const nRes = finish(runTier("N"), exemptAcct);
-    if (nRes !== null) return nRes;
-    return finish(runTier("P"), exemptAcct);
+    // Tier N first; only run tier P if N produced nothing (the shipped order).
+    // `nodes` accumulates across both `runTier` calls (shared closure counter);
+    // publish it to `dfsNodesSpent` before every return so the plan-wide budget
+    // is debited by the exact DFS work this snap performed.
+    const nCand = runTier("N");
+    const nRes = finish(nCand, exemptAcct);
+    if (nRes !== null) {
+      dfsNodesSpent = nodes;
+      return nRes;
+    }
+    const pRes = finish(runTier("P"), exemptAcct);
+    dfsNodesSpent = nodes;
+    return pRes;
   })();
+  // Charge this snap's DFS work to the shared plan budget (perf-incident fix).
+  // `dfsNodesSpent` is set inside the IIFE via the closure; when no shared
+  // budget is threaded this is inert.
+  if (input.nodeBudget !== undefined) {
+    input.nodeBudget.remaining = Math.max(
+      0,
+      input.nodeBudget.remaining - dfsNodesSpent,
+    );
+  }
   if (nice !== null) return nice;
 
   // ── Tier G — the shipped per-100k grid snap (byte-identical fallback) ──
@@ -4564,6 +4704,9 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
       edgeTolAbove: snapEdgeTol,
       grailGuard: snapGrailNotInflated,
       liveCapUnits,
+      // Plan-wide DFS budget (perf-incident fix): shared across every candidate
+      // price the tagged search evaluates so the all-nice enumeration can't grind.
+      ...(input.nodeBudget !== undefined ? { nodeBudget: input.nodeBudget } : {}),
       ...(hasPins
         ? {
             pins: [...pinnedShareByIdx.keys()].map((index) => ({
@@ -4967,6 +5110,14 @@ export type SearchBestPriceResult = {
    * search ran in default mode (no `taggedWinRate`).
    */
   taggedAccuracyHit: boolean | null;
+  /**
+   * Tagged-mode only: total all-nice DFS nodes the plan's snaps spent (perf-
+   * incident bound). Deterministic across runs/machines — the `plan-quality.ts`
+   * permanent perf gate asserts EVERY fleet pack stays under a pinned ceiling so
+   * the tagged snapper can never silently regress into the pool-stampede incident
+   * again. `0` for untagged / disabled searches (no `snapTaggedPer100k` runs).
+   */
+  snapNodesSpent: number;
 };
 
 export function searchBestPriceForCleanSnap(input: {
@@ -5074,6 +5225,24 @@ export function searchBestPriceForCleanSnap(input: {
   const holdWinRate = input.holdWinRate === true;
   const disperseLoss = input.disperseLoss === true;
 
+  // PLAN-WIDE tagged-snap DFS budget (perf-incident fix). ONE mutable counter
+  // shared across every candidate price's snap so the all-nice enumeration is
+  // bounded per PLAN, not per candidate — a lottery pack with many win cards used
+  // to run the full per-snap cap at all 320 candidates and grind for seconds.
+  // Proportional to the requested band (see `taggedPlanNodeBudget`): the DEFAULT
+  // ±10% path (the concurrent stampede path) stays tight; the manual ±60% wide-
+  // probe earns a larger budget. Tagged mode only (the untagged path never runs
+  // `snapTaggedPer100k`); a fresh budget every call keeps each plan independent +
+  // deterministic.
+  const nodeBudget: SnapNodeBudget | undefined = tagged
+    ? { remaining: taggedPlanNodeBudget(maxPriceChangePct) }
+    : undefined;
+  const nodeBudgetInitial = nodeBudget?.remaining ?? 0;
+  // DFS nodes this plan's snaps have spent so far (initial budget minus what's
+  // left). Computed at each return so the perf gate can pin it. 0 when untagged.
+  const snapNodesSpent = (): number =>
+    nodeBudget !== undefined ? nodeBudgetInitial - nodeBudget.remaining : 0;
+
   // Single-call passthrough for the degenerate / disabled cases. Mirrors the
   // backward-compat contract: callers can wire this in unconditionally and
   // disable search with `maxPriceChangePct: 0`.
@@ -5086,6 +5255,7 @@ export function searchBestPriceForCleanSnap(input: {
       maxWinCap,
       nearMissMin,
       winRateTol,
+      ...(nodeBudget !== undefined ? { nodeBudget } : {}),
       ...(currentWeights !== undefined ? { currentWeights } : {}),
       // Retune V2 pins: held exact at every candidate price.
       ...(pinnedShares !== undefined && pinnedShares.length > 0
@@ -5131,6 +5301,7 @@ export function searchBestPriceForCleanSnap(input: {
       searched: 1,
       fellBackToBase: !(baseSnapped && baseAccuracy),
       taggedAccuracyHit: tagged ? baseAccuracy : null,
+      snapNodesSpent: snapNodesSpent(),
     };
   }
 
@@ -5165,6 +5336,7 @@ export function searchBestPriceForCleanSnap(input: {
         searched: 1,
         fellBackToBase: !(baseSnapped && baseAccuracy),
         taggedAccuracyHit: tagged ? baseAccuracy : null,
+        snapNodesSpent: snapNodesSpent(),
       };
     }
   }
@@ -5357,6 +5529,7 @@ export function searchBestPriceForCleanSnap(input: {
       searched: 1,
       fellBackToBase: false,
       taggedAccuracyHit: tagged ? true : null,
+      snapNodesSpent: snapNodesSpent(),
     };
   }
 
@@ -5473,6 +5646,7 @@ export function searchBestPriceForCleanSnap(input: {
     searched,
     fellBackToBase,
     taggedAccuracyHit,
+    snapNodesSpent: snapNodesSpent(),
   };
 }
 

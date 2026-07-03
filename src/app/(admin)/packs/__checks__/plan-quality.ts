@@ -32,6 +32,7 @@ import {
   snapWeightsToCleanLadder,
   disperseLossBand,
   enforceLossMonotone,
+  taggedPlanNodeBudget,
   RETUNE_PRICE_BUDGET_DEFAULT_PCT,
   RETUNE_MAX_PRICE_CHANGE_PCT,
 } from "../../insights/edge-calc/risk";
@@ -1040,6 +1041,172 @@ check("P12 enforceLossMonotone: an ascending synthetic loss band is repaired to 
   assert(massBefore === massAfter, `loss-band mass held exactly (${massBefore} vs ${massAfter})`);
   const after = lossMonotoneViolations(values, res.weights, 1000);
   assert(after === 0, `repaired band is monotone (0 violations, was ${before})`);
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// PATTERN 13 — PERMANENT PERF GATE (pool-stampede incident, 2026-07)
+// ════════════════════════════════════════════════════════════════════════
+// THE INCIDENT (measured, live-anchored fleet sweep): the tagged per-100k all-
+// nice snap DFS ran the FULL 400k-node per-snap cap at all 320 candidate prices
+// for lottery packs with many win cards — up to ~128M nodes ⇒ 1.5–6.7s PURE per
+// plan. On the Vercel 1-vCPU lambda (~2×) a couple concurrent exhausted the MAIN
+// max:3 pool and timed out the WHOLE admin (the owner: "pushed 2 then all cooked").
+//
+// THE BOUND: a plan-wide shared DFS node budget (`taggedPlanNodeBudget`, band-
+// proportional) + a 120k per-snap cap. Every tagged plan's `snapNodesSpent` is
+// now capped at the budget by construction; once spent, remaining candidates snap
+// via the DFS-free P/G tiers (tag-exact, only round numbers sacrificed, honestly
+// flagged `allNice=false`). This gate makes that bound a permanent CONTRACT: it
+// re-runs the EXACT live-arm solve on the incident-class packs and asserts
+//   (a) the ±10% budget (the CONCURRENT stampede path) stays ≤ a pinned ceiling,
+//   (b) every frozen worst-case pack's `snapNodesSpent` stays within the budget,
+//   (c) tag-exactness (1e-4) + snappedness survive the bound (P-tier is fine).
+// A future change that re-inflates the per-snap cap or drops the budget guard
+// would push these back over the ceiling and FAIL here — the incident cannot
+// silently return.
+
+// Frozen worst-case fixtures — the named slowest packs from the incident sweep
+// (fleet dump snapshots: values + live weights, the same practice as every other
+// fixture in this file). These are the packs that took 5–7s PURE before the fix.
+const PERF_BLAZING_LIGHT: Pool = {
+  name: "5% Blazing Light",
+  price: 213.65,
+  values: [21511.21, 10852.41, 9602.51, 4800, 4052.25, 3840, 2041.45, 1.09, 0.16],
+  livePcts: [0.01, 0.05, 0.2, 0.65, 1.29, 1.3, 1.4, 40, 55.1],
+  tags: ["%5"],
+  tag: 0.05,
+};
+const PERF_POKETTO: Pool = {
+  name: "10% Poketto Monsuta",
+  price: 139.32,
+  values: [11004.63, 9300.21, 3865.32, 2170.81, 2040, 1800, 1199.99, 771, 630, 576.6, 0.54, 0.5],
+  livePcts: [0.025, 0.1, 0.2, 0.5, 1, 1.1, 1.275, 1.5, 1.8, 2.5, 45, 45],
+  tags: ["%10"],
+  tag: 0.1,
+};
+const PERF_GOOFY: Pool = {
+  name: "10% Goofy",
+  price: 101.99,
+  values: [9300.21, 4199.99, 2040, 1182, 834, 437.74, 299.99, 0.29, 0.28],
+  livePcts: [0.05, 0.25, 1, 1.5, 2.3, 2.4, 2.5, 30, 60],
+  tags: ["%10"],
+  tag: 0.1,
+};
+const PERF_LUXURY: Pool = {
+  name: "5% Luxury Collector",
+  price: 56.72,
+  values: [3840, 2880, 2280, 2040, 1799.98, 1596.83, 1499.93, 1200, 1079.99, 840, 599.99, 480, 0.01],
+  livePcts: [0.01, 0.025, 0.05, 0.15, 0.25, 0.35, 0.365, 0.5, 0.7, 0.7, 0.8, 1.1, 95],
+  tags: ["%5"],
+  tag: 0.05,
+};
+const PERF_FIXTURES = [PERF_BLAZING_LIGHT, PERF_POKETTO, PERF_GOOFY, PERF_LUXURY];
+
+// Run the EXACT live-arm tagged solve at `band` and report the DFS nodes spent +
+// the tag/snap facts — the quantities the incident bound protects.
+function solvePerf(p: Pool, band: number): {
+  nodes: number;
+  tagExact: boolean;
+  snapped: boolean;
+  price: number | null;
+} {
+  const weights = toWeights(p.livePcts);
+  const before = computePackRisk({
+    cards: p.values.map((v, i) => ({ value: v, weight: weights[i]! })),
+    price: p.price,
+  });
+  const top = Math.max(...p.values);
+  const hitRate = resolveIntendedHitRate(p.name, p.tags ?? null) ?? p.tag ?? undefined;
+  const t = autoRetuneTargets(p.price, CFG, hitRate ?? undefined, top, {
+    winRate: before.winRate,
+    nearMiss: before.nearMiss,
+    edge: before.edge,
+    topValue: top,
+  });
+  const tagged = t.intendedHitRate !== null;
+  const search = searchBestPriceForCleanSnap({
+    cards: p.values.map((v) => ({ value: v })),
+    basePrice: p.price,
+    targetEdge: t.targetEdge,
+    targetWinRate: t.targetWinRate,
+    maxWinCap: t.maxWinCap,
+    nearMissMin: tagged ? Math.max(0, before.nearMiss) : t.nearMissMin,
+    winRateTol: tagged ? 1e-4 : 0.02,
+    currentWeights: weights,
+    maxPriceChangePct: band,
+    upwardPriceExtensionPct: 0,
+    disperseLoss: true,
+    ...(tagged ? { taggedWinRate: t.targetWinRate } : { holdWinRate: true }),
+  });
+  const r = search.bestResult;
+  if ("error" in r) {
+    return { nodes: search.snapNodesSpent, tagExact: false, snapped: false, price: null };
+  }
+  const after = computePackRisk({
+    cards: p.values.map((v, i) => ({ value: v, weight: r.weights[i]! })),
+    price: search.bestPrice,
+  });
+  return {
+    nodes: search.snapNodesSpent,
+    tagExact: Math.abs(after.winRate - t.targetWinRate) <= 1e-4 + 1e-12,
+    snapped: r.snapped === true,
+    price: search.bestPrice,
+  };
+}
+
+// The pinned ceilings. The DEFAULT ±10% band is the CONCURRENT stampede path and
+// MUST stay tight; the ±60% wide-probe is the MANUAL single-pack suggestion (never
+// concurrent) so it earns a proportionally larger — but still bounded — budget.
+// These are the incident contract: bump them and you re-open the stampede.
+const PERF_DEFAULT_BUDGET_CEILING = 3_000_000; // ±10% budget must not exceed this.
+const PERF_WIDE_BUDGET_CEILING = 16_000_000; // ±60% wide-probe budget cap.
+
+check("P13 budget constant: the ±10% (concurrent) plan budget stays under the pinned ceiling", () => {
+  const def = taggedPlanNodeBudget(RETUNE_PRICE_BUDGET_DEFAULT_PCT);
+  assert(
+    def > 0 && def <= PERF_DEFAULT_BUDGET_CEILING,
+    `±10% tagged plan node budget ${def} must be in (0, ${PERF_DEFAULT_BUDGET_CEILING}] — the concurrent stampede path must stay tight`,
+  );
+  // Band-proportional: a wider band earns a strictly larger (still bounded) budget.
+  const wide = taggedPlanNodeBudget(RETUNE_MAX_PRICE_CHANGE_PCT);
+  assert(
+    wide > def && wide <= PERF_WIDE_BUDGET_CEILING,
+    `±60% wide-probe budget ${wide} must be > ±10% (${def}) and ≤ ${PERF_WIDE_BUDGET_CEILING}`,
+  );
+});
+
+check("P13 incident bound: every frozen worst-case pack plans within the ±10% budget (tag-exact + snapped)", () => {
+  const budget = taggedPlanNodeBudget(RETUNE_PRICE_BUDGET_DEFAULT_PCT);
+  for (const p of PERF_FIXTURES) {
+    const out = solvePerf(p, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
+    assert(out.price !== null, `${p.name}: must be feasible in-band`);
+    // The plan-wide budget is the HARD bound — snapNodesSpent can never exceed it.
+    // (Before the fix these packs burned ~40–128M nodes ⇒ multi-second plans.)
+    assert(
+      out.nodes <= budget,
+      `${p.name}: snapNodesSpent ${out.nodes} exceeded the plan budget ${budget} — the incident bound is not holding`,
+    );
+    // Tag exactness (1e-4) is NEVER sacrificed by the bound — only niceness is.
+    assert(out.tagExact, `${p.name}: tag win-rate must stay exact within 1e-4 under the budget`);
+    // The bound degrades N→P→G but STILL snaps (P/G are tag-exact + snapped).
+    assert(out.snapped, `${p.name}: must still land a snapped plan (P/G tier) under the budget`);
+  }
+});
+
+check("P13 no-regression: the incident packs stay tag-exact at the ±60% wide-probe band too", () => {
+  // The wide-probe earns a bigger budget, so these must ALSO stay tag-exact there
+  // (and never exceed the wide budget). A regression that unbounded the wide probe
+  // would blow past the ceiling here.
+  const wideBudget = taggedPlanNodeBudget(RETUNE_MAX_PRICE_CHANGE_PCT);
+  for (const p of PERF_FIXTURES) {
+    const out = solvePerf(p, RETUNE_MAX_PRICE_CHANGE_PCT);
+    assert(out.price !== null, `${p.name}: feasible at ±60%`);
+    assert(
+      out.nodes <= wideBudget,
+      `${p.name}: wide-probe snapNodesSpent ${out.nodes} exceeded ${wideBudget}`,
+    );
+    assert(out.tagExact, `${p.name}: tag stays exact at ±60%`);
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════
