@@ -31,7 +31,14 @@ function readStorage(): PersistedMap {
     if (!raw) return {};
     const parsed: unknown = JSON.parse(raw);
     if (parsed === null || typeof parsed !== "object") return {};
-    return parsed as PersistedMap;
+    const map = parsed as PersistedMap;
+    // Shape normalization for entries persisted BEFORE the pins feature: a
+    // v1 payload has no `pinnedOdds` — normalize to [] so `stagedKey` and the
+    // plan/write builders never see undefined.
+    for (const pool of Object.values(map)) {
+      if (!Array.isArray(pool.pinnedOdds)) pool.pinnedOdds = [];
+    }
+    return map;
   } catch {
     return {};
   }

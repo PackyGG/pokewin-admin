@@ -200,6 +200,8 @@ export function PoolTable({
   onUndoRemove,
   onColorChange,
   onAnimationChange,
+  onPinCard,
+  onPinClear,
   onPriceTextChange,
   onPriceCommit,
   onPinToggle,
@@ -225,6 +227,9 @@ export function PoolTable({
   onUndoRemove: (cardId: string) => void;
   onColorChange: (cardId: string, color: string | null) => void;
   onAnimationChange: (cardId: string, animation: boolean) => void;
+  /** Owner pins: click-to-edit Planned % (Enter pins, Escape cancels). */
+  onPinCard: (cardId: string, pct: number) => void;
+  onPinClear: (cardId: string) => void;
   onPriceTextChange: (text: string) => void;
   /** Enter/blur — commit the typed price immediately (flushes the debounce). */
   onPriceCommit: () => void;
@@ -242,6 +247,8 @@ export function PoolTable({
         onUndoRemove={disabled ? undefined : onUndoRemove}
         onColorChange={disabled ? undefined : onColorChange}
         onAnimationChange={disabled ? undefined : onAnimationChange}
+        onPinCard={disabled ? undefined : onPinCard}
+        onPinClear={disabled ? undefined : onPinClear}
       />
 
       <OddsTotalChip

@@ -1,10 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { Undo2, X } from "lucide-react";
+import { Pencil, Undo2, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -35,7 +36,14 @@ import { isFloorPinnedPct } from "@/app/(admin)/insights/edge-calc/tag-guidance"
 import type { EditPool, PackTunePlan } from "../../doctor/retune-actions";
 
 import { formatDeltaPp, formatPercent } from "../format-percent";
-import { FLOOR_PIN_CHIP, FLOOR_PIN_TOOLTIP } from "./plan-copy";
+import {
+  FLOOR_PIN_CHIP,
+  FLOOR_PIN_TOOLTIP,
+  PIN_CHIP,
+  PIN_EDIT_HINT,
+  PIN_INPUT_PLACEHOLDER,
+  PIN_TOOLTIP,
+} from "./plan-copy";
 import type { StagedPool } from "./plan-state";
 
 /**
@@ -64,6 +72,12 @@ export type CardDiffRow = {
   removed: boolean;
   /** Planned pct is NOT on the clean ladder (amber dot). */
   offLadder: boolean;
+  /**
+   * Owner-pinned chance (typed percent) — non-null renders the amber pin
+   * chip; the row is EXEMPT from the off-ladder dot (a pin is an owner-chosen
+   * number, not a dirty residual).
+   */
+  pinnedPct: number | null;
   color: string | null;
   animation: boolean;
 };
@@ -100,6 +114,9 @@ export function buildCardDiffRows(args: {
     }
   }
   const offLadder = new Set(plan?.offLadderCards ?? []);
+  const pinnedByCard = new Map<string, number>(
+    (staged?.pinnedOdds ?? []).map((p) => [p.cardId, p.pct]),
+  );
 
   // Live probabilities from the edit pool (fallback when the plan doesn't
   // carry a card — e.g. mid-debounce after an add).
@@ -116,6 +133,7 @@ export function buildCardDiffRows(args: {
   if (staged) {
     for (const c of staged.cards) {
       const planned = plannedByCard.get(c.cardId);
+      const pinnedPct = pinnedByCard.get(c.cardId) ?? null;
       rows.push({
         cardId: c.cardId,
         name: c.name,
@@ -125,7 +143,11 @@ export function buildCardDiffRows(args: {
         plannedPct: planned ? planned.pct : null,
         added: c.added,
         removed: false,
-        offLadder: offLadder.has(c.cardId),
+        // Pinned rows are exempt (owner-chosen number, never a dirty dot);
+        // the server-side offLadderCards already excludes them — this guard
+        // covers the brief staged window before the pinned plan lands.
+        offLadder: pinnedPct === null && offLadder.has(c.cardId),
+        pinnedPct,
         color: c.color,
         animation: c.animation,
       });
@@ -141,6 +163,7 @@ export function buildCardDiffRows(args: {
         added: false,
         removed: true,
         offLadder: false,
+        pinnedPct: null,
         color: c.color,
         animation: c.animation,
       });
@@ -158,6 +181,7 @@ export function buildCardDiffRows(args: {
         added: false,
         removed: false,
         offLadder: offLadder.has(c.cardId),
+        pinnedPct: null,
         color: c.color,
         animation: c.animation,
       });
@@ -189,6 +213,8 @@ export function CardDiffTable({
   onUndoRemove,
   onColorChange,
   onAnimationChange,
+  onPinCard,
+  onPinClear,
 }: {
   rows: CardDiffRow[];
   /** Ticket price the win-band coloring is judged against (plan `priceAfter` when available). */
@@ -201,7 +227,24 @@ export function CardDiffTable({
   onUndoRemove?: (cardId: string) => void;
   onColorChange?: (cardId: string, color: string | null) => void;
   onAnimationChange?: (cardId: string, animation: boolean) => void;
+  /**
+   * Owner pins (Retune V2): click-to-edit on the Planned % cell — typing a
+   * percent + Enter pins the card (the typed value binds the plan; re-plans
+   * through the same staged path as add/remove/price), Escape cancels.
+   * Absent (confirm dialog / read-only) ⇒ the cell renders as before.
+   */
+  onPinCard?: (cardId: string, pct: number) => void;
+  onPinClear?: (cardId: string) => void;
 }) {
+  // ONE cell edits at a time; draft lives here (cancelled on Escape/blur).
+  const [editingCardId, setEditingCardId] = React.useState<string | null>(null);
+  const [draft, setDraft] = React.useState("");
+  const commitPin = (cardId: string) => {
+    const pct = Number.parseFloat(draft);
+    setEditingCardId(null);
+    if (!Number.isFinite(pct) || !(pct > 0) || pct > 100) return;
+    onPinCard?.(cardId, pct);
+  };
   return (
     <div className="overflow-x-auto rounded-md border">
       <Table>
@@ -293,9 +336,34 @@ export function CardDiffTable({
                 <TableCell className="text-right text-sm font-medium tabular-nums">
                   {row.removed ? (
                     <span className="text-muted-foreground">—</span>
-                  ) : row.plannedPct !== null ? (
-                    <span className="inline-flex items-center gap-1.5">
-                      {row.offLadder && (
+                  ) : editable && onPinCard && editingCardId === row.cardId ? (
+                    // ── Pin editor: Enter pins, Escape/blur cancels (§ pins) ──
+                    <span className="inline-flex items-center gap-1">
+                      <Input
+                        autoFocus
+                        type="text"
+                        inputMode="decimal"
+                        placeholder={PIN_INPUT_PLACEHOLDER}
+                        value={draft}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (raw === "" || /^\d*\.?\d{0,7}$/.test(raw)) {
+                            setDraft(raw);
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") commitPin(row.cardId);
+                          else if (e.key === "Escape") setEditingCardId(null);
+                        }}
+                        onBlur={() => setEditingCardId(null)}
+                        className="h-6 w-24 text-right text-xs tabular-nums"
+                        aria-label={`Pin chance for ${row.name} (percent)`}
+                      />
+                      <span className="text-xs text-muted-foreground">%</span>
+                    </span>
+                  ) : (
+                    <span className="group/pin inline-flex items-center gap-1.5">
+                      {row.offLadder && row.pinnedPct === null && (
                         <TooltipProvider delay={150}>
                           <Tooltip>
                             <TooltipTrigger
@@ -316,27 +384,90 @@ export function CardDiffTable({
                       {/* Pinned at the quantization floor (LOSS-band cards
                           only — a designed 1-in-a-million jackpot is not a
                           pin): muted "min" chip, tooltip says why. */}
-                      {!winBand && isFloorPinnedPct(row.plannedPct) && (
+                      {!winBand &&
+                        row.pinnedPct === null &&
+                        row.plannedPct !== null &&
+                        isFloorPinnedPct(row.plannedPct) && (
+                          <TooltipProvider delay={150}>
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <Badge
+                                    variant="outline"
+                                    className="h-4 border-border bg-muted/40 px-1 text-[10px] font-normal text-muted-foreground"
+                                  >
+                                    {FLOOR_PIN_CHIP}
+                                  </Badge>
+                                }
+                              />
+                              <TooltipContent>{FLOOR_PIN_TOOLTIP}</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
+                      {/* Owner pin chip (amber): the typed value binds the plan. */}
+                      {row.pinnedPct !== null && (
                         <TooltipProvider delay={150}>
                           <Tooltip>
                             <TooltipTrigger
                               render={
                                 <Badge
                                   variant="outline"
-                                  className="h-4 border-border bg-muted/40 px-1 text-[10px] font-normal text-muted-foreground"
+                                  className="h-4 gap-0.5 border-amber-500/30 bg-amber-500/10 px-1 text-[10px] font-medium text-amber-600 dark:text-amber-400"
                                 >
-                                  {FLOOR_PIN_CHIP}
+                                  {PIN_CHIP} {formatPercent(row.pinnedPct)}
+                                  {editable && onPinClear && (
+                                    <button
+                                      type="button"
+                                      aria-label={`Clear pin on ${row.name}`}
+                                      className="ml-0.5 rounded-full hover:text-amber-800 dark:hover:text-amber-200"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onPinClear(row.cardId);
+                                      }}
+                                    >
+                                      <X className="size-2.5" />
+                                    </button>
+                                  )}
                                 </Badge>
                               }
                             />
-                            <TooltipContent>{FLOOR_PIN_TOOLTIP}</TooltipContent>
+                            <TooltipContent>{PIN_TOOLTIP}</TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
                       )}
-                      <PlannedPct pct={row.plannedPct} />
+                      {editable && onPinCard ? (
+                        // Click-to-edit (pencil affordance on hover).
+                        <button
+                          type="button"
+                          title={PIN_EDIT_HINT}
+                          className="inline-flex items-center gap-1 rounded px-0.5 tabular-nums hover:bg-muted/50"
+                          onClick={() => {
+                            setDraft(
+                              row.pinnedPct !== null
+                                ? String(row.pinnedPct)
+                                : row.plannedPct !== null
+                                  ? String(Number(row.plannedPct.toPrecision(6)))
+                                  : "",
+                            );
+                            setEditingCardId(row.cardId);
+                          }}
+                        >
+                          {row.plannedPct !== null ? (
+                            <PlannedPct pct={row.plannedPct} />
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                          <Pencil
+                            aria-hidden
+                            className="size-3 text-muted-foreground opacity-0 transition-opacity group-hover/pin:opacity-100"
+                          />
+                        </button>
+                      ) : row.plannedPct !== null ? (
+                        <PlannedPct pct={row.plannedPct} />
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </span>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
                   )}
                 </TableCell>
                 <TableCell

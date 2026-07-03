@@ -512,11 +512,63 @@ export function RetuneWorkspace({
         cards: sp.cards.filter((c) => c.cardId !== cardId),
         // An added card is just dropped; a live card moves to removed (Undo).
         removed: target.added ? sp.removed : [...sp.removed, target],
+        // A removed card's pin has nothing left to bind — drop it (the plan
+        // input refuses pins on cards outside the staged pool).
+        pinnedOdds: sp.pinnedOdds.filter((p) => p.cardId !== cardId),
       });
       void requestPlan(packId);
     },
     [ensureStaged, stagedApi, requestPlan],
   );
+
+  // ── Owner pins: Enter on the Planned % cell pins, X clears (§ pins) ─────
+  // Pin edits re-plan through the SAME staged path as add/remove/price —
+  // committed pins are solve-relevant (stagedKey), so the plan re-fires
+  // immediately (a pin commit is an explicit Enter, like a price commit).
+  const pinCard = React.useCallback(
+    (cardId: string, pct: number) => {
+      const packId = selectedRef.current;
+      if (!packId) return;
+      const sp = ensureStaged(packId);
+      if (!sp) return;
+      if (!sp.cards.some((c) => c.cardId === cardId)) return;
+      const existing = sp.pinnedOdds.find((p) => p.cardId === cardId);
+      if (existing && existing.pct === pct) return; // no-op re-commit
+      stagedApi.setStaged(packId, {
+        ...sp,
+        pinnedOdds: [
+          ...sp.pinnedOdds.filter((p) => p.cardId !== cardId),
+          { cardId, pct },
+        ],
+      });
+      void requestPlan(packId);
+    },
+    [ensureStaged, stagedApi, requestPlan],
+  );
+
+  const clearPin = React.useCallback(
+    (cardId: string) => {
+      const packId = selectedRef.current;
+      if (!packId) return;
+      const sp = stagedApi.getStaged(packId);
+      if (!sp || !sp.pinnedOdds.some((p) => p.cardId === cardId)) return;
+      stagedApi.setStaged(packId, {
+        ...sp,
+        pinnedOdds: sp.pinnedOdds.filter((p) => p.cardId !== cardId),
+      });
+      void requestPlan(packId);
+    },
+    [stagedApi, requestPlan],
+  );
+
+  const clearAllPins = React.useCallback(() => {
+    const packId = selectedRef.current;
+    if (!packId) return;
+    const sp = stagedApi.getStaged(packId);
+    if (!sp || sp.pinnedOdds.length === 0) return;
+    stagedApi.setStaged(packId, { ...sp, pinnedOdds: [] });
+    void requestPlan(packId);
+  }, [stagedApi, requestPlan]);
 
   const undoRemove = React.useCallback(
     (cardId: string) => {
@@ -1286,6 +1338,7 @@ export function RetuneWorkspace({
                 onDiscardRehydrated={() =>
                   discardRehydrated(selectedRow.packId)
                 }
+                onClearAllPins={clearAllPins}
                 onSelectPack={(packId) => {
                   select(packId);
                   document
@@ -1337,6 +1390,8 @@ export function RetuneWorkspace({
                       onAnimationChange={(cardId, animation) =>
                         changeCosmetic(cardId, { animation })
                       }
+                      onPinCard={pinCard}
+                      onPinClear={clearPin}
                       onPriceTextChange={(text) => {
                         setPriceText(text);
                         commitPrice(text, false);

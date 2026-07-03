@@ -8,6 +8,7 @@ import {
   Gauge,
   Layers,
   Loader2,
+  PinOff,
   Plus,
   RotateCcw,
   ShieldCheck,
@@ -60,6 +61,7 @@ import {
   GUIDANCE_HEADING,
   SOLVER_VERIFIED_BADGE,
   addCardCtaLabel,
+  clearAllPinsLabel,
   dirtyOddsBanner,
   edgeTargetSub,
   limitHeadline,
@@ -307,6 +309,7 @@ export function PlanPanel({
   onKeepRehydrated,
   onDiscardRehydrated,
   onSelectPack,
+  onClearAllPins,
   children,
 }: {
   row: RetuneRailRow;
@@ -341,6 +344,8 @@ export function PlanPanel({
   onKeepRehydrated: () => void;
   onDiscardRehydrated: () => void;
   onSelectPack: (packId: string) => void;
+  /** Clear every owner pin on this pack (control near the plan header). */
+  onClearAllPins: () => void;
   /** The pool zone (§5d) — rendered between the banner slot and the push row. */
   children: React.ReactNode;
 }) {
@@ -734,7 +739,25 @@ export function PlanPanel({
       )}
 
       {/* ── §5b KPI strip ─────────────────────────────────────────────────── */}
-      <SectionHeading icon={Sparkles} title="Plan" />
+      <SectionHeading
+        icon={Sparkles}
+        title="Plan"
+        action={
+          staged !== null && staged.pinnedOdds.length > 0 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
+              onClick={onClearAllPins}
+              title="Drop every pinned chance on this pack and re-plan"
+            >
+              <PinOff className="size-3.5" />
+              {clearAllPinsLabel(staged.pinnedOdds.length)}
+            </Button>
+          ) : undefined
+        }
+      />
       {before ? (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
           <PlanMetric

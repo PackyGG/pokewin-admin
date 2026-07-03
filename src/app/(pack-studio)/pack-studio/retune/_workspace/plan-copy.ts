@@ -69,6 +69,12 @@ export function limitHeadline(
       return `The ${ctx.tag !== null ? pctBody(ctx.tag) : "?"}% tag is locked and no jackpot may get more likely, so this pool can only pay one exact amount — and it's not the right one. Add one cheap card, or accept a price move.`;
     case "edge-unreachable":
       return "Can't reach the target edge with these cards at this price. Raise the price or add cheaper cards.";
+    case "pins-infeasible":
+      // The engine already writes the pins-infeasible detail in plain words
+      // WITH the computed numbers (how much the pins over/undershoot the EV
+      // budget or the tag, the cap the pinned card breaks, the Drafts pointer
+      // for deliberate below-target pools) — render it verbatim.
+      return limit.detail;
     case "invalid-price":
     case "invalid-target-edge":
     case "invalid-target-win-rate":
@@ -139,6 +145,22 @@ export const FLOOR_PIN_TOOLTIP =
 
 /** One-shot emerald flip after the fix loop lands feasible. */
 export const FIX_LOOP_SUCCESS = "That did it — this pack is tunable now.";
+
+// ─── Owner pins (Retune V2 — click-to-edit Planned %) ────────────────────────
+
+/** The amber per-row chip on a pinned card. */
+export const PIN_CHIP = "pinned";
+/** Tooltip on the pin chip — the typed value BINDS the plan. */
+export const PIN_TOOLTIP =
+  "Pinned — the typed chance binds the plan: the server holds this card at exactly this value (through the clean-odds snap too) or refuses honestly.";
+/** aria/tooltip for the hover pencil on the Planned % cell. */
+export const PIN_EDIT_HINT = "Click to pin this card's chance";
+/** Placeholder inside the pin editor input. */
+export const PIN_INPUT_PLACEHOLDER = "e.g. 0.0005";
+/** Clear-all control near the plan header (shown only when pins exist). */
+export function clearAllPinsLabel(count: number): string {
+  return `Clear ${count} pin${count === 1 ? "" : "s"}`;
+}
 
 export function tagSaturatedBanner(tag: number): string {
   return `No price in the search band hits the ${pctBody(tag)}% tag exactly — closest achievable shown. Pushing is blocked.`;

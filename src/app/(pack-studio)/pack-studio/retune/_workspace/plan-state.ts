@@ -24,6 +24,7 @@ import type {
   PackTuneStagedInput,
   StagedPoolInput,
 } from "../../doctor/retune-actions";
+import type { RetunePinnedOdds } from "@/app/(admin)/packs/_lib/retune-params";
 import { computePoolFingerprint } from "@/app/(admin)/packs/_lib/pool-fingerprint";
 import { TAGGED_WRITE_WINRATE_TOLERANCE } from "@/app/(admin)/packs/_lib/auto-targets";
 
@@ -54,6 +55,14 @@ export type StagedPool = {
   livePrice: number;
   /** Escape hatch: solve odds-only AT the staged price (no price search). */
   pinPrice: boolean;
+  /**
+   * Owner-pinned EXACT per-card odds ({cardId, typed percent}) — the typed
+   * value BINDS the plan: the server holds each pinned card at exactly this
+   * chance through solve AND snap, or refuses as `pins-infeasible`. Solve-
+   * relevant (part of `stagedKey`), persisted in sessionStorage, threaded
+   * verbatim into both the plan and the write.
+   */
+  pinnedOdds: RetunePinnedOdds[];
   /** `computePoolFingerprint` of the LIVE pool this staged pool was seeded from. */
   baseFingerprint: string;
 };
@@ -86,7 +95,8 @@ export type PackVerdict = "ok" | "infeasible" | "error" | "refused";
 // ─── Keys (the D2 precision steal) ──────────────────────────────────────────
 
 /**
- * ONLY solve-relevant inputs: card identity set, price (2dp), pin flag.
+ * ONLY solve-relevant inputs: card identity set, price (2dp), pin flag, and
+ * the owner's pinned odds (a pin changes the solve — it MUST stale the plan).
  * Cosmetic edits (color/animation) and display order change `dirty` but NOT
  * the staged key — they never stale a plan and never trigger a re-plan (they
  * ride the push payload only).
@@ -96,6 +106,9 @@ export function stagedKey(pool: StagedPool): string {
     ids: pool.cards.map((c) => c.cardId).sort(),
     price: pool.price.toFixed(2),
     pin: pool.pinPrice,
+    pins: [...pool.pinnedOdds]
+      .sort((a, b) => (a.cardId < b.cardId ? -1 : a.cardId > b.cardId ? 1 : 0))
+      .map((p) => `${p.cardId}:${p.pct}`),
   });
 }
 
@@ -215,6 +228,7 @@ export function seedStagedPool(pool: EditPool): StagedPool {
     price: pool.price,
     livePrice: pool.price,
     pinPrice: false,
+    pinnedOdds: [],
     baseFingerprint: computePoolFingerprint(
       pool.price,
       pool.cards.map((c) => ({ cardId: c.cardId, weight: c.weight })),
@@ -267,12 +281,16 @@ export function reanchorStagedPool(
       return { ...c, value: fresh.value, liveWeight: fresh.weight, added: false };
     });
   const priceUntouched = staged.price === staged.livePrice;
+  const keptIds = new Set(cards.map((c) => c.cardId));
   return {
     cards,
     removed,
     price: priceUntouched ? freshPool.price : staged.price,
     livePrice: freshPool.price,
     pinPrice: staged.pinPrice,
+    // Pins survive the re-base for cards still in the staged pool; a pin on a
+    // card that no longer exists anywhere is dropped (nothing to bind).
+    pinnedOdds: staged.pinnedOdds.filter((p) => keptIds.has(p.cardId)),
     baseFingerprint: computePoolFingerprint(
       freshPool.price,
       freshPool.cards.map((c) => ({ cardId: c.cardId, weight: c.weight })),
@@ -291,6 +309,7 @@ export function stagedPlanInput(staged: StagedPool): PackTuneStagedInput {
     cards: staged.cards.map((c, i) => ({ cardId: c.cardId, order: i })),
     ...(staged.price !== staged.livePrice ? { price: staged.price } : {}),
     ...(staged.pinPrice ? { pinPrice: true } : {}),
+    ...(staged.pinnedOdds.length > 0 ? { pinnedOdds: staged.pinnedOdds } : {}),
   };
 }
 
@@ -308,6 +327,8 @@ export function stagedWriteInput(staged: StagedPool): StagedPoolInput {
       order: i,
     })),
     ...(staged.price !== staged.livePrice ? { price: staged.price } : {}),
+    // The SAME pins the plan solved with — preview ≡ write includes pins.
+    ...(staged.pinnedOdds.length > 0 ? { pinnedOdds: staged.pinnedOdds } : {}),
   };
 }
 
