@@ -2528,6 +2528,11 @@ async function planPackTuneLiveUncached(
               Number.isFinite(w) && w > 0 ? w / shapedTotal : 0,
             ),
             relaxations: shaped.relaxations,
+            // owner-lens §2.3: feed the shape guard's verdict as a NEW detection
+            // trigger so complaint (B) "Tails?" (which the three legacy
+            // signatures miss) gets the pool-edit guidance — and so the
+            // accept-as-is copy shares the degenerate verdict (Pattern 9c).
+            shapeDegenerate: defaultShapeDegenerate === true,
           })
         : null;
   }
@@ -2698,6 +2703,22 @@ async function planPackTuneStagedUncached(
     outcome.allNice === false;
   let guidance: TagGuidance | null = null;
   const isTagContradiction = !outcome.ok && outcome.code === "tag-contradiction";
+  // §shape-guard: score the FEASIBLE staged plan against the live pool (computed
+  // HERE, before the guidance, so its verdict can feed the untagged guidance as
+  // a §2.3 detection trigger for complaint B + the Pattern 9c accept-as-is copy).
+  // The `planned` rows already carry per-card pct + livePct (null for a staged-in
+  // card → live share 0), aligned to the staged pool order — exactly the shape
+  // inputs. Values come from the resolved card meta.
+  const stagedShape: LadderShape | null =
+    outcome.ok && planned.length > 0
+      ? ladderShape(
+          input.cards.map((c) => r.cardMetaById.get(c.cardId)?.value ?? 0),
+          planned.map((row) => (row.livePct ?? 0) / 100),
+          planned.map((row) => row.pct / 100),
+          r.priceAfter,
+        )
+      : null;
+  const stagedShapeDegenerate: boolean = stagedShape?.degenerate === true;
   if (!taggedStaged && outcome.ok) {
     // UNTAGGED degenerate-loss-ladder guidance on the staged arm — the fix
     // loop's re-plan (add a mid card / type the suggested price) flows through
@@ -2729,6 +2750,7 @@ async function planPackTuneStagedUncached(
             ),
             relaxations: outcome.relaxations,
             pinPrice: staged.pinPrice === true,
+            shapeDegenerate: stagedShapeDegenerate,
           })
         : null;
   } else if (taggedStaged && stagedNeedsGuidance && !isTagContradiction) {
@@ -2757,20 +2779,6 @@ async function planPackTuneStagedUncached(
       liveNearMiss: r.before.nearMiss,
     });
   }
-
-  // §shape-guard: score the FEASIBLE staged plan against the live pool. The
-  // `planned` rows already carry per-card pct + livePct (null for a staged-in
-  // card → live share 0), aligned to the staged pool order — exactly the shape
-  // inputs. Values come from the resolved card meta.
-  const stagedShape: LadderShape | null =
-    outcome.ok && planned.length > 0
-      ? ladderShape(
-          input.cards.map((c) => r.cardMetaById.get(c.cardId)?.value ?? 0),
-          planned.map((row) => (row.livePct ?? 0) / 100),
-          planned.map((row) => row.pct / 100),
-          r.priceAfter,
-        )
-      : null;
 
   // §risk-leverage: the CV band (widened to the live CV) + landed-CV exit. Band
   // is over the LIVE pack (tag + live price + live CV); the exit is judged

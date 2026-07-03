@@ -178,13 +178,43 @@ export function nicePinnedBanner(offCount: number, cardCount: number): string {
   return `Exact but not pretty — ${offCount} of ${cardCount} odds can't land on round numbers at any price in the band: the tag and the never-inflate caps pin this pool too tightly. Fine to push — tag and edge are exact. To prettify: add a mid-value card to free up room, pin the odds you want by hand, or accept these numbers.`;
 }
 
-/** Per-lever relaxation explainer lines (§5c "Relaxed"). */
-export function relaxationLine(r: ShapeWeightsRelaxation): string {
+/**
+ * Per-lever relaxation explainer lines (§5c "Relaxed").
+ *
+ * Tag-aware (owner-lens §5 / Pattern 9e): a TAGGED pack can carry a `winRate`
+ * relaxation — the engine reuses that lever for the unavoidable-jackpot-
+ * inflation NOTE (`requested === applied`) and for the achievable-win-rate
+ * float. The old copy unconditionally printed "Allowed — this pack has no tag",
+ * which rendered on the %10-tagged Chaos (both halves false). The `ctx.tag`
+ * split fixes the emission:
+ *   • no actual float (requested ≈ applied) → the engine's own sentence is the
+ *     truth (it explains the note); never the "floated / no tag" line;
+ *   • a real float on a TAGGED pack → name the tag it drifted off, point at the
+ *     tag banner (Pattern 9a direction-aware, no false "no tag" claim);
+ *   • a real float on an UNTAGGED pack → the original "has no tag" copy, but
+ *     direction-aware: "floated up to" when the plan RAISED the win rate,
+ *     "eased down to" when it lowered it (Pattern 9a: never "relaxed" upward).
+ */
+export function relaxationLine(
+  r: ShapeWeightsRelaxation,
+  ctx: { tag: number | null },
+): string {
   switch (r.lever) {
     case "nearMiss":
       return `Wanted ${pctBody(r.requested)}% near-miss ('almost!') opens; this pool only supports ${pctBody(r.applied)}%. Fine to push — just fewer teases.`;
-    case "winRate":
-      return `Win chance floated ${pctBody(r.requested)}% → ${pctBody(r.applied)}% so the numbers close. Allowed — this pack has no tag.`;
+    case "winRate": {
+      // No actual float (requested ≈ applied): the engine reused the lever as a
+      // NOTE (e.g. unavoidable jackpot inflation) — its own sentence is the
+      // truth, and it can render on tagged AND untagged packs.
+      if (Math.abs(r.applied - r.requested) <= 1e-9) return r.reason;
+      // Pattern 9a — direction-aware verb (never "relaxed"/"floated up" on a
+      // downward move).
+      const verb = r.applied > r.requested ? "floated up to" : "eased down to";
+      if (ctx.tag !== null) {
+        return `Win chance ${verb} ${pctBody(r.applied)}% (from ${pctBody(r.requested)}%) so the numbers close — off the ${pctBody(ctx.tag)}% tag. See the tag banner for the fix.`;
+      }
+      return `Win chance ${verb} ${pctBody(r.applied)}% (from ${pctBody(r.requested)}%) so the numbers close. Allowed — this pack has no tag.`;
+    }
     case "floor":
       return "The most common card lands cheaper than usual.";
     default:

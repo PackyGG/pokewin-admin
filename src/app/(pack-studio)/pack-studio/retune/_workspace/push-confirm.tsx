@@ -162,7 +162,9 @@ export function PushConfirm({
             {plan.relaxations.length > 0 && (
               <ul className="list-disc space-y-0.5 rounded-lg border border-amber-500/30 bg-amber-500/10 py-2 pl-7 pr-3 text-xs text-amber-600 dark:text-amber-400">
                 {plan.relaxations.map((r, i) => (
-                  <li key={`${r.lever}-${i}`}>{relaxationLine(r)}</li>
+                  <li key={`${r.lever}-${i}`}>
+                    {relaxationLine(r, { tag: plan.intendedHitRate })}
+                  </li>
                 ))}
               </ul>
             )}

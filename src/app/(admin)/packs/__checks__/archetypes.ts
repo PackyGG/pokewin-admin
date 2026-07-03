@@ -202,8 +202,13 @@ check("arbitrary hit-rates: decimal name tags, arbitrary DB notation, (0,0.5] cl
   // Clamp: a "tag" above 50% winners is not a lottery product.
   assert(hitRateFromTags(["%75"]) === null, "%75 rejected (> 0.5)");
   assert(hitRateFromTags(["%0"]) === null, "%0 rejected");
-  // Unknown non-pct tags never resolve.
-  assert(hitRateFromTags(["50/50", "onepiece"]) === null, "non-pct tags → null");
+  // Pattern 4: the literal "50/50" ratio tag resolves to a 0.5 hit-rate (the
+  // owner's coin-flip product tier). A non-ratio, non-pct tag stays null.
+  approx(hitRateFromTags(["50/50", "onepiece"])!, 0.5, 1e-12, "50/50 ratio tag → 0.5");
+  approx(hitRateFromTags(["onepiece", "50/50"])!, 0.5, 1e-12, "50/50 resolves regardless of order");
+  assert(hitRateFromTags(["onepiece", "solo"]) === null, "non-ratio non-pct tags → null");
+  // The ratio clamp mirrors the %X clamp: a 90/10 (0.9) is not a lottery product.
+  assert(hitRateFromTags(["90/10"]) === null, "90/10 rejected (> 0.5)");
 
   // DB-first + conflict flag (the 4 silently-mis-labeled prod pools).
   const dbOnly = resolveIntendedHitRateDetailed("Heavy Hitters", ["%1"]);

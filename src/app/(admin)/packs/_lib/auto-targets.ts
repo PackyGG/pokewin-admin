@@ -254,17 +254,40 @@ const TAG_HIT_RATES: Readonly<Record<string, number>> = {
  * (integer or decimal) so a retag-to-live-rate can round-trip through the
  * same tag plumbing. The fixed map above stays FIRST (byte-identical for the
  * three product tiers); this is the fallback for everything else.
+ *
+ * ALSO accepts the `X/Y` ratio notation (owner-lens Pattern 4): the owner runs
+ * a "50/50" product tier (an even coin-flip pack) whose DB tag is the literal
+ * string `"50/50"` — neither the fixed map nor the `%X` arm matched it, so the
+ * whole tier silently fell to the untagged 20% path and shipped 27–55%
+ * winners instead of a clean 50%. `X/Y` → `X/(X+Y)` (so `"50/50" → 0.5`),
+ * subject to the SAME `(0, 0.5]` lottery-product clamp — a `"90/10"` (0.9) is
+ * not a lottery and is rejected, exactly like `"%90"`.
  */
 function parseArbitraryTag(tag: string): number | null {
-  const m = /^(?:%|pct)(\d+(?:\.\d+)?)$/.exec(tag);
-  if (!m) return null;
-  const pct = Number(m[1]);
-  if (!Number.isFinite(pct)) return null;
-  const frac = pct / 100;
-  // Arbitrary tags are valid in (0, 0.5] — a "tag" above 50% winners is not a
-  // lottery product and is rejected (null → untagged fallback).
-  if (!(frac > 0) || frac > 0.5) return null;
-  return frac;
+  const pctMatch = /^(?:%|pct)(\d+(?:\.\d+)?)$/.exec(tag);
+  if (pctMatch) {
+    const pct = Number(pctMatch[1]);
+    if (!Number.isFinite(pct)) return null;
+    const frac = pct / 100;
+    // Arbitrary tags are valid in (0, 0.5] — a "tag" above 50% winners is not a
+    // lottery product and is rejected (null → untagged fallback).
+    if (!(frac > 0) || frac > 0.5) return null;
+    return frac;
+  }
+  // `X/Y` even-split ratio (Pattern 4): the "50/50" product tier and siblings.
+  const ratioMatch = /^(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)$/.exec(tag);
+  if (ratioMatch) {
+    const x = Number(ratioMatch[1]);
+    const y = Number(ratioMatch[2]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const denom = x + y;
+    if (!(denom > 0)) return null;
+    const frac = x / denom;
+    // SAME lottery clamp: `X/Y` above a 50% win share is not a lottery product.
+    if (!(frac > 0) || frac > 0.5) return null;
+    return frac;
+  }
+  return null;
 }
 
 /** The designed hit-rate carried by the DB `packs.tags` column, or `null`. */

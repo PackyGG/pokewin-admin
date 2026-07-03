@@ -544,7 +544,7 @@ export function PlanPanel({
         <Banner tone="amber" icon={TriangleAlert}>
           <ul className="list-disc space-y-0.5 pl-4">
             {plan.relaxations.map((r, i) => (
-              <li key={`${r.lever}-${i}`}>{relaxationLine(r)}</li>
+              <li key={`${r.lever}-${i}`}>{relaxationLine(r, { tag })}</li>
             ))}
           </ul>
           <p className="text-xs text-muted-foreground">{RELAXED_FOOTER}</p>

@@ -1334,6 +1334,18 @@ export type UntaggedPlanGuidanceInput = {
   >[];
   /** TRUE when the operator pinned the price — price-moving fixes are off. */
   pinPrice?: boolean;
+  /**
+   * The §shape-guard verdict on THIS plan ({@link ladderShape}.degenerate),
+   * computed by the caller over the same planned vector (owner-lens §2.3). A
+   * NEW detection trigger: the three legacy signatures (floor pins / forced
+   * loss-avg / empty-NM+float) all MISS complaint (B) "Tails?" — its $20.02
+   * card lands at 0.0002% (above the 0.0001% floor test) and no float relaxation
+   * fired at ±10%, so the ladder inversion + carrier absorption is invisible to
+   * them. The shape guard catches it; feeding its verdict here makes the pool-
+   * edit guidance fire on that whole class. Optional (defaults false) so legacy
+   * callers are unaffected.
+   */
+  shapeDegenerate?: boolean;
 };
 
 /** Soft-mode (untagged) never-inflate caps at a price: existing win/grail
@@ -1467,7 +1479,13 @@ export function computeUntaggedGuidance(
     dustMaxValue > 0 &&
     dustAvg >= 0.95 * dustMaxValue;
   const degenerate =
-    pinnedIdx.length > 0 || lossAvgForced || (nmCount === 0 && winFloated);
+    pinnedIdx.length > 0 ||
+    lossAvgForced ||
+    (nmCount === 0 && winFloated) ||
+    // NEW (owner-lens §2.3): the shape guard's verdict catches complaint (B),
+    // which all three legacy signatures miss (no floor pin, no forced loss-avg,
+    // a non-empty NM band or no float).
+    input.shapeDegenerate === true;
   if (!degenerate) return null;
 
   // ── Feasibility payload: the no-float interval at the DESIGN win-rate ─────
@@ -1738,6 +1756,15 @@ export function computeUntaggedGuidance(
   }
 
   // ── 3. accept-as-is — the plan is sound; this is the pool's structure ─────
+  // Pattern 9c (owner-lens §9 rule 3): the accept-as-is copy must SHARE the
+  // shape guard's verdict — it may NOT bless a DEGENERATE ladder with "Fine to
+  // push as-is" (that copy talked the owner into shipping the exact flagged
+  // screenshot). When the shape guard flagged this plan degenerate, the
+  // acceptance is honest-but-unblessed: you CAN push (it is mathematically
+  // sound), but the pool edit above is the real fix. Only a NON-degenerate
+  // reason to be here (harmless floor pins on truly-dead cards) keeps the
+  // original "Fine to push as-is" blessing.
+  const acceptBody = `At ${usd(price)} the losing ${(lossMassPlanned * 100).toFixed(1)}% of opens must average ≈${usd(lossAvgNeeded)}, and only the ${usd(carrierValue)} card can carry that — so the other loss cards sit at the minimum odds${winFloated ? ` and the win rate floats to ${(winMassPlanned * 100).toFixed(1)}%` : ""}.`;
   suggestions.push({
     kind: "accept-as-is",
     params: {
@@ -1746,8 +1773,12 @@ export function computeUntaggedGuidance(
       lossAvgNeeded: round2(lossAvgNeeded),
       carrierValue,
       maxLossValue: dustMaxValue,
+      degenerate: input.shapeDegenerate === true ? 1 : 0,
     },
-    humanCopy: `This plan is sound — the pins are the pool's structure, not an error. At ${usd(price)} the losing ${(lossMassPlanned * 100).toFixed(1)}% of opens must average ≈${usd(lossAvgNeeded)}, and only the ${usd(carrierValue)} card can carry that — so the other loss cards sit at the minimum odds${winFloated ? ` and the win rate floats to ${(winMassPlanned * 100).toFixed(1)}%` : ""}. Fine to push as-is.`,
+    humanCopy:
+      input.shapeDegenerate === true
+        ? `The math is sound but the ladder is degenerate — ${acceptBody} This is pushable, but the pool edit above is the real fix; accept it only if this concentration is intentional.`
+        : `This plan is sound — the pins are the pool's structure, not an error. ${acceptBody} Fine to push as-is.`,
     proof: {
       evMinAfter: evMin,
       evMaxAfter: evMax,
