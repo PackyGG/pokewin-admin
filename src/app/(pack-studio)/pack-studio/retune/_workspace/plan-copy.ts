@@ -270,6 +270,14 @@ export const PENDING_DISCARD = "Discard";
 /** One-line explainer under the action bar. */
 export const PENDING_EDITS_NOTE =
   "Typed but not saved yet — nothing re-plans until you apply. Apply pins them all at once (one re-plan); Discard reverts.";
+/**
+ * Shown under the action bar ONLY when the typed odds don't sum to exactly
+ * 100% — makes the off-by amount honest (never rounded away) and explains that
+ * Apply reconciles it: the typed rows are held as pins, the remaining rows
+ * absorb the difference so the pushed plan lands on exactly 100%.
+ */
+export const PENDING_EDITS_OFF_HUNDRED_NOTE =
+  "These typed odds don't total 100% yet. Apply re-plans the pack — your edits are held and the un-edited rows absorb the difference to land on exactly 100%.";
 
 export function tagSaturatedBanner(tag: number): string {
   return `No price in the search band hits the ${pctBody(tag)}% tag exactly — closest achievable shown. Pushing is blocked.`;

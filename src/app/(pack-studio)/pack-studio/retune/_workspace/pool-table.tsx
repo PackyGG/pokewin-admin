@@ -24,6 +24,7 @@ import {
   PENDING_APPLY,
   PENDING_DISCARD,
   PENDING_EDITS_NOTE,
+  PENDING_EDITS_OFF_HUNDRED_NOTE,
   PRICE_INPUT_HINT,
   pendingEditsLabel,
 } from "./plan-copy";
@@ -100,6 +101,36 @@ export function describeAutoPick(color: string | null, animation: boolean): stri
 }
 
 /**
+ * "Exactly 100%" tolerance. Odds are entered to at most 4 decimals, so a sum
+ * that is mathematically 100 lands within float noise (~1e-10). Anything looser
+ * (the old ±0.005) let a REAL 100.005% total print as "100.00%" and claim
+ * "match 100%" — the readout lied. A true 100% total is exact to this epsilon;
+ * a 0.005pp overage (5000× this) is now correctly flagged, not hidden.
+ */
+const ODDS_EXACT_EPS = 1e-6;
+
+/** True only when the odds sum is genuinely 100% (within float noise). */
+function oddsExactlyHundred(total: number): boolean {
+  return Math.abs(total - 100) < ODDS_EXACT_EPS;
+}
+
+/**
+ * TRUTHFUL odds-% readout: up to 4 decimals with trailing zeros trimmed, so a
+ * 100.005% total shows as "100.005%" (never rounded to a misleading "100.00%").
+ * An exact total shows as "100%".
+ */
+function fmtOddsPct(total: number): string {
+  return `${Number(total.toFixed(4))}`;
+}
+
+/** The signed gap vs 100, e.g. "over by 0.005pp" / "under by 0.02pp". */
+function fmtOddsGap(total: number): string {
+  const d = total - 100;
+  const mag = Number(Math.abs(d).toFixed(4));
+  return `${d > 0 ? "over" : "under"} by ${mag}pp`;
+}
+
+/**
  * Odds-total chip — moved verbatim from the retired `pool-editor.tsx`. Over
  * the PLANNED odds when a plan exists (always 100.00% → emerald); over the
  * live odds in preview. The renormalize affordance belongs to the Drafts
@@ -118,10 +149,9 @@ function OddsTotalChip({
   disabled: boolean;
 }) {
   if (!hasRows) return null;
-  // ±0.005 tolerance — anything that prints "100.00%" at two decimals counts
-  // as exactly 100, so the chip and the displayed number agree. MUST match
-  // the `oddsExact` gate on the verbatim Approve.
-  const exact = Math.abs(total - 100) <= 0.005;
+  // EXACT means genuinely 100% (float noise only) — NOT the old ±0.005 that let
+  // a real 100.005% total masquerade as "match". MUST match the verbatim gate.
+  const exact = oddsExactlyHundred(total);
   const over = !exact && total > 100;
   const tone = exact
     ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
@@ -131,9 +161,7 @@ function OddsTotalChip({
   const Icon = exact ? Check : over ? TriangleAlert : Info;
   const label = exact
     ? "Total odds match 100%"
-    : over
-      ? "Over 100% — verbatim approve blocked"
-      : "Under 100% — verbatim approve blocked";
+    : `${over ? "Over" : "Under"} 100% (${fmtOddsGap(total)}) — verbatim approve blocked`;
   return (
     <div
       className={cn(
@@ -154,7 +182,7 @@ function OddsTotalChip({
             over ? "text-base font-bold sm:text-lg" : "text-sm font-semibold",
           )}
         >
-          Total odds: {total.toFixed(2)}% / 100%
+          Total odds: {fmtOddsPct(total)}% / 100%
         </span>
         <span
           className={cn(
@@ -219,8 +247,9 @@ function PendingEditsBar({
   disabled: boolean;
 }) {
   if (count === 0) return null;
-  // ±0.005 tolerance so the readout agrees with what prints at 2 decimals.
-  const exact = Math.abs(pendingTotal - 100) <= 0.005;
+  // Genuinely 100% (float noise only) — a 100.005% typed total is NOT "exact"
+  // and must not print as "100.00%". See {@link oddsExactlyHundred}.
+  const exact = oddsExactlyHundred(pendingTotal);
   const totalTone = exact
     ? "text-emerald-600 dark:text-emerald-400"
     : pendingTotal > 100
@@ -242,7 +271,8 @@ function PendingEditsBar({
         </span>
       </div>
       <span className={cn("text-xs font-medium tabular-nums", totalTone)}>
-        Total odds: {pendingTotal.toFixed(2)}% / 100%
+        Total odds: {fmtOddsPct(pendingTotal)}% / 100%
+        {!exact && ` — ${fmtOddsGap(pendingTotal)}`}
       </span>
       <div className="ml-auto flex items-center gap-2">
         <Button
@@ -262,7 +292,7 @@ function PendingEditsBar({
         </Button>
       </div>
       <p className="basis-full text-[11px] text-amber-700/80 dark:text-amber-300/80">
-        {PENDING_EDITS_NOTE}
+        {exact ? PENDING_EDITS_NOTE : PENDING_EDITS_OFF_HUNDRED_NOTE}
       </p>
     </div>
   );
