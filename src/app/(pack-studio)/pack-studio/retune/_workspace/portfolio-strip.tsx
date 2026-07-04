@@ -12,8 +12,9 @@ import type { RetuneRailRow } from "../_queries/rail";
  *
  * The 4th tile is the PERSISTENT "Tuned: X / N · M remaining" progress readout
  * (owner feature, 2026-07-04) — server-derived from the DISTINCT count of packs
- * with an edit/retune snapshot (`getTunedPackCount`), so it survives sessions
- * and browsers instead of the old per-browser "Pushed this session" counter.
+ * tuned via the retune workspace (`getTunedPackCount`, counted off the retune
+ * audit events), so it survives sessions and browsers instead of the old
+ * per-browser "Pushed this session" counter.
  * Packs pushed THIS session are unioned in so a fresh push shows immediately
  * (the server count is 60s-cached and only re-read on the debounced refresh);
  * the count is clamped to the fleet size so "remaining" never goes negative.

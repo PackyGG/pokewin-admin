@@ -457,7 +457,10 @@ model admin_audit_events {
   //     satisfies an unfiltered recency scan).
   //   • event_type — `event_type IN (...)` (multi-value, no following
   //     created_at ordering); also covers groupBy() on event_type for the
-  //     /audit Event Types KPI.
+  //     /audit Event Types KPI, AND the retune-workspace tuned-count
+  //     (getTunedPackCount: event_type IN ('pack_retuned',
+  //     'pack_edited_via_retune','pack_edited_and_retuned')). That slice is
+  //     single-digit rows, so no JSON/metadata index is warranted.
   //   • admin_user_id — covers the cross-DB join into admin_users without
   //     leading the composite, and partial filters without created_at.
   //   • target_user_id — currently has zero coverage; powers the
