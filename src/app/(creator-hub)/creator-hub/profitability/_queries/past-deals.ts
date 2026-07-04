@@ -22,23 +22,32 @@ import { getDealWagerByDeal } from "./frame-wager-by-deal";
  * short). One row PER ended deal — a creator can have many (their deal
  * history), so the same creator appears once per ended deal.
  *
- * The per-leg cost mirrors the Active view's `deal-profitability.ts` EXACTLY:
+ * Per-leg cost. The cap / tip-sponsor / leaderboard legs mirror the Active
+ * view's `deal-profitability.ts`; the DAILY BALANCE FILL leg is added here
+ * (owner directive 2026-07-05 — the fill is the dominant cost and MUST scale
+ * across the full deal duration, not show a single fill):
  *
- *   dealWeeks     = round((endMs − startMs) / week), floored at 1 (weekly /
- *                   bi-weekly boards; a degenerate frame costs one week).
- *   capUsd        = weeklyCap(`total_withdraw_cap_usd`) × dealWeeks
- *                   (null cap → 0).
+ *   dealWeeks     = round((endMs − startMs) / week), floored at 1.
+ *   dealDays      = round((endMs − startMs) / day), floored at 1.
+ *   fillUsd       = `per_fill_amount_usd` × min(dealDays, `fills_allowed`) —
+ *                   the daily balance fill loaded once per day across the
+ *                   deal's days. Verified against prod (2026-07-05): a 7-day
+ *                   deal grants `fills_allowed = 7` (one fill/day), so the
+ *                   fill recurs daily; `per_fill_amount_usd` IS the daily
+ *                   balance-fill amount. Capped at `fills_allowed` so a deal
+ *                   that grants fewer fills than its day-span (or a terminated
+ *                   deal cut short) never counts more fills than it granted.
+ *   capUsd        = weeklyCap(`total_withdraw_cap_usd`) × dealWeeks (null → 0).
  *   tipSponsorUsd = (`max_tip_per_stream_usd` + `max_sponsorship_per_stream_usd`)
- *                   × `fills_allowed` × dealWeeks — the per-stream caps recur
- *                   for every fill the deal grants each week (owner directive
- *                   2026-06-23), scaled across the deal's weeks the same way
- *                   cap is.
+ *                   × `fills_allowed` × dealWeeks — per-stream caps recur for
+ *                   every fill the deal grants each week (owner directive
+ *                   2026-06-23), scaled across the deal's weeks like cap.
  *   leaderboardUsd= Σ sponsored-weighted house cost of the creator's APPROVED
  *                   leaderboards whose run window OVERLAPS the deal window
  *                   (net prize × sponsored% / 100; default 100%). Boards and
  *                   deals are independent entities — most deals overlap no
  *                   board, so this leg is $0 for them (correct, not a gap).
- *   dealCost      = capUsd + leaderboardUsd + tipSponsorUsd.
+ *   dealCost      = fillUsd + capUsd + leaderboardUsd + tipSponsorUsd.
  *   expectedWager = dealCost / house edge (7.5%).
  *   actualWager   = code-cohort wager inside the deal window (per-deal, keyed
  *                   so a creator's multiple ended deals don't collapse).
@@ -78,6 +87,7 @@ import { getDealWagerByDeal } from "./frame-wager-by-deal";
 export const PAST_DEALS_PAGE_SIZE = 25;
 const HOUSE_EDGE = 0.075;
 const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /** Backend cap per request. */
 const BACKEND_PAGE_SIZE = 100;
@@ -121,6 +131,18 @@ function frameWeeks(startMs: number, endMs: number): number {
   return Math.max(1, Math.round((endMs - startMs) / MS_PER_WEEK));
 }
 
+/**
+ * Whole days in a deal frame — used to scale the daily balance fill over the
+ * deal length. Rounded to the nearest day and floored at 1 (a degenerate /
+ * same-day frame is one fill, never zero).
+ */
+function frameDays(startMs: number, endMs: number): number {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return 1;
+  }
+  return Math.max(1, Math.round((endMs - startMs) / MS_PER_DAY));
+}
+
 function toFiniteNumber(value: string | number | null | undefined): number {
   if (value == null) return 0;
   const n = typeof value === "number" ? value : Number(value);
@@ -144,6 +166,14 @@ export type PastDealRow = {
   frameEndMs: number;
   /** Whole weeks in the effective deal frame. */
   dealWeeks: number;
+  /** Whole days in the effective deal frame (drives the daily-fill leg). */
+  dealDays: number;
+  /** Daily balance-fill amount (`per_fill_amount_usd`; 0 when none). */
+  perFillUsd: number;
+  /** Number of daily fills counted = min(dealDays, fills_allowed). */
+  fillsCounted: number;
+  /** Total daily-fill cost over the deal (`perFillUsd × fillsCounted`, rose). */
+  fillUsd: number;
   /** Per-week withdraw cap from the deal (`total_withdraw_cap_usd`; 0 when uncapped). */
   weeklyCapUsd: number;
   /** Total withdraw cap over the deal length (`weeklyCapUsd × dealWeeks`). */
@@ -229,6 +259,10 @@ type PastDealBaseRow = {
   frameStartMs: number;
   frameEndMs: number;
   dealWeeks: number;
+  dealDays: number;
+  perFillUsd: number;
+  fillsCounted: number;
+  fillUsd: number;
   weeklyCapUsd: number;
   capUsd: number;
   weeklyTipSponsorUsd: number;
@@ -405,13 +439,25 @@ const getEndedDealsBase = unstable_cache(
         if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue;
 
         const dealWeeks = frameWeeks(startMs, endMs);
+        const dealDays = frameDays(startMs, endMs);
+        const fillsAllowed = Math.max(0, deal.fills_allowed ?? 0);
+
+        // Daily balance fill (the dominant cost — owner directive 2026-07-05).
+        // `per_fill_amount_usd` is loaded once per day across the deal's days;
+        // a 7-day deal grants fills_allowed = 7 (one fill/day, verified vs
+        // prod). Count min(dealDays, fills_allowed) so a deal never counts
+        // more fills than it granted (a terminated deal cut short, or an
+        // over-provisioned fills_allowed, can't inflate the fill cost).
+        const perFillUsd = toFiniteNumber(deal.per_fill_amount_usd);
+        const fillsCounted = Math.min(dealDays, fillsAllowed);
+        const fillUsd = perFillUsd * fillsCounted;
+
         const weeklyCapUsd = toFiniteNumber(deal.total_withdraw_cap_usd);
         const capUsd = weeklyCapUsd * dealWeeks;
         const perStreamTip = toFiniteNumber(deal.max_tip_per_stream_usd);
         const perStreamSponsor = toFiniteNumber(
           deal.max_sponsorship_per_stream_usd,
         );
-        const fillsAllowed = Math.max(0, deal.fills_allowed ?? 0);
         const weeklyTipSponsorUsd =
           (perStreamTip + perStreamSponsor) * fillsAllowed;
         const tipSponsorUsd = weeklyTipSponsorUsd * dealWeeks;
@@ -426,7 +472,7 @@ const getEndedDealsBase = unstable_cache(
           }
         }
 
-        const dealCost = capUsd + leaderboardUsd + tipSponsorUsd;
+        const dealCost = fillUsd + capUsd + leaderboardUsd + tipSponsorUsd;
 
         ended.push({
           dealId: deal.id,
@@ -435,6 +481,10 @@ const getEndedDealsBase = unstable_cache(
           frameStartMs: startMs,
           frameEndMs: endMs,
           dealWeeks,
+          dealDays,
+          perFillUsd,
+          fillsCounted,
+          fillUsd,
           weeklyCapUsd,
           capUsd,
           weeklyTipSponsorUsd,
@@ -449,7 +499,7 @@ const getEndedDealsBase = unstable_cache(
     ended.sort((a, b) => b.frameEndMs - a.frameEndMs);
     return { rows: ended, backendUnavailable: false };
   },
-  ["profitability-past-deals-base-v2"],
+  ["profitability-past-deals-base-v3"],
   { revalidate: 300, tags: ["profitability-past-deals"] },
 );
 
@@ -636,6 +686,10 @@ async function computePastDealsFromPostgres(
       frameStartMs: r.frameStartMs,
       frameEndMs: r.frameEndMs,
       dealWeeks: r.dealWeeks,
+      dealDays: r.dealDays,
+      perFillUsd: r.perFillUsd,
+      fillsCounted: r.fillsCounted,
+      fillUsd: r.fillUsd,
       weeklyCapUsd: r.weeklyCapUsd,
       capUsd: r.capUsd,
       weeklyTipSponsorUsd: r.weeklyTipSponsorUsd,

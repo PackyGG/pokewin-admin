@@ -274,7 +274,7 @@ async function PastDealsSection({ page }: { page: number }) {
           icon={Coins}
           accent="rose"
           value={formatCurrency(data.totals.totalCost)}
-          sub="Cap + leaderboard + tips · page"
+          sub="Fill + cap + LB + tips · page"
         />
         <HubKpiBox
           label="Page Actual PNL"

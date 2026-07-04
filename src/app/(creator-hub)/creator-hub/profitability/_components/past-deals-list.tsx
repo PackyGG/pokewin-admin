@@ -89,8 +89,18 @@ function endedAgoLabel(row: PastDealRow): string {
   return years === 1 ? "1 year ago" : `${years} years ago`;
 }
 
-/** Cap · LB · tip+sponsor breakdown — mirrors the Active row's breakdown. */
+/**
+ * Fill · Cap · LB · tip+sponsor breakdown. The daily balance fill leads
+ * (it is the dominant leg): `per_fill_amount_usd × fills counted over the
+ * deal's days` (one fill/day, capped at the deal's granted fills).
+ */
 function costBreakdown(row: PastDealRow): string {
+  const fillLabel =
+    row.fillsCounted > 1 && row.perFillUsd > 0
+      ? `Fill ${formatCurrency(row.fillUsd)} (${formatCurrency(
+          row.perFillUsd,
+        )}/day × ${row.fillsCounted})`
+      : `Fill ${formatCurrency(row.fillUsd)}`;
   const capLabel =
     row.dealWeeks > 1 && row.weeklyCapUsd > 0
       ? `Cap ${formatCurrency(row.capUsd)} (${formatCurrency(
@@ -103,7 +113,9 @@ function costBreakdown(row: PastDealRow): string {
           row.weeklyTipSponsorUsd,
         )}/wk × ${row.dealWeeks})`
       : `Tip+Sponsor ${formatCurrency(row.tipSponsorUsd)}`;
-  return `${capLabel} · LB ${formatCurrency(row.leaderboardUsd)} · ${tipLabel}`;
+  return `${fillLabel} · ${capLabel} · LB ${formatCurrency(
+    row.leaderboardUsd,
+  )} · ${tipLabel}`;
 }
 
 function Metric({
