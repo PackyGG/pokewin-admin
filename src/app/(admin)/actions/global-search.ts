@@ -26,8 +26,7 @@
 import { getDb } from "@/lib/db";
 import { verifySession } from "@/lib/dal";
 import { canCurrentAdminIncludeExcludedInSearch } from "@/lib/excluded-users/search-gate";
-import { filterExcludedIdsForSearch } from "@/lib/excluded-users/search-visible-override";
-import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-visible-override";
 
 export type GlobalUserSearchResult = {
   id: string;
@@ -110,9 +109,15 @@ export async function searchUsersGlobal(
   const includeExcluded = await canCurrentAdminIncludeExcludedInSearch(
     session.userId,
   );
-  const excludedUserIds = includeExcluded
-    ? []
-    : filterExcludedIdsForSearch(await getExcludedUserIds());
+  // Single source of truth for search exclusion (shared with the /users list).
+  // Owners (includeExcluded) still see ordinary blacklisted users, but the
+  // ALWAYS_HIDDEN_FROM_SEARCH hard-hide tier is withheld from EVERYONE — so a
+  // user the owner has declared invisible ("nobody, not motha not kotha") can't
+  // be found here either, by username, email, or exact id.
+  const excludedUserIds = await getExcludedUserIdsForAdminSearch({
+    includeAllBlacklisted: includeExcluded,
+    isSearching: true,
+  });
   const excludedFilter =
     excludedUserIds.length > 0 ? { id: { notIn: excludedUserIds } } : {};
 
