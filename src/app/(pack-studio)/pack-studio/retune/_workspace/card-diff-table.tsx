@@ -28,7 +28,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { AnimatedNumber } from "@/components/animated-number";
 import { CardImage } from "@/components/card-image";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
@@ -36,6 +35,7 @@ import { isFloorPinnedPct } from "@/app/(admin)/insights/edge-calc/tag-guidance"
 import type { EditPool, PackTunePlan } from "../../doctor/retune-actions";
 
 import { formatDeltaPp, formatPercent } from "../format-percent";
+import { formatReconciledPct, reconcileOddsForDisplay } from "./odds-display";
 import {
   FLOOR_PIN_CHIP,
   FLOOR_PIN_TOOLTIP,
@@ -73,6 +73,14 @@ export type CardDiffRow = {
   livePct: number | null;
   /** Planned probability in percent from the plan's after-vector, null = no plan. */
   plannedPct: number | null;
+  /**
+   * Display-reconciled planned pct (largest-mass buffer absorbs the rounding
+   * residual so the whole displayed column sums to EXACTLY 100 — see
+   * `reconcileOddsForDisplay`). This is what the Planned-% cell RENDERS and what
+   * every total-odds readout SUMS; `plannedPct` stays the raw true pct for Δpp
+   * math. Null exactly when `plannedPct` is null.
+   */
+  displayPct: number | null;
   added: boolean;
   removed: boolean;
   /**
@@ -145,7 +153,26 @@ export function buildCardDiffRows(args: {
     (args.pending ?? []).map((p) => [p.cardId, p.pct]),
   );
   const plannedByCard = new Map<string, { pct: number; livePct: number | null }>();
+  // Display-reconciled planned pcts: the raw plan vector (`plan.planned.pct`)
+  // sums to exactly 100 as a RATIO, but independent per-card rounding in the
+  // cell would make the VISIBLE column sum to 100.005% / 99.99%. Reconcile the
+  // whole vector once (largest-mass buffer absorbs the residual) so every
+  // rendered cell AND every total-odds readout uses the SAME grid-faithful
+  // numbers that sum to exactly 100. Cap-dropped cards (pct 0, the drop verdict
+  // — not a chance) are excluded from the vector so they never steal residual.
+  const displayByCard = new Map<string, number>();
   if (plan) {
+    const capDroppedForVector = plan.feasible
+      ? new Set(plan.capDroppedCardIds)
+      : new Set<string>();
+    const vectorCards = plan.planned.filter(
+      (p) => !capDroppedForVector.has(p.cardId),
+    );
+    const reconciled = reconcileOddsForDisplay(vectorCards.map((p) => p.pct));
+    for (let i = 0; i < vectorCards.length; i++) {
+      const c = vectorCards[i];
+      if (c) displayByCard.set(c.cardId, reconciled[i]!);
+    }
     for (const p of plan.planned) {
       plannedByCard.set(p.cardId, { pct: p.pct, livePct: p.livePct });
     }
@@ -197,6 +224,14 @@ export function buildCardDiffRows(args: {
         // A cap-removed row renders exactly like a staged removal: no planned
         // odds (the plan's 0 is the drop verdict, not a chance).
         plannedPct: capRemoved ? null : planned ? planned.pct : null,
+        // The reconciled value the cell renders + the total sums (buffer carries
+        // the residual). Falls back to the raw pct when the plan doesn't carry
+        // this card (mid-debounce add) so the cell never blanks.
+        displayPct: capRemoved
+          ? null
+          : planned
+            ? (displayByCard.get(c.cardId) ?? planned.pct)
+            : null,
         added: c.added,
         removed: false,
         capRemovedUsd: capRemoved ? capUsd : null,
@@ -221,6 +256,7 @@ export function buildCardDiffRows(args: {
         imageUrl: c.imageUrl,
         livePct: livePctOf(c.cardId),
         plannedPct: null,
+        displayPct: null,
         added: false,
         removed: true,
         capRemovedUsd: null,
@@ -245,6 +281,11 @@ export function buildCardDiffRows(args: {
         // Same rule as the staged arm: a cap-removed row carries no planned
         // odds — the drop verdict renders as a removal, not a 0% chance.
         plannedPct: capRemoved ? null : planned ? planned.pct : null,
+        displayPct: capRemoved
+          ? null
+          : planned
+            ? (displayByCard.get(c.cardId) ?? planned.pct)
+            : null,
         added: false,
         removed: false,
         capRemovedUsd: capRemoved ? capUsd : null,
@@ -269,16 +310,19 @@ export function buildCardDiffRows(args: {
 }
 
 /**
- * Planned-% cell: `AnimatedNumber` for values its 2-decimal percent format
- * renders faithfully (≥ 1%), the canonical `formatPercent` (4 significant
- * digits) for sub-1% odds — a flat 2dp would collapse a real 0.0075% jackpot
- * to "0.01%", the exact precision loss `format-percent.ts` exists to prevent.
+ * Planned-% cell: renders the DISPLAY-RECONCILED pct (largest-mass buffer
+ * carries the rounding residual, so the whole column sums to EXACTLY 100 — see
+ * `reconcileOddsForDisplay`) at grid-faithful precision. `formatReconciledPct`
+ * shows up to 4 decimals (trailing zeros trimmed — a clean 25 → "25%", the
+ * buffer's 42.625 → "42.625%") and defers to the canonical `formatPercent`
+ * (4 sig-figs) for sub-1% odds so a real 0.0075% jackpot never collapses.
+ *
+ * NOTE: a flat 2dp `AnimatedNumber` was the source of the bug (42.625 → 42.63,
+ * column sums to 100.005%); the cell now renders the reconciled value verbatim
+ * so the visible column and the total-odds readout can never disagree.
  */
 function PlannedPct({ pct }: { pct: number }) {
-  if (pct >= 1) {
-    return <AnimatedNumber value={pct} format="percent" />;
-  }
-  return <span className="tabular-nums">{formatPercent(pct)}</span>;
+  return <span className="tabular-nums">{formatReconciledPct(pct)}</span>;
 }
 
 export function CardDiffTable({
@@ -762,8 +806,8 @@ export function CardDiffTable({
                             className="inline-flex items-center gap-1 rounded px-0.5 tabular-nums hover:bg-muted/50"
                             onClick={() => openEditor(row)}
                           >
-                            {row.plannedPct !== null ? (
-                              <PlannedPct pct={row.plannedPct} />
+                            {row.displayPct !== null ? (
+                              <PlannedPct pct={row.displayPct} />
                             ) : (
                               <span className="text-muted-foreground">—</span>
                             )}
@@ -773,8 +817,8 @@ export function CardDiffTable({
                             />
                           </button>
                         )
-                      ) : row.plannedPct !== null ? (
-                        <PlannedPct pct={row.plannedPct} />
+                      ) : row.displayPct !== null ? (
+                        <PlannedPct pct={row.displayPct} />
                       ) : (
                         <span className="text-muted-foreground">—</span>
                       )}

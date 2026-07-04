@@ -36,6 +36,7 @@ import {
 import type { BuilderCardItem } from "../../builder/actions";
 import type { RetuneRailRow } from "../_queries/rail";
 import { buildCardDiffRows } from "./card-diff-table";
+import { reconcileOddsForDisplay } from "./odds-display";
 import { BulkBar } from "./bulk-bar";
 import { PackRail, attentionCompare } from "./pack-rail";
 import { PlanPanel, type PlanRefusal } from "./plan-panel";
@@ -1246,9 +1247,22 @@ export function RetuneWorkspace({
     [planForBasis, selectedPending],
   );
 
+  // The total-odds chip sums the DISPLAY-RECONCILED vector — the SAME numbers
+  // the Planned-% cells render (buffer carries the rounding residual) — never
+  // the raw underlying pcts. So the chip can never stamp "match 100%" while the
+  // visible column disagrees: the reconciled vector sums to exactly 100 by
+  // construction, and the column shows exactly those values. Cap-dropped cards
+  // (drop verdict, not a chance) are excluded, matching `buildCardDiffRows`.
   const oddsTotal = React.useMemo(() => {
     if (!planForBasis || planForBasis.planned.length === 0) return 100;
-    return planForBasis.planned.reduce((s, p) => s + p.pct, 0);
+    const capDropped = planForBasis.feasible
+      ? new Set(planForBasis.capDroppedCardIds)
+      : new Set<string>();
+    const vector = planForBasis.planned
+      .filter((p) => !capDropped.has(p.cardId))
+      .map((p) => p.pct);
+    if (vector.length === 0) return 100;
+    return reconcileOddsForDisplay(vector).reduce((s, p) => s + p, 0);
   }, [planForBasis]);
 
   const autoHintByCardId = React.useMemo(() => {
