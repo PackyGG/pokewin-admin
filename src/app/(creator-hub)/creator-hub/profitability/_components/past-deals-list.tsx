@@ -11,11 +11,12 @@ import { formatCurrency } from "@/lib/utils/format";
 import type { PastDealRow } from "../_queries/past-deals";
 
 /**
- * Per-DEAL past-deal list. Same row anatomy as the Active view's
- * `ProfitabilityList` — one row per ended creator deal (completed /
- * terminated). The deal-cost breakdown mirrors the Active tab exactly:
- * cap (× weeks) · LB (overlap) · tip+sponsor (× weeks). House-POV colours:
- * deal cost = rose; actual wager = emerald; conversion ≥ 1× = emerald.
+ * Per-FRAME past-deal list. Same row anatomy as the Active view's
+ * `ProfitabilityList` — one row per ended leaderboard frame (= past deal
+ * under the "leaderboard frame IS the deal" model). The cost breakdown is
+ * fill (× frame days) · cap (× frame weeks) · LB · tip+sponsor (× frame
+ * weeks). House-POV colours: deal cost = rose; actual wager = emerald;
+ * conversion ≥ 1× = emerald.
  *
  * CLIENT COMPONENT. Two reasons it must be `"use client"`:
  *   1. `buttonVariants()` is exported from a `"use client"` module
@@ -140,8 +141,9 @@ function Metric({
 }
 
 function PastDealItem({ row }: { row: PastDealRow }) {
-  const initial = (row.username ?? "?").slice(0, 1).toUpperCase();
-  const isTerminated = row.status === "terminated";
+  const initial = (row.username ?? row.boardTitle ?? "?")
+    .slice(0, 1)
+    .toUpperCase();
 
   return (
     <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -158,19 +160,12 @@ function PastDealItem({ row }: { row: PastDealRow }) {
             >
               {row.username ?? "Unknown creator"}
             </Link>
-            <span
-              className={cn(
-                "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide",
-                isTerminated
-                  ? "bg-rose-500/15 text-rose-600 dark:text-rose-400"
-                  : "bg-muted text-muted-foreground",
-              )}
-            >
-              {isTerminated ? "Terminated" : "Completed"}
+            <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Ended
             </span>
           </div>
           <div className="truncate text-[11px] text-muted-foreground">
-            {frameLabel(row)} · ended {endedAgoLabel(row)}
+            {row.boardTitle} · {frameLabel(row)} · ended {endedAgoLabel(row)}
           </div>
           <div className="truncate text-[10px] text-muted-foreground/70">
             {costBreakdown(row)}
@@ -279,7 +274,8 @@ export function PastDealsList({
   if (rows.length === 0) {
     return (
       <div className="rounded-2xl border bg-card p-10 text-center text-sm text-muted-foreground">
-        No past deals yet — every creator deal is still scheduled or active.
+        No past deals yet — every approved leaderboard frame is still live or
+        upcoming.
       </div>
     );
   }
@@ -293,7 +289,7 @@ export function PastDealsList({
     <div className="space-y-3">
       <div className="divide-y overflow-hidden rounded-2xl border bg-card">
         {rows.map((row) => (
-          <PastDealItem key={row.dealId} row={row} />
+          <PastDealItem key={row.boardId} row={row} />
         ))}
       </div>
 

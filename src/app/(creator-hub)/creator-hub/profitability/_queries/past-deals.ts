@@ -17,69 +17,78 @@ import { getDealWagerByDeal } from "./frame-wager-by-deal";
 /**
  * Creator Hub — Past Deals data.
  *
- * A PAST deal is the SAME entity as the Active tab (a `CreatorDealResponse`),
- * just ENDED: status `completed` (ran its full window) or `terminated` (cut
- * short). One row PER ended deal — a creator can have many (their deal
- * history), so the same creator appears once per ended deal.
+ * A PAST deal is an ENDED LEADERBOARD FRAME — the SAME entity the Active tab
+ * uses (the owner's model: "the leaderboard window IS the deal";
+ * `getActiveLeaderboardFrameByUser` in `leaderboard-cost.ts`). A frame is
+ * weekly OR bi-weekly; a bi-weekly frame spans two weekly backend deals, so
+ * the frame — not a single weekly `CreatorDealResponse` — is the unit of
+ * length, past-detection and cost.
  *
- * Per-leg cost. The cap / tip-sponsor / leaderboard legs mirror the Active
- * view's `deal-profitability.ts`; the DAILY BALANCE FILL leg is added here
- * (owner directive 2026-07-05 — the fill is the dominant cost and MUST scale
- * across the full deal duration, not show a single fill):
+ *   • PAST-DETECTION: a frame is past iff its `end_date < now`. A frame still
+ *     running (end_date ≥ now) is NOT a past deal — it belongs to Active.
+ *     (Anchoring to the weekly backend deal wrongly marked a live bi-weekly
+ *     frame as "completed · 7 days ended" — the bug this rebuild fixes.)
+ *   • LENGTH / WINDOW: the FULL frame `[start_date, end_date]` (bi-weekly =
+ *     14 days), never a single 7-day weekly deal window.
+ *   • COST TERMS: pulled from the creator's backend deal that OVERLAPS the
+ *     frame (per_fill / cap / tip / sponsor). Every cost leg scales over the
+ *     FULL frame duration.
  *
- *   dealWeeks     = round((endMs − startMs) / week), floored at 1.
- *   dealDays      = round((endMs − startMs) / day), floored at 1.
- *   fillUsd       = `per_fill_amount_usd` × min(dealDays, `fills_allowed`) —
- *                   the daily balance fill loaded once per day across the
- *                   deal's days. Verified against prod (2026-07-05): a 7-day
- *                   deal grants `fills_allowed = 7` (one fill/day), so the
- *                   fill recurs daily; `per_fill_amount_usd` IS the daily
- *                   balance-fill amount. Capped at `fills_allowed` so a deal
- *                   that grants fewer fills than its day-span (or a terminated
- *                   deal cut short) never counts more fills than it granted.
- *   capUsd        = weeklyCap(`total_withdraw_cap_usd`) × dealWeeks (null → 0).
+ * Per-leg cost (the cap / tip-sponsor legs mirror the Active view's
+ * `deal-profitability.ts`; the DAILY BALANCE FILL leg is the dominant cost —
+ * owner directive 2026-07-05 — and MUST scale across the full frame):
+ *
+ *   frameWeeks    = round((endMs − startMs) / week), floored at 1.
+ *   frameDays     = round((endMs − startMs) / day), floored at 1.
+ *   fillUsd       = `per_fill_amount_usd` × frameDays — the daily balance fill
+ *                   loaded once per day across the WHOLE frame. Verified vs
+ *                   prod (2026-07-05): a 7-day frame's deal grants
+ *                   `fills_allowed = 7` (one fill/day); `per_fill_amount_usd`
+ *                   IS the daily balance-fill amount. Scaled by frame DAYS
+ *                   (not the weekly deal's `fills_allowed`) so a bi-weekly
+ *                   frame counts 14 daily fills, not 7 (owner directive
+ *                   2026-07-05).
+ *   capUsd        = weeklyCap(`total_withdraw_cap_usd`) × frameWeeks (null → 0).
  *   tipSponsorUsd = (`max_tip_per_stream_usd` + `max_sponsorship_per_stream_usd`)
- *                   × `fills_allowed` × dealWeeks — per-stream caps recur for
+ *                   × `fills_allowed` × frameWeeks — per-stream caps recur for
  *                   every fill the deal grants each week (owner directive
- *                   2026-06-23), scaled across the deal's weeks like cap.
- *   leaderboardUsd= Σ sponsored-weighted house cost of the creator's APPROVED
- *                   leaderboards whose run window OVERLAPS the deal window
- *                   (net prize × sponsored% / 100; default 100%). Boards and
- *                   deals are independent entities — most deals overlap no
- *                   board, so this leg is $0 for them (correct, not a gap).
+ *                   2026-06-23), scaled across the frame's weeks like cap.
+ *   leaderboardUsd= the frame's OWN sponsored-weighted house cost
+ *                   (net prize × sponsored% / 100; default 100%) — this IS the
+ *                   board, so its full committed house cost is the LB leg.
  *   dealCost      = fillUsd + capUsd + leaderboardUsd + tipSponsorUsd.
  *   expectedWager = dealCost / house edge (7.5%).
- *   actualWager   = code-cohort wager inside the deal window (per-deal, keyed
- *                   so a creator's multiple ended deals don't collapse).
+ *   actualWager   = code-cohort wager inside the frame window (per-frame, keyed
+ *                   by board id so a creator's multiple past frames don't
+ *                   collapse).
  *   affiliatesMadeUs = coverage-attributed cohort deposits − card withdrawals
  *                   − the creator's own affiliate_claim earnings, inside the
- *                   deal window (per-deal, `getBoardAffiliatePnl` keyed by
- *                   dealId).
+ *                   frame window (per-frame, `getBoardAffiliatePnl` keyed by
+ *                   board id).
  *   actualPnl     = affiliatesMadeUs − dealCost (house-profit convention).
  *   conversion    = actualWager / expectedWager (≥ 1× = the deal paid for
  *                   itself).
  *
- * ─── Effective window (CRITICAL for terminated deals) ────────────────────
- * start = `week_start_utc`. end depends on status:
- *   • completed  → `week_end_utc` (ran its full window).
- *   • terminated → min(`week_end_utc`, `updated_at`) — a terminated deal was
- *     cut short, and an open-ended deal carries a placeholder far-future
- *     `week_end_utc` (e.g. 2037). `updated_at` is the terminate action's
- *     write, so it is the real end. Without this clamp a terminated
- *     open-ended deal would cost `weeklyCap × ~575 weeks` — nonsense.
+ * ─── Overlapping-deal terms ──────────────────────────────────────────────
+ * Each ended frame is costed from the creator's backend deal whose window
+ * overlaps the frame. When several overlap (a bi-weekly frame spanning two
+ * weekly deals), the one with the LARGEST overlap wins — its terms represent
+ * the frame's cadence, and the fill/cap/tip legs are then scaled over the
+ * frame's full days/weeks (so both weeks are counted). A frame with NO
+ * overlapping deal has no deal-term legs (fill / cap / tip = 0); only its LB
+ * leg costs — it is still a real ended board.
  *
  * ─── Fan-out (Active-Timeframe-Only) ─────────────────────────────────────
- * The base walk (cached ~5 min) fetches every creator's ended-deal history
- * (`creatorsApi.listDeals` for creators with `total_deals_count > 0`, via
- * `Promise.allSettled` so one failed fetch can't sink the page) + the
- * approved-board walk for the leaderboard leg. That is the LIGHT part
- * (identity, dates, cost). The HEAVY MAIN reads (wager + PnL) run only for
- * the 25 deals on the ACTIVE page, so a page flip never re-scans wager/PnL
- * for the whole ended set.
+ * The base walk (cached ~5 min) fetches every APPROVED leaderboard + each
+ * deal-bearing creator's deal history (`creatorsApi.listDeals`, via
+ * `Promise.allSettled` so one failed fetch can't sink the page). That is the
+ * LIGHT part (identity, dates, cost). The HEAVY MAIN reads (wager + PnL) run
+ * only for the 25 frames on the ACTIVE page, so a page flip never re-scans
+ * wager/PnL for the whole ended set.
  *
- * Pagination is SERVER-SIDE via `?page=` (PAGE_SIZE = 25), sorted by end
- * DESC (most-recently ended first). Every MONEY KPI total is PAGE-SCOPED so
- * the strip is internally coherent with the 25 rows shown; only the ended
+ * Pagination is SERVER-SIDE via `?page=` (PAGE_SIZE = 25), sorted by frame
+ * end DESC (most-recently ended first). Every MONEY KPI total is PAGE-SCOPED
+ * so the strip is internally coherent with the 25 rows shown; only the ended
  * DEAL count is full-set (it drives pagination).
  */
 
@@ -93,12 +102,12 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const BACKEND_PAGE_SIZE = 100;
 /** Per-creator deal-history walk cap (deal histories are a small bounded set). */
 const DEAL_FETCH_CAP = 1000;
-/** Cold-walk safety cap for the approved-board leaderboard leg. */
+/** Cold-walk safety cap for the approved-board walk. */
 const BOARD_FETCH_CAP = 2000;
 
 /**
  * Per-leg timeout (ms) for the page-scoped heavy reads. Long enough that a
- * healthy cold scan on prod-sized data completes (the per-deal PnL scan uses
+ * healthy cold scan on prod-sized data completes (the per-frame PnL scan uses
  * a 55s `SET LOCAL statement_timeout` inside its own transaction); short
  * enough that a pathological hang degrades to the empty-state card instead
  * of running out the function budget on Vercel and surfacing as a 500.
@@ -119,10 +128,10 @@ const PAST_DEALS_LEG_TIMEOUT_MS = 60_000;
 const PAST_DEALS_SURFACE_KEY = "creator_hub_profitability_past_deals";
 
 /**
- * Whole weeks in a deal frame — used to scale the per-week withdraw cap +
- * tip/sponsor allowance over the deal length. Boards run in weekly multiples
+ * Whole weeks in a frame — used to scale the per-week withdraw cap +
+ * tip/sponsor allowance over the frame length. Boards run in weekly multiples
  * (weekly / bi-weekly), so the duration is rounded to the nearest week and
- * floored at 1. Mirrors `frameWeeks` in `deal-profitability.ts` exactly.
+ * floored at 1. Mirrors `frameWeeks` in `deal-profitability.ts`.
  */
 function frameWeeks(startMs: number, endMs: number): number {
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
@@ -132,8 +141,8 @@ function frameWeeks(startMs: number, endMs: number): number {
 }
 
 /**
- * Whole days in a deal frame — used to scale the daily balance fill over the
- * deal length. Rounded to the nearest day and floored at 1 (a degenerate /
+ * Whole days in a frame — used to scale the daily balance fill over the frame
+ * length. Rounded to the nearest day and floored at 1 (a degenerate /
  * same-day frame is one fill, never zero).
  */
 function frameDays(startMs: number, endMs: number): number {
@@ -150,45 +159,47 @@ function toFiniteNumber(value: string | number | null | undefined): number {
 }
 
 export type PastDealRow = {
-  /** Backend deal id (= the past deal id, stable, map key). */
-  dealId: string;
+  /** Backend leaderboard (frame) id — the past deal id, stable, map key. */
+  boardId: string;
+  /** Frame title (the board's display name). */
+  boardTitle: string;
   /** Primary owner's user id. */
   userId: string;
   /** Resolved owner username (MAIN read), or null when unresolved. */
   username: string | null;
   /** Owner's profile image (MAIN read), or null when unresolved. */
   image: string | null;
-  /** Ended-deal status — `completed` (full run) or `terminated` (cut short). */
-  status: "completed" | "terminated";
-  /** Effective frame start (epoch ms) — the deal's `week_start_utc`. */
+  /** Affiliate codes that fed the frame (for reference / cohort). */
+  affiliateCodes: string[];
+  /** Frame start (epoch ms) — the board's `start_date`. */
   frameStartMs: number;
-  /** Effective frame end (epoch ms) — see the effective-window note above. */
+  /** Frame end (epoch ms) — the board's `end_date` (strictly in the past). */
   frameEndMs: number;
-  /** Whole weeks in the effective deal frame. */
+  /** Whole weeks in the frame. */
   dealWeeks: number;
-  /** Whole days in the effective deal frame (drives the daily-fill leg). */
+  /** Whole days in the frame (drives the daily-fill leg). */
   dealDays: number;
-  /** Daily balance-fill amount (`per_fill_amount_usd`; 0 when none). */
+  /** Daily balance-fill amount from the overlapping deal (0 when no deal). */
   perFillUsd: number;
-  /** Number of daily fills counted = min(dealDays, fills_allowed). */
+  /** Number of daily fills counted = frameDays (0 when no per-fill amount). */
   fillsCounted: number;
-  /** Total daily-fill cost over the deal (`perFillUsd × fillsCounted`, rose). */
+  /** Total daily-fill cost over the frame (`perFillUsd × frameDays`, rose). */
   fillUsd: number;
-  /** Per-week withdraw cap from the deal (`total_withdraw_cap_usd`; 0 when uncapped). */
+  /** Per-week withdraw cap from the overlapping deal (0 when uncapped / no deal). */
   weeklyCapUsd: number;
-  /** Total withdraw cap over the deal length (`weeklyCapUsd × dealWeeks`). */
+  /** Total withdraw cap over the frame (`weeklyCapUsd × dealWeeks`). */
   capUsd: number;
   /** Per-week tip + sponsor allowance (`(tip + sponsor) × fills_allowed`). */
   weeklyTipSponsorUsd: number;
-  /** Total tip + sponsor allowance over the deal length (`weekly × dealWeeks`). */
+  /** Total tip + sponsor allowance over the frame (`weekly × dealWeeks`). */
   tipSponsorUsd: number;
-  /** Sponsored-weighted house cost of the creator's boards overlapping the window (rose). */
+  /** The frame's sponsored-weighted house cost (net prize × sponsored%, rose). */
   leaderboardUsd: number;
-  /** capUsd + leaderboardUsd + tipSponsorUsd (rose house cost). */
+  /** fillUsd + capUsd + leaderboardUsd + tipSponsorUsd (rose house cost). */
   dealCost: number;
   expectedWager: number;
   actualWager: number;
-  /** Coverage-attributed deposits − card withdrawals − affiliate claims, this window. */
+  /** Coverage-attributed deposits − card withdrawals − affiliate claims, this frame. */
   affiliatesMadeUs: number;
   /** `affiliatesMadeUs − dealCost` (house-profit convention). */
   actualPnl: number;
@@ -197,7 +208,7 @@ export type PastDealRow = {
 };
 
 export type PastDealsTotals = {
-  /** Total ended deals across the FULL set (drives pagination) — NOT page-scoped. */
+  /** Total ended frames across the FULL set (drives pagination) — NOT page-scoped. */
   totalEndedDeals: number;
   /** Σ dealCost across the CURRENT PAGE (rose house cost). */
   totalCost: number;
@@ -209,7 +220,7 @@ export type PastDealsTotals = {
   totalExpectedWager: number;
   /** Σ actualWager across the CURRENT PAGE. */
   totalCreatorWager: number;
-  /** Avg conversion across page deals with expectedWager > 0. */
+  /** Avg conversion across page frames with expectedWager > 0. */
   avgConversionRate: number;
 };
 
@@ -219,17 +230,17 @@ export type PastDealsData = {
   /**
    * KPI-strip aggregates. Every MONEY total (cost, expected wager, wager,
    * affiliates-made-us, PnL, conversion) is PAGE-SCOPED — it describes the
-   * same 25 deals in `rows` so the strip is internally coherent. Only
+   * same 25 frames in `rows` so the strip is internally coherent. Only
    * `totalEndedDeals` (+ `totalCount`) is full-set.
    */
   totals: PastDealsTotals;
-  /** Total ended deals (for pagination footer). */
+  /** Total ended frames (for pagination footer). */
   totalCount: number;
   /** 1-based current page (clamped to valid range). */
   page: number;
   /** Total page count (≥ 1). */
   totalPages: number;
-  /** True when the backend deal walk failed (UI shows empty). */
+  /** True when the backend frame walk failed (UI shows empty). */
   backendUnavailable: boolean;
 };
 
@@ -243,19 +254,13 @@ const EMPTY_TOTALS: PastDealsTotals = {
   avgConversionRate: 0,
 };
 
-/** One approved board's window + sponsored-weighted house cost, for overlap. */
-type BoardCostWindow = {
-  creatorUserId: string;
-  startMs: number;
-  endMs: number;
-  houseCostUsd: number;
-};
-
-/** The light, cacheable per-deal base row (identity + cost legs, no MAIN reads). */
+/** The light, cacheable per-frame base row (identity + cost legs, no MAIN reads). */
 type PastDealBaseRow = {
-  dealId: string;
+  boardId: string;
+  boardTitle: string;
   userId: string;
-  status: "completed" | "terminated";
+  coCreatorUserIds: string[];
+  affiliateCodes: string[];
   frameStartMs: number;
   frameEndMs: number;
   dealWeeks: number;
@@ -271,20 +276,59 @@ type PastDealBaseRow = {
   dealCost: number;
 };
 
+/** Cost terms pulled from the creator's deal that best overlaps a frame. */
+type DealTerms = {
+  perFillUsd: number;
+  weeklyCapUsd: number;
+  perStreamTip: number;
+  perStreamSponsor: number;
+  fillsAllowed: number;
+};
+
+const ZERO_TERMS: DealTerms = {
+  perFillUsd: 0,
+  weeklyCapUsd: 0,
+  perStreamTip: 0,
+  perStreamSponsor: 0,
+  fillsAllowed: 0,
+};
+
 /**
- * Effective end (epoch ms) of an ended deal. `completed` deals ran their
- * full window (`week_end_utc`); `terminated` deals were cut short, and an
- * open-ended deal carries a placeholder far-future `week_end_utc`, so the
- * real end is the terminate action's write (`updated_at`) — clamped to
- * never exceed `week_end_utc`.
+ * Pick the deal whose window overlaps a frame the MOST. A bi-weekly frame can
+ * overlap two weekly deals; the largest-overlap deal's terms represent the
+ * frame's cadence (the fill/cap/tip legs are then scaled over the FULL frame
+ * days/weeks by the caller). Returns null when no deal overlaps the frame.
  */
-function effectiveEndMs(deal: CreatorDealResponse): number {
-  const weekEndMs = Date.parse(deal.week_end_utc);
-  if (deal.status !== "terminated") return weekEndMs;
-  const updatedMs = Date.parse(deal.updated_at);
-  if (!Number.isFinite(updatedMs)) return weekEndMs;
-  if (!Number.isFinite(weekEndMs)) return updatedMs;
-  return Math.min(weekEndMs, updatedMs);
+function bestOverlappingDeal(
+  frameStartMs: number,
+  frameEndMs: number,
+  deals: CreatorDealResponse[],
+): CreatorDealResponse | null {
+  let best: CreatorDealResponse | null = null;
+  let bestOverlap = 0;
+  for (const d of deals) {
+    const ds = Date.parse(d.week_start_utc);
+    const de = Date.parse(d.week_end_utc);
+    if (!Number.isFinite(ds) || !Number.isFinite(de)) continue;
+    const overlap =
+      Math.min(frameEndMs, de) - Math.max(frameStartMs, ds);
+    if (overlap > bestOverlap) {
+      bestOverlap = overlap;
+      best = d;
+    }
+  }
+  return best;
+}
+
+function termsFromDeal(deal: CreatorDealResponse | null): DealTerms {
+  if (!deal) return ZERO_TERMS;
+  return {
+    perFillUsd: toFiniteNumber(deal.per_fill_amount_usd),
+    weeklyCapUsd: toFiniteNumber(deal.total_withdraw_cap_usd),
+    perStreamTip: toFiniteNumber(deal.max_tip_per_stream_usd),
+    perStreamSponsor: toFiniteNumber(deal.max_sponsorship_per_stream_usd),
+    fillsAllowed: Math.max(0, deal.fills_allowed ?? 0),
+  };
 }
 
 /** Walk every APPROVED leaderboard, first-page-then-parallel, up to the cap. */
@@ -340,166 +384,134 @@ async function fetchAllDealsForCreator(
 }
 
 /**
- * Cached ended-deal base walk + per-deal cost legs (cap + tip/sponsor + the
- * sponsored-weighted leaderboard-overlap leg). This is the LIGHT part;
+ * Cached ended-frame base walk + per-frame cost legs. This is the LIGHT part;
  * wager + PnL are computed per-page (heavy MAIN reads) AFTER this returns so
  * the cache stays small and reusable across page flips.
  */
 const getEndedDealsBase = unstable_cache(
   async (): Promise<{ rows: PastDealBaseRow[]; backendUnavailable: boolean }> => {
-    // Roster → creators with any deal history. One walk (paged in parallel).
-    let roster;
+    // Every APPROVED leaderboard (the frames).
+    let all: LeaderboardAdminRow[];
     try {
-      const firstPage = await creatorsApi.list({
-        offset: 0,
-        limit: BACKEND_PAGE_SIZE,
-      });
-      const all = [...firstPage.data];
-      const pagesNeeded = Math.ceil(firstPage.total / BACKEND_PAGE_SIZE);
-      const rest = [];
-      for (let p = 1; p < pagesNeeded; p++) {
-        rest.push(
-          creatorsApi.list({ offset: p * BACKEND_PAGE_SIZE, limit: BACKEND_PAGE_SIZE }),
-        );
-      }
-      for (const page of await Promise.all(rest)) all.push(...page.data);
-      roster = all;
+      all = await walkAllApprovedLeaderboards();
     } catch (e) {
-      console.error("[past-deals] creator roster walk failed (page empty):", e);
+      console.error("[past-deals] approved-board walk failed (page empty):", e);
       return { rows: [], backendUnavailable: true };
     }
 
-    // Only fan out deal history for creators that HAVE deals.
-    const dealCreators = roster.filter((c) => (c.total_deals_count ?? 0) > 0);
-
-    // Approved-board walk + sponsorship, for the leaderboard-overlap leg.
-    // Best-effort: a failed walk drops the LB leg (0) rather than blanking
-    // the whole page (cap + tip/sponsor legs still cost the deal).
-    let boardWindows: BoardCostWindow[] = [];
+    // Sponsored % per frame (the LB leg's house-share weighting).
+    let sponsorship: Map<string, number>;
     try {
-      const boards = await walkAllApprovedLeaderboards();
-      let sponsorship: Map<string, number>;
-      try {
-        sponsorship = await getLeaderboardSponsorshipMap(
-          boards.map((lb) => lb.id),
-        );
-      } catch (e) {
-        console.error(
-          "[past-deals] sponsorship lookup failed (treating all as 100%):",
-          e,
-        );
-        sponsorship = new Map();
-      }
-      boardWindows = boards
-        .map((lb) => {
-          const startMs = Date.parse(lb.start_date);
-          const endMs = Date.parse(lb.end_date);
-          const prize = Number(lb.total_prize_usd) || 0;
-          const refund = Number(lb.refund_amount_usd) || 0;
-          const net = prize - refund;
-          const pct = Math.min(100, Math.max(0, sponsorship.get(lb.id) ?? 100));
-          return {
-            creatorUserId: lb.creator_user_id,
-            startMs,
-            endMs,
-            houseCostUsd: net * (pct / 100),
-          };
-        })
-        .filter((b) => Number.isFinite(b.startMs) && Number.isFinite(b.endMs));
+      sponsorship = await getLeaderboardSponsorshipMap(all.map((lb) => lb.id));
     } catch (e) {
       console.error(
-        "[past-deals] approved-board walk failed (LB leg drops to 0):",
+        "[past-deals] sponsorship lookup failed (treating all as 100%):",
         e,
       );
-      boardWindows = [];
+      sponsorship = new Map();
     }
 
-    // Fan out every deal-history fetch in parallel; one creator's failed
-    // fetch can't sink the page (allSettled).
-    const settled = await Promise.allSettled(
-      dealCreators.map((c) => fetchAllDealsForCreator(c.id)),
-    );
+    const now = Date.now();
 
-    const ended: PastDealBaseRow[] = [];
+    // Ended frames only — the whole point of past-detection: a frame is past
+    // iff its end_date is strictly in the past. A LIVE / upcoming frame
+    // (end ≥ now) is NOT a past deal (it belongs to Active).
+    const endedFrames = all.filter((lb) => {
+      const endMs = Date.parse(lb.end_date);
+      return Number.isFinite(endMs) && endMs < now;
+    });
+
+    if (endedFrames.length === 0) {
+      return { rows: [], backendUnavailable: false };
+    }
+
+    // Deal terms live per creator — fetch each frame-owner's deal history once
+    // (allSettled so one failed fetch can't sink the page), then match each
+    // frame to its best-overlapping deal for the cost terms.
+    const ownerIds = Array.from(
+      new Set(endedFrames.map((lb) => lb.creator_user_id)),
+    );
+    const settled = await Promise.allSettled(
+      ownerIds.map((id) => fetchAllDealsForCreator(id)),
+    );
+    const dealsByOwner = new Map<string, CreatorDealResponse[]>();
     settled.forEach((outcome, i) => {
-      const creator = dealCreators[i];
-      if (outcome.status !== "fulfilled") {
+      if (outcome.status === "fulfilled") {
+        dealsByOwner.set(ownerIds[i], outcome.value);
+      } else {
         console.error(
-          `[past-deals] listDeals failed for creator ${creator.id} (its deals are omitted):`,
+          `[past-deals] listDeals failed for creator ${ownerIds[i]} (its frames cost only the LB leg):`,
           outcome.reason,
         );
-        return;
-      }
-      for (const deal of outcome.value) {
-        if (deal.status !== "completed" && deal.status !== "terminated") {
-          continue; // scheduled / active belong to the Active tab
-        }
-        const startMs = Date.parse(deal.week_start_utc);
-        const endMs = effectiveEndMs(deal);
-        if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue;
-
-        const dealWeeks = frameWeeks(startMs, endMs);
-        const dealDays = frameDays(startMs, endMs);
-        const fillsAllowed = Math.max(0, deal.fills_allowed ?? 0);
-
-        // Daily balance fill (the dominant cost — owner directive 2026-07-05).
-        // `per_fill_amount_usd` is loaded once per day across the deal's days;
-        // a 7-day deal grants fills_allowed = 7 (one fill/day, verified vs
-        // prod). Count min(dealDays, fills_allowed) so a deal never counts
-        // more fills than it granted (a terminated deal cut short, or an
-        // over-provisioned fills_allowed, can't inflate the fill cost).
-        const perFillUsd = toFiniteNumber(deal.per_fill_amount_usd);
-        const fillsCounted = Math.min(dealDays, fillsAllowed);
-        const fillUsd = perFillUsd * fillsCounted;
-
-        const weeklyCapUsd = toFiniteNumber(deal.total_withdraw_cap_usd);
-        const capUsd = weeklyCapUsd * dealWeeks;
-        const perStreamTip = toFiniteNumber(deal.max_tip_per_stream_usd);
-        const perStreamSponsor = toFiniteNumber(
-          deal.max_sponsorship_per_stream_usd,
-        );
-        const weeklyTipSponsorUsd =
-          (perStreamTip + perStreamSponsor) * fillsAllowed;
-        const tipSponsorUsd = weeklyTipSponsorUsd * dealWeeks;
-
-        // Leaderboard leg: Σ sponsored-weighted house cost of the creator's
-        // approved boards whose run window overlaps this deal's window.
-        let leaderboardUsd = 0;
-        for (const b of boardWindows) {
-          if (b.creatorUserId !== creator.id) continue;
-          if (b.startMs <= endMs && b.endMs >= startMs) {
-            leaderboardUsd += b.houseCostUsd;
-          }
-        }
-
-        const dealCost = fillUsd + capUsd + leaderboardUsd + tipSponsorUsd;
-
-        ended.push({
-          dealId: deal.id,
-          userId: creator.id,
-          status: deal.status,
-          frameStartMs: startMs,
-          frameEndMs: endMs,
-          dealWeeks,
-          dealDays,
-          perFillUsd,
-          fillsCounted,
-          fillUsd,
-          weeklyCapUsd,
-          capUsd,
-          weeklyTipSponsorUsd,
-          tipSponsorUsd,
-          leaderboardUsd,
-          dealCost,
-        });
+        dealsByOwner.set(ownerIds[i], []);
       }
     });
+
+    const ended: PastDealBaseRow[] = [];
+    for (const lb of endedFrames) {
+      const startMs = Date.parse(lb.start_date);
+      const endMs = Date.parse(lb.end_date);
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue;
+
+      const dealWeeks = frameWeeks(startMs, endMs);
+      const dealDays = frameDays(startMs, endMs);
+
+      // Cost terms from the creator's deal that best overlaps THIS frame.
+      const deals = dealsByOwner.get(lb.creator_user_id) ?? [];
+      const terms = termsFromDeal(
+        bestOverlappingDeal(startMs, endMs, deals),
+      );
+
+      // Daily balance fill scaled over the WHOLE frame (owner directive
+      // 2026-07-05): one fill per day across the frame's days — a bi-weekly
+      // (14-day) frame counts 14 daily fills, not the weekly deal's 7.
+      const perFillUsd = terms.perFillUsd;
+      const fillsCounted = perFillUsd > 0 ? dealDays : 0;
+      const fillUsd = perFillUsd * fillsCounted;
+
+      const weeklyCapUsd = terms.weeklyCapUsd;
+      const capUsd = weeklyCapUsd * dealWeeks;
+      const weeklyTipSponsorUsd =
+        (terms.perStreamTip + terms.perStreamSponsor) * terms.fillsAllowed;
+      const tipSponsorUsd = weeklyTipSponsorUsd * dealWeeks;
+
+      // The frame's own sponsored-weighted house cost — this board IS the
+      // deal, so its full committed house cost is the LB leg.
+      const prize = Number(lb.total_prize_usd) || 0;
+      const refund = Number(lb.refund_amount_usd) || 0;
+      const net = prize - refund;
+      const pct = Math.min(100, Math.max(0, sponsorship.get(lb.id) ?? 100));
+      const leaderboardUsd = net * (pct / 100);
+
+      const dealCost = fillUsd + capUsd + leaderboardUsd + tipSponsorUsd;
+
+      ended.push({
+        boardId: lb.id,
+        boardTitle: lb.title,
+        userId: lb.creator_user_id,
+        coCreatorUserIds: lb.co_creator_user_ids ?? [],
+        affiliateCodes: lb.affiliate_codes ?? [],
+        frameStartMs: startMs,
+        frameEndMs: endMs,
+        dealWeeks,
+        dealDays,
+        perFillUsd,
+        fillsCounted,
+        fillUsd,
+        weeklyCapUsd,
+        capUsd,
+        weeklyTipSponsorUsd,
+        tipSponsorUsd,
+        leaderboardUsd,
+        dealCost,
+      });
+    }
 
     // Most-recently ended first (the default sort).
     ended.sort((a, b) => b.frameEndMs - a.frameEndMs);
     return { rows: ended, backendUnavailable: false };
   },
-  ["profitability-past-deals-base-v3"],
+  ["profitability-past-deals-base-v4"],
   { revalidate: 300, tags: ["profitability-past-deals"] },
 );
 
@@ -522,7 +534,7 @@ export function parsePastDealsPage(raw: string | undefined): number {
 /**
  * Past Deals data layer.
  *
- * Page-scoped: heavy MAIN reads (wager + PnL) only run for the 25 deals on
+ * Page-scoped: heavy MAIN reads (wager + PnL) only run for the 25 frames on
  * the active page (Active-Timeframe-Only). The KPI-strip money totals are
  * therefore ALL page-scoped so the strip stays internally coherent; only the
  * ended-deal COUNT is full-set.
@@ -602,19 +614,19 @@ async function computePastDealsFromPostgres(
     };
   }
 
-  // Hydrate the page: usernames + per-deal wager + per-deal PnL. Each helper
+  // Hydrate the page: usernames + per-frame wager + per-frame PnL. Each helper
   // is best-effort — wrapped in `safeQuery` with a wall-clock timeout so a
   // slow scan degrades the leg to its empty fallback (rows show id / wager 0
   // / PnL 0) instead of sinking the whole page.
   const ownerIds = Array.from(new Set(pageBase.map((r) => r.userId)));
   const wagerInputs = pageBase.map((r) => ({
-    dealId: r.dealId,
+    dealId: r.boardId, // wager helper keys by an arbitrary window id
     creatorUserId: r.userId,
     startIso: new Date(r.frameStartMs).toISOString(),
     endIso: new Date(r.frameEndMs).toISOString(),
   }));
   const pnlInputs = pageBase.map((r) => ({
-    boardId: r.dealId, // getBoardAffiliatePnl is keyed by an arbitrary window id
+    boardId: r.boardId,
     creatorUserId: r.userId,
     startIso: new Date(r.frameStartMs).toISOString(),
     endIso: new Date(r.frameEndMs).toISOString(),
@@ -671,18 +683,19 @@ async function computePastDealsFromPostgres(
 
   const rows: PastDealRow[] = pageBase.map((r) => {
     const creator = creatorMap.get(r.userId);
-    const actualWager = wagerMap.get(r.dealId) ?? 0;
-    const affiliatesMadeUs = pnlMap.get(r.dealId)?.affiliatesMadeUs ?? 0;
+    const actualWager = wagerMap.get(r.boardId) ?? 0;
+    const affiliatesMadeUs = pnlMap.get(r.boardId)?.affiliatesMadeUs ?? 0;
     const expectedWager = r.dealCost / HOUSE_EDGE;
     const actualPnl = affiliatesMadeUs - r.dealCost;
     const conversionRate = expectedWager > 0 ? actualWager / expectedWager : 0;
 
     return {
-      dealId: r.dealId,
+      boardId: r.boardId,
+      boardTitle: r.boardTitle,
       userId: r.userId,
       username: creator?.username ?? null,
       image: creator?.image ?? null,
-      status: r.status,
+      affiliateCodes: r.affiliateCodes,
       frameStartMs: r.frameStartMs,
       frameEndMs: r.frameEndMs,
       dealWeeks: r.dealWeeks,
@@ -706,7 +719,7 @@ async function computePastDealsFromPostgres(
 
   // Page-scope EVERY money total so the KPI strip is internally coherent:
   // cost, expected wager, wager, affiliates-made-us, PnL and conversion all
-  // describe the SAME 25 deals in the rows below. Only `totalEndedDeals` /
+  // describe the SAME 25 frames in the rows below. Only `totalEndedDeals` /
   // `totalCount` stay full-set (they drive pagination + "how many exist").
   const pageCost = rows.reduce((s, r) => s + r.dealCost, 0);
   const pageExpectedWager = pageCost / HOUSE_EDGE;

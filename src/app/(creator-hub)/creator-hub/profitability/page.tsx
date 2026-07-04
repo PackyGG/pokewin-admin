@@ -61,7 +61,7 @@ function parseTab(raw: string | undefined): ProfitabilityTab {
 
 const TAB_SUBTITLES: Record<ProfitabilityTab, string> = {
   active: "Per-creator deal cost vs the wager driven in the current deal frame.",
-  past: "Final stats and conversion for every ended creator deal.",
+  past: "Final stats and conversion for every ended leaderboard-frame deal.",
 };
 
 /**
@@ -70,9 +70,10 @@ const TAB_SUBTITLES: Record<ProfitabilityTab, string> = {
  * Shell-first: the hero + tab strip paint instantly; the active tab's
  * data section streams behind Suspense. Only the active tab loads on
  * each render (Active-Timeframe-Only). The Active tab keeps the existing
- * roster-walk view; the Past Deals tab lists every ENDED creator deal
- * (completed / terminated — the same entity as Active, just finished) with
- * server-side pagination (25/page, `?page=`).
+ * roster-walk view; the Past Deals tab lists every ENDED leaderboard frame
+ * (= past deal under the "leaderboard frame IS the deal" model — the same
+ * entity as Active, just finished) with server-side pagination
+ * (25/page, `?page=`).
  */
 export default async function CreatorHubProfitabilityPage({
   searchParams,
@@ -252,7 +253,7 @@ async function PastDealsSection({ page }: { page: number }) {
 
   // Every money KPI is page-scoped (see `getPastDeals`): cost, expected
   // wager, wager, affiliates-made-us, PnL and conversion all describe the
-  // same 25 deals in the rows below, so the strip is internally coherent
+  // same 25 frames in the rows below, so the strip is internally coherent
   // and the accent can't mislead vs. what the user sees. Full-set wager/PnL
   // would force an unbounded scan — Active-Timeframe-Only forbids it.
   const pnlAccent = data.totals.totalActualPnl < 0 ? "rose" : "emerald";
@@ -267,7 +268,7 @@ async function PastDealsSection({ page }: { page: number }) {
           icon={History}
           accent="blue"
           value={formatNumber(data.totals.totalEndedDeals)}
-          sub="Completed + terminated"
+          sub="Ended leaderboard frames"
         />
         <HubKpiBox
           label="Page Cost"
@@ -292,7 +293,7 @@ async function PastDealsSection({ page }: { page: number }) {
           info={
             <HubKpiInfoPopover
               title="Affiliates Made Us (page)"
-              description="Sum of the visible page's affiliate-PnL legs. Per row = coverage-attributed cohort deposits − card withdrawals − the creator's own affiliate_claim earnings, measured strictly inside that deal's window. Page-scoped so the heavy MAIN scan stays bounded to 25 deals per request (Active-Timeframe-Only)."
+              description="Sum of the visible page's affiliate-PnL legs. Per row = coverage-attributed cohort deposits − card withdrawals − the creator's own affiliate_claim earnings, measured strictly inside that frame's window. Page-scoped so the heavy MAIN scan stays bounded to 25 frames per request (Active-Timeframe-Only)."
               footer={{
                 label: "Page total",
                 value: formatCurrency(data.totals.totalAffiliatesMadeUs),
@@ -326,9 +327,10 @@ async function PastDealsSection({ page }: { page: number }) {
 
       <div className="space-y-2">
         <p className="text-[11px] text-muted-foreground">
-          Each row is one ended creator deal (completed or terminated). Cost,
-          wager and PnL are computed over the deal&apos;s own window — the same
-          per-leg model as the Active tab. Sorted by most recently ended first.
+          Each row is one ended leaderboard frame (a past deal). Cost, wager
+          and PnL are computed over the full frame window (weekly or bi-weekly)
+          — the same per-leg model as the Active tab. Sorted by most recently
+          ended first.
         </p>
         <PastDealsList
           rows={data.rows}
