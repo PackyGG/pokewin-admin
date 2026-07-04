@@ -15,14 +15,6 @@ import { getLeaderboard2wkCostByUser } from "../../../../(admin)/creators/_queri
  *   % house share) + tips + sponsorship combined.
  *
  * Composition (each leg reuses EXISTING data, never invented):
- *   • perFillUsd    — the deal's `per_fill_amount_usd` (the DAILY balance
- *                     fill loaded once per day). Exposed raw (not scaled) so
- *                     the Profitability board can scale it by the leaderboard
- *                     frame's DAYS (`perFillUsd × frameDays`) — the daily fill
- *                     is the dominant deal-cost leg (owner directive
- *                     2026-07-05). The roster's `dealValueUsd` weekly ceiling
- *                     folds in `perFillUsd × fills_allowed` (see below); this
- *                     raw field is what the frame-scaled board needs.
  *   • capUsd        — the active/scheduled deal's `total_withdraw_cap_usd`
  *                     (the worst-case withdrawal ceiling). Same field the
  *                     legacy card's "Cap" chip + "2-Week Max Cost · Deal"
@@ -51,15 +43,9 @@ import { getLeaderboard2wkCostByUser } from "../../../../(admin)/creators/_queri
  *                     weekly figure across multi-week leaderboard frames
  *                     (same way cap is `weeklyCap × dealWeeks`).
  *
- * dealValueUsd = fillWeeklyUsd + capUsd + leaderboardUsd + tipSponsorUsd,
- *   where fillWeeklyUsd = `perFillUsd × fills_allowed` — the deal's WEEKLY
- *   fill ceiling (one fill per granted fill/day). The daily fill is the
- *   dominant deal-cost leg (owner directive 2026-07-05); the roster's
- *   biggest/smallest-deal ranking previously omitted it entirely and
- *   undercounted every deal. It is folded in here at the same weekly grain
- *   as `capUsd` / `tipSponsorUsd` so the "full deal value" ranking is
- *   consistent (the frame-scaled Profitability board uses the raw
- *   `perFillUsd × frameDays` instead — see `deal-profitability.ts`).
+ * dealValueUsd = capUsd + leaderboardUsd + tipSponsorUsd. There is NO
+ *   daily-fill leg — a per-fill fold-in was reverted (owner directive
+ *   2026-07-05): it inflated the deal cost model ~7×.
  *
  * All legs are a HOUSE cost ceiling (rose, house-POV). This is a worst-case
  * deal SIZE used to rank the roster — not money already paid.
@@ -75,13 +61,6 @@ import { getLeaderboard2wkCostByUser } from "../../../../(admin)/creators/_queri
  */
 
 export type CreatorDealValue = {
-  /**
-   * Raw DAILY balance-fill amount (`per_fill_amount_usd`); 0 when absent.
-   * NOT scaled here — the Profitability board scales it by the leaderboard
-   * frame's DAYS (`perFillUsd × frameDays`). The roster's `dealValueUsd`
-   * folds in the WEEKLY equivalent (`perFillUsd × fills_allowed`).
-   */
-  perFillUsd: number;
   /** Active/scheduled deal withdrawal cap (USD); 0 when uncapped/absent. */
   capUsd: number;
   /** Upcoming leaderboard house cost (USD), already × house share %. */
@@ -95,9 +74,9 @@ export type CreatorDealValue = {
    */
   tipSponsorUsd: number;
   /**
-   * `(perFillUsd × fills_allowed) + capUsd + leaderboardUsd + tipSponsorUsd`
-   * — the full deal value (rose). The weekly fill ceiling leads (it is the
-   * dominant cost); previously omitted, which undercounted the ranking.
+   * `capUsd + leaderboardUsd + tipSponsorUsd` — the full deal value (rose).
+   * No daily-fill leg (a per-fill fold-in was reverted — it inflated the
+   * cost model ~7×; owner directive 2026-07-05).
    */
   dealValueUsd: number;
 };
@@ -109,14 +88,9 @@ function toFiniteNumber(value: string | number | null | undefined): number {
 }
 
 /**
- * Per-deal fill + cap + tip/sponsor allowance legs, serializable for the
- * cache. `perFillUsd` is the RAW daily fill amount and `fillsAllowed` the
- * deal's granted weekly fills — the caller derives both the frame-scaled
- * daily fill (board) and the weekly fill ceiling (roster) from these.
+ * Per-deal cap + tip/sponsor allowance legs, serializable for the cache.
  */
 type DealCapTip = {
-  perFillUsd: number;
-  fillsAllowed: number;
   capUsd: number;
   tipSponsorUsd: number;
 };
@@ -161,11 +135,6 @@ const cachedDealCapTipEntries = (deals: { userId: string; dealId: string }[]) =>
           entries.push([
             userId,
             {
-              // Raw daily fill + granted fills — the caller scales these into
-              // the frame-scaled daily fill (board) or the weekly fill
-              // ceiling (roster). Dominant deal-cost leg, owner 2026-07-05.
-              perFillUsd: toFiniteNumber(deal.per_fill_amount_usd),
-              fillsAllowed,
               capUsd: toFiniteNumber(deal.total_withdraw_cap_usd),
               tipSponsorUsd:
                 (perStreamTip + perStreamSponsor) * fillsAllowed,
@@ -180,11 +149,11 @@ const cachedDealCapTipEntries = (deals: { userId: string; dealId: string }[]) =>
       });
       return entries;
     },
-    // v3 (2026-07-05): entry now also carries `perFillUsd` + `fillsAllowed`
-    // (the daily fill leg — dominant deal cost, previously omitted). Bump
-    // the key so cached v2 entries (missing the fill legs) don't shadow the
-    // new shape while it takes over.
-    ["creators-deal-cap-tip-v3", ...deals.map((d) => `${d.userId}:${d.dealId}`)],
+    // v4 (2026-07-05): the daily-fill fold-in (v3's `perFillUsd` +
+    // `fillsAllowed`) was reverted — it inflated the deal cost model ~7×.
+    // Bump the key so cached v3 entries (carrying the fill legs) don't
+    // shadow the reverted shape.
+    ["creators-deal-cap-tip-v4", ...deals.map((d) => `${d.userId}:${d.dealId}`)],
     { revalidate: 300, tags: ["creators-deal-cap"] },
   );
 
@@ -231,13 +200,9 @@ export async function getDealValueByUser(
       ? []
       : await cachedDealCapTipEntries(sortedDeals)();
 
-  const perFillByUser = new Map<string, number>();
-  const fillsAllowedByUser = new Map<string, number>();
   const capByUser = new Map<string, number>();
   const tipSponsorByUser = new Map<string, number>();
   for (const [userId, legs] of capTipEntries) {
-    perFillByUser.set(userId, legs.perFillUsd);
-    fillsAllowedByUser.set(userId, legs.fillsAllowed);
     capByUser.set(userId, legs.capUsd);
     tipSponsorByUser.set(userId, legs.tipSponsorUsd);
   }
@@ -246,30 +211,22 @@ export async function getDealValueByUser(
   // resolved, OR an upcoming leaderboard cost) — so a creator with only a
   // leaderboard and no resolvable deal still ranks on their LB cost.
   const userIds = new Set<string>([
-    ...perFillByUser.keys(),
     ...capByUser.keys(),
     ...tipSponsorByUser.keys(),
     ...lbByUser.keys(),
   ]);
 
   for (const userId of userIds) {
-    const perFillUsd = perFillByUser.get(userId) ?? 0;
-    const fillsAllowed = fillsAllowedByUser.get(userId) ?? 0;
     const capUsd = capByUser.get(userId) ?? 0;
     const tipSponsorUsd = tipSponsorByUser.get(userId) ?? 0;
     const leaderboardUsd = lbByUser.get(userId)?.costUsd ?? 0;
-    // Weekly fill ceiling = daily fill × the deal's granted weekly fills.
-    // Folded into the roster's "full deal value" at the same weekly grain as
-    // cap / tip-sponsor (dominant deal-cost leg, previously omitted — owner
-    // 2026-07-05). The frame-scaled board uses `perFillUsd × frameDays`.
-    const fillWeeklyUsd = perFillUsd * fillsAllowed;
-    const dealValueUsd =
-      fillWeeklyUsd + capUsd + leaderboardUsd + tipSponsorUsd;
+    // No daily-fill leg — a per-fill fold-in was reverted (it inflated the
+    // cost model ~7×; owner directive 2026-07-05).
+    const dealValueUsd = capUsd + leaderboardUsd + tipSponsorUsd;
     // Skip a pure-zero entry so the caller's "—" fallback stays meaningful
-    // (a creator with no fill, no cap, no LB, no allowance contributes nothing).
+    // (a creator with no cap, no LB, no allowance contributes nothing).
     if (dealValueUsd <= 0) continue;
     result.set(userId, {
-      perFillUsd,
       capUsd,
       leaderboardUsd,
       tipSponsorUsd,

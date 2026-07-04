@@ -14,8 +14,8 @@ import type { PastDealRow } from "../_queries/past-deals";
  * Per-FRAME past-deal list. Same row anatomy as the Active view's
  * `ProfitabilityList` — one row per ended leaderboard frame (= past deal
  * under the "leaderboard frame IS the deal" model). The cost breakdown is
- * fill (× frame days) · cap (× frame weeks) · LB · tip+sponsor (× frame
- * weeks). House-POV colours: deal cost = rose; actual wager = emerald;
+ * cap (× frame weeks) · LB (full net prize) · tip+sponsor (× frame weeks).
+ * House-POV colours: deal cost = rose; actual wager = emerald;
  * conversion ≥ 1× = emerald.
  *
  * CLIENT COMPONENT. Two reasons it must be `"use client"`:
@@ -91,17 +91,11 @@ function endedAgoLabel(row: PastDealRow): string {
 }
 
 /**
- * Fill · Cap · LB · tip+sponsor breakdown. The daily balance fill leads
- * (it is the dominant leg): `per_fill_amount_usd × fills counted over the
- * deal's days` (one fill/day, capped at the deal's granted fills).
+ * Cap · LB · tip+sponsor breakdown. The LB leg is the board's FULL net
+ * leaderboard prize (`prize − refund`). No daily-fill leg (removed — it
+ * inflated deal cost ~7×; owner directive 2026-07-05).
  */
 function costBreakdown(row: PastDealRow): string {
-  const fillLabel =
-    row.fillsCounted > 1 && row.perFillUsd > 0
-      ? `Fill ${formatCurrency(row.fillUsd)} (${formatCurrency(
-          row.perFillUsd,
-        )}/day × ${row.fillsCounted})`
-      : `Fill ${formatCurrency(row.fillUsd)}`;
   const capLabel =
     row.dealWeeks > 1 && row.weeklyCapUsd > 0
       ? `Cap ${formatCurrency(row.capUsd)} (${formatCurrency(
@@ -114,7 +108,7 @@ function costBreakdown(row: PastDealRow): string {
           row.weeklyTipSponsorUsd,
         )}/wk × ${row.dealWeeks})`
       : `Tip+Sponsor ${formatCurrency(row.tipSponsorUsd)}`;
-  return `${fillLabel} · ${capLabel} · LB ${formatCurrency(
+  return `${capLabel} · LB ${formatCurrency(
     row.leaderboardUsd,
   )} · ${tipLabel}`;
 }

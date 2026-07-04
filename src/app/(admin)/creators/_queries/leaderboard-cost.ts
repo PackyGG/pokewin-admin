@@ -371,6 +371,14 @@ export type CreatorLbFrame = {
   startMs: number;
   /** Run-window end (epoch ms). */
   endMs: number;
+  /**
+   * FULL net prize of this board (`total_prize_usd − refund_amount_usd`),
+   * with NO sponsored-% weighting. The Creator-Hub Profitability deal-cost
+   * model uses the full prize as the leaderboard leg (owner directive
+   * 2026-07-05). Distinct from `houseCostUsd` (sponsored-weighted), which
+   * other surfaces still depend on.
+   */
+  prizeUsd: number;
   /** Sponsored-weighted house cost of this board (rose). */
   houseCostUsd: number;
   /** True when now ∈ [start, end] (the frame is running right now). */
@@ -426,6 +434,7 @@ export async function getActiveLeaderboardFrameByUser(): Promise<
       title: lb.title,
       startMs,
       endMs,
+      prizeUsd: net,
       houseCostUsd,
       isLive,
     };
