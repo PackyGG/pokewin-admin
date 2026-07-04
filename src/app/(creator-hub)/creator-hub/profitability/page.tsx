@@ -250,9 +250,11 @@ async function PastDealsSection({ page }: { page: number }) {
     };
   }
 
-  // Page-scope PnL totals — the headline accent tracks the visible page so
-  // the colour can't mislead vs. what the user sees in the rows. (Full-set
-  // wager/PnL aggregates would force an unbounded scan — Active-Timeframe-Only.)
+  // Every money KPI is page-scoped (see `getPastDeals`): cost, expected
+  // wager, wager, affiliates-made-us, PnL and conversion all describe the
+  // same 25 boards in the rows below, so the strip is internally coherent
+  // and the accent can't mislead vs. what the user sees. Full-set wager/PnL
+  // would force an unbounded scan — Active-Timeframe-Only forbids it.
   const pnlAccent = data.totals.totalActualPnl < 0 ? "rose" : "emerald";
   const affiliatesAccent =
     data.totals.totalAffiliatesMadeUs < 0 ? "rose" : "emerald";
@@ -268,11 +270,11 @@ async function PastDealsSection({ page }: { page: number }) {
           sub="Past leaderboard cycles"
         />
         <HubKpiBox
-          label="Total Cost"
+          label="Page Cost"
           icon={Coins}
           accent="rose"
           value={formatCurrency(data.totals.totalCost)}
-          sub="House share · all past"
+          sub="House share · this page"
         />
         <HubKpiBox
           label="Page Actual PNL"
@@ -304,7 +306,7 @@ async function PastDealsSection({ page }: { page: number }) {
           icon={TrendingUp}
           accent="blue"
           value={formatCurrency(data.totals.totalExpectedWager)}
-          sub="To cover past cost"
+          sub="To cover page cost"
         />
         <HubKpiBox
           label="Page Wager"

@@ -122,26 +122,31 @@ export type PastDealRow = {
 };
 
 export type PastDealsTotals = {
-  /** Total ended deals across the FULL set (not just this page). */
+  /** Total ended deals across the FULL set (drives pagination) — NOT page-scoped. */
   totalEndedDeals: number;
-  /** Σ dealCost across the FULL set (rose house cost). */
+  /** Σ dealCost across the CURRENT PAGE (rose house cost). */
   totalCost: number;
-  /** Σ affiliatesMadeUs across the FULL set (house POV). */
+  /** Σ affiliatesMadeUs across the CURRENT PAGE (house POV). */
   totalAffiliatesMadeUs: number;
-  /** Σ actualPnl across the FULL set. */
+  /** Σ actualPnl across the CURRENT PAGE. */
   totalActualPnl: number;
-  /** Σ expectedWager across the FULL set. */
+  /** Σ expectedWager across the CURRENT PAGE (= page totalCost / house edge). */
   totalExpectedWager: number;
-  /** Σ actualWager across the FULL set. */
+  /** Σ actualWager across the CURRENT PAGE. */
   totalCreatorWager: number;
-  /** Avg conversion across boards with expectedWager > 0 (FULL set). */
+  /** Avg conversion across page boards with expectedWager > 0. */
   avgConversionRate: number;
 };
 
 export type PastDealsData = {
   /** Current-page rows (≤ PAST_DEALS_PAGE_SIZE). */
   rows: PastDealRow[];
-  /** Aggregates across the FULL ended set (not just this page). */
+  /**
+   * KPI-strip aggregates. Every MONEY total (cost, expected wager, wager,
+   * affiliates-made-us, PnL, conversion) is PAGE-SCOPED — it describes the
+   * same 25 boards in `rows` so the strip is internally coherent. Only
+   * `totalEndedDeals` (+ `totalCount`) is full-set.
+   */
   totals: PastDealsTotals;
   /** Total ended boards (for pagination footer). */
   totalCount: number;
@@ -295,10 +300,11 @@ export function parsePastDealsPage(raw: string | undefined): number {
 /**
  * Past Deals data layer.
  *
- * Page-scoped: full-set aggregates are computed from the cached base walk
- * (cheap, all in memory); heavy MAIN reads (wager + PnL) only run for the
- * 25 boards on the active page, mirroring the active-timeframe-only rule
- * (no eager scan of every past board's wager/PnL on every request).
+ * Page-scoped: heavy MAIN reads (wager + PnL) only run for the 25 boards on
+ * the active page, mirroring the active-timeframe-only rule (no eager scan
+ * of every past board's wager/PnL on every request). The KPI-strip money
+ * totals are therefore ALL page-scoped (cost + expected wager included) so
+ * the strip stays internally coherent; only the ended-deal COUNT is full-set.
  *
  * Routed through `resolveAdminRead` (Index-or-ClickHouse construct). With no
  * ClickHouse twin built, the surface stays dormant; the resolver returns the
@@ -376,26 +382,18 @@ async function computePastDealsFromPostgres(
   const totalPages = Math.max(1, Math.ceil(totalCount / PAST_DEALS_PAGE_SIZE));
   const safePage = clampPage(page, totalPages);
 
-  // Full-set aggregates (cost is already on every base row — cheap to sum).
-  // Wager/PnL aggregates can't be precomputed across every past board
-  // without a heavy unbounded scan (Active-Timeframe-Only forbids that),
-  // so the wager/PnL totals shown to the user reflect the CURRENT PAGE
-  // only. The cost / expected wager / count totals reflect the FULL set.
-  const totalCost = allEnded.reduce((s, r) => s + r.dealCost, 0);
-  const totalExpectedWager = totalCost / HOUSE_EDGE;
-
   const sliceStart = (safePage - 1) * PAST_DEALS_PAGE_SIZE;
   const sliceEnd = sliceStart + PAST_DEALS_PAGE_SIZE;
   const pageBase = allEnded.slice(sliceStart, sliceEnd);
 
   if (pageBase.length === 0) {
+    // No rows on this page → every money total is a page-scoped 0. Only the
+    // count is full-set (drives pagination / "how many past deals exist").
     return {
       rows: [],
       totals: {
         ...EMPTY_TOTALS,
         totalEndedDeals: totalCount,
-        totalCost,
-        totalExpectedWager,
       },
       totalCount,
       page: safePage,
@@ -502,8 +500,20 @@ async function computePastDealsFromPostgres(
     };
   });
 
-  // Page-scope totals for the wager/PnL legs (full-set heavy aggregates
-  // would violate Active-Timeframe-Only — see header note).
+  // Page-scope EVERY money total so the KPI strip is internally coherent:
+  // cost, expected wager, wager, affiliates-made-us, PnL and conversion all
+  // describe the SAME 25 boards the user sees in the rows below. Previously
+  // cost + expected-wager were summed over the FULL ended set while the
+  // wager/PnL/conversion legs were page-scoped — so the strip juxtaposed a
+  // full-set Expected Wager (e.g. ~$754k across 141 boards) with a page
+  // Wager (~$253k across 25) and a page PnL, which reads as the past deals
+  // being wildly under-converting / mis-costed when it is only a scope
+  // mismatch. Deriving every leg from `rows` keeps the whole strip on one
+  // scope (and still honours Active-Timeframe-Only — page-bounded, no
+  // heavy full-set wager/PnL scan). Only `totalEndedDeals` / `totalCount`
+  // stay full-set (they drive pagination + "how many past deals exist").
+  const pageCost = rows.reduce((s, r) => s + r.dealCost, 0);
+  const pageExpectedWager = pageCost / HOUSE_EDGE;
   const pageCreatorWager = rows.reduce((s, r) => s + r.actualWager, 0);
   const pageAffiliatesMadeUs = rows.reduce((s, r) => s + r.affiliatesMadeUs, 0);
   const pageActualPnl = rows.reduce((s, r) => s + r.actualPnl, 0);
@@ -517,8 +527,8 @@ async function computePastDealsFromPostgres(
     rows,
     totals: {
       totalEndedDeals: totalCount,
-      totalCost,
-      totalExpectedWager,
+      totalCost: pageCost,
+      totalExpectedWager: pageExpectedWager,
       totalCreatorWager: pageCreatorWager,
       totalAffiliatesMadeUs: pageAffiliatesMadeUs,
       totalActualPnl: pageActualPnl,
