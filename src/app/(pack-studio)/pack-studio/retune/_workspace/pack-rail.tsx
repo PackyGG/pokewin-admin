@@ -181,10 +181,23 @@ export function PackRail({
   // Keep the selected pack reachable: if it lands in the tab the owner isn't
   // viewing (deep-link `?pack=`, keyboard nav, or a post-push "Next:" jump into
   // an already-done pack), follow to the tab that contains it so it can't be
-  // hidden behind the default Remaining tab. Only fires on a real cross-tab
-  // selection — a manual tab switch with no selection is untouched.
+  // hidden behind the default Remaining tab.
+  //
+  // Follow ONLY when the SELECTION actually changes — never when `doneIds`
+  // merely gets a new identity under a stable selection. Without this guard,
+  // pushing the selected pack (which adds it to `doneIds`, a fresh Set each
+  // push) would re-run this effect while the selection is unchanged and yank
+  // the rail from Remaining to Done on EVERY push, ejecting the operator from
+  // the work-list they explicitly asked to stay in. A manual tab switch (no
+  // selection change) is likewise left untouched.
+  const followedSelRef = React.useRef<string | null>(null);
   React.useEffect(() => {
-    if (!selectedPackId) return;
+    if (!selectedPackId) {
+      followedSelRef.current = null;
+      return;
+    }
+    if (followedSelRef.current === selectedPackId) return;
+    followedSelRef.current = selectedPackId;
     const inDone = doneIds.has(selectedPackId);
     setTab((cur) => {
       if (inDone && cur !== "done") return "done";

@@ -66,6 +66,13 @@ function RailRowInner({
 }: RailRowProps) {
   const belowTarget = row.edge < row.targetEdge - 1e-9;
   const edgeDeltaPp = ((row.edge - row.targetEdge) * 100).toFixed(2);
+  // A non-ok plan verdict from THIS session (infeasible / error / refused)
+  // wins over the emerald "done" check: a pack tuned in a PRIOR session
+  // (`done`, but not `pushed` this session) that the operator re-edits into an
+  // infeasible plan must still show the rose warning — not a misleading green
+  // check. A this-session push always forces the verdict to "ok", so a
+  // genuinely-pushed pack is never flagged and still shows the check.
+  const flagged = verdict !== undefined && verdict !== "ok" && !pushed;
   return (
     <div
       role="option"
@@ -144,14 +151,14 @@ function RailRowInner({
               className="inline-block size-1.5 rounded-full bg-amber-500"
             />
           )}
-          {verdict !== undefined && verdict !== "ok" && !pushed && !done && (
+          {flagged && (
             <span
               aria-label="Plan infeasible / refused on last visit"
               title="Plan infeasible / refused on last visit"
               className="inline-block size-1.5 rounded-full bg-rose-500"
             />
           )}
-          {(pushed || done) && (
+          {!flagged && (pushed || done) && (
             <Check
               className="size-3 text-emerald-500"
               aria-label={pushed ? "Pushed this session" : "Tuned via the workspace"}
