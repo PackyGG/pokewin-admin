@@ -11,32 +11,27 @@ import { formatCurrency } from "@/lib/utils/format";
 import type { PastDealRow } from "../_queries/past-deals";
 
 /**
- * Per-board past-deal list. Same row anatomy as the Active view's
- * `ProfitabilityList`, just keyed by board (one row per past leaderboard
- * = one row per past deal). House-POV colours: deal cost = rose; actual
- * wager = emerald; conversion ≥ 1× = emerald.
+ * Per-DEAL past-deal list. Same row anatomy as the Active view's
+ * `ProfitabilityList` — one row per ended creator deal (completed /
+ * terminated). The deal-cost breakdown mirrors the Active tab exactly:
+ * cap (× weeks) · LB (overlap) · tip+sponsor (× weeks). House-POV colours:
+ * deal cost = rose; actual wager = emerald; conversion ≥ 1× = emerald.
  *
  * CLIENT COMPONENT. Two reasons it must be `"use client"`:
  *   1. `buttonVariants()` is exported from a `"use client"` module
  *      (`src/components/ui/button.tsx`). Calling it from a server-rendered
- *      tree throws the boundary error:
- *        "Attempted to call buttonVariants() from the server but
- *         buttonVariants is on the client."
- *      That throw was the prod incident on `?tab=past` (Vercel error
- *      digest `1881631599`, surfaced as the page-level 500 the owner saw
- *      as digest `3304963582` after the route error boundary caught it).
- *   2. `endedAgoLabel` reads `Date.now()` at render time. As a server
- *      component the server snapshot disagrees with the client's clock on
- *      hydration → a flash + a console "hydration mismatch". As a client
- *      component both renders use the same clock.
+ *      tree throws the boundary error the prod incident on `?tab=past`
+ *      surfaced (Vercel digest `1881631599` → page-level 500 `3304963582`).
+ *   2. `endedAgoLabel` reads `Date.now()` at render time — a client
+ *      component keeps the server + client clock in sync (no hydration
+ *      mismatch flash).
  *
- * Mirrors the Active view's `ProfitabilityList`, which is also `"use client"`
- * for the same shape. Props (`PastDealRow`) are plain serializable JSON.
+ * Mirrors the Active view's `ProfitabilityList`, which is also `"use client"`.
+ * Props (`PastDealRow`) are plain serializable JSON.
  *
- * Pagination is SERVER-SIDE via `?page=`: the page link below switches the
- * URL param, the parent `<Suspense key={`past-${page}`}>` flips into the
- * skeleton, and the server re-renders just the next page's 25 rows
- * (Active-Timeframe-Only: no eager pre-load of every page).
+ * Pagination is SERVER-SIDE via `?page=`: the page link switches the URL
+ * param, the parent `<Suspense key={`past-${page}`}>` flips into the
+ * skeleton, and the server re-renders just the next page's 25 rows.
  */
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -63,15 +58,23 @@ function housePnlClass(value: number): string {
   return "text-muted-foreground";
 }
 
+/** Deal length as whole weeks (with a day count fallback under a week). */
+function dealLengthLabel(row: PastDealRow): string {
+  if (row.dealWeeks <= 1) {
+    const days = Math.max(
+      1,
+      Math.round((row.frameEndMs - row.frameStartMs) / MS_PER_DAY),
+    );
+    return `${days} day${days === 1 ? "" : "s"}`;
+  }
+  return `${row.dealWeeks} weeks`;
+}
+
 function frameLabel(row: PastDealRow): string {
   const range = `${DATE_FMT.format(row.frameStartMs)} – ${DATE_FMT.format(
     row.frameEndMs,
   )}`;
-  const days = Math.max(
-    1,
-    Math.round((row.frameEndMs - row.frameStartMs) / MS_PER_DAY),
-  );
-  return `${range} · ${days} day${days === 1 ? "" : "s"} · ended`;
+  return `${range} · ${dealLengthLabel(row)}`;
 }
 
 function endedAgoLabel(row: PastDealRow): string {
@@ -84,6 +87,23 @@ function endedAgoLabel(row: PastDealRow): string {
   if (months < 12) return `${months} months ago`;
   const years = Math.floor(months / 12);
   return years === 1 ? "1 year ago" : `${years} years ago`;
+}
+
+/** Cap · LB · tip+sponsor breakdown — mirrors the Active row's breakdown. */
+function costBreakdown(row: PastDealRow): string {
+  const capLabel =
+    row.dealWeeks > 1 && row.weeklyCapUsd > 0
+      ? `Cap ${formatCurrency(row.capUsd)} (${formatCurrency(
+          row.weeklyCapUsd,
+        )}/wk × ${row.dealWeeks})`
+      : `Cap ${formatCurrency(row.capUsd)}`;
+  const tipLabel =
+    row.dealWeeks > 1 && row.weeklyTipSponsorUsd > 0
+      ? `Tip+Sponsor ${formatCurrency(row.tipSponsorUsd)} (${formatCurrency(
+          row.weeklyTipSponsorUsd,
+        )}/wk × ${row.dealWeeks})`
+      : `Tip+Sponsor ${formatCurrency(row.tipSponsorUsd)}`;
+  return `${capLabel} · LB ${formatCurrency(row.leaderboardUsd)} · ${tipLabel}`;
 }
 
 function Metric({
@@ -108,10 +128,8 @@ function Metric({
 }
 
 function PastDealItem({ row }: { row: PastDealRow }) {
-  const initial = (row.username ?? row.boardTitle ?? "?").slice(0, 1).toUpperCase();
-  const breakdown = `Prize ${formatCurrency(row.prizeUsd)} · House ${row.sponsoredPct.toFixed(
-    0,
-  )}% = ${formatCurrency(row.dealCost)}`;
+  const initial = (row.username ?? "?").slice(0, 1).toUpperCase();
+  const isTerminated = row.status === "terminated";
 
   return (
     <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -128,21 +146,37 @@ function PastDealItem({ row }: { row: PastDealRow }) {
             >
               {row.username ?? "Unknown creator"}
             </Link>
-            <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Ended
+            <span
+              className={cn(
+                "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide",
+                isTerminated
+                  ? "bg-rose-500/15 text-rose-600 dark:text-rose-400"
+                  : "bg-muted text-muted-foreground",
+              )}
+            >
+              {isTerminated ? "Terminated" : "Completed"}
             </span>
           </div>
           <div className="truncate text-[11px] text-muted-foreground">
-            {row.boardTitle} · {frameLabel(row)}
+            {frameLabel(row)} · ended {endedAgoLabel(row)}
           </div>
           <div className="truncate text-[10px] text-muted-foreground/70">
-            {breakdown} · {endedAgoLabel(row)}
+            {costBreakdown(row)}
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:flex sm:items-center sm:gap-6">
         <div className="col-span-2 flex items-center gap-3 rounded-lg border bg-background/40 px-3 py-1.5 sm:col-span-1">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Length
+            </div>
+            <div className="text-sm font-semibold tabular-nums">
+              {dealLengthLabel(row)}
+            </div>
+          </div>
+          <div className="h-7 w-px bg-border" />
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               Affiliates Made Us
@@ -161,7 +195,7 @@ function PastDealItem({ row }: { row: PastDealRow }) {
           <div
             title={`Affiliates made us ${formatCurrency(
               row.affiliatesMadeUs,
-            )} (cohort deposits − card withdrawals − the creator's own affiliate_claim earnings, this board's window) − deal cost ${formatCurrency(
+            )} (cohort deposits − card withdrawals − the creator's own affiliate_claim earnings, this deal's window) − deal cost ${formatCurrency(
               row.dealCost,
             )}. Positive = the affiliates earned back more than the deal cost.`}
           >
@@ -201,8 +235,7 @@ function PastDealItem({ row }: { row: PastDealRow }) {
 }
 
 function pageHref(page: number): string {
-  // Stays on the same route; ?tab=past is preserved by the parent shell
-  // (the tab strip writes / clears it). We only flip ?page=.
+  // Stays on the same route; ?tab=past is preserved by the parent shell.
   const params = new URLSearchParams();
   params.set("tab", "past");
   if (page > 1) params.set("page", String(page));
@@ -234,8 +267,7 @@ export function PastDealsList({
   if (rows.length === 0) {
     return (
       <div className="rounded-2xl border bg-card p-10 text-center text-sm text-muted-foreground">
-        No past deals yet — every approved leaderboard is still live or
-        scheduled.
+        No past deals yet — every creator deal is still scheduled or active.
       </div>
     );
   }
@@ -249,7 +281,7 @@ export function PastDealsList({
     <div className="space-y-3">
       <div className="divide-y overflow-hidden rounded-2xl border bg-card">
         {rows.map((row) => (
-          <PastDealItem key={row.boardId} row={row} />
+          <PastDealItem key={row.dealId} row={row} />
         ))}
       </div>
 

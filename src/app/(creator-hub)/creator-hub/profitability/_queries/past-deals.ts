@@ -3,6 +3,7 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 
 import { getDb } from "@/lib/db";
+import { creatorsApi, type CreatorDealResponse } from "@/lib/backend-api";
 import {
   affiliateLeaderboardsApi,
   type LeaderboardAdminRow,
@@ -10,66 +11,87 @@ import {
 import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { getLeaderboardSponsorshipMap } from "../../../../(admin)/creators/_queries/leaderboard-sponsorship";
-import {
-  getCreatorLeaderboardWagerMap,
-  type LeaderboardWagerInput,
-} from "../../../../(admin)/creators/[userId]/_queries/leaderboard-wager-by-board";
 import { getBoardAffiliatePnl } from "./frame-affiliate-pnl-by-board";
+import { getDealWagerByDeal } from "./frame-wager-by-deal";
 
 /**
  * Creator Hub — Past Deals data.
  *
- * Mirrors the Active view's "the leaderboard frame IS the deal" model: a
- * PAST deal is an APPROVED creator leaderboard whose run window has
- * ENDED (`end_date < now`). Each ended board → one row, costed and
- * conversion-checked over its OWN lifetime window `[start, end]`.
+ * A PAST deal is the SAME entity as the Active tab (a `CreatorDealResponse`),
+ * just ENDED: status `completed` (ran its full window) or `terminated` (cut
+ * short). One row PER ended deal — a creator can have many (their deal
+ * history), so the same creator appears once per ended deal.
  *
- *   dealCost      = (total_prize_usd − refund) × sponsored% / 100 —
- *                   the same house-cost figure {@link getLiveLeaderboards}
- *                   surfaces for ended boards (rose).
+ * The per-leg cost mirrors the Active view's `deal-profitability.ts` EXACTLY:
+ *
+ *   dealWeeks     = round((endMs − startMs) / week), floored at 1 (weekly /
+ *                   bi-weekly boards; a degenerate frame costs one week).
+ *   capUsd        = weeklyCap(`total_withdraw_cap_usd`) × dealWeeks
+ *                   (null cap → 0).
+ *   tipSponsorUsd = (`max_tip_per_stream_usd` + `max_sponsorship_per_stream_usd`)
+ *                   × `fills_allowed` × dealWeeks — the per-stream caps recur
+ *                   for every fill the deal grants each week (owner directive
+ *                   2026-06-23), scaled across the deal's weeks the same way
+ *                   cap is.
+ *   leaderboardUsd= Σ sponsored-weighted house cost of the creator's APPROVED
+ *                   leaderboards whose run window OVERLAPS the deal window
+ *                   (net prize × sponsored% / 100; default 100%). Boards and
+ *                   deals are independent entities — most deals overlap no
+ *                   board, so this leg is $0 for them (correct, not a gap).
+ *   dealCost      = capUsd + leaderboardUsd + tipSponsorUsd.
  *   expectedWager = dealCost / house edge (7.5%).
- *   actualWager   = code-cohort wager inside [start, end] — same as
- *                   the per-board "Total Wager" `getCreatorLeaderboardWagerMap`
- *                   computes for the detail card (snapshot-aware: settled
- *                   boards use the weighted snapshot total, live/in-flight
- *                   fall through to the raw acu scan).
- *   conversion    = actualWager / expectedWager (≥ 1× = the board paid
- *                   for itself).
- *   affiliatesMadeUs = coverage-attributed deposits − card withdrawals
- *                   − the creator's own affiliate_claim earnings, over
- *                   the FULL board window [start, end], computed by
- *                   {@link getBoardAffiliatePnl}.
- *   actualPnl     = affiliatesMadeUs − dealCost (house-profit convention:
- *                   + = the cohort earned back more than the board cost).
+ *   actualWager   = code-cohort wager inside the deal window (per-deal, keyed
+ *                   so a creator's multiple ended deals don't collapse).
+ *   affiliatesMadeUs = coverage-attributed cohort deposits − card withdrawals
+ *                   − the creator's own affiliate_claim earnings, inside the
+ *                   deal window (per-deal, `getBoardAffiliatePnl` keyed by
+ *                   dealId).
+ *   actualPnl     = affiliatesMadeUs − dealCost (house-profit convention).
+ *   conversion    = actualWager / expectedWager (≥ 1× = the deal paid for
+ *                   itself).
  *
- * The dealCost here is the BOARD's house cost ONLY — the per-week withdraw
- * cap leg from the Active view doesn't apply per-board (caps are deal-level
- * and a creator's deal lasts across many boards). The expected-wager / PnL
- * checks remain meaningful (the board's prize is its own deliverable).
+ * ─── Effective window (CRITICAL for terminated deals) ────────────────────
+ * start = `week_start_utc`. end depends on status:
+ *   • completed  → `week_end_utc` (ran its full window).
+ *   • terminated → min(`week_end_utc`, `updated_at`) — a terminated deal was
+ *     cut short, and an open-ended deal carries a placeholder far-future
+ *     `week_end_utc` (e.g. 2037). `updated_at` is the terminate action's
+ *     write, so it is the real end. Without this clamp a terminated
+ *     open-ended deal would cost `weeklyCap × ~575 weeks` — nonsense.
  *
- * Pagination is SERVER-SIDE via `?page=` (PAGE_SIZE = 25). Sorted by
- * end_date DESC (most-recently ended first). The backend already paginates
- * the leaderboards endpoint, so we only walk the pages we need.
+ * ─── Fan-out (Active-Timeframe-Only) ─────────────────────────────────────
+ * The base walk (cached ~5 min) fetches every creator's ended-deal history
+ * (`creatorsApi.listDeals` for creators with `total_deals_count > 0`, via
+ * `Promise.allSettled` so one failed fetch can't sink the page) + the
+ * approved-board walk for the leaderboard leg. That is the LIGHT part
+ * (identity, dates, cost). The HEAVY MAIN reads (wager + PnL) run only for
+ * the 25 deals on the ACTIVE page, so a page flip never re-scans wager/PnL
+ * for the whole ended set.
+ *
+ * Pagination is SERVER-SIDE via `?page=` (PAGE_SIZE = 25), sorted by end
+ * DESC (most-recently ended first). Every MONEY KPI total is PAGE-SCOPED so
+ * the strip is internally coherent with the 25 rows shown; only the ended
+ * DEAL count is full-set (it drives pagination).
  */
 
 /** Past deals per page. URL-driven via `?page=N`. */
 export const PAST_DEALS_PAGE_SIZE = 25;
 const HOUSE_EDGE = 0.075;
+const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
 
 /** Backend cap per request. */
 const BACKEND_PAGE_SIZE = 100;
-/** Cold-walk safety cap (creator leaderboards are a small bounded set). */
-const FETCH_CAP = 2000;
+/** Per-creator deal-history walk cap (deal histories are a small bounded set). */
+const DEAL_FETCH_CAP = 1000;
+/** Cold-walk safety cap for the approved-board leaderboard leg. */
+const BOARD_FETCH_CAP = 2000;
 
 /**
  * Per-leg timeout (ms) for the page-scoped heavy reads. Long enough that a
- * healthy cold scan on prod-sized data completes (the per-board PnL scan
- * uses a 55s `SET LOCAL statement_timeout` inside its own transaction); short
+ * healthy cold scan on prod-sized data completes (the per-deal PnL scan uses
+ * a 55s `SET LOCAL statement_timeout` inside its own transaction); short
  * enough that a pathological hang degrades to the empty-state card instead
  * of running out the function budget on Vercel and surfacing as a 500.
- * Mirrors the budget shape used by other heavy admin reads (`REWARD_QUERY_TIMEOUT_MS`,
- * with extra headroom because the per-board PnL transaction is the heaviest
- * read in the Creator Hub).
  */
 const PAST_DEALS_LEG_TIMEOUT_MS = 60_000;
 
@@ -80,36 +102,59 @@ const PAST_DEALS_LEG_TIMEOUT_MS = 60_000;
  * ClickHouse client provisioned the resolver returns `"off"` and the surface
  * serves Postgres unchanged. Wiring the call through `resolveAdminRead`
  * satisfies the Index-or-ClickHouse construct so a CH twin can later be
- * dropped in without re-plumbing the page, and Edge Config / env-var
- * overrides remain available for per-surface flips. The `ch` leg throws by
- * design — it is unreachable today, and on a future flip without a built
- * twin the resolver THROWS so the page's empty-state path is taken (the
- * resolver MUST NOT silently re-run the heavy Postgres aggregate).
+ * dropped in without re-plumbing the page. The `ch` leg throws by design —
+ * it is unreachable today, and on a future flip without a built twin the
+ * resolver THROWS so the page's empty-state path is taken.
  */
 const PAST_DEALS_SURFACE_KEY = "creator_hub_profitability_past_deals";
 
+/**
+ * Whole weeks in a deal frame — used to scale the per-week withdraw cap +
+ * tip/sponsor allowance over the deal length. Boards run in weekly multiples
+ * (weekly / bi-weekly), so the duration is rounded to the nearest week and
+ * floored at 1. Mirrors `frameWeeks` in `deal-profitability.ts` exactly.
+ */
+function frameWeeks(startMs: number, endMs: number): number {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return 1;
+  }
+  return Math.max(1, Math.round((endMs - startMs) / MS_PER_WEEK));
+}
+
+function toFiniteNumber(value: string | number | null | undefined): number {
+  if (value == null) return 0;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
 export type PastDealRow = {
-  /** Backend leaderboard id (= the past deal id, stable). */
-  boardId: string;
-  /** Board title (the deal's display name). */
-  boardTitle: string;
+  /** Backend deal id (= the past deal id, stable, map key). */
+  dealId: string;
   /** Primary owner's user id. */
   userId: string;
   /** Resolved owner username (MAIN read), or null when unresolved. */
   username: string | null;
   /** Owner's profile image (MAIN read), or null when unresolved. */
   image: string | null;
-  /** Affiliate codes that fed the board. */
-  affiliateCodes: string[];
-  /** Frame start (epoch ms) — the board's `start_date`. */
+  /** Ended-deal status — `completed` (full run) or `terminated` (cut short). */
+  status: "completed" | "terminated";
+  /** Effective frame start (epoch ms) — the deal's `week_start_utc`. */
   frameStartMs: number;
-  /** Frame end (epoch ms) — the board's `end_date`. */
+  /** Effective frame end (epoch ms) — see the effective-window note above. */
   frameEndMs: number;
-  /** Full prize pool, net of refunds (100%, no sponsored-% weighting). */
-  prizeUsd: number;
-  /** Admin-set sponsored % (0–100); 100 when un-annotated. */
-  sponsoredPct: number;
-  /** House's share of the pool: prizeUsd × sponsoredPct / 100 (rose). */
+  /** Whole weeks in the effective deal frame. */
+  dealWeeks: number;
+  /** Per-week withdraw cap from the deal (`total_withdraw_cap_usd`; 0 when uncapped). */
+  weeklyCapUsd: number;
+  /** Total withdraw cap over the deal length (`weeklyCapUsd × dealWeeks`). */
+  capUsd: number;
+  /** Per-week tip + sponsor allowance (`(tip + sponsor) × fills_allowed`). */
+  weeklyTipSponsorUsd: number;
+  /** Total tip + sponsor allowance over the deal length (`weekly × dealWeeks`). */
+  tipSponsorUsd: number;
+  /** Sponsored-weighted house cost of the creator's boards overlapping the window (rose). */
+  leaderboardUsd: number;
+  /** capUsd + leaderboardUsd + tipSponsorUsd (rose house cost). */
   dealCost: number;
   expectedWager: number;
   actualWager: number;
@@ -134,7 +179,7 @@ export type PastDealsTotals = {
   totalExpectedWager: number;
   /** Σ actualWager across the CURRENT PAGE. */
   totalCreatorWager: number;
-  /** Avg conversion across page boards with expectedWager > 0. */
+  /** Avg conversion across page deals with expectedWager > 0. */
   avgConversionRate: number;
 };
 
@@ -144,17 +189,17 @@ export type PastDealsData = {
   /**
    * KPI-strip aggregates. Every MONEY total (cost, expected wager, wager,
    * affiliates-made-us, PnL, conversion) is PAGE-SCOPED — it describes the
-   * same 25 boards in `rows` so the strip is internally coherent. Only
+   * same 25 deals in `rows` so the strip is internally coherent. Only
    * `totalEndedDeals` (+ `totalCount`) is full-set.
    */
   totals: PastDealsTotals;
-  /** Total ended boards (for pagination footer). */
+  /** Total ended deals (for pagination footer). */
   totalCount: number;
   /** 1-based current page (clamped to valid range). */
   page: number;
   /** Total page count (≥ 1). */
   totalPages: number;
-  /** True when the backend leaderboard walk failed (UI shows empty). */
+  /** True when the backend deal walk failed (UI shows empty). */
   backendUnavailable: boolean;
 };
 
@@ -168,7 +213,47 @@ const EMPTY_TOTALS: PastDealsTotals = {
   avgConversionRate: 0,
 };
 
-/** Walk every APPROVED leaderboard, first-page-then-parallel, up to FETCH_CAP. */
+/** One approved board's window + sponsored-weighted house cost, for overlap. */
+type BoardCostWindow = {
+  creatorUserId: string;
+  startMs: number;
+  endMs: number;
+  houseCostUsd: number;
+};
+
+/** The light, cacheable per-deal base row (identity + cost legs, no MAIN reads). */
+type PastDealBaseRow = {
+  dealId: string;
+  userId: string;
+  status: "completed" | "terminated";
+  frameStartMs: number;
+  frameEndMs: number;
+  dealWeeks: number;
+  weeklyCapUsd: number;
+  capUsd: number;
+  weeklyTipSponsorUsd: number;
+  tipSponsorUsd: number;
+  leaderboardUsd: number;
+  dealCost: number;
+};
+
+/**
+ * Effective end (epoch ms) of an ended deal. `completed` deals ran their
+ * full window (`week_end_utc`); `terminated` deals were cut short, and an
+ * open-ended deal carries a placeholder far-future `week_end_utc`, so the
+ * real end is the terminate action's write (`updated_at`) — clamped to
+ * never exceed `week_end_utc`.
+ */
+function effectiveEndMs(deal: CreatorDealResponse): number {
+  const weekEndMs = Date.parse(deal.week_end_utc);
+  if (deal.status !== "terminated") return weekEndMs;
+  const updatedMs = Date.parse(deal.updated_at);
+  if (!Number.isFinite(updatedMs)) return weekEndMs;
+  if (!Number.isFinite(weekEndMs)) return updatedMs;
+  return Math.min(weekEndMs, updatedMs);
+}
+
+/** Walk every APPROVED leaderboard, first-page-then-parallel, up to the cap. */
 async function walkAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
   const firstPage = await affiliateLeaderboardsApi.list({
     status: "approved",
@@ -176,9 +261,8 @@ async function walkAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
     limit: BACKEND_PAGE_SIZE,
   });
   const all: LeaderboardAdminRow[] = [...firstPage.leaderboards];
-
   const pagesNeeded = Math.min(
-    Math.ceil(FETCH_CAP / BACKEND_PAGE_SIZE),
+    Math.ceil(BOARD_FETCH_CAP / BACKEND_PAGE_SIZE),
     Math.ceil(firstPage.total / BACKEND_PAGE_SIZE),
   );
   const rest: Promise<typeof firstPage>[] = [];
@@ -191,95 +275,183 @@ async function walkAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
       }),
     );
   }
-  for (const page of await Promise.all(rest)) {
-    all.push(...page.leaderboards);
+  for (const page of await Promise.all(rest)) all.push(...page.leaderboards);
+  return all;
+}
+
+/** Fetch one creator's FULL deal history, paging the backend. */
+async function fetchAllDealsForCreator(
+  userId: string,
+): Promise<CreatorDealResponse[]> {
+  const firstPage = await creatorsApi.listDeals(userId, {
+    offset: 0,
+    limit: BACKEND_PAGE_SIZE,
+  });
+  const all: CreatorDealResponse[] = [...firstPage.data];
+  const pagesNeeded = Math.min(
+    Math.ceil(DEAL_FETCH_CAP / BACKEND_PAGE_SIZE),
+    Math.ceil(firstPage.total / BACKEND_PAGE_SIZE),
+  );
+  const rest: Promise<typeof firstPage>[] = [];
+  for (let p = 1; p < pagesNeeded; p++) {
+    rest.push(
+      creatorsApi.listDeals(userId, {
+        offset: p * BACKEND_PAGE_SIZE,
+        limit: BACKEND_PAGE_SIZE,
+      }),
+    );
   }
+  for (const page of await Promise.all(rest)) all.push(...page.data);
   return all;
 }
 
 /**
- * Cached approved-leaderboard walk + per-board cost (sponsored-weighted).
- * This is the LIGHT part: identity, dates, cost. Wager + PnL are computed
- * per-page (heavy MAIN reads) AFTER this returns so the cache stays small
- * and reusable across page flips.
+ * Cached ended-deal base walk + per-deal cost legs (cap + tip/sponsor + the
+ * sponsored-weighted leaderboard-overlap leg). This is the LIGHT part;
+ * wager + PnL are computed per-page (heavy MAIN reads) AFTER this returns so
+ * the cache stays small and reusable across page flips.
  */
 const getEndedDealsBase = unstable_cache(
-  async (): Promise<{
-    rows: PastDealBaseRow[];
-    backendUnavailable: boolean;
-  }> => {
-    let all: LeaderboardAdminRow[];
+  async (): Promise<{ rows: PastDealBaseRow[]; backendUnavailable: boolean }> => {
+    // Roster → creators with any deal history. One walk (paged in parallel).
+    let roster;
     try {
-      all = await walkAllApprovedLeaderboards();
+      const firstPage = await creatorsApi.list({
+        offset: 0,
+        limit: BACKEND_PAGE_SIZE,
+      });
+      const all = [...firstPage.data];
+      const pagesNeeded = Math.ceil(firstPage.total / BACKEND_PAGE_SIZE);
+      const rest = [];
+      for (let p = 1; p < pagesNeeded; p++) {
+        rest.push(
+          creatorsApi.list({ offset: p * BACKEND_PAGE_SIZE, limit: BACKEND_PAGE_SIZE }),
+        );
+      }
+      for (const page of await Promise.all(rest)) all.push(...page.data);
+      roster = all;
     } catch (e) {
-      console.error(
-        "[past-deals] approved-board walk failed (page empty):",
-        e,
-      );
+      console.error("[past-deals] creator roster walk failed (page empty):", e);
       return { rows: [], backendUnavailable: true };
     }
 
-    let sponsorship: Map<string, number>;
+    // Only fan out deal history for creators that HAVE deals.
+    const dealCreators = roster.filter((c) => (c.total_deals_count ?? 0) > 0);
+
+    // Approved-board walk + sponsorship, for the leaderboard-overlap leg.
+    // Best-effort: a failed walk drops the LB leg (0) rather than blanking
+    // the whole page (cap + tip/sponsor legs still cost the deal).
+    let boardWindows: BoardCostWindow[] = [];
     try {
-      sponsorship = await getLeaderboardSponsorshipMap(all.map((lb) => lb.id));
+      const boards = await walkAllApprovedLeaderboards();
+      let sponsorship: Map<string, number>;
+      try {
+        sponsorship = await getLeaderboardSponsorshipMap(
+          boards.map((lb) => lb.id),
+        );
+      } catch (e) {
+        console.error(
+          "[past-deals] sponsorship lookup failed (treating all as 100%):",
+          e,
+        );
+        sponsorship = new Map();
+      }
+      boardWindows = boards
+        .map((lb) => {
+          const startMs = Date.parse(lb.start_date);
+          const endMs = Date.parse(lb.end_date);
+          const prize = Number(lb.total_prize_usd) || 0;
+          const refund = Number(lb.refund_amount_usd) || 0;
+          const net = prize - refund;
+          const pct = Math.min(100, Math.max(0, sponsorship.get(lb.id) ?? 100));
+          return {
+            creatorUserId: lb.creator_user_id,
+            startMs,
+            endMs,
+            houseCostUsd: net * (pct / 100),
+          };
+        })
+        .filter((b) => Number.isFinite(b.startMs) && Number.isFinite(b.endMs));
     } catch (e) {
       console.error(
-        "[past-deals] sponsorship lookup failed (treating all as 100%):",
+        "[past-deals] approved-board walk failed (LB leg drops to 0):",
         e,
       );
-      sponsorship = new Map();
+      boardWindows = [];
     }
 
-    const now = Date.now();
+    // Fan out every deal-history fetch in parallel; one creator's failed
+    // fetch can't sink the page (allSettled).
+    const settled = await Promise.allSettled(
+      dealCreators.map((c) => fetchAllDealsForCreator(c.id)),
+    );
+
     const ended: PastDealBaseRow[] = [];
-    for (const lb of all) {
-      const startMs = new Date(lb.start_date).getTime();
-      const endMs = new Date(lb.end_date).getTime();
-      if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue;
-      // Past board = end strictly in the past. Same date math as the
-      // leaderboard-cost tile's "pastHouseCostUsd" partition.
-      if (endMs >= now) continue;
+    settled.forEach((outcome, i) => {
+      const creator = dealCreators[i];
+      if (outcome.status !== "fulfilled") {
+        console.error(
+          `[past-deals] listDeals failed for creator ${creator.id} (its deals are omitted):`,
+          outcome.reason,
+        );
+        return;
+      }
+      for (const deal of outcome.value) {
+        if (deal.status !== "completed" && deal.status !== "terminated") {
+          continue; // scheduled / active belong to the Active tab
+        }
+        const startMs = Date.parse(deal.week_start_utc);
+        const endMs = effectiveEndMs(deal);
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue;
 
-      const prize = Number(lb.total_prize_usd) || 0;
-      const refund = Number(lb.refund_amount_usd) || 0;
-      const net = prize - refund;
-      const pct = Math.min(100, Math.max(0, sponsorship.get(lb.id) ?? 100));
-      const houseCost = net * (pct / 100);
+        const dealWeeks = frameWeeks(startMs, endMs);
+        const weeklyCapUsd = toFiniteNumber(deal.total_withdraw_cap_usd);
+        const capUsd = weeklyCapUsd * dealWeeks;
+        const perStreamTip = toFiniteNumber(deal.max_tip_per_stream_usd);
+        const perStreamSponsor = toFiniteNumber(
+          deal.max_sponsorship_per_stream_usd,
+        );
+        const fillsAllowed = Math.max(0, deal.fills_allowed ?? 0);
+        const weeklyTipSponsorUsd =
+          (perStreamTip + perStreamSponsor) * fillsAllowed;
+        const tipSponsorUsd = weeklyTipSponsorUsd * dealWeeks;
 
-      ended.push({
-        boardId: lb.id,
-        boardTitle: lb.title,
-        userId: lb.creator_user_id,
-        coCreatorUserIds: lb.co_creator_user_ids ?? [],
-        affiliateCodes: lb.affiliate_codes ?? [],
-        frameStartMs: startMs,
-        frameEndMs: endMs,
-        prizeUsd: net,
-        sponsoredPct: pct,
-        dealCost: houseCost,
-      });
-    }
+        // Leaderboard leg: Σ sponsored-weighted house cost of the creator's
+        // approved boards whose run window overlaps this deal's window.
+        let leaderboardUsd = 0;
+        for (const b of boardWindows) {
+          if (b.creatorUserId !== creator.id) continue;
+          if (b.startMs <= endMs && b.endMs >= startMs) {
+            leaderboardUsd += b.houseCostUsd;
+          }
+        }
+
+        const dealCost = capUsd + leaderboardUsd + tipSponsorUsd;
+
+        ended.push({
+          dealId: deal.id,
+          userId: creator.id,
+          status: deal.status,
+          frameStartMs: startMs,
+          frameEndMs: endMs,
+          dealWeeks,
+          weeklyCapUsd,
+          capUsd,
+          weeklyTipSponsorUsd,
+          tipSponsorUsd,
+          leaderboardUsd,
+          dealCost,
+        });
+      }
+    });
 
     // Most-recently ended first (the default sort).
     ended.sort((a, b) => b.frameEndMs - a.frameEndMs);
     return { rows: ended, backendUnavailable: false };
   },
-  ["profitability-past-deals-base-v1"],
+  ["profitability-past-deals-base-v2"],
   { revalidate: 300, tags: ["profitability-past-deals"] },
 );
-
-type PastDealBaseRow = {
-  boardId: string;
-  boardTitle: string;
-  userId: string;
-  coCreatorUserIds: string[];
-  affiliateCodes: string[];
-  frameStartMs: number;
-  frameEndMs: number;
-  prizeUsd: number;
-  sponsoredPct: number;
-  dealCost: number;
-};
 
 function clampPage(requested: number, totalPages: number): number {
   if (!Number.isFinite(requested) || requested < 1) return 1;
@@ -300,36 +472,21 @@ export function parsePastDealsPage(raw: string | undefined): number {
 /**
  * Past Deals data layer.
  *
- * Page-scoped: heavy MAIN reads (wager + PnL) only run for the 25 boards on
- * the active page, mirroring the active-timeframe-only rule (no eager scan
- * of every past board's wager/PnL on every request). The KPI-strip money
- * totals are therefore ALL page-scoped (cost + expected wager included) so
- * the strip stays internally coherent; only the ended-deal COUNT is full-set.
+ * Page-scoped: heavy MAIN reads (wager + PnL) only run for the 25 deals on
+ * the active page (Active-Timeframe-Only). The KPI-strip money totals are
+ * therefore ALL page-scoped so the strip stays internally coherent; only the
+ * ended-deal COUNT is full-set.
  *
  * Routed through `resolveAdminRead` (Index-or-ClickHouse construct). With no
  * ClickHouse twin built, the surface stays dormant; the resolver returns the
- * `pg()` value (`computePastDealsFromPostgres` below). The `pg` leg itself
- * uses `safeQuery` per heavy leg so a slow scan degrades the leg to its
- * fallback value instead of taking down the whole request — the PageHero +
- * tab strip always render via the page shell, the inner section degrades to
- * an empty-state card.
+ * `pg()` value. The `pg` leg uses `safeQuery` per heavy leg so a slow scan
+ * degrades the leg to its fallback instead of taking down the request.
  */
 export async function getPastDeals(page: number): Promise<PastDealsData> {
-  // Final-mile safety: even though every internal leg is wrapped in
-  // `safeQuery`, unexpected throws (Edge Config error on
-  // `getAdminReadMode`, surprise import-time crash, etc.) must NOT blow up
-  // the request — the PageHero + tab strip must always render and the
-  // section must degrade to the "backendUnavailable" card.
   try {
     return await resolveAdminRead(PAST_DEALS_SURFACE_KEY, {
       pg: () => computePastDealsFromPostgres(page),
       ch: () => {
-        // No CH twin yet. The surface is intentionally NOT in
-        // `CUTOVER_DEFAULT_CLICKHOUSE`, and no CH client exists on prod today
-        // (dormant guard returns "off"), so this branch is unreachable in
-        // practice. Throwing keeps the resolver honest: a future flip to
-        // "clickhouse" without a built twin must degrade via the caller's
-        // error boundary, not silently re-run the heavy Postgres aggregate.
         throw new Error(
           "[past-deals] ClickHouse twin is not implemented for " +
             PAST_DEALS_SURFACE_KEY,
@@ -352,8 +509,7 @@ export async function getPastDeals(page: number): Promise<PastDealsData> {
 /**
  * The Postgres serve path for {@link getPastDeals}. Resilient: each heavy
  * leg is wrapped in `safeQuery` with a wall-clock timeout, so a slow scan
- * degrades to an empty / zero-filled fallback instead of failing the
- * page. Failures are logged via the safeQuery logger, never re-thrown.
+ * degrades to an empty / zero-filled fallback instead of failing the page.
  */
 async function computePastDealsFromPostgres(
   page: number,
@@ -383,18 +539,12 @@ async function computePastDealsFromPostgres(
   const safePage = clampPage(page, totalPages);
 
   const sliceStart = (safePage - 1) * PAST_DEALS_PAGE_SIZE;
-  const sliceEnd = sliceStart + PAST_DEALS_PAGE_SIZE;
-  const pageBase = allEnded.slice(sliceStart, sliceEnd);
+  const pageBase = allEnded.slice(sliceStart, sliceStart + PAST_DEALS_PAGE_SIZE);
 
   if (pageBase.length === 0) {
-    // No rows on this page → every money total is a page-scoped 0. Only the
-    // count is full-set (drives pagination / "how many past deals exist").
     return {
       rows: [],
-      totals: {
-        ...EMPTY_TOTALS,
-        totalEndedDeals: totalCount,
-      },
+      totals: { ...EMPTY_TOTALS, totalEndedDeals: totalCount },
       totalCount,
       page: safePage,
       totalPages,
@@ -402,22 +552,19 @@ async function computePastDealsFromPostgres(
     };
   }
 
-  // Hydrate the page: usernames + per-board wager + per-board PnL. Each
-  // helper is best-effort — wrapped in `safeQuery` with a wall-clock timeout
-  // so a slow scan degrades the leg to its empty fallback (rows show id /
-  // wager 0 / PnL 0) instead of sinking the whole page. Failures are logged
-  // by the safeQuery wrapper, never re-thrown.
+  // Hydrate the page: usernames + per-deal wager + per-deal PnL. Each helper
+  // is best-effort — wrapped in `safeQuery` with a wall-clock timeout so a
+  // slow scan degrades the leg to its empty fallback (rows show id / wager 0
+  // / PnL 0) instead of sinking the whole page.
   const ownerIds = Array.from(new Set(pageBase.map((r) => r.userId)));
-  const wagerInputs: LeaderboardWagerInput[] = pageBase.map((r) => ({
-    id: r.boardId,
+  const wagerInputs = pageBase.map((r) => ({
+    dealId: r.dealId,
     creatorUserId: r.userId,
-    coCreatorUserIds: r.coCreatorUserIds,
-    affiliateCodes: r.affiliateCodes,
-    startDate: new Date(r.frameStartMs),
-    endDate: new Date(r.frameEndMs),
+    startIso: new Date(r.frameStartMs).toISOString(),
+    endIso: new Date(r.frameEndMs).toISOString(),
   }));
   const pnlInputs = pageBase.map((r) => ({
-    boardId: r.boardId,
+    boardId: r.dealId, // getBoardAffiliatePnl is keyed by an arbitrary window id
     creatorUserId: r.userId,
     startIso: new Date(r.frameStartMs).toISOString(),
     endIso: new Date(r.frameEndMs).toISOString(),
@@ -456,7 +603,7 @@ async function computePastDealsFromPostgres(
       PAST_DEALS_LEG_TIMEOUT_MS,
     ),
     safeQuery(
-      () => getCreatorLeaderboardWagerMap(wagerInputs),
+      () => getDealWagerByDeal(wagerInputs),
       emptyWagerMap,
       "creator-hub.past-deals.wager",
       PAST_DEALS_LEG_TIMEOUT_MS,
@@ -474,23 +621,26 @@ async function computePastDealsFromPostgres(
 
   const rows: PastDealRow[] = pageBase.map((r) => {
     const creator = creatorMap.get(r.userId);
-    const actualWager = wagerMap.get(r.boardId) ?? 0;
-    const affiliatesMadeUs = pnlMap.get(r.boardId)?.affiliatesMadeUs ?? 0;
+    const actualWager = wagerMap.get(r.dealId) ?? 0;
+    const affiliatesMadeUs = pnlMap.get(r.dealId)?.affiliatesMadeUs ?? 0;
     const expectedWager = r.dealCost / HOUSE_EDGE;
     const actualPnl = affiliatesMadeUs - r.dealCost;
     const conversionRate = expectedWager > 0 ? actualWager / expectedWager : 0;
 
     return {
-      boardId: r.boardId,
-      boardTitle: r.boardTitle,
+      dealId: r.dealId,
       userId: r.userId,
       username: creator?.username ?? null,
       image: creator?.image ?? null,
-      affiliateCodes: r.affiliateCodes,
+      status: r.status,
       frameStartMs: r.frameStartMs,
       frameEndMs: r.frameEndMs,
-      prizeUsd: r.prizeUsd,
-      sponsoredPct: r.sponsoredPct,
+      dealWeeks: r.dealWeeks,
+      weeklyCapUsd: r.weeklyCapUsd,
+      capUsd: r.capUsd,
+      weeklyTipSponsorUsd: r.weeklyTipSponsorUsd,
+      tipSponsorUsd: r.tipSponsorUsd,
+      leaderboardUsd: r.leaderboardUsd,
       dealCost: r.dealCost,
       expectedWager,
       actualWager,
@@ -502,16 +652,8 @@ async function computePastDealsFromPostgres(
 
   // Page-scope EVERY money total so the KPI strip is internally coherent:
   // cost, expected wager, wager, affiliates-made-us, PnL and conversion all
-  // describe the SAME 25 boards the user sees in the rows below. Previously
-  // cost + expected-wager were summed over the FULL ended set while the
-  // wager/PnL/conversion legs were page-scoped — so the strip juxtaposed a
-  // full-set Expected Wager (e.g. ~$754k across 141 boards) with a page
-  // Wager (~$253k across 25) and a page PnL, which reads as the past deals
-  // being wildly under-converting / mis-costed when it is only a scope
-  // mismatch. Deriving every leg from `rows` keeps the whole strip on one
-  // scope (and still honours Active-Timeframe-Only — page-bounded, no
-  // heavy full-set wager/PnL scan). Only `totalEndedDeals` / `totalCount`
-  // stay full-set (they drive pagination + "how many past deals exist").
+  // describe the SAME 25 deals in the rows below. Only `totalEndedDeals` /
+  // `totalCount` stay full-set (they drive pagination + "how many exist").
   const pageCost = rows.reduce((s, r) => s + r.dealCost, 0);
   const pageExpectedWager = pageCost / HOUSE_EDGE;
   const pageCreatorWager = rows.reduce((s, r) => s + r.actualWager, 0);
