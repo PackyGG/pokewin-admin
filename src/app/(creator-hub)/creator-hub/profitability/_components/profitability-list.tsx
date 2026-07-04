@@ -119,6 +119,15 @@ function Metric({
 
 function ProfitabilityRow({ row }: { row: CreatorProfitabilityRow }) {
   const initial = (row.username ?? row.code ?? "?").slice(0, 1).toUpperCase();
+  // Daily balance fill leads — it is the dominant cost leg:
+  // `per_fill_amount_usd × frame days` (one fill/day across the whole frame,
+  // owner directive 2026-07-05). Show the /day × N breakdown when it scales.
+  const fillLabel =
+    row.fillsCounted > 1 && row.perFillUsd > 0
+      ? `Fill ${formatCurrency(row.fillUsd)} (${formatCurrency(
+          row.perFillUsd,
+        )}/day × ${row.fillsCounted})`
+      : `Fill ${formatCurrency(row.fillUsd)}`;
   const capLabel =
     row.dealWeeks > 1
       ? `Cap ${formatCurrency(row.capUsd)} (${formatCurrency(
@@ -135,7 +144,7 @@ function ProfitabilityRow({ row }: { row: CreatorProfitabilityRow }) {
           row.weeklyTipSponsorUsd,
         )}/wk × ${row.dealWeeks})`
       : `Tip+Sponsor ${formatCurrency(row.tipSponsorUsd)}`;
-  const breakdown = `${capLabel} · LB ${formatCurrency(
+  const breakdown = `${fillLabel} · ${capLabel} · LB ${formatCurrency(
     row.leaderboardUsd,
   )} · ${tipLabel}`;
 
