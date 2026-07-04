@@ -54,6 +54,19 @@ async function computeRakebackFromTodayWager(sinceIso: string): Promise<number> 
     const scope = await getMetricsScope();
     const since = `'${sinceIso}'::timestamptz`;
     const todayDate = `'${sinceIso.slice(0, 10)}'::date`;
+    // Flat-fragment scope style (no CTE): this is a standalone single-table
+    // query with no other WITH clauses, so it uses `exclStaffSessionFrag`
+    // (self-contained `AND user_id IN (...) AND NOT EXISTS (...)`, inlines
+    // the session windows as a sub-relation) instead of the CTE-style
+    // `notInCreatorSession`, which requires `WITH ${scope.sessionWindowsCte}`
+    // to be declared first — omitting that CTE (as an earlier version of
+    // this query did) makes Postgres throw "relation session_windows does
+    // not exist" on every call, which safeQuery swallows to `null`, so the
+    // dashboard sub-line silently never rendered.
+    const scopeFrag = scope.exclStaffSessionFrag({
+      userCol: "rc.user_id",
+      tsCol: "rc.claimed_at",
+    });
 
     type Row = { same_day_amount: string };
     const rows = await db.$queryRawUnsafe<Row[]>(
@@ -63,8 +76,7 @@ async function computeRakebackFromTodayWager(sinceIso: string): Promise<number> 
          AND rc.claimed_at >= ${since}
          AND rc.rakeback_type = 'daily'
          AND rc.period_start = ${todayDate}
-         AND rc.user_id IN ${scope.userScopeSql}
-         AND ${scope.notInCreatorSession("rc.user_id", "rc.claimed_at")}`,
+         ${scopeFrag}`,
     );
 
     return toNumber(rows[0]?.same_day_amount);
