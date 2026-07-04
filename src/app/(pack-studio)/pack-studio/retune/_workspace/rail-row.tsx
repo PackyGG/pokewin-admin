@@ -41,6 +41,12 @@ export type RailRowProps = {
   staged: boolean;
   /** Pushed this session — emerald check. */
   pushed: boolean;
+  /**
+   * Already tuned via the workspace (persistent server set ∪ this session's
+   * pushes) — the Done-tab members. Shows the subtle emerald check even for
+   * packs tuned in a prior session, so the Done list reads consistently.
+   */
+  done: boolean;
   /** Verdict once visited (rose dot when infeasible / error / refused). */
   verdict: PackVerdict | undefined;
   onSelect: (packId: string) => void;
@@ -53,6 +59,7 @@ function RailRowInner({
   checked,
   staged,
   pushed,
+  done,
   verdict,
   onSelect,
   onCheck,
@@ -137,17 +144,17 @@ function RailRowInner({
               className="inline-block size-1.5 rounded-full bg-amber-500"
             />
           )}
-          {verdict !== undefined && verdict !== "ok" && !pushed && (
+          {verdict !== undefined && verdict !== "ok" && !pushed && !done && (
             <span
               aria-label="Plan infeasible / refused on last visit"
               title="Plan infeasible / refused on last visit"
               className="inline-block size-1.5 rounded-full bg-rose-500"
             />
           )}
-          {pushed && (
+          {(pushed || done) && (
             <Check
               className="size-3 text-emerald-500"
-              aria-label="Pushed this session"
+              aria-label={pushed ? "Pushed this session" : "Tuned via the workspace"}
             />
           )}
         </span>

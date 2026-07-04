@@ -39,13 +39,15 @@ const RETUNE_WORKSPACE_EVENT_TYPES = [
 ] as const;
 
 /**
- * Distinct pack_ids pushed from the retune workspace at least once, ever —
- * i.e. the count of packs tuned with the retune tool. Cached 60s (the counter
- * is a coarse progress readout, not a live gauge); the post-push
- * `router.refresh()` re-reads it after the cache window, and the three write
- * actions bust the `pack-studio-tuned-count` tag.
+ * Distinct pack_ids pushed from the retune workspace at least once, ever — the
+ * SET primitive both the "Tuned: X / N" KPI and the rail's Remaining/Done tab
+ * split read from (ONE query, ONE cache entry, so the count and the set can
+ * never drift). Cached 60s (a coarse progress readout, not a live gauge); the
+ * post-push `router.refresh()` re-reads it after the cache window, and the
+ * three write actions bust the `pack-studio-tuned-count` tag. Degrades to `[]`
+ * on error (the KPI reads 0 tuned, the rail falls back to "nothing done yet").
  */
-export async function getTunedPackCount(): Promise<number> {
+export async function getTunedPackIds(): Promise<string[]> {
   return unstable_cache(
     async () => {
       try {
@@ -66,13 +68,22 @@ export async function getTunedPackCount(): Promise<number> {
             }
           }
         }
-        return packIds.size;
+        return [...packIds];
       } catch (err) {
-        console.error("[retune] getTunedPackCount failed", err);
-        return 0;
+        console.error("[retune] getTunedPackIds failed", err);
+        return [];
       }
     },
     ["pack-studio.retune.tuned-count.v2"],
     { revalidate: 60, tags: ["pack-studio-tuned-count"] },
   )();
+}
+
+/**
+ * The count of distinct packs tuned via the retune workspace — derived from the
+ * SAME cached `getTunedPackIds` primitive (no second DB round-trip, no separate
+ * cache entry that could drift from the set the rail splits on).
+ */
+export async function getTunedPackCount(): Promise<number> {
+  return (await getTunedPackIds()).length;
 }

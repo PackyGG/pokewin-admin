@@ -143,6 +143,7 @@ export function RetuneWorkspace({
   rows,
   railError,
   tunedCount,
+  tunedPackIds,
   initialPackId,
   initialBulk,
 }: {
@@ -156,6 +157,13 @@ export function RetuneWorkspace({
    * client-side so the tile can never read lower than reality.
    */
   tunedCount: number;
+  /**
+   * The SAME set the count is derived from, as ids — the persistent list of
+   * packs already tuned via the workspace. Unioned with this session's pushes
+   * into `doneIds`, which drives the rail's Remaining/Done tab split (a pack
+   * pushed this session moves to Done immediately, before the 60s cache/refresh).
+   */
+  tunedPackIds: string[];
   /** `?pack=<id>` deep link (selected + scrolled into view on mount). */
   initialPackId: string | null;
   /** `?bulk=<id,id,…>` or `?bulk=session` (sessionStorage handoff). */
@@ -1398,6 +1406,15 @@ export function RetuneWorkspace({
     [pushedByPack],
   );
 
+  // Done = tuned-ever (server, persistent across sessions/browsers) ∪ pushed
+  // this session (so a fresh push moves the pack to Done immediately, before
+  // the 60s-cached server set catches up on the debounced `router.refresh()`).
+  // Drives the rail's Remaining/Done tab split.
+  const doneIds = React.useMemo(
+    () => new Set([...tunedPackIds, ...pushedIds]),
+    [tunedPackIds, pushedIds],
+  );
+
   const onVisibleIdsChange = React.useCallback((ids: string[]) => {
     setVisibleIds(ids);
   }, []);
@@ -1485,6 +1502,7 @@ export function RetuneWorkspace({
           checkedIds={checkedIds}
           stagedIds={stagedIds}
           pushedIds={pushedIds}
+          doneIds={doneIds}
           verdictByPack={verdictByPack}
           searchInputRef={searchInputRef}
           onSelect={select}

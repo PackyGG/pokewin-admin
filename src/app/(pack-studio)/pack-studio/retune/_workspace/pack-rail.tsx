@@ -24,10 +24,18 @@ import { RailRow } from "./rail-row";
 import type { PackVerdict } from "./plan-state";
 
 /**
- * The left pack rail (§6): filter row (search / tier Select / Below-target /
- * Tagged / Off-tag chips / sort Select) + a plain list of all rows (183
- * memoized rows — no virtualization needed) + the bulk header checkbox
- * (select-all-filtered, shift-click range on rows).
+ * The left pack rail (§6): a Remaining / Done segmented tab (splits the fleet
+ * on `doneIds` — packs already pushed from the workspace, so the owner isn't
+ * re-clicking finished packs), then the filter row (search / tier Select /
+ * Below-target / Tagged / Off-tag chips / sort Select), a plain list of all
+ * rows (183 memoized rows — no virtualization needed) + the bulk header
+ * checkbox (select-all-filtered, shift-click range on rows).
+ *
+ * Default tab = **Remaining** (the work-list). The tab split is applied FIRST,
+ * then the existing filters compose within it, so Done shows only done+matching
+ * and Remaining only not-done+matching. The selected pack is always kept
+ * reachable: if it lands in the other tab (deep-link `?pack=`, keyboard nav, or
+ * a "Next:" jump into a done pack), the rail auto-follows to that tab.
  *
  * Default sort = **Attention**: offTagLive first → (targetEdge − edge) desc
  * → riskScore desc. The current FILTERED order is reported up
@@ -37,6 +45,8 @@ import type { PackVerdict } from "./plan-state";
  * Below `lg` the rail renders as a Collapsible "Packs ({n})" above the
  * workspace (§8); at `lg`+ it is the sticky left column.
  */
+
+type RailTab = "remaining" | "done";
 
 export type RailSortKey = "attention" | "edgeGap" | "riskScore" | "price" | "name";
 
@@ -123,6 +133,7 @@ export function PackRail({
   checkedIds,
   stagedIds,
   pushedIds,
+  doneIds,
   verdictByPack,
   searchInputRef,
   onSelect,
@@ -134,6 +145,12 @@ export function PackRail({
   checkedIds: Set<string>;
   stagedIds: Set<string>;
   pushedIds: Set<string>;
+  /**
+   * Packs already tuned via the workspace (persistent server set ∪ this
+   * session's pushes). Splits the rail into the Remaining / Done tabs so the
+   * owner doesn't re-click finished packs.
+   */
+  doneIds: Set<string>;
   verdictByPack: Map<string, PackVerdict>;
   /** The workspace's `/` shortcut focuses this input. */
   searchInputRef: React.RefObject<HTMLInputElement | null>;
@@ -143,6 +160,7 @@ export function PackRail({
   /** Reports the CURRENT filtered+sorted order (keyboard ↑/↓ + select-all). */
   onVisibleIdsChange: (ids: string[]) => void;
 }) {
+  const [tab, setTab] = React.useState<RailTab>("remaining");
   const [search, setSearch] = React.useState("");
   const [tier, setTier] = React.useState("all");
   const [belowTarget, setBelowTarget] = React.useState(false);
@@ -151,16 +169,43 @@ export function PackRail({
   const [sortKey, setSortKey] = React.useState<RailSortKey>("attention");
   const lastCheckedRef = React.useRef<string | null>(null);
 
+  // Fleet split by tab (the FULL rail, before search/chip filters) — the tab
+  // labels' live counts read this so "Remaining 180 / Done 3" always reflects
+  // the whole fleet, not the post-search subset.
+  const remainingCount = React.useMemo(
+    () => rows.reduce((n, r) => (doneIds.has(r.packId) ? n : n + 1), 0),
+    [rows, doneIds],
+  );
+  const doneCount = rows.length - remainingCount;
+
+  // Keep the selected pack reachable: if it lands in the tab the owner isn't
+  // viewing (deep-link `?pack=`, keyboard nav, or a post-push "Next:" jump into
+  // an already-done pack), follow to the tab that contains it so it can't be
+  // hidden behind the default Remaining tab. Only fires on a real cross-tab
+  // selection — a manual tab switch with no selection is untouched.
+  React.useEffect(() => {
+    if (!selectedPackId) return;
+    const inDone = doneIds.has(selectedPackId);
+    setTab((cur) => {
+      if (inDone && cur !== "done") return "done";
+      if (!inDone && cur !== "remaining") return "remaining";
+      return cur;
+    });
+  }, [selectedPackId, doneIds]);
+
   // Stable display order (§4 "no resort, don't yank the list"): the order is
   // recomputed ONLY when the filter/sort spec or the visible MEMBERSHIP
   // changes — a value-only update (optimistic post-push rail patch, or the
   // server re-stream after `router.refresh()`) keeps every row where the
   // operator last saw it. Changing the sort Select re-sorts explicitly.
   const orderRef = React.useRef<{ sig: string; ids: string[] } | null>(null);
-  const sortSig = `${search.trim().toLowerCase()}|${tier}|${belowTarget}|${tagged}|${offTag}|${sortKey}`;
+  const sortSig = `${tab}|${search.trim().toLowerCase()}|${tier}|${belowTarget}|${tagged}|${offTag}|${sortKey}`;
   const visible = React.useMemo(() => {
     const q = search.trim().toLowerCase();
     const filtered = rows.filter((r) => {
+      // Tab split FIRST — Done shows tuned packs, Remaining the rest — then the
+      // existing filters compose within the selected tab.
+      if ((tab === "done") !== doneIds.has(r.packId)) return false;
       if (q && !r.name.toLowerCase().includes(q)) return false;
       if (tier !== "all" && r.tier !== tier) return false;
       if (belowTarget && !(r.edge < r.targetEdge - 1e-9)) return false;
@@ -178,7 +223,7 @@ export function PackRail({
     const sorted = sortRows(filtered, sortKey);
     orderRef.current = { sig: sortSig, ids: sorted.map((r) => r.packId) };
     return sorted;
-  }, [rows, search, tier, belowTarget, tagged, offTag, sortKey, sortSig]);
+  }, [rows, tab, doneIds, search, tier, belowTarget, tagged, offTag, sortKey, sortSig]);
 
   const visibleIds = React.useMemo(
     () => visible.map((r) => r.packId),
@@ -218,6 +263,43 @@ export function PackRail({
     <div className="flex min-h-0 flex-col">
       {/* Sticky filter header */}
       <div className="sticky top-0 z-10 space-y-2 border-b bg-card/95 p-2.5 backdrop-blur">
+        {/* Remaining / Done segmented tabs — hide already-pushed packs so the
+            owner works only the remaining ones (counts are the full fleet
+            split, not the post-search subset). */}
+        <div
+          role="tablist"
+          aria-label="Filter packs by tuning status"
+          className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-[3px]"
+        >
+          {(
+            [
+              ["remaining", "Remaining", remainingCount],
+              ["done", "Done", doneCount],
+            ] as const
+          ).map(([value, label, count]) => {
+            const active = tab === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setTab(value)}
+                className={cn(
+                  "inline-flex items-center justify-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium motion-safe:transition-colors",
+                  active
+                    ? "bg-background text-foreground shadow-sm dark:bg-input/30"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <span>{label}</span>
+                <span className="tabular-nums text-muted-foreground">
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -286,7 +368,7 @@ export function PackRail({
           <span className="text-[11px] text-muted-foreground">
             {checkedIds.size > 0
               ? `${checkedIds.size} selected`
-              : `${visible.length} of ${rows.length} packs`}
+              : `${visible.length} of ${tab === "done" ? doneCount : remainingCount} packs`}
           </span>
         </div>
       </div>
@@ -301,6 +383,7 @@ export function PackRail({
             checked={checkedIds.has(r.packId)}
             staged={stagedIds.has(r.packId)}
             pushed={pushedIds.has(r.packId)}
+            done={doneIds.has(r.packId)}
             verdict={verdictByPack.get(r.packId)}
             onSelect={onSelect}
             onCheck={handleRowCheck}
@@ -308,7 +391,11 @@ export function PackRail({
         ))}
         {visible.length === 0 && (
           <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-            No packs match these filters.
+            {search || tier !== "all" || belowTarget || tagged || offTag
+              ? "No packs match these filters."
+              : tab === "done"
+                ? "No packs pushed from the workspace yet."
+                : "Every pack has been tuned — nothing remaining."}
           </p>
         )}
       </div>
