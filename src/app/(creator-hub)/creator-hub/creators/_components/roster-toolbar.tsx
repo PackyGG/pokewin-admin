@@ -2,8 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
-import Link from "next/link";
-import { ArrowUpDown, LayoutGrid, List, Scale, Search } from "lucide-react";
+import { ArrowUpDown, LayoutGrid, List, Search } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import {
@@ -13,11 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-
-import { formatCompareParam } from "../../compare/_lib/compare-params";
-import { useRosterSelection } from "./roster-selection-context";
 
 import {
   RosterSortMode,
@@ -46,54 +41,10 @@ export function RosterToolbar() {
     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
       <RosterSearchInput />
       <div className="flex items-center gap-2">
-        <RosterCompareButton />
         <RosterSortControl />
         <RosterViewToggle />
       </div>
     </div>
-  );
-}
-
-function RosterCompareButton() {
-  const { selectedIds, canCompare, clear } = useRosterSelection();
-
-  if (selectedIds.length === 0) return null;
-
-  const href = `/creator-hub/compare?compare=${formatCompareParam(selectedIds)}`;
-  const label = (
-    <>
-      <Scale className="size-3.5" />
-      Compare ({selectedIds.length})
-    </>
-  );
-
-  if (canCompare) {
-    return (
-      <Link
-        href={href}
-        onClick={() => clear()}
-        className={buttonVariants({
-          variant: "default",
-          size: "sm",
-          className: "h-9 gap-1.5 text-xs",
-        })}
-        title="Compare selected creators"
-      >
-        {label}
-      </Link>
-    );
-  }
-
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="h-9 gap-1.5 text-xs"
-      disabled
-      title="Select at least 2 creators to compare"
-    >
-      {label}
-    </Button>
   );
 }
 

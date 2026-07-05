@@ -5,8 +5,6 @@ import { useTransition } from "react";
 import {
   BarChart3,
   IdCard,
-  Tv,
-  Twitter,
   ShieldAlert,
   TrendingUp,
   Users,
@@ -20,8 +18,8 @@ import { Spinner } from "@/components/ux";
 /**
  * Creator detail tab bar.
  *
- * Tab set (owner-confirmed): Overview · Creator · Sessions · Kick · Twitter ·
- * Risk · Forecast · Cohorts & LTV · Alt Accounts.
+ * Tab set: Overview · Creator · Sessions · Risk · Forecast · Cohorts & LTV ·
+ * Alt Accounts.
  *
  * ALL tabs are NAVIGABLE (drive the active tab via `?tab=`): the page reads it
  * and mounts ONLY that tab's component lazily in a keyed Suspense boundary, so
@@ -54,8 +52,6 @@ const NAV_TABS = [
   "overview",
   "creator",
   "sessions",
-  "kick",
-  "twitter",
   "risk",
   "forecast",
   "cohorts",
@@ -75,8 +71,6 @@ const TABS: CreatorTab[] = [
   { key: "overview", label: "Overview", icon: TrendingUp },
   { key: "creator", label: "Creator", icon: IdCard },
   { key: "sessions", label: "Sessions", icon: BarChart3 },
-  { key: "kick", label: "Kick", icon: Tv },
-  { key: "twitter", label: "Twitter", icon: Twitter },
   { key: "risk", label: "Risk", icon: ShieldAlert },
   { key: "forecast", label: "Forecast", icon: CalendarClock },
   { key: "cohorts", label: "Cohorts & LTV", icon: UsersRound },

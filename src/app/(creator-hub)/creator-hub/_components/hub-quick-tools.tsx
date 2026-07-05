@@ -4,7 +4,6 @@ import {
   Users,
   Trophy,
   Calculator,
-  UserSearch,
   History,
   type LucideIcon,
 } from "lucide-react";
@@ -13,10 +12,8 @@ import { cn } from "@/lib/utils";
 /**
  * Creator Hub dashboard — quick-tools button row (mockup top strip).
  *
- * Five tool shortcuts: My Creators · Leaderboards · ROI Calculator ·
- * Creator Check · Changelogs. All link to live routes (Creator Check is the
- * Kick/Twitter recon lookup the owner wants surfaced on the dashboard).
- * Pure presentational, server-safe.
+ * Four tool shortcuts: My Creators · Leaderboards · ROI Calculator ·
+ * Changelogs. All link to live routes. Pure presentational, server-safe.
  */
 
 type Tool = {
@@ -55,14 +52,6 @@ const TOOLS: Tool[] = [
     iconColor: "text-emerald-500",
   },
   {
-    label: "Creator Check",
-    sub: "Kick / X recon",
-    href: "/creator-hub/creator-check",
-    icon: UserSearch,
-    tint: "bg-purple-500/15",
-    iconColor: "text-purple-500",
-  },
-  {
     label: "Changelogs",
     sub: "audit feed",
     href: "/creator-hub/changelog",
@@ -74,7 +63,7 @@ const TOOLS: Tool[] = [
 
 export function HubQuickTools() {
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {TOOLS.map((tool) => {
         const Icon = tool.icon;
         const isPlaceholder = tool.href === "#";

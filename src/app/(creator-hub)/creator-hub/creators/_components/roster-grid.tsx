@@ -4,7 +4,6 @@ import { useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import { Users2 } from "lucide-react";
 
-import { Checkbox } from "@/components/ui/checkbox";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -12,9 +11,7 @@ import { formatCompactUsd, formatNumber } from "@/lib/utils/format";
 
 import type { RosterCreator } from "../_queries/list-roster-creators";
 import { useRosterSearch, matchesRosterSearch } from "./roster-search-context";
-import { useRosterSelection } from "./roster-selection-context";
 import { useRosterView } from "./roster-view-context";
-import { RosterGridCardShell } from "./roster-grid-card-shell";
 
 /**
  * Creator Hub roster — card grid + compact table renderer.
@@ -91,13 +88,7 @@ export function RosterGrid({
       {view === "grid" ? (
         <div className="grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filtered.map((c) => (
-            <RosterGridCardShell
-              key={c.id}
-              creatorId={c.id}
-              username={c.username}
-            >
-              {cardsById[c.id]}
-            </RosterGridCardShell>
+            <div key={c.id}>{cardsById[c.id]}</div>
           ))}
         </div>
       ) : (
@@ -114,14 +105,11 @@ function RosterTable({
   creators: RosterCreator[];
   isPast: boolean;
 }) {
-  const { isSelected, toggle, atMax } = useRosterSelection();
-
   return (
     <div className="overflow-x-auto rounded-2xl border">
       <table className="w-full min-w-[800px] text-sm">
         <thead>
           <tr className="border-b bg-muted/40 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
-            <th className="w-10 px-3 py-2" aria-label="Select" />
             <th className="px-3 py-2 font-semibold">Creator</th>
             <th className="px-3 py-2 font-semibold">Code</th>
             <th className="px-3 py-2 text-right font-semibold">Sign-ups</th>
@@ -136,24 +124,11 @@ function RosterTable({
         </thead>
         <tbody>
           {creators.map((c) => {
-            const selected = isSelected(c.id);
-            const disabled = atMax && !selected;
             return (
             <tr
               key={c.id}
-              className={cn(
-                "border-b last:border-0 transition-colors hover:bg-accent/30",
-                selected && "bg-pink-500/5",
-              )}
+              className="border-b last:border-0 transition-colors hover:bg-accent/30"
             >
-              <td className="px-3 py-2">
-                <Checkbox
-                  checked={selected}
-                  disabled={disabled}
-                  onCheckedChange={() => toggle(c.id)}
-                  aria-label={`Select ${c.username ?? "creator"} for compare`}
-                />
-              </td>
               <td className="px-3 py-2">
                 <Link
                   href={CreatorHref(c.id)}

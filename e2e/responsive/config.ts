@@ -121,13 +121,8 @@ export const CREATOR_HUB_ROUTES: AuditRoute[] = [
     needsSampleCreator: true,
   },
   { key: "hub-leaderboards", path: "/creator-hub/leaderboards" },
-  { key: "hub-creator-check", path: "/creator-hub/creator-check" },
-  { key: "hub-acquisition", path: "/creator-hub/acquisition" },
   { key: "hub-socials-review", path: "/creator-hub/socials-review" },
   { key: "hub-profitable-algo", path: "/creator-hub/profitable-algo" },
   { key: "hub-changelog", path: "/creator-hub/changelog" },
-  { key: "hub-deal-tracker", path: "/creator-hub/deal-tracker" },
-  { key: "hub-compare", path: "/creator-hub/compare" },
-  { key: "hub-settings", path: "/creator-hub/settings" },
   { key: "hub-alerts-redirect", path: "/creator-hub/alerts" },
 ];
