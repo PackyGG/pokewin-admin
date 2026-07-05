@@ -10,10 +10,6 @@ import {
   ArrowDownToLine,
   Trophy,
   Sparkles,
-  CalendarRange,
-  Handshake,
-  Activity,
-  Percent,
 } from "lucide-react";
 
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
@@ -52,7 +48,6 @@ import {
 } from "./_components/hub-creator-cost-chart";
 import { HubPeriodSelector } from "./_components/hub-period-selector";
 import { getHubDashboardOverview } from "./_queries/dashboard-overview";
-import { getFourWeekDealSummary } from "./_queries/four-week-summary";
 import { getHubTopCreatorsByDeposits } from "./_queries/hub-top-creators-query";
 import { getTopSignupLeaders } from "./_queries/hub-top-creator-meta";
 import {
@@ -65,14 +60,6 @@ import {
 } from "./_lib/top-creators-period";
 
 export const metadata = { title: "Creator Hub" };
-
-/**
- * The "4 Weeks" section's board walk + per-owner deal-history fan-out can be a
- * slow cold scan; 120s matches the profitability page (which does the same
- * walk). The section streams behind its own Suspense boundary, so this only
- * bounds the streamed segment — the shell still paints instantly.
- */
-export const maxDuration = 120;
 
 /**
  * Creator Hub — home dashboard.
@@ -133,89 +120,6 @@ export default async function CreatorHubDashboardPage({
           <OverviewSection period={period} topPeriod={topPeriod} />
         </Suspense>
       </div>
-
-      {/* 4 Weeks — a FIXED rolling 28-day view of every leaderboard-frame deal
-          that overlaps [now−28d, now]. Streams behind its OWN Suspense
-          boundary (shell-first): the board walk + deal-history fan-out never
-          block the page's first paint. */}
-      <div className="space-y-3">
-        <SectionHeading icon={CalendarRange} title="4 Weeks" />
-        <Suspense fallback={<FourWeekSkeleton />}>
-          <FourWeekSection />
-        </Suspense>
-      </div>
-    </div>
-  );
-}
-
-// ─── 4 Weeks section (data-bearing, streamed via Suspense) ─────────
-//
-// Hits `getFourWeekDealSummary()` (the base walk is `unstable_cache`'d;
-// backend + MAIN failures are guarded inside the query so it never throws).
-// Wrapped in `safeQueryOrNull` as a belt-and-suspenders boundary; a hard
-// failure OR a `backendUnavailable` result degrades to a friendly card
-// instead of crashing the dashboard shell. Decimal-safe money throughout.
-async function FourWeekSection() {
-  const { data } = await safeQueryOrNull(
-    () => getFourWeekDealSummary(),
-    "creator-hub.fourWeekSummary",
-    120_000,
-  );
-
-  if (!data || data.backendUnavailable) {
-    return (
-      <div className="rounded-2xl border bg-card p-6 text-sm text-muted-foreground">
-        Backend unavailable — 4-week deal summary can’t load right now.
-      </div>
-    );
-  }
-
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <HubKpiBox
-        label="Active Creators"
-        icon={Handshake}
-        accent="blue"
-        value={formatNumber(data.activeCreators)}
-        sub="With a deal · last 28 days"
-      />
-      <HubKpiBox
-        label="Expected Wager"
-        icon={TrendingUp}
-        accent="blue"
-        value={formatCurrency(data.expectedWagerUsd)}
-        sub="To break even · 4 weeks"
-        info={
-          <HubKpiInfoPopover
-            title="Expected wager · 4 weeks"
-            description="Deal cost ÷ 7.5% house edge, summed over every leaderboard-frame deal in the last 28 days. Deal cost = withdraw cap + full net leaderboard prize + tip/sponsor allowance (each scaled across the frame's weeks). No daily-fill leg."
-          />
-        }
-      />
-      <HubKpiBox
-        label="Actual Wager"
-        icon={Activity}
-        accent="emerald"
-        value={formatCurrency(data.actualWagerUsd)}
-        sub="Driven in deal frames · 4 weeks"
-      />
-      <HubKpiBox
-        label="Avg Conversion"
-        icon={Percent}
-        accent="blue"
-        value={`${data.avgConversionPct.toFixed(2)}%`}
-        sub="Configured deal rate · avg"
-      />
-    </div>
-  );
-}
-
-function FourWeekSkeleton() {
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      {Array.from({ length: 4 }).map((_, i) => (
-        <Skeleton key={i} className="h-[104px] rounded-2xl" />
-      ))}
     </div>
   );
 }

@@ -57,7 +57,7 @@ async function computeAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> 
  * admin-DB sponsorship lookup is cheap and the past/active/window math
  * must run against a live clock, not a frozen one.
  */
-export const fetchAllApprovedLeaderboards = unstable_cache(
+const fetchAllApprovedLeaderboards = unstable_cache(
   computeAllApprovedLeaderboards,
   ["creators-approved-leaderboards-v1"],
   { revalidate: 300, tags: ["creators-leaderboard-cost"] },
