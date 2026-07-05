@@ -53,6 +53,7 @@ import {
   Loader2,
   Coins as CoinsIcon,
   Scale,
+  ShieldAlert,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
@@ -83,6 +84,8 @@ import { UserVouchersPanel } from "./user-vouchers-panel";
 import { JoinedBattlesPanel } from "./joined-battles-panel";
 import { UserWagerRequirementCard } from "./user-wager-requirement-card";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
+import { FraudLocksCard } from "./fraud-locks-card";
+import type { UserFeatureLocks } from "@/lib/backend-api/feature-locks";
 import { UserWagerProgressCard } from "./user-wager-progress-card";
 import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
 import { UserBalanceWeightingCard } from "./user-balance-weighting-card";
@@ -1690,6 +1693,7 @@ export function AccountTab({
   notesPromise,
   pnlResultPromise,
   wagerRequirementPromise,
+  featureLocksPromise,
   wagerProgressPromise,
   balanceWeightingPromise,
 }: {
@@ -1701,6 +1705,10 @@ export function AccountTab({
   // "awaiting backend deploy" state for null, exactly as before; only the
   // await point moved off the body gate's serial tail.
   wagerRequirementPromise: Promise<UserWagerRequirement | null> | null;
+  // Backend-API read of the fraud-signal deposit/withdrawal locks (card
+  // refund/chargeback). Same catch→null convention as the wager-requirement
+  // override above.
+  featureLocksPromise: Promise<UserFeatureLocks | null> | null;
   // Read-only wager-requirement PROGRESS from the backend-written `balances`
   // columns (dev-only). null = prod / no-balance / read failed → muted card.
   wagerProgressPromise: Promise<UserWagerProgress | null> | null;
@@ -1748,6 +1756,18 @@ export function AccountTab({
         featureLocks={featureLocks}
         canToggle={capabilities.canToggleFeatureLocks}
       />
+      <SectionHeading icon={ShieldAlert} title="Fraud Locks (Card Deposits)" />
+      {featureLocksPromise ? (
+        <Suspense fallback={<SkeletonCard lines={3} />}>
+          <FraudLocksStreamed
+            userId={user.id}
+            featureLocksPromise={featureLocksPromise}
+            canManage={data.sessionRole === "admin"}
+          />
+        </Suspense>
+      ) : (
+        <SkeletonCard lines={3} />
+      )}
       <SectionHeading icon={Dices} title="Custom Battle Limits" />
       <UserBattleLimitsCard
         userId={user.id}
@@ -1865,6 +1885,21 @@ function WagerRequirementStreamed({
       data={wagerRequirement}
       canManage={canManage}
     />
+  );
+}
+
+function FraudLocksStreamed({
+  userId,
+  featureLocksPromise,
+  canManage,
+}: {
+  userId: string;
+  featureLocksPromise: Promise<UserFeatureLocks | null>;
+  canManage: boolean;
+}) {
+  const featureLocks = use(featureLocksPromise);
+  return (
+    <FraudLocksCard userId={userId} data={featureLocks} canManage={canManage} />
   );
 }
 

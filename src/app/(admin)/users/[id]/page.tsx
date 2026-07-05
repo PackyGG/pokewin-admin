@@ -33,6 +33,7 @@ import {
   type SafeQueryResult,
 } from "@/lib/errors/safe-query";
 import { getUserWagerRequirement } from "@/lib/backend-api/wager-requirements";
+import { getUserFeatureLocks } from "@/lib/backend-api/feature-locks";
 import { getUserWagerProgress } from "@/lib/queries/users-wager-progress";
 import { getUserBalanceWeighting } from "@/lib/queries/users-balance-weighting";
 import { getUserRewardPackOpens } from "@/lib/queries/users-reward-pack-opens";
@@ -567,6 +568,14 @@ async function UserDetailBody({
     initialTab === "account"
       ? getUserWagerRequirement(id).catch(() => null)
       : null;
+  // Account tab: backend-owned fraud-signal deposit/withdrawal locks
+  // (refund/chargeback). Same catch→null convention as the wager-requirement
+  // override above — null renders the card's muted "awaiting backend
+  // deploy" state instead of crashing the tab.
+  const featureLocksPromise =
+    initialTab === "account"
+      ? getUserFeatureLocks(id).catch(() => null)
+      : null;
   // Account tab: how each part of the user's balance is weighted toward each
   // destination (withdrawal / races / rakeback / shards) — the funding-source
   // wager-weight matrix projected onto their balance composition. Account-tab
@@ -761,6 +770,7 @@ async function UserDetailBody({
       cardSaleTxPromise={cardSaleTxPromise}
       battleVoucherTxPromise={battleVoucherTxPromise}
       wagerRequirementPromise={wagerRequirementPromise}
+      featureLocksPromise={featureLocksPromise}
       wagerProgressPromise={wagerProgressPromise}
       balanceWeightingPromise={balanceWeightingPromise}
       viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
