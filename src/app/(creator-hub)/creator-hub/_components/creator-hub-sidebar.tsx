@@ -4,21 +4,15 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ArrowLeft,
-  CalendarRange,
-  GitCompareArrows,
   Gift,
   LayoutDashboard,
   Users,
   Trophy,
-  LineChart,
   ShieldCheck,
   ShieldAlert,
   Calculator,
   History,
-  Receipt,
-  Settings,
   Tv,
-  UserSearch,
   TrendingUp,
   type LucideIcon,
 } from "lucide-react";
@@ -47,10 +41,10 @@ import { LinkPending } from "@/components/ux";
  * identity: the Packy wordmark (same assets as the main sidebar), a
  * "Back to Admin" exit at the top, and its own nav list.
  *
- * Live nav: Dashboard, Creators, Leaderboards, Tips & Sponsors, Creator Check, Acquisition,
- * Socials Review, ROI Calculator, Changelog; plus an Ops group (Deal Tracker,
- * Compare). Settings is pinned in the footer above the theme toggle. Alerts
- * live on the right rail dock.
+ * Live nav: Dashboard, Creators, All Sessions, Leaderboards, Tips & Sponsors,
+ * Socials Review, Wager / Fraud Abusers, Profitability, ROI Calculator,
+ * Changelog. The theme toggle sits in the footer. Alerts live on the right
+ * rail dock.
  *
  * Client-safe: no DB / server-only imports. Icons are direct
  * `lucide-react` component refs (not the string-keyed ICONS map the main
@@ -74,16 +68,6 @@ const HUB_NAV: HubNavItem[] = [
     icon: Gift,
   },
   {
-    label: "Creator Check",
-    href: "/creator-hub/creator-check",
-    icon: UserSearch,
-  },
-  {
-    label: "Acquisition",
-    href: "/creator-hub/acquisition",
-    icon: LineChart,
-  },
-  {
     label: "Socials Review",
     href: "/creator-hub/socials-review",
     icon: ShieldCheck,
@@ -99,29 +83,11 @@ const HUB_NAV: HubNavItem[] = [
     icon: TrendingUp,
   },
   {
-    label: "Audit Spend",
-    href: "/creator-hub/audit-spend",
-    icon: Receipt,
-  },
-  {
     label: "ROI Calculator",
     href: "/creator-hub/profitable-algo",
     icon: Calculator,
   },
   { label: "Changelog", href: "/creator-hub/changelog", icon: History },
-];
-
-const HUB_FOOTER_NAV: HubNavItem[] = [
-  { label: "Settings", href: "/creator-hub/settings", icon: Settings },
-];
-
-const HUB_OPS_NAV: HubNavItem[] = [
-  {
-    label: "Deal Tracker",
-    href: "/creator-hub/deal-tracker",
-    icon: CalendarRange,
-  },
-  { label: "Compare", href: "/creator-hub/compare", icon: GitCompareArrows },
 ];
 
 function HubNavMenu({
@@ -259,25 +225,9 @@ export function CreatorHubSidebar() {
             />
           </SidebarGroupContent>
         </SidebarGroup>
-
-        <SidebarGroup className="px-2 py-1">
-          <SidebarGroupLabel>Ops</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <HubNavMenu
-              items={HUB_OPS_NAV}
-              pathname={pathname}
-              onNavTap={handleNavTap}
-            />
-          </SidebarGroupContent>
-        </SidebarGroup>
       </SidebarContent>
 
       <SidebarFooter className="border-t border-border">
-        <HubNavMenu
-          items={HUB_FOOTER_NAV}
-          pathname={pathname}
-          onNavTap={handleNavTap}
-        />
         <div className="flex items-center justify-between px-2 group-data-[collapsible=icon]:justify-center">
           <span className="text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
             Theme

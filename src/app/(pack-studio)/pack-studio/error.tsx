@@ -15,7 +15,7 @@ import { PageHero } from "@/components/modern-panels";
  * white-screens into the umbrella/root boundary. The operator keeps the
  * Studio sidebar + header and gets a retry that re-renders just this
  * segment. Mirrors `src/app/(admin)/error.tsx` and
- * `src/app/(creator-hub)/creator-hub/acquisition/error.tsx`.
+ * `src/app/(creator-hub)/creator-hub/creators/[id]/error.tsx`.
  *
  * Per-route boundaries (builder / doctor / cards / history / drafts / retune)
  * sit BELOW this one for surface-specific copy + a back link that keeps the

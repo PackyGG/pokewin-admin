@@ -13,8 +13,6 @@ import {
 } from "./_components/overview-tab";
 import { CreatorMetadataTab } from "./_components/creator-metadata-tab";
 import { SessionsTab } from "./_components/sessions-tab";
-import { KickTab } from "./_components/kick-tab";
-import { TwitterTab } from "./_components/twitter-tab";
 import { RiskTab, RiskTabSkeleton } from "./_components/risk-tab";
 import { ForecastTab } from "./_components/forecast-tab";
 import { CohortsLtvTab } from "./_components/cohorts-ltv-tab";
@@ -35,8 +33,6 @@ const NAV_TABS = [
   "overview",
   "creator",
   "sessions",
-  "kick",
-  "twitter",
   "risk",
   "forecast",
   "cohorts",
@@ -73,8 +69,8 @@ function parseSessionsPage(value: string | undefined): number {
  *   1. Top banner (identity bar): pfp, username, creator code chip(s), email
  *      with hide/show toggle, a button per linked social, a Discord-channel
  *      button.
- *   2. Tab bar: Overview (default) + Creator / Sessions / Kick / Twitter / Risk
- *      / Forecast / Cohorts & LTV / Alt Accounts (all navigable via `?tab=`).
+ *   2. Tab bar: Overview (default) + Creator / Sessions / Risk / Forecast /
+ *      Cohorts & LTV / Alt Accounts (all navigable via `?tab=`).
  *   3. The active tab's content.
  *
  * ACCESS: `canAccessCreatorHub` (the layout enforces it; this page adds the
@@ -155,8 +151,6 @@ export default async function CreatorHubCreatorDetailPage({
         )}
         {tab === "creator" && <CreatorMetadataTab userId={id} />}
         {tab === "sessions" && <SessionsTab userId={id} page={sessionsPage} />}
-        {tab === "kick" && <KickTab userId={id} />}
-        {tab === "twitter" && <TwitterTab userId={id} />}
         {tab === "risk" && <RiskTab userId={id} code={header?.code ?? ""} />}
         {tab === "forecast" && <ForecastTab userId={id} />}
         {tab === "cohorts" && <CohortsLtvTab userId={id} />}

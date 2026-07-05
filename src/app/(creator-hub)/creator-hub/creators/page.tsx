@@ -17,7 +17,6 @@ import { parseRosterSearchParams } from "./_lib/roster-params";
 import { listRosterCreators } from "./_queries/list-roster-creators";
 import { listRosterExCreators } from "./_queries/list-roster-ex-creators";
 import { RosterSearchProvider } from "./_components/roster-search-context";
-import { RosterSelectionProvider } from "./_components/roster-selection-context";
 import { RosterViewProvider } from "./_components/roster-view-context";
 import { RosterToolbar } from "./_components/roster-toolbar";
 import { RosterPeriodControl } from "./_components/roster-period-control";
@@ -80,10 +79,9 @@ export default async function CreatorHubRosterPage({
           }
         />
         <RosterSearchProvider>
-          <RosterSelectionProvider>
-            <RosterViewProvider>
-              <div className="space-y-4">
-                <RosterToolbar />
+          <RosterViewProvider>
+            <div className="space-y-4">
+              <RosterToolbar />
               <Suspense
                 key={
                   isPast
@@ -99,9 +97,8 @@ export default async function CreatorHubRosterPage({
                   windowLabel={windowLabel}
                 />
               </Suspense>
-              </div>
-            </RosterViewProvider>
-          </RosterSelectionProvider>
+            </div>
+          </RosterViewProvider>
         </RosterSearchProvider>
       </div>
     </div>

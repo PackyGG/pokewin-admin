@@ -23,14 +23,9 @@ const HUB_ROUTES = [
   "/creator-hub",
   "/creator-hub/creators",
   "/creator-hub/leaderboards",
-  "/creator-hub/creator-check",
-  "/creator-hub/acquisition",
   "/creator-hub/socials-review",
   "/creator-hub/profitable-algo",
   "/creator-hub/changelog",
-  "/creator-hub/deal-tracker",
-  "/creator-hub/compare",
-  "/creator-hub/settings",
   // Legacy bookmark — should redirect to dashboard after gate.
   "/creator-hub/alerts",
 ] as const;
