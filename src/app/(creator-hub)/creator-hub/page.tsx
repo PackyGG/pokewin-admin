@@ -10,6 +10,10 @@ import {
   ArrowDownToLine,
   Trophy,
   Sparkles,
+  CalendarRange,
+  Handshake,
+  Activity,
+  Percent,
 } from "lucide-react";
 
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
@@ -38,6 +42,7 @@ import {
 
 import { HubKpiBox } from "./_components/hub-kpi-box";
 import { HubKpiInfoPopover } from "./_components/hub-kpi-info-popover";
+import { SectionErrorBoundary } from "./_components/section-error-boundary";
 import { HubWagerBreakdownPopover } from "./_components/hub-wager-breakdown-popover";
 import { HubTopCreators } from "./_components/hub-top-creators";
 import { HubTopCreatorsPeriodSelector } from "./_components/hub-top-creators-period-selector";
@@ -48,6 +53,7 @@ import {
 } from "./_components/hub-creator-cost-chart";
 import { HubPeriodSelector } from "./_components/hub-period-selector";
 import { getHubDashboardOverview } from "./_queries/dashboard-overview";
+import { getFourWeekDealSummary } from "./_queries/four-week-summary";
 import { getHubTopCreatorsByDeposits } from "./_queries/hub-top-creators-query";
 import { getTopSignupLeaders } from "./_queries/hub-top-creator-meta";
 import {
@@ -60,6 +66,15 @@ import {
 } from "./_lib/top-creators-period";
 
 export const metadata = { title: "Creator Hub" };
+
+/**
+ * The "4 Weeks" section's board walk + per-owner deal-history fan-out can be a
+ * slow cold scan; 120s matches the profitability page (which does the same
+ * walk). The section streams behind its own Suspense + error boundary, and its
+ * own per-leg timeouts (25s + 20s) degrade well before this — so this only
+ * bounds the streamed segment and the shell still paints instantly.
+ */
+export const maxDuration = 120;
 
 /**
  * Creator Hub — home dashboard.
@@ -120,6 +135,98 @@ export default async function CreatorHubDashboardPage({
           <OverviewSection period={period} topPeriod={topPeriod} />
         </Suspense>
       </div>
+
+      {/* 4 Weeks — a FIXED rolling 28-day view of every leaderboard-frame deal
+          overlapping [now−28d, now]. Wrapped in a SectionErrorBoundary so a
+          render throw degrades to a card instead of taking down the whole hub
+          (a <Suspense> boundary does NOT catch errors); the data path is fully
+          guarded and the query's own timeouts keep it well under maxDuration.
+          Streams shell-first. */}
+      <div className="space-y-3">
+        <SectionHeading icon={CalendarRange} title="4 Weeks" />
+        <SectionErrorBoundary fallback={<FourWeekErrorCard />}>
+          <Suspense fallback={<FourWeekSkeleton />}>
+            <FourWeekSection />
+          </Suspense>
+        </SectionErrorBoundary>
+      </div>
+    </div>
+  );
+}
+
+// ─── 4 Weeks section (data-bearing, streamed via Suspense) ─────────
+//
+// Fully guarded: `getFourWeekDealSummary` never throws (both heavy legs are
+// safeQuery-bounded), and `safeQueryOrNull` here is a belt-and-suspenders
+// boundary. A `null` / `backendUnavailable` result renders the degraded card.
+// The whole thing is ALSO wrapped in a SectionErrorBoundary in the page body,
+// so even an unexpected render throw degrades to the card instead of crashing
+// the hub.
+async function FourWeekSection() {
+  const { data } = await safeQueryOrNull(
+    () => getFourWeekDealSummary(),
+    "creator-hub.fourWeekSummary",
+    50_000,
+  );
+
+  if (!data || data.backendUnavailable) {
+    return <FourWeekErrorCard />;
+  }
+
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <HubKpiBox
+        label="Active Creators"
+        icon={Handshake}
+        accent="blue"
+        value={formatNumber(data.activeCreators)}
+        sub="With a deal · last 28 days"
+      />
+      <HubKpiBox
+        label="Expected Wager"
+        icon={TrendingUp}
+        accent="blue"
+        value={formatCurrency(data.expectedWagerUsd)}
+        sub="To break even · 4 weeks"
+        info={
+          <HubKpiInfoPopover
+            title="Expected wager · 4 weeks"
+            description="Deal cost ÷ 7.5% house edge, summed over every leaderboard-frame deal in the last 28 days. Deal cost = withdraw cap + full net leaderboard prize + tip/sponsor allowance (each scaled across the frame's weeks). No daily-fill leg."
+          />
+        }
+      />
+      <HubKpiBox
+        label="Actual Wager"
+        icon={Activity}
+        accent="emerald"
+        value={formatCurrency(data.actualWagerUsd)}
+        sub="Driven in deal frames · 4 weeks"
+      />
+      <HubKpiBox
+        label="Avg Conversion"
+        icon={Percent}
+        accent="blue"
+        value={`${data.avgConversionPct.toFixed(2)}%`}
+        sub="Configured deal rate · avg"
+      />
+    </div>
+  );
+}
+
+function FourWeekErrorCard() {
+  return (
+    <div className="rounded-2xl border bg-card p-6 text-sm text-muted-foreground">
+      4-week deal summary is unavailable right now — try again shortly.
+    </div>
+  );
+}
+
+function FourWeekSkeleton() {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <Skeleton key={i} className="h-[104px] rounded-2xl" />
+      ))}
     </div>
   );
 }
