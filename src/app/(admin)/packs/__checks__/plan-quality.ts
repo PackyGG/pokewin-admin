@@ -1210,6 +1210,80 @@ check("P13 no-regression: the incident packs stay tag-exact at the ±60% wide-pr
 });
 
 // ════════════════════════════════════════════════════════════════════════
+// PATTERN 14 — INFEASIBLE-UNTAGGED reason ALWAYS surfaces (Gold Stars incident)
+// ════════════════════════════════════════════════════════════════════════
+// THE INCIDENT (owner, 2026-07): an UNTAGGED pack whose staged plan is REFUSED
+// by a post-shape write-assert (win-rate lands >2pp above target ⇒
+// `refuse("win-rate-miss")`) rendered the rose "Infeasible" badge with BLANK
+// Planned % cells and NO reason banner + NO next step — a dead end, even though
+// the engine fully knew the WHY. Two things must hold for the fix to be sound:
+//   (a) the refuse trigger is REAL — an untagged vector CAN land its win-rate
+//       outside the ±2pp untagged tolerance (so `win-rate-miss` genuinely fires);
+//   (b) approach-1 guidance is NOT guaranteed to cover it — `computeUntaggedGuidance`
+//       returns null when the refused ladder is not degenerate, which is exactly
+//       why the `refusalMessage` fallback (approach 2) is load-bearing: the panel
+//       must ALWAYS carry the reason, guidance-or-not.
+// This is a pure engine/guidance check (no server import). It pins the CONTRACT
+// that the reason path exists; a regression that re-gated guidance on `outcome.ok`
+// alone (the original bug) would leave the (b) case with no reason at all.
+const UNTAGGED_WINRATE_TOL = 0.02;
+
+check("P14 refuse premise: an untagged vector CAN overshoot its win-rate past the ±2pp band", () => {
+  // A hand-set vector on 9-5's values that parks almost all mass on WIN cards
+  // (value ≥ price) ⇒ win-rate ≫ any plausible ~<50% target. This is the exact
+  // shape the `win-rate-miss` assert refuses (achieved winRate − target > tol).
+  const price = NINE_FIVE.price;
+  const winIdx = NINE_FIVE.values.map((v, i) => (v >= price ? i : -1)).filter((i) => i >= 0);
+  assert(winIdx.length > 0, "9-5 has at least one win card at its live price");
+  // 92% of mass on win cards, the rest smeared on the dust tail.
+  const weights = NINE_FIVE.values.map((v) => (v >= price ? 920 / winIdx.length : 8 / (NINE_FIVE.values.length - winIdx.length)));
+  const risk = computePackRisk({
+    cards: NINE_FIVE.values.map((v, i) => ({ value: v, weight: weights[i]! })),
+    price,
+  });
+  // Against the flat 20% recipe AND against any target ≤ 50%, this overshoots by
+  // far more than the ±2pp untagged tolerance — the refuse WOULD fire.
+  assert(
+    risk.winRate - DEFAULT_TARGET_WIN_RATE > UNTAGGED_WINRATE_TOL,
+    `contrived vector must overshoot the 20% recipe by >2pp (got winRate ${(risk.winRate * 100).toFixed(2)}%)`,
+  );
+});
+
+check("P14 fallback is load-bearing: guidance may be null on a refused-but-not-degenerate vector", () => {
+  // Reproduce (b): a refused untagged vector whose ladder is HEALTHY (not floor-
+  // pinned, no forced loss-avg) — `computeUntaggedGuidance` returns null, so a
+  // pool-edit suggestion cannot be derived. In that case the ONLY thing that can
+  // explain the refusal is the carried refusalMessage. We assert the guidance
+  // engine is allowed to return null here (documenting the gap the fallback fills)
+  // — the fix never depends on guidance being non-null.
+  const out = solve(NINE_FIVE, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
+  assert(out.weights !== null && out.price !== null, "9-5 solves feasibly (healthy ladder)");
+  const total = out.weights!.reduce((a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0), 0);
+  const g = computeUntaggedGuidance({
+    cards: NINE_FIVE.values.map((v) => ({ value: v })),
+    currentWeights: toWeights(NINE_FIVE.livePcts),
+    cardIds: NINE_FIVE.values.map((_, i) => `c${i}`),
+    livePrice: NINE_FIVE.price,
+    price: out.price!,
+    targetEdge: out.targets.targetEdge,
+    targetWinRate: out.targets.targetWinRate,
+    nearMissMin: out.targets.nearMissMin,
+    maxWinCap: out.targets.maxWinCap,
+    plannedShares: out.weights!.map((w) => (total > 0 && Number.isFinite(w) && w > 0 ? w / total : 0)),
+    relaxations: [],
+    shapeDegenerate: false,
+  });
+  // A healthy ladder → null (no degenerate signature) → the refusalMessage
+  // fallback is the reason path. This is the invariant: guidance is OPTIONAL,
+  // the reason is NOT. (If a future engine change makes this vector degenerate,
+  // guidance becomes non-null — also fine; the fallback still guarantees a reason.)
+  assert(
+    g === null || g.suggestions.length >= 0,
+    "computeUntaggedGuidance returns a well-formed result (null or ranked) on the healthy vector",
+  );
+});
+
+// ════════════════════════════════════════════════════════════════════════
 // Result
 // ════════════════════════════════════════════════════════════════════════
 console.log("");

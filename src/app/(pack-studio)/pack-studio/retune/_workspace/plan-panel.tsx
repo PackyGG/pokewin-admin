@@ -688,6 +688,29 @@ export function PlanPanel({
         </Banner>
       );
     }
+    // §refusal-fallback (owner incident, Gold Stars): a REFUSED plan that
+    // carries no structured `limit`, no `poolEditPlan`, and no `tagContradiction`
+    // (the post-shape write-assert refusals — win-rate-miss / edge-above-band /
+    // max-win-above-cap / edge-below-target) used to render NOTHING but the rose
+    // "Infeasible" badge with blank Planned % cells and no reason. The engine
+    // already knows the WHY — surface it verbatim so the owner is never left at a
+    // dead end. Push stays blocked (the plan is `!feasible`). If the refused pool
+    // was ALSO degenerate the ungated guidance produced ranked fixes — show them.
+    if (!plan.feasible && plan.refusalMessage !== null) {
+      const hasGuidance =
+        plan.guidance != null && plan.guidance.suggestions.length > 0;
+      return (
+        <Banner tone="rose" icon={TriangleAlert}>
+          <p className="font-medium">{plan.refusalMessage}</p>
+          {hasGuidance && (
+            <GuidanceSuggestions
+              guidance={plan.guidance!}
+              onAddCardRange={onAddCardRange}
+            />
+          )}
+        </Banner>
+      );
+    }
     if (plan.feasible && fixLoopSuccess) {
       return (
         <Banner tone="emerald" icon={ShieldCheck} highlight>

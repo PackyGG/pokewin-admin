@@ -972,6 +972,14 @@ type StagedShapeOutcome =
       limit: ShapeWeightsLimit | null;
       /** The shaped risk when shaping succeeded but an assert refused it. */
       after: PackRisk | null;
+      /**
+       * Server-shaped weights (staged input card order) when shaping SUCCEEDED
+       * but a fail-closed write-assert refused the result (e.g. `win-rate-miss`,
+       * `edge-above-band`). Lets the infeasible untagged arm still compute the
+       * degenerate-ladder guidance / pool-edit suggestion off the real vector.
+       * `null` when shaping itself failed (no vector exists).
+       */
+      weights: number[] | null;
     };
 
 type StagedShapeResolution = {
@@ -1347,6 +1355,8 @@ async function resolveAndShapeStagedPool(
         message: `Refused: this pack is tagged ${(auto.intendedHitRate * 100).toFixed(2)}% — the requested win-rate ${(targetWinRate * 100).toFixed(2)}% contradicts the tag. Leave the win-rate on auto (tag-aware), or untag the pack first.`,
         limit: null,
         after: null,
+        // Refused BEFORE shaping — no shaped vector exists.
+        weights: null,
       },
     };
   }
@@ -1480,6 +1490,7 @@ async function resolveAndShapeStagedPool(
         message: `Auto-tune infeasible: ${shaped.error}`,
         limit: shaped.limit,
         after: null,
+        weights: null,
       },
     };
   }
@@ -1509,7 +1520,9 @@ async function resolveAndShapeStagedPool(
     ...base,
     priceAfter,
     priceSearch,
-    outcome: { ok: false, code, message, limit: null, after },
+    // Shaping SUCCEEDED here (a post-shape assert refused) — carry the shaped
+    // weights so the untagged infeasible arm can still compute its guidance.
+    outcome: { ok: false, code, message, limit: null, after, weights: shaped.weights },
   });
   if (after.edge < targetEdge - 1e-9) {
     return refuse(
@@ -2023,6 +2036,28 @@ export type PackTunePlan = {
    * throws this exact message) — null when no contradiction.
    */
   tagContradiction: string | null;
+  /**
+   * The human-readable reason a staged plan was REFUSED by a fail-closed
+   * post-shape write-assert (e.g. `win-rate-miss`, `edge-above-band`,
+   * `max-win-above-cap`, `edge-below-target`). These refusals carry NO
+   * structured `limit` (limit stays null) and — when the refused pool is not
+   * degenerate — no pool-edit guidance either, which previously left the panel
+   * blank with only the rose "Infeasible" badge. Carried verbatim so the UI
+   * ALWAYS renders the WHY as a guaranteed fallback banner. `null` when the
+   * plan is feasible or was refused via a path that already surfaces its reason
+   * (a structured `limit` or `tagContradiction`).
+   */
+  refusalMessage: string | null;
+  /** The refusal's machine code paired with {@link refusalMessage}. `null` otherwise. */
+  refusalCode:
+    | "edge-below-target"
+    | "edge-above-band"
+    | "max-win-above-cap"
+    | "win-rate-miss"
+    | "tag-accuracy-miss"
+    | "edge-floor"
+    | "infeasible"
+    | null;
   snapped: boolean | null;
   /**
    * cardIds whose planned pct is NOT clean (amber dots). UNTAGGED packs:
@@ -2380,6 +2415,10 @@ async function planPackTuneLiveUncached(
     capDroppedCardIds: computeCapDroppedCardIds(cards, targets.maxWinCap),
     before,
     tagContradiction: null,
+    // The live arm surfaces infeasibility via a structured `limit` (never a
+    // post-shape write-assert), so it never carries a refusal message.
+    refusalMessage: null,
+    refusalCode: null,
     intendedHitRate: autoTargets.intendedHitRate,
     targets,
     // The live arm never carries owner pins (pins are staged edits by
@@ -2854,11 +2893,19 @@ async function planPackTuneStagedUncached(
         )
       : null;
   const stagedShapeDegenerate: boolean = stagedShape?.degenerate === true;
-  if (!taggedStaged && outcome.ok) {
-    // UNTAGGED degenerate-loss-ladder guidance on the staged arm — the fix
-    // loop's re-plan (add a mid card / type the suggested price) flows through
-    // here, so the banner clears the moment the ladder actually spreads.
-    const stagedTotal = outcome.weights.reduce(
+  // UNTAGGED guidance runs on the FEASIBLE arm (degenerate-loss-ladder fix
+  // loop) AND on a REFUSED arm whose shaping still produced a vector (the
+  // post-shape write-assert refusals — `win-rate-miss`, `edge-above-band`,
+  // etc. — carry `outcome.weights`). Surfacing guidance on the refused arm
+  // yields the solver-verified pool-edit suggestion WITHOUT flipping the plan
+  // to feasible (`feasible` stays `outcome.ok === false`; Push stays blocked).
+  // The shaping-error `infeasible` refusal carries no vector (weights null) →
+  // guidance stays null and the refusalMessage fallback banner covers the WHY.
+  const stagedGuidanceWeights: number[] | null = outcome.ok
+    ? outcome.weights
+    : outcome.weights;
+  if (!taggedStaged && stagedGuidanceWeights !== null) {
+    const stagedTotal = stagedGuidanceWeights.reduce(
       (a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0),
       0,
     );
@@ -2880,10 +2927,11 @@ async function planPackTuneStagedUncached(
             targetWinRate: r.resolved.targetWinRate,
             nearMissMin: r.resolved.nearMissMin,
             maxWinCap: r.resolved.maxWinCap,
-            plannedShares: outcome.weights.map((w) =>
+            plannedShares: stagedGuidanceWeights.map((w) =>
               Number.isFinite(w) && w > 0 ? w / stagedTotal : 0,
             ),
-            relaxations: outcome.relaxations,
+            // A refused arm ran no relaxations (there is no accepted plan).
+            relaxations: outcome.ok ? outcome.relaxations : [],
             pinPrice: staged.pinPrice === true,
             shapeDegenerate: stagedShapeDegenerate,
           })
@@ -2988,6 +3036,23 @@ async function planPackTuneStagedUncached(
     tagContradiction:
       !outcome.ok && outcome.code === "tag-contradiction"
         ? outcome.message
+        : null,
+    // Guaranteed WHY fallback for a REFUSED plan that carries NO structured
+    // `limit` and is NOT a tag-contradiction (the post-shape write-assert
+    // refusals: win-rate-miss / edge-above-band / max-win-above-cap /
+    // edge-below-target / tag-accuracy-miss / edge-floor). Surfacing-only —
+    // the plan stays `feasible: false` and non-pushable.
+    refusalMessage:
+      !outcome.ok &&
+      outcome.limit === null &&
+      outcome.code !== "tag-contradiction"
+        ? outcome.message
+        : null,
+    refusalCode:
+      !outcome.ok &&
+      outcome.limit === null &&
+      outcome.code !== "tag-contradiction"
+        ? outcome.code
         : null,
     snapped: outcome.ok ? outcome.snapped : null,
     offLadderCards,
