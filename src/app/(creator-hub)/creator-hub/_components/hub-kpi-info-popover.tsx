@@ -79,10 +79,10 @@ export function HubKpiInfoPopover({
         </div>
 
         {lines && lines.length > 0 && (
-          <ul className="space-y-0.5">
-            {lines.map((line) => (
+          <ul className="max-h-72 space-y-0.5 overflow-y-auto pr-1">
+            {lines.map((line, i) => (
               <li
-                key={line.label}
+                key={`${line.label}-${i}`}
                 className="flex items-center justify-between gap-2 rounded px-1 py-0.5 text-[11px] hover:bg-muted/40"
               >
                 <span className="truncate text-muted-foreground">

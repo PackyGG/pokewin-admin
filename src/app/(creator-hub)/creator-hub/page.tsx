@@ -135,21 +135,6 @@ export default async function CreatorHubDashboardPage({
           <OverviewSection period={period} topPeriod={topPeriod} />
         </Suspense>
       </div>
-
-      {/* 4 Weeks — a FIXED rolling 28-day view of every leaderboard-frame deal
-          overlapping [now−28d, now]. Wrapped in a SectionErrorBoundary so a
-          render throw degrades to a card instead of taking down the whole hub
-          (a <Suspense> boundary does NOT catch errors); the data path is fully
-          guarded and the query's own timeouts keep it well under maxDuration.
-          Streams shell-first. */}
-      <div className="space-y-3">
-        <SectionHeading icon={CalendarRange} title="4 Weeks" />
-        <SectionErrorBoundary fallback={<FourWeekErrorCard />}>
-          <Suspense fallback={<FourWeekSkeleton />}>
-            <FourWeekSection />
-          </Suspense>
-        </SectionErrorBoundary>
-      </div>
     </div>
   );
 }
@@ -173,6 +158,38 @@ async function FourWeekSection() {
     return <FourWeekErrorCard />;
   }
 
+  // Per-creator drill-down lines for each tile's (i) popover — "where it's
+  // coming from". Each tile sorts the same breakdown by its own metric.
+  const nameOf = (r: (typeof data.breakdown)[number]) =>
+    r.username ?? `#${r.userId.slice(0, 8)}`;
+  const hasBreakdown = data.breakdown.length > 0;
+  const activeLines = [...data.breakdown]
+    .sort((a, b) => b.frameCount - a.frameCount)
+    .map((r) => ({
+      label: nameOf(r),
+      value: `${r.frameCount} deal${r.frameCount === 1 ? "" : "s"}`,
+      tone: "foreground" as const,
+    }));
+  const expectedLines = data.breakdown.map((r) => ({
+    label: nameOf(r),
+    value: formatCurrency(r.expectedWagerUsd),
+    tone: "foreground" as const,
+  }));
+  const actualLines = [...data.breakdown]
+    .sort((a, b) => b.actualWagerUsd - a.actualWagerUsd)
+    .map((r) => ({
+      label: nameOf(r),
+      value: formatCurrency(r.actualWagerUsd),
+      tone: "emerald" as const,
+    }));
+  const conversionLines = [...data.breakdown]
+    .sort((a, b) => b.avgConversionPct - a.avgConversionPct)
+    .map((r) => ({
+      label: nameOf(r),
+      value: `${r.avgConversionPct.toFixed(2)}%`,
+      tone: "foreground" as const,
+    }));
+
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
       <HubKpiBox
@@ -181,6 +198,19 @@ async function FourWeekSection() {
         accent="blue"
         value={formatNumber(data.activeCreators)}
         sub="With a deal · last 28 days"
+        info={
+          hasBreakdown ? (
+            <HubKpiInfoPopover
+              title="Active creators · last 28 days"
+              description="Every creator with at least one leaderboard-frame deal overlapping the last 28 days, and how many deal frames each has."
+              lines={activeLines}
+              footer={{
+                label: "Active creators",
+                value: formatNumber(data.activeCreators),
+              }}
+            />
+          ) : undefined
+        }
       />
       <HubKpiBox
         label="Expected Wager"
@@ -189,10 +219,17 @@ async function FourWeekSection() {
         value={formatCurrency(data.expectedWagerUsd)}
         sub="To break even · 4 weeks"
         info={
-          <HubKpiInfoPopover
-            title="Expected wager · 4 weeks"
-            description="Deal cost ÷ 7.5% house edge, summed over every leaderboard-frame deal in the last 28 days. Deal cost = withdraw cap + full net leaderboard prize + tip/sponsor allowance (each scaled across the frame's weeks). No daily-fill leg."
-          />
+          hasBreakdown ? (
+            <HubKpiInfoPopover
+              title="Expected wager · 4 weeks"
+              description="Deal cost ÷ 7.5% house edge, per creator. Deal cost = withdraw cap + full net leaderboard prize + tip/sponsor allowance (scaled across the frame's weeks; no daily-fill leg)."
+              lines={expectedLines}
+              footer={{
+                label: "Total",
+                value: formatCurrency(data.expectedWagerUsd),
+              }}
+            />
+          ) : undefined
         }
       />
       <HubKpiBox
@@ -201,6 +238,21 @@ async function FourWeekSection() {
         accent="emerald"
         value={formatCurrency(data.actualWagerUsd)}
         sub="Driven in deal frames · 4 weeks"
+        info={
+          hasBreakdown ? (
+            <HubKpiInfoPopover
+              title="Actual wager · 4 weeks"
+              description="Code-cohort wager driven inside each creator's deal frame(s) over the last 28 days."
+              lines={actualLines}
+              footer={{
+                label: "Total",
+                value: formatCurrency(data.actualWagerUsd),
+                tone: "emerald",
+              }}
+              ringClassName="focus-visible:ring-emerald-500/40"
+            />
+          ) : undefined
+        }
       />
       <HubKpiBox
         label="Avg Conversion"
@@ -208,6 +260,19 @@ async function FourWeekSection() {
         accent="blue"
         value={`${data.avgConversionPct.toFixed(2)}%`}
         sub="Configured deal rate · avg"
+        info={
+          hasBreakdown ? (
+            <HubKpiInfoPopover
+              title="Avg conversion · 4 weeks"
+              description="Each creator's average configured deal conversion rate (conversion_rate_bps). The headline is the deal-weighted mean across all in-window deals, so it can differ slightly from a plain average of these rows."
+              lines={conversionLines}
+              footer={{
+                label: "Average",
+                value: `${data.avgConversionPct.toFixed(2)}%`,
+              }}
+            />
+          ) : undefined
+        }
       />
     </div>
   );
@@ -531,6 +596,21 @@ async function OverviewSection({
           title="Code-cohort deposits (30 days)"
           data={data.dailyDeposits}
         />
+      </div>
+
+      {/* 4 Weeks — a FIXED rolling 28-day view of every leaderboard-frame deal
+          overlapping [now−28d, now], placed directly above "Creator costs over
+          time". Wrapped in a SectionErrorBoundary so a render throw degrades to
+          a card instead of crashing the hub (a <Suspense> boundary does NOT
+          catch errors); its data path is fully guarded and its own timeouts
+          keep it well under maxDuration. Streams behind its own Suspense. */}
+      <div className="space-y-3">
+        <SectionHeading icon={CalendarRange} title="4 Weeks" />
+        <SectionErrorBoundary fallback={<FourWeekErrorCard />}>
+          <Suspense fallback={<FourWeekSkeleton />}>
+            <FourWeekSection />
+          </Suspense>
+        </SectionErrorBoundary>
       </div>
 
       {/* Creator-cost time series (active timeframe only). Streams behind

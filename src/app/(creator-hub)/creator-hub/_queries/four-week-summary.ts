@@ -8,6 +8,7 @@ import {
   type LeaderboardAdminRow,
 } from "@/lib/backend-api/affiliate-leaderboards";
 import { safeQuery } from "@/lib/errors/safe-query";
+import { getDb } from "@/lib/db";
 
 import {
   getDealWagerByDeal,
@@ -82,6 +83,8 @@ const BOARD_FETCH_CAP = 2000;
  */
 const BASE_TIMEOUT_MS = 25_000;
 const WAGER_TIMEOUT_MS = 20_000;
+/** Username resolution for the tile drill-down — bounded PK lookup, best-effort. */
+const USERNAME_TIMEOUT_MS = 10_000;
 
 // ─── Deal-cost helpers ──────────────────────────────────────────────
 // Self-contained copies of the Past Deals helpers (`past-deals.ts` /
@@ -213,6 +216,25 @@ async function walkAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
   return all;
 }
 
+/**
+ * Per-creator breakdown row — the "where it's coming from" drill-down behind
+ * each headline tile. One row per creator with an in-window deal frame; each
+ * metric summed / averaged across THAT creator's frames.
+ */
+export type FourWeekCreatorRow = {
+  userId: string;
+  /** Resolved username (MAIN read), or null when unresolved. */
+  username: string | null;
+  /** Σ expectedWager across this creator's in-window frames. */
+  expectedWagerUsd: number;
+  /** Σ actual code-cohort wager across this creator's in-window frames. */
+  actualWagerUsd: number;
+  /** Mean configured conversion rate (bps/100) across this creator's frames with a deal. */
+  avgConversionPct: number;
+  /** Number of in-window deal frames this creator has. */
+  frameCount: number;
+};
+
 export type FourWeekSummary = {
   /** Distinct `creator_user_id` across the in-window frames. */
   activeCreators: number;
@@ -224,6 +246,8 @@ export type FourWeekSummary = {
   avgConversionPct: number;
   /** Count of in-window frames folded into the totals. */
   framesCounted: number;
+  /** Per-creator contributions (the tile drill-down), sorted by expected wager desc. */
+  breakdown: FourWeekCreatorRow[];
   /** True when the backend board walk failed (UI shows a degraded card). */
   backendUnavailable: boolean;
 };
@@ -234,6 +258,7 @@ const ZERO_SUMMARY: FourWeekSummary = {
   actualWagerUsd: 0,
   avgConversionPct: 0,
   framesCounted: 0,
+  breakdown: [],
   backendUnavailable: false,
 };
 
@@ -409,12 +434,72 @@ export async function getFourWeekDealSummary(): Promise<FourWeekSummary> {
     0,
   );
 
+  // Per-creator breakdown (the tile drill-down). Aggregate each creator's
+  // frames, then resolve usernames in one bounded MAIN read (best-effort — a
+  // failure just leaves usernames null and the UI falls back to a short id).
+  type Agg = {
+    expectedWagerUsd: number;
+    actualWagerUsd: number;
+    convSum: number;
+    convCount: number;
+    frameCount: number;
+  };
+  const perCreator = new Map<string, Agg>();
+  for (const f of frames) {
+    const cur =
+      perCreator.get(f.creatorUserId) ?? {
+        expectedWagerUsd: 0,
+        actualWagerUsd: 0,
+        convSum: 0,
+        convCount: 0,
+        frameCount: 0,
+      };
+    cur.expectedWagerUsd += f.expectedWager;
+    cur.actualWagerUsd += wagerMap.get(f.boardId) ?? 0;
+    if (f.conversionPct != null) {
+      cur.convSum += f.conversionPct;
+      cur.convCount += 1;
+    }
+    cur.frameCount += 1;
+    perCreator.set(f.creatorUserId, cur);
+  }
+
+  const creatorIds = [...perCreator.keys()];
+  const nameRes = await safeQuery(
+    async () => {
+      const db = await getDb();
+      const users = await db.user.findMany({
+        where: { id: { in: creatorIds } },
+        select: { id: true, username: true },
+      });
+      return new Map<string, string | null>(
+        users.map((u) => [u.id, u.username ?? null]),
+      );
+    },
+    new Map<string, string | null>(),
+    "creator-hub.four-week.usernames",
+    USERNAME_TIMEOUT_MS,
+  );
+  const nameMap = nameRes.data;
+
+  const breakdown: FourWeekCreatorRow[] = [...perCreator.entries()]
+    .map(([userId, a]) => ({
+      userId,
+      username: nameMap.get(userId) ?? null,
+      expectedWagerUsd: a.expectedWagerUsd,
+      actualWagerUsd: a.actualWagerUsd,
+      avgConversionPct: a.convCount > 0 ? a.convSum / a.convCount : 0,
+      frameCount: a.frameCount,
+    }))
+    .sort((x, y) => y.expectedWagerUsd - x.expectedWagerUsd);
+
   return {
     activeCreators,
     expectedWagerUsd,
     actualWagerUsd,
     avgConversionPct,
     framesCounted: frames.length,
+    breakdown,
     backendUnavailable: false,
   };
 }
