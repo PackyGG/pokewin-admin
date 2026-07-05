@@ -14,26 +14,27 @@ import {
   getDealWagerByDeal,
   type DealWagerWindow,
 } from "../profitability/_queries/frame-wager-by-deal";
+import { getLeaderboardSponsorshipMap } from "../../../(admin)/creators/_queries/leaderboard-sponsorship";
 
 /**
  * Creator Hub — "4 Weeks" summary.
  *
  * A FIXED rolling 28-day window `[now − 28d, now]`. Frame-centric (the owner's
  * model: "a leaderboard frame IS the deal"): every APPROVED affiliate
- * leaderboard whose run window OVERLAPS the 28-day window contributes. That is
- * ended-within-window, currently-live, and spanning frames — anything with
- * `startMs <= now && endMs >= (now − 28d)`. Purely-future (start > now) and
- * fully-past (end < now−28d) frames are excluded.
+ * leaderboard that ENDED within the 28-day window contributes — anything with
+ * `end_date ∈ [now − 28d, now)`. Still-live frames (end ≥ now) belong to the
+ * Active tab and are excluded; fully-past frames (end < now−28d) too. Ended-
+ * only + sponsored-weighted LB (below) = the SAME model as the Past Deals tab,
+ * so this section reconciles with it (owner request 2026-07-05).
  *
- * Per-frame cost is the ACTIVE-tab model (NO daily-fill leg, FULL net
- * leaderboard prize — owner directive 2026-07-05):
+ * Per-frame cost (NO daily-fill leg; sponsored-weighted LB — matches Past Deals):
  *
  *   dealWeeks        = frameWeeks(startMs, endMs)                       (≥ 1)
  *   weeklyCapUsd     = toFiniteNumber(deal.total_withdraw_cap_usd)      (0 uncapped)
  *   capUsd           = weeklyCapUsd × dealWeeks
  *   weeklyTipSponsor = (tip + sponsor) × max(0, fills_allowed)
  *   tipSponsorUsd    = weeklyTipSponsor × dealWeeks
- *   leaderboardUsd   = max(0, net prize − refund)   (FULL net, NOT sponsored-weighted)
+ *   leaderboardUsd   = max(0, net prize − refund) × sponsored% / 100   (house-paid share)
  *   dealCost         = capUsd + leaderboardUsd + tipSponsorUsd          (NO fill leg)
  *   expectedWager    = dealCost / 0.075                                 (house edge)
  *
@@ -296,20 +297,32 @@ const getFourWeekBase = unstable_cache(
     const now = Date.now();
     const windowStart = now - MS_PER_28D;
 
-    // In-window frames: run window OVERLAPS [now−28d, now].
+    // Frames that ENDED within the last 28 days (end_date ∈ [now−28d, now)).
+    // Ended-only + sponsored-weighted LB (below) = the SAME model as the Past
+    // Deals tab, so this section reconciles with it. A still-live frame
+    // (end ≥ now) is excluded — it belongs to the Active tab.
     const inWindow = all.filter((lb) => {
-      const startMs = Date.parse(lb.start_date);
       const endMs = Date.parse(lb.end_date);
-      return (
-        Number.isFinite(startMs) &&
-        Number.isFinite(endMs) &&
-        startMs <= now &&
-        endMs >= windowStart
-      );
+      return Number.isFinite(endMs) && endMs < now && endMs >= windowStart;
     });
 
     if (inWindow.length === 0) {
       return { frames: [], backendUnavailable: false };
+    }
+
+    // Sponsored % per frame (the LB leg's house-share weighting) — resilient:
+    // a lookup blip treats every board as 100% (full net), same as Past Deals.
+    let sponsorship: Map<string, number>;
+    try {
+      sponsorship = await getLeaderboardSponsorshipMap(
+        inWindow.map((lb) => lb.id),
+      );
+    } catch (e) {
+      console.error(
+        "[4w-summary] sponsorship lookup failed (treating all as 100%):",
+        e,
+      );
+      sponsorship = new Map();
     }
 
     // Deal terms live per owner — fetch each frame-owner's deal history once
@@ -349,12 +362,15 @@ const getFourWeekBase = unstable_cache(
         (terms.perStreamTip + terms.perStreamSponsor) * terms.fillsAllowed;
       const tipSponsorUsd = weeklyTipSponsorUsd * dealWeeks;
 
-      // FULL net leaderboard prize (NOT sponsored-weighted) — owner directive
-      // 2026-07-05. Floored at 0 so a fully-refunded board can't go negative.
-      const leaderboardUsd = Math.max(
+      // Sponsored-WEIGHTED leaderboard house cost (net prize × sponsored% / 100)
+      // — the "house actually pays" figure, matching the Past Deals tab so the
+      // two reconcile. Missing annotation → 100% (full net). Floored at 0.
+      const net = Math.max(
         0,
         (Number(lb.total_prize_usd) || 0) - (Number(lb.refund_amount_usd) || 0),
       );
+      const pct = Math.min(100, Math.max(0, sponsorship.get(lb.id) ?? 100));
+      const leaderboardUsd = net * (pct / 100);
 
       const dealCost = capUsd + leaderboardUsd + tipSponsorUsd;
       const expectedWager = dealCost / HOUSE_EDGE;
@@ -373,10 +389,10 @@ const getFourWeekBase = unstable_cache(
 
     return { frames, backendUnavailable: false };
   },
-  // v2: rewritten to use an OWN uncached board walk (no nested unstable_cache)
-  // + tighter timeouts (incident 491822067). Fresh key so a prior cache entry
-  // can't shadow the new compute.
-  ["creator-hub-4week-summary-v2"],
+  // v3: ended-frames-only + sponsored-weighted LB so the tile reconciles with
+  // the Past Deals tab (was v2: own uncached walk + tight timeouts after
+  // incident 491822067). Fresh key so a prior cache entry can't shadow.
+  ["creator-hub-4week-summary-v3"],
   { revalidate: 300, tags: ["creator-hub-4w-summary"] },
 );
 

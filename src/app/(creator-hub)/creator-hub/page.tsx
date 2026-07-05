@@ -202,7 +202,7 @@ async function FourWeekSection() {
           hasBreakdown ? (
             <HubKpiInfoPopover
               title="Active creators · last 28 days"
-              description="Every creator with at least one leaderboard-frame deal overlapping the last 28 days, and how many deal frames each has."
+              description="Every creator with at least one leaderboard-frame deal that ended in the last 28 days, and how many such deal frames each has."
               lines={activeLines}
               footer={{
                 label: "Active creators",
@@ -222,7 +222,7 @@ async function FourWeekSection() {
           hasBreakdown ? (
             <HubKpiInfoPopover
               title="Expected wager · 4 weeks"
-              description="Deal cost ÷ 7.5% house edge, per creator. Deal cost = withdraw cap + full net leaderboard prize + tip/sponsor allowance (scaled across the frame's weeks; no daily-fill leg)."
+              description="Deal cost ÷ 7.5% house edge, per creator. Deal cost = withdraw cap + sponsored-weighted leaderboard house cost + tip/sponsor allowance (scaled across the frame's weeks; no daily-fill leg). Same per-frame model as the Past Deals tab, over deals that ended in the last 28 days."
               lines={expectedLines}
               footer={{
                 label: "Total",
@@ -242,7 +242,7 @@ async function FourWeekSection() {
           hasBreakdown ? (
             <HubKpiInfoPopover
               title="Actual wager · 4 weeks"
-              description="Code-cohort wager driven inside each creator's deal frame(s) over the last 28 days."
+              description="Code-cohort wager driven inside each creator's deal frame(s) that ended in the last 28 days."
               lines={actualLines}
               footer={{
                 label: "Total",
