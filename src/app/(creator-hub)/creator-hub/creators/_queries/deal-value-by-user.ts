@@ -43,9 +43,7 @@ import { getLeaderboard2wkCostByUser } from "../../../../(admin)/creators/_queri
  *                     weekly figure across multi-week leaderboard frames
  *                     (same way cap is `weeklyCap × dealWeeks`).
  *
- * dealValueUsd = capUsd + leaderboardUsd + tipSponsorUsd. There is NO
- *   daily-fill leg — a per-fill fold-in was reverted (owner directive
- *   2026-07-05): it inflated the deal cost model ~7×.
+ * dealValueUsd = capUsd + leaderboardUsd + tipSponsorUsd.
  *
  * All legs are a HOUSE cost ceiling (rose, house-POV). This is a worst-case
  * deal SIZE used to rank the roster — not money already paid.
@@ -73,11 +71,7 @@ export type CreatorDealValue = {
    * roster / compare surfaces use this weekly figure directly.
    */
   tipSponsorUsd: number;
-  /**
-   * `capUsd + leaderboardUsd + tipSponsorUsd` — the full deal value (rose).
-   * No daily-fill leg (a per-fill fold-in was reverted — it inflated the
-   * cost model ~7×; owner directive 2026-07-05).
-   */
+  /** capUsd + leaderboardUsd + tipSponsorUsd — the full deal value (rose). */
   dealValueUsd: number;
 };
 
@@ -87,13 +81,8 @@ function toFiniteNumber(value: string | number | null | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/**
- * Per-deal cap + tip/sponsor allowance legs, serializable for the cache.
- */
-type DealCapTip = {
-  capUsd: number;
-  tipSponsorUsd: number;
-};
+/** Per-deal cap + tip/sponsor allowance legs, serializable for the cache. */
+type DealCapTip = { capUsd: number; tipSponsorUsd: number };
 
 /**
  * The backend `getDeal` fan-out behind {@link getDealValueByUser}, wrapped
@@ -149,11 +138,10 @@ const cachedDealCapTipEntries = (deals: { userId: string; dealId: string }[]) =>
       });
       return entries;
     },
-    // v4 (2026-07-05): the daily-fill fold-in (v3's `perFillUsd` +
-    // `fillsAllowed`) was reverted — it inflated the deal cost model ~7×.
-    // Bump the key so cached v3 entries (carrying the fill legs) don't
-    // shadow the reverted shape.
-    ["creators-deal-cap-tip-v4", ...deals.map((d) => `${d.userId}:${d.dealId}`)],
+    // v2 (2026-06-23): tipSponsorUsd now multiplies by `fills_allowed` —
+    // bump key so cached v1 entries (single-stream allowance) don't get
+    // served stale while the new formula takes over.
+    ["creators-deal-cap-tip-v2", ...deals.map((d) => `${d.userId}:${d.dealId}`)],
     { revalidate: 300, tags: ["creators-deal-cap"] },
   );
 
@@ -220,18 +208,11 @@ export async function getDealValueByUser(
     const capUsd = capByUser.get(userId) ?? 0;
     const tipSponsorUsd = tipSponsorByUser.get(userId) ?? 0;
     const leaderboardUsd = lbByUser.get(userId)?.costUsd ?? 0;
-    // No daily-fill leg — a per-fill fold-in was reverted (it inflated the
-    // cost model ~7×; owner directive 2026-07-05).
     const dealValueUsd = capUsd + leaderboardUsd + tipSponsorUsd;
     // Skip a pure-zero entry so the caller's "—" fallback stays meaningful
     // (a creator with no cap, no LB, no allowance contributes nothing).
     if (dealValueUsd <= 0) continue;
-    result.set(userId, {
-      capUsd,
-      leaderboardUsd,
-      tipSponsorUsd,
-      dealValueUsd,
-    });
+    result.set(userId, { capUsd, leaderboardUsd, tipSponsorUsd, dealValueUsd });
   }
 
   return result;

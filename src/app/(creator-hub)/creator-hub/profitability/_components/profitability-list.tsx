@@ -135,8 +135,6 @@ function ProfitabilityRow({ row }: { row: CreatorProfitabilityRow }) {
           row.weeklyTipSponsorUsd,
         )}/wk × ${row.dealWeeks})`
       : `Tip+Sponsor ${formatCurrency(row.tipSponsorUsd)}`;
-  // LB leg is the board's FULL net leaderboard prize (`prize − refund`).
-  // No daily-fill leg (removed — it inflated deal cost ~7×; owner 2026-07-05).
   const breakdown = `${capLabel} · LB ${formatCurrency(
     row.leaderboardUsd,
   )} · ${tipLabel}`;

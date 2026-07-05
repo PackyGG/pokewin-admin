@@ -14,8 +14,8 @@ import type { PastDealRow } from "../_queries/past-deals";
  * Per-FRAME past-deal list. Same row anatomy as the Active view's
  * `ProfitabilityList` — one row per ended leaderboard frame (= past deal
  * under the "leaderboard frame IS the deal" model). The cost breakdown is
- * cap (× frame weeks) · LB (full net prize) · tip+sponsor (× frame weeks).
- * House-POV colours: deal cost = rose; actual wager = emerald;
+ * fill (× frame days) · cap (× frame weeks) · LB · tip+sponsor (× frame
+ * weeks). House-POV colours: deal cost = rose; actual wager = emerald;
  * conversion ≥ 1× = emerald.
  *
  * CLIENT COMPONENT. Two reasons it must be `"use client"`:
@@ -91,9 +91,8 @@ function endedAgoLabel(row: PastDealRow): string {
 }
 
 /**
- * Cap · LB · tip+sponsor breakdown. The LB leg is the board's FULL net
- * leaderboard prize (`prize − refund`). No daily-fill leg (removed — it
- * inflated deal cost ~7×; owner directive 2026-07-05).
+ * Cap · LB · tip+sponsor breakdown — mirrors the Active view's deal cost
+ * (`cap + leaderboard + tips`, no daily-fill leg).
  */
 function costBreakdown(row: PastDealRow): string {
   const capLabel =
