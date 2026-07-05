@@ -124,7 +124,7 @@ const PAST_DEALS_SURFACE_KEY = "creator_hub_profitability_past_deals";
  * (weekly / bi-weekly), so the duration is rounded to the nearest week and
  * floored at 1. Mirrors `frameWeeks` in `deal-profitability.ts`.
  */
-function frameWeeks(startMs: number, endMs: number): number {
+export function frameWeeks(startMs: number, endMs: number): number {
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
     return 1;
   }
@@ -143,7 +143,7 @@ function frameDays(startMs: number, endMs: number): number {
   return Math.max(1, Math.round((endMs - startMs) / MS_PER_DAY));
 }
 
-function toFiniteNumber(value: string | number | null | undefined): number {
+export function toFiniteNumber(value: string | number | null | undefined): number {
   if (value == null) return 0;
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -279,7 +279,7 @@ const ZERO_TERMS: DealTerms = {
  * frame's cadence (the fill/cap/tip legs are then scaled over the FULL frame
  * days/weeks by the caller). Returns null when no deal overlaps the frame.
  */
-function bestOverlappingDeal(
+export function bestOverlappingDeal(
   frameStartMs: number,
   frameEndMs: number,
   deals: CreatorDealResponse[],
@@ -300,7 +300,7 @@ function bestOverlappingDeal(
   return best;
 }
 
-function termsFromDeal(deal: CreatorDealResponse | null): DealTerms {
+export function termsFromDeal(deal: CreatorDealResponse | null): DealTerms {
   if (!deal) return ZERO_TERMS;
   return {
     weeklyCapUsd: toFiniteNumber(deal.total_withdraw_cap_usd),
@@ -337,7 +337,7 @@ async function walkAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
 }
 
 /** Fetch one creator's FULL deal history, paging the backend. */
-async function fetchAllDealsForCreator(
+export async function fetchAllDealsForCreator(
   userId: string,
 ): Promise<CreatorDealResponse[]> {
   const firstPage = await creatorsApi.listDeals(userId, {
@@ -480,7 +480,14 @@ const getEndedDealsBase = unstable_cache(
     ended.sort((a, b) => b.frameEndMs - a.frameEndMs);
     return { rows: ended, backendUnavailable: false };
   },
-  ["profitability-past-deals-base-v4"],
+  // v6: bumped past v5 — a prior restore accidentally reused the "v4" key
+  // that an EARLIER deployment (the frame-anchor fix) had already written
+  // under. Vercel's data cache persists unstable_cache entries ACROSS
+  // deployments, so reusing an old key risks serving that earlier
+  // deployment's stale snapshot instead of the current compute. Fresh
+  // namespace guarantees this build's rows are never shadowed by a
+  // previous version's cached output.
+  ["profitability-past-deals-base-v6"],
   { revalidate: 300, tags: ["profitability-past-deals"] },
 );
 
