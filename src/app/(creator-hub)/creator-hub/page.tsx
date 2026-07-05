@@ -183,10 +183,10 @@ async function FourWeekSection() {
       tone: "emerald" as const,
     }));
   const conversionLines = [...data.breakdown]
-    .sort((a, b) => b.avgConversionPct - a.avgConversionPct)
+    .sort((a, b) => b.conversionRatio - a.conversionRatio)
     .map((r) => ({
       label: nameOf(r),
-      value: `${r.avgConversionPct.toFixed(2)}%`,
+      value: `${r.conversionRatio.toFixed(2)}x`,
       tone: "foreground" as const,
     }));
 
@@ -258,17 +258,17 @@ async function FourWeekSection() {
         label="Avg Conversion"
         icon={Percent}
         accent="blue"
-        value={`${data.avgConversionPct.toFixed(2)}%`}
-        sub="Configured deal rate · avg"
+        value={`${data.avgConversionRatio.toFixed(2)}x`}
+        sub="Actual ÷ expected · avg"
         info={
           hasBreakdown ? (
             <HubKpiInfoPopover
-              title="Avg conversion · 4 weeks"
-              description="Each creator's average configured deal conversion rate (conversion_rate_bps). The headline is the deal-weighted mean across all in-window deals, so it can differ slightly from a plain average of these rows."
+              title="Conversion · 4 weeks"
+              description="Actual wager ÷ expected wager per creator — the same 'Conversion' as the Profitability tab (≥ 1.00× = the deals paid for themselves). Headline is the plain average across creators with an expected wager."
               lines={conversionLines}
               footer={{
                 label: "Average",
-                value: `${data.avgConversionPct.toFixed(2)}%`,
+                value: `${data.avgConversionRatio.toFixed(2)}x`,
               }}
             />
           ) : undefined

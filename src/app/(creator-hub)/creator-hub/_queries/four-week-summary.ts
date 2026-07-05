@@ -42,12 +42,12 @@ import { getLeaderboardSponsorshipMap } from "../../../(admin)/creators/_queries
  * (cap / tip = 0) and NO conversion sample.
  *
  * The FOUR tile values:
- *   • activeCreators   = distinct `creator_user_id` across in-window frames.
- *   • expectedWagerUsd = Σ expectedWager over in-window frames.
- *   • actualWagerUsd   = Σ getDealWagerByDeal over in-window frames.
- *   • avgConversionPct = mean over frames WITH an overlapping deal of
- *                        `deal.conversion_rate_bps / 100` (configured rate,
- *                        NOT actual/expected).
+ *   • activeCreators     = distinct `creator_user_id` across in-window frames.
+ *   • expectedWagerUsd   = Σ expectedWager over in-window frames.
+ *   • actualWagerUsd     = Σ getDealWagerByDeal over in-window frames.
+ *   • avgConversionRatio = mean over creators (expected > 0) of
+ *                          actualWager ÷ expectedWager — the same "Conversion"
+ *                          as the Profitability tab (NOT the configured rate).
  *
  * RESILIENCE (hardened after the 2026-07-05 incident, digest 491822067):
  *   • The base compute owns its OWN uncached approved-board walk (mirrors
@@ -230,8 +230,8 @@ export type FourWeekCreatorRow = {
   expectedWagerUsd: number;
   /** Σ actual code-cohort wager across this creator's in-window frames. */
   actualWagerUsd: number;
-  /** Mean configured conversion rate (bps/100) across this creator's frames with a deal. */
-  avgConversionPct: number;
+  /** Conversion = actualWagerUsd ÷ expectedWagerUsd (0 when no expected wager). */
+  conversionRatio: number;
   /** Number of in-window deal frames this creator has. */
   frameCount: number;
 };
@@ -243,8 +243,8 @@ export type FourWeekSummary = {
   expectedWagerUsd: number;
   /** Σ actual code-cohort wager inside the in-window frame windows. */
   actualWagerUsd: number;
-  /** Mean configured per-deal conversion rate (bps/100) over frames WITH a deal. */
-  avgConversionPct: number;
+  /** Mean conversion (actualWager ÷ expectedWager) over creators with expected wager > 0. */
+  avgConversionRatio: number;
   /** Count of in-window frames folded into the totals. */
   framesCounted: number;
   /** Per-creator contributions (the tile drill-down), sorted by expected wager desc. */
@@ -257,7 +257,7 @@ const ZERO_SUMMARY: FourWeekSummary = {
   activeCreators: 0,
   expectedWagerUsd: 0,
   actualWagerUsd: 0,
-  avgConversionPct: 0,
+  avgConversionRatio: 0,
   framesCounted: 0,
   breakdown: [],
   backendUnavailable: false,
@@ -268,7 +268,6 @@ type FourWeekBaseFrame = {
   boardId: string;
   creatorUserId: string;
   expectedWager: number;
-  conversionPct: number | null;
   startIso: string;
   endIso: string;
 };
@@ -374,14 +373,11 @@ const getFourWeekBase = unstable_cache(
 
       const dealCost = capUsd + leaderboardUsd + tipSponsorUsd;
       const expectedWager = dealCost / HOUSE_EDGE;
-      const conversionPct =
-        deal != null ? toFiniteNumber(deal.conversion_rate_bps) / 100 : null;
 
       frames.push({
         boardId: lb.id,
         creatorUserId: lb.creator_user_id,
         expectedWager,
-        conversionPct,
         startIso: new Date(startMs).toISOString(),
         endIso: new Date(Math.min(endMs, now)).toISOString(),
       });
@@ -389,10 +385,12 @@ const getFourWeekBase = unstable_cache(
 
     return { frames, backendUnavailable: false };
   },
-  // v3: ended-frames-only + sponsored-weighted LB so the tile reconciles with
-  // the Past Deals tab (was v2: own uncached walk + tight timeouts after
-  // incident 491822067). Fresh key so a prior cache entry can't shadow.
-  ["creator-hub-4week-summary-v3"],
+  // v4: conversion is now actualWager/expectedWager (was configured
+  // conversion_rate_bps), so the base frame no longer carries conversionPct.
+  // (v3 = ended-only + sponsored-weighted LB for Past Deals parity; v2 = the
+  // own-uncached-walk + tight-timeout incident fix.) Fresh key so a prior
+  // cache entry can't shadow the new shape.
+  ["creator-hub-4week-summary-v4"],
   { revalidate: 300, tags: ["creator-hub-4w-summary"] },
 );
 
@@ -421,13 +419,6 @@ export async function getFourWeekDealSummary(): Promise<FourWeekSummary> {
 
   const activeCreators = new Set(frames.map((f) => f.creatorUserId)).size;
   const expectedWagerUsd = frames.reduce((s, f) => s + f.expectedWager, 0);
-  const conversionSamples = frames
-    .map((f) => f.conversionPct)
-    .filter((p): p is number => p != null);
-  const avgConversionPct =
-    conversionSamples.length > 0
-      ? conversionSamples.reduce((s, p) => s + p, 0) / conversionSamples.length
-      : 0;
 
   // Actual wager (HEAVY MAIN read) — one batched pass over all in-window frame
   // windows, keyed by board id. Best-effort: a slow/failed scan degrades this
@@ -456,8 +447,6 @@ export async function getFourWeekDealSummary(): Promise<FourWeekSummary> {
   type Agg = {
     expectedWagerUsd: number;
     actualWagerUsd: number;
-    convSum: number;
-    convCount: number;
     frameCount: number;
   };
   const perCreator = new Map<string, Agg>();
@@ -466,16 +455,10 @@ export async function getFourWeekDealSummary(): Promise<FourWeekSummary> {
       perCreator.get(f.creatorUserId) ?? {
         expectedWagerUsd: 0,
         actualWagerUsd: 0,
-        convSum: 0,
-        convCount: 0,
         frameCount: 0,
       };
     cur.expectedWagerUsd += f.expectedWager;
     cur.actualWagerUsd += wagerMap.get(f.boardId) ?? 0;
-    if (f.conversionPct != null) {
-      cur.convSum += f.conversionPct;
-      cur.convCount += 1;
-    }
     cur.frameCount += 1;
     perCreator.set(f.creatorUserId, cur);
   }
@@ -504,16 +487,26 @@ export async function getFourWeekDealSummary(): Promise<FourWeekSummary> {
       username: nameMap.get(userId) ?? null,
       expectedWagerUsd: a.expectedWagerUsd,
       actualWagerUsd: a.actualWagerUsd,
-      avgConversionPct: a.convCount > 0 ? a.convSum / a.convCount : 0,
+      conversionRatio:
+        a.expectedWagerUsd > 0 ? a.actualWagerUsd / a.expectedWagerUsd : 0,
       frameCount: a.frameCount,
     }))
     .sort((x, y) => y.expectedWagerUsd - x.expectedWagerUsd);
+
+  // Headline conversion = mean over creators with expected wager > 0 of their
+  // actual÷expected ratio (same "Conversion" metric as the Profitability tab),
+  // so it equals a plain average of the visible breakdown rows.
+  const converting = breakdown.filter((r) => r.expectedWagerUsd > 0);
+  const avgConversionRatio =
+    converting.length > 0
+      ? converting.reduce((s, r) => s + r.conversionRatio, 0) / converting.length
+      : 0;
 
   return {
     activeCreators,
     expectedWagerUsd,
     actualWagerUsd,
-    avgConversionPct,
+    avgConversionRatio,
     framesCounted: frames.length,
     breakdown,
     backendUnavailable: false,
