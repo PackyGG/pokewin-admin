@@ -76,6 +76,8 @@ import {
   SOLVER_VERIFIED_BADGE,
   POOL_EDIT_PRIMARY_HEADING,
   POOL_EDIT_MORE_FIXES,
+  UNTAG_CTA_LABEL,
+  retagCtaLabel,
   addCardCtaLabel,
   clearAllPinsLabel,
   dirtyOddsBanner,
@@ -234,9 +236,11 @@ function Banner({
 function GuidanceSuggestions({
   guidance,
   onAddCardRange,
+  onChangeTag,
 }: {
   guidance: TagGuidance;
   onAddCardRange: (range: { min: number; max: number }) => void;
+  onChangeTag: (override: StagedTagOverride | undefined) => void;
 }) {
   const rows = guidance.suggestions;
   if (rows.length === 0) return null;
@@ -251,6 +255,12 @@ function GuidanceSuggestions({
             s.kind === "add-card" &&
             typeof s.params.valueMin === "number" &&
             typeof s.params.valueMax === "number";
+          // Retag / untag suggestions carry a machine `action` on params so the
+          // guidance row can APPLY the change through the existing tag control
+          // (`onChangeTag` re-plans). Old suggestions without `action` render no
+          // button (guarded on the string type).
+          const tagAction =
+            typeof s.params.action === "string" ? s.params.action : null;
           return (
             <li key={`${s.kind}-${i}`} className="space-y-1">
               <p className="text-xs">
@@ -289,6 +299,38 @@ function GuidanceSuggestions({
                   })}
                 </Button>
               )}
+              {tagAction === "untag" && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onChangeTag({ kind: "untag" })}
+                >
+                  <PinOff className="size-3.5" />
+                  {UNTAG_CTA_LABEL}
+                </Button>
+              )}
+              {tagAction === "retag" && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    onChangeTag({
+                      kind: "tag",
+                      tag: s.params.tierTag as
+                        | "pct1"
+                        | "pct5"
+                        | "pct10"
+                        | "fifty50",
+                      hitRate: Number(s.params.tierHitRate),
+                    })
+                  }
+                >
+                  <Tag className="size-3.5" />
+                  {retagCtaLabel(String(s.params.tierDbLabel))}
+                </Button>
+              )}
             </li>
           );
         })}
@@ -309,11 +351,13 @@ function PoolEditPrimary({
   guidance,
   onStagePoolEdit,
   onAddCardRange,
+  onChangeTag,
 }: {
   poolEdit: NonNullable<PackTunePlan["poolEditPlan"]>;
   guidance: TagGuidance | null;
   onStagePoolEdit: () => void;
   onAddCardRange: (range: { min: number; max: number }) => void;
+  onChangeTag: (override: StagedTagOverride | undefined) => void;
 }) {
   const hasAdd = poolEdit.addCard !== null;
   return (
@@ -348,6 +392,7 @@ function PoolEditPrimary({
             <GuidanceSuggestions
               guidance={guidance}
               onAddCardRange={onAddCardRange}
+              onChangeTag={onChangeTag}
             />
           </div>
         </details>
@@ -628,6 +673,7 @@ export function PlanPanel({
             guidance={plan.guidance}
             onStagePoolEdit={onStagePoolEdit}
             onAddCardRange={onAddCardRange}
+            onChangeTag={onChangeTag}
           />
         </Banner>
       );
@@ -648,6 +694,7 @@ export function PlanPanel({
             <GuidanceSuggestions
               guidance={plan.guidance!}
               onAddCardRange={onAddCardRange}
+              onChangeTag={onChangeTag}
             />
           ) : (
             <>
@@ -683,6 +730,7 @@ export function PlanPanel({
             <GuidanceSuggestions
               guidance={plan.guidance}
               onAddCardRange={onAddCardRange}
+              onChangeTag={onChangeTag}
             />
           )}
         </Banner>
@@ -706,6 +754,7 @@ export function PlanPanel({
             <GuidanceSuggestions
               guidance={plan.guidance!}
               onAddCardRange={onAddCardRange}
+              onChangeTag={onChangeTag}
             />
           )}
         </Banner>
@@ -737,6 +786,7 @@ export function PlanPanel({
             <GuidanceSuggestions
               guidance={plan.guidance}
               onAddCardRange={onAddCardRange}
+              onChangeTag={onChangeTag}
             />
           )}
         </Banner>
@@ -754,6 +804,7 @@ export function PlanPanel({
             <GuidanceSuggestions
               guidance={plan.guidance}
               onAddCardRange={onAddCardRange}
+              onChangeTag={onChangeTag}
             />
           )}
         </Banner>
@@ -774,6 +825,7 @@ export function PlanPanel({
           <GuidanceSuggestions
             guidance={plan.guidance}
             onAddCardRange={onAddCardRange}
+            onChangeTag={onChangeTag}
           />
         </Banner>
       );
@@ -1013,7 +1065,7 @@ export function PlanPanel({
           reports live truth (live win-rate vs the pack's actual live tag). */}
       {row.offTagLive && row.tag !== null && (
         <Banner tone="amber" icon={Tag}>
-          <p>{offTagStrip(row.winRate, row.tag)}</p>
+          <p>{offTagStrip(row.winRate, row.tag, plan?.feasible === true)}</p>
         </Banner>
       )}
 

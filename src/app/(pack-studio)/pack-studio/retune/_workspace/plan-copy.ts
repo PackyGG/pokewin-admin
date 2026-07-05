@@ -116,6 +116,8 @@ export function suggestionKindLabel(kind: string): string {
       return "Loosen floor winner";
     case "retag":
       return "Retag";
+    case "untag":
+      return "Untag";
     case "remove-dead-card":
       return "Dead card";
     case "accept-as-is":
@@ -129,6 +131,14 @@ export function suggestionKindLabel(kind: string): string {
 
 /** Badge shown when the top suggestion round-tripped the real solver. */
 export const SOLVER_VERIFIED_BADGE = "solver-verified";
+
+/** CTA on an UNTAG guidance suggestion — clears the pack's lottery tag. */
+export const UNTAG_CTA_LABEL = "Untag this pack";
+
+/** CTA on a RETAG guidance suggestion — sets the nearest valid lottery tier. */
+export function retagCtaLabel(dbLabel: string): string {
+  return `Retag to ${dbLabel}`;
+}
 
 // ─── Untagged degenerate loss ladder (the owner's "Captive" case) ────────────
 
@@ -363,9 +373,24 @@ export const STALE_BANNER = "Numbers changed — re-planning…";
 export const PLAN_FAILED_BANNER =
   "Planning took too long or failed. Nothing was written.";
 
-/** Independent amber strip ABOVE the banner slot whenever the live pool is off-tag. */
-export function offTagStrip(liveWinRate: number, tag: number): string {
-  return `Live pool pays ${(liveWinRate * 100).toFixed(2)}% winners but the tag says ${pctBody(tag)}%. Pushing this plan fixes it.`;
+/**
+ * Independent amber strip ABOVE the banner slot whenever the live pool is off-tag.
+ *
+ * `feasible` gates the tail (Pattern 9a — never promise a fix that can't happen):
+ * a FEASIBLE plan really does re-tune the pool to the tag on push, so keep the
+ * "Pushing this plan fixes it." tail. An INFEASIBLE plan (or none yet) can't be
+ * tuned to the tag at all — do NOT claim pushing fixes it; point at retag/untag
+ * (the clickable action below re-plans via `onChangeTag`).
+ */
+export function offTagStrip(
+  liveWinRate: number,
+  tag: number,
+  feasible: boolean,
+): string {
+  const head = `Live pool pays ${(liveWinRate * 100).toFixed(2)}% winners but the tag says ${pctBody(tag)}%.`;
+  return feasible
+    ? `${head} Pushing this plan fixes it.`
+    : `${head} This pool can't be tuned to ${pctBody(tag)}% — retag or untag it to its real rate below.`;
 }
 
 // ─── Failure-matrix copy (§7) ───────────────────────────────────────────────

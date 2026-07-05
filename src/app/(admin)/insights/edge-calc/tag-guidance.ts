@@ -51,6 +51,7 @@ import {
 } from "./risk";
 import {
   DEFAULT_EDGE_CURVE,
+  SELECTABLE_TAG_HIT_RATES,
   TAGGED_WRITE_WINRATE_TOLERANCE,
   autoMaxWinCap,
   autoTargetEdge,
@@ -68,6 +69,7 @@ export type TuneSuggestionKind =
   | "loosen-cheapest-winner"
   | "repair-monotone"
   | "retag"
+  | "untag"
   | "remove-dead-card"
   | "accept-as-is"
   | "no-fix-under-constraints";
@@ -81,7 +83,8 @@ export type TuneSuggestion = {
    *   edge-bump:       { edgeTarget }
    *   raise-cap:       { maxWinCap }
    *   repair-monotone: { cardId?, vsCardId?, cardValue, vsCardValue, maxOddsPct }
-   *   retag:           { liveRate, proposedTag }
+   *   retag:           { action:"retag", liveRate, proposedTag, tierHitRate, tierTag, tierDbLabel }
+   *   untag:           { action:"untag", liveRate }
    *   remove-dead-card:{ cardId?, cardValue }
    */
   params: Record<string, number | string>;
@@ -334,6 +337,7 @@ const SUGGESTION_RANK: Record<TuneSuggestionKind, number> = {
   "repair-monotone": 4,
   "loosen-cheapest-winner": 5,
   retag: 6,
+  untag: 7,
   "remove-dead-card": 8,
   "accept-as-is": 9,
   "no-fix-under-constraints": 10,
@@ -753,7 +757,18 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
     }
   }
 
-  // ── 9. Retag to the live rate (last — owner identity decision) ────────────
+  // ── 9. Retag to the nearest lottery tier, else UNTAG (owner identity decision) ─
+  //
+  // The tag control can ONLY write a real lottery tier (pct1/pct5/pct10/fifty50 —
+  // hitRates 0.01/0.05/0.10/0.50). The live win-rate is NOT itself a valid tag: a
+  // pool paying e.g. 30% has NO tier to retag to (there is no %30 tag). So:
+  //   • liveRate within ±1pp of a tier AND the engine accepts at that TIER →
+  //     RETAG to that tier (proof rebuilt at the tier's hitRate, honest for the
+  //     tier — never for the raw liveRate).
+  //   • otherwise (no tier within ±1pp, or the nearest tier doesn't accept) →
+  //     UNTAG: the pool isn't a lottery at its real rate; it plans as a normal
+  //     pack. An untag is an identity decision (feasibleAfter:false is honest —
+  //     it's not a tag-solve), so it won't be picked as the solver-verified top.
   if (
     input.liveWinRate != null &&
     Number.isFinite(input.liveWinRate) &&
@@ -763,23 +778,76 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
   ) {
     const liveRate = input.liveWinRate;
     const nmSeed = Math.max(0, input.liveNearMiss ?? 0);
-    const capPrime = cfg ? autoMaxWinCap(price, cfg, liveRate) : input.maxWinCap;
-    const m2 = buildModel({
-      cards: input.cards,
-      currentWeights: input.currentWeights,
-      price,
-      cap: capPrime,
-      tag: liveRate,
-      nearMissMin: nmSeed,
-    });
-    const eStarPrime = targetEdgeAt(price, capPrime, poolTopAt(price));
-    const evTPrime = price * (1 - eStarPrime);
-    if (engineAccepts(m2, evTPrime, eStarPrime)) {
+
+    // Nearest selectable tier within ±1pp (±0.01) of the live rate.
+    const TIER_TOL = 0.01;
+    let nearestTier: (typeof SELECTABLE_TAG_HIT_RATES)[number] | null = null;
+    let nearestDist = Infinity;
+    for (const t of SELECTABLE_TAG_HIT_RATES) {
+      const dist = Math.abs(liveRate - t.hitRate);
+      if (dist <= TIER_TOL + 1e-9 && dist < nearestDist) {
+        nearestDist = dist;
+        nearestTier = t;
+      }
+    }
+
+    let emittedRetag = false;
+    if (nearestTier) {
+      // Rebuild the proof at the TIER's hitRate (not the raw liveRate) so
+      // feasibleAfter is honest for what the retag actually writes.
+      const tierRate = nearestTier.hitRate;
+      const capPrime = cfg ? autoMaxWinCap(price, cfg, tierRate) : input.maxWinCap;
+      const m2 = buildModel({
+        cards: input.cards,
+        currentWeights: input.currentWeights,
+        price,
+        cap: capPrime,
+        tag: tierRate,
+        nearMissMin: nmSeed,
+      });
+      const eStarPrime = targetEdgeAt(price, capPrime, poolTopAt(price));
+      const evTPrime = price * (1 - eStarPrime);
+      if (engineAccepts(m2, evTPrime, eStarPrime)) {
+        suggestions.push({
+          kind: "retag",
+          params: {
+            action: "retag",
+            liveRate,
+            proposedTag: tierRate,
+            tierHitRate: tierRate,
+            tierTag: nearestTier.tag,
+            tierDbLabel: nearestTier.dbLabel,
+          },
+          humanCopy: `This pool actually pays ${pp(liveRate)}% winners; the closest lottery tier is ${nearestTier.dbLabel}. Retag it to ${nearestTier.dbLabel} and it plans at that rate${nmSeed > 0.005 ? ` (and carries a real ${pp(nmSeed)}% near-miss band)` : ""} — the tag should describe the pool, not fight it.`,
+          proof: proofOf(m2, evTPrime, eStarPrime),
+        });
+        emittedRetag = true;
+      }
+    }
+
+    if (!emittedRetag) {
+      // No tier within ±1pp, or the nearest tier doesn't engine-accept →
+      // this pool isn't a lottery at its real rate. Untag it.
+      const capPrime = cfg ? autoMaxWinCap(price, cfg, liveRate) : input.maxWinCap;
+      const m2 = buildModel({
+        cards: input.cards,
+        currentWeights: input.currentWeights,
+        price,
+        cap: capPrime,
+        tag: liveRate,
+        nearMissMin: nmSeed,
+      });
       suggestions.push({
-        kind: "retag",
-        params: { liveRate, proposedTag: liveRate },
-        humanCopy: `This pool actually pays ${pp(liveRate)}% winners, not the tagged ${pp(tag)}%${nmSeed > 0.005 ? ` (and carries a real ${pp(nmSeed)}% near-miss band)` : ""}. Retag it to ${pp(liveRate)}% and it solves exactly at its real rate — the tag should describe the pool, not fight it.`,
-        proof: proofOf(m2, evTPrime, eStarPrime),
+        kind: "untag",
+        params: { action: "untag", liveRate },
+        humanCopy: `This pool pays ${pp(liveRate)}% winners — that's not one of the lottery tiers (%1 / %5 / %10 / 50-50), so it isn't a lottery. Untag it and it plans as a normal pack at its real rate.`,
+        proof: {
+          // An untag is an identity decision, not a tag-solve — feasibleAfter is
+          // honestly false (it won't be picked as the solver-verified top).
+          evMinAfter: m2.evMin,
+          evMaxAfter: m2.evMax,
+          feasibleAfter: false,
+        },
       });
     }
   }

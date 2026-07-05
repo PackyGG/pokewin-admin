@@ -63,6 +63,7 @@ import {
   parsePackHitRate,
   resolveIntendedHitRate,
   resolveIntendedHitRateDetailed,
+  SELECTABLE_TAG_HIT_RATES,
   DEFAULT_EDGE_CURVE,
 } from "../_lib/auto-targets";
 import {
@@ -599,7 +600,14 @@ check("suggestion honesty: every ranked suggestion is proven; infeasible ⇒ nev
   for (const sc of scenarios) {
     const g = computeTagGuidance(sc);
     for (const s of g.suggestions) {
-      if (s.kind === "remove-dead-card" || s.kind === "no-fix-under-constraints") continue;
+      // Informational entries carry an honest (possibly false) verdict: dead
+      // cards, no-fix, and UNTAG (an identity decision, not a tag-solve).
+      if (
+        s.kind === "remove-dead-card" ||
+        s.kind === "no-fix-under-constraints" ||
+        s.kind === "untag"
+      )
+        continue;
       assert(
         s.proof.feasibleAfter === true,
         `ranked suggestion ${s.kind} must be proven (feasibleAfter)`,
@@ -609,6 +617,84 @@ check("suggestion honesty: every ranked suggestion is proven; infeasible ⇒ nev
       assert(g.suggestions.length >= 1, "infeasible verdicts always carry ≥ 1 entry");
     }
   }
+});
+
+// ── 10b. Retag targets a REAL tier; a non-tier live rate → UNTAG ─────────
+// The tag control can only write a real lottery tier (pct1/pct5/pct10/fifty50).
+// The live win-rate is NOT itself a valid tag: a %10-tagged pool paying 30% has
+// NO tier to retag to (there is no %30 tag) → it must UNTAG. Only a ~tier live
+// rate (within ±1pp) that the engine accepts at that tier retags. This pins the
+// fix for the guidance bug that used the raw live rate as a proposed tag.
+check("retag targets a real tier; a non-tier live rate (30%) → untag, never a %30 tag", () => {
+  // Tier-matching LOGIC directly: 0.50 is within ±1pp of the fifty50 tier;
+  // 0.30 matches NO selectable tier.
+  const TIER_TOL = 0.01;
+  const nearestTier = (rate: number) =>
+    SELECTABLE_TAG_HIT_RATES.filter(
+      (t) => Math.abs(rate - t.hitRate) <= TIER_TOL + 1e-9,
+    ).sort(
+      (a, b) => Math.abs(rate - a.hitRate) - Math.abs(rate - b.hitRate),
+    )[0] ?? null;
+  assert(nearestTier(0.5)?.tag === "fifty50", "0.50 is within ±1pp of the fifty50 tier");
+  assert(nearestTier(0.3) === null, "0.30 matches NO selectable lottery tier");
+
+  // END-TO-END: a %10-tagged pool paying 30% (infeasible at 0.10) → UNTAG.
+  // Divine-Order-shaped: a wall of mid-value "winners" forces a ~30% live rate,
+  // no tier within ±1pp of 0.30.
+  const gUntag = computeTagGuidance({
+    cards: [
+      { value: 30 }, { value: 28 }, { value: 26 }, { value: 24 }, { value: 22 },
+      { value: 0.4 },
+    ],
+    currentWeights: [1000, 1000, 1000, 1000, 1000, 5000],
+    price: 20,
+    targetEdge: 0.11,
+    tag: 0.1,
+    nearMissMin: 0,
+    maxWinCap: 4600,
+    cfg: CFG,
+    liveWinRate: 0.3,
+    liveNearMiss: 0,
+  });
+  assert(!gUntag.feasibility.feasible, "the 30%-on-%10 pool is infeasible");
+  const untag = gUntag.suggestions.find((s) => s.params.action === "untag");
+  assert(untag !== undefined && untag.kind === "untag", "a non-tier live rate emits an UNTAG suggestion");
+  assert(
+    !gUntag.suggestions.some((s) => s.params.action === "retag"),
+    "no RETAG is emitted for a non-tier (30%) live rate",
+  );
+  assert(
+    !gUntag.suggestions.some((s) => s.params.proposedTag === 0.3),
+    "NO suggestion proposes a 0.30 tag (there is no %30 tier)",
+  );
+  // The untag is honestly informational (identity decision, not a tag-solve).
+  assert(untag.proof.feasibleAfter === false, "untag carries an honest feasibleAfter:false");
+
+  // ~TIER live rate (50%) on a pool infeasible at its 0.10 tag but engine-
+  // accepts at 50% → RETAG to the fifty50 tier (a set-tier action, not untag).
+  const gRetag = computeTagGuidance({
+    cards: [{ value: 22 }, { value: 14 }, { value: 3 }, { value: 0.05 }],
+    currentWeights: [3000, 3000, 2000, 2000],
+    price: 10,
+    targetEdge: 0.11,
+    tag: 0.1,
+    nearMissMin: 0,
+    maxWinCap: 2300,
+    cfg: CFG,
+    liveWinRate: 0.5,
+    liveNearMiss: 0,
+  });
+  assert(!gRetag.feasibility.feasible, "the 50%-on-%10 pool is infeasible at its current tag");
+  const retag = gRetag.suggestions.find((s) => s.params.action === "retag");
+  assert(retag !== undefined && retag.kind === "retag", "a ~tier live rate emits a RETAG suggestion");
+  assert(retag.params.tierHitRate === 0.5, "the retag proposes the fifty50 tier (hitRate 0.5)");
+  assert(retag.params.tierTag === "fifty50", "the retag carries the fifty50 enum tag name");
+  assert(retag.params.proposedTag === 0.5, "proposedTag is the TIER rate (0.5), not the raw live rate");
+  assert(retag.proof.feasibleAfter === true, "the retag proof is honest at the TIER rate (engine-accepts)");
+  assert(
+    !gRetag.suggestions.some((s) => s.params.action === "untag"),
+    "no UNTAG is emitted when a valid tier engine-accepts",
+  );
 });
 
 // ── 11. Perf ────────────────────────────────────────────────────────────
