@@ -9,12 +9,12 @@ import {
 } from "@/lib/backend-api/affiliate-leaderboards";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { getDb } from "@/lib/db";
+import { computeDealCost, weeklyDealsInFrame } from "@/lib/deal-economics";
 
 import {
   getDealWagerByDeal,
   type DealWagerWindow,
 } from "../profitability/_queries/frame-wager-by-deal";
-import { getLeaderboardSponsorshipMap } from "../../../(admin)/creators/_queries/leaderboard-sponsorship";
 
 /**
  * Creator Hub — "4 Weeks" summary.
@@ -24,22 +24,19 @@ import { getLeaderboardSponsorshipMap } from "../../../(admin)/creators/_queries
  * leaderboard that ENDED within the 28-day window contributes — anything with
  * `end_date ∈ [now − 28d, now)`. Still-live frames (end ≥ now) belong to the
  * Active tab and are excluded; fully-past frames (end < now−28d) too. Ended-
- * only + sponsored-weighted LB (below) = the SAME model as the Past Deals tab,
- * so this section reconciles with it (owner request 2026-07-05).
+ * only + the canonical `computeDealCost` (below) = the SAME model as the Past
+ * Deals tab, so this section reconciles with it (owner request 2026-07-05).
  *
- * Per-frame cost (NO daily-fill leg; sponsored-weighted LB — matches Past Deals):
+ * Per-frame cost — the canonical `@/lib/deal-economics` model:
  *
- *   dealWeeks        = frameWeeks(startMs, endMs)                       (≥ 1)
- *   weeklyCapUsd     = toFiniteNumber(deal.total_withdraw_cap_usd)      (0 uncapped)
- *   capUsd           = weeklyCapUsd × dealWeeks
- *   weeklyTipSponsor = (tip + sponsor) × max(0, fills_allowed)
- *   tipSponsorUsd    = weeklyTipSponsor × dealWeeks
- *   leaderboardUsd   = max(0, net prize − refund) × sponsored% / 100   (house-paid share)
- *   dealCost         = capUsd + leaderboardUsd + tipSponsorUsd          (NO fill leg)
- *   expectedWager    = dealCost / 0.075                                 (house edge)
+ *   wds              = weeklyDealsInFrame(startMs, endMs, deals)   (any overlap)
+ *   dealCost         = Σ over wds of ( full withdraw cap
+ *                        + (tip + sponsor) × fills_allowed )
+ *                      + leaderboard net prize × 50%
+ *   expectedWager    = dealCost / 0.075                            (house edge)
  *
- * A frame with NO overlapping deal contributes only its leaderboardUsd leg
- * (cap / tip = 0) and NO conversion sample.
+ * A frame with NO overlapping weekly deal contributes only its leaderboard
+ * leg (cap / tip = 0) and NO conversion sample.
  *
  * The FOUR tile values:
  *   • activeCreators     = distinct `creator_user_id` across in-window frames.
@@ -64,9 +61,7 @@ import { getLeaderboardSponsorshipMap } from "../../../(admin)/creators/_queries
  * Decimal-safe throughout (backend strings coerced via `Number` / helper).
  */
 
-const HOUSE_EDGE = 0.075;
 const MS_PER_28D = 28 * 24 * 60 * 60 * 1000;
-const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
 
 /** Backend cap per request (mirrors the creators-stats / past-deals walks). */
 const BACKEND_PAGE_SIZE = 100;
@@ -88,77 +83,9 @@ const WAGER_TIMEOUT_MS = 20_000;
 const USERNAME_TIMEOUT_MS = 10_000;
 
 // ─── Deal-cost helpers ──────────────────────────────────────────────
-// Self-contained copies of the Past Deals helpers (`past-deals.ts` /
-// `deal-profitability.ts`) so this section is independently shippable. The
-// money math is IDENTICAL — keep them in lockstep if the owner model changes.
-
-/** Cost terms pulled from the creator's deal that best overlaps a frame. */
-type DealTerms = {
-  weeklyCapUsd: number;
-  perStreamTip: number;
-  perStreamSponsor: number;
-  fillsAllowed: number;
-};
-
-const ZERO_TERMS: DealTerms = {
-  weeklyCapUsd: 0,
-  perStreamTip: 0,
-  perStreamSponsor: 0,
-  fillsAllowed: 0,
-};
-
-/** Coerce a backend string|number|null money field to a finite number (0 fallback). */
-function toFiniteNumber(value: string | number | null | undefined): number {
-  if (value == null) return 0;
-  const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
-
-/**
- * Whole weeks in a frame, rounded to the nearest week and floored at 1 — used
- * to scale the per-week withdraw cap + tip/sponsor allowance over the frame.
- */
-function frameWeeks(startMs: number, endMs: number): number {
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
-    return 1;
-  }
-  return Math.max(1, Math.round((endMs - startMs) / MS_PER_WEEK));
-}
-
-/**
- * Pick the deal whose window overlaps a frame the MOST (a bi-weekly frame can
- * overlap two weekly deals; the largest-overlap deal's terms represent the
- * frame's cadence). Returns null when no deal overlaps the frame.
- */
-function bestOverlappingDeal(
-  frameStartMs: number,
-  frameEndMs: number,
-  deals: CreatorDealResponse[],
-): CreatorDealResponse | null {
-  let best: CreatorDealResponse | null = null;
-  let bestOverlap = 0;
-  for (const d of deals) {
-    const ds = Date.parse(d.week_start_utc);
-    const de = Date.parse(d.week_end_utc);
-    if (!Number.isFinite(ds) || !Number.isFinite(de)) continue;
-    const overlap = Math.min(frameEndMs, de) - Math.max(frameStartMs, ds);
-    if (overlap > bestOverlap) {
-      bestOverlap = overlap;
-      best = d;
-    }
-  }
-  return best;
-}
-
-function termsFromDeal(deal: CreatorDealResponse | null): DealTerms {
-  if (!deal) return ZERO_TERMS;
-  return {
-    weeklyCapUsd: toFiniteNumber(deal.total_withdraw_cap_usd),
-    perStreamTip: toFiniteNumber(deal.max_tip_per_stream_usd),
-    perStreamSponsor: toFiniteNumber(deal.max_sponsorship_per_stream_usd),
-    fillsAllowed: Math.max(0, deal.fills_allowed ?? 0),
-  };
-}
+// All cost math now routes through the canonical `@/lib/deal-economics`
+// helpers (`weeklyDealsInFrame` + `computeDealCost`) so this section
+// reconciles with Past Deals + Active by construction.
 
 /** Fetch one creator's FULL deal history, paging the backend. */
 async function fetchAllDealsForCreator(
@@ -309,21 +236,6 @@ const getFourWeekBase = unstable_cache(
       return { frames: [], backendUnavailable: false };
     }
 
-    // Sponsored % per frame (the LB leg's house-share weighting) — resilient:
-    // a lookup blip treats every board as 100% (full net), same as Past Deals.
-    let sponsorship: Map<string, number>;
-    try {
-      sponsorship = await getLeaderboardSponsorshipMap(
-        inWindow.map((lb) => lb.id),
-      );
-    } catch (e) {
-      console.error(
-        "[4w-summary] sponsorship lookup failed (treating all as 100%):",
-        e,
-      );
-      sponsorship = new Map();
-    }
-
     // Deal terms live per owner — fetch each frame-owner's deal history once
     // (allSettled so one failed fetch can't sink the section).
     const ownerIds = Array.from(
@@ -351,28 +263,16 @@ const getFourWeekBase = unstable_cache(
       const endMs = Date.parse(lb.end_date);
       if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue;
 
-      const dealWeeks = frameWeeks(startMs, endMs);
+      // Canonical deal cost — the weekly fill-deals overlapping this frame,
+      // each at FULL cap + (tip + sponsor) × fills, plus the leaderboard net
+      // prize × 50%. expectedWager = dealCost / 7.5%.
       const deals = dealsByOwner.get(lb.creator_user_id) ?? [];
-      const deal = bestOverlappingDeal(startMs, endMs, deals);
-      const terms = termsFromDeal(deal);
-
-      const capUsd = terms.weeklyCapUsd * dealWeeks;
-      const weeklyTipSponsorUsd =
-        (terms.perStreamTip + terms.perStreamSponsor) * terms.fillsAllowed;
-      const tipSponsorUsd = weeklyTipSponsorUsd * dealWeeks;
-
-      // Sponsored-WEIGHTED leaderboard house cost (net prize × sponsored% / 100)
-      // — the "house actually pays" figure, matching the Past Deals tab so the
-      // two reconcile. Missing annotation → 100% (full net). Floored at 0.
-      const net = Math.max(
-        0,
-        (Number(lb.total_prize_usd) || 0) - (Number(lb.refund_amount_usd) || 0),
-      );
-      const pct = Math.min(100, Math.max(0, sponsorship.get(lb.id) ?? 100));
-      const leaderboardUsd = net * (pct / 100);
-
-      const dealCost = capUsd + leaderboardUsd + tipSponsorUsd;
-      const expectedWager = dealCost / HOUSE_EDGE;
+      const wds = weeklyDealsInFrame(startMs, endMs, deals);
+      const { expectedWager } = computeDealCost({
+        weeklyDeals: wds,
+        lbPrizeUsd: lb.total_prize_usd,
+        lbRefundUsd: lb.refund_amount_usd,
+      });
 
       frames.push({
         boardId: lb.id,
@@ -385,12 +285,13 @@ const getFourWeekBase = unstable_cache(
 
     return { frames, backendUnavailable: false };
   },
-  // v4: conversion is now actualWager/expectedWager (was configured
-  // conversion_rate_bps), so the base frame no longer carries conversionPct.
-  // (v3 = ended-only + sponsored-weighted LB for Past Deals parity; v2 = the
-  // own-uncached-walk + tight-timeout incident fix.) Fresh key so a prior
-  // cache entry can't shadow the new shape.
-  ["creator-hub-4week-summary-v4"],
+  // v5: cost now routes through the canonical `computeDealCost`
+  // (Σ full cap + (tip+sponsor)×fills over the frame's weekly deals + LB net
+  // × 50%) instead of the old best-overlap × frameWeeks + sponsored-% LB.
+  // (v4 = actualWager/expectedWager conversion; v3 = ended-only + sponsored-
+  // weighted LB; v2 = the own-uncached-walk + tight-timeout incident fix.)
+  // Fresh key so a prior cache entry can't shadow the new shape.
+  ["creator-hub-4week-summary-v5"],
   { revalidate: 300, tags: ["creator-hub-4w-summary"] },
 );
 

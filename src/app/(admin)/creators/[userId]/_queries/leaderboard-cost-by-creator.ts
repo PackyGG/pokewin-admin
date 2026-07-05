@@ -6,7 +6,7 @@ import {
   affiliateLeaderboardsApi,
   type LeaderboardAdminRow,
 } from "@/lib/backend-api/affiliate-leaderboards";
-import { getLeaderboardSponsorshipMap } from "../../_queries/leaderboard-sponsorship";
+import { leaderboardHouseCost, toFiniteNumber } from "@/lib/deal-economics";
 import { CREATOR_COST_CACHE_TTL_SECONDS } from "./_cost-cache";
 
 // Backend caps `limit` per request; 100 mirrors the page size the
@@ -18,10 +18,10 @@ const MAX_PAGES = 20;
 
 export type CreatorLeaderboardCost = {
   /**
-   * Sponsored-weighted net house cost across this creator's APPROVED
-   * leaderboards:
+   * Net house cost across this creator's APPROVED leaderboards, at the
+   * canonical 50% house share (owner rule):
    *
-   *   costUsd = Σ (total_prize_usd − refund_amount_usd) × (sponsored% / 100)
+   *   costUsd = Σ max(0, total_prize_usd − refund_amount_usd) × 50%
    *
    * Same formula + scope the global `getLeaderboardCostTotal` KPI tile on
    * /creators uses, filtered to one `creator_user_id`. House cost → the
@@ -102,29 +102,15 @@ async function computeCreatorLeaderboardCost(
     return { costUsd: 0, grossPrizeUsd: 0, refundedUsd: 0, leaderboardCount: 0 };
   }
 
-  // Sponsored % per leaderboard. Resilient: a blip in the admin-DB
-  // lookup treats every board as 100% (un-weighted) rather than
-  // blanking the metric — same fallback the global tile uses.
-  let sponsorship: Map<string, number>;
-  try {
-    sponsorship = await getLeaderboardSponsorshipMap(all.map((lb) => lb.id));
-  } catch (e) {
-    console.error(
-      "[leaderboard-cost-by-creator] sponsorship lookup failed (treating all as 100%):",
-      e,
-    );
-    sponsorship = new Map();
-  }
-
+  // Canonical LB house cost — net prize × 50% (owner rule), same as the
+  // global tile. No admin sponsored-% map anymore.
   let costUsd = 0;
   let grossPrizeUsd = 0;
   let refundedUsd = 0;
   for (const lb of all) {
-    const prize = Number(lb.total_prize_usd) || 0;
-    const refund = Number(lb.refund_amount_usd) || 0;
-    // No annotation → 100%. Clamp defensively to the 0–100 range.
-    const pct = Math.min(100, Math.max(0, sponsorship.get(lb.id) ?? 100));
-    costUsd += (prize - refund) * (pct / 100);
+    const prize = toFiniteNumber(lb.total_prize_usd);
+    const refund = toFiniteNumber(lb.refund_amount_usd);
+    costUsd += leaderboardHouseCost(prize, refund);
     grossPrizeUsd += prize;
     refundedUsd += refund;
   }

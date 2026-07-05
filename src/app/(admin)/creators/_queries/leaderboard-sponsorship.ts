@@ -2,6 +2,7 @@ import "server-only";
 
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
+import { LB_HOUSE_SHARE } from "@/lib/deal-economics";
 
 /**
  * Admin-side "sponsored %" per creator (affiliate) leaderboard, read
@@ -37,55 +38,48 @@ export type LeaderboardPrizeBucket = {
   prize: number;
 };
 
-/** The sponsored-% split of a set of leaderboard prize buckets. */
+/** The house-share split of a set of leaderboard prize buckets. */
 export type LeaderboardPrizeSplit = {
   /** Full prize pool paid out (100%, no weighting) — Σ bucket.prize. */
   full: number;
   /**
-   * House-funded "our cut" — Σ bucket.prize × (sponsored% / 100), the share
-   * the house actually covers after the creator's off-site sponsor %.
+   * House-funded "our cut" — `full × 50%` (the canonical owner rule: the
+   * house always pays half of every leaderboard prize pool).
    */
   ourCut: number;
   /**
-   * On-site / un-sponsored remainder — `full − ourCut` = Σ bucket.prize ×
-   * ((100 − sponsored%) / 100), the slice the creator funds off-site (NOT a
-   * house cost for the leaderboard "our cut" accounting).
+   * On-site remainder — `full − ourCut` = `full × 50%`, the half the
+   * creator funds off-site (NOT a house cost for the "our cut" accounting).
    */
   onSite: number;
 };
 
 /**
  * Split a set of leaderboard-prize buckets into the house-funded "our cut"
- * and the on-site (un-sponsored) remainder, using each board's admin-set
- * sponsored % (defaulting to 100% — full house cost — when a board is
- * un-annotated or carries no leaderboard id).
+ * and the on-site remainder at the canonical 50% house share (owner rule:
+ * the house always pays half of every leaderboard prize pool). Replaces the
+ * old admin per-board "sponsored %" (which defaulted to 100% and over-counted).
  *
- * THE SINGLE source of the sponsored-% house-share weighting for the
+ * THE SINGLE source of the leaderboard-prize house-share split for the
  * dashboard leaderboard-prize lines, so the Reward Costs box (which keeps
  * `onSite`) and the Creators Costs box (which keeps `ourCut`) derive their
  * split from ONE implementation and reconcile by construction: for any
- * single set of buckets, `ourCut + onSite === full`. Identical weighting +
- * default convention to `leaderboard-cost.ts` `houseCoveredUsd`.
+ * single set of buckets, `ourCut + onSite === full`. Identical 50% share to
+ * `leaderboard-cost.ts` `houseCoveredUsd` / `leaderboardHouseCost`.
  *
- * `sponsorship` is the map from `getLeaderboardSponsorshipMap` keyed on the
- * buckets' leaderboard ids; pass an empty map (the resilient fallback) to
- * treat every board as 100% (`ourCut === full`, `onSite === 0`).
+ * `sponsorship` is retained for signature compatibility with the callers but
+ * is no longer read — the split is a flat 50%.
  */
 export function splitLeaderboardPrizesBySponsorship(
   buckets: LeaderboardPrizeBucket[],
-  sponsorship: Map<string, number>,
+  _sponsorship: Map<string, number>,
 ): LeaderboardPrizeSplit {
   let full = 0;
-  let ourCut = 0;
   for (const b of buckets) {
     full += b.prize;
-    // No annotation / no board id → 100% (full house cost). Clamp to 0–100.
-    const pct =
-      b.leaderboardId != null
-        ? Math.min(100, Math.max(0, sponsorship.get(b.leaderboardId) ?? 100))
-        : 100;
-    ourCut += b.prize * (pct / 100);
   }
-  // onSite is the complement so the two always sum back to the full pool.
+  // The house always pays 50%; onSite is the complement so the two always
+  // sum back to the full pool.
+  const ourCut = full * LB_HOUSE_SHARE;
   return { full, ourCut, onSite: full - ourCut };
 }

@@ -32,16 +32,19 @@ import {
 } from "@/components/modern-panels";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { HOUSE_EDGE, LB_HOUSE_SHARE } from "@/lib/deal-economics";
 
 /**
  * Profitable Algo — Deal Profitability calculator (Creator Hub).
  *
  * A PURE calculator: no DB, no server data, no API. The manager types deal
  * parameters and the tool evaluates whether the deal is profitable using the
- * owner's exact math (plan: iridescent-mixing-lecun.md).
+ * owner's exact math, routed through the canonical `@/lib/deal-economics`
+ * constants (`HOUSE_EDGE` = 0.075, `LB_HOUSE_SHARE` = 0.5).
  *
- *   DEAL_VALUE_RATE = 0.075  ("value generated per $ wagered" for deal
- *   economics — DISTINCT from the 10.8% / 10% gross edge in the Risk tool).
+ *   HOUSE_EDGE = 0.075  ("value generated per $ wagered" for deal economics —
+ *   DISTINCT from the 10.8% / 10% gross edge in the Risk tool). The house
+ *   always funds LB_HOUSE_SHARE (50%) of every leaderboard prize pool.
  *
  * Deal Profitability
  *   Generated Value = WAGER × 0.075
@@ -65,8 +68,11 @@ import { cn } from "@/lib/utils";
  * Client-only: all state + math live here; the page is a thin server shell.
  */
 
-/** Value generated per $ wagered for deal economics (owner-chosen, 7.5%). */
-const DEAL_VALUE_RATE = 0.075;
+// Value generated per $ wagered for deal economics comes from the canonical
+// `HOUSE_EDGE` (7.5%); the LB house share is `LB_HOUSE_SHARE` (50%).
+
+/** "50%" — the LB house share as a display label, derived from the constant. */
+const LB_HOUSE_PCT_LABEL = `${LB_HOUSE_SHARE * 100}%`;
 
 // ─── helpers ───────────────────────────────────────────────────────
 
@@ -210,7 +216,7 @@ export function ProfitableAlgoCalculator() {
 
   // ── Deal Profitability math ──
   const wagerN = num(wager);
-  const generatedValue = wagerN * DEAL_VALUE_RATE;
+  const generatedValue = wagerN * HOUSE_EDGE;
   const dealSpend =
     num(maxWithdrawCap) + num(lbContribution) + num(tipSponsorAllowance);
   const rateOfReturn = dealSpend > 0 ? generatedValue / dealSpend : Infinity;
@@ -219,7 +225,7 @@ export function ProfitableAlgoCalculator() {
   // ── Performance Forecast math ──
   const daysN = num(days);
   const forecastWagerN = num(wagerOverDays);
-  const forecastGeneratedValue = forecastWagerN * DEAL_VALUE_RATE;
+  const forecastGeneratedValue = forecastWagerN * HOUSE_EDGE;
   const dailyValue = daysN > 0 ? forecastGeneratedValue / daysN : 0;
   const weeklyValue = dailyValue * 7;
 
@@ -271,7 +277,7 @@ export function ProfitableAlgoCalculator() {
                 <FieldRow
                   id="dp-lb"
                   label="LB Contribution"
-                  help="Leaderboard contribution the HOUSE funds = prize pool × house share %. Counted as deal spend."
+                  help={`Leaderboard contribution the HOUSE funds — the house pays ${LB_HOUSE_PCT_LABEL} of the prize pool (net prize × ${LB_HOUSE_PCT_LABEL}). Counted as deal spend.`}
                   value={lbContribution}
                   onChange={setLbContribution}
                   placeholder="e.g. 2500"
@@ -437,7 +443,7 @@ export function ProfitableAlgoCalculator() {
                 <FieldRow
                   id="ds-lb"
                   label="Weekly LB Funding"
-                  help="Weekly leaderboard funding the house contributes = weekly prize pool × house share %."
+                  help={`Weekly leaderboard funding the house contributes — the house pays ${LB_HOUSE_PCT_LABEL} of the weekly prize pool (net prize × ${LB_HOUSE_PCT_LABEL}).`}
                   value={weeklyLbFunding}
                   onChange={setWeeklyLbFunding}
                   placeholder="e.g. 2000"

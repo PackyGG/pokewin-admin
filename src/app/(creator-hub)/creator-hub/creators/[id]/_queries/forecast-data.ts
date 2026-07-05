@@ -104,10 +104,11 @@ export type ForecastData = {
   /** Weekly withdraw cap = deal.total_withdraw_cap_usd (the deal is weekly). */
   weeklyWithdrawCapUsd: number;
   /**
-   * Weekly leaderboard funding the HOUSE pays (already × house share %).
-   * Derived from the realized lifetime LB cost spread over the creator's
-   * active weeks (earliest deal week_start → now), so it reflects this
-   * creator's ACTUAL leaderboard cadence rather than a guess. 0 when no LB.
+   * Weekly leaderboard funding the HOUSE pays (net prize × 50% house share,
+   * the canonical owner rule via `getCreatorLeaderboardCost`). Derived from
+   * the realized lifetime LB cost spread over the creator's active weeks
+   * (earliest deal week_start → now), so it reflects this creator's ACTUAL
+   * leaderboard cadence rather than a guess. 0 when no LB.
    */
   weeklyLbFundingUsd: number;
   /**
@@ -244,7 +245,7 @@ export async function getForecastData(
       "creator-hub.creators.forecast.deal",
       20_000,
     ),
-    // Leaderboard funding × house% (lifetime, already sponsored-% weighted).
+    // Leaderboard funding × 50% house share (lifetime, canonical owner rule).
     safeQuery(
       () => getCreatorLeaderboardCost(creatorUserId),
       { costUsd: 0, grossPrizeUsd: 0, refundedUsd: 0, leaderboardCount: 0 },
