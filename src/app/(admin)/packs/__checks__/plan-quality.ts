@@ -345,9 +345,12 @@ check("P1 pool-edits-first: a degenerate plan yields a non-null poolEditPlan (th
 // EV, so edge / win-rate / tag are preserved.
 check("disperseLossBand: min-L2 spread holds mass + EV exactly and lowers the max share", () => {
   // A concentrated 3-card loss band with the mean in range → the affine spread
-  // moves mass off the carrier, keeping mass + EV to floating point.
+  // moves mass off the carrier, keeping mass + EV to floating point. Every card
+  // keeps a REAL (non-floor) share on both sides — the never-newly-crush guard
+  // (attempt #2, item B) is a no-op here since the affine fit stays fully
+  // non-negative for all three cards.
   const values = [10, 20, 30];
-  const w = [0.001, 0.001, 0.6];
+  const w = [0.2, 0.6, 0.05];
   const mass = w.reduce((a, b) => a + b, 0);
   const ev0 = w.reduce((a, x, i) => a + x * values[i]!, 0);
   const out = disperseLossBand(values, w, mass);
@@ -356,6 +359,37 @@ check("disperseLossBand: min-L2 spread holds mass + EV exactly and lowers the ma
   assert(Math.abs(outMass - mass) < 1e-9, `mass held (${outMass} vs ${mass})`);
   assert(Math.abs(outEv - ev0) < 1e-9, `EV held (${outEv} vs ${ev0})`);
   assert(Math.max(...out) < Math.max(...w) - 1e-9, "the carrier's share is lowered (dispersed)");
+  assert(out.every((x) => x > 0.0001), "no card is crushed by the spread");
+});
+
+check("disperseLossBand: NEVER-NEWLY-CRUSH guard — rejects a spread that would floor-pin a real-mass card (attempt #2, item B)", () => {
+  // The near-miss floor-pin bug this guard fixes: a card with REAL input mass
+  // (well above quantization noise) sits at the EXPENSIVE end of the loss band;
+  // the unconstrained affine fit needs NEGATIVE weight there (the required mean
+  // is dragged low by a cheap concentration), so the OLD active-set solve
+  // dropped it to 0 — silently turning a healthy card into a brand-new
+  // 0%/floor-pinned one. The guard now REJECTS that spread and returns the
+  // input UNCHANGED instead (byte-identical — no dispersion — rather than a
+  // worse ladder than what existed before the pass ran).
+  const values = [20.53, 18.16, 12.41, 7.3, 3.62, 1.21];
+  const w = [0.019216, 0.02967, 0.114251, 0.001406, 0.016859, 0.818598];
+  const mass = w.reduce((a, b) => a + b, 0);
+  const out = disperseLossBand(values, w, mass);
+  assert(
+    out.every((x, i) => Math.abs(x - w[i]!) < 1e-9),
+    "a spread that would crush a real-mass card is rejected — input returned unchanged",
+  );
+});
+
+check("disperseLossBand: DOES disperse when the affine fit keeps every real-mass card positive (no false refusal)", () => {
+  // The guard must not become a blanket "never disperse a wide-value band" —
+  // when the min-L2 fit keeps every card ≥ the floor, the spread still applies.
+  const values = [50, 30, 10];
+  const w = [0.05, 0.1, 0.2];
+  const mass = w.reduce((a, b) => a + b, 0);
+  const out = disperseLossBand(values, w, mass);
+  assert(out.some((x, i) => Math.abs(x - w[i]!) > 1e-9), "the spread is applied (not rejected)");
+  assert(out.every((x) => x > 0.0001), "no card crushed");
 });
 
 check("disperseLossBand: EV-forced band (avg near the max) is a no-op; single value is a no-op", () => {

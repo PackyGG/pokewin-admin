@@ -36,9 +36,11 @@ import {
   LADDER_DEGENERATE_THRESHOLD,
   buildWidePriceProbeSuggestion,
   derivePoolEditPlan,
+  isFloorPinnedPct,
   type ProbeOutcome,
   type TagGuidance,
 } from "../../insights/edge-calc/tag-guidance";
+import { buildRetuneSearchParams } from "../_lib/retune-params";
 import {
   packRiskBand,
   isRiskBandExit,
@@ -530,6 +532,79 @@ check("win-rate hold: does NOT fire on TAGGED packs (Chaos/Bidoof keep their exa
       `${p.name}: tagged win-rate holds at the exact ${(p.tag! * 100).toFixed(0)}% tag (got ${(h.achievedWinRate! * 100).toFixed(3)}%)`,
     );
   }
+});
+
+// ── 5b-2. HARD hold WITH GRACEFUL SOFT FALLBACK (attempt #2) — real one-brain
+// wiring via `buildRetuneSearchParams`, not the raw `holdWinRate` the `solve()`
+// helper above passes directly. This exercises the ACTUAL untagged retune arm
+// end-to-end: hard hold tried first, soft float only as a fallback when the
+// hard hold is infeasible everywhere in-budget. ─────────────────────────────
+function solveViaBuilder(p: Pool, band: number) {
+  const weights = toWeights(p.livePcts);
+  const before = computePackRisk({
+    cards: p.values.map((v, i) => ({ value: v, weight: weights[i]! })),
+    price: p.price,
+  });
+  const top = Math.max(...p.values);
+  const t = autoRetuneTargets(p.price, CFG, p.tag ?? undefined, top, {
+    winRate: before.winRate,
+    nearMiss: before.nearMiss,
+    edge: before.edge,
+    topValue: top,
+  });
+  const nearMissMin = p.tag !== null ? Math.max(0, before.nearMiss) : t.nearMissMin;
+  const search = searchBestPriceForCleanSnap(
+    buildRetuneSearchParams("live", {
+      cards: p.values.map((v) => ({ value: v })),
+      basePrice: p.price,
+      targetEdge: t.targetEdge,
+      targetWinRate: t.targetWinRate,
+      maxWinCap: t.maxWinCap,
+      nearMissMin,
+      winRateTol: 0.02,
+      currentWeights: weights,
+      intendedHitRate: p.tag,
+      priceBudgetPct: band,
+    }),
+  );
+  return { search, targetWinRate: t.targetWinRate };
+}
+
+check("HARD hold (via buildRetuneSearchParams): Three Blades — the default ±10% band falls back to SOFT (hard alone can't hold in-budget), still lands a CLEAN plan (never a bare refusal)", () => {
+  const { search, targetWinRate } = solveViaBuilder(THREE_BLADES, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
+  const r = search.bestResult;
+  assert("weights" in r, `Three Blades ±10% must plan via the fallback: ${"error" in r ? r.error : ""}`);
+  assert(search.usedSoftFallback === true, "the hard hold alone can't hold in-budget here — the soft fallback fired");
+  assert(
+    (r as { risk: { winRate: number } }).risk.winRate <= targetWinRate + WINRATE_HOLD_BAND + 1e-6,
+    "the FALLBACK soft float still respects its own +5pp band (unchanged legacy behavior)",
+  );
+  const total = (r as { weights: number[] }).weights.reduce((a, w) => a + (w > 0 ? w : 0), 0);
+  const shares = (r as { weights: number[] }).weights.map((w) => (total > 0 && w > 0 ? w / total : 0));
+  const pinned = THREE_BLADES.values.filter(
+    (v, i) => v < search.bestPrice && isFloorPinnedPct(shares[i]! * 100),
+  );
+  assert(pinned.length === 0, `no 0.0001% floor-pinned cards survive the fallback plan (got ${JSON.stringify(pinned)})`);
+});
+
+check("HARD hold (via buildRetuneSearchParams): Trash — default ±10% stays an honest in-budget refusal (regression guard, unchanged); the ±60% wide band now solves CLEANLY with NO fallback needed", () => {
+  const atDefault = solveViaBuilder(TRASH, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
+  assert("error" in atDefault.search.bestResult, "Trash's default ±10% band stays infeasible (unchanged regression floor)");
+  assert(atDefault.search.usedSoftFallback === true, "both the hard hold AND its soft fallback are infeasible in-budget (honest, matches pre-attempt-#2 behavior)");
+
+  const atWide = solveViaBuilder(TRASH, RETUNE_MAX_PRICE_CHANGE_PCT);
+  const r = atWide.search.bestResult;
+  assert("weights" in r, `Trash's ±60% wide band must plan: ${"error" in r ? r.error : ""}`);
+  assert(
+    atWide.search.usedSoftFallback === false,
+    "the HARD hold succeeds on its own at the wide band — strictly better than the old float (no fallback needed)",
+  );
+  const total = (r as { weights: number[] }).weights.reduce((a, w) => a + (w > 0 ? w : 0), 0);
+  const shares = (r as { weights: number[] }).weights.map((w) => (total > 0 && w > 0 ? w / total : 0));
+  const pinned = TRASH.values.filter(
+    (v, i) => v < atWide.search.bestPrice && isFloorPinnedPct(shares[i]! * 100),
+  );
+  assert(pinned.length === 0, `no 0.0001% floor-pinned cards on the clean wide-band plan (got ${JSON.stringify(pinned)})`);
 });
 
 // ── 6. Risk leverage bands (owner-lens §4 / Pattern 6) ──────────────────

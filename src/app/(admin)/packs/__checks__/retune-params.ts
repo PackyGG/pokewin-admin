@@ -192,9 +192,12 @@ function writeArmSends(i: RetuneSearchInputs): Record<string, unknown> {
     ),
     upwardPriceExtensionPct: 0,
     ...(tagged ? { taggedWinRate: i.targetWinRate } : {}),
-    // WIN-RATE HOLD (owner-lens item 4): untagged retunes hold the achieved
-    // win-rate within +5pp of the design (no-op / absent in tagged mode).
-    ...(tagged ? {} : { holdWinRate: true }),
+    // WIN-RATE HOLD — HARD, WITH GRACEFUL SOFT FALLBACK (attempt #2): untagged
+    // retunes first try to PIN the achieved win-rate at design (no float,
+    // cheapest winner capped); `searchBestPriceForCleanSnap` transparently
+    // falls back to the OLD soft `holdWinRate` (+5pp) internally when no
+    // in-budget price admits the hard hold. No-op / absent in tagged mode.
+    ...(tagged ? {} : { holdWinRateHard: true }),
     // LOSS-MASS DISPERSION (owner-lens item 10): every retune re-spreads the
     // free-dust loss band at fixed mass + EV (present on both tagged + untagged).
     disperseLoss: true,

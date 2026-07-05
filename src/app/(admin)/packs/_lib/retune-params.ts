@@ -250,16 +250,21 @@ export function buildRetuneSearchParams(
     upwardPriceExtensionPct: 0,
     // Tagged win-rate accuracy scoring (0.01pp) — see the gate above.
     ...(tagged ? { taggedWinRate: i.targetWinRate } : {}),
-    // WIN-RATE HOLD (owner-lens item 4): an UNTAGGED retune holds the achieved
-    // win-rate within +5pp ({@link WINRATE_HOLD_BAND}) of the pack's
-    // live-anchored design instead of floating far above it (Three Blades
-    // 30%→37.5%). Applied at every candidate price; a price where the held
-    // win-rate can't reach the edge errors and the search moves to one where it
-    // can (a clean plan) — or the pack surfaces as the wide-probe / pool-edit
-    // path. No-op in tagged mode (a tagged pack never floats — the tag pins the
-    // win-rate). Both plan arms + both writes inherit it through this one
-    // constructor, so preview ≡ write stays unconstructible skew.
-    ...(tagged ? {} : { holdWinRate: true }),
+    // WIN-RATE HOLD — HARD, WITH GRACEFUL SOFT FALLBACK (untagged retune spike
+    // fix, attempt #2): an UNTAGGED retune first tries to PIN the achieved
+    // win-rate at the pack's live-anchored DESIGN target (no +band float at all)
+    // AND does NOT EV-exempt the cheapest winner — killing the mid-pool SPIKE
+    // (root cause: the old soft float left the cheapest winner as an uncapped EV
+    // sink that absorbed all the floated win mass). This is a PREFERENCE, not a
+    // hard requirement: `searchBestPriceForCleanSnap` transparently falls back to
+    // the OLD soft `holdWinRate` (+5pp float, owner-lens item 4) when NO in-budget
+    // price admits a hard-held solve — so a genuinely EV-forced pool (e.g.
+    // "Captive") still gets its plan instead of a bare refusal (see
+    // `usedSoftFallback` on the search result). No-op in tagged mode (a tagged
+    // pack never floats — the tag pins the win-rate). Both plan arms + both
+    // writes inherit it through this one constructor, so preview ≡ write stays
+    // unconstructible skew.
+    ...(tagged ? {} : { holdWinRateHard: true }),
     // LOSS-MASS DISPERSION (owner-lens item 10): every retune re-spreads the
     // free-dust loss band at fixed mass + EV (edge / win-rate / tag byte-for-byte
     // preserved) so the crush ladder's single-carrier collapse is loosened where
