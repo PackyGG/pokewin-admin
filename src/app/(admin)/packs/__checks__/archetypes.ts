@@ -38,15 +38,19 @@
  *       true; infeasible guidance NEVER comes back bare (≥ 1 suggestion or an
  *       explicit no-fix-under-constraints).
  *   11. Perf: full guidance ≪ 10 ms/pack.
- *   12. UNTAGGED degenerate loss ladder (the owner-found "Captive" case):
- *       the plan reproduces (price moves down, two loss cards pinned at the
- *       0.0001% quantization floor, win-rate floats to ~29.3%), the
- *       degenerate detection fires, add-card emits a near-miss band inside
- *       [242.75, 485.50) + a solver-verified fix price, remove-dead-card
- *       lists exactly the two pinned cards, accept-as-is carries the WHY —
- *       and the enriched pool (one ~$300 mid card at the fix price) plans
- *       with NO floor-pinned cards and the win rate back at ~20%. A healthy
- *       untagged plan returns NO guidance.
+ *   12. UNTAGGED HOLD-AT-DESIGN spike fix (the owner-found "Captive" case):
+ *       under `holdWinRateHard` (the untagged retune arm) the win-rate is
+ *       PINNED at the design 20% (no +5pp float) and the cheapest winner is
+ *       NOT EV-exempt — so the Captive pool that DEGENERATED under the old
+ *       soft float (win-rate floated to ~24%, the $18.23/$33.95 cards crushed
+ *       to the 0.0001% floor, the $80.28 card absorbing ~76%) now plans
+ *       CLEAN: a near-live monotonic ladder ($18.23 → ~40%, $33.95 → ~32%,
+ *       $80.28 → ~8%, every winner at ~its live share, no jackpot inflation),
+ *       win-rate ON 20%, ZERO floor-pins, and the untagged degenerate
+ *       detection CLEARS (guidance null). The float was never load-bearing —
+ *       holding at design hits the SAME edge (~11.1%) with a clean ladder. A
+ *       healthy untagged plan (raw `shapeWeights`, no hold flag) still returns
+ *       NO guidance.
  *
  * Exit code 0 = all passed; 1 = at least one failure (printed).
  */
@@ -80,6 +84,7 @@ import {
   computeTagGuidance,
   computeUntaggedGuidance,
   isFloorPinnedPct,
+  ladderShape,
 } from "../../insights/edge-calc/tag-guidance";
 import { buildRetuneSearchParams } from "../_lib/retune-params";
 
@@ -723,17 +728,23 @@ check("perf: full guidance well under 10 ms/pack", () => {
   console.log(`      [guidance ≈ ${perPack.toFixed(2)} ms/pack]`);
 });
 
-// ── 12. UNTAGGED degenerate loss ladder — the owner-found "Captive" case ──
-// Pack "Captive", $485.50, untagged. The plan is EV-forced: the anchored win
-// band can't carry the EV target at the live 20% win-rate, so the win mass
-// floats UP onto the two cheapest winners — but the WIN-RATE HOLD (owner-lens
-// item 4) caps that float at the design + 5pp band, so the achieved win-rate
-// holds at ≈24.0% (was an unbounded 29.3% before the hold). The loss side must
-// still average ≈$80 over the remaining opens — only the $80.28 card can carry
-// that, the $33.95 / $18.23 cards get pinned at the 0.0001% quantization floor,
-// and the near-miss band [242.75, 485.50) is EMPTY. The degeneracy remains (the
-// single carrier absorbs ≈76%); the owner asked WHY two cards sit at 0.0001% —
-// the guidance must answer it, and the pool-edit path is the true fix.
+// ── 12. UNTAGGED HOLD-AT-DESIGN spike fix — the owner-found "Captive" case ──
+// Pack "Captive", $485.50, untagged. Under the OLD soft `holdWinRate` the plan
+// was EV-forced: the anchored win band couldn't carry the EV target at the live
+// 20% win-rate, so the win mass FLOATED UP onto the cheapest winners (capped at
+// design + 5pp → ≈24%), the loss side then had to average ≈$80 over the
+// remaining opens, only the $80.28 card could carry that, and the $18.23/$33.95
+// cards (live 40%/20%!) collapsed to the 0.0001% quantization floor — a
+// degenerate single-carrier ladder that fired add-card/remove-dead-card
+// guidance.
+//
+// Under the NEW `holdWinRateHard` (the untagged retune arm) the win-rate is
+// PINNED at the design 20% (no float) and the cheapest winner is NOT EV-exempt.
+// The float was never load-bearing: holding at design lets the price search land
+// a CLEAN, near-live, monotonic ladder ($18.23 → ~40%, $33.95 → ~32%, $80.28 →
+// ~8%, every winner at ~its live share, no jackpot inflation) at the SAME edge
+// (~11.1%) — with ZERO floor-pins, so the untagged degenerate detection CLEARS
+// (guidance null). This is the spike fix resolving the Captive case outright.
 const CAPTIVE = {
   price: 485.5,
   values: [9100, 3247.24, 2040, 1080, 635.14, 80.28, 33.95, 18.23],
@@ -746,7 +757,8 @@ const captiveTargets = autoRetuneTargets(
   undefined,
   Math.max(...CAPTIVE.values),
 );
-// The EXACT solve path `planPackTune`'s live arm runs (shared param builder).
+// The EXACT solve path `planPackTune`'s live arm runs (shared param builder —
+// the untagged arm now carries `holdWinRateHard`).
 const captiveSearch = searchBestPriceForCleanSnap(
   buildRetuneSearchParams("live", {
     cards: CAPTIVE.values.map((v) => ({ value: v })),
@@ -758,9 +770,6 @@ const captiveSearch = searchBestPriceForCleanSnap(
     winRateTol: 0.02,
     currentWeights: CAPTIVE.weights,
     intendedHitRate: null,
-    // This suite pins the ±60%-band degenerate-ladder archetype ($435.43,
-    // −10.3%); the ±10%-default landing ($446.68, still degenerate) is pinned
-    // in the planner-discipline harness.
     priceBudgetPct: RETUNE_MAX_PRICE_CHANGE_PCT,
   }),
 );
@@ -770,6 +779,7 @@ const captiveShares: number[] = (() => {
   const total = r.weights.reduce((a, b) => a + (b > 0 ? b : 0), 0);
   return r.weights.map((w) => (total > 0 && w > 0 ? w / total : 0));
 })();
+const captiveLiveTotal = CAPTIVE.weights.reduce((a, b) => a + b, 0);
 const captiveGuidance = isSuccess(captiveSearch.bestResult)
   ? computeUntaggedGuidance({
       cards: CAPTIVE.values.map((v) => ({ value: v })),
@@ -783,152 +793,79 @@ const captiveGuidance = isSuccess(captiveSearch.bestResult)
       maxWinCap: captiveTargets.maxWinCap,
       plannedShares: captiveShares,
       relaxations: (captiveSearch.bestResult as ShapeWeightsSuccess).relaxations,
+      shapeDegenerate: ladderShape(
+        CAPTIVE.values,
+        CAPTIVE.weights.map((w) => w / captiveLiveTotal),
+        captiveShares,
+        captiveSearch.bestPrice,
+      ).degenerate,
     })
   : null;
 
-check("Captive reproduces: price moves down, two loss cards pinned at 0.0001%, win-rate HELD to ~24% (was 29.3%)", () => {
+check("Captive (hold-at-design): plans CLEAN — win-rate ON 20%, no float, ZERO floor-pins, no jackpot inflation", () => {
   const r = captiveSearch.bestResult;
   assert(isSuccess(r), `Captive must plan: ${!isSuccess(r) ? r.error : ""}`);
   assert(
     captiveSearch.bestPrice < CAPTIVE.price,
     `price moves DOWN (got $${captiveSearch.bestPrice})`,
   );
-  // WIN-RATE HOLD (owner-lens item 4): the float is capped at design (20%) + 5pp,
-  // so the achieved win-rate lands at ≈24.0% instead of the unbounded 29.3% — and
-  // holding the winners down forces the ticket LOWER (≈$368.91, −24%) and the loss
-  // mass onto the single $80.28 carrier (the degeneracy the pool-edit path fixes).
-  approx(captiveSearch.bestPrice, 368.91, 1.5, "landed price ≈ $368.91");
-  approx(r.risk.winRate, 0.24, 0.01, "win-rate HELD to ≈24% (design 20% + hold band)");
+  // Win-rate PINNED at the design 20% (no +5pp float): the hard hold keeps the
+  // achieved rate on design instead of floating to ≈24%.
+  approx(r.risk.winRate, 0.2, 0.02, "win-rate held ON the design 20% (no float)");
+  // No win-rate FLOAT-UP relaxation is recorded (the pin held — the +5pp band
+  // was never entered).
   assert(
-    r.risk.winRate <= 0.2 + 0.05 + 1e-6,
-    `win-rate must not float past the +5pp hold band (got ${(r.risk.winRate * 100).toFixed(2)}%)`,
+    !r.relaxations.some((x) => x.lever === "winRate" && x.applied > x.requested + 1e-9),
+    "no win-rate float-up relaxation (the hard hold pinned the rate at design)",
   );
+  // Edge still met.
   assert(
-    r.relaxations.some((x) => x.lever === "winRate" && x.applied > x.requested),
-    "the win-rate FLOAT-UP relaxation is recorded (bounded to the hold band)",
+    r.risk.edge >= captiveTargets.targetEdge - 1e-6,
+    `edge ≥ target (got ${(r.risk.edge * 100).toFixed(3)}%)`,
   );
-  // The two cheapest loss cards sit at the quantization floor; the $80.28
-  // carrier and every winner do not.
+  // ZERO floor-pinned loss cards — the old degeneracy (two crushed to 0.0001%)
+  // is gone; every loss card carries real mass.
   const pinned = CAPTIVE.values.filter(
     (v, i) =>
       v < captiveSearch.bestPrice && isFloorPinnedPct(captiveShares[i]! * 100),
   );
   assert(
-    pinned.length === 2 && pinned.includes(33.95) && pinned.includes(18.23),
-    `exactly the $33.95/$18.23 cards are floor-pinned (got ${JSON.stringify(pinned)})`,
+    pinned.length === 0,
+    `NO floor-pinned cards (got ${JSON.stringify(pinned)})`,
   );
-  // The forcing arithmetic: the loss side's required average sits within a
-  // few percent of the max dust value ($80.28) — the degeneracy's cause.
-  let winEv = 0;
-  let lossMass = 0;
+  // The loss ladder is near-live + monotonic (cheaper loss carries more): the
+  // $18.23 card (live 40%) stays the biggest loss carrier, not the $80.28 card.
+  const idx18 = CAPTIVE.values.indexOf(18.23);
+  const idx3395 = CAPTIVE.values.indexOf(33.95);
+  const idx8028 = CAPTIVE.values.indexOf(80.28);
+  assert(
+    captiveShares[idx18]! > captiveShares[idx3395]! &&
+      captiveShares[idx3395]! > captiveShares[idx8028]!,
+    "loss ladder is monotone by value (cheapest loss carries the most)",
+  );
+  approx(captiveShares[idx18]! * 100, 40, 3, "$18.23 ≈ its live 40% (no crush)");
+  // No jackpot inflation: no win/grail card exceeds its live share.
   CAPTIVE.values.forEach((v, i) => {
-    if (v >= captiveSearch.bestPrice) winEv += captiveShares[i]! * v;
-    else lossMass += captiveShares[i]!;
+    if (v >= captiveSearch.bestPrice) {
+      const liveShare = (CAPTIVE.weights[i]! / captiveLiveTotal) * 100;
+      assert(
+        captiveShares[i]! * 100 <= liveShare + 0.05,
+        `winner $${v} not inflated above live (${(captiveShares[i]! * 100).toFixed(3)}% vs live ${liveShare.toFixed(3)}%)`,
+      );
+    }
   });
-  const evTarget = captiveSearch.bestPrice * (1 - captiveTargets.targetEdge);
-  const lossAvgNeeded = (evTarget - winEv) / lossMass;
-  approx(lossAvgNeeded, 80.5, 1, "loss side must average ≈$80.50");
-  assert(
-    lossAvgNeeded >= 0.95 * 80.28,
-    "…which is within a few percent of the $80.28 max dust value",
-  );
 });
 
-check("Captive guidance: detection fires; add-card band inside [242.75, 485.50) with a solver-verified fix price", () => {
-  assert(captiveGuidance !== null, "degenerate detection must fire");
-  const g = captiveGuidance!;
+check("Captive (hold-at-design): untagged degenerate detection CLEARS — guidance is null", () => {
+  // The old soft-float ladder was degenerate (single carrier, two floor-pins) →
+  // add-card/remove-dead-card guidance. The hard-hold ladder is healthy, so the
+  // detector returns null (no banner noise on a clean plan).
   assert(
-    g.feasibility.direction === "need-ev-up",
-    "the no-float window at 20% wins sits below the EV target (the float's cause)",
+    captiveGuidance === null,
+    `guidance must clear on the clean hold-at-design plan (got ${
+      captiveGuidance === null ? "null" : JSON.stringify(captiveGuidance!.suggestions.map((s) => s.kind))
+    })`,
   );
-  const add = g.suggestions.find((s) => s.kind === "add-card");
-  assert(add !== undefined, "an add-card (mid) suggestion is emitted");
-  assert(add!.params.band === "near-miss", "near-miss band tried (and provable) first");
-  const vMin = Number(add!.params.valueMin);
-  const vMax = Number(add!.params.valueMax);
-  const vSug = Number(add!.params.suggestedValue);
-  const pFix = Number(add!.params.price);
-  // The band sits inside the LIVE near-miss band [0.5·485.50, 485.50).
-  assert(vMin >= 242.75 - 1e-9, `band floor ≥ $242.75 (got $${vMin})`);
-  assert(vMax < 485.5, `band ceiling < $485.50 (got $${vMax})`);
-  assert(vSug >= vMin && vSug <= vMax, "suggested value inside the band");
-  assert(vSug >= 250 && vSug <= 350, `suggested value ≈ $300 (got $${vSug})`);
-  assert(
-    Number.isFinite(pFix) && pFix < CAPTIVE.price && pFix > 0.4 * CAPTIVE.price,
-    `a concrete fix price rides along (got $${pFix})`,
-  );
-  assert(add!.proof.feasibleAfter === true, "proven");
-  assert(add!.proof.solverVerified === true, "round-tripped through the real solver");
-  approx(Number(add!.params.expectedShare), 0.1, 1e-9, "carries the 10% near-miss mass");
-});
-
-check("Captive guidance: remove-dead-cards lists exactly the two pinned cards (harmless); accept-as-is carries the WHY", () => {
-  const g = captiveGuidance!;
-  const dead = g.suggestions.filter((s) => s.kind === "remove-dead-card");
-  assert(dead.length === 2, `exactly two dead-card entries (got ${dead.length})`);
-  const deadValues = dead.map((s) => Number(s.params.cardValue)).sort((a, b) => a - b);
-  assert(
-    Math.abs(deadValues[0]! - 18.23) < 1e-9 && Math.abs(deadValues[1]! - 33.95) < 1e-9,
-    `the $18.23 and $33.95 cards (got ${JSON.stringify(deadValues)})`,
-  );
-  for (const s of dead) {
-    assert(typeof s.params.cardId === "string", "cardId threaded for the row action");
-    assert(s.proof.feasibleAfter === true, "removal re-solved through the engine (harmless)");
-  }
-  const acceptIdx = g.suggestions.findIndex((s) => s.kind === "accept-as-is");
-  assert(acceptIdx >= 0, "accept-as-is is present");
-  const accept = g.suggestions[acceptIdx]!;
-  assert(accept.proof.feasibleAfter === true, "the plan IS sound");
-  approx(Number(accept.params.lossAvgNeeded), 80.5, 1, "the WHY: loss side must average ≈$80.50");
-  approx(Number(accept.params.carrierValue), 80.28, 1e-9, "…and only the $80.28 card can carry it");
-  // Ranking: add-card first, dead cards next, accept-as-is last.
-  assert(g.suggestions[0]!.kind === "add-card", "add-card ranks first");
-  assert(acceptIdx === g.suggestions.length - 1, "accept-as-is ranks last");
-});
-
-check("Captive enriched: one ~$300 mid card at the (pinned) fix price → NO floor pins, win-rate back at ~20%; guidance clears", () => {
-  const add = captiveGuidance!.suggestions.find((s) => s.kind === "add-card")!;
-  const pFix = Number(add.params.price);
-  const xVal = Number(add.params.suggestedValue); // ≈ $300, inside the band
-  const values2 = [...CAPTIVE.values, xVal];
-  const weights2 = [...CAPTIVE.weights, 0]; // staged-in card
-  // The pinned-price staged plan path (`pinPrice: true` — the suggestion says
-  // to pin: the free search prefers snap-closeness and drifts back to the
-  // degenerate ladder).
-  const r = shapeWeights({
-    cards: values2.map((v) => ({ value: v })),
-    currentWeights: weights2,
-    price: pFix,
-    targetEdge: captiveTargets.targetEdge,
-    targetWinRate: captiveTargets.targetWinRate,
-    maxWinCap: captiveTargets.maxWinCap,
-    nearMissMin: captiveTargets.nearMissMin,
-    winRateTol: 0.02,
-  });
-  assert(isSuccess(r), `enriched pool must solve at $${pFix}: ${!isSuccess(r) ? r.error : ""}`);
-  assert(r.risk.edge >= captiveTargets.targetEdge - 1e-9, "edge ≥ target");
-  approx(r.risk.winRate, 0.2, 0.021, "win rate back at ~20% (was 29.3%)");
-  const total = r.weights.reduce((a, b) => a + (b > 0 ? b : 0), 0);
-  const shares2 = r.weights.map((w) => (w > 0 ? w / total : 0));
-  const pins = values2.filter(
-    (v, i) => v < pFix && isFloorPinnedPct(shares2[i]! * 100),
-  );
-  assert(pins.length === 0, `NO floor-pinned cards (got ${JSON.stringify(pins)})`);
-  // The fix loop's re-plan detection: the enriched plan is HEALTHY → null.
-  const g2 = computeUntaggedGuidance({
-    cards: values2.map((v) => ({ value: v })),
-    currentWeights: weights2,
-    livePrice: CAPTIVE.price,
-    price: pFix,
-    targetEdge: captiveTargets.targetEdge,
-    targetWinRate: captiveTargets.targetWinRate,
-    nearMissMin: captiveTargets.nearMissMin,
-    maxWinCap: captiveTargets.maxWinCap,
-    plannedShares: shares2,
-    relaxations: r.relaxations,
-    pinPrice: true,
-  });
-  assert(g2 === null, "degenerate detection clears on the enriched plan");
 });
 
 check("healthy untagged plan: no pins, no float → guidance is null (no banner noise)", () => {

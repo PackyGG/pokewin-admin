@@ -250,16 +250,24 @@ export function buildRetuneSearchParams(
     upwardPriceExtensionPct: 0,
     // Tagged win-rate accuracy scoring (0.01pp) — see the gate above.
     ...(tagged ? { taggedWinRate: i.targetWinRate } : {}),
-    // WIN-RATE HOLD (owner-lens item 4): an UNTAGGED retune holds the achieved
-    // win-rate within +5pp ({@link WINRATE_HOLD_BAND}) of the pack's
-    // live-anchored design instead of floating far above it (Three Blades
-    // 30%→37.5%). Applied at every candidate price; a price where the held
-    // win-rate can't reach the edge errors and the search moves to one where it
-    // can (a clean plan) — or the pack surfaces as the wide-probe / pool-edit
-    // path. No-op in tagged mode (a tagged pack never floats — the tag pins the
-    // win-rate). Both plan arms + both writes inherit it through this one
-    // constructor, so preview ≡ write stays unconstructible skew.
-    ...(tagged ? {} : { holdWinRate: true }),
+    // WIN-RATE HOLD — HARD (untagged retune spike fix): an UNTAGGED retune PINS
+    // the achieved win-rate at the pack's live-anchored DESIGN target (no +band
+    // float at all) AND does NOT EV-exempt the cheapest winner. This kills the
+    // mid-pool SPIKE: on the old soft path the cheapest winner was an uncapped
+    // sink and the win-rate floated up to design+5pp, so the solver dumped the
+    // floated win mass onto that one card. Holding at design hits the SAME house
+    // edge with a clean monotonic ladder (cheapest card carries most) — the float
+    // was never load-bearing. EV is reached by the (unconditional) winBeta
+    // steepening within the anti-inflation caps + `disperseLoss`. Applied at every
+    // candidate price; a price where the design-held win-rate can't reach the edge
+    // errors and the search moves to one where it can (a clean plan) — or the pack
+    // surfaces as the wide-probe / pool-edit path. No-op in tagged mode (a tagged
+    // pack never floats — the tag pins the win-rate). Both plan arms + both writes
+    // inherit it through this one constructor, so preview ≡ write stays
+    // unconstructible skew. Distinct from the tagged `winRateIsHard` on purpose —
+    // it carries NONE of the tagged-only semantics (no RC4 saturated-EV interp, no
+    // one-sided-up acceptance, no 0.01pp tag tolerance).
+    ...(tagged ? {} : { holdWinRateHard: true }),
     // LOSS-MASS DISPERSION (owner-lens item 10): every retune re-spreads the
     // free-dust loss band at fixed mass + EV (edge / win-rate / tag byte-for-byte
     // preserved) so the crush ladder's single-carrier collapse is loosened where
