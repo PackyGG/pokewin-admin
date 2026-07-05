@@ -192,11 +192,9 @@ function writeArmSends(i: RetuneSearchInputs): Record<string, unknown> {
     ),
     upwardPriceExtensionPct: 0,
     ...(tagged ? { taggedWinRate: i.targetWinRate } : {}),
-    // WIN-RATE HOLD — HARD (untagged retune spike fix): untagged retunes PIN the
-    // achieved win-rate at the design target (no float) AND cap the cheapest
-    // winner (no EV-exempt sink) — killing the mid-pool spike. No-op / absent in
-    // tagged mode (the tag already pins the win-rate).
-    ...(tagged ? {} : { holdWinRateHard: true }),
+    // WIN-RATE HOLD (owner-lens item 4): untagged retunes hold the achieved
+    // win-rate within +5pp of the design (no-op / absent in tagged mode).
+    ...(tagged ? {} : { holdWinRate: true }),
     // LOSS-MASS DISPERSION (owner-lens item 10): every retune re-spreads the
     // free-dust loss band at fixed mass + EV (present on both tagged + untagged).
     disperseLoss: true,

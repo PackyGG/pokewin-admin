@@ -344,30 +344,6 @@ export type ShapeWeightsInput = {
    */
   holdWinRate?: boolean;
   /**
-   * WIN-RATE HOLD — HARD (untagged retune, owner-lens spike fix): when TRUE, the
-   * UNTAGGED win-rate is PINNED at the design `targetWinRate` (no +band float at
-   * all — a strict superset of {@link holdWinRate}'s +5pp band) AND the CHEAPEST
-   * winner is NOT EV-exempt from its anti-inflation cap. Distinct from
-   * {@link winRateIsHard} on purpose: this flag carries NONE of the tagged-only
-   * semantics — no RC4 saturated-EV interpolation, no one-sided-up tag
-   * acceptance, no 0.01pp {@link TAGGED_WINRATE_TOLERANCE} snap gate. Snap
-   * acceptance stays on the SOFT untagged path (within `winRateTol` under the
-   * `softWinRateCeil`).
-   *
-   * ROOT CAUSE it fixes: on the soft path the cheapest winner is EV-exempt
-   * (its `monoCap` is `Infinity`), so it becomes an uncapped SINK; the win-rate
-   * then floats up to design+5pp and the solver dumps that floated win mass onto
-   * that one uncapped cheapest card — the mid-pool SPIKE. Pinning the win-rate
-   * at design and capping the cheapest winner removes the sink: EV is reached by
-   * the (unconditional) `winBeta` steepening within the anti-inflation caps +
-   * `disperseLoss`, yielding a clean monotonic ladder where the cheapest card
-   * carries the most.
-   *
-   * No-op when {@link winRateIsHard} (a tagged pack already pins the win-rate).
-   * Default FALSE: every legacy direct `shapeWeights` caller stays byte-identical.
-   */
-  holdWinRateHard?: boolean;
-  /**
    * LOSS-MASS DISPERSION (owner-lens item 10): when TRUE (the RETUNE path), the
    * free-dust loss band is RE-SPREAD after the single-β layout — the min-L2
    * (affine-in-value) distribution at the SAME band mass + EV, so edge / win-rate
@@ -3121,18 +3097,10 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   }
 
   const winRateIsHard = input.winRateIsHard === true;
-  // WIN-RATE HOLD — HARD (untagged retune spike fix): pin the win-rate at design
-  // (no float) AND cap the cheapest winner (drop its EV exemption). No-op for a
-  // tagged pack (it already pins the rate). See `holdWinRateHard` on the input.
-  const holdWinRateHard = input.holdWinRateHard === true && !winRateIsHard;
   // WIN-RATE HOLD (owner-lens item 4): opt-in on the untagged RETUNE path only.
   // No-op for a tagged pack (it never floats) and for every legacy direct caller
-  // that doesn't set the flag (behavior byte-identical). The HARD hold is a
-  // strict superset (pin at design, cheapest capped) — it drives the SAME soft
-  // snap-ceiling paths (`winHoldCeil` / `softWinRateCeil`), so fold it in here so
-  // the ceilings bind; the pin (no float) + cheapest-cap are gated separately.
-  const holdWinRate =
-    (input.holdWinRate === true || holdWinRateHard) && !winRateIsHard;
+  // that doesn't set the flag (behavior byte-identical).
+  const holdWinRate = input.holdWinRate === true && !winRateIsHard;
   // LOSS-MASS DISPERSION (owner-lens item 10): opt-in on the RETUNE path. Pure
   // shape improvement at fixed band mass + EV; legacy direct callers (flag unset)
   // keep the single-β loss layout byte-identical.
@@ -3867,19 +3835,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // float (see the float-up gate below). Owner-safe either way: the top card and
   // every pricier card stay capped. (`winRateIsHard` is hoisted above the pin
   // validation — the tag-overshoot refusal needs it before the slot pass.)
-  // ALSO gated OFF under `holdWinRateHard` (untagged retune spike fix): exempting
-  // the cheapest winner makes it an UNCAPPED SINK, and with the win-rate pinned at
-  // design the solver dumps win mass onto that one card — the mid-pool spike. With
-  // the exemption skipped the cheapest winner keeps its own current-odds cap; EV is
-  // reached by `winBeta` steepening within the caps + `disperseLoss`, giving a
-  // clean monotonic ladder. (Soft `holdWinRate` KEEPS the exemption — it needs the
-  // sink to float toward the +5pp band; only the HARD hold removes it.)
-  if (
-    anchorActive &&
-    winPoolSlots.length > 0 &&
-    !winRateIsHard &&
-    !holdWinRateHard
-  ) {
+  if (anchorActive && winPoolSlots.length > 0 && !winRateIsHard) {
     let cheapestWinIdx = 0;
     let cheapestWinVal = Infinity;
     for (let i = 0; i < winPoolSlots.length; i++) {
@@ -3977,12 +3933,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // ANCHORED path (`anchorActive`) and when the win-rate is SOFT — the legacy
   // value-only path keeps the original single-β solve (no float-up); tagged packs
   // hit EV via their big jackpots at the tag rate, never by adding winners.
-  // ALSO gated OFF under `holdWinRateHard` (untagged retune spike fix): the win
-  // mass stays PINNED at design `targetWinRate` — no float at all. EV is instead
-  // reached by the (unconditional) `winBeta` steepening below, within the
-  // anti-inflation caps + `disperseLoss`. (Soft `holdWinRate` still floats, up to
-  // the +5pp `winMassCeil` band.)
-  if (anchorActive && !winRateIsHard && !holdWinRateHard && maxEvAtWinMass(winMass) < evTargetFree - 1e-9 && winMassCeil > winMass) {
+  if (anchorActive && !winRateIsHard && maxEvAtWinMass(winMass) < evTargetFree - 1e-9 && winMassCeil > winMass) {
     if (maxEvAtWinMass(winMassCeil) < evTargetFree - 1e-9) {
       winMass = winMassCeil; // best effort; downstream feasibility check surfaces it
     } else {
@@ -5246,15 +5197,6 @@ export function searchBestPriceForCleanSnap(input: {
    */
   holdWinRate?: boolean;
   /**
-   * WIN-RATE HOLD — HARD (untagged retune spike fix): when TRUE, forwarded to
-   * {@link shapeWeights} at every candidate price so the untagged win-rate is
-   * PINNED at design (no float) AND the cheapest winner keeps its anti-inflation
-   * cap (no EV-exempt sink). Set by the untagged retune arm
-   * (`buildRetuneSearchParams`) in place of the soft `holdWinRate`; omit for the
-   * legacy behavior. No-op in tagged mode. See `holdWinRateHard` on `shapeWeights`.
-   */
-  holdWinRateHard?: boolean;
-  /**
    * LOSS-MASS DISPERSION (owner-lens item 10): when TRUE, forwarded to
    * {@link shapeWeights} at every candidate price so the free-dust loss band is
    * re-spread at fixed band mass + EV (edge/win-rate/tag unchanged) — the crush
@@ -5281,7 +5223,6 @@ export function searchBestPriceForCleanSnap(input: {
   const tagged = typeof taggedWinRate === "number" && Number.isFinite(taggedWinRate);
   const preferHigherEdge = input.preferHigherEdge === true;
   const holdWinRate = input.holdWinRate === true;
-  const holdWinRateHard = input.holdWinRateHard === true;
   const disperseLoss = input.disperseLoss === true;
 
   // PLAN-WIDE tagged-snap DFS budget (perf-incident fix). ONE mutable counter
@@ -5328,9 +5269,6 @@ export function searchBestPriceForCleanSnap(input: {
       // Untagged WIN-RATE HOLD (owner-lens item 4): cap the soft float at
       // design + 5pp at every candidate price (no-op in tagged mode).
       ...(holdWinRate && !tagged ? { holdWinRate: true } : {}),
-      // Untagged WIN-RATE HOLD — HARD (spike fix): pin the win-rate at design AND
-      // cap the cheapest winner at every candidate price (no-op in tagged mode).
-      ...(holdWinRateHard && !tagged ? { holdWinRateHard: true } : {}),
       // LOSS-MASS DISPERSION (owner-lens item 10): re-spread the free-dust band
       // at fixed mass + EV at every candidate price (edge/win-rate untouched).
       ...(disperseLoss ? { disperseLoss: true } : {}),

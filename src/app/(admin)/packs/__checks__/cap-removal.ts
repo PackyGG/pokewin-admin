@@ -267,18 +267,16 @@ check("pins: pinning the cap-dropped Machamp is still the pins-infeasible + rais
 // ── 5. No false positives (under-cap pool) ──────────────────────────────
 
 check("under-cap pack: zero classifications and the write vector keeps every row", () => {
-  // An untagged anchored pool, everything far under the $250 cap. It carries a
-  // mid winner ($12) alongside the $4.2 winner + $120 grail so the DESIGN 20%
-  // win-rate genuinely carries the EV target — the untagged retune arm's
-  // `holdWinRateHard` PINS the win-rate at design (no float), so a thin
-  // two-winner pool would refuse (ev-unreachable-for-split); this pool has the
-  // EV headroom to solve CLEANLY at design with every row kept (the property
-  // this cap-removal test actually asserts, independent of any win-rate float).
+  // An untagged anchored pool, everything far under the $250 cap. Its live
+  // win-rate (mass on the $4.2 + $120 winners) sits at ≈20% — matching the
+  // targetWinRate below — so the WIN-RATE HOLD (owner-lens item 4) is a no-op
+  // float here and the solve lands cleanly with every row kept (the property
+  // this cap-removal test actually asserts). Sibling shape of the pins.ts
+  // untagged fixture, weighted so the held retune is feasible in-band.
   const pool = [
-    { cardId: "u-dust", value: 0.35, weight: 600000 },
-    { cardId: "u-near", value: 1.8, weight: 150000 },
-    { cardId: "u-win", value: 4.2, weight: 140000 },
-    { cardId: "u-win2", value: 12.0, weight: 60000 },
+    { cardId: "u-dust", value: 0.35, weight: 640000 },
+    { cardId: "u-near", value: 1.8, weight: 160000 },
+    { cardId: "u-win", value: 4.2, weight: 195000 },
     { cardId: "u-grail", value: 120, weight: 5000 },
   ];
   const classified = computeCapDroppedCardIds(
