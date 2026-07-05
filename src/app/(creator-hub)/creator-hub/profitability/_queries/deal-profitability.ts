@@ -180,12 +180,27 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
     return { rows: [], totals: EMPTY_TOTALS, rosterUnavailable: true };
   }
 
-  const fill = roster.filter(
-    (c) =>
-      c.current_deal != null &&
-      (c.current_deal.status === "active" ||
-        c.current_deal.status === "scheduled"),
-  );
+  // Defensive: a deal whose backend `current_deal.status` still reads
+  // "active"/"scheduled" but whose fills are already exhausted
+  // (fills_used >= fills_allowed) is functionally ended — exclude it too.
+  // Owner report 2026-07-05: right after terminating a creator's deal, the
+  // roster endpoint's `current_deal` summary lagged behind the deals-history
+  // endpoint (which already showed `status: terminated`), so the exhausted
+  // deal kept surfacing on the Active tab with a fallback (non-board) frame.
+  // This is a belt-and-suspenders guard on data already fetched — it changes
+  // only ROSTER INCLUSION, never a cost figure.
+  const fill = roster.filter((c) => {
+    if (c.current_deal == null) return false;
+    if (
+      c.current_deal.status !== "active" &&
+      c.current_deal.status !== "scheduled"
+    ) {
+      return false;
+    }
+    const { fills_allowed, fills_used } = c.current_deal;
+    if (fills_allowed > 0 && fills_used >= fills_allowed) return false;
+    return true;
+  });
 
   if (fill.length === 0) {
     return { rows: [], totals: EMPTY_TOTALS, rosterUnavailable: false };
