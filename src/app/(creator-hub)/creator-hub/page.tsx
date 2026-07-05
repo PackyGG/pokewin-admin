@@ -678,9 +678,33 @@ async function CreatorCostSeriesSection({ period }: { period: DashboardPeriod })
   );
 }
 
+// `getHubTopCreatorsByDeposits` runs a live PG leg (`creator_hub_top_creators`
+// is not in `CUTOVER_DEFAULT_CLICKHOUSE`, so `resolveAdminRead` serves
+// Postgres directly with no try/catch around it — see resolve-read.ts's
+// "off"/"comparison" path). Unlike every sibling query on this page it was
+// NOT wrapped in `safeQuery`/`safeQueryOrNull`, so a transient failure (pool
+// blip, statement timeout, connection error) threw straight past this
+// Suspense leaf to the group-level error boundary and crashed the whole
+// Creator Hub dashboard (digest 491822067, 2026-07-05). Guarded here to match
+// the house pattern — a query failure now degrades to a "Backend
+// unavailable" placeholder instead of taking down the page.
 async function TopCreatorsList({ period }: { period: TopCreatorsPeriod }) {
-  const creators = await getHubTopCreatorsByDeposits(period);
-  return <HubTopCreators creators={creators} periodLabel={period} />;
+  const { data, error } = await safeQueryOrNull(
+    () => getHubTopCreatorsByDeposits(period),
+    "creator-hub.topCreatorsByDeposits",
+    8_000,
+  );
+
+  if (data == null) {
+    console.error("[creator-hub] top creators by deposits failed:", error);
+    return (
+      <div className="flex min-h-[180px] flex-col items-center justify-center gap-2 rounded-md border border-dashed py-8 text-center text-sm text-muted-foreground">
+        Backend unavailable.
+      </div>
+    );
+  }
+
+  return <HubTopCreators creators={data} periodLabel={period} />;
 }
 
 // ─── Skeleton ──────────────────────────────────────────────────────
