@@ -952,6 +952,217 @@ export function disperseLossBand(
   return out;
 }
 
+/**
+ * A whole-band dispersal result is only kept when it does not DRAIN the
+ * near-miss band: the affine min-L2 fit is near-miss-blind, and when the loss
+ * band's required mean sits low (cheap dust must carry the edge) the straight
+ * line assigns the expensive near-miss cards almost nothing — silently
+ * rewriting the pack's designed "almost!" band (owner incident "Tails?",
+ * 2026-07-06: a live-10% near-miss card planned at 4% with no diagnostic).
+ * Below this tolerance of near-miss band shrinkage the plain dispersal is
+ * kept as-is; above it the rescue layout below is tried first.
+ */
+const NEARMISS_PRESERVE_TOL = 0.005;
+
+/**
+ * NEAR-MISS-PRESERVING LOSS LAYOUT — the rescue arm of the loss dispersion.
+ *
+ * {@link disperseLossBand} re-spreads the WHOLE loss band (near-miss + dust)
+ * at fixed mass + EV, but its affine-in-value objective knows nothing about
+ * the near-miss FLOOR the solver just allocated ({@link ShapeWeightsInput}'s
+ * `nearMissMin` — a designed feel dial, live-anchored on untagged packs). On
+ * a pool whose loss mean is dragged low by cheap dust, the affine line
+ * starves the expensive near-miss card(s) (owner incident "Tails?": live 10%
+ * → planned 4%, sitting visually UNDER a win card).
+ *
+ * This function builds the alternative layout that keeps the near-miss band
+ * as close to its allocated input mass as the pool's physics allow, while
+ * holding the SAME hard invariants as the dispersal (total mass + total EV
+ * exact ⇒ edge/win-rate/tag byte-preserved) AND the loss-monotonicity owner
+ * rule (cheapest-carries-most on the non-buffer chain — so the later
+ * {@link enforceLossMonotone} pass has nothing to pull back down):
+ *
+ *   1. FULLY-FUNDED: keep the near-miss cards' input weights VERBATIM, run
+ *      the standard dispersal on the dust side alone (its own mass + EV), and
+ *      accept only when every non-buffer dust card still carries ≥ the
+ *      heaviest near-miss card (monotone across the band boundary).
+ *   2. SCALED (the EV-feasible maximum): one shared level `x` across ALL
+ *      non-buffer loss cards (near-miss + dust chain) with the buffer
+ *      absorbing the remainder — the closed-form solution of "maximize the
+ *      near-miss band subject to mass, EV and monotonicity". `x` solves
+ *      `x·Σv_chain + (mass − k·x)·v_buffer = EV`. The near-miss band lands at
+ *      `min(k_nm·x, its input mass)` — the honest physical ceiling.
+ *
+ * Returns `null` when no rescue shape passes the guards (buffer inside the
+ * near-miss band, degenerate values, a level that would newly floor-pin a
+ * real-mass card, or a non-monotone/mass/EV-violating result) — the caller
+ * then keeps the plain dispersal and the end-of-solve relaxation check
+ * reports the shrinkage honestly instead. Pure + dep-free for the
+ * `packs/__checks__` harness.
+ */
+export function preserveNearMissLossLayout(input: {
+  /** Loss-band card values (parallel to `weights`). */
+  values: readonly number[];
+  /** PRE-dispersal loss-band weights — the mass/EV/near-miss source of truth. */
+  weights: readonly number[];
+  /** The NEARMISS band's lower boundary (0.5·price): value ≥ this ⇒ near-miss. */
+  nearMissLo: number;
+}): number[] | null {
+  const { values, weights, nearMissLo } = input;
+  const n = values.length;
+  if (n < 2) return null;
+  let mass = 0;
+  let ev = 0;
+  for (let i = 0; i < n; i++) {
+    if (!(weights[i]! >= 0) || !Number.isFinite(values[i]!)) return null;
+    mass += weights[i]!;
+    ev += weights[i]! * values[i]!;
+  }
+  if (!(mass > 0) || !(ev > 0)) return null;
+
+  // Buffer = argmax input weight, tie → cheapest (the same residual-absorber
+  // convention the snap + enforceLossMonotone use). A buffer inside the
+  // near-miss band has no rescue shape (the sink must be a dust card).
+  let buf = 0;
+  for (let i = 1; i < n; i++) {
+    if (
+      weights[i]! > weights[buf]! ||
+      (weights[i]! === weights[buf]! && values[i]! < values[buf]!)
+    ) {
+      buf = i;
+    }
+  }
+  if (values[buf]! >= nearMissLo) return null;
+  const vb = values[buf]!;
+
+  let kNm = 0;
+  let nmMass = 0;
+  let nmEv = 0;
+  let maxNmW = 0;
+  let kD = 0;
+  let sumVD = 0;
+  let sumVChain = 0;
+  for (let i = 0; i < n; i++) {
+    if (values[i]! >= nearMissLo) {
+      kNm += 1;
+      nmMass += weights[i]!;
+      nmEv += weights[i]! * values[i]!;
+      if (weights[i]! > maxNmW) maxNmW = weights[i]!;
+      sumVChain += values[i]!;
+    } else if (i !== buf) {
+      kD += 1;
+      sumVD += values[i]!;
+      sumVChain += values[i]!;
+    }
+  }
+  if (kNm === 0 || !(nmMass > 0)) return null;
+
+  const accept = (out: number[]): number[] | null => {
+    // Hard invariants: exact mass + EV (⇒ edge/win-rate untouched), no
+    // negative weight, no NEWLY floor-pinned real-mass card, and the
+    // non-buffer chain monotone non-increasing in value (so the later
+    // enforceLossMonotone pass is a no-op on this layout).
+    let outMass = 0;
+    let outEv = 0;
+    for (let i = 0; i < n; i++) {
+      const w = out[i]!;
+      if (!(w >= 0)) return null;
+      outMass += w;
+      outEv += w * values[i]!;
+      if (
+        weights[i]! >= DISPERSE_REAL_MASS_FLOOR &&
+        w <= DISPERSE_FLOOR_PIN_FRACTION
+      ) {
+        return null;
+      }
+    }
+    if (
+      Math.abs(outMass - mass) > 1e-6 * Math.max(1, mass) ||
+      Math.abs(outEv - ev) > 1e-6 * Math.max(1, ev)
+    ) {
+      return null;
+    }
+    const chain: { v: number; w: number }[] = [];
+    for (let i = 0; i < n; i++) {
+      if (i === buf) continue;
+      chain.push({ v: values[i]!, w: out[i]! });
+    }
+    chain.sort((a, b) => a.v - b.v);
+    for (let k = 0; k + 1 < chain.length; k++) {
+      if (chain[k]!.w < chain[k + 1]!.w - 1e-9) return null;
+    }
+    // The buffer must remain the argmax (still the residual absorber).
+    for (let i = 0; i < n; i++) {
+      if (i !== buf && out[i]! > out[buf]! + 1e-9) return null;
+    }
+    return out;
+  };
+
+  // ── 1. FULLY-FUNDED: near-miss weights verbatim, dust re-spread alone ────
+  if (kD >= 1) {
+    const dustIdx: number[] = [];
+    for (let i = 0; i < n; i++) {
+      if (values[i]! < nearMissLo) dustIdx.push(i);
+    }
+    const dustValues = dustIdx.map((i) => values[i]!);
+    const dustW = dustIdx.map((i) => weights[i]!);
+    const dustMass = mass - nmMass;
+    if (dustMass > 0) {
+      const dispersedDust = disperseLossBand(dustValues, dustW, dustMass);
+      const out = weights.slice();
+      dustIdx.forEach((i, j) => {
+        out[i] = dispersedDust[j]!;
+      });
+      // Monotone across the band boundary: every non-buffer dust card must
+      // still carry ≥ the heaviest near-miss card.
+      let boundaryOk = true;
+      for (const i of dustIdx) {
+        if (i !== buf && out[i]! < maxNmW - 1e-9) {
+          boundaryOk = false;
+          break;
+        }
+      }
+      if (boundaryOk) {
+        const accepted = accept(out);
+        if (accepted !== null) return accepted;
+      }
+    }
+  }
+
+  // ── 2. SCALED: one shared level x on the whole non-buffer chain ─────────
+  const kChain = kNm + kD;
+  const denom = sumVChain - kChain * vb;
+  if (!(denom > 1e-9)) return null;
+  const x = (ev - mass * vb) / denom;
+  if (!(x > 0)) return null;
+  // Never fund the near-miss band ABOVE its input allocation: when the
+  // uniform level would overfund it, keep the near-miss cards' input weights
+  // VERBATIM (mass + EV of the band exact) and re-level the dust chain to
+  // absorb the freed budget (null when the buffer can no longer stay argmax).
+  const xNmFull = nmMass / kNm;
+  const out = new Array<number>(n).fill(0);
+  if (x > xNmFull + 1e-12 && kD >= 1) {
+    const denomD = sumVD - kD * vb;
+    if (!(denomD > 1e-9)) return null;
+    const y = (ev - nmEv - (mass - nmMass) * vb) / denomD;
+    if (!(y >= maxNmW - 1e-12)) return null;
+    const wb = mass - nmMass - kD * y;
+    if (!(wb >= y - 1e-12)) return null;
+    for (let i = 0; i < n; i++) {
+      if (i === buf) out[i] = wb;
+      else if (values[i]! >= nearMissLo) out[i] = weights[i]!;
+      else out[i] = y;
+    }
+    return accept(out);
+  }
+  const wb = mass - kChain * x;
+  if (!(wb >= x - 1e-12)) return null;
+  for (let i = 0; i < n; i++) {
+    out[i] = i === buf ? wb : x;
+  }
+  return accept(out);
+}
+
 /** Greatest common divisor of two non-negative integers. */
 function gcd(a: number, b: number): number {
   let x = Math.abs(a);
@@ -4425,9 +4636,44 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
       const lossW = lossSlots.map((s) => frac[slotPos.get(s)!]!);
       let lossMassSum = 0;
       for (const w of lossW) lossMassSum += w;
-      const dispersed = disperseLossBand(lossValues, lossW, lossMassSum);
+      let adopted = disperseLossBand(lossValues, lossW, lossMassSum);
+      // NEAR-MISS PRESERVATION (owner incident "Tails?", 2026-07-06): the
+      // affine dispersal is near-miss-blind — on a pool whose loss mean sits
+      // low it DRAINS the designed near-miss band into the dust (live-10%
+      // near-miss card planned at 4%, no diagnostic). When the dispersed
+      // near-miss band lands materially below its allocated input mass, try
+      // the near-miss-preserving layout instead (same exact mass + EV ⇒
+      // edge/win-rate/tag untouched; monotone by construction so the later
+      // enforceLossMonotone pass has nothing to pull down). Adopted only when
+      // it genuinely rescues near-miss mass; any residual shortfall is
+      // reported as a `nearMiss` relaxation at the end of the solve.
+      const nmLo = 0.5 * price;
+      let inputNm = 0;
+      let dispersedNm = 0;
+      for (let i = 0; i < lossSlots.length; i++) {
+        if (lossValues[i]! >= nmLo) {
+          inputNm += lossW[i]!;
+          dispersedNm += adopted[i]!;
+        }
+      }
+      if (inputNm > 0 && dispersedNm < inputNm - NEARMISS_PRESERVE_TOL) {
+        const rescued = preserveNearMissLossLayout({
+          values: lossValues,
+          weights: lossW,
+          nearMissLo: nmLo,
+        });
+        if (rescued !== null) {
+          let rescuedNm = 0;
+          for (let i = 0; i < lossSlots.length; i++) {
+            if (lossValues[i]! >= nmLo) rescuedNm += rescued[i]!;
+          }
+          if (rescuedNm > dispersedNm + NEARMISS_PRESERVE_TOL) {
+            adopted = rescued;
+          }
+        }
+      }
       lossSlots.forEach((s, i) => {
-        frac[slotPos.get(s)!] = dispersed[i]!;
+        frac[slotPos.get(s)!] = adopted[i]!;
       });
     }
   }
@@ -5106,6 +5352,37 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     }
   }
 
+  // ── NEAR-MISS shortfall diagnostic (retune path only) ────────────────────
+  // The dispersal rescue above preserves the near-miss band where the pool's
+  // physics allow — but when the edge target + the cheapest-carries-most loss
+  // ordering genuinely leave no room (the EV-feasible ceiling sits below the
+  // allocated floor), the FINAL vector lands under the ask. That shortfall
+  // used to ship SILENTLY (owner incident "Tails?": near-miss target 10%,
+  // planned 4%, empty relaxations). Record it as a `nearMiss` relaxation so
+  // the plan panel / push review surface it honestly. Tolerance: snap-rung
+  // jitter must never fire this (min(2pp, half the ask)); gated on the retune
+  // path (`disperseLoss`) so every legacy direct caller's relaxations stay
+  // byte-identical.
+  if (disperseLoss) {
+    const expectedNm = nearMissMass + pinnedNearMissShare;
+    const shortfall = expectedNm - risk.nearMiss;
+    if (expectedNm > 1e-9 && shortfall > Math.min(0.02, 0.5 * expectedNm)) {
+      const existingNm = relaxations.find((r) => r.lever === "nearMiss");
+      const reason = `Near-miss band lands at ${(risk.nearMiss * 100).toFixed(2)}% (target ${(expectedNm * 100).toFixed(2)}%): holding the edge target with the cheapest-carries-most loss ordering leaves no more room for near-miss mass in this pool.`;
+      if (existingNm) {
+        existingNm.applied = risk.nearMiss;
+        existingNm.reason = reason;
+      } else {
+        relaxations.push({
+          lever: "nearMiss",
+          requested: requestedNearMissMin,
+          applied: risk.nearMiss,
+          reason,
+        });
+      }
+    }
+  }
+
   return {
     weights,
     risk,
@@ -5145,6 +5422,8 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
 //
 // SCORING — backward-compatible default (no `taggedWinRate`):
 //   Tier 1: snapPriority (snapped + skew matches base < snapped < not snapped < error)
+//   Tier 1b: nmTier (retune path only — near-miss floor shortfall in 1pp
+//            buckets; fully-funded beats starved; inert for legacy callers)
 //   Tier 2: centsDist (closer to basePrice wins)
 //   Tier 3: edgeDrift (smaller |edge − target| wins)
 //   ─ The base price is preferred whenever it produces a clean snap matching
@@ -5598,6 +5877,7 @@ function searchBestPriceForCleanSnapCore(input: {
   //   Tier 0: always 0 (inactive — the tagged tier is collapsed).
   //   Tier 0b: always 0 (inactive — edgeBand only active under preferHigherEdge).
   //   Tier 1: snapPriority (snapped + skew matches base < snapped < not snapped < error)
+  //   Tier 1b: nmTier (retune path only — near-miss floor shortfall, 1pp buckets).
   //   Tier 2: centsDist (closer to basePrice wins).
   //   Tier 3: edgeDrift (smaller |edge − target| wins).
   //
@@ -5637,15 +5917,30 @@ function searchBestPriceForCleanSnapCore(input: {
      * per-100k-exact", never overriding tag exactness / edge window / caps.
      */
     niceTier: number;
+    /**
+     * NEAR-MISS INTEGRITY (retune path only — owner incident "Tails?" /
+     * "Sealed Titan", 2026-07-06): the candidate's near-miss shortfall vs the
+     * requested floor, bucketed in 1pp bins (0 = floor fully funded). The
+     * price sweep is otherwise near-miss-blind: two equally-clean candidates
+     * cents apart can differ 5pp in how much of the pack's DESIGNED "almost!"
+     * band survives (a lower price shrinks the loss-EV budget), and centsDist
+     * would pick the starved one. Sits BELOW snap-cleanness/niceness (clean
+     * odds stay a must) and ABOVE price distance. 0 (inert) for legacy
+     * callers (`disperseLoss` unset) and when no floor was requested —
+     * ordering byte-identical for them.
+     */
+    nmTier: number;
     centsDist: number;
     edgeDrift: number;
   };
+  const nmTierActive = disperseLoss && (nearMissMin ?? 0) > 0;
   const scoreOf = (price: number, result: ShapeWeightsResult): Scored => {
     let snapPriority: number;
     let edgeDrift: number;
     let winRateTier: number;
     let edgeBand: number;
     let niceTier: number;
+    let nmTier: number;
     if (isShapeWeightsSuccess(result)) {
       const isSnapped = result.snapped === true;
       const skewMatchesBase =
@@ -5665,6 +5960,11 @@ function searchBestPriceForCleanSnapCore(input: {
         tagged && isSnapped
           ? countOffNicePct(result.weights, result.niceExemptIdx)
           : 0;
+      // Near-miss integrity: 1pp shortfall buckets (rounded, so snap-rung
+      // jitter under half a point never moves the price).
+      nmTier = nmTierActive
+        ? Math.round(Math.max(0, (nearMissMin ?? 0) - result.risk.nearMiss) * 100)
+        : 0;
     } else {
       snapPriority = 3;
       edgeDrift = Infinity;
@@ -5673,6 +5973,7 @@ function searchBestPriceForCleanSnapCore(input: {
       // lose to every success.
       edgeBand = preferHigherEdge ? Number.MAX_SAFE_INTEGER : 0;
       niceTier = 0;
+      nmTier = nmTierActive ? Number.MAX_SAFE_INTEGER : 0;
     }
     return {
       price,
@@ -5681,15 +5982,17 @@ function searchBestPriceForCleanSnapCore(input: {
       edgeBand,
       snapPriority,
       niceTier,
+      nmTier,
       centsDist: Math.abs(Math.round(price * 100) - centsAtBase),
       edgeDrift,
     };
   };
 
   // Lexicographic comparator: winRateTier < edgeBand < snapPriority <
-  // niceTier < centsDist < edgeDrift. In default mode winRateTier + edgeBand
-  // are always 0 → effectively starts at snapPriority (and niceTier is always
-  // 0 untagged — ordering byte-identical to the pre-niceness comparator).
+  // niceTier < nmTier < centsDist < edgeDrift. In default mode winRateTier +
+  // edgeBand are always 0 → effectively starts at snapPriority (niceTier is
+  // always 0 untagged, nmTier always 0 off the retune path — ordering
+  // byte-identical to the pre-niceness comparator for legacy callers).
   const lexBetter = (a: Scored, b: Scored): boolean =>
     a.winRateTier < b.winRateTier ||
     (a.winRateTier === b.winRateTier && a.edgeBand < b.edgeBand) ||
@@ -5704,11 +6007,18 @@ function searchBestPriceForCleanSnapCore(input: {
       a.edgeBand === b.edgeBand &&
       a.snapPriority === b.snapPriority &&
       a.niceTier === b.niceTier &&
+      a.nmTier < b.nmTier) ||
+    (a.winRateTier === b.winRateTier &&
+      a.edgeBand === b.edgeBand &&
+      a.snapPriority === b.snapPriority &&
+      a.niceTier === b.niceTier &&
+      a.nmTier === b.nmTier &&
       a.centsDist < b.centsDist) ||
     (a.winRateTier === b.winRateTier &&
       a.edgeBand === b.edgeBand &&
       a.snapPriority === b.snapPriority &&
       a.niceTier === b.niceTier &&
+      a.nmTier === b.nmTier &&
       a.centsDist === b.centsDist &&
       a.edgeDrift < b.edgeDrift);
 
@@ -5763,12 +6073,16 @@ function searchBestPriceForCleanSnapCore(input: {
   // centsDist is the deciding tier from there. Without the niceTier guard the
   // tagged sweep would settle at the nearest per-100k-exact cent and never
   // reach the round-number assignment farther out (fixture F2: Δ71¢).
+  // The nmTier guard is the same fix for near-miss integrity ("Sealed
+  // Titan"): a clean-but-starved candidate near base must not stop the walk
+  // before a fully-funded candidate farther out is seen.
   // Exception: preferHigherEdge keeps hunting (edgeBand outranks centsDist).
   const topTierAt = (d: number): boolean =>
     !preferHigherEdge &&
     best.winRateTier === 0 &&
     best.snapPriority === 0 &&
     (!tagged || best.niceTier === 0) &&
+    best.nmTier === 0 &&
     best.centsDist <= d;
 
   // Phase 1 — FINE: 1¢ outward walk (densest near base).
