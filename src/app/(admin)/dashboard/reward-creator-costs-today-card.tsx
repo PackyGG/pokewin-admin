@@ -18,10 +18,11 @@ import {
  * headline the card face, not just whichever two happen to be largest that
  * day. `counted_adjustments` ("Promo balance credits" — counted
  * `admin_balance_adjustment` credits: giveaway / bonus / reload / lossback
- * / deposit-fix) added 2026-07-02 (owner request) — it already existed as
- * a line in `getRewardCostsToday()` and in the Info popover breakdown, just
- * wasn't pinned to a face chip yet. A chip still renders at $0 (muted, not
- * rose) so the card doesn't reshuffle day to day.
+ * / deposit-fix) added 2026-07-02, `race` ("Race wins" — on-site
+ * competitive race prize payouts) added 2026-07-06 (both owner requests) —
+ * each already existed as a line in `getRewardCostsToday()` and in the Info
+ * popover breakdown, just wasn't pinned to a face chip yet. A chip still
+ * renders at $0 (muted, not rose) so the card doesn't reshuffle day to day.
  */
 const REWARD_PINNED_CHIP_KEYS = [
   "daily_packs",
@@ -29,6 +30,7 @@ const REWARD_PINNED_CHIP_KEYS = [
   "rakeback",
   "deposit_bonus",
   "counted_adjustments",
+  "race",
 ] as const;
 
 /**
