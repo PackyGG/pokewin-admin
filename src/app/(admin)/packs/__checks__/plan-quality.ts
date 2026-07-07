@@ -31,6 +31,7 @@ import {
   computePackRisk,
   snapWeightsToCleanLadder,
   disperseLossBand,
+  preserveNearMissLossLayout,
   enforceLossMonotone,
   taggedPlanNodeBudget,
   RETUNE_PRICE_BUDGET_DEFAULT_PCT,
@@ -1315,6 +1316,70 @@ check("P14 fallback is load-bearing: guidance may be null on a refused-but-not-d
     g === null || g.suggestions.length >= 0,
     "computeUntaggedGuidance returns a well-formed result (null or ranked) on the healthy vector",
   );
+});
+
+// ── P15 — ladder sandwich (owner incident "OG Set", 2026-07-06) ─────────────
+// The affine loss dispersal starved the MOST EXPENSIVE loss card relative to
+// the cheaper chain: win-bottom 15% → dust 5% → 20% → 34.5% — the owner reads
+// the 5% as a hole ("why does it go 20% to 5% to 15%?"). The flatten adopts
+// the uniform-level layout (the physics MAXIMUM the chain top can carry at
+// fixed mass + EV) whenever the dip vs the band above exceeds 2pp, so no loss
+// card may sit sandwiched >2pp below BOTH of its ladder neighbors.
+
+const OG_SET: Pool = {
+  name: "OG Set",
+  price: 18.06,
+  values: [602.2, 218.9, 168.9, 99.14, 37.51, 24.84, 23.98, 19.67, 4.07, 1.39, 0.52],
+  livePcts: [0.25, 0.75, 1, 2, 4, 6, 11, 15, 5, 25, 30],
+  tag: null,
+};
+
+check("P15 loss chain carries no >2pp ladder sandwich (OG Set)", () => {
+  const out = solve(OG_SET, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
+  assert(out.price !== null && out.planned !== null, "OG Set solves feasibly");
+  assert(out.snapped === true, "OG Set lands a clean snap");
+  assert(
+    out.after!.edge >= out.targets.targetEdge - 1e-9,
+    `edge ${(out.after!.edge * 100).toFixed(3)}% must land at/above target ${(out.targets.targetEdge * 100).toFixed(3)}%`,
+  );
+  const ladder = OG_SET.values
+    .map((v, i) => ({ v, s: out.planned![i]! }))
+    .filter((r) => r.s > 0)
+    .sort((a, b) => b.v - a.v);
+  for (let i = 1; i + 1 < ladder.length; i++) {
+    if (ladder[i]!.v >= out.price!) continue;
+    const depth = Math.min(ladder[i - 1]!.s, ladder[i + 1]!.s) - ladder[i]!.s;
+    assert(
+      depth <= 0.02 + 1e-9,
+      `loss card $${ladder[i]!.v} planned ${(ladder[i]!.s * 100).toFixed(2)}% sits ${(depth * 100).toFixed(1)}pp below both neighbors (${(ladder[i - 1]!.s * 100).toFixed(2)}% / ${(ladder[i + 1]!.s * 100).toFixed(2)}%)`,
+    );
+  }
+});
+
+check("P15b pure-dust flatten returns the uniform chain (no near-miss cards)", () => {
+  // kNm === 0 degradation: with no near-miss cards the scaled arm must give
+  // ONE shared level across the non-buffer chain with the buffer absorbing
+  // the remainder — the closed-form maximum for the most expensive dust card.
+  // Values/weights = OG Set's dispersed dust band at the pre-fix $18.20 plan.
+  const values = [4.07, 1.39, 0.52];
+  const weights = [0.05, 0.2, 0.345];
+  const flat = preserveNearMissLossLayout({ values, weights, nearMissLo: 9.1 });
+  assert(flat !== null, "flatten produces a layout on the pure-dust band");
+  assert(
+    Math.abs(flat![0]! - flat![1]!) < 1e-9,
+    `chain is uniform (got ${flat![0]!.toFixed(4)} vs ${flat![1]!.toFixed(4)})`,
+  );
+  assert(flat![2]! >= flat![1]! - 1e-9, "buffer stays the argmax");
+  assert(
+    flat![0]! > weights[0]! + 0.02,
+    `uniform level materially raises the starved top (${(flat![0]! * 100).toFixed(2)}% vs affine ${(weights[0]! * 100).toFixed(2)}%)`,
+  );
+  const mass = flat!.reduce((a, b) => a + b, 0);
+  const ev = flat!.reduce((a, b, i) => a + b * values[i]!, 0);
+  const massIn = weights.reduce((a, b) => a + b, 0);
+  const evIn = weights.reduce((a, b, i) => a + b * values[i]!, 0);
+  assert(Math.abs(mass - massIn) < 1e-9, "flatten preserves exact mass");
+  assert(Math.abs(ev - evIn) < 1e-9, "flatten preserves exact EV");
 });
 
 // ════════════════════════════════════════════════════════════════════════

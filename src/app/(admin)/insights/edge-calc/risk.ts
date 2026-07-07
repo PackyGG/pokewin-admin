@@ -965,6 +965,16 @@ export function disperseLossBand(
 const NEARMISS_PRESERVE_TOL = 0.005;
 
 /**
+ * Boundary-dip gate for the loss-chain FLATTEN (owner incident "OG Set",
+ * 2026-07-06): the flatten is tried only when the most expensive loss-chain
+ * card lands more than this far (2pp) BELOW the cheapest planned card of the
+ * band above it — the "ladder sandwich" the owner reads as a hole (win 15% →
+ * dust 5% → 20% → 34.5%). Sub-2pp dips are left to the affine dispersal so
+ * near-flat fleet layouts don't churn.
+ */
+const LOSS_FLATTEN_DIP_TOL = 0.02;
+
+/**
  * NEAR-MISS-PRESERVING LOSS LAYOUT — the rescue arm of the loss dispersion.
  *
  * {@link disperseLossBand} re-spreads the WHOLE loss band (near-miss + dust)
@@ -999,6 +1009,13 @@ const NEARMISS_PRESERVE_TOL = 0.005;
  * then keeps the plain dispersal and the end-of-solve relaxation check
  * reports the shrinkage honestly instead. Pure + dep-free for the
  * `packs/__checks__` harness.
+ *
+ * NO-NEAR-MISS POOLS (owner incident "OG Set", 2026-07-06): with zero cards
+ * in the near-miss band the same scaled arm degrades to the pure uniform
+ * dust chain — the closed-form MAXIMUM the most expensive loss card can
+ * carry at fixed mass + EV with a monotone chain. The caller uses it to
+ * flatten ladder sandwiches (win-bottom 15% → dust 5% → 20% → 34.5% reads
+ * as a hole; the uniform 8% / 8% / 43.5% is the physics ceiling for the 5%).
  */
 export function preserveNearMissLossLayout(input: {
   /** Loss-band card values (parallel to `weights`). */
@@ -1055,7 +1072,7 @@ export function preserveNearMissLossLayout(input: {
       sumVChain += values[i]!;
     }
   }
-  if (kNm === 0 || !(nmMass > 0)) return null;
+  if (kNm > 0 && !(nmMass > 0)) return null;
 
   const accept = (out: number[]): number[] | null => {
     // Hard invariants: exact mass + EV (⇒ edge/win-rate untouched), no
@@ -1099,7 +1116,9 @@ export function preserveNearMissLossLayout(input: {
   };
 
   // ── 1. FULLY-FUNDED: near-miss weights verbatim, dust re-spread alone ────
-  if (kD >= 1) {
+  // (kNm === 0 skips straight to the scaled arm: re-spreading the dust alone
+  // would just reproduce the affine dispersal the caller is escaping.)
+  if (kNm >= 1 && kD >= 1) {
     const dustIdx: number[] = [];
     for (let i = 0; i < n; i++) {
       if (values[i]! < nearMissLo) dustIdx.push(i);
@@ -1139,9 +1158,9 @@ export function preserveNearMissLossLayout(input: {
   // uniform level would overfund it, keep the near-miss cards' input weights
   // VERBATIM (mass + EV of the band exact) and re-level the dust chain to
   // absorb the freed budget (null when the buffer can no longer stay argmax).
-  const xNmFull = nmMass / kNm;
+  const xNmFull = kNm >= 1 ? nmMass / kNm : Infinity;
   const out = new Array<number>(n).fill(0);
-  if (x > xNmFull + 1e-12 && kD >= 1) {
+  if (kNm >= 1 && x > xNmFull + 1e-12 && kD >= 1) {
     const denomD = sumVD - kD * vb;
     if (!(denomD > 1e-9)) return null;
     const y = (ev - nmEv - (mass - nmMass) * vb) / denomD;
@@ -4669,6 +4688,76 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
           }
           if (rescuedNm > dispersedNm + NEARMISS_PRESERVE_TOL) {
             adopted = rescued;
+          }
+        }
+      }
+      // LADDER-SANDWICH FLATTEN (owner incident "OG Set", 2026-07-06): on a
+      // tight loss-EV budget the affine dispersal starves the MOST EXPENSIVE
+      // loss card relative to the cheaper chain (win-bottom 15% → dust 5% →
+      // 20% → 34.5%: the 5% reads as a hole in the ladder). When the loss
+      // chain's top card lands materially below the cheapest planned card of
+      // the band above it, try the uniform-level layout — the closed-form
+      // MAXIMUM that top card can carry at fixed mass + EV with a monotone
+      // chain — and adopt it when it materially raises the top. Same hard
+      // invariants as the near-miss rescue (exact mass + EV, monotone,
+      // buffer argmax, no new floor-pins); if the rescue already ran, the
+      // layouts coincide and this is a no-op.
+      {
+        let aboveBottom = 0;
+        let aboveValue = Infinity;
+        for (const s of slots) {
+          const f = frac[slotPos.get(s)!]!;
+          if (s.value >= price && f > 0 && s.value < aboveValue) {
+            aboveValue = s.value;
+            aboveBottom = f;
+          }
+        }
+        let buf = 0;
+        for (let i = 1; i < lossSlots.length; i++) {
+          if (
+            lossW[i]! > lossW[buf]! ||
+            (lossW[i]! === lossW[buf]! && lossValues[i]! < lossValues[buf]!)
+          ) {
+            buf = i;
+          }
+        }
+        let top = -1;
+        for (let i = 0; i < lossSlots.length; i++) {
+          if (i === buf) continue;
+          if (top === -1 || lossValues[i]! > lossValues[top]!) top = i;
+        }
+        if (
+          Number.isFinite(aboveValue) &&
+          top !== -1 &&
+          adopted[top]! + LOSS_FLATTEN_DIP_TOL < aboveBottom
+        ) {
+          const flattened = preserveNearMissLossLayout({
+            values: lossValues,
+            weights: lossW,
+            nearMissLo: nmLo,
+          });
+          if (
+            flattened !== null &&
+            flattened[top]! > adopted[top]! + NEARMISS_PRESERVE_TOL
+          ) {
+            // NEAR-MISS GUARD: the flatten caps the near-miss band at its
+            // INPUT allocation, but the affine dispersal it replaces may have
+            // (blindly) overfunded that band ABOVE the requested floor — and
+            // that overfunding can be what keeps the pack on its ask (fleet:
+            // "Bright Water" 20.1% → 15.0% vs ask 16.6%). Aesthetics never
+            // outrank the near-miss dial: adopt only when the flatten does
+            // not materially reduce the near-miss mass the dispersal landed.
+            let flatNm = 0;
+            let adoptedNm = 0;
+            for (let i = 0; i < lossSlots.length; i++) {
+              if (lossValues[i]! >= nmLo) {
+                flatNm += flattened[i]!;
+                adoptedNm += adopted[i]!;
+              }
+            }
+            if (flatNm >= adoptedNm - NEARMISS_PRESERVE_TOL) {
+              adopted = flattened;
+            }
           }
         }
       }
