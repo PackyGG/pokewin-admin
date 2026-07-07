@@ -48,7 +48,12 @@ import type {
   StagedTagOverride,
 } from "../../doctor/retune-actions";
 import { LegendPopover } from "./legend-popover";
-import type { PushedInfo, StagedPool, WorkspaceStatus } from "./plan-state";
+import {
+  PINS_INFEASIBLE_LIMIT_KIND,
+  type PushedInfo,
+  type StagedPool,
+  type WorkspaceStatus,
+} from "./plan-state";
 import {
   CLEAN_BANNER,
   COPY_DETAILS,
@@ -60,6 +65,7 @@ import {
   F17_REHYDRATED_DRIFT,
   FIX_LOOP_SUCCESS,
   JACKPOT_NOTE,
+  PINS_ENGINE_DETAIL_SUMMARY,
   PLAN_FAILED_BANNER,
   PUSH_DISABLED_DIRTY,
   PUSH_DISABLED_FIX_POOL,
@@ -84,8 +90,12 @@ import {
   edgeTargetSub,
   limitHeadline,
   nicePinnedBanner,
+  offTagStripRetagStaged,
+  offTagStripUntagStaged,
+  pinsRefusalFrame,
   poolEditReasonLine,
   poolEditSummary,
+  pushDisabledPendingLabel,
   stagePoolEditCta,
   suggestionKindLabel,
   offTagStrip,
@@ -183,6 +193,48 @@ function BeforeAfter({
       </span>
       <ArrowRight className="size-3.5 shrink-0 self-center text-muted-foreground" />
       {after}
+    </>
+  );
+}
+
+/**
+ * Limit-banner lead: headline + detail for `plan.limit`. For the owner-pins
+ * refusal (`pins-infeasible`) the headline is the owner-plain frame derived
+ * from the engine detail ("players would get back at most $A per $P open…")
+ * and the raw engine detail moves into a collapsed disclosure — secondary,
+ * never hidden. Any parse miss (other pins-infeasible wordings, future copy)
+ * falls back to the previous rendering byte-identically.
+ */
+function LimitLead({
+  limit,
+  price,
+  targetEdge,
+  tag,
+}: {
+  limit: NonNullable<PackTunePlan["limit"]>;
+  price: number;
+  targetEdge: number;
+  tag: number | null;
+}) {
+  const framed =
+    limit.kind === PINS_INFEASIBLE_LIMIT_KIND
+      ? pinsRefusalFrame(limit.detail, { price, targetEdge })
+      : null;
+  return (
+    <>
+      <p className="font-medium">
+        {framed ?? limitHeadline(limit, { price, tag })}
+      </p>
+      {framed !== null ? (
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer list-none underline-offset-2 hover:underline">
+            {PINS_ENGINE_DETAIL_SUMMARY}
+          </summary>
+          <p className="pt-0.5">{limit.detail}</p>
+        </details>
+      ) : (
+        <p className="text-xs text-muted-foreground">{limit.detail}</p>
+      )}
     </>
   );
 }
@@ -492,6 +544,7 @@ export function PlanPanel({
   nextSuggestion,
   pushEnabled,
   pushing,
+  pendingCount,
   onReplan,
   onResetToLive,
   onPush,
@@ -538,6 +591,11 @@ export function PlanPanel({
   nextSuggestion: { packId: string; name: string } | null;
   pushEnabled: boolean;
   pushing: boolean;
+  /**
+   * Typed-but-not-applied edits (LAW P): any count > 0 blocks the push and the
+   * disabled label says exactly why — the plan below doesn't contain them.
+   */
+  pendingCount: number;
   onReplan: () => void;
   onResetToLive: () => void;
   onPush: () => void;
@@ -656,17 +714,12 @@ export function PlanPanel({
       return (
         <Banner tone={plan.limit !== null ? "rose" : "amber"} icon={TriangleAlert}>
           {plan.limit !== null && (
-            <>
-              <p className="font-medium">
-                {limitHeadline(plan.limit, {
-                  price: plan.priceAfter || plan.price,
-                  tag,
-                })}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {plan.limit.detail}
-              </p>
-            </>
+            <LimitLead
+              limit={plan.limit}
+              price={plan.priceAfter || plan.price}
+              targetEdge={plan.targets.targetEdge}
+              tag={tag}
+            />
           )}
           <PoolEditPrimary
             poolEdit={plan.poolEditPlan}
@@ -683,14 +736,17 @@ export function PlanPanel({
         plan.guidance != null && plan.guidance.suggestions.length > 0;
       return (
         <Banner tone="rose" icon={TriangleAlert}>
-          <p className="font-medium">
-            {limitHeadline(plan.limit, { price: plan.priceAfter || plan.price, tag })}
-          </p>
-          <p className="text-xs text-muted-foreground">{plan.limit.detail}</p>
+          <LimitLead
+            limit={plan.limit}
+            price={plan.priceAfter || plan.price}
+            targetEdge={plan.targets.targetEdge}
+            tag={tag}
+          />
           {hasGuidance ? (
-            // The guidance engine's ranked, proven fixes replace the limit's
-            // static one-liner (ruleset: no infeasible verdict without a
-            // computed suggestion).
+            // The guidance engine's ranked, proven fixes LEAD whenever they
+            // exist (ruleset: no infeasible verdict without a computed
+            // suggestion); the limit's static one-liner renders as-is ONLY
+            // when guidance shipped nothing verified.
             <GuidanceSuggestions
               guidance={plan.guidance!}
               onAddCardRange={onAddCardRange}
@@ -889,6 +945,9 @@ export function PlanPanel({
     if (status === "pushing") return PUSH_DISABLED_PUSHING;
     if (status === "planning" || status === "stale" || status === "drifted")
       return PUSH_DISABLED_REPLANNING;
+    // LAW P: typed odds not in this plan — the most actionable block (Apply
+    // or Discard resolves it regardless of what the merged plan then says).
+    if (pendingCount > 0) return pushDisabledPendingLabel(pendingCount);
     if (plan && (plan.taggedAccuracyHit === false || plan.tagContradiction))
       return PUSH_DISABLED_OFF_TAG;
     if (plan && plan.feasible && plan.snapped === false)
@@ -1061,11 +1120,23 @@ export function PlanPanel({
       )}
 
       {/* ── Off-tag live strip (independent, ABOVE the banner slot) ──────── */}
-      {/* Uses the LIVE tag (row.tag), not the effective/override tag — it
-          reports live truth (live win-rate vs the pack's actual live tag). */}
+      {/* Reports live truth (live win-rate vs the pack's actual live tag) —
+          but staged-AWARE: once a tag override is staged, the copy names the
+          override and what pushing writes instead of the stale "the tag says
+          X% — pushing fixes it". No override ⇒ byte-identical legacy strip. */}
       {row.offTagLive && row.tag !== null && (
         <Banner tone="amber" icon={Tag}>
-          <p>{offTagStrip(row.winRate, row.tag, plan?.feasible === true)}</p>
+          <p>
+            {tagOverride === undefined
+              ? offTagStrip(row.winRate, row.tag, plan?.feasible === true)
+              : tagOverride.kind === "untag"
+                ? offTagStripUntagStaged(row.winRate, row.tag)
+                : offTagStripRetagStaged(
+                    row.winRate,
+                    row.tag,
+                    tagOverride.hitRate,
+                  )}
+          </p>
         </Banner>
       )}
 

@@ -48,8 +48,16 @@ import {
   F4_OUT_OF_SCOPE,
   AS_IS_SECONDARY_HEADING,
   DEGENERATE_BADGE,
+  PREFLIGHT_REFUSED_FALLBACK,
+  PUSH_KEPT_PENDING_TOAST,
+  applyDroppedEditsToast,
+  pendingDroppedDriftToast,
+  pinsRefusalFrame,
+  pushBlockedPendingToast,
+  suggestionKindLabel,
 } from "./plan-copy";
 import {
+  PINS_INFEASIBLE_LIMIT_KIND,
   basisKey,
   deriveStatus,
   isPoolDriftRefusal,
@@ -63,8 +71,11 @@ import {
   stagedPlanInput,
   stagedWriteInput,
   type PackVerdict,
+  type PendingPreflightView,
   type PlanEntry,
+  type PreflightEntry,
   type PushedInfo,
+  type RemedyChip,
   type StagedCard,
   type StagedPool,
 } from "./plan-state";
@@ -93,13 +104,23 @@ type RailPatch = {
   edge: number;
   winRate: number;
   tier: string;
+  /**
+   * The tag the push actually left (`plan.intendedHitRate` — override-aware:
+   * a staged untag → null, a retag → the new rate, else the live tag). The
+   * rail's tag chip + offTagLive recompute read THIS post-push, so a pushed
+   * untag doesn't keep waving the stale live tag until `router.refresh()`.
+   */
+  tag: number | null;
 };
 
 type WriteResult = PackRetuneResult | ApplyStagedRetuneResult;
 
 const PLAN_CONTEXT = "pack-studio.retune.plan-pack";
+const PREFLIGHT_CONTEXT = "pack-studio.retune.preflight";
 const PLAN_TIMEOUT_MS = 20_000;
 const PRICE_DEBOUNCE_MS = 500;
+/** Stable pause after the last typed odd before the dry-run pre-flight fires. */
+const PREFLIGHT_DEBOUNCE_MS = 800;
 const BULK_HANDOFF_KEY = "pack-studio.retune.bulk-handoff";
 
 /** Stable empty pending-buffer reference (avoids per-render array identity churn). */
@@ -226,6 +247,11 @@ export function RetuneWorkspace({
     React.useState<RetunePickerFilters | null>(null);
   const [priceText, setPriceText] = React.useState("");
   const [visibleIds, setVisibleIds] = React.useState<string[]>([]);
+  // Pending pre-flight entries (dry-run verdicts) — SEPARATE from `planByPack`
+  // by construction: a pre-flight plan can never become the pushable plan.
+  const [preflightByPack, setPreflightByPack] = React.useState<
+    Map<string, PreflightEntry>
+  >(() => new Map());
 
   const tokenRef = React.useRef<string | null>(null);
   const searchInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -233,6 +259,16 @@ export function RetuneWorkspace({
   const replanTimerRef = React.useRef<
     Map<string, ReturnType<typeof setTimeout>>
   >(new Map());
+  // Pre-flight seq/debounce — its OWN counters (sharing `seqRef` would let a
+  // dry-run invalidate a real in-flight plan response, or vice versa).
+  const preflightSeqRef = React.useRef<Map<string, number>>(new Map());
+  const preflightTimerRef = React.useRef<
+    Map<string, ReturnType<typeof setTimeout>>
+  >(new Map());
+  // Price-input typing debounce (stage on flush only — never per keystroke).
+  const priceDebounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const driftRepairRef = React.useRef<Set<string>>(new Set());
   const refreshTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -263,8 +299,10 @@ export function RetuneWorkspace({
         edge: p.edge,
         winRate: p.winRate,
         tier: p.tier,
+        // The tag the push WROTE (override-aware) — not the pre-push live tag.
+        tag: p.tag,
         offTagLive:
-          r.tag !== null && Math.abs(p.winRate - r.tag) > 0.001 + 1e-12,
+          p.tag !== null && Math.abs(p.winRate - p.tag) > 0.001 + 1e-12,
       };
     });
   }, [rows, railPatch]);
@@ -403,6 +441,36 @@ export function RetuneWorkspace({
     [stagedApi],
   );
 
+  // F17-mirror for the PENDING buffer: a rehydrated buffer of typed odds is
+  // only trusted against the SAME pool identity it was typed on (its
+  // `baseFingerprint`, recorded at first edit). Unlike staged pools —
+  // structural edits worth a keep/re-anchor prompt — typed odds against a
+  // pool that has since changed are just stale numbers: drop them with an
+  // honest toast (legacy fingerprint-less buffers are unverifiable ⇒ dropped
+  // too, never silently trusted).
+  const runPendingRehydrationCheck = React.useCallback(
+    (packId: string, pool: EditPool) => {
+      if (!stagedApi.pendingRehydratedIds.has(packId)) return;
+      const entry = stagedApi.getPendingEntry(packId);
+      if (!entry || entry.edits.length === 0) {
+        stagedApi.resolvePendingRehydrated(packId);
+        return;
+      }
+      const liveFp = computePoolFingerprint(
+        pool.price,
+        pool.cards.map((c) => ({ cardId: c.cardId, weight: c.weight })),
+      );
+      if (entry.baseFingerprint !== liveFp) {
+        const count = entry.edits.length;
+        stagedApi.clearPending(packId); // also clears the rehydrated mark
+        toast.warning(pendingDroppedDriftToast(count));
+        return;
+      }
+      stagedApi.resolvePendingRehydrated(packId);
+    },
+    [stagedApi],
+  );
+
   // ── Selection (⇄ ?pack= via the native shallow history API) ─────────────
   const select = React.useCallback(
     (packId: string) => {
@@ -432,11 +500,21 @@ export function RetuneWorkspace({
             ensurePool(packId),
             planFresh ? Promise.resolve() : requestPlan(packId),
           ]);
-          if (pool2) runRehydrationCheck(packId, pool2);
+          if (pool2) {
+            runRehydrationCheck(packId, pool2);
+            runPendingRehydrationCheck(packId, pool2);
+          }
         })();
       });
     },
-    [stagedApi, rowsById, ensurePool, requestPlan, runRehydrationCheck],
+    [
+      stagedApi,
+      rowsById,
+      ensurePool,
+      requestPlan,
+      runRehydrationCheck,
+      runPendingRehydrationCheck,
+    ],
   );
 
   // Deep-link + bulk intake — once, on mount.
@@ -565,26 +643,57 @@ export function RetuneWorkspace({
   // chip) is still solve-relevant and its X clears it immediately (below).
 
   // Buffer a typed Planned % edit — no staged mutation, no re-plan. Only cards
-  // currently in the pool (staged pool if one exists, else the live pool) are
-  // valid targets; a value on a card outside the pool is ignored.
+  // currently in the pool (staged pool if one exists, else the live pool —
+  // or, on the instant table before the pool read lands, the current plan's
+  // planned rows) are valid targets; a value on a card outside is ignored.
+  // The FIRST edit records the pool identity (`baseFingerprint`) the values
+  // are typed against, so a rehydrated buffer can be drift-checked later.
   const addPendingEdit = React.useCallback(
     (cardId: string, pct: number) => {
       const packId = selectedRef.current;
       if (!packId) return;
       const sp = stagedApi.getStaged(packId);
+      const pool = poolByPackRef.current.get(packId) ?? null;
+      const entry = planByPackRef.current.get(packId);
+      // Plan rows count only for the CURRENT basis (the rows on screen).
+      const planForRows =
+        entry &&
+        entry.basisKey === basisKey(packId, sp) &&
+        entry.plan !== null
+          ? entry.plan
+          : null;
       const inPool = sp
         ? sp.cards.some((c) => c.cardId === cardId)
-        : (poolByPackRef.current.get(packId)?.cards.some(
-            (c) => c.cardId === cardId,
-          ) ?? false);
+        : pool
+          ? pool.cards.some((c) => c.cardId === cardId)
+          : (planForRows?.planned.some((p) => p.cardId === cardId) ?? false);
       if (!inPool) return;
       const buffer = stagedApi.getPending(packId);
       const existing = buffer.find((p) => p.cardId === cardId);
       if (existing && existing.pct === pct) return; // no-op
-      stagedApi.setPending(packId, [
-        ...buffer.filter((p) => p.cardId !== cardId),
-        { cardId, pct },
-      ]);
+      // First edit anchors the buffer to the pool identity on screen: the
+      // staged pool's base anchor, else the live pool's fingerprint, else the
+      // plan's own pool fingerprint (instant table). All three name the same
+      // live pool the displayed odds were computed from.
+      const baseFingerprint =
+        buffer.length === 0
+          ? sp
+            ? sp.baseFingerprint
+            : pool
+              ? computePoolFingerprint(
+                  pool.price,
+                  pool.cards.map((c) => ({
+                    cardId: c.cardId,
+                    weight: c.weight,
+                  })),
+                )
+              : (planForRows?.poolFingerprint ?? null)
+          : undefined;
+      stagedApi.setPending(
+        packId,
+        [...buffer.filter((p) => p.cardId !== cardId), { cardId, pct }],
+        baseFingerprint,
+      );
     },
     [stagedApi],
   );
@@ -615,9 +724,12 @@ export function RetuneWorkspace({
     const sp = ensureStaged(packId);
     if (!sp) return;
     // Only pins on cards still in the staged pool bind (mirrors pinCard's guard);
-    // a pending edit on a card that was removed since typing is dropped.
+    // a pending edit on a card that was removed since typing is dropped — and
+    // SAID, never silent (the operator typed it; they hear where it went).
     const inPool = new Set(sp.cards.map((c) => c.cardId));
     const validPending = buffer.filter((p) => inPool.has(p.cardId));
+    const dropped = buffer.length - validPending.length;
+    if (dropped > 0) toast.warning(applyDroppedEditsToast(dropped));
     stagedApi.clearPending(packId);
     if (validPending.length === 0) return;
     const nextPins: RetunePinnedOdds[] = mergePendingIntoPins(
@@ -634,6 +746,73 @@ export function RetuneWorkspace({
     if (!packId) return;
     stagedApi.clearPending(packId);
   }, [stagedApi]);
+
+  // ── Pending pre-flight (auto-balance dry-run) ────────────────────────────
+  // While the buffer is non-empty, a debounced READ-ONLY `planPackTune` over
+  // the MERGE of the committed staged facts + the pending pins answers "would
+  // these odds solve?" BEFORE Apply. Mirrors `requestPlan`'s discipline — one
+  // in flight per pack, seq-guarded, stale responses dropped — on its OWN
+  // counters (a dry-run must never invalidate, or be invalidated by, the real
+  // plan's seq). The result lives in `preflightByPack` ONLY: it can never
+  // become the pushable plan, and the render key-gates it to the CURRENT
+  // merge so a stale verdict is never surfaced.
+  const requestPreflight = React.useCallback(
+    async (packId: string) => {
+      const pending = stagedApi.getPending(packId);
+      if (pending.length === 0) {
+        setPreflightByPack((prev) => delMap(prev, packId));
+        return;
+      }
+      const sp =
+        stagedApi.getStaged(packId) ??
+        (() => {
+          const pool = poolByPackRef.current.get(packId);
+          return pool ? seedStagedPool(pool) : null;
+        })();
+      // No structural basis yet (pool read still in flight) — the bar keeps
+      // its "checking" line; the debounce re-fires when the pool lands.
+      if (!sp) return;
+      const inPool = new Set(sp.cards.map((c) => c.cardId));
+      const valid = pending.filter((p) => inPool.has(p.cardId));
+      if (valid.length === 0) {
+        setPreflightByPack((prev) => delMap(prev, packId));
+        return;
+      }
+      const merged: StagedPool = {
+        ...sp,
+        pinnedOdds: mergePendingIntoPins(sp.pinnedOdds, valid),
+      };
+      const key = basisKey(packId, merged);
+      const seq = (preflightSeqRef.current.get(packId) ?? 0) + 1;
+      preflightSeqRef.current.set(packId, seq);
+      setPreflightByPack((prev) => {
+        const old = prev.get(packId);
+        return setMap(prev, packId, {
+          key,
+          seq,
+          status: "loading",
+          plan: old && old.key === key ? old.plan : null,
+        });
+      });
+      const { data, error } = await safeQueryOrNull(
+        () => planPackTune(packId, stagedPlanInput(merged), null),
+        PREFLIGHT_CONTEXT,
+        PLAN_TIMEOUT_MS,
+      );
+      // Stale seq — a newer pre-flight superseded this one; drop it.
+      if ((preflightSeqRef.current.get(packId) ?? 0) !== seq) return;
+      setPreflightByPack((prev) =>
+        setMap(prev, packId, {
+          key,
+          seq,
+          status: error ? "error" : "ready",
+          plan: data ?? null,
+          ...(error ? { error } : {}),
+        }),
+      );
+    },
+    [stagedApi],
+  );
 
   const clearPin = React.useCallback(
     (cardId: string) => {
@@ -768,10 +947,15 @@ export function RetuneWorkspace({
     [ensureStaged, stagedApi, requestPlan],
   );
 
+  // Commit a typed price into the staged pool. Called ONLY on a debounce
+  // flush (500ms after the last keystroke) or an explicit Enter/blur — never
+  // per keystroke, so a half-typed "4" of "43" can never mint a staged pool
+  // or anchor a plan. Staging + re-plan happen together at the flush, keeping
+  // the effective plan debounce at the same 500ms it always was. `packId` is
+  // captured at schedule time (the pack the text was typed on), never read
+  // from the selection at fire time.
   const commitPrice = React.useCallback(
-    (raw: string, immediate: boolean) => {
-      const packId = selectedRef.current;
-      if (!packId) return;
+    (packId: string, raw: string, mode: "debounced" | "flush") => {
       const parsed = Number.parseFloat(raw);
       if (!Number.isFinite(parsed) || parsed <= 0) return;
       const existing = stagedApi.getStaged(packId);
@@ -779,17 +963,15 @@ export function RetuneWorkspace({
       if (!base) return;
       if (Math.abs(base.price - parsed) < 0.005) {
         // No solve-relevant change — never mint a staged pool for a no-op.
-        if (existing && immediate) void requestPlan(packId);
+        // Only an explicit Enter/blur re-plans an unchanged price (legacy
+        // recovery affordance); the typing debounce stays silent.
+        if (existing && mode === "flush") void requestPlan(packId);
         return;
       }
       stagedApi.setStaged(packId, { ...base, price: parsed });
-      if (immediate) {
-        void requestPlan(packId); // Enter/blur — flush the debounce
-      } else {
-        schedulePlan(packId, PRICE_DEBOUNCE_MS); // 500ms after last keystroke
-      }
+      void requestPlan(packId);
     },
-    [ensureStaged, stagedApi, requestPlan, schedulePlan],
+    [ensureStaged, stagedApi, requestPlan],
   );
 
   const togglePin = React.useCallback(() => {
@@ -951,6 +1133,9 @@ export function RetuneWorkspace({
           edge: result.after.edge,
           winRate: result.after.winRate,
           tier: plan.after?.tier ?? rowsById.get(packId)?.tier ?? "T1",
+          // The tag the write left (override-aware): a pushed untag → null,
+          // a pushed retag → the new rate, else the plan's live tag.
+          tag: plan.intendedHitRate,
         }),
       );
       debouncedRefresh();
@@ -961,9 +1146,16 @@ export function RetuneWorkspace({
   const handleWriteSuccess = React.useCallback(
     (pp: PendingPush, result: WriteResult) => {
       stagedApi.clearStaged(pp.packId);
-      // A successful push clears the pending-edits buffer too — the batch it
-      // would have pinned is now moot (the pool was written).
-      stagedApi.clearPending(pp.packId);
+      // LAW P: a push NEVER silently deletes typed odds. The gate keeps a
+      // push from starting over a non-empty buffer, so edits here were typed
+      // while the write was in flight — keep them and say so (they simply
+      // were not part of this push).
+      const keptPending = stagedApi.getPending(pp.packId);
+      if (keptPending.length > 0) {
+        toast.info(PUSH_KEPT_PENDING_TOAST);
+      } else {
+        stagedApi.clearPending(pp.packId);
+      }
       setDriftPrompts((prev) => delSet(prev, pp.packId));
       applyPushBookkeeping(pp.packId, pp.frozen, result);
       // "Next: {name} →" — the next Attention-ordered row still needing work.
@@ -1106,6 +1298,15 @@ export function RetuneWorkspace({
   const openPushConfirm = React.useCallback(async () => {
     const packId = selectedRef.current;
     if (!packId) return;
+    // LAW P (preview ≡ write): typed-but-not-applied odds are NOT in the
+    // landed plan — the confirm never opens over them. `isPushEnabled`
+    // already disables the button; this guards the keyboard "p" and any
+    // other programmatic path, with the reason said out loud.
+    const pendingEdits = stagedApi.getPending(packId);
+    if (pendingEdits.length > 0) {
+      toast.error(pushBlockedPendingToast(pendingEdits.length));
+      return;
+    }
     const sp = stagedApi.getStaged(packId);
     const basis = basisKey(packId, sp);
     const entry = planByPackRef.current.get(packId);
@@ -1134,6 +1335,9 @@ export function RetuneWorkspace({
       writeInput: sp ? stagedWriteInput(sp) : null,
       pinPrice: sp?.pinPrice ?? false,
       frozenRows: buildCardDiffRows({ pool, staged: sp, plan: entry.plan }),
+      // Re-read at freeze (defensive) — the gate above guarantees 0; any
+      // non-zero renders the rose banner in step 1.
+      pendingAtFreeze: stagedApi.getPending(packId).length,
       step: 1,
       changed: false,
       error: null,
@@ -1148,12 +1352,19 @@ export function RetuneWorkspace({
     const pp = pendingPush;
     if (!pp || pushing) return;
     // §4: re-check the frozen keys at the CLICK — on mismatch the dialog
-    // swaps to "Plan changed underneath — nothing was written" (F10).
+    // swaps to "Plan changed underneath — nothing was written" (F10). A
+    // pending buffer minted while the confirm sat open counts as a change:
+    // the frozen plan doesn't contain those typed odds (LAW P).
     const sp = stagedApi.getStaged(pp.packId);
     const basisNow = basisKey(pp.packId, sp);
     const fingerprintOk =
       sp === null || pp.frozen.poolFingerprint === sp.baseFingerprint;
-    if (basisNow !== pp.frozenBasisKey || !fingerprintOk) {
+    const pendingNow = stagedApi.getPending(pp.packId);
+    if (
+      basisNow !== pp.frozenBasisKey ||
+      !fingerprintOk ||
+      pendingNow.length > 0
+    ) {
       setPendingPush({ ...pp, changed: true });
       return;
     }
@@ -1165,13 +1376,13 @@ export function RetuneWorkspace({
   const selectedStaged = selectedPackId
     ? (stagedApi.stagedByPack.get(selectedPackId) ?? null)
     : null;
-  // Stable identity: the map entry itself is a stable array reference between
+  // Stable identity: the entry's `edits` array is a stable reference between
   // renders (only replaced on a real buffer change), so memoizing on the map +
   // selection keeps `diffRows` / `pendingTotal` from re-computing every render.
   const selectedPending = React.useMemo(
     () =>
       selectedPackId
-        ? (stagedApi.pendingByPack.get(selectedPackId) ?? EMPTY_PENDING)
+        ? (stagedApi.pendingByPack.get(selectedPackId)?.edits ?? EMPTY_PENDING)
         : EMPTY_PENDING,
     [selectedPackId, stagedApi.pendingByPack],
   );
@@ -1211,6 +1422,7 @@ export function RetuneWorkspace({
       plan: planForBasis,
       arm: selectedStaged ? "staged" : "live",
       pinPrice: selectedStaged?.pinPrice ?? false,
+      pendingCount: selectedPending.length,
     });
   const pushEnabledRef = React.useRef(pushEnabled);
   pushEnabledRef.current = pushEnabled;
@@ -1246,6 +1458,101 @@ export function RetuneWorkspace({
     () => pendingOddsTotal(planForBasis?.planned ?? null, selectedPending),
     [planForBasis, selectedPending],
   );
+
+  // Debounced pre-flight while the buffer is non-empty: 800ms of quiet after
+  // the last typed odd (or a staged/pool change under a live buffer) fires
+  // the dry-run; emptying the buffer (Apply/Discard/drop) clears the timer
+  // AND the entry so no verdict outlives its edits.
+  React.useEffect(() => {
+    const packId = selectedPackId;
+    if (!packId) return;
+    const timer = preflightTimerRef.current.get(packId);
+    if (timer) {
+      clearTimeout(timer);
+      preflightTimerRef.current.delete(packId);
+    }
+    if (selectedPending.length === 0) {
+      setPreflightByPack((prev) => delMap(prev, packId));
+      return;
+    }
+    preflightTimerRef.current.set(
+      packId,
+      setTimeout(() => {
+        preflightTimerRef.current.delete(packId);
+        void requestPreflight(packId);
+      }, PREFLIGHT_DEBOUNCE_MS),
+    );
+  }, [
+    selectedPackId,
+    selectedPending,
+    selectedStaged,
+    selectedPool,
+    requestPreflight,
+  ]);
+
+  // The pending-edits bar's verdict view — derived, display-only, key-gated
+  // to the CURRENT merge (an entry for yesterday's buffer renders as
+  // "checking…", mirroring `planForBasis`' basis discipline).
+  const pendingPreflight = React.useMemo((): PendingPreflightView | null => {
+    if (!selectedPackId || selectedPending.length === 0) return null;
+    const sp =
+      selectedStaged ?? (selectedPool ? seedStagedPool(selectedPool) : null);
+    if (!sp) return { status: "loading" };
+    const inPool = new Set(sp.cards.map((c) => c.cardId));
+    const valid = selectedPending.filter((p) => inPool.has(p.cardId));
+    if (valid.length === 0) return null;
+    const merged: StagedPool = {
+      ...sp,
+      pinnedOdds: mergePendingIntoPins(sp.pinnedOdds, valid),
+    };
+    const key = basisKey(selectedPackId, merged);
+    const entry = preflightByPack.get(selectedPackId);
+    if (!entry || entry.key !== key || entry.status === "loading") {
+      return { status: "loading" };
+    }
+    if (entry.status === "error" || entry.plan === null) {
+      return { status: "error" };
+    }
+    const p = entry.plan;
+    if (p.feasible && p.after !== null) {
+      return {
+        status: "ready",
+        feasible: true,
+        priceAfter: p.priceAfter,
+        edgePct: p.after.edge * 100,
+      };
+    }
+    // Refusal detail: the owner-plain pins frame when the engine's
+    // pins-infeasible EV detail parses, else the engine detail verbatim.
+    const detail =
+      p.limit !== null
+        ? p.limit.kind === PINS_INFEASIBLE_LIMIT_KIND
+          ? (pinsRefusalFrame(p.limit.detail, {
+              price: p.priceAfter || p.price,
+              targetEdge: p.targets.targetEdge,
+            }) ?? p.limit.detail)
+          : p.limit.detail
+        : (p.tagContradiction ?? p.refusalMessage ?? PREFLIGHT_REFUSED_FALLBACK);
+    const chips: RemedyChip[] = (p.guidance?.suggestions ?? []).map((s, i) => ({
+      key: `${s.kind}-${i}`,
+      label: suggestionKindLabel(s.kind),
+      detail: s.humanCopy,
+    }));
+    return {
+      status: "ready",
+      feasible: false,
+      detail,
+      // `limit.suggestion` as-is ONLY when guidance shipped nothing verified.
+      suggestion: chips.length === 0 ? (p.limit?.suggestion ?? null) : null,
+      chips,
+    };
+  }, [
+    selectedPackId,
+    selectedPending,
+    selectedStaged,
+    selectedPool,
+    preflightByPack,
+  ]);
 
   // The total-odds chip sums the DISPLAY-RECONCILED vector — the SAME numbers
   // the Planned-% cells render (buffer carries the rounding residual) — never
@@ -1415,6 +1722,16 @@ export function RetuneWorkspace({
     () => new Set(stagedApi.stagedByPack.keys()),
     [stagedApi.stagedByPack],
   );
+  // Staged tag overrides for the rail's effective-tag chips. The override
+  // objects are stable references inside their staged pools, so the memoized
+  // rail rows only re-render when an override actually changes.
+  const tagOverrideByPack = React.useMemo(() => {
+    const out = new Map<string, StagedTagOverride>();
+    for (const [id, sp] of stagedApi.stagedByPack) {
+      if (sp.tagOverride !== undefined) out.set(id, sp.tagOverride);
+    }
+    return out;
+  }, [stagedApi.stagedByPack]);
   const pushedIds = React.useMemo(
     () => new Set(pushedByPack.keys()),
     [pushedByPack],
@@ -1518,6 +1835,7 @@ export function RetuneWorkspace({
           pushedIds={pushedIds}
           doneIds={doneIds}
           verdictByPack={verdictByPack}
+          tagOverrideByPack={tagOverrideByPack}
           searchInputRef={searchInputRef}
           onSelect={select}
           onCheck={handleCheck}
@@ -1583,6 +1901,7 @@ export function RetuneWorkspace({
                 }
                 pushEnabled={pushEnabled}
                 pushing={pushing}
+                pendingCount={selectedPending.length}
                 onReplan={() =>
                   void requestPlan(selectedRow.packId, { fresh: true })
                 }
@@ -1631,13 +1950,19 @@ export function RetuneWorkspace({
                       </div>
                     }
                   />
-                  {selectedPool ? (
+                  {/* Instant table: the pool read (name/value/art) and the
+                      plan (odds) race on selection — whichever lands FIRST
+                      renders. Plan-first rows carry real odds with a shimmer
+                      on the art cells (`artLoading`); the pool fills them.
+                      Only when NEITHER has landed does the skeleton show. */}
+                  {selectedPool || diffRows.length > 0 ? (
                     <PoolTable
                       rows={diffRows}
                       contextPrice={
                         planForBasis?.priceAfter ??
                         selectedStaged?.price ??
-                        selectedPool.price
+                        selectedPool?.price ??
+                        selectedRow.price
                       }
                       oddsTotal={oddsTotal}
                       autoHintByCardId={autoHintByCardId}
@@ -1646,13 +1971,18 @@ export function RetuneWorkspace({
                       disabled={pushing}
                       pendingCount={selectedPending.length}
                       pendingTotal={pendingTotal}
+                      pendingPreflight={pendingPreflight}
                       pickerOpen={pickerOpen}
                       pickerRange={pickerRange}
                       pickerFilters={pickerFilters}
                       pickerSelectedIds={
                         selectedStaged
                           ? selectedStaged.cards.map((c) => c.cardId)
-                          : selectedPool.cards.map((c) => c.cardId)
+                          : selectedPool
+                            ? selectedPool.cards.map((c) => c.cardId)
+                            : diffRows
+                                .filter((r) => !r.removed)
+                                .map((r) => r.cardId)
                       }
                       onPickerOpenChange={setPickerOpen}
                       onPickCard={addCard}
@@ -1670,10 +2000,27 @@ export function RetuneWorkspace({
                       onApplyPending={applyPending}
                       onDiscardPending={discardPending}
                       onPriceTextChange={(text) => {
+                        // Keystrokes only update the text — staging + re-plan
+                        // happen at the debounce flush (or Enter/blur), with
+                        // the pack captured NOW (never the selection at fire
+                        // time).
                         setPriceText(text);
-                        commitPrice(text, false);
+                        const packId = selectedRow.packId;
+                        if (priceDebounceRef.current) {
+                          clearTimeout(priceDebounceRef.current);
+                        }
+                        priceDebounceRef.current = setTimeout(() => {
+                          priceDebounceRef.current = null;
+                          commitPrice(packId, text, "debounced");
+                        }, PRICE_DEBOUNCE_MS);
                       }}
-                      onPriceCommit={() => commitPrice(priceText, true)}
+                      onPriceCommit={() => {
+                        if (priceDebounceRef.current) {
+                          clearTimeout(priceDebounceRef.current);
+                          priceDebounceRef.current = null;
+                        }
+                        commitPrice(selectedRow.packId, priceText, "flush");
+                      }}
                       onPinToggle={togglePin}
                       onOpenPicker={() => openPicker(null)}
                       onMoveCard={moveCard}

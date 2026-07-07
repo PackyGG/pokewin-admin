@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
+import type { StagedTagOverride } from "../../doctor/retune-actions";
 import type { RetuneRailRow } from "../_queries/rail";
 import { RailRow } from "./rail-row";
 import type { PackVerdict } from "./plan-state";
@@ -135,6 +136,7 @@ export function PackRail({
   pushedIds,
   doneIds,
   verdictByPack,
+  tagOverrideByPack,
   searchInputRef,
   onSelect,
   onCheck,
@@ -152,6 +154,8 @@ export function PackRail({
    */
   doneIds: Set<string>;
   verdictByPack: Map<string, PackVerdict>;
+  /** Staged tag overrides — each row renders its EFFECTIVE tag chip from this. */
+  tagOverrideByPack: Map<string, StagedTagOverride>;
   /** The workspace's `/` shortcut focuses this input. */
   searchInputRef: React.RefObject<HTMLInputElement | null>;
   onSelect: (packId: string) => void;
@@ -398,6 +402,7 @@ export function PackRail({
             pushed={pushedIds.has(r.packId)}
             done={doneIds.has(r.packId)}
             verdict={verdictByPack.get(r.packId)}
+            tagOverride={tagOverrideByPack.get(r.packId)}
             onSelect={onSelect}
             onCheck={handleRowCheck}
           />

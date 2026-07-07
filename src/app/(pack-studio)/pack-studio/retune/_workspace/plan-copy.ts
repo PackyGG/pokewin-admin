@@ -93,6 +93,56 @@ export function addCardCtaLabel(range: { min: number; max: number }): string {
   return `Add a card between ${formatCurrency(range.min)}–${formatCurrency(range.max)}`;
 }
 
+// ─── Pins-infeasible owner-plain frame ──────────────────────────────────────
+
+/** Collapsed-disclosure label over the raw engine detail (never hidden). */
+export const PINS_ENGINE_DETAIL_SUMMARY = "Engine detail";
+
+/**
+ * Wrap the engine's pins-infeasible EV-budget detail in the owner-plain frame:
+ * "Your pinned odds make this pack keep too much/little: players would get
+ * back at most/least $A per $P open (E% edge) vs the T% edge target (~$B back)."
+ *
+ * A/E are DERIVED from the raw detail via tolerant parsing (the first $ amount
+ * = the EV miss; the "(BELOW|ABOVE) the T% target" clause = the direction);
+ * P/T/B come from the plan's own price + resolved edge target. Returns `null`
+ * whenever the detail doesn't match (cap-dropped pin, tag overshoot, malformed
+ * pin, future wording) — callers then render the raw detail verbatim. Never
+ * throws, never hides the raw detail (render it as the secondary line).
+ */
+export function pinsRefusalFrame(
+  detail: string,
+  ctx: { price: number; targetEdge: number },
+): string | null {
+  const { price, targetEdge } = ctx;
+  if (!Number.isFinite(price) || price <= 0) return null;
+  if (!Number.isFinite(targetEdge) || targetEdge <= 0 || targetEdge >= 1) {
+    return null;
+  }
+  const evMatch = detail.match(/\$([0-9]+(?:\.[0-9]+)?)/);
+  if (!evMatch) return null;
+  const missEv = Number.parseFloat(evMatch[1]!);
+  if (!Number.isFinite(missEv) || missEv < 0) return null;
+  // The direction clause names the TARGET the edge would land relative to —
+  // "land BELOW the T% target" (house keeps too little) vs "ABOVE the T% edge
+  // target" (house keeps too much). The "above/below the budget" phrasing
+  // earlier in the sentence is about EV, not the edge — anchor on "target".
+  const dir = detail.match(
+    /\b(BELOW|ABOVE) the [0-9]+(?:\.[0-9]+)?% (?:edge )?target/i,
+  );
+  if (!dir) return null;
+  const landsBelowTarget = dir[1]!.toUpperCase() === "BELOW";
+  const evTarget = price * (1 - targetEdge);
+  const payback = landsBelowTarget ? evTarget + missEv : evTarget - missEv;
+  if (!Number.isFinite(payback) || payback <= 0) return null;
+  const edgePct = (1 - payback / price) * 100;
+  const head = landsBelowTarget
+    ? "Your pinned odds make this pack keep too little"
+    : "Your pinned odds make this pack keep too much";
+  const qual = landsBelowTarget ? "at least" : "at most";
+  return `${head}: players would get back ${qual} ${formatCurrency(payback)} per ${formatCurrency(price)} open (${edgePct.toFixed(2)}% edge) vs the ${pctBody(targetEdge)}% edge target (~${formatCurrency(evTarget)} back).`;
+}
+
 // ─── Guidance engine (ruleset §2 — ranked, proven suggestions) ──────────────
 
 export const GUIDANCE_HEADING = "Computed fixes (ranked, engine-proven)";
@@ -273,8 +323,12 @@ export const PENDING_EDIT_ARIA = "Pending edit";
 export function pendingEditsLabel(count: number): string {
   return `${count} pending edit${count === 1 ? "" : "s"}`;
 }
-/** Action-bar Apply button — commits every pending edit as a pin (one re-plan). */
-export const PENDING_APPLY = "Apply";
+/**
+ * Action-bar Apply button — commits every pending edit as a pin (one re-plan).
+ * Named for the owner's headline ask: the typed odds bind, the solver
+ * auto-balances every un-typed row so the pack lands on exactly 100%.
+ */
+export const PENDING_APPLY = "Apply typed odds — auto-balance the rest";
 /** Action-bar Discard button — drops every pending edit, no re-plan. */
 export const PENDING_DISCARD = "Discard";
 /** One-line explainer under the action bar. */
@@ -288,6 +342,62 @@ export const PENDING_EDITS_NOTE =
  */
 export const PENDING_EDITS_OFF_HUNDRED_NOTE =
   "These typed odds don't total 100% yet. Apply re-plans the pack — your edits are held and the un-edited rows absorb the difference to land on exactly 100%.";
+
+// ─── Pending-edits push gate (LAW P — preview ≡ write, no typed odds ride) ──
+//
+// Typed-but-not-applied odds are INVISIBLE to the plan (they never touch
+// `stagedKey`), so a push while they exist would write a plan that does NOT
+// contain them. The gate makes that impossible; every surface says why.
+
+/** Push-row disabled label while the pending buffer is non-empty. */
+export function pushDisabledPendingLabel(count: number): string {
+  return `${count} typed odd${count === 1 ? " isn't" : "s aren't"} in this plan yet — Apply or Discard ${count === 1 ? "it" : "them"} first`;
+}
+/** Toast when the confirm is opened (keyboard/programmatic) with pending edits. */
+export function pushBlockedPendingToast(count: number): string {
+  return `${count} typed odd${count === 1 ? "" : "s"} aren't in this plan — Apply or Discard ${count === 1 ? "it" : "them"} before pushing.`;
+}
+/** Toast when a push lands while a pending buffer exists — it is KEPT, never silently deleted. */
+export const PUSH_KEPT_PENDING_TOAST =
+  "Your typed odds were not part of this push — they're still pending.";
+/** Step-1 confirm: the explicit statement of WHICH basis the write uses. */
+export const CONFIRM_BASIS_NOTE =
+  "It writes the frozen plan below exactly — applied pins included. Typed odds that were not applied are never part of a push.";
+/** Defensive step-1 banner if pending edits somehow exist at confirm time. */
+export function confirmPendingDefensiveBanner(count: number): string {
+  return `${count} typed odd${count === 1 ? " is" : "s are"} NOT in this write — pushing would ignore ${count === 1 ? "it" : "them"}. Close, then Apply or Discard ${count === 1 ? "it" : "them"} first.`;
+}
+
+// ─── Pending-buffer integrity (fingerprint drift + Apply drops) ─────────────
+
+/** Toast when a rehydrated pending buffer no longer matches the live pool (F17-mirror: drop, honestly). */
+export function pendingDroppedDriftToast(count: number): string {
+  return `Dropped ${count} typed odd${count === 1 ? "" : "s"} — this pack's pool changed since ${count === 1 ? "it was" : "they were"} typed. Re-type against the fresh numbers.`;
+}
+/** Toast when Apply drops edits whose cards left the pool (never silent). */
+export function applyDroppedEditsToast(count: number): string {
+  return `Skipped ${count} typed odd${count === 1 ? "" : "s"} — ${count === 1 ? "its card is" : "their cards are"} no longer in the pool.`;
+}
+
+// ─── Pending pre-flight (dry-run verdict inside the pending-edits bar) ──────
+//
+// While the buffer is non-empty, a debounced READ-ONLY `planPackTune` dry-run
+// (committed staged facts + the pending pins merged) answers "would these odds
+// solve?" BEFORE Apply. Its result is display-only — it never becomes the
+// pushable plan.
+
+/** Spinner line while the dry-run is debouncing / in flight. */
+export const PREFLIGHT_CHECKING = "Checking these odds…";
+/** Success verdict — the dry-run solved. */
+export function preflightSuccessLine(priceAfter: number, edgePct: number): string {
+  return `These odds solve at ${formatCurrency(priceAfter)} · edge ${edgePct.toFixed(2)}% — Apply to lock them in.`;
+}
+/** The dry-run itself failed (timeout / error) — Apply still re-plans for real. */
+export const PREFLIGHT_ERROR_LINE =
+  "Couldn't check these odds — Apply still runs the real plan.";
+/** Refusal verdict with no engine detail available (defensive fallback). */
+export const PREFLIGHT_REFUSED_FALLBACK =
+  "These odds don't solve as typed — see the fixes below, or Apply to get the full verdict.";
 
 export function tagSaturatedBanner(tag: number): string {
   return `No price in the search band hits the ${pctBody(tag)}% tag exactly — closest achievable shown. Pushing is blocked.`;
@@ -392,6 +502,49 @@ export function offTagStrip(
     ? `${head} Pushing this plan fixes it.`
     : `${head} This pool can't be tuned to ${pctBody(tag)}% — retag or untag it to its real rate below.`;
 }
+
+/**
+ * Staged-override variants of the off-tag strip (never the stale "the tag says
+ * X — pushing this plan fixes it" once the operator ALREADY staged the fix):
+ * the copy names the staged override and what the push writes. The no-override
+ * path stays {@link offTagStrip}, byte-identical.
+ */
+export function offTagStripUntagStaged(
+  liveWinRate: number,
+  liveTag: number,
+): string {
+  return `Live pool pays ${(liveWinRate * 100).toFixed(2)}% winners but the live tag says ${pctBody(liveTag)}%. Untag staged — this plan treats the pack as untagged at its real rate; pushing clears the ${pctBody(liveTag)}% tag.`;
+}
+
+export function offTagStripRetagStaged(
+  liveWinRate: number,
+  liveTag: number,
+  newTag: number,
+): string {
+  return `Live pool pays ${(liveWinRate * 100).toFixed(2)}% winners but the live tag says ${pctBody(liveTag)}%. Retag staged — this plan re-tunes the pack to ${pctBody(newTag)}%; pushing writes the ${pctBody(newTag)}% tag.`;
+}
+
+// ─── Rail tag-override chips (staged-aware rail surfaces) ───────────────────
+
+/** Title on the struck-through live-tag chip while an UNTAG is staged. */
+export const RAIL_UNTAG_STAGED_TITLE =
+  "Untag staged — pushing clears this tag";
+/** Title on the amber new-tier chip while a RETAG is staged. */
+export function railRetagStagedTitle(liveLabel: string | null): string {
+  return liveLabel === null
+    ? "Retag staged — pushing writes this tag"
+    : `Retag staged — pushing writes this tag (live: ${liveLabel})`;
+}
+/** aria/title on the rail's amber off-tag triangle (live truth, no override). */
+export const RAIL_OFFTAG_LIVE_TITLE = "Live pool is off its tag";
+/** aria/title on the triangle once a tag override is staged (annotated, not stale). */
+export const RAIL_OFFTAG_OVERRIDE_TITLE =
+  "Live pool is off its live tag — a tag change is staged; pushing applies it";
+
+// ─── Instant table (plan-first rows while the pool read is still in flight) ──
+
+/** Shimmer label on the image/name/value cells of a plan-only row. */
+export const ART_LOADING_LABEL = "loading card art…";
 
 // ─── Failure-matrix copy (§7) ───────────────────────────────────────────────
 

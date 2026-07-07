@@ -112,6 +112,50 @@ export type PushedInfo = {
 /** Rail verdict marks once a pack was visited / written this session. */
 export type PackVerdict = "ok" | "infeasible" | "error" | "refused";
 
+// ─── Pending pre-flight facts (dry-run verdict for the pending buffer) ──────
+
+/** `ShapeWeightsLimit.kind` of the owner-pins refusal (copy-frame gate). */
+export const PINS_INFEASIBLE_LIMIT_KIND = "pins-infeasible";
+
+/**
+ * One pack's pre-flight dry-run entry: a READ-ONLY `planPackTune` over the
+ * MERGE of the committed staged facts + the pending pins. `key` is the
+ * basisKey of that MERGED input — the render surfaces the entry ONLY while
+ * the current merge still derives the same key (a stale verdict is hidden,
+ * mirroring `PlanEntry.basisKey`). Seq-guarded like `PlanEntry` (its own
+ * counter — a pre-flight must never invalidate, or be invalidated by, the
+ * real plan's seq). The landed plan here NEVER becomes the pushable plan.
+ */
+export type PreflightEntry = {
+  key: string;
+  seq: number;
+  status: "loading" | "ready" | "error";
+  plan: PackTunePlan | null;
+  error?: string;
+};
+
+/** One rendered remedy chip (seam: a later server wave supplies verified remedies). */
+export type RemedyChip = {
+  key: string;
+  label: string;
+  /** Full plain-words copy (tooltip/title) behind the short chip label. */
+  detail?: string;
+};
+
+/** The view the pending-edits bar renders — derived, display-only. */
+export type PendingPreflightView =
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "ready"; feasible: true; priceAfter: number; edgePct: number }
+  | {
+      status: "ready";
+      feasible: false;
+      detail: string;
+      /** `limit.suggestion` verbatim — ONLY when no guidance chips exist. */
+      suggestion: string | null;
+      chips: RemedyChip[];
+    };
+
 // ─── Keys (the D2 precision steal) ──────────────────────────────────────────
 
 /**
@@ -210,6 +254,10 @@ export function deriveStatus(args: {
  * Push is enabled iff ALL of (§4):
  *   status === `planned` (implies: plan landed for the CURRENT basis, no
  *   push in flight, not recently pushed without re-staging)
+ *   ∧ NO pending (typed-but-not-applied) odds — LAW P (preview ≡ write):
+ *     pending edits are invisible to `stagedKey`, so the landed plan does NOT
+ *     contain them; pushing over a non-empty buffer would write a plan the
+ *     operator isn't looking at. Apply or Discard first.
  *   ∧ no tag contradiction
  *   ∧ tagged packs are tag-exact (`taggedAccuracyHit !== false` AND the
  *     after win-rate is within `TAGGED_WRITE_WINRATE_TOLERANCE` of the tag)
@@ -221,8 +269,11 @@ export function isPushEnabled(args: {
   plan: PackTunePlan | null;
   arm: "live" | "staged";
   pinPrice: boolean;
+  /** Size of the pack's pending-edits buffer — any typed odds block the push. */
+  pendingCount: number;
 }): boolean {
-  const { status, plan, arm, pinPrice } = args;
+  const { status, plan, arm, pinPrice, pendingCount } = args;
+  if (pendingCount > 0) return false;
   if (status !== "planned" || plan === null || plan.after === null) return false;
   if (plan.tagContradiction !== null) return false;
   if (plan.intendedHitRate !== null) {

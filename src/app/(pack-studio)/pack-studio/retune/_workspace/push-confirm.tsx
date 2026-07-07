@@ -19,10 +19,12 @@ import { cn } from "@/lib/utils";
 import type { PackTunePlan, StagedPoolInput } from "../../doctor/retune-actions";
 import { CardDiffTable, type CardDiffRow } from "./card-diff-table";
 import {
+  CONFIRM_BASIS_NOTE,
   CONFIRM_STEP1_CONTINUE,
   CONFIRM_STEP2_ACTION,
   CONFIRM_STEP2_TITLE,
   F10_PLAN_CHANGED,
+  confirmPendingDefensiveBanner,
   confirmStep1Title,
   relaxationLine,
 } from "./plan-copy";
@@ -53,6 +55,12 @@ export type PendingPush = {
   pinPrice: boolean;
   /** Frozen per-card diff rows for the step-1 render. */
   frozenRows: CardDiffRow[];
+  /**
+   * Pending-edits count at freeze time — the push gate (LAW P) guarantees 0;
+   * any non-zero renders the defensive rose banner in step 1 (belt-and-
+   * suspenders: the write recheck also blocks it at the step-2 click).
+   */
+  pendingAtFreeze: number;
   step: 1 | 2;
   /** F10 — the plan changed while the confirm was open; nothing was written. */
   changed: boolean;
@@ -127,11 +135,21 @@ export function PushConfirm({
             <AlertDialogDescription>
               This is the exact frozen artifact the push writes — the server
               refuses anything else (price pin, tolerance 0 + pool
-              fingerprint).
+              fingerprint). {CONFIRM_BASIS_NOTE}
             </AlertDialogDescription>
           </AlertDialogHeader>
 
           <div className="space-y-3">
+            {/* Defensive only — the push gate blocks the confirm from opening
+                with a non-empty buffer; if one exists anyway, say it in rose. */}
+            {pending !== null && pending.pendingAtFreeze > 0 && (
+              <div className="flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">
+                <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+                <span>
+                  {confirmPendingDefensiveBanner(pending.pendingAtFreeze)}
+                </span>
+              </div>
+            )}
             <div className="rounded-lg border px-3 py-1.5">
               <DeltaLine
                 label="Ticket price"

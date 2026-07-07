@@ -8,8 +8,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
+import type { StagedTagOverride } from "../../doctor/retune-actions";
 import type { RetuneRailRow } from "../_queries/rail";
-import { tagBadgeLabel } from "./plan-copy";
+import {
+  RAIL_OFFTAG_LIVE_TITLE,
+  RAIL_OFFTAG_OVERRIDE_TITLE,
+  RAIL_UNTAG_STAGED_TITLE,
+  railRetagStagedTitle,
+  tagBadgeLabel,
+} from "./plan-copy";
 import type { PackVerdict } from "./plan-state";
 
 /**
@@ -17,11 +24,16 @@ import type { PackVerdict } from "./plan-state";
  * every selection change otherwise — memoization keeps a rail click at two
  * row renders. Roving tabindex + `aria-selected` for keyboard users.
  *
- * Line 1: [checkbox] name … tag badge
+ * Line 1: [checkbox] name … tag badge — override-aware: a staged UNTAG
+ *         strikes the live chip through, a staged RETAG renders the NEW tier
+ *         in amber (title names the live tag). The chip shows the tag a push
+ *         would leave, never a stale "live says 50%" while the operator has
+ *         already staged the fix.
  * Line 2: price · tier chip · edge dot (emerald ≥ own target, rose below,
- *         title shows Δpp) · amber triangle when offTagLive · verdict mark
- *         (rose dot infeasible-when-visited · amber dot staged-unpushed
- *         edits · emerald Check pushed).
+ *         title shows Δpp) · amber triangle when offTagLive (annotated, muted
+ *         when a tag override is staged) · verdict mark (rose dot
+ *         infeasible-when-visited · amber dot staged-unpushed edits ·
+ *         emerald Check pushed).
  */
 
 /** Tier badge tint — copied from `doctor-table.tsx` (escalates cool → rose). */
@@ -49,6 +61,12 @@ export type RailRowProps = {
   done: boolean;
   /** Verdict once visited (rose dot when infeasible / error / refused). */
   verdict: PackVerdict | undefined;
+  /**
+   * Staged tag override for this pack (undefined = none): drives the
+   * effective-tag chip + the off-tag triangle annotation. The override object
+   * is a stable reference inside the staged pool, so memoization holds.
+   */
+  tagOverride: StagedTagOverride | undefined;
   onSelect: (packId: string) => void;
   onCheck: (packId: string, shiftKey: boolean) => void;
 };
@@ -61,6 +79,7 @@ function RailRowInner({
   pushed,
   done,
   verdict,
+  tagOverride,
   onSelect,
   onCheck,
 }: RailRowProps) {
@@ -109,14 +128,32 @@ function RailRowInner({
         <span className="min-w-0 flex-1 truncate text-sm font-medium">
           {row.name}
         </span>
-        {row.tag !== null && (
+        {tagOverride?.kind === "untag" && row.tag !== null ? (
+          <Badge
+            variant="outline"
+            title={RAIL_UNTAG_STAGED_TITLE}
+            className="h-4 shrink-0 px-1 text-[10px] tabular-nums text-muted-foreground line-through opacity-70"
+          >
+            {tagBadgeLabel(row.tag)}
+          </Badge>
+        ) : tagOverride?.kind === "tag" ? (
+          <Badge
+            variant="outline"
+            title={railRetagStagedTitle(
+              row.tag !== null ? tagBadgeLabel(row.tag) : null,
+            )}
+            className="h-4 shrink-0 border-amber-500/30 bg-amber-500/10 px-1 text-[10px] tabular-nums text-amber-600 dark:text-amber-400"
+          >
+            {tagBadgeLabel(tagOverride.hitRate)}
+          </Badge>
+        ) : row.tag !== null ? (
           <Badge
             variant="outline"
             className="h-4 shrink-0 px-1 text-[10px] tabular-nums"
           >
             {tagBadgeLabel(row.tag)}
           </Badge>
-        )}
+        ) : null}
       </div>
       <div className="mt-0.5 flex items-center gap-1.5 pl-[22px] text-xs text-muted-foreground">
         <span className="tabular-nums">{formatCurrency(row.price)}</span>
@@ -138,10 +175,29 @@ function RailRowInner({
           )}
         />
         {row.offTagLive && (
-          <TriangleAlert
-            className="size-3 shrink-0 text-amber-500"
-            aria-label="Live pool is off its tag"
-          />
+          // Annotated (not hidden) once a tag override is staged: the live
+          // truth stands, but the "needs action" urgency is muted — the
+          // operator already staged the fix; pushing applies it.
+          <span
+            title={
+              tagOverride !== undefined
+                ? RAIL_OFFTAG_OVERRIDE_TITLE
+                : RAIL_OFFTAG_LIVE_TITLE
+            }
+            className="flex shrink-0 items-center"
+          >
+            <TriangleAlert
+              className={cn(
+                "size-3 shrink-0 text-amber-500",
+                tagOverride !== undefined && "opacity-50",
+              )}
+              aria-label={
+                tagOverride !== undefined
+                  ? RAIL_OFFTAG_OVERRIDE_TITLE
+                  : RAIL_OFFTAG_LIVE_TITLE
+              }
+            />
+          </span>
         )}
         <span className="ml-auto flex shrink-0 items-center gap-1">
           {staged && !pushed && (

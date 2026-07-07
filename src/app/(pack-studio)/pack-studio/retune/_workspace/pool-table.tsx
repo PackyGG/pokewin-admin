@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   Check,
   Info,
+  Loader2,
   Lock,
   LockOpen,
   Pencil,
@@ -25,9 +26,13 @@ import {
   PENDING_DISCARD,
   PENDING_EDITS_NOTE,
   PENDING_EDITS_OFF_HUNDRED_NOTE,
+  PREFLIGHT_CHECKING,
+  PREFLIGHT_ERROR_LINE,
   PRICE_INPUT_HINT,
   pendingEditsLabel,
+  preflightSuccessLine,
 } from "./plan-copy";
+import type { PendingPreflightView, RemedyChip } from "./plan-state";
 import { CardDiffTable, type CardDiffRow } from "./card-diff-table";
 
 /**
@@ -226,15 +231,44 @@ function OddsTotalChip({
 }
 
 /**
+ * Remedy chips — the ONE renderer for "here's how to fix it" chips (currently
+ * fed by the plan's verified guidance suggestions; a later server wave can
+ * supply its own verified remedy list through the same prop). Non-interactive:
+ * the short label carries the kind, the full plain-words copy rides the title.
+ */
+export function RemedyChips({ chips }: { chips: RemedyChip[] }) {
+  if (chips.length === 0) return null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {chips.map((c) => (
+        <span
+          key={c.key}
+          title={c.detail}
+          className="rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300"
+        >
+          {c.label}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/**
  * Pending-edits action bar (§ "edit several % before saving"). Appears only
  * when the buffer is non-empty. It reports the count, shows the live total-%
  * the pending+committed odds would land at, and offers the two batch actions:
  * APPLY commits every buffered edit as a pin in ONE re-plan; DISCARD drops the
  * whole buffer with no re-plan. Amber, matching the pending cell styling.
+ *
+ * `preflight` is the debounced dry-run verdict for the CURRENT buffer (would
+ * these odds solve?): spinner while checking, emerald success line, rose
+ * refusal with remedy chips, muted line when the check itself failed. Purely
+ * informational — it never blocks typing, Apply, or Discard.
  */
 function PendingEditsBar({
   count,
   pendingTotal,
+  preflight,
   onApply,
   onDiscard,
   disabled,
@@ -242,6 +276,7 @@ function PendingEditsBar({
   count: number;
   /** Total odds % across the pending+committed set (see `pendingOddsTotal`). */
   pendingTotal: number;
+  preflight: PendingPreflightView | null;
   onApply: () => void;
   onDiscard: () => void;
   disabled: boolean;
@@ -294,6 +329,39 @@ function PendingEditsBar({
       <p className="basis-full text-[11px] text-amber-700/80 dark:text-amber-300/80">
         {exact ? PENDING_EDITS_NOTE : PENDING_EDITS_OFF_HUNDRED_NOTE}
       </p>
+      {preflight !== null && (
+        <div className="basis-full">
+          {preflight.status === "loading" ? (
+            <p className="flex items-center gap-1.5 text-[11px] text-amber-700/80 dark:text-amber-300/80">
+              <Loader2 className="size-3 animate-spin" aria-hidden />
+              {PREFLIGHT_CHECKING}
+            </p>
+          ) : preflight.status === "error" ? (
+            <p className="text-[11px] text-muted-foreground">
+              {PREFLIGHT_ERROR_LINE}
+            </p>
+          ) : preflight.feasible ? (
+            <p className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+              {preflightSuccessLine(preflight.priceAfter, preflight.edgePct)}
+            </p>
+          ) : (
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-rose-600 dark:text-rose-400">
+                {preflight.detail}
+              </p>
+              {/* `limit.suggestion` renders as-is ONLY when guidance shipped
+                  no verified suggestions — guidance chips lead otherwise. */}
+              {preflight.chips.length > 0 ? (
+                <RemedyChips chips={preflight.chips} />
+              ) : preflight.suggestion !== null ? (
+                <p className="text-[11px] text-rose-600/80 dark:text-rose-400/80">
+                  {preflight.suggestion}
+                </p>
+              ) : null}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -308,6 +376,7 @@ export function PoolTable({
   disabled,
   pendingCount,
   pendingTotal,
+  pendingPreflight,
   pickerOpen,
   pickerRange,
   pickerFilters,
@@ -343,6 +412,8 @@ export function PoolTable({
   pendingCount: number;
   /** Live total-% the pending+committed odds land at (100% = clean). */
   pendingTotal: number;
+  /** Debounced dry-run verdict for the pending buffer (display-only). */
+  pendingPreflight: PendingPreflightView | null;
   pickerOpen: boolean;
   pickerRange: { min?: number; max?: number } | null;
   pickerFilters: RetunePickerFilters | null;
@@ -391,6 +462,7 @@ export function PoolTable({
       <PendingEditsBar
         count={pendingCount}
         pendingTotal={pendingTotal}
+        preflight={pendingPreflight}
         onApply={onApplyPending}
         onDiscard={onDiscardPending}
         disabled={disabled}

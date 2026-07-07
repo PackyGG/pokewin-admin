@@ -29,11 +29,29 @@ import type { RetunePinnedOdds } from "@/app/(admin)/packs/_lib/retune-params";
  * never mint a staged pool, and never trigger a re-plan. Applying the buffer is
  * what commits it into `pinnedOdds` (one re-plan). A pack can have pending edits
  * on its LIVE pool with no staged entry at all.
+ *
+ * Like staged pools, the pending buffer carries a `baseFingerprint` — the pool
+ * identity the values were typed against (recorded at first edit). Rehydrated
+ * buffers are NOT trusted blindly: `pendingRehydratedIds` reports which packIds
+ * came from storage so the workspace can run the F17-mirror drift check against
+ * the fresh live pool (mismatch or missing fingerprint ⇒ drop + toast — typed
+ * odds against a pool that no longer exists must never silently Apply).
  */
 
 const STORAGE_KEY = "pack-studio.retune.staged.v1";
 
-type PendingMap = Record<string, RetunePinnedOdds[]>;
+/**
+ * One pack's pending buffer: the typed edits + the `computePoolFingerprint`
+ * of the pool identity they were typed against (recorded at FIRST edit;
+ * `null` = unknown — a legacy persisted bare array, treated as drifted on
+ * rehydrate because it can't be verified).
+ */
+export type PendingEntry = {
+  baseFingerprint: string | null;
+  edits: RetunePinnedOdds[];
+};
+
+type PendingMap = Record<string, PendingEntry>;
 
 type PersistedPayload = {
   staged: Record<string, StagedPool>;
@@ -58,6 +76,31 @@ function normalizePendingList(value: unknown): RetunePinnedOdds[] {
     }
   }
   return out;
+}
+
+/**
+ * Two persisted pending shapes coexist:
+ *   • the current `{ baseFingerprint, edits }` entry, and
+ *   • the LEGACY bare `RetunePinnedOdds[]` (pre-fingerprint) — normalized to a
+ *     `baseFingerprint: null` entry (unverifiable ⇒ dropped by the rehydrate
+ *     drift check, never silently trusted).
+ */
+function normalizePendingEntry(value: unknown): PendingEntry | null {
+  if (Array.isArray(value)) {
+    const edits = normalizePendingList(value);
+    return edits.length > 0 ? { baseFingerprint: null, edits } : null;
+  }
+  if (value !== null && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const edits = normalizePendingList(obj.edits);
+    if (edits.length === 0) return null;
+    return {
+      baseFingerprint:
+        typeof obj.baseFingerprint === "string" ? obj.baseFingerprint : null,
+      edits,
+    };
+  }
+  return null;
 }
 
 function readStorage(): PersistedPayload {
@@ -90,11 +133,11 @@ function readStorage(): PersistedPayload {
     }
     const pending: PendingMap = {};
     if (hasWrapper && obj.pending && typeof obj.pending === "object") {
-      for (const [packId, list] of Object.entries(
+      for (const [packId, value] of Object.entries(
         obj.pending as Record<string, unknown>,
       )) {
-        const normalized = normalizePendingList(list);
-        if (normalized.length > 0) pending[packId] = normalized;
+        const normalized = normalizePendingEntry(value);
+        if (normalized) pending[packId] = normalized;
       }
     }
     return { staged, pending };
@@ -105,7 +148,7 @@ function readStorage(): PersistedPayload {
 
 function writeStorage(
   stagedMap: Map<string, StagedPool>,
-  pendingMap: Map<string, RetunePinnedOdds[]>,
+  pendingMap: Map<string, PendingEntry>,
 ): void {
   try {
     if (stagedMap.size === 0 && pendingMap.size === 0) {
@@ -115,8 +158,8 @@ function writeStorage(
     const staged: Record<string, StagedPool> = {};
     for (const [packId, pool] of stagedMap) staged[packId] = pool;
     const pending: PendingMap = {};
-    for (const [packId, list] of pendingMap) {
-      if (list.length > 0) pending[packId] = list;
+    for (const [packId, entry] of pendingMap) {
+      if (entry.edits.length > 0) pending[packId] = entry;
     }
     const payload: PersistedPayload = { staged, pending };
     window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -139,13 +182,27 @@ export type StagedPoolsApi = {
   /** Mark a rehydrated entry as reconciled (kept or discarded). */
   resolveRehydrated: (packId: string) => void;
   /** Reactive per-pack pending-edits buffer — render from this. */
-  pendingByPack: Map<string, RetunePinnedOdds[]>;
+  pendingByPack: Map<string, PendingEntry>;
   /** Latest-value accessor for async callbacks (never stale). */
   getPending: (packId: string) => RetunePinnedOdds[];
-  /** Replace the whole pending buffer for a pack (persists; [] drops it). */
-  setPending: (packId: string, list: RetunePinnedOdds[]) => void;
+  /** Latest full entry (edits + base fingerprint) for the drift check. */
+  getPendingEntry: (packId: string) => PendingEntry | null;
+  /**
+   * Replace the whole pending buffer for a pack (persists; [] drops it).
+   * `baseFingerprint` (when passed) records the pool identity of the FIRST
+   * edit; omitted ⇒ the entry's existing fingerprint is preserved.
+   */
+  setPending: (
+    packId: string,
+    list: RetunePinnedOdds[],
+    baseFingerprint?: string | null,
+  ) => void;
   /** Drop a pack's pending buffer (+ its sessionStorage mirror). */
   clearPending: (packId: string) => void;
+  /** PackIds whose pending buffer came from storage, awaiting the drift check. */
+  pendingRehydratedIds: Set<string>;
+  /** Mark a rehydrated pending buffer as reconciled (kept or dropped). */
+  resolvePendingRehydrated: (packId: string) => void;
 };
 
 export function useStagedPools(): StagedPoolsApi {
@@ -153,11 +210,14 @@ export function useStagedPools(): StagedPoolsApi {
     () => new Map(),
   );
   const [pendingByPack, setPendingByPack] = React.useState<
-    Map<string, RetunePinnedOdds[]>
+    Map<string, PendingEntry>
   >(() => new Map());
   const [rehydratedIds, setRehydratedIds] = React.useState<Set<string>>(
     () => new Set(),
   );
+  const [pendingRehydratedIds, setPendingRehydratedIds] = React.useState<
+    Set<string>
+  >(() => new Set());
   const mapRef = React.useRef(stagedByPack);
   mapRef.current = stagedByPack;
   const pendingRef = React.useRef(pendingByPack);
@@ -190,6 +250,7 @@ export function useStagedPools(): StagedPoolsApi {
         pendingRef.current = next;
         return next;
       });
+      setPendingRehydratedIds(new Set(pendingIds));
     }
   }, []);
 
@@ -235,19 +296,34 @@ export function useStagedPools(): StagedPoolsApi {
   }, []);
 
   const getPending = React.useCallback(
-    (packId: string) => pendingRef.current.get(packId) ?? [],
+    (packId: string) => pendingRef.current.get(packId)?.edits ?? [],
+    [],
+  );
+
+  const getPendingEntry = React.useCallback(
+    (packId: string) => pendingRef.current.get(packId) ?? null,
     [],
   );
 
   const setPending = React.useCallback(
-    (packId: string, list: RetunePinnedOdds[]) => {
+    (
+      packId: string,
+      list: RetunePinnedOdds[],
+      baseFingerprint?: string | null,
+    ) => {
       setPendingByPack((prev) => {
         const next = new Map(prev);
         if (list.length === 0) {
           if (!next.has(packId)) return prev;
           next.delete(packId);
         } else {
-          next.set(packId, list);
+          next.set(packId, {
+            baseFingerprint:
+              baseFingerprint !== undefined
+                ? baseFingerprint
+                : (prev.get(packId)?.baseFingerprint ?? null),
+            edits: list,
+          });
         }
         pendingRef.current = next;
         writeStorage(mapRef.current, next);
@@ -266,6 +342,21 @@ export function useStagedPools(): StagedPoolsApi {
       writeStorage(mapRef.current, next);
       return next;
     });
+    setPendingRehydratedIds((prev) => {
+      if (!prev.has(packId)) return prev;
+      const next = new Set(prev);
+      next.delete(packId);
+      return next;
+    });
+  }, []);
+
+  const resolvePendingRehydrated = React.useCallback((packId: string) => {
+    setPendingRehydratedIds((prev) => {
+      if (!prev.has(packId)) return prev;
+      const next = new Set(prev);
+      next.delete(packId);
+      return next;
+    });
   }, []);
 
   return {
@@ -277,7 +368,10 @@ export function useStagedPools(): StagedPoolsApi {
     resolveRehydrated,
     pendingByPack,
     getPending,
+    getPendingEntry,
     setPending,
     clearPending,
+    pendingRehydratedIds,
+    resolvePendingRehydrated,
   };
 }

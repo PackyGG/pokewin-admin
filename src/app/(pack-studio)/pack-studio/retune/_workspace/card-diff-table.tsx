@@ -37,6 +37,7 @@ import type { EditPool, PackTunePlan } from "../../doctor/retune-actions";
 import { formatDeltaPp, formatPercent } from "../format-percent";
 import { formatReconciledPct, reconcileOddsForDisplay } from "./odds-display";
 import {
+  ART_LOADING_LABEL,
   FLOOR_PIN_CHIP,
   FLOOR_PIN_TOOLTIP,
   CRUSH_CHIP,
@@ -116,6 +117,13 @@ export type CardDiffRow = {
   crushed: boolean;
   color: string | null;
   animation: boolean;
+  /**
+   * Instant-table row (plan landed before the pool read): the odds columns are
+   * REAL (from `plan.planned`), but name/value/image are unknown until the pool
+   * lands — those cells render a shimmer instead of fabricated data. Never set
+   * once a pool or staged pool exists.
+   */
+  artLoading?: boolean;
 };
 
 /** Matches the Builder's card color options (`sortable-card-table.tsx`). */
@@ -295,6 +303,33 @@ export function buildCardDiffRows(args: {
         crushed: !capRemoved && crushedCards.has(c.cardId),
         color: c.color,
         animation: c.animation,
+      });
+    }
+  } else if (plan) {
+    // Instant table (live arm, plan landed FIRST): `plan.planned` carries the
+    // full odds vector keyed by cardId — render it immediately with a shimmer
+    // on the name/value/image cells (`artLoading`); the pool read fills them
+    // when it lands. Odds/Δpp/pending columns are real from the start.
+    for (const p of plan.planned) {
+      const capRemoved = capDropped.has(p.cardId) && capUsd !== null;
+      activeRows.push({
+        cardId: p.cardId,
+        name: "",
+        value: 0,
+        imageUrl: "",
+        livePct: p.livePct,
+        plannedPct: capRemoved ? null : p.pct,
+        displayPct: capRemoved ? null : (displayByCard.get(p.cardId) ?? p.pct),
+        added: p.livePct === null,
+        removed: false,
+        capRemovedUsd: capRemoved ? capUsd : null,
+        offLadder: offLadder.has(p.cardId),
+        pinnedPct: null,
+        pendingPct: capRemoved ? null : (pendingByCard.get(p.cardId) ?? null),
+        crushed: !capRemoved && crushedCards.has(p.cardId),
+        color: null,
+        animation: false,
+        artLoading: true,
       });
     }
   }
@@ -545,22 +580,37 @@ export function CardDiffTable({
                 )}
                 <TableCell>
                   <div className="flex items-center gap-2">
-                    <CardImage
-                      src={row.imageUrl || null}
-                      alt={row.name}
-                      className="size-8 shrink-0 rounded"
-                    />
+                    {row.artLoading ? (
+                      <div
+                        aria-hidden
+                        className="size-8 shrink-0 rounded bg-muted/60 motion-safe:animate-pulse"
+                      />
+                    ) : (
+                      <CardImage
+                        src={row.imageUrl || null}
+                        alt={row.name}
+                        className="size-8 shrink-0 rounded"
+                      />
+                    )}
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span
-                          className={cn(
-                            "truncate text-sm font-medium",
-                            inactive &&
-                              "text-rose-600 line-through dark:text-rose-400",
-                          )}
-                        >
-                          {row.name}
-                        </span>
+                        {row.artLoading ? (
+                          <span
+                            title={ART_LOADING_LABEL}
+                            aria-label={ART_LOADING_LABEL}
+                            className="inline-block h-3.5 w-28 rounded bg-muted/60 align-middle motion-safe:animate-pulse"
+                          />
+                        ) : (
+                          <span
+                            className={cn(
+                              "truncate text-sm font-medium",
+                              inactive &&
+                                "text-rose-600 line-through dark:text-rose-400",
+                            )}
+                          >
+                            {row.name}
+                          </span>
+                        )}
                         {row.added && (
                           <Badge
                             variant="outline"
@@ -609,7 +659,15 @@ export function CardDiffTable({
                   </div>
                 </TableCell>
                 <TableCell className="text-right text-sm tabular-nums">
-                  {formatCurrency(row.value)}
+                  {row.artLoading ? (
+                    <span
+                      title={ART_LOADING_LABEL}
+                      aria-label={ART_LOADING_LABEL}
+                      className="inline-block h-3.5 w-12 rounded bg-muted/60 align-middle motion-safe:animate-pulse"
+                    />
+                  ) : (
+                    formatCurrency(row.value)
+                  )}
                 </TableCell>
                 <TableCell className="text-right text-sm tabular-nums text-muted-foreground">
                   {row.livePct !== null ? formatPercent(row.livePct) : "—"}
