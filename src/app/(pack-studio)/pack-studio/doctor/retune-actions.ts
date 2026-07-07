@@ -2947,6 +2947,21 @@ async function planPackTuneStagedUncached(
         (c) => liveWeightByCardId.get(c.cardId) ?? 0,
       ),
       cardIds: input.cards.map((c) => c.cardId),
+      // Owner pins — the SAME index mapping the staged solve uses, so the
+      // guidance models the constraint set the solve actually enforces (a
+      // live-odds model emits "solver-verified" fixes the pinned solve then
+      // refuses — the owner's stuck "1% Bidoof" incident).
+      ...(input.pinnedOdds !== undefined && input.pinnedOdds.length > 0
+        ? {
+            pinnedShares: mapPinnedOddsToShares(
+              input.cards.map((c) => ({
+                value: r.cardMetaById.get(c.cardId)?.value ?? 0,
+                cardId: c.cardId,
+              })),
+              input.pinnedOdds,
+            ),
+          }
+        : {}),
       price: r.priceStaged,
       targetEdge: r.resolved.targetEdge,
       tag: r.resolved.targetWinRate,

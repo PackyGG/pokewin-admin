@@ -54,11 +54,14 @@ import {
 } from "../../insights/edge-calc/risk";
 import {
   DEFAULT_MAX_MULT_CEILING,
+  autoMaxWinCap,
   autoRetuneTargets,
+  autoTargetEdge,
   resolveIntendedHitRate,
   type ResolvedAutoTargetCfg,
 } from "../_lib/auto-targets";
 import { buildRetuneSearchParams } from "../_lib/retune-params";
+import { computeTagGuidance } from "../../insights/edge-calc/tag-guidance";
 
 let passes = 0;
 const failures: string[] = [];
@@ -432,6 +435,108 @@ check("MASAKI counterfactual: cap raised above the Machamp → the pin itself is
       `      (counterfactual verdict: PLAN at $${search.bestPrice.toFixed(2)}, edge ${(r.edge * 100).toFixed(3)}%, pin held)`,
     );
   }
+});
+
+// ── 7. PINS-AWARE GUIDANCE (owner incident "1% Bidoof", 2026-07-07) ─────
+//
+// The staged solve holds typed pins EXACT while the guidance previously
+// modeled the LIVE odds — its "solver-verified" computed fix ($3.35 @
+// 11.257%) then REFUSED under the pins (edge 35.9%), leaving the operator
+// stuck. Contract: guidance built WITH `pinnedShares` models the pinned
+// point-EV, and its price-edge-exact fix round-trips `shapeWeights` WITH
+// the pins (appliable by definition).
+
+const BIDOOF = {
+  values: [502.6, 90, 0.01],
+  liveWeights: [5000, 5000, 990000], // 0.5% / 0.5% / 99%
+  pins: [
+    { index: 0, share: 0.003 },
+    { index: 1, share: 0.007 },
+    { index: 2, share: 0.99 },
+  ],
+  price: 3.33,
+  tag: 0.01,
+  cfg: { globalCap: 25000, maxMultCeiling: DEFAULT_MAX_MULT_CEILING },
+};
+
+function bidoofGuidance(withPins: boolean) {
+  const cap = autoMaxWinCap(BIDOOF.price, BIDOOF.cfg, BIDOOF.tag);
+  const top = Math.max(...BIDOOF.values.filter((v) => v <= cap));
+  return computeTagGuidance({
+    cards: BIDOOF.values.map((v) => ({ value: v })),
+    currentWeights: BIDOOF.liveWeights,
+    price: BIDOOF.price,
+    targetEdge: autoTargetEdge({ price: BIDOOF.price, maxWin: top }),
+    tag: BIDOOF.tag,
+    nearMissMin: 0,
+    maxWinCap: cap,
+    cfg: BIDOOF.cfg,
+    ...(withPins ? { pinnedShares: BIDOOF.pins } : {}),
+  });
+}
+
+const bidoofPinnedEv = BIDOOF.pins.reduce(
+  (a, p) => a + p.share * BIDOOF.values[p.index]!,
+  0,
+);
+
+check("guidance WITH pins models the pinned point-EV, not the live odds", () => {
+  const g = bidoofGuidance(true);
+  assert(!g.feasibility.feasible, "the pinned pool is infeasible at $3.33");
+  assert(g.feasibility.saturated, "fully pinned ⇒ saturated");
+  assert(
+    Math.abs(g.feasibility.evMin - bidoofPinnedEv) < 1e-9 &&
+      Math.abs(g.feasibility.evMax - bidoofPinnedEv) < 1e-9,
+    `interval must be the pinned point ${bidoofPinnedEv.toFixed(4)} (got [${g.feasibility.evMin.toFixed(4)}, ${g.feasibility.evMax.toFixed(4)}])`,
+  );
+});
+
+check("the pins-aware computed fix is APPLIABLE (solver accepts WITH the pins)", () => {
+  const g = bidoofGuidance(true);
+  const s = g.suggestions.find((x) => x.kind === "price-edge-exact");
+  assert(s !== undefined, "a price-edge-exact fix is emitted");
+  const p2 = Number(s!.params.price);
+  const e2 = Number(s!.params.edgeTarget);
+  assert(
+    Math.abs(p2 * (1 - e2) - bidoofPinnedEv) < 0.005,
+    `the fix must price the PINNED payout (${(p2 * (1 - e2)).toFixed(4)} vs ${bidoofPinnedEv.toFixed(4)})`,
+  );
+  assert(
+    s!.proof.solverVerified === true,
+    "the top fix round-trips the pinned solver",
+  );
+  const r = shapeWeights({
+    cards: BIDOOF.values.map((v) => ({ value: v })),
+    price: p2,
+    targetEdge: e2,
+    targetWinRate: BIDOOF.tag,
+    maxWinCap: autoMaxWinCap(p2, BIDOOF.cfg, BIDOOF.tag),
+    nearMissMin: 0,
+    winRateTol: TAGGED_WINRATE_TOLERANCE,
+    currentWeights: BIDOOF.liveWeights,
+    winRateIsHard: true,
+    pinnedShares: BIDOOF.pins.map((p) => ({ ...p })),
+  });
+  const ok = assertSuccess(r, "apply the computed fix with the pins held");
+  assert(
+    Math.abs(ok.risk.winRate - BIDOOF.tag) <= TAGGED_WINRATE_TOLERANCE + 1e-12,
+    `tag exact under the fix (got ${(ok.risk.winRate * 100).toFixed(4)}%)`,
+  );
+});
+
+check("LEGACY: guidance WITHOUT pins still models the live odds (unchanged arm)", () => {
+  const g = bidoofGuidance(false);
+  const liveEv = BIDOOF.values.reduce(
+    (a, v, i) => a + (BIDOOF.liveWeights[i]! / 1e6) * v,
+    0,
+  );
+  assert(
+    Math.abs(g.feasibility.evMin - liveEv) < 1e-9 &&
+      Math.abs(g.feasibility.evMax - liveEv) < 1e-9,
+    `no-pins interval must stay the live point ${liveEv.toFixed(4)} (got [${g.feasibility.evMin.toFixed(4)}, ${g.feasibility.evMax.toFixed(4)}])`,
+  );
+  const s = g.suggestions.find((x) => x.kind === "price-edge-exact");
+  assert(s !== undefined, "the live-arm fix is still emitted");
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────

@@ -47,6 +47,7 @@ import {
   bandEvForBeta,
   waterFillWinEv,
   shapeWeights,
+  type ShapeWeightsPinnedShare,
   type ShapeWeightsRelaxation,
 } from "./risk";
 import {
@@ -151,6 +152,17 @@ export type TagGuidanceInput = {
   liveWinRate?: number | null;
   /** Live pool near-miss mass (the retag suggestion's NM seed). */
   liveNearMiss?: number | null;
+  /**
+   * Owner-typed pins (staged arm) aligned to `cards` by index. The staged
+   * solve holds these EXACT (`shapeWeights` pinnedShares) while
+   * `currentWeights` stays the LIVE anchor — the guidance must model the SAME
+   * constraint set, else its "computed fix" solves a different problem and is
+   * un-appliable (owner incident "1% Bidoof": live-odds model said move to
+   * $3.35 @ 11.257%, but the typed pins fix the payout at a point where that
+   * price still refuses). Pinned cards enter the interval as fixed
+   * point-masses; omit/empty ⇒ live-arm behavior, byte-identical.
+   */
+  pinnedShares?: ShapeWeightsPinnedShare[] | null;
 };
 
 // ─── Band model at a (price, cap) ─────────────────────────────────────────────
@@ -172,11 +184,21 @@ type BandModel = {
   evMax: number;
   /** Engine floor including the RC4 cheapest-winner knob. */
   evMinKnob: number;
-  /** Σ caps (Infinity when any card is uncapped/new). */
+  /** Σ caps over FREE (unpinned) win cards (Infinity when any is uncapped). */
   capSum: number;
   saturated: boolean;
   capDroppedCount: number;
   maxDroppedValue: number;
+  /** Win-band EV at the interval endpoints (pins-inclusive). */
+  winEvMin: number;
+  winEvMax: number;
+  /** Owner-pinned fixed contributions per band (0 when no pins). */
+  winFixedMass: number;
+  winFixedEv: number;
+  nmFixedEv: number;
+  dustFixedEv: number;
+  /** Number of pins actually applied (copy switch). */
+  pinnedCount: number;
 };
 
 function buildModel(args: {
@@ -192,8 +214,23 @@ function buildModel(args: {
   extraWin?: number | null;
   /** Skip the grail monotone tighten (repair-monotone proofs). */
   noMonotoneTighten?: boolean;
+  /**
+   * Owner-typed pins — card index → EXACT share. A pinned card's mass is
+   * FIXED in whatever band its value occupies at this (price, cap): it
+   * contributes share·value to the interval as a POINT and is excluded from
+   * the free water-fill / band-fill budgets, mirroring `shapeWeights`
+   * pinnedShares. Absent ⇒ byte-identical legacy model.
+   */
+  pinnedShares?: readonly ShapeWeightsPinnedShare[] | null;
 }): BandModel {
   const { price, cap, tag, nearMissMin } = args;
+
+  const pinByIdx = new Map<number, number>();
+  if (args.pinnedShares) {
+    for (const p of args.pinnedShares) {
+      if (Number.isFinite(p.share) && p.share > 0) pinByIdx.set(p.index, p.share);
+    }
+  }
 
   let curTotal = 0;
   for (const w of args.currentWeights) {
@@ -206,6 +243,13 @@ function buildModel(args: {
   const dustValues: number[] = [];
   let capDroppedCount = 0;
   let maxDroppedValue = 0;
+  let winFixedMass = 0;
+  let winFixedEv = 0;
+  let nmFixedMass = 0;
+  let nmFixedEv = 0;
+  let dustFixedMass = 0;
+  let dustFixedEv = 0;
+  let pinnedCount = 0;
 
   args.cards.forEach((c, idx) => {
     const v = c.value;
@@ -215,7 +259,14 @@ function buildModel(args: {
       if (v > maxDroppedValue) maxDroppedValue = v;
       return;
     }
+    const pin = pinByIdx.get(idx);
     if (v >= price) {
+      if (pin !== undefined) {
+        winFixedMass += pin;
+        winFixedEv += pin * v;
+        pinnedCount += 1;
+        return;
+      }
       winValues.push(v);
       const w = args.currentWeights[idx];
       // LAW 6: zero/absent current weight ⇒ UNCAPPED (a new card has no
@@ -226,8 +277,20 @@ function buildModel(args: {
           : Infinity,
       );
     } else if (v >= 0.5 * price) {
+      if (pin !== undefined) {
+        nmFixedMass += pin;
+        nmFixedEv += pin * v;
+        pinnedCount += 1;
+        return;
+      }
       nmValues.push(v);
     } else {
+      if (pin !== undefined) {
+        dustFixedMass += pin;
+        dustFixedEv += pin * v;
+        pinnedCount += 1;
+        return;
+      }
       dustValues.push(v);
     }
   });
@@ -258,27 +321,36 @@ function buildModel(args: {
     }
   }
 
-  const m = nmValues.length > 0 && nearMissMin > 0 ? nearMissMin : 0;
-  const d = 1 - tag - m;
+  // Pins carve their mass out of each band's budget: the tag's free win mass,
+  // the near-miss seed's free fill, and the residual dust mass all shrink by
+  // the pinned point-masses (no pins ⇒ every Fixed term is 0, identical math).
+  const tagFree = Math.max(0, tag - winFixedMass);
+  const m =
+    nmValues.length > 0 && nearMissMin > 0
+      ? Math.max(0, nearMissMin - nmFixedMass)
+      : 0;
+  const d = 1 - tag - m - nmFixedMass - dustFixedMass;
 
   const nmLo = bandEvForBeta(nmValues, BETA_HI);
   const nmHi = bandEvForBeta(nmValues, BETA_LO);
   const dustLo = bandEvForBeta(dustValues, BETA_HI);
   const dustHi = bandEvForBeta(dustValues, BETA_LO);
-  const lossLo = m * nmLo + Math.max(0, d) * dustLo;
-  const lossHi = m * nmHi + Math.max(0, d) * dustHi;
+  const lossLo = m * nmLo + Math.max(0, d) * dustLo + nmFixedEv + dustFixedEv;
+  const lossHi = m * nmHi + Math.max(0, d) * dustHi + nmFixedEv + dustFixedEv;
 
-  const winEvMin = waterFillWinEv(winValues, winCaps, tag, BETA_WIN_MAX);
-  const winEvMax = waterFillWinEv(winValues, winCaps, tag, BETA_WIN_FLOOR);
+  const winEvMin = waterFillWinEv(winValues, winCaps, tagFree, BETA_WIN_MAX) + winFixedEv;
+  const winEvMax = waterFillWinEv(winValues, winCaps, tagFree, BETA_WIN_FLOOR) + winFixedEv;
   const evMin = winEvMin + lossLo;
   const evMax = winEvMax + lossHi;
   const cheapestWin = winValues.length > 0 ? Math.min(...winValues) : 0;
   const evMinKnob =
-    winValues.length > 0 ? Math.min(evMin, tag * cheapestWin + lossLo) : evMin;
+    winValues.length > 0
+      ? Math.min(evMin, tagFree * cheapestWin + winFixedEv + lossLo)
+      : evMin;
 
   let capSum = 0;
   for (const c of winCaps) capSum += c;
-  const saturated = Number.isFinite(capSum) && capSum <= tag + 1e-12;
+  const saturated = Number.isFinite(capSum) && capSum <= tagFree + 1e-12;
 
   return {
     price,
@@ -298,6 +370,13 @@ function buildModel(args: {
     saturated,
     capDroppedCount,
     maxDroppedValue,
+    winEvMin,
+    winEvMax,
+    winFixedMass,
+    winFixedEv,
+    nmFixedEv,
+    dustFixedEv,
+    pinnedCount,
   };
 }
 
@@ -378,6 +457,14 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
     return top;
   };
 
+  // Owner pins (staged arm) — threaded into EVERY model this engine builds so
+  // the interval, the direction verdict, and every suggestion proof describe
+  // the SAME constraint set the staged solve enforces.
+  const pins =
+    input.pinnedShares != null && input.pinnedShares.length > 0
+      ? input.pinnedShares
+      : null;
+
   const modelAt = (p: number): { model: BandModel; eStar: number; evT: number } => {
     const cap = capAt(p);
     const model = buildModel({
@@ -387,6 +474,7 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
       cap,
       tag,
       nearMissMin: input.nearMissMin,
+      pinnedShares: pins,
     });
     const eStar = targetEdgeAt(p, cap, poolTopAt(p));
     return { model, eStar, evT: p * (1 - eStar) };
@@ -399,6 +487,7 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
     cap: input.maxWinCap,
     tag,
     nearMissMin: input.nearMissMin,
+    pinnedShares: pins,
   });
 
   const feasibleRaw =
@@ -462,7 +551,11 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
           suggestions.push({
             kind: "price-edge-exact",
             params: { price: pCand, edgeTarget: ePrime },
-            humanCopy: `Move the price to ${usd(pCand)} and set the edge target to ${(ePrime * 100).toFixed(3)}% — this pool's odds are fully pinned (never-inflate + hard tag), so it pays exactly one amount; at ${usd(pCand)} that amount IS a ${(ePrime * 100).toFixed(3)}% edge with the ${pp(tag)}% tag exact. No card changes.`,
+            humanCopy: `Move the price to ${usd(pCand)} and set the edge target to ${(ePrime * 100).toFixed(3)}% — ${
+              base.pinnedCount > 0
+                ? "your typed pins hold every card's odds exact"
+                : "this pool's odds are fully pinned (never-inflate + hard tag)"
+            }, so it pays exactly one amount; at ${usd(pCand)} that amount IS a ${(ePrime * 100).toFixed(3)}% edge with the ${pp(tag)}% tag exact. ${base.pinnedCount > 0 ? "Keep the pins — no card changes." : "No card changes."}`,
             proof: {
               evMinAfter: at.model.evMin,
               evMaxAfter: at.model.evMax,
@@ -549,9 +642,9 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
 
   // ── 3. Add a dust card (LAW 4 — the strongest pool lever, need-ev-down) ───
   if (direction === "need-ev-down" && base.d > 1e-9) {
-    const wUsed = waterFillWinEv(base.winValues, base.winCaps, tag, BETA_WIN_MAX);
-    const nmUsed = base.m * bandEvForBeta(base.nmValues, BETA_HI);
-    const vB = (evTarget - wUsed - nmUsed) / base.d;
+    const wUsed = base.winEvMin;
+    const nmUsed = base.m * bandEvForBeta(base.nmValues, BETA_HI) + base.nmFixedEv;
+    const vB = (evTarget - wUsed - nmUsed - base.dustFixedEv) / base.d;
     const vMax = Math.min(vB, 0.5 * price - 0.01);
     const onlyDustIsCent =
       base.dustValues.length > 0 && Math.max(...base.dustValues) <= 0.01 + 1e-9;
@@ -568,6 +661,7 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
           tag,
           nearMissMin: input.nearMissMin,
           extraDust: [v],
+          pinnedShares: pins,
         });
         if (engineAccepts(m2, evTarget, targetEdge)) {
           proved = m2;
@@ -580,7 +674,7 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
         // Expected odds share of the new card (analytic mixing equation —
         // matched simulation within 0.1pp on the audit fixture).
         const dCur = bandEvForBeta(base.dustValues, BETA_HI);
-        const dReq = (evTarget - wUsed - nmUsed) / base.d;
+        const dReq = (evTarget - wUsed - nmUsed - base.dustFixedEv) / base.d;
         const share =
           dCur - v > 1e-9
             ? Math.min(1, Math.max(0, (base.d * (dCur - dReq)) / (dCur - v)))
@@ -605,16 +699,17 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
   if (
     direction === "need-ev-up" &&
     Number.isFinite(base.capSum) &&
-    tag - base.capSum > 1e-9 &&
+    tag - base.capSum - base.winFixedMass > 1e-9 &&
     base.d > 1e-9
   ) {
-    const s = tag - base.capSum;
-    let capEv = 0;
+    const s = tag - base.capSum - base.winFixedMass;
+    let capEv = base.winFixedEv;
     for (let i = 0; i < base.winValues.length; i++) {
       capEv += base.winCaps[i]! * base.winValues[i]!;
     }
-    const lossLo = base.m * bandEvForBeta(base.nmValues, BETA_HI) + base.d * bandEvForBeta(base.dustValues, BETA_HI);
-    const lossHi = base.m * bandEvForBeta(base.nmValues, BETA_LO) + base.d * bandEvForBeta(base.dustValues, BETA_LO);
+    const lossFixed = base.nmFixedEv + base.dustFixedEv;
+    const lossLo = base.m * bandEvForBeta(base.nmValues, BETA_HI) + base.d * bandEvForBeta(base.dustValues, BETA_HI) + lossFixed;
+    const lossHi = base.m * bandEvForBeta(base.nmValues, BETA_LO) + base.d * bandEvForBeta(base.dustValues, BETA_LO) + lossFixed;
     let vLo = (evTarget - capEv - lossHi) / s;
     let vHi = (evTarget - capEv - lossLo) / s;
     vLo = Math.max(vLo, price);
@@ -636,6 +731,7 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
           tag,
           nearMissMin: input.nearMissMin,
           extraWin: vMid,
+          pinnedShares: pins,
         });
         if (engineAccepts(m2, evTarget, targetEdge)) {
           suggestions.push({
@@ -687,6 +783,7 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
       cap: liftedCap,
       tag,
       nearMissMin: input.nearMissMin,
+      pinnedShares: pins,
     });
     if (engineAccepts(m2, evTarget, targetEdge)) {
       suggestions.push({
@@ -729,6 +826,7 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
         tag,
         nearMissMin: input.nearMissMin,
         noMonotoneTighten: true,
+        pinnedShares: pins,
       });
       if (engineAccepts(m2, evTarget, targetEdge)) {
         const idx = input.cards.findIndex(
@@ -804,6 +902,7 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
         cap: capPrime,
         tag: tierRate,
         nearMissMin: nmSeed,
+        pinnedShares: pins,
       });
       const eStarPrime = targetEdgeAt(price, capPrime, poolTopAt(price));
       const evTPrime = price * (1 - eStarPrime);
@@ -836,6 +935,7 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
         cap: capPrime,
         tag: liveRate,
         nearMissMin: nmSeed,
+        pinnedShares: pins,
       });
       suggestions.push({
         kind: "untag",
@@ -920,8 +1020,8 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
       saturated: base.saturated,
       direction,
       components: {
-        winEvMin: waterFillWinEv(base.winValues, base.winCaps, tag, BETA_WIN_MAX),
-        winEvMax: waterFillWinEv(base.winValues, base.winCaps, tag, BETA_WIN_FLOOR),
+        winEvMin: base.winEvMin,
+        winEvMax: base.winEvMax,
         nmMass: base.m,
         dustMass: base.d,
         capSum: Number.isFinite(base.capSum) ? base.capSum : -1,
@@ -999,6 +1099,12 @@ function solverRoundTrip(input: TagGuidanceInput, s: TuneSuggestion): boolean {
     winRateTol: TAGGED_WINRATE_TOLERANCE,
     currentWeights,
     winRateIsHard: true,
+    // The staged solve holds owner pins EXACT — the round-trip must run the
+    // SAME problem or the "solver-verified" badge certifies a different pack.
+    // (add-card appends, so pin indexes into the original pool stay valid.)
+    ...(input.pinnedShares != null && input.pinnedShares.length > 0
+      ? { pinnedShares: input.pinnedShares.map((p) => ({ ...p })) }
+      : {}),
   });
   if ("error" in r) return false;
   return Math.abs(r.risk.winRate - tag) <= TAGGED_WINRATE_TOLERANCE + 1e-9;
