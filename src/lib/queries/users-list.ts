@@ -19,6 +19,27 @@ import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
 // sort branch, instead of an unchecked cast.
 const USER_ROLES = new Set<string>(Object.values(user_role));
 
+/**
+ * Whether a free-form search term could plausibly be a genuine partial
+ * paste of a packy.gg user id, gating the `LOWER(id) LIKE $1` UNION leg in
+ * {@link buildUserListWhereClause}.
+ *
+ * Real ids are always exactly 32 chars from `[A-Za-z0-9_-]` (see
+ * `isUserId` in src/lib/utils/ids.ts). This branch only ever sees terms
+ * that already failed the `isUserId`/`isUuid` shape check, so a short
+ * fragment colliding with a random nanoid prefix is essentially always
+ * noise (measured: the literal term "jo" spuriously matched 22 unrelated
+ * users on prod, 2026-07-08). 8 was chosen as the floor because the
+ * collision space at that length (62^8) vastly exceeds the ~15.5k-row
+ * table — an accidental match is astronomically unlikely — while still
+ * comfortably covering realistic partial-id pastes (well under the full
+ * 32-char length, well above a typical 2-6 char search-as-you-type term).
+ */
+const PARTIAL_ID_REGEX = /^[A-Za-z0-9_-]{8,}$/;
+function looksLikePartialId(term: string): boolean {
+  return PARTIAL_ID_REGEX.test(term);
+}
+
 // These computed sorts need raw SQL because the displayed value combines
 // multiple tables (e.g. totalWithdrawn = balances.total_withdrawn +
 // card_withdrawal_requests; netHoldings = balances + user_inventory).
@@ -295,9 +316,31 @@ function buildUserListWhereClause(
       const pattern =
         searchMode === "substring" ? `%${escaped}%` : `${escaped}%`;
       params.push(pattern); // $1 — LIKE pattern
-      params.push(lowered); // $2 — raw lowered term (exact-id leg)
       // UNION per column so Postgres can index-range each leg instead of
       // OR-ing four ILIKE predicates (which often devolves to a seq scan).
+      //
+      // The id column contributes at most ONE leg here, and only when the
+      // term is shaped like a genuine partial-id paste (see
+      // looksLikePartialId above). Two id legs used to live here
+      // unconditionally:
+      //   - `LOWER(id) = $2` (exact match) was PROVABLY UNREACHABLE: every
+      //     real id is exactly 32 chars from [A-Za-z0-9_-] (isUserId), and
+      //     this whole branch only runs when the term already failed that
+      //     same shape check (isExactId is false) — so the term can never
+      //     equal a real id. It still paid a full Seq Scan (~4.7ms, prod
+      //     2026-07-08) on every free-form search for nothing. Removed.
+      //   - `LOWER(id) LIKE $1` (partial-id prefix) is real (lets an admin
+      //     find a user by a pasted id fragment) but ran unconditionally,
+      //     costing another Seq Scan (~12.6ms) AND producing noise: a
+      //     2-char term like "jo" spuriously matched 22 unrelated users
+      //     by chance over the 32-char random nanoid space. Now gated
+      //     behind looksLikePartialId (length >= 8 + id charset only) so
+      //     it's omitted entirely — not just filtered to zero rows after
+      //     paying for the scan — for short/non-id-shaped terms.
+      const idLeg = looksLikePartialId(lowered)
+        ? `\n            UNION
+            SELECT id FROM "user" WHERE LOWER(id) LIKE $1 ESCAPE '\\'`
+        : "";
       whereSql.push(
         `u.id IN (
           SELECT id FROM (
@@ -307,11 +350,7 @@ function buildUserListWhereClause(
             UNION
             SELECT id FROM "user" WHERE LOWER(name) LIKE $1 ESCAPE '\\'
             UNION
-            SELECT id FROM "user" WHERE LOWER(email) LIKE $1 ESCAPE '\\'
-            UNION
-            SELECT id FROM "user" WHERE LOWER(id) LIKE $1 ESCAPE '\\'
-            UNION
-            SELECT id FROM "user" WHERE LOWER(id) = $2
+            SELECT id FROM "user" WHERE LOWER(email) LIKE $1 ESCAPE '\\'${idLeg}
           ) matched
         )`,
       );

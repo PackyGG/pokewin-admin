@@ -392,6 +392,19 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pf_result_metadata_pack_id_created_a
 -- QUERY-SHAPE question, not an indexing one, so it is flagged here rather
 -- than acted on.
 --
+-- CLOSING NOTE (2026-07-08, second follow-up, read-only re-verify) — acted
+-- on the finding above. `buildUserListWhereClause` (users-list.ts) now:
+--   - removes the `LOWER(id) = $2` leg entirely (provably unreachable —
+--     this branch only runs when the term already failed the same
+--     isUserId shape check every real id satisfies).
+--   - gates the `LOWER(id) LIKE $1` leg behind a length>=8 + id-charset
+--     guard (`looksLikePartialId`), so it's omitted from the UNION for
+--     short/non-id-shaped terms instead of merely returning nothing.
+-- QUERY-SHAPE fix only — no `lower(id)` index is needed or recommended
+-- here: short searches skip the leg entirely, so there is no scan left to
+-- speed up for them, and a genuine 8+ char partial-id paste is rare
+-- enough that a dedicated index isn't warranted.
+--
 -- Why this now outranks every other unapplied recommendation in this file:
 -- this query runs on the DEFAULT /users search path (not the `?match=
 -- contains` opt-in), on every debounced free-form keystroke, for every
