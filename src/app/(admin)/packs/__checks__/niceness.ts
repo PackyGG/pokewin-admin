@@ -46,14 +46,16 @@
  *       absorbs exactly W − pinned.
  *  10.  Determinism (F1 + F3 run twice, byte-identical) + perf (one F1
  *       search ≤ 3 s).
- *  11.  NICE-GRID POST-PASS (Retune V3 wave 7, `polishTaggedNiceGrid` +
+ *  11.  NICE-GRID POST-PASS (Retune V3 waves 7+8, `polishTaggedNiceGrid` +
  *       `niceGridPolish`): unit contracts for every move family (dust single
  *       via the buffer, win single via the absorber under live-cap semantics,
- *       win exact-cancel pair around a nice absorber, edge-relief dust
- *       transfer), the strict-improvement gate, and the fleet-frozen
- *       Psycho/Goofy A/B needles through the REAL builder wiring (flag-
- *       stripped legacy byte-baseline vs polished: fewer off-nice cards,
- *       laws intact, tag exact, deterministic; untagged byte-identical).
+ *       win exact-cancel pair around a nice absorber, ABSORBER ENDGAME
+ *       partner counter-hop, edge-relief dust transfer), the strict-
+ *       improvement gate, and the fleet-frozen Psycho/Goofy A/B needles
+ *       through the REAL builder wiring (flag-stripped legacy byte-baseline
+ *       vs polished: fewer off-nice cards — Psycho WIDE lands fully ALL-NICE
+ *       via the endgame — laws intact, tag exact, deterministic; untagged
+ *       byte-identical).
  *
  * Exit code 0 = all passed; 1 = at least one failure (printed).
  */
@@ -827,6 +829,48 @@ check("polish: edge-relief dust transfer rescues a window-breaking move (tier-G 
   );
 });
 
+check("polish: ABSORBER ENDGAME — absorber re-rungs nice, one partner counter-hops rung→rung", () => {
+  // Absorber (5500) is the ONLY off row; no single/pair applies (every other
+  // card is nice). Endgame: absorber → 5000 (log-nearest, cap-exempt),
+  // partner B (desc-units first) counter-moves 2500→3000 (+500, uncapped).
+  const units = [100, 2000, 2500, 5500, 30000, 59900];
+  const out = polishTaggedNiceGrid({
+    units,
+    values: POLISH_VALUES,
+    price: POLISH_PRICE,
+    tag: 0.101,
+    targetEdge: 0.8,
+    edgeTolAbove: 0.05,
+    buffer: 5,
+    exemptIdx: [5],
+    liveCapUnits: null,
+  });
+  assert(
+    JSON.stringify(out) === JSON.stringify([100, 2000, 3000, 5000, 30000, 59900]),
+    `endgame: got [${out.join(", ")}]`,
+  );
+  assert(countOffNicePct(out, [5]) === 0, "endgame must land all-nice");
+  const winSum = out[0]! + out[1]! + out[2]! + out[3]!;
+  assert(winSum === 10100, `win sum ${winSum} ≠ 10100 (tag broken)`);
+  // CAPPED variant: every partner up-hop exceeds its live cap and every
+  // down-hop breaks the win chain — the endgame must refuse wholesale.
+  const capped = polishTaggedNiceGrid({
+    units,
+    values: POLISH_VALUES,
+    price: POLISH_PRICE,
+    tag: 0.101,
+    targetEdge: 0.8,
+    edgeTolAbove: 0.05,
+    buffer: 5,
+    exemptIdx: [5],
+    liveCapUnits: units.slice(),
+  });
+  assert(
+    JSON.stringify(capped) === JSON.stringify(units),
+    `capped endgame must be a no-op: got [${capped.join(", ")}]`,
+  );
+});
+
 check("polish: strict-improvement gate — a no-gain vector ships byte-identical", () => {
   // All-nice input: the polish must return the input untouched.
   const units = [100, 2500, 2500, 5000, 30000, 59900];
@@ -872,6 +916,7 @@ function runFleetPair(
   liveW: number[],
   price: number,
   tag: number,
+  priceBudgetPct = 0.1,
 ): { off: SearchBestPriceResult; on: SearchBestPriceResult } {
   const before = computePackRisk({
     cards: values.map((v, i) => ({ value: v, weight: liveW[i]! })),
@@ -895,7 +940,7 @@ function runFleetPair(
     winRateTol: 0.02,
     currentWeights: liveW,
     intendedHitRate: auto.intendedHitRate,
-    priceBudgetPct: 0.1,
+    priceBudgetPct,
   });
   assert(params.niceGridPolish === true, "builder must emit niceGridPolish");
   const { niceGridPolish: _strip, ...legacy } = params;
@@ -937,6 +982,41 @@ check("fleet needle: 1% Psycho — off-nice cards 5→1, laws intact, tag exact,
       JSON.stringify(assertSuccess(again.on.bestResult, "rerun").weights) ===
         JSON.stringify(rOn.weights),
     "Psycho polished arm must be deterministic",
+  );
+});
+
+check("fleet needle: 1% Psycho WIDE band — the endgame lands ALL-NICE @$5.10 (rank 2→3)", () => {
+  const { off, on } = runFleetPair(
+    PSYCHO_VALUES,
+    PSYCHO_LIVE_W,
+    PSYCHO_PRICE,
+    PSYCHO_TAG,
+    RETUNE_MAX_PRICE_CHANGE_PCT,
+  );
+  const rOff = assertSuccess(off.bestResult, "Psycho wide legacy");
+  const rOn = assertSuccess(on.bestResult, "Psycho wide polished");
+  assert(
+    rOff.snapped === true && rOff.allNice === false,
+    "legacy wide arm must land snapped-but-off-nice",
+  );
+  assert(rOn.snapped === true && rOn.allNice === true, "polished wide arm must land ALL-NICE");
+  assert(on.bestPrice === 5.1, `polished wide price ${on.bestPrice} ≠ 5.1`);
+  assert(
+    findMonotoneViolations({
+      values: PSYCHO_VALUES,
+      shares: rOn.weights.map((w, _i, arr) => w / arr.reduce((a, b) => a + b, 0)),
+      tol: 1e-9,
+    }).length === 0,
+    "all-nice Psycho must be LAW M clean",
+  );
+  const total = rOn.weights.reduce((a, b) => a + b, 0);
+  let winUnits = 0;
+  for (let i = 0; i < PSYCHO_VALUES.length; i++) {
+    if (PSYCHO_VALUES[i]! >= on.bestPrice) winUnits += rOn.weights[i]!;
+  }
+  assert(
+    winUnits === Math.round(PSYCHO_TAG * total),
+    `Psycho wide win units ${winUnits} ≠ ${Math.round(PSYCHO_TAG * total)}`,
   );
 });
 

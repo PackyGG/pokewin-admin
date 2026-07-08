@@ -3251,7 +3251,7 @@ export type SnapNodeBudget = { remaining: number };
  * off-nice, 20 of them with the DFS budget exhausted. This post-pass removes
  * the off-nice flag card by card WITHOUT re-running any enumeration.
  *
- * THE MOVES (three families, all mass-conserving by construction):
+ * THE MOVES (four families, all mass-conserving by construction):
  *   • DUST single (value < price/2, not the buffer): re-rung to a bracketing
  *     nice rung; the residual BUFFER absorbs the delta (dust↔dust — the win
  *     band and the near-miss band are untouched).
@@ -3269,13 +3269,24 @@ export type SnapNodeBudget = { remaining: number };
  *     dominant fix (grail neighbors like 0.170%/0.180% pair to 0.150%/0.200%
  *     with a tiny EV shift); distant-value pairs move EV more and the edge
  *     window refuses them honestly.
+ *   • ABSORBER ENDGAME (wave 8): after singles + pairs the absorber is
+ *     usually the LAST off-nice row — it carries the win-band residual by
+ *     construction (tier-P parity: the polish cannot re-solve the win-band
+ *     sum, but it CAN hand the residual's ugliness to ONE partner when an
+ *     exact nice-rung gap exists). The absorber re-rungs onto a nearby nice
+ *     rung (cap-EXEMPT, the tier-N/P anti-jackpot rule) and ONE partner win
+ *     card counter-moves nice-rung→nice-rung by exactly the opposite delta
+ *     (partner caps apply). This is the only family that MOVES the absorber —
+ *     as a mover it stops being a compensator for that one step, and the
+ *     shared acceptance re-verifies everything.
  *
- * NEVER MOVED: pins (owner-sovereign), the buffer and the cheapest free
- * winner (they ARE the compensators), the jackpot (its 1-in-N menu landing is
- * deliberate styling — and the menu is a strict subset of the nice grid, so a
- * menu-picked jackpot is already nice), and EVERY near-miss card — the
- * near-miss mass stays byte-identical so the LAW M gate's near-miss floor
- * (`lawfulSnapCandidate`) sees exactly the reality it already accepted.
+ * NEVER MOVED: pins (owner-sovereign), the buffer, the cheapest free winner
+ * outside the endgame family (it IS the compensator elsewhere), the jackpot
+ * (its 1-in-N menu landing is deliberate styling — and the menu is a strict
+ * subset of the nice grid, so a menu-picked jackpot is already nice), and
+ * EVERY near-miss card — the near-miss mass stays byte-identical so the LAW M
+ * gate's near-miss floor (`lawfulSnapCandidate`) sees exactly the reality it
+ * already accepted.
  *
  * PER-MOVE ACCEPTANCE (re-verified move by move — the polish PROPOSES, the
  * existing laws DISPOSE):
@@ -3572,6 +3583,54 @@ export function polishTaggedNiceGrid(input: {
           if (moved) break;
         }
         if (currentOff === 0) break;
+      }
+    }
+    // ABSORBER ENDGAME: re-rung the off-nice absorber onto a nearby nice
+    // rung; ONE partner win card counter-moves by exactly the opposite delta
+    // onto a nice rung of its own (win sum invariant to the unit). The
+    // absorber's own re-rung is cap-exempt (tier-N/P anti-jackpot rule);
+    // the partner's up-moves stay live-capped. Deterministic: absorber rungs
+    // log-nearest first (ties → lower), partners desc units (ties → index).
+    if (
+      currentOff > 0 &&
+      cheapestFree !== -1 &&
+      cheapestFree !== buffer &&
+      !exempt.has(cheapestFree) &&
+      !isNiceUnits(current[cheapestFree]!)
+    ) {
+      const uAbs = current[cheapestFree]!;
+      const candRungs = rungs
+        .filter((r) => r !== uAbs && r >= Math.max(1, uAbs * 0.4) && r <= uAbs * 2.5)
+        .sort((a, b) => {
+          const da = Math.abs(Math.log(a / uAbs));
+          const db = Math.abs(Math.log(b / uAbs));
+          if (da !== db) return da - db;
+          return a - b;
+        });
+      const partners = freeWin
+        .filter((i) => i !== jack && i !== cheapestFree)
+        .sort((a, b) => {
+          if (current[b]! !== current[a]!) return current[b]! - current[a]!;
+          return a - b;
+        });
+      let moved = false;
+      for (const r of candRungs) {
+        const deltaAbs = r - uAbs;
+        for (const j of partners) {
+          const tJ = current[j]! - deltaAbs;
+          if (tJ < 1 || tJ === current[j]!) continue;
+          if (!isNiceUnits(tJ)) continue;
+          if (!rungAllowed(j, tJ)) continue;
+          const next = current.slice();
+          next[cheapestFree] = r;
+          next[j] = tJ;
+          if (tryAdopt(next)) {
+            moved = true;
+            improved = true;
+            break;
+          }
+        }
+        if (moved) break;
       }
     }
     if (!improved || currentOff === 0) break;
