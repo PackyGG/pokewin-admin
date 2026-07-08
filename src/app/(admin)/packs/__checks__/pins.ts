@@ -46,7 +46,9 @@
 import {
   ONE_SIDED_EDGE_EXCESS_TOL,
   RETUNE_MAX_PRICE_CHANGE_PCT,
+  RETUNE_PRICE_BUDGET_DEFAULT_PCT,
   TAGGED_WINRATE_TOLERANCE,
+  computePackRisk,
   searchBestPriceForCleanSnap,
   shapeWeights,
   type ShapeWeightsResult,
@@ -61,7 +63,10 @@ import {
   type ResolvedAutoTargetCfg,
 } from "../_lib/auto-targets";
 import { buildRetuneSearchParams } from "../_lib/retune-params";
-import { computeTagGuidance } from "../../insights/edge-calc/tag-guidance";
+import {
+  computeTagGuidance,
+  computeUntaggedGuidance,
+} from "../../insights/edge-calc/tag-guidance";
 
 let passes = 0;
 const failures: string[] = [];
@@ -537,6 +542,159 @@ check("LEGACY: guidance WITHOUT pins still models the live odds (unchanged arm)"
   );
   const s = g.suggestions.find((x) => x.kind === "price-edge-exact");
   assert(s !== undefined, "the live-arm fix is still emitted");
+});
+
+// ── 8. PINS-AWARE UNTAGGED GUIDANCE (retune V3) ─────────────────────────
+//
+// `computeUntaggedGuidance` gets the same pins treatment the tagged advisor
+// got: owner pins ride every window as fixed point-masses, the verification
+// solves hold them, and an owner-pinned share is NEVER mistaken for the
+// quantizer's 0.0001% floor-pin signature (owner intent ≠ dead card).
+// Fixture: the CAPTIVE pool — its degenerate plan floor-pins the $33.95
+// card, which the legacy guidance flags as remove-dead-card.
+
+const CAPTIVE = {
+  price: 485.5,
+  values: [9100, 3247.24, 2040, 1080, 635.14, 80.28, 33.95, 18.23],
+  livePcts: [0.5, 4, 5, 7, 8.5, 15, 20, 40],
+};
+const captiveW = CAPTIVE.livePcts.map((p) => Math.round(p * 10000));
+const captiveB = computePackRisk({
+  cards: CAPTIVE.values.map((v, i) => ({ value: v, weight: captiveW[i]! })),
+  price: CAPTIVE.price,
+});
+const captiveT = autoRetuneTargets(
+  CAPTIVE.price,
+  MASAKI_CFG,
+  undefined,
+  Math.max(...CAPTIVE.values),
+  {
+    winRate: captiveB.winRate,
+    nearMiss: captiveB.nearMiss,
+    edge: captiveB.edge,
+    topValue: Math.max(...CAPTIVE.values),
+  },
+);
+const captiveSearch = searchBestPriceForCleanSnap({
+  cards: CAPTIVE.values.map((v) => ({ value: v })),
+  basePrice: CAPTIVE.price,
+  targetEdge: captiveT.targetEdge,
+  targetWinRate: captiveT.targetWinRate,
+  maxWinCap: captiveT.maxWinCap,
+  nearMissMin: captiveT.nearMissMin,
+  winRateTol: 0.02,
+  currentWeights: captiveW,
+  maxPriceChangePct: RETUNE_PRICE_BUDGET_DEFAULT_PCT,
+  upwardPriceExtensionPct: 0,
+  disperseLoss: true,
+  holdWinRate: true,
+});
+const captivePlan = assertSuccess(captiveSearch.bestResult, "captive plan");
+const captiveTotal = captivePlan.weights.reduce(
+  (a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0),
+  0,
+);
+const captivePlanned = captivePlan.weights.map((w) =>
+  w > 0 ? w / captiveTotal : 0,
+);
+const captiveGInput = {
+  cards: CAPTIVE.values.map((v) => ({ value: v })),
+  currentWeights: captiveW,
+  cardIds: CAPTIVE.values.map((_, i) => `c${i}`),
+  livePrice: CAPTIVE.price,
+  price: captiveSearch.bestPrice,
+  targetEdge: captiveT.targetEdge,
+  targetWinRate: captiveT.targetWinRate,
+  nearMissMin: captiveT.nearMissMin,
+  maxWinCap: captiveT.maxWinCap,
+  plannedShares: captivePlanned,
+  relaxations: [],
+  shapeDegenerate: true,
+};
+
+check("untagged guidance: empty pinnedShares ≡ omitted (byte-identical JSON)", () => {
+  const a = computeUntaggedGuidance(captiveGInput);
+  const b = computeUntaggedGuidance({ ...captiveGInput, pinnedShares: [] });
+  assert(a !== null && b !== null, "guidance fires on the degenerate captive plan");
+  assert(JSON.stringify(a) === JSON.stringify(b), "the legacy arm must be byte-identical");
+});
+
+check("untagged guidance: an owner pin at the floor share is INTENT, not a dead card (remove-dead-card flips off)", () => {
+  const g0 = computeUntaggedGuidance(captiveGInput);
+  assert(g0 !== null, "guidance fires without pins");
+  const dead0 = g0.suggestions.filter((s) => s.kind === "remove-dead-card");
+  assert(
+    dead0.length === 1 && dead0[0]!.params.cardId === "c6",
+    `legacy arm flags the floor-pinned $33.95 (got ${JSON.stringify(dead0.map((d) => d.params.cardId))})`,
+  );
+  // The owner pins the SAME card at the SAME floor share — now it's intent.
+  const gPin = computeUntaggedGuidance({
+    ...captiveGInput,
+    pinnedShares: [{ index: 6, share: captivePlanned[6]! }],
+  });
+  assert(gPin !== null, "guidance still fires with the pin");
+  assert(
+    !gPin.suggestions.some((s) => s.kind === "remove-dead-card"),
+    "an owner-pinned card is never a remove-dead-card candidate",
+  );
+});
+
+check("untagged guidance: the add-card fix verifies WITH the pin held (re-applied through the solver)", () => {
+  const pin = { index: 6, share: captivePlanned[6]! };
+  const gPin = computeUntaggedGuidance({
+    ...captiveGInput,
+    pinnedShares: [pin],
+  });
+  assert(gPin !== null, "guidance fires");
+  const add = gPin.suggestions.find((s) => s.kind === "add-card");
+  assert(add !== undefined, "the pool-edit fix is emitted under the pin");
+  assert(add.proof.solverVerified === true, "…and is solver-verified WITH the pin");
+  const rt = assertSuccess(
+    shapeWeights({
+      cards: [
+        ...CAPTIVE.values.map((v) => ({ value: v })),
+        { value: Number(add.params.suggestedValue) },
+      ],
+      price: Number(add.params.price),
+      targetEdge: captiveT.targetEdge,
+      targetWinRate: captiveT.targetWinRate,
+      maxWinCap: captiveT.maxWinCap,
+      nearMissMin: captiveT.nearMissMin,
+      winRateTol: 0.02,
+      currentWeights: [...captiveW, 0],
+      pinnedShares: [{ ...pin }],
+    }),
+    "re-apply the add-card fix with the pin",
+  );
+  const held = shareOf(rt.weights, 6);
+  assert(
+    Math.abs(held - pin.share) <= 1e-9,
+    `the pin must hold through the applied fix (got ${held} vs ${pin.share})`,
+  );
+  assert(rt.edge >= captiveT.targetEdge - 1e-9, "edge ≥ target under the applied fix");
+});
+
+check("untagged guidance: a pinned carrier is a fixed point-mass — the feasibility window squeezes INWARD", () => {
+  const g0 = computeUntaggedGuidance(captiveGInput)!;
+  // Pin the $80.28 dust carrier at 30%: 24.08 of EV becomes fixed; both
+  // bounds must move toward it (the freedom the carrier provided is gone).
+  const gPin = computeUntaggedGuidance({
+    ...captiveGInput,
+    pinnedShares: [{ index: 5, share: 0.3 }],
+  })!;
+  assert(gPin !== null, "guidance fires with the carrier pin");
+  assert(
+    gPin.feasibility.evMin > g0.feasibility.evMin + 1,
+    `evMin must rise (fixed 24.08 EV floor): ${g0.feasibility.evMin.toFixed(3)} → ${gPin.feasibility.evMin.toFixed(3)}`,
+  );
+  assert(
+    gPin.feasibility.evMax < g0.feasibility.evMax - 1,
+    `evMax must fall (the carrier can't absorb upward anymore): ${g0.feasibility.evMax.toFixed(3)} → ${gPin.feasibility.evMax.toFixed(3)}`,
+  );
+  assert(
+    gPin.feasibility.evMin <= gPin.feasibility.evMax + 1e-9,
+    "the window stays a window",
+  );
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────

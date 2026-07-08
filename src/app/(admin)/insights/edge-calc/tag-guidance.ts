@@ -121,6 +121,22 @@ export type TagGuidance = {
       dustMass: number;
       capSum: number;
     };
+    /**
+     * TAG-FIT verdict ({@link monotoneFitLocal}) — present on TAGGED guidance
+     * only. `monotoneFeasible` answers "can an HONEST ladder (never-inflate
+     * caps, loss band cheap-heavy monotone, only the forced cap-overflow
+     * residual on the cheapest winner) pay the tag at the target edge AT THE
+     * PLAN PRICE?" — the engine may still ship such a pool through its
+     * degenerate escape hatches (RC4 cheapest-winner collapse / broad ∝v^-β
+     * spill), which is exactly the shape the owner flags. `monotoneEvMin/Max`
+     * are the honest-ladder window at the plan price (0/0 when structurally
+     * impossible).
+     */
+    shapeFit?: {
+      monotoneFeasible: boolean;
+      monotoneEvMin: number;
+      monotoneEvMax: number;
+    };
   };
   suggestions: TuneSuggestion[];
 };
@@ -396,6 +412,219 @@ function engineAccepts(
   return excess >= -1e-12 && excess <= ONE_SIDED_EDGE_EXCESS_TOL + 1e-12;
 }
 
+// ─── HONEST-LADDER fit (tag-fit verdict / shape-unfit) ────────────────────────
+
+export type MonotoneFitWindow = {
+  /** The honest-ladder EV window (per open) at the given (price, cap, tag). */
+  evMin: number;
+  evMax: number;
+  /**
+   * Witness ladders (fractions of 1) aligned to the INPUT cards: pinned cards
+   * at their pinned share, cap-dropped / non-positive cards at 0. `minShares`
+   * realizes `evMin` (win mass cheap-first under caps, loss mass dumped on the
+   * cheapest loss card above the NM floor); `maxShares` realizes `evMax`
+   * (win mass rich-first under caps, loss mass uniform).
+   */
+  minShares: number[];
+  maxShares: number[];
+};
+
+/**
+ * COMPOSE-SEAM: a LOCAL model of the engine's honest-ladder reachability —
+ * NOT a call into `shapeWeights` internals. It mirrors the engine's band
+ * split, never-inflate caps (grail running-min) and pin carving exactly like
+ * {@link buildModel}, but deliberately EXCLUDES the engine's degenerate escape
+ * hatches: no cheapest-winner EV exemption, no RC4 all-on-cheapest collapse,
+ * no broad ∝v^-β cap spill. Those hatches are how the solver ships a
+ * mis-tagged pool by concentrating the win band on one cheap carrier — the
+ * exact shape the owner flags. What this DOES allow:
+ *
+ *   • WIN band: order-free fill of the tag mass under the never-inflate caps
+ *     (win-band non-monotonicity is audit-protected legitimate). When the
+ *     caps can't carry the tag (Σcaps < tagFree), the forced residual sits on
+ *     the CHEAPEST free winner — the engine's one sanctioned overflow
+ *     direction, at its MINIMAL magnitude.
+ *   • LOSS band: internal monotone (a cheaper loss card is never LESS likely
+ *     than a richer one — the house ladder shape `disperseLoss`/
+ *     `enforceLossMonotone` protect) + the near-miss floor when free NM cards
+ *     exist. Pins are carved out as point-masses exempt from the ordering.
+ *
+ * Returns `null` when NO honest ladder exists structurally (win mass with no
+ * free winner, loss mass with no free loss card, pinned masses over budget,
+ * NM floor unreachable under the loss-monotone uniform bound) — callers show
+ * evMin/evMax as 0/0. Otherwise the reachable EV window + witness vectors.
+ */
+export function monotoneFitLocal(args: {
+  cards: readonly { value: number }[];
+  currentWeights: readonly number[];
+  price: number;
+  cap: number;
+  /** The win-band mass the ladder must pay (the tag for tagged pools). */
+  winMass: number;
+  nearMissMin: number;
+  pinnedShares?: readonly ShapeWeightsPinnedShare[] | null;
+}): MonotoneFitWindow | null {
+  const { price, cap, winMass, nearMissMin } = args;
+  const n = args.cards.length;
+
+  const pinByIdx = new Map<number, number>();
+  if (args.pinnedShares) {
+    for (const p of args.pinnedShares) {
+      if (Number.isFinite(p.share) && p.share > 0) pinByIdx.set(p.index, p.share);
+    }
+  }
+  let curTotal = 0;
+  for (const w of args.currentWeights) {
+    if (Number.isFinite(w) && w > 0) curTotal += w;
+  }
+
+  type FreeWin = { idx: number; v: number; cap: number };
+  type FreeLoss = { idx: number; v: number; nm: boolean };
+  const freeWin: FreeWin[] = [];
+  const freeLoss: FreeLoss[] = [];
+  let winFixedMass = 0;
+  let winFixedEv = 0;
+  let nmFixedMass = 0;
+  let nmFixedEv = 0;
+  let dustFixedMass = 0;
+  let dustFixedEv = 0;
+  const minShares = new Array<number>(n).fill(0);
+  const maxShares = new Array<number>(n).fill(0);
+
+  args.cards.forEach((c, idx) => {
+    const v = c.value;
+    if (!(v > 0) || v > cap) return;
+    const pin = pinByIdx.get(idx);
+    if (pin !== undefined) {
+      minShares[idx] = pin;
+      maxShares[idx] = pin;
+      if (v >= price) {
+        winFixedMass += pin;
+        winFixedEv += pin * v;
+      } else if (v >= 0.5 * price) {
+        nmFixedMass += pin;
+        nmFixedEv += pin * v;
+      } else {
+        dustFixedMass += pin;
+        dustFixedEv += pin * v;
+      }
+      return;
+    }
+    if (v >= price) {
+      const w = args.currentWeights[idx];
+      freeWin.push({
+        idx,
+        v,
+        cap:
+          curTotal > 0 && Number.isFinite(w) && (w as number) > 0
+            ? (w as number) / curTotal
+            : Infinity,
+      });
+    } else {
+      freeLoss.push({ idx, v, nm: v >= 0.5 * price });
+    }
+  });
+
+  // Never-inflate grail running-min (value-ascending over grails ≥ 5·price).
+  const grailAsc = freeWin
+    .filter((x) => x.v >= 5 * price)
+    .sort((a, b) => a.v - b.v);
+  let runningMin = Infinity;
+  for (const g of grailAsc) {
+    runningMin = Math.min(runningMin, g.cap);
+    g.cap = runningMin;
+  }
+
+  const tagFree = winMass - winFixedMass;
+  if (tagFree < -1e-9) return null;
+  if (tagFree > 1e-9 && freeWin.length === 0) return null;
+  const lossFree = 1 - winMass - nmFixedMass - dustFixedMass;
+  if (lossFree < -1e-9) return null;
+  if (lossFree > 1e-9 && freeLoss.length === 0) return null;
+
+  const freeNmCount = freeLoss.reduce((a, x) => a + (x.nm ? 1 : 0), 0);
+  const nmFree =
+    freeNmCount > 0 && nearMissMin > 0
+      ? Math.max(0, nearMissMin - nmFixedMass)
+      : 0;
+  const nu = freeNmCount > 0 ? nmFree / freeNmCount : 0;
+  const lossCnt = freeLoss.length;
+  if (nu * lossCnt > Math.max(0, lossFree) + 1e-9) return null;
+
+  // ── WIN fills (order-free under caps; forced residual on the cheapest) ──
+  const asc = freeWin.slice().sort((a, b) => a.v - b.v);
+  const fillWin = (order: readonly FreeWin[], shares: number[]): number => {
+    let remaining = Math.max(0, tagFree);
+    let ev = 0;
+    for (const x of order) {
+      const take = Math.min(x.cap, remaining);
+      if (take > 0) {
+        shares[x.idx] = take;
+        ev += take * x.v;
+        remaining -= take;
+      }
+      if (!(remaining > 1e-15)) {
+        remaining = 0;
+        break;
+      }
+    }
+    if (remaining > 1e-15 && asc.length > 0) {
+      // Saturated: the sanctioned overflow — the residual on the CHEAPEST.
+      const cheapest = asc[0]!;
+      shares[cheapest.idx] = (shares[cheapest.idx] ?? 0) + remaining;
+      ev += remaining * cheapest.v;
+    }
+    return ev;
+  };
+  const winMinEv = fillWin(asc, minShares);
+  const winMaxEv = fillWin(asc.slice().reverse(), maxShares);
+
+  // ── LOSS layouts (internal monotone + NM floor) ─────────────────────────
+  let lossMinEv = 0;
+  let lossMaxEv = 0;
+  if (lossCnt > 0) {
+    const lf = Math.max(0, lossFree);
+    const uniform = lf / lossCnt;
+    let cheapest = freeLoss[0]!;
+    for (const x of freeLoss) if (x.v < cheapest.v) cheapest = x;
+    for (const x of freeLoss) {
+      maxShares[x.idx] = uniform;
+      lossMaxEv += uniform * x.v;
+      minShares[x.idx] = nu;
+      lossMinEv += nu * x.v;
+    }
+    const excess = lf - nu * lossCnt;
+    if (excess > 0) {
+      minShares[cheapest.idx] = (minShares[cheapest.idx] ?? 0) + excess;
+      lossMinEv += excess * cheapest.v;
+    }
+  }
+
+  const fixedEv = winFixedEv + nmFixedEv + dustFixedEv;
+  return {
+    evMin: winMinEv + lossMinEv + fixedEv,
+    evMax: winMaxEv + lossMaxEv + fixedEv,
+    minShares,
+    maxShares,
+  };
+}
+
+/**
+ * Does the honest-ladder window admit the target EV at `price`? The down side
+ * is sacred (the edge floor is never crossed); the up side carries the
+ * engine's one-sided acceptance (≤ 0.25pp of edge excess).
+ */
+function monotoneFits(
+  w: MonotoneFitWindow | null,
+  evTarget: number,
+  price: number,
+): boolean {
+  if (w === null || !(price > 0)) return false;
+  if (evTarget < w.evMin - 1e-6) return false;
+  if (evTarget <= w.evMax + 1e-6) return true;
+  return (evTarget - w.evMax) / price <= ONE_SIDED_EDGE_EXCESS_TOL + 1e-12;
+}
+
 // ─── The engine ───────────────────────────────────────────────────────────────
 
 const round2 = (v: number): number => Math.round(v * 100) / 100;
@@ -503,7 +732,28 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
   const pointInterval =
     base.saturated && base.evMax - base.evMin < 1e-4 * price;
 
+  // ── TAG-FIT verdict (shape-unfit): the honest-ladder window at the plan
+  //    price. Distinct from `feasibleRaw` — the engine can accept through its
+  //    degenerate hatches (RC4 knob / spill) a tag no honest ladder carries.
+  const baseFit = monotoneFitLocal({
+    cards: input.cards,
+    currentWeights: input.currentWeights,
+    price,
+    cap: input.maxWinCap,
+    winMass: tag,
+    nearMissMin: input.nearMissMin,
+    pinnedShares: pins,
+  });
+  const monotoneFeasible = monotoneFits(baseFit, evTarget, price);
+  const shapeFit = {
+    monotoneFeasible,
+    monotoneEvMin: baseFit?.evMin ?? 0,
+    monotoneEvMax: baseFit?.evMax ?? 0,
+  };
+
   const suggestions: TuneSuggestion[] = [];
+  // Shape-unfit lead entries rank ABOVE the fixed kind ranking (see the sort).
+  const leadSet = new Set<TuneSuggestion>();
   const proofOf = (m: BandModel, evT: number, eStar: number) => ({
     evMinAfter: m.evMin,
     evMaxAfter: m.evMax,
@@ -855,6 +1105,170 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
     }
   }
 
+  // ── 8b. SHAPE-UNFIT lead (tag-fit verdict) ────────────────────────────────
+  //
+  // When the tag is monotone-unfittable at the plan price AND the pool is
+  // infeasible, the identity fix (retag to the live tier / untag to the real
+  // rate) is the honest lead — ranked ABOVE the price levers (the ranking
+  // override in the sort below), and only ever emitted SOLVER-VERIFIED: a real
+  // `shapeWeights` round-trip at THIS price with the pins held. When neither
+  // identity fix verifies, the legacy unverified retag/untag (block 9) still
+  // runs — honesty over silence.
+  let shapeUnfitLead = false;
+  if (
+    !feasibleRaw &&
+    !monotoneFeasible &&
+    input.liveWinRate != null &&
+    Number.isFinite(input.liveWinRate) &&
+    input.liveWinRate > 0 &&
+    Math.abs(input.liveWinRate - tag) > TAGGED_WRITE_WINRATE_TOLERANCE
+  ) {
+    const liveRate = input.liveWinRate;
+    const nmSeed = Math.max(0, input.liveNearMiss ?? 0);
+    const unfitWhy = `The ${pp(tag)}% tag doesn't fit this pool's cards — no honest ladder (never-inflate odds, cheap-heavy losses) pays ${pp(tag)}% winners at the ${pp(targetEdge)}% target at ${usd(price)}.`;
+
+    // Nearest selectable tier within ±1pp of the live rate → verified RETAG.
+    const TIER_TOL = 0.01;
+    let nearestTier: (typeof SELECTABLE_TAG_HIT_RATES)[number] | null = null;
+    let nearestDist = Infinity;
+    for (const t of SELECTABLE_TAG_HIT_RATES) {
+      const dist = Math.abs(liveRate - t.hitRate);
+      if (dist <= TIER_TOL + 1e-9 && dist < nearestDist) {
+        nearestDist = dist;
+        nearestTier = t;
+      }
+    }
+    if (nearestTier) {
+      const tierRate = nearestTier.hitRate;
+      const capPrime = cfg ? autoMaxWinCap(price, cfg, tierRate) : input.maxWinCap;
+      let topPrime = 0;
+      for (const c of input.cards) {
+        if (c.value > 0 && c.value <= capPrime && c.value > topPrime) topPrime = c.value;
+      }
+      const eStarPrime = targetEdgeAt(price, capPrime, topPrime);
+      let verified = false;
+      try {
+        const r = shapeWeights({
+          cards: input.cards.map((c) => ({ value: c.value })),
+          price,
+          targetEdge: eStarPrime,
+          targetWinRate: tierRate,
+          maxWinCap: capPrime,
+          nearMissMin: nmSeed,
+          winRateTol: TAGGED_WINRATE_TOLERANCE,
+          currentWeights: input.currentWeights.slice(),
+          winRateIsHard: true,
+          disperseLoss: true,
+          ...(pins ? { pinnedShares: pins.map((p) => ({ ...p })) } : {}),
+        });
+        verified =
+          !("error" in r) &&
+          r.edge >= eStarPrime - 1e-9 &&
+          Math.abs(r.risk.winRate - tierRate) <= TAGGED_WINRATE_TOLERANCE + 1e-9;
+      } catch {
+        verified = false;
+      }
+      if (verified) {
+        const m2 = buildModel({
+          cards: input.cards,
+          currentWeights: input.currentWeights,
+          price,
+          cap: capPrime,
+          tag: tierRate,
+          nearMissMin: nmSeed,
+          pinnedShares: pins,
+        });
+        const lead: TuneSuggestion = {
+          kind: "retag",
+          params: {
+            action: "retag",
+            liveRate,
+            proposedTag: tierRate,
+            tierHitRate: tierRate,
+            tierTag: nearestTier.tag,
+            tierDbLabel: nearestTier.dbLabel,
+          },
+          humanCopy: `${unfitWhy} The pool actually pays ${pp(liveRate)}% — retag it to ${nearestTier.dbLabel} and it plans tier-exact at this price (solver-verified).`,
+          proof: {
+            evMinAfter: m2.evMin,
+            evMaxAfter: m2.evMax,
+            feasibleAfter: true,
+            solverVerified: true,
+          },
+        };
+        suggestions.push(lead);
+        leadSet.add(lead);
+        shapeUnfitLead = true;
+      }
+    }
+    if (!shapeUnfitLead) {
+      // UNTAG verified via the untagged-retune solve (hard hold → soft
+      // fallback) at the pool's real rate with untagged targets.
+      const rate = Math.min(0.95, Math.max(0.02, liveRate));
+      const capU = cfg ? autoMaxWinCap(price, cfg) : input.maxWinCap;
+      let topU = 0;
+      for (const c of input.cards) {
+        if (c.value > 0 && c.value <= capU && c.value > topU) topU = c.value;
+      }
+      const eStarU = autoTargetEdge(
+        { price, maxWin: Math.min(topU > 0 ? topU : capU, capU) },
+        cfg?.edgeCurve ?? DEFAULT_EDGE_CURVE,
+      );
+      const nmU = Math.max(0.1, 0.8 * nmSeed);
+      let verified = false;
+      try {
+        const solveU = (mode: "hard" | "soft") =>
+          shapeWeights({
+            cards: input.cards.map((c) => ({ value: c.value })),
+            price,
+            targetEdge: eStarU,
+            targetWinRate: rate,
+            maxWinCap: capU,
+            nearMissMin: nmU,
+            winRateTol: 0.02,
+            currentWeights: input.currentWeights.slice(),
+            disperseLoss: true,
+            ...(mode === "hard" ? { holdWinRateHard: true } : { holdWinRate: true }),
+            ...(pins ? { pinnedShares: pins.map((p) => ({ ...p })) } : {}),
+          });
+        const hard = solveU("hard");
+        if (!("error" in hard) && hard.edge >= eStarU - 1e-9) {
+          verified = true;
+        } else {
+          const soft = solveU("soft");
+          verified = !("error" in soft) && soft.edge >= eStarU - 1e-9;
+        }
+      } catch {
+        verified = false;
+      }
+      if (verified) {
+        const m2 = buildModel({
+          cards: input.cards,
+          currentWeights: input.currentWeights,
+          price,
+          cap: capU,
+          tag: rate,
+          nearMissMin: nmU,
+          pinnedShares: pins,
+        });
+        const lead: TuneSuggestion = {
+          kind: "untag",
+          params: { action: "untag", liveRate },
+          humanCopy: `${unfitWhy} It actually pays ${pp(liveRate)}% — not a lottery tier — so untag it and it plans as a normal pack at its real rate (solver-verified at this price).`,
+          proof: {
+            evMinAfter: m2.evMin,
+            evMaxAfter: m2.evMax,
+            feasibleAfter: true,
+            solverVerified: true,
+          },
+        };
+        suggestions.push(lead);
+        leadSet.add(lead);
+        shapeUnfitLead = true;
+      }
+    }
+  }
+
   // ── 9. Retag to the nearest lottery tier, else UNTAG (owner identity decision) ─
   //
   // The tag control can ONLY write a real lottery tier (pct1/pct5/pct10/fifty50 —
@@ -867,7 +1281,10 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
   //     UNTAG: the pool isn't a lottery at its real rate; it plans as a normal
   //     pack. An untag is an identity decision (feasibleAfter:false is honest —
   //     it's not a tag-solve), so it won't be picked as the solver-verified top.
+  // Skipped when the shape-unfit lead (8b) already emitted the VERIFIED
+  // identity fix — one identity suggestion, the strongest available.
   if (
+    !shapeUnfitLead &&
     input.liveWinRate != null &&
     Number.isFinite(input.liveWinRate) &&
     input.liveWinRate > 0 &&
@@ -973,8 +1390,12 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
   }
 
   // ── Ranking (LAW 12, fixed): price levers → add-card → edge-bump →
-  //    raise-cap → repair-monotone → retag; informational entries last. ──────
-  suggestions.sort((a, b) => SUGGESTION_RANK[a.kind] - SUGGESTION_RANK[b.kind]);
+  //    raise-cap → repair-monotone → retag; informational entries last.
+  //    Shape-unfit lead entries (8b) rank ABOVE everything — the verified
+  //    identity fix outranks the price levers on an unfittable tag. ──────────
+  const rankOf = (s: TuneSuggestion): number =>
+    leadSet.has(s) ? -1 : SUGGESTION_RANK[s.kind];
+  suggestions.sort((a, b) => rankOf(a) - rankOf(b));
 
   // ── Emission guarantee: no bare infeasible verdicts. ──────────────────────
   const actionable = suggestions.filter(
@@ -1002,8 +1423,10 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
   }
 
   // ── Solver round-trip of the TOP ranked suggestion (honesty gate). ────────
+  // A shape-unfit lead already carries its own round-trip (solverVerified is
+  // pre-set) — never overwrite a real verification with the generic replay.
   const top = suggestions.find((s) => s.proof.feasibleAfter && s.kind !== "remove-dead-card");
-  if (top) {
+  if (top && top.proof.solverVerified === undefined) {
     try {
       top.proof.solverVerified = solverRoundTrip(input, top);
     } catch {
@@ -1026,6 +1449,7 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
         dustMass: base.d,
         capSum: Number.isFinite(base.capSum) ? base.capSum : -1,
       },
+      shapeFit,
     },
     suggestions,
   };
@@ -1589,17 +2013,47 @@ export type UntaggedPlanGuidanceInput = {
    * callers are unaffected.
    */
   shapeDegenerate?: boolean;
+  /**
+   * Owner-typed pins (staged arm) aligned to `cards` by index — the SAME
+   * treatment {@link computeTagGuidance} got: pinned cards enter every
+   * feasibility window as fixed point-masses carved out of the free bands, the
+   * add-card verification solves run WITH the pins held, and an owner-pinned
+   * card is never floor-pin-detected (its share is owner intent, not the
+   * quantizer's 0.0001% signature) nor suggested for removal. Omit/empty ⇒
+   * legacy behavior, byte-identical.
+   */
+  pinnedShares?: ShapeWeightsPinnedShare[] | null;
 };
 
 /** Soft-mode (untagged) never-inflate caps at a price: existing win/grail
- * cards cap at live odds, grail monotone running-min, cheapest winner EXEMPT
- * (the float-up's sink — its cap is lifted, exactly like the solver). */
+ * cards cap at live odds, grail monotone running-min, cheapest FREE winner
+ * EXEMPT (the float-up's sink — its cap is lifted, exactly like the solver).
+ * Owner pins are carved out of the free bands as fixed point-masses (every
+ * Fixed aggregate is 0 without pins — byte-identical legacy math). */
 function softBandsAt(
   cards: readonly { value: number }[],
   currentWeights: readonly number[],
   price: number,
   cap: number,
-): { winValues: number[]; winCaps: number[]; nmValues: number[]; dustValues: number[] } {
+  pinnedShares?: readonly ShapeWeightsPinnedShare[] | null,
+): {
+  winValues: number[];
+  winCaps: number[];
+  nmValues: number[];
+  dustValues: number[];
+  winFixedMass: number;
+  winFixedEv: number;
+  nmFixedMass: number;
+  nmFixedEv: number;
+  dustFixedMass: number;
+  dustFixedEv: number;
+} {
+  const pinByIdx = new Map<number, number>();
+  if (pinnedShares) {
+    for (const p of pinnedShares) {
+      if (Number.isFinite(p.share) && p.share > 0) pinByIdx.set(p.index, p.share);
+    }
+  }
   let curTotal = 0;
   for (const w of currentWeights) {
     if (Number.isFinite(w) && w > 0) curTotal += w;
@@ -1608,10 +2062,22 @@ function softBandsAt(
   const winCaps: number[] = [];
   const nmValues: number[] = [];
   const dustValues: number[] = [];
+  let winFixedMass = 0;
+  let winFixedEv = 0;
+  let nmFixedMass = 0;
+  let nmFixedEv = 0;
+  let dustFixedMass = 0;
+  let dustFixedEv = 0;
   cards.forEach((c, idx) => {
     const v = c.value;
     if (!(v > 0) || v > cap) return;
+    const pin = pinByIdx.get(idx);
     if (v >= price) {
+      if (pin !== undefined) {
+        winFixedMass += pin;
+        winFixedEv += pin * v;
+        return;
+      }
       winValues.push(v);
       const w = currentWeights[idx];
       winCaps.push(
@@ -1620,8 +2086,18 @@ function softBandsAt(
           : Infinity,
       );
     } else if (v >= 0.5 * price) {
+      if (pin !== undefined) {
+        nmFixedMass += pin;
+        nmFixedEv += pin * v;
+        return;
+      }
       nmValues.push(v);
     } else {
+      if (pin !== undefined) {
+        dustFixedMass += pin;
+        dustFixedEv += pin * v;
+        return;
+      }
       dustValues.push(v);
     }
   });
@@ -1635,7 +2111,7 @@ function softBandsAt(
     runningMin = Math.min(runningMin, winCaps[i]!);
     winCaps[i] = runningMin;
   }
-  // Cheapest-winner exemption (SOFT mode only — the EV-balance sink).
+  // Cheapest-FREE-winner exemption (SOFT mode only — the EV-balance sink).
   if (winValues.length > 0) {
     let cheapIdx = 0;
     for (let i = 1; i < winValues.length; i++) {
@@ -1643,7 +2119,18 @@ function softBandsAt(
     }
     winCaps[cheapIdx] = Infinity;
   }
-  return { winValues, winCaps, nmValues, dustValues };
+  return {
+    winValues,
+    winCaps,
+    nmValues,
+    dustValues,
+    winFixedMass,
+    winFixedEv,
+    nmFixedMass,
+    nmFixedEv,
+    dustFixedMass,
+    dustFixedEv,
+  };
 }
 
 /**
@@ -1666,6 +2153,20 @@ export function computeUntaggedGuidance(
     input.plannedShares.length !== input.cards.length
   ) {
     return null;
+  }
+
+  // Owner pins (staged arm) — carved into every window this advisor builds;
+  // a pinned share is owner intent: never floor-pin-detected, never a removal
+  // candidate, and every verification solve holds it. Null ⇒ legacy math.
+  const ownerPins =
+    input.pinnedShares != null && input.pinnedShares.length > 0
+      ? input.pinnedShares
+      : null;
+  const ownerPinnedIdx = new Set<number>();
+  if (ownerPins) {
+    for (const p of ownerPins) {
+      if (Number.isFinite(p.share) && p.share > 0) ownerPinnedIdx.add(p.index);
+    }
   }
 
   // ── Planned aggregates at the landed price ────────────────────────────────
@@ -1705,7 +2206,7 @@ export function computeUntaggedGuidance(
       dustEvPlanned += share * v;
       if (v > dustMaxValue) dustMaxValue = v;
     }
-    if (isFloorPinnedPct(share * 100)) pinnedIdx.push(i);
+    if (!ownerPinnedIdx.has(i) && isFloorPinnedPct(share * 100)) pinnedIdx.push(i);
   });
 
   const dustAvg = dustMassPlanned > 1e-9 ? dustEvPlanned / dustMassPlanned : 0;
@@ -1734,19 +2235,38 @@ export function computeUntaggedGuidance(
   // ── Feasibility payload: the no-float interval at the DESIGN win-rate ─────
   // evMax = the most the pool can pay at 20% wins without inflating anything
   // (win fill at the baseline decay + loss bands skewed expensive). The plan's
-  // evTarget above it ⇒ the float-up fired ⇒ the ladder degenerated.
-  const base = softBandsAt(input.cards, input.currentWeights, price, input.maxWinCap);
-  const nmMass = base.nmValues.length > 0 ? input.nearMissMin : 0;
-  const dm = Math.max(0, 1 - targetWinRate - nmMass);
+  // evTarget above it ⇒ the float-up fired ⇒ the ladder degenerated. Owner
+  // pins ride every term as fixed point-masses (all Fixed = 0 without pins).
+  const base = softBandsAt(
+    input.cards,
+    input.currentWeights,
+    price,
+    input.maxWinCap,
+    ownerPins,
+  );
+  const nmMass =
+    base.nmValues.length > 0
+      ? Math.max(0, input.nearMissMin - base.nmFixedMass)
+      : 0;
+  const winFree = Math.max(0, targetWinRate - base.winFixedMass);
+  const dm = Math.max(
+    0,
+    1 - targetWinRate - nmMass - base.nmFixedMass - base.dustFixedMass,
+  );
   const evTarget = price * (1 - targetEdge);
+  const lossFixedEv = base.nmFixedEv + base.dustFixedEv;
   const evMax =
-    waterFillWinEv(base.winValues, base.winCaps, targetWinRate, BETA_WIN_FLOOR) +
+    waterFillWinEv(base.winValues, base.winCaps, winFree, BETA_WIN_FLOOR) +
+    base.winFixedEv +
     nmMass * bandEvForBeta(base.nmValues, BETA_LO) +
-    dm * bandEvForBeta(base.dustValues, BETA_LO);
+    dm * bandEvForBeta(base.dustValues, BETA_LO) +
+    lossFixedEv;
   const evMin =
-    waterFillWinEv(base.winValues, base.winCaps, targetWinRate, BETA_WIN_MAX) +
+    waterFillWinEv(base.winValues, base.winCaps, winFree, BETA_WIN_MAX) +
+    base.winFixedEv +
     nmMass * bandEvForBeta(base.nmValues, BETA_HI) +
-    dm * bandEvForBeta(base.dustValues, BETA_HI);
+    dm * bandEvForBeta(base.dustValues, BETA_HI) +
+    lossFixedEv;
 
   const suggestions: TuneSuggestion[] = [];
   const lossAvgNeeded =
@@ -1787,6 +2307,11 @@ export function computeUntaggedGuidance(
         nearMissMin: nearMiss,
         winRateTol: 0.02,
         currentWeights: weights,
+        // The staged solve holds owner pins EXACT — the verification must run
+        // the same problem (add-card appends, so pin indexes stay valid).
+        ...(ownerPins
+          ? { pinnedShares: ownerPins.map((p) => ({ ...p })) }
+          : {}),
       });
       if ("error" in r) return { ok: false, snapped: false };
       if (r.risk.edge < targetEdge - 1e-9) return { ok: false, snapped: false };
@@ -1799,6 +2324,8 @@ export function computeUntaggedGuidance(
       for (let i = 0; i < cards.length; i++) {
         const v = cards[i]!.value;
         if (!(v > 0) || v >= pCand) continue;
+        // An owner-pinned share is intent, not a quantization floor.
+        if (ownerPinnedIdx.has(i)) continue;
         if (isFloorPinnedPct(((r.weights[i] ?? 0) / total) * 100)) {
           return { ok: false, snapped: false };
         }
@@ -1820,19 +2347,26 @@ export function computeUntaggedGuidance(
         input.currentWeights,
         pCand,
         input.maxWinCap,
+        ownerPins,
       );
       if (bands.winValues.length === 0 || bands.dustValues.length === 0) continue;
       const evT = pCand * (1 - targetEdge);
-      const w02 = waterFillWinEv(
-        bands.winValues,
-        bands.winCaps,
-        targetWinRate,
-        BETA_WIN_FLOOR,
-      );
+      const w02 =
+        waterFillWinEv(
+          bands.winValues,
+          bands.winCaps,
+          Math.max(0, targetWinRate - bands.winFixedMass),
+          BETA_WIN_FLOOR,
+        ) + bands.winFixedEv;
       const dHi = bandEvForBeta(bands.dustValues, BETA_LO);
       // Near-miss route: the new card becomes the NM band (mass = nmSeed).
-      const dmWith = Math.max(0, 1 - targetWinRate - nmSeed);
-      const xLo = (evT - w02 - dmWith * dHi) / nmSeed;
+      const dmWith = Math.max(
+        0,
+        1 - targetWinRate - nmSeed - bands.nmFixedMass - bands.dustFixedMass,
+      );
+      const xLo =
+        (evT - w02 - dmWith * dHi - bands.nmFixedEv - bands.dustFixedEv) /
+        nmSeed;
       // The band shown to the operator: a near-miss at BOTH the fix price and
       // the live price (so the picked card stays mid-band wherever the price
       // finally lands), above the analytic bound with a small spread margin.
@@ -1853,11 +2387,24 @@ export function computeUntaggedGuidance(
         nmSeed,
       );
       if (!rt.ok) continue;
-      const evMaxAfter = w02 + nmSeed * xSuggest + dmWith * dHi;
-      const evMinAfter =
-        waterFillWinEv(bands.winValues, bands.winCaps, targetWinRate, BETA_WIN_MAX) +
+      const evMaxAfter =
+        w02 +
         nmSeed * xSuggest +
-        dmWith * bandEvForBeta(bands.dustValues, BETA_HI);
+        dmWith * dHi +
+        bands.nmFixedEv +
+        bands.dustFixedEv;
+      const evMinAfter =
+        waterFillWinEv(
+          bands.winValues,
+          bands.winCaps,
+          Math.max(0, targetWinRate - bands.winFixedMass),
+          BETA_WIN_MAX,
+        ) +
+        bands.winFixedEv +
+        nmSeed * xSuggest +
+        dmWith * bandEvForBeta(bands.dustValues, BETA_HI) +
+        bands.nmFixedEv +
+        bands.dustFixedEv;
       suggestions.push({
         kind: "add-card",
         params: {
@@ -1893,19 +2440,27 @@ export function computeUntaggedGuidance(
           input.currentWeights,
           pCand,
           input.maxWinCap,
+          ownerPins,
         );
         if (bands.winValues.length === 0) continue;
         const evT = pCand * (1 - targetEdge);
-        const w02 = waterFillWinEv(
-          bands.winValues,
-          bands.winCaps,
-          targetWinRate,
-          BETA_WIN_FLOOR,
-        );
+        const w02 =
+          waterFillWinEv(
+            bands.winValues,
+            bands.winCaps,
+            Math.max(0, targetWinRate - bands.winFixedMass),
+            BETA_WIN_FLOOR,
+          ) + bands.winFixedEv;
         const nmHere = bands.nmValues.length > 0 ? nmSeed : 0;
-        const dmHere = Math.max(0, 1 - targetWinRate - nmHere);
+        const dmHere = Math.max(
+          0,
+          1 - targetWinRate - nmHere - bands.nmFixedMass - bands.dustFixedMass,
+        );
         if (!(dmHere > 1e-9)) continue;
-        const nmEv = nmHere * bandEvForBeta(bands.nmValues, BETA_LO);
+        const nmEv =
+          nmHere * bandEvForBeta(bands.nmValues, BETA_LO) +
+          bands.nmFixedEv +
+          bands.dustFixedEv;
         // With the new card X as the richest dust value, the loss side's max
         // EV is ≈ dm·X — the no-float bound solves to X ≥ (evT − W − nmEv)/dm.
         const xLo = (evT - w02 - nmEv) / dmHere;
@@ -1957,9 +2512,17 @@ export function computeUntaggedGuidance(
     // One re-solve WITHOUT the pinned cards proves the removal is a no-op.
     const keepCards: { value: number }[] = [];
     const keepWeights: number[] = [];
+    const keepPins: ShapeWeightsPinnedShare[] = [];
     const pinnedSet = new Set(pinnedIdx);
     input.cards.forEach((c, i) => {
       if (pinnedSet.has(i)) return;
+      if (ownerPins && ownerPinnedIdx.has(i)) {
+        const pin = ownerPins.find(
+          (p) => p.index === i && Number.isFinite(p.share) && p.share > 0,
+        );
+        // Re-index the surviving pins onto the reduced pool.
+        if (pin) keepPins.push({ index: keepCards.length, share: pin.share });
+      }
       keepCards.push({ value: c.value });
       keepWeights.push(input.currentWeights[i] ?? 0);
     });
@@ -1974,6 +2537,7 @@ export function computeUntaggedGuidance(
         nearMissMin: input.nearMissMin,
         winRateTol: 0.02,
         currentWeights: keepWeights,
+        ...(keepPins.length > 0 ? { pinnedShares: keepPins } : {}),
       });
       removalOk = !("error" in r) && r.risk.edge >= targetEdge - 1e-9;
     } catch {
@@ -2043,18 +2607,12 @@ export function computeUntaggedGuidance(
       saturated: false,
       direction: evTarget > evMax + 1e-9 ? "need-ev-up" : "ok",
       components: {
-        winEvMin: waterFillWinEv(
-          base.winValues,
-          base.winCaps,
-          targetWinRate,
-          BETA_WIN_MAX,
-        ),
-        winEvMax: waterFillWinEv(
-          base.winValues,
-          base.winCaps,
-          targetWinRate,
-          BETA_WIN_FLOOR,
-        ),
+        winEvMin:
+          waterFillWinEv(base.winValues, base.winCaps, winFree, BETA_WIN_MAX) +
+          base.winFixedEv,
+        winEvMax:
+          waterFillWinEv(base.winValues, base.winCaps, winFree, BETA_WIN_FLOOR) +
+          base.winFixedEv,
         nmMass,
         dustMass: dm,
         capSum: -1,
@@ -2062,4 +2620,402 @@ export function computeUntaggedGuidance(
     },
     suggestions,
   };
+}
+
+// ═══ PIN REMEDIES (retune V3 — pins-refusal repair search) ═══════════════════
+//
+// When a pinned retune REFUSES, the refusal names the gap ("pins carry too
+// much/too little EV") but not the way out. This section computes VERIFIED
+// remedies: the smallest single-pin changes (raise / lower / unpin) — plus an
+// in-budget price move when the price isn't pinned — under which the SAME
+// solve the retune runs actually accepts. Every emitted remedy round-trips the
+// real solver (`shapeWeights` with the modified pins); nothing unverified is
+// ever returned, and an empty list is itself a verdict ("no single-pin change
+// fixes this — the pins interlock").
+//
+// Search strategy (solver-driven; the pinned acceptance region has no closed
+// form): per pin per direction the search (1) samples the reachable span on a
+// coarse ladder walking AWAY from the current pin, (2) on the first accepted
+// sample bisects the accept/refuse boundary toward the smallest change,
+// (3) snaps to the human step grid INTO the accepted side and re-verifies
+// (walking a few grid steps when the snapped value refuses). Bounded work:
+// ≤ ~30 solver calls per pin per direction on pool sizes this advisor sees.
+
+export type PinRemedyKind =
+  | "raise-pin"
+  | "lower-pin"
+  | "unpin-card"
+  | "price-move";
+
+export type PinRemedy = {
+  kind: PinRemedyKind;
+  /** Pool index / value of the pinned card (pin kinds only). */
+  cardIndex?: number;
+  cardValue?: number;
+  /** The pin's current / proposed percent-of-opens (pin kinds only). */
+  fromPct?: number;
+  toPct?: number;
+  /** The verified price (price-move only). */
+  price?: number;
+  /** The verifying solve's landed edge (fraction). */
+  edge: number;
+  humanCopy: string;
+  /** Always true — an unverified remedy is never emitted. */
+  verified: true;
+};
+
+export type PinRemedyInput = {
+  cards: { value: number }[];
+  /** Anti-inflation anchor (live weights; a staged-in card carries 0). */
+  currentWeights: number[];
+  price: number;
+  targetEdge: number;
+  targetWinRate: number;
+  nearMissMin: number;
+  maxWinCap: number;
+  /** Win-rate tolerance for the untagged verify (default 0.02). */
+  winRateTol?: number;
+  /** The refused pin set (fractions of 1, aligned to `cards` by index). */
+  pinnedShares: ShapeWeightsPinnedShare[];
+  /**
+   * The resolved tag hit-rate. A LOTTERY tag (≤ 12%, equal to the target
+   * win-rate — the retune-params gate) verifies tag-HARD at the strict
+   * tolerance; everything else verifies hard-hold → soft-hold fallback,
+   * exactly like the staged retune solve.
+   */
+  intendedHitRate?: number | null;
+  /** TRUE ⇒ the price is owner-pinned; no price-move remedies. */
+  pinPrice?: boolean;
+  /** Price budget for price-move remedies (fraction of price, default 10%). */
+  priceBudgetPct?: number;
+  /** Cap on emitted remedies (default 4). */
+  maxRemedies?: number;
+};
+
+/** Human step grid for a pin percentage (the odds-editor's display steps). */
+function pinStepPct(pct: number): number {
+  if (pct >= 20) return 0.5;
+  if (pct >= 5) return 0.25;
+  if (pct >= 1) return 0.05;
+  if (pct >= 0.1) return 0.01;
+  return 0.001;
+}
+const ceilToStep = (pct: number): number => {
+  const s = pinStepPct(pct);
+  return Math.ceil(pct / s - 1e-9) * s;
+};
+const floorToStep = (pct: number): number => {
+  const s = pinStepPct(pct);
+  return Math.floor(pct / s + 1e-9) * s;
+};
+const roundPct = (pct: number): number => Math.round(pct * 1e6) / 1e6;
+const pctFmt = (pct: number): string => {
+  const s = pct.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+  return s === "" || s === "-0" ? "0" : s;
+};
+
+export function computePinRemedies(input: PinRemedyInput): PinRemedy[] {
+  const price = input.price;
+  const pins = (input.pinnedShares ?? []).filter(
+    (p) =>
+      Number.isFinite(p.share) &&
+      p.share > 0 &&
+      Number.isInteger(p.index) &&
+      p.index >= 0 &&
+      p.index < input.cards.length,
+  );
+  if (!(price > 0) || pins.length === 0 || input.cards.length === 0) return [];
+  const winRateTol = input.winRateTol ?? 0.02;
+  // Mirror of the retune-params lottery gate: hitRate ≤ 12% AND the target
+  // win-rate IS the tag ⇒ the staged solve ran tag-HARD.
+  const tagged =
+    input.intendedHitRate != null &&
+    Number.isFinite(input.intendedHitRate) &&
+    input.intendedHitRate <= 0.12 &&
+    Math.abs(input.intendedHitRate - input.targetWinRate) < 1e-9;
+
+  const verify = (
+    cand: readonly ShapeWeightsPinnedShare[],
+    atPrice: number,
+  ): { ok: boolean; edge: number } => {
+    const base = {
+      cards: input.cards.map((c) => ({ value: c.value })),
+      price: atPrice,
+      targetEdge: input.targetEdge,
+      targetWinRate: input.targetWinRate,
+      maxWinCap: input.maxWinCap,
+      nearMissMin: input.nearMissMin,
+      currentWeights: input.currentWeights.slice(),
+      disperseLoss: true,
+      ...(cand.length > 0
+        ? { pinnedShares: cand.map((p) => ({ ...p })) }
+        : {}),
+    };
+    try {
+      if (tagged) {
+        const r = shapeWeights({
+          ...base,
+          winRateTol: TAGGED_WINRATE_TOLERANCE,
+          winRateIsHard: true,
+        });
+        if (
+          !("error" in r) &&
+          r.edge >= input.targetEdge - 1e-9 &&
+          Math.abs(r.risk.winRate - input.targetWinRate) <=
+            TAGGED_WINRATE_TOLERANCE + 1e-9
+        ) {
+          return { ok: true, edge: r.edge };
+        }
+        return { ok: false, edge: 0 };
+      }
+      const hard = shapeWeights({
+        ...base,
+        winRateTol,
+        holdWinRateHard: true,
+      });
+      if (!("error" in hard) && hard.edge >= input.targetEdge - 1e-9) {
+        return { ok: true, edge: hard.edge };
+      }
+      const soft = shapeWeights({ ...base, winRateTol, holdWinRate: true });
+      if (!("error" in soft) && soft.edge >= input.targetEdge - 1e-9) {
+        return { ok: true, edge: soft.edge };
+      }
+    } catch {
+      /* refusal — fall through */
+    }
+    return { ok: false, edge: 0 };
+  };
+
+  // Remedies only exist against a REFUSED base — an accepting base has
+  // nothing to repair.
+  if (verify(pins, price).ok) return [];
+
+  let pinTotal = 0;
+  for (const p of pins) pinTotal += p.share;
+  const freeMass = Math.max(0, 1 - pinTotal);
+  let curTotal = 0;
+  for (const w of input.currentWeights) {
+    if (Number.isFinite(w) && w > 0) curTotal += w;
+  }
+
+  const withPinAt = (
+    index: number,
+    sharePct: number,
+  ): ShapeWeightsPinnedShare[] =>
+    pins.map((p) =>
+      p.index === index ? { index, share: sharePct / 100 } : { ...p },
+    );
+
+  type Found = { toPct: number; edge: number };
+  // Directional scan+bisect along one pin's share axis, oriented AWAY from
+  // the current (refused) pin. Returns the accepted grid value closest to it.
+  const searchDirection = (
+    index: number,
+    fromPct: number,
+    farPct: number,
+    dir: 1 | -1,
+  ): Found | null => {
+    const span = (farPct - fromPct) * dir;
+    if (!(span > 1e-9)) return null;
+    const SAMPLES = 12;
+    let accepted: { pct: number; edge: number } | null = null;
+    let refusedNear = fromPct;
+    for (let k = 1; k <= SAMPLES; k++) {
+      const pct = roundPct(fromPct + (dir * (span * k)) / SAMPLES);
+      if (!(pct > 0) || pct > 100) break;
+      const r = verify(withPinAt(index, pct), price);
+      if (r.ok) {
+        accepted = { pct, edge: r.edge };
+        break;
+      }
+      refusedNear = pct;
+    }
+    if (accepted === null) return null;
+    let bad = refusedNear;
+    let good = accepted.pct;
+    let goodEdge = accepted.edge;
+    for (let iter = 0; iter < 14 && Math.abs(good - bad) > 1e-4; iter++) {
+      const mid = roundPct((good + bad) / 2);
+      if (mid === good || mid === bad) break;
+      const r = verify(withPinAt(index, mid), price);
+      if (r.ok) {
+        good = mid;
+        goodEdge = r.edge;
+      } else {
+        bad = mid;
+      }
+    }
+    // Snap INTO the accepted side and re-verify; walk a few grid steps when
+    // the snapped value refuses (boundary jitter).
+    let snapped = roundPct(dir === 1 ? ceilToStep(good) : floorToStep(good));
+    for (let walk = 0; walk < 3; walk++) {
+      if (!(snapped > 0)) break;
+      if (dir === 1 ? snapped > Math.max(farPct, good) + 1e-9 : false) break;
+      if (Math.abs(snapped - fromPct) < 1e-9) break;
+      const r = verify(withPinAt(index, snapped), price);
+      if (r.ok) return { toPct: snapped, edge: r.edge };
+      snapped = roundPct(snapped + dir * pinStepPct(Math.max(snapped, 1e-6)));
+    }
+    // Off-grid fallback: the bisected boundary value itself verified.
+    return { toPct: roundPct(good), edge: goodEdge };
+  };
+
+  const remedies: PinRemedy[] = [];
+  const adjustedIdx = new Set<number>();
+  const edgePct = (e: number): string => (e * 100).toFixed(2);
+
+  // ── RAISE / LOWER per pin (the smallest wins) ─────────────────────────────
+  for (const p of pins) {
+    const card = input.cards[p.index];
+    if (!card || !(card.value > 0)) continue;
+    const v = card.value;
+    const fromPct = p.share * 100;
+    const isWin = v >= price && v <= input.maxWinCap;
+    const w = input.currentWeights[p.index];
+    const livePct =
+      curTotal > 0 && Number.isFinite(w) && (w as number) > 0
+        ? ((w as number) / curTotal) * 100
+        : null;
+    // Raise bound: a WIN pin never inflates past its live odds (never-inflate
+    // law); a LOSS pin may absorb the free mass less a sliver the free cards
+    // keep. Lower bound: one display step above zero.
+    const raiseCap = Math.min(
+      100,
+      isWin
+        ? livePct !== null
+          ? Math.min(livePct, fromPct + freeMass * 100)
+          : fromPct
+        : fromPct + Math.max(0, freeMass * 100 - 0.5),
+    );
+    const lowerFloor = Math.max(0, Math.min(fromPct, pinStepPct(fromPct)));
+    const raise =
+      raiseCap > fromPct + 1e-9
+        ? searchDirection(p.index, fromPct, raiseCap, 1)
+        : null;
+    const lower =
+      lowerFloor < fromPct - 1e-9
+        ? searchDirection(p.index, fromPct, lowerFloor, -1)
+        : null;
+    const best =
+      raise !== null && lower !== null
+        ? Math.abs(raise.toPct - fromPct) <= Math.abs(lower.toPct - fromPct)
+          ? raise
+          : lower
+        : (raise ?? lower);
+    if (best === null) continue;
+    const kind: PinRemedyKind = best.toPct > fromPct ? "raise-pin" : "lower-pin";
+    adjustedIdx.add(p.index);
+    remedies.push({
+      kind,
+      cardIndex: p.index,
+      cardValue: v,
+      fromPct: roundPct(fromPct),
+      toPct: best.toPct,
+      edge: best.edge,
+      humanCopy:
+        kind === "raise-pin"
+          ? `Raise the pinned ${usd(v)} card from ${pctFmt(fromPct)}% to ${pctFmt(best.toPct)}% — the pins then carry enough EV and the plan verifies at ${usd(price)} (house edge ${edgePct(best.edge)}%, solver-checked).`
+          : `Lower the pinned ${usd(v)} card from ${pctFmt(fromPct)}% to ${pctFmt(best.toPct)}% — the pinned EV then fits the budget and the plan verifies at ${usd(price)} (house edge ${edgePct(best.edge)}%, solver-checked).`,
+      verified: true,
+    });
+  }
+
+  // ── UNPIN — only where no verified adjust exists (adjusting preserves the
+  //    owner's intent; the full unpin is the stronger cut) ───────────────────
+  for (const p of pins) {
+    if (adjustedIdx.has(p.index)) continue;
+    const card = input.cards[p.index];
+    if (!card) continue;
+    const rest = pins.filter((q) => q.index !== p.index);
+    const r = verify(rest, price);
+    if (!r.ok) continue;
+    remedies.push({
+      kind: "unpin-card",
+      cardIndex: p.index,
+      cardValue: card.value,
+      fromPct: roundPct(p.share * 100),
+      edge: r.edge,
+      humanCopy: `Unpin the ${usd(card.value)} card (typed ${pctFmt(p.share * 100)}%) and let the solver place it — the remaining pins hold and the plan verifies at ${usd(price)} (house edge ${edgePct(r.edge)}%, solver-checked).`,
+      verified: true,
+    });
+  }
+
+  // ── PRICE-MOVE — nearest in-budget cent that verifies with ALL pins held ──
+  if (input.pinPrice !== true) {
+    const budget = Math.min(
+      Math.max(input.priceBudgetPct ?? 0.1, 0.0001),
+      0.6,
+    );
+    const mults: number[] = [];
+    for (const f of [0.25, 0.5, 0.75, 1]) {
+      const d = f * budget;
+      if (d > 1e-9) mults.push(1 - d, 1 + d);
+    }
+    mults.sort((a, b) => Math.abs(a - 1) - Math.abs(b - 1));
+    for (const mult of mults) {
+      const cent = Math.round(price * mult * 100) / 100;
+      if (!(cent > 0) || Math.abs(cent - price) < 0.005) continue;
+      const r = verify(pins, cent);
+      if (!r.ok) continue;
+      const delta = ((cent - price) / price) * 100;
+      remedies.push({
+        kind: "price-move",
+        price: cent,
+        edge: r.edge,
+        humanCopy: `Keep every pin as typed and move the price to ${usd(cent)} (${delta >= 0 ? "+" : "-"}${Math.abs(delta).toFixed(1)}%) — the plan verifies there (house edge ${edgePct(r.edge)}%, solver-checked).`,
+        verified: true,
+      });
+      break;
+    }
+  }
+
+  // Rank: pin adjusts (smallest change first) → unpins (smallest pin first)
+  // → price move. Deterministic tie-break on the card index.
+  const classRank: Record<PinRemedyKind, number> = {
+    "raise-pin": 0,
+    "lower-pin": 0,
+    "unpin-card": 1,
+    "price-move": 2,
+  };
+  const deltaOf = (r: PinRemedy): number =>
+    r.kind === "price-move"
+      ? Math.abs(((r.price ?? price) - price) / price) * 100
+      : r.kind === "unpin-card"
+        ? (r.fromPct ?? 0)
+        : Math.abs((r.toPct ?? 0) - (r.fromPct ?? 0));
+  remedies.sort(
+    (a, b) =>
+      classRank[a.kind] - classRank[b.kind] ||
+      deltaOf(a) - deltaOf(b) ||
+      (a.cardIndex ?? 0) - (b.cardIndex ?? 0),
+  );
+  return remedies.slice(0, Math.max(1, input.maxRemedies ?? 4));
+}
+
+/**
+ * Owner-facing copy for a pins refusal: the shortfall (the engine refusal's
+ * authoritative detail when available) + the smallest verified way out — or
+ * the honest "the pins interlock" verdict when the remedy search came back
+ * empty-handed.
+ */
+export function pinShortfallHumanCopy(args: {
+  price: number;
+  targetEdge: number;
+  /** The engine refusal's `limit.detail` ($ figures), when available. */
+  refusalDetail?: string | null;
+  remedies: readonly PinRemedy[];
+}): string {
+  const head = `The pinned odds can't reach the ${(args.targetEdge * 100).toFixed(2)}% edge target at ${usd(args.price)}.`;
+  const detail = args.refusalDetail?.trim().replace(/\s+/g, " ") ?? "";
+  const why =
+    detail.length > 0 ? ` ${detail}${/[.!?]$/.test(detail) ? "" : "."}` : "";
+  if (args.remedies.length === 0) {
+    return `${head}${why} No single-pin change fixes this — every raise, lower, unpin and in-budget price move was tried against the solver. The pins interlock: unpin two or more cards, or rebuild the pin set.`;
+  }
+  const first = args.remedies[0]!;
+  const more =
+    args.remedies.length > 1
+      ? ` (${args.remedies.length - 1} more verified option${args.remedies.length > 2 ? "s" : ""} available.)`
+      : "";
+  return `${head}${why} Smallest verified fix: ${first.humanCopy}${more}`;
 }
