@@ -632,15 +632,6 @@ type UserListItem = {
    */
   affiliateCode: string | null;
   availableBalance: number;
-  /**
-   * `balances.locked_balance` — the user's vault / cooldown-locked cash
-   * (the same column the per-user view shows as "Locked"). Surfaced as a
-   * dedicated column so an operator can spot at a glance who has cash
-   * parked in vault / wager-lock, and as the key for the `lockedBalance`
-   * sort (rank by who has the most stuck).
-   */
-  lockedBalance: number;
-  inventoryValue: number;
   totalDeposited: number;
   totalWithdrawn: number;
   totalWagered: number;
@@ -654,6 +645,13 @@ type UserListItem = {
    * user's TOTAL position on-site right now, which from the house POV
    * is the direct liability per user. Useful for spotting whales
    * without having to mentally add the Balance + Inventory columns.
+   *
+   * `lockedBalance` and `inventoryValue` feed this formula but are no
+   * longer exposed as their own row fields (2026-07-08) — the standalone
+   * "Vault / Locked" and "Inventory" list columns + the "Top vault /
+   * locked" sort were removed and nothing else in the /users list reads
+   * them individually. They still live as locals inside
+   * hydrateUserListPage below, computing this value exactly as before.
    */
   netHoldings: number;
   createdAt: string;
@@ -782,8 +780,6 @@ async function hydrateUserListPage(
         countryCode: u.country_code,
         affiliateCode: u.affiliate_code,
         availableBalance,
-        lockedBalance,
-        inventoryValue,
         netHoldings,
         totalDeposited,
         totalWithdrawn,

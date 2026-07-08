@@ -32,7 +32,6 @@ import {
   SortByPnlLosersButton,
   SortByPnlWinnersButton,
 } from "./sort-pnl-buttons";
-import { SortByLockedBalanceButton } from "./sort-locked-balance-button";
 import {
   KpiStripSkeleton,
   PaginationSkeleton,
@@ -184,7 +183,6 @@ export default async function UsersPage({
               <SortByPnlWinnersButton />
               <SortByNetHoldingsButton />
               <SortByUserNetWorthButton />
-              <SortByLockedBalanceButton />
               <ExportUsersButton />
               {gates.canExportAll && <ExportAllUsersButton />}
             </DataTableToolbar>

@@ -42,12 +42,18 @@ export type UsersSortOrder = z.infer<typeof UsersSortOrder>;
  * Every sort key `getUsers` knows how to ORDER BY — the union of its
  * Prisma-path sorts (created_at / email / username / role / country /
  * affiliate_code / status / balance / totalDeposited / totalWagered) and
- * its raw-SQL computed sorts (pnl / totalWithdrawn / inventoryValue /
- * netHoldings / depositCount). Kept in sync with the `userSortFields` /
+ * its raw-SQL computed sorts (pnl / totalWithdrawn / netHoldings /
+ * depositCount). Kept in sync with the `userSortFields` /
  * `balanceSortFields` / `rawSqlSorts` sets in
  * `src/lib/queries/users-list.ts`. An unknown key falls back to
  * `created_at` (the query's own default), so the validated value can
  * never select a non-existent column.
+ *
+ * `inventoryValue` and `lockedBalance` were removed (2026-07-08) along with
+ * the standalone "Inventory" / "Vault / Locked" columns and the "Top vault /
+ * locked" toolbar shortcut — no UI control can produce these sort keys
+ * anymore, so they're dropped from the allowlist rather than left as
+ * unreachable values. The underlying computation still feeds `netHoldings`.
  */
 export const UsersSortBy = z.enum([
   // Prisma-path column sorts
@@ -67,13 +73,8 @@ export const UsersSortBy = z.enum([
   // raw-SQL computed sorts
   "pnl",
   "totalWithdrawn",
-  "inventoryValue",
   "netHoldings",
   "depositCount",
-  // Vault / locked-pool ranking — sorts by balances.locked_balance via the
-  // filter-first ranking path so the toolbar can answer "who has the most
-  // stuck in vault/cooldown right now".
-  "lockedBalance",
 ]);
 export type UsersSortBy = z.infer<typeof UsersSortBy>;
 
