@@ -12,16 +12,24 @@
  *       through `shapeWeights` (checked independently here); an accepting
  *       base returns []; a fully-interlocked pin set returns [] with the
  *       honest "pins interlock" copy via `pinShortfallHumanCopy`.
- *   2.  THE TAILS? FIXTURES (the owner's real "Tails?" pool shape, $432.50):
+ *   2.  THE TAILS? FIXTURES (the owner's real "Tails?" pool shape, $432.50),
+ *       under LAW M (Retune V3): every remedy must yield a plan the monotone
+ *       gate accepts — a "fix" whose plan is a zigzag is not a remedy.
  *       A5 = EV-short pins (choked 3419.40 win pin + over-weighted 20.02
- *       dust pin) — remedy catalog empirically pinned: raise c1 1%→1.85%,
- *       raise c5 10%→23%, lower c8 55%→39.5%, unpins {c2,c3,c4}, price-move
- *       $400.06. C2 = EV-heavy pins (inflated jackpot) — exactly ONE remedy:
- *       lower c0 2%→0.64%. B = fully pinned at a dead-zero edge — NO
- *       single-pin change exists (the interlock verdict).
+ *       dust pin) — the pre-law raise-c1 lead (1%→1.85%) died with the law:
+ *       its plan loaded the $194.10 dust card heavier than the $61.46 one
+ *       (chain-capped EV tops out at $375.43 vs the $384.15 floor). Lawful
+ *       catalog, empirically pinned: raise c5 10%→23.5%, lower c8 55%→20.5%,
+ *       price-move $389.25 — every plan re-verified LAW-M-clean here.
+ *       C2 = EV-heavy pins (inflated jackpot) — exactly ONE remedy: lower
+ *       c0 2%→0.64% (the acceptance is an ISLAND ≈[0.55%, 0.64%] — the
+ *       dense scan + the LAW M rescue ladder land it; 0.65% refuses).
+ *       B = fully pinned at a dead-zero edge — NO single-pin change
+ *       (interlock).
  *   3.  tagged1pct remedy threshold: the $250 jackpot pin on the 1% lottery
- *       verifies tag-HARD only at ≤ 0.068% — the remedy lands exactly there
- *       (grid-snapped) and the re-applied solve holds the tag at 1.0000%.
+ *       verifies tag-HARD only at ≤ 0.057% under LAW M — the remedy lands
+ *       exactly there (grid-snapped), the re-applied solve holds the tag at
+ *       1.0000%, and 0.058% refuses (the boundary is real).
  *   4.  `monotoneFitLocal` — the honest-ladder window: exact band math,
  *       never-inflate caps (saturated residual rides the CHEAPEST winner
  *       only), grail running-min ratchet, pinned point-mass carve,
@@ -37,7 +45,8 @@
 import {
   TAGGED_WINRATE_TOLERANCE,
   computePackRisk,
-  shapeWeights,
+  findMonotoneViolations,
+  searchBestPriceForCleanSnap,
   type ShapeWeightsPinnedShare,
   type ShapeWeightsResult,
   type ShapeWeightsSuccess,
@@ -145,28 +154,30 @@ const PINS_B: ShapeWeightsPinnedShare[] = [
   { index: 8, share: 0.485 },
 ];
 
-/** The refused hard/soft verify a remedy claims to fix — replayed here
- * INDEPENDENTLY of computePinRemedies (defense in depth). */
+/** The refused verify a remedy claims to fix — replayed here INDEPENDENTLY
+ * of computePinRemedies (defense in depth), through the SAME engine the
+ * server retune runs at this exact price (band 0): hard hold → soft float →
+ * LAW M rescue. */
 function tailsVerify(
   pins: readonly ShapeWeightsPinnedShare[],
   price = TAILS.price,
 ): ShapeWeightsSuccess | null {
-  const base = {
+  const s = searchBestPriceForCleanSnap({
     cards: TAILS.values.map((v) => ({ value: v })),
-    price,
+    basePrice: price,
     targetEdge: tailsT.targetEdge,
     targetWinRate: tailsT.targetWinRate,
     maxWinCap: tailsT.maxWinCap,
     nearMissMin: tailsT.nearMissMin,
     winRateTol: 0.02,
+    maxPriceChangePct: 0,
     currentWeights: tailsWeights.slice(),
+    holdWinRateHard: true,
     disperseLoss: true,
     ...(pins.length > 0 ? { pinnedShares: pins.map((p) => ({ ...p })) } : {}),
-  };
-  const hard = shapeWeights({ ...base, holdWinRateHard: true });
-  if (!("error" in hard) && hard.edge >= tailsT.targetEdge - 1e-9) return hard;
-  const soft = shapeWeights({ ...base, holdWinRate: true });
-  if (!("error" in soft) && soft.edge >= tailsT.targetEdge - 1e-9) return soft;
+  });
+  const r = s.bestResult;
+  if (!("error" in r) && r.edge >= tailsT.targetEdge - 1e-9) return r;
   return null;
 }
 
@@ -176,10 +187,10 @@ const remA5 = computePinRemedies({
   maxRemedies: 10,
 });
 
-// ── 1. A5: refused base → a verified remedy catalog ─────────────────────
-check("A5 (EV-short): base refuses; every remedy is solver-verified and typed", () => {
+// ── 1. A5: refused base → a verified LAWFUL remedy catalog ───────────────
+check("A5 (EV-short): base refuses; every remedy is solver-verified, typed and LAW-M-lawful", () => {
   assert(tailsVerify(PINS_A5) === null, "the A5 base must refuse at $432.50");
-  assert(remA5.length === 7, `expected the full 7-remedy catalog, got ${remA5.length}`);
+  assert(remA5.length === 3, `expected the 3-remedy lawful catalog, got ${remA5.length}`);
   for (const r of remA5) {
     assert(r.verified === true, `${r.kind} must carry verified:true`);
     assert(r.edge >= tailsT.targetEdge - 1e-9, `${r.kind} landed edge below target`);
@@ -191,40 +202,77 @@ check("A5 (EV-short): base refuses; every remedy is solver-verified and typed", 
         `${r.kind} carries cardIndex + fromPct`,
       );
     }
+    // Every surviving remedy's PLAN is lawful end to end (the whole point).
+    let pins2 = PINS_A5.map((p) => ({ ...p }));
+    let price2 = TAILS.price;
+    if (r.kind === "raise-pin" || r.kind === "lower-pin") {
+      pins2 = pins2.map((p) =>
+        p.index === r.cardIndex ? { index: p.index, share: (r.toPct ?? 0) / 100 } : p,
+      );
+    } else if (r.kind === "unpin-card") {
+      pins2 = pins2.filter((p) => p.index !== r.cardIndex);
+    } else if (r.kind === "price-move") {
+      price2 = r.price!;
+    }
+    const v = tailsVerify(pins2, price2);
+    assert(v !== null, `${r.kind} must re-verify independently`);
+    let total = 0;
+    for (const w of v.weights) if (w > 0) total += w;
+    const shares = v.weights.map((w) => w / total);
+    assert(
+      findMonotoneViolations({
+        values: TAILS.values,
+        shares,
+        pinnedIdx: new Set(pins2.map((p) => p.index)),
+      }).length === 0,
+      `${r.kind}'s plan obeys LAW M`,
+    );
   }
 });
 
-check("A5 lead remedy: raise the choked 3419.40 pin 1% → 1.85% (grid-snapped, smallest change first)", () => {
+check("A5 lead remedy: raise the under-weighted 406.20 near-miss pin 10% → 23.5% (the pre-law zigzag lead is dead)", () => {
   const lead = remA5[0]!;
   assert(lead.kind === "raise-pin", `lead kind ${lead.kind}`);
-  assert(lead.cardIndex === 1 && lead.cardValue === 3419.4, "lead targets c1 ($3419.40)");
-  assert(Math.abs((lead.fromPct ?? 0) - 1) < 1e-9, `fromPct ${lead.fromPct}`);
+  assert(lead.cardIndex === 5 && lead.cardValue === 406.2, "lead targets c5 ($406.20)");
+  assert(Math.abs((lead.fromPct ?? 0) - 10) < 1e-9, `fromPct ${lead.fromPct}`);
   assert(
-    Math.abs((lead.toPct ?? 0) - 1.85) < 1e-9,
-    `toPct must grid-snap to 1.85 (got ${lead.toPct})`,
+    Math.abs((lead.toPct ?? 0) - 23.5) < 1e-9,
+    `toPct must grid-snap to 23.5 (got ${lead.toPct})`,
   );
   assert(
-    /raise the pinned \$3,?419\.40/i.test(lead.humanCopy),
+    /raise the pinned \$406\.20/i.test(lead.humanCopy),
     `copy names the card — got: ${lead.humanCopy}`,
   );
+  // THE LAW M KILL, pinned as a regression guard: the pre-law lead (raise
+  // the choked $3,419.40 pin 1% → 1.85%) only ever "verified" through a plan
+  // that loaded the $194.10 dust card heavier than the $61.46 one — the
+  // free-dust chain caps that contract's EV at $375.43, below the $384.15
+  // floor. It must refuse today, at 1.85% and at the old boundary 1.80%.
+  const raiseC1 = (toPct: number) =>
+    PINS_A5.map((p) => (p.index === 1 ? { index: 1, share: toPct / 100 } : { ...p }));
+  assert(tailsVerify(raiseC1(1.85)) === null, "the pre-law raise-c1 remedy stays dead (1.85%)");
+  assert(tailsVerify(raiseC1(1.8)) === null, "…and at 1.80%");
 });
 
-check("A5 catalog: raise c5 10%→23%, lower c8 55%→39.5%, unpins exactly {c2,c3,c4}, price-move $400.06", () => {
-  const byKey = (k: string, idx?: number) =>
-    remA5.find((r) => r.kind === k && (idx === undefined || r.cardIndex === idx));
-  const r5 = byKey("raise-pin", 5);
-  assert(r5 !== undefined && Math.abs((r5.toPct ?? 0) - 23) < 1e-9, `raise c5 → 23 (got ${r5?.toPct})`);
-  const r8 = byKey("lower-pin", 8);
-  assert(r8 !== undefined && Math.abs((r8.toPct ?? 0) - 39.5) < 1e-9, `lower c8 → 39.5 (got ${r8?.toPct})`);
-  const unpins = remA5.filter((r) => r.kind === "unpin-card").map((r) => r.cardIndex);
+check("A5 catalog: exactly {raise c5 10%→23.5%, lower c8 55%→20.5%, price-move $389.25} — no unpins survive the law", () => {
+  const kinds = remA5.map((r) => `${r.kind}${r.cardIndex !== undefined ? `@c${r.cardIndex}` : ""}`);
   assert(
-    JSON.stringify(unpins) === JSON.stringify([2, 3, 4]),
-    `unpins must be exactly [c2,c3,c4] in from-small order — got ${JSON.stringify(unpins)}`,
+    JSON.stringify(kinds) === JSON.stringify(["raise-pin@c5", "lower-pin@c8", "price-move"]),
+    `catalog must be [raise-pin@c5, lower-pin@c8, price-move] — got ${JSON.stringify(kinds)}`,
   );
-  const pm = byKey("price-move");
+  const r8 = remA5.find((r) => r.kind === "lower-pin")!;
   assert(
-    pm !== undefined && Math.abs((pm.price ?? 0) - 400.06) < 1e-9,
-    `price-move must land the nearest in-budget verifying cent $400.06 (got ${pm?.price})`,
+    Math.abs((r8.toPct ?? 0) - 20.5) < 1e-9,
+    `lower c8 → 20.5 (got ${r8.toPct})`,
+  );
+  const pm = remA5.find((r) => r.kind === "price-move")!;
+  assert(
+    Math.abs((pm.price ?? 0) - 389.25) < 1e-9,
+    `price-move must land the nearest in-budget verifying cent $389.25 (got ${pm.price})`,
+  );
+  assert(
+    !remA5.some((r) => r.kind === "unpin-card"),
+    "no single unpin yields a lawful plan here",
   );
   // Pins with NO single-change fix get NOTHING: c0 (jackpot at live — its
   // unpin breaks the win band) never appears.
@@ -234,26 +282,26 @@ check("A5 catalog: raise c5 10%→23%, lower c8 55%→39.5%, unpins exactly {c2,
   );
 });
 
-check("A5 remedies re-apply INDEPENDENTLY through shapeWeights (raise c1, lower c8, price-move)", () => {
+check("A5 remedies re-apply INDEPENDENTLY through the engine (lower c8 held exact, price-move, boundary)", () => {
   const applyPin = (idx: number, toPct: number) =>
     PINS_A5.map((p) => (p.index === idx ? { index: idx, share: toPct / 100 } : { ...p }));
-  const r1 = tailsVerify(applyPin(1, 1.85));
-  assert(r1 !== null, "raise c1 → 1.85% must re-verify");
+  const r8 = tailsVerify(applyPin(8, 20.5));
+  assert(r8 !== null, "lower c8 → 20.5% must re-verify");
   let total = 0;
-  for (const w of r1.weights) if (w > 0) total += w;
+  for (const w of r8.weights) if (w > 0) total += w;
   assert(
-    Math.abs(r1.weights[1]! / total - 0.0185) <= 1e-9,
-    `the raised pin must be HELD at 1.85% (got ${(r1.weights[1]! / total) * 100}%)`,
+    Math.abs(r8.weights[8]! / total - 0.205) <= 1e-9,
+    `the lowered pin must be HELD at 20.5% (got ${(r8.weights[8]! / total) * 100}%)`,
   );
-  assert(tailsVerify(applyPin(8, 39.5)) !== null, "lower c8 → 39.5% must re-verify");
-  assert(tailsVerify(PINS_A5, 400.06) !== null, "price-move $400.06 must re-verify with ALL pins held");
-  // And the boundary is real: one grid step SHORT of the lead still refuses.
-  assert(tailsVerify(applyPin(1, 1.8)) === null, "1.80% (one step short) must still refuse");
+  assert(tailsVerify(PINS_A5, 389.25) !== null, "price-move $389.25 must re-verify with ALL pins held");
+  // And the boundary is real: half a display step ABOVE the accepted grid
+  // value still refuses (21% refuses; 20.5% is the largest verifying step).
+  assert(tailsVerify(applyPin(8, 21)) === null, "21% (one step above) must still refuse");
 });
 
-check("A5 default cap: maxRemedies defaults to 4 (a prefix of the full ranked catalog)", () => {
+check("A5 default cap: maxRemedies defaults to 4 — a no-op on the 3-remedy lawful catalog (still the ranked prefix)", () => {
   const capped = computePinRemedies({ ...tailsInput, pinnedShares: PINS_A5 });
-  assert(capped.length === 4, `default cap 4, got ${capped.length}`);
+  assert(capped.length === 3, `default cap keeps all three remedies, got ${capped.length}`);
   const key = (r: PinRemedy) => `${r.kind}:${r.cardIndex ?? ""}:${r.toPct ?? ""}:${r.price ?? ""}`;
   assert(
     JSON.stringify(capped.map(key)) === JSON.stringify(remA5.slice(0, 4).map(key)),
@@ -261,8 +309,8 @@ check("A5 default cap: maxRemedies defaults to 4 (a prefix of the full ranked ca
   );
 });
 
-// ── 2. C2: EV-heavy pins → exactly one remedy ────────────────────────────
-check("C2 (EV-heavy): exactly ONE remedy — lower the inflated jackpot pin 2% → 0.64%", () => {
+// ── 2. C2: EV-heavy pins → exactly one remedy (an acceptance ISLAND) ─────
+check("C2 (EV-heavy): exactly ONE remedy — lower the inflated jackpot pin 2% → 0.64% (island found, plan lawful)", () => {
   const rem = computePinRemedies({ ...tailsInput, pinnedShares: PINS_C2, maxRemedies: 10 });
   assert(rem.length === 1, `expected exactly 1 remedy, got ${rem.length}: ${rem.map((r) => r.kind).join(",")}`);
   const r = rem[0]!;
@@ -271,9 +319,23 @@ check("C2 (EV-heavy): exactly ONE remedy — lower the inflated jackpot pin 2% �
   assert(Math.abs((r.toPct ?? 0) - 0.64) < 1e-9, `toPct must grid-snap to 0.64 (got ${r.toPct})`);
   // The adjust supersedes the unpin for the same card (one remedy per pin).
   assert(!rem.some((x) => x.kind === "unpin-card"), "no unpin rides alongside a verified adjust");
-  // Independent re-apply + boundary honesty (0.65% still refuses).
+  // The acceptance is an ISLAND (≈[0.55%, 0.64%] on this axis — LAW M
+  // feasibility is NOT monotone along a pin share): the re-apply verifies
+  // with a LAWFUL plan while 0.65% (one step above) still refuses.
   const applied = PINS_C2.map((p) => (p.index === 0 ? { index: 0, share: 0.0064 } : p));
-  assert(tailsVerify(applied) !== null, "lower c0 → 0.64% must re-verify");
+  const v = tailsVerify(applied);
+  assert(v !== null, "lower c0 → 0.64% must re-verify");
+  let total = 0;
+  for (const w of v.weights) if (w > 0) total += w;
+  const shares = v.weights.map((w) => w / total);
+  assert(
+    findMonotoneViolations({
+      values: TAILS.values,
+      shares,
+      pinnedIdx: new Set(applied.map((p) => p.index)),
+    }).length === 0,
+    "the remedied plan obeys LAW M (the pre-law zigzag is gone)",
+  );
   const short = PINS_C2.map((p) => (p.index === 0 ? { index: 0, share: 0.0065 } : p));
   assert(tailsVerify(short) === null, "0.65% (one step above) must still refuse");
 });
@@ -300,8 +362,8 @@ check("pinShortfallHumanCopy: refusal detail rides along + the smallest verified
     remedies: remA5,
   });
   assert(copy.includes("$26.5201"), "the engine's authoritative $ figure must ride along");
-  assert(/Smallest verified fix: Raise the pinned \$3,?419\.40/i.test(copy), `the lead remedy leads — got: ${copy}`);
-  assert(/6 more verified options/.test(copy), "the catalog depth is named");
+  assert(/Smallest verified fix: Raise the pinned \$406\.20/i.test(copy), `the lead remedy leads — got: ${copy}`);
+  assert(/2 more verified options available/.test(copy), "the catalog depth is named");
 });
 
 // ── 4. tagged1pct: the remedy threshold on a LOTTERY tag ─────────────────
@@ -316,7 +378,7 @@ const T1 = {
   intendedHitRate: 0.01,
 };
 
-check("tagged1pct: the $250 jackpot pin at 0.5% refuses → remedy lowers it to the 0.068% threshold, tag held HARD", () => {
+check("tagged1pct: the $250 jackpot pin at 0.5% refuses → remedy lowers it to the 0.057% threshold, tag held HARD", () => {
   const rem = computePinRemedies({
     ...T1,
     pinnedShares: [{ index: 0, share: 0.005 }],
@@ -326,44 +388,38 @@ check("tagged1pct: the $250 jackpot pin at 0.5% refuses → remedy lowers it to 
   const r = rem[0]!;
   assert(r.kind === "lower-pin" && r.cardIndex === 0, `kind ${r.kind} c${r.cardIndex}`);
   assert(
-    Math.abs((r.toPct ?? 0) - 0.068) < 1e-9,
-    `toPct must land the empirically-known 0.068% threshold (got ${r.toPct})`,
+    Math.abs((r.toPct ?? 0) - 0.057) < 1e-9,
+    `toPct must land the empirically-known LAW-M threshold 0.057% (got ${r.toPct})`,
   );
-  // Re-apply on the TAGGED verify path: tag-HARD, tag lands exactly 1%.
-  const applied = assertSuccess(
-    shapeWeights({
+  // Re-apply through the SAME engine the server runs (band 0, tagged core +
+  // LAW M rescue): tag lands exactly 1%.
+  const verifyT1 = (pinShare: number): ShapeWeightsResult => {
+    const s = searchBestPriceForCleanSnap({
       cards: T1.cards.map((c) => ({ value: c.value })),
-      price: T1.price,
+      basePrice: T1.price,
       targetEdge: T1.targetEdge,
       targetWinRate: T1.targetWinRate,
+      taggedWinRate: T1.targetWinRate,
       maxWinCap: T1.maxWinCap,
       nearMissMin: T1.nearMissMin,
       winRateTol: TAGGED_WINRATE_TOLERANCE,
+      maxPriceChangePct: 0,
       currentWeights: T1.currentWeights.slice(),
-      winRateIsHard: true,
-      pinnedShares: [{ index: 0, share: 0.00068 }],
-    }),
-    "re-apply the tagged remedy",
-  );
+      disperseLoss: true,
+      pinnedShares: [{ index: 0, share: pinShare }],
+    });
+    return s.bestResult;
+  };
+  const applied = assertSuccess(verifyT1(0.00057), "re-apply the tagged remedy");
   assert(
     Math.abs(applied.risk.winRate - 0.01) <= TAGGED_WINRATE_TOLERANCE + 1e-12,
     `tag must hold at 1% (got ${(applied.risk.winRate * 100).toFixed(4)}%)`,
   );
   assert(applied.edge >= T1.targetEdge - 1e-9, "edge ≥ target under the remedy");
-  // One grid step up (0.069%) sits in the refusing no-win-band zone.
-  const above = shapeWeights({
-    cards: T1.cards.map((c) => ({ value: c.value })),
-    price: T1.price,
-    targetEdge: T1.targetEdge,
-    targetWinRate: T1.targetWinRate,
-    maxWinCap: T1.maxWinCap,
-    nearMissMin: T1.nearMissMin,
-    winRateTol: TAGGED_WINRATE_TOLERANCE,
-    currentWeights: T1.currentWeights.slice(),
-    winRateIsHard: true,
-    pinnedShares: [{ index: 0, share: 0.0007 }],
-  });
-  assert("error" in above, "0.07% must still refuse (the threshold is real)");
+  // One grid step up (0.058%) refuses — the threshold is real. (The pre-law
+  // threshold 0.068% refuses too: its plan broke the monotone ladder.)
+  assert("error" in verifyT1(0.00058), "0.058% must still refuse (the threshold is real)");
+  assert("error" in verifyT1(0.00068), "the pre-law 0.068% threshold stays dead");
 });
 
 check("tagged1pct: an ACCEPTING base returns [] (nothing to repair)", () => {

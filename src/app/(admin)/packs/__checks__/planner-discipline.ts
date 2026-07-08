@@ -27,6 +27,7 @@ import {
   searchBestPriceForCleanSnap,
   computePackRisk,
   enforceLossMonotone,
+  findMonotoneViolations,
   RETUNE_PRICE_BUDGET_DEFAULT_PCT,
   RETUNE_MAX_PRICE_CHANGE_PCT,
   WINRATE_HOLD_BAND,
@@ -116,16 +117,16 @@ const HEAVY_HITTERS: Pool = {
 };
 
 // ── Win-rate HOLD fixtures (owner-lens item 4) — untagged floaters ────────
-// Two of these are the named DEAD-ENDS (monotone ladders the shape guard
+// Two of these were the named DEAD-ENDS (monotone ladders the shape guard
 // misses, guidance returns null): the float used to push their achieved
 // win-rate far above the live-anchored design (Three Blades 30.0%→37.5%, Trash
 // 33.2%→40.2%). The HOLD caps the untagged float at design + WINRATE_HOLD_BAND
 // (+5pp); a price where the held win-rate can't reach the edge errors and the
 // search moves to one where it can (a clean plan) — Three Blades gains a clean
-// $108.83 plan at 34.3%; Trash / Snack Time have no in-budget held price and
-// surface as the wide-probe / pool-edit path (feasible at ±60%, honestly
-// infeasible at ±10%). All are untagged (`tag: null`), snapshots from the fleet
-// dump (values + live weights).
+// in-band plan via the soft fallback; Trash (Retune V3) gains an in-band plan
+// via the LAW M rescue ladder at the live price with the design rate held
+// EXACT. All are untagged (`tag: null`), snapshots from the fleet dump
+// (values + live weights).
 const THREE_BLADES: Pool = {
   name: "Three Blades",
   price: 113.5,
@@ -392,18 +393,28 @@ check("enforceLossMonotone: EV-forced ascending band (no monotone layout) is ref
   }
 });
 
-// ── 3. Captive — DEGENERATE at the default budget (floor pins) ──────────
-check("Captive ±10%: DEGENERATE with the two floor-pinned cards crushed", () => {
+// ── 3. Captive — the old floor-pin crush is GONE under LAW M ─────────────
+check("Captive ±10%: HEALTHY under LAW M — the old $33.95/$18.23 floor-pin crush was never EV-forced", () => {
+  // Pre-V3 this pack shipped its two cheapest loss cards at the 0.0001%
+  // floor (the owner's complaint) and the shape guard read DEGENERATE. The
+  // LAW M gate refuses those zigzag layouts, which steers the price search
+  // to a cent where the hard-held solve lands a LAWFUL ladder — snapped,
+  // healthy, and with both former floor pins carrying REAL mass (≈20% and
+  // ≈54%). The "EV-forced crush" story was a solver artifact, not physics.
   const out = solve(CAPTIVE, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
   assert(out.price !== null, "Captive ±10% must be feasible");
   const s = shapeOf(CAPTIVE, out.planned!, out.price!);
-  assert(s.crushedCount >= 2, `≥2 crushed cards ($33.95/$18.23 floor pins) (got ${s.crushedCount})`);
-  assert(s.absorberExcess >= 0.4, `the carrier absorbs ≥40pp (got +${(s.absorberExcess * 100).toFixed(1)}pp)`);
-  assert(s.degenerate, `Captive is DEGENERATE (score ${s.score})`);
-  // The crushed indices are the two cheapest loss cards ($33.95 idx 6, $18.23 idx 7).
+  assert(s.crushedCount === 0, `no crushed cards under LAW M (got ${s.crushedCount})`);
+  assert(!s.degenerate && s.score < LADDER_DEGENERATE_THRESHOLD, `healthy (score ${s.score})`);
+  // The two formerly-crushed cheapest loss cards carry real, lawful mass.
   assert(
-    s.crushedIdx.includes(6) && s.crushedIdx.includes(7),
-    `crushed idx must name the $33.95/$18.23 cards (got [${s.crushedIdx.join(",")}])`,
+    out.planned![6]! > 0.05 && out.planned![7]! > 0.2,
+    `the $33.95/$18.23 cards carry real mass (got ${(out.planned![6]! * 100).toFixed(3)}% / ${(out.planned![7]! * 100).toFixed(3)}%)`,
+  );
+  // And the full ladder is LAW-M-clean.
+  assert(
+    findMonotoneViolations({ values: CAPTIVE.values, shares: out.planned! }).length === 0,
+    "the shipped plan obeys LAW M end to end",
   );
 });
 
@@ -505,18 +516,22 @@ check("win-rate hold: Three Blades — the named dead-end gains a CLEAN in-band 
   );
 });
 
-check("win-rate hold: Trash — no in-band held price → the pool-edit path (feasible only at ±60%)", () => {
-  // Trash's loss side is a single near-zero carrier ($0.01); holding the
-  // win-rate at design+band leaves the edge unreachable at every ±10% price, so
-  // it honestly surfaces as infeasible-in-band (the wide-probe / pool-edit path)
-  // — never a floated-up plan. It IS feasible at the ±60% suggestion band (a
-  // price move), so it is not pathless.
+check("win-rate hold: Trash — the LAW M rescue ladder plans it IN-BAND at the held design rate (old dead-end gone)", () => {
+  // Pre-V3 Trash was the named dead-end: the core split (near-miss floor as
+  // an EXACT allocation) left the edge unreachable at every ±10% price. The
+  // lawful window treats the floor as a FLOOR — the rescue lays a LAW-M
+  // ladder at the live price with the design rate held EXACT (33.20%), all
+  // 11 rows alive. The wide band stays feasible too.
   const def = solveHold(TRASH, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
-  assert(!def.feasible, "Trash has no in-band held price (dead-end → pool-edit path)");
+  assert(def.feasible, "Trash gains an in-band held plan (the rescue ladder)");
+  assert(
+    Math.abs(def.achievedWinRate! - def.targetWinRate) <= 1e-4,
+    `the design rate is held EXACT (got ${(def.achievedWinRate! * 100).toFixed(3)}% vs ${(def.targetWinRate * 100).toFixed(3)}%)`,
+  );
   const wide = solve(TRASH, RETUNE_MAX_PRICE_CHANGE_PCT);
   assert(
     wide.price !== null,
-    "Trash IS feasible at ±60% — the wide-probe price-move is its coherent path (not pathless)",
+    "Trash stays feasible at ±60% too",
   );
 });
 
@@ -587,10 +602,32 @@ check("HARD hold (via buildRetuneSearchParams): Three Blades — the default ±1
   assert(pinned.length === 0, `no 0.0001% floor-pinned cards survive the fallback plan (got ${JSON.stringify(pinned)})`);
 });
 
-check("HARD hold (via buildRetuneSearchParams): Trash — default ±10% stays an honest in-budget refusal (regression guard, unchanged); the ±60% wide band now solves CLEANLY with NO fallback needed", () => {
+check("HARD hold (via buildRetuneSearchParams): Trash — the ±10% band now plans via the LAW M rescue (design rate EXACT, no fallback, no floor pins); ±60% solves cleanly too", () => {
+  // Pre-V3 the default band was an honest refusal (the old regression
+  // floor). The LAW M rescue ladder turned it into a plan at the LIVE price:
+  // win rate exactly the design (not a soft float — usedSoftFallback stays
+  // FALSE), every row alive, ladder lawful end to end.
   const atDefault = solveViaBuilder(TRASH, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
-  assert("error" in atDefault.search.bestResult, "Trash's default ±10% band stays infeasible (unchanged regression floor)");
-  assert(atDefault.search.usedSoftFallback === true, "both the hard hold AND its soft fallback are infeasible in-budget (honest, matches pre-attempt-#2 behavior)");
+  const rd = atDefault.search.bestResult;
+  assert("weights" in rd, `Trash's default ±10% band plans via the rescue: ${"error" in rd ? rd.error : ""}`);
+  assert(
+    atDefault.search.usedSoftFallback === false,
+    "the rescue holds the DESIGN rate exactly — it reports as the hard arm, never a soft float",
+  );
+  const totalD = (rd as { weights: number[] }).weights.reduce((a, w) => a + (w > 0 ? w : 0), 0);
+  const sharesD = (rd as { weights: number[] }).weights.map((w) => (totalD > 0 && w > 0 ? w / totalD : 0));
+  const afterD = computePackRisk({
+    cards: TRASH.values.map((v, i) => ({ value: v, weight: (rd as { weights: number[] }).weights[i]! })),
+    price: atDefault.search.bestPrice,
+  });
+  assert(
+    Math.abs(afterD.winRate - atDefault.targetWinRate) <= 1e-4,
+    `design rate held EXACT (got ${(afterD.winRate * 100).toFixed(3)}%)`,
+  );
+  const pinnedD = TRASH.values.filter(
+    (v, i) => v < atDefault.search.bestPrice && isFloorPinnedPct(sharesD[i]! * 100),
+  );
+  assert(pinnedD.length === 0, `no 0.0001% floor-pinned cards on the rescue plan (got ${JSON.stringify(pinnedD)})`);
 
   const atWide = solveViaBuilder(TRASH, RETUNE_MAX_PRICE_CHANGE_PCT);
   const r = atWide.search.bestResult;

@@ -33,6 +33,7 @@ import {
   disperseLossBand,
   preserveNearMissLossLayout,
   enforceLossMonotone,
+  findMonotoneViolations,
   taggedPlanNodeBudget,
   RETUNE_PRICE_BUDGET_DEFAULT_PCT,
   RETUNE_MAX_PRICE_CHANGE_PCT,
@@ -301,10 +302,13 @@ check("P1 detection: the RAW crush layout trips crush-guard OR carrier-guard (th
   }
 });
 
-check("P1 fix: dispersion resolves the Tails? layout crush (healthy) but not the EV-forced Captive", () => {
+check("P1 fix: dispersion + LAW M resolve BOTH crushes — Tails? (layout) and Captive (was called EV-forced)", () => {
   // Tails? — a layout crush → dispersion spreads the loss mass and it reads
-  // HEALTHY. Captive — EV-forced onto the single $80.28 carrier → dispersion is
-  // a no-op and it stays degenerate (the pool-edit path is its fix).
+  // HEALTHY. Captive — pre-V3 the solve dumped the loss mass on the single
+  // $80.28 carrier and the story was "EV-forced, pool-edit owns it". Under
+  // LAW M the gate re-lays that zigzag into a lawful ladder that spreads the
+  // loss mass down the chain (≈15.8/20.5/20.5/29?) — HEALTHY at the same
+  // landed edge. The crush was solver-forced, not physics-forced.
   const tailsFixed = solve(TAILS, RETUNE_PRICE_BUDGET_DEFAULT_PCT, true);
   assert(tailsFixed.planned !== null && tailsFixed.price !== null, "Tails? feasible");
   const sTails = ladderShape(TAILS.values, toShares(TAILS.livePcts), tailsFixed.planned!, tailsFixed.price!);
@@ -312,7 +316,14 @@ check("P1 fix: dispersion resolves the Tails? layout crush (healthy) but not the
   const captiveFixed = solve(CAPTIVE, RETUNE_PRICE_BUDGET_DEFAULT_PCT, true);
   assert(captiveFixed.planned !== null && captiveFixed.price !== null, "Captive feasible");
   const sCap = ladderShape(CAPTIVE.values, toShares(CAPTIVE.livePcts), captiveFixed.planned!, captiveFixed.price!);
-  assert(sCap.degenerate, `Captive's EV-forced crush stays degenerate (score ${sCap.score.toFixed(3)})`);
+  assert(
+    !sCap.degenerate && sCap.crushedCount === 0,
+    `LAW M resolves Captive too (score ${sCap.score.toFixed(3)}, crush ${sCap.crushedCount})`,
+  );
+  assert(
+    findMonotoneViolations({ values: CAPTIVE.values, shares: captiveFixed.planned! }).length === 0,
+    "Captive's plan is LAW-M-clean end to end",
+  );
 });
 
 check("P1 pool-edits-first: a degenerate plan yields a non-null poolEditPlan (the escape)", () => {
@@ -427,15 +438,23 @@ check("dispersion: crush ladders become HEALTHY (9-5, Best Friends, High Tides) 
   }
 });
 
-check("dispersion: an EV-forced crush (Captive) stays degenerate — the pool-edit path owns it", () => {
-  // Captive's loss average is EV-forced onto the single $80.28 carrier; there is
-  // no room to spread, so dispersion is a no-op and the plan stays degenerate
-  // (its fix is the pool edit, not a re-spread).
+check("dispersion + LAW M: Captive's crush is a RETUNE-PATH artifact — raw layout degenerate, lawful re-lay healthy", () => {
+  // Pre-V3 this check pinned Captive as "EV-forced, dispersion is a no-op,
+  // pool-edit owns it". The LAW M gate disproved the premise: the retune path
+  // (disperse on) re-lays the $80.28 carrier crush into a healthy lawful
+  // ladder at the SAME landed edge. The RAW path (disperse off — the legacy
+  // direct callers, no gate) still shows the crush: the contrast proves the
+  // fix lives in the retune path, not in the fixture.
   const off = solve(CAPTIVE, RETUNE_PRICE_BUDGET_DEFAULT_PCT, false);
   const on = solve(CAPTIVE, RETUNE_PRICE_BUDGET_DEFAULT_PCT, true);
   assert(off.planned !== null && on.planned !== null, "Captive feasible both ways");
+  const sOff = ladderShape(CAPTIVE.values, toShares(CAPTIVE.livePcts), off.planned!, off.price!);
+  assert(sOff.degenerate, `the RAW (no-disperse) layout still crushes (shape ${sOff.score.toFixed(2)})`);
   const sOn = ladderShape(CAPTIVE.values, toShares(CAPTIVE.livePcts), on.planned!, on.price!);
-  assert(sOn.degenerate, `Captive's EV-forced crush stays degenerate (shape ${sOn.score.toFixed(2)})`);
+  assert(
+    !sOn.degenerate && sOn.crushedCount === 0,
+    `the retune path lands lawful + healthy (shape ${sOn.score.toFixed(2)})`,
+  );
 });
 
 // ════════════════════════════════════════════════════════════════════════
@@ -1144,6 +1163,8 @@ function solvePerf(p: Pool, band: number): {
   tagExact: boolean;
   snapped: boolean;
   price: number | null;
+  /** LAW M violations on the shipped plan (−1 = refused). */
+  lawViols: number;
 } {
   const weights = toWeights(p.livePcts);
   const before = computePackRisk({
@@ -1175,17 +1196,20 @@ function solvePerf(p: Pool, band: number): {
   });
   const r = search.bestResult;
   if ("error" in r) {
-    return { nodes: search.snapNodesSpent, tagExact: false, snapped: false, price: null };
+    return { nodes: search.snapNodesSpent, tagExact: false, snapped: false, price: null, lawViols: -1 };
   }
   const after = computePackRisk({
     cards: p.values.map((v, i) => ({ value: v, weight: r.weights[i]! })),
     price: search.bestPrice,
   });
+  const total = r.weights.reduce((a, x) => a + (x > 0 ? x : 0), 0);
+  const shares = r.weights.map((x) => (total > 0 && x > 0 ? x / total : 0));
   return {
     nodes: search.snapNodesSpent,
     tagExact: Math.abs(after.winRate - t.targetWinRate) <= 1e-4 + 1e-12,
     snapped: r.snapped === true,
     price: search.bestPrice,
+    lawViols: findMonotoneViolations({ values: p.values, shares }).length,
   };
 }
 
@@ -1210,8 +1234,17 @@ check("P13 budget constant: the ±10% (concurrent) plan budget stays under the p
   );
 });
 
-check("P13 incident bound: every frozen worst-case pack plans within the ±10% budget (tag-exact + snapped)", () => {
+check("P13 incident bound: every frozen worst-case pack plans within the ±10% budget (tag-exact + lawful)", () => {
   const budget = taggedPlanNodeBudget(RETUNE_PRICE_BUDGET_DEFAULT_PCT);
+  // LAW M (Retune V3) reshaped the snap outcome on ONE of the four: Blazing
+  // Light's precise solve starves the $1.09 dust card to the 0.0001% floor
+  // while every winner carries real mass — unlawful against the whole win
+  // band, and no HUMAN-NICE layout intersects {lawful × tag-exact × edge
+  // window} for that pool. Its plan now ships as the gate's lawful re-lay
+  // (precise rungs, snapped=false, honestly reported). The other three still
+  // land nice snapped plans — the law check inside the DFS adopts only
+  // lawful candidates, so a snap now IMPLIES lawful.
+  const stillSnaps = new Set(["10% Poketto Monsuta", "10% Goofy", "5% Luxury Collector"]);
   for (const p of PERF_FIXTURES) {
     const out = solvePerf(p, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
     assert(out.price !== null, `${p.name}: must be feasible in-band`);
@@ -1223,8 +1256,11 @@ check("P13 incident bound: every frozen worst-case pack plans within the ±10% b
     );
     // Tag exactness (1e-4) is NEVER sacrificed by the bound — only niceness is.
     assert(out.tagExact, `${p.name}: tag win-rate must stay exact within 1e-4 under the budget`);
-    // The bound degrades N→P→G but STILL snaps (P/G are tag-exact + snapped).
-    assert(out.snapped, `${p.name}: must still land a snapped plan (P/G tier) under the budget`);
+    // LAW M is NEVER sacrificed either — snapped or re-laid, the ladder is lawful.
+    assert(out.lawViols === 0, `${p.name}: the shipped plan must be LAW-M-clean (got ${out.lawViols} violation(s))`);
+    if (stillSnaps.has(p.name)) {
+      assert(out.snapped, `${p.name}: must still land a snapped plan (P/G tier) under the budget`);
+    }
   }
 });
 
@@ -1337,7 +1373,14 @@ const OG_SET: Pool = {
 check("P15 loss chain carries no >2pp ladder sandwich (OG Set)", () => {
   const out = solve(OG_SET, RETUNE_PRICE_BUDGET_DEFAULT_PCT);
   assert(out.price !== null && out.planned !== null, "OG Set solves feasibly");
-  assert(out.snapped === true, "OG Set lands a clean snap");
+  // LAW M SUBSUMES the sandwich rule: a monotone ladder cannot dip below a
+  // cheaper neighbor at all. OG Set's lawful plan ships on precise rungs
+  // (the nice grid does not intersect the law + edge window here — snapped
+  // honestly false), and the sandwich walk below must find nothing.
+  assert(
+    findMonotoneViolations({ values: OG_SET.values, shares: out.planned! }).length === 0,
+    "OG Set's plan is LAW-M-clean",
+  );
   assert(
     out.after!.edge >= out.targets.targetEdge - 1e-9,
     `edge ${(out.after!.edge * 100).toFixed(3)}% must land at/above target ${(out.targets.targetEdge * 100).toFixed(3)}%`,

@@ -527,6 +527,12 @@ export type ShapeWeightsSuccess = {
  *                             mass + EV (the pins / added cards force a rich
  *                             loss card likelier than a cheaper one). The plan
  *                             would be garbage-ordered; the pool edit is the fix.
+ * - `monotone-unreachable`  — LAW M (Retune V3): no FULL-ladder monotone layout
+ *                             (odds only rising down the value order, pins
+ *                             sovereign, zero-weight rows exempt) can carry the
+ *                             landed EV at this price/win mass under the
+ *                             never-inflate caps. The detail carries the lawful
+ *                             EV window so guidance can say what WOULD fit.
  */
 export type ShapeWeightsLimitKind =
   | "invalid-price"
@@ -542,7 +548,8 @@ export type ShapeWeightsLimitKind =
   | "ev-unreachable-for-split"
   | "edge-unreachable"
   | "pins-infeasible"
-  | "loss-nonmonotone";
+  | "loss-nonmonotone"
+  | "monotone-unreachable";
 
 /**
  * Structured description of the HARD limit that made the request genuinely
@@ -1690,7 +1697,7 @@ export function monotoneEvWindow(args: {
   const maxWin = levelFill(lambdaMin);
   {
     // absorb fp drift so the win mass is exact
-    let sum = maxWin.reduce((a, b) => a + b, 0);
+    const sum = maxWin.reduce((a, b) => a + b, 0);
     let drift = W - sum;
     for (let j = m - 1; j >= 0 && Math.abs(drift) > 1e-15; j--) {
       const room = drift > 0 ? eff[j]! - maxWin[j]! : maxWin[j]!;
@@ -1780,6 +1787,327 @@ export function monotoneLayoutForEv(
   const span = window.evMax - window.evMin;
   const t = span > 1e-12 ? Math.min(1, Math.max(0, (evTarget - window.evMin) / span)) : 0;
   return window.minVector.map((lo, i) => lo + t * (window.maxVector[i]! - lo));
+}
+
+/**
+ * The end-of-solve LAW M gate (Retune V3). Verifies the final committed
+ * vector against the owner's full-ladder law; on a zigzag it re-lays the
+ * ladder LAWFULLY at the SAME landed win mass / near-miss reality / EV
+ * (pins exact, never inflating any winner beyond max(live, landed)); when no
+ * lawful ladder can carry the landed EV at this price it reports `refuse`
+ * with the lawful window so the caller can emit the typed
+ * `monotone-unreachable` limit. Pure — the caller applies the outcome.
+ *
+ * The re-layout is quantized on the PIN grid (1e9 units — every pin with ≤ 7
+ * decimal places of percent stays EXACT), keeps every row the solve kept
+ * alive (a 0.0001% floor via same-band micro-transfers — no card silently
+ * vanishes), and is re-verified end-to-end (law, caps, win mass, NM floor,
+ * EV/edge inside the contract); any failure downgrades to `refuse` — the
+ * gate NEVER ships an unverified vector.
+ *
+ * `evAccept` (the caller's own edge-acceptance window as an EV range) lets
+ * the re-layout move WITHIN the already-accepted contract instead of
+ * matching the landed EV to the cent — essential when the landed EV sits
+ * exactly on the lawful window's edge (the EV-forced pools), where an
+ * EV-exact re-layout would be forced to zero rows. Omitted → EV-exact.
+ */
+/** The LAW M layout grid: 1e9 units (every ≤7-decimal-percent pin exact). */
+const LAW_M_SCALE = 1_000_000_000;
+/** 0.0001% — the solver's own floor-pin fraction (keep-alive floor). */
+const LAW_M_KEEP_ALIVE_UNITS = 1_000;
+
+/**
+ * Shared LAW M layout core: compute the lawful EV window at one near-miss
+ * floor, pick an EV inside `[evLo, evHi]` (preferring `evPrefer`), lay the
+ * witness interpolation, quantize on the pin grid (pins + win-band sum
+ * exact), keep every reference-positive row alive (0.0001% same-band
+ * micro-transfers, signed-drift-compensated), and fail-closed verify the
+ * result. Returns the verified integer vector + risk, or the window alone
+ * when no verifiable layout exists (for refusal copy), or `null` when the
+ * window itself is infeasible.
+ */
+function lawfulLadderInWindow(args: {
+  values: number[];
+  price: number;
+  winMass: number;
+  nearMissFloor: number;
+  winCaps: (number | null)[];
+  pins: { index: number; share: number }[] | null;
+  pinnedIdx: Set<number> | undefined;
+  evLo: number;
+  evHi: number;
+  evPrefer: number;
+  /** TRUE → bias off the high (edge-below-target) boundary + range check;
+   *  FALSE → EV-exact mode (|ev − evPrefer| within quantization noise). */
+  contractMode: boolean;
+  /** Shares reference: rows > 0 here must stay alive in the layout. */
+  keepAliveRef: readonly number[] | null;
+}): { units: number[]; risk: PackRisk; window: MonotoneEvWindow } | { window: MonotoneEvWindow | null } {
+  const { values, price, pinnedIdx } = args;
+  const n = values.length;
+  const win = monotoneEvWindow({
+    values,
+    price,
+    winMass: args.winMass,
+    nearMissMin: args.nearMissFloor,
+    winCaps: args.winCaps,
+    pinnedShares: args.pins,
+  });
+  if (win === null) return { window: null };
+  let maxV = 0;
+  for (const v of values) if (v > maxV) maxV = v;
+  const roundSlack = Math.max(1e-6, (n * maxV) / LAW_M_SCALE);
+  const lo = Math.max(win.evMin, args.evLo - 1e-6);
+  let hi = Math.min(win.evMax, args.evHi + (args.contractMode ? 0 : 1e-6));
+  if (lo > hi + 1e-9) return { window: win };
+  if (args.contractMode) hi = Math.max(lo, hi - roundSlack);
+
+  let evStar = Math.min(hi, Math.max(lo, args.evPrefer));
+  const targetWinUnits = Math.round(args.winMass * LAW_M_SCALE);
+  let bigFreeWin = -1;
+  let bigFreeLoss = -1;
+  const layoutAt = (ev: number): number[] => {
+    const layout = monotoneLayoutForEv(win, ev);
+    const u = layout.map((s) => Math.round(s * LAW_M_SCALE));
+    if (args.pins) {
+      for (const p of args.pins) u[p.index] = Math.round(p.share * LAW_M_SCALE);
+    }
+    let freeWinUnits = 0;
+    let pinnedWinUnits = 0;
+    bigFreeWin = -1;
+    bigFreeLoss = -1;
+    for (let i = 0; i < n; i++) {
+      const v = values[i]!;
+      if (!(v > 0)) continue;
+      if (v >= price) {
+        if (pinnedIdx?.has(i)) pinnedWinUnits += u[i]!;
+        else {
+          freeWinUnits += u[i]!;
+          if (bigFreeWin < 0 || u[i]! > u[bigFreeWin]!) bigFreeWin = i;
+        }
+      } else if (!pinnedIdx?.has(i)) {
+        if (bigFreeLoss < 0 || u[i]! > u[bigFreeLoss]!) bigFreeLoss = i;
+      }
+    }
+    if (bigFreeWin >= 0) {
+      u[bigFreeWin] = u[bigFreeWin]! + (targetWinUnits - pinnedWinUnits - freeWinUnits);
+    }
+    let totalUnits = 0;
+    for (const x of u) totalUnits += x;
+    if (bigFreeLoss >= 0) u[bigFreeLoss] = u[bigFreeLoss]! + (LAW_M_SCALE - totalUnits);
+    return u;
+  };
+  const keepAlive = (u: number[]): number => {
+    if (!args.keepAliveRef) return 0;
+    let drift = 0;
+    for (let i = 0; i < n; i++) {
+      const v = values[i]!;
+      if (!(v > 0) || pinnedIdx?.has(i)) continue;
+      if (!(args.keepAliveRef[i]! > 0) || u[i]! > 0) continue;
+      if (args.winCaps[i] === 0) continue; // cap-dropped stays dropped
+      const donor = v >= price ? bigFreeWin : bigFreeLoss;
+      if (donor < 0 || donor === i || u[donor]! <= 2 * LAW_M_KEEP_ALIVE_UNITS) continue;
+      u[i] = LAW_M_KEEP_ALIVE_UNITS;
+      u[donor] = u[donor]! - LAW_M_KEEP_ALIVE_UNITS;
+      drift += (LAW_M_KEEP_ALIVE_UNITS / LAW_M_SCALE) * (v - values[donor]!);
+    }
+    return drift;
+  };
+  let units = layoutAt(evStar);
+  const plannedDrift = keepAlive(units.slice());
+  if (plannedDrift !== 0) {
+    evStar = Math.min(hi, Math.max(lo, evStar - plannedDrift));
+    units = layoutAt(evStar);
+  }
+  keepAlive(units);
+  if (bigFreeLoss < 0 && units.reduce((a, b) => a + b, 0) !== LAW_M_SCALE) {
+    return { window: win };
+  }
+
+  // ── Fail-closed verification of the quantized vector ────────────────────
+  let ok = true;
+  let qWin = 0;
+  let qNm = 0;
+  for (let i = 0; i < n; i++) {
+    const u = units[i]!;
+    if (u < 0 || !Number.isInteger(u)) {
+      ok = false;
+      break;
+    }
+    const v = values[i]!;
+    if (!(v > 0)) continue;
+    const cap = args.winCaps[i];
+    if (v >= price) {
+      qWin += u;
+      if (cap !== null && u > Math.round(cap * LAW_M_SCALE) + LAW_M_KEEP_ALIVE_UNITS + 2) ok = false;
+    } else if (v >= 0.5 * price) qNm += u;
+  }
+  if (!ok || qWin !== targetWinUnits) return { window: win };
+  if (qNm < Math.round(args.nearMissFloor * LAW_M_SCALE) - 5 - LAW_M_KEEP_ALIVE_UNITS) {
+    return { window: win };
+  }
+  const qShares = units.map((u) => u / LAW_M_SCALE);
+  if (
+    findMonotoneViolations({
+      values,
+      shares: qShares,
+      pinnedIdx,
+      tol: (LAW_M_KEEP_ALIVE_UNITS + 5) / LAW_M_SCALE,
+    }).length > 0
+  ) {
+    return { window: win };
+  }
+  const risk = computePackRisk({
+    cards: values.map((value, i) => ({ value, weight: units[i]! })),
+    price,
+  });
+  if (args.contractMode) {
+    if (risk.ev < args.evLo - 2 * roundSlack || risk.ev > args.evHi + 2 * roundSlack) {
+      return { window: win };
+    }
+  } else if (
+    Math.abs(risk.ev - args.evPrefer) >
+    Math.max(1e-5 * price, 2 * roundSlack + Math.abs(plannedDrift))
+  ) {
+    return { window: win };
+  }
+  return { units, risk, window: win };
+}
+
+export function enforceMonotoneLadderLawM(input: {
+  cards: { value: number }[];
+  weights: readonly number[];
+  price: number;
+  maxWinCap?: number;
+  currentWeights?: readonly number[];
+  pinnedShares?: ReadonlyMap<number, number> | null;
+  /** The requested near-miss floor (TOTAL, pinned NM included). */
+  nearMissFloor: number;
+  /** EV range the caller already accepts (edge window mapped to EV). */
+  evAccept?: { min: number; max: number };
+}):
+  | { kind: "lawful" }
+  | { kind: "relayout"; weights: number[]; risk: PackRisk }
+  | {
+      kind: "refuse";
+      detail: string;
+      suggestion: string;
+      monotoneEvMin: number | null;
+      monotoneEvMax: number | null;
+      evTarget: number;
+    } {
+  const { cards, price } = input;
+  const n = cards.length;
+  const values = cards.map((c) => c.value);
+  let total = 0;
+  for (const w of input.weights) total += Number.isFinite(w) && w > 0 ? w : 0;
+  if (!(total > 0) || !(price > 0)) return { kind: "lawful" };
+  const shares = new Array<number>(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    const w = input.weights[i]!;
+    shares[i] = Number.isFinite(w) && w > 0 ? w / total : 0;
+  }
+  const pinnedIdx =
+    input.pinnedShares && input.pinnedShares.size > 0
+      ? new Set(input.pinnedShares.keys())
+      : undefined;
+  const viols = findMonotoneViolations({ values, shares, pinnedIdx, tol: 1e-9 });
+  if (viols.length === 0) return { kind: "lawful" };
+
+  // ── Landed reality ──────────────────────────────────────────────────────
+  let landedEv = 0;
+  let winShare = 0;
+  let landedNm = 0;
+  for (let i = 0; i < n; i++) {
+    const v = values[i]!;
+    if (!(v > 0)) continue;
+    landedEv += shares[i]! * v;
+    if (v >= price) winShare += shares[i]!;
+    else if (v >= 0.5 * price) landedNm += shares[i]!;
+  }
+
+  // Never-inflate caps for the re-layout: a winner may keep what the accepted
+  // solve already gave it (flagged inflation stays legal) but may not rise
+  // further; max-win-cap-dropped cards stay dropped.
+  let curTotal = 0;
+  if (input.currentWeights) {
+    for (const w of input.currentWeights) {
+      if (Number.isFinite(w) && w > 0) curTotal += w;
+    }
+  }
+  const winCaps = new Array<number | null>(n).fill(null);
+  for (let i = 0; i < n; i++) {
+    const v = values[i]!;
+    if (!(v > 0) || v < price) continue;
+    if (pinnedIdx?.has(i)) continue;
+    if (input.maxWinCap !== undefined && v > input.maxWinCap) {
+      winCaps[i] = 0;
+      continue;
+    }
+    if (curTotal > 0) {
+      const live = input.currentWeights![i];
+      const liveShare = Number.isFinite(live) && live! > 0 ? live! / curTotal : 0;
+      winCaps[i] = Math.max(liveShare, shares[i]!);
+    }
+  }
+  const pinsArr =
+    pinnedIdx !== undefined
+      ? Array.from(input.pinnedShares!.entries()).map(([index, share]) => ({ index, share }))
+      : null;
+
+  // ── Lawful re-layout inside the accepted contract ───────────────────────
+  // EV target: the landed EV clamped into the caller's acceptance window
+  // (when given) intersected with the lawful window — so an EV-forced pool
+  // whose landed EV sits ON the window edge can still breathe enough to keep
+  // every row alive without leaving the accepted edge band.
+  const hasAccept = input.evAccept !== undefined;
+  const aMin = hasAccept ? Math.min(input.evAccept!.min, input.evAccept!.max) : landedEv;
+  const aMax = hasAccept ? Math.max(input.evAccept!.min, input.evAccept!.max) : landedEv;
+  const floors = [Math.max(0, input.nearMissFloor)];
+  const landedFloor = Math.min(floors[0]!, Math.max(0, landedNm - 1e-9));
+  if (landedFloor < floors[0]! - 1e-12) floors.push(landedFloor);
+  let lastWindow: MonotoneEvWindow | null = null;
+  for (const floor of floors) {
+    const laid = lawfulLadderInWindow({
+      values,
+      price,
+      winMass: winShare,
+      nearMissFloor: floor,
+      winCaps,
+      pins: pinsArr,
+      pinnedIdx,
+      evLo: aMin,
+      evHi: aMax,
+      evPrefer: landedEv,
+      contractMode: hasAccept,
+      keepAliveRef: shares,
+    });
+    if (laid.window !== null) lastWindow = laid.window;
+    if ("units" in laid) return { kind: "relayout", weights: laid.units, risk: laid.risk };
+  }
+
+  // No lawful layout carries the landed EV at this price.
+  const evTarget = landedEv;
+  if (lastWindow === null) {
+    return {
+      kind: "refuse",
+      detail: `No lawful odds ladder exists for this pool at $${price.toFixed(2)}: the win mass (${(winShare * 100).toFixed(2)}%) cannot be carried with odds only rising down the value order under the never-inflate caps.`,
+      suggestion:
+        "Lower the win-rate target (untag or retag the pack) or edit the pool — the tag mass exceeds what this pool's card values can pay on an honest ladder.",
+      monotoneEvMin: null,
+      monotoneEvMax: null,
+      evTarget,
+    };
+  }
+  return {
+    kind: "refuse",
+    detail: `No lawful odds ladder (odds only rising down the value order) can pay $${evTarget.toFixed(2)} per open at $${price.toFixed(2)}: lawful ladders at this win rate pay $${lastWindow.evMin.toFixed(2)}–$${lastWindow.evMax.toFixed(2)}.`,
+    suggestion:
+      "The designed win rate doesn't fit this pool's card values at this price — untag/retag the pack, move the price, or edit the pool so a lawful ladder can carry the target.",
+    monotoneEvMin: lastWindow.evMin,
+    monotoneEvMax: lastWindow.evMax,
+    evTarget,
+  };
 }
 
 // ─── Lottery skew (steep grail-band redistribution for tagged 1%/5% packs) ──
@@ -3210,6 +3538,9 @@ function snapTaggedPer100k(input: {
       lex: number[];
       u: number[];
     };
+    // Owner pins are LAW-M-exempt (sovereign) in the in-DFS law check.
+    const lawPinnedIdx: ReadonlySet<number> | undefined =
+      pinnedUnitsByIdx.size > 0 ? new Set(pinnedUnitsByIdx.keys()) : undefined;
     // Deterministic total order (spec §2.2): shape distance → jackpot on the
     // 1-in-N menu → smallest house-favorable edge excess → lexicographically
     // smallest (win units value-DESC…, dust rung).
@@ -3324,6 +3655,21 @@ function snapTaggedPer100k(input: {
             if (transferX !== 0) {
               assembled[dustLo] = assembled[dustLo]! + transferX;
               assembled[dustHi] = assembled[dustHi]! - transferX;
+            }
+            // LAW M inside the DFS (Retune V3): adopt only candidates the
+            // boundary gate would accept — same predicate, same tolerance.
+            // An unlawful "nicer" layout must lose to a lawful one, not win
+            // the tier and burn a gate re-lay (which forfeits the snap).
+            const candShares = assembled.map((u) => u / SCALE);
+            if (
+              findMonotoneViolations({
+                values,
+                shares: candShares,
+                pinnedIdx: lawPinnedIdx,
+                tol: 1e-9,
+              }).length > 0
+            ) {
+              continue;
             }
             cand.u = assembled;
             best = cand;
@@ -3764,6 +4110,92 @@ function snapPinnedFreeToCleanLadder(input: {
  * The two arms are DISJOINT — success has weights+relaxations, an error has
  * error+limit, never both.
  */
+/**
+ * LAW M RESCUE (Retune V3, search third pass): the core's band split treats
+ * the near-miss floor as an EXACT allocation, so a pool that must carry MORE
+ * near-miss mass to reach the edge target refuses `ev-unreachable-for-split`
+ * — and the old soft float "solved" it by inflating a cheap winner into a
+ * zigzag instead (under-cap fixture: $4.2 at 24.8% over a 10% near-miss at
+ * −26% price). The lawful window treats the floor as a FLOOR: when a LAW-M
+ * ladder inside the accepted edge band exists at the requested win rate, lay
+ * it directly (win mass / pins exact, never-inflate caps, every live row
+ * kept alive). Verified fail-closed; returns null when no lawful ladder
+ * exists. Runs ONLY as {@link searchBestPriceForCleanSnap}'s last resort so
+ * snapped/nice plans and the remedy engine's stricter verification keep
+ * priority.
+ */
+function lawfulWindowRescue(input: ShapeWeightsInput): ShapeWeightsSuccess | null {
+  const price = input.price;
+  const targetEdge = input.targetEdge ?? TARGET_HOUSE_EDGE;
+  const winMass = input.targetWinRate;
+  if (!(price > 0) || !Number.isFinite(winMass) || winMass < 0 || winMass >= 1) return null;
+  if (!(targetEdge > 0) || targetEdge >= 1) return null;
+  const n = input.cards.length;
+  if (n === 0) return null;
+  const values = input.cards.map((c) => c.value);
+  const pinsIn = input.pinnedShares ?? [];
+  const pinnedIdx = pinsIn.length > 0 ? new Set(pinsIn.map((p) => p.index)) : undefined;
+  let pinnedNm = 0;
+  for (const p of pinsIn) {
+    if (!Number.isInteger(p.index) || p.index < 0 || p.index >= n) return null;
+    if (!Number.isFinite(p.share) || !(p.share > 0) || p.share > 1) return null;
+    const v = values[p.index]!;
+    if (v >= 0.5 * price && v < price) pinnedNm += p.share;
+  }
+  const nearMissFloor = Math.max(0, input.nearMissMin ?? 0.1) + pinnedNm;
+  let curTotal = 0;
+  if (input.currentWeights) {
+    for (const w of input.currentWeights) {
+      if (Number.isFinite(w) && w > 0) curTotal += w;
+    }
+  }
+  const liveShares = new Array<number>(n).fill(0);
+  if (curTotal > 0) {
+    for (let i = 0; i < n; i++) {
+      const w = input.currentWeights![i];
+      liveShares[i] = Number.isFinite(w) && w! > 0 ? w! / curTotal : 0;
+    }
+  }
+  const winCaps = new Array<number | null>(n).fill(null);
+  for (let i = 0; i < n; i++) {
+    const v = values[i]!;
+    if (!(v > 0) || v < price) continue;
+    if (pinnedIdx?.has(i)) continue;
+    if (input.maxWinCap !== undefined && v > input.maxWinCap) {
+      winCaps[i] = 0;
+      continue;
+    }
+    if (curTotal > 0) winCaps[i] = liveShares[i]!;
+  }
+  const laid = lawfulLadderInWindow({
+    values,
+    price,
+    winMass,
+    nearMissFloor,
+    winCaps,
+    pins: pinsIn.length > 0 ? pinsIn.map((p) => ({ index: p.index, share: p.share })) : null,
+    pinnedIdx,
+    evLo: price * (1 - (targetEdge + 0.001)),
+    evHi: price * (1 - targetEdge),
+    // Prefer the exact-edge end of the accepted band.
+    evPrefer: price * (1 - targetEdge),
+    contractMode: true,
+    keepAliveRef: curTotal > 0 ? liveShares : null,
+  });
+  if (!("units" in laid)) return null;
+  if (Math.abs(laid.risk.winRate - winMass) > 1e-6) return null;
+  return {
+    weights: laid.units,
+    risk: laid.risk,
+    ev: laid.risk.ev,
+    edge: laid.risk.edge,
+    relaxations: [],
+    snapped: false,
+    lotterySkewApplied: false,
+    topInflationUnavoidable: false,
+  };
+}
+
 export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   const price = input.price;
   const targetEdge = input.targetEdge ?? TARGET_HOUSE_EDGE;
@@ -4562,6 +4994,15 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // reached by `winBeta` steepening within the caps + `disperseLoss`, giving a
   // clean monotonic ladder. (Soft `holdWinRate` KEEPS the exemption — it needs the
   // sink to float toward the +5pp band; only the HARD hold removes it.)
+  //
+  // LAW M (Retune V3): the sink stays a legal LEVER here — it often lands a
+  // perfectly lawful ladder (the cheapest winner rises but stays under the
+  // near-miss share: Three Blades, Captive's crush). What it may no longer do
+  // on the retune path is SHIP a zigzag: the end-of-solve
+  // `enforceMonotoneLadderLawM` gate re-lays any sink overshoot at the same
+  // landed EV/mass, or refuses typed (`monotone-unreachable`) when no lawful
+  // ladder exists (Love Cycle's 30%-over-10% shape). Legality is enforced at
+  // the boundary, not by removing the lever.
   if (
     anchorActive &&
     winPoolSlots.length > 0 &&
@@ -5845,6 +6286,59 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     }
   }
 
+  // ── LAW M — the FULL-ladder monotone gate (Retune V3, retune path only) ──
+  // `enforceLossMonotone` above orders the free BELOW-price band, but the
+  // owner's law spans the WHOLE ladder — including the win→near-miss boundary
+  // the soft float's sink used to break (Love Cycle: 30% on the cheapest
+  // winner over a 10% near-miss). Verify the final committed vector; on a
+  // zigzag, re-lay the ladder lawfully at the SAME landed win mass / EV /
+  // pins (LAW over nice rungs — `snapped` drops to false, honestly); when no
+  // lawful ladder can carry the landed EV at this price, refuse with the
+  // typed `monotone-unreachable` limit so the price search keeps sweeping
+  // and guidance can say what WOULD fit. Gated on `disperseLoss` so every
+  // legacy direct caller stays byte-identical.
+  if (disperseLoss) {
+    // The contract this solve already accepted, as an EV range: edge may sit
+    // in [target, target + snap tol (+ any one-sided excess already taken)].
+    const gateEdgeHi =
+      targetEdge +
+      0.001 +
+      (oneSidedAccepted && oneSidedEdgeExcess !== null ? oneSidedEdgeExcess : 0);
+    const gate = enforceMonotoneLadderLawM({
+      cards: input.cards,
+      weights,
+      price,
+      maxWinCap,
+      currentWeights: input.currentWeights,
+      pinnedShares: hasPins ? pinnedShareByIdx : null,
+      nearMissFloor: nearMissMass + pinnedNearMissShare,
+      evAccept: {
+        min: price * (1 - gateEdgeHi),
+        max: price * (1 - targetEdge),
+      },
+    });
+    if (gate.kind === "refuse") {
+      return {
+        error:
+          "No lawful odds ladder (odds only rising down the value order) can carry this plan at this price.",
+        limit: {
+          kind: "monotone-unreachable",
+          detail: gate.detail,
+          suggestion: gate.suggestion,
+        },
+      };
+    }
+    if (gate.kind === "relayout") {
+      for (let i = 0; i < weights.length; i++) weights[i] = gate.weights[i]!;
+      risk = gate.risk;
+      // The re-laid ladder is EV/tag-exact but sits on precise (not nice)
+      // rungs, and any per-card niceness verdict computed on the old vector
+      // is stale — report both honestly.
+      snapped = false;
+      taggedSnapApplied = false;
+    }
+  }
+
   // ── NEAR-MISS shortfall diagnostic (retune path only) ────────────────────
   // The dispersal rescue above preserves the near-miss band where the pool's
   // physics allow — but when the edge target + the cheapest-carries-most loss
@@ -6143,9 +6637,112 @@ export function searchBestPriceForCleanSnap(input: {
       ...rest,
       holdWinRate: true,
     });
+    if (isShapeWeightsSuccess(softResult.bestResult)) {
+      return { ...softResult, usedSoftFallback: true };
+    }
+    // LAW M RESCUE (Retune V3): both arms refused everywhere in the band.
+    // When a lawful full-ladder window still contains the contract (the
+    // split's exact-floor allocation was the blocker, not physics), lay the
+    // ladder directly — design win rate held EXACTLY, so this counts as the
+    // HARD arm succeeding, not a soft float.
+    const rescued = lawfulRescueSweep(input);
+    if (rescued !== null) return { ...rescued, usedSoftFallback: false };
     return { ...softResult, usedSoftFallback: true };
   }
-  return { ...searchBestPriceForCleanSnapCore(input), usedSoftFallback: false };
+  const core = searchBestPriceForCleanSnapCore(input);
+  if (!isShapeWeightsSuccess(core.bestResult) && input.disperseLoss === true) {
+    // LAW M RESCUE for the remaining retune arms (tagged / plain hold): same
+    // last-resort contract as above — never reached by legacy callers.
+    const rescued = lawfulRescueSweep(input);
+    if (rescued !== null) return { ...rescued, usedSoftFallback: false };
+  }
+  return { ...core, usedSoftFallback: false };
+}
+
+/**
+ * The LAW M rescue price sweep — {@link searchBestPriceForCleanSnap}'s third
+ * pass (see the call sites above). Walks the SAME ±band the core sweeps
+ * (dense 1¢ ring around base + coarse grid to the endpoints, closest-to-base
+ * first) and lays a lawful window ladder at each candidate via
+ * {@link lawfulWindowRescue}; the first success (= smallest price move) wins.
+ * Tagged mode holds the TAG as the exact win mass. Returns null when no
+ * candidate price admits a lawful ladder — the caller keeps the honest
+ * refusal.
+ */
+function lawfulRescueSweep(input: {
+  cards: { value: number }[];
+  basePrice: number;
+  targetEdge: number;
+  targetWinRate: number;
+  maxWinCap?: number;
+  nearMissMin?: number;
+  winRateTol?: number;
+  maxPriceChangePct?: number;
+  taggedWinRate?: number;
+  upwardPriceExtensionPct?: number;
+  currentWeights?: number[];
+  pinnedShares?: ShapeWeightsPinnedShare[];
+}): SearchBestPriceResultCore | null {
+  const basePrice = input.basePrice;
+  if (!(basePrice > 0) || input.cards.length === 0) return null;
+  const tagged =
+    typeof input.taggedWinRate === "number" && Number.isFinite(input.taggedWinRate);
+  const winMass = tagged ? input.taggedWinRate! : input.targetWinRate;
+  const maxPriceChangePct = input.maxPriceChangePct ?? 0.25;
+  const centsAtBase = Math.round(basePrice * 100);
+  const downCents = Math.max(0, Math.floor(basePrice * maxPriceChangePct * 100));
+  const upCents = Math.max(
+    downCents,
+    Math.floor(basePrice * Math.max(0, input.upwardPriceExtensionPct ?? 0) * 100),
+  );
+  const lo = Math.max(1, centsAtBase - downCents);
+  const hi = centsAtBase + upCents;
+  const seen = new Set<number>();
+  const candidates: number[] = [];
+  const push = (c: number) => {
+    if (c < lo || c > hi || seen.has(c)) return;
+    seen.add(c);
+    candidates.push(c);
+  };
+  push(centsAtBase);
+  for (let d = 1; d <= 30; d++) {
+    push(centsAtBase + d);
+    push(centsAtBase - d);
+  }
+  const span = hi - lo;
+  if (span > 0) {
+    const stride = Math.max(1, Math.ceil(span / 60));
+    for (let c = lo; c <= hi; c += stride) push(c);
+    push(lo);
+    push(hi);
+  }
+  candidates.sort((a, b) => Math.abs(a - centsAtBase) - Math.abs(b - centsAtBase));
+  let searched = 0;
+  for (const cents of candidates) {
+    const price = cents / 100;
+    searched++;
+    const rescued = lawfulWindowRescue({
+      cards: input.cards,
+      price,
+      targetEdge: input.targetEdge,
+      targetWinRate: winMass,
+      maxWinCap: input.maxWinCap,
+      nearMissMin: input.nearMissMin,
+      winRateTol: input.winRateTol,
+      currentWeights: input.currentWeights,
+      pinnedShares: input.pinnedShares,
+    });
+    if (rescued === null) continue;
+    return {
+      bestPrice: price,
+      bestResult: rescued,
+      searched,
+      fellBackToBase: false,
+      taggedAccuracyHit: tagged ? true : null,
+      snapNodesSpent: 0,
+    };
+  }
+  return null;
 }
 
 /**

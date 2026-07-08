@@ -46,6 +46,7 @@ import {
   TAGGED_WINRATE_TOLERANCE,
   bandEvForBeta,
   waterFillWinEv,
+  searchBestPriceForCleanSnap,
   shapeWeights,
   type ShapeWeightsPinnedShare,
   type ShapeWeightsRelaxation,
@@ -1148,19 +1149,23 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
       const eStarPrime = targetEdgeAt(price, capPrime, topPrime);
       let verified = false;
       try {
-        const r = shapeWeights({
+        // Verify through the SAME engine the server retune runs (band 0 =
+        // this exact price): tagged core solve + the LAW M rescue ladder.
+        const s = searchBestPriceForCleanSnap({
           cards: input.cards.map((c) => ({ value: c.value })),
-          price,
+          basePrice: price,
           targetEdge: eStarPrime,
           targetWinRate: tierRate,
+          taggedWinRate: tierRate,
           maxWinCap: capPrime,
           nearMissMin: nmSeed,
           winRateTol: TAGGED_WINRATE_TOLERANCE,
+          maxPriceChangePct: 0,
           currentWeights: input.currentWeights.slice(),
-          winRateIsHard: true,
           disperseLoss: true,
           ...(pins ? { pinnedShares: pins.map((p) => ({ ...p })) } : {}),
         });
+        const r = s.bestResult;
         verified =
           !("error" in r) &&
           r.edge >= eStarPrime - 1e-9 &&
@@ -1217,27 +1222,24 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
       const nmU = Math.max(0.1, 0.8 * nmSeed);
       let verified = false;
       try {
-        const solveU = (mode: "hard" | "soft") =>
-          shapeWeights({
-            cards: input.cards.map((c) => ({ value: c.value })),
-            price,
-            targetEdge: eStarU,
-            targetWinRate: rate,
-            maxWinCap: capU,
-            nearMissMin: nmU,
-            winRateTol: 0.02,
-            currentWeights: input.currentWeights.slice(),
-            disperseLoss: true,
-            ...(mode === "hard" ? { holdWinRateHard: true } : { holdWinRate: true }),
-            ...(pins ? { pinnedShares: pins.map((p) => ({ ...p })) } : {}),
-          });
-        const hard = solveU("hard");
-        if (!("error" in hard) && hard.edge >= eStarU - 1e-9) {
-          verified = true;
-        } else {
-          const soft = solveU("soft");
-          verified = !("error" in soft) && soft.edge >= eStarU - 1e-9;
-        }
+        // Verify through the SAME engine the server untagged retune runs
+        // (band 0 = this exact price): hard hold → soft float → LAW M rescue.
+        const s = searchBestPriceForCleanSnap({
+          cards: input.cards.map((c) => ({ value: c.value })),
+          basePrice: price,
+          targetEdge: eStarU,
+          targetWinRate: rate,
+          maxWinCap: capU,
+          nearMissMin: nmU,
+          winRateTol: 0.02,
+          maxPriceChangePct: 0,
+          currentWeights: input.currentWeights.slice(),
+          holdWinRateHard: true,
+          disperseLoss: true,
+          ...(pins ? { pinnedShares: pins.map((p) => ({ ...p })) } : {}),
+        });
+        verified =
+          !("error" in s.bestResult) && s.bestResult.edge >= eStarU - 1e-9;
       } catch {
         verified = false;
       }
@@ -2738,13 +2740,18 @@ export function computePinRemedies(input: PinRemedyInput): PinRemedy[] {
     cand: readonly ShapeWeightsPinnedShare[],
     atPrice: number,
   ): { ok: boolean; edge: number } => {
+    // Verify through the SAME engine the server retune runs at this exact
+    // price (band 0): tagged core solve / hard hold → soft float, plus the
+    // LAW M rescue ladder — a remedy is only ever claimed when the plan the
+    // server would actually ship verifies.
     const base = {
       cards: input.cards.map((c) => ({ value: c.value })),
-      price: atPrice,
+      basePrice: atPrice,
       targetEdge: input.targetEdge,
       targetWinRate: input.targetWinRate,
       maxWinCap: input.maxWinCap,
       nearMissMin: input.nearMissMin,
+      maxPriceChangePct: 0,
       currentWeights: input.currentWeights.slice(),
       disperseLoss: true,
       ...(cand.length > 0
@@ -2753,11 +2760,12 @@ export function computePinRemedies(input: PinRemedyInput): PinRemedy[] {
     };
     try {
       if (tagged) {
-        const r = shapeWeights({
+        const s = searchBestPriceForCleanSnap({
           ...base,
           winRateTol: TAGGED_WINRATE_TOLERANCE,
-          winRateIsHard: true,
+          taggedWinRate: input.targetWinRate,
         });
+        const r = s.bestResult;
         if (
           !("error" in r) &&
           r.edge >= input.targetEdge - 1e-9 &&
@@ -2768,17 +2776,14 @@ export function computePinRemedies(input: PinRemedyInput): PinRemedy[] {
         }
         return { ok: false, edge: 0 };
       }
-      const hard = shapeWeights({
+      const s = searchBestPriceForCleanSnap({
         ...base,
         winRateTol,
         holdWinRateHard: true,
       });
-      if (!("error" in hard) && hard.edge >= input.targetEdge - 1e-9) {
-        return { ok: true, edge: hard.edge };
-      }
-      const soft = shapeWeights({ ...base, winRateTol, holdWinRate: true });
-      if (!("error" in soft) && soft.edge >= input.targetEdge - 1e-9) {
-        return { ok: true, edge: soft.edge };
+      const r = s.bestResult;
+      if (!("error" in r) && r.edge >= input.targetEdge - 1e-9) {
+        return { ok: true, edge: r.edge };
       }
     } catch {
       /* refusal — fall through */
@@ -2817,7 +2822,10 @@ export function computePinRemedies(input: PinRemedyInput): PinRemedy[] {
   ): Found | null => {
     const span = (farPct - fromPct) * dir;
     if (!(span > 1e-9)) return null;
-    const SAMPLES = 12;
+    // Dense enough to catch the REAL acceptance islands LAW M produces
+    // (C2's jackpot axis: a [0.55%, 0.64%] island in a 1.95pp span — a
+    // 12-sample scan bracketed it at 0.5375/0.7 and missed).
+    const SAMPLES = 36;
     let accepted: { pct: number; edge: number } | null = null;
     let refusedNear = fromPct;
     for (let k = 1; k <= SAMPLES; k++) {

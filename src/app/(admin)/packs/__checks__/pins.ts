@@ -550,8 +550,9 @@ check("LEGACY: guidance WITHOUT pins still models the live odds (unchanged arm)"
 // got: owner pins ride every window as fixed point-masses, the verification
 // solves hold them, and an owner-pinned share is NEVER mistaken for the
 // quantizer's 0.0001% floor-pin signature (owner intent ≠ dead card).
-// Fixture: the CAPTIVE pool — its degenerate plan floor-pins the $33.95
-// card, which the legacy guidance flags as remove-dead-card.
+// Fixture: the CAPTIVE pool. Under LAW M the RETUNE plan re-lays lawfully
+// (no floor pins); the RAW legacy arm (disperseLoss off) still floor-pins
+// the $33.95 card — the dead-card check drives guidance with that raw plan.
 
 const CAPTIVE = {
   price: 485.5,
@@ -620,7 +621,41 @@ check("untagged guidance: empty pinnedShares ≡ omitted (byte-identical JSON)",
 });
 
 check("untagged guidance: an owner pin at the floor share is INTENT, not a dead card (remove-dead-card flips off)", () => {
-  const g0 = computeUntaggedGuidance(captiveGInput);
+  // LAW M note (Retune V3): the RETUNE path's Captive plan no longer
+  // floor-pins the $33.95 card (the gate re-lays it with real mass), so the
+  // floor-pin signature comes from the RAW legacy arm (disperseLoss off —
+  // byte-identical pre-V3 behavior). That raw plan still crushes c6 to the
+  // 0.0001% floor: guidance must flag it dead — unless the owner pins it.
+  const rawSearch = searchBestPriceForCleanSnap({
+    cards: CAPTIVE.values.map((v) => ({ value: v })),
+    basePrice: CAPTIVE.price,
+    targetEdge: captiveT.targetEdge,
+    targetWinRate: captiveT.targetWinRate,
+    maxWinCap: captiveT.maxWinCap,
+    nearMissMin: captiveT.nearMissMin,
+    winRateTol: 0.02,
+    currentWeights: captiveW,
+    maxPriceChangePct: RETUNE_PRICE_BUDGET_DEFAULT_PCT,
+    upwardPriceExtensionPct: 0,
+    holdWinRate: true,
+  });
+  const rawPlan = assertSuccess(rawSearch.bestResult, "raw captive plan");
+  const rawTotal = rawPlan.weights.reduce(
+    (a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0),
+    0,
+  );
+  const rawPlanned = rawPlan.weights.map((w) => (w > 0 ? w / rawTotal : 0));
+  // Premise guard: the raw arm really does floor-pin the $33.95 card.
+  assert(
+    rawPlanned[6]! > 0 && rawPlanned[6]! * 100 < 0.001,
+    `the raw plan floor-pins c6 (got ${(rawPlanned[6]! * 100).toFixed(5)}%)`,
+  );
+  const rawGInput = {
+    ...captiveGInput,
+    price: rawSearch.bestPrice,
+    plannedShares: rawPlanned,
+  };
+  const g0 = computeUntaggedGuidance(rawGInput);
   assert(g0 !== null, "guidance fires without pins");
   const dead0 = g0.suggestions.filter((s) => s.kind === "remove-dead-card");
   assert(
@@ -629,8 +664,8 @@ check("untagged guidance: an owner pin at the floor share is INTENT, not a dead 
   );
   // The owner pins the SAME card at the SAME floor share — now it's intent.
   const gPin = computeUntaggedGuidance({
-    ...captiveGInput,
-    pinnedShares: [{ index: 6, share: captivePlanned[6]! }],
+    ...rawGInput,
+    pinnedShares: [{ index: 6, share: rawPlanned[6]! }],
   });
   assert(gPin !== null, "guidance still fires with the pin");
   assert(

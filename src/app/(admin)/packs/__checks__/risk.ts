@@ -34,6 +34,7 @@ import {
   monotoneEvWindow,
   monotoneLayoutForEv,
   findMonotoneViolations,
+  enforceMonotoneLadderLawM,
   TAGGED_WINRATE_TOLERANCE,
   CV_TIER_BOUNDS,
   type CardLite,
@@ -3022,6 +3023,209 @@ check("ML1 — monotoneLayoutForEv: lawful + EV-exact anywhere in the window", (
   assertLawfulWitness(fx, lo, w.evMin, "ML1 clamp-lo");
   const hi = monotoneLayoutForEv(w, 999);
   assertLawfulWitness(fx, hi, w.evMax, "ML1 clamp-hi");
+});
+
+// ── LAW M — enforceMonotoneLadderLawM (Retune V3, 2/3: the engine gate) ─────
+//
+// The end-of-solve gate: lawful vectors pass byte-untouched, zigzags are
+// re-laid at the SAME landed win mass / EV / pins (fail-closed re-verified),
+// and structurally unlawful demands become the typed `monotone-unreachable`
+// refusal. Wired into `shapeWeights` behind `disperseLoss` (retune path only).
+
+const LOVE_CYCLE_VALUES = [834.0, 810.07, 719.99, 650.6, 600.0, 540.0, 453.0, 376.79, 208.09, 205.37, 152.9, 0.29];
+const LOVE_CYCLE_LIVE_W = [125, 125, 150, 190, 250, 340, 450, 470, 830, 920, 1150, 5000]; // live shares ×1e4
+
+check("MG1 — gate: a lawful ladder passes through untouched", () => {
+  const out = enforceMonotoneLadderLawM({
+    cards: LOVE_CYCLE_VALUES.map((value) => ({ value })),
+    weights: LOVE_CYCLE_LIVE_W,
+    price: 189.93,
+    currentWeights: LOVE_CYCLE_LIVE_W,
+    nearMissFloor: 0.115,
+  });
+  assert(out.kind === "lawful", `live Love Cycle ladder is lawful (got ${out.kind})`);
+});
+
+check("MG2 — gate: a loss-band zigzag inside the lawful window is RE-LAID at the same EV / win mass, integer weights, LAW clean", () => {
+  const values = [100, 50, 30, 10];
+  const cards = values.map((value) => ({ value }));
+  // 50 carries 0.30 over 30's 0.20 — a free-chain zigzag. EV 35 sits inside
+  // the lawful window [25, 37] at winMass 0.1 / floor 0.1, so the gate must
+  // repair, not refuse.
+  const out = enforceMonotoneLadderLawM({
+    cards,
+    weights: [1000, 3000, 2000, 4000],
+    price: 60,
+    nearMissFloor: 0.1,
+  });
+  assert(out.kind === "relayout", `repairable zigzag re-laid (got ${out.kind})`);
+  if (out.kind !== "relayout") return;
+  const total = out.weights.reduce((a, b) => a + b, 0);
+  assert(total === 1_000_000_000, `re-laid on the pin grid (total ${total})`);
+  for (const u of out.weights) assert(Number.isInteger(u) && u >= 0, "integer non-negative units");
+  const shares = out.weights.map((u) => u / total);
+  assert(findMonotoneViolations({ values, shares }).length === 0, "re-laid ladder is lawful");
+  const winShare = shares[0]!;
+  assert(Math.abs(winShare - 0.1) <= 1e-9, `win mass preserved exactly (got ${winShare})`);
+  assert(Math.abs(out.risk.ev - 35) <= 60 * 1e-5, `landed EV preserved (got ${out.risk.ev})`);
+  const nm = shares[1]! + shares[2]!;
+  assert(nm >= 0.1 - 1e-7, `NM floor still met (got ${nm})`);
+});
+
+check("MG2b — gate: pins stay sovereign and EXACT through a re-layout", () => {
+  const values = [100, 50, 30, 10];
+  const cards = values.map((value) => ({ value }));
+  // Win row pinned at 10%; the free loss rows zigzag (0.30 on 50 over 0.20 on
+  // 30). Landed EV 35 ∈ [21, 37] (floor 0.1) → re-layout with the pin exact.
+  const out = enforceMonotoneLadderLawM({
+    cards,
+    weights: [100_000_000, 300_000_000, 200_000_000, 400_000_000],
+    price: 60,
+    pinnedShares: new Map([[0, 0.1]]),
+    nearMissFloor: 0.1,
+  });
+  assert(out.kind === "relayout", `pinned zigzag re-laid (got ${out.kind})`);
+  if (out.kind !== "relayout") return;
+  const total = out.weights.reduce((a, b) => a + b, 0);
+  assert(out.weights[0]! === Math.round(0.1 * total), `pin exact on the grid (got ${out.weights[0]} / ${total})`);
+  const shares = out.weights.map((u) => u / total);
+  assert(
+    findMonotoneViolations({ values, shares, pinnedIdx: new Set([0]) }).length === 0,
+    "re-laid free chain is lawful",
+  );
+  assert(Math.abs(out.risk.ev - 35) <= 60 * 1e-5, `landed EV preserved (got ${out.risk.ev})`);
+});
+
+check("MG3 — gate: a zigzag OUTSIDE the lawful window refuses with the window attached", () => {
+  const values = [100, 50, 10];
+  // 0.3 win / 0.2 NM / 0.5 dust: landed EV 45, but every lawful ladder at
+  // winMass 0.3 + floor 0.2 pays 49–51 — the sink shape underpays the ladder
+  // law. The refusal must carry the exact lawful window.
+  const out = enforceMonotoneLadderLawM({
+    cards: values.map((value) => ({ value })),
+    weights: [3000, 2000, 5000],
+    price: 60,
+    nearMissFloor: 0.2,
+  });
+  assert(out.kind === "refuse", `EV below the lawful window refuses (got ${out.kind})`);
+  if (out.kind !== "refuse") return;
+  assert(Math.abs(out.evTarget - 45) <= 1e-9, `evTarget 45 (got ${out.evTarget})`);
+  assert(out.monotoneEvMin !== null && Math.abs(out.monotoneEvMin - 49) <= 1e-9, `lawful evMin 49 (got ${out.monotoneEvMin})`);
+  assert(out.monotoneEvMax !== null && Math.abs(out.monotoneEvMax - 51) <= 1e-9, `lawful evMax 51 (got ${out.monotoneEvMax})`);
+  assert(out.detail.includes("49.00") && out.detail.includes("51.00"), "detail speaks the lawful window in dollars");
+});
+
+check("MG3b — gate: win mass no lawful ladder can carry refuses with null bounds", () => {
+  // 80% win mass over a 20% loss row: the chain needs the loss row ≥ every
+  // win share — impossible. No window at ANY floor → structural refusal.
+  const out = enforceMonotoneLadderLawM({
+    cards: [{ value: 100 }, { value: 10 }],
+    weights: [8000, 2000],
+    price: 60,
+    nearMissFloor: 0.1,
+  });
+  assert(out.kind === "refuse", `structural impossibility refuses (got ${out.kind})`);
+  if (out.kind !== "refuse") return;
+  assert(out.monotoneEvMin === null && out.monotoneEvMax === null, "no lawful window to report");
+  assert(out.detail.includes("cannot be carried"), "detail names the structural cause");
+});
+
+check("MG4 — shapeWeights (retune path): Love Cycle tagged 0.5 is REFUSED as monotone-unreachable, never a sink plan", () => {
+  const result = shapeWeights({
+    cards: LOVE_CYCLE_VALUES.map((value) => ({ value })),
+    price: 189.93,
+    targetEdge: 0.111,
+    targetWinRate: 0.5,
+    winRateIsHard: true,
+    nearMissMin: 0.115,
+    winRateTol: 0.02,
+    currentWeights: LOVE_CYCLE_LIVE_W,
+    disperseLoss: true,
+  });
+  assert(!isSuccess(result), "tagged 0.5 must not ship a plan at the live price");
+  if (isSuccess(result)) return;
+  assert(
+    result.limit?.kind === "monotone-unreachable",
+    `refusal is the typed LAW M limit (got ${result.limit?.kind ?? "none"}: ${result.error})`,
+  );
+});
+
+check("MG5 — retune search (hard hold + LAW M): Love Cycle untagged ships LAWFUL at both the live-anchored and the raised edge ask", () => {
+  // The soft arm's float+sink is a legal LEVER (it may raise the cheapest
+  // winner) — what it may no longer do is cross the near-miss boundary: the
+  // 50.5%-win / 30%-on-$205 zigzag this pack used to ship is forbidden, and
+  // the LAW M gate verifies every survivor. Both asks must land lawful.
+  for (const targetEdge of [0.1098, 0.111]) {
+    const search = searchBestPriceForCleanSnap({
+      cards: LOVE_CYCLE_VALUES.map((value) => ({ value })),
+      basePrice: 189.93,
+      targetEdge,
+      targetWinRate: 0.385,
+      nearMissMin: 0.115,
+      winRateTol: 0.02,
+      maxPriceChangePct: 0.1,
+      currentWeights: LOVE_CYCLE_LIVE_W,
+      holdWinRateHard: true,
+      disperseLoss: true,
+    });
+    const best = search.bestResult;
+    assert(isSuccess(best), `edge ${targetEdge}: retune plans (${isSuccess(best) ? "" : best.error})`);
+    if (!isSuccess(best)) return;
+    const total = best.weights.reduce((a, b) => a + b, 0);
+    const shares = best.weights.map((w) => w / total);
+    assert(
+      findMonotoneViolations({ values: LOVE_CYCLE_VALUES, shares }).length === 0,
+      `edge ${targetEdge}: the shipped plan obeys LAW M end to end`,
+    );
+    // The exact boundary the owner rejected: cheapest winner ≤ near-miss.
+    assert(
+      shares[9]! <= shares[10]! + 1e-9,
+      `edge ${targetEdge}: cheapest winner ≤ near-miss (got ${(shares[9]! * 100).toFixed(2)}% vs ${(shares[10]! * 100).toFixed(2)}%)`,
+    );
+    // The win-rate float stays inside the +5pp hold band — never the 50.5% runaway.
+    assert(
+      best.risk.winRate <= 0.385 + 0.05 + 1e-9,
+      `edge ${targetEdge}: win rate held (got ${(best.risk.winRate * 100).toFixed(2)}%)`,
+    );
+    assert(best.edge >= targetEdge - 1e-9, `edge ${targetEdge}: at/above target (got ${best.edge})`);
+  }
+});
+
+check("MG6 — full pipeline relayout: a dust-rich pool ships LAWFUL through the gate (hard hold, sink dead)", () => {
+  // Love Cycle's win/NM structure + a REAL dust band (30 / 5 / 0.29): the
+  // dust β-layout has freedom, so the hard-held solve plans — and LAW M's
+  // chain (cheap dust ≥ near-miss share) is enforced by the end-of-solve
+  // gate: lawful ladders at floor 0.115 pay dust-EV ≥ $4.10, so the 8.5%
+  // edge ask (dust-EV $4.87) sits INSIDE the lawful window.
+  const values = [834.0, 810.07, 719.99, 650.6, 600.0, 540.0, 453.0, 376.79, 208.09, 205.37, 152.9, 30, 5, 0.29];
+  const live = [125, 125, 150, 190, 250, 340, 450, 470, 830, 920, 1150, 3000, 1500, 500];
+  const search = searchBestPriceForCleanSnap({
+    cards: values.map((value) => ({ value })),
+    basePrice: 189.93,
+    targetEdge: 0.085,
+    targetWinRate: 0.385,
+    nearMissMin: 0.115,
+    winRateTol: 0.02,
+    maxPriceChangePct: 0.1,
+    currentWeights: live,
+    holdWinRateHard: true,
+    disperseLoss: true,
+  });
+  const best = search.bestResult;
+  assert(isSuccess(best), `dust-rich retune plans (${isSuccess(best) ? "" : best.error})`);
+  if (!isSuccess(best)) return;
+  const total = best.weights.reduce((a, b) => a + b, 0);
+  const shares = best.weights.map((w) => w / total);
+  assert(
+    findMonotoneViolations({ values, shares }).length === 0,
+    `the shipped plan obeys LAW M end to end (${JSON.stringify(
+      findMonotoneViolations({ values, shares })[0] ?? null,
+    )})`,
+  );
+  // The boundary the sink used to break: cheapest winner ≤ near-miss ≤ dust.
+  assert(shares[9]! <= shares[10]! + 1e-9, "cheapest winner ≤ near-miss");
+  assert(shares[10]! <= shares[11]! + 1e-9, "near-miss ≤ cheapest-adjacent dust");
+  assert(best.edge >= 0.085 - 1e-9, `edge at/above target (got ${best.edge})`);
 });
 
 // ── Summary ─────────────────────────────────────────────────────────
