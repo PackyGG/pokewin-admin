@@ -6098,8 +6098,13 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // epsilon for integer quantization). This makes "clean odds" yield to "never
   // inflate the tail" — the snap may round a grail DOWN to a clean rung, never UP.
   const preciseTotalW = weights.reduce((a, b) => a + (b > 0 ? b : 0), 0);
-  const precisePctOf = (i: number): number =>
-    preciseTotalW > 0 ? (weights[i]! / preciseTotalW) * 100 : 0;
+  // Snapshotted BEFORE any snap mutates `weights`: the never-inflate reference
+  // must stay the precise solve even when the snap stack re-runs on the LAW M
+  // re-laid vector (post-gate retry), where `weights` no longer holds it.
+  const precisePcts = weights.map((w) =>
+    preciseTotalW > 0 && w > 0 ? (w / preciseTotalW) * 100 : 0,
+  );
+  const precisePctOf = (i: number): number => precisePcts[i]!;
   const grailIdxForGuard: number[] = [];
   for (let i = 0; i < values.length; i++) {
     if (weights[i]! > 0 && values[i]! >= 5 * price) grailIdxForGuard.push(i);
@@ -6152,233 +6157,281 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   let taggedSnapApplied = false;
   let taggedSnapAllNice: boolean | undefined;
   let taggedSnapNiceExemptIdx: number[] | undefined;
-  if (snapTagTarget !== undefined) {
-    // §niceness live-basis never-inflate caps: current odds on the snap grid
-    // (the owner rule is "never above CURRENT advertised odds" — the precise
-    // vector is an intermediate artifact and capping nice rungs at it would
-    // make the owner's own round-number ask impossible). Zero/absent current
-    // weight ⇒ uncapped (LAW-6 new cards); no anchor ⇒ null (the legacy
-    // value-only path keeps no inflation guard, mirroring the generic snap).
-    const snapScale = hasPins ? PIN_SCALE : 100_000;
-    const curForCaps = cur;
-    const liveCapUnits =
-      anchorActive && curForCaps !== undefined
-        ? values.map((_, i) => {
-            const cw = curForCaps[i];
-            return cw !== undefined && Number.isFinite(cw) && cw > 0
-              ? (cw / curTotal) * snapScale
-              : Infinity;
-          })
-        : null;
-    const taggedSnap = snapTaggedPer100k({
-      values,
-      weights,
-      price,
-      tag: snapTagTarget,
-      targetEdge,
-      edgeTolAbove: snapEdgeTol,
-      grailGuard: snapGrailNotInflated,
-      liveCapUnits,
-      // Plan-wide DFS budget (perf-incident fix): shared across every candidate
-      // price the tagged search evaluates so the all-nice enumeration can't grind.
-      ...(input.nodeBudget !== undefined ? { nodeBudget: input.nodeBudget } : {}),
-      ...(hasPins
-        ? {
-            pins: [...pinnedShareByIdx.keys()].map((index) => ({
-              index,
-              units: weights[index]!,
-            })),
-            scale: PIN_SCALE,
-          }
-        : {}),
-    });
-    if (taggedSnap !== null) {
-      for (let i = 0; i < weights.length; i++) weights[i] = taggedSnap.weights[i]!;
-      risk = taggedSnap.risk;
-      snapped = true;
-      taggedSnapApplied = true;
-      taggedSnapAllNice = taggedSnap.allNice;
-      taggedSnapNiceExemptIdx = taggedSnap.niceExemptIdx;
+  // LAW M acceptance for the POST-GATE snap retry: a retry candidate must keep
+  // the FULL ladder lawful (pins exempt, same predicate the gate verifies) and
+  // hold the near-miss reality the re-layout carried — within the same
+  // snap-rung jitter the NM shortfall diagnostic treats as noise. Never
+  // consulted on the primary (pre-gate) pass.
+  const lawfulSnapCandidate = (
+    cand: readonly number[],
+    candRisk: PackRisk,
+  ): boolean => {
+    let candTotal = 0;
+    for (const w of cand) candTotal += Number.isFinite(w) && w > 0 ? w : 0;
+    if (!(candTotal > 0)) return false;
+    const candShares = Array.from(cand, (w) =>
+      Number.isFinite(w) && w > 0 ? w / candTotal : 0,
+    );
+    if (
+      findMonotoneViolations({
+        values,
+        shares: candShares,
+        pinnedIdx: hasPins ? new Set(pinnedShareByIdx.keys()) : undefined,
+        tol: 1e-9,
+      }).length > 0
+    ) {
+      return false;
     }
-  }
-
-  if (!taggedSnapApplied && hasPins) {
-    // Pinned clean-ladder snap (untagged / off-tag pinned pools): snap the
-    // FREE slots onto the ladder, buffer = largest FREE mass, pins verbatim.
-    // Acceptance stack identical to the unpinned tier-1; on failure the
-    // precise weights stay (dirty odds surface honestly — no local search /
-    // buffer polish for pinned pools, the pins constrain the space anyway).
-    const pinnedSnap = snapPinnedFreeToCleanLadder({
-      weights,
-      values,
-      price,
-      pinnedIdx: new Set(pinnedShareByIdx.keys()),
-      scale: PIN_SCALE,
-    });
-    if (pinnedSnap !== null) {
-      const candRisk = computePackRisk({
-        cards: input.cards.map((c, i) => ({ value: c.value, weight: pinnedSnap[i]! })),
+    const expectedNm = nearMissMass + pinnedNearMissShare;
+    const nmRef = Math.min(expectedNm, risk.nearMiss);
+    return (
+      candRisk.nearMiss >=
+      nmRef - Math.min(0.02, 0.5 * Math.max(expectedNm, 1e-9)) - 1e-9
+    );
+  };
+  // The FULL snap stack (tagged per-100k / pinned clean-ladder / untagged
+  // 3-tier + buffer polish), wrapped so the LAW M gate can RETRY it on the
+  // lawfully re-laid vector: with `lawCheck` every acceptance additionally
+  // requires `lawfulSnapCandidate` — law over rungs, but rungs whenever the
+  // law allows them. `lawCheck=false` is byte-identical to the pre-wrap block.
+  const attemptSnapStack = (lawCheck: boolean): void => {
+    if (snapTagTarget !== undefined) {
+      // §niceness live-basis never-inflate caps: current odds on the snap grid
+      // (the owner rule is "never above CURRENT advertised odds" — the precise
+      // vector is an intermediate artifact and capping nice rungs at it would
+      // make the owner's own round-number ask impossible). Zero/absent current
+      // weight ⇒ uncapped (LAW-6 new cards); no anchor ⇒ null (the legacy
+      // value-only path keeps no inflation guard, mirroring the generic snap).
+      const snapScale = hasPins ? PIN_SCALE : 100_000;
+      const curForCaps = cur;
+      const liveCapUnits =
+        anchorActive && curForCaps !== undefined
+          ? values.map((_, i) => {
+              const cw = curForCaps[i];
+              return cw !== undefined && Number.isFinite(cw) && cw > 0
+                ? (cw / curTotal) * snapScale
+                : Infinity;
+            })
+          : null;
+      const taggedSnap = snapTaggedPer100k({
+        values,
+        weights,
         price,
+        tag: snapTagTarget,
+        targetEdge,
+        edgeTolAbove: snapEdgeTol,
+        grailGuard: snapGrailNotInflated,
+        liveCapUnits,
+        // Plan-wide DFS budget (perf-incident fix): shared across every candidate
+        // price the tagged search evaluates so the all-nice enumeration can't grind.
+        ...(input.nodeBudget !== undefined ? { nodeBudget: input.nodeBudget } : {}),
+        ...(hasPins
+          ? {
+              pins: [...pinnedShareByIdx.keys()].map((index) => ({
+                index,
+                units: weights[index]!,
+              })),
+              scale: PIN_SCALE,
+            }
+          : {}),
       });
       if (
-        Math.abs(candRisk.edge - targetEdge) <= snapEdgeTol &&
-        candRisk.edge >= targetEdge - 1e-9 &&
-        Math.abs(candRisk.winRate - preciseWinRate) <= winRateTol + 1e-9 &&
-        snapKeepsTag(candRisk.winRate) &&
-        snapHoldsWinRate(candRisk.winRate) &&
-        snapGrailNotInflated(pinnedSnap)
+        taggedSnap !== null &&
+        (!lawCheck || lawfulSnapCandidate(taggedSnap.weights, taggedSnap.risk))
       ) {
-        for (let i = 0; i < weights.length; i++) weights[i] = pinnedSnap[i]!;
-        risk = candRisk;
+        for (let i = 0; i < weights.length; i++) weights[i] = taggedSnap.weights[i]!;
+        risk = taggedSnap.risk;
         snapped = true;
+        taggedSnapApplied = true;
+        taggedSnapAllNice = taggedSnap.allNice;
+        taggedSnapNiceExemptIdx = taggedSnap.niceExemptIdx;
       }
     }
-  } else if (!taggedSnapApplied) {
-    // Pattern 11: pass the live weights so the buffer tie-break keeps the modal
-    // live card modal among equal-value dust (deterministic, EV-preserving).
-    const snap = snapWeightsToCleanLadder({
-      weights,
-      price,
-      tieBreakWeights: input.currentWeights ?? null,
-    });
-    // Apply within-band monotonicity repair (owner invariants — see
-    // `repairSnapMonotonicity`). If the basic snap can't be made monotonic
-    // within the ladder bounds, treat as failed and fall through to local-search
-    // refinement (which retries with different ladder positions).
-    const snapRepaired = repairSnapMonotonicity({ weights: snap.weights, values, price });
-    const snapCandidate = snapRepaired.ok ? snapRepaired.weights : snap.weights;
-    const snapCandidateRisk = computePackRisk({
-      cards: input.cards.map((c, i) => ({ value: c.value, weight: snapCandidate[i]! })),
-      price,
-    });
-    const snapDrift = Math.abs(snapCandidateRisk.edge - targetEdge);
-    const snapWinRateDrift = Math.abs(snapCandidateRisk.winRate - preciseWinRate);
-    // Tier 1: accept the basic buffer-residual snap when edge stays within
-    // +0.1pp of target AND ≥ target (one-sided-up invariant) AND win-rate
-    // stays within the soft tolerance of the precise solver's win-rate AND the
-    // monotonicity repair succeeded.
-    if (
-      snapRepaired.ok &&
-      snapDrift <= snapEdgeTol &&
-      snapCandidateRisk.edge >= targetEdge - 1e-9 &&
-      snapWinRateDrift <= winRateTol + 1e-9 &&
-      snapKeepsTag(snapCandidateRisk.winRate) &&
-      snapHoldsWinRate(snapCandidateRisk.winRate) &&
-      snapGrailNotInflated(snapCandidate)
-    ) {
-      for (let i = 0; i < weights.length; i++) weights[i] = snapCandidate[i]!;
-      risk = snapCandidateRisk;
-      snapped = true;
-    } else {
-      // Tier 2: local-search refinement. Wiggle the top-5 EV-impact cards by
-      // ±1 ladder rung; recompute the buffer residual for each combo; pick the
-      // combo whose edge lands closest to target while still ≥ target and
-      // win-rate stays within tol of the precise win-rate.
-      // Try escalating searches: 3^5=243 → 5^4=625 → 3^7=2187. Cheap-then-broad
-      // keeps the common case fast while still catching pools where the rungs
-      // are far from the precise pcts.
-      let refined = snapLocalSearchRefine({
+
+    if (!taggedSnapApplied && hasPins) {
+      // Pinned clean-ladder snap (untagged / off-tag pinned pools): snap the
+      // FREE slots onto the ladder, buffer = largest FREE mass, pins verbatim.
+      // Acceptance stack identical to the unpinned tier-1; on failure the
+      // precise weights stay (dirty odds surface honestly — no local search /
+      // buffer polish for pinned pools, the pins constrain the space anyway).
+      const pinnedSnap = snapPinnedFreeToCleanLadder({
         weights,
         values,
         price,
-        targetEdge,
-        tolerance: snapEdgeTol,
-        searchTop: 5,
-        searchRadius: 1,
-        preciseWinRate,
-        winRateTol,
-        taggedWinRate: snapTagTarget,
+        pinnedIdx: new Set(pinnedShareByIdx.keys()),
+        scale: PIN_SCALE,
       });
-      if (refined === null) {
-        refined = snapLocalSearchRefine({
-          weights,
-          values,
+      if (pinnedSnap !== null) {
+        const candRisk = computePackRisk({
+          cards: input.cards.map((c, i) => ({ value: c.value, weight: pinnedSnap[i]! })),
           price,
-          targetEdge,
-          tolerance: snapEdgeTol,
-          searchTop: 4,
-          searchRadius: 2,
-          preciseWinRate,
-          winRateTol,
-          taggedWinRate: snapTagTarget,
         });
+        if (
+          Math.abs(candRisk.edge - targetEdge) <= snapEdgeTol &&
+          candRisk.edge >= targetEdge - 1e-9 &&
+          Math.abs(candRisk.winRate - preciseWinRate) <= winRateTol + 1e-9 &&
+          snapKeepsTag(candRisk.winRate) &&
+          snapHoldsWinRate(candRisk.winRate) &&
+          snapGrailNotInflated(pinnedSnap) &&
+          (!lawCheck || lawfulSnapCandidate(pinnedSnap, candRisk))
+        ) {
+          for (let i = 0; i < weights.length; i++) weights[i] = pinnedSnap[i]!;
+          risk = candRisk;
+          snapped = true;
+        }
       }
-      if (refined === null) {
-        refined = snapLocalSearchRefine({
+    } else if (!taggedSnapApplied) {
+      // Pattern 11: pass the live weights so the buffer tie-break keeps the modal
+      // live card modal among equal-value dust (deterministic, EV-preserving).
+      const snap = snapWeightsToCleanLadder({
+        weights,
+        price,
+        tieBreakWeights: input.currentWeights ?? null,
+      });
+      // Apply within-band monotonicity repair (owner invariants — see
+      // `repairSnapMonotonicity`). If the basic snap can't be made monotonic
+      // within the ladder bounds, treat as failed and fall through to local-search
+      // refinement (which retries with different ladder positions).
+      const snapRepaired = repairSnapMonotonicity({ weights: snap.weights, values, price });
+      const snapCandidate = snapRepaired.ok ? snapRepaired.weights : snap.weights;
+      const snapCandidateRisk = computePackRisk({
+        cards: input.cards.map((c, i) => ({ value: c.value, weight: snapCandidate[i]! })),
+        price,
+      });
+      const snapDrift = Math.abs(snapCandidateRisk.edge - targetEdge);
+      const snapWinRateDrift = Math.abs(snapCandidateRisk.winRate - preciseWinRate);
+      // Tier 1: accept the basic buffer-residual snap when edge stays within
+      // +0.1pp of target AND ≥ target (one-sided-up invariant) AND win-rate
+      // stays within the soft tolerance of the precise solver's win-rate AND the
+      // monotonicity repair succeeded.
+      if (
+        snapRepaired.ok &&
+        snapDrift <= snapEdgeTol &&
+        snapCandidateRisk.edge >= targetEdge - 1e-9 &&
+        snapWinRateDrift <= winRateTol + 1e-9 &&
+        snapKeepsTag(snapCandidateRisk.winRate) &&
+        snapHoldsWinRate(snapCandidateRisk.winRate) &&
+        snapGrailNotInflated(snapCandidate) &&
+        (!lawCheck || lawfulSnapCandidate(snapCandidate, snapCandidateRisk))
+      ) {
+        for (let i = 0; i < weights.length; i++) weights[i] = snapCandidate[i]!;
+        risk = snapCandidateRisk;
+        snapped = true;
+      } else {
+        // Tier 2: local-search refinement. Wiggle the top-5 EV-impact cards by
+        // ±1 ladder rung; recompute the buffer residual for each combo; pick the
+        // combo whose edge lands closest to target while still ≥ target and
+        // win-rate stays within tol of the precise win-rate.
+        // Try escalating searches: 3^5=243 → 5^4=625 → 3^7=2187. Cheap-then-broad
+        // keeps the common case fast while still catching pools where the rungs
+        // are far from the precise pcts.
+        let refined = snapLocalSearchRefine({
           weights,
           values,
           price,
           targetEdge,
           tolerance: snapEdgeTol,
-          searchTop: 7,
+          searchTop: 5,
           searchRadius: 1,
           preciseWinRate,
           winRateTol,
           taggedWinRate: snapTagTarget,
         });
-      }
-      if (refined !== null) {
-        // Apply monotonicity repair to the local-search winner, then re-verify
-        // edge + win-rate tolerance. If the repair pushes the result out of
-        // tolerance — or fails outright — fall back to precise weights instead
-        // of accepting an ordering that violates the owner invariants.
-        const refinedRepaired = repairSnapMonotonicity({
-          weights: refined.weights,
-          values,
-          price,
-        });
-        if (refinedRepaired.ok) {
-          const refinedRisk = computePackRisk({
-            cards: input.cards.map((c, i) => ({ value: c.value, weight: refinedRepaired.weights[i]! })),
+        if (refined === null) {
+          refined = snapLocalSearchRefine({
+            weights,
+            values,
+            price,
+            targetEdge,
+            tolerance: snapEdgeTol,
+            searchTop: 4,
+            searchRadius: 2,
+            preciseWinRate,
+            winRateTol,
+            taggedWinRate: snapTagTarget,
+          });
+        }
+        if (refined === null) {
+          refined = snapLocalSearchRefine({
+            weights,
+            values,
+            price,
+            targetEdge,
+            tolerance: snapEdgeTol,
+            searchTop: 7,
+            searchRadius: 1,
+            preciseWinRate,
+            winRateTol,
+            taggedWinRate: snapTagTarget,
+          });
+        }
+        if (refined !== null) {
+          // Apply monotonicity repair to the local-search winner, then re-verify
+          // edge + win-rate tolerance. If the repair pushes the result out of
+          // tolerance — or fails outright — fall back to precise weights instead
+          // of accepting an ordering that violates the owner invariants.
+          const refinedRepaired = repairSnapMonotonicity({
+            weights: refined.weights,
+            values,
             price,
           });
-          const refinedDrift = Math.abs(refinedRisk.edge - targetEdge);
-          const refinedWinRateDrift = Math.abs(refinedRisk.winRate - preciseWinRate);
-          if (
-            refinedDrift <= snapEdgeTol &&
-            refinedRisk.edge >= targetEdge - 1e-9 &&
-            refinedWinRateDrift <= winRateTol + 1e-9 &&
-            snapKeepsTag(refinedRisk.winRate) &&
-            snapHoldsWinRate(refinedRisk.winRate) &&
-            snapGrailNotInflated(refinedRepaired.weights)
-          ) {
-            for (let i = 0; i < weights.length; i++) weights[i] = refinedRepaired.weights[i]!;
-            risk = refinedRisk;
-            snapped = true;
+          if (refinedRepaired.ok) {
+            const refinedRisk = computePackRisk({
+              cards: input.cards.map((c, i) => ({ value: c.value, weight: refinedRepaired.weights[i]! })),
+              price,
+            });
+            const refinedDrift = Math.abs(refinedRisk.edge - targetEdge);
+            const refinedWinRateDrift = Math.abs(refinedRisk.winRate - preciseWinRate);
+            if (
+              refinedDrift <= snapEdgeTol &&
+              refinedRisk.edge >= targetEdge - 1e-9 &&
+              refinedWinRateDrift <= winRateTol + 1e-9 &&
+              snapKeepsTag(refinedRisk.winRate) &&
+              snapHoldsWinRate(refinedRisk.winRate) &&
+              snapGrailNotInflated(refinedRepaired.weights) &&
+              (!lawCheck ||
+                lawfulSnapCandidate(refinedRepaired.weights, refinedRisk))
+            ) {
+              for (let i = 0; i < weights.length; i++) weights[i] = refinedRepaired.weights[i]!;
+              risk = refinedRisk;
+              snapped = true;
+            }
           }
         }
       }
     }
-  }
 
-  // ── Buffer-card rung polish (RC5c) ───────────────────────────────────
-  // An accepted snap leaves the buffer (argmax — the pack page's headline
-  // number) off-ladder by design. Try to land IT on a rung too, spreading the
-  // residual over the 2–3 largest OTHER dust cards. Adopt ONLY when the full
-  // acceptance stack still holds — otherwise keep the accepted snap unchanged
-  // (this step can never regress a result). SKIPPED after the tagged per-100k
-  // snap: there the buffer IS on the grid by construction, and re-spreading it
-  // over generic rungs would break the exact win-band tag sum. ALSO skipped
-  // for pinned pools — the polish spreads residual over dust cards without
-  // knowing about pins and could move a pinned card.
-  if (snapped && !taggedSnapApplied && !hasPins) {
-    const polished = trySnapBufferToRung({
-      weights,
-      values,
-      price,
-      accept: (r, cand) =>
-        Math.abs(r.edge - targetEdge) <= snapEdgeTol &&
-        r.edge >= targetEdge - 1e-9 &&
-        Math.abs(r.winRate - preciseWinRate) <= winRateTol + 1e-9 &&
-        snapKeepsTag(r.winRate) &&
-        snapHoldsWinRate(r.winRate) &&
-        snapGrailNotInflated(cand),
-    });
-    if (polished !== null) {
-      for (let i = 0; i < weights.length; i++) weights[i] = polished.weights[i]!;
-      risk = polished.risk;
+    // ── Buffer-card rung polish (RC5c) ───────────────────────────────────
+    // An accepted snap leaves the buffer (argmax — the pack page's headline
+    // number) off-ladder by design. Try to land IT on a rung too, spreading the
+    // residual over the 2–3 largest OTHER dust cards. Adopt ONLY when the full
+    // acceptance stack still holds — otherwise keep the accepted snap unchanged
+    // (this step can never regress a result). SKIPPED after the tagged per-100k
+    // snap: there the buffer IS on the grid by construction, and re-spreading it
+    // over generic rungs would break the exact win-band tag sum. ALSO skipped
+    // for pinned pools — the polish spreads residual over dust cards without
+    // knowing about pins and could move a pinned card.
+    if (snapped && !taggedSnapApplied && !hasPins) {
+      const polished = trySnapBufferToRung({
+        weights,
+        values,
+        price,
+        accept: (r, cand) =>
+          Math.abs(r.edge - targetEdge) <= snapEdgeTol &&
+          r.edge >= targetEdge - 1e-9 &&
+          Math.abs(r.winRate - preciseWinRate) <= winRateTol + 1e-9 &&
+          snapKeepsTag(r.winRate) &&
+          snapHoldsWinRate(r.winRate) &&
+          snapGrailNotInflated(cand) &&
+          (!lawCheck || lawfulSnapCandidate(cand, r)),
+      });
+      if (polished !== null) {
+        for (let i = 0; i < weights.length; i++) weights[i] = polished.weights[i]!;
+        risk = polished.risk;
+      }
     }
-  }
+  };
+  attemptSnapStack(false);
 
   // ── Flag any UNAVOIDABLE jackpot inflation (anti-inflation anchor) ────
   // If the anchor pass couldn't cap a win/grail card at its current odds even
@@ -6519,9 +6572,16 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
       risk = gate.risk;
       // The re-laid ladder is EV/tag-exact but sits on precise (not nice)
       // rungs, and any per-card niceness verdict computed on the old vector
-      // is stale — report both honestly.
+      // is stale — reset both, then RETRY the full snap stack on the LAWFUL
+      // vector (wave 3): every retry acceptance additionally requires
+      // `lawfulSnapCandidate` (full-ladder law + NM reality), so the retune
+      // recovers clean odds whenever a lawful snapped layout exists and keeps
+      // the honest unsnapped re-layout when none does.
       snapped = false;
       taggedSnapApplied = false;
+      taggedSnapAllNice = undefined;
+      taggedSnapNiceExemptIdx = undefined;
+      attemptSnapStack(true);
     }
   }
 

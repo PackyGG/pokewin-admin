@@ -3229,6 +3229,79 @@ check("MG6 — full pipeline relayout: a dust-rich pool ships LAWFUL through the
   assert(best.edge >= 0.085 - 1e-9, `edge at/above target (got ${best.edge})`);
 });
 
+// ── LAWFUL SNAP RETRY (wave 3): the LAW M gate re-lays, then the FULL snap
+// stack retries on the lawful vector — every retry acceptance additionally
+// holds the full-ladder law + the NM reality. Law over rungs, but rungs
+// whenever the law allows them. Fixtures are real fleet pools (frozen
+// 2026-07-08) whose pre-wave plans shipped honest-but-unsnapped: the retry
+// must recover CLEAN odds without ever shipping a zigzag.
+
+check("MG7 — lawful snap retry: God Pack recovers clean odds on the re-laid vector (was honest-unsnapped pre-wave)", () => {
+  // Live-arm asks frozen from the fleet sweep (untagged, live-anchored).
+  const values = [299.99, 152.05, 80.4, 62.76, 40.94, 25.02, 19.52, 15.36, 8.28, 0.65, 0.12];
+  const live = [200, 400, 800, 2000, 4000, 59800, 100000, 112800, 100000, 100000, 520000];
+  const search = searchBestPriceForCleanSnap({
+    cards: values.map((value) => ({ value })),
+    basePrice: 7.41,
+    targetEdge: 0.10996605626536143,
+    targetWinRate: 0.38,
+    nearMissMin: 0.1,
+    winRateTol: 0.02,
+    maxPriceChangePct: 0.1,
+    currentWeights: live,
+    holdWinRateHard: true,
+    disperseLoss: true,
+  });
+  const best = search.bestResult;
+  assert(isSuccess(best), `God Pack retune plans (${isSuccess(best) ? "" : best.error})`);
+  if (!isSuccess(best)) return;
+  assert(best.snapped === true, "the retry recovers a SNAPPED plan (pre-wave this pool shipped unsnapped)");
+  const total = best.weights.reduce((a, b) => a + b, 0);
+  const shares = best.weights.map((w) => w / total);
+  assert(
+    findMonotoneViolations({ values, shares }).length === 0,
+    "the recovered snap obeys LAW M end to end",
+  );
+  assert(best.edge >= 0.10996605626536143 - 1e-9, `edge at/above target (got ${best.edge})`);
+  assert(
+    best.risk.winRate <= 0.38 + 0.05 + 1e-9,
+    `win rate held under the hard hold (got ${best.risk.winRate})`,
+  );
+});
+
+check("MG8 — lawful snap retry holds the NM ask: Wicked lands rung-nice near-miss AT/ABOVE the floor, never below", () => {
+  const values = [307.99, 197.96, 132.02, 93.7, 63.06, 42.04, 32.69, 22.8, 12.3, 9.16, 0.14];
+  const live = [500, 2000, 10000, 20000, 40000, 40000, 75000, 150000, 100000, 250000, 312500];
+  const search = searchBestPriceForCleanSnap({
+    cards: values.map((value) => ({ value })),
+    basePrice: 19.55,
+    targetEdge: 0.11031253196930951,
+    targetWinRate: 0.3375,
+    nearMissMin: 0.1,
+    winRateTol: 0.02,
+    maxPriceChangePct: 0.1,
+    currentWeights: live,
+    holdWinRateHard: true,
+    disperseLoss: true,
+  });
+  const best = search.bestResult;
+  assert(isSuccess(best), `Wicked retune plans (${isSuccess(best) ? "" : best.error})`);
+  if (!isSuccess(best)) return;
+  assert(best.snapped === true, "the retry recovers a SNAPPED plan");
+  const total = best.weights.reduce((a, b) => a + b, 0);
+  const shares = best.weights.map((w) => w / total);
+  assert(
+    findMonotoneViolations({ values, shares }).length === 0,
+    "the recovered snap obeys LAW M end to end",
+  );
+  // The snap may TRIM surplus NM down to a nice rung — but never below the ask.
+  assert(
+    best.risk.nearMiss >= 0.1 - 1e-9,
+    `near-miss stays at/above the 10% ask (got ${best.risk.nearMiss})`,
+  );
+  assert(best.edge >= 0.11031253196930951 - 1e-9, `edge at/above target (got ${best.edge})`);
+});
+
 // ── STAGE 3 — LAW T strictness + NM-floor honesty ────────────────────
 //
 // LAW T: a TAGGED search that refuses at EVERY in-band price gets a typed
