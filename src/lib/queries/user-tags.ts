@@ -3,14 +3,10 @@ import "server-only";
 import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
 
-export type UserTagValue =
-  | "contacted_vip"
-  | "confirmed_vip"
-  | "wager_abuser"
-  | "fraud_abuser";
+export type UserTagValue = "vip" | "wager_abuser";
 
-/** Tags surfaced together on Creator Hub → Wager / Fraud Abusers. */
-export const ABUSER_HUB_TAGS: UserTagValue[] = ["wager_abuser", "fraud_abuser"];
+/** Tags surfaced together on Creator Hub → Wager Abusers. */
+export const ABUSER_HUB_TAGS: UserTagValue[] = ["wager_abuser"];
 
 export type UserTagRow = {
   tag: UserTagValue;

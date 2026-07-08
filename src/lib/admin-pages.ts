@@ -13,6 +13,8 @@ export const ADMIN_PAGES: AdminPage[] = [
   // /map was folded into /analytics as a tab — its permission inherits
   // from /analytics. The standalone page no longer exists.
   { group: "Navigation", label: "Users", key: "/users" },
+  // Gates the new VIPs page (Players sidebar section, lists users tagged vip).
+  { group: "Navigation", label: "VIPs", key: "/vips" },
   // Player CRM was folded into the owner-only Insights Overview as a tab
   // (/insights/real-numbers?tab=crm); /crm now 308-redirects there and its
   // permission inherits from /insights/real-numbers, so the standalone /crm

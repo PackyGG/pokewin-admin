@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -68,6 +69,16 @@ const BALANCE_ADJUST_CATEGORIES = SELECTABLE_ADJUSTMENT_CATEGORY_KEYS.map(
   }),
 );
 
+// The categories offered on the dialog's "VIP" tab — comp-style credits only.
+// Every other selectable category stays on the "Normal" tab. Purely a
+// display-side filter over `BALANCE_ADJUST_CATEGORIES`; the underlying
+// category state and the conditional inputs below are unchanged.
+const VIP_TAB_CATEGORY_KEYS: BalanceAdjustmentCategory[] = [
+  "bonus",
+  "deposit_bonus",
+  "lossback",
+];
+
 // Lossback quick-pick rates + the hard cap on any custom rate. The cap is
 // mirrored server-side in `validateAdjustmentCategory` (actions.ts) — keep
 // the two in sync.
@@ -108,6 +119,11 @@ export function BalanceAdjustDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const [amount, setAmount] = useState("");
+  // Category picker tab — Normal (everything else) vs VIP (bonus,
+  // deposit_bonus, lossback only). Purely a display filter over
+  // `BALANCE_ADJUST_CATEGORIES`; the underlying `category` state and every
+  // conditional input below it are unchanged and rendered once.
+  const [adjustTab, setAdjustTab] = useState<"normal" | "vip">("normal");
   // The strict category drives the conditional inputs + counting.
   const [category, setCategory] = useState<BalanceAdjustmentCategory | "">("");
   // deposit_problem
@@ -129,12 +145,11 @@ export function BalanceAdjustDialog({
   // and this state is unused.
   const [pnl7dManual, setPnl7dManual] = useState("");
   const [totpCode, setTotpCode] = useState("");
-  // Optional: also apply the Wager / Fraud Abuser profile tag together with
-  // this adjustment (separate from the balance-adjustment category — this is
-  // the persistent user-profile flag surfaced on the Tags panel + Creator Hub
-  // Wager / Fraud Abusers page).
+  // Optional: also apply the Wager Abuser profile tag together with this
+  // adjustment (separate from the balance-adjustment category — this is the
+  // persistent user-profile flag surfaced on the Tags panel + Creator Hub
+  // Wager Abusers page).
   const [tagWagerAbuser, setTagWagerAbuser] = useState(false);
-  const [tagFraudAbuser, setTagFraudAbuser] = useState(false);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -156,7 +171,7 @@ export function BalanceAdjustDialog({
     setPnl7dManual("");
     setTotpCode("");
     setTagWagerAbuser(false);
-    setTagFraudAbuser(false);
+    setAdjustTab("normal");
   }
 
   // The human-readable description text sent as `reason` (kept so the
@@ -315,9 +330,8 @@ export function BalanceAdjustDialog({
         // the adjustment. Tagging failures are non-fatal — the balance
         // change already succeeded, so we surface a soft warning instead of
         // rolling anything back.
-        const tagsToApply: ("wager_abuser" | "fraud_abuser")[] = [];
+        const tagsToApply: "wager_abuser"[] = [];
         if (tagWagerAbuser) tagsToApply.push("wager_abuser");
-        if (tagFraudAbuser) tagsToApply.push("fraud_abuser");
         for (const t of tagsToApply) {
           const tagResult = await setUserTag(userId, t);
           if (!tagResult.success) {
@@ -384,10 +398,17 @@ export function BalanceAdjustDialog({
       ? lockedBalance + previewValue
       : null;
 
-  // Every selectable category is always offered. Removal-only categories
+  // Every selectable category is always offered — removal-only categories
   // (Remove locked balance, Fraud / abuse, Leaderboard) used to be HIDDEN
   // until the admin typed a negative amount, which made them look missing.
-  const visibleCategories = BALANCE_ADJUST_CATEGORIES;
+  // The Normal/VIP tab above additionally filters WHICH categories show:
+  // the VIP tab surfaces only the comp-style credits (bonus, deposit_bonus,
+  // lossback); Normal surfaces everything else.
+  const visibleCategories = BALANCE_ADJUST_CATEGORIES.filter((r) =>
+    adjustTab === "vip"
+      ? VIP_TAB_CATEGORY_KEYS.includes(r.value)
+      : !VIP_TAB_CATEGORY_KEYS.includes(r.value),
+  );
 
   // ── Lossback derivations (house POV) ──────────────────────────────
   // `pnl7d` is the rolling 7-day house P&L: POSITIVE = the house gained =
@@ -554,6 +575,22 @@ export function BalanceAdjustDialog({
               </p>
             )}
           </div>
+          <Tabs
+            value={adjustTab}
+            onValueChange={(v) => {
+              const next = v as "normal" | "vip";
+              setAdjustTab(next);
+              // An old selection from the other tab can't linger invalid.
+              setCategory("");
+            }}
+          >
+            <TabsList variant="line">
+              <TabsTrigger value="normal">Normal</TabsTrigger>
+              <TabsTrigger value="vip">VIP</TabsTrigger>
+            </TabsList>
+            <TabsContent value="normal" keepMounted />
+            <TabsContent value="vip" keepMounted />
+          </Tabs>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Category</Label>
             <Select
@@ -909,9 +946,9 @@ export function BalanceAdjustDialog({
               </div>
             )}
           </div>
-          {/* Optional persistent profile flags — applied alongside the
-              adjustment. These are the SAME user-profile tags shown on the
-              Tags panel + Creator Hub Wager / Fraud Abusers page (not the
+          {/* Optional persistent profile flag — applied alongside the
+              adjustment. This is the SAME user-profile tag shown on the
+              Tags panel + Creator Hub Wager Abusers page (not the
               balance-adjustment category). Toggle on to flag the user. */}
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">
@@ -930,24 +967,12 @@ export function BalanceAdjustDialog({
                 <ShieldAlert className="size-3.5" />
                 Wager Abuser
               </button>
-              <button
-                type="button"
-                onClick={() => setTagFraudAbuser((v) => !v)}
-                className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
-                  tagFraudAbuser
-                    ? "border-rose-600/40 bg-rose-600/15 text-rose-800 dark:text-rose-300"
-                    : "border-border text-muted-foreground hover:bg-muted"
-                }`}
-              >
-                <ShieldAlert className="size-3.5" />
-                Fraud Abuser
-              </button>
             </div>
-            {(tagWagerAbuser || tagFraudAbuser) && (
+            {tagWagerAbuser && (
               <p className="text-[10px] text-muted-foreground">
                 Adds a permanent profile tag (also listed on Creator Hub →
-                Wager / Fraud Abusers). Remove it later from the user&apos;s
-                Tags panel.
+                Wager Abusers). Remove it later from the user&apos;s Tags
+                panel.
               </p>
             )}
           </div>

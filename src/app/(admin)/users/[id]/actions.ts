@@ -3544,20 +3544,15 @@ export async function clearUserBattleLimits(
 // ---------------------------------------------------------------------------
 // VIP Tags — admin-CRM metadata on packy.gg users
 // ---------------------------------------------------------------------------
-// Admin-CRM tag system (Contacted VIP / Confirmed VIP / Wager Abuser).
+// Admin-CRM tag system (VIP / Wager Abuser).
 // Stored in the
 // admin DB only — no main-DB write. The full set lives in the
 // `admin_user_tags` table; this action only knows about the allow-listed
 // tag values. Adding a new tag = update both the Zod enum here AND the
 // CHECK constraint in
-// prisma/admin/migrations/20260513000000_admin_user_tags/migration.sql.
+// prisma/admin/migrations/20260708000000_admin_user_tags_vip_consolidate/migration.sql.
 
-const USER_TAG_VALUES = [
-  "contacted_vip",
-  "confirmed_vip",
-  "wager_abuser",
-  "fraud_abuser",
-] as const;
+const USER_TAG_VALUES = ["vip", "wager_abuser"] as const;
 export type UserTagValue = (typeof USER_TAG_VALUES)[number];
 
 const userTagSchema = z.object({

@@ -32,6 +32,7 @@
  *  the sidebar renders groups (and the docs page mirrors it). */
 export type NavGroupKey =
   | "Overview"
+  | "Players"
   | "Insights"
   | "Content"
   | "Creator Portal"
@@ -104,6 +105,7 @@ export type NavEntry = {
 
 export const NAV_GROUP_META: NavGroupMeta[] = [
   { label: "Overview" },
+  { label: "Players" },
   { label: "Insights" },
   { label: "Content" },
   { label: "Creator Portal", creatorOnly: true },
@@ -177,13 +179,25 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
   },
   {
     id: "nav.users",
-    group: "Overview",
+    group: "Players",
     label: "Users",
     href: "/users",
     pageKey: "/users",
     icon: "Users",
     description: "Browse end-users",
     keywords: ["players", "accounts", "search"],
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
+    id: "nav.vips",
+    group: "Players",
+    label: "VIPs",
+    href: "/vips",
+    pageKey: "/vips",
+    icon: "Crown",
+    description: "Users flagged as VIP",
+    keywords: ["vip", "high roller", "whale"],
     inSidebar: true,
     inPalette: true,
   },
@@ -615,6 +629,7 @@ const PALETTE_ORDER: string[] = [
   "nav.analytics",
   "nav.map",
   "nav.users",
+  "nav.vips",
   "nav.rewards",
   "nav.crm",
   "nav.deposits",

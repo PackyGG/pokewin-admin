@@ -2,7 +2,7 @@
 
 import type { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
-import { Crown, Phone, ShieldAlert } from "lucide-react";
+import { Crown, ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { columns as sharedColumns } from "../columns";
@@ -74,15 +74,9 @@ function initialsFor(username: string | null, userId: string): string {
 // still shows the full set-by + when info.
 const TAG_META: Record<
   UserTagValue,
-  { label: string; icon: typeof Phone; color: string }
+  { label: string; icon: typeof Crown; color: string }
 > = {
-  contacted_vip: {
-    label: "Contacted",
-    icon: Phone,
-    color:
-      "border-amber-500/30 bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  },
-  confirmed_vip: {
+  vip: {
     label: "VIP",
     icon: Crown,
     color:
@@ -93,12 +87,6 @@ const TAG_META: Record<
     icon: ShieldAlert,
     color:
       "border-red-500/30 bg-red-500/15 text-red-700 dark:text-red-300",
-  },
-  fraud_abuser: {
-    label: "Fraud",
-    icon: ShieldAlert,
-    color:
-      "border-rose-600/30 bg-rose-600/15 text-rose-800 dark:text-rose-300",
   },
 };
 

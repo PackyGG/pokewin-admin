@@ -18,7 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatDateTime } from "@/lib/utils/format";
 import { ABUSER_HUB_TAGS, getUsersWithTags } from "@/lib/queries/user-tags";
 
-export const metadata = { title: "Wager / Fraud Abusers · Creator Hub" };
+export const metadata = { title: "Wager Abusers · Creator Hub" };
 
 const HUB_WAGER_ABUSERS_PATH = "/creator-hub/wager-abusers";
 const LIMIT = 50;
@@ -26,8 +26,8 @@ const LIMIT = 50;
 /**
  * Creator Hub → Wager Abusers.
  *
- * Lists packy.gg users tagged `wager_abuser` or `fraud_abuser` in the admin DB.
- * Tags are applied on `/users/[id]` by admins (or roles with
+ * Lists packy.gg users tagged `wager_abuser` in the admin DB. Tags are
+ * applied on `/users/[id]` by admins (or roles with
  * `__can_manage_user_tags`).
  *
  * ACCESS: `canAccessCreatorHub` — same gate as other Hub pages.
@@ -48,8 +48,8 @@ export default async function WagerAbusersPage({
         <PageHeroIdentity
           icon={ShieldAlert}
           accent="pink"
-          title="Wager / Fraud Abusers"
-          subtitle="Users flagged for wager abuse or fraud — tag them on their profile in Admin"
+          title="Wager Abusers"
+          subtitle="Users flagged for wager abuse — tag them on their profile in Admin"
         />
       </PageHero>
 
@@ -72,7 +72,7 @@ async function ListSection({ offset }: { offset: number }) {
         <KpiTile
           label="Tagged users"
           value={String(total)}
-          sub="wager / fraud flags"
+          sub="wager abuser flags"
           icon={Users}
           accent="pink"
         />
@@ -91,8 +91,8 @@ async function ListSection({ offset }: { offset: number }) {
             <ShieldAlert className="size-6" />
             <span className="text-sm">No abusers tagged yet.</span>
             <span className="max-w-sm text-center text-xs">
-              Open a user in Admin → Users, then add &quot;Wager Abuser&quot; or
-              &quot;Fraud Abuser&quot; from their profile header.
+              Open a user in Admin → Users, then add &quot;Wager Abuser&quot;
+              from their profile header.
             </span>
           </div>
         ) : (
@@ -100,7 +100,6 @@ async function ListSection({ offset }: { offset: number }) {
             <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-muted-foreground">
-                  <th className="pb-2 pr-4 font-medium">Tag</th>
                   <th className="pb-2 pr-4 font-medium">Username</th>
                   <th className="pb-2 pr-4 font-medium">Email</th>
                   <th className="pb-2 pr-4 font-medium">Tagged by</th>
@@ -110,9 +109,6 @@ async function ListSection({ offset }: { offset: number }) {
               <tbody className="divide-y">
                 {items.map((row) => (
                   <tr key={`${row.userId}-${row.tag}`} className="align-middle">
-                    <td className="py-3 pr-4 capitalize text-xs font-medium text-rose-600 dark:text-rose-400">
-                      {row.tag === "fraud_abuser" ? "Fraud" : "Wager"}
-                    </td>
                     <td className="py-3 pr-4">
                       <Link
                         href={`/users/${row.userId}`}

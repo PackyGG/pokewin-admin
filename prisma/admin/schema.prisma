@@ -232,9 +232,13 @@ model admin_giveaway_actions {
 ///
 /// Two tags supported today, enforced by the `tag` text + a CHECK
 /// constraint at the SQL layer (see migration):
-///   • contacted_vip — sales/CRM reached out to this user
-///   • confirmed_vip — user is verified as an active VIP (deposits,
-///     wagers, communication patterns, etc.)
+///   • vip — user is flagged as VIP (surfaced on the /vips admin page)
+///   • wager_abuser — user is flagged for wager abuse
+///
+/// (The former `contacted_vip` / `confirmed_vip` pair was consolidated into
+/// the single `vip` tag, and `fraud_abuser` was dropped, by the
+/// 20260708000000_admin_user_tags_vip_consolidate migration — zero live
+/// rows used any of those three values at the time.)
 ///
 /// Each (user, tag) pair is unique — re-tagging is idempotent. Removing
 /// a tag is a DELETE; we don't soft-delete because the audit trail
@@ -244,7 +248,7 @@ model admin_user_tags {
   // packy.gg user_id (text — main DB lives in a separate Postgres
   // cluster, can't be an FK).
   target_user_id  String
-  // Tag value — 'contacted_vip' | 'confirmed_vip' | 'wager_abuser' | 'fraud_abuser'.
+  // Tag value — 'vip' | 'wager_abuser'.
   // The set is also enforced server-side in the action (Zod enum) so
   // even if a future code path bypasses the SQL CHECK we still catch
   // bad values.

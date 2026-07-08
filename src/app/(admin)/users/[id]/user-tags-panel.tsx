@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
   Crown,
-  Phone,
   Tag as TagIcon,
   ShieldAlert,
   ChevronDown,
@@ -30,18 +29,11 @@ import type { UserTagRow, UserTagValue } from "@/lib/queries/user-tags";
 
 const TAG_META: Record<
   UserTagValue,
-  { label: string; icon: typeof Phone; color: string }
+  { label: string; icon: typeof Crown; color: string }
 > = {
-  // Contacted = first-touch signal. Amber reads as "in progress".
-  contacted_vip: {
-    label: "Contacted VIP",
-    icon: Phone,
-    color:
-      "border-amber-500/30 bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  },
-  // Confirmed = verified VIP. Purple reads as "premium".
-  confirmed_vip: {
-    label: "Confirmed VIP",
+  // VIP. Purple reads as "premium".
+  vip: {
+    label: "VIP",
     icon: Crown,
     color:
       "border-purple-500/30 bg-purple-500/15 text-purple-700 dark:text-purple-300",
@@ -52,20 +44,9 @@ const TAG_META: Record<
     color:
       "border-red-500/30 bg-red-500/15 text-red-700 dark:text-red-300",
   },
-  fraud_abuser: {
-    label: "Fraud Abuser",
-    icon: ShieldAlert,
-    color:
-      "border-rose-600/30 bg-rose-600/15 text-rose-800 dark:text-rose-300",
-  },
 };
 
-const ALL_TAGS: UserTagValue[] = [
-  "contacted_vip",
-  "confirmed_vip",
-  "wager_abuser",
-  "fraud_abuser",
-];
+const ALL_TAGS: UserTagValue[] = ["vip", "wager_abuser"];
 
 /**
  * VIP tag manager.

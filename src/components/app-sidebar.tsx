@@ -63,6 +63,7 @@ import {
   PieChart,
   Anchor,
   Dices,
+  Crown,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -148,6 +149,7 @@ const ICONS: Record<string, LucideIcon> = {
   PieChart,
   Anchor,
   Dices,
+  Crown,
 };
 
 type NavItem = {
