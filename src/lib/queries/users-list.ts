@@ -688,12 +688,22 @@ const USER_LIST_SELECT = {
   // the always-available column instead.
   affiliate_code: true,
   created_at: true,
+  // Only `locked_balance` and `total_wagered` are actually READ off this
+  // relation in hydrateUserListPage below — `availableBalance`,
+  // `totalDeposited`, and `totalWithdrawn` on the displayed row all come
+  // from the canonical `calculateUsersPnlBatch` PnL batch instead (which
+  // nets out the official_stream / remove_locked_balance carve-outs the
+  // raw balances columns don't). `available_balance` / `total_deposited` /
+  // `total_withdrawn` used to be selected here too but were dead weight —
+  // fetched on every row of every page/search and never read. Removing
+  // them shrinks this JOIN's result set on every getUsers call. NOTE: the
+  // "balance" / "totalDeposited" / "totalWagered" column-sort `orderBy`
+  // below (`balanceSortFields`) still works — Prisma's `orderBy` on a
+  // relation field is independent of `select`, so ordering by
+  // `balances.available_balance` needs no change here.
   balances: {
     select: {
-      available_balance: true,
       locked_balance: true,
-      total_deposited: true,
-      total_withdrawn: true,
       total_wagered: true,
     },
   },

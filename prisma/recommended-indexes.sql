@@ -307,6 +307,59 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pf_result_metadata_pack_id_created_a
 -- #15 ----------------------------------------------------------------
 -- /users page SEARCH — prefix (text_pattern_ops) + substring (pg_trgm)
 -- ===================================================================
+-- ⚠️ ESCALATION (2026-07-08, read-only EXPLAIN ANALYZE re-audit) — HIGHEST
+-- PRIORITY unapplied recommendation on this page. Re-read before deferring.
+--
+-- The closing note at the bottom of this section ("Prod is 761 rows...
+-- small enough that the scan itself is cheap today") is STALE. The `user`
+-- table has grown to 15,562 rows (2026-07-08, vs. 761–7,800 when this
+-- section and the row-count note at the bottom of this file were written —
+-- roughly 2–20x growth). Querying `pg_indexes` on prod confirms only TWO
+-- of the FOUR recommended prefix indexes below actually exist:
+--   • idx_user_lower_username_prefix       — EXISTS
+--   • idx_user_lower_email_prefix          — EXISTS
+--   • idx_user_lower_name_prefix           — MISSING (never applied)
+--   • idx_user_lower_display_username_prefix — MISSING (never applied)
+-- This is not a low-value gap: `name` and `display_username` are populated
+-- on virtually every row today (15,562/15,562 and 15,560/15,562
+-- non-null/non-empty).
+--
+-- Live EXPLAIN ANALYZE (read-only, prod, 2026-07-08) of the EXACT query
+-- getUsers (src/lib/queries/users-list.ts) issues for a free-form search
+-- term — the `where.OR` branch across username / display_username / name
+-- / email `startsWith`, plus the `id` equals leg — confirms the planner
+-- falls back to a FULL Seq Scan of the whole table instead of the
+-- expected BitmapOr index plan:
+--   Seq Scan on "user"  (cost=0.00..612.53 rows=... width=...)
+--     Filter: ((lower(username) ~~ 'term%'::text) OR
+--              (lower(display_username) ~~ 'term%'::text) OR
+--              (lower(name) ~~ 'term%'::text) OR
+--              (lower(email) ~~ 'term%'::text) OR (id = 'term'))
+--     Rows Removed by Filter: 15,203
+--   Execution Time: 35.48 ms
+-- Root cause: with only 2 of the 4 OR legs index-backed, Postgres cannot
+-- assemble a beneficial BitmapOr (it would still have to fall through to a
+-- heap check for the other two legs on every row), so the planner
+-- correctly rejects the partial index combination and takes the seq scan
+-- instead. This is NOT a planner misconfiguration — it is the direct,
+-- provable consequence of the two missing indexes.
+--
+-- Why this now outranks every other unapplied recommendation in this file:
+-- this query runs on the DEFAULT /users search path (not the `?match=
+-- contains` opt-in), on every debounced free-form keystroke, for every
+-- admin using the page. 35 ms/keystroke is a real, measured, growing cost
+-- today — not a someday-if-it-grows concern. Applying the two missing
+-- CREATE INDEX CONCURRENTLY statements below (idx_user_lower_name_prefix,
+-- idx_user_lower_display_username_prefix) is the single highest-value
+-- unapplied index on this page.
+--
+-- The opt-in substring search (`?match=contains`) was also re-measured
+-- (2026-07-08): still a Seq Scan, 2.08 ms at today's size — lower priority
+-- than the above because it is opt-in, not the default path, but the three
+-- pg_trgm GIN indexes below (idx_user_lower_username_trgm /
+-- idx_user_lower_name_trgm / idx_user_lower_display_username_trgm) remain
+-- unapplied too and should follow once the four prefix indexes land.
+--
 -- Added by the 2026-06-05 /users search perf pass.
 --
 -- The /users search (src/lib/queries/users-list.ts) used to OR four
@@ -736,6 +789,40 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS admin_audit_events_target_user_id_idx
 -- shave milliseconds and is not worth the write-amplification on the hot
 -- `balances` table. Reassess if /users grows past ~50k or the cold
 -- "Top vault / locked" click becomes user-visible slow.
+--
+-- ⚠️ ESCALATION (2026-07-08, read-only EXPLAIN re-audit) — re-measured at
+-- today's row count. The `user` table has grown to 15,562 rows (from ~761
+-- when the ~11 ms baseline above was measured). The Top vault/locked sort
+-- (SortByLockedBalanceButton, sortBy=lockedBalance) now measures 26.9 ms
+-- total: a full Hash Left Join of `user` (Seq Scan, all 15,562 rows) to
+-- `balances` (Seq Scan, all rows), then a top-N sort. So the "filter-first
+-- CTE keeps rows-to-sort tiny" assumption in the paragraph above is ALSO
+-- now stale — verify the current query shape before trusting that framing
+-- (see judgement call below).
+--
+-- Judgement call: DEFER, do not apply yet, but for a different reason than
+-- "not worth it" — the partial index alone would not fix this even if
+-- applied. `idx_balances_locked_balance_nz` only helps a query that scans
+-- `balances` ORDER BY locked_balance DESC and joins outward to `user`; the
+-- current implementation (src/lib/queries/users-list.ts, search for
+-- buildRankingOrderExpr / computeRankedUserIds / RAW_SQL_SORTS) drives the
+-- opposite direction — it scans `user` first (via the filtered CTE) and
+-- LEFT JOINs `balances` in, so a `balances`-side index cannot be seeked
+-- into by that plan shape. Getting the index's benefit would require BOTH
+-- the partial index AND restructuring the query to be driven from
+-- `balances` (index range-scan on locked_balance DESC LIMIT n, joined back
+-- to `user`) — a real query rewrite, not just an index add.
+--
+-- That rewrite is NOT done in this pass: this sort is a manual button
+-- click (not on every page load / not on every keystroke, unlike #15
+-- above), and 26.9 ms is not itself slow in absolute terms — there is no
+-- user-visible complaint and no Index-or-ClickHouse violation (the read is
+-- fully indexed-table Seq Scan at a size where Seq Scan is still a
+-- reasonable planner choice, not an unindexed hot path). Re-escalate to an
+-- actual code change if /users approaches the ~50k mark this section
+-- already flagged, or if the click becomes perceptibly slow — until then,
+-- documenting the current 15,562-row / 26.9 ms reality (replacing the
+-- stale 761-row / ~11 ms assumption) is the proportional response.
 
 -- #21 ----------------------------------------------------------------
 -- affiliate_codes.code — /insights/affiliate-codes code-PREFIX search
