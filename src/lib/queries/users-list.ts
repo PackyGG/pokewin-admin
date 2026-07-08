@@ -24,16 +24,19 @@ const USER_ROLES = new Set<string>(Object.values(user_role));
  * paste of a packy.gg user id, gating the `LOWER(id) LIKE $1` UNION leg in
  * {@link buildUserListWhereClause}.
  *
- * Real ids are always exactly 32 chars from `[A-Za-z0-9_-]` (see
- * `isUserId` in src/lib/utils/ids.ts). This branch only ever sees terms
- * that already failed the `isUserId`/`isUuid` shape check, so a short
+ * Real ids are 32 chars from `[A-Za-z0-9_-]` (verified against every live
+ * prod row, 2026-07-08) — comfortably inside the 21-64 char range
+ * `isUserId` (src/lib/utils/ids.ts) accepts, which is what actually matters
+ * here: this branch only ever sees terms that already failed the
+ * `isUserId`/`isUuid` shape check, so no term reaching it can equal a real
+ * id regardless of the id's exact length within that range. A short
  * fragment colliding with a random nanoid prefix is essentially always
  * noise (measured: the literal term "jo" spuriously matched 22 unrelated
  * users on prod, 2026-07-08). 8 was chosen as the floor because the
  * collision space at that length (62^8) vastly exceeds the ~15.5k-row
  * table — an accidental match is astronomically unlikely — while still
- * comfortably covering realistic partial-id pastes (well under the full
- * 32-char length, well above a typical 2-6 char search-as-you-type term).
+ * comfortably covering realistic partial-id pastes (well under the real
+ * 32-char id length, well above a typical 2-6 char search-as-you-type term).
  */
 const PARTIAL_ID_REGEX = /^[A-Za-z0-9_-]{8,}$/;
 function looksLikePartialId(term: string): boolean {
@@ -324,11 +327,14 @@ function buildUserListWhereClause(
       // looksLikePartialId above). Two id legs used to live here
       // unconditionally:
       //   - `LOWER(id) = $2` (exact match) was PROVABLY UNREACHABLE: every
-      //     real id is exactly 32 chars from [A-Za-z0-9_-] (isUserId), and
-      //     this whole branch only runs when the term already failed that
-      //     same shape check (isExactId is false) — so the term can never
-      //     equal a real id. It still paid a full Seq Scan (~4.7ms, prod
-      //     2026-07-08) on every free-form search for nothing. Removed.
+      //     real id is 32 chars from [A-Za-z0-9_-] (verified against prod,
+      //     2026-07-08) — well inside the 21-64 char range isUserId
+      //     accepts — and this whole branch only runs when the term
+      //     already failed that same shape check (isExactId is false), so
+      //     the term can never equal a real id regardless of its exact
+      //     length within that range. It still paid a full Seq Scan
+      //     (~4.7ms, prod 2026-07-08) on every free-form search for
+      //     nothing. Removed.
       //   - `LOWER(id) LIKE $1` (partial-id prefix) is real (lets an admin
       //     find a user by a pasted id fragment) but ran unconditionally,
       //     costing another Seq Scan (~12.6ms) AND producing noise: a
