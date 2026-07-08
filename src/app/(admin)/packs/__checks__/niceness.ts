@@ -46,6 +46,14 @@
  *       absorbs exactly W − pinned.
  *  10.  Determinism (F1 + F3 run twice, byte-identical) + perf (one F1
  *       search ≤ 3 s).
+ *  11.  NICE-GRID POST-PASS (Retune V3 wave 7, `polishTaggedNiceGrid` +
+ *       `niceGridPolish`): unit contracts for every move family (dust single
+ *       via the buffer, win single via the absorber under live-cap semantics,
+ *       win exact-cancel pair around a nice absorber, edge-relief dust
+ *       transfer), the strict-improvement gate, and the fleet-frozen
+ *       Psycho/Goofy A/B needles through the REAL builder wiring (flag-
+ *       stripped legacy byte-baseline vs polished: fewer off-nice cards,
+ *       laws intact, tag exact, deterministic; untagged byte-identical).
  *
  * Exit code 0 = all passed; 1 = at least one failure (printed).
  */
@@ -58,8 +66,11 @@ import {
   ONE_SIDED_EDGE_EXCESS_TOL,
   RETUNE_MAX_PRICE_CHANGE_PCT,
   TAGGED_WINRATE_TOLERANCE,
+  computePackRisk,
   countOffNicePct,
+  findMonotoneViolations,
   isOnNiceGridPct,
+  polishTaggedNiceGrid,
   searchBestPriceForCleanSnap,
   shapeWeights,
   type SearchBestPriceResult,
@@ -67,9 +78,11 @@ import {
   type ShapeWeightsSuccess,
 } from "../../insights/edge-calc/risk";
 import {
+  DEFAULT_EDGE_CURVE,
   autoRetuneTargets,
   type ResolvedAutoTargetCfg,
 } from "../_lib/auto-targets";
+import { buildRetuneSearchParams } from "../_lib/retune-params";
 
 let passes = 0;
 const failures: string[] = [];
@@ -667,6 +680,305 @@ check("determinism: F1 and F3 run twice — byte-identical outputs", () => {
     "F1 must be deterministic",
   );
   assert(norm(runSynA()) === norm(runSynA()), "F3 must be deterministic");
+});
+
+// ── 11. Nice-grid post-pass (Retune V3 wave 7) ───────────────────────────
+//
+// Unit contracts run `polishTaggedNiceGrid` directly on hand-derived
+// vectors (integer card values → EV is fp-exact); fleet needles run the
+// REAL builder wiring on frozen prod pools, flag-stripped vs flag-on.
+
+/** Shared unit-contract fixture: [jack, A, B, absorber, dust…, buffer]. */
+const POLISH_VALUES = [200, 100, 90, 80, 2, 1];
+const POLISH_PRICE = 60;
+
+check("polish: dust single re-rungs via the buffer (exempt), exact output", () => {
+  const out = polishTaggedNiceGrid({
+    units: [5000, 38279, 56721],
+    values: [100, 10, 1],
+    price: 50,
+    tag: 0.05,
+    targetEdge: 0.8,
+    edgeTolAbove: 0.02,
+    buffer: 2,
+    exemptIdx: [2],
+    liveCapUnits: null,
+  });
+  assert(
+    JSON.stringify(out) === JSON.stringify([5000, 40000, 55000]),
+    `dust single: got [${out.join(", ")}]`,
+  );
+  assert(countOffNicePct(out, [2]) === 0, "dust single must clear all off-nice");
+});
+
+check("polish: win single UNCAPPED — up-rung lands the absorber nice (all-nice)", () => {
+  const out = polishTaggedNiceGrid({
+    units: [100, 2300, 2500, 5200, 30000, 59900],
+    values: POLISH_VALUES,
+    price: POLISH_PRICE,
+    tag: 0.101,
+    targetEdge: 0.8,
+    edgeTolAbove: 0.05,
+    buffer: 5,
+    exemptIdx: [5],
+    liveCapUnits: null,
+  });
+  assert(
+    JSON.stringify(out) === JSON.stringify([100, 2500, 2500, 5000, 30000, 59900]),
+    `uncapped: got [${out.join(", ")}]`,
+  );
+  assert(countOffNicePct(out, [5]) === 0, "uncapped variant must be all-nice");
+});
+
+check("polish: live-cap semantics — planned==live freezes up-rungs, down-move adopts via absorber", () => {
+  const units = [100, 2300, 2500, 5200, 30000, 59900];
+  const out = polishTaggedNiceGrid({
+    units,
+    values: POLISH_VALUES,
+    price: POLISH_PRICE,
+    tag: 0.101,
+    targetEdge: 0.8,
+    edgeTolAbove: 0.05,
+    buffer: 5,
+    exemptIdx: [5],
+    liveCapUnits: units.slice(),
+  });
+  // 2300→2500 exceeds the live cap (2300) → blocked; 2300→2000 adopts with
+  // the absorber (already off-nice) taking +300: net −1 passes the strict
+  // gate. The win-band unit sum is preserved exactly (tag law).
+  assert(
+    JSON.stringify(out) === JSON.stringify([100, 2000, 2500, 5500, 30000, 59900]),
+    `capped: got [${out.join(", ")}]`,
+  );
+  assert(countOffNicePct(out, [5]) === 1, "capped variant leaves only the absorber off");
+  const winSum = out[0]! + out[1]! + out[2]! + out[3]!;
+  assert(winSum === 10100, `win sum ${winSum} ≠ 10100 (tag broken)`);
+});
+
+check("polish: exact-cancel WIN pair around a NICE absorber (singles refused, pair lands)", () => {
+  const out = polishTaggedNiceGrid({
+    units: [100, 170, 180, 2000, 35000, 62550],
+    values: POLISH_VALUES,
+    price: POLISH_PRICE,
+    tag: 0.0245,
+    targetEdge: 0.9,
+    edgeTolAbove: 0.06,
+    buffer: 5,
+    exemptIdx: [5],
+    liveCapUnits: null,
+  });
+  // Any single move would push the nice absorber (2000) off the grid — net
+  // zero, refused by the strict gate. The pair (180→200, 170→150) cancels
+  // exactly: absorber untouched, all-nice.
+  assert(
+    JSON.stringify(out) === JSON.stringify([100, 150, 200, 2000, 35000, 62550]),
+    `pair: got [${out.join(", ")}]`,
+  );
+  assert(countOffNicePct(out, [5]) === 0, "pair variant must be all-nice");
+});
+
+check("polish: edge-relief dust transfer rescues a window-breaking move (tier-G analytic mirror)", () => {
+  const units = [100, 2500, 2500, 5000, 19700, 33852, 36348];
+  const values = [200, 100, 90, 80, 5, 2, 1];
+  const run = () =>
+    polishTaggedNiceGrid({
+      units,
+      values,
+      price: POLISH_PRICE,
+      tag: 0.101,
+      targetEdge: 0.817055,
+      edgeTolAbove: 0.0001,
+      buffer: 6,
+      exemptIdx: [6],
+      liveCapUnits: null,
+    });
+  const out = run();
+  // 33852→35000 (+$0.01148 EV) exits the 0.0001-wide window; the analytic
+  // transfer moves x=258 units from the ALREADY-OFF 5-card to the buffer,
+  // landing edge back inside. The 5-card itself then finds no lawful rung
+  // (both brackets re-exit and their reliefs would only undo themselves).
+  assert(
+    JSON.stringify(out) === JSON.stringify([100, 2500, 2500, 5000, 19442, 35000, 35458]),
+    `edge-relief: got [${out.join(", ")}]`,
+  );
+  assert(countOffNicePct(out, [6]) === 1, "edge-relief leaves exactly the 5-card off");
+  const r = computePackRisk({
+    cards: values.map((v, i) => ({ value: v, weight: out[i]! })),
+    price: POLISH_PRICE,
+  });
+  assert(
+    r.edge >= 0.817055 - 1e-9 && r.edge <= 0.817055 + 0.0001 + 1e-9,
+    `edge ${r.edge} outside the acceptance window`,
+  );
+  assert(Math.abs(r.winRate - 0.101) <= 1e-12, `tag drifted: ${r.winRate}`);
+  const total = out.reduce((a, b) => a + b, 0);
+  assert(total === 100000, `total ${total} ≠ 100000`);
+  assert(
+    findMonotoneViolations({
+      values,
+      shares: out.map((x) => x / 100000),
+      tol: 1e-9,
+    }).length === 0,
+    "edge-relief output must stay LAW M clean",
+  );
+  assert(
+    JSON.stringify(run()) === JSON.stringify(out),
+    "polish must be deterministic",
+  );
+});
+
+check("polish: strict-improvement gate — a no-gain vector ships byte-identical", () => {
+  // All-nice input: the polish must return the input untouched.
+  const units = [100, 2500, 2500, 5000, 30000, 59900];
+  const out = polishTaggedNiceGrid({
+    units,
+    values: POLISH_VALUES,
+    price: POLISH_PRICE,
+    tag: 0.101,
+    targetEdge: 0.8,
+    edgeTolAbove: 0.05,
+    buffer: 5,
+    exemptIdx: [5],
+    liveCapUnits: null,
+  });
+  assert(
+    JSON.stringify(out) === JSON.stringify(units),
+    "all-nice input must pass through byte-identical",
+  );
+});
+
+// ── Fleet-frozen needles (prod pools, real builder wiring) ───────────────
+
+/** 1% Psycho @ $6.74 (prod pool, frozen 2026-07-09). */
+const PSYCHO_VALUES = [2670, 1200, 1082.99, 652.8, 448.58, 358.8, 349.01, 208.66, 0.66, 0.32];
+const PSYCHO_LIVE_W = [250, 600, 1000, 1150, 1500, 1700, 1800, 2000, 390000, 600000];
+const PSYCHO_PRICE = 6.74;
+const PSYCHO_TAG = 0.01;
+
+/** 10% Goofy @ $101.99 (prod pool, frozen 2026-07-09). */
+const GOOFY_VALUES = [9300.21, 4199.99, 2040, 1182, 834, 437.74, 299.99, 0.29, 0.28];
+const GOOFY_LIVE_W = [500, 2500, 10000, 15000, 23000, 24000, 25000, 300000, 600000];
+const GOOFY_PRICE = 101.99;
+const GOOFY_TAG = 0.1;
+
+const FLEET_CFG: ResolvedAutoTargetCfg = {
+  globalCap: 25000,
+  maxMultCeiling: 100,
+  edgeCurve: DEFAULT_EDGE_CURVE,
+};
+
+function runFleetPair(
+  values: number[],
+  liveW: number[],
+  price: number,
+  tag: number,
+): { off: SearchBestPriceResult; on: SearchBestPriceResult } {
+  const before = computePackRisk({
+    cards: values.map((v, i) => ({ value: v, weight: liveW[i]! })),
+    price,
+  });
+  const top = Math.max(...values);
+  const auto = autoRetuneTargets(price, FLEET_CFG, tag, top, {
+    winRate: before.winRate,
+    nearMiss: before.nearMiss,
+    edge: before.edge,
+    topValue: top,
+  });
+  assert(auto.intendedHitRate !== null, "fixture must resolve as tagged");
+  const params = buildRetuneSearchParams("live", {
+    cards: values.map((v) => ({ value: v })),
+    basePrice: price,
+    targetEdge: auto.targetEdge,
+    targetWinRate: auto.targetWinRate,
+    maxWinCap: auto.maxWinCap,
+    nearMissMin: Math.max(0, before.nearMiss),
+    winRateTol: 0.02,
+    currentWeights: liveW,
+    intendedHitRate: auto.intendedHitRate,
+    priceBudgetPct: 0.1,
+  });
+  assert(params.niceGridPolish === true, "builder must emit niceGridPolish");
+  const { niceGridPolish: _strip, ...legacy } = params;
+  return {
+    off: searchBestPriceForCleanSnap(legacy),
+    on: searchBestPriceForCleanSnap(params),
+  };
+}
+
+check("fleet needle: 1% Psycho — off-nice cards 5→1, laws intact, tag exact, deterministic", () => {
+  const { off, on } = runFleetPair(PSYCHO_VALUES, PSYCHO_LIVE_W, PSYCHO_PRICE, PSYCHO_TAG);
+  const rOff = assertSuccess(off.bestResult, "Psycho legacy");
+  const rOn = assertSuccess(on.bestResult, "Psycho polished");
+  assert(rOff.snapped === true && rOn.snapped === true, "both arms must snap");
+  const c0 = countOffNicePct(rOff.weights, rOff.niceExemptIdx);
+  const c1 = countOffNicePct(rOn.weights, rOn.niceExemptIdx);
+  assert(c0 === 5, `legacy off-cards ${c0} ≠ 5`);
+  assert(c1 === 1, `polished off-cards ${c1} ≠ 1`);
+  assert(
+    findMonotoneViolations({
+      values: PSYCHO_VALUES,
+      shares: rOn.weights.map((w, _i, arr) => w / arr.reduce((a, b) => a + b, 0)),
+      tol: 1e-9,
+    }).length === 0,
+    "polished Psycho must be LAW M clean",
+  );
+  const total = rOn.weights.reduce((a, b) => a + b, 0);
+  let winUnits = 0;
+  for (let i = 0; i < PSYCHO_VALUES.length; i++) {
+    if (PSYCHO_VALUES[i]! >= on.bestPrice) winUnits += rOn.weights[i]!;
+  }
+  assert(
+    winUnits === Math.round(PSYCHO_TAG * total),
+    `Psycho win units ${winUnits} ≠ ${Math.round(PSYCHO_TAG * total)}`,
+  );
+  const again = runFleetPair(PSYCHO_VALUES, PSYCHO_LIVE_W, PSYCHO_PRICE, PSYCHO_TAG);
+  assert(
+    again.on.bestPrice === on.bestPrice &&
+      JSON.stringify(assertSuccess(again.on.bestResult, "rerun").weights) ===
+        JSON.stringify(rOn.weights),
+    "Psycho polished arm must be deterministic",
+  );
+});
+
+check("fleet needle: 10% Goofy — off-nice cards 3→2, snap outcome never regresses", () => {
+  const { off, on } = runFleetPair(GOOFY_VALUES, GOOFY_LIVE_W, GOOFY_PRICE, GOOFY_TAG);
+  const rOff = assertSuccess(off.bestResult, "Goofy legacy");
+  const rOn = assertSuccess(on.bestResult, "Goofy polished");
+  assert(rOff.snapped === true && rOn.snapped === true, "both arms must snap");
+  const c0 = countOffNicePct(rOff.weights, rOff.niceExemptIdx);
+  const c1 = countOffNicePct(rOn.weights, rOn.niceExemptIdx);
+  assert(c0 === 3, `legacy off-cards ${c0} ≠ 3`);
+  assert(c1 === 2, `polished off-cards ${c1} ≠ 2`);
+  assert(
+    Math.abs(rOn.risk.winRate - GOOFY_TAG) <= TAGGED_WINRATE_TOLERANCE + 1e-12,
+    `Goofy tag missed: ${rOn.risk.winRate}`,
+  );
+});
+
+check("fleet needle: untagged arm is byte-identical with the flag (polish is tagged-only)", () => {
+  const params = buildRetuneSearchParams("live", {
+    cards: PSYCHO_VALUES.map((v) => ({ value: v })),
+    basePrice: PSYCHO_PRICE,
+    targetEdge: 0.35,
+    targetWinRate: 0.01,
+    maxWinCap: 25000,
+    nearMissMin: 0,
+    winRateTol: 0.02,
+    currentWeights: PSYCHO_LIVE_W,
+    intendedHitRate: null,
+    priceBudgetPct: 0.1,
+  });
+  assert(params.niceGridPolish === true, "builder emits the flag on the untagged arm too");
+  const { niceGridPolish: _strip, ...legacy } = params;
+  const a = searchBestPriceForCleanSnap(params);
+  const b = searchBestPriceForCleanSnap(legacy);
+  assert(a.bestPrice === b.bestPrice, "untagged bestPrice must not move");
+  const wa = "weights" in a.bestResult ? a.bestResult.weights : null;
+  const wb = "weights" in b.bestResult ? b.bestResult.weights : null;
+  assert(
+    JSON.stringify(wa) === JSON.stringify(wb),
+    "untagged weights must be byte-identical",
+  );
 });
 
 // ── Summary ──────────────────────────────────────────────────────────────

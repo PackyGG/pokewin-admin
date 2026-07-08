@@ -281,6 +281,17 @@ export function buildRetuneSearchParams(
     // widest and needles were most likely missed). Legacy non-retune callers
     // never set it — their enumeration stays byte-identical.
     seedSegmentBoundaries: true,
+    // NICE-GRID POST-PASS (Retune V3 wave 7): every retune polishes an
+    // accepted tier-G tagged snap onto the human-nice grid (strictly
+    // improving, full acceptance stack re-verified per move — edge window,
+    // exact tag, win-ladder + LAW M monotonicity, anti-inflation guard,
+    // byte-identical near-miss mass). Fleet-measured (2026-07-09): 25 of 37
+    // tagged lottery packs shipped snapped-but-off-nice tier-G vectors, 20 of
+    // them DFS-budget-starved — the polish clears the off-nice flag wherever
+    // a lawful re-rung exists, and ships byte-identical vectors otherwise.
+    // No-op on untagged packs (the tagged snapper never runs); both plan arms
+    // + both writes inherit it through this one constructor (preview ≡ write).
+    niceGridPolish: true,
     ...(pinnedShares !== null ? { pinnedShares } : {}),
   };
 }

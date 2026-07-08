@@ -418,6 +418,15 @@ export type ShapeWeightsInput = {
    * in tagged mode; omit for the legacy per-snap-only cap (byte-identical).
    */
   nodeBudget?: SnapNodeBudget;
+  /**
+   * NICE-GRID POST-PASS (Retune V3 wave 7): forwarded to
+   * {@link snapTaggedPer100k} so an accepted tier-G tagged snap is polished
+   * onto the human-nice grid ({@link polishTaggedNiceGrid} — strictly
+   * improving, full acceptance stack re-verified per move). Set by
+   * {@link searchBestPriceForCleanSnap} when its own flag is on; omit for the
+   * legacy tier-G vector (byte-identical).
+   */
+  niceGridPolish?: boolean;
 };
 
 /**
@@ -3230,6 +3239,347 @@ export function taggedPlanNodeBudget(maxPriceChangePct: number): number {
 export type SnapNodeBudget = { remaining: number };
 
 /**
+ * NICE-GRID POST-PASS (Retune V3 wave 7 — the dust-chain nice-grid item):
+ * polish an ACCEPTED tier-G tagged snap vector onto the human-nice grid
+ * ({@link NICE_UNITS}) one lawful move at a time. Pure + deterministic.
+ *
+ * WHY: when the all-nice DFS (tiers N/P) fails or the plan-wide node budget
+ * is exhausted, tier G ships a per-100k-EXACT copy of the precise vector —
+ * tag-exact and inside the edge window, but its decimals are whatever the
+ * dispersal/flatten physics produced (38.279% dust, 0.115% grail). Fleet
+ * measurement (2026-07-09, 37 tagged lottery packs): 25 land snapped-but-
+ * off-nice, 20 of them with the DFS budget exhausted. This post-pass removes
+ * the off-nice flag card by card WITHOUT re-running any enumeration.
+ *
+ * THE MOVES (three families, all mass-conserving by construction):
+ *   • DUST single (value < price/2, not the buffer): re-rung to a bracketing
+ *     nice rung; the residual BUFFER absorbs the delta (dust↔dust — the win
+ *     band and the near-miss band are untouched).
+ *   • WIN/GRAIL single (value ≥ price, not the jackpot, not the cheapest free
+ *     winner): re-rung to a bracketing nice rung; the CHEAPEST FREE WINNER
+ *     absorbs the delta (the same anti-jackpot absorber tier G's win-sum
+ *     landing already uses), so the win-band unit sum — the exact tag — is
+ *     preserved to the unit. Only strictly improving: when the absorber sat
+ *     ON a nice rung (tier G's win-sum landing often leaves it there, e.g.
+ *     2.000%), any delta would pollute it and the move is refused — which is
+ *     exactly what the pair family exists for.
+ *   • WIN/GRAIL EXACT-CANCEL PAIR: two off-nice win cards re-rung in ONE
+ *     step with deltas that cancel to zero (Σdelta = 0), so the win sum — and
+ *     the nice absorber — are untouched entirely. Fleet-measured to be the
+ *     dominant fix (grail neighbors like 0.170%/0.180% pair to 0.150%/0.200%
+ *     with a tiny EV shift); distant-value pairs move EV more and the edge
+ *     window refuses them honestly.
+ *
+ * NEVER MOVED: pins (owner-sovereign), the buffer and the cheapest free
+ * winner (they ARE the compensators), the jackpot (its 1-in-N menu landing is
+ * deliberate styling — and the menu is a strict subset of the nice grid, so a
+ * menu-picked jackpot is already nice), and EVERY near-miss card — the
+ * near-miss mass stays byte-identical so the LAW M gate's near-miss floor
+ * (`lawfulSnapCandidate`) sees exactly the reality it already accepted.
+ *
+ * PER-MOVE ACCEPTANCE (re-verified move by move — the polish PROPOSES, the
+ * existing laws DISPOSE):
+ *   • every touched card keeps ≥ 1 unit,
+ *   • the win+grail ladder stays monotone (odds non-increasing in value,
+ *     pinned winners interleaved as immovable fixed points),
+ *   • LAW M ({@link findMonotoneViolations}, pins exempt) never gains a
+ *     violation over the input vector (normally 0 → stays 0),
+ *   • edge stays inside [targetEdge, targetEdge + edgeTolAbove],
+ *   • the win-rate stays within {@link TAGGED_WINRATE_TOLERANCE} of the tag,
+ *   • never-inflate on the LIVE basis (`liveCapUnits`, the N/P-tier
+ *     semantics): an UP-rung on a non-absorber win/grail card is allowed only
+ *     up to its CURRENT advertised odds; the cheapest free winner — the
+ *     anti-jackpot absorber — stays exempt, exactly as tiers N and P treat
+ *     it. Tier G's own `grailGuard` (precise-based) is deliberately NOT the
+ *     polish's guard: tier G ships a COPY of the precise vector, so under
+ *     that guard every grail would be frozen down-only and the absorber
+ *     (grail on most lottery pools) could absorb nothing — the same
+ *     round-number-ask ban the nice tiers already reject (their header:
+ *     capping nice rungs at the intermediate precise vector would make the
+ *     owner's own round-number ask impossible; house safety is preserved by
+ *     the unchanged edge window),
+ *   • the plan-wide off-nice count STRICTLY DECREASES (a move that merely
+ *     shuffles ugliness is refused).
+ *
+ * Deterministic order: DUST movers first (their EV-per-unit is tiny, so they
+ * bank cosmetic wins with minimal edge-window pressure), then WIN/GRAIL;
+ * within a family descending units, ties by ascending index. Per mover the
+ * log-nearest bracketing rung is tried first, then the other bracket. Up to
+ * `maxPasses` (default 3) full passes or until nothing improves. Bounded
+ * small: O(passes · movers · n log n) integer arithmetic — no DFS, no node
+ * budget interaction (`snapNodesSpent` is unaffected by design).
+ *
+ * Returns the improved unit vector, or the input verbatim (copied) when no
+ * lawful improving move exists. Total mass and the win-band sum are invariant
+ * by construction — the caller re-derives risk/`allNice` from the result.
+ */
+export function polishTaggedNiceGrid(input: {
+  units: readonly number[];
+  values: readonly number[];
+  price: number;
+  tag: number;
+  targetEdge: number;
+  /** Acceptance ceiling above target (same window the snap accepted with). */
+  edgeTolAbove: number;
+  /** Total-weight grid (default 100,000; pinned solves pass the PIN grid). */
+  scale?: number;
+  /** The residual dust buffer index (niceness-exempt, absorbs dust deltas). */
+  buffer: number;
+  /** Accounting exemptions (buffer + pins + forced single free winner). */
+  exemptIdx: readonly number[];
+  /** Owner-pinned slots — never moved, LAW-M-exempt, never compensators. */
+  pinnedIdx?: ReadonlySet<number>;
+  /**
+   * Live anchor caps in `scale` units (the N/P never-inflate basis): UP-rungs
+   * on non-absorber win/grail cards stay ≤ cap. `Infinity`/absent = uncapped;
+   * `null` = no anchor (legacy value-only path — no inflation guard, matching
+   * every tier).
+   */
+  liveCapUnits?: readonly number[] | null;
+  maxPasses?: number;
+}): number[] {
+  const { values, price, tag, targetEdge, edgeTolAbove, buffer } = input;
+  const n = values.length;
+  const SCALE = input.scale ?? 100_000;
+  const RUNG = SCALE / 100_000;
+  if (!Number.isInteger(RUNG) || RUNG < 1) return input.units.slice();
+  const exempt = new Set(input.exemptIdx);
+  const pinned = input.pinnedIdx ?? new Set<number>();
+  const rungs: number[] = NICE_UNITS.map((r) => r * RUNG);
+  const caps = input.liveCapUnits ?? null;
+  const capOf = (i: number): number => {
+    if (caps === null) return Infinity;
+    const c = caps[i];
+    return c === undefined || !Number.isFinite(c) ? Infinity : c;
+  };
+
+  let current = input.units.slice();
+  let currentOff = countOffNicePct(current, input.exemptIdx);
+  if (currentOff === 0) return current;
+
+  const lawViol = (u: readonly number[]): number =>
+    findMonotoneViolations({
+      values,
+      shares: u.map((x) => x / SCALE),
+      pinnedIdx: pinned.size > 0 ? pinned : undefined,
+      tol: 1e-9,
+    }).length;
+  const baselineViol = lawViol(current);
+  const riskOf = (u: readonly number[]): PackRisk =>
+    computePackRisk({
+      cards: values.map((v, i) => ({ value: v, weight: u[i]! })),
+      price,
+    });
+  const eLo = targetEdge - 1e-9;
+  const eHi = targetEdge + edgeTolAbove + 1e-9;
+
+  // Win ladder geometry: FREE winners value-DESC (stable ties by index) plus
+  // the FULL chain with pinned winners interleaved as fixed points.
+  const freeWin: number[] = [];
+  const fullWin: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (!(current[i]! > 0) || !(values[i]! > 0)) continue;
+    if (values[i]! < price) continue;
+    fullWin.push(i);
+    if (!pinned.has(i)) freeWin.push(i);
+  }
+  fullWin.sort((a, b) => values[b]! - values[a]!);
+  freeWin.sort((a, b) => values[b]! - values[a]!);
+  const jack = freeWin.length > 0 ? freeWin[0]! : -1;
+  const cheapestFree = freeWin.length > 0 ? freeWin[freeWin.length - 1]! : -1;
+
+  const winChainMonotone = (u: readonly number[]): boolean => {
+    let prev = 0;
+    for (const i of fullWin) {
+      if (u[i]! < prev) return false;
+      prev = u[i]!;
+    }
+    return true;
+  };
+
+  const isNiceUnits = (x: number): boolean =>
+    x % RUNG === 0 && NICE_UNITS_SET.has(x / RUNG);
+
+  // Bracketing nice rungs around x, log-nearest first (ties → the lower rung,
+  // matching the nice tiers' nearest-rung convention).
+  const bracketRungs = (x: number): number[] => {
+    let lower = -1;
+    let upper = -1;
+    for (const r of rungs) {
+      if (r < x) lower = r;
+      else if (r > x) {
+        upper = r;
+        break;
+      }
+    }
+    if (lower === -1 && upper === -1) return [];
+    if (lower === -1) return [upper];
+    if (upper === -1) return [lower];
+    const dLo = Math.abs(Math.log(lower / x));
+    const dHi = Math.abs(Math.log(upper / x));
+    return dLo <= dHi ? [lower, upper] : [upper, lower];
+  };
+
+  const maxPasses = input.maxPasses ?? 3;
+  for (let pass = 0; pass < maxPasses; pass++) {
+    const movers: number[] = [];
+    for (let i = 0; i < n; i++) {
+      if (!(current[i]! > 0) || !(values[i]! > 0)) continue;
+      if (exempt.has(i) || pinned.has(i) || i === buffer) continue;
+      if (isNiceUnits(current[i]!)) continue;
+      const v = values[i]!;
+      if (v >= price) {
+        if (i === jack || i === cheapestFree) continue;
+        movers.push(i);
+      } else if (v < 0.5 * price) {
+        movers.push(i);
+      }
+      // Near-miss band (price/2 ≤ v < price): never moved — see the header.
+    }
+    movers.sort((a, b) => {
+      const fa = values[a]! < 0.5 * price ? 0 : 1;
+      const fb = values[b]! < 0.5 * price ? 0 : 1;
+      if (fa !== fb) return fa - fb;
+      if (current[b]! !== current[a]!) return current[b]! - current[a]!;
+      return a - b;
+    });
+    // The shared per-candidate acceptance: laws first (cheap integer checks),
+    // then the real risk math, then the strict-improvement gate. When a move
+    // pushes the edge out of the window, the SAME analytic integer dust
+    // transfer tier G's landing uses (EV is linear in a mass shift between
+    // the free dust value-extremes; total + win band unchanged) tries to pull
+    // it back in — the transfer endpoints' niceness is not protected, the
+    // strict plan-wide gate decides honestly.
+    const tryAdopt = (proposal: number[]): boolean => {
+      const next = proposal;
+      if (!winChainMonotone(next)) return false;
+      let r = riskOf(next);
+      if (r.edge < eLo || r.edge > eHi) {
+        const freeDust: number[] = [];
+        for (let k = 0; k < n; k++) {
+          if (!(next[k]! > 0) || !(values[k]! > 0)) continue;
+          if (pinned.has(k)) continue;
+          if (values[k]! < 0.5 * price) freeDust.push(k);
+        }
+        if (freeDust.length < 2) return false;
+        freeDust.sort((a, b) => values[a]! - values[b]!);
+        const lo = freeDust[0]!;
+        const hi = freeDust[freeDust.length - 1]!;
+        const spread = values[hi]! - values[lo]!;
+        if (!(spread > 0)) return false;
+        const evHiBound = price * (1 - targetEdge);
+        const evLoBound = price * (1 - targetEdge - edgeTolAbove);
+        const xMin = Math.ceil(((r.ev - evHiBound) * SCALE) / spread - 1e-9);
+        const xMax = Math.floor(((r.ev - evLoBound) * SCALE) / spread + 1e-9);
+        const a = Math.max(xMin, -(next[lo]! - 1));
+        const b = Math.min(xMax, next[hi]! - 1);
+        if (a > b) return false;
+        let x = a <= 0 && 0 <= b ? 0 : Math.abs(a) < Math.abs(b) ? a : b;
+        if (x !== 0 && RUNG > 1) {
+          x = x > 0 ? Math.ceil(a / RUNG) * RUNG : Math.floor(b / RUNG) * RUNG;
+          if (x < a || x > b) return false;
+        }
+        if (x === 0) return false;
+        next[lo] = next[lo]! + x;
+        next[hi] = next[hi]! - x;
+        r = riskOf(next);
+        if (r.edge < eLo || r.edge > eHi) return false;
+      }
+      if (lawViol(next) > baselineViol) return false;
+      if (Math.abs(r.winRate - tag) > TAGGED_WINRATE_TOLERANCE + 1e-12) {
+        return false;
+      }
+      const nextOff = countOffNicePct(next, input.exemptIdx);
+      if (nextOff >= currentOff) return false;
+      current = next;
+      currentOff = nextOff;
+      return true;
+    };
+    // Never-inflate on the LIVE basis for a mover's UP-rung (win/grail only;
+    // the absorber is exempt by the N/P rule and is never a mover anyway).
+    const rungAllowed = (i: number, rung: number): boolean => {
+      if (rung <= current[i]!) return true;
+      if (values[i]! < price) return true; // loss side: edge window guards
+      return rung <= capOf(i) + 1e-9;
+    };
+
+    let improved = false;
+    for (const i of movers) {
+      if (isNiceUnits(current[i]!)) continue;
+      const isWin = values[i]! >= price;
+      const comp = isWin ? cheapestFree : buffer;
+      if (comp === -1 || comp === i || pinned.has(comp)) continue;
+      let moved = false;
+      for (const rung of bracketRungs(current[i]!)) {
+        const delta = rung - current[i]!;
+        if (delta === 0) continue;
+        if (!rungAllowed(i, rung)) continue;
+        const compNext = current[comp]! - delta;
+        if (compNext < 1) continue;
+        const next = current.slice();
+        next[i] = rung;
+        next[comp] = compNext;
+        if (tryAdopt(next)) {
+          moved = true;
+          improved = true;
+          break;
+        }
+      }
+      if (moved && currentOff === 0) break;
+    }
+    // WIN/GRAIL pairs: the single-move family often can't touch a win card —
+    // the absorber may sit ON a nice rung (tier G's win-sum landing leaves it
+    // there) so a lone delta would pollute it, and on all-grail pools every
+    // mover is down-only (live caps) so no single direction helps. A PAIR
+    // re-rungs two off-nice win cards in one step; the absorber takes only
+    // the pair's residual (zero for exact-cancel pairs), and the strict
+    // plan-wide gate (−2 movers, ≤ +1 absorber) decides honestly.
+    // Deterministic: movers-order outer/inner, log-nearest rung combos first.
+    if (currentOff > 0) {
+      const winMovers = movers.filter(
+        (i) =>
+          values[i]! >= price &&
+          !isNiceUnits(current[i]!) &&
+          i !== jack &&
+          i !== cheapestFree,
+      );
+      for (const i of winMovers) {
+        if (isNiceUnits(current[i]!)) continue;
+        let moved = false;
+        for (const j of winMovers) {
+          if (j === i || isNiceUnits(current[j]!)) continue;
+          for (const rungI of bracketRungs(current[i]!)) {
+            const deltaI = rungI - current[i]!;
+            if (deltaI === 0 || !rungAllowed(i, rungI)) continue;
+            for (const rungJ of bracketRungs(current[j]!)) {
+              const deltaJ = rungJ - current[j]!;
+              if (deltaJ === 0 || !rungAllowed(j, rungJ)) continue;
+              if (cheapestFree === -1) continue;
+              const compNext = current[cheapestFree]! - (deltaI + deltaJ);
+              if (compNext < 1) continue;
+              const next = current.slice();
+              next[i] = rungI;
+              next[j] = rungJ;
+              next[cheapestFree] = compNext;
+              if (tryAdopt(next)) {
+                moved = true;
+                improved = true;
+                break;
+              }
+            }
+            if (moved) break;
+          }
+          if (moved) break;
+        }
+        if (currentOff === 0) break;
+      }
+    }
+    if (!improved || currentOff === 0) break;
+  }
+  return current;
+}
+
+/**
  * Snap a HARD-TAGGED solve onto the per-100k integer house ladder. Pure.
  * Returns the snapped weights + risk, or `null` when the ladder can't hold the
  * acceptance stack (caller falls back to the generic snap → precise weights).
@@ -3329,6 +3679,17 @@ function snapTaggedPer100k(input: {
    * per-snap cap. See the header note. Omit for the legacy per-snap-only cap.
    */
   nodeBudget?: SnapNodeBudget;
+  /**
+   * NICE-GRID POST-PASS (Retune V3 wave 7): when TRUE, an accepted tier-G
+   * vector is polished by {@link polishTaggedNiceGrid} — off-nice cards are
+   * re-rugged onto the human-nice grid one lawful, strictly-improving move at
+   * a time (full acceptance stack re-verified per move; near-miss mass and
+   * `snapNodesSpent` byte-unchanged). Tiers N/P are untouched (N is all-nice
+   * by construction; P's only counted-off card is the absorber itself — the
+   * compensator, unfixable by definition). Omit for the legacy tier-G vector
+   * (existing callers byte-identical).
+   */
+  niceGridPolish?: boolean;
 }): {
   weights: number[];
   risk: PackRisk;
@@ -3949,6 +4310,33 @@ function snapTaggedPer100k(input: {
   // accounting as tiers N/P — see the note there).
   const exemptG = [buffer, ...pinnedUnitsByIdx.keys()];
   if (winDesc.length === 1) exemptG.push(winDesc[0]!);
+  // NICE-GRID POST-PASS (wave 7, opt-in): re-rung the accepted G vector's
+  // off-nice cards onto the human-nice grid, one strictly-improving lawful
+  // move at a time. The polish re-verifies the acceptance stack per move
+  // (edge window, exact tag, win-ladder + LAW M monotonicity, live-basis
+  // never-inflate caps — the N/P semantics, NOT the precise-based grailGuard
+  // this G vector already passed, which would freeze a precise-copy vector
+  // down-only; see the polish header). On zero improvement the vector ships
+  // byte-identical to the legacy G snap.
+  if (input.niceGridPolish === true && countOffNicePct(cand, exemptG) > 0) {
+    const polished = polishTaggedNiceGrid({
+      units: cand,
+      values,
+      price,
+      tag,
+      targetEdge,
+      edgeTolAbove,
+      scale: SCALE,
+      buffer,
+      exemptIdx: exemptG,
+      ...(pinnedUnitsByIdx.size > 0
+        ? { pinnedIdx: new Set(pinnedUnitsByIdx.keys()) }
+        : {}),
+      liveCapUnits: input.liveCapUnits ?? null,
+    });
+    cand = polished;
+    r = riskOf(cand);
+  }
   return {
     weights: cand.slice(),
     risk: r,
@@ -6225,6 +6613,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
         // Plan-wide DFS budget (perf-incident fix): shared across every candidate
         // price the tagged search evaluates so the all-nice enumeration can't grind.
         ...(input.nodeBudget !== undefined ? { nodeBudget: input.nodeBudget } : {}),
+        ...(input.niceGridPolish === true ? { niceGridPolish: true } : {}),
         ...(hasPins
           ? {
               pins: [...pinnedShareByIdx.keys()].map((index) => ({
@@ -6880,6 +7269,21 @@ export function searchBestPriceForCleanSnap(input: {
    * the legacy enumeration (existing callers byte-identical).
    */
   seedSegmentBoundaries?: boolean;
+  /**
+   * NICE-GRID POST-PASS (Retune V3 wave 7 — the dust-chain nice-grid item):
+   * when TRUE, forwarded to {@link shapeWeights} at every candidate price so
+   * an accepted tier-G tagged snap (the DFS-starved / all-nice-infeasible
+   * fallback that ships per-100k-exact but off-nice decimals like 38.279%)
+   * is polished onto the human-nice grid by {@link polishTaggedNiceGrid} —
+   * one strictly-improving move at a time, the FULL acceptance stack (edge
+   * window, exact tag, win-ladder + LAW M monotonicity, anti-inflation
+   * grailGuard, byte-identical near-miss mass) re-verified per move, so a
+   * polished plan can never be lawful-worse than the unpolished one. No-op
+   * in untagged mode ({@link snapTaggedPer100k} never runs) and on tiers
+   * N/P. Set by the retune arm (`buildRetuneSearchParams`, both arms); omit
+   * for the legacy tier-G vector (existing callers byte-identical).
+   */
+  niceGridPolish?: boolean;
 }): SearchBestPriceResult {
   const holdWinRateHardRequested = input.holdWinRateHard === true;
   // GRACEFUL FALLBACK orchestration: try the hard hold across the WHOLE sweep
@@ -7219,6 +7623,7 @@ function searchBestPriceForCleanSnapCore(input: {
   holdWinRateHard?: boolean;
   disperseLoss?: boolean;
   seedSegmentBoundaries?: boolean;
+  niceGridPolish?: boolean;
 }): SearchBestPriceResultCore {
   const {
     cards,
@@ -7240,6 +7645,7 @@ function searchBestPriceForCleanSnapCore(input: {
   const holdWinRateHard = input.holdWinRateHard === true;
   const disperseLoss = input.disperseLoss === true;
   const seedSegmentBoundaries = input.seedSegmentBoundaries === true;
+  const niceGridPolish = input.niceGridPolish === true;
 
   // PLAN-WIDE tagged-snap DFS budget (perf-incident fix). ONE mutable counter
   // shared across every candidate price's snap so the all-nice enumeration is
@@ -7294,6 +7700,9 @@ function searchBestPriceForCleanSnapCore(input: {
       // LOSS-MASS DISPERSION (owner-lens item 10): re-spread the free-dust band
       // at fixed mass + EV at every candidate price (edge/win-rate untouched).
       ...(disperseLoss ? { disperseLoss: true } : {}),
+      // NICE-GRID POST-PASS (wave 7): polish accepted tier-G tagged snaps onto
+      // the human-nice grid at every candidate price (no-op untagged / N / P).
+      ...(niceGridPolish ? { niceGridPolish: true } : {}),
     });
 
   // Tagged-mode helper: did this shape land within 0.01pp of the tag?

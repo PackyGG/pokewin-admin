@@ -204,6 +204,10 @@ function writeArmSends(i: RetuneSearchInputs): Record<string, unknown> {
     // SEGMENT-SEEDED CANDIDATE SEARCH (ruleset delta 9): every retune sweep
     // seeds the banding-boundary cents (present on both tagged + untagged).
     seedSegmentBoundaries: true,
+    // NICE-GRID POST-PASS (Retune V3 wave 7): every retune polishes accepted
+    // tier-G tagged snaps onto the human-nice grid (present on both arms;
+    // no-op untagged — the tagged snapper never runs there).
+    niceGridPolish: true,
     // Owner pins (Retune V2): the write threads {cardId, pct} pins through the
     // SAME builder as the plan; the emitted solver vector is {index, share},
     // resolved against the SAME cards array and sorted by index.
