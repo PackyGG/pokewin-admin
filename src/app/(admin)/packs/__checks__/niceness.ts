@@ -449,9 +449,12 @@ check("F4: the honesty-banner copy exists verbatim in plan-copy.ts (push stays e
   );
   const panelPath = path.resolve(path.dirname(copyPath), "plan-panel.tsx");
   const panel = readFileSync(panelPath, "utf8");
+  // Wave 2c: the panel gates on the SERVER verdict — `off-nice` fires iff
+  // tagged ∧ !allNice after the unsnapped rank (i.e. the old client-side
+  // `snapped && !allNice` predicate, proven in the tune-verdict suite).
   assert(
-    panel.includes("plan.snapped === true && plan.allNice === false"),
-    "plan-panel must gate the banner on snapped && !allNice",
+    panel.includes('verdict.kind === "off-nice"'),
+    "plan-panel must gate the banner on the off-nice verdict",
   );
   assert(panel.includes("nicePinnedBanner(plan.offLadderCards.length"), "banner must render the off count");
 });

@@ -40,7 +40,10 @@ import {
   TAGGED_WRITE_WINRATE_TOLERANCE,
 } from "@/app/(admin)/packs/_lib/auto-targets";
 import type { PackRisk } from "@/app/(admin)/insights/edge-calc/risk";
-import type { TagGuidance } from "@/app/(admin)/insights/edge-calc/tag-guidance";
+import type {
+  PackTuneVerdict,
+  TagGuidance,
+} from "@/app/(admin)/insights/edge-calc/tag-guidance";
 
 import type { RetuneRailRow } from "../_queries/rail";
 import type {
@@ -48,8 +51,8 @@ import type {
   StagedTagOverride,
 } from "../../doctor/retune-actions";
 import { LegendPopover } from "./legend-popover";
+import { RemedyChips } from "./pool-table";
 import {
-  PINS_INFEASIBLE_LIMIT_KIND,
   type PushedInfo,
   type StagedPool,
   type WorkspaceStatus,
@@ -92,7 +95,7 @@ import {
   nicePinnedBanner,
   offTagStripRetagStaged,
   offTagStripUntagStaged,
-  pinsRefusalFrame,
+  pinRemedyKindLabel,
   poolEditReasonLine,
   poolEditSummary,
   pushDisabledPendingLabel,
@@ -105,6 +108,13 @@ import {
   relaxationLine,
   tagBadgeLabel,
   tagSaturatedBanner,
+  TAG_TRIAGE_HEADING,
+  TAG_TRIAGE_NO_FIT,
+  TAG_TRIAGE_CURRENT,
+  TAG_TRIAGE_UNTAG_TITLE,
+  tagTriageOutsideTitle,
+  tagTriageRetagTitle,
+  tagTriageWindowLine,
 } from "./plan-copy";
 
 /** Tier badge tint — same escalation the rail rows use. */
@@ -198,44 +208,139 @@ function BeforeAfter({
 }
 
 /**
- * Limit-banner lead: headline + detail for `plan.limit`. For the owner-pins
- * refusal (`pins-infeasible`) the headline is the owner-plain frame derived
- * from the engine detail ("players would get back at most $A per $P open…")
- * and the raw engine detail moves into a collapsed disclosure — secondary,
- * never hidden. Any parse miss (other pins-infeasible wordings, future copy)
- * falls back to the previous rendering byte-identically.
+ * Verdict lead (wave 2c): the server's `plan.verdict` renders FIRST — the
+ * payload and the panel can never disagree. Headline resolution: every
+ * DEDICATED verdict kind leads with its own headline; ONLY the generic
+ * `refused`-with-structured-limit case defers to the plain-words
+ * `limitHeadline` map (quantified beats generic — the verdict's detail is the
+ * same `limit.detail` either way). For the owner-pins refusal the verdict
+ * detail is the server's shortfall copy (shortfall + smallest verified fix),
+ * the raw engine detail moves into the collapsed disclosure, and the verified
+ * remedies render as chips via the ONE `RemedyChips` renderer.
  */
-function LimitLead({
+function VerdictLead({
+  verdict,
   limit,
   price,
-  targetEdge,
   tag,
 }: {
-  limit: NonNullable<PackTunePlan["limit"]>;
+  verdict: PackTuneVerdict;
+  limit: PackTunePlan["limit"];
   price: number;
-  targetEdge: number;
   tag: number | null;
 }) {
-  const framed =
-    limit.kind === PINS_INFEASIBLE_LIMIT_KIND
-      ? pinsRefusalFrame(limit.detail, { price, targetEdge })
-      : null;
+  const headline =
+    verdict.kind === "refused" && limit !== null
+      ? limitHeadline(limit, { price, tag })
+      : verdict.headline;
   return (
     <>
-      <p className="font-medium">
-        {framed ?? limitHeadline(limit, { price, tag })}
-      </p>
-      {framed !== null ? (
+      <p className="font-medium">{headline}</p>
+      {verdict.detail !== null && verdict.detail !== headline && (
+        <p className="text-xs text-muted-foreground">{verdict.detail}</p>
+      )}
+      {verdict.kind === "pins-infeasible" && limit !== null && (
         <details className="text-xs text-muted-foreground">
           <summary className="cursor-pointer list-none underline-offset-2 hover:underline">
             {PINS_ENGINE_DETAIL_SUMMARY}
           </summary>
           <p className="pt-0.5">{limit.detail}</p>
         </details>
-      ) : (
-        <p className="text-xs text-muted-foreground">{limit.detail}</p>
+      )}
+      {verdict.pinRemedies !== null && verdict.pinRemedies.length > 0 && (
+        <RemedyChips
+          chips={verdict.pinRemedies.map((r, i) => ({
+            key: `${r.kind}-${i}`,
+            label: pinRemedyKindLabel(r.kind),
+            detail: r.humanCopy,
+          }))}
+        />
       )}
     </>
+  );
+}
+
+/**
+ * Tag triage (wave 2c): the LAW T window is THE bound for the retag picker.
+ * Renders under the verdict lead on the tag-law refusals (`tag-unreachable` /
+ * `monotone-unreachable`) when the fit probe ran: the window-proven lawful
+ * interval at the plan price, the four selectable tiers as one-click retag
+ * buttons — enabled iff the tier's designed hit-rate falls INSIDE
+ * `verdict.fitRange` — plus the always-lawful Untag. Buttons reuse the
+ * existing tag-control loop (`onChangeTag` stages the override + re-plans
+ * immediately; the push writes `packs.tags`). `fitRange === null` with the
+ * probe run = window-proven "no tag fits" — untag or edit the pool.
+ */
+function TagTriage({
+  verdict,
+  price,
+  tag,
+  onChangeTag,
+}: {
+  verdict: PackTuneVerdict;
+  price: number;
+  /** The EFFECTIVE tag the plan solved against (marks the failing tier). */
+  tag: number | null;
+  onChangeTag: (override: StagedTagOverride | undefined) => void;
+}) {
+  if (!verdict.fitProbed) return null;
+  const fitRange = verdict.fitRange;
+  return (
+    <div className="space-y-1.5 rounded-lg border border-current/25 bg-background/50 p-2.5">
+      <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+        <Tag className="size-3 shrink-0" aria-hidden />
+        {TAG_TRIAGE_HEADING}
+      </p>
+      <p className="text-xs text-foreground/90">
+        {fitRange !== null
+          ? tagTriageWindowLine(price, fitRange)
+          : TAG_TRIAGE_NO_FIT}
+      </p>
+      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+        {SELECTABLE_TAG_HIT_RATES.map((t) => {
+          const fits =
+            fitRange !== null &&
+            t.hitRate >= fitRange.minFit - 1e-9 &&
+            t.hitRate <= fitRange.maxFit + 1e-9;
+          const current = tag !== null && Math.abs(tag - t.hitRate) <= 1e-9;
+          return (
+            <Button
+              key={t.tag}
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!fits || current}
+              title={
+                fits && !current
+                  ? tagTriageRetagTitle(t.dbLabel)
+                  : tagTriageOutsideTitle(t.dbLabel)
+              }
+              onClick={() =>
+                onChangeTag({ kind: "tag", tag: t.tag, hitRate: t.hitRate })
+              }
+            >
+              <Tag className="size-3.5" />
+              {t.dbLabel}
+              {current && (
+                <span className="text-[10px] text-muted-foreground">
+                  · {TAG_TRIAGE_CURRENT}
+                </span>
+              )}
+            </Button>
+          );
+        })}
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          title={TAG_TRIAGE_UNTAG_TITLE}
+          onClick={() => onChangeTag({ kind: "untag" })}
+        >
+          <PinOff className="size-3.5" />
+          {UNTAG_CTA_LABEL}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -705,20 +810,36 @@ export function PlanPanel({
       );
     }
     if (!plan) return null;
+    const verdict = plan.verdict;
+    const verdictPrice = plan.priceAfter || plan.price;
+    const showTriage =
+      verdict.kind === "tag-unreachable" ||
+      verdict.kind === "monotone-unreachable";
+    const hasGuidance =
+      plan.guidance != null && plan.guidance.suggestions.length > 0;
     // §3 pool-edits-first (owner-lens): whenever the server attached a
     // solver-verified `poolEditPlan` — infeasible, degenerate, risk-flip, or a
-    // dirty dead-end — the PRIMARY recommendation is the pool edit. The limit's
-    // own detail line stays as the WHY on infeasible; on a feasible-but-
-    // degenerate plan the reason line inside the card carries the WHY.
+    // dirty dead-end — the PRIMARY recommendation is the pool edit. Wave 2c:
+    // the server VERDICT is the WHY line above the card (a healthy verdict —
+    // the risk-band-exit pool edit on an otherwise-clean plan — renders no
+    // lead; the card's reason line carries the why, as before).
     if (plan.poolEditPlan !== null) {
       return (
         <Banner tone={plan.limit !== null ? "rose" : "amber"} icon={TriangleAlert}>
-          {plan.limit !== null && (
-            <LimitLead
+          {verdict.kind !== "healthy" && (
+            <VerdictLead
+              verdict={verdict}
               limit={plan.limit}
-              price={plan.priceAfter || plan.price}
-              targetEdge={plan.targets.targetEdge}
+              price={verdictPrice}
               tag={tag}
+            />
+          )}
+          {showTriage && (
+            <TagTriage
+              verdict={verdict}
+              price={verdictPrice}
+              tag={tag}
+              onChangeTag={onChangeTag}
             />
           )}
           <PoolEditPrimary
@@ -731,21 +852,46 @@ export function PlanPanel({
         </Banner>
       );
     }
-    if (plan.limit !== null) {
-      const hasGuidance =
-        plan.guidance != null && plan.guidance.suggestions.length > 0;
+    // Wave 2c: every refusal kind — and the feasible-but-off-tag block — leads
+    // with the SERVER verdict (ranked worst-first at the source; the client
+    // never re-derives "why is this bad?" from six nullable fields again).
+    // The tag-law refusals additionally render the LAW T tag triage: the
+    // window-proven retag picker bounded by `verdict.fitRange`.
+    if (
+      verdict.kind === "tag-contradiction" ||
+      verdict.kind === "pins-infeasible" ||
+      verdict.kind === "monotone-unreachable" ||
+      verdict.kind === "tag-unreachable" ||
+      verdict.kind === "refused" ||
+      verdict.kind === "off-tag"
+    ) {
       return (
         <Banner tone="rose" icon={TriangleAlert}>
-          <LimitLead
+          <VerdictLead
+            verdict={verdict}
             limit={plan.limit}
-            price={plan.priceAfter || plan.price}
-            targetEdge={plan.targets.targetEdge}
+            price={verdictPrice}
             tag={tag}
           />
+          {/* off-tag ships no server detail — the quantified saturation copy
+              (closest-achievable framing) stays as the second line. */}
+          {verdict.kind === "off-tag" && tag !== null && (
+            <p className="text-xs text-muted-foreground">
+              {tagSaturatedBanner(tag)}
+            </p>
+          )}
+          {showTriage && (
+            <TagTriage
+              verdict={verdict}
+              price={verdictPrice}
+              tag={tag}
+              onChangeTag={onChangeTag}
+            />
+          )}
           {hasGuidance ? (
             // The guidance engine's ranked, proven fixes LEAD whenever they
             // exist (ruleset: no infeasible verdict without a computed
-            // suggestion); the limit's static one-liner renders as-is ONLY
+            // suggestion); the verdict's ONE `action` renders as-is ONLY
             // when guidance shipped nothing verified.
             <GuidanceSuggestions
               guidance={plan.guidance!}
@@ -754,8 +900,10 @@ export function PlanPanel({
             />
           ) : (
             <>
-              <p className="text-xs">{plan.limit.suggestion}</p>
-              {plan.limit.suggestedRange && (
+              {verdict.action !== null && (
+                <p className="text-xs">{verdict.action}</p>
+              )}
+              {plan.limit?.suggestedRange && (
                 <Button
                   type="button"
                   size="sm"
@@ -771,51 +919,6 @@ export function PlanPanel({
         </Banner>
       );
     }
-    if (plan.tagContradiction !== null) {
-      return (
-        <Banner tone="rose" icon={TriangleAlert}>
-          <p>{plan.tagContradiction}</p>
-        </Banner>
-      );
-    }
-    if (plan.taggedAccuracyHit === false && tag !== null) {
-      return (
-        <Banner tone="rose" icon={TriangleAlert}>
-          <p>{tagSaturatedBanner(tag)}</p>
-          {plan.guidance != null && plan.guidance.suggestions.length > 0 && (
-            <GuidanceSuggestions
-              guidance={plan.guidance}
-              onAddCardRange={onAddCardRange}
-              onChangeTag={onChangeTag}
-            />
-          )}
-        </Banner>
-      );
-    }
-    // §refusal-fallback (owner incident, Gold Stars): a REFUSED plan that
-    // carries no structured `limit`, no `poolEditPlan`, and no `tagContradiction`
-    // (the post-shape write-assert refusals — win-rate-miss / edge-above-band /
-    // max-win-above-cap / edge-below-target) used to render NOTHING but the rose
-    // "Infeasible" badge with blank Planned % cells and no reason. The engine
-    // already knows the WHY — surface it verbatim so the owner is never left at a
-    // dead end. Push stays blocked (the plan is `!feasible`). If the refused pool
-    // was ALSO degenerate the ungated guidance produced ranked fixes — show them.
-    if (!plan.feasible && plan.refusalMessage !== null) {
-      const hasGuidance =
-        plan.guidance != null && plan.guidance.suggestions.length > 0;
-      return (
-        <Banner tone="rose" icon={TriangleAlert}>
-          <p className="font-medium">{plan.refusalMessage}</p>
-          {hasGuidance && (
-            <GuidanceSuggestions
-              guidance={plan.guidance!}
-              onAddCardRange={onAddCardRange}
-              onChangeTag={onChangeTag}
-            />
-          )}
-        </Banner>
-      );
-    }
     if (plan.feasible && fixLoopSuccess) {
       return (
         <Banner tone="emerald" icon={ShieldCheck} highlight>
@@ -823,42 +926,44 @@ export function PlanPanel({
         </Banner>
       );
     }
-    if (plan.feasible && plan.snapped === false) {
-      // A dirty plan that swept the whole band + fell back is a dead end —
-      // "nudge the price" is wrong advice (Pattern 9g/10). Dead ends normally
-      // carry a poolEditPlan (handled above); this dirty banner only renders
-      // for the residual dirty-but-not-dead-end case.
-      const deadEnd = plan.searchMeta?.fellBackToBase === true;
-      return (
-        <Banner tone="amber" icon={TriangleAlert}>
-          <p>
-            {dirtyOddsBanner(
+    // Wave 2c quality kinds — the verdict headline leads, the QUANTIFIED
+    // client line follows (the server keeps quality details null by design):
+    //   • `unsnapped` — the dirty banner; a dirty plan that swept the whole
+    //     band + fell back is a dead end ("nudge the price" is wrong advice,
+    //     Pattern 9g/10). Dead ends normally carry a poolEditPlan (above);
+    //     this renders the residual dirty-but-not-dead-end case.
+    //   • `off-nice` — §niceness saturation-honesty: exact but off the nice
+    //     rung grid, quantified. Push stays ENABLED (tag + edge exact).
+    //   • `degenerate` — the shape guard's verdict WITHOUT a pool-edit lever
+    //     (previously badge-only for tagged packs): the ladder-collapse
+    //     banner + whatever spread fixes guidance proved.
+    if (
+      verdict.kind === "degenerate" ||
+      verdict.kind === "unsnapped" ||
+      verdict.kind === "off-nice"
+    ) {
+      const qualityLine =
+        verdict.kind === "unsnapped"
+          ? dirtyOddsBanner(
               plan.offLadderCards.length,
               plan.planned.length,
-              deadEnd,
-            )}
-          </p>
-          {plan.guidance != null && plan.guidance.suggestions.length > 0 && (
-            <GuidanceSuggestions
-              guidance={plan.guidance}
-              onAddCardRange={onAddCardRange}
-              onChangeTag={onChangeTag}
-            />
-          )}
-        </Banner>
-      );
-    }
-    if (plan.feasible && tag !== null && plan.snapped === true && plan.allNice === false) {
-      // §niceness saturation-honesty: the tiered nice snap exhausted its
-      // bounded search at every in-band price and the best exact vector
-      // still carries off-nice odds — quantified, not vibed. Push stays
-      // ENABLED (tag + edge are exact); the banner carries the honesty.
+              plan.searchMeta?.fellBackToBase === true,
+            )
+          : verdict.kind === "off-nice"
+            ? nicePinnedBanner(plan.offLadderCards.length, plan.planned.length)
+            : DEGENERATE_LADDER_BANNER;
       return (
         <Banner tone="amber" icon={TriangleAlert}>
-          <p>{nicePinnedBanner(plan.offLadderCards.length, plan.planned.length)}</p>
-          {plan.guidance != null && plan.guidance.suggestions.length > 0 && (
+          <VerdictLead
+            verdict={verdict}
+            limit={plan.limit}
+            price={verdictPrice}
+            tag={tag}
+          />
+          <p>{qualityLine}</p>
+          {hasGuidance && (
             <GuidanceSuggestions
-              guidance={plan.guidance}
+              guidance={plan.guidance!}
               onAddCardRange={onAddCardRange}
               onChangeTag={onChangeTag}
             />

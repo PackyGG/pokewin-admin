@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Check, TriangleAlert } from "lucide-react";
+import { Check, Tag, TriangleAlert } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -13,6 +13,7 @@ import type { RetuneRailRow } from "../_queries/rail";
 import {
   RAIL_OFFTAG_LIVE_TITLE,
   RAIL_OFFTAG_OVERRIDE_TITLE,
+  RAIL_TAG_TRIAGE_TITLE,
   RAIL_UNTAG_STAGED_TITLE,
   railRetagStagedTitle,
   tagBadgeLabel,
@@ -31,9 +32,9 @@ import type { PackVerdict } from "./plan-state";
  *         already staged the fix.
  * Line 2: price · tier chip · edge dot (emerald ≥ own target, rose below,
  *         title shows Δpp) · amber triangle when offTagLive (annotated, muted
- *         when a tag override is staged) · verdict mark (rose dot
- *         infeasible-when-visited · amber dot staged-unpushed edits ·
- *         emerald Check pushed).
+ *         when a tag override is staged) · verdict mark (amber Tag = tag-law
+ *         refusal, retag triage waits · rose dot other infeasible-when-visited
+ *         · amber dot staged-unpushed edits · emerald Check pushed).
  */
 
 /** Tier badge tint — copied from `doctor-table.tsx` (escalates cool → rose). */
@@ -207,7 +208,18 @@ function RailRowInner({
               className="inline-block size-1.5 rounded-full bg-amber-500"
             />
           )}
-          {flagged && (
+          {flagged && verdict === "tag" && (
+            // Tag-law refusal (wave 2c): the plan proved NO lawful ladder
+            // hosts this tag at its price — a retag decision waits, which is
+            // actionable triage, not a generic dead-end dot.
+            <span title={RAIL_TAG_TRIAGE_TITLE} className="flex shrink-0 items-center">
+              <Tag
+                className="size-3 shrink-0 text-amber-500"
+                aria-label={RAIL_TAG_TRIAGE_TITLE}
+              />
+            </span>
+          )}
+          {flagged && verdict !== "tag" && (
             <span
               aria-label="Plan infeasible / refused on last visit"
               title="Plan infeasible / refused on last visit"

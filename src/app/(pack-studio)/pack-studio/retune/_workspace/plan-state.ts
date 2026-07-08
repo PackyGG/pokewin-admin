@@ -109,13 +109,15 @@ export type PushedInfo = {
   winRateAfter: number;
 };
 
-/** Rail verdict marks once a pack was visited / written this session. */
-export type PackVerdict = "ok" | "infeasible" | "error" | "refused";
+/**
+ * Rail verdict marks once a pack was visited / written this session.
+ * `"tag"` = the plan refused on the TAG LAW (`verdict.kind` is
+ * `tag-unreachable` / `monotone-unreachable`) — the rail renders the amber
+ * retag-triage mark instead of the generic rose dot (wave 2c).
+ */
+export type PackVerdict = "ok" | "infeasible" | "error" | "refused" | "tag";
 
 // ─── Pending pre-flight facts (dry-run verdict for the pending buffer) ──────
-
-/** `ShapeWeightsLimit.kind` of the owner-pins refusal (copy-frame gate). */
-export const PINS_INFEASIBLE_LIMIT_KIND = "pins-infeasible";
 
 /**
  * One pack's pre-flight dry-run entry: a READ-ONLY `planPackTune` over the
@@ -134,7 +136,11 @@ export type PreflightEntry = {
   error?: string;
 };
 
-/** One rendered remedy chip (seam: a later server wave supplies verified remedies). */
+/**
+ * One rendered remedy chip. Since wave 2c the pins refusal fills this with the
+ * server's SOLVER-VERIFIED remedies (`verdict.pinRemedies`); every other
+ * refusal falls back to the guidance suggestions.
+ */
 export type RemedyChip = {
   key: string;
   label: string;
@@ -151,7 +157,7 @@ export type PendingPreflightView =
       status: "ready";
       feasible: false;
       detail: string;
-      /** `limit.suggestion` verbatim — ONLY when no guidance chips exist. */
+      /** The verdict's ONE `action` — ONLY when no chips exist. */
       suggestion: string | null;
       chips: RemedyChip[];
     };

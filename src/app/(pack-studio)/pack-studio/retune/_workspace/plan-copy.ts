@@ -93,55 +93,15 @@ export function addCardCtaLabel(range: { min: number; max: number }): string {
   return `Add a card between ${formatCurrency(range.min)}–${formatCurrency(range.max)}`;
 }
 
-// ─── Pins-infeasible owner-plain frame ──────────────────────────────────────
+// ─── Pins-infeasible engine-detail disclosure ────────────────────────────────
+//
+// The owner-plain pins frame lives SERVER-SIDE since wave 2b: the verdict's
+// detail is `pinShortfallHumanCopy` (shortfall + smallest verified fix), so
+// the client-side `pinsRefusalFrame` parser is retired. Only the collapsed
+// raw-engine-detail disclosure label remains client copy.
 
 /** Collapsed-disclosure label over the raw engine detail (never hidden). */
 export const PINS_ENGINE_DETAIL_SUMMARY = "Engine detail";
-
-/**
- * Wrap the engine's pins-infeasible EV-budget detail in the owner-plain frame:
- * "Your pinned odds make this pack keep too much/little: players would get
- * back at most/least $A per $P open (E% edge) vs the T% edge target (~$B back)."
- *
- * A/E are DERIVED from the raw detail via tolerant parsing (the first $ amount
- * = the EV miss; the "(BELOW|ABOVE) the T% target" clause = the direction);
- * P/T/B come from the plan's own price + resolved edge target. Returns `null`
- * whenever the detail doesn't match (cap-dropped pin, tag overshoot, malformed
- * pin, future wording) — callers then render the raw detail verbatim. Never
- * throws, never hides the raw detail (render it as the secondary line).
- */
-export function pinsRefusalFrame(
-  detail: string,
-  ctx: { price: number; targetEdge: number },
-): string | null {
-  const { price, targetEdge } = ctx;
-  if (!Number.isFinite(price) || price <= 0) return null;
-  if (!Number.isFinite(targetEdge) || targetEdge <= 0 || targetEdge >= 1) {
-    return null;
-  }
-  const evMatch = detail.match(/\$([0-9]+(?:\.[0-9]+)?)/);
-  if (!evMatch) return null;
-  const missEv = Number.parseFloat(evMatch[1]!);
-  if (!Number.isFinite(missEv) || missEv < 0) return null;
-  // The direction clause names the TARGET the edge would land relative to —
-  // "land BELOW the T% target" (house keeps too little) vs "ABOVE the T% edge
-  // target" (house keeps too much). The "above/below the budget" phrasing
-  // earlier in the sentence is about EV, not the edge — anchor on "target".
-  const dir = detail.match(
-    /\b(BELOW|ABOVE) the [0-9]+(?:\.[0-9]+)?% (?:edge )?target/i,
-  );
-  if (!dir) return null;
-  const landsBelowTarget = dir[1]!.toUpperCase() === "BELOW";
-  const evTarget = price * (1 - targetEdge);
-  const payback = landsBelowTarget ? evTarget + missEv : evTarget - missEv;
-  if (!Number.isFinite(payback) || payback <= 0) return null;
-  const edgePct = (1 - payback / price) * 100;
-  const head = landsBelowTarget
-    ? "Your pinned odds make this pack keep too little"
-    : "Your pinned odds make this pack keep too much";
-  const qual = landsBelowTarget ? "at least" : "at most";
-  return `${head}: players would get back ${qual} ${formatCurrency(payback)} per ${formatCurrency(price)} open (${edgePct.toFixed(2)}% edge) vs the ${pctBody(targetEdge)}% edge target (~${formatCurrency(evTarget)} back).`;
-}
 
 // ─── Guidance engine (ruleset §2 — ranked, proven suggestions) ──────────────
 
@@ -395,9 +355,6 @@ export function preflightSuccessLine(priceAfter: number, edgePct: number): strin
 /** The dry-run itself failed (timeout / error) — Apply still re-plans for real. */
 export const PREFLIGHT_ERROR_LINE =
   "Couldn't check these odds — Apply still runs the real plan.";
-/** Refusal verdict with no engine detail available (defensive fallback). */
-export const PREFLIGHT_REFUSED_FALLBACK =
-  "These odds don't solve as typed — see the fixes below, or Apply to get the full verdict.";
 
 export function tagSaturatedBanner(tag: number): string {
   return `No price in the search band hits the ${pctBody(tag)}% tag exactly — closest achievable shown. Pushing is blocked.`;
@@ -523,6 +480,65 @@ export function offTagStripRetagStaged(
 ): string {
   return `Live pool pays ${(liveWinRate * 100).toFixed(2)}% winners but the live tag says ${pctBody(liveTag)}%. Retag staged — this plan re-tunes the pack to ${pctBody(newTag)}%; pushing writes the ${pctBody(newTag)}% tag.`;
 }
+
+// ─── Verdict lead + tag triage (Retune V3 wave 2c — v9 `plan.verdict`) ───────
+//
+// The server's `plan.verdict` is THE lead the panel renders first (wave 2b:
+// worst-first kind + headline + engine-verbatim detail + the ONE action +
+// LAW T `fitRange` + pin remedies). The copy here is only what the SERVER
+// doesn't carry: chip labels, the triage frame, and the rail triage title.
+
+/** Short chip label per verified pin remedy kind (`PinRemedyKind`). */
+export function pinRemedyKindLabel(kind: string): string {
+  switch (kind) {
+    case "raise-pin":
+      return "Raise pin";
+    case "lower-pin":
+      return "Lower pin";
+    case "unpin-card":
+      return "Unpin";
+    case "price-move":
+      return "Price move";
+    default:
+      return kind;
+  }
+}
+
+/** Heading over the tag-triage block (tag-law refusals with a LAW T probe). */
+export const TAG_TRIAGE_HEADING = "Tag triage — what this pool can host";
+
+/** The window-proven lawful tag interval at the plan price. */
+export function tagTriageWindowLine(
+  price: number,
+  fitRange: { minFit: number; maxFit: number },
+): string {
+  return `Lawful tag window at ${formatCurrency(price)}: ${pctBody(fitRange.minFit)}%–${pctBody(fitRange.maxFit)}% (window-proven).`;
+}
+
+/** The probe ran and NO tag fits — untag or edit the pool. */
+export const TAG_TRIAGE_NO_FIT =
+  "No tag fits this pool at this price — window-proven. Untag it, or edit the pool and re-plan.";
+
+/** Title on an ENABLED triage tier button (inside the lawful window). */
+export function tagTriageRetagTitle(dbLabel: string): string {
+  return `Retag to ${dbLabel} — inside the lawful window; re-plans immediately, pushing writes the tag`;
+}
+
+/** Title on a DISABLED triage tier button (outside the lawful window). */
+export function tagTriageOutsideTitle(dbLabel: string): string {
+  return `${dbLabel} is outside the lawful window at this price`;
+}
+
+/** Chip suffix on the tier the pack currently solves against. */
+export const TAG_TRIAGE_CURRENT = "current";
+
+/** Title on the triage Untag button (always lawful). */
+export const TAG_TRIAGE_UNTAG_TITLE =
+  "Untag — plan this pack at its real rate; pushing clears the tag";
+
+/** Rail mark title: the visited plan refused on the tag law (triage waits). */
+export const RAIL_TAG_TRIAGE_TITLE =
+  "No lawful ladder hosts this tag at its price — open for retag triage";
 
 // ─── Rail tag-override chips (staged-aware rail surfaces) ───────────────────
 

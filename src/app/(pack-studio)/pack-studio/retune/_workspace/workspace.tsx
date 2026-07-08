@@ -48,16 +48,14 @@ import {
   F4_OUT_OF_SCOPE,
   AS_IS_SECONDARY_HEADING,
   DEGENERATE_BADGE,
-  PREFLIGHT_REFUSED_FALLBACK,
   PUSH_KEPT_PENDING_TOAST,
   applyDroppedEditsToast,
   pendingDroppedDriftToast,
-  pinsRefusalFrame,
+  pinRemedyKindLabel,
   pushBlockedPendingToast,
   suggestionKindLabel,
 } from "./plan-copy";
 import {
-  PINS_INFEASIBLE_LIMIT_KIND,
   basisKey,
   deriveStatus,
   isPoolDriftRefusal,
@@ -364,8 +362,22 @@ export function RetuneWorkspace({
       // A landed plan supersedes any write-refusal banner (the operator
       // re-planned — the refusal's artifact is gone).
       setRefusalByPack((prev) => delMap(prev, packId));
+      // Rail mark from the SERVER verdict (wave 2c): a tag-law refusal
+      // (`tag-unreachable` / `monotone-unreachable`) gets the amber retag-
+      // triage Tag mark — actionable, distinct from the generic rose dot.
       setVerdictByPack((prev) =>
-        setMap(prev, packId, data !== null && data.feasible ? "ok" : "infeasible"),
+        setMap(
+          prev,
+          packId,
+          data === null
+            ? "infeasible"
+            : data.feasible
+              ? "ok"
+              : data.verdict.kind === "tag-unreachable" ||
+                  data.verdict.kind === "monotone-unreachable"
+                ? "tag"
+                : "infeasible",
+        ),
       );
       // Fix-loop one-shot (§5c): infeasible → feasible flip = emerald pop.
       setFixLoopPacks((prev) => {
@@ -1522,28 +1534,28 @@ export function RetuneWorkspace({
         edgePct: p.after.edge * 100,
       };
     }
-    // Refusal detail: the owner-plain pins frame when the engine's
-    // pins-infeasible EV detail parses, else the engine detail verbatim.
-    const detail =
-      p.limit !== null
-        ? p.limit.kind === PINS_INFEASIBLE_LIMIT_KIND
-          ? (pinsRefusalFrame(p.limit.detail, {
-              price: p.priceAfter || p.price,
-              targetEdge: p.targets.targetEdge,
-            }) ?? p.limit.detail)
-          : p.limit.detail
-        : (p.tagContradiction ?? p.refusalMessage ?? PREFLIGHT_REFUSED_FALLBACK);
-    const chips: RemedyChip[] = (p.guidance?.suggestions ?? []).map((s, i) => ({
-      key: `${s.kind}-${i}`,
-      label: suggestionKindLabel(s.kind),
-      detail: s.humanCopy,
-    }));
+    // Refusal view from the SERVER verdict (wave 2c): its detail carries the
+    // engine WHY (for a pins refusal: the shortfall + smallest verified fix),
+    // its VERIFIED pin remedies render as the chips (solver-proven — they
+    // outrank the plain guidance chips, which remain the fallback for every
+    // other refusal), and its ONE `action` is the no-chips suggestion line.
+    const chips: RemedyChip[] =
+      p.verdict.pinRemedies !== null && p.verdict.pinRemedies.length > 0
+        ? p.verdict.pinRemedies.map((r, i) => ({
+            key: `${r.kind}-${i}`,
+            label: pinRemedyKindLabel(r.kind),
+            detail: r.humanCopy,
+          }))
+        : (p.guidance?.suggestions ?? []).map((s, i) => ({
+            key: `${s.kind}-${i}`,
+            label: suggestionKindLabel(s.kind),
+            detail: s.humanCopy,
+          }));
     return {
       status: "ready",
       feasible: false,
-      detail,
-      // `limit.suggestion` as-is ONLY when guidance shipped nothing verified.
-      suggestion: chips.length === 0 ? (p.limit?.suggestion ?? null) : null,
+      detail: p.verdict.detail ?? p.verdict.headline,
+      suggestion: chips.length === 0 ? p.verdict.action : null,
       chips,
     };
   }, [
