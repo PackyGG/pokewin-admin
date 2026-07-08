@@ -271,6 +271,16 @@ export function buildRetuneSearchParams(
     // the pool has room. EV-forced crushes (Captive) are untouched (the pool-edit
     // path owns those). Safe for tagged packs too — it never moves the win band.
     disperseLoss: true,
+    // SEGMENT-SEEDED CANDIDATE SEARCH (ruleset delta 9): every retune sweep
+    // also evaluates the pool's banding-boundary cents inside the band
+    // (price = v / 2v / v/5 crossings — where feasibility breakpoints and
+    // therefore snap-capable "needle" prices cluster), so a clean landing
+    // stranded between coarse-grid points is found instead of missed. Budget-
+    // bounded + deterministic; the wide ±60% suggestion probe inherits it
+    // through this same constructor (spread-override band, where strides are
+    // widest and needles were most likely missed). Legacy non-retune callers
+    // never set it — their enumeration stays byte-identical.
+    seedSegmentBoundaries: true,
     ...(pinnedShares !== null ? { pinnedShares } : {}),
   };
 }

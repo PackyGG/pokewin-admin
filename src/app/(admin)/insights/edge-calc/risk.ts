@@ -6859,6 +6859,27 @@ export function searchBestPriceForCleanSnap(input: {
    * layout (existing callers byte-identical).
    */
   disperseLoss?: boolean;
+  /**
+   * SEGMENT-SEEDED CANDIDATE SEARCH (ruleset delta 9, Retune V3): when TRUE,
+   * the sweep seeds candidates at the pool's BANDING BOUNDARIES inside the
+   * band — the cents where a card's band membership flips (`price = v` WIN↔
+   * NEARMISS, `price = 2v` NEARMISS↔DUST, `price = v/5` GRAIL↔WIN; both cents
+   * of each crossing). Feasibility is piecewise in price with breakpoints
+   * exactly there (crossing a boundary changes which cards can carry EV /
+   * near-miss mass), so snap-capable "needle" cents cluster at boundaries the
+   * coarse grid can miss on expensive packs (stride grows with band width;
+   * the offset passes densify blindly and the budget can run out first —
+   * see the Phase 4 note). Seeds run as a BONUS ROUND after the full legacy
+   * enumeration on an EXTRA ~20% allowance — the seeded sweep evaluates a
+   * strict SUPERSET of the unseeded one, so it can never land on a worse
+   * plan (fleet-measured: spending seeds from the shared budget instead
+   * cannibalized grid cents and regressed snapped plans). Deterministic
+   * (nearest-boundary-first) and never leaves the requested band. Set by the
+   * retune arm (`buildRetuneSearchParams`, both arms — the wide ±60%
+   * suggestion probe inherits it too, where strides are widest); omit for
+   * the legacy enumeration (existing callers byte-identical).
+   */
+  seedSegmentBoundaries?: boolean;
 }): SearchBestPriceResult {
   const holdWinRateHardRequested = input.holdWinRateHard === true;
   // GRACEFUL FALLBACK orchestration: try the hard hold across the WHOLE sweep
@@ -7138,6 +7159,48 @@ function hardFeasibleSomewhere(result: SearchBestPriceResultCore): boolean {
   return isShapeWeightsSuccess(result.bestResult);
 }
 
+/**
+ * Ruleset delta 9 seed list: the in-band cents where a card's band membership
+ * flips. Banding is `v ≥ 5·price` GRAIL / `v ≥ price` WIN / `v ≥ 0.5·price`
+ * NEARMISS / else DUST, so per usable card value `v` the price-space
+ * breakpoints are `v/5`, `v`, `2v`. With integer-cent prices the upper-band
+ * side of a breakpoint `b` is the cent `floor(b·100 + ε)` and the lower-band
+ * side is the next cent up — both are seeded (the physics differ on each
+ * side). Over-cap / non-positive values are skipped (their exclusion is
+ * price-independent, no breakpoint exists). Deduped, clipped to
+ * `[loCents, hiCents]`, sorted nearest-to-base first (ties: lower cent) so a
+ * capped spend keeps the most-relevant seeds — deterministic by construction.
+ * Exported for the `packs/__checks__` harness (boundary-math contract).
+ */
+export function segmentBoundaryCents(args: {
+  cards: readonly { value: number }[];
+  maxWinCap: number | undefined;
+  loCents: number;
+  hiCents: number;
+  centsAtBase: number;
+}): number[] {
+  const { cards, maxWinCap, loCents, hiCents, centsAtBase } = args;
+  const out = new Set<number>();
+  const push = (c: number) => {
+    if (c > 0 && c >= loCents && c <= hiCents) out.add(c);
+  };
+  for (const card of cards) {
+    const v = card.value;
+    if (!Number.isFinite(v) || !(v > 0)) continue;
+    if (maxWinCap !== undefined && v > maxWinCap) continue;
+    for (const boundaryCents of [v * 100, v * 200, v * 20]) {
+      const bc = Math.floor(boundaryCents + 1e-6);
+      push(bc);
+      push(bc + 1);
+    }
+  }
+  return [...out].sort((a, b) => {
+    const da = Math.abs(a - centsAtBase);
+    const db = Math.abs(b - centsAtBase);
+    return da !== db ? da - db : a - b;
+  });
+}
+
 function searchBestPriceForCleanSnapCore(input: {
   cards: { value: number }[];
   basePrice: number;
@@ -7155,6 +7218,7 @@ function searchBestPriceForCleanSnapCore(input: {
   holdWinRate?: boolean;
   holdWinRateHard?: boolean;
   disperseLoss?: boolean;
+  seedSegmentBoundaries?: boolean;
 }): SearchBestPriceResultCore {
   const {
     cards,
@@ -7175,6 +7239,7 @@ function searchBestPriceForCleanSnapCore(input: {
   const holdWinRate = input.holdWinRate === true;
   const holdWinRateHard = input.holdWinRateHard === true;
   const disperseLoss = input.disperseLoss === true;
+  const seedSegmentBoundaries = input.seedSegmentBoundaries === true;
 
   // PLAN-WIDE tagged-snap DFS budget (perf-incident fix). ONE mutable counter
   // shared across every candidate price's snap so the all-nice enumeration is
@@ -7320,6 +7385,15 @@ function searchBestPriceForCleanSnapCore(input: {
   //   4. OFFSET passes: any leftover budget re-walks the grid at halved
   //      offsets, densifying coverage until the budget is spent (cheap packs
   //      end up with full 1¢ coverage; expensive packs keep a bounded grid).
+  //   5. SEGMENT-SEED BONUS ROUND (retune arm only, ruleset delta 9): the
+  //      in-band cents where a card's band membership flips (price = v, 2v,
+  //      v/5 — both sides of each crossing) — feasibility breakpoints where
+  //      isolated snap-capable needles cluster. Runs AFTER phases 1-4 on an
+  //      EXTRA allowance (~20% on top of the budget), so the seeded
+  //      enumeration is a strict SUPERSET of the unseeded one — a seeded
+  //      sweep can never land on a worse plan than the same sweep without
+  //      seeds (spending seeds from the shared budget instead was measured
+  //      to cannibalize grid cents and regress snapped fleet plans).
   const upwardBoosted = upwardPriceExtensionPct > 0;
   const MAX_CANDIDATES = upwardBoosted ? 800 : tagged ? 320 : 120;
   const centsAtBase = Math.round(basePrice * 100);
@@ -7527,9 +7601,14 @@ function searchBestPriceForCleanSnapCore(input: {
   const seenCents = new Set<number>([centsAtBase]);
   const loCents = centsAtBase - downCents;
   const hiCents = centsAtBase + upCents;
+  // The evaluation cap: `MAX_CANDIDATES` through phases 1-4 (byte-identical
+  // legacy enumeration); the segment-seed bonus round (phase 5) RAISES it by
+  // its own allowance so seeds never displace a grid cent the unseeded sweep
+  // would have evaluated (the superset guarantee).
+  let candidateCap = MAX_CANDIDATES;
   const evaluateCents = (cents: number): boolean => {
     if (cents <= 0 || cents < loCents || cents > hiCents) return false;
-    if (seenCents.has(cents) || searched >= MAX_CANDIDATES) return false;
+    if (seenCents.has(cents) || searched >= candidateCap) return false;
     seenCents.add(cents);
     const price = cents / 100;
     const scored = scoreOf(price, runAt(price));
@@ -7618,6 +7697,39 @@ function searchBestPriceForCleanSnapCore(input: {
     ) {
       evaluateCents(centsAtBase + g);
       evaluateCents(centsAtBase - g);
+    }
+  }
+
+  // Phase 5 — SEGMENT-SEED BONUS ROUND (ruleset delta 9, retune arm only):
+  // evaluate the banding-boundary cents nearest-first on an EXTRA allowance
+  // (candidateCap is raised, so phases 1-4 above ran the byte-identical
+  // legacy enumeration first — the seeded sweep evaluates a strict SUPERSET
+  // and can never pick a worse plan). If a seed takes the lead, the leftover
+  // allowance polishes a 1¢ outward walk around it (a boundary hit rarely
+  // sits on its own exact best cent, same reasoning as the REFINE phase).
+  // Skipped when the fine walk settled a provably-optimal near hit (every
+  // seed is farther, so centsDist already decides against it).
+  if (seedSegmentBoundaries && !settledNear) {
+    const seedAllowance = Math.max(6, Math.floor((MAX_CANDIDATES - 1) * 0.2));
+    candidateCap = searched + seedAllowance;
+    const bestBefore = best;
+    const seeds = segmentBoundaryCents({
+      cards,
+      maxWinCap,
+      loCents,
+      hiCents,
+      centsAtBase,
+    });
+    for (const c of seeds) {
+      if (searched >= candidateCap) break;
+      evaluateCents(c);
+    }
+    if (best !== bestBefore) {
+      const seedCents = Math.round(best.price * 100);
+      for (let d = 1; d <= maxDelta && searched < candidateCap; d++) {
+        evaluateCents(seedCents + d);
+        if (searched < candidateCap) evaluateCents(seedCents - d);
+      }
     }
   }
 

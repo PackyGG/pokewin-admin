@@ -201,6 +201,9 @@ function writeArmSends(i: RetuneSearchInputs): Record<string, unknown> {
     // LOSS-MASS DISPERSION (owner-lens item 10): every retune re-spreads the
     // free-dust loss band at fixed mass + EV (present on both tagged + untagged).
     disperseLoss: true,
+    // SEGMENT-SEEDED CANDIDATE SEARCH (ruleset delta 9): every retune sweep
+    // seeds the banding-boundary cents (present on both tagged + untagged).
+    seedSegmentBoundaries: true,
     // Owner pins (Retune V2): the write threads {cardId, pct} pins through the
     // SAME builder as the plan; the emitted solver vector is {index, share},
     // resolved against the SAME cards array and sorted by index.

@@ -25,6 +25,7 @@ import {
 } from "../_lib/auto-targets";
 import {
   searchBestPriceForCleanSnap,
+  segmentBoundaryCents,
   computePackRisk,
   enforceLossMonotone,
   findMonotoneViolations,
@@ -894,6 +895,154 @@ check("pool-edit: an in-budget price → beyondBudget false; a healthy guidance 
   assert(noLever === null, "no add/remove lever → null (banner fallback)");
   // Null guidance → null.
   assert(derivePoolEditPlan(null, "infeasible", 100, 0.1) === null, "null guidance → null");
+});
+
+// ── 9. Segment-seeded candidate search (ruleset delta 9, Retune V3) ───────
+// The retune sweep evaluates the pool's banding-boundary cents (price = v /
+// 2v / v/5 crossings) as a BONUS ROUND on extra allowance after the legacy
+// enumeration — a strict SUPERSET, so seeding can never regress a plan. The
+// fleet A/B (183 active official packs, read-only) measured: default ±10%
+// band ZERO diffs; wide ±60% band 3 improvements (Airstrike + Power Guards
+// unsnapped→snapped, Bonus Buy soft→hard per the arm-preference law), 5
+// strict lex reprices, 0 regressions, 0 LAW M violations.
+const POWER_GUARDS: Pool = {
+  name: "Power Guards",
+  price: 31.63,
+  values: [1007.93, 229.01, 162.07, 84.79, 75.76, 46.37, 34.84, 15.72, 2.15],
+  livePcts: [0.05, 0.5, 0.8, 3, 8.65, 12, 15, 30, 30],
+  tag: null,
+};
+
+/** The exact live-arm params (`solveViaBuilder`'s construction), returned raw
+ * so the seeded arm and the flag-stripped legacy arm can run side by side. */
+function builderParamsFor(p: Pool, band: number) {
+  const weights = toWeights(p.livePcts);
+  const before = computePackRisk({
+    cards: p.values.map((v, i) => ({ value: v, weight: weights[i]! })),
+    price: p.price,
+  });
+  const top = Math.max(...p.values);
+  const t = autoRetuneTargets(p.price, CFG, p.tag ?? undefined, top, {
+    winRate: before.winRate,
+    nearMiss: before.nearMiss,
+    edge: before.edge,
+    topValue: top,
+  });
+  const nearMissMin = p.tag !== null ? Math.max(0, before.nearMiss) : t.nearMissMin;
+  const params = buildRetuneSearchParams("live", {
+    cards: p.values.map((v) => ({ value: v })),
+    basePrice: p.price,
+    targetEdge: t.targetEdge,
+    targetWinRate: t.targetWinRate,
+    maxWinCap: t.maxWinCap,
+    nearMissMin,
+    winRateTol: 0.02,
+    currentWeights: weights,
+    intendedHitRate: p.tag,
+    priceBudgetPct: band,
+  });
+  return { params, targets: t };
+}
+
+/** Product-law outcome rank (the engine's own arm preference): refused 0 <
+ * soft-unsnapped 1 < soft-snapped 2 < hard-unsnapped 3 < hard-snapped 4. */
+function lawRank(res: ReturnType<typeof searchBestPriceForCleanSnap>): number {
+  const r = res.bestResult;
+  if (!("weights" in r)) return 0;
+  return (res.usedSoftFallback ? 1 : 3) + (r.snapped === true ? 1 : 0);
+}
+
+check("delta 9 boundary math: v / 2v / v/5 crossings, both cents, clipped + deduped + nearest-first, over-cap and degenerate values skipped", () => {
+  const cents = segmentBoundaryCents({
+    cards: [{ value: 15.72 }, { value: 50000 }, { value: 0 }, { value: -3 }],
+    maxWinCap: 25000,
+    loCents: 1266,
+    hiCents: 5060,
+    centsAtBase: 3163,
+  });
+  // $15.72 usable: v→1572,1573 · 2v→3144,3145 · v/5→314,315 (below loCents,
+  // clipped). $50,000 is over-cap (price-independent drop — no breakpoints);
+  // 0 / negative values carry none. Nearest-to-base first.
+  assert(
+    JSON.stringify(cents) === JSON.stringify([3145, 3144, 1573, 1572]),
+    `expected [3145,3144,1573,1572], got ${JSON.stringify(cents)}`,
+  );
+  const again = segmentBoundaryCents({
+    cards: [{ value: 15.72 }, { value: 50000 }, { value: 0 }, { value: -3 }],
+    maxWinCap: 25000,
+    loCents: 1266,
+    hiCents: 5060,
+    centsAtBase: 3163,
+  });
+  assert(JSON.stringify(again) === JSON.stringify(cents), "deterministic across runs");
+});
+
+check("delta 9 needle (Power Guards, fleet-found): the unseeded ±60% probe lands UNSNAPPED; the seeded probe lands SNAPPED at $15.72 — the $15.72 card's WIN↔NEARMISS boundary cent", () => {
+  const { params, targets } = builderParamsFor(POWER_GUARDS, RETUNE_MAX_PRICE_CHANGE_PCT);
+  const { seedSegmentBoundaries: _s, ...legacy } = params;
+  const off = searchBestPriceForCleanSnap(legacy);
+  const on = searchBestPriceForCleanSnap(params);
+  const rOff = off.bestResult;
+  const rOn = on.bestResult;
+  assert("weights" in rOff, "the unseeded wide probe still plans");
+  assert(rOff.snapped !== true, `the unseeded probe must MISS the needle (got snapped at $${off.bestPrice})`);
+  assert("weights" in rOn, "the seeded wide probe plans");
+  assert(rOn.snapped === true, "the seeded probe lands a clean snap");
+  assert(on.usedSoftFallback === false, "the hard arm itself snaps — no soft float");
+  assert(
+    Math.round(on.bestPrice * 100) === 1572,
+    `the landing is the boundary cent 1572 (got ${Math.round(on.bestPrice * 100)})`,
+  );
+  // The landing IS a seed (physics, not grid luck): 1572 = floor(100·$15.72).
+  const seeds = segmentBoundaryCents({
+    cards: POWER_GUARDS.values.map((v) => ({ value: v })),
+    maxWinCap: targets.maxWinCap,
+    loCents: Math.round(POWER_GUARDS.price * 100) - Math.floor(POWER_GUARDS.price * RETUNE_MAX_PRICE_CHANGE_PCT * 100),
+    hiCents: Math.round(POWER_GUARDS.price * 100) + Math.floor(POWER_GUARDS.price * RETUNE_MAX_PRICE_CHANGE_PCT * 100),
+    centsAtBase: Math.round(POWER_GUARDS.price * 100),
+  });
+  assert(seeds.includes(1572), "1572 is a computed banding-boundary seed for this pool");
+  assert(rOn.edge >= targets.targetEdge - 1e-9, "the seeded plan clears the edge target");
+  let total = 0;
+  for (const w of rOn.weights) if (Number.isFinite(w) && w > 0) total += w;
+  const shares = rOn.weights.map((w) => (Number.isFinite(w) && w > 0 ? w / total : 0));
+  assert(
+    findMonotoneViolations({
+      values: POWER_GUARDS.values,
+      shares,
+      pinnedIdx: new Set<number>(),
+    }).length === 0,
+    "the seeded plan obeys LAW M",
+  );
+  // Determinism: a second seeded run is byte-identical.
+  const on2 = searchBestPriceForCleanSnap(params);
+  assert(
+    on2.bestPrice === on.bestPrice && on2.searched === on.searched,
+    "the seeded sweep is deterministic",
+  );
+});
+
+check("delta 9 superset law: seeding never worsens the product-law outcome, and the default ±10% band stays byte-identical (fleet-measured zero churn)", () => {
+  for (const p of [POWER_GUARDS, TAILS, CAPTIVE]) {
+    const def = builderParamsFor(p, RETUNE_PRICE_BUDGET_DEFAULT_PCT).params;
+    const { seedSegmentBoundaries: _a, ...defLegacy } = def;
+    const offD = searchBestPriceForCleanSnap(defLegacy);
+    const onD = searchBestPriceForCleanSnap(def);
+    assert(
+      onD.bestPrice === offD.bestPrice &&
+        lawRank(onD) === lawRank(offD) &&
+        onD.usedSoftFallback === offD.usedSoftFallback,
+      `${p.name}: the default band must not churn (off $${offD.bestPrice} rank ${lawRank(offD)} vs on $${onD.bestPrice} rank ${lawRank(onD)})`,
+    );
+    const wide = builderParamsFor(p, RETUNE_MAX_PRICE_CHANGE_PCT).params;
+    const { seedSegmentBoundaries: _b, ...wideLegacy } = wide;
+    const offW = searchBestPriceForCleanSnap(wideLegacy);
+    const onW = searchBestPriceForCleanSnap(wide);
+    assert(
+      lawRank(onW) >= lawRank(offW),
+      `${p.name}: the seeded wide probe may never rank below the unseeded one`,
+    );
+  }
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────
