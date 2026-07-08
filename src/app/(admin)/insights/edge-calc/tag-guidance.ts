@@ -45,6 +45,9 @@ import {
   ONE_SIDED_EDGE_EXCESS_TOL,
   TAGGED_WINRATE_TOLERANCE,
   bandEvForBeta,
+  buildLawEnv,
+  lawfulTagFitRange,
+  monotoneEvWindow,
   waterFillWinEv,
   searchBestPriceForCleanSnap,
   shapeWeights,
@@ -123,20 +126,24 @@ export type TagGuidance = {
       capSum: number;
     };
     /**
-     * TAG-FIT verdict ({@link monotoneFitLocal}) — present on TAGGED guidance
-     * only. `monotoneFeasible` answers "can an HONEST ladder (never-inflate
-     * caps, loss band cheap-heavy monotone, only the forced cap-overflow
-     * residual on the cheapest winner) pay the tag at the target edge AT THE
-     * PLAN PRICE?" — the engine may still ship such a pool through its
-     * degenerate escape hatches (RC4 cheapest-winner collapse / broad ∝v^-β
-     * spill), which is exactly the shape the owner flags. `monotoneEvMin/Max`
-     * are the honest-ladder window at the plan price (0/0 when structurally
-     * impossible).
+     * TAG-FIT verdict ({@link monotoneFitWindow}) — present on TAGGED
+     * guidance only. `monotoneFeasible` answers "can a LAWFUL ladder (the
+     * engine's `monotoneEvWindow`: LAW M chain, hard never-inflate caps,
+     * pins sovereign) pay the tag at the target edge AT THE PLAN PRICE?" —
+     * the core engine may still ship such a pool through its flagged escape
+     * hatches (RC4 cheapest-winner collapse / flagged inflation), which is
+     * exactly the shape the owner flags. `monotoneEvMin/Max` are the lawful
+     * window at the plan price (0/0 when no lawful ladder exists at all).
+     * `fitRange` is the LAW T proof ({@link lawfulTagFitRange}): the interval
+     * of tags this pool CAN lawfully host inside the edge contract at this
+     * price — null when NO tag fits ("retag at or below maxFit" copy comes
+     * straight from here).
      */
     shapeFit?: {
       monotoneFeasible: boolean;
       monotoneEvMin: number;
       monotoneEvMax: number;
+      fitRange: { minFit: number; maxFit: number } | null;
     };
   };
   suggestions: TuneSuggestion[];
@@ -413,49 +420,40 @@ function engineAccepts(
   return excess >= -1e-12 && excess <= ONE_SIDED_EDGE_EXCESS_TOL + 1e-12;
 }
 
-// ─── HONEST-LADDER fit (tag-fit verdict / shape-unfit) ────────────────────────
+// ─── LAWFUL-LADDER fit (tag-fit verdict / shape-unfit) ────────────────────────
 
 export type MonotoneFitWindow = {
-  /** The honest-ladder EV window (per open) at the given (price, cap, tag). */
+  /** The lawful-ladder EV window (per open) at the given (price, cap, tag). */
   evMin: number;
   evMax: number;
   /**
    * Witness ladders (fractions of 1) aligned to the INPUT cards: pinned cards
    * at their pinned share, cap-dropped / non-positive cards at 0. `minShares`
-   * realizes `evMin` (win mass cheap-first under caps, loss mass dumped on the
-   * cheapest loss card above the NM floor); `maxShares` realizes `evMax`
-   * (win mass rich-first under caps, loss mass uniform).
+   * realizes `evMin`, `maxShares` realizes `evMax`; both satisfy the FULL
+   * LAW M constraint set (chain, never-inflate caps, win mass exact, NM
+   * floor, total mass 1).
    */
   minShares: number[];
   maxShares: number[];
 };
 
 /**
- * COMPOSE-SEAM: a LOCAL model of the engine's honest-ladder reachability —
- * NOT a call into `shapeWeights` internals. It mirrors the engine's band
- * split, never-inflate caps (grail running-min) and pin carving exactly like
- * {@link buildModel}, but deliberately EXCLUDES the engine's degenerate escape
- * hatches: no cheapest-winner EV exemption, no RC4 all-on-cheapest collapse,
- * no broad ∝v^-β cap spill. Those hatches are how the solver ships a
- * mis-tagged pool by concentrating the win band on one cheap carrier — the
- * exact shape the owner flags. What this DOES allow:
+ * COMPOSE SEAM (closed, Retune V3): the guidance's tag-fit window IS the
+ * engine's — a thin adapter over {@link monotoneEvWindow} through the shared
+ * {@link buildLawEnv} (the SAME values / never-inflate caps / pins / pinned-NM
+ * construction the LAW M gate, the lawful rescue and `lawfulTagFitRange`
+ * use), so the verdict and the solver can never disagree about what "the
+ * lawful envelope" means. The pre-compose LOCAL model allowed the engine's
+ * sanctioned cap-overflow onto the cheapest winner and ratcheted only grails;
+ * the engine window enforces the full law: never-inflate caps are HARD
+ * (Σcaps < tag ⇒ no window — the "tag doesn't fit this pool" proof),
+ * running-min over the WHOLE win band, and the cross-band chain (no loss row
+ * below the win band's bottom rung).
  *
- *   • WIN band: order-free fill of the tag mass under the never-inflate caps
- *     (win-band non-monotonicity is audit-protected legitimate). When the
- *     caps can't carry the tag (Σcaps < tagFree), the forced residual sits on
- *     the CHEAPEST free winner — the engine's one sanctioned overflow
- *     direction, at its MINIMAL magnitude.
- *   • LOSS band: internal monotone (a cheaper loss card is never LESS likely
- *     than a richer one — the house ladder shape `disperseLoss`/
- *     `enforceLossMonotone` protect) + the near-miss floor when free NM cards
- *     exist. Pins are carved out as point-masses exempt from the ordering.
- *
- * Returns `null` when NO honest ladder exists structurally (win mass with no
- * free winner, loss mass with no free loss card, pinned masses over budget,
- * NM floor unreachable under the loss-monotone uniform bound) — callers show
- * evMin/evMax as 0/0. Otherwise the reachable EV window + witness vectors.
+ * Returns `null` when NO lawful ladder satisfies the masses at all — callers
+ * show evMin/evMax as 0/0. Otherwise the reachable EV window + witnesses.
  */
-export function monotoneFitLocal(args: {
+export function monotoneFitWindow(args: {
   cards: readonly { value: number }[];
   currentWeights: readonly number[];
   price: number;
@@ -465,153 +463,35 @@ export function monotoneFitLocal(args: {
   nearMissMin: number;
   pinnedShares?: readonly ShapeWeightsPinnedShare[] | null;
 }): MonotoneFitWindow | null {
-  const { price, cap, winMass, nearMissMin } = args;
-  const n = args.cards.length;
-
-  const pinByIdx = new Map<number, number>();
-  if (args.pinnedShares) {
-    for (const p of args.pinnedShares) {
-      if (Number.isFinite(p.share) && p.share > 0) pinByIdx.set(p.index, p.share);
-    }
-  }
-  let curTotal = 0;
-  for (const w of args.currentWeights) {
-    if (Number.isFinite(w) && w > 0) curTotal += w;
-  }
-
-  type FreeWin = { idx: number; v: number; cap: number };
-  type FreeLoss = { idx: number; v: number; nm: boolean };
-  const freeWin: FreeWin[] = [];
-  const freeLoss: FreeLoss[] = [];
-  let winFixedMass = 0;
-  let winFixedEv = 0;
-  let nmFixedMass = 0;
-  let nmFixedEv = 0;
-  let dustFixedMass = 0;
-  let dustFixedEv = 0;
-  const minShares = new Array<number>(n).fill(0);
-  const maxShares = new Array<number>(n).fill(0);
-
-  args.cards.forEach((c, idx) => {
-    const v = c.value;
-    if (!(v > 0) || v > cap) return;
-    const pin = pinByIdx.get(idx);
-    if (pin !== undefined) {
-      minShares[idx] = pin;
-      maxShares[idx] = pin;
-      if (v >= price) {
-        winFixedMass += pin;
-        winFixedEv += pin * v;
-      } else if (v >= 0.5 * price) {
-        nmFixedMass += pin;
-        nmFixedEv += pin * v;
-      } else {
-        dustFixedMass += pin;
-        dustFixedEv += pin * v;
-      }
-      return;
-    }
-    if (v >= price) {
-      const w = args.currentWeights[idx];
-      freeWin.push({
-        idx,
-        v,
-        cap:
-          curTotal > 0 && Number.isFinite(w) && (w as number) > 0
-            ? (w as number) / curTotal
-            : Infinity,
-      });
-    } else {
-      freeLoss.push({ idx, v, nm: v >= 0.5 * price });
-    }
+  const env = buildLawEnv({
+    cards: args.cards.map((c) => ({ value: c.value })),
+    price: args.price,
+    maxWinCap: args.cap,
+    currentWeights: args.currentWeights.slice(),
+    ...(args.pinnedShares && args.pinnedShares.length > 0
+      ? { pinnedShares: args.pinnedShares.map((p) => ({ ...p })) }
+      : {}),
   });
-
-  // Never-inflate grail running-min (value-ascending over grails ≥ 5·price).
-  const grailAsc = freeWin
-    .filter((x) => x.v >= 5 * price)
-    .sort((a, b) => a.v - b.v);
-  let runningMin = Infinity;
-  for (const g of grailAsc) {
-    runningMin = Math.min(runningMin, g.cap);
-    g.cap = runningMin;
-  }
-
-  const tagFree = winMass - winFixedMass;
-  if (tagFree < -1e-9) return null;
-  if (tagFree > 1e-9 && freeWin.length === 0) return null;
-  const lossFree = 1 - winMass - nmFixedMass - dustFixedMass;
-  if (lossFree < -1e-9) return null;
-  if (lossFree > 1e-9 && freeLoss.length === 0) return null;
-
-  const freeNmCount = freeLoss.reduce((a, x) => a + (x.nm ? 1 : 0), 0);
-  const nmFree =
-    freeNmCount > 0 && nearMissMin > 0
-      ? Math.max(0, nearMissMin - nmFixedMass)
-      : 0;
-  const nu = freeNmCount > 0 ? nmFree / freeNmCount : 0;
-  const lossCnt = freeLoss.length;
-  if (nu * lossCnt > Math.max(0, lossFree) + 1e-9) return null;
-
-  // ── WIN fills (order-free under caps; forced residual on the cheapest) ──
-  const asc = freeWin.slice().sort((a, b) => a.v - b.v);
-  const fillWin = (order: readonly FreeWin[], shares: number[]): number => {
-    let remaining = Math.max(0, tagFree);
-    let ev = 0;
-    for (const x of order) {
-      const take = Math.min(x.cap, remaining);
-      if (take > 0) {
-        shares[x.idx] = take;
-        ev += take * x.v;
-        remaining -= take;
-      }
-      if (!(remaining > 1e-15)) {
-        remaining = 0;
-        break;
-      }
-    }
-    if (remaining > 1e-15 && asc.length > 0) {
-      // Saturated: the sanctioned overflow — the residual on the CHEAPEST.
-      const cheapest = asc[0]!;
-      shares[cheapest.idx] = (shares[cheapest.idx] ?? 0) + remaining;
-      ev += remaining * cheapest.v;
-    }
-    return ev;
-  };
-  const winMinEv = fillWin(asc, minShares);
-  const winMaxEv = fillWin(asc.slice().reverse(), maxShares);
-
-  // ── LOSS layouts (internal monotone + NM floor) ─────────────────────────
-  let lossMinEv = 0;
-  let lossMaxEv = 0;
-  if (lossCnt > 0) {
-    const lf = Math.max(0, lossFree);
-    const uniform = lf / lossCnt;
-    let cheapest = freeLoss[0]!;
-    for (const x of freeLoss) if (x.v < cheapest.v) cheapest = x;
-    for (const x of freeLoss) {
-      maxShares[x.idx] = uniform;
-      lossMaxEv += uniform * x.v;
-      minShares[x.idx] = nu;
-      lossMinEv += nu * x.v;
-    }
-    const excess = lf - nu * lossCnt;
-    if (excess > 0) {
-      minShares[cheapest.idx] = (minShares[cheapest.idx] ?? 0) + excess;
-      lossMinEv += excess * cheapest.v;
-    }
-  }
-
-  const fixedEv = winFixedEv + nmFixedEv + dustFixedEv;
+  if (env === null) return null;
+  const w = monotoneEvWindow({
+    values: env.values,
+    price: args.price,
+    winMass: args.winMass,
+    nearMissMin: args.nearMissMin,
+    winCaps: env.winCaps,
+    pinnedShares: env.pins,
+  });
+  if (w === null) return null;
   return {
-    evMin: winMinEv + lossMinEv + fixedEv,
-    evMax: winMaxEv + lossMaxEv + fixedEv,
-    minShares,
-    maxShares,
+    evMin: w.evMin,
+    evMax: w.evMax,
+    minShares: w.minVector,
+    maxShares: w.maxVector,
   };
 }
 
 /**
- * Does the honest-ladder window admit the target EV at `price`? The down side
+ * Does the lawful-ladder window admit the target EV at `price`? The down side
  * is sacred (the edge floor is never crossed); the up side carries the
  * engine's one-sided acceptance (≤ 0.25pp of edge excess).
  */
@@ -733,10 +613,11 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
   const pointInterval =
     base.saturated && base.evMax - base.evMin < 1e-4 * price;
 
-  // ── TAG-FIT verdict (shape-unfit): the honest-ladder window at the plan
-  //    price. Distinct from `feasibleRaw` — the engine can accept through its
-  //    degenerate hatches (RC4 knob / spill) a tag no honest ladder carries.
-  const baseFit = monotoneFitLocal({
+  // ── TAG-FIT verdict (shape-unfit): the ENGINE's lawful window at the plan
+  //    price. Distinct from `feasibleRaw` — the core can accept through its
+  //    flagged hatches (RC4 knob / flagged inflation) a tag no lawful ladder
+  //    carries. `fitRange` is the LAW T proof over the tag axis.
+  const baseFit = monotoneFitWindow({
     cards: input.cards,
     currentWeights: input.currentWeights,
     price,
@@ -746,10 +627,19 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
     pinnedShares: pins,
   });
   const monotoneFeasible = monotoneFits(baseFit, evTarget, price);
+  const fitRange = lawfulTagFitRange({
+    cards: input.cards.map((c) => ({ value: c.value })),
+    price,
+    targetEdge,
+    maxWinCap: input.maxWinCap,
+    currentWeights: input.currentWeights.slice(),
+    ...(pins ? { pinnedShares: pins.map((p) => ({ ...p })) } : {}),
+  });
   const shapeFit = {
     monotoneFeasible,
     monotoneEvMin: baseFit?.evMin ?? 0,
     monotoneEvMax: baseFit?.evMax ?? 0,
+    fitRange,
   };
 
   const suggestions: TuneSuggestion[] = [];
@@ -1126,7 +1016,13 @@ export function computeTagGuidance(input: TagGuidanceInput): TagGuidance {
   ) {
     const liveRate = input.liveWinRate;
     const nmSeed = Math.max(0, input.liveNearMiss ?? 0);
-    const unfitWhy = `The ${pp(tag)}% tag doesn't fit this pool's cards — no honest ladder (never-inflate odds, cheap-heavy losses) pays ${pp(tag)}% winners at the ${pp(targetEdge)}% target at ${usd(price)}.`;
+    const ceiling =
+      fitRange !== null && fitRange.maxFit < tag - 1e-9
+        ? ` The lawful ceiling at ${usd(price)} is ${pp(fitRange.maxFit)}% (window-proven).`
+        : fitRange === null
+          ? ` No tag fits this pool at ${usd(price)} under the lawful envelope.`
+          : "";
+    const unfitWhy = `The ${pp(tag)}% tag doesn't fit this pool's cards — no lawful ladder (never-inflate odds, monotone down the value order) pays ${pp(tag)}% winners at the ${pp(targetEdge)}% target at ${usd(price)}.${ceiling}`;
 
     // Nearest selectable tier within ±1pp of the live rate → verified RETAG.
     const TIER_TOL = 0.01;

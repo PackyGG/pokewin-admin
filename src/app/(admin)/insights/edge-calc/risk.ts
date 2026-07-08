@@ -4122,12 +4122,14 @@ function snapPinnedFreeToCleanLadder(input: {
  */
 /**
  * Shared construction of the LAW M environment (values, never-inflate caps
- * from the LIVE shares, pins, pinned near-miss mass) used by BOTH the lawful
- * rescue and the tag-fit verdict, so the two can never disagree about what
- * "the lawful envelope" means. Returns null on malformed input (same
- * validations the rescue always applied).
+ * from the LIVE shares, pins, pinned near-miss mass) used by the lawful
+ * rescue, the tag-fit verdict AND the guidance's fit window (compose seam),
+ * so none of them can ever disagree about what "the lawful envelope" means.
+ * Over-cap win rows are zero-capped (excluded as rungs) unless pinned — pins
+ * are sovereign. Returns null on malformed input (same validations the
+ * rescue always applied).
  */
-function buildLawEnv(input: {
+export function buildLawEnv(input: {
   cards: { value: number }[];
   price: number;
   maxWinCap?: number;

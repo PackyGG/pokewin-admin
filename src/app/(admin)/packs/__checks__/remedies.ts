@@ -30,14 +30,18 @@
  *       verifies tag-HARD only at ≤ 0.057% under LAW M — the remedy lands
  *       exactly there (grid-snapped), the re-applied solve holds the tag at
  *       1.0000%, and 0.058% refuses (the boundary is real).
- *   4.  `monotoneFitLocal` — the honest-ladder window: exact band math,
- *       never-inflate caps (saturated residual rides the CHEAPEST winner
- *       only), grail running-min ratchet, pinned point-mass carve,
- *       structural nulls.
- *   5.  SHAPE-UNFIT lead (Love-Cycle): a 50/50 tag no honest ladder carries
+ *   4.  `monotoneFitWindow` — the guidance's fit window IS the engine's
+ *       (compose seam: thin adapter over `monotoneEvWindow` through the
+ *       shared `buildLawEnv`): exact band math, HARD never-inflate caps
+ *       (Σcaps < tag ⇒ null, no overflow hatch), running-min ratchet over
+ *       the whole win band, pinned point-mass carve, structural nulls.
+ *   5.  SHAPE-UNFIT lead (Love-Cycle): a 50/50 tag no lawful ladder carries
  *       at the plan price leads with the VERIFIED untag (solver round-trip,
- *       ranked ABOVE the price levers); 10% Chaos keeps its legacy kinds
- *       byte-identical (live rate == tag gates the lead off).
+ *       ranked ABOVE the price levers) and the copy names the LAW T
+ *       window-proven ceiling; 10% Chaos keeps its legacy kinds
+ *       byte-identical (live rate == tag gates the lead off); the verdict
+ *       catches the hatch-frame lie (BandModel feasible + law-unfit ⇒ the
+ *       engine really refuses `tag-unreachable`).
  *
  * Exit code 0 = all passed; 1 = at least one failure (printed).
  */
@@ -60,7 +64,7 @@ import {
 import {
   computePinRemedies,
   computeTagGuidance,
-  monotoneFitLocal,
+  monotoneFitWindow,
   pinShortfallHumanCopy,
   type PinRemedy,
 } from "../../insights/edge-calc/tag-guidance";
@@ -430,12 +434,15 @@ check("tagged1pct: an ACCEPTING base returns [] (nothing to repair)", () => {
   assert(rem.length === 0, `expected [], got ${rem.length}`);
 });
 
-// ── 5. monotoneFitLocal: the honest-ladder window ────────────────────────
-check("monotoneFitLocal: exact window math (win at live cap + NM floor + cheap-heavy loss)", () => {
+// ── 5. monotoneFitWindow: the ENGINE's lawful window (compose seam) ──────
+check("monotoneFitWindow: exact window math (win at live cap + NM floor + lawful loss)", () => {
   // Win {12 @ cap 0.1} · NM {3} · dust {0.4}; tag 0.1, nmMin 0.1.
-  // evMin = 0.1·12 + 0.1·3 + 0.8·0.4 = 1.82 (loss excess on the CHEAPEST);
+  // evMin = 0.1·12 + 0.1·3 + 0.8·0.4 = 1.82 (floor-and-dump on the CHEAPEST);
   // evMax = 0.1·12 + 0.45·3 + 0.45·0.4 = 2.73 (uniform loss).
-  const w = monotoneFitLocal({
+  // Byte-identical to the pre-compose local model on this pool — the swap to
+  // the engine's `monotoneEvWindow` changed NOTHING where the local model
+  // was already lawful.
+  const w = monotoneFitWindow({
     cards: [{ value: 12 }, { value: 3 }, { value: 0.4 }],
     currentWeights: [100000, 200000, 700000],
     price: 5,
@@ -452,48 +459,61 @@ check("monotoneFitLocal: exact window math (win at live cap + NM floor + cheap-h
   assert(w.minShares[1]! < w.maxShares[1]!, "NM floor vs uniform separates the bounds");
 });
 
-check("monotoneFitLocal: saturated tag → the forced residual rides ONLY the cheapest winner (never-inflate)", () => {
-  // Caps 0.02 + 0.03 < tag 0.2 → residual 0.15 lands on the CHEAPEST ($8);
-  // the rich $12 card NEVER exceeds its live 0.02. Saturated ⇒ point window.
-  const w = monotoneFitLocal({
+check("monotoneFitWindow: saturated tag ⇒ NULL — never-inflate caps are HARD (no overflow hatch)", () => {
+  // Caps 0.02 + 0.03 < tag 0.2: the pre-compose local model overflowed the
+  // residual onto the cheapest winner; the ENGINE window refuses outright —
+  // that overflow is exactly the flagged-inflation shape LAW T exists to
+  // surface. At the caps' exact carry (0.05) the window is a point with the
+  // cheapest at ITS OWN cap: 0.02·12 + 0.03·8 + 0.95·0.4 = 0.86.
+  const base = {
     cards: [{ value: 12 }, { value: 8 }, { value: 0.4 }],
     currentWeights: [20000, 30000, 950000],
     price: 5,
     cap: 100,
-    winMass: 0.2,
     nearMissMin: 0,
-  });
-  assert(w !== null, "window exists");
+  };
+  assert(
+    monotoneFitWindow({ ...base, winMass: 0.2 }) === null,
+    "tag over the caps ⇒ no lawful window",
+  );
+  const w = monotoneFitWindow({ ...base, winMass: 0.05 });
+  assert(w !== null, "window exists at the caps' exact carry");
   assert(Math.abs(w.evMin - w.evMax) < 1e-12, "saturated win band ⇒ point window");
-  assert(Math.abs(w.evMin - 2.0) < 1e-9, `point ${w.evMin} (win 1.68 + dust 0.32)`);
+  assert(Math.abs(w.evMin - 0.86) < 1e-9, `point ${w.evMin} (win 0.48 + dust 0.38)`);
   assert(w.minShares[0] === 0.02 && w.maxShares[0] === 0.02, "the RICH winner stays at live");
-  assert(Math.abs(w.minShares[1]! - 0.18) < 1e-12, "the cheapest carries cap + residual (0.03 + 0.15)");
+  assert(w.minShares[1] === 0.03 && w.maxShares[1] === 0.03, "the cheapest stays at ITS cap — no residual ever");
 });
 
-check("monotoneFitLocal: grail running-min ratchet caps a richer grail at the cheaper grail's live odds", () => {
-  // Both winners ≥ 5·price are grails; the $30's live 1% ratchets the $100
-  // down from live 5% to 1%.
-  const w = monotoneFitLocal({
+check("monotoneFitWindow: running-min ratchet caps a richer winner at the cheaper one's live odds", () => {
+  // The $30's live 1% ratchets the $100 down from live 5% to 1% (running-min
+  // over the WHOLE win band, not only grails). Effective carry = 2%: at
+  // winMass 0.02 the window is the ratcheted point (0.01/0.01, EV 1.692);
+  // one basis point more (0.03) ⇒ NULL — the old local model's residual
+  // overflow is gone.
+  const base = {
     cards: [{ value: 100 }, { value: 30 }, { value: 0.4 }],
     currentWeights: [50000, 10000, 940000],
     price: 5,
     cap: 1000,
-    winMass: 0.1,
     nearMissMin: 0,
-  });
-  assert(w !== null, "window exists");
+  };
+  assert(monotoneFitWindow({ ...base, winMass: 0.1 }) === null, "0.10 over the ratcheted carry ⇒ null");
+  assert(monotoneFitWindow({ ...base, winMass: 0.03 }) === null, "0.03 over the ratcheted carry ⇒ null");
+  const w = monotoneFitWindow({ ...base, winMass: 0.02 });
+  assert(w !== null, "window exists at the ratcheted carry");
   assert(
     w.minShares[0] === 0.01 && w.maxShares[0] === 0.01,
-    `the $100 grail is ratcheted to the $30's 1% (got ${w.maxShares[0]})`,
+    `the $100 is ratcheted to the $30's 1% (got ${w.maxShares[0]})`,
   );
-  assert(Math.abs(w.minShares[1]! - 0.09) < 1e-12, "the cheapest grail carries its cap + the residual");
+  assert(w.minShares[1] === 0.01 && w.maxShares[1] === 0.01, "the $30 sits at its live 1%");
+  assert(Math.abs(w.evMin - 1.692) < 1e-9 && Math.abs(w.evMax - 1.692) < 1e-9, `ratcheted point 1.692 (got [${w.evMin}, ${w.evMax}])`);
 });
 
-check("monotoneFitLocal: pinned point-mass carve + structural null arms", () => {
+check("monotoneFitWindow: pinned point-mass carve + structural null arms", () => {
   // Pin the NM card at 15%: its mass/EV leave the free bands; the only free
   // loss card is the dust → both loss layouts coincide ⇒ point window
   // 0.1·12 + 0.15·3 + 0.75·0.4 = 1.95.
-  const pinned = monotoneFitLocal({
+  const pinned = monotoneFitWindow({
     cards: [{ value: 12 }, { value: 3 }, { value: 0.4 }],
     currentWeights: [100000, 200000, 700000],
     price: 5,
@@ -514,7 +534,7 @@ check("monotoneFitLocal: pinned point-mass carve + structural null arms", () => 
   // Structural nulls: win mass with every winner cap-dropped; loss mass with
   // no loss card; pinned masses over budget.
   assert(
-    monotoneFitLocal({
+    monotoneFitWindow({
       cards: [{ value: 10 }, { value: 0.05 }],
       currentWeights: [0, 100],
       price: 5,
@@ -525,7 +545,7 @@ check("monotoneFitLocal: pinned point-mass carve + structural null arms", () => 
     "cap-dropped-only win band ⇒ null",
   );
   assert(
-    monotoneFitLocal({
+    monotoneFitWindow({
       cards: [{ value: 10 }],
       currentWeights: [100],
       price: 5,
@@ -536,7 +556,7 @@ check("monotoneFitLocal: pinned point-mass carve + structural null arms", () => 
     "loss mass with no loss card ⇒ null",
   );
   assert(
-    monotoneFitLocal({
+    monotoneFitWindow({
       cards: [{ value: 10 }, { value: 0.05 }],
       currentWeights: [100, 900],
       price: 5,
@@ -580,9 +600,21 @@ check("Love-Cycle (50/50, live 38.5%): shape-unfit → the VERIFIED untag leads,
   assert(g.feasibility.shapeFit !== undefined, "the tag-fit verdict is present");
   assert(
     g.feasibility.shapeFit!.monotoneFeasible === false,
-    "no honest ladder pays 50% here — monotone-unfit",
+    "no lawful ladder pays 50% here — monotone-unfit",
   );
-  assert(g.feasibility.shapeFit!.monotoneEvMin > 0, "the honest window is reported");
+  // 50% exceeds what the never-inflate caps can carry (live win mass 38.5%):
+  // NO lawful window exists at all — reported honestly as 0/0, with the
+  // LAW T fit range carrying the window-proven ceiling instead.
+  assert(
+    g.feasibility.shapeFit!.monotoneEvMin === 0 && g.feasibility.shapeFit!.monotoneEvMax === 0,
+    "no lawful window at 50% ⇒ 0/0",
+  );
+  const fr = g.feasibility.shapeFit!.fitRange;
+  assert(fr !== null, "the LAW T fit range is present");
+  assert(
+    Math.abs(fr!.maxFit - 0.385) < 1e-3,
+    `the window-proven ceiling IS the live carryable mass 38.5% (got ${(fr!.maxFit * 100).toFixed(3)}%)`,
+  );
   const kinds = g.suggestions.map((s) => s.kind);
   assert(kinds[0] === "untag", `the untag LEADS (got ${JSON.stringify(kinds)})`);
   const lead = g.suggestions[0]!;
@@ -590,6 +622,10 @@ check("Love-Cycle (50/50, live 38.5%): shape-unfit → the VERIFIED untag leads,
   assert(lead.proof.feasibleAfter === true, "the lead untag is a real solve, not an identity note");
   assert(/doesn't fit/i.test(lead.humanCopy), `the copy names the shape verdict — got: ${lead.humanCopy}`);
   assert(/38\.50%/.test(lead.humanCopy), "the copy names the live rate");
+  assert(
+    /lawful ceiling at \$189\.93 is 38\.50%/.test(lead.humanCopy),
+    `the copy carries the LAW T window-proven ceiling — got: ${lead.humanCopy}`,
+  );
   assert(kinds.includes("price-move"), "the price lever is still offered");
   assert(
     kinds.indexOf("price-move") > 0,
@@ -639,17 +675,23 @@ check("10% Chaos (live == tag): the lead is gated OFF — legacy kinds byte-iden
   assert(g.feasibility.shapeFit !== undefined, "the verdict field is still reported");
 });
 
+// Two winners {30, 25} at live 5% each (lawful boundary 0.05, not 0.1) — the
+// lawful window [3.125, 4.12] and the core interval [3.09, 3.37] OVERLAP.
+const HEALTHY = {
+  values: [30, 25, 3, 2.6, 0.4, 0.1],
+  weights: [50000, 50000, 100000, 100000, 350000, 350000],
+};
+
 check("healthy tagged pool: feasible + monotone-fit ⇒ no identity suggestions at all", () => {
-  // Win {30 @ live 10%} carries the tag exactly (point 3.0); two-card NM +
-  // dust bands give the engine loss-side freedom (window ≈ [3.34, 3.62]) and
-  // the honest ladder even more ([3.365, 4.22]). evTarget 5·0.72 = 3.60 sits
-  // inside BOTH — feasible AND monotone-fittable, despite the live rate
-  // sitting far off the tag.
+  // evTarget 5·0.64 = 3.20 sits inside BOTH the core interval and the lawful
+  // window — feasible AND lawfully fittable, despite the live rate sitting
+  // far off the tag; the engine plans this pool at edge 0.36000 exactly
+  // (probe-verified, LAW M clean).
   const g = computeTagGuidance({
-    cards: [{ value: 30 }, { value: 3 }, { value: 2.6 }, { value: 0.4 }, { value: 0.1 }],
-    currentWeights: [100000, 100000, 100000, 350000, 350000],
+    cards: HEALTHY.values.map((v) => ({ value: v })),
+    currentWeights: HEALTHY.weights,
     price: 5,
-    targetEdge: 0.28,
+    targetEdge: 0.36,
     tag: 0.1,
     nearMissMin: 0.1,
     maxWinCap: 100,
@@ -657,10 +699,58 @@ check("healthy tagged pool: feasible + monotone-fit ⇒ no identity suggestions 
     liveNearMiss: 0.2,
   });
   assert(g.feasibility.feasible, "the pool is feasible");
-  assert(g.feasibility.shapeFit?.monotoneFeasible === true, "…and monotone-fittable");
+  assert(g.feasibility.shapeFit?.monotoneFeasible === true, "…and lawfully fittable");
+  const fr = g.feasibility.shapeFit!.fitRange;
+  assert(fr !== null && fr!.minFit <= 0.1 && 0.1 <= fr!.maxFit, "the tag sits inside the LAW T fit range");
   assert(
     !g.suggestions.some((s) => s.kind === "untag" || s.kind === "retag"),
     "no identity suggestion on a feasible pool",
+  );
+});
+
+check("hatch-frame lie caught: core-feasible + law-unfit ⇒ the engine really refuses tag-unreachable", () => {
+  // Same pool, deeper target (e* 0.38 ⇒ evTarget 3.10): the core interval
+  // [3.09, 3.37] still says FEASIBLE, but 3.10 sits BELOW the lawful floor
+  // 3.125 — no lawful ladder pays that little here. The verdict flags it
+  // (fit false, ceiling < tag) and the REAL engine confirms: the search
+  // refuses `tag-unreachable` at this exact price. This is the pre-compose
+  // lie class the swap kills — the old local model called this pool fit.
+  const g = computeTagGuidance({
+    cards: HEALTHY.values.map((v) => ({ value: v })),
+    currentWeights: HEALTHY.weights,
+    price: 5,
+    targetEdge: 0.38,
+    tag: 0.1,
+    nearMissMin: 0.1,
+    maxWinCap: 100,
+    liveWinRate: 0.3,
+    liveNearMiss: 0.2,
+  });
+  assert(g.feasibility.feasible, "the CORE frame still claims feasible");
+  assert(g.feasibility.shapeFit?.monotoneFeasible === false, "…but the law says unfit");
+  const fr = g.feasibility.shapeFit!.fitRange;
+  assert(
+    fr !== null && fr!.maxFit < 0.1,
+    `the LAW T ceiling sits below the tag (got ${fr === null ? "null" : (fr.maxFit * 100).toFixed(3) + "%"})`,
+  );
+  const s = searchBestPriceForCleanSnap({
+    cards: HEALTHY.values.map((v) => ({ value: v })),
+    basePrice: 5,
+    targetEdge: 0.38,
+    targetWinRate: 0.1,
+    taggedWinRate: 0.1,
+    maxWinCap: 100,
+    nearMissMin: 0.1,
+    winRateTol: 0.005,
+    maxPriceChangePct: 0,
+    currentWeights: HEALTHY.weights.slice(),
+    disperseLoss: true,
+  });
+  const r = s.bestResult;
+  assert("error" in r, "the engine refuses at this price");
+  assert(
+    r.limit.kind === "tag-unreachable",
+    `the refusal is the LAW T verdict (got ${r.limit.kind})`,
   );
 });
 
