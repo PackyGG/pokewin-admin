@@ -324,25 +324,73 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pf_result_metadata_pack_id_created_a
 -- on virtually every row today (15,562/15,562 and 15,560/15,562
 -- non-null/non-empty).
 --
--- Live EXPLAIN ANALYZE (read-only, prod, 2026-07-08) of the EXACT query
--- getUsers (src/lib/queries/users-list.ts) issues for a free-form search
--- term — the `where.OR` branch across username / display_username / name
--- / email `startsWith`, plus the `id` equals leg — confirms the planner
--- falls back to a FULL Seq Scan of the whole table instead of the
--- expected BitmapOr index plan:
---   Seq Scan on "user"  (cost=0.00..612.53 rows=... width=...)
---     Filter: ((lower(username) ~~ 'term%'::text) OR
---              (lower(display_username) ~~ 'term%'::text) OR
---              (lower(name) ~~ 'term%'::text) OR
---              (lower(email) ~~ 'term%'::text) OR (id = 'term'))
---     Rows Removed by Filter: 15,203
---   Execution Time: 35.48 ms
--- Root cause: with only 2 of the 4 OR legs index-backed, Postgres cannot
--- assemble a beneficial BitmapOr (it would still have to fall through to a
--- heap check for the other two legs on every row), so the planner
--- correctly rejects the partial index combination and takes the seq scan
--- instead. This is NOT a planner misconfiguration — it is the direct,
--- provable consequence of the two missing indexes.
+-- CORRECTION (2026-07-08, second pass) — the EXPLAIN below in an earlier
+-- version of this note was mislabeled: it described a Prisma `where.OR`
+-- branch (username/display_username/name/email `startsWith` ORed together)
+-- as THE query the default search path runs. That branch exists in
+-- getUsers but is DEAD CODE for free-form terms: `isFreeFormTextSearch`
+-- (set whenever the term isn't a UUID/email/Discord-snowflake shape) always
+-- routes to `fetchColumnSortUserIds` → `cachedFilteredColumnSortUserIds`
+-- FIRST (see the `if (isFreeFormTextSearch || ...)` branch ahead of the
+-- plain Prisma path), which builds its WHERE via
+-- `buildUserListWhereClause` — a raw-SQL UNION-per-column construct, NOT a
+-- single ORed filter:
+--   u.id IN (
+--     SELECT id FROM (
+--       SELECT id FROM "user" WHERE LOWER(username) LIKE $1 ESCAPE '\'
+--       UNION SELECT id FROM "user" WHERE LOWER(display_username) LIKE $1 ESCAPE '\'
+--       UNION SELECT id FROM "user" WHERE LOWER(name) LIKE $1 ESCAPE '\'
+--       UNION SELECT id FROM "user" WHERE LOWER(email) LIKE $1 ESCAPE '\'
+--       UNION SELECT id FROM "user" WHERE LOWER(id) LIKE $1 ESCAPE '\'
+--       UNION SELECT id FROM "user" WHERE LOWER(id) = $2
+--     ) matched
+--   )
+-- This UNION shape was deliberately chosen (2026-06-05 pass) so each column
+-- gets its OWN per-leg plan instead of one mixed BitmapOr — i.e. the
+-- indexed legs already run as index scans today; they don't need to "wait"
+-- on the missing ones.
+--
+-- Live EXPLAIN ANALYZE (read-only, prod, 2026-07-08) of this EXACT
+-- reconstructed query (term "jo", default sort, page 1) confirms precisely
+-- that: a Hash Join / Append over the six UNION legs, where the
+-- username and email legs ALREADY hit their indexes and the other four do
+-- not —
+--   Append (six UNION legs, 750 rows before de-dup)
+--     -> Bitmap Heap Scan on "user"  (username leg)
+--          Filter: lower(username) ~~ 'jo%'   -> Bitmap Index Scan idx_user_lower_username_prefix   (0.166 ms)
+--     -> Seq Scan on "user"  (display_username leg)
+--          Filter: lower(display_username) ~~ 'jo%'   Rows Removed by Filter: 15,405   (11.4 ms)
+--     -> Seq Scan on "user"  (name leg)
+--          Filter: lower(name) ~~ 'jo%'                Rows Removed by Filter: 15,405   (6.8 ms)
+--     -> Bitmap Heap Scan on "user"  (email leg)
+--          Filter: lower(email) ~~ 'jo%'    -> Bitmap Index Scan idx_user_lower_email_prefix        (0.114 ms)
+--     -> Seq Scan on "user"  (id LIKE leg — no lower(id) index exists or is proposed)
+--          Filter: lower(id) ~~ 'jo%'                  Rows Removed by Filter: 15,543   (5.4 ms)
+--     -> Seq Scan on "user"  (id = leg, exact-partial-id fallback)
+--          Filter: lower(id) = 'jo'                     Rows Removed by Filter: 15,565   (4.7 ms)
+--   -> Hash Join back to "user" u for the outer SELECT + ORDER BY created_at DESC LIMIT 20
+--   Execution Time: 36.19 ms   (page-slice query)
+--   (the parallel exact-count query over the same UNION shape: 19.10 ms —
+--    runs concurrently via Promise.all, so wall-clock ≈ the slower of the
+--    two, not their sum)
+-- Root cause: NOT a BitmapOr/planner problem (the UNION design already
+-- avoids that) — it is simply that 2 of the 6 UNION legs (display_username,
+-- name) have no supporting index and each independently pays a full
+-- Seq Scan, together accounting for ~18 ms of the ~36 ms total. This is the
+-- direct, provable consequence of the two missing indexes, and applying
+-- them converts those two legs into Bitmap Index Scans matching the
+-- username/email legs already shown above.
+--
+-- Secondary, SEPARATE finding (not fixed by the two indexes above): the two
+-- `id`-shaped legs (LIKE and exact `=`) together cost another ~10 ms and
+-- always run a full Seq Scan regardless — no `lower(id)` prefix index is
+-- recommended here (id is the primary key; a short free-form term rarely
+-- if ever matches a random nanoid prefix, and a full-id paste is already
+-- routed to the dedicated `isExactId` fast path earlier in getUsers, which
+-- never reaches this UNION at all). Worth a follow-up look at whether these
+-- two legs are pulling their weight for the cost they add, but that is a
+-- QUERY-SHAPE question, not an indexing one, so it is flagged here rather
+-- than acted on.
 --
 -- Why this now outranks every other unapplied recommendation in this file:
 -- this query runs on the DEFAULT /users search path (not the `?match=
