@@ -51,6 +51,7 @@ import {
   waterFillWinEv,
   searchBestPriceForCleanSnap,
   shapeWeights,
+  type ShapeWeightsLimit,
   type ShapeWeightsPinnedShare,
   type ShapeWeightsRelaxation,
 } from "./risk";
@@ -2922,4 +2923,232 @@ export function pinShortfallHumanCopy(args: {
       ? ` (${args.remedies.length - 1} more verified option${args.remedies.length > 2 ? "s" : ""} available.)`
       : "";
   return `${head}${why} Smallest verified fix: ${first.humanCopy}${more}`;
+}
+
+// ─── PACK-TUNE VERDICT (server contract v9 — Retune V3 wave 2b) ──────────────
+//
+// THE one-line product verdict the plan panel renders FIRST. Derived server-
+// side as a pure function of the plan's already-computed fields so the payload
+// and the panel can never disagree (the client re-deriving "why is this bad?"
+// from six nullable fields is exactly what wave 2b retires). Ranked
+// worst-first: a refusal always outranks a quality flag, and within refusals
+// the typed engine verdicts (pins / tag-law) outrank the generic arm.
+
+export type PackTuneVerdictKind =
+  /** The staged pool contradicts the pack's tag (pre-solve refusal). */
+  | "tag-contradiction"
+  /** Owner pins make the solve impossible — carries the verified remedies. */
+  | "pins-infeasible"
+  /** LAW M: no lawful (monotone, never-inflate) ladder exists at all. */
+  | "monotone-unreachable"
+  /** LAW T: lawful ladders exist, but none hosts THIS tag at this price. */
+  | "tag-unreachable"
+  /** Any other refusal (structured limit or post-shape write-assert). */
+  | "refused"
+  /** Feasible but the strict tag accuracy was missed (fell back). */
+  | "off-tag"
+  /** Feasible but the ladder collapsed (shape guard) — pool edits lead. */
+  | "degenerate"
+  /** Feasible but no clean-odds landing exists at this price. */
+  | "unsnapped"
+  /** Feasible + exact, but off the human-nice rung grid. */
+  | "off-nice"
+  /** Clean plan — ready to push. */
+  | "healthy";
+
+export type PackTuneVerdict = {
+  kind: PackTuneVerdictKind;
+  /** One-line owner-facing verdict (the panel's lead). */
+  headline: string;
+  /**
+   * The engine's WHY, verbatim (`limit.detail` / refusal message / tag
+   * contradiction / pin-shortfall copy). `null` when the kind is
+   * self-explanatory (quality flags, healthy).
+   */
+  detail: string | null;
+  /**
+   * The ONE suggested next move (`limit.suggestion`, the smallest verified
+   * pin fix, or the window-proven retag line). `null` when the ranked
+   * guidance/pool-edit blocks already carry the moves.
+   */
+  action: string | null;
+  /** TRUE when the LAW T tag-fit probe ran (tagged guidance computed). */
+  fitProbed: boolean;
+  /**
+   * LAW T proof at the plan price ({@link lawfulTagFitRange} via the
+   * guidance's `shapeFit`): the interval of tags this pool CAN lawfully host
+   * inside the edge contract. THE retag-slider bound for the wave-2c rail
+   * triage. `null` = untagged pack, probe not run, or NO tag fits (see
+   * `fitProbed` to distinguish the last two).
+   */
+  fitRange: { minFit: number; maxFit: number } | null;
+  /**
+   * Solver-verified single-pin fixes, smallest first (pins-infeasible only;
+   * `[]` = the pins interlock — no single-pin change helps). `null` for
+   * every other kind.
+   */
+  pinRemedies: PinRemedy[] | null;
+};
+
+export type PackTuneVerdictInput = {
+  feasible: boolean;
+  limit: ShapeWeightsLimit | null;
+  tagContradiction: string | null;
+  refusalMessage: string | null;
+  refusalCode: string | null;
+  /** TRUE when the pack solves tag-HARD (intendedHitRate === targetWinRate). */
+  tagged: boolean;
+  taggedAccuracyHit: boolean | null;
+  snapped: boolean | null;
+  allNice: boolean | null;
+  /** The shape guard's verdict over the FEASIBLE plan (`shape.degenerate`). */
+  shapeDegenerate: boolean | null;
+  /** The plan's guidance — sources `fitProbed`/`fitRange` (never recomputed). */
+  guidance: TagGuidance | null;
+  /** Plan price (staged price on the staged arm) — pins copy only. */
+  price: number;
+  targetEdge: number;
+  /** Precomputed pin remedies (staged pins-infeasible arm only). */
+  pinRemedies?: readonly PinRemedy[] | null;
+};
+
+export function buildPackTuneVerdict(
+  input: PackTuneVerdictInput,
+): PackTuneVerdict {
+  const shapeFit = input.guidance?.feasibility.shapeFit;
+  const fitProbed = shapeFit !== undefined;
+  const fitRange = shapeFit?.fitRange ?? null;
+  const base = { fitProbed, fitRange, pinRemedies: null };
+  // `ShapeWeightsLimit.suggestion` is a required string — an empty one means
+  // "the engine has no move here" and must not surface as an action.
+  const limitSuggestion = (limit: ShapeWeightsLimit): string | null => {
+    const s = limit.suggestion.trim();
+    return s.length > 0 ? s : null;
+  };
+
+  if (input.tagContradiction !== null) {
+    return {
+      ...base,
+      kind: "tag-contradiction",
+      headline: "The staged pool contradicts the pack's tag.",
+      detail: input.tagContradiction,
+      action: null,
+    };
+  }
+
+  if (input.limit !== null) {
+    const limit = input.limit;
+    if (limit.kind === "pins-infeasible") {
+      const remedies = [...(input.pinRemedies ?? [])];
+      return {
+        ...base,
+        kind: "pins-infeasible",
+        headline: "The pinned odds make this tune impossible at this price.",
+        detail: pinShortfallHumanCopy({
+          price: input.price,
+          targetEdge: input.targetEdge,
+          refusalDetail: limit.detail,
+          remedies,
+        }),
+        action:
+          remedies[0]?.humanCopy ??
+          "Unpin two or more cards, or rebuild the pin set.",
+        pinRemedies: remedies,
+      };
+    }
+    if (limit.kind === "monotone-unreachable") {
+      return {
+        ...base,
+        kind: "monotone-unreachable",
+        headline: "No lawful odds ladder can pay this tag at this price.",
+        detail: limit.detail,
+        action: limitSuggestion(limit),
+      };
+    }
+    if (limit.kind === "tag-unreachable") {
+      return {
+        ...base,
+        kind: "tag-unreachable",
+        headline: "This pool can't host the tag at this price.",
+        detail: limit.detail,
+        action:
+          limitSuggestion(limit) ??
+          (fitRange !== null
+            ? `Retag between ${pp(fitRange.minFit)}% and ${pp(fitRange.maxFit)}% (window-proven), or restructure the pool.`
+            : null),
+      };
+    }
+    return {
+      ...base,
+      kind: "refused",
+      headline: "The engine refused this plan.",
+      detail: limit.detail,
+      action: limitSuggestion(limit),
+    };
+  }
+
+  if (input.refusalCode !== null || input.refusalMessage !== null) {
+    return {
+      ...base,
+      kind: "refused",
+      headline: "The plan fails a write-time law.",
+      detail: input.refusalMessage,
+      action: null,
+    };
+  }
+
+  if (!input.feasible) {
+    return {
+      ...base,
+      kind: "refused",
+      headline: "The engine refused this plan.",
+      detail: null,
+      action: null,
+    };
+  }
+
+  if (input.tagged && input.taggedAccuracyHit === false) {
+    return {
+      ...base,
+      kind: "off-tag",
+      headline: "The plan misses the exact tag hit-rate.",
+      detail: null,
+      action: null,
+    };
+  }
+  if (input.shapeDegenerate === true) {
+    return {
+      ...base,
+      kind: "degenerate",
+      headline:
+        "Mathematically sound, but the ladder collapses onto a carrier card.",
+      detail: null,
+      action: null,
+    };
+  }
+  if (input.snapped === false) {
+    return {
+      ...base,
+      kind: "unsnapped",
+      headline: "The plan can't land on clean odds at this price.",
+      detail: null,
+      action: null,
+    };
+  }
+  if (input.tagged && input.allNice === false) {
+    return {
+      ...base,
+      kind: "off-nice",
+      headline: "Exact per-100k odds, but not human-nice.",
+      detail: null,
+      action: null,
+    };
+  }
+  return {
+    ...base,
+    kind: "healthy",
+    headline: "Clean plan — ready to push.",
+    detail: null,
+    action: null,
+  };
 }

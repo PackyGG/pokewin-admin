@@ -41,11 +41,15 @@ import {
   buildWidePriceProbeSuggestion,
   derivePoolEditPlan,
   pruneNoOpSuggestions,
+  buildPackTuneVerdict,
+  computePinRemedies,
   type TagGuidance,
   type LadderShape,
   type TuneSuggestion,
   type PoolEditPlan,
   type PoolEditReason,
+  type PackTuneVerdict,
+  type PinRemedy,
 } from "@/app/(admin)/insights/edge-calc/tag-guidance";
 import {
   planPackReprice,
@@ -2140,6 +2144,16 @@ export type PackTunePlan = {
    * plan is healthy or the guidance carries no actionable pool lever.
    */
   poolEditPlan: PoolEditPlan | null;
+  /**
+   * v9 (Retune V3 wave 2b): THE one-line product verdict, derived server-side
+   * from the fields above ({@link buildPackTuneVerdict} — pure, so payload and
+   * panel can never disagree). Ranked worst-first (refusals above quality
+   * flags; typed engine verdicts `pins-infeasible` / `monotone-unreachable` /
+   * `tag-unreachable` above the generic arm). Carries the LAW T `fitRange`
+   * (the wave-2c retag-slider bound) and, on a pins refusal, the
+   * solver-verified {@link PinRemedy} list + shortfall copy in one shape.
+   */
+  verdict: PackTuneVerdict;
 };
 
 /**
@@ -2183,9 +2197,12 @@ export async function planPackTune(
   // v8: the plan shape gained `poolEditPlan` (§pool-edits-first) + a
   // §1.4 wide-probe `price-move` suggestion may now ride the guidance — key
   // bumped so persisted v7 entries never surface.
+  // v9: the plan shape gained `verdict` (Retune V3 wave 2b: the verdict-first
+  // server contract — LAW T `fitRange` + pin remedies ride the plan) — key
+  // bumped so persisted v8 entries never surface.
   return unstable_cache(
     () => planPackTuneLiveUncached(packId),
-    ["pack-studio.retune.plan-pack.v8", packId],
+    ["pack-studio.retune.plan-pack.v9", packId],
     { revalidate: 60, tags: [packRetunePlanTag(packId)] },
   )();
 }
@@ -2400,6 +2417,9 @@ async function planPackTuneLiveUncached(
     maxWinCap: autoTargets.maxWinCap,
     nearMissMin,
   };
+  const tagged =
+    autoTargets.intendedHitRate !== null &&
+    Math.abs(autoTargets.intendedHitRate - autoTargets.targetWinRate) < 1e-9;
   const base = {
     packId: p.id,
     name: p.name,
@@ -2427,6 +2447,12 @@ async function planPackTuneLiveUncached(
   };
 
   if (cards.length === 0) {
+    const emptyLimit: ShapeWeightsLimit = {
+      kind: "empty-pool",
+      detail:
+        "This pack has no cards in its pool, so there is nothing to retune.",
+      suggestion: "Add cards to the pack in the Builder before retuning it.",
+    };
     return {
       ...base,
       priceAfter: p.price,
@@ -2434,12 +2460,7 @@ async function planPackTuneLiveUncached(
       after: null,
       feasible: false,
       relaxations: [],
-      limit: {
-        kind: "empty-pool",
-        detail:
-          "This pack has no cards in its pool, so there is nothing to retune.",
-        suggestion: "Add cards to the pack in the Builder before retuning it.",
-      },
+      limit: emptyLimit,
       snapped: null,
       offLadderCards: [],
       allNice: null,
@@ -2451,6 +2472,21 @@ async function planPackTuneLiveUncached(
       riskBand: null,
       riskBandExit: false,
       poolEditPlan: null,
+      verdict: buildPackTuneVerdict({
+        feasible: false,
+        limit: emptyLimit,
+        tagContradiction: null,
+        refusalMessage: null,
+        refusalCode: null,
+        tagged,
+        taggedAccuracyHit: null,
+        snapped: null,
+        allNice: null,
+        shapeDegenerate: null,
+        guidance: null,
+        price: p.price,
+        targetEdge: autoTargets.targetEdge,
+      }),
     };
   }
 
@@ -2482,9 +2518,6 @@ async function planPackTuneLiveUncached(
     candidates: search.searched,
     fellBackToBase: search.fellBackToBase,
   };
-  const tagged =
-    autoTargets.intendedHitRate !== null &&
-    Math.abs(autoTargets.intendedHitRate - autoTargets.targetWinRate) < 1e-9;
 
   // Tag guidance (ruleset §2): whenever a TAGGED plan fails, misses the tag,
   // or ships dirty odds, compute the LAW-1 feasibility verdict + the ranked,
@@ -2646,6 +2679,23 @@ async function planPackTuneLiveUncached(
         p.price,
         priceBudgetPct,
       ),
+      // The live arm never carries pins, so a live `pins-infeasible` cannot
+      // occur and no remedies are computed here.
+      verdict: buildPackTuneVerdict({
+        feasible: false,
+        limit: shaped.limit,
+        tagContradiction: null,
+        refusalMessage: null,
+        refusalCode: null,
+        tagged,
+        taggedAccuracyHit: search.taggedAccuracyHit,
+        snapped: null,
+        allNice: null,
+        shapeDegenerate: null,
+        guidance: infeasibleGuidance,
+        price: p.price,
+        targetEdge: autoTargets.targetEdge,
+      }),
     };
   }
 
@@ -2787,6 +2837,21 @@ async function planPackTuneLiveUncached(
     riskBand,
     riskBandExit,
     poolEditPlan,
+    verdict: buildPackTuneVerdict({
+      feasible: true,
+      limit: null,
+      tagContradiction: null,
+      refusalMessage: null,
+      refusalCode: null,
+      tagged,
+      taggedAccuracyHit: search.taggedAccuracyHit,
+      snapped: shaped.snapped ?? false,
+      allNice: shaped.allNice ?? null,
+      shapeDegenerate: shape?.degenerate ?? null,
+      guidance: feasibleGuidance,
+      price: p.price,
+      targetEdge: autoTargets.targetEdge,
+    }),
   };
 }
 
@@ -2901,6 +2966,20 @@ async function planPackTuneStagedUncached(
   // to feasible (`feasible` stays `outcome.ok === false`; Push stays blocked).
   // The shaping-error `infeasible` refusal carries no vector (weights null) →
   // guidance stays null and the refusalMessage fallback banner covers the WHY.
+  const liveWeightByCardId = new Map<string, number>();
+  for (const c of r.livePool) liveWeightByCardId.set(c.cardId, c.weight);
+  // Owner pins mapped to the SAME index space the staged solve used — shared
+  // by the tagged guidance model and the pins-infeasible remedy probe below.
+  const stagedPinnedShares =
+    input.pinnedOdds !== undefined && input.pinnedOdds.length > 0
+      ? mapPinnedOddsToShares(
+          input.cards.map((c) => ({
+            value: r.cardMetaById.get(c.cardId)?.value ?? 0,
+            cardId: c.cardId,
+          })),
+          input.pinnedOdds,
+        )
+      : null;
   const stagedGuidanceWeights: number[] | null = outcome.ok
     ? outcome.weights
     : outcome.weights;
@@ -2909,8 +2988,6 @@ async function planPackTuneStagedUncached(
       (a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0),
       0,
     );
-    const liveWeightByCardId = new Map<string, number>();
-    for (const c of r.livePool) liveWeightByCardId.set(c.cardId, c.weight);
     guidance =
       stagedTotal > 0
         ? computeUntaggedGuidance({
@@ -2937,8 +3014,6 @@ async function planPackTuneStagedUncached(
           })
         : null;
   } else if (taggedStaged && stagedNeedsGuidance && !isTagContradiction) {
-    const liveWeightByCardId = new Map<string, number>();
-    for (const c of r.livePool) liveWeightByCardId.set(c.cardId, c.weight);
     guidance = computeTagGuidance({
       cards: input.cards.map((c) => ({
         value: r.cardMetaById.get(c.cardId)?.value ?? 0,
@@ -2951,16 +3026,8 @@ async function planPackTuneStagedUncached(
       // guidance models the constraint set the solve actually enforces (a
       // live-odds model emits "solver-verified" fixes the pinned solve then
       // refuses — the owner's stuck "1% Bidoof" incident).
-      ...(input.pinnedOdds !== undefined && input.pinnedOdds.length > 0
-        ? {
-            pinnedShares: mapPinnedOddsToShares(
-              input.cards.map((c) => ({
-                value: r.cardMetaById.get(c.cardId)?.value ?? 0,
-                cardId: c.cardId,
-              })),
-              input.pinnedOdds,
-            ),
-          }
+      ...(stagedPinnedShares !== null
+        ? { pinnedShares: stagedPinnedShares }
         : {}),
       price: r.priceStaged,
       targetEdge: r.resolved.targetEdge,
@@ -2980,6 +3047,35 @@ async function planPackTuneStagedUncached(
   // Pattern 9h: drop any staged price suggestion equal to the plan's own landed
   // price (a no-op "move").
   guidance = pruneNoOpSuggestions(guidance, r.priceAfter);
+
+  // Wave 2b: a pins refusal ships the smallest SOLVER-VERIFIED single-pin
+  // fixes IN the plan (`verdict.pinRemedies` + the shortfall copy) — the
+  // remedy probe re-verifies every candidate through the same engine the
+  // staged solve ran, so a claimed fix is a plan the write would accept.
+  let stagedPinRemedies: PinRemedy[] | null = null;
+  if (
+    !outcome.ok &&
+    outcome.limit?.kind === "pins-infeasible" &&
+    stagedPinnedShares !== null
+  ) {
+    stagedPinRemedies = computePinRemedies({
+      cards: input.cards.map((c) => ({
+        value: r.cardMetaById.get(c.cardId)?.value ?? 0,
+      })),
+      currentWeights: input.cards.map(
+        (c) => liveWeightByCardId.get(c.cardId) ?? 0,
+      ),
+      price: r.priceStaged,
+      targetEdge: r.resolved.targetEdge,
+      targetWinRate: r.resolved.targetWinRate,
+      nearMissMin: r.resolved.nearMissMin,
+      maxWinCap: r.resolved.maxWinCap,
+      pinnedShares: stagedPinnedShares,
+      intendedHitRate: r.resolved.intendedHitRate,
+      pinPrice: staged.pinPrice === true,
+      priceBudgetPct: await readRetunePriceBudgetPct(),
+    });
+  }
 
   // §risk-leverage: the CV band (widened to the live CV) + landed-CV exit. Band
   // is over the LIVE pack (tag + live price + live CV); the exit is judged
@@ -3022,6 +3118,41 @@ async function planPackTuneStagedUncached(
         )
       : null;
 
+  // Refusal WHY fields, computed ONCE — the payload and the verdict share
+  // them so they can never disagree (see the field docs on the return).
+  const stagedTagContradiction =
+    !outcome.ok && outcome.code === "tag-contradiction"
+      ? outcome.message
+      : null;
+  const stagedRefusalMessage =
+    !outcome.ok &&
+    outcome.limit === null &&
+    outcome.code !== "tag-contradiction"
+      ? outcome.message
+      : null;
+  const stagedRefusalCode =
+    !outcome.ok &&
+    outcome.limit === null &&
+    outcome.code !== "tag-contradiction"
+      ? outcome.code
+      : null;
+  const stagedVerdict = buildPackTuneVerdict({
+    feasible: outcome.ok,
+    limit: outcome.ok ? null : outcome.limit,
+    tagContradiction: stagedTagContradiction,
+    refusalMessage: stagedRefusalMessage,
+    refusalCode: stagedRefusalCode,
+    tagged: taggedStaged,
+    taggedAccuracyHit: r.priceSearch?.taggedAccuracyHit ?? null,
+    snapped: outcome.ok ? outcome.snapped : null,
+    allNice: outcome.ok ? outcome.allNice : null,
+    shapeDegenerate: stagedShape?.degenerate ?? null,
+    guidance,
+    price: r.priceStaged,
+    targetEdge: r.resolved.targetEdge,
+    pinRemedies: stagedPinRemedies,
+  });
+
   return {
     packId,
     name: r.packName,
@@ -3048,27 +3179,14 @@ async function planPackTuneStagedUncached(
     feasible: outcome.ok,
     relaxations: outcome.ok ? outcome.relaxations : [],
     limit: outcome.ok ? null : outcome.limit,
-    tagContradiction:
-      !outcome.ok && outcome.code === "tag-contradiction"
-        ? outcome.message
-        : null,
+    tagContradiction: stagedTagContradiction,
     // Guaranteed WHY fallback for a REFUSED plan that carries NO structured
     // `limit` and is NOT a tag-contradiction (the post-shape write-assert
     // refusals: win-rate-miss / edge-above-band / max-win-above-cap /
     // edge-below-target / tag-accuracy-miss / edge-floor). Surfacing-only —
     // the plan stays `feasible: false` and non-pushable.
-    refusalMessage:
-      !outcome.ok &&
-      outcome.limit === null &&
-      outcome.code !== "tag-contradiction"
-        ? outcome.message
-        : null,
-    refusalCode:
-      !outcome.ok &&
-      outcome.limit === null &&
-      outcome.code !== "tag-contradiction"
-        ? outcome.code
-        : null,
+    refusalMessage: stagedRefusalMessage,
+    refusalCode: stagedRefusalCode,
     snapped: outcome.ok ? outcome.snapped : null,
     offLadderCards,
     allNice: outcome.ok ? outcome.allNice : null,
@@ -3094,5 +3212,6 @@ async function planPackTuneStagedUncached(
     riskBand: stagedRiskBand,
     riskBandExit: stagedRiskBandExit,
     poolEditPlan: stagedPoolEditPlan,
+    verdict: stagedVerdict,
   };
 }
