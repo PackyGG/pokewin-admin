@@ -300,6 +300,12 @@ check("under-cap pack: zero classifications and the write vector keeps every row
   );
   const r = search.bestResult;
   assert(!("error" in r), "under-cap fixture must solve");
+  // NM-floor honesty guard (stage 3): this pool funds its 10% floor — the
+  // rescue must never emit a false nearMiss relaxation on a feasible floor.
+  assert(
+    r.relaxations.every((x) => x.lever !== "nearMiss"),
+    "feasible near-miss floor must ship un-relaxed",
+  );
   const written = omitZeroWeightRows(
     pool.map((c, i) => ({ card_id: c.cardId, weight: r.weights[i]! })),
   );

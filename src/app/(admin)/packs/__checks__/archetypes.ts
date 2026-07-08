@@ -73,6 +73,7 @@ import {
   RETUNE_MAX_PRICE_CHANGE_PCT,
   RETUNE_PRICE_BUDGET_DEFAULT_PCT,
   TAGGED_WINRATE_TOLERANCE,
+  findMonotoneViolations,
   searchBestPriceForCleanSnap,
   shapeWeights,
   waterFillBandProbs,
@@ -728,14 +729,21 @@ check("perf: full guidance well under 10 ms/pack", () => {
 
 // ── 12. UNTAGGED HOLD-WITH-FALLBACK spike + near-miss fix (attempt #2) — the
 // owner-found "Captive" case ─────────────────────────────────────────────
-// Pack "Captive", $485.50, untagged. This is the NAMED REGRESSION CHECK: the
-// DEFAULT ±10% budget must stay EXACTLY as infeasible as before attempt #2 (a
-// bare `ev-unreachable-for-split` error, byte-identical message — the anchored
-// win band genuinely cannot carry the EV target at ANY in-budget price, hard
-// OR soft hold) — a genuinely EV-forced pool must never regress into a WORSE
-// failure, and must never be silently "fixed" into a false-clean plan either.
+// Pack "Captive", $485.50, untagged. HISTORY: before attempt #2 the DEFAULT
+// ±10% budget refused (`ev-unreachable-for-split` — the anchored win band
+// cannot carry the EV target at the design rate under the CORE SPLIT's
+// exact-floor allocation, hard OR soft hold), and this check pinned that
+// refusal byte-identically. STAGE 3 (LAW M rescue + NM-floor honesty)
+// revealed the refusal was another SPLIT-FRAME artifact, not physics: at
+// $453.15 (−6.7%, in-budget) a lawful full-ladder window carries the EV at
+// the design 20% EXACTLY — the near-miss band is simply EMPTY at that price
+// (every loss card sits below 0.5·price), so the 10% NM feel-floor is
+// honestly relaxed to the physics ceiling (zero) and REPORTED, never silent.
+// The named guard now pins THAT: the default budget plans lawfully in-band
+// via the rescue (hard arm — no soft float), with the NM relaxation explicit.
+// "Never a bare/worse failure" still holds — it is no longer a failure at all.
 //
-// At the WIDE ±60% suggestion band, though, the hard-hold-with-fallback fix
+// At the WIDE ±60% suggestion band, the hard-hold-with-fallback fix
 // does better than both the pre-attempt-#1 baseline (soft float to ~29.3%,
 // two loss cards crushed to the 0.0001% floor, degenerate guidance) AND
 // attempt #1's broken claim (hard-only, no fallback): the hard hold ALONE
@@ -813,21 +821,49 @@ const captiveGuidance = isSuccess(captiveSearch.bestResult)
     })
   : null;
 
-check("Captive REGRESSION GUARD: the default ±10% budget stays exactly as infeasible as before attempt #2 (byte-identical refusal, never a bare/worse failure)", () => {
+check("Captive REGRESSION GUARD: the default ±10% budget plans LAWFULLY in-band via the rescue — design rate exact, NM emptiness reported honestly, never a bare/worse failure", () => {
   const r = captiveDefaultSearch.bestResult;
-  assert(!isSuccess(r), "Captive's default ±10% plan must stay infeasible (genuinely EV-forced pool)");
   assert(
-    r.limit?.kind === "ev-unreachable-for-split",
-    `must refuse with the SAME limit kind as before attempt #2 (got ${r.limit?.kind})`,
+    isSuccess(r),
+    `the lawful rescue plans Captive in-budget (${isSuccess(r) ? "" : r.error})`,
   );
-  // The hard hold's own attempt inside the default band is ALSO infeasible
-  // (the win band structurally cannot carry the EV target at design win-rate
-  // in-budget) — so the fallback to soft ALSO ran, and soft is ALSO
-  // infeasible in-budget (unchanged from before attempt #2: Captive's default
-  // plan was already an honest refusal, never a floated-up in-budget plan).
   assert(
-    captiveDefaultSearch.usedSoftFallback === true,
-    "the hard hold failed in-budget, so the soft fallback DID run (both arms infeasible in-budget — honest)",
+    captiveDefaultSearch.usedSoftFallback === false,
+    "the rescue holds the DESIGN rate exactly — it counts as the hard arm, never a soft float",
+  );
+  const move = (captiveDefaultSearch.bestPrice - CAPTIVE.price) / CAPTIVE.price;
+  assert(
+    move < 0 && move >= -0.1 - 1e-9,
+    `price moves DOWN within the ±10% budget (got ${(move * 100).toFixed(2)}%)`,
+  );
+  approx(r.risk.winRate, 0.2, 1e-6, "win-rate ON the design 20% EXACTLY (hard, no float)");
+  assert(
+    r.risk.edge >= captiveTargets.targetEdge - 1e-9 &&
+      r.risk.edge <= captiveTargets.targetEdge + 0.001 + 1e-6,
+    `edge inside the rescue contract (got ${(r.risk.edge * 100).toFixed(3)}%)`,
+  );
+  // The near-miss band is EMPTY at the landed price (every loss card < 0.5·p):
+  // the 10% feel-floor relaxes to the physics ceiling (zero) and says so.
+  const nmRelax = r.relaxations.filter((x) => x.lever === "nearMiss");
+  assert(nmRelax.length === 1, `exactly one honest nearMiss relaxation (got ${r.relaxations.length})`);
+  assert(
+    Math.abs(nmRelax[0]!.requested - 0.1) <= 1e-9 && nmRelax[0]!.applied <= 1e-9,
+    `requested 10% → applied 0% reported verbatim (got ${nmRelax[0]!.requested} → ${nmRelax[0]!.applied})`,
+  );
+  assert(
+    /LAW M window/.test(nmRelax[0]!.reason),
+    `the relaxation names its provenance (got: ${nmRelax[0]!.reason})`,
+  );
+  assert(
+    r.risk.nearMiss <= 1e-9,
+    "the shipped near-miss mass IS the reported zero (no silent divergence)",
+  );
+  // LAW M end to end on the shipped vector.
+  const total = r.weights.reduce((a, b) => a + b, 0);
+  const shares = r.weights.map((w) => w / total);
+  assert(
+    findMonotoneViolations({ values: CAPTIVE.values, shares }).length === 0,
+    "the rescued plan obeys LAW M end to end",
   );
 });
 

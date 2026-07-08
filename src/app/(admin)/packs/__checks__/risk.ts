@@ -35,6 +35,7 @@ import {
   monotoneLayoutForEv,
   findMonotoneViolations,
   enforceMonotoneLadderLawM,
+  lawfulTagFitRange,
   TAGGED_WINRATE_TOLERANCE,
   CV_TIER_BOUNDS,
   type CardLite,
@@ -3226,6 +3227,159 @@ check("MG6 — full pipeline relayout: a dust-rich pool ships LAWFUL through the
   assert(shares[9]! <= shares[10]! + 1e-9, "cheapest winner ≤ near-miss");
   assert(shares[10]! <= shares[11]! + 1e-9, "near-miss ≤ cheapest-adjacent dust");
   assert(best.edge >= 0.085 - 1e-9, `edge at/above target (got ${best.edge})`);
+});
+
+// ── STAGE 3 — LAW T strictness + NM-floor honesty ────────────────────
+//
+// LAW T: a TAGGED search that refuses at EVERY in-band price gets a typed
+// `tag-unreachable` verdict when (and only when) the LAW M window math at
+// the live price PROVES the tag sits outside the pool's lawful fit range
+// ({@link lawfulTagFitRange}); structural refusals keep their own story.
+// NM-floor honesty: the lawful rescue never silently loses a plan over the
+// near-miss floor — when the requested floor empties the window, it lays at
+// the bisected physics ceiling and records an explicit `nearMiss` relaxation.
+
+check("LAW T — physics pool: tagged 10% over a lone $100 winner refuses as tag-unreachable with the window-proven max tag", () => {
+  // One rich winner + poor dust: ANY 10% win mass carries $10 of EV against
+  // a ~$3.56 contract — no in-band price can host the tag. The fit range at
+  // $4 tops out just above 3% and the verdict must carry that number.
+  const cards = [{ value: 100 }, { value: 0.5 }, { value: 0.3 }];
+  const range = lawfulTagFitRange({ cards, price: 4, targetEdge: 0.1099 });
+  assert(range !== null, "some smaller tag DOES fit this pool");
+  if (range === null) return;
+  assert(
+    range.maxFit > 0.03 && range.maxFit < 0.04,
+    `maxFit ≈ 3.26% (got ${(range.maxFit * 100).toFixed(3)}%)`,
+  );
+  assert(
+    range.minFit > 0 && range.minFit < range.maxFit,
+    `minFit below maxFit (got ${(range.minFit * 100).toFixed(3)}%–${(range.maxFit * 100).toFixed(3)}%)`,
+  );
+  const search = searchBestPriceForCleanSnap({
+    cards,
+    basePrice: 4,
+    targetEdge: 0.1099,
+    targetWinRate: 0.1,
+    taggedWinRate: 0.1,
+    winRateTol: TAGGED_WINRATE_TOLERANCE,
+    nearMissMin: 0.1,
+    maxPriceChangePct: 0.25,
+    disperseLoss: true,
+  });
+  const r = search.bestResult;
+  assert("error" in r, "the 10% tag must refuse");
+  if (!("error" in r)) return;
+  assert(!("weights" in r), "the error arm never carries a weights vector");
+  assert(
+    r.limit.kind === "tag-unreachable",
+    `typed LAW T verdict (got ${r.limit.kind}: ${r.error})`,
+  );
+  const maxPct = `${(range.maxFit * 100).toFixed(2)}%`;
+  assert(
+    r.limit.detail.includes(maxPct),
+    `the verdict carries the window-proven max tag ${maxPct} (got: ${r.limit.detail})`,
+  );
+  assert(
+    /retag/i.test(r.limit.suggestion),
+    `the retag remedy rides the verdict (got: ${r.limit.suggestion})`,
+  );
+});
+
+check("LAW T — verdict guard: broken pins keep the specific pins-infeasible refusal (no tag-verdict overwrite)", () => {
+  // Pins totalling 120% make EVERY tag infeasible WITH the pins while the
+  // unpinned pool would host one — the pins are the story, and the typed
+  // pins copy (which names the 120%) is more actionable than a tag verdict.
+  const cards = [
+    { value: 15 },
+    { value: 40 },
+    { value: 100 },
+    { value: 1.4 },
+    { value: 1.2 },
+    { value: 0.9 },
+  ];
+  const search = searchBestPriceForCleanSnap({
+    cards,
+    basePrice: 4,
+    targetEdge: 0.1099,
+    targetWinRate: 0.12,
+    taggedWinRate: 0.12,
+    winRateTol: TAGGED_WINRATE_TOLERANCE,
+    nearMissMin: 0.1,
+    maxPriceChangePct: 0.25,
+    currentWeights: [200, 300, 200, 3000, 3000, 3300],
+    pinnedShares: [
+      { index: 3, share: 0.6 },
+      { index: 4, share: 0.6 },
+    ],
+    disperseLoss: true,
+  });
+  const r = search.bestResult;
+  assert("error" in r, "over-100% pins must refuse");
+  if (!("error" in r)) return;
+  assert(
+    r.limit.kind === "pins-infeasible",
+    `the pins story survives the LAW T upgrade path (got ${r.limit.kind})`,
+  );
+});
+
+check("NM-floor honesty — the rescue bisects to the physics ceiling and records the nearMiss relaxation (tag exact, LAW M clean)", () => {
+  // A single near-miss card among 11 dust rows: under LAW M the NM card can
+  // never out-weigh the dust below it, so the near-miss band can carry at
+  // most L/k = 94%/12 ≈ 7.83% — the requested 10% floor is physically
+  // unfundable at ANY layout. The narrow ±2% budget keeps the core's own
+  // far-cent landings out of reach, so the lawful rescue must lay at base:
+  // tag held EXACT, floor honestly relaxed to the bisected ceiling.
+  const dust = [1.1, 1.05, 1.0, 0.95, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3];
+  const values = [15, 40, 100, 2.0, ...dust];
+  const search = searchBestPriceForCleanSnap({
+    cards: values.map((value) => ({ value })),
+    basePrice: 3,
+    targetEdge: 0.1099,
+    targetWinRate: 0.06,
+    taggedWinRate: 0.06,
+    winRateTol: TAGGED_WINRATE_TOLERANCE,
+    nearMissMin: 0.1,
+    maxPriceChangePct: 0.02,
+    currentWeights: [500, 300, 200, 800, ...new Array(10).fill(745), 750],
+    disperseLoss: true,
+  });
+  const best = search.bestResult;
+  assert(isSuccess(best), `the rescue plans it (${isSuccess(best) ? "" : best.error})`);
+  if (!isSuccess(best)) return;
+  assert(search.usedSoftFallback === false, "the rescue counts as the hard arm, not a soft float");
+  assert(
+    Math.abs(best.risk.winRate - 0.06) <= 1e-6,
+    `tag held EXACT through the relaxation (got ${(best.risk.winRate * 100).toFixed(4)}%)`,
+  );
+  const nm = best.relaxations.filter((x) => x.lever === "nearMiss");
+  assert(nm.length === 1, `exactly one nearMiss relaxation (got ${best.relaxations.length})`);
+  const relax = nm[0]!;
+  assert(
+    Math.abs(relax.requested - 0.1) <= 1e-9,
+    `requested floor reported verbatim (got ${relax.requested})`,
+  );
+  assert(
+    relax.applied < 0.09 && Math.abs(relax.applied - 0.94 / 12) < 1e-3,
+    `applied = the L/k physics ceiling ≈ 7.83% (got ${(relax.applied * 100).toFixed(3)}%)`,
+  );
+  assert(
+    Math.abs(best.risk.nearMiss - relax.applied) <= 1e-6,
+    "the reported relaxation IS the shipped near-miss mass",
+  );
+  assert(
+    /LAW M window/.test(relax.reason),
+    `the relaxation names its provenance (got: ${relax.reason})`,
+  );
+  const total = best.weights.reduce((a, b) => a + b, 0);
+  const shares = best.weights.map((w) => w / total);
+  assert(
+    findMonotoneViolations({ values, shares }).length === 0,
+    "the relaxed re-lay obeys LAW M end to end",
+  );
+  assert(
+    best.edge >= 0.1099 - 1e-9 && best.edge <= 0.1099 + 0.001 + 1e-6,
+    `edge inside the rescue contract (got ${(best.edge * 100).toFixed(3)}%)`,
+  );
 });
 
 // ── Summary ─────────────────────────────────────────────────────────

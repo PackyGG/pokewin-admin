@@ -533,6 +533,15 @@ export type ShapeWeightsSuccess = {
  *                             landed EV at this price/win mass under the
  *                             never-inflate caps. The detail carries the lawful
  *                             EV window so guidance can say what WOULD fit.
+ * - `tag-unreachable`       — LAW T (Retune V3 stage 3): the pack's TAG cannot
+ *                             be lawfully hosted — the solver refused at every
+ *                             in-band candidate price AND the LAW M window
+ *                             math at the live price proves the tag sits
+ *                             outside the pool's lawful fit range
+ *                             ({@link lawfulTagFitRange}). The detail carries
+ *                             the largest tag that DOES fit (or that no tag
+ *                             fits at all), so the verdict is actionable:
+ *                             retag, untag, or edit the pool.
  */
 export type ShapeWeightsLimitKind =
   | "invalid-price"
@@ -549,7 +558,8 @@ export type ShapeWeightsLimitKind =
   | "edge-unreachable"
   | "pins-infeasible"
   | "loss-nonmonotone"
-  | "monotone-unreachable";
+  | "monotone-unreachable"
+  | "tag-unreachable";
 
 /**
  * Structured description of the HARD limit that made the request genuinely
@@ -4111,27 +4121,30 @@ function snapPinnedFreeToCleanLadder(input: {
  * error+limit, never both.
  */
 /**
- * LAW M RESCUE (Retune V3, search third pass): the core's band split treats
- * the near-miss floor as an EXACT allocation, so a pool that must carry MORE
- * near-miss mass to reach the edge target refuses `ev-unreachable-for-split`
- * — and the old soft float "solved" it by inflating a cheap winner into a
- * zigzag instead (under-cap fixture: $4.2 at 24.8% over a 10% near-miss at
- * −26% price). The lawful window treats the floor as a FLOOR: when a LAW-M
- * ladder inside the accepted edge band exists at the requested win rate, lay
- * it directly (win mass / pins exact, never-inflate caps, every live row
- * kept alive). Verified fail-closed; returns null when no lawful ladder
- * exists. Runs ONLY as {@link searchBestPriceForCleanSnap}'s last resort so
- * snapped/nice plans and the remedy engine's stricter verification keep
- * priority.
+ * Shared construction of the LAW M environment (values, never-inflate caps
+ * from the LIVE shares, pins, pinned near-miss mass) used by BOTH the lawful
+ * rescue and the tag-fit verdict, so the two can never disagree about what
+ * "the lawful envelope" means. Returns null on malformed input (same
+ * validations the rescue always applied).
  */
-function lawfulWindowRescue(input: ShapeWeightsInput): ShapeWeightsSuccess | null {
+function buildLawEnv(input: {
+  cards: { value: number }[];
+  price: number;
+  maxWinCap?: number;
+  currentWeights?: number[];
+  pinnedShares?: ShapeWeightsPinnedShare[];
+}): {
+  values: number[];
+  pins: { index: number; share: number }[] | null;
+  pinnedIdx: Set<number> | undefined;
+  pinnedNm: number;
+  winCaps: (number | null)[];
+  liveShares: number[];
+  curTotal: number;
+} | null {
   const price = input.price;
-  const targetEdge = input.targetEdge ?? TARGET_HOUSE_EDGE;
-  const winMass = input.targetWinRate;
-  if (!(price > 0) || !Number.isFinite(winMass) || winMass < 0 || winMass >= 1) return null;
-  if (!(targetEdge > 0) || targetEdge >= 1) return null;
   const n = input.cards.length;
-  if (n === 0) return null;
+  if (!(price > 0) || n === 0) return null;
   const values = input.cards.map((c) => c.value);
   const pinsIn = input.pinnedShares ?? [];
   const pinnedIdx = pinsIn.length > 0 ? new Set(pinsIn.map((p) => p.index)) : undefined;
@@ -4142,7 +4155,6 @@ function lawfulWindowRescue(input: ShapeWeightsInput): ShapeWeightsSuccess | nul
     const v = values[p.index]!;
     if (v >= 0.5 * price && v < price) pinnedNm += p.share;
   }
-  const nearMissFloor = Math.max(0, input.nearMissMin ?? 0.1) + pinnedNm;
   let curTotal = 0;
   if (input.currentWeights) {
     for (const w of input.currentWeights) {
@@ -4167,29 +4179,201 @@ function lawfulWindowRescue(input: ShapeWeightsInput): ShapeWeightsSuccess | nul
     }
     if (curTotal > 0) winCaps[i] = liveShares[i]!;
   }
-  const laid = lawfulLadderInWindow({
+  return {
     values,
-    price,
-    winMass,
-    nearMissFloor,
-    winCaps,
     pins: pinsIn.length > 0 ? pinsIn.map((p) => ({ index: p.index, share: p.share })) : null,
     pinnedIdx,
-    evLo: price * (1 - (targetEdge + 0.001)),
-    evHi: price * (1 - targetEdge),
-    // Prefer the exact-edge end of the accepted band.
-    evPrefer: price * (1 - targetEdge),
-    contractMode: true,
-    keepAliveRef: curTotal > 0 ? liveShares : null,
-  });
-  if (!("units" in laid)) return null;
-  if (Math.abs(laid.risk.winRate - winMass) > 1e-6) return null;
+    pinnedNm,
+    winCaps,
+    liveShares,
+    curTotal,
+  };
+}
+
+/**
+ * LAW T fit range (Retune V3 stage 3): the interval of win-rate TAGS this
+ * pool can lawfully host at ONE price — i.e. the tags whose LAW M window
+ * (never-inflate caps from the live shares, pins sovereign, near-miss floor
+ * at its unrelaxable minimum = the pinned NM mass) intersects the accepted
+ * one-sided edge contract `[targetEdge, targetEdge + edgeExcessTol]`.
+ *
+ * This is the engine's PROOF for the tag-fit verdict: `maxFit` is the
+ * largest tag that fits ("retag at or below this"), `minFit` the smallest
+ * (a pool can also be too poor to hold a tiny tag inside the contract —
+ * the window's EV tops out below the accepted band). `null` = NO tag fits
+ * at this price under the pool's lawful envelope.
+ *
+ * The near-miss floor is deliberately taken at its HARD minimum (pins only):
+ * the engine's NM-floor honesty pass relaxes the free floor before refusing,
+ * so a fit claim here must not depend on relaxable mass. Feasibility over the
+ * tag axis need not be one interval in pathological pools; the scan returns
+ * the outer bounds (0.05pp grid + boundary bisection), which is exactly what
+ * the verdict copy needs.
+ */
+export function lawfulTagFitRange(input: {
+  cards: { value: number }[];
+  price: number;
+  targetEdge?: number;
+  maxWinCap?: number;
+  currentWeights?: number[];
+  pinnedShares?: ShapeWeightsPinnedShare[];
+  /** One-sided edge acceptance above target. Default {@link ONE_SIDED_EDGE_EXCESS_TOL}. */
+  edgeExcessTol?: number;
+}): { minFit: number; maxFit: number } | null {
+  const price = input.price;
+  const targetEdge = input.targetEdge ?? TARGET_HOUSE_EDGE;
+  if (!(price > 0) || !(targetEdge > 0) || targetEdge >= 1) return null;
+  const env = buildLawEnv(input);
+  if (env === null) return null;
+  const excess = input.edgeExcessTol ?? ONE_SIDED_EDGE_EXCESS_TOL;
+  const evLo = price * (1 - (targetEdge + excess));
+  const evHi = price * (1 - targetEdge);
+  const fits = (tag: number): boolean => {
+    if (!(tag >= 0) || tag >= 1) return false;
+    const win = monotoneEvWindow({
+      values: env.values,
+      price,
+      winMass: tag,
+      nearMissMin: env.pinnedNm,
+      winCaps: env.winCaps,
+      pinnedShares: env.pins,
+    });
+    if (win === null) return false;
+    return win.evMin <= evHi + 1e-9 && win.evMax >= evLo - 1e-9;
+  };
+  const STEP = 0.0005;
+  let first = -1;
+  let last = -1;
+  for (let t = 0; t <= 1 - STEP / 2; t += STEP) {
+    if (fits(t)) {
+      if (first < 0) first = t;
+      last = t;
+    }
+  }
+  if (first < 0) return null;
+  // Bisect the outer boundaries to ~1e-7 tag precision.
+  let minFit = first;
+  {
+    let lo = Math.max(0, first - STEP);
+    let hi = first;
+    if (!fits(lo)) {
+      for (let it = 0; it < 24; it++) {
+        const mid = (lo + hi) / 2;
+        if (fits(mid)) hi = mid;
+        else lo = mid;
+      }
+      minFit = hi;
+    } else {
+      minFit = lo;
+    }
+  }
+  let maxFit = last;
+  {
+    let lo = last;
+    let hi = Math.min(1 - 1e-9, last + STEP);
+    if (fits(hi)) {
+      maxFit = hi;
+    } else {
+      for (let it = 0; it < 24; it++) {
+        const mid = (lo + hi) / 2;
+        if (fits(mid)) lo = mid;
+        else hi = mid;
+      }
+      maxFit = lo;
+    }
+  }
+  return { minFit, maxFit };
+}
+
+/**
+ * LAW M RESCUE (Retune V3, search third pass): the core's band split treats
+ * the near-miss floor as an EXACT allocation, so a pool that must carry MORE
+ * near-miss mass to reach the edge target refuses `ev-unreachable-for-split`
+ * — and the old soft float "solved" it by inflating a cheap winner into a
+ * zigzag instead (under-cap fixture: $4.2 at 24.8% over a 10% near-miss at
+ * −26% price). The lawful window treats the floor as a FLOOR: when a LAW-M
+ * ladder inside the accepted edge band exists at the requested win rate, lay
+ * it directly (win mass / pins exact, never-inflate caps, every live row
+ * kept alive). Verified fail-closed; returns null when no lawful ladder
+ * exists. Runs ONLY as {@link searchBestPriceForCleanSnap}'s last resort so
+ * snapped/nice plans and the remedy engine's stricter verification keep
+ * priority.
+ *
+ * NM-FLOOR HONESTY (stage 3): when the requested near-miss floor itself is
+ * what empties the lawful window (the pool physically cannot carry that much
+ * near-miss mass inside the edge contract), the rescue does not give the
+ * plan up — it bisects to the MAXIMUM floor the window can fund (never below
+ * the pinned NM mass, which is sovereign), lays there, and reports the gap
+ * as an explicit `nearMiss` relaxation. Win mass / pins stay EXACT — only
+ * the soft feel dial relaxes, and never silently.
+ */
+function lawfulWindowRescue(input: ShapeWeightsInput): ShapeWeightsSuccess | null {
+  const price = input.price;
+  const targetEdge = input.targetEdge ?? TARGET_HOUSE_EDGE;
+  const winMass = input.targetWinRate;
+  if (!(price > 0) || !Number.isFinite(winMass) || winMass < 0 || winMass >= 1) return null;
+  if (!(targetEdge > 0) || targetEdge >= 1) return null;
+  const env = buildLawEnv(input);
+  if (env === null) return null;
+  const { values, pins, pinnedIdx, pinnedNm, winCaps, liveShares, curTotal } = env;
+  const requestedFloor = Math.max(0, input.nearMissMin ?? 0.1) + pinnedNm;
+  const layAt = (
+    floor: number,
+  ): { units: number[]; risk: PackRisk } | null => {
+    const laid = lawfulLadderInWindow({
+      values,
+      price,
+      winMass,
+      nearMissFloor: floor,
+      winCaps,
+      pins,
+      pinnedIdx,
+      evLo: price * (1 - (targetEdge + 0.001)),
+      evHi: price * (1 - targetEdge),
+      // Prefer the exact-edge end of the accepted band.
+      evPrefer: price * (1 - targetEdge),
+      contractMode: true,
+      keepAliveRef: curTotal > 0 ? liveShares : null,
+    });
+    if (!("units" in laid)) return null;
+    if (Math.abs(laid.risk.winRate - winMass) > 1e-6) return null;
+    return { units: laid.units, risk: laid.risk };
+  };
+  let laid = layAt(requestedFloor);
+  let relaxed = false;
+  if (laid === null && requestedFloor > pinnedNm + 1e-9) {
+    // The floor may be the blocker. Only relax when the HARD minimum floor
+    // (pins only) admits a lawful in-contract ladder — otherwise the refusal
+    // is structural and stays a refusal.
+    if (layAt(pinnedNm) !== null) {
+      let lo = pinnedNm; // feasible
+      let hi = requestedFloor; // infeasible
+      for (let it = 0; it < 24; it++) {
+        const mid = (lo + hi) / 2;
+        if (layAt(mid) !== null) lo = mid;
+        else hi = mid;
+      }
+      laid = layAt(lo);
+      relaxed = laid !== null;
+    }
+  }
+  if (laid === null) return null;
+  const relaxations: ShapeWeightsRelaxation[] = relaxed
+    ? [
+        {
+          lever: "nearMiss",
+          requested: requestedFloor,
+          applied: laid.risk.nearMiss,
+          reason: `LAW M window at $${price.toFixed(2)} cannot fund the ${(requestedFloor * 100).toFixed(1)}% near-miss floor inside the edge contract — laid at the lawful maximum ${(laid.risk.nearMiss * 100).toFixed(2)}%.`,
+        },
+      ]
+    : [];
   return {
     weights: laid.units,
     risk: laid.risk,
     ev: laid.risk.ev,
     edge: laid.risk.edge,
-    relaxations: [],
+    relaxations,
     snapped: false,
     lotterySkewApplied: false,
     topInflationUnavoidable: false,
@@ -6655,8 +6839,143 @@ export function searchBestPriceForCleanSnap(input: {
     // last-resort contract as above — never reached by legacy callers.
     const rescued = lawfulRescueSweep(input);
     if (rescued !== null) return { ...rescued, usedSoftFallback: false };
+    // LAW T VERDICT (stage 3): a TAGGED retune refused at EVERY candidate
+    // price (core sweep + lawful rescue). When the LAW M window math PROVES
+    // the tag itself sits outside the pool's lawful fit range at the live
+    // price, upgrade the generic closest-cent refusal to the typed
+    // `tag-unreachable` verdict. Only the ambiguous EV/law refusal kinds are
+    // upgradable — structural refusals (no dust, no winners, broken pins,
+    // invalid inputs) name a concrete defect and keep their own story.
+    const coreKind = !isShapeWeightsSuccess(core.bestResult)
+      ? core.bestResult.limit.kind
+      : "";
+    if (
+      typeof input.taggedWinRate === "number" &&
+      Number.isFinite(input.taggedWinRate) &&
+      TAG_VERDICT_UPGRADABLE_KINDS.has(coreKind)
+    ) {
+      const verdict = lawTagVerdict({
+        cards: input.cards,
+        basePrice: input.basePrice,
+        targetEdge: input.targetEdge,
+        taggedWinRate: input.taggedWinRate,
+        maxWinCap: input.maxWinCap,
+        currentWeights: input.currentWeights,
+        pinnedShares: input.pinnedShares,
+      });
+      if (verdict !== null) {
+        const priorFeas = !isShapeWeightsSuccess(core.bestResult)
+          ? core.bestResult.feasibility
+          : undefined;
+        return {
+          ...core,
+          bestResult: {
+            error: verdict.error,
+            ...(priorFeas !== undefined ? { feasibility: priorFeas } : {}),
+            limit: verdict.limit,
+          },
+          usedSoftFallback: false,
+        };
+      }
+    }
   }
   return { ...core, usedSoftFallback: false };
+}
+
+/**
+ * The refusal kinds the LAW T verdict may upgrade: the ambiguous "the math
+ * didn't reach" family, where the window proof genuinely ANSWERS the refusal.
+ * Structural kinds (`no-dust-cards`, `no-win-cards`, `pins-infeasible`,
+ * `empty-pool`, `degenerate-pool`, invalid inputs…) stay verbatim — they
+ * already name the concrete defect and its fix.
+ */
+const TAG_VERDICT_UPGRADABLE_KINDS: ReadonlySet<string> = new Set([
+  "ev-unreachable-for-split",
+  "edge-unreachable",
+  "ev-out-of-range",
+  "monotone-unreachable",
+  "loss-nonmonotone",
+  "no-win-band-card",
+]);
+
+type LawTagVerdictInput = {
+  cards: { value: number }[];
+  basePrice: number;
+  targetEdge: number;
+  taggedWinRate: number;
+  maxWinCap?: number;
+  currentWeights?: number[];
+  pinnedShares?: ShapeWeightsPinnedShare[];
+};
+
+/**
+ * LAW T verdict builder (stage 3): decides whether an everywhere-refused
+ * TAGGED search should surface as the typed `tag-unreachable` limit, and
+ * builds the refusal copy from the window proof ({@link lawfulTagFitRange}
+ * at the LIVE price, one-sided edge acceptance).
+ *
+ * Returns null (keep the solver's own refusal) when the tag DOES fit the
+ * lawful envelope at the live price — the refusal is then solver- or
+ * pin-specific, and that story is more actionable than a false tag verdict.
+ * With pins present and NO tag fitting, the pool is re-probed UNPINNED: if
+ * some tag fits without the pins, the pins are the blocker and the solver's
+ * `pins-infeasible` copy stands.
+ */
+function lawTagVerdict(
+  input: LawTagVerdictInput,
+): { error: string; limit: ShapeWeightsLimit } | null {
+  const tag = input.taggedWinRate;
+  const price = input.basePrice;
+  if (!(price > 0) || !Number.isFinite(tag) || tag < 0 || tag >= 1) return null;
+  const fitArgs = {
+    cards: input.cards,
+    price,
+    targetEdge: input.targetEdge,
+    maxWinCap: input.maxWinCap,
+    currentWeights: input.currentWeights,
+    pinnedShares: input.pinnedShares,
+  };
+  const range = lawfulTagFitRange(fitArgs);
+  const tagPct = (tag * 100).toFixed(2);
+  if (range === null) {
+    if ((input.pinnedShares?.length ?? 0) > 0) {
+      const unpinned = lawfulTagFitRange({ ...fitArgs, pinnedShares: undefined });
+      if (unpinned !== null) return null; // pins are the blocker — keep pins copy
+    }
+    return {
+      error: `LAW T: no win-rate tag fits this pool lawfully at $${price.toFixed(2)} — the solver refused at every in-band price.`,
+      limit: {
+        kind: "tag-unreachable",
+        detail: `No lawful plan exists for the ${tagPct}% tag at any candidate price, and the LAW M window math at $${price.toFixed(2)} proves NO tag fits this pool inside the ${(input.targetEdge * 100).toFixed(2)}% edge contract (never-inflate caps + monotone full ladder + pins). The pool shape itself refuses.`,
+        suggestion:
+          "Edit the pool: add win-band cards (or raise never-inflate caps by editing live odds), or reprice the pack — retagging alone cannot fix this.",
+      },
+    };
+  }
+  const tolerance = TAGGED_WINRATE_TOLERANCE;
+  if (tag >= range.minFit - tolerance && tag <= range.maxFit + tolerance) {
+    return null; // the tag fits the lawful envelope — the refusal is solver/pin-specific
+  }
+  const maxPct = (range.maxFit * 100).toFixed(2);
+  const minPct = (range.minFit * 100).toFixed(2);
+  if (tag > range.maxFit) {
+    return {
+      error: `LAW T: the ${tagPct}% tag exceeds the lawful maximum ${maxPct}% for this pool — the solver refused at every in-band price.`,
+      limit: {
+        kind: "tag-unreachable",
+        detail: `The ${tagPct}% tag cannot be lawfully hosted: no candidate price in the band produced a plan, and the LAW M window at $${price.toFixed(2)} proves the pool can carry at most a ${maxPct}% tag inside the ${(input.targetEdge * 100).toFixed(2)}% edge contract (never-inflate caps + monotone full ladder + pins).`,
+        suggestion: `Retag the pack at or below ${maxPct}% (or untag it for a soft win-rate), raise the never-inflate caps by editing live odds, or add win-band cards.`,
+      },
+    };
+  }
+  return {
+    error: `LAW T: the ${tagPct}% tag sits below the lawful minimum ${minPct}% for this pool — the solver refused at every in-band price.`,
+    limit: {
+      kind: "tag-unreachable",
+      detail: `The ${tagPct}% tag cannot be lawfully hosted: no candidate price in the band produced a plan, and the LAW M window at $${price.toFixed(2)} proves this pool's lawful tag range is ${minPct}%–${maxPct}% inside the ${(input.targetEdge * 100).toFixed(2)}% edge contract — the tag falls below it (the pool needs more win mass to land the edge).`,
+      suggestion: `Retag the pack into the ${minPct}%–${maxPct}% range, or edit the pool (add cheaper dust/near-miss cards so less win mass is needed).`,
+    },
+  };
 }
 
 /**
