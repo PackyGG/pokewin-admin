@@ -88,7 +88,11 @@ const FORMULA_ROWS: RowDef[] = [
     contribution: (b) => -b.inventoryDelta,
     icon: Box,
     accent: "neutral",
-    href: "/users?sortBy=inventoryValue&sortOrder=desc",
+    // `inventoryValue` was removed as a standalone list sort key
+    // (2026-07-08, alongside the standalone "Inventory" list column) —
+    // `netHoldings` (the surviving "Net" = Balance + Inventory column)
+    // is the closest still-valid sort to drill into the same cohort.
+    href: "/users?sortBy=netHoldings&sortOrder=desc",
   },
   {
     label: "Voucher change",
