@@ -3038,6 +3038,13 @@ async function planPackTuneStagedUncached(
             plannedShares: stagedGuidanceWeights.map((w) =>
               Number.isFinite(w) && w > 0 ? w / stagedTotal : 0,
             ),
+            // Owner pins — the SAME index mapping the staged solve uses (the
+            // tagged branch below threads them since the Bidoof fix; an
+            // untagged pinned pool needs the same treatment or its fixes are
+            // modeled against a constraint set the solve doesn't run).
+            ...(stagedPinnedShares !== null
+              ? { pinnedShares: stagedPinnedShares }
+              : {}),
             // A refused arm ran no relaxations (there is no accepted plan).
             relaxations: outcome.ok ? outcome.relaxations : [],
             pinPrice: staged.pinPrice === true,
