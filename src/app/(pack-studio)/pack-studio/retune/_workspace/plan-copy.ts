@@ -93,6 +93,28 @@ export function addCardCtaLabel(range: { min: number; max: number }): string {
   return `Add a card between ${formatCurrency(range.min)}–${formatCurrency(range.max)}`;
 }
 
+// ─── Price-suggestion one-click (wave 4) ─────────────────────────────────────
+
+/** `price-move` CTA: stages the suggested price PINNED + re-plans. */
+export function applyPriceCtaLabel(price: number): string {
+  return `Set price to ${formatCurrency(price)}`;
+}
+
+/** `price-edge-exact` CTA: stages price (pinned) + the edge-target override. */
+export function applyPriceEdgeCtaLabel(price: number, edge: number): string {
+  return `Set ${formatCurrency(price)} + ${(edge * 100).toFixed(3)}% edge target`;
+}
+
+/** Header chip while an owner edge-target override binds the plan. */
+export function edgeOverrideChipLabel(edge: number): string {
+  return `Edge target ${(edge * 100).toFixed(3)}% (override)`;
+}
+
+export const EDGE_OVERRIDE_CHIP_TITLE =
+  "The plan solves against this owner-set edge target instead of the price-curve auto target. Clear it to return to the auto target.";
+
+export const EDGE_OVERRIDE_CLEAR_ARIA = "Clear the edge-target override";
+
 // ─── Pins-infeasible engine-detail disclosure ────────────────────────────────
 //
 // The owner-plain pins frame lives SERVER-SIDE since wave 2b: the verdict's

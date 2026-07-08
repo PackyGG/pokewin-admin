@@ -1099,6 +1099,44 @@ export function RetuneWorkspace({
     }
   }, [ensureStaged, stagedApi, openPicker, requestPlan]);
 
+  // ── Wave 4: price-suggestion one-click (price-move / price-edge-exact) ───
+  // Stages the suggested price PINNED — the suggestion's claim is a point
+  // solution at exactly that cent (the free search would re-anchor the band
+  // elsewhere) — plus, for price-edge-exact, the edge-target override the
+  // suggestion computed. Then re-plans: the landed plan re-verifies the claim
+  // through the real engine (fail-closed — a claim the solve can't honour
+  // REFUSES visibly). NEVER writes; push stays behind the two-step confirm.
+  const applyPriceSuggestion = React.useCallback(
+    (args: { price: number; edgeTarget?: number }) => {
+      const packId = selectedRef.current;
+      if (!packId) return;
+      if (!(Number.isFinite(args.price) && args.price > 0)) return;
+      const sp = ensureStaged(packId);
+      if (!sp) return;
+      const next = { ...sp, price: args.price, pinPrice: true };
+      if (args.edgeTarget !== undefined) {
+        next.edgeTargetOverride = args.edgeTarget;
+      }
+      stagedApi.setStaged(packId, next);
+      setPriceText(priceInputText(args.price));
+      void requestPlan(packId);
+    },
+    [ensureStaged, stagedApi, requestPlan],
+  );
+
+  // Clear the staged edge-target override (header chip ×). The staged price
+  // + pin stay as they are; the re-plan solves on the auto curve target.
+  const clearEdgeOverride = React.useCallback(() => {
+    const packId = selectedRef.current;
+    if (!packId) return;
+    const sp = stagedApi.getStaged(packId);
+    if (!sp || sp.edgeTargetOverride === undefined) return;
+    const next = { ...sp };
+    delete next.edgeTargetOverride;
+    stagedApi.setStaged(packId, next);
+    void requestPlan(packId);
+  }, [stagedApi, requestPlan]);
+
   // ── Token mint (lazy at first confirm-open; silent re-mint on expiry) ───
   const getToken = React.useCallback(async (): Promise<string> => {
     if (tokenRef.current) return tokenRef.current;
@@ -1924,6 +1962,8 @@ export function RetuneWorkspace({
                 }
                 onAddCardRange={(range) => openPicker(range)}
                 onStagePoolEdit={stagePoolEdit}
+                onApplyPrice={applyPriceSuggestion}
+                onClearEdgeOverride={clearEdgeOverride}
                 onKeepRehydrated={() => keepRehydrated(selectedRow.packId)}
                 onDiscardRehydrated={() =>
                   discardRehydrated(selectedRow.packId)

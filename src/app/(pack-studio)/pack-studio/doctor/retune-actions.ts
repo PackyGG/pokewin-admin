@@ -1975,6 +1975,17 @@ export type PackTuneStagedInput = {
    * live tag is used.
    */
   tagOverride?: StagedTagOverride;
+  /**
+   * Owner edge-target override (wave 4, the `price-edge-exact` one-click):
+   * the plan resolves `targets.targetEdge` from this fraction (0..0.9)
+   * instead of the price-curve auto target. The write carries NO counterpart
+   * field — it receives the frozen plan's resolved `targets.targetEdge`
+   * verbatim through the `targets` argument, so plan ≡ write holds by
+   * construction. Every engine law (edge floor, tag accuracy, never-inflate,
+   * snap) still gates the resulting plan — an unlawful override REFUSES, it
+   * never ships silently.
+   */
+  edgeTargetOverride?: number;
 };
 
 export type PackTunePlan = {
@@ -2881,6 +2892,21 @@ async function planPackTuneStagedUncached(
     return null;
   }
 
+  // Structural validation of the edge-target override (fail-closed, mirrors
+  // the resolver's own input checks): a fraction strictly inside (0, 0.9).
+  if (
+    staged.edgeTargetOverride !== undefined &&
+    !(
+      Number.isFinite(staged.edgeTargetOverride) &&
+      staged.edgeTargetOverride > 0 &&
+      staged.edgeTargetOverride < 0.9
+    )
+  ) {
+    throw new Error(
+      "Refused: the edge-target override must be a fraction between 0 and 0.9.",
+    );
+  }
+
   const input: StagedPoolInput = {
     cards: staged.cards.map((c) => ({ cardId: c.cardId, order: c.order })),
     ...(staged.price !== undefined ? { price: staged.price } : {}),
@@ -2900,6 +2926,11 @@ async function planPackTuneStagedUncached(
     // `pinPrice` is the rare odds-only escape hatch — the write's anchored
     // no-search branch.
     allowPriceSearch: staged.pinPrice !== true,
+    // Owner edge-target override (`price-edge-exact` one-click): resolved
+    // targets carry it, the frozen plan freezes it, the write inherits it.
+    ...(staged.edgeTargetOverride !== undefined
+      ? { targetEdge: staged.edgeTargetOverride }
+      : {}),
   });
   const outcome = r.outcome;
 

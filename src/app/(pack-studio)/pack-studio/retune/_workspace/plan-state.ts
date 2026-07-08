@@ -83,6 +83,15 @@ export type StagedPool = {
    * ⇒ the pack's live tag is used (no override). See {@link StagedTagOverride}.
    */
   tagOverride?: StagedTagOverride;
+  /**
+   * Owner edge-target override (wave 4, the `price-edge-exact` one-click):
+   * the staged plan resolves `targets.targetEdge` from this fraction instead
+   * of the price-curve auto target. The write needs NO extra field — it
+   * inherits the frozen plan's resolved `targets.targetEdge` verbatim
+   * (plan ≡ write). Solve-relevant (part of `stagedKey`). `undefined` ⇒ the
+   * auto curve target.
+   */
+  edgeTargetOverride?: number;
   /** `computePoolFingerprint` of the LIVE pool this staged pool was seeded from. */
   baseFingerprint: string;
 };
@@ -188,6 +197,9 @@ export function stagedKey(pool: StagedPool): string {
         : pool.tagOverride.kind === "untag"
           ? "untag"
           : pool.tagOverride.tag,
+    // The edge-target override changes the target the server solves against,
+    // so it MUST stale the plan.
+    edge: pool.edgeTargetOverride ?? "auto",
   });
 }
 
@@ -387,6 +399,10 @@ export function reanchorStagedPool(
     ...(staged.tagOverride !== undefined
       ? { tagOverride: staged.tagOverride }
       : {}),
+    // The edge-target override is an operator choice too — it survives.
+    ...(staged.edgeTargetOverride !== undefined
+      ? { edgeTargetOverride: staged.edgeTargetOverride }
+      : {}),
     baseFingerprint: computePoolFingerprint(
       freshPool.price,
       freshPool.cards.map((c) => ({ cardId: c.cardId, weight: c.weight })),
@@ -408,6 +424,9 @@ export function stagedPlanInput(staged: StagedPool): PackTuneStagedInput {
     ...(staged.pinnedOdds.length > 0 ? { pinnedOdds: staged.pinnedOdds } : {}),
     ...(staged.tagOverride !== undefined
       ? { tagOverride: staged.tagOverride }
+      : {}),
+    ...(staged.edgeTargetOverride !== undefined
+      ? { edgeTargetOverride: staged.edgeTargetOverride }
       : {}),
   };
 }

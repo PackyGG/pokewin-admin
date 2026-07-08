@@ -20,6 +20,7 @@ import {
   Trophy,
   Check,
   Wrench,
+  X,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -86,8 +87,13 @@ import {
   POOL_EDIT_PRIMARY_HEADING,
   POOL_EDIT_MORE_FIXES,
   UNTAG_CTA_LABEL,
+  EDGE_OVERRIDE_CHIP_TITLE,
+  EDGE_OVERRIDE_CLEAR_ARIA,
   retagCtaLabel,
   addCardCtaLabel,
+  applyPriceCtaLabel,
+  applyPriceEdgeCtaLabel,
+  edgeOverrideChipLabel,
   clearAllPinsLabel,
   dirtyOddsBanner,
   edgeTargetSub,
@@ -394,10 +400,19 @@ function GuidanceSuggestions({
   guidance,
   onAddCardRange,
   onChangeTag,
+  onApplyPrice,
 }: {
   guidance: TagGuidance;
   onAddCardRange: (range: { min: number; max: number }) => void;
   onChangeTag: (override: StagedTagOverride | undefined) => void;
+  /**
+   * Wave 4 one-click for the price suggestions: stages the suggested price
+   * PINNED (odds-only solve at exactly that cent — the suggestion's claim is a
+   * point solution, not a search anchor) plus, for `price-edge-exact`, the
+   * edge-target override; then re-plans. The landed plan re-verifies the claim
+   * through the real engine — a suggestion the solve can't honour REFUSES.
+   */
+  onApplyPrice: (args: { price: number; edgeTarget?: number }) => void;
 }) {
   const rows = guidance.suggestions;
   if (rows.length === 0) return null;
@@ -418,6 +433,20 @@ function GuidanceSuggestions({
           // button (guarded on the string type).
           const tagAction =
             typeof s.params.action === "string" ? s.params.action : null;
+          // Price suggestions carry the exact cent on params; `price-edge-exact`
+          // additionally carries the edge fraction the pinned pool pays there.
+          const priceParam =
+            typeof s.params.price === "number" &&
+            Number.isFinite(s.params.price) &&
+            s.params.price > 0
+              ? s.params.price
+              : null;
+          const edgeParam =
+            typeof s.params.edgeTarget === "number" &&
+            Number.isFinite(s.params.edgeTarget) &&
+            s.params.edgeTarget > 0
+              ? s.params.edgeTarget
+              : null;
           return (
             <li key={`${s.kind}-${i}`} className="space-y-1">
               <p className="text-xs">
@@ -488,6 +517,32 @@ function GuidanceSuggestions({
                   {retagCtaLabel(String(s.params.tierDbLabel))}
                 </Button>
               )}
+              {s.kind === "price-move" && priceParam !== null && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onApplyPrice({ price: priceParam })}
+                >
+                  <Ticket className="size-3.5" />
+                  {applyPriceCtaLabel(priceParam)}
+                </Button>
+              )}
+              {s.kind === "price-edge-exact" &&
+                priceParam !== null &&
+                edgeParam !== null && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      onApplyPrice({ price: priceParam, edgeTarget: edgeParam })
+                    }
+                  >
+                    <Ticket className="size-3.5" />
+                    {applyPriceEdgeCtaLabel(priceParam, edgeParam)}
+                  </Button>
+                )}
             </li>
           );
         })}
@@ -509,12 +564,14 @@ function PoolEditPrimary({
   onStagePoolEdit,
   onAddCardRange,
   onChangeTag,
+  onApplyPrice,
 }: {
   poolEdit: NonNullable<PackTunePlan["poolEditPlan"]>;
   guidance: TagGuidance | null;
   onStagePoolEdit: () => void;
   onAddCardRange: (range: { min: number; max: number }) => void;
   onChangeTag: (override: StagedTagOverride | undefined) => void;
+  onApplyPrice: (args: { price: number; edgeTarget?: number }) => void;
 }) {
   const hasAdd = poolEdit.addCard !== null;
   return (
@@ -550,6 +607,7 @@ function PoolEditPrimary({
               guidance={guidance}
               onAddCardRange={onAddCardRange}
               onChangeTag={onChangeTag}
+              onApplyPrice={onApplyPrice}
             />
           </div>
         </details>
@@ -656,6 +714,8 @@ export function PlanPanel({
   onRetryPlan,
   onAddCardRange,
   onStagePoolEdit,
+  onApplyPrice,
+  onClearEdgeOverride,
   onKeepRehydrated,
   onDiscardRehydrated,
   onSelectPack,
@@ -712,6 +772,13 @@ export function PlanPanel({
    * its add-card band). One-click; never writes.
    */
   onStagePoolEdit: () => void;
+  /**
+   * Wave 4 price-suggestion one-click: stage the suggested price PINNED
+   * (+ the edge-target override for `price-edge-exact`) and re-plan.
+   */
+  onApplyPrice: (args: { price: number; edgeTarget?: number }) => void;
+  /** Drop the staged edge-target override (header chip ×) and re-plan. */
+  onClearEdgeOverride: () => void;
   onKeepRehydrated: () => void;
   onDiscardRehydrated: () => void;
   onSelectPack: (packId: string) => void;
@@ -848,6 +915,7 @@ export function PlanPanel({
             onStagePoolEdit={onStagePoolEdit}
             onAddCardRange={onAddCardRange}
             onChangeTag={onChangeTag}
+            onApplyPrice={onApplyPrice}
           />
         </Banner>
       );
@@ -897,6 +965,7 @@ export function PlanPanel({
               guidance={plan.guidance!}
               onAddCardRange={onAddCardRange}
               onChangeTag={onChangeTag}
+              onApplyPrice={onApplyPrice}
             />
           ) : (
             <>
@@ -966,6 +1035,7 @@ export function PlanPanel({
               guidance={plan.guidance!}
               onAddCardRange={onAddCardRange}
               onChangeTag={onChangeTag}
+              onApplyPrice={onApplyPrice}
             />
           )}
         </Banner>
@@ -987,6 +1057,7 @@ export function PlanPanel({
             guidance={plan.guidance}
             onAddCardRange={onAddCardRange}
             onChangeTag={onChangeTag}
+            onApplyPrice={onApplyPrice}
           />
         </Banner>
       );
@@ -1105,6 +1176,30 @@ export function PlanPanel({
           <span className="text-sm tabular-nums text-muted-foreground">
             {formatCurrency(row.price)}
           </span>
+          {/* Wave 4: the staged edge-target override binds the plan — always
+              visible while set, cleared with one click (re-plans on the auto
+              curve target). */}
+          {staged?.edgeTargetOverride !== undefined && (
+            <Badge
+              variant="outline"
+              className={cn(
+                "h-5 gap-1 px-1.5 text-[10px] tabular-nums",
+                BANNER_TONES.amber,
+              )}
+              title={EDGE_OVERRIDE_CHIP_TITLE}
+            >
+              {edgeOverrideChipLabel(staged.edgeTargetOverride)}
+              <button
+                type="button"
+                aria-label={EDGE_OVERRIDE_CLEAR_ARIA}
+                onClick={onClearEdgeOverride}
+                disabled={pushing}
+                className="rounded-sm opacity-70 transition-opacity hover:opacity-100 disabled:pointer-events-none"
+              >
+                <X className="size-3" />
+              </button>
+            </Badge>
+          )}
           <div className="ml-auto flex flex-wrap items-center gap-1.5">
             {pushed && (
               <Badge
