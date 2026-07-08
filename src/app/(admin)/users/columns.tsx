@@ -20,6 +20,13 @@ export type UserRow = {
   status: string;
   country: string | null;
   countryCode: string | null;
+  /**
+   * `user.affiliate_code` — the affiliate/referral code this user signed
+   * up under, if any (null = organic signup). See users-list.ts
+   * USER_LIST_SELECT comment for why this reads the plain column rather
+   * than the fuller historical resolution users-detail.ts does.
+   */
+  affiliateCode: string | null;
   availableBalance: number;
   /**
    * `balances.locked_balance` — the user's vault / cooldown-locked cash
@@ -129,6 +136,29 @@ export const columns: ColumnDef<UserRow>[] = [
           (row.original.countryCode ? row.original.countryCode : "—")}
       </span>
     ),
+  },
+  {
+    // Affiliate/referral code this user signed up under (`user.affiliate_code`).
+    // Blue badge mirrors the referrer-code chip on /users/[id] (ReferrerCard);
+    // "—" mirrors the Country cell's organic/no-data fallback above.
+    accessorKey: "affiliateCode",
+    header: () => (
+      <UsersSortHeader title="Code / Affiliate" sortKey="affiliate_code" />
+    ),
+    cell: ({ row }) => {
+      const code = row.original.affiliateCode;
+      if (!code) {
+        return <span className="text-sm text-muted-foreground">—</span>;
+      }
+      return (
+        <Badge
+          variant="outline"
+          className="bg-blue-500/15 font-mono text-xs text-blue-600 border-blue-500/30 dark:text-blue-400"
+        >
+          {code}
+        </Badge>
+      );
+    },
   },
   {
     accessorKey: "role",

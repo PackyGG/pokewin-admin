@@ -402,6 +402,9 @@ function buildUserListColumnOrderSql(
     "username",
     "role",
     "country",
+    // Plain scalar column on `user` — same unindexed-but-accepted sort
+    // tier as country/role above (no join, no aggregate).
+    "affiliate_code",
   ]);
   const field = userSortFields.has(sortBy) ? sortBy : "created_at";
   return {
@@ -620,6 +623,14 @@ type UserListItem = {
   status: string;
   country: string | null;
   countryCode: string | null;
+  /**
+   * `user.affiliate_code` — the affiliate/referral code this user is
+   * currently carrying (set at signup via a referral link/cookie, or by
+   * an admin attributing a referrer). Null = organic signup / no code.
+   * See the USER_LIST_SELECT comment for why this reads the plain column
+   * rather than mirroring users-detail.ts's full historical resolution.
+   */
+  affiliateCode: string | null;
   availableBalance: number;
   /**
    * `balances.locked_balance` — the user's vault / cooldown-locked cash
@@ -658,6 +669,26 @@ const USER_LIST_SELECT = {
   is_locked: true,
   country: true,
   country_code: true,
+  // The live "affiliate/referral code this user is carrying" — written
+  // together with `referred_by` when an admin sets a referrer, or by the
+  // backend when the user signed up under a link/cookie (see the
+  // ReferrerCard comment in users/[id]/user-view-modern-tabs.tsx: "Setting
+  // referred_by alone does NOT move wager income — affiliate_code is the
+  // live routing field"). Surfaced as-is for the list's "Code / Affiliate"
+  // column — a plain scalar already on this row, so it costs nothing extra
+  // on top of the existing PK/indexed row fetch (no per-row lookup, no new
+  // query). This is a simplification vs. the full historical fallback
+  // chain users-detail.ts resolves for the single-user page
+  // (signupUsage.code → affiliate_code → latestUsage.code → referrer.code):
+  // that chain needs a batch query on affiliate_code_usages filtered by
+  // referred_user_id, which has no supporting index (the only index on
+  // that table leads with affiliate_user_id — see
+  // idx_affiliate_code_usages_affiliate_referred in prisma/schema.prisma;
+  // the referred_user_id-first index is recommended-but-NOT-applied, see
+  // prisma/recommended-indexes.sql #28). Doing that scan for every page of
+  // the list would violate the Index-or-ClickHouse rule, so the list uses
+  // the always-available column instead.
+  affiliate_code: true,
   created_at: true,
   balances: {
     select: {
@@ -749,6 +780,7 @@ async function hydrateUserListPage(
         status: u.is_banned ? "banned" : u.is_locked ? "locked" : "active",
         country: u.country,
         countryCode: u.country_code,
+        affiliateCode: u.affiliate_code,
         availableBalance,
         lockedBalance,
         inventoryValue,
@@ -988,6 +1020,9 @@ export async function getUsers(params: {
     "username",
     "role",
     "country",
+    // Kept in sync with the identically-named Set in
+    // buildUserListColumnOrderSql (the search-time column-sort path).
+    "affiliate_code",
   ]);
 
   // Narrow projection — see USER_LIST_SELECT at module scope.

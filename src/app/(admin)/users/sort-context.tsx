@@ -81,6 +81,8 @@ const COMPARATORS: Record<string, (a: UserRow, b: UserRow) => number> = {
     (a.country ?? a.countryCode ?? "").localeCompare(
       b.country ?? b.countryCode ?? "",
     ),
+  affiliate_code: (a, b) =>
+    (a.affiliateCode ?? "").localeCompare(b.affiliateCode ?? ""),
 };
 
 export function sortRowsLocally(

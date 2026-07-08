@@ -41,9 +41,9 @@ export type UsersSortOrder = z.infer<typeof UsersSortOrder>;
 /**
  * Every sort key `getUsers` knows how to ORDER BY — the union of its
  * Prisma-path sorts (created_at / email / username / role / country /
- * status / balance / totalDeposited / totalWagered) and its raw-SQL
- * computed sorts (pnl / totalWithdrawn / inventoryValue / netHoldings /
- * depositCount). Kept in sync with the `userSortFields` /
+ * affiliate_code / status / balance / totalDeposited / totalWagered) and
+ * its raw-SQL computed sorts (pnl / totalWithdrawn / inventoryValue /
+ * netHoldings / depositCount). Kept in sync with the `userSortFields` /
  * `balanceSortFields` / `rawSqlSorts` sets in
  * `src/lib/queries/users-list.ts`. An unknown key falls back to
  * `created_at` (the query's own default), so the validated value can
@@ -56,6 +56,9 @@ export const UsersSortBy = z.enum([
   "username",
   "role",
   "country",
+  // "Code / Affiliate" column — plain scalar column sort, same tier as
+  // country/role above.
+  "affiliate_code",
   "status",
   // balance-relation sorts
   "balance",
