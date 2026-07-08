@@ -303,6 +303,31 @@ check("A5 remedies re-apply INDEPENDENTLY through the engine (lower c8 held exac
   assert(tailsVerify(applyPin(8, 21)) === null, "21% (one step above) must still refuse");
 });
 
+check("A5 cardId stamping (wave 5 one-click): pin remedies carry the id at their index; price-move carries none; id-less input stays bare", () => {
+  const ids = TAILS.values.map((_, i) => `card-${i}`);
+  const withIds = computePinRemedies({
+    ...tailsInput,
+    pinnedShares: PINS_A5,
+    maxRemedies: 10,
+    cardIds: ids,
+  });
+  assert(withIds.length === remA5.length, "supplying ids never changes the catalog");
+  for (const r of withIds) {
+    if (r.kind === "price-move") {
+      assert(r.cardId === undefined, "price-move names no card");
+    } else {
+      assert(
+        r.cardId === `card-${r.cardIndex}`,
+        `${r.kind} must be stamped with the id at its index (got ${r.cardId})`,
+      );
+    }
+  }
+  assert(
+    remA5.every((r) => r.cardId === undefined),
+    "no cardIds supplied → no cardId stamped (back-compat)",
+  );
+});
+
 check("A5 default cap: maxRemedies defaults to 4 — a no-op on the 3-remedy lawful catalog (still the ranked prefix)", () => {
   const capped = computePinRemedies({ ...tailsInput, pinnedShares: PINS_A5 });
   assert(capped.length === 3, `default cap keeps all three remedies, got ${capped.length}`);

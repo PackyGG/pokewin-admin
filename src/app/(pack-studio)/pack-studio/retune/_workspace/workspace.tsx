@@ -14,6 +14,7 @@ import { TableSkeleton } from "@/components/loading-skeletons";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { formatCurrency } from "@/lib/utils/format";
 import { computePackRisk, type PackRisk } from "@/app/(admin)/insights/edge-calc/risk";
+import type { PinRemedy } from "@/app/(admin)/insights/edge-calc/tag-guidance";
 import { computePoolFingerprint } from "@/app/(admin)/packs/_lib/pool-fingerprint";
 import { hitRateFromTags } from "@/app/(admin)/packs/_lib/auto-targets";
 import {
@@ -1124,6 +1125,50 @@ export function RetuneWorkspace({
     [ensureStaged, stagedApi, requestPlan],
   );
 
+  // ── Wave 5: one-click pin remedies (pins-infeasible chips) ───────────────
+  // A remedy is solver-verified server-side; applying it mutates ONLY the
+  // staged fact it names — adjust the pin to the verified % (raise/lower),
+  // drop the pin (unpin), or stage the verified pinned price (price-move) —
+  // then re-plans. Applied by cardId, never index (row reorders don't stale
+  // a plan). Pins imply a staged pool exists; a remedy whose pin is already
+  // gone is a stale artifact and no-ops (its plan is stale-keyed anyway).
+  const applyPinRemedy = React.useCallback(
+    (remedy: PinRemedy) => {
+      const packId = selectedRef.current;
+      if (!packId) return;
+      if (remedy.kind === "price-move") {
+        if (typeof remedy.price === "number" && remedy.price > 0) {
+          applyPriceSuggestion({ price: remedy.price });
+        }
+        return;
+      }
+      if (typeof remedy.cardId !== "string" || remedy.cardId.length === 0)
+        return;
+      const sp = stagedApi.getStaged(packId);
+      if (!sp) return;
+      if (remedy.kind === "unpin-card") {
+        if (!sp.pinnedOdds.some((p) => p.cardId === remedy.cardId)) return;
+        stagedApi.setStaged(packId, {
+          ...sp,
+          pinnedOdds: sp.pinnedOdds.filter((p) => p.cardId !== remedy.cardId),
+        });
+        void requestPlan(packId);
+        return;
+      }
+      // raise-pin / lower-pin — retype the pin at the verified percent.
+      if (!(typeof remedy.toPct === "number" && remedy.toPct > 0)) return;
+      if (!sp.pinnedOdds.some((p) => p.cardId === remedy.cardId)) return;
+      stagedApi.setStaged(packId, {
+        ...sp,
+        pinnedOdds: sp.pinnedOdds.map((p) =>
+          p.cardId === remedy.cardId ? { ...p, pct: remedy.toPct! } : p,
+        ),
+      });
+      void requestPlan(packId);
+    },
+    [stagedApi, requestPlan, applyPriceSuggestion],
+  );
+
   // Clear the staged edge-target override (header chip ×). The staged price
   // + pin stay as they are; the re-plan solves on the auto curve target.
   const clearEdgeOverride = React.useCallback(() => {
@@ -1963,6 +2008,7 @@ export function RetuneWorkspace({
                 onAddCardRange={(range) => openPicker(range)}
                 onStagePoolEdit={stagePoolEdit}
                 onApplyPrice={applyPriceSuggestion}
+                onApplyPinRemedy={applyPinRemedy}
                 onClearEdgeOverride={clearEdgeOverride}
                 onKeepRehydrated={() => keepRehydrated(selectedRow.packId)}
                 onDiscardRehydrated={() =>

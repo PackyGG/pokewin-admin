@@ -2550,6 +2550,13 @@ export type PinRemedy = {
   kind: PinRemedyKind;
   /** Pool index / value of the pinned card (pin kinds only). */
   cardIndex?: number;
+  /**
+   * Stable card identity for the one-click apply (pin kinds only, present
+   * when the caller supplied `cardIds`). The client MUST apply by id, never
+   * by `cardIndex` — row reorders are not solve-relevant, so a plan can
+   * outlive the order its indices were minted in.
+   */
+  cardId?: string;
   cardValue?: number;
   /** The pin's current / proposed percent-of-opens (pin kinds only). */
   fromPct?: number;
@@ -2565,6 +2572,8 @@ export type PinRemedy = {
 
 export type PinRemedyInput = {
   cards: { value: number }[];
+  /** Card ids aligned to `cards` by index — stamps `PinRemedy.cardId`. */
+  cardIds?: string[];
   /** Anti-inflation anchor (live weights; a staged-in card carries 0). */
   currentWeights: number[];
   price: number;
@@ -2813,6 +2822,9 @@ export function computePinRemedies(input: PinRemedyInput): PinRemedy[] {
     remedies.push({
       kind,
       cardIndex: p.index,
+      ...(input.cardIds?.[p.index] !== undefined
+        ? { cardId: input.cardIds[p.index] }
+        : {}),
       cardValue: v,
       fromPct: roundPct(fromPct),
       toPct: best.toPct,
@@ -2837,6 +2849,9 @@ export function computePinRemedies(input: PinRemedyInput): PinRemedy[] {
     remedies.push({
       kind: "unpin-card",
       cardIndex: p.index,
+      ...(input.cardIds?.[p.index] !== undefined
+        ? { cardId: input.cardIds[p.index] }
+        : {}),
       cardValue: card.value,
       fromPct: roundPct(p.share * 100),
       edge: r.edge,

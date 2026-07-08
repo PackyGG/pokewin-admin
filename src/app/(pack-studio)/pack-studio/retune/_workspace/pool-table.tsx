@@ -231,24 +231,44 @@ function OddsTotalChip({
 }
 
 /**
- * Remedy chips — the ONE renderer for "here's how to fix it" chips (currently
- * fed by the plan's verified guidance suggestions; a later server wave can
- * supply its own verified remedy list through the same prop). Non-interactive:
- * the short label carries the kind, the full plain-words copy rides the title.
+ * Remedy chips — the ONE renderer for "here's how to fix it" chips (fed by
+ * the plan's verified guidance suggestions AND the verdict's solver-verified
+ * pin remedies). Display-only by default: the short label carries the kind,
+ * the full plain-words copy rides the title. With `onApply` (wave 5, the
+ * plan-panel pin remedies) every chip becomes a one-click apply button —
+ * `onApply` receives the chip's INDEX (chip order ≡ source remedy order).
+ * The pending-bar call site stays display-only: its chips describe fixes for
+ * the un-applied typed buffer, which Apply/Discard owns.
  */
-export function RemedyChips({ chips }: { chips: RemedyChip[] }) {
+export function RemedyChips({
+  chips,
+  onApply,
+}: {
+  chips: RemedyChip[];
+  onApply?: (index: number) => void;
+}) {
   if (chips.length === 0) return null;
+  const chipClass =
+    "rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300";
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
-      {chips.map((c) => (
-        <span
-          key={c.key}
-          title={c.detail}
-          className="rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300"
-        >
-          {c.label}
-        </span>
-      ))}
+      {chips.map((c, i) =>
+        onApply ? (
+          <button
+            key={c.key}
+            type="button"
+            title={c.detail ? `${c.detail} Click to apply — re-plans immediately.` : undefined}
+            onClick={() => onApply(i)}
+            className={`${chipClass} cursor-pointer transition-colors hover:bg-amber-500/25`}
+          >
+            {c.label}
+          </button>
+        ) : (
+          <span key={c.key} title={c.detail} className={chipClass}>
+            {c.label}
+          </span>
+        ),
+      )}
     </span>
   );
 }

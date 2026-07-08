@@ -43,6 +43,7 @@ import {
 import type { PackRisk } from "@/app/(admin)/insights/edge-calc/risk";
 import type {
   PackTuneVerdict,
+  PinRemedy,
   TagGuidance,
 } from "@/app/(admin)/insights/edge-calc/tag-guidance";
 
@@ -229,11 +230,18 @@ function VerdictLead({
   limit,
   price,
   tag,
+  onApplyPinRemedy,
 }: {
   verdict: PackTuneVerdict;
   limit: PackTunePlan["limit"];
   price: number;
   tag: number | null;
+  /**
+   * Wave 5 one-click: apply a solver-verified pin remedy (adjust/remove the
+   * staged pin by `cardId`, or stage the verified pinned price) + re-plan.
+   * Omitted ⇒ the chips render display-only (legacy behavior).
+   */
+  onApplyPinRemedy?: (remedy: PinRemedy) => void;
 }) {
   const headline =
     verdict.kind === "refused" && limit !== null
@@ -260,6 +268,14 @@ function VerdictLead({
             label: pinRemedyKindLabel(r.kind),
             detail: r.humanCopy,
           }))}
+          {...(onApplyPinRemedy
+            ? {
+                onApply: (i: number) => {
+                  const r = verdict.pinRemedies![i];
+                  if (r) onApplyPinRemedy(r);
+                },
+              }
+            : {})}
         />
       )}
     </>
@@ -715,6 +731,7 @@ export function PlanPanel({
   onAddCardRange,
   onStagePoolEdit,
   onApplyPrice,
+  onApplyPinRemedy,
   onClearEdgeOverride,
   onKeepRehydrated,
   onDiscardRehydrated,
@@ -777,6 +794,13 @@ export function PlanPanel({
    * (+ the edge-target override for `price-edge-exact`) and re-plan.
    */
   onApplyPrice: (args: { price: number; edgeTarget?: number }) => void;
+  /**
+   * Wave 5 one-click pin remedies (pins-infeasible chips): adjust/remove the
+   * staged pin by the remedy's `cardId` — or stage its verified pinned price
+   * (`price-move`) — then re-plan. Solver-verified server-side; the landed
+   * plan re-verifies through the real engine either way.
+   */
+  onApplyPinRemedy: (remedy: PinRemedy) => void;
   /** Drop the staged edge-target override (header chip ×) and re-plan. */
   onClearEdgeOverride: () => void;
   onKeepRehydrated: () => void;
@@ -899,6 +923,7 @@ export function PlanPanel({
               limit={plan.limit}
               price={verdictPrice}
               tag={tag}
+              onApplyPinRemedy={onApplyPinRemedy}
             />
           )}
           {showTriage && (
@@ -940,6 +965,7 @@ export function PlanPanel({
             limit={plan.limit}
             price={verdictPrice}
             tag={tag}
+            onApplyPinRemedy={onApplyPinRemedy}
           />
           {/* off-tag ships no server detail — the quantified saturation copy
               (closest-achievable framing) stays as the second line. */}
@@ -1028,6 +1054,7 @@ export function PlanPanel({
             limit={plan.limit}
             price={verdictPrice}
             tag={tag}
+            onApplyPinRemedy={onApplyPinRemedy}
           />
           <p>{qualityLine}</p>
           {hasGuidance && (

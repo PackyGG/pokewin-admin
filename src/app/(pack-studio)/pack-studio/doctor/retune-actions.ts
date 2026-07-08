@@ -3100,6 +3100,10 @@ async function planPackTuneStagedUncached(
       cards: input.cards.map((c) => ({
         value: r.cardMetaById.get(c.cardId)?.value ?? 0,
       })),
+      // Stable identity per remedy (wave 5 one-click apply): the client
+      // applies a pin fix by cardId, never by index — row reorders are not
+      // solve-relevant, so indices can outlive the order they were minted in.
+      cardIds: input.cards.map((c) => c.cardId),
       currentWeights: input.cards.map(
         (c) => liveWeightByCardId.get(c.cardId) ?? 0,
       ),
