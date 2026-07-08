@@ -31,6 +31,9 @@ import {
   shapeWeights,
   snapWeightsToCleanLadder,
   searchBestPriceForCleanSnap,
+  monotoneEvWindow,
+  monotoneLayoutForEv,
+  findMonotoneViolations,
   TAGGED_WINRATE_TOLERANCE,
   CV_TIER_BOUNDS,
   type CardLite,
@@ -2713,6 +2716,312 @@ check("RC5c: a snapped tagged result is clean on ITS ladder (per-100k grid, tag-
       `off-ladder card must be DUST (value $${cards[i]!.value})`,
     );
   }
+});
+
+// ── LAW M — monotoneEvWindow / findMonotoneViolations (Retune V3, 1/3) ──────
+//
+// The owner's hard ladder law: value-DESC, share non-decreasing, across band
+// boundaries, pins + zero rows + equal values exempt. These checks pin the
+// exact EV window primitive the engine's enforcement (stage 2) builds on.
+
+/** Assert a witness vector is LAWFUL for the window's constraint set. */
+function assertLawfulWitness(
+  fx: {
+    values: number[];
+    price: number;
+    winMass: number;
+    nearMissMin: number;
+    winCaps?: (number | null)[];
+    pinned?: { index: number; share: number }[];
+  },
+  shares: number[],
+  expectedEv: number,
+  label: string,
+): void {
+  const n = fx.values.length;
+  assert(shares.length === n, `${label}: witness length`);
+  let total = 0;
+  let winMass = 0;
+  let nmMass = 0;
+  let ev = 0;
+  for (let i = 0; i < n; i++) {
+    const s = shares[i]!;
+    const v = fx.values[i]!;
+    assert(Number.isFinite(s) && s >= -1e-9, `${label}: share[${i}] ≥ 0 (got ${s})`);
+    total += s;
+    ev += s * v;
+    if (v >= fx.price) winMass += s;
+    else if (v >= 0.5 * fx.price) nmMass += s;
+  }
+  assert(Math.abs(total - 1) <= 1e-7, `${label}: total mass 1 (got ${total})`);
+  assert(Math.abs(winMass - fx.winMass) <= 1e-7, `${label}: win mass (got ${winMass})`);
+  assert(nmMass >= fx.nearMissMin - 1e-7, `${label}: NM floor (got ${nmMass})`);
+  const pinnedIdx = new Set<number>((fx.pinned ?? []).map((p) => p.index));
+  for (const p of fx.pinned ?? []) {
+    assert(Math.abs(shares[p.index]! - p.share) <= 1e-12, `${label}: pin[${p.index}] exact`);
+  }
+  if (fx.winCaps) {
+    for (let i = 0; i < n; i++) {
+      const cap = fx.winCaps[i];
+      if (cap === null || cap === undefined || pinnedIdx.has(i)) continue;
+      if (fx.values[i]! >= fx.price) {
+        assert(shares[i]! <= cap + 1e-9, `${label}: cap[${i}] respected (${shares[i]} > ${cap})`);
+      }
+    }
+  }
+  const viols = findMonotoneViolations({
+    values: fx.values,
+    shares,
+    pinnedIdx,
+    tol: 1e-7,
+  });
+  assert(viols.length === 0, `${label}: LAW M chain (${JSON.stringify(viols[0] ?? null)})`);
+  assert(Math.abs(ev - expectedEv) <= 1e-6, `${label}: EV achieves bound (${ev} vs ${expectedEv})`);
+}
+
+/**
+ * Brute-force window over an integer grid (units of 1/20) — the chain is
+ * enforced INCLUDING ties (strictly tighter than the law, so the brute
+ * feasible set is a subset: containment must hold regardless).
+ */
+function bruteWindow(fx: {
+  values: number[];
+  price: number;
+  winUnits: number;
+  nmMinUnits: number;
+  capUnits?: (number | null)[];
+}): { min: number; max: number } | null {
+  const UNITS = 20;
+  const order = fx.values
+    .map((v, idx) => ({ v, idx }))
+    .sort((a, b) => a.v - b.v); // cheap → pricey; shares non-increasing along this walk
+  let best: { min: number; max: number } | null = null;
+  const walk = (pos: number, prev: number, left: number, winLeft: number, nm: number, ev: number): void => {
+    if (pos === order.length) {
+      if (left === 0 && winLeft === 0 && nm >= fx.nmMinUnits) {
+        const e = ev / UNITS;
+        if (best === null) best = { min: e, max: e };
+        else {
+          best.min = Math.min(best.min, e);
+          best.max = Math.max(best.max, e);
+        }
+      }
+      return;
+    }
+    const { v, idx } = order[pos]!;
+    const isWin = v >= fx.price;
+    const capRaw = fx.capUnits?.[idx];
+    const cap = isWin && capRaw !== null && capRaw !== undefined ? capRaw : UNITS;
+    const hi = Math.min(prev, left, cap, isWin ? winLeft : left - winLeft);
+    for (let u = hi; u >= 0; u--) {
+      walk(
+        pos + 1,
+        u,
+        left - u,
+        isWin ? winLeft - u : winLeft,
+        !isWin && v >= 0.5 * fx.price ? nm + u : nm,
+        ev + u * v,
+      );
+    }
+  };
+  walk(0, UNITS, UNITS, fx.winUnits, 0, 0);
+  return best;
+}
+
+check("MW1 — hand fixture: exact window [40, 44] + lawful witnesses", () => {
+  const fx = {
+    values: [100, 50, 10],
+    price: 60,
+    winMass: 0.2,
+    nearMissMin: 0.3,
+    winCaps: [0.25, null, null] as (number | null)[],
+  };
+  const w = monotoneEvWindow(fx);
+  assert(w !== null, "window exists");
+  assert(Math.abs(w.evMin - 40) <= 1e-9, `evMin 40 (got ${w.evMin})`);
+  assert(Math.abs(w.evMax - 44) <= 1e-9, `evMax 44 (got ${w.evMax})`);
+  assertLawfulWitness(fx, w.minVector, w.evMin, "MW1 min");
+  assertLawfulWitness(fx, w.maxVector, w.evMax, "MW1 max");
+  // The 1/20 grid expresses both extremes exactly here — brute force agrees.
+  const bf = bruteWindow({ values: fx.values, price: fx.price, winUnits: 4, nmMinUnits: 6, capUnits: [5, null, null] });
+  assert(bf !== null, "brute force found feasible vectors");
+  assert(Math.abs(bf.min - w.evMin) <= 1e-9, `brute min = evMin (${bf.min})`);
+  assert(Math.abs(bf.max - w.evMax) <= 1e-9, `brute max = evMax (${bf.max})`);
+});
+
+check("MW2 — never-inflate cap on a CHEAP winner bounds every pricier one", () => {
+  // caps [0.5, 0.1]: the pricier card's own cap is loose, but the chain makes
+  // the cheap card's 0.1 the effective bound for BOTH → win capacity 0.2.
+  const nullW = monotoneEvWindow({
+    values: [100, 80, 10],
+    price: 60,
+    winMass: 0.3,
+    nearMissMin: 0,
+    winCaps: [0.5, 0.1, null],
+  });
+  assert(nullW === null, "winMass 0.3 > chain capacity 0.2 → null");
+  const fx = {
+    values: [100, 80, 10],
+    price: 60,
+    winMass: 0.15,
+    nearMissMin: 0,
+    winCaps: [0.5, 0.1, null] as (number | null)[],
+  };
+  const w = monotoneEvWindow(fx);
+  assert(w !== null, "winMass 0.15 fits");
+  assert(w.maxVector[0]! <= 0.1 + 1e-9, `pricier winner ≤ running-min cap (got ${w.maxVector[0]})`);
+  assert(Math.abs(w.evMin - 21.5) <= 1e-9, `evMin 21.5 (got ${w.evMin})`);
+  assert(Math.abs(w.evMax - 22.0) <= 1e-9, `evMax 22.0 (got ${w.evMax})`);
+  assertLawfulWitness(fx, w.minVector, w.evMin, "MW2 min");
+  assertLawfulWitness(fx, w.maxVector, w.evMax, "MW2 max");
+});
+
+check("MW3 — pins carve out exactly and are LAW-M-exempt (point window)", () => {
+  const fx = {
+    values: [100, 50, 10],
+    price: 60,
+    winMass: 0.2,
+    nearMissMin: 0.3, // pinned NM 0.5 already covers it
+    pinned: [{ index: 1, share: 0.5 }],
+  };
+  const w = monotoneEvWindow({ ...fx, pinnedShares: fx.pinned });
+  assert(w !== null, "window exists");
+  assert(Math.abs(w.evMin - 48) <= 1e-9, `evMin 48 (got ${w.evMin})`);
+  assert(Math.abs(w.evMax - 48) <= 1e-9, `evMax 48 (got ${w.evMax})`);
+  assertLawfulWitness(fx, w.minVector, 48, "MW3 min");
+  assertLawfulWitness(fx, w.maxVector, 48, "MW3 max");
+  assert(Math.abs(w.minVector[1]! - 0.5) <= 1e-12, "pin exact in witness");
+});
+
+check("MW4 — structural nulls: cap capacity, NM floor, missing loss band", () => {
+  assert(
+    monotoneEvWindow({ values: [100, 50, 10], price: 60, winMass: 0.4, nearMissMin: 0, winCaps: [0.25, null, null] }) === null,
+    "winMass above cap capacity → null",
+  );
+  assert(
+    monotoneEvWindow({ values: [100, 10], price: 60, winMass: 0.2, nearMissMin: 0.1 }) === null,
+    "NM floor with no NM rows → null",
+  );
+  assert(
+    monotoneEvWindow({ values: [100], price: 60, winMass: 0.5, nearMissMin: 0 }) === null,
+    "loss mass with no loss rows → null",
+  );
+});
+
+check("MW5 — Love Cycle: the 50% tag has NO lawful ladder under live caps", () => {
+  const values = [834.0, 810.07, 719.99, 650.6, 600.0, 540.0, 453.0, 376.79, 208.09, 205.37, 152.9, 0.29];
+  const winCaps: (number | null)[] = [0.0125, 0.0125, 0.015, 0.019, 0.025, 0.034, 0.045, 0.047, 0.083, 0.092, null, null];
+  const price = 189.93;
+  // Tagged 0.5: the never-inflate caps carry Σ 38.5% — 50% win mass is
+  // structurally impossible on a lawful ladder. This is the engine-side proof
+  // behind the "tag doesn't fit this pool" verdict (recon 2026-07-08).
+  assert(
+    monotoneEvWindow({ values, price, winMass: 0.5, nearMissMin: 0.115, winCaps }) === null,
+    "tagged 0.5 under live caps → null",
+  );
+  // At the live-achievable 38.5% the window exists — but its EV floor sits
+  // ABOVE the ~11% design target EV (~$168.9), which is why the honest plan
+  // must move price / float win-rate instead of shipping a zigzag.
+  const fx = { values, price, winMass: 0.385, nearMissMin: 0.115, winCaps };
+  const w = monotoneEvWindow(fx);
+  assert(w !== null, "winMass 0.385 window exists");
+  assert(Math.abs(w.evMin - 169.0598) <= 0.01, `evMin ≈ 169.06 (got ${w.evMin.toFixed(4)})`);
+  assert(Math.abs(w.evMax - 198.4372) <= 0.01, `evMax ≈ 198.44 (got ${w.evMax.toFixed(4)})`);
+  assert(w.evMin > 168.9, "design-target EV sits below the lawful window");
+  assertLawfulWitness(fx, w.minVector, w.evMin, "MW5 min");
+  assertLawfulWitness(fx, w.maxVector, w.evMax, "MW5 max");
+});
+
+check("MW6 — min-EV loss layout j-scan lands on the true structure", () => {
+  // Concentrating the NM floor on the cheapest NM row wins when dust is cheap…
+  const a = monotoneEvWindow({ values: [100, 59, 31, 1], price: 60, winMass: 0, nearMissMin: 0.4 });
+  assert(a !== null, "A window exists");
+  assert(Math.abs(a.evMin - 13.0) <= 1e-9, `A: evMin 13.0 (got ${a.evMin})`);
+  assert(a.minVector[0]! === 0, "A: zero-mass win row stays 0 (LAW-M-exempt)");
+  // …but spreading it wins when the raised dust floor would be expensive.
+  const b = monotoneEvWindow({ values: [100, 59, 31, 29, 29, 29, 1], price: 60, winMass: 0, nearMissMin: 0.2 });
+  assert(b !== null, "B window exists");
+  assert(Math.abs(b.evMin - 18.2) <= 1e-9, `B: evMin 18.2 (got ${b.evMin})`);
+});
+
+check("MW7 — brute-force containment on an ungainly 5-card pool", () => {
+  const fx = {
+    values: [120, 100, 55, 40, 8],
+    price: 60,
+    winMass: 0.25,
+    nearMissMin: 0.2,
+    winCaps: [0.15, 0.2, null, null, null] as (number | null)[],
+  };
+  const w = monotoneEvWindow(fx);
+  assert(w !== null, "window exists");
+  assertLawfulWitness(fx, w.minVector, w.evMin, "MW7 min");
+  assertLawfulWitness(fx, w.maxVector, w.evMax, "MW7 max");
+  const bf = bruteWindow({
+    values: fx.values,
+    price: fx.price,
+    winUnits: 5,
+    nmMinUnits: 4,
+    capUnits: [3, 4, null, null, null],
+  });
+  assert(bf !== null, "brute force found feasible vectors");
+  // Containment: no lawful grid vector may escape the window…
+  assert(bf.min >= w.evMin - 1e-9, `brute min ${bf.min} ≥ evMin ${w.evMin}`);
+  assert(bf.max <= w.evMax + 1e-9, `brute max ${bf.max} ≤ evMax ${w.evMax}`);
+  // …and the coarse grid must land reasonably close to the true extremes.
+  assert(bf.min - w.evMin <= 1.5, `grid min within step slack (${bf.min} vs ${w.evMin})`);
+  assert(w.evMax - bf.max <= 1.5, `grid max within step slack (${bf.max} vs ${w.evMax})`);
+});
+
+check("MV1 — findMonotoneViolations: the Love Cycle zigzag, exemptions, ties", () => {
+  const values = [834.0, 810.07, 719.99, 650.6, 600.0, 540.0, 453.0, 376.79, 208.09, 205.37, 152.9, 0.29];
+  // The shipped sink plan: 30% on the cheapest WIN over 10% near-miss.
+  const sink = [0.0125, 0.0125, 0.015, 0.019, 0.025, 0.034, 0.045, 0.047, 0.05, 0.3, 0.1, 0.395];
+  const viols = findMonotoneViolations({ values, shares: sink });
+  assert(viols.length >= 1, "sink plan violates LAW M");
+  assert(
+    viols.some((v) => v.richIdx === 9 && v.poorIdx === 10),
+    `the 30%→10% boundary drop is flagged (got ${JSON.stringify(viols)})`,
+  );
+  // The live ladder is lawful.
+  const live = [0.0125, 0.0125, 0.015, 0.019, 0.025, 0.034, 0.045, 0.047, 0.083, 0.092, 0.115, 0.5];
+  assert(findMonotoneViolations({ values, shares: live }).length === 0, "live ladder lawful");
+  // Zero rows are not rungs; pins are sovereign; equal values are unordered.
+  assert(
+    findMonotoneViolations({ values: [100, 50, 10], shares: [0.3, 0, 0.7] }).length === 0,
+    "zero row exempt",
+  );
+  assert(
+    findMonotoneViolations({
+      values: [100, 50, 10],
+      shares: [0.2, 0.7, 0.1],
+      pinnedIdx: new Set([1]),
+    }).length === 1,
+    "pin exempt but the free chain still catches 0.2 > 0.1",
+  );
+  assert(
+    findMonotoneViolations({ values: [29, 29, 29], shares: [0.5, 0.2, 0.3] }).length === 0,
+    "equal-value rows carry no order constraint",
+  );
+});
+
+check("ML1 — monotoneLayoutForEv: lawful + EV-exact anywhere in the window", () => {
+  const fx = {
+    values: [100, 50, 10],
+    price: 60,
+    winMass: 0.2,
+    nearMissMin: 0.3,
+    winCaps: [0.25, null, null] as (number | null)[],
+  };
+  const w = monotoneEvWindow(fx);
+  assert(w !== null, "window exists");
+  const target = 42; // mid-window
+  const shares = monotoneLayoutForEv(w, target);
+  assertLawfulWitness(fx, shares, target, "ML1 lerp");
+  // Clamps outside the window.
+  const lo = monotoneLayoutForEv(w, 0);
+  assertLawfulWitness(fx, lo, w.evMin, "ML1 clamp-lo");
+  const hi = monotoneLayoutForEv(w, 999);
+  assertLawfulWitness(fx, hi, w.evMax, "ML1 clamp-hi");
 });
 
 // ── Summary ─────────────────────────────────────────────────────────

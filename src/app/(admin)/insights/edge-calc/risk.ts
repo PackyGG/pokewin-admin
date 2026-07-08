@@ -1378,6 +1378,410 @@ export function enforceLossMonotone(input: {
   return { ok: true, weights: out, changed: true };
 }
 
+// ─── LAW M — the owner's monotone odds ladder (Retune V3) ───────────────────
+//
+// The owner's hard product law for every planned ladder the retune ships:
+// reading the pool by card value DESCENDING, planned share may only RISE or
+// stay level as value drops — win → near-miss → dust, ACROSS band boundaries
+// included. A pricier card being likelier than a cheaper one (a zigzag) is
+// forbidden no matter which band it sits in. Exemptions, and only these:
+//   • owner-pinned cards (pins are sovereign numbers, carved out exactly);
+//   • zero-share cards (cap-dropped / zero-cap rows are not rungs at all);
+//   • equal-value cards (the same prize twice carries no order constraint).
+// The FREE rows form ONE chain in value order (pins/zeros are skipped, not
+// segment-splitters): a free row must respect every free row above it even
+// when a pin sits between them.
+//
+// `monotoneEvWindow` answers the solver's two questions exactly:
+//   1. does ANY law-abiding ladder satisfy the mass constraints (win mass,
+//      near-miss floor, never-inflate caps)? — `null` when none does;
+//   2. which EVs can law-abiding ladders reach? — [evMin, evMax] with witness
+//      vectors realizing both extremes. The constraint set is CONVEX (chain
+//      inequalities + caps + affine band masses), so the straight line between
+//      the witnesses stays feasible and every EV in between is reachable —
+//      `monotoneLayoutForEv` is exactly that interpolation.
+//
+// The window is REAL-valued: quantization to the engine's integer weight grid
+// happens downstream (callers compare with tolerances ~1e-7, not exactly).
+
+export type MonotoneEvWindow = {
+  evMin: number;
+  evMax: number;
+  /**
+   * Witness shares aligned to the CALLER's `values` order: pinned cards at
+   * their pinned share, zero-cap / non-positive-value rows at 0. `minVector`
+   * realizes `evMin`, `maxVector` realizes `evMax`; both satisfy every
+   * constraint the window was asked for (LAW M chain, caps, win mass,
+   * near-miss floor, total mass 1).
+   */
+  minVector: number[];
+  maxVector: number[];
+};
+
+/** One forbidden zigzag: a pricier FREE card likelier than a cheaper one. */
+export type MonotoneViolation = {
+  /** Index (caller order) of the pricier card carrying the higher share. */
+  richIdx: number;
+  /** Index of the cheaper card it out-weighs (the tightest witness below). */
+  poorIdx: number;
+  richShare: number;
+  poorShare: number;
+};
+
+/**
+ * LAW M verifier: every zigzag among FREE rows (pins exempt, zero-share rows
+ * exempt, equal-value rows unordered). Empty result = the ladder is lawful.
+ */
+export function findMonotoneViolations(args: {
+  values: readonly number[];
+  shares: readonly number[];
+  pinnedIdx?: ReadonlySet<number>;
+  /** Share tolerance below which a zigzag counts as equality. Default 1e-9. */
+  tol?: number;
+  /** Shares at/below this are "zero" (not a rung). Default 0. */
+  zeroTol?: number;
+}): MonotoneViolation[] {
+  const tol = args.tol ?? 1e-9;
+  const zeroTol = args.zeroTol ?? 0;
+  const rows: { idx: number; v: number; s: number }[] = [];
+  const n = Math.min(args.values.length, args.shares.length);
+  for (let i = 0; i < n; i++) {
+    if (args.pinnedIdx?.has(i)) continue;
+    const v = args.values[i]!;
+    const s = args.shares[i]!;
+    if (!Number.isFinite(v) || !(v > 0)) continue;
+    if (!Number.isFinite(s) || s <= zeroTol) continue;
+    rows.push({ idx: i, v, s });
+  }
+  // Cheap → pricey; a pricier row may never exceed the min share of any
+  // STRICTLY cheaper row. Equal values group together (no constraint inside).
+  rows.sort((a, b) => a.v - b.v);
+  const out: MonotoneViolation[] = [];
+  let minCheaper = Infinity;
+  let minCheaperIdx = -1;
+  let g = 0;
+  while (g < rows.length) {
+    let h = g;
+    while (h < rows.length && rows[h]!.v - rows[g]!.v <= 1e-9) h += 1;
+    for (let i = g; i < h; i++) {
+      const r = rows[i]!;
+      if (r.s > minCheaper + tol) {
+        out.push({
+          richIdx: r.idx,
+          poorIdx: minCheaperIdx,
+          richShare: r.s,
+          poorShare: minCheaper,
+        });
+      }
+    }
+    for (let i = g; i < h; i++) {
+      if (rows[i]!.s < minCheaper) {
+        minCheaper = rows[i]!.s;
+        minCheaperIdx = rows[i]!.idx;
+      }
+    }
+    g = h;
+  }
+  return out;
+}
+
+/**
+ * The exact EV window reachable by LAW-M-monotone ladders under the retune's
+ * mass constraints, with witness vectors. `null` = NO lawful ladder satisfies
+ * the masses at all (e.g. the tag's win mass exceeds what the never-inflate
+ * caps can carry under the chain — the "tag doesn't fit this pool" proof).
+ *
+ * Constraint set (over shares s aligned to `values`):
+ *   • LAW M chain over free rows (see {@link findMonotoneViolations});
+ *   • Σ s = 1 (pins included at their exact share);
+ *   • Σ_{value ≥ price} s = `winMass` (pinned win shares count toward it);
+ *   • Σ_{0.5·price ≤ value < price} s ≥ `nearMissMin` (pinned NM counts);
+ *   • s_i ≤ winCaps[i] for free WIN rows (never-inflate; loss rows uncapped —
+ *     caps passed for loss rows are ignored); a win row capped at ≤ 0 is
+ *     excluded from the ladder entirely (share 0, LAW-M-exempt);
+ *   • s_i = pinned share for pinned rows (LAW-M-exempt, sovereign).
+ *
+ * Mechanics (each extreme is a closed-form greedy, O(n log n) total):
+ *   • effective caps = running min of `winCaps` from the CHEAP end of the win
+ *     band upward — under the chain, a cap on a cheap winner bounds every
+ *     pricier winner too;
+ *   • max EV = the "level" water-fill of the win band (as even as the caps
+ *     allow — this simultaneously has the LOOSEST cross-band boundary) + the
+ *     uniform loss spread (loss mass as high up the loss ladder as the chain
+ *     permits);
+ *   • min EV = cheap-first win fill bounded by a boundary level β + the
+ *     floor-and-dump loss layout (everything at the boundary floor, the
+ *     near-miss floor topped up on the cheapest NM rows, the excess dumped on
+ *     the very cheapest loss card). Both pieces are piecewise-linear in β, so
+ *     the joint minimum sits on a breakpoint — evaluated over the full
+ *     breakpoint set (caps, W/j concentration points, the NM-floor kink and
+ *     per-j feasibility edges).
+ */
+export function monotoneEvWindow(args: {
+  values: readonly number[];
+  price: number;
+  winMass: number;
+  nearMissMin: number;
+  winCaps?: readonly (number | null | undefined)[];
+  pinnedShares?: readonly ShapeWeightsPinnedShare[] | null;
+}): MonotoneEvWindow | null {
+  const EPS = 1e-9;
+  const { values, price } = args;
+  const n = values.length;
+  if (!(price > 0) || n === 0) return null;
+  if (!Number.isFinite(args.winMass) || args.winMass < -EPS || args.winMass > 1 + EPS) {
+    return null;
+  }
+  const nearMissMin = Number.isFinite(args.nearMissMin) ? Math.max(0, args.nearMissMin) : 0;
+
+  // Pins: exact carve-outs (mass + EV), LAW-M-exempt.
+  const pinShare = new Map<number, number>();
+  if (args.pinnedShares) {
+    for (const p of args.pinnedShares) {
+      if (!Number.isInteger(p.index) || p.index < 0 || p.index >= n) return null;
+      if (!Number.isFinite(p.share) || p.share <= 0) continue;
+      pinShare.set(p.index, (pinShare.get(p.index) ?? 0) + p.share);
+    }
+  }
+  let pinMass = 0;
+  let pinEv = 0;
+  let pinWinMass = 0;
+  let pinNmMass = 0;
+  for (const [idx, s] of pinShare) {
+    const v = values[idx]!;
+    pinMass += s;
+    if (Number.isFinite(v) && v > 0) {
+      pinEv += s * v;
+      if (v >= price) pinWinMass += s;
+      else if (v >= 0.5 * price) pinNmMass += s;
+    }
+  }
+  if (pinMass > 1 + EPS) return null;
+
+  // Free rows, value-DESC (stable sort keeps caller order among ties).
+  type Row = { idx: number; v: number; cap: number; nm: boolean };
+  const win: Row[] = [];
+  const loss: Row[] = [];
+  for (let i = 0; i < n; i++) {
+    if (pinShare.has(i)) continue;
+    const v = values[i]!;
+    if (!Number.isFinite(v) || !(v > 0)) continue;
+    if (v >= price) {
+      const raw = args.winCaps?.[i];
+      let cap = Infinity;
+      if (raw !== null && raw !== undefined && Number.isFinite(raw)) cap = Math.max(0, raw);
+      if (cap <= EPS) continue; // zero-cap: forced 0, not a rung
+      win.push({ idx: i, v, cap, nm: false });
+    } else {
+      loss.push({ idx: i, v, cap: Infinity, nm: v >= 0.5 * price });
+    }
+  }
+  win.sort((a, b) => b.v - a.v);
+  loss.sort((a, b) => b.v - a.v);
+
+  const W = args.winMass - pinWinMass; // free win mass
+  const freeMass = 1 - pinMass;
+  const L = freeMass - W; // free loss mass
+  if (W < -EPS || L < -EPS) return null;
+  if (W > EPS && win.length === 0) return null;
+  if (L > EPS && loss.length === 0) return null;
+  const nmNeed = Math.max(0, nearMissMin - pinNmMass);
+  const nmCount = loss.reduce((a, r) => a + (r.nm ? 1 : 0), 0);
+  if (nmNeed > EPS && nmCount === 0) return null;
+
+  const m = win.length;
+  const k = loss.length;
+  const d = k - nmCount;
+
+  // Effective never-inflate caps under the chain: running min from the cheap
+  // end of the win band upward (non-decreasing down-ladder by construction).
+  const eff = new Array<number>(m).fill(Infinity);
+  {
+    let run = Infinity;
+    for (let j = m - 1; j >= 0; j--) {
+      run = Math.min(run, win[j]!.cap);
+      eff[j] = run;
+    }
+  }
+  const capSum = eff.reduce((a, c) => a + Math.min(c, 1), 0);
+  if (m > 0 && W > capSum + 1e-7) return null;
+
+  // λ water-fill level: Σ min(eff_j, λ) = mass (the "as even as the caps
+  // allow" fill — max win EV AND the loosest cross-band boundary).
+  const levelFor = (mass: number): number => {
+    if (m === 0 || mass <= EPS) return 0;
+    const capsAsc = eff.map((c) => Math.min(c, 1)).sort((a, b) => a - b);
+    let sumBelow = 0;
+    for (let t = 0; t < capsAsc.length; t++) {
+      const cand = (mass - sumBelow) / (capsAsc.length - t);
+      if (cand <= capsAsc[t]! + 1e-15) return cand;
+      sumBelow += capsAsc[t]!;
+    }
+    return capsAsc[capsAsc.length - 1]!;
+  };
+  const lambdaMin = levelFor(W);
+  if (k > 0 && lambdaMin > L / k + 1e-9) return null;
+  if (k === 0 && L > EPS) return null;
+  if (nmNeed > EPS && k > 0 && nmNeed > nmCount * (L / k) + 1e-9) return null;
+
+  // Win fill at level λ (max-EV extreme): s_j = min(eff_j, λ).
+  const levelFill = (lambda: number): number[] => {
+    const out = new Array<number>(m).fill(0);
+    for (let j = 0; j < m; j++) out[j] = Math.min(eff[j]!, lambda);
+    return out;
+  };
+  // Cheap-first win fill bounded by β (min-EV extreme for a given boundary).
+  const cheapFirstFill = (mass: number, bound: number): number[] | null => {
+    const out = new Array<number>(m).fill(0);
+    let rem = mass;
+    for (let j = m - 1; j >= 0; j--) {
+      const room = Math.min(eff[j]!, bound);
+      const take = Math.min(Math.max(0, room), rem);
+      out[j] = take;
+      rem -= take;
+      if (rem <= 1e-12) {
+        rem = 0;
+        break;
+      }
+    }
+    return rem > 1e-7 ? null : out;
+  };
+  const evOf = (rows: readonly Row[], shares: readonly number[]): number => {
+    let ev = 0;
+    for (let j = 0; j < rows.length; j++) ev += rows[j]!.v * shares[j]!;
+    return ev;
+  };
+
+  // Min-EV loss layout for boundary floor b: everything at b, the NM floor
+  // topped up on the j cheapest NM rows (dust floor rises to the NM top
+  // level), excess dumped on the cheapest loss card. Exact j-scan: EV is
+  // linear between structure breakpoints, so the best j wins outright.
+  const lossMinLayout = (b: number): { shares: number[]; ev: number } | null => {
+    if (k === 0) return L > 1e-7 ? null : { shares: [], ev: 0 };
+    const floor = Math.max(0, b);
+    if (k * floor > L + 1e-9) return null;
+    const nmShort = Math.max(0, nmNeed - nmCount * floor);
+    const build = (levels: number[]): { shares: number[]; ev: number } => {
+      const shares = levels.slice();
+      let used = 0;
+      for (const s of shares) used += s;
+      const excess = L - used;
+      shares[k - 1] = shares[k - 1]! + excess;
+      return { shares, ev: evOf(loss, shares) };
+    };
+    if (nmShort <= EPS) {
+      return build(new Array<number>(k).fill(floor));
+    }
+    let best: { shares: number[]; ev: number } | null = null;
+    for (let j = 1; j <= nmCount; j++) {
+      const x = floor + nmShort / j;
+      const floorsMass = k * floor + nmShort + d * (x - floor);
+      if (floorsMass > L + 1e-9) continue;
+      const levels = new Array<number>(k).fill(floor);
+      for (let t = nmCount - j; t < nmCount; t++) levels[t] = x; // j cheapest NM rows
+      for (let t = nmCount; t < k; t++) levels[t] = x; // dust floor = NM top
+      const cand = build(levels);
+      if (best === null || cand.ev < best.ev - 1e-12) best = cand;
+    }
+    return best;
+  };
+
+  // ── MAX extreme: level win fill + uniform loss ─────────────────────────
+  const maxWin = levelFill(lambdaMin);
+  {
+    // absorb fp drift so the win mass is exact
+    let sum = maxWin.reduce((a, b) => a + b, 0);
+    let drift = W - sum;
+    for (let j = m - 1; j >= 0 && Math.abs(drift) > 1e-15; j--) {
+      const room = drift > 0 ? eff[j]! - maxWin[j]! : maxWin[j]!;
+      const take = Math.sign(drift) * Math.min(Math.abs(drift), Math.max(0, room));
+      maxWin[j] = maxWin[j]! + take;
+      drift -= take;
+    }
+  }
+  const maxLoss = new Array<number>(k).fill(k > 0 ? L / k : 0);
+
+  // ── MIN extreme: joint boundary scan over the breakpoint set ──────────
+  const betaHi = Math.min(m > 0 ? eff[m - 1]! : Infinity, k > 0 ? L / k : Infinity, 1);
+  const betaLo = Math.min(lambdaMin, betaHi);
+  const candidates = new Set<number>([betaLo, betaHi]);
+  if (nmCount > 0 && nmNeed > EPS) {
+    const kink = nmNeed / nmCount;
+    if (kink > betaLo && kink < betaHi) candidates.add(kink);
+  }
+  for (const c of eff) {
+    if (Number.isFinite(c) && c > betaLo && c < betaHi) candidates.add(c);
+  }
+  for (let j = 1; j <= m; j++) {
+    const conc = W / j;
+    if (conc > betaLo && conc < betaHi) candidates.add(conc);
+  }
+  // per-j feasibility edges of the loss layout: k·b + nmShort(b) + d·(x_j(b) − b) = L
+  for (let j = 1; j <= nmCount; j++) {
+    const denom = k - nmCount - (d * nmCount) / j;
+    if (Math.abs(denom) > 1e-12) {
+      const bj = (L - nmNeed * (1 + d / j)) / denom;
+      if (bj > betaLo && bj < betaHi) candidates.add(bj);
+    }
+  }
+  let minWin: number[] | null = null;
+  let minLoss: number[] | null = null;
+  let evMin = Infinity;
+  for (const beta of candidates) {
+    const w = m > 0 ? cheapFirstFill(W, beta) : W > EPS ? null : new Array<number>(0);
+    if (w === null) continue;
+    const bUsed = m > 0 && W > EPS ? w[m - 1]! : 0;
+    const l = lossMinLayout(bUsed);
+    if (l === null) continue;
+    const ev = evOf(win, w) + l.ev;
+    if (ev < evMin - 1e-12) {
+      evMin = ev;
+      minWin = w;
+      minLoss = l.shares;
+    }
+  }
+  if (minWin === null || minLoss === null) return null;
+
+  // ── Assemble in caller order ───────────────────────────────────────────
+  const minVector = new Array<number>(n).fill(0);
+  const maxVector = new Array<number>(n).fill(0);
+  for (const [idx, s] of pinShare) {
+    minVector[idx] = s;
+    maxVector[idx] = s;
+  }
+  for (let j = 0; j < m; j++) {
+    minVector[win[j]!.idx] = minWin[j]!;
+    maxVector[win[j]!.idx] = maxWin[j]!;
+  }
+  for (let j = 0; j < k; j++) {
+    minVector[loss[j]!.idx] = minLoss[j]!;
+    maxVector[loss[j]!.idx] = maxLoss[j]!;
+  }
+  const evMinTotal = evMin + pinEv;
+  const evMaxTotal = evOf(win, maxWin) + evOf(loss, maxLoss) + pinEv;
+  if (evMinTotal > evMaxTotal + 1e-6) return null; // defensive: never emit an inverted window
+  return {
+    evMin: evMinTotal,
+    evMax: Math.max(evMinTotal, evMaxTotal),
+    minVector,
+    maxVector,
+  };
+}
+
+/**
+ * A lawful ladder hitting `evTarget` (clamped into the window): the straight
+ * interpolation between the window's witnesses — feasible by convexity of the
+ * constraint set, EV-exact by linearity.
+ */
+export function monotoneLayoutForEv(
+  window: MonotoneEvWindow,
+  evTarget: number,
+): number[] {
+  const span = window.evMax - window.evMin;
+  const t = span > 1e-12 ? Math.min(1, Math.max(0, (evTarget - window.evMin) / span)) : 0;
+  return window.minVector.map((lo, i) => lo + t * (window.maxVector[i]! - lo));
+}
+
 // ─── Lottery skew (steep grail-band redistribution for tagged 1%/5% packs) ──
 //
 // Even after the inverse solver picks a shared beta that hits the target edge,
