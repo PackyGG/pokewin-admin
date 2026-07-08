@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
@@ -25,6 +26,8 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { ROLES } from "@/lib/constants";
+import { cn } from "@/lib/utils";
+import { transition } from "@/components/ux";
 import { formatCurrency } from "@/lib/utils/format";
 import { parseUsdAmount } from "@/lib/utils/money";
 import {
@@ -1341,23 +1344,42 @@ export function ChangeRoleDialog({
   currentRole: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [newRole, setNewRole] = useState<string>(currentRole);
+  // Multi-select Site Role. The only role we can know up front is the
+  // singular `currentRole` (the additive `roles` array isn't fetched by
+  // this page's query), so the picker starts pre-checked with just that
+  // role — identical starting point to the old single-select.
+  const [roles, setRoles] = useState<Set<string>>(() => new Set([currentRole]));
   const [totpCode, setTotpCode] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+
+  const isUnchanged = roles.size === 1 && roles.has(currentRole);
+
+  function toggle(role: string) {
+    setRoles((prev) => {
+      const next = new Set(prev);
+      if (next.has(role)) next.delete(role);
+      else next.add(role);
+      return next;
+    });
+  }
 
   function handleOpenChange(v: boolean) {
     setOpen(v);
     if (!v) {
       // Reset form on close
-      setNewRole(currentRole);
+      setRoles(new Set([currentRole]));
       setTotpCode("");
     }
   }
 
   function handleSubmit() {
-    if (!newRole || newRole === currentRole) {
-      toast.error("Please pick a different role");
+    if (roles.size === 0) {
+      toast.error("Pick at least one role");
+      return;
+    }
+    if (isUnchanged) {
+      toast.error("Please pick a different set of roles");
       return;
     }
     if (!totpCode.trim()) {
@@ -1366,8 +1388,22 @@ export function ChangeRoleDialog({
     }
     startTransition(async () => {
       try {
-        await changeRole(userId, newRole, totpCode.trim());
-        toast.success("Role updated");
+        const { rolesColumnExists } = await changeRole(
+          userId,
+          [...roles],
+          totpCode.trim(),
+        );
+        if (rolesColumnExists) {
+          toast.success("Role updated");
+        } else {
+          // Honest degrade: the game DB's additive `roles` column hasn't
+          // been applied yet, so only the highest-privilege role of the
+          // picked set was persisted (identical to the legacy single-role
+          // write) — the rest of the selection did not take effect.
+          toast.warning(
+            "Primary role updated, but the multi-role column isn't live on the game DB yet — only one role was saved.",
+          );
+        }
         setOpen(false);
         setTotpCode("");
         router.refresh();
@@ -1398,26 +1434,40 @@ export function ChangeRoleDialog({
             access to this admin panel — admin-panel access is managed
             separately under Admin Users.
           </p>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Site role</Label>
-            <Select
-              value={newRole}
-              onValueChange={(v) => {
-                if (!v) return;
-                setNewRole(v);
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Pick a role..." />
-              </SelectTrigger>
-              <SelectContent>
-                {ROLES.map((r) => (
-                  <SelectItem key={r} value={r}>
-                    {r.charAt(0).toUpperCase() + r.slice(1)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          {/* Honest caveat: this admin panel can persist + display a
+              combined role set, but packy.gg's own codebase must
+              independently support reading multiple roles for the
+              combined access to actually take effect there. */}
+          <p className="rounded-md bg-amber-500/10 px-2.5 py-2 text-xs text-amber-700 dark:text-amber-400">
+            A user can hold several roles at once here, but packy.gg&apos;s
+            own codebase must independently support multiple roles for the
+            combined access to take effect on the game platform — this
+            panel can only persist and display the combined set.
+          </p>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Site roles</Label>
+            <div className="space-y-1.5">
+              {ROLES.map((r) => {
+                const checked = roles.has(r);
+                return (
+                  <label
+                    key={r}
+                    className={cn(
+                      "flex cursor-pointer items-center gap-3 rounded-md border p-2.5",
+                      transition("colors", "fast"),
+                      checked
+                        ? "border-primary/40 bg-primary/5"
+                        : "border-input hover:bg-accent/40",
+                    )}
+                  >
+                    <Checkbox checked={checked} onCheckedChange={() => toggle(r)} />
+                    <span className="text-sm font-medium">
+                      {r.charAt(0).toUpperCase() + r.slice(1)}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
             <p className="text-xs text-muted-foreground">
               Current role:{" "}
               <span className="font-medium text-foreground">{currentRole}</span>
@@ -1449,9 +1499,7 @@ export function ChangeRoleDialog({
           <Button
             size="sm"
             onClick={handleSubmit}
-            disabled={
-              isPending || !totpCode.trim() || newRole === currentRole
-            }
+            disabled={isPending || !totpCode.trim() || roles.size === 0 || isUnchanged}
             className="w-full sm:w-auto"
           >
             {isPending ? "Updating..." : "Change role"}

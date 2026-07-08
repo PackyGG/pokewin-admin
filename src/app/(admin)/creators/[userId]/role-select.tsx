@@ -45,7 +45,12 @@ export function RoleSelect({
     if (!pendingRole || !totpCode.trim()) return;
     startTransition(async () => {
       try {
-        await changeRole(userId, pendingRole, totpCode.trim());
+        // Single-role picker: submits the picked role as the user's whole
+        // role set (matches its pre-multi-role semantics — replace, not
+        // add). `changeRole` now takes an array (multi-select support in
+        // the /users/[id] `ChangeRoleDialog`); this dropdown stays single-
+        // select on purpose, so it just wraps the one value.
+        await changeRole(userId, [pendingRole], totpCode.trim());
         toast.success("Role updated");
         setDialogOpen(false);
       } catch (e) {

@@ -38,6 +38,7 @@ import {
   requireBalanceAdjustmentEditAdmin,
 } from "@/lib/balance-adjustment-edit/motha-gate";
 import { generateRandomAffiliateCode } from "@/lib/affiliate/generate-code";
+import { isSiteRole, pickPrimaryRole, writeUserWithRoles } from "@/lib/user-site-roles";
 
 /**
  * Bust BOTH the route segment AND the per-user `unstable_cache` entries for
@@ -1603,7 +1604,30 @@ export async function recordManualWithdrawal(data: {
   return { success: true };
 }
 
-export async function changeRole(userId: string, newRole: string, totpCode: string) {
+/**
+ * Multi-role Site Role setter (game platform / packy.gg role, NOT the
+ * admin-panel role). Accepts the full desired role set; every entry is
+ * validated via {@link isSiteRole} and an empty set is rejected. The
+ * singular `role` column is kept in sync as the highest-privilege member
+ * ({@link pickPrimaryRole}) so every legacy single-role read path
+ * (dashboards, filters, `ROLE_COLORS` badges, etc.) keeps working
+ * unchanged.
+ *
+ * Resilient to the un-applied MAIN-DB `users.roles` migration: the owner
+ * runs `ALTER TABLE users ADD COLUMN IF NOT EXISTS roles user_role[] ...`
+ * against read-only-to-us prod on their own timeline. Until then,
+ * {@link writeUserWithRoles} catches the missing-column error and retries
+ * the SAME update with only `{ role: primary }`, so the role change still
+ * takes effect (collapsed to the legacy single-role write) instead of
+ * throwing. The returned `rolesColumnExists` flag tells the caller whether
+ * the multi-role part of the write actually persisted, so the UI can show
+ * an honest notice rather than silently pretending it did.
+ */
+export async function changeRole(
+  userId: string,
+  roles: string[],
+  totpCode: string,
+): Promise<{ rolesColumnExists: boolean }> {
   const db = await getDb();
   // Role changes remain admin-only (+ 2FA). The capability check is kept as
   // defence-in-depth so `__can_change_user_roles` is catalogued; admins pass
@@ -1613,9 +1637,14 @@ export async function changeRole(userId: string, newRole: string, totpCode: stri
 
   await require2FA(session.userId, totpCode);
 
-  if (!["user", "support", "admin", "creator"].includes(newRole)) {
+  if (roles.length === 0) {
+    throw new Error("Pick at least one role");
+  }
+  if (!roles.every(isSiteRole)) {
     throw new Error("Invalid role");
   }
+  const dedupedRoles = [...new Set(roles)] as user_role[];
+  const primary = pickPrimaryRole(dedupedRoles) as user_role;
 
   // Read the prior role BEFORE the update so the audit row records the full
   // before→after transition (not just the new role). This is what lets the
@@ -1628,19 +1657,31 @@ export async function changeRole(userId: string, newRole: string, totpCode: stri
   });
   const prevRole = before?.role ?? null;
 
-  await db.user.update({
-    where: { id: userId },
-    data: { role: newRole as user_role },
-  });
+  const { rolesColumnExists } = await writeUserWithRoles(
+    () =>
+      db.user.update({
+        where: { id: userId },
+        data: { role: primary, roles: dedupedRoles },
+        select: { id: true },
+      }),
+    () =>
+      db.user.update({
+        where: { id: userId },
+        data: { role: primary },
+        select: { id: true },
+      }),
+  );
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "role_changed",
     targetUserId: userId,
-    metadata: { prev_role: prevRole, new_role: newRole },
+    metadata: { prev_role: prevRole, new_role: primary, new_roles: dedupedRoles },
   });
 
   invalidateUserCaches(userId);
+
+  return { rolesColumnExists };
 }
 
 /**

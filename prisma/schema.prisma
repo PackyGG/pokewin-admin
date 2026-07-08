@@ -888,6 +888,8 @@ model User {
   display_username                                                      String?
   two_factor_enabled                                                    Boolean?                              @default(false)
   role                                                                  user_role                             @default(user)
+  // Additive multi-role support (owner-applied via `ALTER TABLE users ADD COLUMN`, mirrors admin_users.roles / getEffectiveRoles in src/lib/user-site-roles.ts).
+  roles                                                                 user_role[]                           @default([])
   country                                                               String?
   country_code                                                          String?
   continent_code                                                        String                                @default("NA")
