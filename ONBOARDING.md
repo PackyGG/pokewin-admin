@@ -112,12 +112,12 @@ The backend was fully reworked. **Every read is served by exactly one of two pat
   | Program | Real config / cost | Notes |
   |---|---|---|
   | Rakeback | daily **0.25%** / weekly **0.1%** / monthly **0.05%** (= 0.40% blended) | `rakeback_config`; pre-claim/instant-claim lever modeled |
-  | Affiliate | **8 tiers, 3%→10%**, thresholds $0→$1.5M | `affiliate_level_configs`; the "1× wager req" is a modeled what-if, not a confirmed stored toggle. **Commission basis (NGR vs wager) decides net-edge erosion — must be read, not assumed.** |
+  | Affiliate | **8 tiers, 3%→10%**, thresholds $0→$1.5M | `affiliate_level_configs`; the "1× wager req" is a modeled what-if, not a confirmed stored toggle. **Commission basis (RESOLVED, see `system-edge-plan/_model.ts`): `commission_rate` is a share of referred house edge / GGR, NOT a % of wager — wager drag = edge_share × house_edge (tier 8 = 10% of edge @ 10.5% edge → 1.05% of referred wager).** |
   | Deposit bonus | match 100%, **cap $100/24h**, real spend ~$17,364 | settings live in game backend |
   | Races | `race_prize`, real ~$6,907.50 | on-site competitive races |
   | Raffles | reconstructed from raffle `prizes` JSON (no ledger type), ~$15.59 | tickets per $X wagered; distinct from races |
   | Daily packs | ~$9.27 (`getDailyPacksTotalCost`) | free daily packs; EV editable; 30-day XP-unlock %; wager-loss (under active rework) |
-  | Signup | "avg $5.71" is **suspect/misleading** | actually the **3 welcome packs**, EV ~$0.01–0.02 each (under investigation) |
+  | Signup | "avg $5.71" **CLARIFIED** = total signup-bonus cost amortized across EVERY signup (incl. the majority who never claim) — an efficiency metric, NOT the grant | the real cost is the cash `balance_reward_claim` per CLAIMANT (`signupAvgGrant`); bridge: `avgPerSignup = avgPerClaim × conversionPct`. The **3 welcome packs** (EV ~$0.01–0.02 each) are display-only context, not the signup cost. See `system-edge-plan/_model.ts` signup anchors |
   | Rain | net house slice = `max(0, rain_win − tips)`, ~$928.68 | system-automatic, mixed-funded (users + founder/motha) |
   | Motha giveaways | founder account: `creator_tip` + `battle_sponsorship` + motha `rain_tips` | named line, no double-count (these are residual/wager/rain-funding, not in canonical reward cost) |
 - **Reward Costs box** (dashboard + system-edge-plan) is broken out **per-program** (rakeback, affiliate, deposit bonus, race, raffle, daily packs, signup, motha, rain) with an explicit sum = total (no double-count). Motha + raffle are **named lines only — no standalone display pages**.
