@@ -21,6 +21,7 @@ import {
 import type { Prisma as AdminPrisma } from "@/generated/admin-prisma/client";
 import { ok, fail, type ServerActionResult } from "@/lib/errors/server-action-result";
 import { logError } from "@/lib/errors/logger";
+import { userDetailTag } from "@/lib/queries/users-detail-cache";
 
 // 7-day soft-delete window for admin_deleted_users snapshots. Mirrored
 // in /users/deleted's purge-on-read scan and the restore action's
@@ -100,14 +101,16 @@ export async function banUser(
     metadata: { reason, issuer_main_user_id: issuerMainUserId },
   });
 
-  revalidatePath("/users");
-  revalidatePath(`/users/${userId}`);
-  revalidatePath("/chat");
-  // revalidatePath does NOT drop unstable_cache entries — without the tag
-  // flush, the /users ranking/ids caches (≤300s TTL) and the KPI strip
-  // (60s) keep serving the pre-mutation state after a ban.
+  // Narrow tag flushes ONLY — no revalidatePath. A path revalidation
+  // re-renders the entire route on the action response (the scroll-jump
+  // use-toggle-action.ts exists to prevent), and unstable_cache ignores
+  // it anyway. The list tags cover the /users ranking/ids caches (≤300s
+  // TTL) + KPI strip (60s); userDetailTag busts this user's /users/[id]
+  // detail caches so the streamed re-sync serves fresh truth. /chat has
+  // no server-rendered ban state (banned feedback there is client-side).
   revalidateTag("users-list");
   revalidateTag("users-list-stats");
+  revalidateTag(userDetailTag(userId));
   return ok({ userId });
 }
 
@@ -134,11 +137,10 @@ export async function unbanUser(userId: string) {
     targetUserId: userId,
   });
 
-  revalidatePath("/users");
-  revalidatePath(`/users/${userId}`);
-  // Tag flush — see banUser; unstable_cache ignores revalidatePath.
+  // Narrow tag flushes only — see banUser (no revalidatePath = no jump).
   revalidateTag("users-list");
   revalidateTag("users-list-stats");
+  revalidateTag(userDetailTag(userId));
 }
 
 /**
@@ -196,11 +198,10 @@ export async function lockUser(
     metadata: { reason, issuer_main_user_id: issuerMainUserId },
   });
 
-  revalidatePath("/users");
-  revalidatePath(`/users/${userId}`);
-  // Tag flush — see banUser; unstable_cache ignores revalidatePath.
+  // Narrow tag flushes only — see banUser (no revalidatePath = no jump).
   revalidateTag("users-list");
   revalidateTag("users-list-stats");
+  revalidateTag(userDetailTag(userId));
   return ok({ userId });
 }
 
@@ -228,11 +229,10 @@ export async function unlockUser(userId: string) {
     targetUserId: userId,
   });
 
-  revalidatePath("/users");
-  revalidatePath(`/users/${userId}`);
-  // Tag flush — see banUser; unstable_cache ignores revalidatePath.
+  // Narrow tag flushes only — see banUser (no revalidatePath = no jump).
   revalidateTag("users-list");
   revalidateTag("users-list-stats");
+  revalidateTag(userDetailTag(userId));
 }
 
 /**

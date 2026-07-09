@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useTransition } from "react";
+import React, { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Archive, Ban, ShieldAlert, ShieldBan, ShieldCheck, ShieldOff, Lock, Unlock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -76,19 +76,33 @@ export function UserAdminActions({
   const canBan = isAdmin || capabilities.canBanUsers;
   const canLock = isAdmin || capabilities.canLockUsers;
   const canMoveToVault = isAdmin || capabilities.canAdjustBalance;
+
+  // Optimistic ban/lock state — the server actions flush NARROW cache tags
+  // only (no revalidatePath, which re-rendered the whole route and caused
+  // the scroll jump), so the button flip can't come from a route re-render
+  // anymore. Flip locally the moment the action SUCCEEDS (post-confirm, so
+  // no rollback path is needed) and re-sync whenever the tag revalidation
+  // streams fresh server truth in — same seed/re-sync semantics as
+  // use-toggle-action.ts, which doesn't fit directly here because ban/lock
+  // are reason-gated confirm dialogs split across two components.
+  const [banned, setBanned] = useState(user.isBanned);
+  const [locked, setLocked] = useState(user.isLocked);
+  useEffect(() => setBanned(user.isBanned), [user.isBanned]);
+  useEffect(() => setLocked(user.isLocked), [user.isLocked]);
+
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {canBan &&
-        (user.isBanned ? (
-          <UnbanButton userId={user.id} />
+        (banned ? (
+          <UnbanButton userId={user.id} onSuccess={() => setBanned(false)} />
         ) : (
-          <BanButton userId={user.id} />
+          <BanButton userId={user.id} onSuccess={() => setBanned(true)} />
         ))}
       {canLock &&
-        (user.isLocked ? (
-          <UnlockButton userId={user.id} />
+        (locked ? (
+          <UnlockButton userId={user.id} onSuccess={() => setLocked(false)} />
         ) : (
-          <LockButton userId={user.id} />
+          <LockButton userId={user.id} onSuccess={() => setLocked(true)} />
         ))}
       {canMoveToVault && availableBalance !== undefined && (
         <MoveToVaultButton
@@ -319,7 +333,13 @@ export const ModerationSection = React.memo(function ModerationSection({
 // client doesn't need to gate — any user without permission gets an
 // error toast when they submit.
 
-function BanButton({ userId }: { userId: string }) {
+function BanButton({
+  userId,
+  onSuccess,
+}: {
+  userId: string;
+  onSuccess: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -339,9 +359,10 @@ function BanButton({ userId }: { userId: string }) {
       toast.success("User banned");
       setOpen(false);
       setReason("");
-      // No `router.refresh()` — the banUser server action already revalidates
-      // the route, which flips the Ban→Unban button. A client refresh on top
-      // just triggers a second full-tree refetch (extra re-suspend / churn).
+      // No `router.refresh()` and no route re-render — the action flushes
+      // narrow tags only; `onSuccess` flips the optimistic Ban→Unban state
+      // in UserAdminActions instantly, server truth re-syncs via the tags.
+      onSuccess();
     });
   }
 
@@ -385,7 +406,13 @@ function BanButton({ userId }: { userId: string }) {
   );
 }
 
-function UnbanButton({ userId }: { userId: string }) {
+function UnbanButton({
+  userId,
+  onSuccess,
+}: {
+  userId: string;
+  onSuccess: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -395,8 +422,9 @@ function UnbanButton({ userId }: { userId: string }) {
         await unbanUser(userId);
         toast.success("User unbanned");
         setOpen(false);
-        // No `router.refresh()` — the unbanUser server action revalidates the
-        // route, flipping the Unban→Ban button without a client full refetch.
+        // Optimistic Unban→Ban flip — see BanButton (narrow tags, no
+        // route re-render).
+        onSuccess();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Unban failed");
       }
@@ -431,7 +459,13 @@ function UnbanButton({ userId }: { userId: string }) {
   );
 }
 
-function LockButton({ userId }: { userId: string }) {
+function LockButton({
+  userId,
+  onSuccess,
+}: {
+  userId: string;
+  onSuccess: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -451,8 +485,9 @@ function LockButton({ userId }: { userId: string }) {
       toast.success("User locked");
       setOpen(false);
       setReason("");
-      // No `router.refresh()` — the lockUser server action revalidates the
-      // route, flipping the Lock→Unlock button without a client full refetch.
+      // Optimistic Lock→Unlock flip — see BanButton (narrow tags, no
+      // route re-render).
+      onSuccess();
     });
   }
 
@@ -497,7 +532,13 @@ function LockButton({ userId }: { userId: string }) {
   );
 }
 
-function UnlockButton({ userId }: { userId: string }) {
+function UnlockButton({
+  userId,
+  onSuccess,
+}: {
+  userId: string;
+  onSuccess: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -507,8 +548,9 @@ function UnlockButton({ userId }: { userId: string }) {
         await unlockUser(userId);
         toast.success("User unlocked");
         setOpen(false);
-        // No `router.refresh()` — the unlockUser server action revalidates the
-        // route, flipping the Unlock→Lock button without a client full refetch.
+        // Optimistic Unlock→Lock flip — see BanButton (narrow tags, no
+        // route re-render).
+        onSuccess();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Unlock failed");
       }
