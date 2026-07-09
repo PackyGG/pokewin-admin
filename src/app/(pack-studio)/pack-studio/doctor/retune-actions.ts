@@ -23,11 +23,9 @@ import { capturePackSnapshot } from "@/app/(admin)/packs/_lib/pack-history";
 import { buildPackCompliance } from "@/app/(admin)/packs/_lib/risk-config";
 import {
   computePackRisk,
-  shapeWeights,
   searchBestPriceForCleanSnap,
   isOnCleanLadderPct,
   isOnNiceGridPct,
-  TAGGED_WINRATE_TOLERANCE,
   ONE_SIDED_EDGE_EXCESS_TOL,
   RETUNE_MAX_PRICE_CHANGE_PCT,
   type PackRisk,
@@ -1450,31 +1448,44 @@ async function resolveAndShapeStagedPool(
       taggedAccuracyHit: search.taggedAccuracyHit,
     };
   } else {
-    // Pinned-price solve (the V2 `pinPrice` escape hatch). EVERY tagged path
-    // — plan AND write, search on or off — carries the hard-tag contract
-    // (ruleset: `winRateIsHard` + the strict 0.01pp solver tolerance),
-    // mirroring what `buildRetuneSearchParams` bakes into the search branch;
-    // gating it on the search flag was exactly the RC2 sentinel defeat.
-    const taggedHere =
-      intendedHitRate !== null &&
-      Math.abs(intendedHitRate - targetWinRate) < 1e-9;
-    shaped = shapeWeights({
-      cards: stagedValues,
-      price: priceAfter,
-      targetEdge,
-      targetWinRate,
-      maxWinCap,
-      nearMissMin,
-      winRateTol: taggedHere ? TAGGED_WINRATE_TOLERANCE : winRateTol,
-      // Anti-inflation anchor (no win/grail card's odds exceed its current odds).
-      currentWeights: stagedCurrentWeights,
-      ...(taggedHere ? { winRateIsHard: true } : {}),
-      // Owner pins — the SAME index mapping the shared builder uses, so the
-      // pinned-price plan and this write solve one identical problem.
-      ...(pinnedOdds !== null
-        ? { pinnedShares: mapPinnedOddsToShares(stagedValues, pinnedOdds) }
-        : {}),
+    // Pinned-price solve (the V2 `pinPrice` escape hatch) — routed through THE
+    // SAME shared constructor as every search solve, with the band spread-
+    // overridden to 0 so the sweep degenerates to ONE solve at EXACTLY the
+    // pinned price (`searchBestPriceForCleanSnap`'s documented disabled-search
+    // contract: `bestPrice === basePrice`, `searched: 1`). This branch used to
+    // hand-mirror the builder's flags and drifted exactly the way the RC2
+    // sentinel defeat predicted: it was missing `disperseLoss`,
+    // `niceGridPolish`, the untagged `holdWinRateHard` (+ graceful fallback /
+    // LAW M rescue, which live in the search wrapper), AND the lottery gate
+    // (a 50/50 coin-flip pin ran the strict hard-tag contract the search arm
+    // deliberately avoids) — so a one-click far-price suggestion promising
+    // "fully clean (all-nice) at $X" re-planned through here to an UNPOLISHED
+    // off-nice vector at that very $X. Routing through the builder makes the
+    // whole skew class unconstructible; the write runs this same resolver, so
+    // plan ≡ write is preserved automatically.
+    const search = searchBestPriceForCleanSnap({
+      ...buildRetuneSearchParams("staged", {
+        cards: stagedValues,
+        basePrice: priceAfter,
+        targetEdge,
+        targetWinRate,
+        maxWinCap,
+        nearMissMin,
+        winRateTol,
+        // Anti-inflation anchor (no win/grail card's odds exceed its current odds).
+        currentWeights: stagedCurrentWeights,
+        intendedHitRate,
+        priceBudgetPct,
+        // Owner pins — held EXACT, through the SAME builder mapping the
+        // search branch uses (pinned-price plan and write solve one problem).
+        ...(pinnedOdds !== null ? { pinnedOdds } : {}),
+      }),
+      // ANCHORED: no band — one solve at the pinned price, nothing else. The
+      // budget passed above only sizes the DFS node budget (a 0 band earns
+      // the default-band budget, all of it spent on this single snap).
+      maxPriceChangePct: 0,
     });
+    shaped = search.bestResult;
   }
 
   const priceSearch = priceSearchMeta;
@@ -3082,9 +3093,120 @@ async function planPackTuneStagedUncached(
       liveNearMiss: r.before.nearMiss,
     });
   }
-  // Pattern 9h: drop any staged price suggestion equal to the plan's own landed
-  // price (a no-op "move").
-  guidance = pruneNoOpSuggestions(guidance, r.priceAfter);
+  // ── §1.4 WIDE-PRICE PROBE (staged-arm parity) ────────────────────────────
+  // The LIVE arm has probed the full ±60% suggestion band since wave 4
+  // whenever its in-budget default is not materially clean; the STAGED arm —
+  // the owner's primary iteration surface — never did, so the moment ANY edit
+  // was staged (pool change, pin, price) the "move the price to $X → fully
+  // clean" suggestion vanished from the guidance. Same gate as live (tagged:
+  // accuracy/snap/nice/degenerate; untagged: snap/degenerate; a refused solve
+  // always probes), same one-probe budget, same crossing detector, merged
+  // BEFORE the no-op prune so the verdict + pool-edit derivation see it —
+  // mirroring the live arm's ordering exactly. Deliberately NOT gated on
+  // `pinPrice`: the probe is a SUGGESTION (never auto-applied), and an owner
+  // whose pinned price is not clean is precisely who needs the far clean
+  // price surfaced; applying it re-pins at the suggested cent, which the
+  // builder-routed anchored solve above re-verifies fail-closed.
+  const stagedProbeBudgetPct = await readRetunePriceBudgetPct();
+  const stagedNotMateriallyClean = outcome.ok
+    ? taggedStaged
+      ? r.priceSearch?.taggedAccuracyHit === false ||
+        outcome.snapped !== true ||
+        outcome.allNice === false ||
+        stagedShapeDegenerate === true
+      : outcome.snapped !== true || stagedShapeDegenerate === true
+    : true; // refused staged solve → always probe
+  let stagedWideProbeSuggestion: TuneSuggestion | null = null;
+  if (
+    stagedNotMateriallyClean &&
+    stagedProbeBudgetPct < RETUNE_MAX_PRICE_CHANGE_PCT
+  ) {
+    const stagedValuesForProbe = input.cards.map(
+      (c) => r.cardMetaById.get(c.cardId)?.value ?? 0,
+    );
+    const wideSearch = searchBestPriceForCleanSnap({
+      ...buildRetuneSearchParams("staged", {
+        cards: input.cards.map((c) => ({
+          cardId: c.cardId,
+          value: r.cardMetaById.get(c.cardId)?.value ?? 0,
+        })),
+        basePrice: r.priceStaged,
+        targetEdge: r.resolved.targetEdge,
+        targetWinRate: r.resolved.targetWinRate,
+        maxWinCap: r.resolved.maxWinCap,
+        nearMissMin: r.resolved.nearMissMin,
+        winRateTol: 0.02,
+        currentWeights: input.cards.map(
+          (c) => liveWeightByCardId.get(c.cardId) ?? 0,
+        ),
+        intendedHitRate: r.resolved.intendedHitRate,
+        priceBudgetPct: stagedProbeBudgetPct,
+        // Owner pins — held EXACT at every probed cent, same builder mapping
+        // as the staged solve (a far price the pins refuse is never suggested).
+        ...(input.pinnedOdds !== undefined && input.pinnedOdds.length > 0
+          ? { pinnedOdds: input.pinnedOdds }
+          : {}),
+      }),
+      // Spread-override the band to the full ±60% SUGGESTION band — the probe
+      // is NOT a plan and never becomes the write artifact.
+      maxPriceChangePct: RETUNE_MAX_PRICE_CHANGE_PCT,
+    });
+    const wideShaped = wideSearch.bestResult;
+    let wideShapeDegenerate: boolean | null = null;
+    let wideEdge = 0;
+    let wideWinRate = 0;
+    if (!("error" in wideShaped)) {
+      wideEdge = wideShaped.risk.edge;
+      wideWinRate = wideShaped.risk.winRate;
+      const wt = wideShaped.weights.reduce(
+        (a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0),
+        0,
+      );
+      wideShapeDegenerate =
+        wt > 0
+          ? ladderShape(
+              stagedValuesForProbe,
+              input.cards.map((c) => (livePcts.get(c.cardId) ?? 0) / 100),
+              wideShaped.weights.map((w) =>
+                Number.isFinite(w) && w > 0 ? w / wt : 0,
+              ),
+              wideSearch.bestPrice,
+            ).degenerate
+          : null;
+    }
+    stagedWideProbeSuggestion = buildWidePriceProbeSuggestion({
+      // The probe's anchor: the STAGED price (the band is measured from it).
+      livePrice: r.priceStaged,
+      tagged: taggedStaged,
+      tag: r.resolved.targetWinRate,
+      def: {
+        feasible: outcome.ok,
+        price: r.priceAfter,
+        allNice: outcome.ok ? (outcome.allNice ?? null) : null,
+        snapped: outcome.ok ? (outcome.snapped ?? false) : null,
+        taggedAccuracyHit: r.priceSearch?.taggedAccuracyHit ?? null,
+        shapeDegenerate: outcome.ok ? stagedShapeDegenerate : null,
+      },
+      wide: {
+        feasible: !("error" in wideShaped),
+        price: wideSearch.bestPrice,
+        allNice: !("error" in wideShaped) ? (wideShaped.allNice ?? null) : null,
+        snapped: !("error" in wideShaped) ? (wideShaped.snapped ?? false) : null,
+        taggedAccuracyHit: wideSearch.taggedAccuracyHit,
+        shapeDegenerate: wideShapeDegenerate,
+      },
+      wideEdge,
+      wideWinRate,
+    });
+  }
+  // §1.4 merge + Pattern 9h: drop any staged price suggestion equal to the
+  // plan's own landed price (a no-op "move") — merge FIRST, prune SECOND,
+  // exactly the live arm's ordering, so the verdict + pool-edit derivation
+  // below consume the merged guidance.
+  guidance = pruneNoOpSuggestions(
+    mergeWideProbeSuggestion(guidance, stagedWideProbeSuggestion),
+    r.priceAfter,
+  );
 
   // Wave 2b: a pins refusal ships the smallest SOLVER-VERIFIED single-pin
   // fixes IN the plan (`verdict.pinRemedies` + the shortfall copy) — the

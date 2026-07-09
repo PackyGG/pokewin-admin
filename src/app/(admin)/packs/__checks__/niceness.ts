@@ -56,6 +56,12 @@
  *       vs polished: fewer off-nice cards — Psycho WIDE lands fully ALL-NICE
  *       via the endgame — laws intact, tag exact, deterministic; untagged
  *       byte-identical).
+ *  12.  APPLY HONESTY (wave 9): the pinned-price anchored solve (one-click
+ *       far-price apply → `pinPrice` → builder-routed 0-band search) lands
+ *       the promised ALL-NICE plan at EXACTLY the suggested cent (searched=1,
+ *       tag exact, LAW M clean, deterministic) — and the OLD hand-mirrored
+ *       anchored params provably shipped 8/10 off-nice at that same cent
+ *       (the load-bearing sentinel for the builder routing).
  *
  * Exit code 0 = all passed; 1 = at least one failure (printed).
  */
@@ -1058,6 +1064,103 @@ check("fleet needle: untagged arm is byte-identical with the flag (polish is tag
   assert(
     JSON.stringify(wa) === JSON.stringify(wb),
     "untagged weights must be byte-identical",
+  );
+});
+
+// ── Wave 9: the APPLY-HONESTY contract (pinned-price anchored solve) ──────
+//
+// One-click applying a far-price suggestion stages the price PINNED
+// (`pinPrice: true`) — the staged resolver then solves ANCHORED (no search).
+// That anchored branch used to hand-mirror the builder's flags and drifted
+// (missing `disperseLoss` + `niceGridPolish` + untagged `holdWinRateHard` +
+// the lottery gate), so applying the wave-8 "fully clean (all-nice) at $5.10"
+// suggestion landed 8 of 10 Psycho cards OFF-nice at that very cent. The fix
+// routes the anchored solve through `buildRetuneSearchParams` with the band
+// spread-overridden to 0 (the search core's documented disabled-search
+// contract: one solve at exactly the base price). These checks emulate the
+// REAL apply flow byte-for-byte: staged-resolver target derivation (targets
+// at the PINNED price, live-anchored seeds, tagged nearMissMin =
+// max(TAGGED_NEAR_MISS_MIN=0, live near-miss)) and freeze both arms.
+
+check("apply honesty: 0-band anchored solve at the suggested $5.10 lands the promised ALL-NICE plan", () => {
+  const before = computePackRisk({
+    cards: PSYCHO_VALUES.map((v, i) => ({ value: v, weight: PSYCHO_LIVE_W[i]! })),
+    price: PSYCHO_PRICE,
+  });
+  const top = Math.max(...PSYCHO_VALUES);
+  const auto = autoRetuneTargets(5.1, FLEET_CFG, PSYCHO_TAG, top, {
+    winRate: before.winRate,
+    nearMiss: before.nearMiss,
+    edge: before.edge,
+    topValue: top,
+  });
+  assert(auto.intendedHitRate !== null, "apply fixture must resolve as tagged");
+  const params = buildRetuneSearchParams("staged", {
+    cards: PSYCHO_VALUES.map((v) => ({ value: v })),
+    basePrice: 5.1,
+    targetEdge: auto.targetEdge,
+    targetWinRate: auto.targetWinRate,
+    maxWinCap: auto.maxWinCap,
+    nearMissMin: Math.max(0, before.nearMiss),
+    winRateTol: 0.02,
+    currentWeights: PSYCHO_LIVE_W,
+    intendedHitRate: auto.intendedHitRate,
+    priceBudgetPct: 0.1,
+  });
+  const anchored = searchBestPriceForCleanSnap({ ...params, maxPriceChangePct: 0 });
+  // The pin is honored EXACTLY: one solve, at the pinned cent, nothing else.
+  assert(anchored.bestPrice === 5.1, `anchored price ${anchored.bestPrice} ≠ 5.1`);
+  assert(anchored.searched === 1, `anchored searched ${anchored.searched} ≠ 1`);
+  assert(anchored.fellBackToBase === false, "anchored base solve must be GOOD (not a fallback)");
+  assert(anchored.taggedAccuracyHit === true, "anchored solve must hit the tag");
+  const r = assertSuccess(anchored.bestResult, "anchored apply");
+  assert(r.snapped === true, "anchored apply must snap");
+  assert(r.allNice === true, "anchored apply must land ALL-NICE (the suggestion's promise)");
+  assert(
+    countOffNicePct(r.weights, r.niceExemptIdx) === 0,
+    "anchored apply must have 0 off-nice cards",
+  );
+  assert(
+    Math.abs(r.risk.winRate - PSYCHO_TAG) <= TAGGED_WINRATE_TOLERANCE + 1e-12,
+    `anchored apply tag missed: ${r.risk.winRate}`,
+  );
+  assert(
+    findMonotoneViolations({
+      values: PSYCHO_VALUES,
+      shares: r.weights.map((w, _i, arr) => w / arr.reduce((x, y) => x + y, 0)),
+      tol: 1e-9,
+    }).length === 0,
+    "anchored apply must be LAW M clean",
+  );
+  // Deterministic across runs (the plan the owner reviews IS the write).
+  const again = searchBestPriceForCleanSnap({ ...params, maxPriceChangePct: 0 });
+  assert(
+    again.bestPrice === anchored.bestPrice &&
+      JSON.stringify(assertSuccess(again.bestResult, "rerun").weights) ===
+        JSON.stringify(r.weights),
+    "anchored apply must be deterministic",
+  );
+  // LOAD-BEARING sentinel: the OLD hand-mirrored anchored params (strict-hard
+  // tag, no disperseLoss, no niceGridPolish, no plan budget) at the SAME cent
+  // with the SAME targets ship 8 of 10 cards OFF-nice — the exact broken
+  // promise this wave fixed. If this arm ever lands all-nice, the fixture no
+  // longer proves the builder routing matters — re-derive it.
+  const rOld = shapeWeights({
+    cards: PSYCHO_VALUES.map((v) => ({ value: v })),
+    price: 5.1,
+    targetEdge: auto.targetEdge,
+    targetWinRate: auto.targetWinRate,
+    maxWinCap: auto.maxWinCap,
+    nearMissMin: Math.max(0, before.nearMiss),
+    winRateTol: TAGGED_WINRATE_TOLERANCE,
+    currentWeights: PSYCHO_LIVE_W,
+    winRateIsHard: true,
+  });
+  assert(!("error" in rOld), "old anchored params must still solve");
+  assert(rOld.snapped === true, "old anchored params snapped");
+  assert(
+    rOld.allNice === false && countOffNicePct(rOld.weights, rOld.niceExemptIdx) === 8,
+    `old anchored params must ship 8 off-nice cards (got allNice=${rOld.allNice}, off=${countOffNicePct(rOld.weights, rOld.niceExemptIdx)})`,
   );
 });
 
