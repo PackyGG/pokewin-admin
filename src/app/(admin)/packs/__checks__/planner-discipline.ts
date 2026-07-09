@@ -706,6 +706,7 @@ const CLEAN: ProbeOutcome = {
   snapped: true,
   taggedAccuracyHit: true,
   shapeDegenerate: false,
+  offNiceCount: 0,
 };
 
 check("wide probe: infeasible default → feasible wide emits a beyond-budget price-move", () => {
@@ -716,6 +717,7 @@ check("wide probe: infeasible default → feasible wide emits a beyond-budget pr
     snapped: null,
     taggedAccuracyHit: null,
     shapeDegenerate: null,
+    offNiceCount: null,
   };
   const wide: ProbeOutcome = { ...CLEAN, price: 159.5 };
   const s = buildWidePriceProbeSuggestion({
@@ -736,11 +738,11 @@ check("wide probe: infeasible default → feasible wide emits a beyond-budget pr
   assert(/outside the ±10% budget/.test(s!.humanCopy), "copy names the budget");
 });
 
-check("wide probe: a COUNT-only improvement does NOT qualify (Bidoof class)", () => {
-  // Default is feasible+snapped but off-nice; wide is ALSO off-nice (fewer
-  // off-nice cards is a count gain, not a rung crossing).
-  const def: ProbeOutcome = { ...CLEAN, allNice: false };
-  const wide: ProbeOutcome = { ...CLEAN, price: 59, allNice: false };
+check("wide probe: a Δ1 off-nice gain does NOT qualify (Bidoof class)", () => {
+  // Default is feasible+snapped but off-nice; wide is ALSO off-nice with just
+  // ONE fewer off-nice row — below the wave-10 Δ≥2 material bar.
+  const def: ProbeOutcome = { ...CLEAN, allNice: false, offNiceCount: 2 };
+  const wide: ProbeOutcome = { ...CLEAN, price: 59, allNice: false, offNiceCount: 1 };
   const s = buildWidePriceProbeSuggestion({
     livePrice: 100,
     tagged: true,
@@ -750,7 +752,67 @@ check("wide probe: a COUNT-only improvement does NOT qualify (Bidoof class)", ()
     wideEdge: 0.11,
     wideWinRate: 0.01,
   });
-  assert(s === null, "off-nice → off-nice is a count gain, not a crossing → no suggestion");
+  assert(s === null, "a Δ1 off-nice gain is noise, not a crossing → no suggestion");
+});
+
+check("wide probe: a Δ≥2 off-nice reduction fires the off-improvement tier (Pixie class)", () => {
+  // Wave 10: both arms snapped + tag-held, wide NOT all-nice, but 6 → 1
+  // off-nice rows (the fleet-measured ghost improvement).
+  const def: ProbeOutcome = { ...CLEAN, allNice: false, offNiceCount: 6 };
+  const wide: ProbeOutcome = { ...CLEAN, price: 61, allNice: false, offNiceCount: 1 };
+  const s = buildWidePriceProbeSuggestion({
+    livePrice: 100,
+    tagged: true,
+    tag: 0.1,
+    def,
+    wide,
+    wideEdge: 0.11,
+    wideWinRate: 0.1,
+  });
+  assert(s !== null, "a Δ≥2 off-nice reduction qualifies (wave 10)");
+  assert(s!.kind === "price-move", "the suggestion is a price-move");
+  assert(s!.params.price === 61, "carries the exact far price");
+  assert(s!.params.beyondBudget === 1, "flagged beyond-budget");
+  assert(s!.params.offNiceBefore === 6 && s!.params.offNiceAfter === 1, "carries the off-nice counts");
+  assert(
+    /5 more chances land on round numbers \(1 left off, from 6\)/.test(s!.humanCopy),
+    `copy names the count benefit (got: ${s!.humanCopy})`,
+  );
+  // Never-worse guards: an unsnapped, tag-missing, or shape-worsened wide
+  // arm must NOT ride the count tier, whatever the Δ.
+  assert(
+    buildWidePriceProbeSuggestion({
+      livePrice: 100, tagged: true, tag: 0.1,
+      def, wide: { ...wide, snapped: false },
+      wideEdge: 0.11, wideWinRate: 0.1,
+    }) === null,
+    "unsnapped wide never rides the count tier",
+  );
+  assert(
+    buildWidePriceProbeSuggestion({
+      livePrice: 100, tagged: true, tag: 0.1,
+      def, wide: { ...wide, taggedAccuracyHit: false },
+      wideEdge: 0.11, wideWinRate: 0.1,
+    }) === null,
+    "tag-missing wide never rides the count tier",
+  );
+  assert(
+    buildWidePriceProbeSuggestion({
+      livePrice: 100, tagged: true, tag: 0.1,
+      def, wide: { ...wide, shapeDegenerate: true },
+      wideEdge: 0.11, wideWinRate: 0.1,
+    }) === null,
+    "shape-worsened wide never rides the count tier",
+  );
+  assert(
+    buildWidePriceProbeSuggestion({
+      livePrice: 100, tagged: false, tag: 0.1,
+      def: { ...def, allNice: null, taggedAccuracyHit: null },
+      wide: { ...wide, allNice: null, taggedAccuracyHit: null },
+      wideEdge: 0.11, wideWinRate: 0.1,
+    }) === null,
+    "the count tier is tagged-only",
+  );
 });
 
 check("wide probe: an already-clean default yields no suggestion", () => {
@@ -784,8 +846,8 @@ check("wide probe: off-nice→all-nice crossing (tagged) emits; snapped→snappe
     livePrice: 100,
     tagged: false,
     tag: 0.2,
-    def: { feasible: false, price: 100, allNice: null, snapped: null, taggedAccuracyHit: null, shapeDegenerate: null },
-    wide: { feasible: false, price: 0, allNice: null, snapped: null, taggedAccuracyHit: null, shapeDegenerate: null },
+    def: { feasible: false, price: 100, allNice: null, snapped: null, taggedAccuracyHit: null, shapeDegenerate: null, offNiceCount: null },
+    wide: { feasible: false, price: 0, allNice: null, snapped: null, taggedAccuracyHit: null, shapeDegenerate: null, offNiceCount: null },
     wideEdge: 0,
     wideWinRate: 0,
   });
@@ -797,8 +859,8 @@ check("wide probe: untagged unsnapped→snapped and degenerate→healthy both cr
     livePrice: 100,
     tagged: false,
     tag: 0.2,
-    def: { feasible: true, price: 100, allNice: null, snapped: false, taggedAccuracyHit: null, shapeDegenerate: false },
-    wide: { feasible: true, price: 90, allNice: null, snapped: true, taggedAccuracyHit: null, shapeDegenerate: false },
+    def: { feasible: true, price: 100, allNice: null, snapped: false, taggedAccuracyHit: null, shapeDegenerate: false, offNiceCount: null },
+    wide: { feasible: true, price: 90, allNice: null, snapped: true, taggedAccuracyHit: null, shapeDegenerate: false, offNiceCount: null },
     wideEdge: 0.11,
     wideWinRate: 0.2,
   });
@@ -808,8 +870,8 @@ check("wide probe: untagged unsnapped→snapped and degenerate→healthy both cr
     livePrice: 100,
     tagged: false,
     tag: 0.2,
-    def: { feasible: true, price: 100, allNice: null, snapped: true, taggedAccuracyHit: null, shapeDegenerate: true },
-    wide: { feasible: true, price: 70, allNice: null, snapped: true, taggedAccuracyHit: null, shapeDegenerate: false },
+    def: { feasible: true, price: 100, allNice: null, snapped: true, taggedAccuracyHit: null, shapeDegenerate: true, offNiceCount: null },
+    wide: { feasible: true, price: 70, allNice: null, snapped: true, taggedAccuracyHit: null, shapeDegenerate: false, offNiceCount: null },
     wideEdge: 0.11,
     wideWinRate: 0.2,
   });

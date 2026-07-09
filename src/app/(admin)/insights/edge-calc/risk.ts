@@ -3749,6 +3749,18 @@ function snapTaggedPer100k(input: {
    * (existing callers byte-identical).
    */
   niceGridPolish?: boolean;
+  /**
+   * FULL-LADDER lawfulness acceptance (Retune V3 — the LAW M gate's snap
+   * RETRY). When set, every tier's FINAL candidate must additionally satisfy
+   * this predicate; a refused candidate falls through (N → P → G) instead of
+   * being returned for the caller to reject — otherwise a well-budgeted DFS
+   * whose nicest candidate breaks the law FORFEITS the snap that a
+   * budget-starved run would have shipped via the DFS-free tier G (measured:
+   * 10% Illusion @$31.28 — 0-band anchored solve unsnapped at 240k nodes
+   * while the exhausted wide sweep shipped snapped/off-2 at the same cent).
+   * Omit for the primary pass and legacy callers — byte-identical.
+   */
+  lawCheck?: (weights: readonly number[], risk: PackRisk) => boolean;
 }): {
   weights: number[];
   risk: PackRisk;
@@ -4206,6 +4218,11 @@ function snapTaggedPer100k(input: {
       if (Math.abs(r.winRate - tag) > TAGGED_WINRATE_TOLERANCE + 1e-12) {
         return null;
       }
+      // Retry lawfulness (see the `lawCheck` input doc): refuse HERE so the
+      // tier falls through instead of the caller forfeiting the snap.
+      if (input.lawCheck !== undefined && !input.lawCheck(cand.u, r)) {
+        return null;
+      }
       return {
         weights: cand.u.slice(),
         risk: r,
@@ -4396,6 +4413,9 @@ function snapTaggedPer100k(input: {
     cand = polished;
     r = riskOf(cand);
   }
+  // Retry lawfulness on the FINAL (post-polish) G vector — the last tier, so
+  // a refusal here honestly ships unsnapped (same as the legacy wrapper).
+  if (input.lawCheck !== undefined && !input.lawCheck(cand, r)) return null;
   return {
     weights: cand.slice(),
     risk: r,
@@ -6545,10 +6565,17 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // epsilon for integer quantization). This makes "clean odds" yield to "never
   // inflate the tail" — the snap may round a grail DOWN to a clean rung, never UP.
   const preciseTotalW = weights.reduce((a, b) => a + (b > 0 ? b : 0), 0);
-  // Snapshotted BEFORE any snap mutates `weights`: the never-inflate reference
-  // must stay the precise solve even when the snap stack re-runs on the LAW M
-  // re-laid vector (post-gate retry), where `weights` no longer holds it.
-  const precisePcts = weights.map((w) =>
+  // Snapshotted BEFORE any snap mutates `weights` (at gate time they hold the
+  // SNAPPED vector, never the precise solve). The LAW M relayout branch
+  // re-snapshots this basis from the RE-LAID vector before the snap retry:
+  // the re-lay is the committed reality being rounded (it ships verbatim when
+  // the retry fails), so a grail share the lawful chain itself raised is not
+  // a snap inflation — keeping the pre-gate precise basis there deadlocks the
+  // retry (measured: 10% Illusion @$31.28 — every tier-G copy of the re-laid
+  // vector was refused for carrying the re-lay's own grail share, shipping
+  // the SAME shares off-rung/unsnapped). The one-sided rule is unchanged:
+  // the snap may never round a grail UP vs its basis.
+  let precisePcts = weights.map((w) =>
     preciseTotalW > 0 && w > 0 ? (w / preciseTotalW) * 100 : 0,
   );
   const precisePctOf = (i: number): number => precisePcts[i]!;
@@ -6673,6 +6700,11 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
         // price the tagged search evaluates so the all-nice enumeration can't grind.
         ...(input.nodeBudget !== undefined ? { nodeBudget: input.nodeBudget } : {}),
         ...(input.niceGridPolish === true ? { niceGridPolish: true } : {}),
+        // Retry pass: refuse unlawful candidates INSIDE the tier stack so a
+        // law-broken DFS candidate degrades N → P → G instead of forfeiting
+        // the snap (the outer `lawfulSnapCandidate` check below stays as the
+        // final assert — same predicate, so an inside-accepted vector passes).
+        ...(lawCheck ? { lawCheck: lawfulSnapCandidate } : {}),
         ...(hasPins
           ? {
               pins: [...pinnedShareByIdx.keys()].map((index) => ({
@@ -7029,6 +7061,12 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
       taggedSnapApplied = false;
       taggedSnapAllNice = undefined;
       taggedSnapNiceExemptIdx = undefined;
+      // Refresh the grail never-inflate basis to the RE-LAID vector (see the
+      // `precisePcts` snapshot note) — the retry rounds THIS lawful layout.
+      const relaidTotalW = weights.reduce((a, b) => a + (b > 0 ? b : 0), 0);
+      precisePcts = weights.map((w) =>
+        relaidTotalW > 0 && w > 0 ? (w / relaidTotalW) * 100 : 0,
+      );
       attemptSnapStack(true);
     }
   }

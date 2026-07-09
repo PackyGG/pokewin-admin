@@ -62,6 +62,14 @@
  *       tag exact, LAW M clean, deterministic) — and the OLD hand-mirrored
  *       anchored params provably shipped 8/10 off-nice at that same cent
  *       (the load-bearing sentinel for the builder routing).
+ *  13.  LAW M RELAYOUT-RETRY RESCUE (wave 10, 10% Illusion): at a cent where
+ *       the committed snap breaks the full-ladder law, the gate re-lays and
+ *       the snap RETRY must still ship a snapped vector — the grail
+ *       never-inflate basis refreshes to the RE-LAID vector (the committed
+ *       reality being rounded; the stale precise basis deadlocked every
+ *       tier-G copy → off-rung/unsnapped with the SAME shares), and a
+ *       law-refused tier candidate falls through N → P → G inside the tier
+ *       stack instead of forfeiting the snap.
  *
  * Exit code 0 = all passed; 1 = at least one failure (printed).
  */
@@ -991,7 +999,11 @@ check("fleet needle: 1% Psycho — off-nice cards 5→1, laws intact, tag exact,
   );
 });
 
-check("fleet needle: 1% Psycho WIDE band — the endgame lands ALL-NICE @$5.10 (rank 2→3)", () => {
+check("fleet needle: 1% Psycho WIDE band — the endgame lands ALL-NICE @$6.02", () => {
+  // Wave 8 landed this ALL-NICE at $5.10; the wave-10 relayout-retry rescue
+  // un-deadlocks nearer candidates, and the cents-distance tier now picks
+  // $6.02 (base $6.74) — same ALL-NICE promise, smaller price move. The
+  // $5.10 apply-honesty contract (§12) keeps covering the old cent.
   const { off, on } = runFleetPair(
     PSYCHO_VALUES,
     PSYCHO_LIVE_W,
@@ -1006,7 +1018,7 @@ check("fleet needle: 1% Psycho WIDE band — the endgame lands ALL-NICE @$5.10 (
     "legacy wide arm must land snapped-but-off-nice",
   );
   assert(rOn.snapped === true && rOn.allNice === true, "polished wide arm must land ALL-NICE");
-  assert(on.bestPrice === 5.1, `polished wide price ${on.bestPrice} ≠ 5.1`);
+  assert(on.bestPrice === 6.02, `polished wide price ${on.bestPrice} ≠ 6.02`);
   assert(
     findMonotoneViolations({
       values: PSYCHO_VALUES,
@@ -1161,6 +1173,93 @@ check("apply honesty: 0-band anchored solve at the suggested $5.10 lands the pro
   assert(
     rOld.allNice === false && countOffNicePct(rOld.weights, rOld.niceExemptIdx) === 8,
     `old anchored params must ship 8 off-nice cards (got allNice=${rOld.allNice}, off=${countOffNicePct(rOld.weights, rOld.niceExemptIdx)})`,
+  );
+});
+
+// ── Wave 10: LAW M RELAYOUT-RETRY RESCUE (the Illusion deadlock) ──────────
+//
+// 10% Illusion (real-prod pool frozen 2026-07-09; live $32.66) at the wide
+// probe's pinned cent $31.28: the committed tier-G snap broke the full-ladder
+// law → gate re-laid → the retry DEADLOCKED — the lawful re-lay raises the
+// grail shares (the monotone chain forces it), and the grail never-inflate
+// guard still compared against the PRE-GATE precise solve, so every tier-G
+// copy of the re-laid vector was refused for carrying the re-lay's own grail
+// shares. Result: unsnapped/off-8 shipped at apply time while the wide sweep
+// (same params, same cent inside the band) shipped snapped/off-2 — the snap
+// outcome depended on the plan budget's exhaustion state, non-monotonically.
+// The fix refreshes the guard basis to the RE-LAID vector on relayout (the
+// committed reality being rounded — refusing to ROUND shares that ship
+// verbatim anyway protects nothing) and threads the retry lawfulness
+// predicate INTO the tier stack (N → P → G fall-through instead of the
+// wrapper forfeiting the snap on its single returned candidate).
+
+const ILLUSION_VALUES = [719.99, 599.99, 342.26, 270.58, 208.09, 93.1, 4.5, 3.59, 1.93];
+const ILLUSION_LIVE_W = [3500, 10000, 13000, 20000, 23500, 30000, 300000, 300000, 300000];
+const ILLUSION_LIVE_PRICE = 32.66;
+const ILLUSION_TAG = 0.1;
+const ILLUSION_PIN = 31.28;
+
+check("relayout retry: 10% Illusion pinned @$31.28 SNAPS (gate re-lay no longer forfeits the snap)", () => {
+  const before = computePackRisk({
+    cards: ILLUSION_VALUES.map((v, i) => ({ value: v, weight: ILLUSION_LIVE_W[i]! })),
+    price: ILLUSION_LIVE_PRICE,
+  });
+  const top = Math.max(...ILLUSION_VALUES);
+  const auto = autoRetuneTargets(ILLUSION_PIN, FLEET_CFG, ILLUSION_TAG, top, {
+    winRate: before.winRate,
+    nearMiss: before.nearMiss,
+    edge: before.edge,
+    topValue: top,
+  });
+  assert(auto.intendedHitRate !== null, "Illusion fixture must resolve as tagged");
+  const params = buildRetuneSearchParams("staged", {
+    cards: ILLUSION_VALUES.map((v) => ({ value: v })),
+    basePrice: ILLUSION_PIN,
+    targetEdge: auto.targetEdge,
+    targetWinRate: auto.targetWinRate,
+    maxWinCap: auto.maxWinCap,
+    nearMissMin: Math.max(0, before.nearMiss),
+    winRateTol: 0.02,
+    currentWeights: ILLUSION_LIVE_W,
+    intendedHitRate: auto.intendedHitRate,
+    priceBudgetPct: 0.1,
+  });
+  const anchored = searchBestPriceForCleanSnap({ ...params, maxPriceChangePct: 0 });
+  assert(anchored.bestPrice === ILLUSION_PIN, `anchored price ${anchored.bestPrice} ≠ ${ILLUSION_PIN}`);
+  assert(anchored.searched === 1, `anchored searched ${anchored.searched} ≠ 1`);
+  const r = assertSuccess(anchored.bestResult, "Illusion anchored apply");
+  // THE regression this wave fixed: this exact solve shipped snapped=false
+  // with 8 off-nice cards under the stale precise grail basis.
+  assert(r.snapped === true, "Illusion anchored apply must snap (was the wave-10 regression)");
+  const off = countOffNicePct(r.weights, r.niceExemptIdx);
+  assert(off === 2, `Illusion anchored off-nice ${off} ≠ 2`);
+  assert(
+    Math.abs(r.risk.winRate - ILLUSION_TAG) <= TAGGED_WINRATE_TOLERANCE + 1e-12,
+    `Illusion anchored tag missed: ${r.risk.winRate}`,
+  );
+  assert(
+    findMonotoneViolations({
+      values: ILLUSION_VALUES,
+      shares: r.weights.map((w, _i, arr) => w / arr.reduce((x, y) => x + y, 0)),
+      tol: 1e-9,
+    }).length === 0,
+    "Illusion anchored apply must be LAW M clean",
+  );
+  const total = r.weights.reduce((a, b) => a + b, 0);
+  let winUnits = 0;
+  for (let i = 0; i < ILLUSION_VALUES.length; i++) {
+    if (ILLUSION_VALUES[i]! >= ILLUSION_PIN) winUnits += r.weights[i]!;
+  }
+  assert(
+    winUnits === Math.round(ILLUSION_TAG * total),
+    `Illusion win units ${winUnits} ≠ ${Math.round(ILLUSION_TAG * total)}`,
+  );
+  const again = searchBestPriceForCleanSnap({ ...params, maxPriceChangePct: 0 });
+  assert(
+    again.bestPrice === anchored.bestPrice &&
+      JSON.stringify(assertSuccess(again.bestResult, "rerun").weights) ===
+        JSON.stringify(r.weights),
+    "Illusion anchored apply must be deterministic",
   );
 });
 

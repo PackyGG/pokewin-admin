@@ -26,6 +26,7 @@ import {
   searchBestPriceForCleanSnap,
   isOnCleanLadderPct,
   isOnNiceGridPct,
+  countOffNicePct,
   ONE_SIDED_EDGE_EXCESS_TOL,
   RETUNE_MAX_PRICE_CHANGE_PCT,
   type PackRisk,
@@ -2656,6 +2657,10 @@ async function planPackTuneLiveUncached(
         snapped: defaultFeasible ? (shaped.snapped ?? false) : null,
         taggedAccuracyHit: search.taggedAccuracyHit,
         shapeDegenerate: defaultShapeDegenerate,
+        offNiceCount:
+          tagged && defaultFeasible
+            ? countOffNicePct(shaped.weights, shaped.niceExemptIdx)
+            : null,
       },
       wide: {
         feasible: !("error" in wideShaped),
@@ -2664,6 +2669,10 @@ async function planPackTuneLiveUncached(
         snapped: !("error" in wideShaped) ? (wideShaped.snapped ?? false) : null,
         taggedAccuracyHit: wideSearch.taggedAccuracyHit,
         shapeDegenerate: wideShapeDegenerate,
+        offNiceCount:
+          tagged && !("error" in wideShaped)
+            ? countOffNicePct(wideShaped.weights, wideShaped.niceExemptIdx)
+            : null,
       },
       wideEdge,
       wideWinRate,
@@ -3186,6 +3195,10 @@ async function planPackTuneStagedUncached(
         snapped: outcome.ok ? (outcome.snapped ?? false) : null,
         taggedAccuracyHit: r.priceSearch?.taggedAccuracyHit ?? null,
         shapeDegenerate: outcome.ok ? stagedShapeDegenerate : null,
+        offNiceCount:
+          taggedStaged && outcome.ok
+            ? countOffNicePct(outcome.weights, outcome.niceExemptIdx)
+            : null,
       },
       wide: {
         feasible: !("error" in wideShaped),
@@ -3194,6 +3207,10 @@ async function planPackTuneStagedUncached(
         snapped: !("error" in wideShaped) ? (wideShaped.snapped ?? false) : null,
         taggedAccuracyHit: wideSearch.taggedAccuracyHit,
         shapeDegenerate: wideShapeDegenerate,
+        offNiceCount:
+          taggedStaged && !("error" in wideShaped)
+            ? countOffNicePct(wideShaped.weights, wideShaped.niceExemptIdx)
+            : null,
       },
       wideEdge,
       wideWinRate,

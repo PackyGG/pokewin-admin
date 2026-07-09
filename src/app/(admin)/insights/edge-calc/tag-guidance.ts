@@ -1647,10 +1647,15 @@ export function ladderShape(
 // materially clean (infeasible / off-tag / unsnapped / degenerate) AND a single
 // ±60% probe solve improves the highest differing rung of the quality ladder,
 // the planner appends ONE `price-move` suggestion carrying the exact far price —
-// ranked first, flagged `beyondBudget`, NEVER silently applied. Count-only
-// improvements (fewer off-nice cards, more snaps at the same rung) do NOT
-// qualify — only a rung CROSSING (infeasible→feasible, tag miss→hit, unsnapped→
-// snapped, off-nice→all-nice, degenerate→healthy) is "materially better".
+// ranked first, flagged `beyondBudget`, NEVER silently applied. A rung CROSSING
+// (infeasible→feasible, tag miss→hit, unsnapped→snapped, off-nice→all-nice,
+// degenerate→healthy) always qualifies; below the crossings, ONE bounded
+// count tier qualifies too (wave 10): a MATERIAL off-nice reduction — ≥ 2
+// fewer off-grid rows with both arms snapped + tag-held (fleet-measured ghost
+// improvements: Pixie 6→1, Luxury Collector 4→1, Charizard 3→1, Museum
+// Pieces 5→3, Blazing Light 3→1 previously shipped NO suggestion). A Δ1 gain
+// (the Bidoof case) still never qualifies — a ±60% move that cleans a single
+// row stays noise.
 
 /** A minimal quality summary of a solve outcome — the probe compares two. */
 export type ProbeOutcome = {
@@ -1666,6 +1671,12 @@ export type ProbeOutcome = {
   taggedAccuracyHit: boolean | null;
   /** The plan-vs-live shape guard verdict (null when infeasible / not scored). */
   shapeDegenerate: boolean | null;
+  /**
+   * Non-exempt off-nice row count ({@link countOffNicePct} on the landed
+   * vector; null = untagged / infeasible). Powers the wave-10 off-improvement
+   * tier — the crossings never read it.
+   */
+  offNiceCount: number | null;
 };
 
 /**
@@ -1679,8 +1690,10 @@ export type ProbeOutcome = {
  *   3. unsnapped → snapped
  *   4. (tagged) off-nice → all-nice
  *   5. degenerate → healthy shape
- * A count-only gain at an already-equal rung never qualifies (the Bidoof case:
- * 1 off-nice → 2 off-nice is not a crossing).
+ * …or, below the crossings (wave 10), lands a MATERIAL off-nice reduction:
+ * both arms snapped + tag-held + shape not worsened, and the wide vector has
+ * ≥ 2 fewer non-exempt off-nice rows. A Δ1 gain never qualifies (the Bidoof
+ * case), and the wide arm must never be WORSE on any higher rung.
  *
  * Returns `null` when the wide probe is infeasible, not better, or the plan is
  * already clean (the caller gates on "default not materially clean" first — but
@@ -1707,8 +1720,25 @@ export function buildWidePriceProbeSuggestion(args: {
   const niceCross = tagged && def.allNice === false && wide.allNice === true;
   const shapeCross =
     def.shapeDegenerate === true && wide.shapeDegenerate === false;
+  const anyCross = feasCross || tagCross || snapCross || niceCross || shapeCross;
 
-  if (!(feasCross || tagCross || snapCross || niceCross || shapeCross)) {
+  // Wave-10 off-improvement tier (below every crossing): a ≥ 2 off-nice-row
+  // reduction with no higher rung worsened. Guards spell out "never worse":
+  // both snapped, wide holds the tag, wide shape not newly degenerate.
+  const offImprove =
+    !anyCross &&
+    tagged &&
+    def.feasible &&
+    def.snapped === true &&
+    wide.snapped === true &&
+    wide.taggedAccuracyHit !== false &&
+    def.allNice === false &&
+    (wide.shapeDegenerate !== true || def.shapeDegenerate === true) &&
+    def.offNiceCount !== null &&
+    wide.offNiceCount !== null &&
+    def.offNiceCount - wide.offNiceCount >= 2;
+
+  if (!(anyCross || offImprove)) {
     return null;
   }
 
@@ -1721,7 +1751,9 @@ export function buildWidePriceProbeSuggestion(args: {
         ? "every chance lands on a round number"
         : snapCross
           ? "every chance lands on a round number"
-          : "the ladder stays healthy";
+          : shapeCross
+            ? "the ladder stays healthy"
+            : `${def.offNiceCount! - wide.offNiceCount!} more chances land on round numbers (${wide.offNiceCount} left off, from ${def.offNiceCount})`;
   const sign = deltaPct >= 0 ? "+" : "−";
   const humanCopy = `Move the price to ${usd(wide.price)} (${sign}${Math.abs(deltaPct).toFixed(1)}%, outside the ±10% budget) — ${benefit}.`;
 
@@ -1736,6 +1768,9 @@ export function buildWidePriceProbeSuggestion(args: {
       snapped: wide.snapped === true ? 1 : 0,
       allNice: tagged ? (wide.allNice === true ? 1 : 0) : -1,
       tag: tagged ? tag : -1,
+      ...(offImprove
+        ? { offNiceBefore: def.offNiceCount!, offNiceAfter: wide.offNiceCount! }
+        : {}),
     },
     humanCopy,
     proof: {
