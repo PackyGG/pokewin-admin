@@ -149,13 +149,16 @@ test("RoleV2 seed token source (ROLE_BASELINES) set-equals the harness baseline 
   }
 });
 
-// ── 3. baseline cardinalities match the brief (support 16 / pack_creator 24) ─
+// ── 3. baseline cardinalities match the brief (support 15 / pack_creator 23) ─
+// Originally 16 / 24 per the Phase-A live intersection; `/transactions/rewards`
+// (support) left with the page removals in f6514a42 and `/rewards/shards`
+// (pack_creator) with the shard-pack frontend removal in 1dcbaabd.
 test("built-in baselines have the canonical cardinalities", () => {
-  assert.equal(ROLE_BASELINES.support.tokens.length, 16, "support baseline = 16 tokens");
+  assert.equal(ROLE_BASELINES.support.tokens.length, 15, "support baseline = 15 tokens");
   assert.equal(
     ROLE_BASELINES.pack_creator.tokens.length,
-    24,
-    "pack_creator baseline = 24 tokens",
+    23,
+    "pack_creator baseline = 23 tokens",
   );
   // No duplicates within a baseline.
   for (const role of Object.keys(ROLE_BASELINES) as (keyof typeof ROLE_BASELINES)[]) {

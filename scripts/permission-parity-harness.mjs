@@ -39,14 +39,14 @@ const repoRoot = path.resolve(__dirname, "..");
 
 // ── Canonical baselines (faithful port of src/lib/role-baselines.ts) ─────────
 // admin = [] (total-bypass sentinel). marketing/creator/creator_manager = []
-// (no live holder). support = 16, pack_creator = 24.
+// (no live holder). support = 15, pack_creator = 23 (the `/transactions/rewards`
+// + `/rewards/shards` tokens left with their removed pages — f6514a42 / 1dcbaabd).
 export const HARNESS_ROLE_BASELINES = {
   admin: [],
   support: [
     "/shifts",
     "/users",
     "/transactions/packs",
-    "/transactions/rewards",
     "/transactions/deposits",
     "/chat",
     "/withdrawals",
@@ -67,7 +67,6 @@ export const HARNESS_ROLE_BASELINES = {
     "/cards",
     "/sets",
     "/upgrader",
-    "/rewards/shards",
     "__can_create_pack",
     "__can_update_pack",
     "__can_edit_live_packs",

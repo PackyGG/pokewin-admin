@@ -2,7 +2,6 @@ import "server-only";
 
 import { clickhouseRead } from "@/lib/clickhouse/readonly-query";
 import type { MetricWindow } from "@/lib/metrics/queries";
-import type { InsightsPeriod } from "@/lib/queries/insights-analytics/period";
 
 import { CH_DB, chDateTime, customerScopeCte, toNumber } from "../_shared";
 import { getWindowMetricsFromClickHouse } from "../window-metrics";
@@ -356,13 +355,12 @@ async function getWindowedPnlFromClickHouse(
 
 /**
  * ClickHouse twin of the cost-breakdown waterfall's headline scalar money
- * figures (see module header). `period` selects the lifetime (`since = null`)
- * vs finite gaming-margin window; `cutoff` is the canonical `periodToCutoff`
- * value the Postgres path used (from `CostBreakdown.cutoffIso`), reused
- * verbatim for the bridge + pnl legs so the window is byte-identical.
+ * figures (see module header). `cutoff` is the canonical window edge the
+ * Postgres path used (from `CostBreakdown.cutoffIso`), reused verbatim for
+ * ALL THREE legs (gaming margin + bridge + pnl) so the window is
+ * byte-identical for every caller — capped or not.
  */
 export async function getCostBreakdownComparableFromClickHouse(
-  period: InsightsPeriod,
   cutoff: Date,
   blacklist: string[],
 ): Promise<CostBreakdownComparable> {
@@ -374,12 +372,17 @@ export async function getCostBreakdownComparableFromClickHouse(
     cutoff: cutoffLiteral,
   };
 
-  // Gaming-margin leg: the canonical window. Lifetime ("all") is unbounded
-  // (since = null) exactly as `getCostBreakdown` builds its MetricWindow;
-  // finite periods use the canonical cutoff.
-  const metricWindow: MetricWindow = {
-    since: period === "all" ? null : cutoff,
-  };
+  // Gaming-margin leg: the caller's canonical window edge, reused VERBATIM.
+  // `cutoff` is the SAME value the Postgres assembly computed (carried in
+  // `CostBreakdown.cutoffIso`): finite periods pass their `periodToCutoff`;
+  // the 365d-CAPPED lifetime callers (`getCostBreakdownLifetimeCached`) pass
+  // the cap; the UNCAPPED /insights/cost-breakdown lifetime passes
+  // `periodToCutoff("all") = epoch`, and `since = epoch` is row-identical to
+  // the PG `since = null` unbounded scan (no pre-1970 rows). Reconstructing
+  // `null` from `period === "all"` here (the old shape) silently UNCAPPED the
+  // capped-lifetime window — the ~0.18% GGR/wager/NGR drift that kept
+  // `insights_cost_breakdown_lifetime` out of the cutover set.
+  const metricWindow: MetricWindow = { since: cutoff };
 
   const [metrics, bridge, pnl] = await Promise.all([
     getWindowMetricsFromClickHouse(metricWindow, blacklist),

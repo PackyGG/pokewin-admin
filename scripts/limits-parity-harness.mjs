@@ -1,8 +1,16 @@
 #!/usr/bin/env node
 // =============================================================================
-// limits-parity-harness.mjs — READ-ONLY behavior-preservation proof for the
-// per-ROLE balance-limit defaults (RoleV2 P3). Sibling of
+// limits-parity-harness.mjs — READ-ONLY enforcement-resolution proof for the
+// per-ROLE balance-limit defaults (RoleV2 P3/P4). Sibling of
 // permission-parity-harness.mjs; same probe mechanics.
+//
+// CONTRACT HISTORY: at P3-ship time this asserted the role-default layer was
+// INERT (every role limit column NULL → merged cap == per-user-or-unlimited).
+// That was a point-in-time SHIPPING gate. P4 then shipped the role-limits
+// editor (`setRoleLimits`), so owner-set role caps are now legitimate LIVE
+// config the runtime enforces (e.g. support weekly $500) — "a role column is
+// non-null" stopped being a defect. The gate below therefore asserts the
+// DURABLE layering invariants instead of inertness.
 //
 // What it does:
 //   1. Re-probes the ADMIN DB READ-ONLY (writes a throwaway
@@ -10,15 +18,18 @@
 //      ONLY to process.env.ADMIN_DATABASE_URL via `pg`, SELECT-only, never
 //      selects or prints password_hash / totp_secret / recovery_codes / the
 //      connection string; the probe is deleted afterwards).
-//   2. For EVERY admin_user, per period (daily/weekly/monthly), asserts:
-//        (userRow[period]?.max ?? roleDefault[period] ?? null)
-//          === (userRow[period]?.max ?? null)
-//      i.e. with every role's limit columns NULL today, the merged effective
-//      cap equals exactly today's per-user-or-unlimited cap. The role-default
-//      layer is provably INERT (it changes no admin's enforced cap).
-//   3. Prints the per-admin, per-period resolution and exits NON-ZERO on any
-//      mismatch (which would mean a role default is non-null AND would change
-//      enforcement — the thing P3 must NOT do in prod).
+//   2. For EVERY admin_user, per period (daily/weekly/monthly), resolves the
+//      effective cap exactly as the runtime does —
+//        effective = userRow[period]?.max ?? roleDefault[period] ?? null
+//      — and asserts the layering invariants:
+//        • PER-USER WINS: a non-null per-user row is never overridden by a
+//          role default (effective === userMax whenever userMax != null).
+//        • SANE CAPS: every non-null cap (user or role) is a positive finite
+//          number.
+//   3. Prints the per-admin, per-period resolution with the SOURCE of each
+//      cap (user / role / ∞), loudly lists every ACTIVE role default (so
+//      enforcement-changing config is visible in the log), and exits NON-ZERO
+//      only on an invariant violation or probe failure.
 //
 // `roleDefault[period]` is computed here exactly as the runtime does
 // (src/lib/role-limits.ts → mergeRoleBalanceLimits): the SMALLEST non-null
@@ -191,20 +202,24 @@ function main() {
   const userCap = new Map();
   for (const l of snap.userLimits) userCap.set(`${l.adminUserId}|${l.period}`, l.max);
 
-  // Count non-null role limit columns up front — a non-zero count is a loud
-  // banner (it MAY still pass parity if it happens to match a per-user row,
-  // but in prod every column should be NULL).
-  let nonNullRoleCols = 0;
+  // List every ACTIVE role default up front — owner-set config the runtime
+  // enforces for admins without a per-user row. Informational, not a failure.
+  const activeRoleCaps = [];
   for (const r of snap.roles) {
-    for (const p of PERIODS) if (r[p] !== null && r[p] !== undefined) nonNullRoleCols++;
+    for (const p of PERIODS) {
+      if (r[p] !== null && r[p] !== undefined) {
+        activeRoleCaps.push(`${r.systemKey ?? r.name}.${p}=${fmt(r[p])}`);
+      }
+    }
   }
   console.log(
     `[limits-parity] ${snap.meta.userCount} admins · ${snap.meta.roleCount} roles · ` +
-      `${snap.meta.userLimitCount} per-user caps · non-null role limit columns: ${nonNullRoleCols} (expect 0)`,
+      `${snap.meta.userLimitCount} per-user caps · active role default columns: ${activeRoleCaps.length}` +
+      (activeRoleCaps.length ? ` → ${activeRoleCaps.join(", ")}` : ""),
   );
 
-  console.log("\n[limits-parity] per-admin, per-period reconciliation:\n");
-  let failures = 0;
+  console.log("\n[limits-parity] per-admin, per-period resolution (userRow ?? roleDefault ?? ∞):\n");
+  let violations = 0;
   let checks = 0;
 
   for (const u of snap.users) {
@@ -212,25 +227,29 @@ function main() {
     const eff = effectiveRoles(u.role, u.roles);
     const parts = [];
     let userRowParts = [];
+    let userViolations = 0;
 
     for (const p of PERIODS) {
       const userMax = userCap.has(`${u.id}|${p}`) ? userCap.get(`${u.id}|${p}`) : undefined;
-      // The cap WITH the role-default layer (what runtime now resolves).
-      const withRole = resolveEffectiveCap(userMax, roleDef[p]);
-      // The cap as it was BEFORE P3 (per-user row ?? unlimited).
-      const todayOnly = userMax ?? null;
+      const effective = resolveEffectiveCap(userMax, roleDef[p]);
+      const source = userMax != null ? "user" : roleDef[p] != null ? "role" : "∞";
       checks++;
-      const ok = withRole === todayOnly;
-      if (!ok) failures++;
-      const tag = ok ? "ok" : "MISMATCH";
-      parts.push(
-        `${p}=${fmt(withRole)} (today ${fmt(todayOnly)}${ok ? "" : ` · roleDef=${fmt(roleDef[p])}`}) ${tag}`,
-      );
+
+      // Invariant 1 — PER-USER WINS: a non-null per-user row is the cap.
+      const userWins = userMax == null || effective === userMax;
+      // Invariant 2 — SANE CAPS: any non-null cap is a positive finite number.
+      const sane = effective === null || (Number.isFinite(effective) && effective > 0);
+      const ok = userWins && sane;
+      if (!ok) {
+        violations++;
+        userViolations++;
+      }
+      const tag = ok ? "ok" : !userWins ? "USER-ROW-OVERRIDDEN" : "BAD-CAP";
+      parts.push(`${p}=${fmt(effective)}[${source}] ${tag}`);
       if (userMax !== undefined) userRowParts.push(`${p}:${fmt(userMax)}`);
     }
 
-    const allOk = parts.every((s) => s.endsWith("ok"));
-    const tag = allOk ? "PASS" : "FAIL";
+    const tag = userViolations === 0 ? "PASS" : "FAIL";
     const roleStr = eff.length ? eff.join("+") : u.role;
     const customStr = u.roleId ? ` +custom(${u.roleId.slice(0, 8)})` : "";
     const userRowStr = userRowParts.length ? `userRow{${userRowParts.join(",")}}` : "userRow{—}";
@@ -240,18 +259,20 @@ function main() {
   }
 
   console.log("");
-  if (failures === 0) {
+  if (violations === 0) {
     console.log(
-      `✅ all ${snap.meta.userCount} admins reconcile across ${checks} (admin × period) checks — ` +
-        `(userRow[period] ?? roleDefault[period] ?? null) === (userRow[period] ?? null) everywhere. ` +
-        `The per-role default layer changes NO admin's enforced cap (all role limit columns NULL). ` +
-        `Per-user-wins proven; behavior preserved.`,
+      `✅ all ${snap.meta.userCount} admins resolve cleanly across ${checks} (admin × period) checks — ` +
+        `per-user rows always win, every cap is a positive finite number. ` +
+        (activeRoleCaps.length
+          ? `${activeRoleCaps.length} active role default(s) in force (listed above) for admins without a per-user row — owner-set config, enforced by checkBalanceAdjustmentLimit.`
+          : `No active role defaults; every admin without a per-user row is unlimited.`),
     );
     process.exit(0);
   } else {
     console.error(
-      `❌ ${failures} of ${checks} (admin × period) checks MISMATCH across ${snap.meta.userCount} admins — ` +
-        `a role default would CHANGE enforcement. Do NOT ship with non-null role limit columns in prod.`,
+      `❌ ${violations} of ${checks} (admin × period) checks VIOLATE the layering invariants ` +
+        `(per-user row overridden by a role default, or a non-positive/non-finite cap). ` +
+        `The runtime resolution (userRow ?? roleDefault ?? unlimited) is broken — investigate before shipping.`,
     );
     process.exit(1);
   }

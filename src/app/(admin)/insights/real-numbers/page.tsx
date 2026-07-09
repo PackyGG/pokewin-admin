@@ -75,6 +75,7 @@ import {
   type RealizedPnlSnapshot,
 } from "@/lib/queries/_realized-pnl";
 import { compareRealNumbers } from "@/lib/clickhouse/compare/insights-real-numbers";
+import { compareCostBreakdown } from "@/lib/clickhouse/compare/insights-cost-breakdown";
 import { formatDateTime } from "@/lib/utils/format";
 // Reuse the cost-breakdown waterfall primitives + the directive-free
 // semantic-tone vocabulary (server-safe — see ../cost-breakdown/tones.ts).
@@ -386,6 +387,14 @@ async function RealNumbersBody() {
   // Comparison-mode CH twin (Phase 2B) — fire-and-forget after the PG values
   // are computed. No-op unless `insights_real_numbers` is in comparison mode;
   // never affects the served Postgres payload.
+  //
+  // The shared 365d-CAPPED lifetime cost-breakdown read gets its OWN surface
+  // key here: the twin mirrors the caller's window via `cutoffIso`, so this
+  // measures the capped window's parity (the per-period hook on
+  // /insights/cost-breakdown covers the uncapped page read).
+  if (cost) {
+    void compareCostBreakdown("all", cost, "insights_cost_breakdown_lifetime");
+  }
   void compareRealNumbers({
     hubWager: wager ?? 0,
     split,
