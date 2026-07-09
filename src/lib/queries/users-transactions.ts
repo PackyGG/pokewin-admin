@@ -650,6 +650,24 @@ export async function getUserTransactions(
     db.ledger_transactions.count({ where }),
   ]);
 
+  // Upgrader-target batch lookup KICKED here (not awaited) — it depends only
+  // on `transactions` (already resolved above), NOT on the battle lookup /
+  // inventory+voucher fan-out / battle-winnings groupBy that follow. Those
+  // were previously all sequential awaits BEFORE this one started, adding a
+  // full extra round-trip of latency to every Gaming-tab load even though
+  // this query is fully independent of them. Kicking it now lets it run
+  // concurrently with that work; it's awaited later at its point of use
+  // (see `upgraderBetByLedgerId` below). `fetchUpgraderTargetByLedgerTxIds`
+  // never rejects (internal try/catch) and no-ops instantly on an empty id
+  // list, so this is free for pages with no upgrader_bet rows.
+  const upgraderBetLedgerIds = transactions
+    .filter((t) => t.type === "upgrader_bet")
+    .map((t) => t.id);
+  const upgraderBetByLedgerIdPromise = fetchUpgraderTargetByLedgerTxIds(
+    db,
+    upgraderBetLedgerIds,
+  );
+
   // Batch-fetch battle rows for every battle referenced on this page —
   // both from PF results (borrow badge) and from battle_bet participants
   // (win/loss + winnings). One query yields borrow_percentage AND the
@@ -1051,14 +1069,11 @@ export async function getUserTransactions(
   //
   // `game_sessions.game_id` is the upgrader_games row's UUID for
   // game_type='upgrader' — verified against analytics-packs.ts's same
-  // convention for packs.
-  const upgraderBetLedgerIds = transactions
-    .filter((t) => t.type === "upgrader_bet")
-    .map((t) => t.id);
-  const upgraderBetByLedgerId = await fetchUpgraderTargetByLedgerTxIds(
-    db,
-    upgraderBetLedgerIds,
-  );
+  // convention for packs. The lookup itself was KICKED (not awaited) right
+  // after `transactions` resolved above, so it has been running concurrently
+  // with the battle lookup + inventory/voucher fan-out + battle-winnings
+  // groupBy this whole time — this just joins that already-in-flight promise.
+  const upgraderBetByLedgerId = await upgraderBetByLedgerIdPromise;
   const upgraderWinningsByGsid = new Map<string, number>();
   for (const r of upgraderBetByLedgerId.values()) {
     if (r.gsid && r.won_amount != null) {

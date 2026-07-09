@@ -1016,3 +1016,73 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_affiliate_code_usages_referred_creat
 -- NOTE (2026-07-01): idx_pf_result_metadata_pack_id_created_at (#14) is CONFIRMED
 -- PRESENT + index-served on the current prod DB (packs stats/games EXPLAIN);
 -- idx_user_inv_card_id (#10) is CONFIRMED APPLIED (Index Only Scan). No action.
+
+-- =============================================================================
+-- #30 -- 2026-07-10 "/users/[id] click takes ages" bug report
+-- MAIN is read-only; agents NEVER apply — owner applies these CONCURRENTLY.
+-- =============================================================================
+
+-- #30 -----------------------------------------------------------------
+-- user_inventory (user_id, obtained_at) + vouchers (user_id) — NON-PARTIAL,
+-- backing getUserTransactions' full-lifetime "held value" sweep
+-- ===================================================================
+-- getUserTransactions (src/lib/queries/users-transactions.ts) is the
+-- enrichment fan-out behind the Gaming tab — one of the TWO tabs kicked by
+-- DEFAULT on every /users/[id] load (Overview always sets wantsGamingTx).
+-- For every gaming-type call it reads the user's ENTIRE historical
+-- inventory + voucher ledger (not just currently-held items) to reconstruct
+-- a per-transaction "held value" sweep (worth-before/worth-after per row):
+--
+--   allInventory: user_inventory.findMany({ where: { user_id, obtained_at: { lte: maxTxTs } } })
+--   allVouchers:  vouchers.findMany({ where: { user_id } })
+--
+-- Both are UNFILTERED by sold_at/exchanged_at/claimed_at — the sweep needs
+-- every acquire AND every dispose/claim event over the user's lifetime to
+-- compute the running held-value total, so a disposed/claimed row is just
+-- as necessary as a currently-open one. Neither existing partial index can
+-- serve that:
+--   • idx_user_inv_open_by_user / idx_user_inv_owned_by_user — WHERE sold_at
+--     IS NULL AND exchanged_at IS NULL (± withdrawal_locked_at) — excludes
+--     every disposed row, which this query also needs.
+--   • idx_vouchers_unclaimed_by_user — WHERE claimed_at IS NULL — excludes
+--     every claimed voucher, which this query also needs.
+--
+-- EXPLAIN (ANALYZE, BUFFERS) against prod (read-only, 2026-07-10), a
+-- representative top-inventory user (13,915 of that user's 797,673-row
+-- user_inventory total; 452 of 60,465-row vouchers total):
+--
+--   allInventory (obtained_at <= now(), i.e. the full page-1 bound):
+--     Gather (Parallel Seq Scan on user_inventory, 2 workers)
+--       Rows Removed by Filter: 261,253   Buffers: hit=3,545 read=16,888
+--     Execution Time: 50.8 ms
+--
+--   allVouchers (user_id = $1, no other predicate):
+--     Seq Scan on vouchers
+--       Rows Removed by Filter: 60,013    Buffers: read=3,911
+--     Execution Time: 23.0 ms
+--
+-- Neither number is catastrophic in isolation, but this PAIR of full-table
+-- scans (797k + 60k rows) runs on every COLD Gaming/Overview tab load for
+-- EVERY user — the #1-traffic route's default tab — competing for the MAIN
+-- `max: 3` connection-pool slots (db.ts) alongside the rest of the
+-- ~19-round-trip detail aggregate. Buffers are mostly `read` (disk), not
+-- `hit` (cache) — under concurrent admin traffic this is exactly the
+-- "click a user, takes ages" failure mode: two large disk-bound seq scans
+-- queueing behind an undersized pool instead of resolving as sub-ms index
+-- seeks. The 15s cache (getUserGamingTransactionsCached) only helps a
+-- REPEAT visit to the SAME user within the window — the first click on any
+-- user (or any click after a 15s gap) pays the full scan cost fresh.
+--
+-- A non-partial composite on user_inventory and a non-partial single-column
+-- index on vouchers turn both into user_id-scoped index (range) scans — the
+-- same class of fix that already cured idx_ledger_tx_user_created_at (#19:
+-- "no existing index covers an ALL-STATUSES per-user scan", same file, same
+-- page, same "takes ages" symptom — 66ms/187k-rows-removed down to
+-- 0.46ms/64-rows-removed once applied).
+--
+-- NOT APPLIED — flagged only (MAIN is read-only; agents never apply).
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_inventory_user_id_obtained_at
+  ON user_inventory (user_id, obtained_at);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vouchers_user_id
+  ON vouchers (user_id);
