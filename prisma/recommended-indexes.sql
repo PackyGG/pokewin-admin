@@ -20,6 +20,33 @@
 --
 -- Apply order (suggested): #1 first (biggest dashboard impact), then #2,
 -- #3, #4 in order. The rest are lower-priority follow-ups.
+--
+-- ═══════════════════════════════════════════════════════════════════════════
+-- APPLIED STATUS (2026-07-10, owner-run + read-only pg_index/EXPLAIN verify):
+-- EVERY active recommendation in this file is now LIVE on prod. The owner
+-- applied the final 13 missing statements this date — all 13 valid=true:
+--   idx_battles_user_id_status_created_at (#6) · idx_pf_inventory_item_id (#7c)
+--   idx_gs_user_id_created_at (#8a) · idx_gs_game_type_created_at (#8b)
+--   idx_ledger_tx_metadata_affiliate_code (#9) · idx_battle_participants_battle_id (#13)
+--   idx_cards_set_id_created_at (#23) · idx_ledger_tx_deposit_created_at (#24)
+--   idx_ledger_tx_game_session_id (#25a) · idx_vouchers_origin_id (#25b)
+--   idx_game_sessions_bet_ledger_tx_id (#25c) · rain_tips_rain_id_idx (#26)
+--   idx_user_inventory_obtained_at (#27)
+-- EXPLAIN spot-checks (read-only): #24 deposits list, #6 battles per-user and
+-- #13 participants-by-battle all plan onto their new index; #27 index-only-scans
+-- 7d/30d windows while the 365d window correctly stays a seq scan (planner-
+-- optimal low selectivity, same class as the #17 CRM finding — cached anyway).
+-- Four recommendations are covered by PRE-EXISTING differently-named indexes
+-- (do not re-create): #5c → idx_acu_upper_code · #7a → idx_pf_results_game_session_id
+-- · #7b → idx_pf_results_battle_id · #28 → idx_acu_referred_user_created_at (#5d,
+-- DESC btree serves the ASC range via backward scan).
+-- STILL INTENTIONALLY NOT APPLIED (deferred by their own sections — do not
+-- apply without re-reading them): #20 · #21 · #29 · #22 pair (table ~14 rows)
+-- · the three #15 pg_trgm GIN indexes (pg_trgm extension NOT installed; only
+-- back the opt-in ?match=contains path). #5a/#5b remain optional (leading-
+-- column coverage exists via idx_affiliate_code_usages_affiliate_referred /
+-- idx_acu_referred_user_created_at).
+-- ═══════════════════════════════════════════════════════════════════════════
 -- =============================================================================
 
 -- #1 -----------------------------------------------------------------
