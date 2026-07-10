@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db";
+import { Prisma } from "@/generated/prisma/client";
 import { affiliate_usage_type } from "@/generated/prisma/enums";
 import { toNumber } from "@/lib/utils/decimal";
 import { isUserId, isUuid } from "@/lib/utils/ids";
@@ -6,6 +7,8 @@ import { filterLedgerTxTypesLive } from "./_ledger-tx-types";
 import { calculateUserPnl } from "./pnl";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-visible-override";
+import { escapeBlacklistIds } from "./_blacklist";
 
 type Db = Awaited<ReturnType<typeof getDb>>;
 
@@ -532,6 +535,43 @@ export async function getUserDetail(id: string) {
       return [] as { type: string; _sum: { amount: unknown } }[];
     });
 
+  // Excluded (blacklisted) user ids for the per-owned-code referral count
+  // below, resolved with the SAME default (non-search) semantics
+  // /users?affiliateCode=<code> and /users?affiliateOwnerId=<ownerId> use
+  // when reached via the plain "View referrals" link (no active search term
+  // → getExcludedUserIdsForAdminSearch's `isSearching: false` branch, which
+  // returns the FULL excluded_users blacklist regardless of
+  // includeAllBlacklisted). Without this, a referred user who is on the
+  // blacklist inflated the displayed count above what clicking through
+  // actually lists. Independent of `id` — resolved once and reused by the
+  // referral-count query promise below.
+  const ownedCodeReferralCountPromise = getExcludedUserIdsForAdminSearch({
+    includeAllBlacklisted: false,
+    isSearching: false,
+  })
+    .then((excludedUserIds) => {
+      const blacklistClause =
+        excludedUserIds.length > 0
+          ? Prisma.sql`AND acu.referred_user_id NOT IN (${Prisma.raw(escapeBlacklistIds(excludedUserIds))})`
+          : Prisma.empty;
+      return db.$queryRaw<Array<{ upper_code: string; referral_count: bigint | number | null }>>`
+        WITH codes AS (
+          SELECT UPPER(code) AS upper_code FROM affiliate_codes WHERE user_id = ${id}
+        )
+        SELECT c.upper_code,
+               COUNT(DISTINCT acu.referred_user_id) AS referral_count
+          FROM codes c
+          LEFT JOIN affiliate_code_usages acu
+                 ON UPPER(acu.code) = c.upper_code
+                ${blacklistClause}
+         GROUP BY c.upper_code
+      `;
+    })
+    .catch((e) => {
+      console.error("[getUserDetail] owned-code referral count query failed:", e);
+      return [] as Array<{ upper_code: string; referral_count: bigint | number | null }>;
+    });
+
   // Canonical P&L components (deposits, withdrawals, on-site balance,
   // inventory value, unclaimed vouchers) live in the shared helper so the
   // formula stays identical to dashboard / users-list. We only use the
@@ -671,28 +711,17 @@ export async function getUserDetail(id: string) {
     // no-usage_type-restriction semantics as getCodeReferrals/getCodeAnalytics
     // (creators-codes.ts), so the number shown next to each code here agrees
     // with what /users?affiliateCode=<code> ("View referrals" link,
-    // OwnedCodeRow below) actually lists. Keyed on `id` only (not on
-    // ownedCodeRows' resolved value) via its own `codes` CTE, so it runs in
-    // this same batch instead of a serial tail waiting on ownedCodeRows.
-    // UPPER(code) is index-backed on prod (idx_acu_upper_code — see
-    // prisma/recommended-indexes.sql #5c APPLIED STATUS), the same index the
-    // sibling live-affiliate-aggregate query below already relies on.
-    // .catch keeps a schema hiccup from taking down the whole aggregate —
-    // an empty array degrades every code's count to 0 via the Map lookup
-    // below, not a broken page.
-    db.$queryRaw<Array<{ upper_code: string; referral_count: bigint | number | null }>>`
-      WITH codes AS (
-        SELECT UPPER(code) AS upper_code FROM affiliate_codes WHERE user_id = ${id}
-      )
-      SELECT c.upper_code,
-             COUNT(DISTINCT acu.referred_user_id) AS referral_count
-        FROM codes c
-        LEFT JOIN affiliate_code_usages acu ON UPPER(acu.code) = c.upper_code
-       GROUP BY c.upper_code
-    `.catch((e) => {
-      console.error("[getUserDetail] owned-code referral count query failed:", e);
-      return [] as Array<{ upper_code: string; referral_count: bigint | number | null }>;
-    }),
+    // OwnedCodeRow below) actually lists — including the excluded_users
+    // blacklist exclusion that list applies (see ownedCodeReferralCountPromise
+    // above). Keyed on `id` only (not on ownedCodeRows' resolved value) via
+    // its own `codes` CTE, so it runs in this same batch instead of a serial
+    // tail waiting on ownedCodeRows. UPPER(code) is index-backed on prod
+    // (idx_acu_upper_code — see prisma/recommended-indexes.sql #5c APPLIED
+    // STATUS), the same index the sibling live-affiliate-aggregate query
+    // below already relies on. .catch keeps a schema hiccup from taking down
+    // the whole aggregate — an empty array degrades every code's count to 0
+    // via the Map lookup below, not a broken page.
+    ownedCodeReferralCountPromise,
     // Creator tips received + sent (both are creator_tip rows, split by
     // metadata.direction). Runs in parallel; resolves counterparty names
     // for the shown rows internally.
