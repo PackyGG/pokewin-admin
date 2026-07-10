@@ -52,6 +52,14 @@ export type UserDetail = {
       code: string;
       createdAt: string;
       isPrimary: boolean;
+      /**
+       * DISTINCT referred_user_id count from affiliate_code_usages for
+       * this code (UPPER(code) match, no usage_type restriction — same
+       * semantics as getCodeReferrals/getCodeAnalytics and the
+       * /users?affiliateCode= list filter). 0 when the code has never
+       * referred anyone.
+       */
+      referralCount: number;
     }>;
     affiliateCodeActive: boolean;
     affiliateCodeExpiresAt: string | null;

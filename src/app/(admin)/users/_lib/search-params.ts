@@ -179,6 +179,18 @@ const UsersSearchParamsSchema = z.object({
   // `/users?affiliateCode=<code>`. Same bound + trim as `search` above;
   // case-insensitivity is handled query-side (UPPER(code) comparison).
   affiliateCode: z.string().trim().max(200).optional(),
+  // Referral filter (all codes) — restricts the list to every user this
+  // OWNER (any of their codes) has ever referred, matched against
+  // `affiliate_code_usages.affiliate_user_id` (no code restriction, so it
+  // covers every code the owner has ever had, past or present). Sibling to
+  // `affiliateCode` above (per-code); the two are alternatives — only one
+  // applies at a time (see buildUserListWhereClause in
+  // src/lib/queries/users-list.ts). Set by the "View all referrals" link
+  // on the owned-codes card header (users/[id]/user-view-modern-tabs.tsx
+  // OwnCodeCard) via `/users?affiliateOwnerId=<owner user id>`. Same bound
+  // + trim as affiliateCode; this is a packy.gg user id, not a code
+  // string, so no case-folding is needed query-side.
+  affiliateOwnerId: z.string().trim().max(200).optional(),
   // No `.default()` on the sort pair: when the URL carries no sort the
   // query applies its OWN default (created_at desc), so leaving these
   // undefined preserves the existing happy-path ordering exactly. A

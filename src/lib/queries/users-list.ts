@@ -101,6 +101,16 @@ type UserListFilterInput = {
    * the same referred population with the standard user-list columns.
    */
   affiliateCode: string | undefined;
+  /**
+   * Restrict to users referred via ANY code owned by this affiliate/creator
+   * — matched against `affiliate_code_usages.affiliate_user_id` directly (no
+   * code restriction, so rotated/extra codes are all covered). Alternative
+   * to `affiliateCode` above (per-code vs all-codes-for-this-owner); only
+   * one applies at a time, `affiliateOwnerId` taking precedence if both are
+   * somehow set (see buildUserListWhereClause). This is a packy.gg user id,
+   * not a code string.
+   */
+  affiliateOwnerId: string | undefined;
   /** packy.gg user_ids from admin `excluded_users` — hidden from list results. */
   excludedUserIds: string[];
 };
@@ -305,6 +315,7 @@ function buildUserListWhereClause(
     role,
     status,
     affiliateCode,
+    affiliateOwnerId,
   } = input;
   const whereSql: string[] = [];
   const params: unknown[] = [];
@@ -380,7 +391,25 @@ function buildUserListWhereClause(
   else if (status === "locked") whereSql.push("u.is_locked = true");
   else if (status === "active")
     whereSql.push("u.is_banned = false AND u.is_locked = false");
-  if (affiliateCode) {
+  // affiliateOwnerId (all codes this owner has ever had) and affiliateCode
+  // (one specific code) are alternatives — only one applies at a time.
+  // affiliateOwnerId takes precedence in the (edge-case, not the main path)
+  // event both were somehow passed at once.
+  if (affiliateOwnerId) {
+    // Every user referred via ANY code this affiliate/creator owns —
+    // matched directly on affiliate_code_usages.affiliate_user_id, so
+    // rotated/extra codes are covered without needing the code strings.
+    // `affiliate_user_id` is the LEADING column of
+    // idx_affiliate_code_usages_affiliate_referred (applied on prod, see
+    // prisma/schema.prisma), so this is an index scan, not a seq scan.
+    params.push(affiliateOwnerId);
+    whereSql.push(
+      `u.id IN (
+        SELECT referred_user_id FROM affiliate_code_usages
+         WHERE affiliate_user_id = $${params.length}
+      )`,
+    );
+  } else if (affiliateCode) {
     // Same match this codebase already treats as authoritative for "who
     // was referred by this code" — getCodeReferrals / getCodeAnalytics
     // (creators-codes.ts) join affiliate_code_usages on
@@ -644,7 +673,8 @@ const cachedFilteredRankedUserIds = unstable_cache(
 /**
  * Route a ranking request to the long-TTL global cache when no filter is
  * active, or the short-TTL filtered cache otherwise. A search term, role
- * filter, status filter, or affiliateCode filter all count as "filtered".
+ * filter, status filter, affiliateCode filter, or affiliateOwnerId filter
+ * all count as "filtered".
  */
 function cachedRankedUserIds(
   input: RankedUserIdsInput,
@@ -653,7 +683,8 @@ function cachedRankedUserIds(
     !!input.searchTerm ||
     (!!input.role && input.role !== "all") ||
     !!input.status ||
-    !!input.affiliateCode;
+    !!input.affiliateCode ||
+    !!input.affiliateOwnerId;
   return isFiltered
     ? cachedFilteredRankedUserIds(input)
     : cachedGlobalRankedUserIds(input);
@@ -878,6 +909,13 @@ export async function getUsers(params: {
    * authoritative match this mirrors.
    */
   affiliateCode?: string;
+  /**
+   * Restrict to users referred via ANY code owned by this affiliate/creator
+   * — see the `affiliateOwnerId` field on {@link UserListFilterInput}.
+   * Alternative to `affiliateCode` (per-code vs all-codes-for-this-owner);
+   * only one applies at a time.
+   */
+  affiliateOwnerId?: string;
 }): Promise<PaginatedResult<UserListItem>> {
   const db = await getDb();
   const {
@@ -891,12 +929,19 @@ export async function getUsers(params: {
     searchMode = "prefix",
     includeExcludedInSearch = false,
     affiliateCode: affiliateCodeParam,
+    affiliateOwnerId: affiliateOwnerIdParam,
   } = params;
 
   const searchTerm = search?.trim();
   const isAnySearch = !!searchTerm;
-  const affiliateCode = affiliateCodeParam?.trim() || undefined;
+  const affiliateOwnerId = affiliateOwnerIdParam?.trim() || undefined;
+  // affiliateOwnerId (all codes) takes precedence over affiliateCode
+  // (one code) if both were somehow passed — see buildUserListWhereClause.
+  const affiliateCode = affiliateOwnerId
+    ? undefined
+    : affiliateCodeParam?.trim() || undefined;
   const hasAffiliateCodeFilter = !!affiliateCode;
+  const hasAffiliateOwnerIdFilter = !!affiliateOwnerId;
 
   const excludedUserIds = await getExcludedUserIdsForAdminSearch({
     includeAllBlacklisted: includeExcludedInSearch,
@@ -963,6 +1008,7 @@ export async function getUsers(params: {
     role,
     status,
     affiliateCode,
+    affiliateOwnerId,
     excludedUserIds,
   };
 
@@ -993,7 +1039,16 @@ export async function getUsers(params: {
       exactWhere.is_banned = false;
       exactWhere.is_locked = false;
     }
-    if (affiliateCode) {
+    if (affiliateOwnerId) {
+      // Same relation as the affiliateCode branch below, but constrained by
+      // affiliate_user_id (ANY code this owner has) instead of one code —
+      // mirrors the raw-SQL path's `u.id IN (SELECT referred_user_id FROM
+      // affiliate_code_usages WHERE affiliate_user_id = …)` so an
+      // exact-shaped search combined with an active affiliateOwnerId filter
+      // can't silently ignore it.
+      exactWhere.affiliate_code_usages_affiliate_code_usages_referred_user_idTouser =
+        { some: { affiliate_user_id: affiliateOwnerId } };
+    } else if (affiliateCode) {
       // Same relation the raw-SQL path's `u.id IN (SELECT referred_user_id
       // FROM affiliate_code_usages WHERE UPPER(code) = …)` targets — applied
       // here too so an exact-shaped search (id/email/discord) combined with
@@ -1186,14 +1241,16 @@ export async function getUsers(params: {
     if (
       isFreeFormTextSearch ||
       hasAffiliateCodeFilter ||
+      hasAffiliateOwnerIdFilter ||
       (skipHeavyRanking && RAW_SQL_SORTS.has(sortBy))
     ) {
-      // affiliateCode has no plain Prisma-`where` equivalent (it's a
-      // subquery against affiliate_code_usages, not a scalar column) — it
-      // ALWAYS routes through the raw-SQL column-sort path below
-      // (buildUserListWhereClause), same as free-form text search, so the
-      // filter can never be silently dropped by falling into the plain
-      // Prisma `where`/`orderBy` branch further down.
+      // affiliateCode / affiliateOwnerId have no plain Prisma-`where`
+      // equivalent (both are subqueries against affiliate_code_usages, not
+      // a scalar column) — either ALWAYS routes through the raw-SQL
+      // column-sort path below (buildUserListWhereClause), same as
+      // free-form text search, so the filter can never be silently dropped
+      // by falling into the plain Prisma `where`/`orderBy` branch further
+      // down.
       const effectiveSort =
         skipHeavyRanking && RAW_SQL_SORTS.has(sortBy) ? "created_at" : sortBy;
       const { ids, total: totalCount } = await cachedFilteredColumnSortUserIds(

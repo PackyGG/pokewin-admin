@@ -1600,9 +1600,28 @@ function OwnCodeCard({
     <Card className="border-l-4 border-l-purple-500/40">
       <CardContent className="space-y-4 pt-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">
-            Codes they own ({owned.length})
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">
+              Codes they own ({owned.length})
+            </p>
+            {/* Only worth its own link once there's more than one code —
+                with a single owned code this would be identical to that
+                code's own "View referrals" link in OwnedCodeRow below. */}
+            {owned.length > 1 && (
+              <Button
+                size="xs"
+                variant="ghost"
+                className="text-muted-foreground"
+                nativeButton={false}
+                render={
+                  <Link href={`/users?affiliateOwnerId=${encodeURIComponent(user.id)}`} />
+                }
+              >
+                <Users className="size-3" />
+                View all referrals
+              </Button>
+            )}
+          </div>
           <Button
             size="sm"
             variant="outline"
@@ -1619,6 +1638,7 @@ function OwnCodeCard({
                 key={c.code}
                 code={c.code}
                 createdAt={c.createdAt}
+                referralCount={c.referralCount}
                 userRole={user.role}
                 userId={user.id}
               />
@@ -1662,11 +1682,13 @@ function OwnCodeCard({
 function OwnedCodeRow({
   code,
   createdAt,
+  referralCount,
   userRole,
   userId,
 }: {
   code: string;
   createdAt: string;
+  referralCount: number;
   userRole: string;
   userId: string;
 }) {
@@ -1684,6 +1706,9 @@ function OwnedCodeRow({
           {code}
           <ArrowUpRight className="size-3 opacity-50 transition-opacity group-hover:opacity-100" />
         </Link>
+        <span className="text-[11px] text-muted-foreground">
+          {referralCount} {referralCount === 1 ? "referral" : "referrals"}
+        </span>
         <Button
           size="xs"
           variant="ghost"

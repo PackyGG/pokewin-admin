@@ -188,7 +188,9 @@ const DATA: UserDetail = {
     referredByUsername: null,
     referredByCode: null,
     affiliateCode: "FIXTURE10",
-    ownedCodes: [{ code: "FIXTURE10", createdAt: NOW_ISO, isPrimary: true }],
+    ownedCodes: [
+      { code: "FIXTURE10", createdAt: NOW_ISO, isPrimary: true, referralCount: 3 },
+    ],
     affiliateCodeActive: true,
     affiliateCodeExpiresAt: null,
     affiliateBonusOptedIn: true,

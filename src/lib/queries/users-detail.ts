@@ -561,6 +561,7 @@ export async function getUserDetail(id: string) {
     userPnl,
     wagerBreakdownResolved,
     ownedCodeRows,
+    ownedCodeReferralCountRows,
     tips,
     balancePoints,
     wagerLockedAgg,
@@ -664,6 +665,33 @@ export async function getUserDetail(id: string) {
       where: { user_id: id },
       orderBy: { created_at: "asc" },
       select: { code: true, created_at: true },
+    }),
+    // Per-owned-code referral counts for the "Codes they own" list — DISTINCT
+    // referred_user_id per code, same case-fold (UPPER(code)) and
+    // no-usage_type-restriction semantics as getCodeReferrals/getCodeAnalytics
+    // (creators-codes.ts), so the number shown next to each code here agrees
+    // with what /users?affiliateCode=<code> ("View referrals" link,
+    // OwnedCodeRow below) actually lists. Keyed on `id` only (not on
+    // ownedCodeRows' resolved value) via its own `codes` CTE, so it runs in
+    // this same batch instead of a serial tail waiting on ownedCodeRows.
+    // UPPER(code) is index-backed on prod (idx_acu_upper_code — see
+    // prisma/recommended-indexes.sql #5c APPLIED STATUS), the same index the
+    // sibling live-affiliate-aggregate query below already relies on.
+    // .catch keeps a schema hiccup from taking down the whole aggregate —
+    // an empty array degrades every code's count to 0 via the Map lookup
+    // below, not a broken page.
+    db.$queryRaw<Array<{ upper_code: string; referral_count: bigint | number | null }>>`
+      WITH codes AS (
+        SELECT UPPER(code) AS upper_code FROM affiliate_codes WHERE user_id = ${id}
+      )
+      SELECT c.upper_code,
+             COUNT(DISTINCT acu.referred_user_id) AS referral_count
+        FROM codes c
+        LEFT JOIN affiliate_code_usages acu ON UPPER(acu.code) = c.upper_code
+       GROUP BY c.upper_code
+    `.catch((e) => {
+      console.error("[getUserDetail] owned-code referral count query failed:", e);
+      return [] as Array<{ upper_code: string; referral_count: bigint | number | null }>;
     }),
     // Creator tips received + sent (both are creator_tip rows, split by
     // metadata.direction). Runs in parallel; resolves counterparty names
@@ -799,10 +827,22 @@ export async function getUserDetail(id: string) {
   // lets admins see drift between user.affiliate_code and what's
   // actually in the affiliate_codes table — and switch the primary
   // without touching the DB. (Rows fetched in the main Promise.all.)
+  // UPPER(code) -> distinct referred-user count, from the batched query
+  // above. The LEFT JOIN there means every owned code appears exactly once
+  // (a code with zero usage rows still gets one grouped row with
+  // referral_count = 0, not a missing row) — the `?? 0` on the Map lookup
+  // is just defence-in-depth for the .catch()-empty-array failure path.
+  const referralCountByUpperCode = new Map<string, number>(
+    ownedCodeReferralCountRows.map((r) => [
+      r.upper_code,
+      Number(r.referral_count ?? 0),
+    ]),
+  );
   const ownedCodes = ownedCodeRows.map((c) => ({
     code: c.code,
     createdAt: c.created_at.toISOString(),
     isPrimary: c.code === user.affiliate_code,
+    referralCount: referralCountByUpperCode.get(c.code.toUpperCase()) ?? 0,
   }));
   // Newest owned code — preserves the dropped findFirst(orderBy desc)
   // fallback: ownedCodeRows is sorted ASC, so the last element is the

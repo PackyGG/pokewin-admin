@@ -109,22 +109,24 @@ export default async function UsersPage({
     params.sortBy,
     params.sortOrder,
     params.affiliateCode,
+    params.affiliateOwnerId,
   ].join("|");
 
-  // "Clear" href for the affiliateCode filter chip below — drops ONLY
-  // `affiliateCode` from the current URL, keeping every other param (search,
-  // role, status, sort) intact. Built from the validated params object (not
-  // the raw searchParams) so a fuzzed/invalid value never leaks back into
-  // the URL.
-  const clearAffiliateCodeParams = new URLSearchParams();
-  if (params.search) clearAffiliateCodeParams.set("search", params.search);
-  if (params.match !== "prefix") clearAffiliateCodeParams.set("match", params.match);
-  if (params.role) clearAffiliateCodeParams.set("role", params.role);
-  if (params.status) clearAffiliateCodeParams.set("status", params.status);
-  if (params.sortBy) clearAffiliateCodeParams.set("sortBy", params.sortBy);
-  if (params.sortOrder) clearAffiliateCodeParams.set("sortOrder", params.sortOrder);
-  const clearAffiliateCodeHref = clearAffiliateCodeParams.size
-    ? `/users?${clearAffiliateCodeParams.toString()}`
+  // "Clear" href for the affiliateCode / affiliateOwnerId filter chip below
+  // — drops BOTH referral-filter params from the current URL (only one is
+  // ever active at a time, see buildUserListWhereClause), keeping every
+  // other param (search, role, status, sort) intact. Built from the
+  // validated params object (not the raw searchParams) so a fuzzed/invalid
+  // value never leaks back into the URL.
+  const clearAffiliateFilterParams = new URLSearchParams();
+  if (params.search) clearAffiliateFilterParams.set("search", params.search);
+  if (params.match !== "prefix") clearAffiliateFilterParams.set("match", params.match);
+  if (params.role) clearAffiliateFilterParams.set("role", params.role);
+  if (params.status) clearAffiliateFilterParams.set("status", params.status);
+  if (params.sortBy) clearAffiliateFilterParams.set("sortBy", params.sortBy);
+  if (params.sortOrder) clearAffiliateFilterParams.set("sortOrder", params.sortOrder);
+  const clearAffiliateFilterHref = clearAffiliateFilterParams.size
+    ? `/users?${clearAffiliateFilterParams.toString()}`
     : "/users";
 
   // MAIN-DB work streams below: the shell (hero + headings + toolbar)
@@ -175,22 +177,38 @@ export default async function UsersPage({
               chip system (DataTableToolbar only offers a generic "Clear"
               that resets every param at once), so this stays a plain text
               line rather than introducing a new chip subsystem for one
-              filter. Only rendered when the "View referrals" link
-              (users/[id] OwnedCodeRow) sent us here with `?affiliateCode=`. */}
-          {params.affiliateCode && (
+              filter. Only rendered when a "View referrals" / "View all
+              referrals" link (users/[id] OwnCodeCard / OwnedCodeRow) sent us
+              here with `?affiliateCode=` or `?affiliateOwnerId=`. The two
+              are alternatives (see buildUserListWhereClause), so at most one
+              of these renders. */}
+          {params.affiliateOwnerId ? (
             <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-              Showing referrals for code{" "}
-              <span className="font-mono font-medium text-foreground">
-                {params.affiliateCode}
-              </span>
+              Showing all referrals for this affiliate
               <Link
-                href={clearAffiliateCodeHref}
+                href={clearAffiliateFilterHref}
                 className="inline-flex items-center gap-0.5 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
               >
                 <X className="size-3" />
                 Clear
               </Link>
             </p>
+          ) : (
+            params.affiliateCode && (
+              <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                Showing referrals for code{" "}
+                <span className="font-mono font-medium text-foreground">
+                  {params.affiliateCode}
+                </span>
+                <Link
+                  href={clearAffiliateFilterHref}
+                  className="inline-flex items-center gap-0.5 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                >
+                  <X className="size-3" />
+                  Clear
+                </Link>
+              </p>
+            )
           )}
           <Suspense fallback={<Skeleton className="h-10 w-full" />}>
             <DataTableToolbar
@@ -335,6 +353,7 @@ async function UsersTableSection({
         searchMode: params.match === "contains" ? "substring" : "prefix",
         includeExcludedInSearch,
         affiliateCode: params.affiliateCode,
+        affiliateOwnerId: params.affiliateOwnerId,
       }),
     EMPTY_LIST,
     "users.list",
