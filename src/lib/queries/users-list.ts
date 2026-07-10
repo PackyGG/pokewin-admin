@@ -369,6 +369,29 @@ function buildUserListWhereClause(
         ? `\n            UNION
             SELECT id FROM "user" WHERE LOWER(id) LIKE $1 ESCAPE '\\'`
         : "";
+      // Affiliate/creator CODE ownership — a searchTerm that exactly
+      // (case-insensitively) matches a row in affiliate_codes surfaces that
+      // code's OWNER (affiliate_codes.user_id), same UPPER(code) case-fold
+      // this file already uses for the affiliateCode filter below. EXACT
+      // match only (bound as its own param, NOT the $1 LIKE pattern) —
+      // codes are short unique identifiers, not names, so this deliberately
+      // does not share the prefix/substring semantics of the handle/name
+      // legs above. UPPER() is required for correctness (read-only prod
+      // check, 2026-07-10: 12 of 1,036 affiliate_codes rows are NOT
+      // canonical-uppercase, so a plain `code = UPPER(term)` would silently
+      // miss them) — but `affiliate_codes.code`'s only index
+      // (affiliate_codes_code_unique) is a plain default-collation unique
+      // btree, which does NOT serve `UPPER(code) = …` (EXPLAIN ANALYZE
+      // against prod confirms a Seq Scan on affiliate_codes here, NOT an
+      // index scan). Flagged as prisma/recommended-indexes.sql #31
+      // (idx_affiliate_codes_upper_code) — table is only ~1k rows today so
+      // the scan is sub-millisecond and does not regress the pre-existing
+      // outer "user" scan in this same branch, but this leg is NOT yet
+      // index-backed per the Index-or-ClickHouse rule.
+      params.push(searchTerm.toUpperCase()); // $2 — exact code match
+      const affiliateCodeOwnerLeg = `
+            UNION
+            SELECT user_id AS id FROM affiliate_codes WHERE UPPER(code) = $2`;
       whereSql.push(
         `u.id IN (
           SELECT id FROM (
@@ -378,7 +401,7 @@ function buildUserListWhereClause(
             UNION
             SELECT id FROM "user" WHERE LOWER(name) LIKE $1 ESCAPE '\\'
             UNION
-            SELECT id FROM "user" WHERE LOWER(email) LIKE $1 ESCAPE '\\'${idLeg}
+            SELECT id FROM "user" WHERE LOWER(email) LIKE $1 ESCAPE '\\'${idLeg}${affiliateCodeOwnerLeg}
           ) matched
         )`,
       );
@@ -1117,6 +1140,23 @@ export async function getUsers(params: {
         { name: textMatch },
         { email: textMatch },
         { id: { equals: searchTerm, mode: "insensitive" } },
+        // Affiliate/creator CODE ownership — a searchTerm that exactly
+        // (case-insensitively) matches a row in `affiliate_codes` surfaces
+        // that CODE'S OWNER, mirroring what the raw-SQL free-form branch in
+        // buildUserListWhereClause does. EXACT match only (codes are short
+        // unique identifiers, not names) — never loosen this leg to
+        // startsWith/contains. NOT yet index-backed for the case-insensitive
+        // match (see the UPPER(code) note + prisma/recommended-indexes.sql
+        // #31 in buildUserListWhereClause) — this Prisma leg is also DEAD
+        // for actual free-form queries today (isFreeFormTextSearch always
+        // routes to the raw-SQL path below instead, per the #15 note in
+        // recommended-indexes.sql), kept in sync per this file's own
+        // documented Prisma-path/ranking-path invariant.
+        {
+          affiliate_codes: {
+            some: { code: { equals: searchTerm, mode: "insensitive" } },
+          },
+        },
       ];
     }
   }

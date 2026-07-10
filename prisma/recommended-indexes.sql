@@ -1113,3 +1113,50 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_inventory_user_id_obtained_at
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vouchers_user_id
   ON vouchers (user_id);
+
+-- #31 ----------------------------------------------------------------
+-- affiliate_codes.code — /users free-form search "find a code's owner" leg
+-- ===================================================================
+-- Added by the 2026-07-10 /users search extension (users-list.ts): a
+-- free-form search term that exactly (case-insensitively) matches an
+-- affiliate_codes.code row now surfaces that code's OWNER, via a new
+-- UNION leg in buildUserListWhereClause's free-form branch —
+--   SELECT user_id AS id FROM affiliate_codes WHERE UPPER(code) = $N
+-- — and the mirrored Prisma `{ affiliate_codes: { some: { code: {
+-- equals, mode:"insensitive" } } } }` leg in getUsers' (dead-for-free-form,
+-- kept-in-sync per this file's own documented invariant, see #15) plain
+-- `where.OR`.
+--
+-- UPPER() is required, not optional: a read-only check against prod
+-- (2026-07-10) shows 1,024 of 1,036 affiliate_codes rows are already
+-- canonical-uppercase, but 12 are NOT — a plain `code = UPPER($N)`
+-- equality (skipping the SQL-side UPPER(code)) would silently miss those
+-- 12 real codes whenever an admin doesn't paste the exact stored casing.
+-- Same case-fold convention #5's idx_acu_upper_code already established
+-- for affiliate_code_usages.code.
+--
+-- EXPLAIN ANALYZE (read-only, prod, 2026-07-10) confirms `code`'s ONLY
+-- existing index — `affiliate_codes_code_unique`, a plain default-collation
+-- unique btree — does NOT serve `UPPER(code) = $N` (functional/expression
+-- lookups need a matching expression index; a plain btree on the raw
+-- column cannot):
+--   Seq Scan on affiliate_codes  (cost=0.00..32.52 rows=5 width=33)
+--     Filter: (upper(code) = '...'::text)
+--     Rows Removed by Filter: 1036
+--   Execution Time: 0.970 ms
+-- (A bare `code = $N`, no UPPER(), DOES hit `affiliate_codes_code_unique`
+-- as an Index Scan — same finding #21 already made for that page's exact-
+-- code lookup — but that's the wrong semantics here, per the correctness
+-- note above.)
+--
+-- NOT APPLIED — flagged only. At today's prod size (1,036 affiliate_codes
+-- rows) the Seq Scan is sub-millisecond and does not make the pre-existing
+-- outer `user`-table scan in this same free-form branch (documented at #15)
+-- any worse — confirmed via EXPLAIN ANALYZE on the full combined free-form
+-- WHERE shape with this leg included. Per the Index-or-ClickHouse rule this
+-- specific leg is BLOCKED from being a true index-backed read until the
+-- owner applies the statement below; ship the feature now (correct,
+-- negligible-cost, and consistent with #21/#22/#29's precedent for a small,
+-- flagged, currently-cheap Seq Scan) and re-verify once applied:
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_affiliate_codes_upper_code
+  ON affiliate_codes (UPPER(code));
