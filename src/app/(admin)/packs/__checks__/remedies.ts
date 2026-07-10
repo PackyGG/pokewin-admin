@@ -63,6 +63,7 @@ import {
 } from "../_lib/auto-targets";
 import {
   computePinRemedies,
+  computePinRemediesMeta,
   computeTagGuidance,
   monotoneFitWindow,
   pinShortfallHumanCopy,
@@ -381,6 +382,75 @@ check("B (fully pinned, edge −22.4%): NO remedy exists — [] + the interlock 
   assert(/pins interlock/i.test(copy), `copy must carry the interlock verdict — got: ${copy}`);
   assert(/unpin two or more/i.test(copy), "copy points at the multi-pin way out");
   assert(copy.includes("$432.50") && copy.includes("11.08%"), "copy names price + target");
+});
+
+// ── 3b. Sweep meta: budget + the all-pinned fast path (the 16-pin hang) ──
+check("meta parity: computePinRemedies delegates — unbudgeted A5 meta is the SAME catalog, sweepComplete, not allPinned", () => {
+  const meta = computePinRemediesMeta({ ...tailsInput, pinnedShares: PINS_A5, maxRemedies: 10 });
+  assert(meta.sweepComplete === true, "unbudgeted sweep completes");
+  assert(meta.allPinned === false, "A5 leaves c6/c7 free");
+  const key = (r: PinRemedy) => `${r.kind}:${r.cardIndex ?? ""}:${r.toPct ?? ""}:${r.price ?? ""}`;
+  assert(
+    JSON.stringify(meta.remedies.map(key)) === JSON.stringify(remA5.map(key)),
+    "the meta catalog IS the legacy catalog",
+  );
+});
+
+check("B all-pinned fast path: raise/lower structurally skipped — the WHOLE sweep fits in base+unpins+price solves", () => {
+  // 1 base + 9 unpins + 8 price probes = 18 solves. Pre-fast-path the
+  // raise/lower scans alone burned ~650 solves on this pool — a budget this
+  // tight only completes because an all-pinned pool skips them wholesale
+  // (pins are EXACT and must sum to 100%: with zero free cards, every
+  // single-pin raise/lower is a guaranteed structural refusal).
+  const meta = computePinRemediesMeta({
+    ...tailsInput,
+    pinnedShares: PINS_B,
+    maxRemedies: 10,
+    maxSolves: 18,
+  });
+  assert(meta.allPinned === true, "every card carries a pin");
+  assert(meta.sweepComplete === true, "the fast-path sweep completes within 18 solves");
+  assert(meta.remedies.length === 0, `expected [], got ${meta.remedies.map((r) => r.kind).join(",")}`);
+  const copy = pinShortfallHumanCopy({
+    price: TAILS.price,
+    targetEdge: tailsT.targetEdge,
+    remedies: meta.remedies,
+    sweepComplete: meta.sweepComplete,
+    allPinned: meta.allPinned,
+  });
+  assert(/Every card is pinned/.test(copy), `all-pinned copy leads — got: ${copy}`);
+  assert(/unpin two or more/i.test(copy), "copy points at the multi-pin way out");
+  assert(/approve edited pool/i.test(copy), "copy points at the verbatim write");
+  assert(
+    !copy.includes("every raise, lower, unpin and in-budget price move was tried"),
+    "the skipped raise/lower scans are never claimed as tried",
+  );
+});
+
+check("budget honesty: a starved A5 sweep reports sweepComplete=false and claims nothing unverified", () => {
+  const meta = computePinRemediesMeta({
+    ...tailsInput,
+    pinnedShares: PINS_A5,
+    maxRemedies: 10,
+    maxSolves: 3,
+  });
+  assert(meta.sweepComplete === false, "3 solves cannot finish the A5 sweep");
+  assert(
+    meta.remedies.every((r) => r.verified === true),
+    "whatever survived the budget is still solver-verified",
+  );
+  const copy = pinShortfallHumanCopy({
+    price: TAILS.price,
+    targetEdge: tailsT.targetEdge,
+    remedies: [],
+    sweepComplete: false,
+  });
+  assert(/solve budget/i.test(copy), `budget-cut copy owns the cut — got: ${copy}`);
+  assert(/unpin two or more/i.test(copy), "copy still points at the multi-pin way out");
+  assert(
+    !copy.includes("every raise, lower, unpin and in-budget price move was tried"),
+    "a cut sweep never claims the full enumeration ran",
+  );
 });
 
 check("pinShortfallHumanCopy: refusal detail rides along + the smallest verified fix leads", () => {

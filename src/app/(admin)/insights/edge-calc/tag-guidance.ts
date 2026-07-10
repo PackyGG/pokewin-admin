@@ -2633,6 +2633,30 @@ export type PinRemedyInput = {
   priceBudgetPct?: number;
   /** Cap on emitted remedies (default 4). */
   maxRemedies?: number;
+  /**
+   * Total solver-call budget for the WHOLE sweep (scans + bisects + snap
+   * walks + unpins + price probes). The hand-authored workspace shape pins
+   * EVERY row — unbudgeted that is O(pins × ~70 solves) ≈ minutes of CPU at
+   * 16 pins while the plan panel spins on a 20s client timeout. When the
+   * budget runs dry the sweep stops and returns what verified so far
+   * (`sweepComplete: false` on {@link computePinRemediesMeta}'s shape).
+   * Default: unbudgeted (the original harness contract).
+   */
+  maxSolves?: number;
+};
+
+/** {@link computePinRemediesMeta}'s shape: the catalog + sweep honesty. */
+export type PinRemedySweep = {
+  remedies: PinRemedy[];
+  /** FALSE ⇒ the solve budget ran dry before every candidate was tried. */
+  sweepComplete: boolean;
+  /**
+   * TRUE ⇒ every pool card carries a pin. Raise/lower is then structurally
+   * dead (pins are held EXACT and must sum to 100% — with no free card to
+   * absorb a single pin's change, every such candidate refuses), so the
+   * sweep skips straight to unpins + price moves.
+   */
+  allPinned: boolean;
 };
 
 /** Human step grid for a pin percentage (the odds-editor's display steps). */
@@ -2658,6 +2682,10 @@ const pctFmt = (pct: number): string => {
 };
 
 export function computePinRemedies(input: PinRemedyInput): PinRemedy[] {
+  return computePinRemediesMeta(input).remedies;
+}
+
+export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
   const price = input.price;
   const pins = (input.pinnedShares ?? []).filter(
     (p) =>
@@ -2667,7 +2695,17 @@ export function computePinRemedies(input: PinRemedyInput): PinRemedy[] {
       p.index >= 0 &&
       p.index < input.cards.length,
   );
-  if (!(price > 0) || pins.length === 0 || input.cards.length === 0) return [];
+  // Every pool card pinned ⇒ the raise/lower axis is structurally dead (see
+  // the field doc on {@link PinRemedySweep.allPinned}).
+  const allPinned =
+    input.cards.length > 0 &&
+    new Set(pins.map((p) => p.index)).size === input.cards.length;
+  if (!(price > 0) || pins.length === 0 || input.cards.length === 0) {
+    return { remedies: [], sweepComplete: true, allPinned };
+  }
+  const maxSolves = input.maxSolves ?? Number.POSITIVE_INFINITY;
+  let solveCount = 0;
+  let budgetExhausted = false;
   const winRateTol = input.winRateTol ?? 0.02;
   // Mirror of the retune-params lottery gate: hitRate ≤ 12% AND the target
   // win-rate IS the tag ⇒ the staged solve ran tag-HARD.
@@ -2681,6 +2719,14 @@ export function computePinRemedies(input: PinRemedyInput): PinRemedy[] {
     cand: readonly ShapeWeightsPinnedShare[],
     atPrice: number,
   ): { ok: boolean; edge: number } => {
+    // Budget gate: over budget every further candidate reads as a refusal —
+    // that can only shrink or end searches, never mint an unverified accept
+    // (every emitted remedy came from a REAL accepting solve below).
+    if (solveCount >= maxSolves) {
+      budgetExhausted = true;
+      return { ok: false, edge: 0 };
+    }
+    solveCount += 1;
     // Verify through the SAME engine the server retune runs at this exact
     // price (band 0): tagged core solve / hard hold → soft float, plus the
     // LAW M rescue ladder — a remedy is only ever claimed when the plan the
@@ -2734,7 +2780,9 @@ export function computePinRemedies(input: PinRemedyInput): PinRemedy[] {
 
   // Remedies only exist against a REFUSED base — an accepting base has
   // nothing to repair.
-  if (verify(pins, price).ok) return [];
+  if (verify(pins, price).ok) {
+    return { remedies: [], sweepComplete: !budgetExhausted, allPinned };
+  }
 
   let pinTotal = 0;
   for (const p of pins) pinTotal += p.share;
@@ -2814,7 +2862,14 @@ export function computePinRemedies(input: PinRemedyInput): PinRemedy[] {
   const edgePct = (e: number): string => (e * 100).toFixed(2);
 
   // ── RAISE / LOWER per pin (the smallest wins) ─────────────────────────────
-  for (const p of pins) {
+  // Skipped wholesale on an all-pinned pool: pins are held EXACT and the
+  // shares must sum to 100% — with zero free cards to absorb the delta,
+  // every single-pin raise/lower is a guaranteed structural refusal. The
+  // hand-authored workspace pool (owner types every row → every row pinned)
+  // used to burn the full 36-sample scan per pin per direction here just to
+  // conclude nothing works.
+  for (const p of allPinned ? [] : pins) {
+    if (budgetExhausted) break;
     const card = input.cards[p.index];
     if (!card || !(card.value > 0)) continue;
     const v = card.value;
@@ -2875,6 +2930,7 @@ export function computePinRemedies(input: PinRemedyInput): PinRemedy[] {
   // ── UNPIN — only where no verified adjust exists (adjusting preserves the
   //    owner's intent; the full unpin is the stronger cut) ───────────────────
   for (const p of pins) {
+    if (budgetExhausted) break;
     if (adjustedIdx.has(p.index)) continue;
     const card = input.cards[p.index];
     if (!card) continue;
@@ -2908,6 +2964,7 @@ export function computePinRemedies(input: PinRemedyInput): PinRemedy[] {
     }
     mults.sort((a, b) => Math.abs(a - 1) - Math.abs(b - 1));
     for (const mult of mults) {
+      if (budgetExhausted) break;
       const cent = Math.round(price * mult * 100) / 100;
       if (!(cent > 0) || Math.abs(cent - price) < 0.005) continue;
       const r = verify(pins, cent);
@@ -2944,7 +3001,11 @@ export function computePinRemedies(input: PinRemedyInput): PinRemedy[] {
       deltaOf(a) - deltaOf(b) ||
       (a.cardIndex ?? 0) - (b.cardIndex ?? 0),
   );
-  return remedies.slice(0, Math.max(1, input.maxRemedies ?? 4));
+  return {
+    remedies: remedies.slice(0, Math.max(1, input.maxRemedies ?? 4)),
+    sweepComplete: !budgetExhausted,
+    allPinned,
+  };
 }
 
 /**
@@ -2959,12 +3020,26 @@ export function pinShortfallHumanCopy(args: {
   /** The engine refusal's `limit.detail` ($ figures), when available. */
   refusalDetail?: string | null;
   remedies: readonly PinRemedy[];
+  /** FALSE ⇒ the sweep hit its solve budget — never claim "every … was tried". */
+  sweepComplete?: boolean;
+  /** TRUE ⇒ every pool card is pinned (raise/lower structurally dead). */
+  allPinned?: boolean;
 }): string {
   const head = `The pinned odds can't reach the ${(args.targetEdge * 100).toFixed(2)}% edge target at ${usd(args.price)}.`;
   const detail = args.refusalDetail?.trim().replace(/\s+/g, " ") ?? "";
   const why =
     detail.length > 0 ? ` ${detail}${/[.!?]$/.test(detail) ? "" : "."}` : "";
   if (args.remedies.length === 0) {
+    if (args.allPinned === true) {
+      return `${head}${why} Every card is pinned, so the tuner has no room left to shape — ${
+        args.sweepComplete === false
+          ? "and the unpin sweep stopped at its solve budget before trying every card"
+          : "every unpin and in-budget price move was tried against the solver"
+      }. The pins interlock: unpin two or more cards to give the tuner room — or use Approve edited pool to write the typed odds verbatim.`;
+    }
+    if (args.sweepComplete === false) {
+      return `${head}${why} No verified fix surfaced before the remedy search hit its solve budget — with this many pins not every raise, lower and unpin could be tried. The pins interlock: unpin two or more cards, or rebuild the pin set.`;
+    }
     return `${head}${why} No single-pin change fixes this — every raise, lower, unpin and in-budget price move was tried against the solver. The pins interlock: unpin two or more cards, or rebuild the pin set.`;
   }
   const first = args.remedies[0]!;
@@ -3060,6 +3135,10 @@ export type PackTuneVerdictInput = {
   targetEdge: number;
   /** Precomputed pin remedies (staged pins-infeasible arm only). */
   pinRemedies?: readonly PinRemedy[] | null;
+  /** Remedy-sweep meta ({@link computePinRemediesMeta}) — copy honesty. */
+  pinSweepComplete?: boolean;
+  /** TRUE ⇒ every pool card is pinned — the verbatim-write CTA leads. */
+  pinsAllPinned?: boolean;
 };
 
 export function buildPackTuneVerdict(
@@ -3099,10 +3178,18 @@ export function buildPackTuneVerdict(
           targetEdge: input.targetEdge,
           refusalDetail: limit.detail,
           remedies,
+          ...(input.pinSweepComplete !== undefined
+            ? { sweepComplete: input.pinSweepComplete }
+            : {}),
+          ...(input.pinsAllPinned !== undefined
+            ? { allPinned: input.pinsAllPinned }
+            : {}),
         }),
         action:
           remedies[0]?.humanCopy ??
-          "Unpin two or more cards, or rebuild the pin set.",
+          (input.pinsAllPinned === true
+            ? "Unpin at least one card to give the tuner room — or use Approve edited pool to write the typed odds verbatim."
+            : "Unpin two or more cards, or rebuild the pin set."),
         pinRemedies: remedies,
       };
     }

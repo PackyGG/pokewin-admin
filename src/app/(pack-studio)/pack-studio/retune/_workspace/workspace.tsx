@@ -807,8 +807,12 @@ export function RetuneWorkspace({
           plan: old && old.key === key ? old.plan : null,
         });
       });
+      // `lite`: the dry-run needs the feasibility verdict fast — it re-fires
+      // 800ms after every typing pause, so the ±60% wide-probe suggestion is
+      // skipped and the pin-remedy sweep runs on the tight solve budget. The
+      // real plan (on Apply) computes the full catalog.
       const { data, error } = await safeQueryOrNull(
-        () => planPackTune(packId, stagedPlanInput(merged), null),
+        () => planPackTune(packId, stagedPlanInput(merged), { lite: true }),
         PREFLIGHT_CONTEXT,
         PLAN_TIMEOUT_MS,
       );

@@ -41,7 +41,7 @@ import {
   derivePoolEditPlan,
   pruneNoOpSuggestions,
   buildPackTuneVerdict,
-  computePinRemedies,
+  computePinRemediesMeta,
   type TagGuidance,
   type LadderShape,
   type TuneSuggestion,
@@ -2184,18 +2184,22 @@ export type PackTunePlan = {
  * operator gated (auth OUTSIDE the cache). READ-ONLY — writes nothing.
  * Returns `null` when the pack is out of scope (inactive / price ≤ 0 / not
  * found). `opts.fresh` bypasses the 60s live-arm cache (the manual Re-plan
- * recovery path); staged calls are always uncached.
+ * recovery path); staged calls are always uncached. `opts.lite` is the
+ * pre-flight dry-run mode (fires 800ms after every typing pause): the
+ * verdict + feasibility are identical, but the ±60% wide-probe suggestion is
+ * skipped and the pin-remedy sweep runs on a tighter solve budget — the
+ * full catalog belongs to the real plan, not to a keystroke.
  */
 export async function planPackTune(
   packId: string,
   staged?: PackTuneStagedInput | null,
-  opts?: { fresh?: boolean } | null,
+  opts?: { fresh?: boolean; lite?: boolean } | null,
 ): Promise<PackTunePlan | null> {
   await requireRetuneOwner();
   if (!isUuid(packId)) throw new Error("Invalid pack id");
 
   if (staged != null) {
-    return planPackTuneStagedUncached(packId, staged);
+    return planPackTuneStagedUncached(packId, staged, opts?.lite === true);
   }
   if (opts?.fresh === true) {
     return planPackTuneLiveUncached(packId);
@@ -2886,6 +2890,16 @@ async function planPackTuneLiveUncached(
   };
 }
 
+// Pin-remedy solve budgets (total solver calls across the WHOLE sweep). A
+// verify is a full band-0 engine solve (~30-80ms on workspace pools); the
+// real plan's budget keeps planPackTune comfortably under the client's 20s
+// timeout even stacked on the base solve + guidance + wide probe, and the
+// pre-flight's keeps the typing loop snappy. The all-pinned fast path inside
+// `computePinRemediesMeta` makes the hand-authored shape (every row pinned)
+// ~pins solves regardless of these caps.
+const PIN_REMEDY_SOLVE_BUDGET = 120;
+const PIN_REMEDY_SOLVE_BUDGET_LITE = 40;
+
 /**
  * The STAGED arm — the write's read/solve phase via the SAME
  * `resolveAndShapeStagedPool` pass `applyStagedPackEditAndRetune` runs, with
@@ -2898,6 +2912,7 @@ async function planPackTuneLiveUncached(
 async function planPackTuneStagedUncached(
   packId: string,
   staged: PackTuneStagedInput,
+  lite = false,
 ): Promise<PackTunePlan | null> {
   // Scope probe (indexed PK read): a plan for an inactive / unpriced /
   // deleted pack is out of scope — return null (data, not a throw) so the
@@ -3126,7 +3141,11 @@ async function planPackTuneStagedUncached(
       : outcome.snapped !== true || stagedShapeDegenerate === true
     : true; // refused staged solve → always probe
   let stagedWideProbeSuggestion: TuneSuggestion | null = null;
+  // `lite` (pre-flight dry-run) skips the probe: it is a SUGGESTION sweep
+  // (up to ~120 pinned solves), pure cost for a feasibility readout that
+  // re-fires 800ms after every typing pause. The real plan re-probes.
   if (
+    !lite &&
     stagedNotMateriallyClean &&
     stagedProbeBudgetPct < RETUNE_MAX_PRICE_CHANGE_PCT
   ) {
@@ -3229,13 +3248,23 @@ async function planPackTuneStagedUncached(
   // fixes IN the plan (`verdict.pinRemedies` + the shortfall copy) — the
   // remedy probe re-verifies every candidate through the same engine the
   // staged solve ran, so a claimed fix is a plan the write would accept.
+  // BUDGETED (the owner's 16-pin hand-authored hang): unbudgeted the sweep
+  // is O(pins × ~70 solves) ≈ minutes while the client plan timeout is 20s —
+  // the panel spun on "Planning…" until a reload. The budget keeps the WHOLE
+  // planPackTune under the timeout; the pre-flight (`lite`) gets a tighter
+  // one — its job is the feasibility line, not the full remedy catalog.
   let stagedPinRemedies: PinRemedy[] | null = null;
+  let stagedPinSweepComplete = true;
+  let stagedPinsAllPinned = false;
   if (
     !outcome.ok &&
     outcome.limit?.kind === "pins-infeasible" &&
     stagedPinnedShares !== null
   ) {
-    stagedPinRemedies = computePinRemedies({
+    const remedySweep = computePinRemediesMeta({
+      maxSolves: lite
+        ? PIN_REMEDY_SOLVE_BUDGET_LITE
+        : PIN_REMEDY_SOLVE_BUDGET,
       cards: input.cards.map((c) => ({
         value: r.cardMetaById.get(c.cardId)?.value ?? 0,
       })),
@@ -3256,6 +3285,9 @@ async function planPackTuneStagedUncached(
       pinPrice: staged.pinPrice === true,
       priceBudgetPct: await readRetunePriceBudgetPct(),
     });
+    stagedPinRemedies = remedySweep.remedies;
+    stagedPinSweepComplete = remedySweep.sweepComplete;
+    stagedPinsAllPinned = remedySweep.allPinned;
   }
 
   // §risk-leverage: the CV band (widened to the live CV) + landed-CV exit. Band
@@ -3332,6 +3364,8 @@ async function planPackTuneStagedUncached(
     price: r.priceStaged,
     targetEdge: r.resolved.targetEdge,
     pinRemedies: stagedPinRemedies,
+    pinSweepComplete: stagedPinSweepComplete,
+    pinsAllPinned: stagedPinsAllPinned,
   });
 
   return {

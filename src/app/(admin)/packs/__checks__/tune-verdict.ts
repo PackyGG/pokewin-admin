@@ -387,6 +387,50 @@ check("pins-infeasible with NO remedies: honest interlock copy", () => {
   );
 });
 
+check("pins-infeasible, ALL cards pinned: the verbatim-write CTA leads", () => {
+  const v = buildPackTuneVerdict(
+    baseInput({
+      feasible: false,
+      limit: { kind: "pins-infeasible", detail: "Shortfall $8.72.", suggestion: "" },
+      pinsAllPinned: true,
+      pinSweepComplete: true,
+    }),
+  );
+  assert(v.kind === "pins-infeasible", `kind ${v.kind}`);
+  assert(
+    v.detail !== null &&
+      v.detail.includes("Every card is pinned") &&
+      /unpin two or more/i.test(v.detail) &&
+      /approve edited pool/i.test(v.detail),
+    `detail must carry the all-pinned + verbatim copy — got ${v.detail}`,
+  );
+  assert(
+    v.action !== null && /approve edited pool/i.test(v.action),
+    `action points at the verbatim write — got ${v.action}`,
+  );
+});
+
+check("pins-infeasible, budget-cut sweep: no false 'every … was tried' claim", () => {
+  const v = buildPackTuneVerdict(
+    baseInput({
+      feasible: false,
+      limit: { kind: "pins-infeasible", detail: "Shortfall $8.72.", suggestion: "" },
+      pinSweepComplete: false,
+    }),
+  );
+  assert(v.kind === "pins-infeasible", `kind ${v.kind}`);
+  assert(
+    v.detail !== null &&
+      /solve budget/i.test(v.detail) &&
+      !v.detail.includes("every raise, lower, unpin and in-budget price move was tried"),
+    `detail must own the budget cut honestly — got ${v.detail}`,
+  );
+  assert(
+    v.action === "Unpin two or more cards, or rebuild the pin set.",
+    `action ${v.action}`,
+  );
+});
+
 check("tag-contradiction outranks pins-infeasible", () => {
   const v = buildPackTuneVerdict(
     baseInput({
