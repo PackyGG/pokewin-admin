@@ -169,6 +169,16 @@ const UsersSearchParamsSchema = z.object({
   // the whole parse and resetting every other valid param to its default.
   role: UsersRoleFilter.optional().catch(undefined),
   status: UsersStatusFilter.optional().catch(undefined),
+  // Referral filter — restricts the list to users referred via THIS
+  // specific affiliate/creator code (matched against
+  // `affiliate_code_usages.code`, the same authoritative join
+  // getCodeReferrals / getCodeAnalytics in src/lib/queries/creators-codes.ts
+  // already use to answer "who did this code refer"). Set by the "View
+  // referrals" link on a user's owned-code row
+  // (users/[id]/user-view-modern-tabs.tsx OwnedCodeRow) via
+  // `/users?affiliateCode=<code>`. Same bound + trim as `search` above;
+  // case-insensitivity is handled query-side (UPPER(code) comparison).
+  affiliateCode: z.string().trim().max(200).optional(),
   // No `.default()` on the sort pair: when the URL carries no sort the
   // query applies its OWN default (created_at desc), so leaving these
   // undefined preserves the existing happy-path ordering exactly. A

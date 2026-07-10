@@ -54,6 +54,7 @@ import {
   Coins as CoinsIcon,
   Scale,
   ShieldAlert,
+  Users,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
@@ -1648,9 +1649,16 @@ function OwnCodeCard({
   );
 }
 
-// One row in the owned-codes list. Each row is a tappable link to
-// the code's stat page (or, for users with role=creator, the
-// creator dashboard which has the full deep-dive).
+// One row in the owned-codes list. The code chip links to the code
+// owner's own stat page (or, for users with role=creator, the creator
+// dashboard which has the full deep-dive); "View referrals" is a
+// separate, additional control that jumps to the existing /users list
+// pre-filtered to the users THIS code referred (?affiliateCode=, see
+// buildUserListWhereClause in src/lib/queries/users-list.ts — mirrors
+// the same affiliate_code_usages join getCodeReferrals/getCodeAnalytics
+// in src/lib/queries/creators-codes.ts already use for "who did this
+// code refer"). Two sibling links, not one wrapping link, so neither
+// nests inside the other.
 function OwnedCodeRow({
   code,
   createdAt,
@@ -1667,20 +1675,32 @@ function OwnedCodeRow({
       ? `/creators/${userId}`
       : `/users/${userId}`;
   return (
-    <Link
-      href={codeHref}
-      className="group flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 transition-colors hover:border-purple-500/30 hover:bg-purple-500/5"
-    >
+    <div className="group flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 transition-colors hover:border-purple-500/30 hover:bg-purple-500/5">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="inline-flex items-center gap-1 rounded-md bg-purple-500/15 px-2 py-1 font-mono text-sm font-semibold text-purple-700 dark:text-purple-300">
+        <Link
+          href={codeHref}
+          className="inline-flex items-center gap-1 rounded-md bg-purple-500/15 px-2 py-1 font-mono text-sm font-semibold text-purple-700 dark:text-purple-300 transition-colors hover:bg-purple-500/25"
+        >
           {code}
           <ArrowUpRight className="size-3 opacity-50 transition-opacity group-hover:opacity-100" />
-        </span>
+        </Link>
+        <Button
+          size="xs"
+          variant="ghost"
+          className="text-muted-foreground"
+          nativeButton={false}
+          render={
+            <Link href={`/users?affiliateCode=${encodeURIComponent(code)}`} />
+          }
+        >
+          <Users className="size-3" />
+          View referrals
+        </Button>
       </div>
       <span className="text-[11px] text-muted-foreground">
         added <RelativeTime date={createdAt} />
       </span>
-    </Link>
+    </div>
   );
 }
 

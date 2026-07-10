@@ -91,6 +91,16 @@ type UserListFilterInput = {
   searchMode: UserSearchMode;
   role: string | undefined;
   status: string | undefined;
+  /**
+   * Restrict to users referred via this SPECIFIC affiliate/creator code —
+   * matched against `affiliate_code_usages.code` (case-insensitively, same
+   * as every other code-driven query in this codebase). This is the same
+   * authoritative "who did this code refer" join `getCodeReferrals` /
+   * `getCodeAnalytics` (src/lib/queries/creators-codes.ts) already use for
+   * the Creator Hub economics tables — mirrored here so `/users` can show
+   * the same referred population with the standard user-list columns.
+   */
+  affiliateCode: string | undefined;
   /** packy.gg user_ids from admin `excluded_users` — hidden from list results. */
   excludedUserIds: string[];
 };
@@ -294,6 +304,7 @@ function buildUserListWhereClause(
     searchMode,
     role,
     status,
+    affiliateCode,
   } = input;
   const whereSql: string[] = [];
   const params: unknown[] = [];
@@ -369,6 +380,26 @@ function buildUserListWhereClause(
   else if (status === "locked") whereSql.push("u.is_locked = true");
   else if (status === "active")
     whereSql.push("u.is_banned = false AND u.is_locked = false");
+  if (affiliateCode) {
+    // Same match this codebase already treats as authoritative for "who
+    // was referred by this code" — getCodeReferrals / getCodeAnalytics
+    // (creators-codes.ts) join affiliate_code_usages on
+    // `UPPER(code) = UPPER($param)` with no usage_type filter, so a user
+    // counts as referred by ANY usage row (signup, deposit, or wager).
+    // Mirrored verbatim here, just applied to the /users list instead of
+    // the creator-economics columns. UPPER(code) is index-backed on prod
+    // (idx_acu_upper_code, applied 2026-07-10 — see
+    // prisma/recommended-indexes.sql #5c); confirmed via read-only EXPLAIN
+    // ANALYZE against prod (Bitmap Index Scan, no seq scan on
+    // affiliate_code_usages).
+    params.push(affiliateCode.toUpperCase());
+    whereSql.push(
+      `u.id IN (
+        SELECT referred_user_id FROM affiliate_code_usages
+         WHERE UPPER(code) = $${params.length}
+      )`,
+    );
+  }
   if (input.excludedUserIds.length > 0) {
     whereSql.push(
       `u.id NOT IN (${escapeBlacklistIds(input.excludedUserIds)})`,
@@ -613,7 +644,7 @@ const cachedFilteredRankedUserIds = unstable_cache(
 /**
  * Route a ranking request to the long-TTL global cache when no filter is
  * active, or the short-TTL filtered cache otherwise. A search term, role
- * filter, or status filter all count as "filtered".
+ * filter, status filter, or affiliateCode filter all count as "filtered".
  */
 function cachedRankedUserIds(
   input: RankedUserIdsInput,
@@ -621,7 +652,8 @@ function cachedRankedUserIds(
   const isFiltered =
     !!input.searchTerm ||
     (!!input.role && input.role !== "all") ||
-    !!input.status;
+    !!input.status ||
+    !!input.affiliateCode;
   return isFiltered
     ? cachedFilteredRankedUserIds(input)
     : cachedGlobalRankedUserIds(input);
@@ -840,6 +872,12 @@ export async function getUsers(params: {
    * are included in results. Only set after `canCurrentAdminIncludeExcludedInSearch`.
    */
   includeExcludedInSearch?: boolean;
+  /**
+   * Restrict to users referred via this specific affiliate/creator code —
+   * see the `affiliateCode` field on {@link UserListFilterInput} for the
+   * authoritative match this mirrors.
+   */
+  affiliateCode?: string;
 }): Promise<PaginatedResult<UserListItem>> {
   const db = await getDb();
   const {
@@ -852,10 +890,13 @@ export async function getUsers(params: {
     sortOrder = "desc",
     searchMode = "prefix",
     includeExcludedInSearch = false,
+    affiliateCode: affiliateCodeParam,
   } = params;
 
   const searchTerm = search?.trim();
   const isAnySearch = !!searchTerm;
+  const affiliateCode = affiliateCodeParam?.trim() || undefined;
+  const hasAffiliateCodeFilter = !!affiliateCode;
 
   const excludedUserIds = await getExcludedUserIdsForAdminSearch({
     includeAllBlacklisted: includeExcludedInSearch,
@@ -921,6 +962,7 @@ export async function getUsers(params: {
     searchMode,
     role,
     status,
+    affiliateCode,
     excludedUserIds,
   };
 
@@ -950,6 +992,14 @@ export async function getUsers(params: {
     else if (status === "active") {
       exactWhere.is_banned = false;
       exactWhere.is_locked = false;
+    }
+    if (affiliateCode) {
+      // Same relation the raw-SQL path's `u.id IN (SELECT referred_user_id
+      // FROM affiliate_code_usages WHERE UPPER(code) = …)` targets — applied
+      // here too so an exact-shaped search (id/email/discord) combined with
+      // an active affiliateCode filter can't silently ignore it.
+      exactWhere.affiliate_code_usages_affiliate_code_usages_referred_user_idTouser =
+        { some: { code: { equals: affiliateCode, mode: "insensitive" } } };
     }
 
     const exactWhereFiltered = withExcludedUsers(exactWhere, excludedUserIds);
@@ -1135,8 +1185,15 @@ export async function getUsers(params: {
 
     if (
       isFreeFormTextSearch ||
+      hasAffiliateCodeFilter ||
       (skipHeavyRanking && RAW_SQL_SORTS.has(sortBy))
     ) {
+      // affiliateCode has no plain Prisma-`where` equivalent (it's a
+      // subquery against affiliate_code_usages, not a scalar column) — it
+      // ALWAYS routes through the raw-SQL column-sort path below
+      // (buildUserListWhereClause), same as free-form text search, so the
+      // filter can never be silently dropped by falling into the plain
+      // Prisma `where`/`orderBy` branch further down.
       const effectiveSort =
         skipHeavyRanking && RAW_SQL_SORTS.has(sortBy) ? "created_at" : sortBy;
       const { ids, total: totalCount } = await cachedFilteredColumnSortUserIds(

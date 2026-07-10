@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Users, Ban, Archive, UserPlus, AlertTriangle } from "lucide-react";
+import { Users, Ban, Archive, UserPlus, AlertTriangle, X } from "lucide-react";
 import { getUsers, getUsersListStats } from "@/lib/queries/users";
 import { requirePageAccess } from "@/lib/dal";
 import { safeQuery } from "@/lib/errors/safe-query";
@@ -108,7 +108,24 @@ export default async function UsersPage({
     params.status,
     params.sortBy,
     params.sortOrder,
+    params.affiliateCode,
   ].join("|");
+
+  // "Clear" href for the affiliateCode filter chip below — drops ONLY
+  // `affiliateCode` from the current URL, keeping every other param (search,
+  // role, status, sort) intact. Built from the validated params object (not
+  // the raw searchParams) so a fuzzed/invalid value never leaks back into
+  // the URL.
+  const clearAffiliateCodeParams = new URLSearchParams();
+  if (params.search) clearAffiliateCodeParams.set("search", params.search);
+  if (params.match !== "prefix") clearAffiliateCodeParams.set("match", params.match);
+  if (params.role) clearAffiliateCodeParams.set("role", params.role);
+  if (params.status) clearAffiliateCodeParams.set("status", params.status);
+  if (params.sortBy) clearAffiliateCodeParams.set("sortBy", params.sortBy);
+  if (params.sortOrder) clearAffiliateCodeParams.set("sortOrder", params.sortOrder);
+  const clearAffiliateCodeHref = clearAffiliateCodeParams.size
+    ? `/users?${clearAffiliateCodeParams.toString()}`
+    : "/users";
 
   // MAIN-DB work streams below: the shell (hero + headings + toolbar)
   // paints immediately after the cheap auth/gate reads above; the KPI
@@ -154,6 +171,27 @@ export default async function UsersPage({
       <div className="space-y-3">
         <SectionHeading icon={Users} title="All Users" />
         <FadeIn className="space-y-4">
+          {/* Minimal active-filter indicator — /users has no per-filter
+              chip system (DataTableToolbar only offers a generic "Clear"
+              that resets every param at once), so this stays a plain text
+              line rather than introducing a new chip subsystem for one
+              filter. Only rendered when the "View referrals" link
+              (users/[id] OwnedCodeRow) sent us here with `?affiliateCode=`. */}
+          {params.affiliateCode && (
+            <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+              Showing referrals for code{" "}
+              <span className="font-mono font-medium text-foreground">
+                {params.affiliateCode}
+              </span>
+              <Link
+                href={clearAffiliateCodeHref}
+                className="inline-flex items-center gap-0.5 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              >
+                <X className="size-3" />
+                Clear
+              </Link>
+            </p>
+          )}
           <Suspense fallback={<Skeleton className="h-10 w-full" />}>
             <DataTableToolbar
               searchPlaceholder="Search by username, email, user ID, or Discord ID..."
@@ -296,6 +334,7 @@ async function UsersTableSection({
         // anything else (the default) → left-anchored prefix match.
         searchMode: params.match === "contains" ? "substring" : "prefix",
         includeExcludedInSearch,
+        affiliateCode: params.affiliateCode,
       }),
     EMPTY_LIST,
     "users.list",
