@@ -437,16 +437,26 @@ export async function getPackEditPool(packId: string): Promise<EditPool> {
 
 /**
  * OWNER HARD LAW (2026-07-11): "never got over the allowed ticket amount,
- * never lie to me about it." The ONLY lawful ticket totals a pool write may
- * carry are the engine's two canonical scales — per-100k (free solves) and
- * per-1e9 (pinned solves, `PIN_SCALE`). Every row must be a whole ticket ≥ 1
- * (a 0-ticket prod row renders in the pool but can never drop — a display
- * lie). Runs on the FINAL rows each writer persists (post cap-omission),
+ * never lie to me about it."
+ *
+ * CORRECTED 2026-07-12 (incident): the first cut of this gate demanded the
+ * total equal exactly 100k or 1e9 — factually WRONG. The engine gcd-reduces
+ * every final vector (free QUANT path after edge bumps AND the pinned
+ * PIN_SCALE layout), so lawful totals are arbitrary reduced integers by
+ * design; odds are weight/total at ANY total, and the UI reads the true
+ * total (tickets-truth). The exact-set check refused nearly every lawful
+ * write. The REAL law this gate can and must enforce:
+ *   • every persisted row carries a WHOLE ticket count ≥ 1 (a 0-ticket prod
+ *     row renders in the pool but can never drop — a display lie), and
+ *   • the pool total never exceeds 1e9 tickets (`PIN_SCALE` — the engine's
+ *     largest scale, chosen to stay under the int4 `pack_cards.weight`
+ *     bound: "never got over the allowed ticket amount").
+ * Runs on the FINAL rows each writer persists (post cap-omission),
  * fail-closed BEFORE snapshot + transaction, with a best-effort refusal
  * audit. There is no bypass: verbatim, drafts and shaped writers all pass
  * through here.
  */
-const CANONICAL_TICKET_TOTALS: readonly number[] = [100_000, 1_000_000_000];
+const MAX_TICKET_TOTAL = 1_000_000_000;
 
 function assertCanonicalTicketTotal(
   rows: readonly { card_id: string; weight: number }[],
@@ -462,7 +472,7 @@ function assertCanonicalTicketTotal(
   );
   let total = 0;
   for (const r of rows) total += r.weight;
-  const ok = bad === undefined && CANONICAL_TICKET_TOTALS.includes(total);
+  const ok = bad === undefined && total >= 1 && total <= MAX_TICKET_TOTAL;
   if (ok) return;
   void createAdminAuditEvent({
     adminUserId: audit.adminUserId,
@@ -472,7 +482,7 @@ function assertCanonicalTicketTotal(
       name: audit.packName,
       writer: audit.writer,
       attempted_ticket_total: total,
-      allowed_totals: [...CANONICAL_TICKET_TOTALS],
+      max_ticket_total: MAX_TICKET_TOTAL,
       ...(bad !== undefined
         ? { bad_card_id: bad.card_id, bad_weight: bad.weight }
         : {}),
@@ -484,7 +494,7 @@ function assertCanonicalTicketTotal(
   throw new Error(
     bad !== undefined
       ? `Refused: card ${bad.card_id} would be written with ${bad.weight} tickets — every card must carry a whole ticket count of at least 1 (owner ticket law).`
-      : `Refused: the pool's ticket total would be ${total.toLocaleString("en-US")}, but only exactly 100,000 (free) or 1,000,000,000 (pinned) tickets are allowed — the displayed odds would not be the odds players get (owner ticket law).`,
+      : `Refused: the pool's ticket total would be ${total.toLocaleString("en-US")}, above the allowed maximum of ${MAX_TICKET_TOTAL.toLocaleString("en-US")} tickets (owner ticket law).`,
   );
 }
 
