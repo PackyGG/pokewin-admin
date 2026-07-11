@@ -36,7 +36,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   BalanceAdjustDialog,
-  ManualWithdrawalDialog,
   XpAdjustDialog,
 } from "./user-tabs-dialogs";
 import { extendVaultLock, refreshUserDetailCache } from "./actions";
@@ -193,6 +192,58 @@ export function PanelRow({
   );
 }
 
+// Compact "mini-box" stat tile rendered INSIDE a StatPanel's breakdown grid
+// (the small boxes-inside-the-box the dashboard uses). Replaces the old
+// vertical PanelRow list so the three Overview panels stay short + equal
+// height. Flat + neutral by design: one hairline border + a subtle
+// `bg-muted/40` inset on the card surface, `rounded-lg`, NO glow / gradient /
+// sheen — matches the just-shipped flat pilot. The accent lives only on the
+// value number (House-POV tinted where it's money) via `valueClassName`.
+//   • `sub`    — optional tiny caption under the value (e.g. the Vault
+//                unlock-at timestamp, the Locked wager-progress hint).
+//   • `action` — optional top-right affordance on the label row (e.g. the
+//                Vault "Remove"/freeze button).
+//   • `className` — grid escape hatch, e.g. `col-span-2` for a wide tile.
+function PanelStat({
+  label,
+  value,
+  valueClassName,
+  sub,
+  action,
+  className,
+}: {
+  label: string;
+  value: React.ReactNode;
+  valueClassName?: string;
+  sub?: string | null;
+  action?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex min-w-0 flex-col rounded-lg border border-border bg-muted/40 px-2.5 py-2",
+        className,
+      )}
+    >
+      <div className="flex items-center justify-between gap-1.5">
+        <p className="min-w-0 truncate text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+          {label}
+        </p>
+        {action}
+      </div>
+      <p className={cn("mt-1 truncate text-sm font-semibold tabular-nums", valueClassName)}>
+        {value}
+      </p>
+      {sub ? (
+        <p className="mt-0.5 truncate text-[10px] uppercase tracking-wider text-muted-foreground/70">
+          {sub}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 // Compact rolling-P&L chip for the Platform-P&L panel footer (24h / 7d).
 // House POV — must match the panel's main P&L number coloring exactly:
 //   value > 0  → house gained  → emerald
@@ -258,6 +309,7 @@ function LockedRowWithRemove({
   removeKind,
   onRemoveClick,
   showRemove = true,
+  className,
 }: {
   label: string;
   amount: number;
@@ -272,6 +324,9 @@ function LockedRowWithRemove({
   // (used for the wager-debt row, which has no backend unlock action).
   // Defaults to true so the Vault row keeps its Remove button unchanged.
   showRemove?: boolean;
+  // Grid escape hatch forwarded to the underlying PanelStat mini-box
+  // (e.g. `col-span-2` so the Locked pocket spans the full breakdown grid).
+  className?: string;
 }) {
   // Vault: wired to the freeze-for-10-years flow when an onRemoveClick
   // handler is supplied; otherwise (defensive fallback) shows the same
@@ -284,57 +339,44 @@ function LockedRowWithRemove({
       ? "Vault freeze action not available in this context"
       : "Clear wager debt via the dedicated Wager Requirement card (audit + 2FA flow); inline Remove not wired yet";
 
-  // Mirrors the optional-sub variant of PanelRow so the Vault / Locked
-  // rows stay visually aligned with every other row in the breakdown.
-  const valueNode = (
-    <div className="flex items-center gap-1.5 shrink-0">
-      <span className={cn("font-medium tabular-nums", valueClassName)}>
-        {formatCurrency(amount)}
-      </span>
-      {amount > 0 && showRemove ? (
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={!enabled}
-          onClick={enabled ? onRemoveClick : undefined}
-          className={cn(
-            "h-5 px-1.5 text-[10px] font-semibold uppercase tracking-wider",
-            enabled
-              ? "text-rose-600 hover:text-rose-600 hover:bg-rose-500/10 dark:text-rose-400 dark:hover:text-rose-400"
-              : "text-amber-600 dark:text-amber-400",
-          )}
-          title={removeTitle}
-          aria-label={
-            enabled
-              ? `Freeze ${label.toLowerCase()} balance for 10 years`
-              : `Force unlock ${label.toLowerCase()} balance (not yet implemented)`
-          }
-        >
-          <Lock className="size-3 shrink-0" />
-          Remove
-        </Button>
-      ) : null}
-    </div>
-  );
+  // The Vault / Locked pockets render as the SAME mini-box as every other
+  // breakdown stat (via PanelStat); the only extra is the trailing Remove
+  // affordance in the box's top-right action slot (Vault: enabled freeze
+  // flow; Locked: suppressed via showRemove=false → no button at all).
+  const removeButton =
+    amount > 0 && showRemove ? (
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={!enabled}
+        onClick={enabled ? onRemoveClick : undefined}
+        className={cn(
+          "h-5 shrink-0 px-1.5 text-[10px] font-semibold uppercase tracking-wider",
+          enabled
+            ? "text-rose-600 hover:text-rose-600 hover:bg-rose-500/10 dark:text-rose-400 dark:hover:text-rose-400"
+            : "text-amber-600 dark:text-amber-400",
+        )}
+        title={removeTitle}
+        aria-label={
+          enabled
+            ? `Freeze ${label.toLowerCase()} balance for 10 years`
+            : `Force unlock ${label.toLowerCase()} balance (not yet implemented)`
+        }
+      >
+        <Lock className="size-3 shrink-0" />
+        Remove
+      </Button>
+    ) : null;
 
-  if (sub) {
-    return (
-      <div className="flex items-start justify-between gap-3 py-1 text-sm">
-        <div className="min-w-0">
-          <div className="text-muted-foreground">{label}</div>
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 truncate">
-            {sub}
-          </div>
-        </div>
-        {valueNode}
-      </div>
-    );
-  }
   return (
-    <div className="flex items-center justify-between py-1 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      {valueNode}
-    </div>
+    <PanelStat
+      label={label}
+      value={formatCurrency(amount)}
+      valueClassName={valueClassName}
+      sub={sub}
+      action={removeButton}
+      className={className}
+    />
   );
 }
 
@@ -343,7 +385,6 @@ export function ModernBalancePanel({
   userId,
   pnl7d,
   canAdjustBalance = false,
-  canRecordManualWithdrawal = false,
 }: {
   balances: UserDetail["balances"];
   userId?: string;
@@ -354,10 +395,8 @@ export function ModernBalancePanel({
   // server→client boundary.
   pnl7d?: number;
   canAdjustBalance?: boolean;
-  canRecordManualWithdrawal?: boolean;
 }) {
   const [adjustOpen, setAdjustOpen] = useState(false);
-  const [manualOpen, setManualOpen] = useState(false);
   const [vaultFreezeOpen, setVaultFreezeOpen] = useState(false);
   // Soft-refresh the page server data when the admin clicks the icon —
   // re-runs the parent server components without a hard browser
@@ -453,10 +492,6 @@ export function ModernBalancePanel({
     return `${formatCurrency(progress)} wagered · ${formatCurrency(debt)} to clear`;
   })();
   const showAdjust = canAdjustBalance && Boolean(userId);
-  // Show the manual-withdrawal button whenever the admin has the
-  // capability — it's also useful at $0 balance for backfilling
-  // historical off-platform payouts so P&L counts them.
-  const showManual = canRecordManualWithdrawal && Boolean(userId);
   return (
     <StatPanel
       title="Balances"
@@ -472,12 +507,12 @@ export function ModernBalancePanel({
           {formatCurrency(total)}
         </p>
       </div>
-      <div className="mt-4 space-y-0.5 border-t pt-3">
-        <PanelRow label="Cash" value={formatCurrency(balances.availableBalance)} />
+      <div className="mt-4 grid grid-cols-2 gap-2 border-t pt-3">
+        <PanelStat label="Cash" value={formatCurrency(balances.availableBalance)} />
         {/* Vault — cooldown-locked balance (user's own money, just not
             spendable yet). BLUE/muted neutral: it IS the user's money.
-            Trailing "Remove" affordance is shipped DISABLED — see
-            LockedRowWithRemove for why (no backend unlock action exists). */}
+            Trailing "Remove" affordance freezes the vault for 10 years —
+            see LockedRowWithRemove. */}
         <LockedRowWithRemove
           label="Vault"
           amount={balances.lockedBalance}
@@ -490,10 +525,13 @@ export function ModernBalancePanel({
               : undefined
           }
         />
+        <PanelStat label="Inventory" value={formatCurrency(balances.inventoryValue)} />
+        <PanelStat label="Vouchers" value={formatCurrency(balances.vouchersValue)} />
         {/* Locked — wager-requirement debt (bonus dollars spendable on
             wagers but reserved from withdrawal until cleared). AMBER
             warning: spendable but not withdrawable. Hidden if the column
-            isn't on this DB. No inline Remove affordance (showRemove=false):
+            isn't on this DB. Spans the full grid width so its wager-progress
+            sub-line has room. No inline Remove affordance (showRemove=false):
             clearing wager-req debt goes through a backend-API path
             (clearUserWagerRequirementAction) the panel doesn't own, so the
             trailing button is suppressed rather than shown disabled. */}
@@ -505,34 +543,20 @@ export function ModernBalancePanel({
             sub={lockedSub}
             removeKind="wager"
             showRemove={false}
+            className="col-span-2"
           />
         )}
-        <PanelRow label="Inventory" value={formatCurrency(balances.inventoryValue)} />
-        <PanelRow label="Vouchers" value={formatCurrency(balances.vouchersValue)} />
       </div>
-      {(showAdjust || showManual) && (
-        <div className="mt-3 pt-3 border-t space-y-2">
-          {showAdjust && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full"
-              onClick={() => setAdjustOpen(true)}
-            >
-              Adjust Balance
-            </Button>
-          )}
-          {showManual && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full text-rose-600 hover:text-rose-600 dark:text-rose-400 dark:hover:text-rose-400 border-rose-500/40 hover:bg-rose-500/10"
-              onClick={() => setManualOpen(true)}
-              title="Record an off-platform payout (deducts on-site balance + bumps total_withdrawn so PnL stays correct)"
-            >
-              Record Manual Withdrawal
-            </Button>
-          )}
+      {showAdjust && (
+        <div className="mt-3 pt-3 border-t">
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={() => setAdjustOpen(true)}
+          >
+            Adjust Balance
+          </Button>
         </div>
       )}
       {showAdjust && userId && (
@@ -544,14 +568,6 @@ export function ModernBalancePanel({
           pnl7d={pnl7d}
           open={adjustOpen}
           onOpenChange={setAdjustOpen}
-        />
-      )}
-      {showManual && userId && (
-        <ManualWithdrawalDialog
-          userId={userId}
-          availableBalance={balances.availableBalance}
-          open={manualOpen}
-          onOpenChange={setManualOpen}
         />
       )}
       {userId && balances.lockedBalance > 0 && (
@@ -760,19 +776,24 @@ export function ModernPnlPanel({
           {formatCurrency(pnl)}
         </p>
       </div>
-      <div className="mt-4 space-y-0.5 border-t pt-3">
-        <PanelRow label="Deposited" value={formatCurrency(deposits)} />
-        <PanelRow label="Withdrawn" value={formatCurrency(withdrawals)} />
+      <div className="mt-4 grid grid-cols-2 gap-2 border-t pt-3">
+        <PanelStat label="Deposited" value={formatCurrency(deposits)} />
+        <PanelStat label="Withdrawn" value={formatCurrency(withdrawals)} />
         {vouchersValue > 0 ? (
-          <PanelRow label="Unclaimed vouchers" value={`-${formatCurrency(vouchersValue)}`} />
+          <PanelStat
+            label="Unclaimed vouchers"
+            value={`-${formatCurrency(vouchersValue)}`}
+          />
         ) : null}
-        <PanelRow
+        {/* Bonuses given — house handed the user money (house-loss side) →
+            rose. When the Unclaimed-vouchers box is absent this is the 3rd
+            (odd) box, so it spans the full grid width to avoid a lonely
+            half-tile. */}
+        <PanelStat
           label="Bonuses given"
-          value={
-            <span className="text-rose-500">
-              -{formatCurrency(pnlBreakdown.bonusesCost)}
-            </span>
-          }
+          value={`-${formatCurrency(pnlBreakdown.bonusesCost)}`}
+          valueClassName="text-rose-500"
+          className={vouchersValue > 0 ? undefined : "col-span-2"}
         />
       </div>
       {/* Compact rolling-P&L footer — the full 12h/24h/3d/7d/14d ladder was
@@ -837,14 +858,15 @@ export function ModernActivityPanel({
           </p>
         </div>
       </div>
-      <div className="mt-4 space-y-0.5 border-t pt-3">
-        <PanelRow label="Packs Opened" value={String(statistics?.openedPacks ?? 0)} />
-        <PanelRow label="Battles Played" value={String(statistics?.battlesPlayed ?? 0)} />
-        <PanelRow label="Inventory Items" value={String(inventoryCount)} />
-        <PanelRow label="Avg Deposit" value={formatCurrency(avgDeposit)} />
-        <PanelRow
+      <div className="mt-4 grid grid-cols-2 gap-2 border-t pt-3">
+        <PanelStat label="Packs Opened" value={String(statistics?.openedPacks ?? 0)} />
+        <PanelStat label="Battles Played" value={String(statistics?.battlesPlayed ?? 0)} />
+        <PanelStat label="Inventory Items" value={String(inventoryCount)} />
+        <PanelStat label="Avg Deposit" value={formatCurrency(avgDeposit)} />
+        <PanelStat
           label="Avg House Edge"
           value={balances && balances.totalWagered > 0 ? `${houseEdge.toFixed(2)}%` : "—"}
+          className="col-span-2"
         />
       </div>
       {showXpAdjust && (

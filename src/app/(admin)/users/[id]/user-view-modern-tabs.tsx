@@ -29,6 +29,7 @@ import {
 import { assignAffiliateCode, fetchUserAttributionJourney } from "./actions";
 import type { AttributionJourneyEntry } from "@/lib/queries/users";
 import { SetAffiliateCodeDialog } from "./user-tabs-creator";
+import { ManualWithdrawalDialog } from "./user-tabs-dialogs";
 import {
   Wallet,
   TrendingUp,
@@ -289,7 +290,6 @@ function PnlFedPanelsStreamed({
         userId={user.id}
         pnl7d={r.error ? undefined : r.data.pnl7d}
         canAdjustBalance={capabilities.canAdjustBalance}
-        canRecordManualWithdrawal={capabilities.canRecordManualWithdrawal}
       />
       {r.error ? (
         <BandError
@@ -1743,6 +1743,52 @@ function OwnedCodeRow({
 //  ACCOUNT TAB
 // ───────────────────────────────────────────────────────────────────
 
+// "Record manual withdrawal" account action — relocated here from the
+// Balances panel (Overview tab) so account-level balance actions live on the
+// Account tab. Pure dialog trigger: no data fetch until the admin submits, so
+// it carries no Active-Timeframe-Only cost (and the whole Account tab is only
+// mounted when active anyway). The dialog + server-action wiring are unchanged
+// — recording still deducts the user's on-site balance and bumps
+// total_withdrawn so P&L stays correct.
+function AccountManualWithdrawal({
+  userId,
+  availableBalance,
+}: {
+  userId: string;
+  availableBalance: number;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Card>
+        <CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Record a manual withdrawal</p>
+            <p className="text-xs text-muted-foreground">
+              Log an off-platform payout — deducts the user&apos;s on-site
+              balance and bumps total withdrawn so P&amp;L stays correct.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0 border-rose-500/40 text-rose-600 hover:bg-rose-500/10 hover:text-rose-600 dark:text-rose-400 dark:hover:text-rose-400"
+            onClick={() => setOpen(true)}
+          >
+            Record Manual Withdrawal
+          </Button>
+        </CardContent>
+      </Card>
+      <ManualWithdrawalDialog
+        userId={userId}
+        availableBalance={availableBalance}
+        open={open}
+        onOpenChange={setOpen}
+      />
+    </>
+  );
+}
+
 export function AccountTab({
   data,
   notesPromise,
@@ -1827,6 +1873,21 @@ export function AccountTab({
             canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
           />
         </Suspense>
+      )}
+
+      {/* Record manual withdrawal — relocated here from the Overview
+          Balances panel. Grouped with the balance-mutation surfaces above
+          (admin adjustments) since it's the same class of action. Gated by
+          the capability; also useful at $0 balance for backfilling past
+          off-platform payouts so P&L counts them. */}
+      {capabilities.canRecordManualWithdrawal && (
+        <>
+          <SectionHeading icon={ArrowUpFromLine} title="Manual Withdrawal" />
+          <AccountManualWithdrawal
+            userId={user.id}
+            availableBalance={balances?.availableBalance ?? 0}
+          />
+        </>
       )}
 
       <SectionHeading icon={ShieldCheck} title="Account Details" />
