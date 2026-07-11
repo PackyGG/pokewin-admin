@@ -927,8 +927,8 @@ async function CreatorsGridSection({
  * panel-shaped boxes (the 4 figure panels + the Leaderboard Spend and
  * Tips & Sponsor Spend panels) on the same responsive grid (1-up on
  * phones, 2 at sm, 4 at lg, 6 at xl). Shape matches the real `Card`
- * panels (tinted bg, header row, hero + sub) so there's no layout jank
- * when the data lands.
+ * panels (solid bg-card, header row, hero + sub) so there's no layout
+ * jank when the data lands.
  */
 function CreatorsKpiStripSkeleton() {
   return (
@@ -1121,7 +1121,7 @@ async function GlobalPnlTile({ tab }: { tab: CreatorsTab }) {
 
 function GlobalPnlTileSkeleton({ tab }: { tab: CreatorsTab }) {
   return (
-    <Card className="bg-blue-500/10">
+    <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <span className="text-card-title min-w-0 truncate text-muted-foreground">
           {pnlTileLabel(tab)}
@@ -1216,7 +1216,7 @@ async function NetGgrTile({
 
 function NetGgrTileSkeleton() {
   return (
-    <Card className="bg-cyan-500/10">
+    <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <span className="text-card-title min-w-0 truncate text-muted-foreground">
           Net Code-User GGR

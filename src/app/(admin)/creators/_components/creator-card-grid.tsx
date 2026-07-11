@@ -274,14 +274,7 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
   const initials = display.slice(0, 2).toUpperCase();
 
   return (
-    <div className="group relative overflow-hidden rounded-2xl border border-border/60 bg-card p-5 transition-all hover:-translate-y-px hover:border-border hover:shadow-lg sm:p-6">
-      {/* Subtle pink glow — only visible on hover for a quieter
-          default look. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-16 -top-16 size-40 rounded-full bg-pink-500/0 blur-3xl transition-colors duration-500 group-hover:bg-pink-500/[0.08]"
-      />
-
+    <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-card p-5 transition-all hover:border-border hover:shadow-sm sm:p-6">
       <div className="relative space-y-5">
         {/* IDENTITY */}
         <div className="flex items-start gap-3">
@@ -292,7 +285,7 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
           >
             <Avatar className="size-12 ring-2 ring-background">
               {creator.image && <AvatarImage src={creator.image} alt="" />}
-              <AvatarFallback className="bg-pink-500/15 text-sm font-semibold text-pink-700 dark:text-pink-300">
+              <AvatarFallback className="text-sm font-semibold">
                 {initials}
               </AvatarFallback>
             </Avatar>
@@ -535,7 +528,7 @@ function CreatorListRow({ creator }: { creator: CreatorWithSocials }) {
         >
           <Avatar className="size-8">
             {creator.image && <AvatarImage src={creator.image} alt="" />}
-            <AvatarFallback className="bg-pink-500/15 text-[11px] font-semibold text-pink-700 dark:text-pink-300">
+            <AvatarFallback className="text-[11px] font-semibold">
               {initials}
             </AvatarFallback>
           </Avatar>

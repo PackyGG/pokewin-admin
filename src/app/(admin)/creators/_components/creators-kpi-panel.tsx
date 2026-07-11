@@ -33,28 +33,23 @@ import {
  * as the dashboard section does.
  */
 
-// Panel + icon tints — same token set + same opacities as the dashboard
-// `PANEL_TINT` / `ICON_TINT`, so a /creators panel is visually identical to
-// a dashboard KPI box. Restricted to the accents the /creators strip uses.
-const PANEL_TINT = {
-  cyan: "bg-cyan-500/10",
-  purple: "bg-purple-500/10",
-  emerald: "bg-emerald-500/10",
-  pink: "bg-pink-500/10",
-  blue: "bg-blue-500/10",
-  rose: "bg-rose-500/10",
-} as const;
-
-export type CreatorsPanelTint = keyof typeof PANEL_TINT;
-
-const ICON_TINT: Record<CreatorsPanelTint, string> = {
+// Icon accent tints — the ONLY place a panel's accent color survives after
+// the flat pass. Same token set the dashboard KPI boxes use for the glyph,
+// but the per-hue Card FILL (the old `PANEL_TINT` `bg-<hue>-500/10`) was the
+// layered noise the flat direction removes: every /creators panel now renders
+// on a solid `bg-card` surface with a hairline ring (a plain <Card>), and the
+// accent lives ONLY on the header icon + the hero value number. Restricted to
+// the accents the /creators strip uses.
+const ICON_TINT = {
   cyan: "text-cyan-400",
   purple: "text-purple-400",
   emerald: "text-emerald-400",
   pink: "text-pink-400",
   blue: "text-blue-400",
   rose: "text-rose-400",
-};
+} as const;
+
+export type CreatorsPanelTint = keyof typeof ICON_TINT;
 
 /**
  * Generic panel shell shared by every /creators KPI box — a tinted `Card`
@@ -83,7 +78,10 @@ export function CreatorsKpiPanel({
   children: React.ReactNode;
 }) {
   return (
-    <Card className={PANEL_TINT[tint]}>
+    // Flat surface: a plain <Card> is already `bg-card` + a hairline ring, so
+    // the panel reads on a solid neutral surface — no per-hue fill. The accent
+    // survives only on the header icon (ICON_TINT) + the hero value inside.
+    <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <CardTitle className="text-card-title text-muted-foreground inline-flex min-w-0 items-center gap-1">
           <span className="truncate">{title}</span>
@@ -165,12 +163,10 @@ export function CreatorsPanelChip({
   format?: AnimatedNumberFormat;
   tone?: "neutral" | "emerald" | "rose";
 }) {
-  const border =
-    tone === "emerald"
-      ? "border-emerald-500/15"
-      : tone === "rose"
-        ? "border-rose-500/15"
-        : "border-border/60";
+  // Flat chip: a fixed hairline border + a neutral inset surface. The
+  // per-tone COLORED border (the old `border-<hue>-500/15`) was dropped in the
+  // flat pass — the accent survives only on the value number below (House-POV
+  // emerald/rose), never on the chip's border or surface.
   const valueColor =
     tone === "emerald"
       ? "text-emerald-600 dark:text-emerald-400"
@@ -178,12 +174,7 @@ export function CreatorsPanelChip({
         ? "text-rose-600 dark:text-rose-400"
         : "text-foreground";
   return (
-    <div
-      className={cn(
-        "rounded-md border bg-background/40 px-2 py-1.5 min-w-0",
-        border,
-      )}
-    >
+    <div className="rounded-md border border-border/60 bg-background/40 px-2 py-1.5 min-w-0">
       <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground truncate">
         {label}
       </p>
