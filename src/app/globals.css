@@ -306,6 +306,31 @@
   }
 }
 
+/* Reusable "hide the scrollbar, keep it scrollable" utility.
+ *
+ * Already referenced (as `no-scrollbar`) on a couple of existing scroll
+ * containers (sidebar content rail, command palette list) — this defines it
+ * so those pick it up too, instead of inventing a second name. Scoped to a
+ * single opt-in class, NOT applied to `*`, so it never touches scrollable
+ * areas elsewhere that intentionally keep their (already-themed-thin)
+ * scrollbar visible.
+ *
+ * Wheel / trackpad / drag-to-scroll all keep working — only the visible
+ * track + thumb are removed, cross-browser:
+ *   - Firefox: `scrollbar-width: none`
+ *   - old Edge / IE: `-ms-overflow-style: none`
+ *   - Chrome / Safari / other Blink+WebKit: `::-webkit-scrollbar { display: none }`
+ */
+@layer utilities {
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 /* Typography utility classes
  *
  * Mobile-first sizing: stat values shrink to text-xl on phones so that

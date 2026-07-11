@@ -625,8 +625,13 @@ export const CategoryTransactionsTable = React.memo(
             )}
           </div>
           {/* Wide multi-column transaction table — let it horizontal-scroll
-              inside the card on phone instead of forcing the page to scroll. */}
-          <div className="overflow-x-auto -mx-6 px-6 sm:mx-0 sm:px-0">
+              inside the card on phone instead of forcing the page to scroll.
+              `no-scrollbar` (globals.css) hides the track/thumb while wheel /
+              trackpad / drag-scroll keep working — this is the one scroll
+              container inside every CategoryTransactionsTable instance (Deposits
+              & Withdrawals, Gaming, Card Sales, Battle Vouchers, Admin
+              Adjustments all share this component). */}
+          <div className="overflow-x-auto -mx-6 px-6 sm:mx-0 sm:px-0 no-scrollbar">
           <Table>
             <TableHeader>
               <TableRow>
