@@ -100,19 +100,23 @@ export const ZERO_NEAR_MISS_FLOOR = 0.005;
 export const NEAR_MISS_COVERAGE_MIN = 0.05;
 
 /**
- * Server-side fail-closed safety floor for any direct pool write that bypasses
- * the auto-retune shaper (`applyPackEdit` writes operator weights verbatim;
- * `applyPackRetune` writes shaped weights). No matter what the operator
- * approved client-side, the server refuses to commit a pool whose computed
- * house edge lands below this fraction. 5% is intentionally generous vs. the
- * 10.99% edge-curve target (`TARGET_PACK_EDGE`) — the curve is the TARGET,
- * this is the absolute "never ship below this" guard rail. The client-side
- * double-confirm in the retune review is a UX defense and was demonstrably
- * bypassed once by a stale browser bundle; this server constant is the
- * backstop a stale client can never talk us out of. Lift only with deliberate
- * follow-up.
+ * Server-side fail-closed safety floor for EVERY pool write — verbatim
+ * (`applyPackEdit`, which the drafts push funnels through) AND solver-shaped
+ * (`applyPackRetune` / `applyStagedPackEditAndRetune` via the shared write
+ * verdict). No matter what the operator approved client-side, the server
+ * refuses to commit a pool whose computed house edge lands below this
+ * fraction.
+ *
+ * OWNER HARD LAW (2026-07-11): "never ever allow a push with a edge below
+ * 10.5%. clear rules, no around it." 10.5% supersedes the old 5% guard rail;
+ * it sits just under the ~11% edge-curve target (`TARGET_PACK_EDGE`) — the
+ * curve stays the TARGET, this is the absolute "never ship below" line, and
+ * the verbatim escape hatch is NOT exempt. The client-side disable copy
+ * (`MIN_PUSH_EDGE` in the retune plan-copy) mirrors this constant for UX
+ * only; THIS server constant is the backstop a stale client can never talk
+ * us out of. Lower again only on an explicit owner instruction.
  */
-export const EDIT_EDGE_FLOOR = 0.05;
+export const EDIT_EDGE_FLOOR = 0.105;
 
 /**
  * Per-pack compliance flags persisted in `pack_risk_scores.compliance` (JSON)

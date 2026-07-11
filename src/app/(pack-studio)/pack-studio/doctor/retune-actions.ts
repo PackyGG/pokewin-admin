@@ -434,6 +434,59 @@ export async function getPackEditPool(packId: string): Promise<EditPool> {
   };
 }
 
+/**
+ * OWNER HARD LAW (2026-07-11): "never got over the allowed ticket amount,
+ * never lie to me about it." The ONLY lawful ticket totals a pool write may
+ * carry are the engine's two canonical scales — per-100k (free solves) and
+ * per-1e9 (pinned solves, `PIN_SCALE`). Every row must be a whole ticket ≥ 1
+ * (a 0-ticket prod row renders in the pool but can never drop — a display
+ * lie). Runs on the FINAL rows each writer persists (post cap-omission),
+ * fail-closed BEFORE snapshot + transaction, with a best-effort refusal
+ * audit. There is no bypass: verbatim, drafts and shaped writers all pass
+ * through here.
+ */
+const CANONICAL_TICKET_TOTALS: readonly number[] = [100_000, 1_000_000_000];
+
+function assertCanonicalTicketTotal(
+  rows: readonly { card_id: string; weight: number }[],
+  audit: {
+    adminUserId: string;
+    packId: string;
+    packName: string;
+    writer: string;
+  },
+): void {
+  const bad = rows.find(
+    (r) => !Number.isInteger(r.weight) || r.weight < 1,
+  );
+  let total = 0;
+  for (const r of rows) total += r.weight;
+  const ok = bad === undefined && CANONICAL_TICKET_TOTALS.includes(total);
+  if (ok) return;
+  void createAdminAuditEvent({
+    adminUserId: audit.adminUserId,
+    eventType: "pack_write_refused_ticket_total",
+    metadata: {
+      pack_id: audit.packId,
+      name: audit.packName,
+      writer: audit.writer,
+      attempted_ticket_total: total,
+      allowed_totals: [...CANONICAL_TICKET_TOTALS],
+      ...(bad !== undefined
+        ? { bad_card_id: bad.card_id, bad_weight: bad.weight }
+        : {}),
+      card_count_attempted: rows.length,
+    },
+  }).catch(() => {
+    /* best-effort — never block the refusal */
+  });
+  throw new Error(
+    bad !== undefined
+      ? `Refused: card ${bad.card_id} would be written with ${bad.weight} tickets — every card must carry a whole ticket count of at least 1 (owner ticket law).`
+      : `Refused: the pool's ticket total would be ${total.toLocaleString("en-US")}, but only exactly 100,000 (free) or 1,000,000,000 (pinned) tickets are allowed — the displayed odds would not be the odds players get (owner ticket law).`,
+  );
+}
+
 /** One explicit card slot the operator approves — written verbatim. */
 export type EditPoolInputCard = {
   cardId: string;
@@ -681,7 +734,7 @@ export async function applyPackEdit(
       /* best-effort — never block the refusal */
     }
     throw new Error(
-      `Refused: edited pool produces ${(after.edge * 100).toFixed(2)}% house edge, below the ${(EDIT_EDGE_FLOOR * 100).toFixed(0)}% safety floor. Adjust the odds so the house keeps at least ${(EDIT_EDGE_FLOOR * 100).toFixed(0)}% margin, then re-approve.`,
+      `Refused: edited pool produces ${(after.edge * 100).toFixed(2)}% house edge, below the ${(EDIT_EDGE_FLOOR * 100).toFixed(1)}% floor (owner law). Adjust the odds so the house keeps at least ${(EDIT_EDGE_FLOOR * 100).toFixed(1)}% margin, then re-approve.`,
     );
   }
 
@@ -694,6 +747,15 @@ export async function applyPackEdit(
     animation: c.animation ?? false,
     order: c.order,
   }));
+
+  // Owner ticket law — the verbatim path is the likeliest to carry a hand-made
+  // overrun, and it is NOT exempt.
+  assertCanonicalTicketTotal(rows, {
+    adminUserId: session.userId,
+    packId,
+    packName: pack.name,
+    writer: "applyPackEdit",
+  });
 
   // Capture the PRIOR state into the ADMIN change history BEFORE the write below,
   // so this snapshot is the state the owner can revert TO. Best-effort: a snapshot
@@ -1594,7 +1656,7 @@ async function resolveAndShapeStagedPool(
   if (after.edge < EDIT_EDGE_FLOOR) {
     return refuse(
       "edge-floor",
-      `Refused: shaped pool produces ${(after.edge * 100).toFixed(2)}% house edge, below the ${(EDIT_EDGE_FLOOR * 100).toFixed(0)}% safety floor.`,
+      `Refused: shaped pool produces ${(after.edge * 100).toFixed(2)}% house edge, below the ${(EDIT_EDGE_FLOOR * 100).toFixed(1)}% floor (owner law).`,
     );
   }
 
@@ -1778,6 +1840,14 @@ export async function applyStagedPackEditAndRetune(
       order: c.order,
     })),
   );
+  // Owner ticket law — shaped weights are canonical by construction, but the
+  // law admits no by-construction trust: assert the FINAL persisted rows.
+  assertCanonicalTicketTotal(rows, {
+    adminUserId: session.userId,
+    packId,
+    packName: r.packName,
+    writer: "applyStagedPackEditAndRetune",
+  });
   // Audit trace of the omission — the engine predicate over the staged pool.
   const capRemovedCardIds = computeCapDroppedCardIds(
     input.cards.map((c) => ({
