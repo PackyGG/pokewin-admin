@@ -3,10 +3,6 @@ import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AdminHeader } from "@/components/admin-header";
 import { TopProgressBar } from "@/components/top-progress-bar";
-import {
-  TopbarHouseStats,
-  TopbarHouseStatsSkeleton,
-} from "@/components/topbar-house-stats";
 import { DockedChat } from "@/components/docked-chat";
 import { DockedRecentActivity } from "@/components/docked-recent-activity";
 import { LiveMoneyChat } from "@/components/live-money-chat";
@@ -378,38 +374,6 @@ export default async function AdminLayout({
             preferences={preferences}
             dbEnv={dbEnv}
             canSwitchDbEnv={canSwitchDbEnv}
-            // Admin-only top-bar house pills (all-time wager/deposit/
-            // withdrawal/GGR). Reuses the dashboard's 5-min-cached balances
-            // aggregate (no new query), and is wrapped in its OWN Suspense
-            // boundary so it streams independently and never blocks the
-            // header/shell — a slow read shows skeleton pills, then "—" on
-            // failure. Rendered only for the `admin` role; every other role
-            // sees the bar unchanged.
-            houseStatsSlot={
-              session.role === "admin" ? (
-                <Suspense
-                  // The skeleton pills otherwise pop in from blank the
-                  // instant this boundary mounts. Wrapping the fallback in a
-                  // soft fade-in (tw-animate-css, the same `animate-in
-                  // fade-in` the house motion system uses) eases them in
-                  // rather than hard-cutting. `motion-safe:` only — reduced-
-                  // motion users land on the final state with no tween. The
-                  // wrapper mirrors the skeleton's own `hidden md:flex`
-                  // breakpoint (`hidden md:block`) so it stays display:none
-                  // below md — no phantom flex-gap next to the avatar on
-                  // phones — and is only a real (animatable) box at md+ where
-                  // the pills actually show. The real stats replace it,
-                  // unwrapped, once they stream in.
-                  fallback={
-                    <div className="hidden md:block motion-safe:animate-in motion-safe:fade-in">
-                      <TopbarHouseStatsSkeleton />
-                    </div>
-                  }
-                >
-                  <TopbarHouseStats />
-                </Suspense>
-              ) : undefined
-            }
           />
           {/* Scrollable content region. This used to be a <main>, but the
               SidebarInset wrapper above is now the page's single <main>

@@ -4,10 +4,6 @@ import { redirect } from "next/navigation";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AdminHeader } from "@/components/admin-header";
 import { TopProgressBar } from "@/components/top-progress-bar";
-import {
-  TopbarHouseStats,
-  TopbarHouseStatsSkeleton,
-} from "@/components/topbar-house-stats";
 import { DockedRecentActivity } from "@/components/docked-recent-activity";
 import { LiveMoneyChat } from "@/components/live-money-chat";
 import { RightRailProvider } from "@/components/right-rail-context";
@@ -294,19 +290,6 @@ export default async function PackStudioLayout({
             preferences={preferences}
             dbEnv={dbEnv}
             canSwitchDbEnv={canSwitchDbEnv}
-            houseStatsSlot={
-              session.role === "admin" ? (
-                <Suspense
-                  fallback={
-                    <div className="hidden md:block motion-safe:animate-in motion-safe:fade-in">
-                      <TopbarHouseStatsSkeleton />
-                    </div>
-                  }
-                >
-                  <TopbarHouseStats />
-                </Suspense>
-              ) : undefined
-            }
           />
           <div
             data-admin-scroll
