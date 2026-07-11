@@ -175,25 +175,50 @@ export default function GlobalError({
             Server logs (Vercel Functions) have the stack — search the
             digest above.
           </p>
-          <button
-            type="button"
-            onClick={reset}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "0.5rem 0.875rem",
-              fontSize: "0.875rem",
-              fontWeight: 500,
-              borderRadius: 8,
-              border: "1px solid rgba(255,255,255,0.18)",
-              backgroundColor: "transparent",
-              color: "inherit",
-              cursor: "pointer",
-            }}
-          >
-            Try again
-          </button>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <button
+              type="button"
+              onClick={reset}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "0.5rem 0.875rem",
+                fontSize: "0.875rem",
+                fontWeight: 600,
+                borderRadius: 8,
+                border: "1px solid rgba(255,255,255,0.9)",
+                backgroundColor: "#e7e9ee",
+                color: "#0b0e15",
+                cursor: "pointer",
+              }}
+            >
+              Try again
+            </button>
+            {/* Full document reload back to the dashboard. A plain anchor
+                (not next/link) — the router/shell isn't mounted here, so we
+                fall back to a hard navigation, which also gives the broken
+                root layout a clean re-mount. */}
+            <a
+              href="/dashboard"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "0.5rem 0.875rem",
+                fontSize: "0.875rem",
+                fontWeight: 500,
+                borderRadius: 8,
+                border: "1px solid rgba(255,255,255,0.18)",
+                backgroundColor: "transparent",
+                color: "inherit",
+                textDecoration: "none",
+                cursor: "pointer",
+              }}
+            >
+              Back to dashboard
+            </a>
+          </div>
         </div>
       </body>
     </html>
