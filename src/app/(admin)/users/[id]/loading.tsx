@@ -24,16 +24,12 @@ export default function UserDetailLoading() {
         </div>
       </div>
 
-      {/* Modern user view: identity hero — gradient container with avatar
-          (+ status dot), name line, and a row of status / role pills.
-          Shaped to match the real UserViewModern header so the swap-in
-          doesn't jump from a flat block to a populated hero. */}
-      <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/60 p-4 sm:p-5">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-blue-500/[0.06] blur-2xl"
-        />
-        <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+      {/* Modern user view: identity hero — flat solid-card container with
+          avatar (+ status dot), name line, and a row of status / role pills.
+          Matches the real UserViewModern header (flat bg-card + hairline +
+          soft shadow) so the swap-in doesn't jump. */}
+      <div className="rounded-xl border bg-card p-4 shadow-sm sm:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div className="flex min-w-0 items-center gap-3">
             <Skeleton className="size-12 shrink-0 rounded-full sm:size-14" />
             <div className="min-w-0 space-y-2">
@@ -54,11 +50,11 @@ export default function UserDetailLoading() {
       <TabBarSkeleton count={5} />
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <Skeleton className="h-48 rounded-2xl" />
-        <Skeleton className="h-48 rounded-2xl" />
-        <Skeleton className="h-48 rounded-2xl" />
+        <Skeleton className="h-48 rounded-xl" />
+        <Skeleton className="h-48 rounded-xl" />
+        <Skeleton className="h-48 rounded-xl" />
       </div>
-      <Skeleton className="h-64 rounded-2xl" />
+      <Skeleton className="h-64 rounded-xl" />
     </div>
   );
 }

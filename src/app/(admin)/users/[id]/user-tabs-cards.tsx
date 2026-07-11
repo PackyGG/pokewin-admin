@@ -861,7 +861,7 @@ export const BalanceHistoryChart = React.memo(function BalanceHistoryChart({
       <CardContent>
         <ChartContainer
           config={balanceChartConfig}
-          className="h-[300px] w-full"
+          className="h-[300px] w-full [&_.recharts-cartesian-axis-tick_text]:tabular-nums"
         >
           <AreaChart data={chartData} accessibilityLayer>
             <defs>

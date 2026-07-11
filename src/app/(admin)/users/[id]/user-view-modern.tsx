@@ -376,18 +376,11 @@ export function UserViewModern({
   // hero scrolls out of view. The tab bar's own sticky behaviour is
   // untouched (the condensed bar layers above it on z-index).
   const heroNode = (
-    <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/60">
-        {/* Subtle blue glow top-right */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -right-24 -top-24 size-72 rounded-full bg-blue-500/[0.06] blur-3xl"
-        />
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -left-24 -bottom-24 size-72 rounded-full bg-purple-500/[0.06] blur-3xl"
-        />
-
-        <div className="relative p-3 sm:p-4 md:p-5">
+    <div className="rounded-xl border bg-card shadow-sm">
+        {/* Flat hero: solid bg-card + hairline border + a single very soft
+            shadow. The gradient fill and the two corner-glow blobs were the
+            layered depth noise the cleaner/flatter pilot removes. */}
+        <div className="p-4 sm:p-5">
           {/* Hero = balanced two-column header on lg+: identity on the LEFT,
               a compact KPI tile grid on the RIGHT. Below lg the two columns
               stack (identity, then tiles) so phones get a clean vertical
@@ -1080,32 +1073,30 @@ function KpiTile({
   accent?: keyof typeof TILE_COLORS;
 }) {
   const colors = TILE_COLORS[accent] ?? TILE_COLORS.blue;
+  // Flat KPI tile: neutral bg-card surface + hairline border, completely
+  // static (no hover shadow, no sheen). h-full + w-full so the tile still
+  // fills its equal-width grid cell (the grid owns sizing). The accent
+  // survives only on the icon + the value number — House-POV tint for
+  // money/P&L, the informational hue for the rest. Kept compact so the
+  // dense hero KPI grid still fits beside the identity column.
   return (
-    <div
-      className={cn(
-        // h-full + w-full so the tile fills its (equal-width) grid cell — the
-        // grid owns sizing now, so no flex-basis / max-width content-sizing
-        // (that was the source of the uneven, truncated tiles).
-        "group relative h-full w-full min-w-0 overflow-hidden rounded-lg border px-2 py-1.5 transition-all hover:shadow-sm sm:px-2.5 sm:py-2",
-        colors.bg,
-      )}
-    >
-      <div className="flex items-center gap-1">
+    <div className="h-full w-full min-w-0 rounded-lg border bg-card px-2.5 py-2">
+      <div className="flex items-center gap-1.5">
         <Icon className={cn("size-3 shrink-0", colors.icon)} />
-        <span className="truncate text-[9px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[10px]">
+        <span className="truncate text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
           {label}
         </span>
       </div>
       <p
         className={cn(
-          "mt-0.5 truncate text-sm font-bold tabular-nums leading-tight sm:text-base",
+          "mt-1 truncate text-sm font-bold tracking-tight tabular-nums leading-tight sm:text-base",
           colors.text,
         )}
       >
         {value}
       </p>
       {sub && (
-        <p className="mt-0.5 truncate text-[9px] text-muted-foreground sm:text-[10px]">
+        <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
           {sub}
         </p>
       )}
@@ -1134,10 +1125,10 @@ function DepWdCountTile({
   avgDeposit: number;
 }) {
   return (
-    <div className="group relative h-full w-full min-w-0 overflow-hidden rounded-lg border bg-card/40 px-2 py-1.5 transition-all hover:shadow-sm sm:px-2.5 sm:py-2">
-      <div className="flex items-center gap-1">
+    <div className="h-full w-full min-w-0 rounded-lg border bg-card px-2.5 py-2">
+      <div className="flex items-center gap-1.5">
         <Coins className="size-3 shrink-0 text-muted-foreground" />
-        <span className="truncate text-[9px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[10px]">
+        <span className="truncate text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
           Dep / Wd
         </span>
       </div>
@@ -1158,7 +1149,7 @@ function DepWdCountTile({
           {withdrawals}
         </span>
       </div>
-      <p className="mt-0.5 truncate text-[9px] text-muted-foreground sm:text-[10px]">
+      <p className="mt-1 truncate text-[10px] text-muted-foreground">
         {formatCurrency(avgDeposit)} avg dep
       </p>
     </div>
@@ -1190,10 +1181,10 @@ function DepWdTotalsTile({
   withdrawalLabel: string;
 }) {
   return (
-    <div className="group relative h-full w-full min-w-0 overflow-hidden rounded-lg border bg-card/40 px-2 py-1.5 transition-all hover:shadow-sm sm:px-2.5 sm:py-2">
-      <div className="flex items-center gap-1">
+    <div className="h-full w-full min-w-0 rounded-lg border bg-card px-2.5 py-2">
+      <div className="flex items-center gap-1.5">
         <Banknote className="size-3 shrink-0 text-muted-foreground" />
-        <span className="truncate text-[9px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[10px]">
+        <span className="truncate text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
           Deposits / Withdrawals
         </span>
       </div>
@@ -1206,7 +1197,7 @@ function DepWdTotalsTile({
             <ArrowDownToLine className="size-3 shrink-0 text-emerald-500" />
             <span className="truncate">{depositLabel}</span>
           </div>
-          <p className="mt-0.5 truncate text-[9px] text-muted-foreground sm:text-[10px]">
+          <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
             deposited
           </p>
         </div>
@@ -1218,7 +1209,7 @@ function DepWdTotalsTile({
             <ArrowUpFromLine className="size-3 shrink-0 text-rose-500" />
             <span className="truncate">{withdrawalLabel}</span>
           </div>
-          <p className="mt-0.5 truncate text-[9px] text-muted-foreground sm:text-[10px]">
+          <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
             withdrawn
           </p>
         </div>

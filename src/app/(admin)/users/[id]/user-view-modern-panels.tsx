@@ -126,29 +126,26 @@ export function StatPanel({
   children: React.ReactNode;
 }) {
   const colors = TILE_COLORS[accent] ?? TILE_COLORS.blue;
+  // Flat surface: one solid bg-card + a single hairline border + a very
+  // soft shadow on this (large) panel only. The old gradient fill, the
+  // colored corner-glow blob, and the rounded-2xl were the layered noise
+  // that read as "not clean" — dropped for the flat direction. The accent
+  // now lives only on the small icon chip (colors.bg) + the value numbers
+  // inside (House-POV tinted), not on the panel surface.
   return (
-    <div className="relative h-full overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
-      <div
-        aria-hidden
-        className={cn(
-          "pointer-events-none absolute -right-12 -top-12 size-32 rounded-full blur-2xl opacity-40",
-          colors.bg,
-        )}
-      />
-      <div className="relative flex h-full flex-col p-4 sm:p-5">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <div className={cn("flex size-7 items-center justify-center rounded-lg shrink-0", colors.bg)}>
-              <Icon className={cn("size-3.5", colors.icon)} />
-            </div>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground truncate">
-              {title}
-            </h3>
+    <div className="flex h-full flex-col rounded-xl border bg-card p-5 shadow-sm">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className={cn("flex size-7 items-center justify-center rounded-lg shrink-0", colors.bg)}>
+            <Icon className={cn("size-3.5", colors.icon)} />
           </div>
-          {action}
+          <h3 className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground truncate">
+            {title}
+          </h3>
         </div>
-        {children}
+        {action}
       </div>
+      {children}
     </div>
   );
 }
@@ -464,10 +461,10 @@ export function ModernBalancePanel({
       action={refreshAction}
     >
       <div className="space-y-0.5">
-        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+        <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
           Total Value
         </p>
-        <p className="text-2xl sm:text-3xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400 truncate">
+        <p className="text-2xl sm:text-3xl font-bold tracking-tight tabular-nums text-emerald-600 dark:text-emerald-400 truncate">
           {formatCurrency(total)}
         </p>
       </div>
@@ -744,12 +741,12 @@ export function ModernPnlPanel({
   return (
     <StatPanel title="Platform P&L" icon={Icon} accent={isProfit ? "emerald" : "rose"}>
       <div className="space-y-0.5">
-        <p className="text-[11px] uppercase tracking-wider text-muted-foreground truncate">
+        <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground truncate">
           Deposits − Withdrawals − Balance − Inventory
         </p>
         <p
           className={cn(
-            "text-2xl sm:text-3xl font-bold tabular-nums truncate",
+            "text-2xl sm:text-3xl font-bold tracking-tight tabular-nums truncate",
             isProfit ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400",
           )}
         >
@@ -820,15 +817,15 @@ export function ModernActivityPanel({
     <StatPanel title="Activity" icon={Activity} accent="blue">
       <div className="flex flex-wrap items-baseline gap-4">
         <div className="min-w-0">
-          <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
             Level
           </p>
-          <p className="text-2xl sm:text-3xl font-bold tabular-nums text-blue-600 dark:text-blue-400">
+          <p className="text-2xl sm:text-3xl font-bold tracking-tight tabular-nums text-blue-600 dark:text-blue-400">
             {statistics?.level ?? 0}
           </p>
         </div>
         <div className="min-w-0">
-          <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
             XP
           </p>
           <p className="text-base sm:text-lg font-semibold tabular-nums text-muted-foreground truncate">
@@ -890,15 +887,19 @@ export function ModernMetricTile({
   icon: React.ElementType;
 }) {
   const colors = TILE_COLORS[accent] ?? TILE_COLORS.blue;
+  // Flat tile: neutral bg-card surface + hairline border (no per-hue tinted
+  // box, no shadow). The accent survives only on the icon + the value number,
+  // so the strip reads as calm neutral cards with meaningful colored numbers
+  // rather than a rainbow of tinted boxes.
   return (
-    <div className={cn("rounded-xl border p-3 sm:p-4 min-w-0", colors.bg)}>
+    <div className="rounded-lg border bg-card p-4 min-w-0">
       <div className="flex items-center gap-2">
         <Icon className={cn("size-4 shrink-0", colors.icon)} />
-        <span className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-muted-foreground truncate">
+        <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground truncate">
           {label}
         </span>
       </div>
-      <p className={cn("mt-1 text-xl sm:text-2xl font-bold tabular-nums truncate", colors.text)}>
+      <p className={cn("mt-1.5 text-2xl font-bold tracking-tight tabular-nums truncate", colors.text)}>
         {value}
       </p>
     </div>
