@@ -907,6 +907,17 @@ function DisposedCardsStreamed({
 // surfaces live on one tab. Body unchanged — only the mounting point moved.
 function AffiliateSection({ data }: { data: UserDetail }) {
   const { user, affiliate } = data;
+  // Each distinct sub-part below was already separately headed (own
+  // SectionHeading) before this pass — collapsing them individually reads
+  // better than one giant Affiliate block, and matches the granularity of
+  // every other section on this tab. All default OPEN (same convention as
+  // the rest of the tab — collapsing is an admin convenience, not a new
+  // default-hidden state).
+  const [creatorDashboardOpen, setCreatorDashboardOpen] = useState(true);
+  const [referrerOpen, setReferrerOpen] = useState(true);
+  const [attributionOpen, setAttributionOpen] = useState(true);
+  const [ownCodeOpen, setOwnCodeOpen] = useState(true);
+  const [affiliateStatsOpen, setAffiliateStatsOpen] = useState(true);
   return (
     <div className="space-y-4">
       {/* Creator deep-link — only for users actually flagged creator.
@@ -914,28 +925,35 @@ function AffiliateSection({ data }: { data: UserDetail }) {
           webhooks, payouts, code analytics, clicks, signup tracking.
           Inline-duplicating that here would be a maintenance nightmare. */}
       {user.role === "creator" && (
-        <Card className="overflow-hidden">
-          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="flex size-10 items-center justify-center rounded-lg bg-purple-500/15 shrink-0">
-                <Sparkles className="size-5 text-purple-500" />
+        <CollapsibleSection
+          icon={Sparkles}
+          title="Creator Dashboard"
+          open={creatorDashboardOpen}
+          onOpenChange={setCreatorDashboardOpen}
+        >
+          <Card className="overflow-hidden">
+            <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="flex size-10 items-center justify-center rounded-lg bg-purple-500/15 shrink-0">
+                  <Sparkles className="size-5 text-purple-500" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">Creator Dashboard</p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    Deals, webhooks, payouts, click + signup analytics
+                  </p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <p className="text-sm font-semibold">Creator Dashboard</p>
-                <p className="text-xs text-muted-foreground truncate">
-                  Deals, webhooks, payouts, click + signup analytics
-                </p>
-              </div>
-            </div>
-            <a
-              href={`/creators/${user.id}`}
-              className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 min-h-[44px] shrink-0"
-            >
-              Open Creator Dashboard
-              <span aria-hidden>→</span>
-            </a>
-          </CardContent>
-        </Card>
+              <a
+                href={`/creators/${user.id}`}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 min-h-[44px] shrink-0"
+              >
+                Open Creator Dashboard
+                <span aria-hidden>→</span>
+              </a>
+            </CardContent>
+          </Card>
+        </CollapsibleSection>
       )}
 
       {/* Two visually distinct sections — each manages DIFFERENT
@@ -948,11 +966,14 @@ function AffiliateSection({ data }: { data: UserDetail }) {
           The labels and panel styling are deliberately different so
           admins can't confuse the two — the previous "Referral Code
           Used" / "Own Affiliate Code" naming was too symmetric. */}
-      <SectionHeading
+      <CollapsibleSection
         icon={ArrowDownToLine}
         title="Joined Under (Referrer)"
-      />
-      <ReferrerCard user={user} />
+        open={referrerOpen}
+        onOpenChange={setReferrerOpen}
+      >
+        <ReferrerCard user={user} />
+      </CollapsibleSection>
 
       {/* Attribution journey — the codes this user hopped through over
           time + the economics booked under each. Lazy-loaded on mount so
@@ -960,16 +981,32 @@ function AffiliateSection({ data }: { data: UserDetail }) {
           under the referrer card because it's the same side of the
           relationship: how THIS user was attributed to creators (not the
           codes they own, which the next section covers). */}
-      <SectionHeading icon={Waypoints} title="Attribution Journey" />
-      <AttributionJourneySection userId={user.id} />
+      <CollapsibleSection
+        icon={Waypoints}
+        title="Attribution Journey"
+        open={attributionOpen}
+        onOpenChange={setAttributionOpen}
+      >
+        <AttributionJourneySection userId={user.id} />
+      </CollapsibleSection>
 
-      <SectionHeading icon={Sparkles} title="Their Own Affiliate Code" />
-      <OwnCodeCard user={user} affiliate={affiliate} />
+      <CollapsibleSection
+        icon={Sparkles}
+        title="Their Own Affiliate Code"
+        open={ownCodeOpen}
+        onOpenChange={setOwnCodeOpen}
+      >
+        <OwnCodeCard user={user} affiliate={affiliate} />
+      </CollapsibleSection>
 
       {/* Section 3: Stats — only render if the affiliate_accounts row exists */}
       {affiliate && (
-        <>
-          <SectionHeading icon={TrendingUp} title="Affiliate Stats" />
+        <CollapsibleSection
+          icon={TrendingUp}
+          title="Affiliate Stats"
+          open={affiliateStatsOpen}
+          onOpenChange={setAffiliateStatsOpen}
+        >
           <div className="grid gap-3 grid-cols-2 lg:grid-cols-3">
             <ModernMetricTile
               label="Total Referred"
@@ -1011,7 +1048,7 @@ function AffiliateSection({ data }: { data: UserDetail }) {
               icon={Gift}
             />
           </div>
-        </>
+        </CollapsibleSection>
       )}
     </div>
   );
@@ -1770,6 +1807,8 @@ export function AccountTab({
   const [balanceWeightingOpen, setBalanceWeightingOpen] = useState(true);
   const [manualWithdrawalOpen, setManualWithdrawalOpen] = useState(true);
   const [moderationOpen, setModerationOpen] = useState(true);
+  const [fraudLocksOpen, setFraudLocksOpen] = useState(true);
+  const [kycOpen, setKycOpen] = useState(true);
   return (
     <div className="space-y-4">
       <SectionHeading icon={Dices} title="Wagering Stats" />
@@ -1843,30 +1882,43 @@ export function AccountTab({
         />
       </CollapsibleSection>
 
-      <SectionHeading icon={ShieldAlert} title="Fraud Locks (Card Deposits)" />
-      {featureLocksPromise ? (
-        <Suspense fallback={<SkeletonCard lines={3} />}>
-          <FraudLocksStreamed
-            userId={user.id}
-            featureLocksPromise={featureLocksPromise}
-            canManage={data.sessionRole === "admin"}
-          />
-        </Suspense>
-      ) : (
-        <SkeletonCard lines={3} />
-      )}
-      <SectionHeading icon={BadgeCheck} title="KYC (Sumsub)" />
-      {kycPromise ? (
-        <Suspense fallback={<SkeletonCard lines={3} />}>
-          <KycStreamed
-            userId={user.id}
-            kycPromise={kycPromise}
-            canManage={data.sessionRole === "admin"}
-          />
-        </Suspense>
-      ) : (
-        <SkeletonCard lines={3} />
-      )}
+      <CollapsibleSection
+        icon={ShieldAlert}
+        title="Fraud Locks (Card Deposits)"
+        open={fraudLocksOpen}
+        onOpenChange={setFraudLocksOpen}
+      >
+        {featureLocksPromise ? (
+          <Suspense fallback={<SkeletonCard lines={3} />}>
+            <FraudLocksStreamed
+              userId={user.id}
+              featureLocksPromise={featureLocksPromise}
+              canManage={data.sessionRole === "admin"}
+            />
+          </Suspense>
+        ) : (
+          <SkeletonCard lines={3} />
+        )}
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        icon={BadgeCheck}
+        title="KYC (Sumsub)"
+        open={kycOpen}
+        onOpenChange={setKycOpen}
+      >
+        {kycPromise ? (
+          <Suspense fallback={<SkeletonCard lines={3} />}>
+            <KycStreamed
+              userId={user.id}
+              kycPromise={kycPromise}
+              canManage={data.sessionRole === "admin"}
+            />
+          </Suspense>
+        ) : (
+          <SkeletonCard lines={3} />
+        )}
+      </CollapsibleSection>
       <CollapsibleSection
         icon={Dices}
         title="Custom Battle Limits"
@@ -1973,7 +2025,9 @@ export function AccountTab({
           owned codes and affiliate stats (all reading data.affiliate /
           data.user), so admins still manage a user's referral code from
           here. The lead heading marks the start of the affiliate block; the
-          section supplies its own sub-headings below it. */}
+          section itself wraps each distinct sub-part (creator dashboard,
+          referrer, attribution journey, own code, stats) in its own
+          CollapsibleSection below. */}
       <SectionHeading icon={Sparkles} title="Affiliate" />
       <AffiliateSection data={data} />
     </div>

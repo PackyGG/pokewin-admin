@@ -545,10 +545,19 @@
   background: var(--accent) !important;
 }
 
-/* Collapsible panel animation */
+/* Collapsible panel animation
+   Base UI's Collapsible.Panel exposes `--collapsible-panel-height` (the
+   measured content height) plus `data-open`/`data-closed` (steady state) and
+   `data-starting-style`/`data-ending-style` (present for exactly one frame
+   while a transition is starting/ending). During that one frame BOTH the
+   steady-state attribute (open/closed) and the transition attribute
+   (starting/ending) are present on the same element, so cascade ORDER here
+   is load-bearing: the starting/ending rule must come after the open rule so
+   it wins and forces height back to 0 as the "from"/"to" value — without it
+   the panel has nothing to transition from and just pops open instantly. */
 [data-slot="collapsible-content"] {
   overflow: hidden;
-  transition: height 200ms ease;
+  transition: height 280ms ease-out;
 }
 
 [data-slot="collapsible-content"][data-open] {
@@ -556,6 +565,11 @@
 }
 
 [data-slot="collapsible-content"][data-closed] {
+  height: 0;
+}
+
+[data-slot="collapsible-content"][data-starting-style],
+[data-slot="collapsible-content"][data-ending-style] {
   height: 0;
 }
 
