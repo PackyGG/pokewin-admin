@@ -295,7 +295,7 @@ function RewardTypeBox({ group }: { group: RewardTypeGroup }) {
 
       {/* Per-card provenance — PRESERVED but secondary (collapsed by default). */}
       <Collapsible open={open} onOpenChange={setOpen} className="mt-3">
-        <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted/50">
+        <CollapsibleTrigger className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 px-2.5 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border hover:bg-muted/50 hover:text-foreground">
           <span>
             {open ? "Hide" : "Show"} per-card detail ·{" "}
             {formatNumber(group.cardCount)}{" "}
@@ -306,7 +306,7 @@ function RewardTypeBox({ group }: { group: RewardTypeGroup }) {
           <ChevronDown
             className={cn(
               "size-4 shrink-0 motion-safe:transition-transform motion-safe:duration-200",
-              open && "rotate-180",
+              open ? "rotate-0" : "-rotate-90",
             )}
           />
         </CollapsibleTrigger>

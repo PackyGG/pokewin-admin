@@ -57,14 +57,9 @@ import {
   ShieldAlert,
   BadgeCheck,
   Users,
-  ChevronDown,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { CollapsibleSection } from "./collapsible-section";
 import { EmptyState } from "@/components/empty-state";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { SkeletonCard, SkeletonTable } from "@/components/ux";
@@ -108,8 +103,6 @@ import type {
   RaceClaimEntry,
 } from "./user-tabs-types";
 import {
-  CARD_SALE_TX_TYPES,
-  BATTLE_VOUCHER_TX_TYPES,
   DEPOSIT_TX_TYPES,
   WITHDRAWAL_TX_TYPES,
 } from "./user-tabs-types";
@@ -218,47 +211,27 @@ export function OverviewTab({
           skeleton stay INSIDE the collapsible content so the section still
           shell-first streams (never a blocking await) and the balance panels
           above still paint first. */}
-      <Collapsible
+      <CollapsibleSection
+        icon={ArrowDownToLine}
+        title="Deposits & Withdrawals"
         open={dwOpen}
         onOpenChange={setDwOpen}
-        className="space-y-4 sm:space-y-6"
       >
-        <CollapsibleTrigger
-          render={
-            <button
-              type="button"
-              className="flex w-full items-center justify-between gap-3 rounded-lg text-left transition-opacity hover:opacity-80"
-            >
-              <SectionHeading
-                icon={ArrowDownToLine}
-                title="Deposits & Withdrawals"
-              />
-              <ChevronDown
-                className={cn(
-                  "size-5 shrink-0 text-muted-foreground motion-safe:transition-transform motion-safe:duration-200",
-                  dwOpen && "rotate-180",
-                )}
-              />
-            </button>
-          }
-        />
-        <CollapsibleContent>
-          {financialTxPromise ? (
-            <Suspense fallback={<SkeletonTable rows={5} columns={6} />}>
-              <DepositsWithdrawalsStreamed
-                userId={user.id}
-                financialTxPromise={financialTxPromise}
-                isAdmin={isAdmin}
-                canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
-                viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
-                wagerProgressPromise={wagerProgressPromise}
-              />
-            </Suspense>
-          ) : (
-            <SkeletonTable rows={5} columns={6} />
-          )}
-        </CollapsibleContent>
-      </Collapsible>
+        {financialTxPromise ? (
+          <Suspense fallback={<SkeletonTable rows={5} columns={6} />}>
+            <DepositsWithdrawalsStreamed
+              userId={user.id}
+              financialTxPromise={financialTxPromise}
+              isAdmin={isAdmin}
+              canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
+              viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
+              wagerProgressPromise={wagerProgressPromise}
+            />
+          </Suspense>
+        ) : (
+          <SkeletonTable rows={5} columns={6} />
+        )}
+      </CollapsibleSection>
 
       {/* Tips & Rain — creator tips this user received/sent + rain
           prizes won. Sits directly below deposits per admin request
@@ -809,8 +782,6 @@ export function InventoryTab({
   data,
   inventoryPromise,
   disposedInventoryPromise,
-  cardSaleTxPromise,
-  battleVoucherTxPromise,
 }: {
   data: UserDetail;
   // Both inventory pages are tab-gated reads (kicked only when ?tab=
@@ -819,17 +790,21 @@ export function InventoryTab({
   // moving the owned page out of the body gate costs the hero nothing.
   inventoryPromise: Promise<SafeQueryResult<PaginatedInventory>> | null;
   disposedInventoryPromise: Promise<SafeQueryResult<PaginatedInventory>> | null;
-  // Card-sale cash-out ledger (card_sale / reward_card_sale) — moved here off
-  // the Gaming tab per owner. Same tab-gated contract: null = not kicked
-  // (Active-Timeframe-Only) → skeleton until the URL-driven re-render kicks it.
+  // NOTE: `cardSaleTxPromise` / `battleVoucherTxPromise` are still created in
+  // page.tsx and threaded through user-view-modern → InventoryTab. The fetch
+  // contract is deliberately left unchanged, but the "Card & Voucher Sales" and
+  // "Battle Win Vouchers" sections were removed from this tab per owner, so the
+  // props are no longer destructured or rendered here — they stay on the type
+  // only to keep the upstream prop contract intact.
   cardSaleTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
-  // Battle-win voucher GRANT ledger (battle_excess_to_voucher) — moved here off
-  // the Gaming tab per owner (the paired battle_bet row already shows the full
-  // win P&L). Same tab-gated contract as cardSaleTxPromise: null = not kicked.
   battleVoucherTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
 }) {
   const { user } = data;
-  const isAdmin = data.sessionRole === "admin";
+  // Sold & Exchanged is collapsed by default so the Inventory tab opens clean.
+  // `disposedOpenToken` bumps on every OPEN so the (self-stateful) disposed
+  // table remounts fresh — i.e. it always re-opens on page 1.
+  const [disposedOpen, setDisposedOpen] = useState(false);
+  const [disposedOpenToken, setDisposedOpenToken] = useState(0);
   return (
     <div className="space-y-6">
       <SectionHeading icon={Gem} title="Current Inventory" />
@@ -844,110 +819,37 @@ export function InventoryTab({
         userId={user.id}
         canRemove={data.capabilities.canAdjustBalance}
       />
-      <SectionHeading icon={Trophy} title="Sold & Exchanged" />
-      {disposedInventoryPromise ? (
-        <Suspense fallback={<SkeletonTable rows={5} columns={5} />}>
-          <DisposedCardsStreamed
-            userId={user.id}
-            disposedInventoryPromise={disposedInventoryPromise}
-          />
-        </Suspense>
-      ) : (
-        <SkeletonTable rows={5} columns={5} />
-      )}
 
-      {/* Item cash-outs — selling a won (card_sale) or reward
-          (reward_card_sale) card back to balance, OR cashing a won voucher back
-          to balance (voucher_redeemed). These realize a held item into cash
-          (voucher == card per house rules), so they sit with the items they
-          came from (moved off the Gaming tab per owner). Streamed on the
-          tab-gated promise. */}
-      <SectionHeading icon={Banknote} title="Card & Voucher Sales" />
-      {cardSaleTxPromise ? (
-        <Suspense fallback={<SkeletonTable rows={5} columns={6} />}>
-          <CardSalesStreamed
-            userId={user.id}
-            cardSaleTxPromise={cardSaleTxPromise}
-            isAdmin={isAdmin}
-          />
-        </Suspense>
-      ) : (
-        <SkeletonTable rows={5} columns={6} />
-      )}
-
-      {/* Battle-win voucher GRANTS — battle_excess_to_voucher, the leftover
-          voucher leg of a battle win (voucher == card per house rules). This is
-          a win-GRANT of a held item, not a sale/cash-out, so it sits in its own
-          section rather than diluting "Card & Voucher Sales". Moved off the
-          Gaming tab per owner (the paired battle_bet row already shows the full
-          win P&L). Same tab-gated streaming contract as the sales section. */}
-      <SectionHeading icon={Swords} title="Battle Win Vouchers" />
-      {battleVoucherTxPromise ? (
-        <Suspense fallback={<SkeletonTable rows={4} columns={6} />}>
-          <BattleVouchersStreamed
-            userId={user.id}
-            battleVoucherTxPromise={battleVoucherTxPromise}
-            isAdmin={isAdmin}
-          />
-        </Suspense>
-      ) : (
-        <SkeletonTable rows={4} columns={6} />
-      )}
+      {/* Sold & Exchanged — collapsible, collapsed by default so the tab opens
+          clean. The existing DisposedCardsTable keeps its own status tabs /
+          search / filters / server pagination; keying the Suspense on
+          `disposedOpenToken` remounts it on each open so it always re-opens on
+          page 1. The disposed read is still the same tab-gated promise from
+          page.tsx (fetch unchanged). */}
+      <CollapsibleSection
+        icon={Trophy}
+        title="Sold & Exchanged"
+        open={disposedOpen}
+        onOpenChange={(next) => {
+          setDisposedOpen(next);
+          if (next) setDisposedOpenToken((t) => t + 1);
+        }}
+      >
+        {disposedInventoryPromise ? (
+          <Suspense
+            key={disposedOpenToken}
+            fallback={<SkeletonTable rows={5} columns={5} />}
+          >
+            <DisposedCardsStreamed
+              userId={user.id}
+              disposedInventoryPromise={disposedInventoryPromise}
+            />
+          </Suspense>
+        ) : (
+          <SkeletonTable rows={5} columns={5} />
+        )}
+      </CollapsibleSection>
     </div>
-  );
-}
-
-// `use()`s the streamed battle-win voucher-grant ledger page and renders the
-// shared CategoryTransactionsTable with the battle_excess_to_voucher allow-list.
-// Reusing the table keeps the "Battle win — voucher" label + the per-row
-// battle Watch-button association intact in the inventory context. error ≠
-// empty — a load error surfaces visibly instead of a false "no vouchers".
-function BattleVouchersStreamed({
-  userId,
-  battleVoucherTxPromise,
-  isAdmin,
-}: {
-  userId: string;
-  battleVoucherTxPromise: Promise<SafeQueryResult<PaginatedTransactions>>;
-  isAdmin: boolean;
-}) {
-  const r = use(battleVoucherTxPromise);
-  return (
-    <CategoryTransactionsTable
-      title="Battle Win Vouchers"
-      userId={userId}
-      types={BATTLE_VOUCHER_TX_TYPES}
-      initialTx={r.data}
-      initialLoadError={r.error}
-      showCardsValue
-      isAdmin={isAdmin}
-    />
-  );
-}
-
-// `use()`s the streamed card-sale ledger page and renders the shared
-// CategoryTransactionsTable with the card-sale type allow-list. error ≠ empty —
-// the table surfaces a VISIBLE load error instead of a false "no sales".
-function CardSalesStreamed({
-  userId,
-  cardSaleTxPromise,
-  isAdmin,
-}: {
-  userId: string;
-  cardSaleTxPromise: Promise<SafeQueryResult<PaginatedTransactions>>;
-  isAdmin: boolean;
-}) {
-  const r = use(cardSaleTxPromise);
-  return (
-    <CategoryTransactionsTable
-      title="Card & Voucher Sales"
-      userId={userId}
-      types={CARD_SALE_TX_TYPES}
-      initialTx={r.data}
-      initialLoadError={r.error}
-      showCardsValue
-      isAdmin={isAdmin}
-    />
   );
 }
 
