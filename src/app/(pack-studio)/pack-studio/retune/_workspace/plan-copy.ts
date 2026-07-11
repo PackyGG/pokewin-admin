@@ -7,6 +7,7 @@
  */
 
 import type { ShapeWeightsLimit, ShapeWeightsRelaxation } from "@/app/(admin)/insights/edge-calc/risk";
+import type { CleanRescue } from "@/app/(admin)/insights/edge-calc/tag-guidance";
 import { formatCurrency } from "@/lib/utils/format";
 
 // ─── Small formatters (shared by the copy functions) ────────────────────────
@@ -397,6 +398,24 @@ export function dirtyOddsBanner(
   return deadEnd
     ? `${head} No price in the band lands clean odds for this pool — edit the pool (add or remove a card) to make a clean plan exist. Clean odds are required to push.`
     : `${head} Nudge the price or swap a card; clean odds are required to push.`;
+}
+
+/**
+ * Wave 13 auto-clean adoption toast (owner grant 2026-07-11): the engine
+ * proved a clean landing by flexing the granted levers; the workspace staged
+ * it and is re-verifying. LOUD about exactly what was flexed — an
+ * auto-adopted change the owner can't see is a bug, not a feature.
+ */
+export function autoCleanAppliedToast(rescue: CleanRescue): string {
+  const price = `price ${formatCurrency(rescue.price)} (pinned)`;
+  const edge =
+    rescue.edgeTargetOverride !== null
+      ? ` · edge target flexed to ${(rescue.edgeTargetOverride * 100).toFixed(2)}%`
+      : "";
+  const band = rescue.tier === "wide-price" || rescue.tier === "edge-flex-wide"
+    ? " (beyond the normal price band)"
+    : "";
+  return `Auto-clean applied: ${price}${band}${edge} — solver-proven clean odds (edge ${(rescue.landedEdge * 100).toFixed(2)}%, win rate ${(rescue.landedWinRate * 100).toFixed(2)}%). Re-verifying now; review, then push.`;
 }
 
 /** Feasible + exact on the per-100k grid, but the pool is too pinned to land

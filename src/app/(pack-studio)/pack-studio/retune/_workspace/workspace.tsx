@@ -51,6 +51,7 @@ import {
   DEGENERATE_BADGE,
   PUSH_KEPT_PENDING_TOAST,
   applyDroppedEditsToast,
+  autoCleanAppliedToast,
   pendingDroppedDriftToast,
   pinRemedyKindLabel,
   pushBlockedPendingToast,
@@ -1704,6 +1705,39 @@ export function RetuneWorkspace({
     if (!selectedPackId || status !== "stale") return;
     schedulePlan(selectedPackId, PRICE_DEBOUNCE_MS);
   }, [selectedPackId, status, schedulePlan]);
+
+  // Wave 13 — auto-clean adoption (owner grant 2026-07-11: "you can adjust
+  // edge, odds and price for anything to make it better"; cards only if
+  // necessary). A SETTLED dirty plan carrying a solver-proven `cleanRescue`
+  // is adopted automatically: stage the pinned price + edge-target override
+  // (the exact plumbing a manual suggestion click uses) and re-plan — the
+  // landed plan re-verifies the claim fail-closed before any push. LOUD
+  // toast disclosure; one shot per pack+signature and a hard cap of 2
+  // adoptions per pack, so a rescue that fails to re-verify downstream
+  // degrades to the ranked manual chips instead of looping. Pool edits are
+  // NEVER auto-applied.
+  const rescueAdoptedRef = React.useRef(new Map<string, string[]>());
+  React.useEffect(() => {
+    if (!selectedPackId || status !== "planned") return;
+    const plan = planForBasis;
+    const rescue = plan?.cleanRescue ?? null;
+    if (!plan || rescue === null || plan.snapped !== false) return;
+    const sig = `${rescue.price.toFixed(2)}|${
+      rescue.edgeTargetOverride !== null
+        ? rescue.edgeTargetOverride.toFixed(4)
+        : ""
+    }`;
+    const seen = rescueAdoptedRef.current.get(selectedPackId) ?? [];
+    if (seen.includes(sig) || seen.length >= 2) return;
+    rescueAdoptedRef.current.set(selectedPackId, [...seen, sig]);
+    applyPriceSuggestion({
+      price: rescue.price,
+      ...(rescue.edgeTargetOverride !== null
+        ? { edgeTarget: rescue.edgeTargetOverride }
+        : {}),
+    });
+    toast.info(autoCleanAppliedToast(rescue), { duration: 10_000 });
+  }, [selectedPackId, status, planForBasis, applyPriceSuggestion]);
 
   // F7 — the plan's live fingerprint drifted under the staged edits:
   // auto re-seed the baseline + re-plan (staged identity kept).

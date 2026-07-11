@@ -38,10 +38,14 @@ import {
   computeUntaggedGuidance,
   ladderShape,
   buildWidePriceProbeSuggestion,
+  buildCleanRescueSuggestion,
+  computeCleanRescue,
   derivePoolEditPlan,
   pruneNoOpSuggestions,
   buildPackTuneVerdict,
   computePinRemediesMeta,
+  type CleanRescue,
+  type ProbeOutcome,
   type TagGuidance,
   type LadderShape,
   type TuneSuggestion,
@@ -2177,6 +2181,19 @@ export type PackTunePlan = {
    * solver-verified {@link PinRemedy} list + shortfall copy in one shape.
    */
   verdict: PackTuneVerdict;
+  /**
+   * Wave 13 (owner grant 2026-07-11): when a FEASIBLE plan lands DIRTY
+   * (snapped=false — push-blocked), the engine sweeps the owner-granted
+   * levers (price beyond the budget band, edge-target flex ±0.75pp — pool
+   * edits stay one-click suggestions, "only if necessary") and returns the
+   * first solver-PROVEN clean landing. The workspace AUTO-ADOPTS it (stages
+   * the pinned price + edge override and re-plans — the landed plan
+   * re-verifies the claim fail-closed before any push). Absent/`null` when
+   * the plan is clean, refused, pinned-odds (pin remedies own that space),
+   * `lite`, or the bounded sweep found nothing (pool edits are then
+   * genuinely necessary).
+   */
+  cleanRescue?: CleanRescue | null;
 };
 
 /**
@@ -2609,6 +2626,10 @@ async function planPackTuneLiveUncached(
       : shaped.snapped !== true || defaultShapeDegenerate === true
     : true; // infeasible default → always probe
   let wideProbeSuggestion: TuneSuggestion | null = null;
+  // Hoisted wide-probe summary — Tier A input of the wave-13 clean rescue
+  // (the rescue adopts an already-proven clean far price at ZERO extra cost).
+  let liveWideProbe: (ProbeOutcome & { edge: number; winRate: number }) | null =
+    null;
   if (defaultNotMateriallyClean && priceBudgetPct < RETUNE_MAX_PRICE_CHANGE_PCT) {
     const wideSearch = searchBestPriceForCleanSnap({
       ...buildRetuneSearchParams("live", {
@@ -2650,6 +2671,20 @@ async function planPackTuneLiveUncached(
             ).degenerate
           : null;
     }
+    liveWideProbe = {
+      feasible: !("error" in wideShaped),
+      price: wideSearch.bestPrice,
+      allNice: !("error" in wideShaped) ? (wideShaped.allNice ?? null) : null,
+      snapped: !("error" in wideShaped) ? (wideShaped.snapped ?? false) : null,
+      taggedAccuracyHit: wideSearch.taggedAccuracyHit,
+      shapeDegenerate: wideShapeDegenerate,
+      offNiceCount:
+        tagged && !("error" in wideShaped)
+          ? countOffNicePct(wideShaped.weights, wideShaped.niceExemptIdx)
+          : null,
+      edge: wideEdge,
+      winRate: wideWinRate,
+    };
     wideProbeSuggestion = buildWidePriceProbeSuggestion({
       livePrice: p.price,
       tagged,
@@ -2666,18 +2701,7 @@ async function planPackTuneLiveUncached(
             ? countOffNicePct(shaped.weights, shaped.niceExemptIdx)
             : null,
       },
-      wide: {
-        feasible: !("error" in wideShaped),
-        price: wideSearch.bestPrice,
-        allNice: !("error" in wideShaped) ? (wideShaped.allNice ?? null) : null,
-        snapped: !("error" in wideShaped) ? (wideShaped.snapped ?? false) : null,
-        taggedAccuracyHit: wideSearch.taggedAccuracyHit,
-        shapeDegenerate: wideShapeDegenerate,
-        offNiceCount:
-          tagged && !("error" in wideShaped)
-            ? countOffNicePct(wideShaped.weights, wideShaped.niceExemptIdx)
-            : null,
-      },
+      wide: liveWideProbe,
       wideEdge,
       wideWinRate,
     });
@@ -2810,20 +2834,62 @@ async function planPackTuneLiveUncached(
   const riskBandExit = isRiskBandExit(shaped.risk.cv, riskBand);
   const tierFlip = shaped.risk.tier !== before.tier;
 
+  // Wave 13 clean rescue (owner grant 2026-07-11): a FEASIBLE plan stuck on
+  // dirty odds sweeps the granted levers (far price / edge-target flex ±0.75pp,
+  // least invasive first; pool edits stay suggestions) for a solver-proven
+  // clean landing the workspace auto-adopts. The live arm never carries pins,
+  // so no pin gate is needed here.
+  const cleanRescue =
+    shaped.snapped === false
+      ? computeCleanRescue({
+          mkParams: (te, band) => ({
+            ...buildRetuneSearchParams("live", {
+              cards: cards.map((c) => ({ value: c.value })),
+              basePrice: p.price,
+              targetEdge: te,
+              targetWinRate: autoTargets.targetWinRate,
+              maxWinCap: autoTargets.maxWinCap,
+              nearMissMin,
+              winRateTol: 0.02,
+              currentWeights: cards.map((c) => c.weight),
+              intendedHitRate: autoTargets.intendedHitRate,
+              priceBudgetPct,
+            }),
+            maxPriceChangePct: band,
+          }),
+          values: cards.map((c) => c.value),
+          liveShares: cards.map((c) => (livePcts.get(c.cardId) ?? 0) / 100),
+          targetEdge: autoTargets.targetEdge,
+          priceBudgetPct,
+          widePct: RETUNE_MAX_PRICE_CHANGE_PCT,
+          pricePinned: false,
+          tagged,
+          currentPrice: search.bestPrice,
+          wideProbe: liveWideProbe,
+        })
+      : null;
+
   // §niceness: a pinned-but-valid plan (exact grid, not pretty) gets the ranked
   // fixes too. §1.4: a materially-better beyond-budget far price rides as a
   // ranked `price-move` SUGGESTION on top (never auto-applied). Pattern 9h: drop
   // any price suggestion equal to the plan's OWN landed price (a no-op "move").
+  // Wave 13: the clean rescue's edge-flex combo rides FIRST as a
+  // `price-edge-exact` row (the auto-adopt's visible, re-applicable form).
   const feasibleGuidance = pruneNoOpSuggestions(
     mergeWideProbeSuggestion(
-      tagged
-        ? guidanceFor(
-            shaped.snapped !== true ||
-              search.taggedAccuracyHit === false ||
-              shaped.allNice === false,
-          )
-        : untaggedGuidance,
-      wideProbeSuggestion,
+      mergeWideProbeSuggestion(
+        tagged
+          ? guidanceFor(
+              shaped.snapped !== true ||
+                search.taggedAccuracyHit === false ||
+                shaped.allNice === false,
+            )
+          : untaggedGuidance,
+        wideProbeSuggestion,
+      ),
+      cleanRescue !== null
+        ? buildCleanRescueSuggestion(cleanRescue, p.price)
+        : null,
     ),
     search.bestPrice,
   );
@@ -2887,6 +2953,7 @@ async function planPackTuneLiveUncached(
       price: p.price,
       targetEdge: autoTargets.targetEdge,
     }),
+    cleanRescue,
   };
 }
 
@@ -3141,6 +3208,10 @@ async function planPackTuneStagedUncached(
       : outcome.snapped !== true || stagedShapeDegenerate === true
     : true; // refused staged solve → always probe
   let stagedWideProbeSuggestion: TuneSuggestion | null = null;
+  // Hoisted wide-probe summary — Tier A input of the wave-13 clean rescue.
+  let stagedWideProbe:
+    | (ProbeOutcome & { edge: number; winRate: number })
+    | null = null;
   // `lite` (pre-flight dry-run) skips the probe: it is a SUGGESTION sweep
   // (up to ~120 pinned solves), pure cost for a feasibility readout that
   // re-fires 800ms after every typing pause. The real plan re-probes.
@@ -3202,6 +3273,20 @@ async function planPackTuneStagedUncached(
             ).degenerate
           : null;
     }
+    stagedWideProbe = {
+      feasible: !("error" in wideShaped),
+      price: wideSearch.bestPrice,
+      allNice: !("error" in wideShaped) ? (wideShaped.allNice ?? null) : null,
+      snapped: !("error" in wideShaped) ? (wideShaped.snapped ?? false) : null,
+      taggedAccuracyHit: wideSearch.taggedAccuracyHit,
+      shapeDegenerate: wideShapeDegenerate,
+      offNiceCount:
+        taggedStaged && !("error" in wideShaped)
+          ? countOffNicePct(wideShaped.weights, wideShaped.niceExemptIdx)
+          : null,
+      edge: wideEdge,
+      winRate: wideWinRate,
+    };
     stagedWideProbeSuggestion = buildWidePriceProbeSuggestion({
       // The probe's anchor: the STAGED price (the band is measured from it).
       livePrice: r.priceStaged,
@@ -3219,28 +3304,73 @@ async function planPackTuneStagedUncached(
             ? countOffNicePct(outcome.weights, outcome.niceExemptIdx)
             : null,
       },
-      wide: {
-        feasible: !("error" in wideShaped),
-        price: wideSearch.bestPrice,
-        allNice: !("error" in wideShaped) ? (wideShaped.allNice ?? null) : null,
-        snapped: !("error" in wideShaped) ? (wideShaped.snapped ?? false) : null,
-        taggedAccuracyHit: wideSearch.taggedAccuracyHit,
-        shapeDegenerate: wideShapeDegenerate,
-        offNiceCount:
-          taggedStaged && !("error" in wideShaped)
-            ? countOffNicePct(wideShaped.weights, wideShaped.niceExemptIdx)
-            : null,
-      },
+      wide: stagedWideProbe,
       wideEdge,
       wideWinRate,
     });
   }
+
+  // Wave 13 clean rescue (owner grant 2026-07-11), staged arm: a FEASIBLE
+  // staged plan stuck on dirty odds sweeps far price + edge-target flex for a
+  // solver-proven clean landing the workspace auto-adopts. Gated OFF for
+  // `lite` (keystroke dry-runs), pinned odds (the pin-remedy machinery owns
+  // that space), and refusals (nothing to rescue — the WHY banner leads).
+  // A pinned PRICE keeps the sweep but zeroes the band: edge flex only, at
+  // the pinned cent (`maxPriceChangePct: 0` short-circuits to base price).
+  const stagedCleanRescue =
+    !lite &&
+    outcome.ok &&
+    outcome.snapped === false &&
+    (input.pinnedOdds === undefined || input.pinnedOdds.length === 0)
+      ? computeCleanRescue({
+          mkParams: (te, band) => ({
+            ...buildRetuneSearchParams("staged", {
+              cards: input.cards.map((c) => ({
+                cardId: c.cardId,
+                value: r.cardMetaById.get(c.cardId)?.value ?? 0,
+              })),
+              basePrice: r.priceStaged,
+              targetEdge: te,
+              targetWinRate: r.resolved.targetWinRate,
+              maxWinCap: r.resolved.maxWinCap,
+              nearMissMin: r.resolved.nearMissMin,
+              winRateTol: 0.02,
+              currentWeights: input.cards.map(
+                (c) => liveWeightByCardId.get(c.cardId) ?? 0,
+              ),
+              intendedHitRate: r.resolved.intendedHitRate,
+              priceBudgetPct: stagedProbeBudgetPct,
+            }),
+            maxPriceChangePct: band,
+          }),
+          values: input.cards.map(
+            (c) => r.cardMetaById.get(c.cardId)?.value ?? 0,
+          ),
+          liveShares: input.cards.map(
+            (c) => (livePcts.get(c.cardId) ?? 0) / 100,
+          ),
+          targetEdge: r.resolved.targetEdge,
+          priceBudgetPct: stagedProbeBudgetPct,
+          widePct: RETUNE_MAX_PRICE_CHANGE_PCT,
+          pricePinned: staged.pinPrice === true,
+          tagged: taggedStaged,
+          currentPrice: r.priceAfter,
+          wideProbe: stagedWideProbe,
+        })
+      : null;
+
   // §1.4 merge + Pattern 9h: drop any staged price suggestion equal to the
   // plan's own landed price (a no-op "move") — merge FIRST, prune SECOND,
   // exactly the live arm's ordering, so the verdict + pool-edit derivation
-  // below consume the merged guidance.
+  // below consume the merged guidance. Wave 13: the clean rescue's edge-flex
+  // combo rides FIRST (the auto-adopt's visible, re-applicable form).
   guidance = pruneNoOpSuggestions(
-    mergeWideProbeSuggestion(guidance, stagedWideProbeSuggestion),
+    mergeWideProbeSuggestion(
+      mergeWideProbeSuggestion(guidance, stagedWideProbeSuggestion),
+      stagedCleanRescue !== null
+        ? buildCleanRescueSuggestion(stagedCleanRescue, r.priceStaged)
+        : null,
+    ),
     r.priceAfter,
   );
 
@@ -3428,5 +3558,6 @@ async function planPackTuneStagedUncached(
     riskBandExit: stagedRiskBandExit,
     poolEditPlan: stagedPoolEditPlan,
     verdict: stagedVerdict,
+    cleanRescue: stagedCleanRescue,
   };
 }

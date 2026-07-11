@@ -1783,6 +1783,216 @@ export function buildWidePriceProbeSuggestion(args: {
   };
 }
 
+// ── CLEAN RESCUE (wave 13 — owner grant 2026-07-11) ─────────────────────
+//
+// The owner: "you can still change the price to make the odds cleaner. you
+// can adjust edge, odds and price for anything to make it better" (cards only
+// if NECESSARY). So a FEASIBLE plan stuck on dirty odds (snapped=false —
+// push-blocked) no longer dead-ends into "nudge the price or swap a card":
+// the engine sweeps the levers the owner granted, LEAST invasive first, and
+// returns the first solver-proven CLEAN landing for the plan to adopt.
+//
+// Ladder (stop at the first accepted landing):
+//   Tier A `wide-price`     — the arm's ALREADY-COMPUTED ±60% probe result,
+//                             when it snapped clean (zero extra solves).
+//   Tier B `edge-flex`      — flex the edge target ±0.25pp steps (nearest
+//                             first, house-favorable + before −) with the
+//                             price search kept IN-budget.
+//   Tier C `edge-flex-wide` — same flex, price search on the wide band.
+//   (B and C interleave PER candidate: the smallest edge deviation wins even
+//   if its clean price sits beyond the budget — edge is the sacred number,
+//   price is the granted knob.)
+// Pool edits are deliberately NOT in the ladder — "only do it if its
+// nessecary": they stay ranked one-click suggestions for when this sweep
+// returns null.
+//
+// Acceptance per candidate (fail-closed, same bars as the push gate):
+// feasible + snapped===true + (tagged → strict accuracy not violated) + the
+// landed ladder NOT degenerate (never trade dirty odds for a collapsed
+// ladder). A pinned price (staged `pinPrice`) zeroes the band — the sweep
+// then only flexes edge AT the pinned cent (`maxPriceChangePct: 0`
+// short-circuits to the base-price solve).
+//
+// BUDGETED (wave-11 law: every sweep is budgeted): at most `maxSearches`
+// search invocations — each is one `searchBestPriceForCleanSnap` call, the
+// same cost class as the wide probe the arms already absorb.
+
+export type CleanRescueTier = "wide-price" | "edge-flex" | "edge-flex-wide";
+
+export type CleanRescue = {
+  tier: CleanRescueTier;
+  /** The solver-proven clean price (cents-exact). */
+  price: number;
+  /**
+   * The flexed edge target (fraction) the clean landing was proven at —
+   * `null` = the pack's own target was kept (Tier A). The client threads
+   * this as the staged `edgeTargetOverride`, so the re-plan and the write
+   * re-verify the exact claim fail-closed.
+   */
+  edgeTargetOverride: number | null;
+  landedEdge: number;
+  landedWinRate: number;
+  allNice: boolean | null;
+  /** Search invocations spent (budget proof — Tier A costs 0). */
+  searchesSpent: number;
+};
+
+/** Total search-call budget for one rescue sweep (≈ the wide probe ×8 worst case). */
+export const CLEAN_RESCUE_SEARCH_BUDGET = 8;
+/** Edge-flex grid step: 0.25pp per rung. */
+export const CLEAN_RESCUE_EDGE_STEP = 0.0025;
+/** Max rungs each side of the pack target (±0.75pp). */
+export const CLEAN_RESCUE_EDGE_FLEX_MAX_STEPS = 3;
+
+export function computeCleanRescue(input: {
+  /**
+   * Arm-built param constructor: MUST route through the arm's own
+   * `buildRetuneSearchParams` (tagged tolerance, hold semantics, budgets)
+   * with ONLY `targetEdge` + the spread-overridden `maxPriceChangePct`
+   * varying — so every candidate solve is byte-compatible with the plan the
+   * client re-verifies after adoption.
+   */
+  mkParams: (
+    targetEdge: number,
+    bandPct: number,
+  ) => Parameters<typeof searchBestPriceForCleanSnap>[0];
+  /** Pool values + live shares (fractions) — the degeneracy veto's inputs. */
+  values: readonly number[];
+  liveShares: readonly number[];
+  targetEdge: number;
+  priceBudgetPct: number;
+  widePct: number;
+  pricePinned: boolean;
+  tagged: boolean;
+  /** The dirty plan's landed price (no-op pruning for Tier A). */
+  currentPrice: number;
+  /** The arm's already-run wide probe summary (Tier A input; null = not probed). */
+  wideProbe: (ProbeOutcome & { edge: number; winRate: number }) | null;
+  maxSearches?: number;
+  /** Harness seam — defaults to the real engine search. */
+  searchFn?: typeof searchBestPriceForCleanSnap;
+}): CleanRescue | null {
+  const {
+    mkParams,
+    values,
+    liveShares,
+    targetEdge,
+    priceBudgetPct,
+    widePct,
+    pricePinned,
+    tagged,
+    currentPrice,
+    wideProbe,
+  } = input;
+  const maxSearches = input.maxSearches ?? CLEAN_RESCUE_SEARCH_BUDGET;
+  const search = input.searchFn ?? searchBestPriceForCleanSnap;
+
+  // ── Tier A: adopt the already-proven wide-probe landing (0 searches) ────
+  if (
+    !pricePinned &&
+    wideProbe !== null &&
+    wideProbe.feasible &&
+    wideProbe.snapped === true &&
+    (!tagged || wideProbe.taggedAccuracyHit !== false) &&
+    wideProbe.shapeDegenerate !== true &&
+    Math.abs(wideProbe.price - currentPrice) > 0.01
+  ) {
+    return {
+      tier: "wide-price",
+      price: wideProbe.price,
+      edgeTargetOverride: null,
+      landedEdge: wideProbe.edge,
+      landedWinRate: wideProbe.winRate,
+      allNice: wideProbe.allNice,
+      searchesSpent: 0,
+    };
+  }
+
+  // ── Tier B/C: edge-flex sweep (nearest rung first, + before −) ──────────
+  const candidates: number[] = [];
+  for (let k = 1; k <= CLEAN_RESCUE_EDGE_FLEX_MAX_STEPS; k++) {
+    for (const sign of [1, -1]) {
+      const cand = targetEdge + sign * k * CLEAN_RESCUE_EDGE_STEP;
+      if (cand > 0.001 && cand < 0.9) candidates.push(cand);
+    }
+  }
+  let spent = 0;
+  for (const cand of candidates) {
+    const bands = pricePinned ? [0] : [priceBudgetPct, widePct];
+    for (const band of bands) {
+      if (spent >= maxSearches) return null;
+      spent++;
+      const res = search(mkParams(cand, band));
+      const shaped = res.bestResult;
+      if ("error" in shaped) continue;
+      if (shaped.snapped !== true) continue;
+      if (tagged && res.taggedAccuracyHit === false) continue;
+      // Degeneracy veto: never swap dirty odds for a collapsed ladder.
+      const total = shaped.weights.reduce(
+        (a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0),
+        0,
+      );
+      if (total <= 0) continue;
+      const degenerate = ladderShape(
+        values,
+        liveShares,
+        shaped.weights.map((w) => (Number.isFinite(w) && w > 0 ? w / total : 0)),
+        res.bestPrice,
+      ).degenerate;
+      if (degenerate) continue;
+      return {
+        tier: band === widePct && !pricePinned ? "edge-flex-wide" : "edge-flex",
+        price: res.bestPrice,
+        edgeTargetOverride: cand,
+        landedEdge: shaped.risk.edge,
+        landedWinRate: shaped.risk.winRate,
+        allNice: shaped.allNice ?? null,
+        searchesSpent: spent,
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * The rescue's ranked one-click row (manual path — the workspace ALSO
+ * auto-adopts the rescue; this chip is the visible/re-applicable form).
+ * Tier A returns `null`: the wide probe's own `price-move` suggestion
+ * already carries that exact price. Rides the existing `price-edge-exact`
+ * kind, so the plan panel's Apply plumbing (price + edgeTarget) needs no
+ * new wiring.
+ */
+export function buildCleanRescueSuggestion(
+  rescue: CleanRescue,
+  basePrice: number,
+): TuneSuggestion | null {
+  if (rescue.edgeTargetOverride === null) return null;
+  const deltaPct =
+    basePrice > 0 ? ((rescue.price - basePrice) / basePrice) * 100 : 0;
+  const sign = deltaPct >= 0 ? "+" : "−";
+  const priceBit =
+    Math.abs(rescue.price - basePrice) <= 0.01
+      ? `keep the price at ${usd(basePrice)}`
+      : `set the price to ${usd(rescue.price)} (${sign}${Math.abs(deltaPct).toFixed(1)}%)`;
+  return {
+    kind: "price-edge-exact",
+    params: {
+      price: rescue.price,
+      edgeTarget: rescue.edgeTargetOverride,
+      autoClean: 1,
+      edge: rescue.landedEdge,
+      winRate: rescue.landedWinRate,
+    },
+    humanCopy: `Auto-clean: ${priceBit} and flex the edge target to ${(rescue.edgeTargetOverride * 100).toFixed(2)}% — every chance lands clean (edge ${(rescue.landedEdge * 100).toFixed(2)}%, win rate ${(rescue.landedWinRate * 100).toFixed(2)}%).`,
+    proof: {
+      evMinAfter: rescue.price * (1 - rescue.landedEdge),
+      evMaxAfter: rescue.price * (1 - rescue.landedEdge),
+      feasibleAfter: true,
+      solverVerified: true,
+    },
+  };
+}
+
 // ── POOL-EDITS-FIRST (owner-lens §3 / Pattern 1, 10) ────────────────────
 //
 // When the fixed-pool plan is DEGENERATE or INFEASIBLE, editing the POOL (add a
