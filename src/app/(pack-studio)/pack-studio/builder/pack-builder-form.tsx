@@ -52,6 +52,7 @@ import {
   type SortableCard,
 } from "@/app/(admin)/packs/sortable-card-table";
 
+import { RiskLevelBar } from "../_components/risk-level-bar";
 import { BuilderCardPicker } from "./builder-card-picker";
 import type { BuilderCardItem } from "./actions";
 
@@ -702,9 +703,16 @@ export function PackBuilderForm({
                 }
                 title="Risk tier"
               >
-                <p className="mb-2 text-xl font-bold tracking-tight">
+                <p className="mb-1.5 text-xl font-bold tracking-tight">
                   {TIER_LABELS[previewRisk.tier]}
                 </p>
+                {/* Owner ask 2026-07-11: the game-style risk LEVEL BAR, not
+                    just the raw numbers (they stay below as detail rows). */}
+                <RiskLevelBar
+                  tier={previewRisk.tier}
+                  showLabel={false}
+                  className="mb-3"
+                />
                 <PanelRow
                   label="Volatility (CV)"
                   value={previewRisk.cv.toFixed(2)}

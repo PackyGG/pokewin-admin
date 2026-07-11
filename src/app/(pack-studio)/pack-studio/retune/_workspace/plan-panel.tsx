@@ -47,6 +47,7 @@ import type {
   TagGuidance,
 } from "@/app/(admin)/insights/edge-calc/tag-guidance";
 
+import { RiskLevelBar } from "../../_components/risk-level-bar";
 import type { RetuneRailRow } from "../_queries/rail";
 import type {
   PackTunePlan,
@@ -1486,7 +1487,7 @@ export function PlanPanel({
             />
           </PlanMetric>
           <PlanMetric
-            label="Tier + CV"
+            label="Risk level"
             icon={Gauge}
             accent="blue"
             sub={
@@ -1495,18 +1496,12 @@ export function PlanPanel({
                 : undefined
             }
           >
-            <span className="inline-flex items-center gap-1.5">
-              <Badge
-                variant="outline"
-                className={cn(
-                  "h-5 px-1.5 text-[10px]",
-                  TIER_COLORS_BADGE[(afterRisk ?? before).tier] ?? "",
-                )}
-              >
-                {(afterRisk ?? before).tier}
-              </Badge>
-              <span>{(afterRisk ?? before).cv.toFixed(2)}</span>
-            </span>
+            {/* Owner ask 2026-07-11: the game-style 5-segment LEVEL BAR, not
+                a bare CV number — the CV rides as the muted suffix. */}
+            <RiskLevelBar
+              tier={(afterRisk ?? before).tier}
+              cv={(afterRisk ?? before).cv}
+            />
           </PlanMetric>
         </div>
       ) : (
