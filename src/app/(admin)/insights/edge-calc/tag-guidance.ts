@@ -1951,7 +1951,16 @@ export function computeCleanRescue(input: {
       // structurally unreachable on the unpinned path.
       if (spent >= maxSearches) break outer;
       spent++;
-      const res = search(mkParams(cand, band));
+      // A candidate solve may THROW (tag/pin contradictions raise instead of
+      // returning an error-result) — a rescue probe must never take the whole
+      // plan down with it (prod masks the message into the useless "Server
+      // Components render" text). A throwing candidate is just a refusal.
+      let res: ReturnType<typeof search>;
+      try {
+        res = search(mkParams(cand, band));
+      } catch {
+        continue;
+      }
       const shaped = res.bestResult;
       if ("error" in shaped) continue;
       if (shaped.snapped !== true) continue;
@@ -2033,13 +2042,24 @@ export function computeCleanRescue(input: {
         if (shareSum >= 1) continue;
         pinSpent++;
         const params = mkParams(targetEdge, pricePinned ? 0 : priceBudgetPct);
-        const res = search({
-          ...params,
-          pinnedShares: combo.pins.map((p) => ({
-            index: p.index,
-            share: p.pct / 100,
-          })),
-        });
+        // PINNED candidate solves can throw on pin-vs-tag contradictions
+        // (the pins-aware model raises for structurally impossible inputs
+        // instead of returning an error-result). Tier P probes speculative
+        // pin combos, so a throw is an EXPECTED refusal — never plan-fatal
+        // (incident 2026-07-11: prod masks such a throw into the generic
+        // "Server Components render" error).
+        let res: ReturnType<typeof search>;
+        try {
+          res = search({
+            ...params,
+            pinnedShares: combo.pins.map((p) => ({
+              index: p.index,
+              share: p.pct / 100,
+            })),
+          });
+        } catch {
+          continue;
+        }
         const shaped = res.bestResult;
         if ("error" in shaped) continue;
         if (shaped.snapped !== true) continue;

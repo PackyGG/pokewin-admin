@@ -1374,7 +1374,9 @@ export function RetuneWorkspace({
         approvedPriceAfter: pp.frozen.priceAfter,
         approvedPoolFingerprint: pp.frozen.poolFingerprint,
       };
-      const write = (token: string): Promise<WriteResult> =>
+      const write = (
+        token: string,
+      ): Promise<WriteResult | { refusedMessage: string }> =>
         pp.arm === "staged"
           ? applyStagedPackEditAndRetune(pp.packId, token, pp.writeInput!, {
               ...targets,
@@ -1389,15 +1391,22 @@ export function RetuneWorkspace({
             });
       try {
         let token = await getToken();
-        let result: WriteResult;
-        try {
-          result = await write(token);
-        } catch (err) {
-          const message = errMessage(err);
-          if (!isTokenExpired(message)) throw err;
+        // Refusals arrive as DATA (`refusedMessage`) — Next prod masks
+        // server-action throws, so the old throw+string-match routing showed
+        // the owner the useless "Server Components render" text instead of
+        // the real refusal (incident 2026-07-11).
+        let result = await write(token);
+        if (
+          "refusedMessage" in result &&
+          isTokenExpired(result.refusedMessage)
+        ) {
           // F6 — silent re-mint + ONE retry with the SAME frozen artifact.
           token = await remintToken();
           result = await write(token);
+        }
+        if ("refusedMessage" in result) {
+          handleWriteFailure(pp, result.refusedMessage);
+          return;
         }
         handleWriteSuccess(pp, result);
       } catch (err) {

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath, revalidateTag } from "next/cache";
+import { unstable_rethrow } from "next/navigation";
 import { getDb } from "@/lib/db";
 import { isUuid } from "@/lib/utils/ids";
 import { ensurePackSetAssignmentsSchema } from "@/lib/pack-set-assignments/ensure-schema";
@@ -1703,8 +1704,28 @@ export type PackRetuneResult = {
  *   - Writes the new weights via the SAME delete-all-then-createMany pack_cards
  *     transaction `updatePack` uses, preserving each surviving card's
  *     color / animation / order from the existing rows.
+ *
+ * REFUSALS ARE DATA, NOT THROWS (incident 2026-07-11): Next.js prod masks
+ * server-action throws ("Server Components render" text), which broke the
+ * workspace's string-matched refusal routing (token re-mint, drift rebase,
+ * skew, invariant). The exported action catches the inner throw and returns
+ * `{ refusedMessage }`; the inner implementation keeps its throw-based flow.
  */
 export async function applyPackRetune(
+  ...args: Parameters<typeof applyPackRetuneInner>
+): Promise<PackRetuneResult | { refusedMessage: string }> {
+  try {
+    return await applyPackRetuneInner(...args);
+  } catch (err) {
+    unstable_rethrow(err);
+    return {
+      refusedMessage:
+        err instanceof Error ? err.message : "The write failed unexpectedly.",
+    };
+  }
+}
+
+async function applyPackRetuneInner(
   packId: string,
   token: string,
   targets: PackRetuneTargets,

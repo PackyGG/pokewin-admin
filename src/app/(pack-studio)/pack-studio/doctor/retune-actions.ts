@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath, revalidateTag, unstable_cache } from "next/cache";
+import { unstable_rethrow } from "next/navigation";
 import { isUuid } from "@/lib/utils/ids";
 import type { pack_tag } from "@/generated/prisma/enums";
 import { getDb } from "@/lib/db";
@@ -1709,8 +1710,32 @@ async function resolveAndShapeStagedPool(
  * `updatePack` / `applyPackRetune` / `applyPackEdit` use, audits
  * `pack_edited_and_retuned` with before/after card counts + a risk summary, and
  * refreshes the ADMIN risk row.
+ *
+ * REFUSALS ARE DATA, NOT THROWS (incident 2026-07-11): Next.js prod MASKS
+ * every server-action throw into the generic "Server Components render"
+ * message, which destroyed the workspace's string-matched refusal routing
+ * (F6 token re-mint, F8 drift rebase, F9 skew, F11 invariant) — the owner
+ * saw the masked text on every push instead of the real reason. The exported
+ * action therefore catches the inner throw and RETURNS `{ refusedMessage }`;
+ * the inner implementation keeps its throw-based flow unchanged.
  */
+export type WriteRefusal = { refusedMessage: string };
+
 export async function applyStagedPackEditAndRetune(
+  ...args: Parameters<typeof applyStagedPackEditAndRetuneInner>
+): Promise<ApplyStagedRetuneResult | WriteRefusal> {
+  try {
+    return await applyStagedPackEditAndRetuneInner(...args);
+  } catch (err) {
+    unstable_rethrow(err);
+    return {
+      refusedMessage:
+        err instanceof Error ? err.message : "The write failed unexpectedly.",
+    };
+  }
+}
+
+async function applyStagedPackEditAndRetuneInner(
   packId: string,
   token: string,
   input: StagedPoolInput,

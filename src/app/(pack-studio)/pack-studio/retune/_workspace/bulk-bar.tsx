@@ -242,12 +242,14 @@ export function BulkBar({
       const plan = row.plan!;
       setCurrentName(row.name);
       try {
-        let result: PackRetuneResult;
-        try {
-          result = await applyPackRetune(row.packId, token, targetsOf(plan));
-        } catch (err) {
-          const message = err instanceof Error ? err.message : "Re-tune failed.";
-          if (!isTokenExpired(message)) throw err;
+        // Refusals arrive as DATA (`refusedMessage`) — Next prod masks
+        // server-action throws (incident 2026-07-11), so routing matches the
+        // returned message, never a caught error's.
+        let result = await applyPackRetune(row.packId, token, targetsOf(plan));
+        if (
+          "refusedMessage" in result &&
+          isTokenExpired(result.refusedMessage)
+        ) {
           // Silent re-mint + ONE retry; a second auth failure aborts the loop.
           try {
             token = await remintToken();
@@ -260,6 +262,9 @@ export function BulkBar({
             break;
           }
           result = await applyPackRetune(row.packId, token, targetsOf(plan));
+        }
+        if ("refusedMessage" in result) {
+          throw new Error(result.refusedMessage);
         }
         onPushed(row.packId, plan, result);
         onUncheck(row.packId);
