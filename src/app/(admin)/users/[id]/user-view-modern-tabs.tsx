@@ -56,8 +56,14 @@ import {
   ShieldAlert,
   BadgeCheck,
   Users,
+  ChevronDown,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { EmptyState } from "@/components/empty-state";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { SkeletonCard, SkeletonTable } from "@/components/ux";
@@ -147,7 +153,6 @@ import {
 export function OverviewTab({
   data,
   financialTxPromise,
-  adjustmentsTxPromise,
   pnlResultPromise,
   wagerProgressPromise,
   isAdmin,
@@ -159,17 +164,6 @@ export function OverviewTab({
   // into the Deposits & Withdrawals popup so the wager-requirement status
   // shows on a deposit/withdrawal row. null when not kicked → popup self-hides.
   wagerProgressPromise: Promise<UserWagerProgress | null> | null;
-  // Dedicated, UNCAPPED admin_balance_adjustment fetch (separate from the
-  // shared 10-row `financialTx` page, which lumps adjustments together with
-  // deposits/withdrawals/claims and can push an older adjustment off page 1
-  // entirely). Surfacing it as its own input guarantees EVERY admin balance
-  // adjustment reaches the dedicated adjustments block below, no matter how
-  // much newer financial activity sits in front of it. Same query path, so
-  // the official_stream fake-balance NOT-filter still applies automatically.
-  // For a non-owner viewer the server hands a resolved empty page (the kick
-  // is skipped; the server-side gate in getUserTransactions stays the
-  // authority).
-  adjustmentsTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   // Platform-P&L breakdown — feeds the Balance panel's pnl7d (Lossback
   // autofill) + the Platform P&L panel with its rolling ladder. Always
   // kicked by the server (hero risk/pnl are tab-independent).
@@ -181,6 +175,10 @@ export function OverviewTab({
   viewerIsAdjustmentOwner: boolean;
 }) {
   const { user, statistics, counts, capabilities } = data;
+  // Local open/close for the collapsible Deposits & Withdrawals section.
+  // Default OPEN so first paint is unchanged; the streamed feed stays inside
+  // the collapsible content (never a blocking await).
+  const [dwOpen, setDwOpen] = useState(true);
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -215,46 +213,51 @@ export function OverviewTab({
         />
       </div>
 
-      {/* Deposits & Withdrawals — streamed so balance panels paint first. */}
-      <SectionHeading icon={ArrowDownToLine} title="Deposits & Withdrawals" />
-      {financialTxPromise ? (
-        <Suspense fallback={<SkeletonTable rows={5} columns={6} />}>
-          <DepositsWithdrawalsStreamed
-            userId={user.id}
-            cardWithdrawals={data.cardWithdrawals}
-            financialTxPromise={financialTxPromise}
-            isAdmin={isAdmin}
-            canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
-            viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
-            wagerProgressPromise={wagerProgressPromise}
-          />
-        </Suspense>
-      ) : (
-        <SkeletonTable rows={5} columns={6} />
-      )}
-
-      {/* Admin balance adjustments — OWNER ONLY (motha). Non-owner admins
-          never see this block: the server already returns zero adjustment
-          rows for them (so the block would self-hide anyway), but we also
-          gate the render here so the section heading can't flash. Admin
-          inventory removals/sales are written as admin_balance_adjustment
-          rows ("Inventory removed: …"), so they surface HERE and in the
-          Deposits & Withdrawals box above — like any other balance adjustment. */}
-      {viewerIsAdjustmentOwner && adjustmentsTxPromise && (
-        <Suspense fallback={null}>
-          <AdminAdjustmentsStreamed
-            userId={user.id}
-            adjustmentsTxPromise={adjustmentsTxPromise}
-            isAdmin={isAdmin}
-            canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
-          />
-        </Suspense>
-      )}
-
-      {/* Sponsored / free battles the user joined with no ledger row — these
-          are otherwise invisible in gaming history. Self-fetching; hidden
-          when none. */}
-      <JoinedBattlesPanel userId={user.id} />
+      {/* Deposits & Withdrawals — collapsible (default open). The Suspense +
+          skeleton stay INSIDE the collapsible content so the section still
+          shell-first streams (never a blocking await) and the balance panels
+          above still paint first. */}
+      <Collapsible
+        open={dwOpen}
+        onOpenChange={setDwOpen}
+        className="space-y-4 sm:space-y-6"
+      >
+        <CollapsibleTrigger
+          render={
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-3 rounded-lg text-left transition-opacity hover:opacity-80"
+            >
+              <SectionHeading
+                icon={ArrowDownToLine}
+                title="Deposits & Withdrawals"
+              />
+              <ChevronDown
+                className={cn(
+                  "size-5 shrink-0 text-muted-foreground motion-safe:transition-transform motion-safe:duration-200",
+                  dwOpen && "rotate-180",
+                )}
+              />
+            </button>
+          }
+        />
+        <CollapsibleContent>
+          {financialTxPromise ? (
+            <Suspense fallback={<SkeletonTable rows={5} columns={6} />}>
+              <DepositsWithdrawalsStreamed
+                userId={user.id}
+                financialTxPromise={financialTxPromise}
+                isAdmin={isAdmin}
+                canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
+                viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
+                wagerProgressPromise={wagerProgressPromise}
+              />
+            </Suspense>
+          ) : (
+            <SkeletonTable rows={5} columns={6} />
+          )}
+        </CollapsibleContent>
+      </Collapsible>
 
       {/* Tips & Rain — creator tips this user received/sent + rain
           prizes won. Sits directly below deposits per admin request
@@ -310,7 +313,6 @@ const FINANCIAL_TX_TYPES_NO_ADJUSTMENTS = FINANCIAL_TX_TYPES.filter(
 
 function DepositsWithdrawalsStreamed({
   userId,
-  cardWithdrawals,
   financialTxPromise,
   isAdmin,
   canEditBalanceAdjustments,
@@ -318,7 +320,6 @@ function DepositsWithdrawalsStreamed({
   wagerProgressPromise,
 }: {
   userId: string;
-  cardWithdrawals: UserDetail["cardWithdrawals"];
   financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>>;
   isAdmin: boolean;
   canEditBalanceAdjustments: boolean;
@@ -352,7 +353,6 @@ function DepositsWithdrawalsStreamed({
       ]}
       initialTx={r.data}
       initialLoadError={r.error}
-      cardWithdrawals={cardWithdrawals}
       isAdmin={isAdmin}
       canEditBalanceAdjustments={canEditBalanceAdjustments}
       wagerRequirement={toWagerRequirementSummary(wagerProgress)}
@@ -748,6 +748,13 @@ export function GamingTab({
       ) : (
         <SkeletonTable rows={5} columns={6} />
       )}
+
+      {/* Sponsored / free battles the user joined with no ledger row — moved
+          here from the Overview tab. These never appear in the ledger-backed
+          gaming history above (that reads only ledger_transactions), so they
+          belong on the Gaming tab. Self-fetching (kicks only when this tab
+          mounts) + hidden when none. */}
+      <JoinedBattlesPanel userId={user.id} />
     </div>
   );
 }
@@ -1745,6 +1752,8 @@ export function AccountTab({
   kycPromise,
   wagerProgressPromise,
   balanceWeightingPromise,
+  adjustmentsTxPromise,
+  viewerIsAdjustmentOwner,
 }: {
   data: UserDetail;
   notesPromise: Promise<SafeQueryResult<AdminNote[]>> | null;
@@ -1768,6 +1777,14 @@ export function AccountTab({
   // (funding-source wager-weight matrix × balance composition). null = tab
   // not active / read failed → muted card.
   balanceWeightingPromise: Promise<UserBalanceWeighting | null> | null;
+  // Owner-only (motha) dedicated uncapped admin_balance_adjustment page —
+  // moved here from the Overview tab. Streamed + lazy: page.tsx kicks
+  // adjustmentsTxPromise only when the Account tab is active
+  // (Active-Timeframe-Only). null for a non-owner viewer / non-active tab.
+  adjustmentsTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
+  // Owner-only flag (motha). Gates the adjustments block below so a non-owner
+  // never sees it (defence-in-depth; the server already returns zero rows).
+  viewerIsAdjustmentOwner: boolean;
 }) {
   const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, battleLimits, mutes, capabilities } = data;
   return (
@@ -1791,6 +1808,27 @@ export function AccountTab({
       >
         <WindowedStripsStreamed pnlResultPromise={pnlResultPromise} />
       </Suspense>
+
+      {/* Admin balance adjustments — OWNER ONLY (motha). Moved here from the
+          Overview tab. Non-owner admins never see this block: the server
+          returns zero adjustment rows for them (so it would self-hide anyway),
+          but we also gate the render here so the heading can't flash. Streamed
+          + lazy — adjustmentsTxPromise is kicked only when the Account tab is
+          active (Active-Timeframe-Only). Admin inventory removals/sales are
+          written as admin_balance_adjustment rows ("Inventory removed: …"), so
+          they surface here + in the Deposits & Withdrawals box on Overview —
+          like any other balance adjustment. */}
+      {viewerIsAdjustmentOwner && adjustmentsTxPromise && (
+        <Suspense fallback={null}>
+          <AdminAdjustmentsStreamed
+            userId={user.id}
+            adjustmentsTxPromise={adjustmentsTxPromise}
+            isAdmin={data.sessionRole === "admin"}
+            canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
+          />
+        </Suspense>
+      )}
+
       <SectionHeading icon={ShieldCheck} title="Account Details" />
       <Card>
         <CardContent className="pt-6">

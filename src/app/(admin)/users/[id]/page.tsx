@@ -456,14 +456,16 @@ async function UserDetailBody({
           ),
         )
       : null;
-  // Adjustments: Overview-only. Kicked only when the viewer is the owner
-  // `motha` — a non-owner gets a resolved empty page instead of a wasted
-  // round trip (the server returns zero adjustment rows for them anyway;
-  // the fail-closed gate inside getUserTransactions remains the security
-  // authority, this skip is purely a perf nicety). Chained on the owner
-  // probe (fast admin-DB read), NOT on the heavy body gate.
+  // Adjustments: Account-tab-only (moved off Overview — the dedicated
+  // admin-balance-adjustments block now lives on the Account tab). Kicked
+  // only when the viewer is the owner `motha` — a non-owner gets a resolved
+  // empty page instead of a wasted round trip (the server returns zero
+  // adjustment rows for them anyway; the fail-closed gate inside
+  // getUserTransactions remains the security authority, this skip is purely a
+  // perf nicety). Chained on the owner probe (fast admin-DB read), NOT on the
+  // heavy body gate.
   const adjustmentsTxPromise: Promise<SafeQueryResult<UserTxPage>> | null =
-    initialTab === "overview"
+    initialTab === "account"
       ? viewerIsOwnerPromise.then((ownerRes) =>
           ownerRes.data
             ? safeQuery(

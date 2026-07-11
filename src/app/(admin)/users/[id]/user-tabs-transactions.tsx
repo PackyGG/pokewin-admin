@@ -63,12 +63,10 @@ import { EmptyState } from "@/components/empty-state";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { battleUrl } from "@/lib/utils/main-site";
 import { fetchUserTransactions } from "./actions";
-import { WithdrawalDeclineButton } from "./withdrawal-decline-button";
 import type { WagerRequirementSummary } from "@/lib/queries/users-wager-progress-shared";
 import type {
   Transaction,
   PaginatedTransactions,
-  UserDetail,
 } from "./user-tabs-types";
 
 // The transaction detail modal is heavy (Dialog primitives + provably-fair
@@ -91,15 +89,6 @@ const BalanceAdjustmentEditDialog = dynamic(
 );
 
 const TX_STATUSES = ["all", "pending", "completed", "failed"] as const;
-
-const CW_STATUS_COLORS: Record<string, string> = {
-  pending: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400",
-  processing: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
-  shipped: "bg-purple-500/15 text-purple-600 dark:text-purple-400",
-  completed: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-  failed: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
-  cancelled: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
-};
 
 /**
  * Pull a useful display string out of a ledger row's `metadata` blob
@@ -274,7 +263,6 @@ export const CategoryTransactionsTable = React.memo(
     initialTx,
     initialLoadError = null,
     showCardsValue = false,
-    cardWithdrawals,
     isAdmin = false,
     canEditBalanceAdjustments = false,
     wagerRequirement = null,
@@ -294,7 +282,6 @@ export const CategoryTransactionsTable = React.memo(
      */
     initialLoadError?: string | null;
     showCardsValue?: boolean;
-    cardWithdrawals?: UserDetail["cardWithdrawals"];
     /**
      * Gates the admin-only "reveal + copy + open Watch URL with
      * password" affordance on private-battle rows. Defaults to false so
@@ -1338,178 +1325,11 @@ export const CategoryTransactionsTable = React.memo(
             </div>
           )}
 
-          {/* Card Withdrawals */}
-          {cardWithdrawals && cardWithdrawals.length > 0 && (
-            <CardWithdrawalsSubTable withdrawals={cardWithdrawals} />
-          )}
         </CardContent>
       </Card>
     );
   },
 );
-
-function CardWithdrawalsSubTable({
-  withdrawals,
-}: {
-  withdrawals: UserDetail["cardWithdrawals"];
-}) {
-  const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(10);
-
-  const totalPages = Math.max(1, Math.ceil(withdrawals.length / perPage));
-  const paginated = withdrawals.slice((page - 1) * perPage, page * perPage);
-
-  function changePage(p: number) {
-    setPage(Math.max(1, Math.min(p, totalPages)));
-  }
-
-  function changePerPage(pp: number) {
-    setPerPage(pp);
-    setPage(1);
-  }
-
-  return (
-    <div className="border-t pt-4">
-      <p className="text-xs font-medium text-muted-foreground mb-3">
-        Card Withdrawals ({withdrawals.length})
-      </p>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>ID</TableHead>
-            <TableHead>Method</TableHead>
-            <TableHead>Value</TableHead>
-            <TableHead>Shipping</TableHead>
-            <TableHead>Tracking</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Date</TableHead>
-            <TableHead>Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {paginated.map((w) => (
-            <TableRow
-              key={w.id}
-              className="cursor-pointer hover:bg-muted/50"
-              onClick={() => window.open(`/withdrawals/${w.id}`, "_blank")}
-            >
-              <TableCell>
-                <span className="font-mono text-xs text-blue-400">
-                  {w.id.slice(0, 8)}…
-                </span>
-              </TableCell>
-              <TableCell className="text-xs">
-                {w.method.replace(/_/g, " ")}
-              </TableCell>
-              <TableCell className="text-xs">
-                {formatCurrency(w.totalValueUsd)}
-              </TableCell>
-              <TableCell className="text-xs">
-                {w.shippingFeeUsd != null
-                  ? formatCurrency(w.shippingFeeUsd)
-                  : "-"}
-              </TableCell>
-              <TableCell className="text-xs font-mono">
-                {w.trackingNumber ?? "-"}
-              </TableCell>
-              <TableCell>
-                <Badge
-                  variant="outline"
-                  className={CW_STATUS_COLORS[w.status] ?? ""}
-                >
-                  {w.status}
-                </Badge>
-              </TableCell>
-              <TableCell
-                className="text-xs text-muted-foreground whitespace-nowrap"
-                title={formatRelative(w.requestedAt)}
-              >
-                {formatDateTime(w.requestedAt)}
-              </TableCell>
-              <TableCell>
-                <div onClick={(e) => e.stopPropagation()}>
-                  <WithdrawalDeclineButton
-                    withdrawalId={w.id}
-                    status={w.status}
-                    method={w.method}
-                  />
-                </div>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-      {totalPages > 0 && (
-        <div className="flex items-center justify-between py-4">
-          <p className="text-sm text-muted-foreground">
-            {withdrawals.length} withdrawal{withdrawals.length !== 1 ? "s" : ""}
-          </p>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">Rows</span>
-              <Select
-                value={String(perPage)}
-                onValueChange={(v) => v && changePerPage(Number(v))}
-              >
-                <SelectTrigger className="h-8 w-[70px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {[10, 20, 50].map((n) => (
-                    <SelectItem key={n} value={String(n)}>
-                      {n}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <span className="text-sm text-muted-foreground">
-              Page {page} of {totalPages}
-            </span>
-            <div className="flex items-center gap-1">
-              <Button
-                variant="outline"
-                size="icon"
-                className="size-8"
-                onClick={() => changePage(1)}
-                disabled={page <= 1}
-              >
-                <ChevronsLeft className="size-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                className="size-8"
-                onClick={() => changePage(page - 1)}
-                disabled={page <= 1}
-              >
-                <ChevronLeft className="size-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                className="size-8"
-                onClick={() => changePage(page + 1)}
-                disabled={page >= totalPages}
-              >
-                <ChevronRight className="size-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                className="size-8"
-                onClick={() => changePage(totalPages)}
-                disabled={page >= totalPages}
-              >
-                <ChevronsRight className="size-4" />
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 /**
  * Watch-live button on the Gaming-tab battle rows. Has two modes:

@@ -213,8 +213,8 @@ export function UserViewModern({
   gamingTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   // Overview — deposits & withdrawals feed:
   financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
-  // Overview, owner only — dedicated uncapped admin_balance_adjustment page
-  // (see page.tsx ADJ_LIMIT) so the Overview tab can surface every
+  // Account tab, owner only — dedicated uncapped admin_balance_adjustment page
+  // (see page.tsx ADJ_LIMIT) so the Account tab can surface every
   // adjustment without the shared financial page hiding older ones behind
   // newer activity. Non-owners receive a resolved empty page (the server
   // gate in getUserTransactions stays the authority).
@@ -759,7 +759,6 @@ export function UserViewModern({
           <OverviewTab
             data={data}
             financialTxPromise={financialTxPromise}
-            adjustmentsTxPromise={adjustmentsTxPromise}
             pnlResultPromise={pnlResultPromise}
             wagerProgressPromise={wagerProgressPromise}
             isAdmin={isAdmin}
@@ -798,6 +797,8 @@ export function UserViewModern({
             kycPromise={kycPromise}
             wagerProgressPromise={wagerProgressPromise}
             balanceWeightingPromise={balanceWeightingPromise}
+            adjustmentsTxPromise={adjustmentsTxPromise}
+            viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
           />
         )}
       </FadeIn>
