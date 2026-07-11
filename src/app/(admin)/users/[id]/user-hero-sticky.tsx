@@ -118,11 +118,11 @@ export function UserHeroSticky({
 
   return (
     <>
-      {/* Condensed sticky bar — a polished mini-header echoing the hero's
-          design language (subtle blue/purple corner glow, soft border,
-          backdrop blur, rounded-2xl). z above the tab bar (z-20) so it layers
-          cleanly on top when both are sticky. Pointer-events off while hidden
-          so it never blocks clicks on the content underneath.
+      {/* Condensed sticky bar — a flat mini-header echoing the now-flat hero
+          (solid bg-card surface, hairline border, backdrop blur, rounded-2xl).
+          z above the tab bar (z-20) so it layers cleanly on top when both are
+          sticky. Pointer-events off while hidden so it never blocks clicks on
+          the content underneath.
 
           The scroll show/hide mechanics are untouched: it stays
           `sticky top-0`, toggles opacity / translate / pointer-events on
@@ -138,17 +138,12 @@ export function UserHeroSticky({
         )}
       >
         {collapsed && (
-          <div className="relative overflow-hidden rounded-2xl border bg-card/80 shadow-sm ring-1 ring-black/[0.02] backdrop-blur-xl dark:ring-white/[0.04]">
-            {/* Hero-matched corner glows — purely decorative, behind content. */}
-            <div
-              aria-hidden
-              className="pointer-events-none absolute -right-16 -top-16 size-40 rounded-full bg-blue-500/[0.07] blur-3xl"
-            />
-            <div
-              aria-hidden
-              className="pointer-events-none absolute -left-16 -bottom-16 size-40 rounded-full bg-purple-500/[0.06] blur-3xl"
-            />
-
+          <div className="relative overflow-hidden rounded-2xl border bg-card/80 shadow-sm backdrop-blur-xl">
+            {/* Flat: solid bg-card surface + hairline border + one soft shadow,
+                matching the now-flat hero. The decorative blue/purple corner-
+                glow blobs and the subtle ring were the layered depth noise the
+                cleaner/flatter pass removes. The backdrop-blur stays — it's
+                functional (this bar overlays scrolling content), not decor. */}
             <div className="relative flex items-center gap-3 px-3.5 py-2">
               {/* Identity — avatar + status dot, name, status sublabel. */}
               <div className="relative shrink-0">
@@ -182,8 +177,10 @@ export function UserHeroSticky({
               </div>
 
               {/* Balance — labelled, right-aligned. Available balance is money
-                  the user holds; emerald matches the hero's balance treatment. */}
-              <div className="flex shrink-0 items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1">
+                  the user holds; flat neutral chip with House-POV emerald kept
+                  on the icon + number only (no colored fill), matching the
+                  flat hero KPI tiles. */}
+              <div className="flex shrink-0 items-center gap-2 rounded-xl border bg-card px-2.5 py-1">
                 <Wallet
                   aria-hidden
                   className="size-3.5 shrink-0 text-emerald-500"

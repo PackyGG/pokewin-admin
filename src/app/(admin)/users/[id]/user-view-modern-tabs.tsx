@@ -174,9 +174,9 @@ export function OverviewTab({
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* Modern stat panels — purpose-built to match the hero aesthetic:
-          rounded-2xl, subtle colored corner glow, color-accented icon
-          chip + hero number + breakdown rows below. items-stretch (with
+      {/* Modern stat panels — flat surface matching the hero: solid bg-card,
+          hairline border, accent-tinted icon chip + hero number + breakdown
+          rows below (no colored fill / corner glow). items-stretch (with
           h-full on each StatPanel) so the three columns share one even
           height instead of the Platform-P&L panel towering over the
           others — its tall rolling-P&L ladder was removed for the same
@@ -1347,10 +1347,11 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
   const canClearReferral = hasFormalReferrer || hasCarriedCookie;
 
   return (
-    // Subtle blue accent on this card so it visually distinguishes
-    // from the Sparkles/purple "Own Affiliate Code" card below.
-    // Same Card primitive — different left-border tint.
-    <Card className="border-l-4 border-l-blue-500/40">
+    // Flat: plain neutral Card. The decorative blue left-border tint was
+    // dropped in the cleaner/flatter pass — this card is distinguished from
+    // the "Own Affiliate Code" card below by its section heading + content,
+    // not a color accent.
+    <Card>
       <CardContent className="space-y-3">
         <div className="space-y-2">
           {hasFormalReferrer ? (
@@ -1369,7 +1370,7 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
                   <Link
                     href={`/users/${user.referredBy}`}
                     aria-label={`Open profile of ${user.referredByUsername ?? user.referredBy?.slice(0, 8)} (owner of ${user.referredByCode})`}
-                    className="rounded-md bg-blue-500/15 px-2 py-1 font-mono text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-500/25 dark:text-blue-300"
+                    className="rounded-md border bg-muted px-2 py-1 font-mono text-sm font-semibold text-foreground transition-colors hover:bg-muted/70"
                   >
                     {user.referredByCode}
                   </Link>
@@ -1404,7 +1405,7 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
                 Carrying referral cookie
               </p>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-md bg-blue-500/15 px-2 py-1 font-mono text-sm font-semibold text-blue-700 dark:text-blue-300">
+                <span className="rounded-md border bg-muted px-2 py-1 font-mono text-sm font-semibold text-foreground">
                   {carriedCookie}
                 </span>
                 <Badge
@@ -1561,9 +1562,10 @@ function OwnCodeCard({
   const hasAny = owned.length > 0;
 
   return (
-    // Purple left-border so it's visually distinct from the blue
-    // ReferrerCard above. Two completely different DB sources.
-    <Card className="border-l-4 border-l-purple-500/40">
+    // Flat: plain neutral Card. The decorative purple left-border tint was
+    // dropped in the cleaner/flatter pass — still distinct from the Referrer
+    // card above via its section heading + content, not a color accent.
+    <Card>
       <CardContent className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -1663,11 +1665,11 @@ function OwnedCodeRow({
       ? `/creators/${userId}`
       : `/users/${userId}`;
   return (
-    <div className="group flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 transition-colors hover:border-purple-500/30 hover:bg-purple-500/5">
+    <div className="group flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 transition-colors hover:border-border hover:bg-muted/40">
       <div className="flex flex-wrap items-center gap-2">
         <Link
           href={codeHref}
-          className="inline-flex items-center gap-1 rounded-md bg-purple-500/15 px-2 py-1 font-mono text-sm font-semibold text-purple-700 dark:text-purple-300 transition-colors hover:bg-purple-500/25"
+          className="inline-flex items-center gap-1 rounded-md border bg-muted px-2 py-1 font-mono text-sm font-semibold text-foreground transition-colors hover:bg-muted/70"
         >
           {code}
           <ArrowUpRight className="size-3 opacity-50 transition-opacity group-hover:opacity-100" />
