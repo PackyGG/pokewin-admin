@@ -77,7 +77,7 @@ function UpgraderKpiTile({
       <div
         aria-hidden
         className={cn(
-          "pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-current opacity-50 transition-opacity duration-200 group-hover:opacity-80",
+          "tile-accent-bar pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-current opacity-50 transition-opacity duration-200 group-hover:opacity-80",
           colors.icon,
         )}
       />

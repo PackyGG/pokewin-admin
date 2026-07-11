@@ -385,7 +385,7 @@ export function KpiTile({
       <div
         aria-hidden
         className={cn(
-          "pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-current opacity-50 motion-safe:transition-opacity motion-safe:duration-200 motion-safe:group-hover:opacity-80",
+          "tile-accent-bar pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-current opacity-50 motion-safe:transition-opacity motion-safe:duration-200 motion-safe:group-hover:opacity-80",
           colors.icon,
         )}
       />
@@ -467,7 +467,7 @@ export function MetricTile({
       <div
         aria-hidden
         className={cn(
-          "pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-current opacity-50 motion-safe:transition-opacity motion-safe:duration-200 motion-safe:group-hover:opacity-80",
+          "tile-accent-bar pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-current opacity-50 motion-safe:transition-opacity motion-safe:duration-200 motion-safe:group-hover:opacity-80",
           colors.icon,
         )}
       />

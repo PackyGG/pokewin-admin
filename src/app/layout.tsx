@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Chakra_Petch } from "next/font/google";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -14,6 +14,19 @@ const geistSans = Geist({
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+});
+
+// Chakra Petch — the "Grailed Dark" theme typeface. NOT a variable font,
+// so explicit weights are required. Exposed as `--font-grailed`; the
+// unlayered `.grailed { font-family: var(--font-grailed) … }` rule in
+// globals.css switches the app to it only under the grailed theme (the
+// light + dark themes keep Geist). `display: "swap"` avoids blocking
+// first paint on the webfont.
+const chakraPetch = Chakra_Petch({
+  weight: ["400", "500", "600", "700"],
+  subsets: ["latin"],
+  variable: "--font-grailed",
+  display: "swap",
 });
 
 // Absolute base for OG image URLs in link-preview embeds (Discord /
@@ -89,7 +102,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`} suppressHydrationWarning>
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} ${chakraPetch.variable}`} suppressHydrationWarning>
       <body className="antialiased overflow-x-hidden">
         {/* Dark mode stays the project default (CLAUDE.md). `enableSystem`
             is on so the admin preferences dropdown can offer a "System"

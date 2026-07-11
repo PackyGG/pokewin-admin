@@ -148,64 +148,132 @@
 }
 
 /* ── "Grailed Dark" — third theme ──────────────────────────────────
-   Premium dark SaaS palette (blue/purple-tinted layered surfaces).
+   Faithful recreation of the Grailed admin dashboard's design language
+   using REAL extracted `--ds-*` tokens from their live site: an
+   indigo/purple-tinted layered ramp, a bright-cyan primary, solid
+   indigo hairline borders and a compact ~8px radius. The signature
+   typeface (Chakra Petch) is wired via the unlayered `font-family`
+   rule below.
+
    next-themes applies the single `.grailed` class; the `dark`
    custom-variant above also matches `.grailed`, so every `dark:`
    utility fires under Grailed exactly as under `.dark` — only the
-   palette differs. House-POV emerald/rose financial colors are
-   Tailwind palette classes (not theme tokens) and intentionally stay
-   identical across both dark themes. */
+   palette + typeface differ. House-POV emerald/rose financial colors
+   are Tailwind palette classes (not theme tokens) and intentionally
+   stay identical across both dark themes.
+
+   `--ds-*` reference ramp (for in-between surfaces if ever needed):
+   0 #131320 · 10 #1A1A29 · 50 #1F1F30 · 100 #202032 · 150 #242438 ·
+   200 #26263B · 250 #2A2A41 · 300 #2E2E48 · 350 #30304A · 400 #393956 ·
+   600 #6A6A8A · 650 #8383AA · 700 #9494B3 · 800 #ACACCB · 900 #F1F1FE. */
 .grailed {
   color-scheme: dark;
 
-  --background: #131722;
-  --foreground: #F3F5FA;
+  /* Chakra Petch is the Grailed signature. Unlayered so it beats the
+     layered `@layer base html { @apply font-sans }` rule; Tailwind
+     Preflight sets `font: inherit` on form controls, so inputs +
+     buttons inherit it too. Falls back to the system sans stack while
+     the webfont swaps in. */
+  font-family: var(--font-grailed), ui-sans-serif, system-ui, sans-serif;
 
-  --card: #202636;
-  --card-foreground: #F3F5FA;
+  --background: #1A1A29;
+  --foreground: #F1F1FE;
 
-  --popover: #1A1F2E;
-  --popover-foreground: #F3F5FA;
+  --card: #1F1F30;
+  --card-foreground: #F1F1FE;
 
-  /* Bright cyan-blue primary → foreground MUST be dark for AA contrast */
-  --primary: #4CC3FF;
-  --primary-foreground: #0C111B;
+  --popover: #202032;
+  --popover-foreground: #F1F1FE;
 
-  --secondary: #1A1F2E;
-  --secondary-foreground: #F3F5FA;
+  /* Bright cyan primary → foreground MUST be near-black for AA contrast */
+  --primary: #65E3FF;
+  --primary-foreground: #131320;
 
-  --muted: #1A1F2E;
-  --muted-foreground: #9CA7B8;
+  --secondary: #202032;
+  --secondary-foreground: #F1F1FE;
 
-  --accent: #252C3F; /* card-hover */
-  --accent-foreground: #F3F5FA;
+  --muted: #202032;
+  --muted-foreground: #9494B3;
 
-  --destructive: #FF6B7A;
+  --accent: #26263B; /* hover surface */
+  --accent-foreground: #F1F1FE;
 
-  --border: rgba(255, 255, 255, 0.06);
-  /* Solid, not rgba: `bg-input` is used as a FILL across the UI (slider
-     track, outline-button/tab/command-input backgrounds), so a
-     semi-transparent 10% white would render washed-out/near-invisible.
-     A solid layered surface matches `.dark`'s solid `--input`. */
-  --input: #232A3B;
-  --ring: #4CC3FF;
+  --destructive: #FF5165;
 
-  --chart-1: #4CC3FF;
-  --chart-2: #50D890;
-  --chart-3: #FFC857;
-  --chart-4: #FF6B7A;
-  --chart-5: #A78BFA;
+  /* Solid indigo hairline — Grailed uses a real 1px indigo border, not
+     an rgba-white overlay. `bg-input` is also used as a FILL across the
+     UI (slider track, outline-button/tab/command-input backgrounds), so
+     the solid indigo reads as a subtle raised surface there. */
+  --border: #2E2E48;
+  --input: #2E2E48;
+  --ring: #65E3FF;
 
-  --sidebar: #10141E;
-  --sidebar-foreground: #F3F5FA;
-  --sidebar-primary: #4CC3FF;
-  --sidebar-primary-foreground: #0C111B;
-  --sidebar-accent: #202636;
-  --sidebar-accent-foreground: #F3F5FA;
-  --sidebar-border: rgba(255, 255, 255, 0.06);
-  --sidebar-ring: #4CC3FF;
+  /* Chart series — exact rendered accents pulled from grailed.gg:
+     cyan / green / gold / red / blue. */
+  --chart-1: #65E3FF;
+  --chart-2: #5CFF6E;
+  --chart-3: #FFB84F;
+  --chart-4: #FF5165;
+  --chart-5: #54A3FF;
 
-  --radius: 0.75rem;
+  --sidebar: #131320; /* darkest surface */
+  --sidebar-foreground: #9494B3;
+  --sidebar-primary: #65E3FF;
+  --sidebar-primary-foreground: #131320;
+  --sidebar-accent: #202032;
+  --sidebar-accent-foreground: #F1F1FE;
+  --sidebar-border: #2E2E48;
+  --sidebar-ring: #65E3FF;
+
+  --radius: 0.5rem; /* ~8px, compact */
+}
+
+/* ── Grailed structural design-language (scoped) ─────────────────────
+   Everything below is scoped under `.grailed` so the light + dark
+   themes render byte-identical. These recreate the Grailed dashboard's
+   component language on our OWN shadcn primitives via their class /
+   data-slot hooks — no component logic or props change. */
+
+/* KPI / metric tile accent bar — Grailed's signature left rule. The
+   tiles (KpiTile / MetricTile) already render a 2px `bg-current` bar
+   tinted with each tile's accent; under grailed we widen it to 3px and
+   firm up its opacity so it reads as the Grailed accent rule. Targets
+   the `.tile-accent-bar` hook on those bars. Unlayered so it wins over
+   the `w-0.5` / `opacity-50` utilities. */
+.grailed .tile-accent-bar {
+  width: 3px;
+  opacity: 0.85;
+}
+
+/* Cards — the token ramp already gives the #1F1F30 fill + #2E2E48
+   hairline + 8px radius; add a soft lift so cards float on the dark
+   indigo page like Grailed's. Kept subtle so dense tables never feel
+   heavy. (PageHero / StatPanel / KpiTile are custom divs, not
+   data-slot=card, and keep their own `surface-raise` — no double
+   shadow.) */
+.grailed [data-slot="card"] {
+  box-shadow:
+    0 1px 2px -1px color-mix(in oklch, black 40%, transparent),
+    0 10px 26px -16px color-mix(in oklch, black 55%, transparent);
+}
+
+/* Sidebar group labels → uppercase tracked micro-caps, the Grailed nav
+   treatment. The label is otherwise `text-xs font-medium`. */
+.grailed [data-slot="sidebar-group-label"] {
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+/* Recharts tooltip fallback — the app's standard <ChartTooltipContent>
+   already themes via tokens (bg-background + border-border + rounded-lg
+   → dark indigo card, indigo hairline, 8px radius). This only catches
+   charts that fall back to Recharts' built-in tooltip, giving them the
+   same dark indigo popover surface instead of the library's white box. */
+.grailed .recharts-default-tooltip {
+  background-color: var(--popover) !important;
+  border-color: var(--border) !important;
+  border-radius: var(--radius) !important;
+  color: var(--popover-foreground) !important;
 }
 
 @layer base {
