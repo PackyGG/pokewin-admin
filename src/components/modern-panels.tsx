@@ -14,9 +14,17 @@ import { SparkleField } from "@/components/decor";
  *   - TILE_COLORS         — accent color tokens (blue / emerald / rose / …)
  *   - PageHero            — gradient hero block with soft corner glows
  *   - SectionHeading      — icon chip + title, used to open a section
- *   - KpiTile             — compact stat tile with accent color
- *   - StatPanel           — larger stat card with corner glow + hero number
+ *   - KpiTile             — compact flat stat tile; accent tints icon + value only
+ *   - StatPanel           — larger flat stat card (solid bg-card + soft shadow)
  *   - MetricTile          — medium tile used in-tab (between KpiTile and StatPanel)
+ *
+ * Flat direction (matches the users/[id] pilot): the tiles + panels render
+ * on a solid `bg-card` surface with a hairline border. The per-hue colored
+ * FILL, the diagonal white sheen, and the blurred corner-glow blobs were the
+ * layered noise that read as "not clean" — dropped. TILE_COLORS now drives
+ * ONLY the icon + the value number (and the small StatPanel icon chip), never
+ * the tile background. PageHero keeps its hero treatment (it is a hero, not a
+ * tile) and is intentionally left unchanged.
  */
 
 export type AccentColor =
@@ -288,9 +296,10 @@ export function SectionHeading({
   return (
     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
       <div className="flex min-w-0 items-center gap-2.5">
-        {/* Refined icon chip — gradient wash + slightly brighter inner
-            hairline so the chip reads as a tiny glass tile in both themes. */}
-        <div className="shrink-0 rounded-lg border border-primary/20 bg-gradient-to-br from-primary/15 to-primary/5 p-1.5 shadow-sm ring-1 ring-inset ring-white/10">
+        {/* Flat icon chip — one solid `bg-primary/10` fill, no gradient /
+            border / ring / shadow (matches the flat pilot's SectionHeading
+            chip). The accent lives on the icon glyph only. */}
+        <div className="shrink-0 rounded-lg bg-primary/10 p-1.5">
           <Icon className="size-4 text-primary" />
         </div>
         {/* Rendered as <h2> so the page ladder is h1 (PageHero) → h2
@@ -368,35 +377,24 @@ export function KpiTile({
   // so a screen reader announces the tile contents in one breath
   // instead of just the uppercase chip text. Visual layout unchanged.
   const ariaLabel = sub ? `${label}: ${value}, ${sub}` : `${label}: ${value}`;
+  // Flat tile: one solid `bg-card` surface + a hairline border, uniform
+  // `rounded-lg`, completely static. The per-hue colored FILL (`colors.bg`),
+  // the diagonal white sheen overlay, and the left accent bar were the
+  // layered noise the flat pilot removes — dropped. The accent now survives
+  // only on the icon + the value number (House-POV tint where money). The
+  // `interactive` opt-in still adds a subtle press (scale + active brightness)
+  // for tiles wrapped in a Link/button — that's a tap affordance, not a hover
+  // sheen, so it's preserved. Reduced-motion safe (scale is `motion-safe`).
   return (
     <div
       role="group"
       aria-label={ariaLabel}
       className={cn(
-        "hover-raise group surface-sheen relative overflow-hidden rounded-xl border px-3 py-2.5 sm:px-4 sm:py-3",
-        colors.bg,
+        "rounded-lg border bg-card px-3 py-2.5 sm:px-4 sm:py-3",
         interactive && cn(pressable("scale"), "active:brightness-95"),
       )}
     >
-      {/* Left accent bar — inherits the accent hue via text-color +
-          bg-current. Brightens on hover (decorative — only animates
-          under `motion-safe`, snaps under reduced motion). House-POV
-          safe: the accent is chosen by the caller, same as the value tint. */}
-      <div
-        aria-hidden
-        className={cn(
-          "tile-accent-bar pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-current opacity-50 motion-safe:transition-opacity motion-safe:duration-200 motion-safe:group-hover:opacity-80",
-          colors.icon,
-        )}
-      />
-      {/* Faint diagonal sheen for a glassy finish — neutral white so it
-          never fights the House-POV accent. Decorative-only, so the
-          gradient suppresses itself under `prefers-reduced-motion`. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent motion-reduce:opacity-0 motion-safe:opacity-100"
-      />
-      <div className="relative flex items-start justify-between gap-2">
+      <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
           <Icon className={cn("size-3.5 shrink-0 sm:size-4", colors.icon)} />
           {/* micro-caps eyebrow — the canonical 11px/0.14em label rhythm */}
@@ -408,7 +406,7 @@ export function KpiTile({
       </div>
       <p
         className={cn(
-          "relative mt-1.5 truncate text-xl font-bold leading-tight tracking-tight tabular-nums sm:text-2xl",
+          "mt-1.5 truncate text-xl font-bold leading-tight tracking-tight tabular-nums sm:text-2xl",
           colors.text,
         )}
       >
@@ -420,7 +418,7 @@ export function KpiTile({
         // (mt-0.5 → mt-1) so it stops touching the value's baseline.
         // Still secondary (muted-foreground) so the hierarchy stays
         // value > label > sub.
-        <p className="relative mt-1 truncate text-xs text-muted-foreground">
+        <p className="mt-1 truncate text-xs text-muted-foreground">
           {sub}
         </p>
       )}
@@ -452,30 +450,19 @@ export function MetricTile({
   interactive?: boolean;
 }) {
   const colors = TILE_COLORS[accent];
+  // Flat tile — matches KpiTile so a grid of mixed tiles reads as one family:
+  // solid `bg-card` surface + hairline border, uniform `rounded-lg`, static.
+  // The colored FILL, the left accent bar, and the diagonal sheen are gone;
+  // the accent survives on the icon + value number only. `interactive` keeps
+  // its opt-in press affordance (scale + active brightness), reduced-motion safe.
   return (
     <div
       className={cn(
-        "hover-raise group surface-sheen relative overflow-hidden rounded-xl border p-3 sm:p-4",
-        colors.bg,
+        "rounded-lg border bg-card p-3 sm:p-4",
         interactive && cn(pressable("scale"), "active:brightness-95"),
       )}
     >
-      {/* Left accent bar + glassy sheen — matches KpiTile so a grid of
-          mixed tiles reads as one family. House-POV safe (neutral sheen,
-          caller-chosen accent). Hover lift + sheen are decorative so they
-          only animate under `motion-safe`. */}
-      <div
-        aria-hidden
-        className={cn(
-          "tile-accent-bar pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-current opacity-50 motion-safe:transition-opacity motion-safe:duration-200 motion-safe:group-hover:opacity-80",
-          colors.icon,
-        )}
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent motion-reduce:opacity-0 motion-safe:opacity-100"
-      />
-      <div className="relative flex items-center gap-1.5 sm:gap-2">
+      <div className="flex items-center gap-1.5 sm:gap-2">
         <Icon className={cn("size-3.5 shrink-0 sm:size-4", colors.icon)} />
         {/* micro-caps eyebrow — matches KpiTile so mixed grids read as one family */}
         <span className="truncate text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
@@ -484,7 +471,7 @@ export function MetricTile({
       </div>
       <p
         className={cn(
-          "relative mt-1.5 truncate text-2xl font-bold tracking-tight tabular-nums sm:text-3xl",
+          "mt-1.5 truncate text-2xl font-bold tracking-tight tabular-nums sm:text-3xl",
           colors.text,
         )}
       >
@@ -494,7 +481,7 @@ export function MetricTile({
         // Same readability bump as KpiTile — 11px → 12px (text-xs)
         // and a hair more space above so the sub line clears the
         // value baseline.
-        <p className="relative mt-1 truncate text-xs text-muted-foreground">
+        <p className="mt-1 truncate text-xs text-muted-foreground">
           {sub}
         </p>
       )}
@@ -505,12 +492,18 @@ export function MetricTile({
 // ─── StatPanel ────────────────────────────────────────────────────
 
 /**
- * Full stat card with corner glow, hero number, and room for breakdown
- * rows. Pair with <PanelRow>.
+ * Full stat card with a hero number + room for breakdown rows. Pair with
+ * <PanelRow>.
  *
- * Mobile-first notes: padding scales (p-4 → p-5), corner radius softens
- * to rounded-xl on phones, and the title row wraps so an action cluster
- * never pushes the title off-screen.
+ * Flat surface (matches the users/[id] pilot): one solid `bg-card` + a
+ * hairline border + a single soft `shadow-sm`. The `bg-gradient-to-br`
+ * fill, the blurred colored corner-glow blob, and the hairline top-edge
+ * highlight were the layered depth noise the flat direction removes — the
+ * accent now lives ONLY on the small icon chip (`colors.bg`) + the hero
+ * value inside `children` (House-POV tinted by the caller).
+ *
+ * Mobile-first notes: padding scales (p-4 → p-5) and the title row wraps
+ * so an action cluster never pushes the title off-screen.
  */
 export function StatPanel({
   title,
@@ -527,47 +520,32 @@ export function StatPanel({
 }) {
   const colors = TILE_COLORS[accent];
   return (
-    <div className="surface-sheen surface-raise group relative overflow-hidden rounded-xl border bg-gradient-to-br from-card via-card to-card/70 sm:rounded-2xl">
-      {/* Accent corner glow — a touch stronger (40% → 50%) and a hair
-          larger so the panel feels alive. Still soft/low-opacity. The
-          hover-driven opacity bump is decorative so it only animates
-          under `motion-safe` (reduced-motion holds the base 50%). */}
-      <div
-        aria-hidden
-        className={cn(
-          "pointer-events-none absolute -right-12 -top-12 size-28 rounded-full opacity-50 blur-2xl motion-safe:transition-opacity motion-safe:duration-200 motion-safe:group-hover:opacity-70 sm:size-36",
-          colors.bg,
-        )}
-      />
-      {/* Hairline top highlight for a crisp lifted edge on dark. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"
-      />
-      <div className="relative p-4 sm:p-5">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <div
-              className={cn(
-                "flex size-7 shrink-0 items-center justify-center rounded-lg border shadow-sm ring-1 ring-inset ring-white/10",
-                colors.bg,
-              )}
-            >
-              <Icon className={cn("size-3.5", colors.icon)} />
-            </div>
-            {/* Intentionally a <div>, not a heading: a StatPanel lives
-                inside a section already opened by a SectionHeading (h2),
-                so this small uppercase label is intra-panel chrome — not
-                another level in the document outline. Visual styling
-                unchanged. */}
-            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-              {title}
-            </div>
+    <div className="rounded-xl border bg-card p-4 shadow-sm sm:p-5">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          {/* Flat icon chip — one solid tinted fill (`colors.bg`), no
+              border / ring / shadow. This is the only place the accent
+              touches a surface; the panel body itself stays neutral. */}
+          <div
+            className={cn(
+              "flex size-7 shrink-0 items-center justify-center rounded-lg",
+              colors.bg,
+            )}
+          >
+            <Icon className={cn("size-3.5", colors.icon)} />
           </div>
-          {action}
+          {/* Intentionally a <div>, not a heading: a StatPanel lives
+              inside a section already opened by a SectionHeading (h2),
+              so this small uppercase label is intra-panel chrome — not
+              another level in the document outline. Visual styling
+              unchanged. */}
+          <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+            {title}
+          </div>
         </div>
-        {children}
+        {action}
       </div>
+      {children}
     </div>
   );
 }
