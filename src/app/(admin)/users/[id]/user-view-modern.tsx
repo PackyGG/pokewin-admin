@@ -31,7 +31,6 @@ import {
 } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { toast } from "sonner";
 import {
   Wallet,
   TrendingUp,
@@ -366,19 +365,6 @@ export function UserViewModern({
   const heroMoney = (v: number): string =>
     Math.abs(v) >= 100_000 ? formatCompactUsd(v) : formatCurrency(v);
 
-  // Plain click-to-copy for the User ID overline at the very top of the
-  // hero (owner 2026-07-12) — no icon, no button chrome, just the id text
-  // itself. Mirrors CopyButton's clipboard-write + success/error toast
-  // convention (src/components/copy-button.tsx) without its icon affordance.
-  async function handleCopyUserId() {
-    try {
-      await navigator.clipboard.writeText(user.id);
-      toast.success("User ID copied");
-    } catch {
-      toast.error("Couldn't copy to clipboard");
-    }
-  }
-
   // ── HERO ──────────────────────────────────────────────────────────
   // Extracted as a node so UserHeroSticky can render it inline AND derive
   // a thin condensed bar (avatar + name + balance) that appears once the
@@ -390,18 +376,6 @@ export function UserViewModern({
             shadow. The gradient fill and the two corner-glow blobs were the
             layered depth noise the cleaner/flatter pilot removes. */}
         <div className="p-3 sm:p-4">
-          {/* User ID — the very first, most prominent element in the hero.
-              Plain text, no icon, no visible button chrome — click anywhere
-              on it to copy the FULL id (owner 2026-07-12: previously buried
-              in the secondary info row next to the joined-date). */}
-          <button
-            type="button"
-            onClick={handleCopyUserId}
-            title="Click to copy user ID"
-            className="mb-1.5 block font-mono text-[11px] text-muted-foreground/60 transition-colors hover:text-foreground"
-          >
-            {user.id}
-          </button>
           {/* Hero = balanced two-column header on lg+: identity on the LEFT,
               a compact KPI tile grid on the RIGHT. Below lg the two columns
               stack (identity, then tiles) so phones get a clean vertical
@@ -604,6 +578,14 @@ export function UserViewModern({
                   <span className="inline-flex items-center gap-0.5">
                     <Calendar className="size-2.5" />
                     <RelativeTime date={user.createdAt} />
+                  </span>
+                  {/* User ID — short form shown, FULL id copied. */}
+                  <span
+                    className="inline-flex items-center gap-1 font-mono"
+                    title={user.id}
+                  >
+                    {user.id.slice(0, 8)}
+                    <CopyButton value={user.id} label="User ID" />
                   </span>
                 </div>
 

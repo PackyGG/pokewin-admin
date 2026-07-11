@@ -46,19 +46,22 @@ export function TopProgressBar() {
     if (reduced) {
       // Reduced motion: no sweep. Show the bar at full width as a quiet
       // commit cue, then fade it out — no width tween across the page.
+      // Held a touch longer so it's clearly registered before fading.
       setProgress(100);
-      const toHide = setTimeout(() => setVisible(false), 550);
+      const toHide = setTimeout(() => setVisible(false), 700);
       return () => clearTimeout(toHide);
     }
 
     setProgress(0);
-    // Animation sequence: snap to 30% immediately so users see motion,
-    // then ease toward 90% (simulates "loading"), snap to 100% on a
-    // short delay, fade out cleanly.
-    const frame = requestAnimationFrame(() => setProgress(30));
-    const toEase = setTimeout(() => setProgress(85), 120);
-    const toDone = setTimeout(() => setProgress(100), 350);
-    const toHide = setTimeout(() => setVisible(false), 550);
+    // Animation sequence: snap to a visible 40% immediately so the sweep
+    // is obviously in motion, ease toward 90% (simulates "loading"), snap
+    // to 100%, then fade out. Timings are stretched vs. the original so a
+    // fast navigation still leaves the bar on screen long enough to read
+    // instead of flashing away before the eye catches it.
+    const frame = requestAnimationFrame(() => setProgress(40));
+    const toEase = setTimeout(() => setProgress(90), 180);
+    const toDone = setTimeout(() => setProgress(100), 520);
+    const toHide = setTimeout(() => setVisible(false), 760);
 
     return () => {
       cancelAnimationFrame(frame);
@@ -71,14 +74,30 @@ export function TopProgressBar() {
   return (
     <div
       aria-hidden
-      className="pointer-events-none fixed left-0 top-0 z-[100] h-[2px] bg-primary shadow-[0_0_8px_var(--color-primary)]"
+      className="pointer-events-none fixed left-0 top-0 z-[100] h-[3px] overflow-visible"
       style={{
         width: `${progress}%`,
         opacity: visible ? 1 : 0,
         transition: reduced
           ? `opacity ${DURATION.base}ms ${EASE_OUT}`
-          : `width ${DURATION.base}ms ${EASE_STANDARD}, opacity ${DURATION.base}ms ${EASE_OUT}`,
+          : `width ${DURATION.slow}ms ${EASE_STANDARD}, opacity ${DURATION.base}ms ${EASE_OUT}`,
       }}
-    />
+    >
+      {/* Bright gradient fill + soft outer glow — reads clearly against both
+          the light and dark admin chrome, unlike the old flat 2px line. */}
+      <div className="h-full w-full rounded-r-full bg-gradient-to-r from-primary/70 via-primary to-primary shadow-[0_0_10px_1px_var(--color-primary)]" />
+      {/* Leading-edge highlight — the classic nprogress "comet" cap at the
+          right end of the growing bar. A concentrated glow that makes the
+          sweep unmistakable even on a quick navigation. */}
+      <div
+        aria-hidden
+        className="absolute right-0 top-1/2 h-full w-16 -translate-y-1/2"
+        style={{
+          boxShadow:
+            "0 0 14px 4px var(--color-primary), 0 0 6px 2px var(--color-primary)",
+          transform: "translateY(-50%) rotate(2deg)",
+        }}
+      />
+    </div>
   );
 }
