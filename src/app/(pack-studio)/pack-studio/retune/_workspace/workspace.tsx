@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/empty-state";
 import { FadeIn } from "@/components/fade-in";
 import { SectionHeading } from "@/components/modern-panels";
 import { TableSkeleton } from "@/components/loading-skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { formatCurrency } from "@/lib/utils/format";
 import { computePackRisk, type PackRisk } from "@/app/(admin)/insights/edge-calc/risk";
@@ -37,7 +38,6 @@ import { planPackTuneOverWire } from "./plan-transport";
 import type { BuilderCardItem } from "../../builder/actions";
 import type { RetuneRailRow } from "../_queries/rail";
 import { buildCardDiffRows } from "./card-diff-table";
-import { reconcileOddsForDisplay } from "./odds-display";
 import { BulkBar } from "./bulk-bar";
 import { PackRail, attentionCompare } from "./pack-rail";
 import { PlanPanel, type PlanRefusal } from "./plan-panel";
@@ -50,6 +50,7 @@ import {
   AS_IS_SECONDARY_HEADING,
   DEGENERATE_BADGE,
   PUSH_KEPT_PENDING_TOAST,
+  RESET_TO_LIVE_TOAST,
   applyDroppedEditsToast,
   autoCleanAppliedToast,
   pendingDroppedDriftToast,
@@ -65,7 +66,6 @@ import {
   isPushEnabled,
   isTokenExpired,
   mergePendingIntoPins,
-  pendingOddsTotal,
   reanchorStagedPool,
   seedStagedPool,
   stagedPlanInput,
@@ -1006,11 +1006,17 @@ export function RetuneWorkspace({
 
   const resetToLive = React.useCallback(
     (packId: string) => {
+      // Toast only when the reset actually dropped something — an idle
+      // keyboard "l" on a clean pack shouldn't claim edits were discarded.
+      const hadEdits =
+        stagedApi.getStaged(packId) !== null ||
+        stagedApi.getPending(packId).length > 0;
       stagedApi.clearStaged(packId);
       stagedApi.clearPending(packId); // drop any un-applied typed edits too
       setDriftPrompts((prev) => delSet(prev, packId));
       setRebasedPacks((prev) => delSet(prev, packId));
       setFixLoopPacks((prev) => delSet(prev, packId));
+      if (hadEdits) toast.success(RESET_TO_LIVE_TOAST);
       void (async () => {
         const fresh = await ensurePool(packId, { fresh: true });
         if (fresh) setPriceText(priceInputText(fresh.price));
@@ -1560,14 +1566,6 @@ export function RetuneWorkspace({
     [selectedPool, selectedStaged, planForBasis, selectedPending],
   );
 
-  // Live total-% the pending+committed odds would land at (the readout the
-  // owner watches before Apply). Base = the plan's planned odds (committed pins
-  // already folded in); each pending edit overrides its card's share.
-  const pendingTotal = React.useMemo(
-    () => pendingOddsTotal(planForBasis?.planned ?? null, selectedPending),
-    [planForBasis, selectedPending],
-  );
-
   // Debounced pre-flight while the buffer is non-empty: 800ms of quiet after
   // the last typed odd (or a staged/pool change under a live buffer) fires
   // the dry-run; emptying the buffer (Apply/Discard/drop) clears the timer
@@ -1662,24 +1660,6 @@ export function RetuneWorkspace({
     selectedPool,
     preflightByPack,
   ]);
-
-  // The total-odds chip sums the DISPLAY-RECONCILED vector — the SAME numbers
-  // the Planned-% cells render (buffer carries the rounding residual) — never
-  // the raw underlying pcts. So the chip can never stamp "match 100%" while the
-  // visible column disagrees: the reconciled vector sums to exactly 100 by
-  // construction, and the column shows exactly those values. Cap-dropped cards
-  // (drop verdict, not a chance) are excluded, matching `buildCardDiffRows`.
-  const oddsTotal = React.useMemo(() => {
-    if (!planForBasis || planForBasis.planned.length === 0) return 100;
-    const capDropped = planForBasis.feasible
-      ? new Set(planForBasis.capDroppedCardIds)
-      : new Set<string>();
-    const vector = planForBasis.planned
-      .filter((p) => !capDropped.has(p.cardId))
-      .map((p) => p.pct);
-    if (vector.length === 0) return 100;
-    return reconcileOddsForDisplay(vector).reduce((s, p) => s + p, 0);
-  }, [planForBasis]);
 
   const autoHintByCardId = React.useMemo(() => {
     const out = new Map<string, string>();
@@ -2109,13 +2089,11 @@ export function RetuneWorkspace({
                         selectedPool?.price ??
                         selectedRow.price
                       }
-                      oddsTotal={oddsTotal}
                       autoHintByCardId={autoHintByCardId}
                       priceText={priceText}
                       pinPrice={selectedStaged?.pinPrice ?? false}
                       disabled={pushing}
                       pendingCount={selectedPending.length}
-                      pendingTotal={pendingTotal}
                       pendingPreflight={pendingPreflight}
                       pickerOpen={pickerOpen}
                       pickerRange={pickerRange}
@@ -2171,7 +2149,20 @@ export function RetuneWorkspace({
                       onMoveCard={moveCard}
                     />
                   ) : (
-                    <TableSkeleton rows={6} columns={5} />
+                    // Mirrors the real pool zone (table + totals strip + the
+                    // add/price/pin control row) so the swap-in doesn't jump.
+                    <div className="space-y-3">
+                      <TableSkeleton rows={6} columns={5} />
+                      <Skeleton className="h-[38px] w-full rounded-lg" />
+                      <div className="flex flex-wrap items-end gap-3">
+                        <Skeleton className="h-8 w-28 rounded-md" />
+                        <div>
+                          <Skeleton className="h-3 w-14 rounded" />
+                          <Skeleton className="mt-1 h-8 w-28 rounded-md" />
+                        </div>
+                        <Skeleton className="h-8 w-24 rounded-md" />
+                      </div>
+                    </div>
                   )}
                 </div>
               </PlanPanel>

@@ -594,6 +594,18 @@
   }
 }
 
+/* Indeterminate re-planning bar (Retune workspace): a 40%-wide runner sweeps
+   the track left→right. Applied via motion-safe:animate-[…] so reduced-motion
+   users get a static bar (the elapsed counter still ticks). */
+@keyframes plan-progress-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   [data-slot="skeleton"] {
     position: relative;

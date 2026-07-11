@@ -71,8 +71,12 @@ import {
   F17_REHYDRATED_DRIFT,
   FIX_LOOP_SUCCESS,
   JACKPOT_NOTE,
+  MIN_PUSH_EDGE,
   PINS_ENGINE_DETAIL_SUMMARY,
   PLAN_FAILED_BANNER,
+  PLAN_PROGRESS_SLOW_HINT,
+  PLAN_PROGRESS_VERY_SLOW_HINT,
+  PUSH_BLOCKED_EDGE_FLOOR,
   PUSH_DISABLED_DIRTY,
   PUSH_DISABLED_FIX_POOL,
   PUSH_DISABLED_OFF_TAG,
@@ -363,6 +367,47 @@ function TagTriage({
           {UNTAG_CTA_LABEL}
         </Button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Live re-planning progress: an animated indeterminate sweep bar + an
+ * elapsed-seconds counter, mounted for the WHOLE stale→planning episode
+ * (the caller keys it by pack, so switching packs resets the clock while a
+ * stale→planning flip keeps it running). Reduced motion: the bar stays
+ * static, the counter still ticks — the operator always sees liveness.
+ * Slow-solve hints appear at 12s / 30s so a long search never reads as hung.
+ */
+function PlanningProgress() {
+  const [seconds, setSeconds] = React.useState(0);
+  React.useEffect(() => {
+    const id = window.setInterval(() => setSeconds((s) => s + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2">
+        <div className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
+          <div
+            aria-hidden
+            className="h-full w-2/5 rounded-full bg-primary/70 motion-safe:animate-[plan-progress-sweep_1.4s_ease-in-out_infinite]"
+          />
+        </div>
+        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+          {seconds}s
+        </span>
+      </div>
+      {seconds >= 12 && (
+        <p className="text-xs text-muted-foreground">
+          {PLAN_PROGRESS_SLOW_HINT}
+        </p>
+      )}
+      {seconds >= 30 && (
+        <p className="text-xs text-muted-foreground">
+          {PLAN_PROGRESS_VERY_SLOW_HINT}
+        </p>
+      )}
     </div>
   );
 }
@@ -819,7 +864,20 @@ export function PlanPanel({
     estimate !== null &&
     (status === "planning" || status === "stale");
   const afterRisk = after ?? (showEstimate ? estimate : null);
-  const before = plan?.before ?? lastPlanBefore;
+  // Hold the last non-null BEFORE through a re-plan: a staged edit flips the
+  // basis and nulls the entry's plan, which would unmount the whole KPI grid
+  // to skeletons mid-episode (flash + layout jump). `before` is live truth
+  // (basis-independent), so re-showing it during planning/stale/drifted is
+  // honest. The panel remounts per pack (FadeIn key), so it can't leak across
+  // packs. Render-time setState is the sanctioned previous-render pattern.
+  const beforeLive = plan?.before ?? lastPlanBefore;
+  const [heldBefore, setHeldBefore] = React.useState<PackRisk | null>(null);
+  if (beforeLive !== null && beforeLive !== heldBefore) setHeldBefore(beforeLive);
+  const before =
+    beforeLive ??
+    (status === "planning" || status === "stale" || status === "drifted"
+      ? heldBefore
+      : null);
   // The EFFECTIVE tag the plan is solving against: when the operator staged a
   // tag override, the plan's `intendedHitRate` reflects it (a number = the
   // overridden tag, null = untagged). Otherwise it's the pack's live tag. All
@@ -884,9 +942,10 @@ export function PlanPanel({
     if (status === "stale" || status === "planning") {
       return (
         <Banner tone="blue" icon={Loader2}>
-          <p className="flex items-center gap-2">
-            <span>{STALE_BANNER}</span>
-          </p>
+          <p>{STALE_BANNER}</p>
+          {/* One episode = one clock: keyed by pack so pack switches reset it
+              while the stale→planning flip keeps it mounted and counting. */}
+          <PlanningProgress key={row.packId} />
         </Banner>
       );
     }
@@ -1143,8 +1202,16 @@ export function PlanPanel({
       (plan.feasible ? plan.capDroppedCardIds.length : 0)
     : 0;
 
+  // Owner hard law 2026-07-11 (client mirror): a landed plan whose after-edge
+  // sits below the 10.5% floor never offers Push. The server write gate
+  // enforces the same floor fail-closed — this is only the honest pre-disable.
+  const edgeFloorBlocked =
+    plan !== null &&
+    plan.after !== null &&
+    plan.after.edge < MIN_PUSH_EDGE - 1e-9;
+
   const pushDisabledLabel = ((): string | null => {
-    if (pushEnabled) return null;
+    if (pushEnabled) return edgeFloorBlocked ? PUSH_BLOCKED_EDGE_FLOOR : null;
     if (status === "pushed") return PUSH_LABEL; // F14 — re-stage to re-arm
     if (status === "pushing") return PUSH_DISABLED_PUSHING;
     if (status === "planning" || status === "stale" || status === "drifted")
@@ -1373,18 +1440,36 @@ export function PlanPanel({
         icon={Sparkles}
         title="Plan"
         action={
-          staged !== null && staged.pinnedOdds.length > 0 ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-xs text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
-              onClick={onClearAllPins}
-              title="Drop every pinned chance on this pack and re-plan"
-            >
-              <PinOff className="size-3.5" />
-              {clearAllPinsLabel(staged.pinnedOdds.length)}
-            </Button>
+          staged !== null ? (
+            <div className="flex items-center gap-1.5">
+              {staged.pinnedOdds.length > 0 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
+                  onClick={onClearAllPins}
+                  title="Drop every pinned chance on this pack and re-plan"
+                >
+                  <PinOff className="size-3.5" />
+                  {clearAllPinsLabel(staged.pinnedOdds.length)}
+                </Button>
+              )}
+              {/* Owner ask: the restart affordance must be findable at a
+                  glance whenever a staged pool exists — this duplicates the
+                  header button right next to the plan/pool controls. */}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={onResetToLive}
+                title="Drop the staged edits and reload the live pool"
+              >
+                <RotateCcw className="size-3.5" />
+                Reset to live
+              </Button>
+            </div>
           ) : undefined
         }
       />
@@ -1506,10 +1591,12 @@ export function PlanPanel({
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+          {/* h matches the real PlanMetric tile (icon row + value + sub) so
+              the grid doesn't jump when data swaps in. */}
           {Array.from({ length: 5 }).map((_, i) => (
             <div
               key={i}
-              className="h-20 animate-pulse rounded-xl border bg-muted/30"
+              className="h-[92px] animate-pulse rounded-xl border bg-muted/30"
             />
           ))}
         </div>
@@ -1526,12 +1613,12 @@ export function PlanPanel({
         <Button
           type="button"
           onClick={onPush}
-          disabled={!pushEnabled || pushing}
+          disabled={!pushEnabled || pushing || edgeFloorBlocked}
         >
           {pushing && <Loader2 className="size-4 animate-spin" />}
           {pushDisabledLabel ?? PUSH_LABEL}
         </Button>
-        {plan && pushEnabled && (
+        {plan && pushEnabled && !edgeFloorBlocked && (
           <p className="text-right text-[11px] text-muted-foreground">
             {pushSubLine({
               priceAfter: plan.priceAfter,

@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { formatNumber } from "@/lib/utils/format";
 
 import { BuilderCardPicker } from "../../builder/builder-card-picker";
 import type { BuilderCardItem } from "../../builder/actions";
@@ -33,6 +34,11 @@ import {
   preflightSuccessLine,
 } from "./plan-copy";
 import type { PendingPreflightView, RemedyChip } from "./plan-state";
+import {
+  isWholeTicketPct,
+  TICKETS_PER_PACK,
+  ticketsFromPct,
+} from "./odds-grid";
 import { CardDiffTable, type CardDiffRow } from "./card-diff-table";
 
 /**
@@ -135,97 +141,102 @@ function fmtOddsGap(total: number): string {
   return `${d > 0 ? "over" : "under"} by ${mag}pp`;
 }
 
+/** The signed % gap vs 100 at full precision — trailing zeros trimmed, never
+ *  rounded to "0" while a real gap exists (the exactness eps is 1e-6). */
+function fmtGapPct(gap: number): string {
+  return String(Number(Math.abs(gap).toFixed(6)));
+}
+
 /**
- * Odds-total chip — moved verbatim from the retired `pool-editor.tsx`. Over
- * the PLANNED odds when a plan exists (always 100.00% → emerald); over the
- * live odds in preview. The renormalize affordance belongs to the Drafts
- * verbatim flow the chip's sub-copy references (linked from the header).
+ * Total-odds truth strip — LIVE against the CURRENT edit buffer, not the last
+ * landed plan: the % total sums exactly what the Planned-% column shows
+ * (a pending typed value overrides its row; untouched rows carry the plan's
+ * display-reconciled pct), and the tickets total sums the integer per-100k
+ * tickets those values mean (0.001% = 1 ticket). Emerald ONLY when the %
+ * total is exactly 100 (±1e-6) AND the tickets sum to exactly 100,000 whole
+ * tickets — a fractional-ticket typed value or an incomplete vector can never
+ * read as OK, and an off total always prints its true gap (never rounded
+ * away). Muted "waiting" state while no planned values exist yet, so the
+ * strip never claims anything during a cold load / re-plan.
  */
-function OddsTotalChip({
-  total,
+function OddsTotalStrip({
+  pctTotal,
+  hasValues,
+  tickets,
+  ticketsKnown,
+  wholeTickets,
   hasRows,
-  onRenormalize,
-  disabled,
 }: {
-  total: number;
+  /** Sum of the effective displayed Planned-% column (typed + planned). */
+  pctTotal: number;
+  /** At least one row carries a displayable planned/typed pct. */
+  hasValues: boolean;
+  /** Sum of the per-row integer tickets (the same numbers the rows show). */
+  tickets: number;
+  /** Every active row carried a typed/plan pct — the ticket sum is complete. */
+  ticketsKnown: boolean;
+  /** Every summed pct sits on a whole ticket (pct·1000 integer). */
+  wholeTickets: boolean;
   hasRows: boolean;
-  /** Rescales every row's odds by 100/total, visibly, into the inputs. */
-  onRenormalize: () => void;
-  disabled: boolean;
 }) {
   if (!hasRows) return null;
-  // EXACT means genuinely 100% (float noise only) — NOT the old ±0.005 that let
-  // a real 100.005% total masquerade as "match". MUST match the verbatim gate.
-  const exact = oddsExactlyHundred(total);
-  const over = !exact && total > 100;
-  const tone = exact
-    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-    : over
-      ? "border-rose-500/40 bg-rose-500/15 text-rose-600 dark:text-rose-400"
-      : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400";
-  const Icon = exact ? Check : over ? TriangleAlert : Info;
-  const label = exact
-    ? "Total odds match 100%"
-    : `${over ? "Over" : "Under"} 100% (${fmtOddsGap(total)}) — verbatim approve blocked`;
+  if (!hasValues) {
+    return (
+      <div
+        className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-muted/30 px-3 py-2 text-muted-foreground"
+        role="status"
+        aria-live="polite"
+      >
+        <Info className="size-3.5 shrink-0" aria-hidden />
+        <span className="text-sm font-medium tabular-nums">Total —%</span>
+        <span className="text-xs">waiting for the plan…</span>
+      </div>
+    );
+  }
+  // EXACT means genuinely 100% (float noise only) — a 100.005% total must
+  // never masquerade as "match". Same eps as the pending bar.
+  const exact = oddsExactlyHundred(pctTotal);
+  const ticketsExact =
+    ticketsKnown && wholeTickets && tickets === TICKETS_PER_PACK;
+  const ok = exact && ticketsExact;
+  const Icon = ok ? Check : TriangleAlert;
+  const gap = pctTotal - 100;
+  const ticketsTitle = !ticketsKnown
+    ? "Some rows have no planned value yet — the ticket sum is incomplete."
+    : !wholeTickets
+      ? "A typed chance falls between whole tickets (0.001% = 1 ticket) — the engine writes whole tickets, so these numbers are rounded."
+      : tickets === TICKETS_PER_PACK
+        ? "Every ticket accounted for — the write sums to exactly 100,000."
+        : "The true ticket sum — it must be exactly 100,000 to be clean.";
   return (
     <div
       className={cn(
         "flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2",
-        tone,
+        ok
+          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+          : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
       )}
       role="status"
       aria-live="polite"
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <Icon
-          className={cn("shrink-0", over ? "size-4" : "size-3.5")}
-          aria-hidden
-        />
-        <span
-          className={cn(
-            "tabular-nums",
-            over ? "text-base font-bold sm:text-lg" : "text-sm font-semibold",
-          )}
-        >
-          Total odds: {fmtOddsPct(total)}% / 100%
+      <Icon className="size-3.5 shrink-0" aria-hidden />
+      <span className="text-sm font-semibold tabular-nums">
+        {/* When off, print the full-precision total so "100" never shows
+            while the real sum is 99.99995. */}
+        Total {exact ? fmtOddsPct(pctTotal) : String(Number(pctTotal.toFixed(6)))}%
+      </span>
+      {!exact && (
+        <span className="text-xs font-medium">
+          {gap > 0 ? `over by ${fmtGapPct(gap)}%` : `${fmtGapPct(gap)}% missing`}
         </span>
-        <span
-          className={cn(
-            "text-xs font-medium",
-            over ? "font-bold uppercase tracking-wider" : "opacity-90",
-          )}
-        >
-          {label}
-        </span>
-        {!exact && (
-          <button
-            type="button"
-            onClick={onRenormalize}
-            disabled={disabled}
-            className="rounded-full border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-50"
-            title="Rescale every row by 100 ÷ total so the odds sum to exactly 100% — the same rescale a verbatim write would otherwise apply silently, made visible in the inputs first."
-          >
-            Renormalize to 100%
-          </button>
-        )}
-      </div>
-      <p className="basis-full text-[11px] opacity-75">
-        {exact ? (
-          <>
-            Verbatim (&quot;Approve edited pool&quot;) writes each row exactly
-            as typed. Auto-tune re-shapes the odds from scratch — your typed
-            odds don&apos;t bind it.
-          </>
-        ) : (
-          <>
-            Verbatim approve stays blocked until the total is exactly 100% —
-            it writes each row as typed, and an off-total would silently
-            rescale every odd (2.5% → 2.45% at 102%). Renormalize above to
-            apply that rescale visibly, or fix the rows. Auto-tune is
-            unaffected — the server re-shapes the odds from scratch.
-          </>
-        )}
-      </p>
+      )}
+      <span
+        className={cn("text-xs tabular-nums", ok ? "opacity-80" : "font-medium")}
+        title={ticketsTitle}
+      >
+        {ticketsKnown ? formatNumber(tickets) : "—"} /{" "}
+        {formatNumber(TICKETS_PER_PACK)} tk
+      </span>
     </div>
   );
 }
@@ -389,13 +400,11 @@ function PendingEditsBar({
 export function PoolTable({
   rows,
   contextPrice,
-  oddsTotal,
   autoHintByCardId,
   priceText,
   pinPrice,
   disabled,
   pendingCount,
-  pendingTotal,
   pendingPreflight,
   pickerOpen,
   pickerRange,
@@ -421,8 +430,6 @@ export function PoolTable({
   rows: CardDiffRow[];
   /** Ticket price the win-band coloring is judged against. */
   contextPrice: number;
-  /** Sum of the odds column shown (planned when a plan exists, else live). */
-  oddsTotal: number;
   autoHintByCardId: Map<string, string>;
   priceText: string;
   pinPrice: boolean;
@@ -430,8 +437,6 @@ export function PoolTable({
   disabled: boolean;
   /** Number of typed-but-not-yet-applied edits in the buffer (0 hides the bar). */
   pendingCount: number;
-  /** Live total-% the pending+committed odds land at (100% = clean). */
-  pendingTotal: number;
   /** Debounced dry-run verdict for the pending buffer (display-only). */
   pendingPreflight: PendingPreflightView | null;
   pickerOpen: boolean;
@@ -462,6 +467,43 @@ export function PoolTable({
   /** Move a card one step up/down in the display order (sets pack_cards.order). */
   onMoveCard: (cardId: string, direction: "up" | "down") => void;
 }) {
+  // The LIVE effective odds vector — exactly what the Planned-% column shows:
+  // a pending typed value overrides its row, untouched rows carry the plan's
+  // display-reconciled pct. Tickets ride the TRUE pcts (typed values / raw
+  // plan pcts), so per-row rounding can never hide an overrun in the total
+  // (owner hard rule: never lie about the ticket amount).
+  const totals = React.useMemo(() => {
+    let pct = 0;
+    let hasValues = false;
+    let tickets = 0;
+    let wholeTickets = true;
+    let sawTicket = false;
+    let missingTicket = false;
+    for (const r of rows) {
+      if (r.removed || r.capRemovedUsd !== null) continue;
+      const shownPct = r.pendingPct ?? r.displayPct;
+      if (shownPct !== null) {
+        pct += shownPct;
+        hasValues = true;
+      }
+      const truePct = r.pendingPct ?? r.plannedPct;
+      if (truePct === null) {
+        missingTicket = true;
+      } else {
+        tickets += ticketsFromPct(truePct);
+        if (!isWholeTicketPct(truePct)) wholeTickets = false;
+        sawTicket = true;
+      }
+    }
+    return {
+      pct,
+      hasValues,
+      tickets,
+      ticketsKnown: sawTicket && !missingTicket,
+      wholeTickets,
+    };
+  }, [rows]);
+
   return (
     <div className="space-y-3">
       <CardDiffTable
@@ -481,21 +523,20 @@ export function PoolTable({
 
       <PendingEditsBar
         count={pendingCount}
-        pendingTotal={pendingTotal}
+        pendingTotal={totals.pct}
         preflight={pendingPreflight}
         onApply={onApplyPending}
         onDiscard={onDiscardPending}
         disabled={disabled}
       />
 
-      <OddsTotalChip
-        total={oddsTotal}
+      <OddsTotalStrip
+        pctTotal={totals.pct}
+        hasValues={totals.hasValues}
+        tickets={totals.tickets}
+        ticketsKnown={totals.ticketsKnown}
+        wholeTickets={totals.wholeTickets}
         hasRows={rows.some((r) => !r.removed)}
-        // The workspace has no editable odds inputs to rescale — the chip is
-        // informational here (planned/live odds always sum to 100%); the
-        // renormalize affordance lives with the Drafts verbatim editor.
-        onRenormalize={() => {}}
-        disabled
       />
 
       <div className="flex flex-wrap items-end gap-3">

@@ -29,13 +29,20 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { CardImage } from "@/components/card-image";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { isFloorPinnedPct } from "@/app/(admin)/insights/edge-calc/tag-guidance";
 import type { EditPool, PackTunePlan } from "../../doctor/retune-actions";
 
 import { formatDeltaPp, formatPercent } from "../format-percent";
 import { formatReconciledPct, reconcileOddsForDisplay } from "./odds-display";
+import {
+  isOnOddsGrid,
+  isWholeTicketPct,
+  offGridTitle,
+  oneInOpensLabel,
+  ticketsFromPct,
+} from "./odds-grid";
 import {
   ART_LOADING_LABEL,
   FLOOR_PIN_CHIP,
@@ -360,6 +367,54 @@ function PlannedPct({ pct }: { pct: number }) {
   return <span className="tabular-nums">{formatReconciledPct(pct)}</span>;
 }
 
+/**
+ * Per-row tickets truth (owner ask: "live odds / tickets"): the integer
+ * per-100k tickets the row's effective chance MEANS (0.001% = 1 ticket), with
+ * the human "1 in N opens" read in the title. "≈" flags a value that falls
+ * BETWEEN whole tickets — the engine writes whole tickets, so the shown
+ * integer is a rounding and says so instead of hiding it.
+ */
+function RowTickets({ pct }: { pct: number }) {
+  const whole = isWholeTicketPct(pct);
+  const tickets = ticketsFromPct(pct);
+  return (
+    <span
+      className="text-[10px] font-normal tabular-nums text-muted-foreground"
+      title={`${oneInOpensLabel(tickets)}${
+        whole
+          ? ""
+          : " · not a whole-ticket value (0.001% = 1 ticket) — the engine writes whole tickets"
+      }`}
+    >
+      {whole ? "" : "≈"}
+      {formatNumber(tickets)} tk
+    </span>
+  );
+}
+
+/**
+ * Clean-ladder truth dot for a HAND-TYPED value (pending edit, pin, or the
+ * live draft while typing): emerald = exactly on the human step grid, amber =
+ * off it (title names the nearest rung). Engine-planned values keep the
+ * existing server-verdict amber dot (`row.offLadder`) — this dot only judges
+ * numbers the owner typed, live per keystroke, so a manual edit is never
+ * mystery-clean.
+ */
+function GridDot({ pct }: { pct: number }) {
+  const on = isOnOddsGrid(pct);
+  return (
+    <span
+      role="img"
+      aria-label={on ? "On the clean ladder" : offGridTitle(pct)}
+      title={on ? "on the clean ladder" : offGridTitle(pct)}
+      className={cn(
+        "inline-block size-1.5 shrink-0 rounded-full",
+        on ? "bg-emerald-500" : "bg-amber-500",
+      )}
+    />
+  );
+}
+
 export function CardDiffTable({
   rows,
   contextPrice,
@@ -543,6 +598,10 @@ export function CardDiffTable({
                     : "text-rose-600 dark:text-rose-400"
                   : "text-muted-foreground";
             const hint = autoHintByCardId?.get(row.cardId);
+            // Tickets ride the TRUE pct (typed pending value wins, else the
+            // raw plan pct — NOT the display-reconciled one), the same numbers
+            // the totals strip sums, so row and total can never disagree.
+            const ticketsPct = row.pendingPct ?? row.plannedPct;
             return (
               <TableRow
                 key={row.cardId}
@@ -723,6 +782,21 @@ export function CardDiffTable({
                         aria-label={`${PENDING_EDIT_ARIA}: chance for ${row.name} (percent)`}
                       />
                       <span className="text-xs text-muted-foreground">%</span>
+                      {/* Live per-keystroke truth: grid dot + tickets for the
+                          draft as typed — the owner sees clean/off-ladder and
+                          the real ticket meaning BEFORE committing the cell. */}
+                      {(() => {
+                        const p = Number.parseFloat(draft);
+                        if (!Number.isFinite(p) || !(p > 0) || p > 100) {
+                          return null;
+                        }
+                        return (
+                          <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                            <GridDot pct={p} />
+                            <RowTickets pct={p} />
+                          </span>
+                        );
+                      })()}
                     </span>
                   ) : (
                     <span className="group/pin inline-flex items-center gap-1.5">
@@ -802,6 +876,18 @@ export function CardDiffTable({
                                   variant="outline"
                                   className="h-4 gap-0.5 border-amber-500/30 bg-amber-500/10 px-1 text-[10px] font-medium text-amber-600 dark:text-amber-400"
                                 >
+                                  {/* Clean-ladder verdict for the typed pin —
+                                      emerald on-grid / amber off (tooltip
+                                      carries the nearest rung). */}
+                                  <span
+                                    aria-hidden
+                                    className={cn(
+                                      "inline-block size-1.5 shrink-0 rounded-full",
+                                      isOnOddsGrid(row.pinnedPct)
+                                        ? "bg-emerald-500"
+                                        : "bg-amber-500",
+                                    )}
+                                  />
                                   {PIN_CHIP} {formatPercent(row.pinnedPct)}
                                   {editable && onPinClear && (
                                     <button
@@ -819,7 +905,11 @@ export function CardDiffTable({
                                 </Badge>
                               }
                             />
-                            <TooltipContent>{PIN_TOOLTIP}</TooltipContent>
+                            <TooltipContent className="max-w-72">
+                              {PIN_TOOLTIP}
+                              {!isOnOddsGrid(row.pinnedPct) &&
+                                ` This value is ${offGridTitle(row.pinnedPct)}.`}
+                            </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
                       )}
@@ -832,14 +922,19 @@ export function CardDiffTable({
                           <span className="inline-flex items-center gap-1">
                             <button
                               type="button"
-                              title={PENDING_EDIT_HINT}
+                              title={
+                                isOnOddsGrid(row.pendingPct)
+                                  ? PENDING_EDIT_HINT
+                                  : `${PENDING_EDIT_HINT} · ${offGridTitle(row.pendingPct)}`
+                              }
                               onClick={() => openEditor(row)}
                               className="inline-flex items-center gap-1 rounded-md border border-dashed border-amber-500/70 bg-amber-500/10 px-1.5 py-0.5 text-amber-700 tabular-nums hover:bg-amber-500/20 dark:text-amber-300"
                             >
-                              <span
-                                aria-hidden
-                                className="inline-block size-1.5 rounded-full bg-amber-500"
-                              />
+                              {/* Truth dot: emerald = the typed value sits ON
+                                  the clean ladder, amber = off it. The pill
+                                  stays amber (pending ≠ committed) — the dot
+                                  is the cleanliness verdict. */}
+                              <GridDot pct={row.pendingPct} />
                               {formatPercent(row.pendingPct)}
                               <Pencil aria-hidden className="size-3 opacity-70" />
                             </button>
@@ -880,6 +975,7 @@ export function CardDiffTable({
                       ) : (
                         <span className="text-muted-foreground">—</span>
                       )}
+                      {ticketsPct !== null && <RowTickets pct={ticketsPct} />}
                     </span>
                   )}
                 </TableCell>

@@ -478,8 +478,19 @@ export const CLEAN_BANNER =
 
 export const STALE_BANNER = "Numbers changed — re-planning…";
 
+/** Progress-bar hint once a solve has run ≥12s. */
+export const PLAN_PROGRESS_SLOW_HINT =
+  "Still solving — big pools and wide searches take longer.";
+/** Added at ≥30s — names the fail-loud contract (error state → Retry). */
+export const PLAN_PROGRESS_VERY_SLOW_HINT =
+  "Still working. If it fails it will say so loudly with a Retry — nothing hangs silently.";
+
 export const PLAN_FAILED_BANNER =
   "Planning took too long or failed. Nothing was written.";
+
+/** Toast after "Reset to live" drops the staged pool + any pending edits. */
+export const RESET_TO_LIVE_TOAST =
+  "Pool reset to live — staged edits dropped.";
 
 /**
  * Independent amber strip ABOVE the banner slot whenever the live pool is off-tag.
@@ -665,6 +676,11 @@ export function pushSubLine(args: {
 }
 
 export const PUSH_LABEL = "Push to production";
+// owner hard law 2026-07-11: no push below 10.5% edge — server enforces
+// fail-closed; this constant only drives the client disable copy
+export const MIN_PUSH_EDGE = 0.105;
+export const PUSH_BLOCKED_EDGE_FLOOR =
+  "Blocked — edge 10.5% floor (owner law). This plan lands below it.";
 export const PUSH_DISABLED_REPLANNING = "Re-planning…";
 export const PUSH_DISABLED_FIX_POOL = "Fix the pool first";
 export const PUSH_DISABLED_OFF_TAG = "Off tag — can't push";
