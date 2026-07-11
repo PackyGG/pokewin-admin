@@ -25,6 +25,13 @@
  *   8. `buildCleanRescueSuggestion`: Tier A → null (the wide probe's own
  *      suggestion carries that price); edge tiers → a `price-edge-exact`
  *      row with the exact {price, edgeTarget} the one-click apply threads.
+ *   9. Tier P pin-repair (owner 2026-07-11, the hand-proven move): after
+ *      the edge-flex ladder fails OR starves its budget, the few off-ladder
+ *      landed rows are pinned to their nearest clean rungs (cheapest total
+ *      nudge first, Cartesian combos) and re-verified at the pack's OWN
+ *      edge target under tier P's OWN budget; on-grid landings and >4
+ *      off-rows skip the tier; repairs carry cardIds for the one-click
+ *      staging.
  *
  * Exit code 0 = all passed; 1 = at least one failure (printed).
  */
@@ -116,11 +123,16 @@ function baseInput(overrides?: {
   maxSearches?: number;
   searchFn?: SearchFn;
   targetEdge?: number;
+  values?: number[];
+  liveShares?: number[];
+  landedShares?: number[];
+  cardIds?: string[];
+  maxPinRepairSolves?: number;
 }): Parameters<typeof computeCleanRescue>[0] {
   return {
     mkParams,
-    values: [...VALUES],
-    liveShares: [...LIVE_SHARES],
+    values: overrides?.values ?? [...VALUES],
+    liveShares: overrides?.liveShares ?? [...LIVE_SHARES],
     targetEdge: overrides?.targetEdge ?? TARGET_EDGE,
     priceBudgetPct: BUDGET_PCT,
     widePct: WIDE_PCT,
@@ -133,6 +145,15 @@ function baseInput(overrides?: {
       : {}),
     ...(overrides?.searchFn !== undefined
       ? { searchFn: overrides.searchFn }
+      : {}),
+    ...(overrides?.landedShares !== undefined
+      ? { landedShares: overrides.landedShares }
+      : {}),
+    ...(overrides?.cardIds !== undefined
+      ? { cardIds: overrides.cardIds }
+      : {}),
+    ...(overrides?.maxPinRepairSolves !== undefined
+      ? { maxPinRepairSolves: overrides.maxPinRepairSolves }
       : {}),
   };
 }
@@ -358,6 +379,132 @@ check("suggestion: tier A → null; edge tiers → price-edge-exact row", () => 
   assert(Number(s!.params.autoClean) === 1, "autoClean marker expected");
   assert(s!.humanCopy.startsWith("Auto-clean:"), s!.humanCopy);
   assert(s!.proof.solverVerified === true, "solver-verified proof expected");
+});
+
+// ── 9. Tier P: pin-repair (the owner's hand-proven move, mechanized) ───────
+// Landed rows 4.89% (grid 0.05 ⇒ rungs 4.85/4.9) and 10.11% (grid 0.25 ⇒
+// rungs 10.0/10.25) sit off-ladder; 25% and 60% are on-grid. Cheapest total
+// nudge = {4.9, 10.0} (Δ 0.12pp) — the FIRST combo tried.
+const LANDED_DIRTY = [0.0489, 0.1011, 0.25, 0.6];
+const CARD_IDS = ["card-a", "card-b", "card-c", "card-d"];
+
+/** Stub: dirty everywhere EXCEPT when the candidate carries repair pins. */
+function pinAcceptingStub(counters: { unpinned: number; pinned: number }): SearchFn {
+  return ((p: Parameters<SearchFn>[0]) => {
+    const pins = (p as { pinnedShares?: { index: number; share: number }[] })
+      .pinnedShares;
+    if (pins !== undefined && pins.length > 0) {
+      counters.pinned++;
+      return okResult(BASE_PRICE + 0.5, { snapped: true });
+    }
+    counters.unpinned++;
+    return okResult(BASE_PRICE, { snapped: false });
+  }) as SearchFn;
+}
+
+check("tier P: off-ladder rows pinned to nearest rungs at the OWN edge target", () => {
+  const n = { unpinned: 0, pinned: 0 };
+  const r = computeCleanRescue(
+    baseInput({
+      searchFn: pinAcceptingStub(n),
+      landedShares: LANDED_DIRTY,
+      cardIds: CARD_IDS,
+    }),
+  );
+  assert(r !== null, "expected the pin-repair rescue");
+  assert(r!.tier === "pin-repair", `tier ${r!.tier}`);
+  assert(r!.edgeTargetOverride === null, "tier P must NOT flex the edge target");
+  assert(r!.price === BASE_PRICE + 0.5, `price ${r!.price}`);
+  const reps = r!.pinRepairs ?? [];
+  assert(reps.length === 2, `expected 2 repairs, got ${reps.length}`);
+  assert(
+    reps[0]!.index === 0 && Math.abs(reps[0]!.pct - 4.9) < 1e-9,
+    `repair 0: got ${reps[0]!.index}@${reps[0]!.pct}, want 0@4.9 (nearest rung)`,
+  );
+  assert(
+    reps[1]!.index === 1 && Math.abs(reps[1]!.pct - 10) < 1e-9,
+    `repair 1: got ${reps[1]!.index}@${reps[1]!.pct}, want 1@10 (nearest rung)`,
+  );
+  assert(
+    reps[0]!.cardId === "card-a" && reps[1]!.cardId === "card-b",
+    "repairs must carry the cardIds for one-click staging",
+  );
+  assert(n.pinned === 1, `cheapest combo first — ${n.pinned} pinned solves`);
+  assert(
+    r!.searchesSpent === n.unpinned + n.pinned,
+    `searchesSpent ${r!.searchesSpent} != ${n.unpinned + n.pinned}`,
+  );
+});
+
+check("tier P: reachable AFTER the edge-flex budget starves (the dead-code trap)", () => {
+  const n = { unpinned: 0, pinned: 0 };
+  const r = computeCleanRescue(
+    baseInput({
+      searchFn: pinAcceptingStub(n),
+      landedShares: LANDED_DIRTY,
+      cardIds: CARD_IDS,
+      maxSearches: 2,
+    }),
+  );
+  assert(r !== null, "budget exhaustion must fall through to tier P, not null");
+  assert(r!.tier === "pin-repair", `tier ${r!.tier}`);
+  assert(n.unpinned === 2, `edge-flex stops at its budget — ${n.unpinned}`);
+  assert(n.pinned === 1, `tier P runs on its OWN budget — ${n.pinned}`);
+});
+
+check("tier P: own combo budget + honest null when no combo verifies", () => {
+  let pinned = 0;
+  const alwaysDirty: SearchFn = ((p: Parameters<SearchFn>[0]) => {
+    const pins = (p as { pinnedShares?: unknown[] }).pinnedShares;
+    if (pins !== undefined && pins.length > 0) pinned++;
+    return okResult(BASE_PRICE, { snapped: false });
+  }) as SearchFn;
+  const r = computeCleanRescue(
+    baseInput({
+      searchFn: alwaysDirty,
+      landedShares: LANDED_DIRTY,
+      maxSearches: 2,
+    }),
+  );
+  assert(r === null, "no verifying combo ⇒ null (pool edits are next)");
+  assert(pinned === 4, `all 4 rung combos tried, got ${pinned}`);
+  pinned = 0;
+  const r2 = computeCleanRescue(
+    baseInput({
+      searchFn: alwaysDirty,
+      landedShares: LANDED_DIRTY,
+      maxSearches: 2,
+      maxPinRepairSolves: 1,
+    }),
+  );
+  assert(r2 === null, "starved tier P ⇒ null");
+  assert(pinned === 1, `tier P budget honored, got ${pinned}`);
+});
+
+check("tier P: skipped on clean landings and on >4 off-ladder rows", () => {
+  const n1 = { unpinned: 0, pinned: 0 };
+  const clean = computeCleanRescue(
+    baseInput({
+      searchFn: pinAcceptingStub(n1),
+      landedShares: [0.05, 0.1, 0.25, 0.6],
+      maxSearches: 2,
+    }),
+  );
+  assert(clean === null && n1.pinned === 0, "on-grid landing ⇒ no tier P solve");
+  const n2 = { unpinned: 0, pinned: 0 };
+  const tooMany = computeCleanRescue(
+    baseInput({
+      searchFn: pinAcceptingStub(n2),
+      values: [50, 20, 10, 5, 1],
+      liveShares: [0.05, 0.1, 0.15, 0.25, 0.45],
+      landedShares: [0.0489, 0.1011, 0.1511, 0.2511, 0.4489],
+      maxSearches: 2,
+    }),
+  );
+  assert(
+    tooMany === null && n2.pinned === 0,
+    "5 off-ladder rows exceed the 4-row cap ⇒ tier P never solves",
+  );
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────

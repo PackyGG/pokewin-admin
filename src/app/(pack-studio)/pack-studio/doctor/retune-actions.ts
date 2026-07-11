@@ -2936,6 +2936,16 @@ async function planPackTuneLiveUncached(
           tagged,
           currentPrice: search.bestPrice,
           wideProbe: liveWideProbe,
+          // Tier P (owner 2026-07-11): the dirty landing's own shares — the
+          // few off-ladder rows get pinned to their nearest rungs and
+          // re-verified at the pack's OWN edge target.
+          landedShares:
+            shapeTotal > 0
+              ? shaped.weights.map((w) =>
+                  Number.isFinite(w) && w > 0 ? w / shapeTotal : 0,
+                )
+              : undefined,
+          cardIds: cards.map((c) => c.cardId),
         })
       : null;
 
@@ -3426,6 +3436,20 @@ async function planPackTuneStagedUncached(
           tagged: taggedStaged,
           currentPrice: r.priceAfter,
           wideProbe: stagedWideProbe,
+          // Tier P (owner 2026-07-11): pin the dirty landing's few off-ladder
+          // rows to their nearest rungs at the pack's OWN edge target.
+          landedShares: (() => {
+            const t = outcome.weights.reduce(
+              (a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0),
+              0,
+            );
+            return t > 0
+              ? outcome.weights.map((w) =>
+                  Number.isFinite(w) && w > 0 ? w / t : 0,
+                )
+              : undefined;
+          })(),
+          cardIds: input.cards.map((c) => c.cardId),
         })
       : null;
 
@@ -3456,6 +3480,7 @@ async function planPackTuneStagedUncached(
   let stagedPinRemedies: PinRemedy[] | null = null;
   let stagedPinSweepComplete = true;
   let stagedPinsAllPinned = false;
+  let stagedPinsExactRefused: number | null = null;
   if (
     !outcome.ok &&
     outcome.limit?.kind === "pins-infeasible" &&
@@ -3488,6 +3513,7 @@ async function planPackTuneStagedUncached(
     stagedPinRemedies = remedySweep.remedies;
     stagedPinSweepComplete = remedySweep.sweepComplete;
     stagedPinsAllPinned = remedySweep.allPinned;
+    stagedPinsExactRefused = remedySweep.exactPriceRefused;
   }
 
   // §risk-leverage: the CV band (widened to the live CV) + landed-CV exit. Band
@@ -3566,6 +3592,7 @@ async function planPackTuneStagedUncached(
     pinRemedies: stagedPinRemedies,
     pinSweepComplete: stagedPinSweepComplete,
     pinsAllPinned: stagedPinsAllPinned,
+    pinsExactPriceRefused: stagedPinsExactRefused,
   });
 
   return {

@@ -24,8 +24,12 @@
  *       C2 = EV-heavy pins (inflated jackpot) — exactly ONE remedy: lower
  *       c0 2%→0.64% (the acceptance is an ISLAND ≈[0.55%, 0.64%] — the
  *       dense scan + the LAW M rescue ladder land it; 0.65% refuses).
- *       B = fully pinned at a dead-zero edge — NO single-pin change
- *       (interlock).
+ *       B = fully pinned at a dead-zero edge — since wave 15 (owner ask
+ *       2026-07-11) the ALL-PINNED EXACT PRICE-SOLVE rescues it: with every
+ *       card pinned the edge is price-only, p* = EV/(1−target) (ceil to the
+ *       cent) verifies through the real solve and leads the catalog. A
+ *       TAGGED all-pinned set with off-tag win mass stays truly dead — the
+ *       tried p* is stamped `exactPriceRefused` and the copy names it.
  *   3.  tagged1pct remedy threshold: the $250 jackpot pin on the 1% lottery
  *       verifies tag-HARD only at ≤ 0.057% under LAW M — the remedy lands
  *       exactly there (grid-snapped), the re-applied solve holds the tag at
@@ -370,17 +374,31 @@ check("C2 (EV-heavy): exactly ONE remedy — lower the inflated jackpot pin 2% �
   assert(tailsVerify(short) === null, "0.65% (one step above) must still refuse");
 });
 
-// ── 3. B: fully pinned, dead edge → the interlock verdict ────────────────
-check("B (fully pinned, edge −22.4%): NO remedy exists — [] + the interlock copy", () => {
+// ── 3. B: fully pinned, dead edge AT $432.50 → the exact price-solve ──────
+// Wave 15 (owner ask 2026-07-11): B's pins are NOT structurally dead — the
+// edge is price-only when everything is pinned, and the closed-form price
+// p* = EV/(1−target) verifies. Pre-15 this fixture returned [] + interlock
+// copy; that was the engine missing the obvious move, not a law.
+check("B (fully pinned, edge −22.4%): the exact price-solve leads — no more dead-end", () => {
   const rem = computePinRemedies({ ...tailsInput, pinnedShares: PINS_B, maxRemedies: 10 });
-  assert(rem.length === 0, `expected [], got ${rem.map((r) => r.kind).join(",")}`);
+  assert(rem.length > 0, "expected the exact price-move remedy");
+  assert(rem[0]!.exact === true && rem[0]!.kind === "price-move", `lead ${rem[0]!.kind}`);
+  const evB = TAILS.values.reduce(
+    (a, v, i) => a + v * (PINS_B.find((p) => p.index === i)?.share ?? 0),
+    0,
+  );
+  const expected =
+    Math.ceil((evB / (1 - tailsInput.targetEdge)) * 100 - 1e-6) / 100;
+  assert(
+    Math.abs((rem[0]!.price ?? 0) - expected) < 1e-9,
+    `price ${rem[0]!.price}, want closed-form ${expected}`,
+  );
   const copy = pinShortfallHumanCopy({
     price: TAILS.price,
     targetEdge: tailsT.targetEdge,
     remedies: rem,
   });
-  assert(/pins interlock/i.test(copy), `copy must carry the interlock verdict — got: ${copy}`);
-  assert(/unpin two or more/i.test(copy), "copy points at the multi-pin way out");
+  assert(/Smallest verified fix/.test(copy), `fix leads the copy — got: ${copy}`);
   assert(copy.includes("$432.50") && copy.includes("11.08%"), "copy names price + target");
 });
 
@@ -397,20 +415,25 @@ check("meta parity: computePinRemedies delegates — unbudgeted A5 meta is the S
 });
 
 check("B all-pinned fast path: raise/lower structurally skipped — the WHOLE sweep fits in base+unpins+price solves", () => {
-  // 1 base + 9 unpins + 8 price probes = 18 solves. Pre-fast-path the
-  // raise/lower scans alone burned ~650 solves on this pool — a budget this
-  // tight only completes because an all-pinned pool skips them wholesale
-  // (pins are EXACT and must sum to 100%: with zero free cards, every
-  // single-pin raise/lower is a guaranteed structural refusal).
+  // 1 base + 1 exact price-solve (owner 2026-07-11: all-pinned edge is
+  // price-only, so p* = EV/(1−target) is computed and VERIFIED first) +
+  // 9 unpins + 8 price probes = 19 solves. Pre-fast-path the raise/lower
+  // scans alone burned ~650 solves on this pool — a budget this tight only
+  // completes because an all-pinned pool skips them wholesale (pins are
+  // EXACT and must sum to 100%: with zero free cards, every single-pin
+  // raise/lower is a guaranteed structural refusal).
   const meta = computePinRemediesMeta({
     ...tailsInput,
     pinnedShares: PINS_B,
     maxRemedies: 10,
-    maxSolves: 18,
+    maxSolves: 19,
   });
   assert(meta.allPinned === true, "every card carries a pin");
-  assert(meta.sweepComplete === true, "the fast-path sweep completes within 18 solves");
-  assert(meta.remedies.length === 0, `expected [], got ${meta.remedies.map((r) => r.kind).join(",")}`);
+  assert(meta.sweepComplete === true, "the fast-path sweep completes within 19 solves");
+  assert(
+    meta.remedies[0]?.exact === true,
+    `the exact price-solve leads, got ${meta.remedies.map((r) => r.kind).join(",") || "[]"}`,
+  );
   const copy = pinShortfallHumanCopy({
     price: TAILS.price,
     targetEdge: tailsT.targetEdge,
@@ -418,12 +441,111 @@ check("B all-pinned fast path: raise/lower structurally skipped — the WHOLE sw
     sweepComplete: meta.sweepComplete,
     allPinned: meta.allPinned,
   });
-  assert(/Every card is pinned/.test(copy), `all-pinned copy leads — got: ${copy}`);
-  assert(/unpin two or more/i.test(copy), "copy points at the multi-pin way out");
-  assert(/approve edited pool/i.test(copy), "copy points at the verbatim write");
+  assert(/Smallest verified fix/.test(copy), `the fix leads the copy — got: ${copy}`);
   assert(
     !copy.includes("every raise, lower, unpin and in-budget price move was tried"),
     "the skipped raise/lower scans are never claimed as tried",
+  );
+});
+
+// ── 3c. All-pinned exact price-solve (owner ask 2026-07-11) ──────────────
+check("all-pinned exact price-solve: p* = EV/(1−target) verified + ranked FIRST", () => {
+  // Every card pinned at the LIVE shares (a coherent hand-typed pool): EV is
+  // then a constant, the edge is price-only, and the closed-form price must
+  // surface as the lead remedy — never a guess, never a range.
+  const pinsLive: ShapeWeightsPinnedShare[] = TAILS.livePcts.map((p, i) => ({
+    index: i,
+    share: p / 100,
+  }));
+  const meta = computePinRemediesMeta({
+    ...tailsInput,
+    pinnedShares: pinsLive,
+    maxRemedies: 10,
+  });
+  assert(meta.allPinned === true, "every card carries a pin");
+  const ev = TAILS.values.reduce(
+    (a, v, i) => a + v * (TAILS.livePcts[i]! / 100),
+    0,
+  );
+  const expected =
+    Math.ceil((ev / (1 - tailsInput.targetEdge)) * 100 - 1e-6) / 100;
+  const first = meta.remedies[0];
+  assert(first !== undefined, "expected the exact price-move to lead");
+  assert(first!.exact === true, `lead remedy must be the exact solve, got ${first!.kind}`);
+  assert(first!.kind === "price-move", `kind ${first!.kind}`);
+  assert(
+    Math.abs((first!.price ?? 0) - expected) < 1e-9,
+    `price ${first!.price}, want the closed-form ${expected}`,
+  );
+  assert(
+    first!.edge >= tailsInput.targetEdge - 1e-9,
+    `verified edge ${first!.edge} must land ≥ target ${tailsInput.targetEdge}`,
+  );
+  assert(
+    (first!.edge - tailsInput.targetEdge) * 100 < 0.01,
+    `on the dot: overshoot ${(first!.edge - tailsInput.targetEdge) * 100}pp must stay < 0.01pp`,
+  );
+  assert(meta.exactPriceRefused === null, "an adopted exact price is never stamped refused");
+  assert(
+    /on the dot/.test(first!.humanCopy) && /keeps every typed chance/.test(first!.humanCopy),
+    `copy names the exactness — got: ${first!.humanCopy}`,
+  );
+});
+
+check("all-pinned exact price REFUSED (tagged) ⇒ stamped + the interlock copy names it", () => {
+  // A TAG-DEAD all-pinned set on a 1% lottery: pinned win mass 5.2% is off
+  // the tag at EVERY price (untagged packs have no such lock — pins are
+  // owner law and the acceptance reduces to edge ≥ target, so the exact
+  // price nearly always verifies there). Every unpin is dead too: freed
+  // mass must land back on the same card (zero shaping freedom). The
+  // closed-form price is computed, TRIED, refused, and the copy must say so
+  // instead of pretending the price knob was never turned.
+  const deadInput = {
+    cards: [250, 100, 75, 0.05, 0.02].map((v) => ({ value: v })),
+    currentWeights: [500, 3500, 6000, 600000, 390000],
+    price: 1.0,
+    targetEdge: 0.11,
+    targetWinRate: 0.01,
+    nearMissMin: 0,
+    maxWinCap: 2300,
+    intendedHitRate: 0.01,
+  };
+  const pinsDead: ShapeWeightsPinnedShare[] = [
+    { index: 0, share: 0.05 },
+    { index: 1, share: 0.001 },
+    { index: 2, share: 0.001 },
+    { index: 3, share: 0.474 },
+    { index: 4, share: 0.474 },
+  ];
+  const meta = computePinRemediesMeta({
+    ...deadInput,
+    pinnedShares: pinsDead,
+    maxRemedies: 10,
+  });
+  assert(meta.allPinned === true, "the dead set pins every card");
+  assert(
+    meta.remedies.length === 0,
+    `the dead set has no verified remedy, got ${meta.remedies.map((r) => r.kind).join(",")}`,
+  );
+  assert(
+    meta.exactPriceRefused !== null && meta.exactPriceRefused > 0,
+    "the tried-and-refused exact price must be stamped",
+  );
+  const copy = pinShortfallHumanCopy({
+    price: deadInput.price,
+    targetEdge: deadInput.targetEdge,
+    remedies: meta.remedies,
+    sweepComplete: meta.sweepComplete,
+    allPinned: meta.allPinned,
+    exactPriceRefused: meta.exactPriceRefused,
+  });
+  assert(
+    /exact-edge price/i.test(copy),
+    `copy must name the exact-price attempt — got: ${copy}`,
+  );
+  assert(
+    /fight the tag or the caps, not the price/i.test(copy),
+    "copy must name the REAL blocker class",
   );
 });
 

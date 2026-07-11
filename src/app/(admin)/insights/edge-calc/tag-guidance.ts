@@ -1817,7 +1817,11 @@ export function buildWidePriceProbeSuggestion(args: {
 // search invocations — each is one `searchBestPriceForCleanSnap` call, the
 // same cost class as the wide probe the arms already absorb.
 
-export type CleanRescueTier = "wide-price" | "edge-flex" | "edge-flex-wide";
+export type CleanRescueTier =
+  | "wide-price"
+  | "edge-flex"
+  | "edge-flex-wide"
+  | "pin-repair";
 
 export type CleanRescue = {
   tier: CleanRescueTier;
@@ -1825,9 +1829,9 @@ export type CleanRescue = {
   price: number;
   /**
    * The flexed edge target (fraction) the clean landing was proven at —
-   * `null` = the pack's own target was kept (Tier A). The client threads
-   * this as the staged `edgeTargetOverride`, so the re-plan and the write
-   * re-verify the exact claim fail-closed.
+   * `null` = the pack's own target was kept (Tier A / Tier P). The client
+   * threads this as the staged `edgeTargetOverride`, so the re-plan and the
+   * write re-verify the exact claim fail-closed.
    */
   edgeTargetOverride: number | null;
   landedEdge: number;
@@ -1835,6 +1839,14 @@ export type CleanRescue = {
   allNice: boolean | null;
   /** Search invocations spent (budget proof — Tier A costs 0). */
   searchesSpent: number;
+  /**
+   * Tier P payload: the few off-ladder rows pinned to their nearest clean
+   * rung (pct = percent of opens), under which the SAME solve at the SAME
+   * edge target lands everything clean. The owner proved this move by hand
+   * (2026-07-11, twice) before the engine learned it: rounding two rows by
+   * ±0.005pp beats a −28% price move every time. Undefined for A/B/C.
+   */
+  pinRepairs?: { index: number; cardId: string | null; pct: number }[];
 };
 
 /** Total search-call budget for one rescue sweep (≈ the wide probe ×8 worst case). */
@@ -1843,6 +1855,10 @@ export const CLEAN_RESCUE_SEARCH_BUDGET = 8;
 export const CLEAN_RESCUE_EDGE_STEP = 0.0025;
 /** Max rungs each side of the pack target (±0.75pp). */
 export const CLEAN_RESCUE_EDGE_FLEX_MAX_STEPS = 3;
+/** Tier P: max off-ladder rows a pin-repair will attempt (combinatorial cap). */
+export const CLEAN_RESCUE_PIN_REPAIR_MAX_ROWS = 4;
+/** Tier P: its OWN solve budget (rung combos, cheapest total nudge first). */
+export const CLEAN_RESCUE_PIN_REPAIR_BUDGET = 8;
 
 export function computeCleanRescue(input: {
   /**
@@ -1868,7 +1884,16 @@ export function computeCleanRescue(input: {
   currentPrice: number;
   /** The arm's already-run wide probe summary (Tier A input; null = not probed). */
   wideProbe: (ProbeOutcome & { edge: number; winRate: number }) | null;
+  /**
+   * Tier P inputs: the DIRTY plan's landed per-card shares (fractions of 1,
+   * aligned to `values`) + stable card ids for the adoption payload. Omitted
+   * ⇒ Tier P is skipped (legacy callers).
+   */
+  landedShares?: readonly number[];
+  cardIds?: readonly string[];
   maxSearches?: number;
+  /** Tier P's own combo budget (defaults to CLEAN_RESCUE_PIN_REPAIR_BUDGET). */
+  maxPinRepairSolves?: number;
   /** Harness seam — defaults to the real engine search. */
   searchFn?: typeof searchBestPriceForCleanSnap;
 }): CleanRescue | null {
@@ -1917,10 +1942,14 @@ export function computeCleanRescue(input: {
     }
   }
   let spent = 0;
-  for (const cand of candidates) {
+  outer: for (const cand of candidates) {
     const bands = pricePinned ? [0] : [priceBudgetPct, widePct];
     for (const band of bands) {
-      if (spent >= maxSearches) return null;
+      // Budget exhaustion ends the edge-flex sweep but MUST fall through to
+      // tier P (its own budget): with 6 rungs × 2 bands the default budget
+      // starves the ladder, and a `return null` here would leave pin-repair
+      // structurally unreachable on the unpinned path.
+      if (spent >= maxSearches) break outer;
       spent++;
       const res = search(mkParams(cand, band));
       const shaped = res.bestResult;
@@ -1949,6 +1978,101 @@ export function computeCleanRescue(input: {
         allNice: shaped.allNice ?? null,
         searchesSpent: spent,
       };
+    }
+  }
+
+  // ── Tier P: pin-repair at the pack's OWN edge target ────────────────────
+  // The owner's hand-move, mechanized: when only a FEW rows sit off the
+  // clean ladder, pin each to its nearest rung(s) and let the SAME solve
+  // re-verify — the free rows re-shape and snap around them. Edge target is
+  // NOT flexed here (the pins move EV by fractions of a cent); the price
+  // search stays in-budget (pinned price ⇒ band 0). Cheapest total nudge
+  // first, its own budget, same acceptance bars as B/C.
+  const landed = input.landedShares;
+  if (landed !== undefined && landed.length === values.length) {
+    type OffRow = { index: number; pct: number; rungs: number[] };
+    const offRows: OffRow[] = [];
+    for (let i = 0; i < landed.length; i++) {
+      const pct = (landed[i] ?? 0) * 100;
+      if (!(pct > 0)) continue;
+      const lo = roundPct(floorToStep(pct));
+      const hi = roundPct(ceilToStep(pct));
+      const onGrid = Math.abs(pct - lo) < 1e-9 || Math.abs(pct - hi) < 1e-9;
+      if (onGrid) continue;
+      const rungs = [...new Set([lo, hi])].filter((r) => r > 0);
+      if (rungs.length === 0) return null;
+      offRows.push({ index: i, pct, rungs });
+      if (offRows.length > CLEAN_RESCUE_PIN_REPAIR_MAX_ROWS) break;
+    }
+    if (
+      offRows.length > 0 &&
+      offRows.length <= CLEAN_RESCUE_PIN_REPAIR_MAX_ROWS
+    ) {
+      // Cartesian rung combos, ordered by total |nudge| ascending.
+      let combos: { pins: { index: number; pct: number }[]; delta: number }[] =
+        [{ pins: [], delta: 0 }];
+      for (const row of offRows) {
+        const next: typeof combos = [];
+        for (const c of combos) {
+          for (const rung of row.rungs) {
+            next.push({
+              pins: [...c.pins, { index: row.index, pct: rung }],
+              delta: c.delta + Math.abs(rung - row.pct),
+            });
+          }
+        }
+        combos = next;
+      }
+      combos.sort((a, b) => a.delta - b.delta);
+      const pinBudget =
+        input.maxPinRepairSolves ?? CLEAN_RESCUE_PIN_REPAIR_BUDGET;
+      let pinSpent = 0;
+      for (const combo of combos) {
+        if (pinSpent >= pinBudget) break;
+        const shareSum = combo.pins.reduce((a, p) => a + p.pct / 100, 0);
+        if (shareSum >= 1) continue;
+        pinSpent++;
+        const params = mkParams(targetEdge, pricePinned ? 0 : priceBudgetPct);
+        const res = search({
+          ...params,
+          pinnedShares: combo.pins.map((p) => ({
+            index: p.index,
+            share: p.pct / 100,
+          })),
+        });
+        const shaped = res.bestResult;
+        if ("error" in shaped) continue;
+        if (shaped.snapped !== true) continue;
+        if (tagged && res.taggedAccuracyHit === false) continue;
+        const total = shaped.weights.reduce(
+          (a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0),
+          0,
+        );
+        if (total <= 0) continue;
+        const degenerate = ladderShape(
+          values,
+          liveShares,
+          shaped.weights.map((w) =>
+            Number.isFinite(w) && w > 0 ? w / total : 0,
+          ),
+          res.bestPrice,
+        ).degenerate;
+        if (degenerate) continue;
+        return {
+          tier: "pin-repair",
+          price: res.bestPrice,
+          edgeTargetOverride: null,
+          landedEdge: shaped.risk.edge,
+          landedWinRate: shaped.risk.winRate,
+          allNice: shaped.allNice ?? null,
+          searchesSpent: spent + pinSpent,
+          pinRepairs: combo.pins.map((p) => ({
+            index: p.index,
+            cardId: input.cardIds?.[p.index] ?? null,
+            pct: p.pct,
+          })),
+        };
+      }
     }
   }
   return null;
@@ -2808,6 +2932,11 @@ export type PinRemedy = {
   toPct?: number;
   /** The verified price (price-move only). */
   price?: number;
+  /**
+   * TRUE ⇒ the closed-form all-pinned price-solve: this price lands the edge
+   * target EXACTLY (owner ask 2026-07-11). Ranked before every other remedy.
+   */
+  exact?: true;
   /** The verifying solve's landed edge (fraction). */
   edge: number;
   humanCopy: string;
@@ -2867,6 +2996,15 @@ export type PinRemedySweep = {
    * sweep skips straight to unpins + price moves.
    */
   allPinned: boolean;
+  /**
+   * The all-pinned closed-form price (p* = EV ÷ (1 − target)) that was
+   * computed and TRIED but refused by the verifying solve — the honest
+   * "not even the exact price saves these pins" diagnosis (the pins then
+   * fight the tag/caps, not the price). `null` = not applicable (not
+   * all-pinned, price pinned, no-op move) or the solve accepted it (it then
+   * rides `remedies[0]` as the `exact` price-move).
+   */
+  exactPriceRefused: number | null;
 };
 
 /** Human step grid for a pin percentage (the odds-editor's display steps). */
@@ -2911,7 +3049,7 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
     input.cards.length > 0 &&
     new Set(pins.map((p) => p.index)).size === input.cards.length;
   if (!(price > 0) || pins.length === 0 || input.cards.length === 0) {
-    return { remedies: [], sweepComplete: true, allPinned };
+    return { remedies: [], sweepComplete: true, allPinned, exactPriceRefused: null };
   }
   const maxSolves = input.maxSolves ?? Number.POSITIVE_INFINITY;
   let solveCount = 0;
@@ -2991,7 +3129,12 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
   // Remedies only exist against a REFUSED base — an accepting base has
   // nothing to repair.
   if (verify(pins, price).ok) {
-    return { remedies: [], sweepComplete: !budgetExhausted, allPinned };
+    return {
+      remedies: [],
+      sweepComplete: !budgetExhausted,
+      allPinned,
+      exactPriceRefused: null,
+    };
   }
 
   let pinTotal = 0;
@@ -3000,6 +3143,54 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
   let curTotal = 0;
   for (const w of input.currentWeights) {
     if (Number.isFinite(w) && w > 0) curTotal += w;
+  }
+
+  let exactPriceRefused: number | null = null;
+
+  // ── ALL-PINNED EXACT PRICE-SOLVE (owner ask 2026-07-11) ──────────────────
+  // With EVERY card pinned, EV is a constant (Σ share·value) — the edge is a
+  // pure function of price, so the price that lands the target EXACTLY has a
+  // closed form: p* = EV / (1 − targetEdge). "it could just make the new
+  // price based on these odds and make a perfect edge! and just ask me" —
+  // compute it, verify it through the real solve (tag + caps can still
+  // refuse), and emit it as the RANKED-FIRST one-click remedy. The price
+  // budget is deliberately NOT a constraint here: an exact, verified,
+  // owner-confirmed price beats an in-budget dead end. Never emitted when
+  // the price is owner-pinned (they froze that knob).
+  const remedies: PinRemedy[] = [];
+  if (
+    allPinned &&
+    input.pinPrice !== true &&
+    input.targetEdge < 1 &&
+    Math.abs(pinTotal - 1) < 1e-6
+  ) {
+    let pinnedEv = 0;
+    for (const p of pins) pinnedEv += p.share * (input.cards[p.index]?.value ?? 0);
+    // CEIL to the cent: the verify bar is edge ≥ target, and rounding down
+    // half a cent would land a hair BELOW it — refusing a price that is one
+    // cent from perfect. Ceiling overshoots the target by < 0.01pp instead.
+    const exactPrice =
+      Math.ceil((pinnedEv / (1 - input.targetEdge)) * 100 - 1e-6) / 100;
+    if (
+      Number.isFinite(exactPrice) &&
+      exactPrice > 0 &&
+      Math.abs(exactPrice - price) > 0.005
+    ) {
+      const r = verify(pins, exactPrice);
+      if (r.ok) {
+        const deltaPct = ((exactPrice - price) / price) * 100;
+        remedies.push({
+          kind: "price-move",
+          price: exactPrice,
+          edge: r.edge,
+          exact: true,
+          humanCopy: `Your pinned odds price out exactly: with every card pinned the edge is price-only, and at ${usd(exactPrice)} (${deltaPct >= 0 ? "+" : "−"}${Math.abs(deltaPct).toFixed(1)}%) they land the ${(input.targetEdge * 100).toFixed(2)}% target on the dot (verified ${(r.edge * 100).toFixed(2)}%). One click applies the price and keeps every typed chance.`,
+          verified: true,
+        });
+      } else {
+        exactPriceRefused = exactPrice;
+      }
+    }
   }
 
   const withPinAt = (
@@ -3067,7 +3258,6 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
     return { toPct: roundPct(good), edge: goodEdge };
   };
 
-  const remedies: PinRemedy[] = [];
   const adjustedIdx = new Set<number>();
   const edgePct = (e: number): string => (e * 100).toFixed(2);
 
@@ -3199,6 +3389,10 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
     "unpin-card": 1,
     "price-move": 2,
   };
+  // The exact price-solve outranks everything: it is the only remedy that
+  // keeps EVERY typed chance and lands the target on the dot.
+  const rankOf = (r: PinRemedy): number =>
+    r.exact === true ? -1 : classRank[r.kind];
   const deltaOf = (r: PinRemedy): number =>
     r.kind === "price-move"
       ? Math.abs(((r.price ?? price) - price) / price) * 100
@@ -3207,7 +3401,7 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
         : Math.abs((r.toPct ?? 0) - (r.fromPct ?? 0));
   remedies.sort(
     (a, b) =>
-      classRank[a.kind] - classRank[b.kind] ||
+      rankOf(a) - rankOf(b) ||
       deltaOf(a) - deltaOf(b) ||
       (a.cardIndex ?? 0) - (b.cardIndex ?? 0),
   );
@@ -3215,6 +3409,7 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
     remedies: remedies.slice(0, Math.max(1, input.maxRemedies ?? 4)),
     sweepComplete: !budgetExhausted,
     allPinned,
+    exactPriceRefused,
   };
 }
 
@@ -3234,6 +3429,8 @@ export function pinShortfallHumanCopy(args: {
   sweepComplete?: boolean;
   /** TRUE ⇒ every pool card is pinned (raise/lower structurally dead). */
   allPinned?: boolean;
+  /** The refused closed-form exact price (all-pinned) — names the REAL blocker. */
+  exactPriceRefused?: number | null;
 }): string {
   const head = `The pinned odds can't reach the ${(args.targetEdge * 100).toFixed(2)}% edge target at ${usd(args.price)}.`;
   const detail = args.refusalDetail?.trim().replace(/\s+/g, " ") ?? "";
@@ -3241,11 +3438,15 @@ export function pinShortfallHumanCopy(args: {
     detail.length > 0 ? ` ${detail}${/[.!?]$/.test(detail) ? "" : "."}` : "";
   if (args.remedies.length === 0) {
     if (args.allPinned === true) {
+      const exactBit =
+        args.exactPriceRefused != null
+          ? ` Even the exact-edge price ${usd(args.exactPriceRefused)} (EV ÷ (1 − target)) was tried and the solve refused it — these pins fight the tag or the caps, not the price.`
+          : "";
       return `${head}${why} Every card is pinned, so the tuner has no room left to shape — ${
         args.sweepComplete === false
           ? "and the unpin sweep stopped at its solve budget before trying every card"
           : "every unpin and in-budget price move was tried against the solver"
-      }. The pins interlock: unpin two or more cards to give the tuner room — or use Approve edited pool to write the typed odds verbatim.`;
+      }.${exactBit} The pins interlock: unpin two or more cards to give the tuner room — or use Approve edited pool to write the typed odds verbatim.`;
     }
     if (args.sweepComplete === false) {
       return `${head}${why} No verified fix surfaced before the remedy search hit its solve budget — with this many pins not every raise, lower and unpin could be tried. The pins interlock: unpin two or more cards, or rebuild the pin set.`;
@@ -3349,6 +3550,8 @@ export type PackTuneVerdictInput = {
   pinSweepComplete?: boolean;
   /** TRUE ⇒ every pool card is pinned — the verbatim-write CTA leads. */
   pinsAllPinned?: boolean;
+  /** The tried-and-refused closed-form exact price (all-pinned honesty). */
+  pinsExactPriceRefused?: number | null;
 };
 
 export function buildPackTuneVerdict(
@@ -3393,6 +3596,9 @@ export function buildPackTuneVerdict(
             : {}),
           ...(input.pinsAllPinned !== undefined
             ? { allPinned: input.pinsAllPinned }
+            : {}),
+          ...(input.pinsExactPriceRefused !== undefined
+            ? { exactPriceRefused: input.pinsExactPriceRefused }
             : {}),
         }),
         action:

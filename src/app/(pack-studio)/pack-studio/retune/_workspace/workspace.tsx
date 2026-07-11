@@ -1706,18 +1706,55 @@ export function RetuneWorkspace({
       rescue.edgeTargetOverride !== null
         ? rescue.edgeTargetOverride.toFixed(4)
         : ""
-    }`;
+    }|${(rescue.pinRepairs ?? [])
+      .map((p) => `${p.cardId ?? p.index}@${p.pct}`)
+      .join(",")}`;
     const seen = rescueAdoptedRef.current.get(selectedPackId) ?? [];
     if (seen.includes(sig) || seen.length >= 2) return;
     rescueAdoptedRef.current.set(selectedPackId, [...seen, sig]);
-    applyPriceSuggestion({
-      price: rescue.price,
-      ...(rescue.edgeTargetOverride !== null
-        ? { edgeTarget: rescue.edgeTargetOverride }
-        : {}),
-    });
+    if (rescue.tier === "pin-repair" && (rescue.pinRepairs?.length ?? 0) > 0) {
+      // Tier P: stage the repair pins (the owner's hand-move, mechanized) +
+      // the proven price, PINNED. The re-plan re-verifies fail-closed through
+      // the pin machinery — and since pins gate the rescue OFF, an adopted
+      // repair can never re-fire and oscillate.
+      const packId = selectedPackId;
+      const sp = ensureStaged(packId);
+      if (!sp) return;
+      const repairs = (rescue.pinRepairs ?? []).filter(
+        (p): p is { index: number; cardId: string; pct: number } =>
+          p.cardId !== null,
+      );
+      if (repairs.length === 0) return;
+      const repairIds = new Set(repairs.map((p) => p.cardId));
+      stagedApi.setStaged(packId, {
+        ...sp,
+        price: rescue.price,
+        pinPrice: true,
+        pinnedOdds: [
+          ...sp.pinnedOdds.filter((p) => !repairIds.has(p.cardId)),
+          ...repairs.map((p) => ({ cardId: p.cardId, pct: p.pct })),
+        ],
+      });
+      setPriceText(priceInputText(rescue.price));
+      void requestPlan(packId);
+    } else {
+      applyPriceSuggestion({
+        price: rescue.price,
+        ...(rescue.edgeTargetOverride !== null
+          ? { edgeTarget: rescue.edgeTargetOverride }
+          : {}),
+      });
+    }
     toast.info(autoCleanAppliedToast(rescue), { duration: 10_000 });
-  }, [selectedPackId, status, planForBasis, applyPriceSuggestion]);
+  }, [
+    selectedPackId,
+    status,
+    planForBasis,
+    applyPriceSuggestion,
+    ensureStaged,
+    stagedApi,
+    requestPlan,
+  ]);
 
   // F7 — the plan's live fingerprint drifted under the staged edits:
   // auto re-seed the baseline + re-plan (staged identity kept).

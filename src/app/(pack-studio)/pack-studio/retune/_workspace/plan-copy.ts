@@ -407,6 +407,13 @@ export function dirtyOddsBanner(
  * auto-adopted change the owner can't see is a bug, not a feature.
  */
 export function autoCleanAppliedToast(rescue: CleanRescue): string {
+  if (rescue.tier === "pin-repair" && (rescue.pinRepairs?.length ?? 0) > 0) {
+    const n = rescue.pinRepairs!.length;
+    const rows = rescue.pinRepairs!
+      .map((p) => `${p.pct}%`)
+      .join(", ");
+    return `Auto-clean applied: pinned ${n} off-ladder ${n === 1 ? "row" : "rows"} to the nearest clean rung (${rows}) at price ${formatCurrency(rescue.price)} (pinned) — same edge target, solver-proven clean (edge ${(rescue.landedEdge * 100).toFixed(2)}%, win rate ${(rescue.landedWinRate * 100).toFixed(2)}%). Re-verifying now; review, then push.`;
+  }
   const price = `price ${formatCurrency(rescue.price)} (pinned)`;
   const edge =
     rescue.edgeTargetOverride !== null
