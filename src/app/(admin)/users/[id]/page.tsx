@@ -34,6 +34,7 @@ import {
 } from "@/lib/errors/safe-query";
 import { getUserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import { getUserFeatureLocks } from "@/lib/backend-api/feature-locks";
+import { getUserKyc } from "@/lib/backend-api/kyc";
 import { getUserWagerProgress } from "@/lib/queries/users-wager-progress";
 import { getUserBalanceWeighting } from "@/lib/queries/users-balance-weighting";
 import { getUserRewardPackOpens } from "@/lib/queries/users-reward-pack-opens";
@@ -576,6 +577,11 @@ async function UserDetailBody({
     initialTab === "account"
       ? getUserFeatureLocks(id).catch(() => null)
       : null;
+  // Account tab: backend-owned Sumsub KYC status + admin control. Same
+  // catch→null convention as the fraud-locks read above — null renders the
+  // card's muted "awaiting backend deploy" state instead of crashing the tab.
+  const kycPromise =
+    initialTab === "account" ? getUserKyc(id).catch(() => null) : null;
   // Account tab: how each part of the user's balance is weighted toward each
   // destination (withdrawal / races / rakeback / shards) — the funding-source
   // wager-weight matrix projected onto their balance composition. Account-tab
@@ -771,6 +777,7 @@ async function UserDetailBody({
       battleVoucherTxPromise={battleVoucherTxPromise}
       wagerRequirementPromise={wagerRequirementPromise}
       featureLocksPromise={featureLocksPromise}
+      kycPromise={kycPromise}
       wagerProgressPromise={wagerProgressPromise}
       balanceWeightingPromise={balanceWeightingPromise}
       viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}

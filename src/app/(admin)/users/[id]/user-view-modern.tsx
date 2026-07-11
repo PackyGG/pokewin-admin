@@ -72,6 +72,7 @@ import type { UserRewards } from "@/lib/queries/users";
 import type { PaginatedInventory } from "./user-tabs-types";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import type { UserFeatureLocks } from "@/lib/backend-api/feature-locks";
+import type { UserKycStatus } from "@/lib/backend-api/kyc";
 import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
 import type { UserBalanceWeighting } from "@/lib/queries/users-balance-weighting";
 import type { UserRewardPackOpensResult } from "@/lib/queries/users-reward-pack-opens";
@@ -182,6 +183,7 @@ export function UserViewModern({
   battleVoucherTxPromise,
   wagerRequirementPromise,
   featureLocksPromise,
+  kycPromise,
   wagerProgressPromise,
   balanceWeightingPromise,
   viewerIsAdjustmentOwner,
@@ -243,6 +245,9 @@ export function UserViewModern({
   // (card refund/chargeback). Same catch→null convention as the
   // wager-requirement override above.
   featureLocksPromise: Promise<UserFeatureLocks | null> | null;
+  // Account tab — backend-owned Sumsub KYC status + admin control. Same
+  // catch→null convention as the fraud-locks read above.
+  kycPromise: Promise<UserKycStatus | null> | null;
   // Account tab — read-only wager-requirement PROGRESS derived from the
   // backend-written `balances` columns (dev-only). null = prod / no-balance /
   // read failed → the card's muted "not available" state.
@@ -797,6 +802,7 @@ export function UserViewModern({
             pnlResultPromise={pnlResultPromise}
             wagerRequirementPromise={wagerRequirementPromise}
             featureLocksPromise={featureLocksPromise}
+            kycPromise={kycPromise}
             wagerProgressPromise={wagerProgressPromise}
             balanceWeightingPromise={balanceWeightingPromise}
           />

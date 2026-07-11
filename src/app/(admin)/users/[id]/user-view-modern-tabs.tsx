@@ -54,6 +54,7 @@ import {
   Coins as CoinsIcon,
   Scale,
   ShieldAlert,
+  BadgeCheck,
   Users,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -87,6 +88,8 @@ import { UserWagerRequirementCard } from "./user-wager-requirement-card";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import { FraudLocksCard } from "./fraud-locks-card";
 import type { UserFeatureLocks } from "@/lib/backend-api/feature-locks";
+import { KycCard } from "./kyc-card";
+import type { UserKycStatus } from "@/lib/backend-api/kyc";
 import { UserWagerProgressCard } from "./user-wager-progress-card";
 import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
 import { UserBalanceWeightingCard } from "./user-balance-weighting-card";
@@ -1739,6 +1742,7 @@ export function AccountTab({
   pnlResultPromise,
   wagerRequirementPromise,
   featureLocksPromise,
+  kycPromise,
   wagerProgressPromise,
   balanceWeightingPromise,
 }: {
@@ -1754,6 +1758,9 @@ export function AccountTab({
   // refund/chargeback). Same catch→null convention as the wager-requirement
   // override above.
   featureLocksPromise: Promise<UserFeatureLocks | null> | null;
+  // Backend-owned Sumsub KYC status + admin control. Same catch→null
+  // convention as the fraud-locks read above.
+  kycPromise: Promise<UserKycStatus | null> | null;
   // Read-only wager-requirement PROGRESS from the backend-written `balances`
   // columns (dev-only). null = prod / no-balance / read failed → muted card.
   wagerProgressPromise: Promise<UserWagerProgress | null> | null;
@@ -1807,6 +1814,18 @@ export function AccountTab({
           <FraudLocksStreamed
             userId={user.id}
             featureLocksPromise={featureLocksPromise}
+            canManage={data.sessionRole === "admin"}
+          />
+        </Suspense>
+      ) : (
+        <SkeletonCard lines={3} />
+      )}
+      <SectionHeading icon={BadgeCheck} title="KYC (Sumsub)" />
+      {kycPromise ? (
+        <Suspense fallback={<SkeletonCard lines={3} />}>
+          <KycStreamed
+            userId={user.id}
+            kycPromise={kycPromise}
             canManage={data.sessionRole === "admin"}
           />
         </Suspense>
@@ -1946,6 +1965,19 @@ function FraudLocksStreamed({
   return (
     <FraudLocksCard userId={userId} data={featureLocks} canManage={canManage} />
   );
+}
+
+function KycStreamed({
+  userId,
+  kycPromise,
+  canManage,
+}: {
+  userId: string;
+  kycPromise: Promise<UserKycStatus | null>;
+  canManage: boolean;
+}) {
+  const kyc = use(kycPromise);
+  return <KycCard userId={userId} data={kyc} canManage={canManage} />;
 }
 
 function WagerProgressStreamed({
