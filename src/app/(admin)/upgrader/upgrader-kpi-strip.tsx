@@ -13,8 +13,10 @@
  * the directive makes the tile a Server Component end-to-end and the icon prop
  * stays inside server code.
  *
- * Visual language matches modern-panels.tsx: left accent bar, glassy diagonal
- * sheen, surface-sheen lifted edge, and the same TILE_COLORS accents.
+ * Visual language matches the flattened modern-panels.tsx KpiTile: one solid
+ * bg-card surface with a hairline border, no colored fill / accent bar / sheen.
+ * The TILE_COLORS accent survives ONLY on the icon glyph + the value number
+ * (House-POV tinted where the value is money).
  *
  * House-POV coloring (CLAUDE.md, strict): the upgrader output pool is the
  * set of cards a player can *win*, so its monetary size is payout liability
@@ -65,31 +67,18 @@ function UpgraderKpiTile({
   accent,
 }: UpgraderKpi) {
   const colors = TILE_COLORS[accent];
+  // Flat tile — matches the flattened shared KpiTile in modern-panels.tsx: one
+  // solid `bg-card` surface + a hairline border, uniform `rounded-lg`, static.
+  // The per-hue colored FILL (`colors.bg`), the left accent bar, and the
+  // diagonal white sheen are dropped; the accent now survives only on the icon
+  // + the value number (House-POV tinted). The value stays an <AnimatedNumber>
+  // so the ramp-on-mount behavior is unchanged — only the chrome was flattened.
   return (
-    <div
-      className={cn(
-        "hover-raise group surface-sheen relative overflow-hidden rounded-xl border px-3 py-2.5 sm:px-4 sm:py-3",
-        colors.bg,
-      )}
-    >
-      {/* Left accent bar — inherits the accent hue, brightens on hover.
-          Neutral by construction: hue is caller-chosen (House-POV). */}
-      <div
-        aria-hidden
-        className={cn(
-          "tile-accent-bar pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-current opacity-50 transition-opacity duration-200 group-hover:opacity-80",
-          colors.icon,
-        )}
-      />
-      {/* Faint diagonal sheen for a glassy finish — neutral white. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent"
-      />
-      <div className="relative flex items-start justify-between gap-2">
+    <div className="rounded-lg border bg-card px-3 py-2.5 sm:px-4 sm:py-3">
+      <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
           <Icon className={cn("size-3.5 shrink-0 sm:size-4", colors.icon)} />
-          <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
+          <span className="truncate text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
             {label}
           </span>
         </div>
@@ -98,12 +87,12 @@ function UpgraderKpiTile({
         value={value}
         format={format}
         className={cn(
-          "relative mt-1 block truncate text-xl font-bold leading-tight tracking-tight tabular-nums sm:text-2xl",
+          "mt-1.5 block truncate text-xl font-bold leading-tight tracking-tight tabular-nums sm:text-2xl",
           colors.text,
         )}
       />
       {sub && (
-        <p className="relative mt-0.5 truncate text-[10px] text-muted-foreground sm:text-[11px]">
+        <p className="mt-1 truncate text-xs text-muted-foreground">
           {sub}
         </p>
       )}

@@ -156,7 +156,7 @@ export function UpgraderTxDialog({
                 House-POV colors: badge ROSE for a user win (the house
                 paid out), EMERALD for a user loss (the house kept the
                 wager). Net-for-house mirrors the same rule. */}
-            <div className="rounded-2xl border bg-gradient-to-br from-card via-card to-card/70 p-4">
+            <div className="rounded-xl border bg-card p-4">
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div className="space-y-1.5">
                   <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -516,7 +516,7 @@ function UpgraderTxDialogSkeleton() {
   return (
     <div className="space-y-4" aria-hidden>
       {/* Outcome panel */}
-      <div className="rounded-2xl border bg-gradient-to-br from-card via-card to-card/70 p-4">
+      <div className="rounded-xl border bg-card p-4">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="space-y-2">
             <Skeleton className="h-2.5 w-16 rounded" />

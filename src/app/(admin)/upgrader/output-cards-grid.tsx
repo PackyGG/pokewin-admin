@@ -219,7 +219,7 @@ function UpgraderOutputCardTile({ card }: { card: UpgraderOutputCard }) {
   return (
     <div
       className={cn(
-        "surface-sheen group relative flex flex-col gap-2 rounded-xl border border-border/60 bg-card/40 p-2.5 transition-colors hover:border-border hover:bg-card/70",
+        "group relative flex flex-col gap-2 rounded-xl border border-border/60 bg-card/40 p-2.5 transition-colors hover:border-border hover:bg-card/70",
         !card.enabled && "opacity-60",
       )}
     >

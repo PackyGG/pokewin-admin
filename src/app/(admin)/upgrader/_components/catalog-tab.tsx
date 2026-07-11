@@ -274,16 +274,8 @@ export async function UpgraderCatalogTab({
       {/* ── TIER DISTRIBUTION ───────────────────────────────────────── */}
       {total > 0 && (
         <FadeIn>
-          <div className="surface-sheen surface-raise relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/70">
-            <div
-              aria-hidden
-              className="pointer-events-none absolute -right-16 -top-16 size-48 rounded-full bg-amber-500/10 blur-3xl"
-            />
-            <div
-              aria-hidden
-              className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"
-            />
-            <div className="relative p-4 sm:p-5">
+          <div className="rounded-xl border bg-card shadow-sm">
+            <div className="p-4 sm:p-5">
               <SectionHeading
                 icon={Palette}
                 title="Liability by Tier"
@@ -305,10 +297,17 @@ export async function UpgraderCatalogTab({
                     <div
                       key={color}
                       className={cn(
-                        "relative overflow-hidden rounded-xl border bg-background/40 p-3 transition-colors",
+                        // Flat nested tile — neutral surface + hairline border.
+                        // The dominant-by-value tier keeps a subtle NEUTRAL
+                        // emphasis (muted fill + full-strength border) instead of
+                        // the old amber tint, so the "biggest liability slice"
+                        // signal survives without a decorative colored fill. The
+                        // per-tier hue lives only on the swatch dot + progress
+                        // bar below (semantic rarity identity).
+                        "rounded-lg border p-3",
                         isDominant
-                          ? "border-amber-500/40 bg-amber-500/[0.04]"
-                          : "border-border/60",
+                          ? "border-border bg-muted/60"
+                          : "border-border/60 bg-background/40",
                       )}
                     >
                       <div className="flex items-center justify-between gap-2">
