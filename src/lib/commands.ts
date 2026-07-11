@@ -46,6 +46,7 @@ import {
   Settings,
   Shield,
   ShieldCheck,
+  Sparkles,
   SquareKanban,
   Sun,
   Swords,
@@ -111,7 +112,7 @@ export type ActionCommand = {
    */
   run:
     | { type: "navigate"; href: string }
-    | { type: "theme"; mode: "light" | "dark" | "system" }
+    | { type: "theme"; mode: "light" | "dark" | "system" | "grailed" }
     | { type: "logout" }
     | { type: "focus-user-search" };
   /** Page the action belongs to — gates visibility via ADMIN_PAGES. */
@@ -234,6 +235,14 @@ export const ACTION_COMMANDS: ActionCommand[] = [
     icon: MoonStar,
     run: { type: "theme", mode: "dark" },
     keywords: ["theme", "night"],
+  },
+  {
+    kind: "action",
+    id: "action.theme-grailed",
+    label: "Grailed Dark theme",
+    icon: Sparkles,
+    run: { type: "theme", mode: "grailed" },
+    keywords: ["theme", "grailed", "premium", "blue"],
   },
   {
     kind: "action",

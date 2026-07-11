@@ -94,7 +94,12 @@ export default function RootLayout({
         {/* Dark mode stays the project default (CLAUDE.md). `enableSystem`
             is on so the admin preferences dropdown can offer a "System"
             option that follows the OS setting. */}
-        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          enableSystem
+          themes={["light", "dark", "grailed"]}
+        >
           <TooltipProvider>
             {children}
           </TooltipProvider>

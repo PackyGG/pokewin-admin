@@ -3,7 +3,7 @@
 import * as React from "react";
 import { toast } from "sonner";
 import { useTheme } from "next-themes";
-import { Sun, Moon, Monitor, Clock, CalendarDays } from "lucide-react";
+import { Sun, Moon, Monitor, Sparkles, Clock, CalendarDays } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -215,7 +215,7 @@ export function PreferencesForm({
             Dark is the project default. Pick System to follow your OS.
           </p>
         </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <ThemeRadio
             value="light"
             active={theme}
@@ -231,6 +231,14 @@ export function PreferencesForm({
             icon={Moon}
             label="Dark"
             hint="Low-light mode"
+          />
+          <ThemeRadio
+            value="grailed"
+            active={theme}
+            onSelect={setThemeLocal}
+            icon={Sparkles}
+            label="Grailed Dark"
+            hint="Premium blue"
           />
           <ThemeRadio
             value="system"

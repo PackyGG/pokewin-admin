@@ -2,7 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:is(.dark *, .grailed *));
 
 @theme inline {
   --color-background: var(--background);
@@ -145,6 +145,67 @@
   --sidebar-accent-foreground: oklch(0.97 0 0);
   --sidebar-border: oklch(0.285 0.024 250);
   --sidebar-ring: oklch(0.65 0.19 250);
+}
+
+/* ── "Grailed Dark" — third theme ──────────────────────────────────
+   Premium dark SaaS palette (blue/purple-tinted layered surfaces).
+   next-themes applies the single `.grailed` class; the `dark`
+   custom-variant above also matches `.grailed`, so every `dark:`
+   utility fires under Grailed exactly as under `.dark` — only the
+   palette differs. House-POV emerald/rose financial colors are
+   Tailwind palette classes (not theme tokens) and intentionally stay
+   identical across both dark themes. */
+.grailed {
+  color-scheme: dark;
+
+  --background: #131722;
+  --foreground: #F3F5FA;
+
+  --card: #202636;
+  --card-foreground: #F3F5FA;
+
+  --popover: #1A1F2E;
+  --popover-foreground: #F3F5FA;
+
+  /* Bright cyan-blue primary → foreground MUST be dark for AA contrast */
+  --primary: #4CC3FF;
+  --primary-foreground: #0C111B;
+
+  --secondary: #1A1F2E;
+  --secondary-foreground: #F3F5FA;
+
+  --muted: #1A1F2E;
+  --muted-foreground: #9CA7B8;
+
+  --accent: #252C3F; /* card-hover */
+  --accent-foreground: #F3F5FA;
+
+  --destructive: #FF6B7A;
+
+  --border: rgba(255, 255, 255, 0.06);
+  /* Solid, not rgba: `bg-input` is used as a FILL across the UI (slider
+     track, outline-button/tab/command-input backgrounds), so a
+     semi-transparent 10% white would render washed-out/near-invisible.
+     A solid layered surface matches `.dark`'s solid `--input`. */
+  --input: #232A3B;
+  --ring: #4CC3FF;
+
+  --chart-1: #4CC3FF;
+  --chart-2: #50D890;
+  --chart-3: #FFC857;
+  --chart-4: #FF6B7A;
+  --chart-5: #A78BFA;
+
+  --sidebar: #10141E;
+  --sidebar-foreground: #F3F5FA;
+  --sidebar-primary: #4CC3FF;
+  --sidebar-primary-foreground: #0C111B;
+  --sidebar-accent: #202636;
+  --sidebar-accent-foreground: #F3F5FA;
+  --sidebar-border: rgba(255, 255, 255, 0.06);
+  --sidebar-ring: #4CC3FF;
+
+  --radius: 0.75rem;
 }
 
 @layer base {

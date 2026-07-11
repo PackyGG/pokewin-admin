@@ -32,9 +32,12 @@ function parsePreferences(raw: unknown): AdminPreferences {
   if (!raw || typeof raw !== "object") return { ...DEFAULT_PREFERENCES };
   const obj = raw as Record<string, unknown>;
 
+  // Derive the whitelist from THEME_VALUES (single source) so new themes
+  // like "grailed" survive a round-trip instead of being reset to default.
   const theme: AdminPreferences["theme"] =
-    obj.theme === "light" || obj.theme === "dark" || obj.theme === "system"
-      ? obj.theme
+    typeof obj.theme === "string" &&
+    (THEME_VALUES as readonly string[]).includes(obj.theme)
+      ? (obj.theme as AdminPreferences["theme"])
       : DEFAULT_PREFERENCES.theme;
 
   let timezone: string | null = DEFAULT_PREFERENCES.timezone;

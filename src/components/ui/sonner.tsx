@@ -7,9 +7,14 @@ import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon, Loader2Icon
 const Toaster = ({ ...props }: ToasterProps) => {
   const { theme = "system" } = useTheme()
 
+  // Sonner only understands light | dark | system. "grailed" is a
+  // dark-family theme, so map it to "dark" — otherwise toasts render
+  // light-styled under Grailed.
+  const sonnerTheme = theme === "grailed" ? "dark" : theme
+
   return (
     <Sonner
-      theme={theme as ToasterProps["theme"]}
+      theme={sonnerTheme as ToasterProps["theme"]}
       className="toaster group"
       icons={{
         success: (
