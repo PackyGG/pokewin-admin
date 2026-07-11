@@ -103,7 +103,7 @@ export function RewardCreatorCostsTodayCard({
   };
 }) {
   return (
-    <Card className="bg-rose-500/10">
+    <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <CardTitle className="text-card-title text-muted-foreground">
           Reward + Creators Costs

@@ -18,19 +18,12 @@ import {
 import { getDashboardKpiStatsAction } from "./actions";
 import type { KpiWindowPayload } from "./kpi-window-data";
 
-const PANEL_TINT = {
-  cyan: "bg-cyan-500/10",
-  purple: "bg-purple-500/10",
-  emerald: "bg-emerald-500/10",
-  pink: "bg-pink-500/10",
-  blue: "bg-blue-500/10",
-  amber: "bg-amber-500/10",
-  rose: "bg-rose-500/10",
-} as const;
-
-type PanelTint = keyof typeof PANEL_TINT;
-
-const ICON_TINT: Record<PanelTint, string> = {
+// Flat direction (matches the shared modern-panels flatten): each KPI box is
+// a solid neutral `bg-card` surface carrying the Card primitive's hairline
+// ring — the per-hue colored FILL that used to tint the whole box was the
+// layered noise the flat pilot drops. The box's identity hue now survives
+// ONLY on its icon glyph (below), never the box background.
+const ICON_TINT = {
   cyan: "text-cyan-400",
   purple: "text-purple-400",
   emerald: "text-emerald-400",
@@ -38,7 +31,9 @@ const ICON_TINT: Record<PanelTint, string> = {
   blue: "text-blue-400",
   amber: "text-amber-400",
   rose: "text-rose-400",
-};
+} as const;
+
+type PanelTint = keyof typeof ICON_TINT;
 
 /**
  * Per-box "today / 24h" toggle. Same look as the PnL tile's old
@@ -136,7 +131,7 @@ function KpiPanel({
   footer?: React.ReactNode;
 }) {
   return (
-    <Card className={cn("h-full", PANEL_TINT[tint])}>
+    <Card className="h-full">
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <CardTitle className="text-card-title text-muted-foreground inline-flex min-w-0 items-center gap-1">
           <span className="truncate">{title}</span>

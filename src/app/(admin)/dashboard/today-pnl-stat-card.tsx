@@ -33,8 +33,9 @@ import type { GgrBreakdown } from "@/lib/queries/dashboard";
  * getTodayPnl / calculateWindowedPnl). Because it's the same formula the
  * period-P&L card and daily-P&L chart use, this reconciles with them.
  *
- * House-POV colors per CLAUDE.md:
- *   • P&L ≥ 0 → house in profit → emerald (card tint + value).
+ * House-POV colors per CLAUDE.md (flat surface — the profit/loss signal
+ * lives on the value + trend icon, not a colored card fill):
+ *   • P&L ≥ 0 → house in profit → emerald (value + trend icon).
  *   • P&L < 0 → house in the red → rose.
  * The card face also shows the two largest plain components — Deposits
  * (emerald, capital in) and Withdrawals (rose, money out) — matching the
@@ -106,7 +107,7 @@ export function TodayPnlStatCard({
   const netHoldingsChange = balanceChange + inventoryChange + voucherChange;
   const netHoldingsPnlContribution = -netHoldingsChange;
   return (
-    <Card className={cn(isProfit ? "bg-emerald-500/10" : "bg-rose-500/10")}>
+    <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
           <CardTitle className="text-card-title text-muted-foreground inline-flex items-center gap-1">

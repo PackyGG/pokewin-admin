@@ -59,7 +59,7 @@ export function UpgraderDoubleDownTodayCard({
     doubleDown.winRate === null ? null : doubleDown.winRate * 100;
 
   return (
-    <Card className="bg-cyan-500/5">
+    <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <CardTitle className="text-card-title text-muted-foreground">
           Upgrader + Double Down

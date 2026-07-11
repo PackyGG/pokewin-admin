@@ -3,21 +3,24 @@ import { type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AnimatedNumber, type AnimatedNumberFormat } from "@/components/animated-number";
 
+// Flat direction (matches the shared modern-panels flatten): the card is a
+// solid neutral `bg-card` surface carrying the Card primitive's hairline
+// ring — the per-hue colored FILL was the layered tint the flat pilot drops.
+// The accent now survives ONLY on the icon glyph, never the card background.
+// `emerald`/`green` are the house-POV "house gain" accent (deposits, wagers,
+// positive P&L/GGR); `rose` is the "house loss" accent (withdrawals, payouts
+// to users, creator commission, negative P&L). `green` stays as an alias for
+// `emerald` so existing call sites don't have to be touched at once.
 const colorMap = {
-  blue: { bg: "bg-blue-500/10", icon: "text-blue-400" },
-  // `emerald` is the house-POV "house gain" accent used for deposits, wagers,
-  // positive P&L/GGR. `green` is kept as an alias so existing call sites
-  // don't have to be touched at once.
-  emerald: { bg: "bg-emerald-500/10", icon: "text-emerald-400" },
-  green: { bg: "bg-emerald-500/10", icon: "text-emerald-400" },
-  // `rose` is the "house loss" accent — withdrawals, payouts to users,
-  // creator commission, negative P&L.
-  rose: { bg: "bg-rose-500/10", icon: "text-rose-400" },
-  purple: { bg: "bg-purple-500/10", icon: "text-purple-400" },
-  orange: { bg: "bg-orange-500/10", icon: "text-orange-400" },
-  pink: { bg: "bg-pink-500/10", icon: "text-pink-400" },
-  cyan: { bg: "bg-cyan-500/10", icon: "text-cyan-400" },
-  amber: { bg: "bg-amber-500/10", icon: "text-amber-400" },
+  blue: "text-blue-400",
+  emerald: "text-emerald-400",
+  green: "text-emerald-400",
+  rose: "text-rose-400",
+  purple: "text-purple-400",
+  orange: "text-orange-400",
+  pink: "text-pink-400",
+  cyan: "text-cyan-400",
+  amber: "text-amber-400",
 } as const;
 
 export type StatCardColor = keyof typeof colorMap;
@@ -47,12 +50,12 @@ export function StatCard({
   color?: StatCardColor;
   children?: React.ReactNode;
 }) {
-  const colors = color ? colorMap[color] : null;
+  const iconColor = color ? colorMap[color] : null;
   const useAnimated =
     typeof animatedValue === "number" && typeof formatKind === "string";
 
   return (
-    <Card className={cn(colors?.bg)}>
+    <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <CardTitle className="truncate text-card-title text-muted-foreground">
           {title}
@@ -60,7 +63,7 @@ export function StatCard({
         <Icon
           className={cn(
             "size-4 shrink-0",
-            colors?.icon ?? "text-muted-foreground",
+            iconColor ?? "text-muted-foreground",
           )}
         />
       </CardHeader>
