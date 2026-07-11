@@ -13,6 +13,8 @@ import {
   Check,
   Database,
   KeyRound,
+  ChevronDown,
+  ShieldCheck,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
@@ -373,22 +375,56 @@ export function AdminHeader({
             whole cluster is the trigger so the click target stays as
             large as the pre-dropdown Link was. */}
         <DropdownMenu>
+          {/* All-in-one identity card — rounded-square avatar + a two-line
+              name/role stack + a chevron, wrapped in a single bordered,
+              tinted pill (sm+). On phones it stays a compact avatar-only tap
+              target so it never crowds a 360px header (name + roles live in
+              the dropdown there). The whole card is the trigger, so the click
+              target stays large. `group` + base-ui's `data-popup-open` flips
+              the chevron while the menu is open. */}
           <DropdownMenuTrigger
-            className="flex items-center gap-2 rounded-full p-0.5 outline-none hover:bg-accent transition-colors focus-visible:ring-2 focus-visible:ring-ring sm:gap-2.5 sm:p-1 sm:pr-3"
+            className={cn(
+              "group flex items-center gap-2.5 rounded-xl p-0.5 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+              "sm:gap-3 sm:border sm:border-border/60 sm:bg-muted/40 sm:py-1 sm:pl-1 sm:pr-2.5 sm:hover:border-border",
+            )}
             aria-label="Open profile menu"
             title={label}
           >
-            <Avatar className="size-10 sm:size-9">
+            <Avatar className="size-10 rounded-lg after:rounded-lg sm:size-9">
               {hasAvatar && (
-                <AvatarImage src={`/api/admin/avatar/${adminId}`} alt={label} />
+                <AvatarImage
+                  src={`/api/admin/avatar/${adminId}`}
+                  alt={label}
+                  className="rounded-lg"
+                />
               )}
-              <AvatarFallback className="text-sm font-semibold">
+              <AvatarFallback className="rounded-lg text-sm font-semibold">
                 {initials(label)}
               </AvatarFallback>
             </Avatar>
-            <span className="hidden max-w-[10rem] truncate text-sm font-medium sm:inline">
-              {label}
-            </span>
+            {/* Name (line 1) over role badge(s) (line 2). Hidden on phones —
+                the dropdown menu already carries both there. */}
+            <div className="hidden min-w-0 flex-col items-start gap-1 sm:flex">
+              <span className="max-w-[11rem] truncate text-sm font-semibold leading-none text-foreground">
+                {label}
+              </span>
+              <span className="flex flex-wrap items-center gap-1">
+                {roleList.map((r) => (
+                  <Badge
+                    key={r}
+                    variant="outline"
+                    className={cn(
+                      "h-4 gap-0.5 px-1 text-[9px] font-bold uppercase leading-none tracking-wide",
+                      ROLE_COLORS[r],
+                    )}
+                  >
+                    <ShieldCheck className="size-2.5" />
+                    {r.replace("_", " ")}
+                  </Badge>
+                ))}
+              </span>
+            </div>
+            <ChevronDown className="hidden size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[popup-open]:rotate-180 sm:block" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-[220px]">
             <DropdownMenuGroup>
@@ -436,18 +472,6 @@ export function AdminHeader({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        {/* Role badges sit next to the avatar at sm+. A user can hold
-            several roles, so every one is shown. On phones the roles
-            already live inside the dropdown menu (and the badges would
-            push the avatar off-screen on a 360px viewport), so they're
-            hidden here. */}
-        <span className="hidden items-center gap-1 sm:inline-flex">
-          {roleList.map((r) => (
-            <Badge key={r} variant="outline" className={cn(ROLE_COLORS[r])}>
-              {r.replace("_", " ")}
-            </Badge>
-          ))}
-        </span>
         {/* Hidden form so the menu item above can trigger the server
             action — the old iconified button is replaced by the
             dropdown's Log out entry, but the form is still needed to
