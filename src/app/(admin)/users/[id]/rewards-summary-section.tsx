@@ -18,9 +18,29 @@
  *
  * HOUSE-POV (CLAUDE.md): every dollar the user GAINS is a dollar we owe →
  *   • rakeback claimed/claimable, rain, races, leaderboards, tips received →
- *     house COST → ROSE.
- *   • tips SENT (the user spending) → house GAIN → EMERALD.
+ *     house COST → ROSE — but ONLY when the figure is actually > 0. An exact
+ *     $0.00 means nothing happened in that category yet; that's neutral, not
+ *     a house cost, so it renders muted/blue instead of rose (bug fix —
+ *     these boxes previously hardcoded rose regardless of the value, so a
+ *     user with no rain/race/leaderboard/rakeback activity saw every box in
+ *     red for $0.00).
+ *   • tips SENT (the user spending) → house GAIN → EMERALD (same zero-aware
+ *     rule — no tips sent = neutral, not emerald).
  *   • unopened one-time rewards (a neutral count, not money) → BLUE.
+ *
+ * LAYOUT: the Rakeback box (the "big box") sits on the LEFT with the
+ * reward-payout display boxes to its RIGHT on lg+ viewports, stacked below
+ * it on narrower ones (owner request — was full-width-stacked before).
+ *
+ * PRIMITIVES: imports `SectionHeading` / `StatPanel` from the page-local
+ * FLAT fork (`./user-view-modern-panels`), not the shared, colorful
+ * gradient/corner-glow versions in `@/components/modern-panels`. This page
+ * flattened its own primitives in the "cleaner & flatter" pilot; a later
+ * commit that added this file imported the global colorful ones by mistake,
+ * silently reintroducing the gradient fill + corner glow this page had just
+ * dropped everywhere else. The reward-payout tiles use a small page-local
+ * `PayoutTile` (flat, same vocabulary as `MiniStat`) instead of the
+ * shared/oversized `KpiTile` for the same reason.
  *
  * NOT SHOWN (data gap, flagged — NOT fabricated): "sponsored / free battles"
  * as a reward TO the user has no metric — `battle_sponsorship` is the user
@@ -30,13 +50,50 @@
  */
 
 import { Percent, Trophy, Flag, Award, ArrowDownToLine, ArrowUpRight, Gift } from "lucide-react";
-import { SectionHeading, StatPanel, KpiTile } from "@/components/modern-panels";
+import { SectionHeading, StatPanel } from "./user-view-modern-panels";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import type { UserRewards } from "@/lib/queries/users";
 import type { UserDetail } from "./user-tabs-types";
 
 const ROSE = "text-rose-600 dark:text-rose-400";
+const EMERALD = "text-emerald-600 dark:text-emerald-400";
+const BLUE = "text-blue-600 dark:text-blue-400";
+const NEUTRAL = "text-muted-foreground";
+
+/** Flat-tile accent keys — House-POV colors (rose/emerald/blue) plus the
+ *  handful of informational hues `reward-pack-opens-section` reuses
+ *  `PayoutTile` for (cyan/amber/purple — cadence/type groupings, not
+ *  money-sign-driven). */
+type PayoutTileAccent = "rose" | "emerald" | "blue" | "cyan" | "amber" | "purple";
+
+const ACCENT_TEXT: Record<PayoutTileAccent, string> = {
+  rose: ROSE,
+  emerald: EMERALD,
+  blue: BLUE,
+  cyan: "text-cyan-600 dark:text-cyan-400",
+  amber: "text-amber-600 dark:text-amber-400",
+  purple: "text-purple-600 dark:text-purple-400",
+};
+const ACCENT_ICON: Record<PayoutTileAccent, string> = {
+  rose: "text-rose-500",
+  emerald: "text-emerald-500",
+  blue: "text-blue-500",
+  cyan: "text-cyan-500",
+  amber: "text-amber-500",
+  purple: "text-purple-500",
+};
+
+/**
+ * House-POV money color for a rakeback figure — zero-aware. A genuine house
+ * cost (amount > 0) still gets the rose tint; an exact $0.00 means nothing
+ * has happened yet (no claim, no cadence used) — that's neutral, not a
+ * loss, so it must NOT render rose. Mirrors the zero-is-flat convention
+ * already used by `RollingPnlChip` on this same page.
+ */
+function rakebackValueClass(amountUsd: number): string {
+  return amountUsd > 0 ? ROSE : NEUTRAL;
+}
 
 /** Flat "mini-box" stat — mirrors the PanelStat pilot pattern (one hairline
  *  border + subtle muted inset, no glow), used for the rakeback cadence grid
@@ -69,6 +126,53 @@ export function MiniStat({
   );
 }
 
+/**
+ * Flat "display box" for a reward-payout category — icon + label + value +
+ * count sub-line. Same flat vocabulary as `MiniStat` (hairline border,
+ * bg-card, no gradient/corner-glow), sized at the same sane KPI-tile scale
+ * used elsewhere on this page — replaces the oversized global `KpiTile`
+ * these boxes used to render with. Exported so `reward-pack-opens-section`
+ * (the sibling Rewards-tab section) can reuse the same flat tile instead of
+ * pulling in the colorful global `KpiTile` too.
+ */
+export function PayoutTile({
+  label,
+  value,
+  sub,
+  icon: Icon,
+  accent,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  icon: React.ElementType;
+  accent: PayoutTileAccent;
+}) {
+  return (
+    <div className="min-w-0 rounded-lg border bg-card px-3 py-2.5">
+      <div className="flex items-center gap-1.5">
+        <Icon className={cn("size-3.5 shrink-0", ACCENT_ICON[accent])} />
+        <span className="truncate text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+          {label}
+        </span>
+      </div>
+      <p
+        className={cn(
+          "mt-1 truncate text-lg font-bold tracking-tight tabular-nums",
+          ACCENT_TEXT[accent],
+        )}
+      >
+        {value}
+      </p>
+      {sub && (
+        <p className="mt-0.5 truncate text-[10px] uppercase tracking-wider text-muted-foreground/70">
+          {sub}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function RewardsSummarySection({
   rewards,
   tips,
@@ -81,6 +185,9 @@ export function RewardsSummarySection({
     rewards.instantClaimedUsd != null && rewards.instantClaimedCount != null;
 
   // Reward-payout boxes. House-POV: user gains → rose; tips sent → emerald.
+  // (The actual rendered accent is zero-aware — see `PayoutTile` call
+  // below — an exact-zero total renders neutral/blue instead of this base
+  // accent.)
   const payouts: {
     key: string;
     label: string;
@@ -138,7 +245,10 @@ export function RewardsSummarySection({
   ];
 
   return (
-    <div className="space-y-4">
+    // Rakeback (the "big box") on the LEFT, reward-payout display boxes on
+    // the RIGHT, side by side on lg+ — stacked (box, then tile grid) below
+    // that so neither column gets cramped on phones/tablets.
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,360px)_1fr] lg:items-start">
       {/* ── Rakeback (lead) ───────────────────────────────────────────── */}
       <StatPanel title="Rakeback" icon={Percent} accent="rose">
         {/* Claimed lifetime + claimable now — the two headline numbers. */}
@@ -146,7 +256,7 @@ export function RewardsSummarySection({
           <MiniStat
             label="Claimed (lifetime)"
             value={formatCurrency(rewards.rakebackClaimedUsd)}
-            valueClassName={ROSE}
+            valueClassName={rakebackValueClass(rewards.rakebackClaimedUsd)}
             sub={`${formatNumber(rewards.rakebackClaimedCount)} ${
               rewards.rakebackClaimedCount === 1 ? "claim" : "claims"
             }`}
@@ -154,7 +264,7 @@ export function RewardsSummarySection({
           <MiniStat
             label="Claimable now"
             value={formatCurrency(rewards.rakebackClaimableUsd)}
-            valueClassName={ROSE}
+            valueClassName={rakebackValueClass(rewards.rakebackClaimableUsd)}
             sub="unclaimed liability"
           />
         </div>
@@ -168,19 +278,19 @@ export function RewardsSummarySection({
           <MiniStat
             label="Daily"
             value={formatCurrency(byFrequency.daily.claimedUsd)}
-            valueClassName={ROSE}
+            valueClassName={rakebackValueClass(byFrequency.daily.claimedUsd)}
             sub={`${formatNumber(byFrequency.daily.claimedCount)} claims`}
           />
           <MiniStat
             label="Weekly"
             value={formatCurrency(byFrequency.weekly.claimedUsd)}
-            valueClassName={ROSE}
+            valueClassName={rakebackValueClass(byFrequency.weekly.claimedUsd)}
             sub={`${formatNumber(byFrequency.weekly.claimedCount)} claims`}
           />
           <MiniStat
             label="Monthly"
             value={formatCurrency(byFrequency.monthly.claimedUsd)}
-            valueClassName={ROSE}
+            valueClassName={rakebackValueClass(byFrequency.monthly.claimedUsd)}
             sub={`${formatNumber(byFrequency.monthly.claimedCount)} claims`}
           />
         </div>
@@ -190,7 +300,12 @@ export function RewardsSummarySection({
         {hasInstant && rewards.instantClaimedCount! > 0 ? (
           <p className="mt-2 text-[11px] text-muted-foreground">
             of which instant-claimed:{" "}
-            <span className={cn("font-semibold tabular-nums", ROSE)}>
+            <span
+              className={cn(
+                "font-semibold tabular-nums",
+                rakebackValueClass(rewards.instantClaimedUsd!),
+              )}
+            >
               {formatCurrency(rewards.instantClaimedUsd!)}
             </span>{" "}
             · {formatNumber(rewards.instantClaimedCount!)}{" "}
@@ -199,21 +314,27 @@ export function RewardsSummarySection({
         ) : null}
       </StatPanel>
 
-      {/* ── Reward payouts ────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+      {/* ── Reward payouts ("display boxes") ─────────────────────────────
+          Sit to the RIGHT of the Rakeback box on lg+ (owner: "make the
+          rakeback big box left side and put the display boxes right side
+          of it"), stacked below it on narrower viewports. */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {payouts.map((p) => (
-          <KpiTile
+          <PayoutTile
             key={p.key}
             label={p.label}
             value={formatCurrency(p.total)}
             sub={`${formatNumber(p.count)} ${p.count === 1 ? p.unit : `${p.unit}s`}`}
             icon={p.icon}
-            accent={p.accent}
+            // Zero-aware House-POV: nothing paid out yet = neutral, not a
+            // house cost/gain in either direction — only a genuine nonzero
+            // total keeps the category's accent.
+            accent={p.total > 0 ? p.accent : "blue"}
           />
         ))}
         {/* Unopened one-time rewards — a neutral COUNT (rewards available to
             open), not money → blue. Preserves the datum the old card showed. */}
-        <KpiTile
+        <PayoutTile
           label="Unopened Rewards"
           value={formatNumber(rewards.openOneTimeCount)}
           sub="one-time, unclaimed"

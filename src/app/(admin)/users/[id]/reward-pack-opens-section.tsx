@@ -37,8 +37,12 @@ import {
   CalendarDays,
   ChevronDown,
 } from "lucide-react";
+// Local FLAT primitives (see rewards-summary-section.tsx for why) — not the
+// colorful gradient/corner-glow `SectionHeading`/`StatPanel` in the shared
+// `@/components/modern-panels`. `AccentColor` is a type-only import from
+// there since the local fork doesn't export its own named accent type.
 import type { AccentColor } from "@/components/modern-panels";
-import { SectionHeading, StatPanel, KpiTile } from "@/components/modern-panels";
+import { SectionHeading, StatPanel } from "./user-view-modern-panels";
 import {
   Collapsible,
   CollapsibleContent,
@@ -50,7 +54,7 @@ import { SkeletonCard } from "@/components/ux";
 import { RelativeTime } from "@/components/relative-time";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { MiniStat } from "./rewards-summary-section";
+import { MiniStat, PayoutTile } from "./rewards-summary-section";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import type {
   UserRewardPackOpensResult,
@@ -191,25 +195,26 @@ function RewardPackOpensStreamed({
         house&apos;s cost of the giveaway.
       </p>
 
-      {/* Totals strip — opens, cards granted, total house cost (rose). */}
+      {/* Totals strip — opens, cards granted, total house cost (rose, but
+          zero-aware: a genuine $0.00 grant value is neutral, not a cost). */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <KpiTile
+        <PayoutTile
           label="Reward packs opened"
           value={formatNumber(result.totalOpens)}
           icon={Package}
           accent="purple"
         />
-        <KpiTile
+        <PayoutTile
           label="Cards granted"
           value={formatNumber(result.totalCards)}
           icon={Gift}
           accent="purple"
         />
-        <KpiTile
+        <PayoutTile
           label="Value granted"
           value={formatCurrency(result.totalValue)}
           icon={Sparkles}
-          accent="rose"
+          accent={result.totalValue > 0 ? "rose" : "blue"}
         />
       </div>
 
@@ -217,26 +222,26 @@ function RewardPackOpensStreamed({
           packs. "How often" (opens) + "how much pulled" (value). */}
       {dailyOpens > 0 ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <KpiTile
+          <PayoutTile
             label="Daily packs claimed"
             value={formatNumber(dailyOpens)}
             sub={dailyOpens === 1 ? "time" : "times"}
             icon={CalendarDays}
             accent="cyan"
           />
-          <KpiTile
+          <PayoutTile
             label="Daily-pack cards"
             value={formatNumber(dailyCards)}
             sub="granted"
             icon={Gift}
             accent="cyan"
           />
-          <KpiTile
+          <PayoutTile
             label="Daily-pack value"
             value={formatCurrency(dailyValue)}
             sub="pulled"
             icon={Sparkles}
-            accent="rose"
+            accent={dailyValue > 0 ? "rose" : "blue"}
           />
         </div>
       ) : null}
