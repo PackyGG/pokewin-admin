@@ -8,34 +8,56 @@
  * pack (`packs.pack_type='reward'`) is an INVENTORY GIVEAWAY: the cards land
  * in `user_inventory` with `source_type='reward'` and there is NO ledger grant
  * row, so without this section an admin only sees the later card SALES and
- * cannot tell where the cards came from. This is the owner's primary ask:
- * "sign-up packs are rewards → show it in the Rewards tab".
+ * cannot tell where the cards came from.
+ *
+ * READABILITY REDESIGN (owner: "the Rewards tab is hard to read"):
+ *   • The old layout drew ONE full panel PER OPEN with a full card list — for a
+ *     daily-pack user that is dozens of near-identical walls of cards.
+ *   • Now the opens are GROUPED by reward type (welcome pack, each level pack,
+ *     daily pack, …) into one scannable box PER TYPE showing that type's
+ *     stats (opens / cards / value). Daily packs get a dedicated highlight up
+ *     top (how often claimed + how much pulled). The detailed per-card
+ *     provenance is PRESERVED but demoted into a collapsible inside each type
+ *     box, so "where did these cards come from" is never lost — just secondary.
  *
  * House-POV (CLAUDE.md): a reward-pack grant is the house GIVING the user
- * value → a house COST → card values render in ROSE, consistent with every
- * other reward cost on the site.
+ * value → a house COST → card values render in ROSE.
  *
  * Streamed-band contract: receives `Promise<SafeQueryResult<…>> | null`.
  *   • null      → query not kicked for the active tab → skeleton.
- *   • r.error   → visible amber band error (load failure ≠ empty).
- *   • 0 opens   → self-hides (renders nothing) so the tab stays clean for
- *                 users who never got a reward pack.
+ *   • r.error   → visible band error (load failure ≠ empty).
+ *   • 0 opens   → self-hides (renders nothing) so the tab stays clean.
  */
 
-import { use } from "react";
-import { Gift, Package, Sparkles } from "lucide-react";
+import { use, useState } from "react";
+import {
+  Gift,
+  Package,
+  Sparkles,
+  CalendarDays,
+  ChevronDown,
+} from "lucide-react";
+import type { AccentColor } from "@/components/modern-panels";
 import { SectionHeading, StatPanel, KpiTile } from "@/components/modern-panels";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { SkeletonCard } from "@/components/ux";
 import { RelativeTime } from "@/components/relative-time";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { MiniStat } from "./rewards-summary-section";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import type {
   UserRewardPackOpensResult,
   RewardPackOpenEntry,
 } from "@/lib/queries/users-reward-pack-opens";
+
+const ROSE = "text-rose-600 dark:text-rose-400";
 
 const RARITY_COLORS: Record<string, string> = {
   common: "bg-zinc-700/90 text-zinc-100",
@@ -47,6 +69,61 @@ const RARITY_COLORS: Record<string, string> = {
   holo: "bg-cyan-700/90 text-cyan-100",
   secret: "bg-pink-700/90 text-pink-100",
 };
+
+// Accent per reward cadence so the boxes read as a family but stay
+// distinguishable: daily = cyan (recurring), one-time = purple (welcome/level),
+// balance = amber, unknown/unresolved = purple.
+const TYPE_ACCENT: Record<string, AccentColor> = {
+  daily: "cyan",
+  one_time: "purple",
+  balance: "amber",
+};
+
+/** One reward-TYPE group: all opens of the same reward (e.g. every daily-pack
+ *  open) folded into one scannable box. */
+type RewardTypeGroup = {
+  key: string;
+  typeName: string;
+  rewardType: string | null;
+  rewardSlug: string | null;
+  opensCount: number;
+  cardCount: number;
+  ownedCount: number;
+  totalValue: number;
+  opens: RewardPackOpenEntry[];
+};
+
+function groupByRewardType(opens: RewardPackOpenEntry[]): RewardTypeGroup[] {
+  const groups = new Map<string, RewardTypeGroup>();
+  for (const open of opens) {
+    // Stable grouping key: the reward program (slug) first; fall back to name,
+    // then pack name, then a single "unresolved" bucket for legacy rows.
+    const key =
+      open.rewardSlug ?? open.rewardName ?? open.packName ?? "__unresolved__";
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        key,
+        typeName: open.rewardName ?? open.packName ?? "Reward pack",
+        rewardType: open.rewardType,
+        rewardSlug: open.rewardSlug,
+        opensCount: 0,
+        cardCount: 0,
+        ownedCount: 0,
+        totalValue: 0,
+        opens: [],
+      };
+      groups.set(key, g);
+    }
+    g.opensCount += 1;
+    g.cardCount += open.cardCount;
+    g.ownedCount += open.ownedCount;
+    g.totalValue += open.totalValue;
+    g.opens.push(open);
+  }
+  // Biggest house cost first — matches the "these are giveaways / cost" framing.
+  return [...groups.values()].sort((a, b) => b.totalValue - a.totalValue);
+}
 
 export function RewardPackOpensSection({
   rewardPackOpensPromise,
@@ -64,9 +141,7 @@ export function RewardPackOpensSection({
     );
   }
   return (
-    <RewardPackOpensStreamed
-      rewardPackOpensPromise={rewardPackOpensPromise}
-    />
+    <RewardPackOpensStreamed rewardPackOpensPromise={rewardPackOpensPromise} />
   );
 }
 
@@ -95,6 +170,14 @@ function RewardPackOpensStreamed({
   // Self-hide when the user never received a card from a reward pack — keeps
   // the Rewards tab focused for the common case.
   if (result.totalOpens === 0) return null;
+
+  const groups = groupByRewardType(result.opens);
+
+  // Daily-packs highlight (owner item 2): how often claimed + how much pulled.
+  const dailyGroups = groups.filter((g) => g.rewardType === "daily");
+  const dailyOpens = dailyGroups.reduce((s, g) => s + g.opensCount, 0);
+  const dailyCards = dailyGroups.reduce((s, g) => s + g.cardCount, 0);
+  const dailyValue = dailyGroups.reduce((s, g) => s + g.totalValue, 0);
 
   return (
     <div className="space-y-3">
@@ -130,33 +213,128 @@ function RewardPackOpensStreamed({
         />
       </div>
 
-      {/* Per-open detail — each reward pack open, the reward that granted it,
-          and the cards it produced. */}
+      {/* Daily-packs highlight — only when the user actually claimed daily
+          packs. "How often" (opens) + "how much pulled" (value). */}
+      {dailyOpens > 0 ? (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <KpiTile
+            label="Daily packs claimed"
+            value={formatNumber(dailyOpens)}
+            sub={dailyOpens === 1 ? "time" : "times"}
+            icon={CalendarDays}
+            accent="cyan"
+          />
+          <KpiTile
+            label="Daily-pack cards"
+            value={formatNumber(dailyCards)}
+            sub="granted"
+            icon={Gift}
+            accent="cyan"
+          />
+          <KpiTile
+            label="Daily-pack value"
+            value={formatCurrency(dailyValue)}
+            sub="pulled"
+            icon={Sparkles}
+            accent="rose"
+          />
+        </div>
+      ) : null}
+
+      {/* One box PER reward type — scannable stats, per-card detail collapsed. */}
       <div className="space-y-3">
-        {result.opens.map((open) => (
-          <RewardPackOpenCardPanel key={open.sessionId ?? "unresolved"} open={open} />
+        {groups.map((g) => (
+          <RewardTypeBox key={g.key} group={g} />
         ))}
       </div>
     </div>
   );
 }
 
-function RewardPackOpenCardPanel({ open }: { open: RewardPackOpenEntry }) {
-  const title = open.packName ?? "Reward pack";
+function RewardTypeBox({ group }: { group: RewardTypeGroup }) {
+  const [open, setOpen] = useState(false);
+  const accent: AccentColor =
+    (group.rewardType && TYPE_ACCENT[group.rewardType]) || "purple";
+
   return (
-    <StatPanel title={title} icon={Package} accent="purple">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+    <StatPanel
+      title={group.typeName}
+      icon={Package}
+      accent={accent}
+      action={
+        group.rewardType ? (
+          <Badge variant="outline" className="text-[10px] capitalize">
+            {group.rewardType.replace(/_/g, " ")}
+          </Badge>
+        ) : null
+      }
+    >
+      {/* Scannable per-type stats. */}
+      <div className="grid grid-cols-3 gap-2">
+        <MiniStat
+          label={group.rewardType === "daily" ? "Claims" : "Opens"}
+          value={formatNumber(group.opensCount)}
+          sub={group.rewardType === "daily" ? "daily" : "reward pack"}
+        />
+        <MiniStat
+          label="Cards"
+          value={formatNumber(group.cardCount)}
+          sub={
+            group.ownedCount > 0
+              ? `${formatNumber(group.ownedCount)} still held`
+              : "all sold / exchanged"
+          }
+        />
+        <MiniStat
+          label="Value"
+          value={formatCurrency(group.totalValue)}
+          valueClassName={ROSE}
+          sub="house cost"
+        />
+      </div>
+
+      {/* Per-card provenance — PRESERVED but secondary (collapsed by default). */}
+      <Collapsible open={open} onOpenChange={setOpen} className="mt-3">
+        <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted/50">
+          <span>
+            {open ? "Hide" : "Show"} per-card detail ·{" "}
+            {formatNumber(group.cardCount)}{" "}
+            {group.cardCount === 1 ? "card" : "cards"} across{" "}
+            {formatNumber(group.opensCount)}{" "}
+            {group.opensCount === 1 ? "open" : "opens"}
+          </span>
+          <ChevronDown
+            className={cn(
+              "size-4 shrink-0 motion-safe:transition-transform motion-safe:duration-200",
+              open && "rotate-180",
+            )}
+          />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-2 space-y-2.5">
+          {group.opens.map((o) => (
+            <RewardPackOpenDetail key={o.sessionId ?? "unresolved"} open={o} />
+          ))}
+        </CollapsibleContent>
+      </Collapsible>
+    </StatPanel>
+  );
+}
+
+/** One open's detail — the reward it came from + the cards it produced. Lives
+ *  inside the per-type collapsible (secondary provenance view). */
+function RewardPackOpenDetail({ open }: { open: RewardPackOpenEntry }) {
+  return (
+    <div className="rounded-lg border bg-muted/20 p-2.5">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-foreground">
+          {open.packName ?? "Reward pack"}
+        </span>
         {open.rewardName ? (
           <Badge
             variant="outline"
-            className="bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30"
+            className="bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30 text-[10px]"
           >
             {open.rewardName}
-          </Badge>
-        ) : null}
-        {open.rewardType ? (
-          <Badge variant="outline" className="text-[10px] capitalize">
-            {open.rewardType.replace(/_/g, " ")}
           </Badge>
         ) : null}
         {open.openedAt ? (
@@ -166,30 +344,20 @@ function RewardPackOpenCardPanel({ open }: { open: RewardPackOpenEntry }) {
         ) : null}
         <span className="ml-auto flex items-baseline gap-1.5">
           <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-            Granted value
+            Granted
           </span>
           {/* House-POV: a reward-pack grant is a house cost → rose. */}
-          <span className="text-base font-bold tabular-nums text-rose-600 dark:text-rose-400">
+          <span className={cn("text-sm font-bold tabular-nums", ROSE)}>
             {formatCurrency(open.totalValue)}
           </span>
         </span>
-      </div>
-
-      <div className="mb-2 text-[11px] text-muted-foreground">
-        {formatNumber(open.cardCount)}{" "}
-        {open.cardCount === 1 ? "card" : "cards"} granted
-        {open.ownedCount > 0 ? (
-          <> · {formatNumber(open.ownedCount)} still held</>
-        ) : (
-          <> · all sold or exchanged</>
-        )}
       </div>
 
       <ul className="space-y-1">
         {open.cards.map((card) => (
           <li
             key={card.inventoryId}
-            className="flex items-center justify-between gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-sm"
+            className="flex items-center justify-between gap-2 rounded-md border bg-background/60 px-2.5 py-1.5 text-sm"
           >
             <span className="flex min-w-0 items-center gap-2">
               {card.rarity ? (
@@ -213,12 +381,12 @@ function RewardPackOpenCardPanel({ open }: { open: RewardPackOpenEntry }) {
               ) : null}
             </span>
             {/* House-POV: card value granted to the user → house cost → rose. */}
-            <span className="shrink-0 font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+            <span className={cn("shrink-0 font-semibold tabular-nums", ROSE)}>
               {formatCurrency(card.value)}
             </span>
           </li>
         ))}
       </ul>
-    </StatPanel>
+    </div>
   );
 }

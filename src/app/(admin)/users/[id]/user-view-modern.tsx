@@ -770,6 +770,7 @@ export function UserViewModern({
           <RewardsTab
             rewardsPromise={rewardsPromise}
             rewardPackOpensPromise={rewardPackOpensPromise}
+            tips={data.tips}
           />
         )}
 

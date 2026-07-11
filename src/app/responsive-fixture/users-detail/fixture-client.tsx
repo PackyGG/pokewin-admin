@@ -98,6 +98,14 @@ const REWARDS: UserRewards = {
   openOneTimeCount: 0,
   rakebackClaimableUsd: 0,
   rakebackClaimedUsd: 0,
+  rakebackClaimedCount: 0,
+  byFrequency: {
+    daily: { claimedUsd: 0, claimableUsd: 0, claimedCount: 0 },
+    weekly: { claimedUsd: 0, claimableUsd: 0, claimedCount: 0 },
+    monthly: { claimedUsd: 0, claimableUsd: 0, claimedCount: 0 },
+  },
+  instantClaimedUsd: null,
+  instantClaimedCount: null,
 };
 
 // Reward / sign-up pack opens — modelled on the real verified shape (a welcome

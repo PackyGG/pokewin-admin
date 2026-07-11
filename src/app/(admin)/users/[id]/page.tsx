@@ -6,6 +6,7 @@ import {
   getUserTransactions,
   getUserInventory,
   getUserRewards,
+  EMPTY_USER_REWARDS,
 } from "@/lib/queries/users";
 import {
   getUserDetailCached,
@@ -535,11 +536,7 @@ async function UserDetailBody({
     initialTab === "rewards"
       ? safeQuery(
           () => getUserRewards(id),
-          {
-            openOneTimeCount: 0,
-            rakebackClaimableUsd: 0,
-            rakebackClaimedUsd: 0,
-          },
+          EMPTY_USER_REWARDS,
           "users.detail.rewards",
           USER_DETAIL_QUERY_TIMEOUT_MS,
         )

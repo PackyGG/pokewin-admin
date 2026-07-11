@@ -76,7 +76,6 @@ import {
   type PaginatedTransactions,
   type PnlBreakdown,
   type AdminNote,
-  RewardsCard,
   CategoryTransactionsTable,
   AccountDetailsSection,
   FeatureLocksCard,
@@ -119,6 +118,7 @@ import type { UserRewards } from "@/lib/queries/users";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import type { UserRewardPackOpensResult } from "@/lib/queries/users-reward-pack-opens";
 import { RewardPackOpensSection } from "./reward-pack-opens-section";
+import { RewardsSummary } from "./rewards-summary-section";
 import { BandError } from "./band-error";
 import {
   SectionHeading,
@@ -667,6 +667,7 @@ function TipPanel({
 export function RewardsTab({
   rewardsPromise,
   rewardPackOpensPromise,
+  tips,
 }: {
   rewardsPromise: Promise<SafeQueryResult<UserRewards>> | null;
   // Reward / sign-up pack opens (welcome/level/daily packs) + the cards they
@@ -674,16 +675,20 @@ export function RewardsTab({
   rewardPackOpensPromise: Promise<
     SafeQueryResult<UserRewardPackOpensResult>
   > | null;
+  // Rain / race / leaderboard / creator-tip aggregates — already part of the
+  // main user-detail aggregate (no extra query), surfaced here as reward stat
+  // boxes alongside rakeback. Also shown on Overview (Tips & Rain); the owner
+  // wants a consolidated Rewards summary too.
+  tips: UserDetail["tips"];
 }) {
   return (
     <div className="space-y-6">
-      <SectionHeading icon={Gift} title="Rewards" />
       {rewardsPromise ? (
-        <Suspense fallback={<SkeletonCard lines={4} />}>
-          <RewardsStreamed rewardsPromise={rewardsPromise} />
+        <Suspense fallback={<RewardsSummarySkeleton />}>
+          <RewardsStreamed rewardsPromise={rewardsPromise} tips={tips} />
         </Suspense>
       ) : (
-        <SkeletonCard lines={4} />
+        <RewardsSummarySkeleton />
       )}
 
       {/* Reward / sign-up pack opens — the provenance trail for cards granted
@@ -698,22 +703,36 @@ export function RewardsTab({
   );
 }
 
+function RewardsSummarySkeleton() {
+  return (
+    <div className="space-y-3">
+      <SectionHeading icon={Gift} title="Rewards summary" />
+      <SkeletonCard lines={5} />
+    </div>
+  );
+}
+
 function RewardsStreamed({
   rewardsPromise,
+  tips,
 }: {
   rewardsPromise: Promise<SafeQueryResult<UserRewards>>;
+  tips: UserDetail["tips"];
 }) {
   const r = use(rewardsPromise);
   if (r.error) {
     return (
-      <InlineError
-        compact
-        title="Couldn't load rewards"
-        hint="This is a load failure, not an empty rewards history — retry to re-run the query."
-      />
+      <div className="space-y-3">
+        <SectionHeading icon={Gift} title="Rewards summary" />
+        <InlineError
+          compact
+          title="Couldn't load rewards"
+          hint="This is a load failure, not an empty rewards history — retry to re-run the query."
+        />
+      </div>
     );
   }
-  return <RewardsCard rewards={r.data} />;
+  return <RewardsSummary rewards={r.data} tips={tips} />;
 }
 
 // ───────────────────────────────────────────────────────────────────
