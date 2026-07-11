@@ -478,19 +478,6 @@ export function ModernBalancePanel({
       ? "Eligible to unlock now"
       : `Unlocks ${stamp} UTC`;
   })();
-  // Locked row — render only when the column exists on the connected DB
-  // (`wagerLocked != null`). With the column present we render even at $0
-  // so an operator can see the user has nothing wagered-locked right now;
-  // hiding-on-zero would create the wrong impression that the panel just
-  // forgot the line.
-  const showLocked = balances.wagerLocked != null;
-  const lockedSub = (() => {
-    if (!showLocked) return null;
-    const progress = balances.wagerProgress ?? 0;
-    const debt = balances.wagerLocked ?? 0;
-    if (debt <= 0) return `${formatCurrency(progress)} wagered · no debt`;
-    return `${formatCurrency(progress)} wagered · ${formatCurrency(debt)} to clear`;
-  })();
   const showAdjust = canAdjustBalance && Boolean(userId);
   return (
     <StatPanel
@@ -527,25 +514,6 @@ export function ModernBalancePanel({
         />
         <PanelStat label="Inventory" value={formatCurrency(balances.inventoryValue)} />
         <PanelStat label="Vouchers" value={formatCurrency(balances.vouchersValue)} />
-        {/* Locked — wager-requirement debt (bonus dollars spendable on
-            wagers but reserved from withdrawal until cleared). AMBER
-            warning: spendable but not withdrawable. Hidden if the column
-            isn't on this DB. Spans the full grid width so its wager-progress
-            sub-line has room. No inline Remove affordance (showRemove=false):
-            clearing wager-req debt goes through a backend-API path
-            (clearUserWagerRequirementAction) the panel doesn't own, so the
-            trailing button is suppressed rather than shown disabled. */}
-        {showLocked && (
-          <LockedRowWithRemove
-            label="Locked"
-            amount={balances.wagerLocked ?? 0}
-            valueClassName="text-amber-600 dark:text-amber-400"
-            sub={lockedSub}
-            removeKind="wager"
-            showRemove={false}
-            className="col-span-2"
-          />
-        )}
       </div>
       {showAdjust && (
         <div className="mt-3 pt-3 border-t">
@@ -818,14 +786,17 @@ export function ModernPnlPanel({
 
 export function ModernActivityPanel({
   statistics,
-  balances,
   inventoryCount,
   avgDeposit,
   userId,
   canAdjustXp = false,
 }: {
   statistics: UserDetail["statistics"];
-  balances: UserDetail["balances"];
+  // `balances` is still accepted (the caller passes it) but no longer read
+  // here — the Avg House Edge tile that used balances.totalWagered/totalWon
+  // was removed. Kept in the type so the call site stays valid without a
+  // cross-file change; drop it here if the prop is ever removed upstream.
+  balances?: UserDetail["balances"];
   inventoryCount: number;
   avgDeposit: number;
   userId?: string;
@@ -833,10 +804,6 @@ export function ModernActivityPanel({
 }) {
   const [xpAdjustOpen, setXpAdjustOpen] = useState(false);
 
-  const houseEdge =
-    balances && balances.totalWagered > 0
-      ? ((balances.totalWagered - balances.totalWon) / balances.totalWagered) * 100
-      : 0;
   const showXpAdjust = canAdjustXp && Boolean(userId);
   return (
     <StatPanel title="Activity" icon={Activity} accent="blue">
@@ -863,11 +830,6 @@ export function ModernActivityPanel({
         <PanelStat label="Battles Played" value={String(statistics?.battlesPlayed ?? 0)} />
         <PanelStat label="Inventory Items" value={String(inventoryCount)} />
         <PanelStat label="Avg Deposit" value={formatCurrency(avgDeposit)} />
-        <PanelStat
-          label="Avg House Edge"
-          value={balances && balances.totalWagered > 0 ? `${houseEdge.toFixed(2)}%` : "—"}
-          className="col-span-2"
-        />
       </div>
       {showXpAdjust && (
         <div className="mt-3 pt-3 border-t">
