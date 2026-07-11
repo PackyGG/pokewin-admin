@@ -66,7 +66,7 @@ export function FraudLocksCard({
   if (!localData) {
     return (
       <Card className="border-dashed">
-        <CardContent className="pt-6">
+        <CardContent>
           <div className="flex items-start gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400">
             <AlertTriangle className="size-4 shrink-0 mt-0.5" />
             <div className="space-y-1">
@@ -99,7 +99,7 @@ export function FraudLocksCard({
 
   return (
     <Card>
-      <CardContent className="pt-6 space-y-4">
+      <CardContent className="space-y-3">
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium">Status</span>
           <Badge

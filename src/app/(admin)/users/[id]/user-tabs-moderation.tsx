@@ -133,7 +133,7 @@ export const ModerationSection = React.memo(function ModerationSection({
       new Date(user.selfExcludedUntil).getTime() > Date.now());
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Ban/Lock Metadata */}
       {(user.isBanned || user.isLocked) && (
         <div className="space-y-3">
@@ -268,7 +268,7 @@ export const ModerationSection = React.memo(function ModerationSection({
       {/* Mute History */}
       {mutes.length > 0 && (
         <div>
-          <p className="text-xs font-medium text-muted-foreground mb-3">
+          <p className="text-xs font-medium text-muted-foreground mb-2">
             Mute History ({mutes.length})
           </p>
           <Table>

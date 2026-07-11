@@ -878,16 +878,19 @@ export function ModernMetricTile({
   // Flat tile: neutral bg-card surface + hairline border (no per-hue tinted
   // box, no shadow). The accent survives only on the icon + the value number,
   // so the strip reads as calm neutral cards with meaningful colored numbers
-  // rather than a rainbow of tinted boxes.
+  // rather than a rainbow of tinted boxes. Kept deliberately denser than the
+  // hero-style tiles (p-3 / text-xl, no responsive scale-up) — the Account
+  // tab stacks several of these grids in a row, so a compact tile keeps the
+  // tab scannable instead of towering.
   return (
-    <div className="rounded-lg border bg-card p-4 min-w-0">
-      <div className="flex items-center gap-2">
-        <Icon className={cn("size-4 shrink-0", colors.icon)} />
+    <div className="rounded-lg border bg-card p-3 min-w-0">
+      <div className="flex items-center gap-1.5">
+        <Icon className={cn("size-3.5 shrink-0", colors.icon)} />
         <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground truncate">
           {label}
         </span>
       </div>
-      <p className={cn("mt-1.5 text-2xl font-bold tracking-tight tabular-nums truncate", colors.text)}>
+      <p className={cn("mt-1 text-xl font-bold tracking-tight tabular-nums truncate", colors.text)}>
         {value}
       </p>
     </div>

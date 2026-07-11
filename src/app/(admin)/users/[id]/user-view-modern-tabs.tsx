@@ -910,14 +910,14 @@ function DisposedCardsStreamed({
 function AffiliateSection({ data }: { data: UserDetail }) {
   const { user, affiliate } = data;
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Creator deep-link — only for users actually flagged creator.
           The /creators/[userId] page has the full panel: deals,
           webhooks, payouts, code analytics, clicks, signup tracking.
           Inline-duplicating that here would be a maintenance nightmare. */}
       {user.role === "creator" && (
         <Card className="overflow-hidden">
-          <CardContent className="flex flex-col gap-3 sm:gap-4 p-4 sm:p-6 sm:flex-row sm:items-center sm:justify-between">
+          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3 min-w-0">
               <div className="flex size-10 items-center justify-center rounded-lg bg-purple-500/15 shrink-0">
                 <Sparkles className="size-5 text-purple-500" />
@@ -972,7 +972,7 @@ function AffiliateSection({ data }: { data: UserDetail }) {
       {affiliate && (
         <>
           <SectionHeading icon={TrendingUp} title="Affiliate Stats" />
-          <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-3 grid-cols-2 lg:grid-cols-3">
             <ModernMetricTile
               label="Total Referred"
               value={formatNumber(affiliate.totalReferred)}
@@ -1067,7 +1067,7 @@ function AttributionJourneySection({ userId }: { userId: string }) {
   if (state.status === "loading") {
     return (
       <Card>
-        <CardContent className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground">
+        <CardContent className="flex items-center justify-center gap-2 p-6 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin" />
           Loading attribution journey…
         </CardContent>
@@ -1078,7 +1078,7 @@ function AttributionJourneySection({ userId }: { userId: string }) {
   if (state.status === "error") {
     return (
       <Card>
-        <CardContent className="p-4 sm:p-6">
+        <CardContent className="p-4">
           <p className="text-sm text-muted-foreground">
             Couldn&apos;t load the attribution journey
             {state.error ? ` (${state.error})` : ""}.
@@ -1114,10 +1114,10 @@ function AttributionJourneySection({ userId }: { userId: string }) {
   const codeCount = state.rows.length;
 
   return (
-    <div className="space-y-3 sm:space-y-4">
+    <div className="space-y-3">
       {/* Headline strip — distinct-codes count + lifetime deposits/wager
           booked across the whole journey. */}
-      <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-3">
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-3">
         <ModernMetricTile
           label="Codes Used"
           value={formatNumber(codeCount)}
@@ -1152,7 +1152,7 @@ function AttributionJourneySection({ userId }: { userId: string }) {
               return (
                 <li
                   key={`${row.code}-${row.firstUsedAt}`}
-                  className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5"
+                  className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4"
                 >
                   <div className="flex min-w-0 items-start gap-3">
                     <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold tabular-nums text-primary">
@@ -1316,7 +1316,7 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
     // from the Sparkles/purple "Own Affiliate Code" card below.
     // Same Card primitive — different left-border tint.
     <Card className="border-l-4 border-l-blue-500/40">
-      <CardContent className="space-y-4 pt-6">
+      <CardContent className="space-y-3">
         <div className="space-y-2">
           {hasFormalReferrer ? (
             <div className="space-y-2">
@@ -1529,7 +1529,7 @@ function OwnCodeCard({
     // Purple left-border so it's visually distinct from the blue
     // ReferrerCard above. Two completely different DB sources.
     <Card className="border-l-4 border-l-purple-500/40">
-      <CardContent className="space-y-4 pt-6">
+      <CardContent className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">
@@ -1682,7 +1682,7 @@ function AccountManualWithdrawal({
   return (
     <>
       <Card>
-        <CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:items-center sm:justify-between">
+        <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <p className="text-sm font-medium">Record a manual withdrawal</p>
             <p className="text-xs text-muted-foreground">
@@ -1755,7 +1755,7 @@ export function AccountTab({
 }) {
   const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, battleLimits, mutes, capabilities } = data;
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <SectionHeading icon={Dices} title="Wagering Stats" />
       <WageringStatsCard balances={balances} />
       {/* Windowed P&L / Deposits / Wager strips — all three are fed by the
@@ -1813,7 +1813,7 @@ export function AccountTab({
 
       <SectionHeading icon={ShieldCheck} title="Account Details" />
       <Card>
-        <CardContent className="pt-6">
+        <CardContent>
           <AccountDetailsSection
             user={user}
             shippingAddress={shippingAddress}
@@ -1894,7 +1894,7 @@ export function AccountTab({
       )}
       <SectionHeading icon={ShieldCheck} title="Moderation" />
       <Card>
-        <CardContent className="pt-6 space-y-4">
+        <CardContent>
           <ModerationSection user={user} mutes={mutes} />
         </CardContent>
       </Card>

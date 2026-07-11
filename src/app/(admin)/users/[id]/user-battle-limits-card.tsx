@@ -77,7 +77,7 @@ export function UserBattleLimitsCard({
 
   return (
     <Card>
-      <CardContent className="pt-6 space-y-3">
+      <CardContent className="space-y-3">
         <div className="space-y-3">
           <InfoRow
             label="Max Battle Value"

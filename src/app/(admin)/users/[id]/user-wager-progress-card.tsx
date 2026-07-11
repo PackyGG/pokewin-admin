@@ -96,7 +96,7 @@ export function UserWagerProgressCard({
   if (!localData) {
     return (
       <Card className="border-dashed">
-        <CardContent className="pt-6">
+        <CardContent>
           <div className="flex items-start gap-3 rounded-md border border-muted-foreground/30 bg-muted/40 p-3 text-xs text-muted-foreground">
             <AlertTriangle className="size-4 shrink-0 mt-0.5" />
             <div className="space-y-1">

@@ -648,15 +648,15 @@ export const AccountDetailsSection = React.memo(function AccountDetailsSection({
   depositAddresses: UserDetail["depositAddresses"];
 }) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Row 1 — Account | Shipping Address | Vault */}
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {/* Account */}
         <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
             Account
           </p>
-          <div className="space-y-2.5">
+          <div className="space-y-2">
             <InfoRow
               label="Signed up with"
               value={formatSignupProvider(user.signupProvider)}
@@ -688,10 +688,10 @@ export const AccountDetailsSection = React.memo(function AccountDetailsSection({
         {/* Shipping Address */}
         {shippingAddress && (
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
               Shipping Address
             </p>
-            <div className="space-y-2.5">
+            <div className="space-y-2">
               <InfoRow
                 label="Name"
                 value={`${shippingAddress.firstName} ${shippingAddress.lastName}`}
@@ -723,10 +723,10 @@ export const AccountDetailsSection = React.memo(function AccountDetailsSection({
         {/* Vault */}
         {vault && (
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
               Vault
             </p>
-            <div className="space-y-2.5">
+            <div className="space-y-2">
               <InfoRow label="ID" value={vault.id} mono truncate />
               <InfoRow label="Name" value={vault.name} />
               {vault.customerRefId && (
@@ -757,7 +757,7 @@ export const AccountDetailsSection = React.memo(function AccountDetailsSection({
       {/* Row 2 — Deposit Addresses (full width) */}
       {depositAddresses.length > 0 && (
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
             Deposit Addresses
           </p>
           <div className="grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
