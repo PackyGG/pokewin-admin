@@ -260,19 +260,19 @@ function RealNumbersBodySkeleton() {
       <KpiStripSkeleton count={6} />
       <div className="space-y-3">
         <SectionHeadingSkeleton titleWidth={240} />
-        <div className="rounded-2xl border bg-card p-4 ring-1 ring-foreground/10 sm:p-5">
+        <div className="rounded-2xl border bg-card p-4 sm:p-5">
           <SkeletonText lines={5} />
         </div>
       </div>
       <div className="space-y-3">
         <SectionHeadingSkeleton titleWidth={280} />
-        <div className="rounded-xl border bg-card p-3 ring-1 ring-foreground/10 sm:p-4">
+        <div className="rounded-xl border bg-card p-3 sm:p-4">
           <SkeletonText lines={10} />
         </div>
       </div>
       <div className="space-y-3">
         <SectionHeadingSkeleton titleWidth={220} />
-        <div className="rounded-xl border bg-card p-3 ring-1 ring-foreground/10 sm:p-4">
+        <div className="rounded-xl border bg-card p-3 sm:p-4">
           <Skeleton className="h-40 w-full rounded-lg" />
         </div>
       </div>
@@ -1340,7 +1340,7 @@ function ReconciliationCallout({
   const pnlPos = snapshot.pnl >= 0;
 
   return (
-    <div className="overflow-hidden rounded-2xl border bg-card ring-1 ring-foreground/10">
+    <div className="overflow-hidden rounded-2xl border bg-card">
       <div className="flex items-start gap-3 border-b bg-muted/30 px-4 py-3 sm:px-5">
         <div className="shrink-0 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2">
           <Scale className="size-4 text-amber-500" />
@@ -2422,7 +2422,7 @@ function CreatorProgramCostPanel({
             footnote="Already counted in reward & bonus cost — not additional."
           />
           {/* Subtotal: creator-SPECIFIC program cost NOT already in reward. */}
-          <li className="grid grid-cols-[1fr_auto] items-center gap-2 bg-rose-500/[0.05] px-3 py-2.5 text-xs font-semibold sm:gap-3 sm:px-4">
+          <li className="grid grid-cols-[1fr_auto] items-center gap-2 bg-muted/40 px-3 py-2.5 text-xs font-semibold sm:gap-3 sm:px-4">
             <span className="min-w-0">
               <span className="block">
                 Creator-specific program cost
@@ -2439,7 +2439,7 @@ function CreatorProgramCostPanel({
         </ul>
 
         {/* Fill context — fake money for content, NOT a cost (blue / muted). */}
-        <div className="space-y-2 border-t bg-blue-500/[0.03] p-4 sm:p-5">
+        <div className="space-y-2 border-t bg-muted/20 p-4 sm:p-5">
           <div className="flex items-center gap-2">
             <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-blue-500/10 text-blue-500">
               <Coins className="size-3.5" />
@@ -2582,7 +2582,7 @@ function Definitions({
         return (
           <div
             key={d.key}
-            className="surface-sheen relative overflow-hidden rounded-xl border bg-card p-4 ring-1 ring-foreground/10 sm:p-5"
+            className="rounded-xl border bg-card p-4 sm:p-5"
           >
             <div className="flex items-center gap-2">
               <span className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-primary/20 bg-primary/10">
@@ -2605,7 +2605,7 @@ function Definitions({
         );
       })}
       {/* Scope card — applies to everything above. */}
-      <div className="surface-sheen relative overflow-hidden rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] p-4 ring-1 ring-inset ring-emerald-500/10 sm:p-5 lg:col-span-2">
+      <div className="rounded-xl border bg-card p-4 sm:p-5 lg:col-span-2">
         <div className="flex items-center gap-2">
           <span className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-emerald-500/20 bg-emerald-500/10">
             <Landmark className="size-3.5 text-emerald-500" />

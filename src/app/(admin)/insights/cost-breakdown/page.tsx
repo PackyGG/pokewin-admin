@@ -326,7 +326,7 @@ function CostBreakdownBodySkeleton() {
       {/* Waterfall */}
       <div className="space-y-3">
         <SectionHeadingSkeleton titleWidth={260} />
-        <div className="rounded-xl border bg-card p-3 ring-1 ring-foreground/10 sm:p-4">
+        <div className="rounded-xl border bg-card p-3 sm:p-4">
           <SkeletonText lines={12} />
         </div>
       </div>
@@ -360,17 +360,7 @@ function LifetimePnlReference({
   const tone = SEMANTIC_TONES[pos ? "keep" : "cost"];
   const PnlIcon = pos ? TrendingUp : TrendingDown;
   return (
-    <div
-      className={cn(
-        "surface-sheen relative overflow-hidden rounded-2xl border p-4 ring-1 ring-inset sm:p-5",
-        tone.face,
-        tone.ring,
-      )}
-    >
-      <div
-        aria-hidden
-        className={cn("pointer-events-none absolute inset-y-0 left-0 w-1", tone.bar)}
-      />
+    <div className="rounded-2xl border bg-card p-4 shadow-sm sm:p-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3">
           <span
@@ -500,7 +490,7 @@ function StoryLead({
   const pnlPos = data.pnl >= 0;
   const ggrPos = data.ggr >= 0;
   return (
-    <div className="overflow-hidden rounded-2xl border bg-card ring-1 ring-foreground/10">
+    <div className="overflow-hidden rounded-2xl border bg-card">
       <div className="flex items-start gap-3 border-b bg-muted/30 px-4 py-3 sm:px-5">
         <div className="shrink-0 rounded-lg border border-rose-500/30 bg-rose-500/10 p-2">
           <TrendingDown className="size-4 text-rose-500" />
@@ -614,19 +604,10 @@ function SummaryTile({
   return (
     <div
       className={cn(
-        "surface-sheen relative flex flex-col overflow-hidden rounded-xl ring-1 ring-inset",
-        t.face,
-        t.ring,
+        "flex flex-col rounded-xl border bg-card",
         size === "hero" ? "p-4 sm:p-5" : "p-3 sm:p-4",
       )}
     >
-      <div
-        aria-hidden
-        className={cn(
-          "pointer-events-none absolute inset-y-0 left-0 w-0.5",
-          t.bar,
-        )}
-      />
       <div className="flex items-center gap-1.5">
         <span
           className={cn(
@@ -1336,7 +1317,7 @@ function MarginHealth({ data }: { data: CostBreakdown }) {
         return (
           <div
             key={tile.label}
-            className="surface-sheen relative overflow-hidden rounded-xl border bg-card p-3 ring-1 ring-foreground/10"
+            className="rounded-xl border bg-card p-3"
           >
             <div className="flex items-center gap-1.5">
               <tile.icon className={cn("size-3.5 shrink-0", t.icon)} />

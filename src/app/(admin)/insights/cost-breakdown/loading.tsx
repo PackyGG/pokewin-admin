@@ -55,7 +55,7 @@ export default function Loading() {
       {/* Waterfall */}
       <div className="space-y-3">
         <SectionHeadingSkeleton titleWidth={260} />
-        <div className="rounded-xl border bg-card p-3 ring-1 ring-foreground/10 sm:p-4">
+        <div className="rounded-xl border bg-card p-3 sm:p-4">
           <SkeletonText lines={12} />
         </div>
       </div>

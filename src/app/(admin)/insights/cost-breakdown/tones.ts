@@ -21,7 +21,12 @@
  * client components import it just the same. Mirrors the
  * `entity-surface/view.ts` split that fixed the /cards + /packs crash.
  *
- * Held / unrealized liabilities get AMBER so they never read as a realized
+ * Flat direction (matches the modern-panels pilot): the tinted FACE + the
+ * hue RING were the layered colour that read as "not clean" — dropped. Every
+ * tone's `face`/`ring` is now the SAME neutral surface (a solid muted face +
+ * a hairline border ring); the tone's meaning survives ONLY on the value
+ * TEXT, the icon glyph, the icon CHIP and the magnitude BAR (House-POV):
+ * held / unrealized liabilities keep AMBER so they never read as a realized
  * loss (rose); realized costs / money-back stay rose; the house keep
  * (GGR/NGR/P&L positive) is emerald; the base wager is blue; the honest
  * leftover is muted.
@@ -41,11 +46,11 @@ export type SemanticTone =
   | "muted";
 
 export type ToneTokens = {
-  /** Tinted face background. */
+  /** Neutral surface face (flattened — no longer per-tone tinted). */
   face: string;
-  /** Hairline ring in the tone hue. */
+  /** Neutral hairline ring (flattened — no longer the tone hue). */
   ring: string;
-  /** Icon-chip background. */
+  /** Icon-chip background (keeps the tone hue — the accent chip). */
   chip: string;
   /** Value / accent text colour (light + dark). */
   text: string;
@@ -59,8 +64,10 @@ export type ToneTokens = {
 
 export const SEMANTIC_TONES: Record<SemanticTone, ToneTokens> = {
   keep: {
-    face: "bg-emerald-500/[0.07]",
-    ring: "ring-emerald-500/20",
+    // Flat: neutral face + hairline ring; the emerald hue lives on the
+    // text / icon / chip / bar below, never the surface.
+    face: "bg-muted/40",
+    ring: "ring-border/60",
     chip: "bg-emerald-500/15 text-emerald-500 dark:text-emerald-400",
     text: "text-emerald-600 dark:text-emerald-400",
     icon: "text-emerald-500",
@@ -68,8 +75,10 @@ export const SEMANTIC_TONES: Record<SemanticTone, ToneTokens> = {
     focus: "focus-visible:ring-emerald-500/40",
   },
   cost: {
-    face: "bg-rose-500/[0.06]",
-    ring: "ring-rose-500/20",
+    // Flat: neutral face + hairline ring; the rose hue lives on the text /
+    // icon / chip / bar below, never the surface.
+    face: "bg-muted/40",
+    ring: "ring-border/60",
     chip: "bg-rose-500/15 text-rose-500 dark:text-rose-400",
     text: "text-rose-600 dark:text-rose-400",
     icon: "text-rose-500",
@@ -77,8 +86,10 @@ export const SEMANTIC_TONES: Record<SemanticTone, ToneTokens> = {
     focus: "focus-visible:ring-rose-500/40",
   },
   held: {
-    face: "bg-amber-500/[0.07]",
-    ring: "ring-amber-500/20",
+    // Flat: neutral face + hairline ring; the amber hue lives on the text /
+    // icon / chip / bar below, never the surface.
+    face: "bg-muted/40",
+    ring: "ring-border/60",
     chip: "bg-amber-500/15 text-amber-500 dark:text-amber-400",
     text: "text-amber-600 dark:text-amber-400",
     icon: "text-amber-500",
@@ -86,8 +97,10 @@ export const SEMANTIC_TONES: Record<SemanticTone, ToneTokens> = {
     focus: "focus-visible:ring-amber-500/40",
   },
   base: {
-    face: "bg-blue-500/[0.06]",
-    ring: "ring-blue-500/20",
+    // Flat: neutral face + hairline ring; the blue hue lives on the text /
+    // icon / chip / bar below, never the surface.
+    face: "bg-muted/40",
+    ring: "ring-border/60",
     chip: "bg-blue-500/15 text-blue-500 dark:text-blue-400",
     text: "text-blue-600 dark:text-blue-400",
     icon: "text-blue-500",
