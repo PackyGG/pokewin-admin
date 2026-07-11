@@ -67,6 +67,10 @@ export type RewardPackOpenEntry = {
   sessionId: string | null;
   /** Reward pack name, e.g. "Welcome Pack" / "Level 1". Null if unresolved. */
   packName: string | null;
+  /** `packs.image_url` — same thumbnail source the /packs list and the
+   *  Daily Packs breakdown row use. Null if unresolved or the pack has no
+   *  image; `CardImage` renders its neutral placeholder in that case. */
+  packImageUrl: string | null;
   /** The reward program that granted the pack, e.g. "Welcome Reward". */
   rewardName: string | null;
   /** Reward slug, e.g. "onboarding" / "level-1". */
@@ -118,6 +122,7 @@ type RawCard = {
 type RawOpenRow = {
   session_id: string | null;
   pack_name: string | null;
+  pack_image_url: string | null;
   reward_slug: string | null;
   reward_name: string | null;
   reward_type: string | null;
@@ -151,6 +156,7 @@ async function queryUserRewardPackOpens(
     SELECT
       ri.session_id::text AS session_id,
       p.name AS pack_name,
+      MAX(p.image_url) AS pack_image_url,
       r.slug AS reward_slug,
       r.name AS reward_name,
       r.type::text AS reward_type,
@@ -201,6 +207,7 @@ async function queryUserRewardPackOpens(
     return {
       sessionId: row.session_id,
       packName: row.pack_name,
+      packImageUrl: row.pack_image_url,
       rewardName: row.reward_name,
       rewardSlug: row.reward_slug,
       rewardType: row.reward_type,
@@ -239,7 +246,9 @@ async function queryUserRewardPackOpens(
 function cachedByUser(userId: string): Promise<UserRewardPackOpensResult> {
   return unstable_cache(
     (): Promise<UserRewardPackOpensResult> => queryUserRewardPackOpens(userId),
-    ["users-reward-pack-opens-v1", userId],
+    // v2: bumped when `packImageUrl` was added to the row shape, so stale
+    // v1-cached entries (pre-image-column) don't linger under the same key.
+    ["users-reward-pack-opens-v2", userId],
     {
       revalidate: 60,
       tags: [USERS_DETAIL_GLOBAL_TAG, userDetailTag(userId)],

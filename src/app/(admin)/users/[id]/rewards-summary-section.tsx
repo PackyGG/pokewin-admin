@@ -31,6 +31,15 @@
  * LAYOUT: the Rakeback box (the "big box") sits on the LEFT with the
  * reward-payout display boxes to its RIGHT on lg+ viewports, stacked below
  * it on narrower ones (owner request — was full-width-stacked before).
+ * The two columns share the SAME row height via `lg:items-stretch` (grid's
+ * own default, made explicit — mirrors the Overview 3-up panel row in
+ * user-view-modern-tabs.tsx) instead of the `lg:items-start` this shipped
+ * with, which forced each column to size to only its OWN content — since
+ * the payout-tile grid is naturally much shorter than the Rakeback panel,
+ * that produced a visibly mismatched-height "weird af" layout (owner
+ * report, 2026-07-12). The shorter tile column is then vertically centered
+ * within the shared height via its own `h-full flex flex-col justify-center`
+ * wrapper, so it stays correct however many payout tiles render.
  *
  * PRIMITIVES: imports `SectionHeading` / `StatPanel` from the page-local
  * FLAT fork (`./user-view-modern-panels`), not the shared, colorful
@@ -248,7 +257,9 @@ export function RewardsSummarySection({
     // Rakeback (the "big box") on the LEFT, reward-payout display boxes on
     // the RIGHT, side by side on lg+ — stacked (box, then tile grid) below
     // that so neither column gets cramped on phones/tablets.
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,360px)_1fr] lg:items-start">
+    // `lg:items-stretch` (see doc comment above) keeps both columns at the
+    // same height instead of each sizing to its own content.
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,360px)_1fr] lg:items-stretch">
       {/* ── Rakeback (lead) ───────────────────────────────────────────── */}
       <StatPanel title="Rakeback" icon={Percent} accent="rose">
         {/* Claimed lifetime + claimable now — the two headline numbers. */}
@@ -317,30 +328,38 @@ export function RewardsSummarySection({
       {/* ── Reward payouts ("display boxes") ─────────────────────────────
           Sit to the RIGHT of the Rakeback box on lg+ (owner: "make the
           rakeback big box left side and put the display boxes right side
-          of it"), stacked below it on narrower viewports. */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {payouts.map((p) => (
+          of it"), stacked below it on narrower viewports. The tile grid is
+          naturally shorter than the Rakeback panel, so this wrapper takes
+          the full stretched row height (`h-full`) and vertically centers
+          the tiles inside it (`justify-center`) instead of leaving them
+          stuck to the top with dead space below — same fix pattern as the
+          Overview tab's equal-height panel row. */}
+      <div className="flex h-full flex-col justify-center">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {payouts.map((p) => (
+            <PayoutTile
+              key={p.key}
+              label={p.label}
+              value={formatCurrency(p.total)}
+              sub={`${formatNumber(p.count)} ${p.count === 1 ? p.unit : `${p.unit}s`}`}
+              icon={p.icon}
+              // Zero-aware House-POV: nothing paid out yet = neutral, not a
+              // house cost/gain in either direction — only a genuine nonzero
+              // total keeps the category's accent.
+              accent={p.total > 0 ? p.accent : "blue"}
+            />
+          ))}
+          {/* Unopened one-time rewards — a neutral COUNT (rewards available
+              to open), not money → blue. Preserves the datum the old card
+              showed. */}
           <PayoutTile
-            key={p.key}
-            label={p.label}
-            value={formatCurrency(p.total)}
-            sub={`${formatNumber(p.count)} ${p.count === 1 ? p.unit : `${p.unit}s`}`}
-            icon={p.icon}
-            // Zero-aware House-POV: nothing paid out yet = neutral, not a
-            // house cost/gain in either direction — only a genuine nonzero
-            // total keeps the category's accent.
-            accent={p.total > 0 ? p.accent : "blue"}
+            label="Unopened Rewards"
+            value={formatNumber(rewards.openOneTimeCount)}
+            sub="one-time, unclaimed"
+            icon={Gift}
+            accent="blue"
           />
-        ))}
-        {/* Unopened one-time rewards — a neutral COUNT (rewards available to
-            open), not money → blue. Preserves the datum the old card showed. */}
-        <PayoutTile
-          label="Unopened Rewards"
-          value={formatNumber(rewards.openOneTimeCount)}
-          sub="one-time, unclaimed"
-          icon={Gift}
-          accent="blue"
-        />
+        </div>
       </div>
     </div>
   );

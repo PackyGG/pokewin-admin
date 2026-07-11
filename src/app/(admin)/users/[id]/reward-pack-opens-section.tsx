@@ -19,6 +19,15 @@
  *     top (how often claimed + how much pulled). The detailed per-card
  *     provenance is PRESERVED but demoted into a collapsible inside each type
  *     box, so "where did these cards come from" is never lost — just secondary.
+ *   • PRESENTATION PASS 2 (owner, 2026-07-12: "u didnt update the rewards &
+ *     sign up pack opens boxes"): each per-type box mirrors the redesign
+ *     already shipped for the Insights → Rewards → Daily Packs breakdown row
+ *     (`insights/rewards/_components/daily-pack-row.tsx`) — a small pack
+ *     thumbnail (the group's most-recently-opened pack's `packs.image_url`)
+ *     next to the compact per-type stat boxes, and the old full-width
+ *     "Show per-card detail · N cards across M opens" trigger bar shrunk down
+ *     to a small chevron icon-button in the box header (same lazy collapsible
+ *     content underneath — no data/functionality change, presentation only).
  *
  * House-POV (CLAUDE.md): a reward-pack grant is the house GIVING the user
  * value → a house COST → card values render in ROSE.
@@ -49,6 +58,8 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { CardImage } from "@/components/card-image";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { SkeletonCard } from "@/components/ux";
 import { RelativeTime } from "@/components/relative-time";
@@ -260,68 +271,107 @@ function RewardTypeBox({ group }: { group: RewardTypeGroup }) {
   const [open, setOpen] = useState(false);
   const accent: AccentColor =
     (group.rewardType && TYPE_ACCENT[group.rewardType]) || "purple";
+  // Representative pack thumbnail for the whole type group — the most
+  // recently opened pack's image (opens are newest-first, so `opens[0]` is
+  // it). Same `CardImage` + `packs.image_url` source /packs and the Daily
+  // Packs breakdown row use; `CardImage` already falls back to a neutral
+  // placeholder icon when the URL is null/broken, so unresolved legacy opens
+  // just render blank instead of a fabricated image.
+  const imageUrl = group.opens[0]?.packImageUrl ?? null;
+  const detailLabel = `${formatNumber(group.cardCount)} ${
+    group.cardCount === 1 ? "card" : "cards"
+  } across ${formatNumber(group.opensCount)} ${
+    group.opensCount === 1 ? "open" : "opens"
+  }`;
 
   return (
-    <StatPanel
-      title={group.typeName}
-      icon={Package}
-      accent={accent}
-      action={
-        group.rewardType ? (
-          <Badge variant="outline" className="text-[10px] capitalize">
-            {group.rewardType.replace(/_/g, " ")}
-          </Badge>
-        ) : null
-      }
-    >
-      {/* Scannable per-type stats. */}
-      <div className="grid grid-cols-3 gap-2">
-        <MiniStat
-          label={group.rewardType === "daily" ? "Claims" : "Opens"}
-          value={formatNumber(group.opensCount)}
-          sub={group.rewardType === "daily" ? "daily" : "reward pack"}
-        />
-        <MiniStat
-          label="Cards"
-          value={formatNumber(group.cardCount)}
-          sub={
-            group.ownedCount > 0
-              ? `${formatNumber(group.ownedCount)} still held`
-              : "all sold / exchanged"
-          }
-        />
-        <MiniStat
-          label="Value"
-          value={formatCurrency(group.totalValue)}
-          valueClassName={ROSE}
-          sub="house cost"
-        />
-      </div>
+    // Collapsible wraps the whole box so the trigger can live in the header
+    // (next to the type badge) while the content stays below the stat row —
+    // mirrors the Daily Packs breakdown row's toggle-next-to-value placement.
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <StatPanel
+        title={group.typeName}
+        icon={Package}
+        accent={accent}
+        action={
+          <div className="flex shrink-0 items-center gap-1.5">
+            {group.rewardType ? (
+              <Badge variant="outline" className="text-[10px] capitalize">
+                {group.rewardType.replace(/_/g, " ")}
+              </Badge>
+            ) : null}
+            {/* Small icon-button toggle — replaces the old full-width "show
+                per-card detail" bar (owner: mirror the Daily Packs row's
+                compact trigger). Reveals the same per-card provenance,
+                collapsed by default. */}
+            <CollapsibleTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={
+                    open
+                      ? `Hide per-card detail for ${group.typeName}`
+                      : `Show per-card detail for ${group.typeName} — ${detailLabel}`
+                  }
+                  title={open ? "Hide per-card detail" : `Show per-card detail · ${detailLabel}`}
+                />
+              }
+            >
+              <ChevronDown
+                className={cn(
+                  "size-3.5 motion-safe:transition-transform motion-safe:duration-200",
+                  open && "rotate-180",
+                )}
+              />
+            </CollapsibleTrigger>
+          </div>
+        }
+      >
+        {/* Pack thumbnail + scannable per-type stats, side by side — mirrors
+            the Daily Packs breakdown row (image left, compact stat boxes
+            next to it). */}
+        <div className="flex items-start gap-2.5">
+          <div className="relative size-10 shrink-0 overflow-hidden rounded-lg bg-muted/40 ring-1 ring-border">
+            <CardImage
+              src={imageUrl}
+              alt={group.typeName}
+              className="absolute inset-0 size-full"
+            />
+          </div>
+          <div className="grid min-w-0 flex-1 grid-cols-3 gap-2">
+            <MiniStat
+              label={group.rewardType === "daily" ? "Claims" : "Opens"}
+              value={formatNumber(group.opensCount)}
+              sub={group.rewardType === "daily" ? "daily" : "reward pack"}
+            />
+            <MiniStat
+              label="Cards"
+              value={formatNumber(group.cardCount)}
+              sub={
+                group.ownedCount > 0
+                  ? `${formatNumber(group.ownedCount)} still held`
+                  : "all sold / exchanged"
+              }
+            />
+            <MiniStat
+              label="Value"
+              value={formatCurrency(group.totalValue)}
+              valueClassName={ROSE}
+              sub="house cost"
+            />
+          </div>
+        </div>
 
-      {/* Per-card provenance — PRESERVED but secondary (collapsed by default). */}
-      <Collapsible open={open} onOpenChange={setOpen} className="mt-3">
-        <CollapsibleTrigger className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 px-2.5 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border hover:bg-muted/50 hover:text-foreground">
-          <span>
-            {open ? "Hide" : "Show"} per-card detail ·{" "}
-            {formatNumber(group.cardCount)}{" "}
-            {group.cardCount === 1 ? "card" : "cards"} across{" "}
-            {formatNumber(group.opensCount)}{" "}
-            {group.opensCount === 1 ? "open" : "opens"}
-          </span>
-          <ChevronDown
-            className={cn(
-              "size-4 shrink-0 motion-safe:transition-transform motion-safe:duration-200",
-              open ? "rotate-0" : "-rotate-90",
-            )}
-          />
-        </CollapsibleTrigger>
-        <CollapsibleContent className="mt-2 space-y-2.5">
+        {/* Per-card provenance — PRESERVED but secondary, revealed by the
+            small chevron button in the header above (collapsed by default). */}
+        <CollapsibleContent className="mt-3 space-y-2.5">
           {group.opens.map((o) => (
             <RewardPackOpenDetail key={o.sessionId ?? "unresolved"} open={o} />
           ))}
         </CollapsibleContent>
-      </Collapsible>
-    </StatPanel>
+      </StatPanel>
+    </Collapsible>
   );
 }
 
