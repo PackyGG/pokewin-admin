@@ -257,6 +257,7 @@ function LockedRowWithRemove({
   sub,
   removeKind,
   onRemoveClick,
+  showRemove = true,
 }: {
   label: string;
   amount: number;
@@ -265,9 +266,12 @@ function LockedRowWithRemove({
   removeKind: "vault" | "wager";
   // Optional handler — when provided the Remove button is enabled and
   // clicking it fires this callback (typically opens a confirm dialog).
-  // Wired for `removeKind="vault"` via the freeze-vault flow; the wager
-  // case still falls back to the disabled-button + tooltip explanation.
+  // Wired for `removeKind="vault"` via the freeze-vault flow.
   onRemoveClick?: () => void;
+  // When false the trailing Remove affordance is not rendered at all
+  // (used for the wager-debt row, which has no backend unlock action).
+  // Defaults to true so the Vault row keeps its Remove button unchanged.
+  showRemove?: boolean;
 }) {
   // Vault: wired to the freeze-for-10-years flow when an onRemoveClick
   // handler is supplied; otherwise (defensive fallback) shows the same
@@ -287,7 +291,7 @@ function LockedRowWithRemove({
       <span className={cn("font-medium tabular-nums", valueClassName)}>
         {formatCurrency(amount)}
       </span>
-      {amount > 0 ? (
+      {amount > 0 && showRemove ? (
         <Button
           variant="ghost"
           size="sm"
@@ -489,9 +493,10 @@ export function ModernBalancePanel({
         {/* Locked — wager-requirement debt (bonus dollars spendable on
             wagers but reserved from withdrawal until cleared). AMBER
             warning: spendable but not withdrawable. Hidden if the column
-            isn't on this DB. Same DISABLED Remove affordance — clearing
-            wager-req debt goes through a backend-API path
-            (clearUserWagerRequirementAction) the panel doesn't own. */}
+            isn't on this DB. No inline Remove affordance (showRemove=false):
+            clearing wager-req debt goes through a backend-API path
+            (clearUserWagerRequirementAction) the panel doesn't own, so the
+            trailing button is suppressed rather than shown disabled. */}
         {showLocked && (
           <LockedRowWithRemove
             label="Locked"
@@ -499,6 +504,7 @@ export function ModernBalancePanel({
             valueClassName="text-amber-600 dark:text-amber-400"
             sub={lockedSub}
             removeKind="wager"
+            showRemove={false}
           />
         )}
         <PanelRow label="Inventory" value={formatCurrency(balances.inventoryValue)} />
