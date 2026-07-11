@@ -27,13 +27,13 @@ import {
   applyStagedPackEditAndRetune,
   getPackEditPool,
   getRetunePickerFilters,
-  planPackTune,
   type ApplyStagedRetuneResult,
   type EditPool,
   type PackTunePlan,
   type RetunePickerFilters,
   type StagedTagOverride,
 } from "../../doctor/retune-actions";
+import { planPackTuneOverWire } from "./plan-transport";
 import type { BuilderCardItem } from "../../builder/actions";
 import type { RetuneRailRow } from "../_queries/rail";
 import { buildCardDiffRows } from "./card-diff-table";
@@ -337,7 +337,7 @@ export function RetuneWorkspace({
       });
       const { data, error } = await safeQueryOrNull(
         () =>
-          planPackTune(
+          planPackTuneOverWire(
             packId,
             sp ? stagedPlanInput(sp) : null,
             opts?.fresh ? { fresh: true } : null,
@@ -812,7 +812,10 @@ export function RetuneWorkspace({
       // skipped and the pin-remedy sweep runs on the tight solve budget. The
       // real plan (on Apply) computes the full catalog.
       const { data, error } = await safeQueryOrNull(
-        () => planPackTune(packId, stagedPlanInput(merged), { lite: true }),
+        () =>
+          planPackTuneOverWire(packId, stagedPlanInput(merged), {
+            lite: true,
+          }),
         PREFLIGHT_CONTEXT,
         PLAN_TIMEOUT_MS,
       );
@@ -1279,10 +1282,16 @@ export function RetuneWorkspace({
           : `Pushed ${result.name}: edge ${(result.after.edge * 100).toFixed(2)}% · win ${(result.after.winRate * 100).toFixed(2)}%.`,
       );
       // Refresh the panel's live truth (pool + live-arm plan) — Push stays
-      // disabled until the operator stages again (F14 `pushed` state).
+      // disabled until the operator stages again (F14 `pushed` state). ONLY
+      // while the pack is still selected: the owner's flow is push → next
+      // pack, and a speculative cold re-plan for a pack nobody is looking at
+      // is pure compute waste (the selection effect re-plans it on return —
+      // its plan entry + pool were just cleared by `applyPushBookkeeping`).
       void (async () => {
+        if (selectedRef.current !== pp.packId) return;
         const fresh = await ensurePool(pp.packId, { fresh: true });
-        if (fresh) void requestPlan(pp.packId, { fresh: true });
+        if (!fresh || selectedRef.current !== pp.packId) return;
+        void requestPlan(pp.packId, { fresh: true });
       })();
     },
     [stagedApi, applyPushBookkeeping, ensurePool, requestPlan],

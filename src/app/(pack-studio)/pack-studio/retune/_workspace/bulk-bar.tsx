@@ -32,10 +32,8 @@ import {
   type PackRetuneResult,
 } from "@/app/(admin)/packs/actions";
 
-import {
-  planPackTune,
-  type PackTunePlan,
-} from "../../doctor/retune-actions";
+import type { PackTunePlan } from "../../doctor/retune-actions";
+import { planPackTuneOverWire } from "./plan-transport";
 import {
   RetuneProgressDialog,
   type RetuneFailure,
@@ -171,8 +169,10 @@ export function BulkBar({
       const name = rowsById.get(id)?.name ?? id;
       setCurrentName(name);
       // Strictly sequential — one plan at a time against the max:3 MAIN pool.
+      // Over the route transport: the bulk sweep no longer hogs the client's
+      // serialized server-action queue, so interactive plans stay responsive.
       const { data, error } = await safeQueryOrNull(
-        () => planPackTune(id),
+        () => planPackTuneOverWire(id, null, null),
         "pack-studio.retune.plan-pack",
         20_000,
       );
