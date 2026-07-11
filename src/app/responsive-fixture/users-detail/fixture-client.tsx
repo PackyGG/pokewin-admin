@@ -76,7 +76,6 @@ const PNL: PnlBreakdown = {
   },
   netPnlRealized: 0,
   netPnlTrue: 0,
-  pnl12h: 0,
   // Non-zero 24h (house gain → emerald) + 7d (house loss → rose) so the
   // new compact Platform-P&L footer chips exercise both color branches in
   // the render-verify sweep.
@@ -119,6 +118,7 @@ const REWARD_PACK_OPENS: UserRewardPackOpensResult = {
     {
       sessionId: "fixture-session-welcome",
       packName: "Welcome Pack",
+      packImageUrl: null,
       rewardName: "Welcome Reward",
       rewardSlug: "onboarding",
       rewardType: "one_time",
@@ -135,6 +135,7 @@ const REWARD_PACK_OPENS: UserRewardPackOpensResult = {
     {
       sessionId: "fixture-session-level1",
       packName: "Level 1",
+      packImageUrl: null,
       rewardName: "Level 1",
       rewardSlug: "level-1",
       rewardType: "daily",

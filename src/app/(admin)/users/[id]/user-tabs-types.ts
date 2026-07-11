@@ -615,13 +615,13 @@ export type PnlBreakdown = {
   };
   netPnlRealized: number;
   netPnlTrue: number;
-  // Rolling windowed house P&L (past 12h / 24h / 3d / 7d / 14d) — see
-  // getUserPnlBreakdown. Five rungs so the row reads from acute to
+  // Rolling windowed house P&L (past 24h / 3d / 7d / 14d) — see
+  // getUserPnlBreakdown. Four rungs so the row reads from acute to
   // baseline; same rolling-window convention as the dashboard's
   // global period selector. The 14d rung gives admins a slightly
   // longer baseline than 7d for spotting medium-term trends on
   // active users without paging the deeper monthly breakdown.
-  pnl12h: number;
+  // (The 12h rung was dropped per owner request.)
   pnl24h: number;
   pnl3d: number;
   pnl7d: number;

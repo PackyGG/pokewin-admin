@@ -358,7 +358,6 @@ async function UserDetailBody({
     },
     netPnlRealized: 0,
     netPnlTrue: 0,
-    pnl12h: 0,
     pnl24h: 0,
     pnl3d: 0,
     pnl7d: 0,

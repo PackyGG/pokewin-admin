@@ -40,7 +40,6 @@ import {
   Gift,
   Coins,
   ShieldCheck,
-  FileText,
   ArrowDownToLine,
   Banknote,
   ArrowUpFromLine,
@@ -75,7 +74,6 @@ import {
   AccountDetailsSection,
   FeatureLocksCard,
   ModerationSection,
-  NotesSection,
   DisposedCardsTable,
   InventoryGrid,
   GAMING_TX_TYPES,
@@ -1712,7 +1710,6 @@ function AccountManualWithdrawal({
 
 export function AccountTab({
   data,
-  notesPromise,
   pnlResultPromise,
   wagerRequirementPromise,
   featureLocksPromise,
@@ -1723,6 +1720,12 @@ export function AccountTab({
   viewerIsAdjustmentOwner,
 }: {
   data: UserDetail;
+  // Admin Notes was removed from this tab's rendering (owner request). The
+  // prop stays on the type — but is no longer destructured/rendered — only
+  // to match what page.tsx → UserViewModern → AccountTab still threads
+  // through (UserViewModern's prop contract is a different file's scope).
+  // Same pattern as cardSaleTxPromise/battleVoucherTxPromise on InventoryTab
+  // above: kept on the type only to keep the upstream prop contract intact.
   notesPromise: Promise<SafeQueryResult<AdminNote[]>> | null;
   pnlResultPromise: Promise<SafeQueryResult<PnlBreakdown>>;
   // Backend-API read (NOT the MAIN DB). Resolves to null when the backend
@@ -1754,6 +1757,19 @@ export function AccountTab({
   viewerIsAdjustmentOwner: boolean;
 }) {
   const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, battleLimits, mutes, capabilities } = data;
+  // Local open/close state for each collapsible Account-tab section. All
+  // default OPEN so first paint is unchanged from before these became
+  // collapsible — collapsing is an admin convenience, not a new
+  // default-hidden state. Same controlled pattern as the Deposits &
+  // Withdrawals collapsible on the Overview tab (CollapsibleSection).
+  const [accountDetailsOpen, setAccountDetailsOpen] = useState(true);
+  const [featureLocksOpen, setFeatureLocksOpen] = useState(true);
+  const [battleLimitsOpen, setBattleLimitsOpen] = useState(true);
+  const [wagerRequirementOpen, setWagerRequirementOpen] = useState(true);
+  const [wagerProgressOpen, setWagerProgressOpen] = useState(true);
+  const [balanceWeightingOpen, setBalanceWeightingOpen] = useState(true);
+  const [manualWithdrawalOpen, setManualWithdrawalOpen] = useState(true);
+  const [moderationOpen, setModerationOpen] = useState(true);
   return (
     <div className="space-y-4">
       <SectionHeading icon={Dices} title="Wagering Stats" />
@@ -1796,38 +1812,37 @@ export function AccountTab({
         </Suspense>
       )}
 
-      {/* Record manual withdrawal — relocated here from the Overview
-          Balances panel. Grouped with the balance-mutation surfaces above
-          (admin adjustments) since it's the same class of action. Gated by
-          the capability; also useful at $0 balance for backfilling past
-          off-platform payouts so P&L counts them. */}
-      {capabilities.canRecordManualWithdrawal && (
-        <>
-          <SectionHeading icon={ArrowUpFromLine} title="Manual Withdrawal" />
-          <AccountManualWithdrawal
-            userId={user.id}
-            availableBalance={balances?.availableBalance ?? 0}
-          />
-        </>
-      )}
+      <CollapsibleSection
+        icon={ShieldCheck}
+        title="Account Details"
+        open={accountDetailsOpen}
+        onOpenChange={setAccountDetailsOpen}
+      >
+        <Card>
+          <CardContent>
+            <AccountDetailsSection
+              user={user}
+              shippingAddress={shippingAddress}
+              vault={vault}
+              depositAddresses={depositAddresses}
+            />
+          </CardContent>
+        </Card>
+      </CollapsibleSection>
 
-      <SectionHeading icon={ShieldCheck} title="Account Details" />
-      <Card>
-        <CardContent>
-          <AccountDetailsSection
-            user={user}
-            shippingAddress={shippingAddress}
-            vault={vault}
-            depositAddresses={depositAddresses}
-          />
-        </CardContent>
-      </Card>
-      <SectionHeading icon={ShieldCheck} title="Feature Locks" />
-      <FeatureLocksCard
-        userId={user.id}
-        featureLocks={featureLocks}
-        canToggle={capabilities.canToggleFeatureLocks}
-      />
+      <CollapsibleSection
+        icon={ShieldCheck}
+        title="Feature Locks"
+        open={featureLocksOpen}
+        onOpenChange={setFeatureLocksOpen}
+      >
+        <FeatureLocksCard
+          userId={user.id}
+          featureLocks={featureLocks}
+          canToggle={capabilities.canToggleFeatureLocks}
+        />
+      </CollapsibleSection>
+
       <SectionHeading icon={ShieldAlert} title="Fraud Locks (Card Deposits)" />
       {featureLocksPromise ? (
         <Suspense fallback={<SkeletonCard lines={3} />}>
@@ -1852,60 +1867,106 @@ export function AccountTab({
       ) : (
         <SkeletonCard lines={3} />
       )}
-      <SectionHeading icon={Dices} title="Custom Battle Limits" />
-      <UserBattleLimitsCard
-        userId={user.id}
-        limits={battleLimits}
-        canManage={data.sessionRole === "admin"}
-      />
-      <SectionHeading icon={Banknote} title="Withdrawal Wager Requirement" />
-      {wagerRequirementPromise ? (
-        <Suspense fallback={<SkeletonCard lines={3} />}>
-          <WagerRequirementStreamed
+      <CollapsibleSection
+        icon={Dices}
+        title="Custom Battle Limits"
+        open={battleLimitsOpen}
+        onOpenChange={setBattleLimitsOpen}
+      >
+        <UserBattleLimitsCard
+          userId={user.id}
+          limits={battleLimits}
+          canManage={data.sessionRole === "admin"}
+        />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        icon={Banknote}
+        title="Withdrawal Wager Requirement"
+        open={wagerRequirementOpen}
+        onOpenChange={setWagerRequirementOpen}
+      >
+        {wagerRequirementPromise ? (
+          <Suspense fallback={<SkeletonCard lines={3} />}>
+            <WagerRequirementStreamed
+              userId={user.id}
+              wagerRequirementPromise={wagerRequirementPromise}
+              canManage={data.sessionRole === "admin"}
+            />
+          </Suspense>
+        ) : (
+          <SkeletonCard lines={3} />
+        )}
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        icon={TrendingUp}
+        title="Wager Requirement Progress"
+        open={wagerProgressOpen}
+        onOpenChange={setWagerProgressOpen}
+      >
+        {wagerProgressPromise ? (
+          <Suspense fallback={<SkeletonCard lines={3} />}>
+            <WagerProgressStreamed
+              wagerProgressPromise={wagerProgressPromise}
+              userId={user.id}
+              canManage={data.sessionRole === "admin"}
+            />
+          </Suspense>
+        ) : (
+          <SkeletonCard lines={3} />
+        )}
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        icon={Scale}
+        title="Balance Wager Weighting"
+        open={balanceWeightingOpen}
+        onOpenChange={setBalanceWeightingOpen}
+      >
+        {balanceWeightingPromise ? (
+          <Suspense fallback={<SkeletonCard lines={4} />}>
+            <BalanceWeightingStreamed
+              balanceWeightingPromise={balanceWeightingPromise}
+            />
+          </Suspense>
+        ) : (
+          <SkeletonCard lines={4} />
+        )}
+      </CollapsibleSection>
+
+      {/* Record manual withdrawal — relocated here from the Overview
+          Balances panel, and moved further down within the Account tab
+          itself (owner request) so it sits near the bottom with the other
+          account-management collapsibles instead of up top. Gated by the
+          capability; also useful at $0 balance for backfilling past
+          off-platform payouts so P&L counts them. */}
+      {capabilities.canRecordManualWithdrawal && (
+        <CollapsibleSection
+          icon={ArrowUpFromLine}
+          title="Manual Withdrawal"
+          open={manualWithdrawalOpen}
+          onOpenChange={setManualWithdrawalOpen}
+        >
+          <AccountManualWithdrawal
             userId={user.id}
-            wagerRequirementPromise={wagerRequirementPromise}
-            canManage={data.sessionRole === "admin"}
+            availableBalance={balances?.availableBalance ?? 0}
           />
-        </Suspense>
-      ) : (
-        <SkeletonCard lines={3} />
+        </CollapsibleSection>
       )}
-      <SectionHeading icon={TrendingUp} title="Wager Requirement Progress" />
-      {wagerProgressPromise ? (
-        <Suspense fallback={<SkeletonCard lines={3} />}>
-          <WagerProgressStreamed
-            wagerProgressPromise={wagerProgressPromise}
-            userId={user.id}
-            canManage={data.sessionRole === "admin"}
-          />
-        </Suspense>
-      ) : (
-        <SkeletonCard lines={3} />
-      )}
-      <SectionHeading icon={Scale} title="Balance Wager Weighting" />
-      {balanceWeightingPromise ? (
-        <Suspense fallback={<SkeletonCard lines={4} />}>
-          <BalanceWeightingStreamed
-            balanceWeightingPromise={balanceWeightingPromise}
-          />
-        </Suspense>
-      ) : (
-        <SkeletonCard lines={4} />
-      )}
-      <SectionHeading icon={ShieldCheck} title="Moderation" />
-      <Card>
-        <CardContent>
-          <ModerationSection user={user} mutes={mutes} />
-        </CardContent>
-      </Card>
-      <SectionHeading icon={FileText} title="Admin Notes" />
-      {notesPromise ? (
-        <Suspense fallback={<SkeletonCard lines={3} />}>
-          <NotesStreamed userId={user.id} notesPromise={notesPromise} />
-        </Suspense>
-      ) : (
-        <SkeletonCard lines={3} />
-      )}
+
+      <CollapsibleSection
+        icon={ShieldCheck}
+        title="Moderation"
+        open={moderationOpen}
+        onOpenChange={setModerationOpen}
+      >
+        <Card>
+          <CardContent>
+            <ModerationSection user={user} mutes={mutes} />
+          </CardContent>
+        </Card>
+      </CollapsibleSection>
 
       {/* Affiliate — folded in from the old standalone Affiliate tab.
           AffiliateSection renders the referrer card, attribution journey,
@@ -2028,26 +2089,6 @@ function BalanceWeightingStreamed({
   return <UserBalanceWeightingCard data={weighting} />;
 }
 
-function NotesStreamed({
-  userId,
-  notesPromise,
-}: {
-  userId: string;
-  notesPromise: Promise<SafeQueryResult<AdminNote[]>>;
-}) {
-  const r = use(notesPromise);
-  if (r.error) {
-    return (
-      <InlineError
-        compact
-        title="Couldn't load admin notes"
-        hint="This is a load failure (admin DB), not an empty notes list — retry to re-run the query."
-      />
-    );
-  }
-  return <NotesSection userId={userId} notes={r.data} />;
-}
-
 // Wagering stats — moved out of the hero KPI strip to keep the hero
 // compact. Headline number is Wager Loss (totalWagered − totalWon)
 // from the HOUSE perspective: positive means we won that money, so
@@ -2120,12 +2161,14 @@ function WageringStatsCard({
 // ───────────────────────────────────────────────────────────────────
 
 /**
- * Five rolling P&L tiles (12h / 24h / 3d / 7d / 14d) shown as a
+ * Four rolling P&L tiles (24h / 3d / 7d / 14d) shown as a
  * horizontal strip on the Account tab. Each tile shows the windowed
  * realized P&L for that user, computed by `getUserPnlBreakdown` via
  * the same `getUserWindowedPnlMulti` helper that powers the Rolling
  * P&L block on the Overview tab — the numbers are guaranteed to match
  * between tabs because both consume the same `pnlBreakdown` prop.
+ * (The 12h rung was dropped per owner request — 24h is now the
+ * shortest window shown here.)
  *
  * House-POV color rule per CLAUDE.md:
  *   pnl > 0  → user lost net → house gain → emerald
@@ -2134,8 +2177,9 @@ function WageringStatsCard({
  *
  * Tile sizing mirrors `ModernMetricTile` so the strip visually
  * matches the wagering-stats row directly above it. Grid wraps from
- * 2 columns on phones → 5 on lg so each window stays scannable
- * without horizontal scrolling on any breakpoint.
+ * 2 columns on phones → 4 on lg (matching the Deposits/Wager strips
+ * below it) so each window stays scannable without horizontal
+ * scrolling on any breakpoint.
  */
 function WindowedPnlStrip({
   pnlBreakdown,
@@ -2143,14 +2187,13 @@ function WindowedPnlStrip({
   pnlBreakdown: PnlBreakdown;
 }) {
   const windows: { label: string; pnl: number }[] = [
-    { label: "Past 12h", pnl: pnlBreakdown.pnl12h },
     { label: "Past 24h", pnl: pnlBreakdown.pnl24h },
     { label: "Past 3d", pnl: pnlBreakdown.pnl3d },
     { label: "Past 7d", pnl: pnlBreakdown.pnl7d },
     { label: "Past 14d", pnl: pnlBreakdown.pnl14d },
   ];
   return (
-    <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+    <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
       {windows.map((w) => {
         // Treat exact zero as neutral so a quiet user reads grey
         // instead of arbitrary emerald — same convention as the
