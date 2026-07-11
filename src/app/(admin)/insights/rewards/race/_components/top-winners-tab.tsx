@@ -99,7 +99,7 @@ function WinnersPanel({
   return (
     <div className="space-y-3">
       <SectionHeading icon={Trophy} title={title} />
-      <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card">
+      <div className="relative overflow-hidden rounded-2xl border bg-card">
         <div className="border-b p-3 sm:p-4">
           <p className="text-[11px] text-muted-foreground">{subtitle}</p>
         </div>

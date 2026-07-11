@@ -76,7 +76,7 @@ export async function RaceBreakdownTab({
           icon={ListOrdered}
           title={`Race instances · ${rows.length} race${rows.length === 1 ? "" : "s"}`}
         />
-        <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card">
+        <div className="relative overflow-hidden rounded-2xl border bg-card">
           {/* Mobile cards */}
           <div className="md:hidden divide-y">
             {rows.map((row) => (

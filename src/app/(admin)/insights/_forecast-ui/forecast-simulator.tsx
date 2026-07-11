@@ -466,7 +466,7 @@ export function ForecastSimulator<A extends BaseAssumptions, S extends BaseScena
               </Badge>
             }
           />
-          <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-3 sm:p-4">
+          <div className="relative overflow-hidden rounded-2xl border bg-card p-3 sm:p-4">
             <ForecastComparisonTable
               rows={comparisonRows}
               baselineId={baselineScenarioId}
@@ -585,7 +585,7 @@ function RecommendationCard({
       type="button"
       onClick={onSelect}
       className={cn(
-        "group surface-sheen relative overflow-hidden rounded-xl border bg-gradient-to-br from-card via-card to-card/70 p-3.5 text-left transition-colors",
+        "group relative overflow-hidden rounded-xl border bg-card p-3.5 text-left transition-colors",
         active ? "border-primary/40 ring-1 ring-primary/30" : "hover:border-border",
       )}
     >
@@ -615,7 +615,7 @@ function ChartCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/70 p-4">
+    <div className="relative overflow-hidden rounded-2xl border bg-card p-4">
       <div className="mb-2 flex items-center gap-2">
         <Icon className="size-3.5 text-muted-foreground" />
         <div className="min-w-0">

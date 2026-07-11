@@ -71,18 +71,22 @@ export function PrizePercentSection({
   );
 }
 
+// Flat direction (matches modern-panels): the tile surface is a solid
+// `bg-card` + hairline border; the per-hue colored FILL + colored border
+// were the noise that read as "not clean" — dropped. The accent now drives
+// ONLY the value number (`[&_[data-value]]`), never the tile background,
+// so the semantic hues (emerald = house profit, rose = cost) still land on
+// the number while the container stays neutral.
 const ACCENT_STYLES = {
-  sky: "border-sky-500/20 bg-sky-500/5 [&_[data-value]]:text-sky-700 dark:[&_[data-value]]:text-sky-300",
-  rose: "border-rose-500/20 bg-rose-500/5 [&_[data-value]]:text-rose-600 dark:[&_[data-value]]:text-rose-400",
-  violet:
-    "border-violet-500/20 bg-violet-500/5 [&_[data-value]]:text-violet-700 dark:[&_[data-value]]:text-violet-300",
+  sky: "[&_[data-value]]:text-sky-700 dark:[&_[data-value]]:text-sky-300",
+  rose: "[&_[data-value]]:text-rose-600 dark:[&_[data-value]]:text-rose-400",
+  violet: "[&_[data-value]]:text-violet-700 dark:[&_[data-value]]:text-violet-300",
   emerald:
-    "border-emerald-500/20 bg-emerald-500/5 [&_[data-value]]:text-emerald-600 dark:[&_[data-value]]:text-emerald-400",
-  amber:
-    "border-amber-500/20 bg-amber-500/5 [&_[data-value]]:text-amber-700 dark:[&_[data-value]]:text-amber-300",
-  slate: "border-border/60 bg-background/60",
+    "[&_[data-value]]:text-emerald-600 dark:[&_[data-value]]:text-emerald-400",
+  amber: "[&_[data-value]]:text-amber-700 dark:[&_[data-value]]:text-amber-300",
+  slate: "",
   purple:
-    "border-purple-500/20 bg-purple-500/5 [&_[data-value]]:text-purple-700 dark:[&_[data-value]]:text-purple-300",
+    "[&_[data-value]]:text-purple-700 dark:[&_[data-value]]:text-purple-300",
 } as const;
 
 export function MetricTile({
@@ -100,7 +104,7 @@ export function MetricTile({
 }) {
   return (
     <div
-      className={`rounded-lg border px-3 py-2.5 ${ACCENT_STYLES[accent]} ${className ?? ""}`}
+      className={`rounded-lg border bg-card px-3 py-2.5 ${ACCENT_STYLES[accent]} ${className ?? ""}`}
     >
       <p className="whitespace-nowrap text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
         {label}

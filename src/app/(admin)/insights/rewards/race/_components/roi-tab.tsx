@@ -199,7 +199,7 @@ export async function RaceRoiTab({
 
           <div>
             <SectionHeading icon={Users} title="What ROI tells you" />
-            <div className="surface-sheen relative mt-3 overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <div className="relative mt-3 overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
               <ul className="space-y-2 text-sm text-muted-foreground">
                 <li>
                   <span className="font-medium text-foreground">ROI &gt; 0:</span>{" "}

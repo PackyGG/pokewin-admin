@@ -199,11 +199,7 @@ export async function DailyPacksTab({
       {/* Daily giveaway-cost curve — rose area, same chart family as the
           rest of the rewards-insights surface. */}
       <FadeIn>
-        <div className="surface-sheen surface-raise relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/70 p-4 sm:p-5">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-rose-500/[0.08] blur-2xl"
-          />
+        <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
           <div className="relative">
             <SectionHeading
               icon={LineChartIcon}

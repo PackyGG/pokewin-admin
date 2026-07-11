@@ -314,7 +314,7 @@ export async function ImpactTab({
         <div className="grid gap-4 xl:grid-cols-2">
           <div className="space-y-3">
             <SectionHeading icon={Layers} title="Deposit frequency per day" />
-            <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
               {freqRes.error || !freq ? (
                 <TileErrorFallback
                   label="Deposit frequency"
@@ -349,7 +349,7 @@ export async function ImpactTab({
           {/* ── 2. Deposit-size distribution ───────────────────────── */}
           <div className="space-y-3">
             <SectionHeading icon={BarChart3} title="Deposit size distribution" />
-            <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
               {sizeRes.error || !size ? (
                 <TileErrorFallback
                   label="Deposit size"
@@ -391,7 +391,7 @@ export async function ImpactTab({
               icon={Banknote}
               title="Deposit-size bands — full breakdown"
             />
-            <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
               <DepositSizeTable size={size} />
             </div>
           </div>
@@ -405,7 +405,7 @@ export async function ImpactTab({
             icon={Clock}
             title="Time between consecutive deposits"
           />
-          <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+          <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
             {gapRes.error || !gap ? (
               <TileErrorFallback
                 label="Time-between-deposits"
@@ -458,7 +458,7 @@ export async function ImpactTab({
               icon={Gauge}
               title="Bonus-to-wager subsidy by deposit-size segment"
             />
-            <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
               <BonusWagerTable seg={seg} />
             </div>
           </div>
@@ -477,7 +477,7 @@ export async function ImpactTab({
                   <span className="text-xs text-muted-foreground">approx.</span>
                 }
               />
-              <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+              <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
                 <PostCapSection post={post} />
               </div>
             </div>
@@ -489,7 +489,7 @@ export async function ImpactTab({
                 icon={UserPlus}
                 title="New vs returning cap triggers"
               />
-              <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+              <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
                 <CohortSection cohort={cohort} period={period} />
               </div>
             </div>
@@ -516,11 +516,7 @@ function TldrStrip({
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       {/* Headline 1 — who triggers the cap */}
-      <div className="surface-sheen relative overflow-hidden rounded-2xl border border-rose-500/20 bg-rose-500/[0.07] p-4 sm:p-5">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -right-10 -top-10 size-32 rounded-full bg-rose-500/10 blur-3xl"
-        />
+      <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
         <div className="relative flex items-center gap-2 text-rose-600 dark:text-rose-400">
           <Crown className="size-4" />
           <span className="text-xs font-semibold uppercase tracking-wider">
@@ -550,11 +546,7 @@ function TldrStrip({
       </div>
 
       {/* Headline 2 — typical multi-deposit day */}
-      <div className="surface-sheen relative overflow-hidden rounded-2xl border border-blue-500/20 bg-blue-500/[0.07] p-4 sm:p-5">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -right-10 -top-10 size-32 rounded-full bg-blue-500/10 blur-3xl"
-        />
+      <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
         <div className="relative flex items-center gap-2 text-blue-600 dark:text-blue-400">
           <Activity className="size-4" />
           <span className="text-xs font-semibold uppercase tracking-wider">
@@ -591,7 +583,7 @@ function TldrStrip({
 function CapHitSection({ cap }: { cap: DepositBonusCapHitters }) {
   if (cap.capValue === 0) {
     return (
-      <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+      <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
         <EmptyState
           icon={Crown}
           title="No cap hits in window"
@@ -641,7 +633,7 @@ function CapHitSection({ cap }: { cap: DepositBonusCapHitters }) {
         />
       </div>
 
-      <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+      <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
         {cap.rows.length > 0 ? (
           <CapHittersTable rows={cap.rows} />
         ) : (

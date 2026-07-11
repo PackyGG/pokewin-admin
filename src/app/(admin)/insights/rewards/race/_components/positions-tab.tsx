@@ -66,7 +66,7 @@ export async function RacePositionsTab({
         <div className="grid gap-4 xl:grid-cols-2">
           <div className="space-y-3">
             <SectionHeading icon={PieChart} title="Position distribution — by count" />
-            <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
               <p className="text-[11px] text-muted-foreground">
                 Number of prize lines per position bucket. A lopsided distribution
                 toward the top buckets means races skew top-heavy.
@@ -78,7 +78,7 @@ export async function RacePositionsTab({
           </div>
           <div className="space-y-3">
             <SectionHeading icon={PieChart} title="Position distribution — by volume" />
-            <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
               <p className="text-[11px] text-muted-foreground">
                 Total prize $ paid per position bucket. Shows where the bulk of
                 spend actually lands.

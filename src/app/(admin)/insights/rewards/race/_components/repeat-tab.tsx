@@ -126,7 +126,7 @@ export async function RaceRepeatWinnersTab({
               icon={Repeat}
               title="Frequency distribution"
             />
-            <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
               <p className="text-[11px] text-muted-foreground">
                 How many users land in each race-count bucket. Spotting a long
                 tail at 11+ means a small group of repeat winners absorb most
@@ -168,7 +168,7 @@ export async function RaceRepeatWinnersTab({
               icon={Trophy}
               title="Top 10 cumulative repeat winners"
             />
-            <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card">
+            <div className="relative overflow-hidden rounded-2xl border bg-card">
               <div className="md:hidden divide-y">
                 {data.topRepeatWinners.map((w, i) => (
                   <div

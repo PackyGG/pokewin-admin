@@ -153,7 +153,7 @@ export async function RiskTab({
             icon={Trophy}
             title="Top 25 bonus recipients"
           />
-          <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+          <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
             <TopSpendersTable rows={top} />
           </div>
         </div>
@@ -197,7 +197,7 @@ export async function RiskTab({
                   icon={UserX}
                   title="Cash-out abuse candidates"
                 />
-                <div className="surface-sheen relative overflow-hidden rounded-2xl border border-rose-500/20 bg-rose-500/[0.04] p-4 sm:p-5">
+                <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
                   {suspicious.withdrewAfterBonus.length > 0 ? (
                     <WithdrewAfterBonusTable
                       rows={suspicious.withdrewAfterBonus}
@@ -218,7 +218,7 @@ export async function RiskTab({
                   icon={Activity}
                   title="Bonus parked — no wager"
                 />
-                <div className="surface-sheen relative overflow-hidden rounded-2xl border border-amber-500/20 bg-amber-500/[0.04] p-4 sm:p-5">
+                <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
                   {suspicious.noWager.length > 0 ? (
                     <NoWagerTable rows={suspicious.noWager} />
                   ) : (
@@ -238,7 +238,7 @@ export async function RiskTab({
                 icon={Fingerprint}
                 title="Shared fingerprint clusters"
               />
-              <div className="surface-sheen relative overflow-hidden rounded-2xl border border-amber-500/20 bg-amber-500/[0.04] p-4 sm:p-5">
+              <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
                 {suspicious.sharedFingerprint.length > 0 ? (
                   <SharedFingerprintTable
                     rows={suspicious.sharedFingerprint}

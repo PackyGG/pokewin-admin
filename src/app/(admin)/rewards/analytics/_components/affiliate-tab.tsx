@@ -119,7 +119,7 @@ export async function AffiliateTab({
             icon={Crown}
             title="Top affiliates by referred-user wager"
           />
-          <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+          <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
             <p className="text-[11px] text-muted-foreground">
               Distinct from the leaderboard above (which ranks by
               commission paid). This ranks by the wager their referred

@@ -121,7 +121,7 @@ export async function RakebackTab({
             icon={PieChart}
             title="Per-claim rate distribution"
           />
-          <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+          <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
             <p className="text-[11px] text-muted-foreground">
               How much of the wager each claim returns as rakeback.
             </p>
@@ -157,7 +157,7 @@ export async function RakebackTab({
       {data.count > 0 && (
         <div className="space-y-3">
           <SectionHeading icon={Sigma} title="Spread by rakeback type" />
-          <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+          <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
             <div className="space-y-2">
               {extras.rakebackTypeSpread.map((row) => (
                 <div

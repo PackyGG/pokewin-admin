@@ -144,15 +144,7 @@ export function ForecastControls<S extends BaseScenarioConfig>({
 
   return (
     <TooltipProvider delay={150}>
-      <div className="surface-sheen surface-raise relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/70">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -right-16 -top-16 size-48 rounded-full bg-blue-500/[0.08] blur-3xl"
-        />
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"
-        />
+      <div className="relative overflow-hidden rounded-2xl border bg-card">
         <div className="relative space-y-5 p-4 sm:p-5">
           <SectionHeading
             icon={SlidersHorizontal}

@@ -126,7 +126,7 @@ export async function RaceTab({
           pool, and winner count. Only renders when at least one
           race had winners. */}
       {data.count > 0 && extras.topRace && (
-        <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+        <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex size-9 items-center justify-center rounded-lg bg-rose-500/10">
               <Crown className="size-5 text-rose-500" />
@@ -155,7 +155,7 @@ export async function RaceTab({
       {data.count > 0 && (
         <div className="space-y-3">
           <SectionHeading icon={PieChart} title="Winner position spread" />
-          <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+          <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
             <p className="text-[11px] text-muted-foreground">
               Where prize claims land. Lower buckets dominating means
               races skew top-heavy.
@@ -195,7 +195,7 @@ export async function RaceTab({
             icon={Repeat}
             title={`Repeat winners (${formatNumber(extras.repeatWinnerCount)})`}
           />
-          <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+          <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
             <p className="text-[11px] text-muted-foreground">
               Users who placed in more than one race in this window.
               Top 5 by total prize volume.

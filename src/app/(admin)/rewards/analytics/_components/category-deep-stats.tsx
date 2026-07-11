@@ -389,12 +389,8 @@ export function CategoryDeepStatsPanel({
       {/* Daily volume chart — shares the DepositBonusChart component
           since the area-chart shape is identical across categories
           and the colour family (rose) is consistent. */}
-      <div className="surface-sheen surface-raise relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/70 p-4 sm:p-5">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-rose-500/[0.08] blur-2xl"
-        />
-        <div className="relative">
+      <div className="rounded-2xl border bg-card p-4 sm:p-5">
+        <div>
           <SectionHeading
             icon={LineChartIcon}
             title={`Daily volume — ${periodLabel}`}
@@ -408,7 +404,7 @@ export function CategoryDeepStatsPanel({
       <div className="grid gap-4 xl:grid-cols-2">
         <div>
           <SectionHeading icon={Trophy} title="Top 10 users by volume" />
-          <div className="surface-sheen mt-3 relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+          <div className="mt-3 rounded-2xl border bg-card p-4 sm:p-5">
             <TopUsersTable
               rows={data.topUsers}
               unitLabel={unitLabel}
@@ -419,7 +415,7 @@ export function CategoryDeepStatsPanel({
         </div>
         <div>
           <SectionHeading icon={CalendarDays} title="Top 10 days by volume" />
-          <div className="surface-sheen mt-3 relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+          <div className="mt-3 rounded-2xl border bg-card p-4 sm:p-5">
             <TopDaysTable
               rows={data.topDays}
               unitLabel={unitLabel}

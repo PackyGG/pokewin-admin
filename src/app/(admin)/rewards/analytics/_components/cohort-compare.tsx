@@ -43,12 +43,8 @@ export function CohortCompareCard({
   const liftAbs = liftAvailable ? Math.abs(liftPct) : 0;
   const liftIsRise = liftAvailable && (liftPct as number) >= 0;
   return (
-    <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-rose-500/[0.08] blur-2xl"
-      />
-      <div className="relative">
+    <div className="rounded-2xl border bg-card p-4 sm:p-5">
+      <div>
         <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           {title}
         </p>

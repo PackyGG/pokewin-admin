@@ -140,7 +140,7 @@ export async function DepositBonusCohortSection({
           icon={PieChart}
           title="Bonus / deposit ratio distribution"
         />
-        <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+        <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
           <p className="text-[11px] text-muted-foreground">
             How much of each deposit returns as bonus, bucketed.
           </p>
@@ -174,7 +174,7 @@ export async function DepositBonusCohortSection({
             icon={Crown}
             title={`Top deposits that hit the ${formatCurrency(capValue)} cap`}
           />
-          <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+          <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
             {/* Mobile cards (<md) */}
             <div className="space-y-1.5 md:hidden">
               {cohort.topCapDeposits.map((d) => (

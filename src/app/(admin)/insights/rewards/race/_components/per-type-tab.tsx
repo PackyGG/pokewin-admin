@@ -113,7 +113,7 @@ function PerTypeSection({
         icon={CalendarClock}
         title={`${TYPE_LABEL[row.raceType]} races`}
       />
-      <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+      <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
         {row.distinctRaces === 0 ? (
           <p className="text-sm text-muted-foreground">
             No {TYPE_LABEL[row.raceType].toLowerCase()} race instances paid out in {period}.

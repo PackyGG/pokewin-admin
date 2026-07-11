@@ -293,13 +293,13 @@ export async function RoiTab({
           <div className="grid gap-4 xl:grid-cols-2">
             <div className="space-y-3">
               <SectionHeading icon={Globe2} title="Top countries by bonus $" />
-              <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+              <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
                 <GeoSourceBarsList rows={geo.countries} emptyLabel="No country data" />
               </div>
             </div>
             <div className="space-y-3">
               <SectionHeading icon={Plug} title="Top signup sources by bonus $" />
-              <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+              <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
                 <GeoSourceBarsList rows={geo.sources} emptyLabel="No source data" />
               </div>
             </div>
@@ -316,13 +316,13 @@ export async function RoiTab({
               title="When are bonuses awarded? (UTC)"
             />
             <div className="grid gap-4 xl:grid-cols-2">
-              <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+              <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                   By hour of day
                 </p>
                 <HourlyBars hourly={tod.hourly} />
               </div>
-              <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+              <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                   By day of week
                 </p>

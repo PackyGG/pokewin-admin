@@ -109,7 +109,7 @@ function CohortPanel({
   return (
     <div className="space-y-3">
       <SectionHeading icon={Icon} title={title} />
-      <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+      <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
         <p className="text-[11px] text-muted-foreground">{subtitle}</p>
         {total === 0 ? (
           <p className="mt-3 text-sm text-muted-foreground">{emptyHint}</p>

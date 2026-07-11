@@ -162,7 +162,7 @@ export async function CapTab({
               icon={BarChart3}
               title={`Bonus amount distribution — to cap ${formatCurrency(cap.capValue)}`}
             />
-            <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
               <CapAmountHistogram buckets={cap.amountDistribution} />
             </div>
           </div>
@@ -171,7 +171,7 @@ export async function CapTab({
               icon={PieChart}
               title="Bonus / deposit ratio distribution"
             />
-            <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
               {ratio && ratio.totalDeposits > 0 ? (
                 <>
                   <RatioBucketsBars buckets={ratio.ratioBuckets} />
@@ -211,7 +211,7 @@ export async function CapTab({
         <div className="grid gap-4 xl:grid-cols-2">
           <div className="space-y-3">
             <SectionHeading icon={Crown} title="Top cap hitters (by count)" />
-            <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
               {cap.topCapHitters.length > 0 ? (
                 <TopCapHittersTable rows={cap.topCapHitters} />
               ) : (
@@ -229,7 +229,7 @@ export async function CapTab({
               icon={ArrowUpRight}
               title={`Biggest cap deposits (${formatCurrency(cap.capValue)} bonus)`}
             />
-            <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
               {cap.biggestCapDeposits.length > 0 ? (
                 <BiggestCapDepositsTable rows={cap.biggestCapDeposits} />
               ) : (

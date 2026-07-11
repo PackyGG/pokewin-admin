@@ -156,7 +156,7 @@ export async function SignupTab({
       {extras.signupSources.length > 0 && (
         <div className="space-y-3">
           <SectionHeading icon={PieChart} title="Signup source distribution" />
-          <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+          <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
             <p className="text-[11px] text-muted-foreground">
               Auth provider breakdown for the signup cohort.
             </p>
@@ -202,7 +202,7 @@ export async function SignupTab({
               icon={Globe2}
               title="Country distribution of claimants"
             />
-            <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
               <div className="space-y-1.5">
                 {extras.countryDistribution.map((c) => (
                   <div
@@ -231,7 +231,7 @@ export async function SignupTab({
           </div>
           <div className="space-y-3">
             <SectionHeading icon={Clock} title="Claim hour-of-day (UTC)" />
-            <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
               <p className="text-[11px] text-muted-foreground">
                 When this cohort claims their signup bonus.
               </p>
@@ -281,7 +281,7 @@ function FunnelPanel({
     },
   ];
   return (
-    <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+    <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
       <p className="text-[11px] text-muted-foreground">
         Drop-off from signup through repeat deposit. Each bar is % of
         the signup cohort.

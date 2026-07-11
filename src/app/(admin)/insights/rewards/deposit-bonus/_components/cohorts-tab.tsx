@@ -283,7 +283,7 @@ export async function CohortsTab({
               />
             </div>
 
-            <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
               <NewVsReturningTable data={newRet} />
             </div>
           </div>
@@ -298,7 +298,7 @@ export async function CohortsTab({
               icon={Repeat}
               title={`Repeat-claimant segments — ${formatNumber(repeat.totalClaimants)} total claimants`}
             />
-            <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
               <RepeatSegmentsTable
                 segments={repeat.segments}
                 totalBonus={repeat.totalBonus}
@@ -354,7 +354,7 @@ export async function CohortsTab({
               />
             </div>
 
-            <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <div className="relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
               <TimeToClaimBuckets buckets={ttc.buckets} total={ttc.totalPaired} />
             </div>
           </div>

@@ -77,7 +77,7 @@ export function ChallengeCardSummaryPanel({
       />
 
       <div className="flex w-full flex-col gap-4 p-4 sm:flex-row sm:items-start sm:gap-5">
-        <div className="flex shrink-0 items-center justify-center self-center rounded-xl bg-gradient-to-b from-muted/50 to-muted/20 p-3 ring-1 ring-border/50 sm:w-[8.5rem]">
+        <div className="flex shrink-0 items-center justify-center self-center rounded-xl border bg-muted/30 p-3 sm:w-[8.5rem]">
           {summary.cardImageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
