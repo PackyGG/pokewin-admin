@@ -41,10 +41,7 @@ import {
   Coins,
   ShieldCheck,
   Activity,
-  ArrowDownToLine,
-  ArrowUpFromLine,
   Hourglass,
-  Banknote,
   Sparkles,
   Percent,
   Calendar,
@@ -268,7 +265,7 @@ export function UserViewModern({
   // this prop re-syncs the pill on every new server payload.
   initialTab: TabKey;
 }) {
-  const { user, balances, counts, capabilities } = data;
+  const { user, balances, capabilities } = data;
   const isAdmin = data.sessionRole === "admin";
   const canChangeUserRoles = capabilities.canChangeUserRoles;
   const router = useRouter();
@@ -380,13 +377,15 @@ export function UserViewModern({
         {/* Flat hero: solid bg-card + hairline border + a single very soft
             shadow. The gradient fill and the two corner-glow blobs were the
             layered depth noise the cleaner/flatter pilot removes. */}
-        <div className="p-4 sm:p-5">
+        <div className="p-3 sm:p-4">
           {/* Hero = balanced two-column header on lg+: identity on the LEFT,
               a compact KPI tile grid on the RIGHT. Below lg the two columns
               stack (identity, then tiles) so phones get a clean vertical
               flow. This keeps the hero SHORT — the tiles sit beside the
-              identity instead of adding a tall second block underneath. */}
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-6">
+              identity instead of adding a tall second block underneath.
+              Padding + gaps were tightened (owner 2026-07-11: hero read as
+              "too big") on top of the tile-count reduction below. */}
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:gap-5">
             <div className="flex min-w-0 flex-1 items-start gap-3 sm:gap-4">
               {/* Compact back-to-users button — tucked into the hero's
                   top-left (replaces the standalone back arrow from the
@@ -625,13 +624,19 @@ export function UserViewModern({
             </div>
 
             {/* KPI tiles — compact RIGHT column on lg+ (sits beside the
-                identity, keeping the hero short), full-width below lg. One
-                dense grid of EQUAL-WIDTH tiles: 2 cols on phone, 4 cols on
-                sm+/lg. Capped width on lg so the tiles stay tidy and don't
-                stretch the whole row. Deposits + Withdrawals counts are
-                consolidated into a single Dep/Wd tile so everything fits in
-                the grid with no wasted space. */}
-            <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4 lg:w-[clamp(28rem,42vw,40rem)] lg:shrink-0">
+                identity, keeping the hero short), full-width below lg. Five
+                equal-width tiles that fit in ONE row from sm+ up
+                (grid-cols-5), down from the previous 2-row / 8-cell grid.
+                Deposits/Withdrawals $ totals + counts were dropped from the
+                hero (owner 2026-07-11: "deposits / withdrawals i can also
+                see below on platform pl ... so its double data for
+                nothing") — both figures are already shown verbatim in the
+                Platform P&L panel (Deposited/Withdrawn) and the avg-deposit
+                figure in the Activity panel, further down the Overview tab.
+                This hero now only surfaces numbers that live nowhere else
+                on the page. On phone (2-col) the 5th tile spans the full
+                row so the last row never leaves a dangling empty cell. */}
+            <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-5 lg:w-[clamp(26rem,40vw,38rem)] lg:shrink-0">
               <KpiTile
                 label="Total Value"
                 value={heroMoney(totalValue)}
@@ -644,25 +649,6 @@ export function UserViewModern({
                 icon={pnl >= 0 ? TrendingUp : TrendingDown}
                 accent={pnl >= 0 ? "emerald" : "rose"}
               />
-              {/* Total Deposited + Total Withdrawn consolidated into ONE
-                  side-by-side tile (per owner request 2026-06-16) — same as
-                  the DepWdCountTile pattern but for $ totals. Deposit total
-                  on the left in emerald (cash flowing in = house gain in the
-                  moment), withdrawal total on the right in rose (user pulling
-                  money out = house loss per the house-POV finance convention
-                  in CLAUDE.md). Same numbers as before — `deposits` is
-                  balances.totalDeposited, `withdrawals` is
-                  balances.totalWithdrawn (userPnl helper, the canonical P&L
-                  source that also drives the dashboard's lifetime aggregates),
-                  so this view stays in lockstep with users-list / dashboard.
-                  Spans two grid columns so each half has the same visual
-                  weight as a standalone KpiTile. */}
-              <div className="col-span-2">
-                <DepWdTotalsTile
-                  depositLabel={heroMoney(deposits)}
-                  withdrawalLabel={heroMoney(withdrawals)}
-                />
-              </div>
               {/* Wager Left — weighted wager remaining before this user can
                   withdraw balance. Neutral info (cyan). Streamed so the
                   per-user wager read never blocks the identity hero. The
@@ -690,16 +676,6 @@ export function UserViewModern({
                   accent="cyan"
                 />
               )}
-              {/* Deposits & Withdrawals COUNTS consolidated into one tile —
-                  dep count (emerald, house money in) on the left, wd count
-                  (rose, user takes out) on the right, with the avg-deposit
-                  size as the sub. Keeps both real numbers but in a single
-                  cell so the grid stays compact. */}
-              <DepWdCountTile
-                deposits={counts.deposits}
-                withdrawals={counts.withdrawals}
-                avgDeposit={counts.avgDeposit}
-              />
               <KpiTile
                 label="Multiplier"
                 value={wagerMultiplier > 0 ? `${wagerMultiplier.toFixed(2)}×` : "—"}
@@ -707,12 +683,18 @@ export function UserViewModern({
                 icon={Coins}
                 accent="amber"
               />
-              <KpiTile
-                label="House Edge"
-                value={balances && balances.totalWagered > 0 ? `${houseEdge.toFixed(2)}%` : "—"}
-                icon={Percent}
-                accent="purple"
-              />
+              {/* Last tile — spans both mobile columns so a 5-tile grid on
+                  a 2-col phone layout ends on a full-width row instead of
+                  leaving one empty cell dangling next to it. Reverts to a
+                  normal single cell from sm+ where the grid is 5-wide. */}
+              <div className="col-span-2 sm:col-span-1">
+                <KpiTile
+                  label="House Edge"
+                  value={balances && balances.totalWagered > 0 ? `${houseEdge.toFixed(2)}%` : "—"}
+                  icon={Percent}
+                  accent="purple"
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -1102,120 +1084,6 @@ function KpiTile({
           {sub}
         </p>
       )}
-    </div>
-  );
-}
-
-// ───────────────────────────────────────────────────────────────────
-//  DEP / WD COUNT TILE — consolidated deposit + withdrawal COUNTS
-//
-//  Replaces the two separate "Deposits" / "Withdrawals" count tiles with a
-//  single dense cell so the hero KPI grid stays compact. Both real numbers
-//  are kept: deposit count (emerald — house money in) on the left,
-//  withdrawal count (rose — user takes out) on the right, with the average
-//  deposit size as the sub. Same container vocabulary as KpiTile (neutral
-//  card surface; the per-value emerald/rose carries the house-POV signal).
-// ───────────────────────────────────────────────────────────────────
-
-function DepWdCountTile({
-  deposits,
-  withdrawals,
-  avgDeposit,
-}: {
-  deposits: number;
-  withdrawals: number;
-  avgDeposit: number;
-}) {
-  return (
-    <div className="h-full w-full min-w-0 rounded-lg border bg-card px-2.5 py-2">
-      <div className="flex items-center gap-1.5">
-        <Coins className="size-3 shrink-0 text-muted-foreground" />
-        <span className="truncate text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-          Dep / Wd
-        </span>
-      </div>
-      <div className="mt-0.5 flex items-center gap-2">
-        <span
-          className="inline-flex items-center gap-0.5 text-sm font-bold tabular-nums leading-tight text-emerald-600 dark:text-emerald-400 sm:text-base"
-          title={`${deposits} deposits`}
-        >
-          <ArrowDownToLine className="size-3 shrink-0 text-emerald-500" />
-          {deposits}
-        </span>
-        <span className="text-muted-foreground/50">/</span>
-        <span
-          className="inline-flex items-center gap-0.5 text-sm font-bold tabular-nums leading-tight text-rose-600 dark:text-rose-400 sm:text-base"
-          title={`${withdrawals} withdrawals`}
-        >
-          <ArrowUpFromLine className="size-3 shrink-0 text-rose-500" />
-          {withdrawals}
-        </span>
-      </div>
-      <p className="mt-1 truncate text-[10px] text-muted-foreground">
-        {formatCurrency(avgDeposit)} avg dep
-      </p>
-    </div>
-  );
-}
-
-// ───────────────────────────────────────────────────────────────────
-//  DEP / WD TOTALS TILE — consolidated deposit + withdrawal $ TOTALS
-//
-//  Merges the previously-separate "Total Deposited" and "Total Withdrawn"
-//  KpiTiles into a single side-by-side tile (per owner 2026-06-16) so the
-//  two halves of the user's cash flow read as one unit, not two competing
-//  cells. Deposit total on the left in emerald (house cash-in), withdrawal
-//  total on the right in rose (user cashing out), matching the house-POV
-//  finance convention in CLAUDE.md (see also: DepWdCountTile, which does
-//  the same consolidation for COUNTS). Spans 2 grid columns so each half
-//  has the same visual weight as a standalone KpiTile.
-//
-//  Pre-formatted strings (depositLabel / withdrawalLabel) are passed in so
-//  this stays a pure presentational component and the parent keeps using
-//  its local heroMoney() compact-vs-full formatter.
-// ───────────────────────────────────────────────────────────────────
-
-function DepWdTotalsTile({
-  depositLabel,
-  withdrawalLabel,
-}: {
-  depositLabel: string;
-  withdrawalLabel: string;
-}) {
-  return (
-    <div className="h-full w-full min-w-0 rounded-lg border bg-card px-2.5 py-2">
-      <div className="flex items-center gap-1.5">
-        <Banknote className="size-3 shrink-0 text-muted-foreground" />
-        <span className="truncate text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-          Deposits / Withdrawals
-        </span>
-      </div>
-      <div className="mt-0.5 grid grid-cols-2 gap-2">
-        <div className="min-w-0">
-          <div
-            className="inline-flex max-w-full items-center gap-0.5 text-sm font-bold tabular-nums leading-tight text-emerald-600 dark:text-emerald-400 sm:text-base"
-            title={`Total deposited: ${depositLabel}`}
-          >
-            <ArrowDownToLine className="size-3 shrink-0 text-emerald-500" />
-            <span className="truncate">{depositLabel}</span>
-          </div>
-          <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-            deposited
-          </p>
-        </div>
-        <div className="min-w-0">
-          <div
-            className="inline-flex max-w-full items-center gap-0.5 text-sm font-bold tabular-nums leading-tight text-rose-600 dark:text-rose-400 sm:text-base"
-            title={`Total withdrawn: ${withdrawalLabel}`}
-          >
-            <ArrowUpFromLine className="size-3 shrink-0 text-rose-500" />
-            <span className="truncate">{withdrawalLabel}</span>
-          </div>
-          <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-            withdrawn
-          </p>
-        </div>
-      </div>
     </div>
   );
 }
