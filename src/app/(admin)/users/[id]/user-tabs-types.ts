@@ -538,6 +538,14 @@ export type InventoryItem = {
   rarity: string | null;
   value: number;
   sourceType: string;
+  /**
+   * The originating `game_sessions.id` for pack/reward/battle/upgrader rows
+   * — powers the "view origin" click-through (see getInventoryItemOrigin).
+   * Null for `exchange` (never set on that source type) and set-but-
+   * unresolvable for `raffle` (references something other than a game
+   * session) — the origin lookup degrades gracefully in both cases.
+   */
+  sourceId: string | null;
   obtainedAt: string;
   soldAt: string | null;
   exchangedAt: string | null;

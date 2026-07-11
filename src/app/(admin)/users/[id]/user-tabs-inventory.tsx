@@ -30,9 +30,11 @@ import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { CardImage } from "@/components/card-image";
 import { EmptyState } from "@/components/empty-state";
 import { InlineError } from "@/components/entity-surface/inline-error";
+import { getRarityDot, getRarityRing } from "@/components/card-tile";
 import { fetchInventory } from "./actions";
 import { InventoryItemDeleteDialog } from "./inventory-item-delete-dialog";
 import { InventoryBulkDeleteDialog } from "./inventory-bulk-delete-dialog";
+import { InventoryItemOriginSheet } from "./inventory-item-origin-sheet";
 import {
   inventorySourceLabel,
   type InventoryItem,
@@ -83,6 +85,11 @@ export const InventoryGrid = React.memo(function InventoryGrid({
   );
   const [loading, setLoading] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<InventoryItem | null>(null);
+  // Item whose ORIGIN sheet is open (click-to-view "where did this come
+  // from"). Separate from deleteTarget so the two overlays never fight over
+  // one piece of state. The origin fetch itself is lazy — see
+  // InventoryItemOriginSheet / getInventoryItemOrigin.
+  const [originTarget, setOriginTarget] = useState<InventoryItem | null>(null);
   // Multi-select for bulk removal. Holds inventory-item ids + their values
   // (value kept so the bulk dialog can show a total without a re-fetch).
   // Persists across pages so an admin can sweep a large inventory.
@@ -381,11 +388,19 @@ export const InventoryGrid = React.memo(function InventoryGrid({
           </div>
         )}
         {(() => {
+          // Compact, modern tile — mirrors the shared <CardTile/> visual
+          // vocabulary used on /cards and /packs/[id] (rarity accent line +
+          // ring instead of a bulky color pill, calmer 5/7 image frame) but
+          // with a bigger, higher-contrast name + price footer, since those
+          // were the two fields the owner called out as "too small and
+          // hidden" on the old bulky/edge-to-edge tile. The whole tile is a
+          // button that opens the origin sheet (click-to-view where this
+          // came from); the checkbox/delete overlays sit OUTSIDE that button
+          // (siblings, not descendants) so selecting/removing never triggers
+          // the origin click — same non-conflicting overlay arrangement the
+          // old markup already used, no stopPropagation needed.
           const renderCard = (item: InventoryItem) => (
-            <div
-              key={item.id}
-              className="group relative rounded-lg border bg-card overflow-hidden transition-shadow hover:shadow-md"
-            >
+            <div key={item.id} className="group relative">
               {canSelect && (
                 <span
                   className="absolute left-1 top-1 z-10 rounded bg-background/80 p-0.5 backdrop-blur-sm"
@@ -410,46 +425,66 @@ export const InventoryGrid = React.memo(function InventoryGrid({
                   <Trash2 className="size-3.5" />
                 </Button>
               )}
-              <div className="aspect-[2/3] relative bg-muted">
-                <CardImage
-                  src={item.imageUrl}
-                  alt={item.cardName}
-                  className="size-full rounded-t-lg"
-                />
-                {item.rarity && (
-                  <span
-                    className={`absolute bottom-1 left-1 rounded px-1 py-0.5 text-[10px] font-semibold leading-none shadow backdrop-blur-sm ${INVENTORY_RARITY_COLORS[item.rarity.toLowerCase()] ?? "bg-black/80 text-white"}`}
-                  >
-                    {item.rarity}
-                  </span>
+              <button
+                type="button"
+                onClick={() => setOriginTarget(item)}
+                className={cn(
+                  "flex w-full flex-col overflow-hidden rounded-lg border bg-card/50 text-left",
+                  "transition-all duration-200 motion-safe:hover:-translate-y-0.5 hover:shadow-md hover:bg-card hover:border-primary/40",
                 )}
-              </div>
-              <div className="p-1 space-y-0">
-                <p
-                  className="text-[10px] font-medium truncate"
-                  title={item.cardName}
-                >
-                  {item.cardName}
-                </p>
-                <p className="text-xs font-medium text-muted-foreground">
-                  {formatCurrency(item.value)}
-                </p>
-                {/* Provenance badge — where this card came from. `reward` =
-                    granted by a reward / sign-up / daily pack (full per-pack
-                    trail on the Rewards tab); tinted purple to stand out from
-                    bought/won cards. */}
-                <span
+                aria-label={`View origin of ${item.cardName}`}
+              >
+                <div
+                  className={cn("h-0.5 w-full", getRarityDot(item.rarity))}
+                  aria-hidden
+                />
+                <div
                   className={cn(
-                    "mt-0.5 inline-block max-w-full truncate rounded px-1 py-0 text-[9px] font-medium leading-tight",
-                    item.sourceType === "reward"
-                      ? "bg-purple-500/15 text-purple-600 dark:text-purple-400"
-                      : "bg-muted text-muted-foreground",
+                    "relative overflow-hidden bg-muted/40 ring-1",
+                    getRarityRing(item.rarity),
                   )}
-                  title={`Source: ${inventorySourceLabel(item.sourceType)}`}
+                  style={{ aspectRatio: "5 / 7" }}
                 >
-                  {inventorySourceLabel(item.sourceType)}
-                </span>
-              </div>
+                  <CardImage
+                    src={item.imageUrl}
+                    alt={item.cardName}
+                    className="absolute inset-0 size-full motion-safe:transition-transform motion-safe:duration-200 motion-safe:group-hover:scale-[1.03]"
+                  />
+                </div>
+                <div className="flex flex-col gap-1 px-1.5 py-1.5">
+                  <p
+                    className="truncate text-[12px] font-semibold leading-tight"
+                    title={item.cardName}
+                  >
+                    {item.cardName}
+                  </p>
+                  <div className="flex items-center justify-between gap-1.5">
+                    <span className="text-sm font-bold tabular-nums">
+                      {formatCurrency(item.value)}
+                    </span>
+                    {item.rarity && (
+                      <span className="shrink-0 truncate text-[9px] font-medium uppercase text-muted-foreground">
+                        {item.rarity}
+                      </span>
+                    )}
+                  </div>
+                  {/* Provenance badge — where this card came from. `reward` =
+                      granted by a reward / sign-up / daily pack (full per-pack
+                      trail on the Rewards tab); tinted purple to stand out from
+                      bought/won cards. */}
+                  <span
+                    className={cn(
+                      "w-fit max-w-full truncate rounded px-1 py-0 text-[9px] font-medium leading-tight",
+                      item.sourceType === "reward"
+                        ? "bg-purple-500/15 text-purple-600 dark:text-purple-400"
+                        : "bg-muted text-muted-foreground",
+                    )}
+                    title={`Source: ${inventorySourceLabel(item.sourceType)}`}
+                  >
+                    {inventorySourceLabel(item.sourceType)}
+                  </span>
+                </div>
+              </button>
             </div>
           );
 
@@ -509,6 +544,14 @@ export const InventoryGrid = React.memo(function InventoryGrid({
             }}
           />
         )}
+        <InventoryItemOriginSheet
+          userId={userId}
+          item={originTarget}
+          open={Boolean(originTarget)}
+          onOpenChange={(open) => {
+            if (!open) setOriginTarget(null);
+          }}
+        />
       </CardContent>
     </Card>
   );

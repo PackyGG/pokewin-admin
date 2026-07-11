@@ -2850,6 +2850,94 @@ export async function getGameSessionDetails(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Inventory item origin — lazy-loaded "where did this come from" detail
+// ---------------------------------------------------------------------------
+//
+// Powers the click-to-view origin sheet on the Inventory tab's "Current
+// Inventory" grid (user-tabs-inventory.tsx / inventory-item-origin-sheet.tsx).
+// Deliberately called ONLY when an admin clicks a single card — never
+// fetched for the whole grid (Active-Timeframe-Only / no eager loading).
+//
+// `user_inventory.source_id` is the originating `game_sessions.id` for
+// pack / reward / battle / upgrader rows — verified read-only against prod
+// (2026-07-11): source_id resolves to a real game_sessions row for 100% of
+// `pack`/`battle` rows and 81458/81459 (~99.9%) of `reward` rows. `exchange`
+// rows NEVER carry a source_id (1742/1742 null in prod) — a card exchange is
+// a value-neutral item swap with no linked session, consistent with
+// CLAUDE.md's Voucher=Card model (exchanging isn't a house event either).
+// `raffle` rows DO carry a source_id (26/26), but it does NOT reference
+// `game_sessions` (0/26 resolved) — no verified join exists for raffle
+// origins in this codebase, so a raffle item degrades to the same "no
+// linked opening session" fallback as exchange rather than fabricating one.
+export type InventoryItemOrigin = {
+  itemId: string;
+  cardName: string;
+  imageUrl: string | null;
+  rarity: string | null;
+  value: number;
+  sourceType: string;
+  obtainedAt: string;
+  /** Probability of pulling this exact card at the time it was obtained
+   *  (`user_inventory.pull_chance`), when recorded on the row. */
+  pullChance: number | null;
+  /**
+   * Resolved game-session detail (pack/battle breakdown, bet amount, cards
+   * pulled) — reuses the EXACT same lookup + ownership guard the
+   * transaction-detail modal already uses for gaming rows. Null when the
+   * source type has no linked session (exchange/raffle, per the audit
+   * above) or the session row could not be resolved.
+   */
+  session: Awaited<ReturnType<typeof getGameSessionDetails>>;
+};
+
+export async function getInventoryItemOrigin(
+  userId: string,
+  itemId: string,
+): Promise<InventoryItemOrigin | null> {
+  const db = await getDb();
+  await requirePageAccess("/users");
+
+  const item = await db.user_inventory.findUnique({
+    where: { id: itemId },
+    select: {
+      id: true,
+      user_id: true,
+      card_id: true,
+      value_at_obtained: true,
+      source_type: true,
+      source_id: true,
+      obtained_at: true,
+      pull_chance: true,
+    },
+  });
+  // Ownership check — same convention as getGameSessionDetails: compare
+  // against the URL's userId so a wrong-page click returns "not found"
+  // rather than leaking another user's item across a guessed id.
+  if (!item || item.user_id !== userId) return null;
+
+  const card = await db.cards.findUnique({
+    where: { id: item.card_id },
+    select: { name: true, image_url: true, rarity: true },
+  });
+
+  const session = item.source_id
+    ? await getGameSessionDetails(item.source_id, userId)
+    : null;
+
+  return {
+    itemId: item.id,
+    cardName: card?.name ?? "Unknown",
+    imageUrl: card?.image_url ?? null,
+    rarity: card?.rarity ?? null,
+    value: Number(item.value_at_obtained),
+    sourceType: item.source_type,
+    obtainedAt: item.obtained_at.toISOString(),
+    pullChance: item.pull_chance !== null ? Number(item.pull_chance) : null,
+    session,
+  };
+}
+
 const withdrawalLimitsSchema = z.object({
   userId: z.string(),
   currencyLimitAmount: z.number().nullable(),
