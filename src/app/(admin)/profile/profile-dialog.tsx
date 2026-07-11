@@ -28,14 +28,17 @@ import { PasskeysCard } from "./passkeys-card";
 // preferences / password) are unchanged and imported straight into the
 // forms below.
 //
-// Three stacked, scrollable sections (Profile · Preferences · Security).
-// Stacked-not-tabbed is deliberate: it stays legible and overflow-free at
-// any width from ~360px phones up to large desktops, where horizontal tab
-// strips get cramped. The shared <DialogContent> already provides the
-// mobile bottom-sheet / desktop centered-modal geometry, the scroll
-// container (`overflow-y-auto`, capped at 90vh / 85vh), and the safe-area
-// padding; here we only widen the desktop cap to `sm:max-w-lg` so the
-// preference grids (3-up theme / date-format tiles) have room to breathe.
+// Three sections (Profile · Preferences · Security). On large screens they
+// lay out side-by-side — Profile + Security share a two-column row and the
+// wider Preferences section (4-up theme tiles, timezone picker) spans the
+// full width below — so the dialog reads as a compact panel instead of one
+// long scroll. Below lg it collapses back to a single legible column,
+// overflow-free from ~360px phones up. The shared <DialogContent> provides
+// the mobile bottom-sheet / desktop centered-modal geometry, the scroll
+// container (`overflow-y-auto`, capped at 90vh / 85vh) and the safe-area
+// padding; here we widen the desktop cap (`sm:max-w-4xl`) to make room for
+// the two-column layout and lift the surface to `bg-card` for a brighter,
+// crisper panel.
 // ---------------------------------------------------------------------------
 
 export type ProfileDialogSection = "profile" | "security";
@@ -87,10 +90,13 @@ export function ProfileDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        // Widen the desktop cap from the default `sm:max-w-sm` so the
-        // 3-column preference grids fit without wrapping awkwardly. Mobile
-        // stays the full-width bottom sheet from the base component.
-        className="sm:max-w-lg gap-0"
+        // Wide desktop cap so the sections sit side-by-side (Profile +
+        // Security in a two-column row, Preferences full-width below) instead
+        // of one tall scroll. `bg-card` + `ring-border` lift the surface a
+        // shade above the page for a brighter, crisper panel — both semantic
+        // tokens, so light / dark / grailed all stay correct. Mobile stays
+        // the full-width bottom sheet from the base component.
+        className="sm:max-w-4xl gap-0 bg-card ring-border"
       >
         <DialogHeader className="pb-2">
           <DialogTitle className="flex items-center gap-2">
@@ -124,10 +130,15 @@ export function ProfileDialog({
           </div>
         )}
 
-        {/* Stacked sections. `min-w-0` on the wrapper + each section keeps
-            long content (emails, IANA zone strings) from forcing horizontal
-            overflow at narrow widths. */}
-        <div className="mt-4 flex min-w-0 flex-col gap-7">
+        {/* Side-by-side layout. On lg+ the two narrow-friendly sections
+            (Profile + Security) share a two-column row and the wider
+            Preferences section spans the full width beneath them — far less
+            vertical scrolling than the old single stack. Below lg everything
+            collapses back to one column with dividers between sections.
+            `min-w-0` on the grid + each section keeps long content (emails,
+            IANA zone strings) from forcing horizontal overflow at narrow
+            widths. */}
+        <div className="mt-4 grid min-w-0 grid-cols-1 gap-x-10 gap-y-7 lg:grid-cols-2 lg:items-start">
           <section className="min-w-0 space-y-3">
             <SectionHeading icon={User} title="Profile" />
             <ProfileForm
@@ -141,17 +152,9 @@ export function ProfileDialog({
             />
           </section>
 
-          <div className="border-t border-border" />
-
-          <section className="min-w-0 space-y-3">
-            <SectionHeading icon={Settings} title="Preferences" />
-            <PreferencesForm
-              initial={data.preferences}
-              profileFieldsAvailable={data.profileFieldsAvailable}
-            />
-          </section>
-
-          <div className="border-t border-border" />
+          {/* Divider between Profile and Security only while they're stacked
+              (below lg); on lg the column gap separates them instead. */}
+          <div className="border-t border-border lg:hidden" />
 
           <section ref={securityRef} className="min-w-0 scroll-mt-4 space-y-3">
             <SectionHeading icon={KeyRound} title="Security" />
@@ -167,6 +170,17 @@ export function ProfileDialog({
                 <PasskeysCard active={open} />
               </div>
             </div>
+          </section>
+
+          {/* Full-width divider above the wide Preferences section. */}
+          <div className="border-t border-border lg:col-span-2" />
+
+          <section className="min-w-0 space-y-3 lg:col-span-2">
+            <SectionHeading icon={Settings} title="Preferences" />
+            <PreferencesForm
+              initial={data.preferences}
+              profileFieldsAvailable={data.profileFieldsAvailable}
+            />
           </section>
         </div>
       </DialogContent>

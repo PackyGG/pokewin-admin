@@ -85,34 +85,38 @@ export function PasswordForm() {
         />
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="new-password">New password</Label>
-        <Input
-          id="new-password"
-          type="password"
-          autoComplete="new-password"
-          value={newPassword}
-          onChange={(e) => setNewPassword(e.target.value)}
-          minLength={MIN_PASSWORD_LENGTH}
-          disabled={saving}
-        />
-        <p className="text-xs text-muted-foreground">
-          At least {MIN_PASSWORD_LENGTH} characters. Must differ from your
-          current password.
-        </p>
-      </div>
+      {/* New + confirm sit side-by-side on wider layouts (the profile dialog
+          hands this form a roomy column) and stack on phones. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="new-password">New password</Label>
+          <Input
+            id="new-password"
+            type="password"
+            autoComplete="new-password"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            minLength={MIN_PASSWORD_LENGTH}
+            disabled={saving}
+          />
+          <p className="text-xs text-muted-foreground">
+            At least {MIN_PASSWORD_LENGTH} characters. Must differ from your
+            current password.
+          </p>
+        </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="confirm-password">Confirm new password</Label>
-        <Input
-          id="confirm-password"
-          type="password"
-          autoComplete="new-password"
-          value={confirmPassword}
-          onChange={(e) => setConfirmPassword(e.target.value)}
-          minLength={MIN_PASSWORD_LENGTH}
-          disabled={saving}
-        />
+        <div className="space-y-2">
+          <Label htmlFor="confirm-password">Confirm new password</Label>
+          <Input
+            id="confirm-password"
+            type="password"
+            autoComplete="new-password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            minLength={MIN_PASSWORD_LENGTH}
+            disabled={saving}
+          />
+        </div>
       </div>
 
       <div className="space-y-2">
