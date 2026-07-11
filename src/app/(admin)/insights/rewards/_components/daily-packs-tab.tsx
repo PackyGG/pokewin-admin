@@ -28,6 +28,7 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { ForecastLineChart } from "./forecast-line-chart";
+import { DailyPackBreakdownRow } from "./daily-pack-row";
 
 /**
  * Daily Packs tab on /insights/rewards.
@@ -250,35 +251,7 @@ function PerPackBreakdown({
         const share =
           grandTotal > 0 ? (pack.giveawayPayout / grandTotal) * 100 : 0;
         return (
-          <div key={pack.packId} className="rounded-lg border bg-muted/20 p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="truncate text-sm font-medium">
-                  {pack.name}
-                </span>
-                <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                  · {formatNumber(pack.opens)} opens
-                </span>
-                <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                  · {formatNumber(pack.claimers)} users
-                </span>
-              </div>
-              <span className="shrink-0 text-sm font-medium tabular-nums text-rose-600 dark:text-rose-400">
-                {formatCurrency(pack.giveawayPayout)}
-              </span>
-            </div>
-            <div className="mt-2 flex items-center gap-2">
-              <div className="h-2 flex-1 overflow-hidden rounded-sm bg-muted">
-                <div
-                  className="h-full rounded-sm bg-rose-500/60 transition-all"
-                  style={{ width: `${share}%` }}
-                />
-              </div>
-              <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                {share.toFixed(1)}%
-              </span>
-            </div>
-          </div>
+          <DailyPackBreakdownRow key={pack.packId} pack={pack} share={share} />
         );
       })}
     </div>

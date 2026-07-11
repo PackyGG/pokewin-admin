@@ -64,6 +64,9 @@ export type DailyPackRow = {
   packId: string;
   name: string;
   slug: string;
+  /** `packs.image_url` — same thumbnail source the /packs list uses. Null
+   *  when the pack has no image set; the UI falls back to a placeholder. */
+  imageUrl: string | null;
   /** Distinct reward-pack opens (game_sessions) in the window. */
   opens: number;
   /** Distinct users who opened this pack in the window. */
@@ -145,6 +148,7 @@ async function computeDailyPacksGiveaway(
       pack_id: string;
       name: string;
       slug: string;
+      image_url: string | null;
       opens: string;
       claimers: string;
       giveaway_payout: string;
@@ -177,6 +181,7 @@ async function computeDailyPacksGiveaway(
           p.id::text AS pack_id,
           p.name AS name,
           p.slug AS slug,
+          p.image_url AS image_url,
           COALESCE((SELECT COUNT(DISTINCT rc.session_id) FROM reward_cards rc WHERE rc.pack_id = p.id), 0)::text AS opens,
           COALESCE((SELECT COUNT(DISTINCT rc.user_id) FROM reward_cards rc WHERE rc.pack_id = p.id), 0)::text AS claimers,
           COALESCE((SELECT SUM(rc.card_value) FROM reward_cards rc WHERE rc.pack_id = p.id), 0)::text AS giveaway_payout,
@@ -259,6 +264,7 @@ async function computeDailyPacksGiveaway(
         packId: r.pack_id,
         name: r.name,
         slug: r.slug,
+        imageUrl: r.image_url,
         opens: Number(r.opens),
         claimers: Number(r.claimers),
         giveawayPayout,
