@@ -420,75 +420,6 @@ export function AppSidebar({
           <img src="/icon.png" alt="Pokewin" className="h-7 w-7 hidden group-data-[collapsible=icon]:block" />
         </Link>
       </SidebarHeader>
-      {/* Creator Hub portal — sits directly below the logo, above the
-          Overview group. A distinct accent "switch to a sub-app" affordance
-          (not a normal nav link): pink gradient, sparkle mark, nudging
-          arrow. Visibility is decided SERVER-SIDE (canEnterCreatorHub prop):
-          username `motha` OR a per-role ADMIN-DB toggle (both default off),
-          identical to the /creator-hub route guard. The route itself is
-          independently gated regardless. In icon-collapsed mode it shrinks
-          to a centered pink mark with a hover tooltip. */}
-      {canEnterCreatorHub && (
-        <div className="px-2 pt-2 group-data-[collapsible=icon]:px-0">
-          <Link
-            href="/creator-hub"
-            onClick={handleNavTap}
-            title="Switch to Creator Hub"
-            className={cn(
-              "group/portal relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-pink-500/30 bg-gradient-to-r from-pink-500/15 via-pink-500/10 to-transparent px-3 py-2.5 outline-none",
-              "transition-colors hover:border-pink-500/50 hover:from-pink-500/25 hover:via-pink-500/15 focus-visible:ring-2 focus-visible:ring-pink-500/40",
-              "group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0",
-            )}
-          >
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-pink-500/20 text-pink-600 ring-1 ring-inset ring-pink-500/30 dark:text-pink-400 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:rounded-lg">
-              <Megaphone className="size-4" />
-            </span>
-            <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
-              <span className="block truncate text-xs font-semibold text-pink-600 dark:text-pink-300">
-                Switch to Creator Hub
-              </span>
-              <span className="block truncate text-[11px] text-muted-foreground">
-                CM team workspace
-              </span>
-            </span>
-            <ArrowRight className="size-4 shrink-0 text-pink-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/portal:translate-x-0.5" />
-          </Link>
-        </div>
-      )}
-      {/* Pack Studio portal — sits directly beside the Creator Hub portal, a
-          second "switch to a sub-app" affordance with its own violet accent.
-          Visibility is decided SERVER-SIDE (canEnterPackStudio prop): an owner
-          OR a per-role ADMIN-DB toggle (default off), identical to the
-          /pack-studio route guard. The route itself is independently gated
-          regardless. In icon-collapsed mode it shrinks to a centered violet
-          mark with a hover tooltip. */}
-      {canEnterPackStudio && (
-        <div className="px-2 pt-2 group-data-[collapsible=icon]:px-0">
-          <Link
-            href="/pack-studio"
-            onClick={handleNavTap}
-            title="Switch to Pack Studio"
-            className={cn(
-              "group/studio relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-violet-500/30 bg-gradient-to-r from-violet-500/15 via-violet-500/10 to-transparent px-3 py-2.5 outline-none",
-              "transition-colors hover:border-violet-500/50 hover:from-violet-500/25 hover:via-violet-500/15 focus-visible:ring-2 focus-visible:ring-violet-500/40",
-              "group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0",
-            )}
-          >
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-violet-500/20 text-violet-600 ring-1 ring-inset ring-violet-500/30 dark:text-violet-400 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:rounded-lg">
-              <Package className="size-4" />
-            </span>
-            <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
-              <span className="block truncate text-xs font-semibold text-violet-600 dark:text-violet-300">
-                Switch to Pack Studio
-              </span>
-              <span className="block truncate text-[11px] text-muted-foreground">
-                Pack design workspace
-              </span>
-            </span>
-            <ArrowRight className="size-4 shrink-0 text-violet-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/studio:translate-x-0.5" />
-          </Link>
-        </div>
-      )}
       <SidebarContent>
         {groupsWithVisibility.map((group) => {
           if (group.creatorOnly && !isCreator) return null;
@@ -678,6 +609,75 @@ export function AppSidebar({
               );
             })}
           </SidebarMenu>
+        )}
+        {/* Creator Hub portal — sits in the sidebar footer, directly above the
+            Theme row. A distinct accent "switch to a sub-app" affordance (not a
+            normal nav link): pink gradient, megaphone mark, nudging arrow.
+            Visibility is decided SERVER-SIDE (canEnterCreatorHub prop): username
+            `motha` OR a per-role ADMIN-DB toggle (both default off), identical to
+            the /creator-hub route guard. The route itself is independently gated
+            regardless. In icon-collapsed mode it shrinks to a centered pink mark
+            with a hover tooltip. */}
+        {canEnterCreatorHub && (
+          <div className="px-2 group-data-[collapsible=icon]:px-0">
+            <Link
+              href="/creator-hub"
+              onClick={handleNavTap}
+              title="Switch to Creator Hub"
+              className={cn(
+                "group/portal relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-pink-500/30 bg-gradient-to-r from-pink-500/15 via-pink-500/10 to-transparent px-3 py-2.5 outline-none",
+                "transition-colors hover:border-pink-500/50 hover:from-pink-500/25 hover:via-pink-500/15 focus-visible:ring-2 focus-visible:ring-pink-500/40",
+                "group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0",
+              )}
+            >
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-pink-500/20 text-pink-600 ring-1 ring-inset ring-pink-500/30 dark:text-pink-400 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:rounded-lg">
+                <Megaphone className="size-4" />
+              </span>
+              <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+                <span className="block truncate text-xs font-semibold text-pink-600 dark:text-pink-300">
+                  Switch to Creator Hub
+                </span>
+                <span className="block truncate text-[11px] text-muted-foreground">
+                  CM team workspace
+                </span>
+              </span>
+              <ArrowRight className="size-4 shrink-0 text-pink-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/portal:translate-x-0.5" />
+            </Link>
+          </div>
+        )}
+        {/* Pack Studio portal — sits directly below the Creator Hub portal in
+            the footer, a second "switch to a sub-app" affordance with its own
+            violet accent. Visibility is decided SERVER-SIDE (canEnterPackStudio
+            prop): an owner OR a per-role ADMIN-DB toggle (default off), identical
+            to the /pack-studio route guard. The route itself is independently
+            gated regardless. In icon-collapsed mode it shrinks to a centered
+            violet mark with a hover tooltip. */}
+        {canEnterPackStudio && (
+          <div className="px-2 group-data-[collapsible=icon]:px-0">
+            <Link
+              href="/pack-studio"
+              onClick={handleNavTap}
+              title="Switch to Pack Studio"
+              className={cn(
+                "group/studio relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-violet-500/30 bg-gradient-to-r from-violet-500/15 via-violet-500/10 to-transparent px-3 py-2.5 outline-none",
+                "transition-colors hover:border-violet-500/50 hover:from-violet-500/25 hover:via-violet-500/15 focus-visible:ring-2 focus-visible:ring-violet-500/40",
+                "group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0",
+              )}
+            >
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-violet-500/20 text-violet-600 ring-1 ring-inset ring-violet-500/30 dark:text-violet-400 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:rounded-lg">
+                <Package className="size-4" />
+              </span>
+              <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+                <span className="block truncate text-xs font-semibold text-violet-600 dark:text-violet-300">
+                  Switch to Pack Studio
+                </span>
+                <span className="block truncate text-[11px] text-muted-foreground">
+                  Pack design workspace
+                </span>
+              </span>
+              <ArrowRight className="size-4 shrink-0 text-violet-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/studio:translate-x-0.5" />
+            </Link>
+          </div>
         )}
         <div className="flex items-center justify-between px-2 group-data-[collapsible=icon]:justify-center">
           <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground group-data-[collapsible=icon]:hidden">Theme</span>

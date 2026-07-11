@@ -14,10 +14,10 @@ import {
   PageHero,
   PageHeroIdentity,
   SectionHeading,
-  KpiTile,
 } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatDateTime, formatNumber } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
+import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { getUsersWithTag } from "@/lib/queries/user-tags";
 
 export const metadata = { title: "VIPs" };
@@ -67,13 +67,44 @@ export default async function VipsPage({
   );
 }
 
+/**
+ * House-POV PnL cell — mirrors `PnlCell` in `/users`'s
+ * `src/app/(admin)/users/columns.tsx` exactly: user-perspective sign
+ * (positive = user in profit = house liability → rose; negative = user
+ * down → emerald), same "+"/"-" prefix via `formatCurrency`.
+ */
+function PnlCell({ value }: { value: number | null }) {
+  if (value === null) {
+    return <span className="tabular-nums text-muted-foreground">—</span>;
+  }
+  const isUserProfit = value > 0;
+  const isUserLoss = value < 0;
+  return (
+    <span
+      className={cn(
+        "font-medium tabular-nums",
+        isUserProfit && "text-rose-400",
+        isUserLoss && "text-emerald-400",
+      )}
+    >
+      {value >= 0 ? "+" : ""}
+      {formatCurrency(value)}
+    </span>
+  );
+}
+
 async function VipsListSection({ offset }: { offset: number }) {
   const EMPTY: Awaited<ReturnType<typeof getUsersWithTag>> = {
     items: [],
     total: 0,
   };
   const result = await safeQuery(
-    () => getUsersWithTag("vip", { limit: LIMIT, offset }),
+    () =>
+      getUsersWithTag("vip", {
+        limit: LIMIT,
+        offset,
+        includeFinancials: true,
+      }),
     EMPTY,
     "vips.list",
     VIPS_LIST_TIMEOUT_MS,
@@ -83,18 +114,8 @@ async function VipsListSection({ offset }: { offset: number }) {
 
   return (
     <FadeIn className="space-y-6">
-      <div className="grid grid-cols-1 gap-3 sm:max-w-xs">
-        <KpiTile
-          label="Total VIPs"
-          value={formatNumber(total)}
-          sub="vip flags"
-          icon={Crown}
-          accent="purple"
-        />
-      </div>
-
       <div className="space-y-3">
-        <SectionHeading icon={Crown} title="Flagged accounts" />
+        <SectionHeading icon={Crown} title="VIP accounts" />
 
         {listFailed && (
           <div
@@ -132,12 +153,15 @@ async function VipsListSection({ offset }: { offset: number }) {
             </div>
           ) : (
             <div className="mt-4 overflow-x-auto">
-              <table className="w-full min-w-[640px] text-sm">
+              <table className="w-full min-w-[860px] text-sm">
                 <thead>
                   <tr className="border-b text-left text-xs text-muted-foreground">
                     <th className="pb-2 pr-4 font-medium">Username</th>
                     <th className="pb-2 pr-4 font-medium">Email</th>
-                    <th className="pb-2 pr-4 font-medium">Tagged by</th>
+                    <th className="pb-2 pr-4 font-medium">Lifetime PnL</th>
+                    <th className="pb-2 pr-4 font-medium">Deposits</th>
+                    <th className="pb-2 pr-4 font-medium">Withdrawals</th>
+                    <th className="pb-2 pr-4 font-medium">Country</th>
                     <th className="pb-2 font-medium">Tagged at</th>
                   </tr>
                 </thead>
@@ -155,8 +179,21 @@ async function VipsListSection({ offset }: { offset: number }) {
                       <td className="py-3 pr-4 text-muted-foreground">
                         {row.email ?? "—"}
                       </td>
+                      <td className="py-3 pr-4">
+                        <PnlCell value={row.pnl} />
+                      </td>
+                      <td className="py-3 pr-4 tabular-nums">
+                        {row.totalDeposited === null
+                          ? "—"
+                          : formatCurrency(row.totalDeposited)}
+                      </td>
+                      <td className="py-3 pr-4 tabular-nums">
+                        {row.totalWithdrawn === null
+                          ? "—"
+                          : formatCurrency(row.totalWithdrawn)}
+                      </td>
                       <td className="py-3 pr-4 text-muted-foreground">
-                        {row.setByAdminUsername ?? "—"}
+                        {row.country ?? row.countryCode ?? "—"}
                       </td>
                       <td className="py-3 text-muted-foreground">
                         {formatDateTime(row.taggedAt)}
@@ -247,7 +284,6 @@ function PaginationFooter({
 function VipsListSkeleton() {
   return (
     <div className="space-y-4">
-      <Skeleton className="h-[88px] max-w-xs rounded-xl" />
       <div className="rounded-2xl border bg-card p-4">
         <div className="flex items-center justify-between">
           <Skeleton className="h-4 w-32 rounded" />
