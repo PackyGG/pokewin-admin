@@ -488,8 +488,16 @@ export const InventoryGrid = React.memo(function InventoryGrid({
             </div>
           );
 
+          // Auto-fill + minmax instead of fixed breakpoint column-counts —
+          // the previous `lg:grid-cols-10` scaled each tile up to 1/10th of
+          // the container on wide admin monitors (200px+ tiles on an
+          // ultrawide), which is exactly the "still too big" the owner
+          // reported after the first redesign pass. A 92px floor caps the
+          // absolute tile size on ANY viewport width while still filling the
+          // row with more columns as the container grows — no breakpoint
+          // ever produces a tile bigger than ~92-130px.
           const gridClass =
-            "grid grid-cols-3 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-1.5";
+            "grid grid-cols-[repeat(auto-fill,minmax(92px,1fr))] gap-1.5";
 
           return (
             <>
