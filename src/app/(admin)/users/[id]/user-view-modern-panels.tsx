@@ -757,8 +757,6 @@ export function ModernPnlPanel({
       <div className="mt-4 space-y-0.5 border-t pt-3">
         <PanelRow label="Deposited" value={formatCurrency(deposits)} />
         <PanelRow label="Withdrawn" value={formatCurrency(withdrawals)} />
-        <PanelRow label="On-site balance" value={`-${formatCurrency(onSiteBalance)}`} />
-        <PanelRow label="Inventory value" value={`-${formatCurrency(inventoryValue)}`} />
         {vouchersValue > 0 ? (
           <PanelRow label="Unclaimed vouchers" value={`-${formatCurrency(vouchersValue)}`} />
         ) : null}
