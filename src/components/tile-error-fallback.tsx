@@ -77,8 +77,8 @@ export function TileErrorFallback({
       role="status"
       aria-live="polite"
       className={cn(
-        "surface-sheen relative overflow-hidden rounded-xl border border-amber-500/30 bg-amber-500/10",
-        isPanel ? "p-4 sm:p-5 sm:rounded-2xl" : "px-3 py-2.5 sm:px-4 sm:py-3",
+        "relative overflow-hidden border border-amber-500/30 bg-amber-500/10",
+        isPanel ? "rounded-xl p-4 sm:p-5" : "rounded-lg px-3 py-2.5 sm:px-4 sm:py-3",
         className,
       )}
     >

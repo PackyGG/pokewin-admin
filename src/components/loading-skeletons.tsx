@@ -72,7 +72,7 @@ export function PageHeroSkeleton({
 // ─── KPI strip ────────────────────────────────────────────────────────────
 
 /**
- * Mirrors a row of <KpiTile>s. Matches the real tiles' rounded-xl border,
+ * Mirrors a row of <KpiTile>s. Matches the real tiles' rounded-lg border,
  * subtle accent-free background, icon + label line, and value line.
  */
 export function KpiStripSkeleton({
@@ -105,7 +105,7 @@ export function KpiStripSkeleton({
       {Array.from({ length: count }).map((_, i) => (
         <div
           key={i}
-          className="rounded-xl border bg-card px-3 py-2.5 sm:px-4 sm:py-3"
+          className="rounded-lg border bg-card px-3 py-2.5 sm:px-4 sm:py-3"
         >
           <div className="flex items-center gap-1.5 sm:gap-2">
             <Skeleton className="size-3.5 rounded sm:size-4" />
@@ -401,15 +401,11 @@ export function PaginationSkeleton() {
 
 // ─── StatPanel ────────────────────────────────────────────────────────────
 
-/** Mirrors <StatPanel> — larger card with corner glow, icon chip, rows. */
+/** Mirrors <StatPanel> — flat card (solid bg-card, hairline border), icon chip, rows. */
 export function StatPanelSkeleton({ rows = 3 }: { rows?: number }) {
   return (
-    <div className="relative overflow-hidden rounded-xl border bg-gradient-to-br from-card via-card to-card/80 p-4 sm:rounded-2xl sm:p-5">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-12 -top-12 size-24 rounded-full bg-blue-500/[0.06] blur-2xl sm:size-32"
-      />
-      <div className="relative mb-3 flex items-center gap-2">
+    <div className="rounded-xl border bg-card p-4 shadow-sm sm:p-5">
+      <div className="mb-3 flex items-center gap-2">
         <Skeleton className="size-7 shrink-0 rounded-lg" />
         <Skeleton className="h-3 w-24 sm:w-28" />
       </div>
