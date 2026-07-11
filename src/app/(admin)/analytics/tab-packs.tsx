@@ -461,10 +461,10 @@ function TopPacks24hPanel({ rows }: { rows: TopPack24hRow[] }) {
   const topOpens = rows[0]?.opens ?? 0;
 
   return (
-    <div className="rounded-2xl border bg-gradient-to-br from-card via-card to-card/80 p-4 sm:p-5">
+    <div className="rounded-2xl border bg-card p-4 sm:p-5">
       <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-orange-500/15">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-orange-500/10">
             <Flame className="size-4 text-orange-500" />
           </div>
           <div className="min-w-0">
@@ -477,11 +477,11 @@ function TopPacks24hPanel({ rows }: { rows: TopPack24hRow[] }) {
             </p>
           </div>
         </div>
-        <div className="shrink-0 rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 py-1.5 sm:text-right">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="shrink-0 rounded-lg border bg-muted/30 px-3 py-1.5 sm:text-right">
+          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
             Total opens
           </p>
-          <p className="text-base font-bold tabular-nums text-orange-600 dark:text-orange-400">
+          <p className="text-base font-bold tabular-nums text-foreground">
             {formatNumber(totalOpens)}
           </p>
         </div>

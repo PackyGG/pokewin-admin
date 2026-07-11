@@ -31,11 +31,7 @@ export function CountryLeaderboard({
   const meta = METRIC_META[metric];
 
   return (
-    <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/60 p-5">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-amber-500/[0.08] blur-2xl"
-      />
+    <div className="relative overflow-hidden rounded-2xl border bg-card p-5">
       <div className="relative">
         <SectionHeading icon={Trophy} title={`Top markets · ${meta.label}`} />
 

@@ -250,14 +250,14 @@ async function OverviewPackBattlePure() {
 
 /**
  * Footprint-matched Suspense fallback for the two P&L panels — same
- * rounded-2xl gradient-card chrome as the real panels (heading line,
+ * rounded-2xl card footprint as the real panels (heading line,
  * description line, table block) so the swap into real content stays
  * dimension-stable. Inline height mirrors the SkeletonChart pattern
  * in src/components/ux/skeleton.tsx.
  */
 function PnlPanelSkeleton({ bodyHeight }: { bodyHeight: number }) {
   return (
-    <div className="rounded-2xl border bg-gradient-to-br from-card via-card to-card/80 p-4 sm:p-5">
+    <div className="rounded-2xl border bg-card p-4 sm:p-5">
       <Skeleton className="h-5 w-48 rounded" />
       <Skeleton className="mt-1.5 h-3 w-full max-w-md rounded" />
       <Skeleton

@@ -171,19 +171,9 @@ export function WorldMap({
   return (
     <div
       ref={containerRef}
-      className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/60 p-4"
+      className="relative overflow-hidden rounded-2xl border bg-card p-4"
       onMouseLeave={() => setHover(null)}
     >
-      {/* Ambient corner glows — match the PageHero chrome */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-24 -top-24 size-72 rounded-full bg-blue-500/[0.05] blur-3xl"
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -left-24 -bottom-24 size-72 rounded-full bg-purple-500/[0.05] blur-3xl"
-      />
-
       <div className="relative">
         <svg
           viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
