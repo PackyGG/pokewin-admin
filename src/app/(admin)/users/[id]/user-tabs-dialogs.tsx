@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ArrowDownToLine, Pencil, ShieldAlert, ShieldCheck } from "lucide-react";
+import { ArrowDownToLine, ShieldAlert, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -47,9 +47,7 @@ import {
   forceResetCreatorToUser,
   recordManualWithdrawal,
   setUserTag,
-  updateUserIdentity,
 } from "./actions";
-import type { UserDetail } from "./user-tabs-types";
 
 // Balance-adjust categories OFFERED IN THE PICKER — the strict, canonical
 // SELECTABLE set. Each option's `value` is written to the ledger row's
@@ -1607,136 +1605,6 @@ export function ResetRoleToUserButton({
             className="w-full sm:w-auto bg-amber-500 text-white hover:bg-amber-500/90"
           >
             {isPending ? "Resetting..." : "Reset Role"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Edit Identity Dialog (Admin Only) — Email / Username / Display Name
-// ---------------------------------------------------------------------------
-export function EditIdentityButton({ user }: { user: UserDetail["user"] }) {
-  const [open, setOpen] = useState(false);
-  const [email, setEmail] = useState(user.email ?? "");
-  const [username, setUsername] = useState(user.username ?? "");
-  const [displayUsername, setDisplayUsername] = useState(
-    user.displayUsername ?? "",
-  );
-  const [isPending, startTransition] = useTransition();
-  const router = useRouter();
-
-  // Reset form values when dialog opens (in case user data changed)
-  function handleOpenChange(v: boolean) {
-    if (v) {
-      setEmail(user.email ?? "");
-      setUsername(user.username ?? "");
-      setDisplayUsername(user.displayUsername ?? "");
-    }
-    setOpen(v);
-  }
-
-  function handleSave() {
-    const changes: {
-      email?: string;
-      username?: string;
-      displayUsername?: string;
-    } = {};
-
-    const trimmedEmail = email.trim().toLowerCase();
-    const trimmedUsername = username.trim();
-    const trimmedDisplay = displayUsername.trim();
-
-    if (trimmedEmail !== (user.email ?? "").toLowerCase()) {
-      changes.email = trimmedEmail;
-    }
-    if (trimmedUsername !== (user.username ?? "")) {
-      changes.username = trimmedUsername;
-    }
-    if (trimmedDisplay !== (user.displayUsername ?? "")) {
-      changes.displayUsername = trimmedDisplay;
-    }
-
-    if (Object.keys(changes).length === 0) {
-      toast.error("No changes to save");
-      return;
-    }
-
-    startTransition(async () => {
-      try {
-        const result = await updateUserIdentity(user.id, changes);
-        if (!result.success) {
-          toast.error(result.error);
-          return;
-        }
-        toast.success("User identity updated");
-        setOpen(false);
-        router.refresh();
-      } catch (e) {
-        toast.error(
-          e instanceof Error ? e.message : "Failed to update identity",
-        );
-      }
-    });
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger
-        render={
-          <Button variant="ghost" size="icon" className="size-6" />
-        }
-      >
-        <Pencil className="size-3" />
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Edit User Identity</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label>Email</Label>
-            <Input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="user@example.com"
-              type="email"
-            />
-            <p className="text-xs text-muted-foreground">
-              Will be automatically verified on save.
-            </p>
-          </div>
-          <div className="space-y-2">
-            <Label>Username</Label>
-            <Input
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="username"
-            />
-            <p className="text-xs text-muted-foreground">
-              Must be unique. 3–20 characters.
-            </p>
-          </div>
-          <div className="space-y-2">
-            <Label>Display Name</Label>
-            <Input
-              value={displayUsername}
-              onChange={(e) => setDisplayUsername(e.target.value)}
-              placeholder="Display name (optional)"
-            />
-            <p className="text-xs text-muted-foreground">
-              Shown instead of username. Leave empty to use username.
-            </p>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button
-            onClick={handleSave}
-            disabled={isPending}
-            className="w-full sm:w-auto"
-          >
-            {isPending ? "Saving..." : "Save Changes"}
           </Button>
         </DialogFooter>
       </DialogContent>
