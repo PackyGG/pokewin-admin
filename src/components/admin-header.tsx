@@ -385,27 +385,27 @@ export function AdminHeader({
           <DropdownMenuTrigger
             className={cn(
               "group flex items-center gap-2.5 rounded-xl p-0.5 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
-              "sm:gap-3 sm:border sm:border-border/60 sm:bg-muted/40 sm:py-1 sm:pl-1 sm:pr-2.5 sm:hover:border-border",
+              "sm:gap-3 sm:rounded-2xl sm:border sm:border-border/60 sm:bg-muted/30 sm:py-0.5 sm:pl-1 sm:pr-3.5 sm:hover:border-border sm:hover:bg-muted/50",
             )}
             aria-label="Open profile menu"
             title={label}
           >
-            <Avatar className="size-10 rounded-lg after:rounded-lg sm:size-9">
+            <Avatar className="size-10 rounded-lg after:rounded-lg sm:size-9 sm:rounded-xl sm:after:rounded-xl">
               {hasAvatar && (
                 <AvatarImage
                   src={`/api/admin/avatar/${adminId}`}
                   alt={label}
-                  className="rounded-lg"
+                  className="rounded-lg sm:rounded-xl"
                 />
               )}
-              <AvatarFallback className="rounded-lg text-sm font-semibold">
+              <AvatarFallback className="rounded-lg text-sm font-semibold sm:rounded-xl">
                 {initials(label)}
               </AvatarFallback>
             </Avatar>
             {/* Name (line 1) over role badge(s) (line 2). Hidden on phones —
                 the dropdown menu already carries both there. */}
             <div className="hidden min-w-0 flex-col items-start gap-1 sm:flex">
-              <span className="max-w-[11rem] truncate text-sm font-semibold leading-none text-foreground">
+              <span className="max-w-[13rem] truncate text-sm font-semibold leading-none text-foreground">
                 {label}
               </span>
               <span className="flex flex-wrap items-center gap-1">
@@ -414,7 +414,7 @@ export function AdminHeader({
                     key={r}
                     variant="outline"
                     className={cn(
-                      "h-4 gap-0.5 px-1 text-[9px] font-bold uppercase leading-none tracking-wide",
+                      "h-4 gap-0.5 px-1.5 text-[9px] font-bold uppercase leading-none tracking-wide",
                       ROLE_COLORS[r],
                     )}
                   >
