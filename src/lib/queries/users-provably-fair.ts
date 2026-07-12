@@ -63,7 +63,6 @@ export async function getProvablyFairResults(
         user_inventory: {
           select: {
             value_at_obtained: true,
-            card_id: true,
           },
         },
       },
