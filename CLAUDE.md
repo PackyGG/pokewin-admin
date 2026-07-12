@@ -86,6 +86,21 @@ Warum: Beide Pfade sind die einzigen, die unter realer Last + Concurrency auf de
 
 ---
 
+## ⚡ MINIMAL-OVERHEAD / SPEED RULE — skip everything not 100% needed (Owner, 2026-07-12, STRICT)
+
+**Owner directive (verbatim): "skip as much of all of this if it's not 100% needed — if it works without it, don't do it. yallah."** Do the SMALLEST amount of work that safely ships the change. Cut ceremony; ship fast.
+
+- **Match the gate to the change — do NOT over-verify:**
+  - Docs / markdown / comment-only edit → **no gate at all** (no `npm install`, no tsc/lint/build). Just commit + push.
+  - Pure CSS / className / copy / static-JSX edit → **`tsc --noEmit` + `npm run lint` is enough**; do NOT run `npm run build`.
+  - Run the full **`npm run build` ONLY when the change can break what ONLY the build catches**: Server↔Client (RSC) boundaries, new/changed imports or exports, types, data flow, new deps, or route/config/prisma-generate changes.
+- **No redundant re-verification:** skip the separate composed-main build unless MULTIPLE agents changed INTERDEPENDENT code in the same area. One fitting gate → push.
+- **No unneeded ceremony:** no browser render unless asked; no belt-and-suspenders double-checks; don't spin a fresh worktree + full `npm install` for a trivial edit that can be shipped cleanly without it.
+
+**Hard floor — this rule does NOT override these (NEVER skipped):** MAIN / prod-DB stays strictly read-only; never commit `.env` / secrets / `src/generated` / `recent-pushes.json`; the Index-or-ClickHouse backend rule; and honest reporting. Speed means cutting *verification overhead* — NEVER skipping *safety* rules or misreporting what was actually checked.
+
+---
+
 ## 🔥 ABSOLUTE PRIORITÄTSREGEL — Parallel-Modus ist Pflicht
 
 **Jede neue User-Aufgabe → sofort `Agent` Tool mit `run_in_background: true` starten und nur eine 1–2-zeilige Bestätigung antworten.** Keine inline-Bearbeitung. Keine Bündelung mehrerer User-Messages in eine lange Inline-Session. Keine Ausnahmen für "kurze" Fixes.
