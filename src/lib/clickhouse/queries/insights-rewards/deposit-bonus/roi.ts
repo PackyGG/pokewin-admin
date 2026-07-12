@@ -29,7 +29,7 @@ import { depositBonusCutoff, depositBonusScopeCte } from "./_shared";
 const WAGER_TYPES = "('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')";
 const PAYOUT_TYPES = "('battle_refund','upgrader_payout')";
 
-export type DepositBonusRoiCh = {
+type DepositBonusRoiCh = {
   cost: number;
   claimants: number;
   wager: number;
