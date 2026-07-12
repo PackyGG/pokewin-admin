@@ -26,7 +26,6 @@ import {
 
 import {
   applyStagedPackEditAndRetune,
-  getPackEditPool,
   getRetunePickerFilters,
   type ApplyStagedRetuneResult,
   type EditPool,
@@ -35,6 +34,7 @@ import {
   type StagedTagOverride,
 } from "../../doctor/retune-actions";
 import { planPackTuneOverWire } from "./plan-transport";
+import { fetchPoolOverWire } from "./pool-transport";
 import type { BuilderCardItem } from "../../builder/actions";
 import type { RetuneRailRow } from "../_queries/rail";
 import { buildCardDiffRows } from "./card-diff-table";
@@ -117,7 +117,7 @@ type WriteResult = PackRetuneResult | ApplyStagedRetuneResult;
 
 const PLAN_CONTEXT = "pack-studio.retune.plan-pack";
 const PREFLIGHT_CONTEXT = "pack-studio.retune.preflight";
-const PLAN_TIMEOUT_MS = 20_000;
+const PLAN_TIMEOUT_MS = 45_000;
 const PRICE_DEBOUNCE_MS = 500;
 /** Stable pause after the last typed odd before the dry-run pre-flight fires. */
 const PREFLIGHT_DEBOUNCE_MS = 800;
@@ -418,7 +418,7 @@ export function RetuneWorkspace({
         if (cached) return cached;
       }
       try {
-        const pool = await getPackEditPool(packId);
+        const pool = await fetchPoolOverWire(packId);
         setPoolByPack((prev) => setMap(prev, packId, pool));
         setPoolErrorByPack((prev) => delMap(prev, packId));
         return pool;
