@@ -24,7 +24,7 @@ import { cutoffClause, depositBonusCutoff, depositBonusScopeCte } from "./_share
  * out of scope for the drift gate).
  */
 
-export type DepositBonusOverviewCh = {
+type DepositBonusOverviewCh = {
   totalCost: number;
   count: number;
   uniqueClaimants: number;
