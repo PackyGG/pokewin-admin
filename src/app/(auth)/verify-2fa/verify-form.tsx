@@ -1,7 +1,6 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Fingerprint } from "lucide-react";
 import { startAuthentication } from "@simplewebauthn/browser";
 import { Button } from "@/components/ui/button";
@@ -10,7 +9,6 @@ import { Label } from "@/components/ui/label";
 import { verify2FA, startPasskeyLogin, verifyPasskeyLogin } from "./actions";
 
 export function VerifyForm({ hasPasskeys = false }: { hasPasskeys?: boolean }) {
-  const router = useRouter();
   const [state, formAction, pending] = useActionState(verify2FA, {});
   const [useRecovery, setUseRecovery] = useState(false);
   const [passkeyPending, setPasskeyPending] = useState(false);
@@ -24,9 +22,15 @@ export function VerifyForm({ hasPasskeys = false }: { hasPasskeys?: boolean }) {
       const response = await startAuthentication({ optionsJSON });
       const result = await verifyPasskeyLogin(response);
       if (result?.redirectTo) {
-        // Navigate client-side (mirrors the login flow) — keep the button in
-        // its pending state through the transition so it doesn't flash back.
-        router.replace(result.redirectTo);
+        // Full-page navigation (NOT a soft router.replace): verifyPasskeyLogin
+        // just minted the real admin_session cookie server-side. A soft App
+        // Router nav can race that Set-Cookie and be served a stale,
+        // unauthenticated RSC cache, so middleware bounces the user back here
+        // (the reported "stuck on /verify-2fa until manual reload" bug). A hard
+        // navigation guarantees middleware re-runs with the committed cookie.
+        // We intentionally do NOT clear passkeyPending here, so the button
+        // stays disabled / "Waiting for passkey…" until the page unloads.
+        window.location.assign(result.redirectTo);
         return;
       }
       if (result?.error) {

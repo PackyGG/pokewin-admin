@@ -1,7 +1,6 @@
 "use client";
 
 import { useActionState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { login } from "./actions";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
@@ -10,15 +9,23 @@ import { Label } from "@/components/ui/label";
 
 export function LoginForm() {
   const [state, formAction, pending] = useActionState(login, {});
-  const router = useRouter();
+
+  // A successful password step returns requires2FA / requiresSetup with the
+  // pending-2FA cookie already committed by the server action. Navigate with a
+  // full-page load (NOT a soft router.push) so middleware re-runs with the
+  // fresh cookie and no stale unauthenticated RSC cache is served. `redirecting`
+  // keeps the button pinned to "Signing in…" through the hop, so it never
+  // flashes back to "Sign in" while the navigation is in flight (the reported
+  // ~2s button-flash jank).
+  const redirecting = !!(state?.requires2FA || state?.requiresSetup);
 
   useEffect(() => {
     if (state?.requires2FA) {
-      router.push("/verify-2fa");
+      window.location.assign("/verify-2fa");
     } else if (state?.requiresSetup) {
-      router.push("/setup-2fa");
+      window.location.assign("/setup-2fa");
     }
-  }, [state, router]);
+  }, [state]);
 
   return (
     <div className="relative w-full sm:w-[520px] max-w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6 sm:rounded-3xl sm:p-12 shadow-2xl shadow-black/30 backdrop-blur-xl">
@@ -73,10 +80,10 @@ export function LoginForm() {
 
         <Button
           type="submit"
-          disabled={pending}
+          disabled={pending || redirecting}
           className="h-12 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:bg-primary/90"
         >
-          {pending ? "Signing in..." : "Sign in"}
+          {pending || redirecting ? "Signing in..." : "Sign in"}
         </Button>
       </form>
 
