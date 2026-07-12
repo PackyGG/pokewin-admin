@@ -1,12 +1,13 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { after } from "next/server";
 import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { invalidateCountryRestrictionsCache } from "@/lib/invalidate-country-restrictions-cache";
+import { GEO_BLOCKING_CACHE_TAG } from "@/lib/queries/geo-blocking";
 
 /**
  * Geo Blocking (formerly "Country Restrictions") server actions — relocated
@@ -21,7 +22,13 @@ import { invalidateCountryRestrictionsCache } from "@/lib/invalidate-country-res
  * They call `invalidateCountryRestrictionsCache()` (dedicated backend
  * endpoint) rather than `refreshSiteConfig()`, which was a mismatched-cache
  * bug fixed 2026-07-12 (see src/lib/refresh-site-config.ts for the
- * site_config sibling).
+ * site_config sibling). They ALSO call `revalidateTag(GEO_BLOCKING_CACHE_TAG)`
+ * (added 2026-07-12 alongside the admin-page's own `unstable_cache` read, see
+ * `src/lib/queries/geo-blocking.ts`) — `revalidatePath` alone does not evict
+ * an `unstable_cache` entry, so without this a toggle would keep serving the
+ * pre-toggle row for up to the cache's 300s TTL. `revalidateTag` is kept on
+ * the synchronous, awaited path (not inside `after()` below) so the local
+ * Next.js cache is guaranteed evicted before the response returns.
  *
  * Perf fix (2026-07-12, owner: "when i click blocked it takes rly long to
  * load"): `invalidateCountryRestrictionsCache()` used to be awaited here,
@@ -70,6 +77,7 @@ export async function updateCountryRestrictionArray(
   after(() => {
     invalidateCountryRestrictionsCache().catch(() => {});
   });
+  revalidateTag(GEO_BLOCKING_CACHE_TAG);
   revalidatePath("/system/geo-blocking");
 }
 
@@ -105,5 +113,6 @@ export async function toggleCountryRestriction(
   after(() => {
     invalidateCountryRestrictionsCache().catch(() => {});
   });
+  revalidateTag(GEO_BLOCKING_CACHE_TAG);
   revalidatePath("/system/geo-blocking");
 }

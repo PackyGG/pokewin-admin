@@ -1,8 +1,18 @@
+import { Suspense } from "react";
 import { Globe } from "lucide-react";
 import { requireAdmin } from "@/lib/dal";
 import { getCountryRestrictions } from "@/lib/queries/geo-blocking";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import {
+  KpiStripSkeleton,
+  SectionHeadingSkeleton,
+  TabBarSkeleton,
+  TableSkeleton,
+} from "@/components/loading-skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
 import { GeoBlockingContent } from "./geo-blocking-content";
 
 export const metadata = { title: "Geo Blocking" };
@@ -13,10 +23,23 @@ export const metadata = { title: "Geo Blocking" };
  * page). Admin-only config surface; the gate matches the old /settings page
  * (requireAdmin) and the underlying server actions enforce requireAdmin +
  * the per-action capabilities independently.
+ *
+ * Shell-first Suspense streaming (2026-07-12, owner report: "when i click
+ * blocked it takes really long to load"): a read-only prod `EXPLAIN ANALYZE`
+ * confirmed `getCountryRestrictions()` itself is trivially fast (250 rows,
+ * sub-millisecond execution — PK seq scan is optimal at that size, no
+ * missing index). The real fix per CLAUDE.md's Shell-first Suspense-Streaming
+ * rule is that the PREVIOUS version awaited the read directly in the page
+ * body, blocking First Paint on a request-time DB round-trip. `requireAdmin`
+ * stays a top-level await (auth gate, not the heavy read, and already
+ * `cache()`-memoized per request) while the restrictions read moves into
+ * `GeoBlockingBody` behind its own `<Suspense>` so the hero shell paints
+ * instantly. `getCountryRestrictions` is also now `unstable_cache`-wrapped
+ * (see `src/lib/queries/geo-blocking.ts`) so a repeat navigation is an
+ * instant cache hit that doesn't touch the shared MAIN-DB pool at all.
  */
 export default async function GeoBlockingPage() {
   await requireAdmin();
-  const countryRestrictions = await getCountryRestrictions();
 
   return (
     <div className="space-y-6">
@@ -28,9 +51,44 @@ export default async function GeoBlockingPage() {
         />
       </PageHero>
 
-      <FadeIn>
-        <GeoBlockingContent countryRestrictions={countryRestrictions} />
-      </FadeIn>
+      <Suspense
+        fallback={
+          <div className="space-y-4">
+            <SectionHeadingSkeleton titleWidth={120} />
+            <KpiStripSkeleton count={3} />
+            <Skeleton className="h-9 w-full sm:max-w-sm" />
+            <TabBarSkeleton count={2} />
+            <TableSkeleton rows={10} columns={3} />
+          </div>
+        }
+      >
+        <GeoBlockingBody />
+      </Suspense>
     </div>
+  );
+}
+
+async function GeoBlockingBody() {
+  const { data: countryRestrictions, error, kind } = await safeQuery(
+    () => getCountryRestrictions(),
+    null,
+    "geo-blocking.restrictions",
+  );
+
+  if (error || !countryRestrictions) {
+    return (
+      <TileErrorFallback
+        label="Geo Blocking"
+        hint="The country restrictions query failed — refresh to retry."
+        kind={kind ?? "error"}
+        size="panel"
+      />
+    );
+  }
+
+  return (
+    <FadeIn>
+      <GeoBlockingContent countryRestrictions={countryRestrictions} />
+    </FadeIn>
   );
 }
