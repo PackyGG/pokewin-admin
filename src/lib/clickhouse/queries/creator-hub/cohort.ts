@@ -38,16 +38,16 @@ import { CH_DB, chDateTime } from "@/lib/clickhouse/queries/_shared";
  * the PG DATE_TRUNC('day', ...) buckets the merge helpers consume.
  */
 
-export type HubCohortCountRow = { value: string };
-export type HubCohortCountBucketRow = { bucket: string; value: string };
-export type HubCohortMoneyBucketRow = { bucket: string; amount: string };
-export type HubCohortWagerBucketRow = {
+type HubCohortCountRow = { value: string };
+type HubCohortCountBucketRow = { bucket: string; value: string };
+type HubCohortMoneyBucketRow = { bucket: string; amount: string };
+type HubCohortWagerBucketRow = {
   bucket: string;
   packs: string;
   battles: string;
 };
 
-export type HubCohortScanBundle = {
+type HubCohortScanBundle = {
   signupRows: HubCohortCountRow[];
   ftdRows: HubCohortCountRow[];
   depositTotalRows: HubCohortCountRow[];
@@ -57,8 +57,6 @@ export type HubCohortScanBundle = {
   ledgerWagerSeriesRows: HubCohortWagerBucketRow[];
   upgraderWagerSeriesRows: HubCohortMoneyBucketRow[];
 };
-
-const CHART_LOOKBACK_DAYS = 30;
 
 function realUsersCte(hasBlacklist: boolean): string {
   return `real_users AS (
@@ -295,5 +293,3 @@ export async function getHubCohortScansFromClickHouse(
     upgraderWagerSeriesRows,
   };
 }
-
-export { CHART_LOOKBACK_DAYS };
