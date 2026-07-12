@@ -22,7 +22,7 @@ import { getTodayNetHoldingsTopHoldersFromClickHouse } from "@/lib/clickhouse/qu
  * blacklist, statsExcluded ledger carve-outs on balance change).
  */
 
-export type TodayNetHoldingsHolderRow = {
+type TodayNetHoldingsHolderRow = {
   userId: string;
   username: string | null;
   balanceChange: number;
