@@ -385,12 +385,17 @@ export function AdminHeader({
           <DropdownMenuTrigger
             className={cn(
               "group flex items-center gap-2.5 rounded-xl p-0.5 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
-              "sm:gap-3 sm:rounded-2xl sm:border sm:border-border/60 sm:bg-muted/30 sm:py-0.5 sm:pl-1 sm:pr-3.5 sm:hover:border-border sm:hover:bg-muted/50",
+              // sm+: a roomy, premium identity card — wider avatar-to-chevron
+              // span via a min-width floor that grows on large screens, more
+              // L↔R padding and a larger gap. Kept deliberately short vertically
+              // (py-1 + a size-10 avatar sits well inside the h-14 header) so it
+              // reads WIDE + spacious, never tall/bulky.
+              "sm:gap-3.5 sm:rounded-2xl sm:border sm:border-border/60 sm:bg-muted/30 sm:py-1 sm:pl-1.5 sm:pr-3.5 sm:min-w-[14.5rem] lg:min-w-[17rem] sm:hover:border-border sm:hover:bg-muted/50",
             )}
             aria-label="Open profile menu"
             title={label}
           >
-            <Avatar className="size-10 rounded-lg after:rounded-lg sm:size-9 sm:rounded-xl sm:after:rounded-xl">
+            <Avatar className="size-10 rounded-lg after:rounded-lg sm:rounded-xl sm:after:rounded-xl">
               {hasAvatar && (
                 <AvatarImage
                   src={`/api/admin/avatar/${adminId}`}
@@ -405,7 +410,7 @@ export function AdminHeader({
             {/* Name (line 1) over role badge(s) (line 2). Hidden on phones —
                 the dropdown menu already carries both there. */}
             <div className="hidden min-w-0 flex-col items-start gap-1 sm:flex">
-              <span className="max-w-[13rem] truncate text-sm font-semibold leading-none text-foreground">
+              <span className="max-w-[16rem] truncate text-sm font-semibold leading-tight text-foreground">
                 {label}
               </span>
               <span className="flex flex-wrap items-center gap-1">
@@ -414,17 +419,17 @@ export function AdminHeader({
                     key={r}
                     variant="outline"
                     className={cn(
-                      "h-4 gap-0.5 px-1.5 text-[9px] font-bold uppercase leading-none tracking-wide",
+                      "h-[18px] gap-0.5 px-2 text-[10px] font-bold uppercase leading-none tracking-wide",
                       ROLE_COLORS[r],
                     )}
                   >
-                    <ShieldCheck className="size-2.5" />
+                    <ShieldCheck className="size-3" />
                     {r.replace("_", " ")}
                   </Badge>
                 ))}
               </span>
             </div>
-            <ChevronDown className="hidden size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[popup-open]:rotate-180 sm:block" />
+            <ChevronDown className="hidden size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[popup-open]:rotate-180 sm:ml-auto sm:block" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-[220px]">
             <DropdownMenuGroup>
