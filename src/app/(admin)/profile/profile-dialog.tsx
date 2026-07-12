@@ -138,8 +138,15 @@ export function ProfileDialog({
             `min-w-0` on the grid + each section keeps long content (emails,
             IANA zone strings) from forcing horizontal overflow at narrow
             widths. */}
-        <div className="mt-4 grid min-w-0 grid-cols-1 gap-x-10 gap-y-7 lg:grid-cols-2 lg:items-start">
-          <section className="min-w-0 space-y-3">
+        {/* Each section is its own bordered panel so the layout reads as
+            tidy, aligned cards instead of free-floating columns with ragged
+            heights (owner 2026-07-12: "not aligned / clean, dif heights").
+            Profile + Security share a two-column row on lg+; the wider
+            Preferences panel spans the full width beneath. Uniform gap +
+            per-panel padding replace the old hand-drawn dividers. `min-w-0`
+            keeps long content (emails, IANA zones) from overflowing. */}
+        <div className="mt-4 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+          <section className="min-w-0 space-y-3 rounded-xl border border-border/60 p-4">
             <SectionHeading icon={User} title="Profile" />
             <ProfileForm
               adminId={data.id}
@@ -152,11 +159,10 @@ export function ProfileDialog({
             />
           </section>
 
-          {/* Divider between Profile and Security only while they're stacked
-              (below lg); on lg the column gap separates them instead. */}
-          <div className="border-t border-border lg:hidden" />
-
-          <section ref={securityRef} className="min-w-0 scroll-mt-4 space-y-3">
+          <section
+            ref={securityRef}
+            className="min-w-0 scroll-mt-4 space-y-3 rounded-xl border border-border/60 p-4"
+          >
             <SectionHeading icon={KeyRound} title="Security" />
             <p className="text-xs text-muted-foreground">
               Change your password. Requires your current password and a 2FA
@@ -172,10 +178,7 @@ export function ProfileDialog({
             </div>
           </section>
 
-          {/* Full-width divider above the wide Preferences section. */}
-          <div className="border-t border-border lg:col-span-2" />
-
-          <section className="min-w-0 space-y-3 lg:col-span-2">
+          <section className="min-w-0 space-y-3 rounded-xl border border-border/60 p-4 lg:col-span-2">
             <SectionHeading icon={Settings} title="Preferences" />
             <PreferencesForm
               initial={data.preferences}

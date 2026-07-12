@@ -108,7 +108,7 @@ function ThemeSubmenu() {
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger>
-        <Sun className="mr-1 size-4" />
+        <Sun className="size-4" />
         <span>Theme</span>
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent className="min-w-[160px]">
@@ -164,7 +164,7 @@ function TimezoneSubmenu({ onOpenProfile }: { onOpenProfile: () => void }) {
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger>
-        <Clock className="mr-1 size-4" />
+        <Clock className="size-4" />
         <span>Timezone</span>
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent className="max-h-[60vh] min-w-[240px] overflow-y-auto">
@@ -234,7 +234,7 @@ function DbEnvSubmenu({ active }: { active: DbEnv }) {
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger>
-        <Database className="mr-1 size-4" />
+        <Database className="size-4" />
         <span>Database</span>
         <span
           className={
