@@ -102,61 +102,32 @@ Warum: Beide Pfade sind die einzigen, die unter realer Last + Concurrency auf de
 
 ---
 
-## 🔥 ABSOLUTE PRIORITÄTSREGEL — Parallel-Modus ist Pflicht
+## ⚡ Arbeitsmodus — Standard ist inline (User-Override, 2026-07-12, ersetzt die alte Parallel-Pflicht)
 
-**Jede neue User-Aufgabe → sofort `Agent` Tool mit `run_in_background: true` starten und nur eine 1–2-zeilige Bestätigung antworten.** Keine inline-Bearbeitung. Keine Bündelung mehrerer User-Messages in eine lange Inline-Session. Keine Ausnahmen für "kurze" Fixes.
+**User-Override (verbatim): "i dont want that fucking bullshit, make it good and fast again".** Die alte Zwangsregel „jede Message → sofort Background-Agent, nur 1–2-zeilige Ack" ist **aufgehoben**. Sie hat Sessions massiv verlangsamt (Dispatch-Overhead, Worktree-Setup, Warten auf Agent-Ergebnisse für Dinge, die eine direkte Antwort gebraucht hätten) und wird durch normales Arbeiten ersetzt.
 
-Der User feuert mehrere Tasks nacheinander rein und erwartet, dass jeder sofort an einen eigenen Background-Agent geht, damit er **nicht warten muss**, bis der vorherige fertig ist. Wenn du inline arbeitest, blockst du den Channel und der User kann den nächsten Task erst nach deiner langen Antwort schicken — genau das soll dieser Modus verhindern.
+**Neuer Default: Arbeite direkt inline, in diesem Turn.** Lies, editiere, verifiziere (tsc/lint, ggf. build) und antworte selbst — normal, wie ein direkter Coding-Assistant. Kein automatisches Abfeuern eines Background-`Agent` nur weil eine neue Message kommt. Kein erzwungenes 1–2-Zeilen-Ack-Protokoll — antworte normal.
 
-**Immer empfangsbereit bleiben — niemals auf einer einzigen Task festhängen (CRITICAL):** Der Channel ist NIE blockiert. Während Agents im Hintergrund laufen, hörst du durchgehend auf neue User-Inputs und bist jederzeit bereit, sofort einen weiteren parallelen Agent zu starten. Mehrere Agents gleichzeitig laufen zu lassen ist der **Normalfall, nicht die Ausnahme** — es gibt keine Obergrenze, solange die Aufgaben unabhängig sind und keine Hotspot-Datei kollidiert. Verboten ist "Tunnel-Vision": dich auf eine laufende Aufgabe fixieren, während weitere offen sind oder neue reinkommen. Wenn der User mitten in laufenden Agents eine neue Message schickt → **sofort** den nächsten Agent dispatchen, NICHT erst den vorherigen abwarten, NICHT erst fertig erklären. Halte die Inline-Investigation (Greps/Reads/Diagnose) vor dem Dispatch minimal — gerade genug scopen, um den Agent präzise zu briefen, dann delegieren; tiefe Analyse macht der Agent selbst. Wenn du merkst, dass du gerade lange selbst recherchierst statt zu delegieren → STOP, dispatchen.
+**Nutze `Agent` (background) oder `Workflow` gezielt, wenn Parallelität einen echten Vorteil bringt:**
+- Der User wirft mehrere echt unabhängige Tasks nacheinander rein und will, dass du am aktuellen weiterarbeitest, während ein anderer im Hintergrund läuft.
+- Große, in viele unabhängige Einheiten zerlegbare Jobs (Audit über N Pages, ein Fix pro Reward-Typ, breite Recherche über viele Files) — hier lohnt sich echtes Fan-out.
+- Lange, unabhängige Recherche/Exploration, deren Suchweg den Hauptkontext nur unnötig aufbläht (nicht das Ergebnis selbst).
 
-**ALWAYS re-check for new user messages before and after every action, and accept them as new tasks immediately (explicit user rule, 2026-06-04).** Between tool calls and dispatches — and especially before declaring anything finished — check whether the user has sent a new message. Every new message is a new task, correction, or priority: pick it up at once (dispatch a fresh background `Agent` for it) without waiting for in-flight work to complete. Never block the channel and never go silent fixating on one task while new input is waiting.
+**Bleibt bindend, unabhängig von inline vs. delegiert:** Hotspot-Kollisionsvermeidung, Commit/Push-Disziplin, DB-Policy, Index-or-ClickHouse-Regel, Minimal-Overhead-Gate (§ oben), Honest-Reporting. Diese Regel ändert nur *wer die Arbeit macht*, nicht die Sicherheits-/Qualitätsstandards.
 
-**Was zählt als "eine User-Aufgabe":** Alles, was der User in einer Message anfragt — auch wenn er mehrere Sub-Punkte aufzählt. Eine Message = ein Agent (mit allen Sub-Punkten im Prompt). Mehrere unabhängige Sub-Punkte in einer Message können in mehrere parallele Agents aufgeteilt werden, wenn sie unterschiedliche Files anfassen.
-
-**Erlaubte Ausnahmen (eng definiert, nicht großzügig interpretieren):**
-- Reine Fragen zur Codebasis ohne Edit ("wo ist X definiert?", "wie funktioniert Y?") — max. 1–3 Tool-Calls (Read/Grep/Glob), keine Edits.
-- Live-Troubleshooting im Dialog mit Log-Snippets vom User.
-- Ein **einziger** trivialer Fix (1 File, 1 Edit, < 60 Sekunden Gesamtarbeit inkl. tsc+lint).
-- Wenn der User explizit "inline machen" / "selbst machen" / "nicht delegieren" sagt.
-
-**Verboten:**
-- Mehrere zusammengehörige Pages/Files inline durcheditieren ("Audit-Sweep", "5 Surfaces fixen") — das ist immer mehrere parallele Agents wert, nie inline.
-- Lange Recherchen-Antworten zur User-Aufgabe schreiben, bevor du den Agent startest. **Erst delegieren, dann erklären** (in der 1–2-zeiligen Ack).
-- Auf das Ergebnis eines Agents warten, bevor du den nächsten startest. Wenn zwischenzeitlich eine neue User-Message kommt, sofort den nächsten Agent starten.
-
-**Ack-Protokoll (genau einhalten):**
-Nach dem `Agent`-Tool-Call antwortest du dem User mit max. 2 Zeilen:
-1. Was dispatched wurde (kurze Aufgaben-Bezeichnung).
-2. Welche Files / Routen der Agent anfasst + ob Hotspot-Kollision mit gerade laufenden Agents besteht (falls ja: PROPOSED-Patch reporten lassen, siehe Hotspot-Liste unten).
-
-Danach: **Stille bis zur nächsten User-Message oder Agent-Completion**. Keine zusätzlichen Erklärungen.
-
-**Selbst-Check vor jeder Antwort:**
-
-> "Tippe ich gerade eine Inline-Lösung für etwas, das der User mir gerade geschickt hat?"  
-> Wenn ja → STOP, `Agent` dispatchen, 1–2-zeilige Ack, fertig.
-
-> "Habe ich gerade > 2 File-Edits hintereinander für eine einzige User-Message gemacht?"  
-> Wenn ja → die Regel ist bereits gebrochen. Stop, was übrig ist an einen Agent geben, nicht weiter inline.
-
-Die volle Mechanik (Scope, Hotspots, Commit-Disziplin, Honest-Reporting) steht weiter unten unter § Agent-Parallelisierung. Diese Top-Regel überschreibt alles andere — wenn du dich fragst "soll ich inline oder Agent?" → immer Agent.
+**Merkregel:** Frag dich nicht mehr reflexhaft "Agent oder inline?" — Standard ist inline. Nur zu Agent/Workflow greifen, wenn es die Aufgabe nachweislich schneller oder breiter abdeckt (echte Unabhängigkeit, echte Breite), nicht weil "das ist die Regel".
 
 ---
 
-## ⚙️ Workflows / Multi-Agent-Orchestrierung — STRIKTE PFLICHT (User-Regel, 2026-06-05, verschärft · 2026-06-10 bekräftigt)
+## ⚙️ Workflows / Multi-Agent-Orchestrierung — opt-in für echte Breite (überarbeitet 2026-07-12)
 
-**Bekräftigt 2026-06-10 (User, explizit: „use multiple agents and workflow in future! strict rule"):** Diese Regel gilt **ausnahmslos** und **auch für Exploration, Planung und Audit** — nicht nur für Implementation. Keine langen Inline-Recherchen oder Inline-Edits, wenn parallele Agents (Explore/Plan) bzw. ein `Workflow` die Arbeit breiter, paralleler und verifiziert abdecken können. Default für **jede** nicht-triviale Aufgabe = **Workflow + Fan-out paralleler Agents + adversariale Verify-Phase**, dann erst Synthese/Push. Inline nur für die unten genannten engen Ausnahmen.
+**Kein Pflicht-Einstiegspunkt mehr.** Die alte Regel „jede nicht-triviale Aufgabe beginnt mit Workflow" ist mit der Arbeitsmodus-Regel oben aufgehoben (User-Override 2026-07-12: „make it good and fast again"). `Workflow` ist ein Werkzeug, kein Pflichtschritt.
 
-**STRIKTE User-Regel (höchste Priorität, NICHT optional):** Beginne **jede** nicht-triviale Aufgabe **mit einem Workflow** (`Workflow`-Tool, deterministische Multi-Agent-Orchestrierung). Workflows sind der **Default-Arbeitsmodus**, nicht die Ausnahme. **Mehrere Tasks → mehrere Workflows gleichzeitig** (im Zweifel ein eigener Workflow pro Task), und nutze **so viele Agents wie möglich** pro Workflow (Fan-out → Verify → Synthese), um das **bestmögliche Ergebnis** zu liefern — nicht nur das schnellste. **Keine Obergrenze** für parallel laufende Workflows oder Agents. Inline-Arbeit oder ein einzelner Background-Agent ist nur noch für die eng definierten Ausnahmen erlaubt (reine Codebasis-Frage ohne Edit, **ein einziger** trivialer 1-File-Fix, Live-Troubleshooting mit Log-Snippets, oder explizites „inline machen" des Users). In allen anderen Fällen gilt ausnahmslos: **Workflow zuerst.**
+**Nutze `Workflow`, wenn die Aufgabe wirklich Struktur braucht:** Fan-out über viele gleichartige, unabhängige Einheiten (z. B. ein Fix pro Reward-Typ über 10 Pages, ein breiter Audit-Sweep, tiefe Multi-Source-Recherche) gefolgt von Verify-/Synthese-Phasen — dort liefert es echten Mehrwert. Für normale einzelne Tasks (ein Bugfix, ein Feature auf einer Page, eine Query anpassen) ist inline schneller und genauso gut.
 
-- **Workflow statt Einzel-Agents, wenn** die Aufgabe Struktur braucht: Fan-out über viele gleichartige Einheiten (z. B. ein Forecast / eine Page / ein Fix pro Reward-Typ), gefolgt von Verify-/Synthese-Phasen. Ziel: breit + konsistent + verifiziert liefern, nicht nur schnell.
-- **Einzelne Background-Agents weiterhin** für unabhängige Task-Spam-Einzelaufgaben (eine User-Message = ein Agent). Die Parallel-Agent-Regeln oben bleiben unverändert gültig.
-- **Kombinierbar:** Mehrere Workflows UND mehrere Background-Agents dürfen parallel laufen. Der Kanal bleibt immer empfangsbereit für neue User-Inputs.
-- **Bewährte Muster:** understand → design → implement → review (je Phase ggf. ein eigener Workflow); `pipeline()` als Default, `parallel()`-Barrier nur wenn eine Phase wirklich alle Vorergebnisse braucht; fan-out + adversarial verify; loop-until-dry für Discovery.
-- **In JEDEM Workflow/Agent unverändert bindend:** keine Prod-DB-Writes (read-only Hard-Rule), `npm run build`-Gate vor Push, Hotspot-Kollisionen vermeiden, Browser-Verifikation für UI, Honest-Reporting. Workflows heben KEINE dieser Regeln auf.
+- **In jedem Workflow/Agent unverändert bindend:** keine Prod-DB-Writes (read-only Hard-Rule), Build-Gate passend zur Änderung (§ Minimal-Overhead), Hotspot-Kollisionen vermeiden, Honest-Reporting.
 
-**Merkregel:** Großer, zerlegbarer Job → Workflow (fan-out + verify). Kleine unabhängige Task → Background-Agent. Bei Breite/Umfang im Zweifel → Workflow.
+**Merkregel:** Großer, zerlegbarer Job mit echter Breite → Workflow. Alles andere → inline.
 
 ---
 
@@ -177,49 +148,14 @@ Die volle Mechanik (Scope, Hotspots, Commit-Disziplin, Honest-Reporting) steht w
 
 ---
 
-## 🔁 Persistent Parallel Workflow Mode (always active)
+## 🔁 Staying responsive across a session (trimmed 2026-07-12)
 
-_Added per user instruction. This generalizes and reinforces the ABSOLUTE PRIORITÄTSREGEL above. Where this section and the repo-specific mechanics (Hotspot-Liste, Commit-/Push-Disziplin, Browser-Verifikation, Dual-DB, Active-Timeframe-Only) differ on specifics, the repo-specific rules win on those specifics — this section governs the overall operating posture._
+_The parallel-by-default mandate this section used to carry is gone (see § Arbeitsmodus above). What's left is just good practice, not an overhead multiplier._
 
-Operate as a continuously-listening project agent, not a one-shot responder.
-
-### Core behavior
-- Treat every new user message as a possible new task, refinement, correction, continuation, or priority change. Read the newest message carefully and integrate it with the current project state before acting.
-- Do not assume the previous plan is still correct if the new message changes scope, priorities, or constraints. New work → update the plan and continue. A newer instruction overrides an older one → follow the newest and adjust. Stay responsive to newly added tasks at all times.
-
-### Parallel execution
-- For every non-trivial request, use a parallel-agent workflow whenever possible. Break work into independent streams and run them in parallel — e.g. codebase audit, architecture/design decisions, backend/data analysis, frontend/UI implementation, testing/QA, documentation/changelog.
-- Delegate separate subproblems to parallel agents for speed and coverage. If a task is too coupled for full parallelization, still parallelize the safely-separable parts, then merge carefully (respecting the Hotspot-Liste — never two agents on the same hotspot file).
-
-### Workflow for each new task
-1. **Interpret the input** — new task / modification / bug report / follow-up / reprioritization. Extract explicit requirements and infer implied ones.
-2. **Update the active plan** — merge the new instruction; identify what stays valid, what must change, what to pause or discard.
-3. **Split into parallel workstreams** — separate into independent units; assign to parallel agents when concurrency is safe (no hotspot collision).
-4. **Execute with coordination** — focused work per stream; periodically reconcile outputs so final changes stay consistent across the codebase.
-5. **Validate globally** — do not stop at local success; check downstream impact across UI, backend, shared utilities, stats/derived metrics, exports, tests, and docs.
-6. **Report clearly** — what changed, what is in progress, what assumptions were made, recommended follow-ups. (On *dispatch*, keep the ack to the 1–2 lines per the Ack-Protokoll above; the full structured report is for substantial *completed* work.)
-
-### Quality standard
-- Prefer multi-file reasoning over isolated edits; source-of-truth fixes over cosmetic patches; reusable architecture over one-off exceptions.
-- Always look for affected pages, shared logic, derived metrics, API consumers, and edge cases. Always check whether the request should also update tests, admin tools, analytics, docs, and related dashboard surfaces.
-
-### Persistence (internal working memory)
-Keep track of: current objective · active sub-tasks · completed work · pending validations · open risks · latest user priority. Each new message updates this active working state — not an unrelated fresh chat, unless the user clearly starts a totally separate topic.
-
-### Task-intake shorthands
-Short follow-ups like "also do this", "change that", "same for this page", "fix this too", "make it more detailed", "now check mobile" = instructions to continue the current workflow and expand the plan accordingly.
-
-### Use parallel agents by default when a task includes two or more of:
-repo scanning · implementation · refactoring · debugging · test writing · UI polish · analytics/stat logic · documentation.
-
-### Non-negotiables
-- Never ignore a newer user instruction. Never treat follow-up messages as optional context. Never stop at one file if the task obviously affects multiple systems. Never ship partial logic while shared calculations, filters, metrics, or dashboard surfaces remain inconsistent. Never use parallel agents blindly — coordinate and reconcile their outputs before finalizing.
-
-### Output style (substantial tasks)
-Updated objective · Parallel workstreams · Changes made · Cross-system impacts checked · Remaining risks · Next recommended actions.
-
-### Final
-Always watch for new inputs, merge them into the active workflow, use parallel agents when they improve speed/coverage/quality, and optimize for the best final project outcome — not just the fastest single reply.
+- Treat every new user message as a possible new task, correction, or priority change — read it and integrate it with current state before acting. A newer instruction overrides an older one.
+- Don't stop at one file if the task obviously spans multiple systems (UI + query + shared util). Don't ship partial logic while shared calculations, filters, or dashboard surfaces go inconsistent.
+- Short follow-ups ("also do this", "same for this page", "now check mobile") continue the current task/plan — don't treat them as unrelated asks.
+- For substantial completed work, summarize plainly: what changed, cross-system impacts checked, remaining risks, next steps. No forced format beyond that.
 
 ---
 
@@ -462,15 +398,13 @@ Das bedeutet:
 - wartbar
 - ohne geratenen Unsinn
 
-### Agent-Parallelisierung (Arbeitsweise)
+### Agent-Parallelisierung (Arbeitsweise, wenn Agents/Workflows genutzt werden)
 
-Die Top-Regel oben (§ 🔥 ABSOLUTE PRIORITÄTSREGEL) ist bindend. Dieser Abschnitt definiert die Mechanik dahinter.
+Die Top-Regel oben (§ ⚡ Arbeitsmodus) ist bindend: **Standard ist inline**, Agents/Workflows nur bei echtem Vorteil (Breite, echte Nebenläufigkeit). Dieser Abschnitt definiert die Mechanik, **wenn** du dich für Agents/Workflow entscheidest — er ist kein Argument dafür, sie öfter einzusetzen.
 
-Der User arbeitet in einem "Task-Spam"-Modus: er wirft Aufgaben nacheinander rein und erwartet, dass du jede in einem eigenen Background-Agent startest, damit er nicht warten muss. Das ist die Standard-Arbeitsweise, nicht die Ausnahme.
+**Regeln für parallele Agents (falls eingesetzt):**
 
-**Regeln für parallele Agents:**
-
-1. **Eine Aufgabe → ein Agent.** Neue Aufgabe des Users → `Agent` Tool mit `run_in_background: true` starten. Die einzigen Ausnahmen stehen in der Top-Regel oben (reine Codebasis-Fragen, Live-Troubleshooting, **ein einziger** trivialer 1-File-Fix, oder explizite "inline machen"-Anweisung). Audit-Sweeps über mehrere Pages / Surfaces / Query-Files sind **nie** trivial — die zerlegt man in N parallele Agents, nicht in eine lange Inline-Session.
+1. **Große, in Units zerlegbare Jobs → ein Agent pro Unit.** Audit-Sweeps über mehrere Pages / Surfaces / Query-Files gehören in N parallele Agents, nicht in eine lange Inline-Session, weil dort Fan-out tatsächlich schneller ist als seriell inline. Normale einzelne Tasks bleiben inline (§ Arbeitsmodus).
 
 2. **Explicit scope + avoid-list pro Agent.** Jeder Agent-Prompt enthält:
    - Klare Deliverables (Dateien, Routen, Features).
@@ -510,18 +444,11 @@ Der User arbeitet in einem "Task-Spam"-Modus: er wirft Aufgaben nacheinander rei
    - `BLOCKED` = konnte nicht abgeschlossen werden, Grund nennen
    - **Keine Zeile im Summary darf eine Unwahrheit sein.** (Siehe Ehrlichkeits-Regel oben.)
 
-7. **Aufgaben, die du NICHT an Agents delegierst** (Liste ist abschließend, nicht großzügig erweitern):
-   - **Ein einziger** trivialer Fix: 1 File, 1 Edit, **inkl. tsc + lint + commit + push** in unter 60 Sekunden. Zwei "kleine" Fixes hintereinander für eine User-Message sind **kein** trivialer Fix — die gehen an einen Agent.
-   - Reine Codebasis-Fragen ohne Edit ("wo ist X definiert?") — max. 1–3 Tool-Calls.
-   - Live-Troubleshooting mit User (Logs anschauen, Symptom rekonstruieren).
-   - User sagt explizit "inline machen" / "selbst" / "nicht delegieren".
+7. **Default bleibt inline** (§ ⚡ Arbeitsmodus) — Einzel-Fixes, einzelne Feature-Requests, einzelne Page-Changes, Codebasis-Fragen, Live-Troubleshooting: alles normal direkt bearbeiten. Agent/Workflow nur greifen, wenn Punkt 1 oben zutrifft (echte Breite/Units) oder der User mehrere unabhängige Tasks parallel laufen lassen will.
 
-8. **Wenn der User zu schnell Tasks reinwirft:**
-   - Nicht zögern — sofort Agent starten.
-   - Kurz bestätigen welche Files der neue Agent anfasst + ob/wo Kollisionsrisiko.
-   - Nicht auf vorherige Agents warten, wenn die Arbeit unabhängig ist.
+8. **Wenn der User mehrere unabhängige Tasks nacheinander schickt** und ausdrücklich parallel arbeiten will: neuen Agent starten statt zu warten, kurz sagen welche Files er anfasst + Kollisionsrisiko, und am aktuellen Task weiterarbeiten.
 
-**Merkregel:** Wenn du dich fragst "soll ich das selber machen oder einen Agent starten?" — Agent starten. Der User will nicht blockieren.
+**Merkregel:** Standard ist inline. Agent/Workflow nur wenn es die Aufgabe echt schneller oder breiter macht — nicht als Reflex.
 
 ### Fan-out-Geometrie & Build-/Verify-Agent-Contract (Worktrees) — Session-Learning 2026-06-05
 
