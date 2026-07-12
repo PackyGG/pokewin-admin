@@ -33,7 +33,7 @@ import {
  * Scope mirrors PG: `role NOT IN ('admin','support')` + blacklist.
  */
 
-export type SignupCountryCh = {
+type SignupCountryCh = {
   signups: number;
   claimants: number;
   totalCost: number;
