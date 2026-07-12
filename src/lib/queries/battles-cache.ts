@@ -1,13 +1,3 @@
-import { unstable_cache } from "next/cache";
-import { readDbEnv } from "@/lib/db-env";
-import {
-  getBattles,
-  getBattleDetail,
-  type BattleListItem,
-  type BattleSortMode,
-} from "./battles";
-import type { PaginatedResult } from "@/lib/types";
-
 /**
  * Cross-request cache for the two heaviest reads behind /battles —
  * the list query (`getBattles`, which fans battles → participants →
@@ -36,54 +26,3 @@ import type { PaginatedResult } from "@/lib/types";
  * dev-toggled admin bypasses the cache and runs the query directly so
  * they always see live dev data.
  */
-
-const REVALIDATE_SECONDS = 60;
-
-export const BATTLES_LIST_TAG = "battles-list";
-export const BATTLES_DETAIL_TAG = "battles-detail";
-
-type BattlesListParams = {
-  page: number;
-  perPage: number;
-  status?: string;
-  mode?: string;
-  search?: string;
-  sortBy: BattleSortMode;
-  since?: "24h";
-};
-
-// `unstable_cache` folds the call arguments into the cache key, so each
-// distinct (page, perPage, status, mode, search, sortBy, since) combo
-// gets its own entry — paginating / filtering reuses the matching warmed
-// scan instead of recomputing it.
-const cachedBattlesList = unstable_cache(
-  (params: BattlesListParams): Promise<PaginatedResult<BattleListItem>> =>
-    getBattles(params),
-  ["battles-list-v1"],
-  { revalidate: REVALIDATE_SECONDS, tags: [BATTLES_LIST_TAG] },
-);
-
-const cachedBattleDetail = unstable_cache(
-  (id: string) => getBattleDetail(id),
-  ["battles-detail-v1"],
-  { revalidate: REVALIDATE_SECONDS, tags: [BATTLES_DETAIL_TAG] },
-);
-
-/** Cached `getBattles` on prod; direct (uncached) on a dev-toggled admin
- * so they see live dev data — see module doc. */
-export async function getBattlesCached(
-  params: BattlesListParams,
-): Promise<PaginatedResult<BattleListItem>> {
-  const env = await readDbEnv();
-  if (env !== "prod") return getBattles(params);
-  return cachedBattlesList(params);
-}
-
-/** Cached `getBattleDetail` on prod; direct on dev — see module doc. */
-export async function getBattleDetailCached(
-  id: string,
-): Promise<Awaited<ReturnType<typeof getBattleDetail>>> {
-  const env = await readDbEnv();
-  if (env !== "prod") return getBattleDetail(id);
-  return cachedBattleDetail(id);
-}
