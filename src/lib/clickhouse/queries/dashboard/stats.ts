@@ -93,7 +93,7 @@ export type DashboardStatsCh = {
   voucherChangePeriod: number;
 };
 
-export type DashboardStatsChArgs = {
+type DashboardStatsChArgs = {
   /** SQL cutoff for the period-bound 3-role + 2-role-delta legs (epoch for "all"). */
   periodCutoff: Date;
   /** Canonical metric-window start for the upgrader wager leg (365d-capped for "all"). */
