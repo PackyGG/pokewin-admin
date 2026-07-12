@@ -73,7 +73,7 @@ const WD_LIABILITY_SQL = `(${WD_LIABILITY_STATUSES.map((s) => `'${s}'`).join(","
 const PERIOD_KEYS = ["24h", "3d", "7d", "14d", "30d"] as const;
 type PeriodKey = (typeof PERIOD_KEYS)[number];
 
-export type CreatorPnlHeadlineSnapshot = {
+type CreatorPnlHeadlineSnapshot = {
   byPeriod: Record<
     PeriodKey,
     { deposits: number; wagered: number; cardWithdrawals: number; pnl: number }
