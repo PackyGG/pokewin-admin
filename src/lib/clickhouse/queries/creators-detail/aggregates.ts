@@ -51,7 +51,7 @@ import { CH_DB, chDateTime, toNumber } from "../_shared";
 const CREATOR_DETAIL_LIFETIME_LOOKBACK_DAYS = 365;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export type CreatorDetailAggregatesSnapshot = {
+type CreatorDetailAggregatesSnapshot = {
   clicksTotal: number;
   clicks24h: number;
   clicks7d: number;
