@@ -2293,10 +2293,12 @@ export type PackTunePlan = {
    * edits stay one-click suggestions, "only if necessary") and returns the
    * first solver-PROVEN clean landing. The workspace AUTO-ADOPTS it (stages
    * the pinned price + edge override and re-plans — the landed plan
-   * re-verifies the claim fail-closed before any push). Absent/`null` when
-   * the plan is clean, refused, pinned-odds (pin remedies own that space),
-   * `lite`, or the bounded sweep found nothing (pool edits are then
-   * genuinely necessary).
+   * re-verifies the claim fail-closed before any push). Owner pins ride
+   * along (2026-07-12): every candidate solve enforces them and tier P never
+   * repairs a pinned row (pin remedies own REFUSED pinned plans; the rescue
+   * owns FEASIBLE-dirty ones). Absent/`null` when the plan is clean,
+   * refused, `lite`, or the bounded sweep found nothing (pool edits are
+   * then genuinely necessary).
    */
   cleanRescue?: CleanRescue | null;
 };
@@ -2904,6 +2906,9 @@ async function planPackTuneLiveUncached(
             // signatures miss) gets the pool-edit guidance — and so the
             // accept-as-is copy shares the degenerate verdict (Pattern 9c).
             shapeDegenerate: defaultShapeDegenerate === true,
+            // Push-honesty: snapped=false blocks the write — the accept-as-is
+            // copy must never bless a push-blocked plan (owner 2026-07-12).
+            snapped: shaped.snapped ?? null,
           })
         : null;
   }
@@ -3272,6 +3277,9 @@ async function planPackTuneStagedUncached(
             relaxations: outcome.ok ? outcome.relaxations : [],
             pinPrice: staged.pinPrice === true,
             shapeDegenerate: stagedShapeDegenerate,
+            // Push-honesty: snapped=false blocks the write — the accept-as-is
+            // copy must never bless a push-blocked plan (owner 2026-07-12).
+            snapped: outcome.ok ? (outcome.snapped ?? null) : null,
           })
         : null;
   } else if (taggedStaged && stagedNeedsGuidance && !isTagContradiction) {
@@ -3434,8 +3442,11 @@ async function planPackTuneStagedUncached(
   // Wave 13 clean rescue (owner grant 2026-07-11), staged arm: a FEASIBLE
   // staged plan stuck on dirty odds sweeps far price + edge-target flex for a
   // solver-proven clean landing the workspace auto-adopts. Gated OFF for
-  // `lite` (keystroke dry-runs), pinned odds (the pin-remedy machinery owns
-  // that space), and refusals (nothing to rescue — the WHY banner leads).
+  // `lite` (keystroke dry-runs) and refusals (nothing to rescue — the WHY
+  // banner leads). OWNER PINS RIDE ALONG (owner 2026-07-12: clicking an
+  // unpin chip left 2 pins + raw decimals and the rescue never armed): the
+  // pins bake into every candidate solve via the shared constructor, tier P
+  // never repairs a pinned row and merges its repair pins with the owner's.
   // A pinned PRICE keeps the sweep but zeroes the band: edge flex only, at
   // the pinned cent (`maxPriceChangePct: 0` short-circuits to base price).
   const stagedCleanRescue =
@@ -3444,8 +3455,7 @@ async function planPackTuneStagedUncached(
     // Both dirty states arm (owner 2026-07-12): off the clean ladder, or —
     // tagged only — snapped but off the human-nice grid (tier N repairs it).
     (outcome.snapped === false ||
-      (taggedStaged && outcome.allNice === false)) &&
-    (input.pinnedOdds === undefined || input.pinnedOdds.length === 0)
+      (taggedStaged && outcome.allNice === false))
       ? computeCleanRescue({
           mkParams: (te, band) => ({
             ...buildRetuneSearchParams("staged", {
@@ -3464,6 +3474,10 @@ async function planPackTuneStagedUncached(
               ),
               intendedHitRate: r.resolved.intendedHitRate,
               priceBudgetPct: stagedProbeBudgetPct,
+              ...(input.pinnedOdds !== undefined &&
+              input.pinnedOdds.length > 0
+                ? { pinnedOdds: input.pinnedOdds }
+                : {}),
             }),
             maxPriceChangePct: band,
           }),
@@ -3496,6 +3510,9 @@ async function planPackTuneStagedUncached(
           })(),
           cardIds: input.cards.map((c) => c.cardId),
           niceExemptIdx: outcome.niceExemptIdx ?? undefined,
+          ...(stagedPinnedShares !== null
+            ? { ownerPinnedIdx: stagedPinnedShares.map((p) => p.index) }
+            : {}),
         })
       : null;
 

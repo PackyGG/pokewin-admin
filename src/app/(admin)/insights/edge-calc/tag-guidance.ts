@@ -1900,6 +1900,14 @@ export function computeCleanRescue(input: {
    * judge can never disagree about which rows are off. Ignored untagged.
    */
   niceExemptIdx?: readonly number[];
+  /**
+   * OWNER-pinned row indexes (owner 2026-07-12: a pinned pool's dirty
+   * landing gets rescued too — the pins ride mkParams into every candidate
+   * solve). Tier P never repairs an owner-pinned row (pins are owner law,
+   * even ugly ones) and MERGES its repair pins with the owner's; Tier A is
+   * skipped (the wide probe's pin provenance is not verifiable here).
+   */
+  ownerPinnedIdx?: readonly number[];
   maxSearches?: number;
   /** Tier P's own combo budget (defaults to CLEAN_RESCUE_PIN_REPAIR_BUDGET). */
   maxPinRepairSolves?: number;
@@ -1921,11 +1929,15 @@ export function computeCleanRescue(input: {
   const maxSearches = input.maxSearches ?? CLEAN_RESCUE_SEARCH_BUDGET;
   const search = input.searchFn ?? searchBestPriceForCleanSnap;
 
+  const ownerPinned = new Set(input.ownerPinnedIdx ?? []);
+
   // ── Tier A: adopt the already-proven wide-probe landing (0 searches) ────
   // Tagged bar includes NICE (owner 2026-07-12): a rescue that lands snapped
   // but off the human-nice grid just moves the problem — for tagged packs a
-  // landing only counts as clean when `allNice === true`.
+  // landing only counts as clean when `allNice === true`. Skipped when owner
+  // pins exist: the probe's pin provenance is not verifiable here.
   if (
+    ownerPinned.size === 0 &&
     !pricePinned &&
     wideProbe !== null &&
     wideProbe.feasible &&
@@ -2029,6 +2041,9 @@ export function computeCleanRescue(input: {
     for (let i = 0; i < landed.length; i++) {
       const pct = (landed[i] ?? 0) * 100;
       if (!(pct > 0)) continue;
+      // Owner-pinned rows are never repaired — pins are owner law (an ugly
+      // typed pin is a sovereign choice, not a landing artifact).
+      if (ownerPinned.has(i)) continue;
       let rungs: number[];
       if (tagged) {
         if (exempt.has(i) || isOnNiceGridPct(pct)) continue;
@@ -2069,10 +2084,16 @@ export function computeCleanRescue(input: {
       let pinSpent = 0;
       for (const combo of combos) {
         if (pinSpent >= pinBudget) break;
-        const shareSum = combo.pins.reduce((a, p) => a + p.pct / 100, 0);
+        const params = mkParams(targetEdge, pricePinned ? 0 : priceBudgetPct);
+        // MERGE with the owner's pins (baked into mkParams by the caller):
+        // the candidate solve must enforce BOTH sets — a repair verified
+        // without the owner's constraints is a plan the real solve refuses.
+        const ownerShares = params.pinnedShares ?? [];
+        const shareSum =
+          combo.pins.reduce((a, p) => a + p.pct / 100, 0) +
+          ownerShares.reduce((a, p) => a + p.share, 0);
         if (shareSum >= 1) continue;
         pinSpent++;
-        const params = mkParams(targetEdge, pricePinned ? 0 : priceBudgetPct);
         // PINNED candidate solves can throw on pin-vs-tag contradictions
         // (the pins-aware model raises for structurally impossible inputs
         // instead of returning an error-result). Tier P probes speculative
@@ -2083,10 +2104,13 @@ export function computeCleanRescue(input: {
         try {
           res = search({
             ...params,
-            pinnedShares: combo.pins.map((p) => ({
-              index: p.index,
-              share: p.pct / 100,
-            })),
+            pinnedShares: [
+              ...ownerShares,
+              ...combo.pins.map((p) => ({
+                index: p.index,
+                share: p.pct / 100,
+              })),
+            ],
           });
         } catch {
           continue;
@@ -2333,6 +2357,13 @@ export type UntaggedPlanGuidanceInput = {
    * callers are unaffected.
    */
   shapeDegenerate?: boolean;
+  /**
+   * The plan's clean-odds landing (`snapped`). FALSE ⇒ push is BLOCKED — the
+   * accept-as-is copy must never say "Fine to push as-is" next to the
+   * clean-odds push gate (owner 2026-07-12: both rendered on one screen).
+   * Omitted/null ⇒ treated as clean (legacy callers).
+   */
+  snapped?: boolean | null;
   /**
    * Owner-typed pins (staged arm) aligned to `cards` by index — the SAME
    * treatment {@link computeTagGuidance} got: pinned cards enter every
@@ -2892,6 +2923,10 @@ export function computeUntaggedGuidance(
   // reason to be here (harmless floor pins on truly-dead cards) keeps the
   // original "Fine to push as-is" blessing.
   const acceptBody = `At ${usd(price)} the losing ${(lossMassPlanned * 100).toFixed(1)}% of opens must average ≈${usd(lossAvgNeeded)}, and only the ${usd(carrierValue)} card can carry that — so the other loss cards sit at the minimum odds${winFloated ? ` and the win rate floats to ${(winMassPlanned * 100).toFixed(1)}%` : ""}.`;
+  // Push-honesty (owner 2026-07-12): a snapped=false plan is push-BLOCKED
+  // (clean odds are the write gate) — never bless it "Fine to push as-is"
+  // on the same screen that says clean odds are required.
+  const pushBlocked = input.snapped === false;
   suggestions.push({
     kind: "accept-as-is",
     params: {
@@ -2904,8 +2939,8 @@ export function computeUntaggedGuidance(
     },
     humanCopy:
       input.shapeDegenerate === true
-        ? `The math is sound but the ladder is degenerate — ${acceptBody} This is pushable, but the pool edit above is the real fix; accept it only if this concentration is intentional.`
-        : `This plan is sound — the pins are the pool's structure, not an error. ${acceptBody} Fine to push as-is.`,
+        ? `The math is sound but the ladder is degenerate — ${acceptBody} ${pushBlocked ? "Push still needs clean odds (use a fix above to land them), and" : "This is pushable, but"} the pool edit above is the real fix; accept it only if this concentration is intentional.`
+        : `This plan is sound — the pins are the pool's structure, not an error. ${acceptBody}${pushBlocked ? " Push still needs clean odds — apply a fix above to land them." : " Fine to push as-is."}`,
     proof: {
       evMinAfter: evMin,
       evMaxAfter: evMax,

@@ -650,8 +650,17 @@ export function edgeTargetSub(targetEdge: number): string {
 export const WIN_RATE_ON_TAG = "on tag";
 export const WIN_RATE_OVER_TAG = "users win more than designed";
 
-export function priceMoveSub(delta: number): string {
-  return `Price moves ${delta >= 0 ? "+" : "−"}$${Math.abs(delta).toFixed(2)} so the odds land clean.`;
+/**
+ * Honest price-move caption (owner 2026-07-12: "Price moves −$16.23 so the
+ * odds land clean" rendered NEXT TO the "can't land on clean odds" verdict).
+ * The "so the odds land clean" clause is only claimed when the landed plan
+ * actually IS clean.
+ */
+export function priceMoveSub(delta: number, landedClean?: boolean): string {
+  const move = `Price moves ${delta >= 0 ? "+" : "−"}$${Math.abs(delta).toFixed(2)}`;
+  return landedClean === false
+    ? `${move} — the odds still don't land clean at this price.`
+    : `${move} so the odds land clean.`;
 }
 
 /**

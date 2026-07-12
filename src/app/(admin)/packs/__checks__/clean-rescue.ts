@@ -135,9 +135,11 @@ function baseInput(overrides?: {
   cardIds?: string[];
   maxPinRepairSolves?: number;
   niceExemptIdx?: number[];
+  ownerPinnedIdx?: number[];
+  mkParams?: Parameters<typeof computeCleanRescue>[0]["mkParams"];
 }): Parameters<typeof computeCleanRescue>[0] {
   return {
-    mkParams,
+    mkParams: overrides?.mkParams ?? mkParams,
     values: overrides?.values ?? [...VALUES],
     liveShares: overrides?.liveShares ?? [...LIVE_SHARES],
     targetEdge: overrides?.targetEdge ?? TARGET_EDGE,
@@ -164,6 +166,9 @@ function baseInput(overrides?: {
       : {}),
     ...(overrides?.niceExemptIdx !== undefined
       ? { niceExemptIdx: overrides.niceExemptIdx }
+      : {}),
+    ...(overrides?.ownerPinnedIdx !== undefined
+      ? { ownerPinnedIdx: overrides.ownerPinnedIdx }
       : {}),
   };
 }
@@ -582,6 +587,95 @@ check("tier N: an all-nice tagged landing never solves pinned combos", () => {
   );
   assert(r === null, "nothing off-nice ⇒ no tier N rescue");
   assert(n.pinned === 0, `no pinned solves expected, got ${n.pinned}`);
+});
+
+// ── 11. Owner pins ride the rescue (owner 2026-07-12) ──────────────────────
+// A pool with OWNER pins used to gate the rescue OFF entirely — clicking an
+// unpin chip left 2 pins + raw decimals and no auto-clean. Now the pins bake
+// into mkParams (caller-side) and: tier A is skipped (probe pin provenance
+// unverifiable), every candidate solve carries the owner pins, tier P never
+// repairs an owner-pinned row and MERGES its combo pins with the owner's.
+check("owner pins: tier A skipped, pins ride every solve, owner rows never repaired", () => {
+  // Owner pinned row 0 at an UGLY 4.89% (their sovereign choice); row 1
+  // landed off-ladder at 10.11% and is the only repairable row.
+  const ownerPin = { index: 0, share: 0.0489 };
+  const seenPins: { index: number; share: number }[][] = [];
+  const stub: SearchFn = ((p: Parameters<SearchFn>[0]) => {
+    const pins =
+      (p as { pinnedShares?: { index: number; share: number }[] })
+        .pinnedShares ?? [];
+    seenPins.push(pins);
+    // Accept only when a repair pin joined the owner's (tier P combo).
+    return pins.length >= 2
+      ? okResult(BASE_PRICE + 0.5, { snapped: true })
+      : okResult(BASE_PRICE, { snapped: false });
+  }) as SearchFn;
+  const r = computeCleanRescue(
+    baseInput({
+      mkParams: (te, band) => ({
+        ...mkParams(te, band),
+        pinnedShares: [ownerPin],
+      }),
+      ownerPinnedIdx: [0],
+      wideProbe: CLEAN_WIDE_PROBE, // clean — but owner pins outrank tier A
+      searchFn: stub,
+      landedShares: LANDED_DIRTY,
+      cardIds: CARD_IDS,
+    }),
+  );
+  assert(r !== null, "expected the pin-repair rescue");
+  assert(r!.tier === "pin-repair", `tier ${r!.tier} (tier A must be skipped)`);
+  const reps = r!.pinRepairs ?? [];
+  assert(
+    reps.length === 1 && reps[0]!.index === 1 && reps[0]!.cardId === "card-b",
+    `only the unpinned row 1 may be repaired, got ${reps
+      .map((p) => p.index)
+      .join(",")}`,
+  );
+  assert(
+    seenPins.length > 0 &&
+      seenPins.every((pins) =>
+        pins.some((p) => p.index === 0 && Math.abs(p.share - 0.0489) < 1e-12),
+      ),
+    "every candidate solve must carry the owner's pin",
+  );
+  const accepting = seenPins[seenPins.length - 1]!;
+  assert(
+    accepting.length === 2 &&
+      accepting.some((p) => p.index === 1 && Math.abs(p.share - 0.1) < 1e-12),
+    `the verifying solve must merge owner + repair pins, got ${JSON.stringify(accepting)}`,
+  );
+});
+
+check("owner pins: all-owner-ugly landing yields honest null (pins are law)", () => {
+  // BOTH off-ladder rows are owner-pinned — nothing is repairable, and the
+  // rescue must refuse rather than override the owner's typed odds.
+  let comboSolves = 0;
+  const stub: SearchFn = ((p: Parameters<SearchFn>[0]) => {
+    const pins =
+      (p as { pinnedShares?: { index: number; share: number }[] })
+        .pinnedShares ?? [];
+    if (pins.length > 2) comboSolves++;
+    return okResult(BASE_PRICE, { snapped: false });
+  }) as SearchFn;
+  const r = computeCleanRescue(
+    baseInput({
+      mkParams: (te, band) => ({
+        ...mkParams(te, band),
+        pinnedShares: [
+          { index: 0, share: 0.0489 },
+          { index: 1, share: 0.1011 },
+        ],
+      }),
+      ownerPinnedIdx: [0, 1],
+      searchFn: stub,
+      landedShares: LANDED_DIRTY,
+      cardIds: CARD_IDS,
+      maxSearches: 2,
+    }),
+  );
+  assert(r === null, "no repairable row ⇒ null (pool edits are next)");
+  assert(comboSolves === 0, `tier P must not probe combos, got ${comboSolves}`);
 });
 
 check("tagged acceptance: every tier rejects an allNice=false landing", () => {

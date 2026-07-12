@@ -1715,10 +1715,13 @@ export function RetuneWorkspace({
   // is adopted automatically: stage the pinned price + edge-target override
   // (the exact plumbing a manual suggestion click uses) and re-plan — the
   // landed plan re-verifies the claim fail-closed before any push. LOUD
-  // toast disclosure; one shot per pack+signature and a hard cap of 2
-  // adoptions per pack, so a rescue that fails to re-verify downstream
-  // degrades to the ranked manual chips instead of looping. Pool edits are
-  // NEVER auto-applied.
+  // toast disclosure; one shot per basis+signature and a hard cap of 2
+  // adoptions per BASIS (owner 2026-07-12: every owner action — chip click,
+  // unpin, price edit — mints a new basis and deserves a fresh rescue shot;
+  // the old per-pack cap died after two adoptions and then dumped raw
+  // decimals + manual chips on the owner). Convergence stays bounded: each
+  // basis burns its own cap, every adopt is a solver-proven strictly-cleaner
+  // landing. Pool edits are NEVER auto-applied.
   const rescueAdoptedRef = React.useRef(new Map<string, string[]>());
   React.useEffect(() => {
     if (!selectedPackId || status !== "planned") return;
@@ -1736,14 +1739,15 @@ export function RetuneWorkspace({
     }|${(rescue.pinRepairs ?? [])
       .map((p) => `${p.cardId ?? p.index}@${p.pct}`)
       .join(",")}`;
-    const seen = rescueAdoptedRef.current.get(selectedPackId) ?? [];
+    const capKey = `${selectedPackId}|${selectedBasis ?? ""}`;
+    const seen = rescueAdoptedRef.current.get(capKey) ?? [];
     if (seen.includes(sig) || seen.length >= 2) return;
-    rescueAdoptedRef.current.set(selectedPackId, [...seen, sig]);
+    rescueAdoptedRef.current.set(capKey, [...seen, sig]);
     if (rescue.tier === "pin-repair" && (rescue.pinRepairs?.length ?? 0) > 0) {
       // Tier P: stage the repair pins (the owner's hand-move, mechanized) +
-      // the proven price, PINNED. The re-plan re-verifies fail-closed through
-      // the pin machinery — and since pins gate the rescue OFF, an adopted
-      // repair can never re-fire and oscillate.
+      // the proven price, PINNED, MERGED with the owner's own pins (repair
+      // rows never collide — the engine skips owner-pinned rows). The
+      // re-plan re-verifies fail-closed through the pin machinery.
       const packId = selectedPackId;
       const sp = ensureStaged(packId);
       if (!sp) return;
@@ -1775,6 +1779,7 @@ export function RetuneWorkspace({
     toast.info(autoCleanAppliedToast(rescue), { duration: 10_000 });
   }, [
     selectedPackId,
+    selectedBasis,
     status,
     planForBasis,
     applyPriceSuggestion,

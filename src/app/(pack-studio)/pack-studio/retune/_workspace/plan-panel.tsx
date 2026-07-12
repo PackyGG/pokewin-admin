@@ -1537,7 +1537,7 @@ export function PlanPanel({
               staged?.pinPrice
                 ? pricePinnedSub(staged.price ?? row.price, row.price)
                 : plan && Math.abs(priceDelta) > 1e-9
-                  ? priceMoveSub(priceDelta)
+                  ? priceMoveSub(priceDelta, plan.snapped !== false)
                   : "price unchanged"
             }
           >
