@@ -1110,8 +1110,12 @@ export function RetuneWorkspace({
       ...(pe.price !== null ? { price: pe.price } : {}),
       // An add-card fix pins the price so the free search can't drift the
       // spread back (the untagged spread-fix contract); a pure-removal / price
-      // fix respects whatever the derived plan carried.
-      ...(pe.addCard !== null && pe.price !== null ? { pinPrice: true } : {}),
+      // fix respects whatever the derived plan carried. BUT for a dirty-dead-end
+      // the engine proved no clean odds exist at ANY single in-band price —
+      // the pool edit changes the shape, and the price must FLOAT to find the
+      // new clean point. Re-pinning here creates a loop (unpin → add card →
+      // re-pinned → still dirty → unpin → ...).
+      ...(pe.addCard !== null && pe.price !== null && pe.reason !== "dirty-dead-end" ? { pinPrice: true } : {}),
     });
     if (pe.addCard !== null) {
       openPicker({ min: pe.addCard.valueMin, max: pe.addCard.valueMax });
