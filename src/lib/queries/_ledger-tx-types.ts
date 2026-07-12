@@ -7,7 +7,7 @@ import { dbForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 
 /** Generated Prisma enum values — keep queries in sync with schema.prisma. */
-export const LEDGER_TX_TYPES = new Set<string>(Object.values(ledger_transaction_type));
+const LEDGER_TX_TYPES = new Set<string>(Object.values(ledger_transaction_type));
 
 /** Drop strings that are not in the generated client (e.g. after schema drift before `prisma generate`). */
 export function filterLedgerTxTypes(types: readonly string[]): LedgerTransactionType[] {
