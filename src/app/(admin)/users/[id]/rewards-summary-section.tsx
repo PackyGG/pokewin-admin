@@ -59,6 +59,18 @@
  *   • Fixed a real 2-col/3-tile orphan-row wrap in the sibling pack-opens
  *     section's daily-highlight strip (see reward-pack-opens-section.tsx).
  *
+ * VISUAL REDESIGN ROUND 2 (owner: "looks the same still ass", screenshot):
+ * the round-1 pass fixed hierarchy/labels but left `PayoutTile` as a
+ * top-left stacked block (icon+label row, value below) inside a grid cell
+ * that stretches to fill whatever width the `1fr` payout column gets — on a
+ * wide viewport that leaves most of each tile empty below/right of the
+ * content, which reads as unfinished. Rebuilt `PayoutTile` as a horizontal
+ * icon-chip row (chip left, label/value column, optional meta caption right)
+ * so it fills its full height at any tile width instead of leaving dead
+ * space, using the same icon-chip treatment `StatPanel`'s header already
+ * uses. No prop shape change — every call site (this file +
+ * reward-pack-opens-section.tsx) is unaffected.
+ *
  * PRIMITIVES: imports `SectionHeading` / `StatPanel` from the page-local
  * FLAT fork (`./user-view-modern-panels`), not the shared, colorful
  * gradient/corner-glow versions in `@/components/modern-panels`. This page
@@ -111,6 +123,19 @@ const ACCENT_ICON: Record<PayoutTileAccent, string> = {
   purple: "text-purple-500",
 };
 
+/** Icon-chip background per accent — same token values as `TILE_COLORS` in
+ *  `./user-view-modern-panels` (kept as a local copy since `PayoutTile` uses
+ *  its own accent union, which includes cyan/amber/purple on top of the
+ *  House-POV rose/emerald/blue). */
+const ACCENT_CHIP: Record<PayoutTileAccent, string> = {
+  rose: "bg-rose-500/10",
+  emerald: "bg-emerald-500/10",
+  blue: "bg-blue-500/10",
+  cyan: "bg-cyan-500/10",
+  amber: "bg-amber-500/10",
+  purple: "bg-purple-500/10",
+};
+
 /**
  * House-POV money color for a rakeback figure — zero-aware. A genuine house
  * cost (amount > 0) still gets the rose tint; an exact $0.00 means nothing
@@ -154,13 +179,17 @@ export function MiniStat({
 }
 
 /**
- * Flat "display box" for a reward-payout category — icon + label + value +
- * count sub-line. Same flat vocabulary as `MiniStat` (hairline border,
- * bg-card, no gradient/corner-glow), sized at the same sane KPI-tile scale
- * used elsewhere on this page — replaces the oversized global `KpiTile`
- * these boxes used to render with. Exported so `reward-pack-opens-section`
- * (the sibling Rewards-tab section) can reuse the same flat tile instead of
- * pulling in the colorful global `KpiTile` too.
+ * Flat "display box" for a reward-payout category — icon CHIP + label/value
+ * column + an optional right-aligned meta caption, laid out as a horizontal
+ * row (not a top-left stack). A stacked layout left most of a wide grid cell
+ * empty below the content (owner, 2026-07-12 round 2: "looks the same still
+ * ass" — the wide near-empty tiles in the screenshot were the actual defect,
+ * not the numbers/labels). The icon-chip + row layout fills the tile's full
+ * height regardless of width and reads as an intentional list-row instead of
+ * a mostly-empty box — same chip treatment `StatPanel`'s header icon uses in
+ * `./user-view-modern-panels`, just sized for a compact tile. Exported so
+ * `reward-pack-opens-section` (the sibling Rewards-tab section) reuses the
+ * same tile instead of pulling in the colorful global `KpiTile`.
  */
 export function PayoutTile({
   label,
@@ -176,25 +205,32 @@ export function PayoutTile({
   accent: PayoutTileAccent;
 }) {
   return (
-    <div className="min-w-0 rounded-lg border bg-card px-3 py-2.5">
-      <div className="flex items-center gap-1.5">
-        <Icon className={cn("size-3.5 shrink-0", ACCENT_ICON[accent])} />
-        <span className="truncate text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-          {label}
-        </span>
-      </div>
-      <p
+    <div className="flex min-w-0 items-center gap-3 rounded-lg border bg-card px-3 py-3">
+      <div
         className={cn(
-          "mt-1 truncate text-lg font-bold tracking-tight tabular-nums",
-          ACCENT_TEXT[accent],
+          "flex size-9 shrink-0 items-center justify-center rounded-lg",
+          ACCENT_CHIP[accent],
         )}
       >
-        {value}
-      </p>
-      {sub && (
-        <p className="mt-0.5 truncate text-[10px] uppercase tracking-wider text-muted-foreground/70">
-          {sub}
+        <Icon className={cn("size-4", ACCENT_ICON[accent])} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+          {label}
         </p>
+        <p
+          className={cn(
+            "mt-0.5 truncate text-lg font-bold tracking-tight tabular-nums",
+            ACCENT_TEXT[accent],
+          )}
+        >
+          {value}
+        </p>
+      </div>
+      {sub && (
+        <span className="shrink-0 whitespace-nowrap text-right text-[10px] uppercase tracking-wider text-muted-foreground/70">
+          {sub}
+        </span>
       )}
     </div>
   );
