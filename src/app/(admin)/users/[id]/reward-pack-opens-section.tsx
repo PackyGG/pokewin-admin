@@ -28,6 +28,13 @@
  *     "Show per-card detail · N cards across M opens" trigger bar shrunk down
  *     to a small chevron icon-button in the box header (same lazy collapsible
  *     content underneath — no data/functionality change, presentation only).
+ *   • PRESENTATION PASS 3 (owner, 2026-07-12: "the UI right now is horrible"
+ *     — full Rewards-tab redesign): fixed a real wrap bug in the daily-packs
+ *     highlight strip (was `grid-cols-2` for 3 tiles → the 3rd orphaned into
+ *     a lonely half-width row on mobile; now `grid-cols-1` like the totals
+ *     strip above it) and labeled the per-type box list ("Breakdown by
+ *     type") so this section reads as clearly grouped totals → daily
+ *     highlight → per-type detail instead of an unlabeled stack.
  *
  * House-POV (CLAUDE.md): a reward-pack grant is the house GIVING the user
  * value → a house COST → card values render in ROSE.
@@ -230,9 +237,12 @@ function RewardPackOpensStreamed({
       </div>
 
       {/* Daily-packs highlight — only when the user actually claimed daily
-          packs. "How often" (opens) + "how much pulled" (value). */}
+          packs. "How often" (opens) + "how much pulled" (value).
+          `grid-cols-1` on mobile (not `grid-cols-2`, which orphaned the 3rd
+          tile into a lonely half-width row) — matches the totals strip
+          above so both 3-tile rows wrap identically. */}
       {dailyOpens > 0 ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <PayoutTile
             label="Daily packs claimed"
             value={formatNumber(dailyOpens)}
@@ -257,11 +267,18 @@ function RewardPackOpensStreamed({
         </div>
       ) : null}
 
-      {/* One box PER reward type — scannable stats, per-card detail collapsed. */}
-      <div className="space-y-3">
-        {groups.map((g) => (
-          <RewardTypeBox key={g.key} group={g} />
-        ))}
+      {/* One box PER reward type — scannable stats, per-card detail collapsed.
+          Labeled so this reads as its own group under the totals/daily
+          strips above, not a bolted-on list. */}
+      <div className="space-y-2">
+        <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          Breakdown by type
+        </p>
+        <div className="space-y-3">
+          {groups.map((g) => (
+            <RewardTypeBox key={g.key} group={g} />
+          ))}
+        </div>
       </div>
     </div>
   );

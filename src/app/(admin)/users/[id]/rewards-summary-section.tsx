@@ -41,6 +41,24 @@
  * within the shared height via its own `h-full flex flex-col justify-center`
  * wrapper, so it stays correct however many payout tiles render.
  *
+ * VISUAL REDESIGN (owner, 2026-07-12: "the UI right now is horrible" — full
+ * pass, not a patch):
+ *   • Rakeback panel had NO hero — "Claimed" and "Claimable" were rendered
+ *     as the same tiny `MiniStat` scale as the cadence sub-breakdown below
+ *     them, so nothing drew the eye first and the panel read flat. Promoted
+ *     both to a hero-number pair (same `text-xl sm:text-2xl font-bold`
+ *     treatment `ModernBalancePanel`/`ModernPnlPanel` use for their headline
+ *     number in `./user-view-modern-panels.tsx`), with the cadence
+ *     breakdown demoted below a `border-t` divider — mirrors the established
+ *     "hero number(s) → breakdown grid" shape used everywhere else on this
+ *     page instead of inventing a new one.
+ *   • Added matching subsection labels ("Claimed by cadence" already
+ *     existed; "Reward payouts" added above the tile grid) so both halves
+ *     of the row read as clearly labeled groups instead of one box with a
+ *     title and one without.
+ *   • Fixed a real 2-col/3-tile orphan-row wrap in the sibling pack-opens
+ *     section's daily-highlight strip (see reward-pack-opens-section.tsx).
+ *
  * PRIMITIVES: imports `SectionHeading` / `StatPanel` from the page-local
  * FLAT fork (`./user-view-modern-panels`), not the shared, colorful
  * gradient/corner-glow versions in `@/components/modern-panels`. This page
@@ -262,67 +280,96 @@ export function RewardsSummarySection({
     <div className="grid gap-4 lg:grid-cols-[minmax(0,360px)_1fr] lg:items-stretch">
       {/* ── Rakeback (lead) ───────────────────────────────────────────── */}
       <StatPanel title="Rakeback" icon={Percent} accent="rose">
-        {/* Claimed lifetime + claimable now — the two headline numbers. */}
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <MiniStat
-            label="Claimed (lifetime)"
-            value={formatCurrency(rewards.rakebackClaimedUsd)}
-            valueClassName={rakebackValueClass(rewards.rakebackClaimedUsd)}
-            sub={`${formatNumber(rewards.rakebackClaimedCount)} ${
-              rewards.rakebackClaimedCount === 1 ? "claim" : "claims"
-            }`}
-          />
-          <MiniStat
-            label="Claimable now"
-            value={formatCurrency(rewards.rakebackClaimableUsd)}
-            valueClassName={rakebackValueClass(rewards.rakebackClaimableUsd)}
-            sub="unclaimed liability"
-          />
+        {/* Claimed lifetime + claimable now — the two headline numbers,
+            promoted to hero scale (was the same tiny MiniStat size as the
+            cadence breakdown below, so nothing drew the eye first). Mirrors
+            the hero-number treatment ModernBalancePanel/ModernPnlPanel use
+            for their own headline figure. Stacks on the narrowest widths
+            (this panel goes full-bleed below `lg`) so two currency values
+            never fight for space in a 360px column. */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="min-w-0">
+            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              Claimed (lifetime)
+            </p>
+            <p
+              className={cn(
+                "mt-1 truncate text-xl font-bold tracking-tight tabular-nums sm:text-2xl",
+                rakebackValueClass(rewards.rakebackClaimedUsd),
+              )}
+            >
+              {formatCurrency(rewards.rakebackClaimedUsd)}
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {formatNumber(rewards.rakebackClaimedCount)}{" "}
+              {rewards.rakebackClaimedCount === 1 ? "claim" : "claims"}
+            </p>
+          </div>
+          <div className="min-w-0">
+            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              Claimable now
+            </p>
+            <p
+              className={cn(
+                "mt-1 truncate text-xl font-bold tracking-tight tabular-nums sm:text-2xl",
+                rakebackValueClass(rewards.rakebackClaimableUsd),
+              )}
+            >
+              {formatCurrency(rewards.rakebackClaimableUsd)}
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              unclaimed liability
+            </p>
+          </div>
         </div>
 
         {/* Cadence sub-breakdown of CLAIMED — the three slices sum to the
-            claimed total above (daily|weekly|monthly is the full enum). */}
-        <p className="mb-1.5 mt-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-          Claimed by cadence
-        </p>
-        <div className="grid grid-cols-3 gap-2">
-          <MiniStat
-            label="Daily"
-            value={formatCurrency(byFrequency.daily.claimedUsd)}
-            valueClassName={rakebackValueClass(byFrequency.daily.claimedUsd)}
-            sub={`${formatNumber(byFrequency.daily.claimedCount)} claims`}
-          />
-          <MiniStat
-            label="Weekly"
-            value={formatCurrency(byFrequency.weekly.claimedUsd)}
-            valueClassName={rakebackValueClass(byFrequency.weekly.claimedUsd)}
-            sub={`${formatNumber(byFrequency.weekly.claimedCount)} claims`}
-          />
-          <MiniStat
-            label="Monthly"
-            value={formatCurrency(byFrequency.monthly.claimedUsd)}
-            valueClassName={rakebackValueClass(byFrequency.monthly.claimedUsd)}
-            sub={`${formatNumber(byFrequency.monthly.claimedCount)} claims`}
-          />
-        </div>
-
-        {/* "Of which instant" — a CROSS-CUTTING subset, not a 4th cadence.
-            Hidden when the early-claim column is absent (drift → null). */}
-        {hasInstant && rewards.instantClaimedCount! > 0 ? (
-          <p className="mt-2 text-[11px] text-muted-foreground">
-            of which instant-claimed:{" "}
-            <span
-              className={cn(
-                "font-semibold tabular-nums",
-                rakebackValueClass(rewards.instantClaimedUsd!),
-              )}
-            >
-              {formatCurrency(rewards.instantClaimedUsd!)}
-            </span>{" "}
-            · {formatNumber(rewards.instantClaimedCount!)}{" "}
-            {rewards.instantClaimedCount === 1 ? "claim" : "claims"}
+            claimed total above (daily|weekly|monthly is the full enum).
+            Demoted below a divider so it reads as detail under the hero
+            pair above, not equal-weight with it. */}
+        <div className="mt-4 border-t pt-3">
+          <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            Claimed by cadence
           </p>
-        ) : null}
+          <div className="grid grid-cols-3 gap-2">
+            <MiniStat
+              label="Daily"
+              value={formatCurrency(byFrequency.daily.claimedUsd)}
+              valueClassName={rakebackValueClass(byFrequency.daily.claimedUsd)}
+              sub={`${formatNumber(byFrequency.daily.claimedCount)} claims`}
+            />
+            <MiniStat
+              label="Weekly"
+              value={formatCurrency(byFrequency.weekly.claimedUsd)}
+              valueClassName={rakebackValueClass(byFrequency.weekly.claimedUsd)}
+              sub={`${formatNumber(byFrequency.weekly.claimedCount)} claims`}
+            />
+            <MiniStat
+              label="Monthly"
+              value={formatCurrency(byFrequency.monthly.claimedUsd)}
+              valueClassName={rakebackValueClass(byFrequency.monthly.claimedUsd)}
+              sub={`${formatNumber(byFrequency.monthly.claimedCount)} claims`}
+            />
+          </div>
+
+          {/* "Of which instant" — a CROSS-CUTTING subset, not a 4th cadence.
+              Hidden when the early-claim column is absent (drift → null). */}
+          {hasInstant && rewards.instantClaimedCount! > 0 ? (
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              of which instant-claimed:{" "}
+              <span
+                className={cn(
+                  "font-semibold tabular-nums",
+                  rakebackValueClass(rewards.instantClaimedUsd!),
+                )}
+              >
+                {formatCurrency(rewards.instantClaimedUsd!)}
+              </span>{" "}
+              · {formatNumber(rewards.instantClaimedCount!)}{" "}
+              {rewards.instantClaimedCount === 1 ? "claim" : "claims"}
+            </p>
+          ) : null}
+        </div>
       </StatPanel>
 
       {/* ── Reward payouts ("display boxes") ─────────────────────────────
@@ -335,6 +382,9 @@ export function RewardsSummarySection({
           stuck to the top with dead space below — same fix pattern as the
           Overview tab's equal-height panel row. */}
       <div className="flex h-full flex-col justify-center">
+        <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          Reward payouts
+        </p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {payouts.map((p) => (
             <PayoutTile
