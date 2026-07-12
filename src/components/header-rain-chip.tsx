@@ -23,8 +23,10 @@ function endsInLabel(endsAtIso: string): string {
 /**
  * Compact live-rain countdown chip for the admin header — a cyan-tinted pill
  * that sits just to the LEFT of the profile menu. A rain glyph + the live
- * entrant count + the live countdown (reusing RainCountdown); the pool and
- * ends-in live in the tooltip.
+ * entrant count + the live $ pool total + the live countdown (reusing
+ * RainCountdown). min-h-8 + rounded-full + the same p-1/px-3 padding rhythm
+ * as the profile dropdown's trigger pill in admin-header.tsx, so the two
+ * chips read as one matched pair sitting side by side.
  *
  * Reads the single active/drawing rains row via the SAME read the dashboard
  * chip uses (getActiveRain), wrapped in safeQuery so a failed/slow lookup
@@ -50,23 +52,29 @@ export async function HeaderRainChip() {
   const participants = `${formatNumber(rain.participantCount)} ${
     rain.participantCount === 1 ? "participant" : "participants"
   }`;
+  const pool = formatCurrency(rain.totalPoolUsd);
   return (
     <span
-      className="hidden items-center gap-1.5 rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2 py-1 text-xs font-medium text-cyan-700 sm:inline-flex dark:text-cyan-400"
-      title={`Active rain · ${participants} · ${formatCurrency(
-        rain.totalPoolUsd,
-      )} pool · ${drawing ? "drawing winner" : endsInLabel(rain.endsAt)}`}
+      className="hidden min-h-8 items-center gap-1.5 rounded-full border border-cyan-500/40 bg-cyan-500/10 px-3 text-xs font-medium text-cyan-700 sm:inline-flex dark:text-cyan-400"
+      title={`Active rain · ${participants} · ${pool} pool · ${
+        drawing ? "drawing winner" : endsInLabel(rain.endsAt)
+      }`}
     >
       <CloudRain className="size-3.5 shrink-0" aria-hidden />
       {/* Live entrant count — surfaced IN the chip (not just the tooltip) so
-          the headline number is visible at a glance. Pool + ends-in stay in
-          the tooltip to keep the header pill compact. */}
+          the headline number is visible at a glance. */}
       <span className="inline-flex items-center gap-1">
         <Users className="size-3 shrink-0" aria-hidden />
         <span className="tabular-nums">
           {formatNumber(rain.participantCount)}
         </span>
       </span>
+      <span className="text-cyan-700/40 dark:text-cyan-400/40" aria-hidden>
+        ·
+      </span>
+      {/* Pool $ total — now visible in the chip body, not just the tooltip,
+          so the joined pool amount is readable at a glance. */}
+      <span className="tabular-nums font-semibold">{pool}</span>
       <span className="text-cyan-700/40 dark:text-cyan-400/40" aria-hidden>
         ·
       </span>

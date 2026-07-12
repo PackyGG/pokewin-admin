@@ -15,7 +15,6 @@ import {
   Database,
   KeyRound,
   ChevronDown,
-  ShieldCheck,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
@@ -404,51 +403,56 @@ export function AdminHeader({
               `data-popup-open` flips the chevron while the menu is open. */}
           <DropdownMenuTrigger
             className={cn(
-              // A subtle bordered, tinted pill — content-sized (NO min-width).
+              // A clean, tinted pill — content-sized (no min-width) and
+              // rounded-full so its shape matches the perfectly circular
+              // avatar + role badge nested inside it (a rounded-lg box
+              // around a circular avatar was the "rounding is off"
+              // mismatch). min-h-8 pixel-matches the rain chip beside it.
               // Symmetric p-1 keeps the phone avatar-only target tidy; sm+
-              // opens the right side (pr-2) so the chevron has room.
-              "group flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 p-1 outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring sm:pr-2",
+              // opens the right side (pr-3) so the chevron has room.
+              "group flex min-h-8 items-center gap-2 rounded-full border border-border/60 bg-muted/40 p-1 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring sm:pr-3",
             )}
             aria-label="Open profile menu"
             title={label}
           >
-            <Avatar className="size-7 shrink-0">
+            <Avatar size="sm" className="shrink-0">
               {hasAvatar && (
                 <AvatarImage
                   src={`/api/admin/avatar/${adminId}`}
                   alt={label}
                 />
               )}
-              <AvatarFallback className="text-xs font-semibold">
+              <AvatarFallback className="font-semibold">
                 {initials(label)}
               </AvatarFallback>
             </Avatar>
-            {/* Name over role — a two-line stack (name on top, role badge on
-                the line below), hidden on phones where the dropdown carries
-                the name + full role set instead. items-start keeps the badge
-                content-sized + left-aligned under the name. */}
-            <span className="hidden flex-col items-start sm:flex">
-              <span className="max-w-[10rem] truncate text-sm font-medium leading-tight text-foreground">
+            {/* Name over role — a tight two-line identity stack (name on
+                top, role badge flush below with no gap) so it reads as one
+                compact unit instead of two loosely related lines. Hidden on
+                phones, where the dropdown carries the name + full role set
+                instead. items-start keeps the badge content-sized +
+                left-aligned under the name. */}
+            <span className="hidden flex-col items-start justify-center sm:flex">
+              <span className="max-w-[9rem] truncate text-xs leading-none font-semibold text-foreground">
                 {label}
               </span>
               <Badge
                 variant="outline"
                 className={cn(
-                  "mt-0.5 inline-flex h-[18px] shrink-0 gap-0.5 px-1.5 text-[10px] font-bold uppercase leading-none tracking-wide",
+                  "h-3.5 shrink-0 px-1.5 py-0 text-[9px] font-bold uppercase leading-none tracking-wide",
                   ROLE_COLORS[role],
                 )}
               >
-                <ShieldCheck className="size-3" />
                 {role.replace("_", " ")}
               </Badge>
             </span>
-            <ChevronDown className="ml-1.5 hidden size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[popup-open]:rotate-180 sm:block" />
+            <ChevronDown className="ml-1 hidden size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[popup-open]:rotate-180 sm:block" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-[220px]">
             <DropdownMenuGroup>
               <DropdownMenuLabel className="font-normal">
-                <div className="flex flex-col gap-1">
-                  <span className="text-sm font-medium">{label}</span>
+                <div className="flex flex-col gap-1.5 py-0.5">
+                  <span className="text-sm font-semibold">{label}</span>
                   <span className="truncate text-xs text-muted-foreground">
                     @{username}
                   </span>
