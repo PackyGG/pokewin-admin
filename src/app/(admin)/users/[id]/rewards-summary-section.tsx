@@ -409,19 +409,16 @@ export function RewardsSummarySection({
       </StatPanel>
 
       {/* ── Reward payouts ("display boxes") ─────────────────────────────
-          Sit to the RIGHT of the Rakeback box on lg+ (owner: "make the
-          rakeback big box left side and put the display boxes right side
-          of it"), stacked below it on narrower viewports. The tile grid is
-          naturally shorter than the Rakeback panel, so this wrapper takes
-          the full stretched row height (`h-full`) and vertically centers
-          the tiles inside it (`justify-center`) instead of leaving them
-          stuck to the top with dead space below — same fix pattern as the
-          Overview tab's equal-height panel row. */}
-      <div className="flex h-full flex-col justify-center">
-        <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-          Reward payouts
-        </p>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          A matching StatPanel that mirrors the Rakeback panel on the left
+          (same flat bordered box + header treatment) so the two columns read
+          as an aligned equal-height PAIR instead of a big box sitting next to
+          small floating tiles (owner: "reward payout boxes so much smaller
+          than the rakeback one — make it all align"). `lg:items-stretch` on
+          the outer grid keeps both panels the same height; the tile grid
+          fills that height (`flex-1` + `auto-rows-fr`) so the tiles grow to
+          the panel edges and line up with the Rakeback panel. */}
+      <StatPanel title="Reward payouts" icon={Gift} accent="blue">
+        <div className="grid flex-1 auto-rows-fr grid-cols-2 gap-3 sm:grid-cols-3">
           {payouts.map((p) => (
             <PayoutTile
               key={p.key}
@@ -446,7 +443,7 @@ export function RewardsSummarySection({
             accent="blue"
           />
         </div>
-      </div>
+      </StatPanel>
     </div>
   );
 }
