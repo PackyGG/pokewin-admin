@@ -62,7 +62,7 @@ import { CH_DB } from "@/lib/clickhouse/queries/_shared";
  * → caller's Number(...), never Float); blacklist bound `{blacklist:Array(String)}`.
  */
 
-export type LifetimePnlRow = {
+type LifetimePnlRow = {
   creator_user_id: string;
   username: string | null;
   image: string | null;
