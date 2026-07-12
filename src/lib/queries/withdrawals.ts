@@ -357,7 +357,6 @@ async function computeWithdrawalDetail(id: string) {
     id: withdrawal.id,
     userId: withdrawal.user_id,
     username: user.username ?? user.email,
-    userEmail: user.email,
     method: withdrawal.method,
     status: withdrawal.status,
     totalValueUsd: toNumber(withdrawal.total_value_usd),
@@ -380,9 +379,6 @@ async function computeWithdrawalDetail(id: string) {
     shippedBy: (withdrawal.metadata as Record<string, unknown>)?.shipped_by_admin as string ?? withdrawal.user_card_withdrawal_requests_shipped_byTouser?.username ?? null,
     items,
     vouchers,
-    requiresConfirmation: withdrawal.requires_confirmation,
-    confirmationReason: withdrawal.confirmation_reason,
-    confirmedAt: withdrawal.confirmed_at?.toISOString() ?? null,
   };
 }
 
