@@ -16,7 +16,6 @@ import {
   type DoubleDownLog,
   type DoubleDownTimeSeriesPoint,
   type DoubleDownDashboardStats,
-  type UserDoubleDownHistory,
 } from "@/lib/queries/double-down-shared";
 
 // Re-export the client-safe shared surface so server call sites keep a single
@@ -528,86 +527,6 @@ export async function getDoubleDownLog(args: {
     ],
     { revalidate: cacheTtlForDoubleDownPeriod(args.period), tags: ["double-down"] },
   )(full);
-}
-
-// ── SURFACE 2: per-user history (INDEXED lookup) ──────────────────────────────
-
-/**
- * This user's Double Down history — log rows + a compact summary. STARTED-only
- * (owner rule): only rounds the user actually played (status IN
- * accepted/resolved) — a user with only expired offers shows nothing. Filters
- * `user_id` + status so the planner serves it from the (user_id,status) index
- * (EXPLAIN → Bitmap Index Scan). Lazy-loaded by the /users/[id] Gaming tab
- * (kicked only when that tab is active — Active-Timeframe-Only). NOT cached:
- * it is a per-user operational read on an indexed lookup with a small LIMIT,
- * consistent with the other per-user Gaming-tab reads.
- *
- * `limit` bounds the row list; the summary aggregates ALL of this user's
- * STARTED rounds (also via the (user_id,status) index).
- */
-export async function getUserDoubleDownHistory(
-  userId: string,
-  limit = 50,
-): Promise<UserDoubleDownHistory> {
-  const db = await getDb();
-
-  const [summaryRows, rows] = await Promise.all([
-    db.$queryRaw<
-      {
-        total_rounds: bigint;
-        resolved_rounds: bigint;
-        win_count: bigint;
-        lose_count: bigint;
-        total_staked: string | null;
-        total_paid_out: string | null;
-      }[]
-    >(Prisma.sql`
-      SELECT
-        count(*)                                                    AS total_rounds,
-        count(*) FILTER (WHERE o.result IS NOT NULL)                AS resolved_rounds,
-        count(*) FILTER (WHERE o.result = 'win')                    AS win_count,
-        count(*) FILTER (WHERE o.result = 'lose')                   AS lose_count,
-        sum(o.won_amount_usd) FILTER (WHERE o.result IS NOT NULL)   AS total_staked,
-        -- Real payout = the paired payout voucher's value (the actual credited
-        -- amount; reconciles to the voucher_redeemed ledger). NO multiplier,
-        -- NO metadata fallback.
-        sum(v.value) FILTER (WHERE o.result = 'win')                AS total_paid_out
-      FROM battle_double_down_offers o
-      LEFT JOIN vouchers v
-        ON v.id = o.won_voucher_id
-       AND v.origin = 'battle_double_down_payout'
-      WHERE o.user_id = ${userId} AND ${STARTED_STATUS}
-    `),
-    db.$queryRaw<RawLogRow[]>(Prisma.sql`
-      ${LOG_SELECT}
-      WHERE o.user_id = ${userId} AND ${STARTED_STATUS}
-      ORDER BY o.created_at DESC
-      LIMIT ${limit}
-    `),
-  ]);
-
-  const s = summaryRows[0];
-  const resolvedRounds = Number(s?.resolved_rounds ?? 0);
-  const winCount = Number(s?.win_count ?? 0);
-  const totalStaked = num(s?.total_staked ?? null) ?? 0;
-  const totalPaidOut = num(s?.total_paid_out ?? null) ?? 0;
-
-  return {
-    summary: {
-      totalRounds: Number(s?.total_rounds ?? 0),
-      resolvedRounds,
-      winCount,
-      loseCount: Number(s?.lose_count ?? 0),
-      winRate: resolvedRounds > 0 ? winCount / resolvedRounds : null,
-      totalStaked,
-      totalPaidOut,
-      netStakedVsPaid: totalStaked - totalPaidOut,
-      // House P&L on this user (matches Insights/dashboard): total staked −
-      // total actually paid out, over RESOLVED rounds. >0 = house profit.
-      netHousePnl: totalStaked - totalPaidOut,
-    },
-    rows: rows.map(mapLogRow),
-  };
 }
 
 // ── SURFACE 3: dashboard lifetime stats (DEV's canonical game_type method) ─────
