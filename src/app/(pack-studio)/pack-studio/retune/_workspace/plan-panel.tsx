@@ -115,7 +115,7 @@ import {
   suggestionKindLabel,
   offTagStrip,
   priceMoveSub,
-  PRICE_PINNED_SUB,
+  pricePinnedSub,
   pushSubLine,
   relaxationLine,
   tagBadgeLabel,
@@ -1535,7 +1535,7 @@ export function PlanPanel({
             accent="blue"
             sub={
               staged?.pinPrice
-                ? PRICE_PINNED_SUB
+                ? pricePinnedSub(staged.price ?? row.price, row.price)
                 : plan && Math.abs(priceDelta) > 1e-9
                   ? priceMoveSub(priceDelta)
                   : "price unchanged"

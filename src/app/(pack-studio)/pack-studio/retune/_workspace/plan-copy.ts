@@ -652,7 +652,19 @@ export function priceMoveSub(delta: number): string {
   return `Price moves ${delta >= 0 ? "+" : "−"}$${Math.abs(delta).toFixed(2)} so the odds land clean.`;
 }
 
-export const PRICE_PINNED_SUB = "price pinned — odds only";
+/**
+ * Pinned-price caption for the Ticket-price metric. The pin holds the
+ * STAGED price — which one-click price chips / the clean-rescue adopt may
+ * have set to a value ≠ live. Without naming that number, "price pinned"
+ * next to a Live→Planned move reads as a contradiction (owner, 2026-07-12:
+ * "pinned at $189.03 yet planned $104.63?" — the pin was honestly holding
+ * the staged $104.63 the exact-price chip staged).
+ */
+export function pricePinnedSub(pinnedPrice: number, livePrice: number): string {
+  return Math.abs(pinnedPrice - livePrice) > 1e-9
+    ? `pinned at the staged $${pinnedPrice.toFixed(2)} — odds only`
+    : "price pinned — odds only";
+}
 
 // ─── Pool-table footer copy (§5d) ───────────────────────────────────────────
 
