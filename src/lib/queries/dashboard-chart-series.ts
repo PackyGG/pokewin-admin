@@ -1,5 +1,4 @@
 import {
-  DASHBOARD_PERIOD_LABELS,
   periodToCutoff,
   type DashboardPeriod,
 } from "./dashboard-period";
@@ -73,10 +72,6 @@ export function dashboardChartDateLabel(d: Date, period: DashboardPeriod): strin
     return d.toISOString().slice(11, 16);
   }
   return d.toISOString().slice(0, 10);
-}
-
-export function dashboardChartTitleSuffix(period: DashboardPeriod): string {
-  return DASHBOARD_PERIOD_LABELS[period].toLowerCase();
 }
 
 function padSeries<T extends { date: string }>(
