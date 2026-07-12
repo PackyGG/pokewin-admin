@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AdminHeader } from "@/components/admin-header";
+import { HeaderRainChip } from "@/components/header-rain-chip";
 import { TopProgressBar } from "@/components/top-progress-bar";
 import { DockedChat } from "@/components/docked-chat";
 import { DockedRecentActivity } from "@/components/docked-recent-activity";
@@ -374,6 +375,16 @@ export default async function AdminLayout({
             preferences={preferences}
             dbEnv={dbEnv}
             canSwitchDbEnv={canSwitchDbEnv}
+            rainSlot={
+              // Live-rain countdown chip, streamed behind its OWN Suspense so
+              // this MAIN-DB read never blocks the header shell's first paint
+              // (fallback null → nothing until it resolves; the chip itself
+              // renders nothing at all between rains). Sits to the LEFT of the
+              // profile menu inside the header's right cluster.
+              <Suspense fallback={null}>
+                <HeaderRainChip />
+              </Suspense>
+            }
           />
           {/* Scrollable content region. This used to be a <main>, but the
               SidebarInset wrapper above is now the page's single <main>

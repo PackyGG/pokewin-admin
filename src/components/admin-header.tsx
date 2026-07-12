@@ -272,6 +272,7 @@ export function AdminHeader({
   preferences,
   dbEnv,
   canSwitchDbEnv,
+  rainSlot,
 }: {
   adminId: string;
   username: string;
@@ -296,6 +297,12 @@ export function AdminHeader({
   preferences: AdminPreferences;
   dbEnv: DbEnv;
   canSwitchDbEnv: boolean;
+  /**
+   * Server-rendered live-rain countdown chip, streamed from the admin layout
+   * behind its own <Suspense> so it never blocks the header's first paint.
+   * Sits to the LEFT of the profile menu; renders nothing between rains.
+   */
+  rainSlot?: React.ReactNode;
 }) {
   const pathname = usePathname();
   const breadcrumbs = getBreadcrumbs(pathname);
@@ -378,6 +385,10 @@ export function AdminHeader({
         </div>
       </nav>
       <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-3">
+        {/* Live-rain countdown chip — server-rendered in the layout and
+            streamed in behind its own <Suspense>. Sits to the LEFT of the
+            profile menu; renders nothing between rains (null slot). */}
+        {rainSlot}
         {/* Avatar + name now opens a dropdown with quick-access theme +
             timezone pickers alongside the profile link and logout. The
             whole cluster is the trigger so the click target stays as
