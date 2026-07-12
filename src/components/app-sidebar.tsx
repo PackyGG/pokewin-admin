@@ -468,16 +468,24 @@ export function AppSidebar({
                       // the collapse animation is unchanged. Reduced-motion
                       // users get none of this (no tween, no scale).
                       //
-                      // Liquid-Glass active treatment: the active row is a
-                      // soft primary pill (primary/10 wash + primary text via
-                      // the primitive) with a small rounded left indicator
-                      // bar drawn by the ::before pseudo-element. Both are
-                      // pure CSS state styles — nav logic untouched. The
-                      // indicator hides in icon-collapsed mode (the 32px
-                      // square button leaves no gutter for it).
-                      className="relative h-11 rounded-lg md:h-9 group-data-[collapsible=icon]:h-8! data-active:bg-primary/10 before:pointer-events-none before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-primary before:opacity-0 data-active:before:opacity-100 group-data-[collapsible=icon]:before:hidden motion-safe:transition-[color,background-color,width,height,padding,transform] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-[0.98]"
+                      // Active treatment — ONE cohesive accent state (no
+                      // grey-pill-plus-clashing-blue): a single soft
+                      // sidebar-primary wash (bg-sidebar-primary/15) with the
+                      // accent carried on the label + icon (text-sidebar-primary)
+                      // and a small rounded left indicator bar drawn by the
+                      // ::before pseudo-element. `data-active:bg-sidebar-primary/15`
+                      // deliberately OVERRIDES the primitive's own
+                      // `data-active:bg-sidebar-accent` grey fill (twMerge keeps
+                      // this later bg-color), so the active row reads as one
+                      // harmonious tinted pill instead of a grey pill fighting a
+                      // blue accent. All sidebar tokens → correct hue in every
+                      // theme (blue light/dark, cyan grailed). Pure CSS state
+                      // styles — nav logic untouched. The indicator hides in
+                      // icon-collapsed mode (the 32px square button leaves no
+                      // gutter for it); the wash + accent icon still mark it there.
+                      className="relative h-11 rounded-lg md:h-9 group-data-[collapsible=icon]:h-8! data-active:bg-sidebar-primary/15 data-active:text-sidebar-primary before:pointer-events-none before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-sidebar-primary before:opacity-0 data-active:before:opacity-100 group-data-[collapsible=icon]:before:hidden motion-safe:transition-[color,background-color,width,height,padding,transform] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-[0.98]"
                     >
-                      <Icon className={cn("size-4", isActive ? "text-primary" : "text-muted-foreground")} />
+                      <Icon className={cn("size-4", isActive ? "text-sidebar-primary" : "text-muted-foreground")} />
                       <span>{item.label}</span>
                       {/* Per-link pending cue — reads this <Link>'s
                           `useLinkStatus()` and shows a small spinner only
@@ -540,8 +548,16 @@ export function AppSidebar({
                     // medium / 0.14em) so section labels read as quiet
                     // chrome, not competing nav items.
                     "flex h-11 w-full shrink-0 cursor-pointer select-none items-center justify-between rounded-md px-2 text-[11px] font-medium uppercase tracking-[0.14em] transition-[color,background-color,transform] hover:bg-sidebar-accent/50 hover:text-sidebar-foreground md:h-9 motion-safe:active:scale-95",
+                    // Active section: quiet accent-colored label (no grey fill).
+                    // Previously this was a solid `bg-sidebar-accent` grey pill
+                    // that sat right above the active item's blue accent pill —
+                    // the two competing fills read as "grey background AND blue
+                    // one" and clashed. Tinting just the label with the same
+                    // sidebar-primary accent ties the section to its active item
+                    // in ONE hue with zero competing grey. Hover still gets the
+                    // transient grey wash above, so hover stays clearly distinct.
                     group.label === activeGroupLabel
-                      ? "bg-sidebar-accent text-sidebar-foreground"
+                      ? "text-sidebar-primary"
                       : "text-sidebar-foreground/50",
                   )}
                 >
@@ -581,14 +597,16 @@ export function AppSidebar({
                     tooltip={item.label}
                     render={<Link href={item.href} />}
                     onClick={handleNavTap}
-                    // Same Liquid-Glass active pill + left indicator as the
-                    // main nav rows above.
-                    className="relative h-11 rounded-lg md:h-9 group-data-[collapsible=icon]:h-8! data-active:bg-primary/10 before:pointer-events-none before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-primary before:opacity-0 data-active:before:opacity-100 group-data-[collapsible=icon]:before:hidden motion-safe:transition-[color,background-color,width,height,padding,transform] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-[0.98]"
+                    // Same single cohesive accent active treatment as the main
+                    // nav rows above (sidebar-primary wash + accent label/icon +
+                    // left indicator bar; overrides the primitive's grey active
+                    // fill so there is no grey-plus-blue clash).
+                    className="relative h-11 rounded-lg md:h-9 group-data-[collapsible=icon]:h-8! data-active:bg-sidebar-primary/15 data-active:text-sidebar-primary before:pointer-events-none before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-sidebar-primary before:opacity-0 data-active:before:opacity-100 group-data-[collapsible=icon]:before:hidden motion-safe:transition-[color,background-color,width,height,padding,transform] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-[0.98]"
                   >
                     <Icon
                       className={cn(
                         "size-4",
-                        isActive ? "text-primary" : "text-muted-foreground",
+                        isActive ? "text-sidebar-primary" : "text-muted-foreground",
                       )}
                     />
                     <span>{item.label}</span>
