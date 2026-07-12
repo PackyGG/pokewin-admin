@@ -5,8 +5,6 @@ import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { withTimeout, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { blacklistNotInClause } from "./_blacklist";
-import type { PaginatedResult } from "@/lib/types";
-import type { CreatorTipItem } from "./creators-types";
 
 // Lifetime-lookback cap (days) for the "all-time" branches of the creator
 // detail aggregate. Several legs here had NO lower bound and scanned the
@@ -579,77 +577,4 @@ export async function getCreatorDetailCached(
   const env = await readDbEnv();
   if (env !== "prod") return getCreatorDetail(userId);
   return cachedCreatorDetail(userId);
-}
-
-// ---------------------------------------------------------------------------
-// Creator Tips — rain tips sent by this creator
-// ---------------------------------------------------------------------------
-
-export async function getCreatorTips(
-  userId: string,
-  page: number = 1,
-  perPage: number = 20,
-): Promise<PaginatedResult<CreatorTipItem> & { totalTipped: number }> {
-  const db = await getDb();
-  const [tips, total, totalAgg] = await Promise.all([
-    db.rain_tips.findMany({
-      where: { user_id: userId },
-      include: {
-        rains: {
-          select: {
-            id: true,
-            total_pool_usd: true,
-            status: true,
-            winner_user_id: true,
-          },
-        },
-      },
-      orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-    }),
-    db.rain_tips.count({ where: { user_id: userId } }),
-    db.rain_tips.aggregate({
-      where: { user_id: userId },
-      _sum: { amount_usd: true },
-    }),
-  ]);
-
-  // Batch-fetch winner usernames
-  const winnerIds = [
-    ...new Set(
-      tips
-        .map((t) => t.rains.winner_user_id)
-        .filter((id): id is string => id !== null),
-    ),
-  ];
-  const winners =
-    winnerIds.length > 0
-      ? await db.user.findMany({
-          where: { id: { in: winnerIds } },
-          select: { id: true, username: true, email: true },
-        })
-      : [];
-  const winnerMap = new Map(
-    winners.map((w) => [w.id, w.username ?? w.email ?? w.id.slice(0, 8)]),
-  );
-
-  return {
-    data: tips.map((t) => ({
-      id: t.id,
-      rainId: t.rain_id,
-      amountUsd: toNumber(t.amount_usd),
-      rainTotalPool: toNumber(t.rains.total_pool_usd),
-      rainStatus: t.rains.status,
-      rainWinnerUsername: t.rains.winner_user_id
-        ? winnerMap.get(t.rains.winner_user_id) ?? null
-        : null,
-      createdAt: t.created_at.toISOString(),
-    })),
-    total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
-    totalTipped: toNumber(totalAgg._sum.amount_usd ?? 0),
-  };
 }

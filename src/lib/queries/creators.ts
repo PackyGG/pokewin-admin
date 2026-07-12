@@ -16,7 +16,6 @@ export {
   getCreatorDetail,
   getCreatorDetailCached,
   getCreatorHeader,
-  getCreatorTips,
 } from "./creators-detail";
 export {
   getCodes,
