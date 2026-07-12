@@ -35,7 +35,7 @@ import {
  * deposit/wager activity correctly scores 0.
  */
 
-export type SignupCohortMatrixCh = {
+type SignupCohortMatrixCh = {
   signups: number;
   claimers: number;
   retained30d: number;
