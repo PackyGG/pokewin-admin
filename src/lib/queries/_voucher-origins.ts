@@ -7,10 +7,10 @@ import { dbForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 
 /** Generated Prisma `voucher_origin` members — keep in sync with schema.prisma. */
-export const VOUCHER_ORIGINS = new Set<string>(Object.values(voucher_origin));
+const VOUCHER_ORIGINS = new Set<string>(Object.values(voucher_origin));
 
 /** Drop strings not in the generated client (schema drift before `prisma generate`). */
-export function filterVoucherOrigins(origins: readonly string[]): VoucherOrigin[] {
+function filterVoucherOrigins(origins: readonly string[]): VoucherOrigin[] {
   return origins.filter((o): o is VoucherOrigin => VOUCHER_ORIGINS.has(o));
 }
 
