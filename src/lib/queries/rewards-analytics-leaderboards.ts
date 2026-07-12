@@ -163,21 +163,27 @@ async function buildRaceSummary(
       wageredUsd: r.wagered_usd ? toNumber(r.wagered_usd) : 0,
     }));
   } else {
+    // `position` on race_leaderboard_snapshots is only finalized once the
+    // period ends (a backend job assigns 1..N by wagered_usd desc at that
+    // point) — while active it stays 0 for every row (verified read-only
+    // against prod), so ordering by it here would return an arbitrary set of
+    // "winners", not the top wagerers. Rank live by wagered_usd instead; this
+    // matches exactly how position gets finalized once the period ends.
     const snapshots = await db.race_leaderboard_snapshots.findMany({
       where: {
         race_type: kind,
         period_start: new Date(periodStartDateString),
         user: userRelation,
       },
-      orderBy: { position: "asc" },
+      orderBy: [{ wagered_usd: "desc" }, { user_id: "asc" }],
       take: TOP_WINNERS_LIMIT,
       include: { user: { select: { username: true } } },
     });
-    topWinners = snapshots.map((s) => ({
-      position: s.position,
+    topWinners = snapshots.map((s, i) => ({
+      position: i + 1,
       userId: s.user_id,
       username: s.user?.username ?? null,
-      prizeAmountUsd: tierByPosition.get(s.position) ?? 0,
+      prizeAmountUsd: tierByPosition.get(i + 1) ?? 0,
       wageredUsd: toNumber(s.wagered_usd),
     }));
   }

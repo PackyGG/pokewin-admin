@@ -190,10 +190,27 @@ export async function getRaceLeaderboard(params: {
     };
   }
 
+  // `position` on race_leaderboard_snapshots is only finalized once a period
+  // ends — a backend job assigns 1..N (by wagered_usd desc) at that point.
+  // While the period is still running every row's position stays 0 (verified
+  // read-only against prod: the active weekly period starting 2026-07-06 had
+  // all 371 rows at position 0, while the prior ended period was correctly
+  // 1..N and matched ORDER BY wagered_usd DESC exactly through the
+  // prize-tier range). Sorting by the raw column then shows every row as
+  // "#0" in an arbitrary order. Detect that case and rank live by
+  // wagered_usd instead of trusting the unset column.
+  const maxPosition = await db.race_leaderboard_snapshots.aggregate({
+    where,
+    _max: { position: true },
+  });
+  const unfinalized = (maxPosition._max.position ?? 0) === 0;
+
   const [entries, total, tiers] = await Promise.all([
     db.race_leaderboard_snapshots.findMany({
       where,
-      orderBy: { position: "asc" },
+      orderBy: unfinalized
+        ? [{ wagered_usd: "desc" }, { user_id: "asc" }]
+        : [{ position: "asc" }],
       skip: (page - 1) * perPage,
       take: perPage,
       include: {
@@ -251,16 +268,19 @@ export async function getRaceLeaderboard(params: {
   }
 
   return {
-    data: entries.map((e) => ({
-      id: e.id,
-      userId: e.user_id,
-      username: e.user?.username ?? null,
-      position: e.position,
-      wageredUsd: toNumber(e.wagered_usd),
-      prizeAmountUsd: tierByPosition.get(e.position) ?? null,
-      hold: holdByUser.get(e.user_id) ?? null,
-      claimedAt: claimedAtByUser.get(e.user_id) ?? null,
-    })),
+    data: entries.map((e, i) => {
+      const rank = unfinalized ? (page - 1) * perPage + i + 1 : e.position;
+      return {
+        id: e.id,
+        userId: e.user_id,
+        username: e.user?.username ?? null,
+        position: rank,
+        wageredUsd: toNumber(e.wagered_usd),
+        prizeAmountUsd: tierByPosition.get(rank) ?? null,
+        hold: holdByUser.get(e.user_id) ?? null,
+        claimedAt: claimedAtByUser.get(e.user_id) ?? null,
+      };
+    }),
     total,
     page,
     perPage,
