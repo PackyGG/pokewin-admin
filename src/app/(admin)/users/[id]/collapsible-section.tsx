@@ -16,9 +16,15 @@ import { cn } from "@/lib/utils";
  * state so it can run side effects on toggle (e.g. reset pagination on
  * re-open).
  *
+ * Trigger + content live inside ONE continuous bordered/rounded box (not two
+ * separately-floating blocks) so an open section visibly reads as "this
+ * content belongs to this header": the header fills the top of the box, a
+ * `border-t` divider marks the seam, and the content fills the rest — the
+ * outer box never gaps or re-borders itself between the two.
+ *
  * State affordance (must be readable at a glance, not just from the chevron):
- *   • COLLAPSED — a bordered, tinted (`bg-muted/30`) neutral header row with
- *     a hover affordance (`cursor-pointer` + `hover:bg-muted/50` + border /
+ *   • COLLAPSED — a tinted (`bg-muted/30`) neutral header row with a hover
+ *     affordance (`cursor-pointer` + `hover:bg-muted/50` + border /
  *     text-foreground shift), chevron pointing RIGHT.
  *   • OPEN — the header switches to a primary-tinted background + border
  *     (`bg-primary/10` / `border-primary/25`) and the icon chip goes from
@@ -47,17 +53,21 @@ export function CollapsibleSection({
     <Collapsible
       open={open}
       onOpenChange={onOpenChange}
-      className={cn("space-y-4 sm:space-y-6", className)}
+      className={cn(
+        "overflow-hidden rounded-lg border transition-colors",
+        open ? "border-primary/25" : "border-border/60 hover:border-border",
+        className,
+      )}
     >
       <CollapsibleTrigger
         render={
           <button
             type="button"
             className={cn(
-              "group flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
+              "group flex w-full cursor-pointer items-center justify-between gap-3 px-3 py-2.5 text-left transition-colors",
               open
-                ? "border-primary/25 bg-primary/10 hover:bg-primary/15"
-                : "border-border/60 bg-muted/30 hover:border-border hover:bg-muted/50",
+                ? "bg-primary/10 hover:bg-primary/15"
+                : "bg-muted/30 hover:bg-muted/50",
             )}
           >
             <span className="flex min-w-0 items-center gap-2">
@@ -82,7 +92,11 @@ export function CollapsibleSection({
           </button>
         }
       />
-      <CollapsibleContent>{children}</CollapsibleContent>
+      <CollapsibleContent>
+        <div className="border-t border-primary/15 px-3 py-4 sm:py-5">
+          {children}
+        </div>
+      </CollapsibleContent>
     </Collapsible>
   );
 }

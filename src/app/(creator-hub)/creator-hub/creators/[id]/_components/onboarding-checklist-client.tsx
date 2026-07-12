@@ -120,7 +120,7 @@ export function OnboardingChecklistPanel({
       </div>
 
       <CollapsibleContent>
-        <div className="space-y-1.5 px-2.5 pb-3 pt-0.5">
+        <div className="space-y-1.5 border-t border-primary/15 px-2.5 pt-2 pb-3">
           {data.items.map((item) => (
             <ChecklistRow
               key={item.id}

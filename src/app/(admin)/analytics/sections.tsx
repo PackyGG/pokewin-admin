@@ -15,6 +15,7 @@ import {
   CollapsibleContent,
 } from "@/components/ui/collapsible";
 import { Card, CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { formatNumber } from "@/lib/utils/format";
 import type {
   BattleModeStats,
@@ -40,6 +41,12 @@ const tooltipStyle = {
 const tooltipItemStyle = { color: "var(--foreground)" };
 const tooltipLabelStyle = { color: "var(--muted-foreground)", marginBottom: 2 };
 
+/**
+ * Trigger + content live inside ONE continuous bordered/rounded box — the
+ * header fills the top, a `border-t` divider marks the seam, the content
+ * fills the rest — so an open section visibly reads as "this content
+ * belongs to this header" instead of two disconnected floating blocks.
+ */
 function CollapsibleSection({
   title,
   defaultOpen = true,
@@ -51,14 +58,33 @@ function CollapsibleSection({
 }) {
   const [open, setOpen] = React.useState(defaultOpen);
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors">
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className={cn(
+        "overflow-hidden rounded-lg border transition-colors",
+        open ? "border-primary/25" : "border-border/60 hover:border-border",
+      )}
+    >
+      <CollapsibleTrigger
+        className={cn(
+          "flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm font-medium transition-colors",
+          open
+            ? "bg-primary/10 text-foreground hover:bg-primary/15"
+            : "bg-muted/30 text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+        )}
+      >
         <ChevronDown
-          className={`size-4 transition-transform ${open ? "" : "-rotate-90"}`}
+          className={cn(
+            "size-4 shrink-0 motion-safe:transition-transform motion-safe:duration-200",
+            open ? "rotate-0 text-primary" : "-rotate-90",
+          )}
         />
         {title}
       </CollapsibleTrigger>
-      <CollapsibleContent className="mt-2">{children}</CollapsibleContent>
+      <CollapsibleContent>
+        <div className="border-t border-primary/15 px-3 py-3">{children}</div>
+      </CollapsibleContent>
     </Collapsible>
   );
 }

@@ -364,8 +364,10 @@ function RewardTypeBox({ group }: { group: RewardTypeGroup }) {
         </div>
 
         {/* Per-card provenance — PRESERVED but secondary, revealed by the
-            small chevron button in the header above (collapsed by default). */}
-        <CollapsibleContent className="mt-3 space-y-2.5">
+            small chevron button in the header above (collapsed by default).
+            `border-t` marks the seam so the list visibly belongs to the
+            toggle instead of just floating below it. */}
+        <CollapsibleContent className="mt-3 space-y-2.5 border-t pt-3">
           {group.opens.map((o) => (
             <RewardPackOpenDetail key={o.sessionId ?? "unresolved"} open={o} />
           ))}

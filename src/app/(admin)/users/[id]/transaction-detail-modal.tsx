@@ -36,6 +36,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { STATUS_COLORS } from "@/lib/constants";
+import { cn } from "@/lib/utils";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import {
   amountColorFor,
@@ -854,15 +855,37 @@ export function TransactionDetailModal({
                       onOpenChange={setPfOpen}
                       className="border-t pt-3"
                     >
-                      <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 text-left">
-                        <span className="text-xs text-muted-foreground">
+                      {/* Trigger + content share one continuous bordered box
+                          (not a bare row + a loose gap below) so it's
+                          unmistakable the seed data belongs to this toggle. */}
+                      <div
+                        className={cn(
+                          "overflow-hidden rounded-lg border transition-colors",
+                          pfOpen
+                            ? "border-primary/25"
+                            : "border-border/60 hover:border-border",
+                        )}
+                      >
+                      <CollapsibleTrigger
+                        className={cn(
+                          "flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-2 text-left transition-colors",
+                          pfOpen
+                            ? "bg-primary/10 hover:bg-primary/15"
+                            : "bg-muted/30 hover:bg-muted/50",
+                        )}
+                      >
+                        <span className="text-xs font-medium text-muted-foreground">
                           Provably Fair ({gameSession.pfResults.length})
                         </span>
                         <ChevronDown
-                          className={`size-4 text-muted-foreground transition-transform duration-200 ${pfOpen ? "" : "-rotate-90"}`}
+                          className={cn(
+                            "size-4 shrink-0 text-muted-foreground motion-safe:transition-transform motion-safe:duration-200",
+                            pfOpen ? "rotate-0 text-primary" : "-rotate-90",
+                          )}
                         />
                       </CollapsibleTrigger>
-                      <CollapsibleContent className="space-y-2 pt-2">
+                      <CollapsibleContent>
+                      <div className="space-y-2 border-t border-primary/15 p-3">
                       {gameSession.pfResults.map((pf, i) => (
                         <div
                           key={pf.id}
@@ -927,7 +950,9 @@ export function TransactionDetailModal({
                           </div>
                         </div>
                       ))}
+                      </div>
                       </CollapsibleContent>
+                      </div>
                     </Collapsible>
                   )}
                 </>
