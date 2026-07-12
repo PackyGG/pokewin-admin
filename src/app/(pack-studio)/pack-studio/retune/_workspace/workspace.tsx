@@ -1238,6 +1238,36 @@ export function RetuneWorkspace({
     void requestPlan(packId);
   }, [stagedApi, requestPlan]);
 
+  // Raise the edge target by raising the price — no odds changes. Computes
+  // the price that produces the desired edge at the current planned EV:
+  //   EV = priceAfter * (1 - after.edge)  →  newPrice = EV / (1 - desiredEdge)
+  // Stages the new price (pinned) + edge target override, then re-plans.
+  // The planner re-solves at the new price, but since the price is computed
+  // from the current EV, the odds should barely move.
+  const setEdgeTarget = React.useCallback(
+    (desiredEdge: number) => {
+      const packId = selectedRef.current;
+      if (!packId) return;
+      if (!(desiredEdge > 0 && desiredEdge < 0.9)) return;
+      const entry = planByPackRef.current.get(packId);
+      const plan = entry?.plan ?? null;
+      if (!plan?.after || !plan.priceAfter) return;
+      const currentEV = plan.priceAfter * (1 - plan.after.edge);
+      const newPrice = currentEV / (1 - desiredEdge);
+      const sp = ensureStaged(packId);
+      if (!sp) return;
+      stagedApi.setStaged(packId, {
+        ...sp,
+        price: newPrice,
+        pinPrice: true,
+        edgeTargetOverride: desiredEdge,
+      });
+      setPriceText(priceInputText(newPrice));
+      void requestPlan(packId);
+    },
+    [ensureStaged, stagedApi, requestPlan],
+  );
+
   // ── Token mint (lazy at first confirm-open; silent re-mint on expiry) ───
   const getToken = React.useCallback(async (): Promise<string> => {
     if (tokenRef.current) return tokenRef.current;
@@ -2176,6 +2206,7 @@ export function RetuneWorkspace({
                 onApplyPrice={applyPriceSuggestion}
                 onApplyPinRemedy={applyPinRemedy}
                 onClearEdgeOverride={clearEdgeOverride}
+                onSetEdgeTarget={setEdgeTarget}
                 onKeepRehydrated={() => keepRehydrated(selectedRow.packId)}
                 onDiscardRehydrated={() =>
                   discardRehydrated(selectedRow.packId)

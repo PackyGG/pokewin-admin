@@ -26,6 +26,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -782,6 +783,7 @@ export function PlanPanel({
   onApplyPrice,
   onApplyPinRemedy,
   onClearEdgeOverride,
+  onSetEdgeTarget,
   onKeepRehydrated,
   onDiscardRehydrated,
   onSelectPack,
@@ -853,6 +855,12 @@ export function PlanPanel({
   onApplyPinRemedy: (remedy: PinRemedy) => void;
   /** Drop the staged edge-target override (header chip ×) and re-plan. */
   onClearEdgeOverride: () => void;
+  /**
+   * Raise the edge target by raising the price — computes the price that
+   * produces the desired edge at the current EV, stages it pinned + the
+   * edge override, then re-plans. No odds changes.
+   */
+  onSetEdgeTarget: (desiredEdge: number) => void;
   onKeepRehydrated: () => void;
   onDiscardRehydrated: () => void;
   onSelectPack: (packId: string) => void;
@@ -1536,6 +1544,29 @@ export function PlanPanel({
                 ) : null
               }
             />
+            {plan && plan.after && plan.priceAfter > 0 && !showEstimate && (
+              <div className="mt-1 flex items-center gap-1">
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="Set %"
+                  className="h-5 w-16 rounded-md text-xs tabular-nums"
+                  title="Type a desired edge % and press Enter — raises the price to hit it, no odds changes."
+                  defaultValue=""
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      const val = Number.parseFloat(
+                        (e.target as HTMLInputElement).value,
+                      );
+                      if (Number.isFinite(val) && val > 0 && val < 90) {
+                        onSetEdgeTarget(val / 100);
+                      }
+                    }
+                  }}
+                />
+                <span className="text-[10px] text-muted-foreground">% edge</span>
+              </div>
+            )}
           </PlanMetric>
           <PlanMetric
             label="Win rate"
