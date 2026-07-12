@@ -29,7 +29,7 @@ If you only answered a quick question with zero code changes and zero new facts 
 5. CLAUDE.local.md      ← owner pacing overrides (if present)
 6. Active plan (only if your task touches it):
      Creator Hub        → .claude/plans/iridescent-mixing-lecun.md
-     Ex-creator GGR     → .claude/plans/iridescent-mixing-lecun-agent-a2e6b570aacbcb19d.md
+     Pack Studio Retune → .claude/plans/retune-v2-{blueprint,ruleset,workspace}.md
 7. Domain audits (only if editing that surface):
      layout/insights    → AUDIT_REPORT.md
      packs/cards        → AUDIT_PACKS_CARDS.md
@@ -83,6 +83,11 @@ Keep this structure; replace content each update:
 ```
 
 Rules: only claim shipped work that is **committed**; remove completed in-flight items.
+
+**🔴 Hard cap — this file must stay compact (added 2026-07-12 after it grew to 270KB):**
+- **Never append a permanent narrative log.** No "### SESSION YYYY-MM-DD (part N) — …" entries that just accumulate forever — that pattern is exactly what caused the bloat (fixed once by moving everything to `AGENT_HANDOFF_ARCHIVE.md`, don't recreate it). Forensic detail (exact SHAs, exact test counts, root-cause essays) belongs in the **commit message**, not this file — git already keeps that history searchably.
+- **"Shipped (recent)" means the last few days, not ever.** When an item stops being recent, either delete it or move it to `AGENT_HANDOFF_ARCHIVE.md` — don't just let the list grow.
+- **If a write would push this file past ~40-50KB, archive old content first.** A new session should be able to get oriented from this file alone in well under a minute of reading, not several.
 
 ---
 

@@ -8,7 +8,7 @@ Dieses File definiert verbindliche Arbeitsregeln für jede Claude Code Session i
 
 Diese Datei (`CLAUDE.md`) ist die **bindende Regel-Quelle**. Zu Sessionbeginn mitlesen:
 
-- **`AGENT_HANDOFF.md`** — **live Session-State** (shipped, in-flight, blocked, next). **Zuerst lesen.**
+- **`AGENT_HANDOFF.md`** — **live Session-State** (shipped, in-flight, blocked, next). **Zuerst lesen.** Kompakt gehalten (2026-07-12 von 270KB auf ~36KB getrimmt) — volle Historie in **`AGENT_HANDOFF_ARCHIVE.md`**, nur bei Bedarf nachschlagen (forensisches Detail zu einem konkreten Past-Feature/Incident), nicht standardmäßig mitlesen.
 - **`ONBOARDING.md`** — **Architektur + Domain-Wissen** (Key-Files, Reward-/Ledger-Modell, Gotchas).
 
 **Boundary:** Session-State (CURRENT STATE, IN-FLIGHT, OPEN/NEXT, FAILED/BLOCKED) lebt in `AGENT_HANDOFF.md`, **nicht hier**. In `CLAUDE.md` kommen nur **durable Regeln & Konventionen**. Wenn `AGENT_HANDOFF.md` eine durable Regel korrigiert/verschärft, wird sie hierher übernommen (genau das ist 2026-06-05 passiert: Worktree-`npm install` statt `npm ci`, Admin-DB-`db push` statt `migrate`, Build-/Verify-Agent-Contract, UI-Verify-Fallback, Gotchas-Liste).
