@@ -2965,6 +2965,7 @@ export type PinRemedyKind =
   | "raise-pin"
   | "lower-pin"
   | "unpin-card"
+  | "unpin-pair"
   | "price-move";
 
 export type PinRemedy = {
@@ -2982,6 +2983,11 @@ export type PinRemedy = {
   /** The pin's current / proposed percent-of-opens (pin kinds only). */
   fromPct?: number;
   toPct?: number;
+  /** The SECOND unpinned card (`unpin-pair` only — same id-apply contract). */
+  cardIndex2?: number;
+  cardId2?: string;
+  cardValue2?: number;
+  fromPct2?: number;
   /** The verified price (price-move only). */
   price?: number;
   /**
@@ -3256,12 +3262,18 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
   type Found = { toPct: number; edge: number };
   // Directional scan+bisect along one pin's share axis, oriented AWAY from
   // the current (refused) pin. Returns the accepted grid value closest to it.
+  // `stopAt` (absolute solveCount bound) is the fair-share cap: when THIS
+  // pin's slice of the budget is spent the direction aborts — keeping the
+  // best already-VERIFIED value if the scan had accepted one — instead of
+  // draining the global budget and starving every pin after it.
   const searchDirection = (
     index: number,
     fromPct: number,
     farPct: number,
     dir: 1 | -1,
+    stopAt: number = Number.POSITIVE_INFINITY,
   ): Found | null => {
+    const capped = (): boolean => solveCount >= stopAt;
     const span = (farPct - fromPct) * dir;
     if (!(span > 1e-9)) return null;
     // Dense enough to catch the REAL acceptance islands LAW M produces
@@ -3271,6 +3283,7 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
     let accepted: { pct: number; edge: number } | null = null;
     let refusedNear = fromPct;
     for (let k = 1; k <= SAMPLES; k++) {
+      if (capped()) return null;
       const pct = roundPct(fromPct + (dir * (span * k)) / SAMPLES);
       if (!(pct > 0) || pct > 100) break;
       const r = verify(withPinAt(index, pct), price);
@@ -3285,6 +3298,7 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
     let good = accepted.pct;
     let goodEdge = accepted.edge;
     for (let iter = 0; iter < 14 && Math.abs(good - bad) > 1e-4; iter++) {
+      if (capped()) break;
       const mid = roundPct((good + bad) / 2);
       if (mid === good || mid === bad) break;
       const r = verify(withPinAt(index, mid), price);
@@ -3299,6 +3313,7 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
     // the snapped value refuses (boundary jitter).
     let snapped = roundPct(dir === 1 ? ceilToStep(good) : floorToStep(good));
     for (let walk = 0; walk < 3; walk++) {
+      if (capped()) break;
       if (!(snapped > 0)) break;
       if (dir === 1 ? snapped > Math.max(farPct, good) + 1e-9 : false) break;
       if (Math.abs(snapped - fromPct) < 1e-9) break;
@@ -3313,6 +3328,56 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
   const adjustedIdx = new Set<number>();
   const edgePct = (e: number): string => (e * 100).toFixed(2);
 
+  // ── UNPIN probes FIRST (cheapest fixes: ONE solve per pin) ────────────────
+  // Owner incident 2026-07-12 (Side Eyes): the raise/lower scans below cost
+  // up to ~100 solves PER PIN (36-sample scan + 14 bisections + grid walk,
+  // per direction), so a 4-pin pool burned the whole 120-solve budget inside
+  // the first pins and the 1-solve unpin probes NEVER ran — the sweep
+  // refused "no verified fix" while "unpin the dust card" verified on its
+  // first solve. Probe every single unpin up front; EMISSION still prefers
+  // adjusts (a verified adjust for the same card discards its unpin
+  // candidate below — adjusting preserves the owner's typed number).
+  const unpinFound = new Map<number, number>();
+  for (const p of pins) {
+    if (budgetExhausted) break;
+    const card = input.cards[p.index];
+    if (!card) continue;
+    const rest = pins.filter((q) => q.index !== p.index);
+    const r = verify(rest, price);
+    if (r.ok) unpinFound.set(p.index, r.edge);
+  }
+
+  // ── PAIR-UNPIN probes — the "unpin two or more" advice, actually TRIED ──
+  // Only when NO single unpin verifies (a pair is a strictly stronger cut,
+  // never offered when one card suffices) and only on pools with free cards
+  // (the all-pinned family keeps its ~n-solve fast path + exact price-solve).
+  // Seeded by the mass-dominant pin — unpinning the largest share frees the
+  // most shape room — paired with each other pin: n−1 solves, all verified.
+  // Emitted LAST-RESORT below, only when the whole catalog came up empty.
+  const pairFound: {
+    a: ShapeWeightsPinnedShare;
+    b: ShapeWeightsPinnedShare;
+    edge: number;
+  }[] = [];
+  if (
+    !allPinned &&
+    !budgetExhausted &&
+    unpinFound.size === 0 &&
+    pins.length >= 2
+  ) {
+    const seed = pins.reduce((m, p) => (p.share > m.share ? p : m), pins[0]!);
+    for (const p of pins) {
+      if (budgetExhausted) break;
+      if (p.index === seed.index) continue;
+      if (!input.cards[p.index]) continue;
+      const rest = pins.filter(
+        (q) => q.index !== p.index && q.index !== seed.index,
+      );
+      const r = verify(rest, price);
+      if (r.ok) pairFound.push({ a: seed, b: p, edge: r.edge });
+    }
+  }
+
   // ── RAISE / LOWER per pin (the smallest wins) ─────────────────────────────
   // Skipped wholesale on an all-pinned pool: pins are held EXACT and the
   // shares must sum to 100% — with zero free cards to absorb the delta,
@@ -3320,7 +3385,20 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
   // hand-authored workspace pool (owner types every row → every row pinned)
   // used to burn the full 36-sample scan per pin per direction here just to
   // conclude nothing works.
-  for (const p of allPinned ? [] : pins) {
+  //
+  // Fair-share budgeting (owner 2026-07-12): each pin's raise+lower search
+  // is capped at an equal slice of the REMAINING budget (min 12 solves so a
+  // late pin still gets a real scan), and 8 solves stay reserved for the
+  // price-move probes below when the price is free to move. Pre-cap, pin #1's
+  // deep scan could eat the entire budget and the sweep concluded "no
+  // verified fix" while verified fixes sat on the un-probed pins. Unbudgeted
+  // sweeps pass stopAt = ∞, so complete catalogs are unchanged.
+  const adjustPins = allPinned ? [] : pins;
+  const priceReserve =
+    Number.isFinite(maxSolves) && input.pinPrice !== true ? 8 : 0;
+  let pinPos = 0;
+  for (const p of adjustPins) {
+    pinPos += 1;
     if (budgetExhausted) break;
     const card = input.cards[p.index];
     if (!card || !(card.value > 0)) continue;
@@ -3344,13 +3422,23 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
         : fromPct + Math.max(0, freeMass * 100 - 0.5),
     );
     const lowerFloor = Math.max(0, Math.min(fromPct, pinStepPct(fromPct)));
+    const stopAt = Number.isFinite(maxSolves)
+      ? solveCount +
+        Math.max(
+          12,
+          Math.floor(
+            (maxSolves - priceReserve - solveCount) /
+              (adjustPins.length - pinPos + 1),
+          ),
+        )
+      : Number.POSITIVE_INFINITY;
     const raise =
       raiseCap > fromPct + 1e-9
-        ? searchDirection(p.index, fromPct, raiseCap, 1)
+        ? searchDirection(p.index, fromPct, raiseCap, 1, stopAt)
         : null;
     const lower =
       lowerFloor < fromPct - 1e-9
-        ? searchDirection(p.index, fromPct, lowerFloor, -1)
+        ? searchDirection(p.index, fromPct, lowerFloor, -1, stopAt)
         : null;
     const best =
       raise !== null && lower !== null
@@ -3379,16 +3467,15 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
     });
   }
 
-  // ── UNPIN — only where no verified adjust exists (adjusting preserves the
-  //    owner's intent; the full unpin is the stronger cut) ───────────────────
+  // ── UNPIN — emit the probes found above, only where no verified adjust
+  //    exists (adjusting preserves the owner's intent; the full unpin is the
+  //    stronger cut). The solves already happened in the cheap-first phase.
   for (const p of pins) {
-    if (budgetExhausted) break;
     if (adjustedIdx.has(p.index)) continue;
     const card = input.cards[p.index];
     if (!card) continue;
-    const rest = pins.filter((q) => q.index !== p.index);
-    const r = verify(rest, price);
-    if (!r.ok) continue;
+    const foundEdge = unpinFound.get(p.index);
+    if (foundEdge === undefined) continue;
     remedies.push({
       kind: "unpin-card",
       cardIndex: p.index,
@@ -3397,8 +3484,8 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
         : {}),
       cardValue: card.value,
       fromPct: roundPct(p.share * 100),
-      edge: r.edge,
-      humanCopy: `Unpin the ${usd(card.value)} card (typed ${pctFmt(p.share * 100)}%) and let the solver place it — the remaining pins hold and the plan verifies at ${usd(price)} (house edge ${edgePct(r.edge)}%, solver-checked).`,
+      edge: foundEdge,
+      humanCopy: `Unpin the ${usd(card.value)} card (typed ${pctFmt(p.share * 100)}%) and let the solver place it — the remaining pins hold and the plan verifies at ${usd(price)} (house edge ${edgePct(foundEdge)}%, solver-checked).`,
       verified: true,
     });
   }
@@ -3433,13 +3520,44 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
     }
   }
 
+  // ── PAIR-UNPIN emission — only when the whole catalog came up empty ──────
+  // Every smaller cut (adjust, single unpin, price move) refused; the pins
+  // interlock and these are the verified two-card ways out (owner 2026-07-12:
+  // the copy used to SAY "unpin two or more cards" without ever probing one).
+  if (remedies.length === 0) {
+    for (const pf of pairFound) {
+      const ca = input.cards[pf.a.index];
+      const cb = input.cards[pf.b.index];
+      if (!ca || !cb) continue;
+      remedies.push({
+        kind: "unpin-pair",
+        cardIndex: pf.a.index,
+        ...(input.cardIds?.[pf.a.index] !== undefined
+          ? { cardId: input.cardIds[pf.a.index] }
+          : {}),
+        cardValue: ca.value,
+        fromPct: roundPct(pf.a.share * 100),
+        cardIndex2: pf.b.index,
+        ...(input.cardIds?.[pf.b.index] !== undefined
+          ? { cardId2: input.cardIds[pf.b.index] }
+          : {}),
+        cardValue2: cb.value,
+        fromPct2: roundPct(pf.b.share * 100),
+        edge: pf.edge,
+        humanCopy: `No single change fixes this, but unpinning the ${usd(ca.value)} card (typed ${pctFmt(pf.a.share * 100)}%) together with the ${usd(cb.value)} card (typed ${pctFmt(pf.b.share * 100)}%) does — the remaining pins hold and the plan verifies at ${usd(price)} (house edge ${edgePct(pf.edge)}%, solver-checked).`,
+        verified: true,
+      });
+    }
+  }
+
   // Rank: pin adjusts (smallest change first) → unpins (smallest pin first)
-  // → price move. Deterministic tie-break on the card index.
+  // → price move → pair unpins (the last resort — only ever present alone).
   const classRank: Record<PinRemedyKind, number> = {
     "raise-pin": 0,
     "lower-pin": 0,
     "unpin-card": 1,
     "price-move": 2,
+    "unpin-pair": 3,
   };
   // The exact price-solve outranks everything: it is the only remedy that
   // keeps EVERY typed chance and lands the target on the dot.
@@ -3450,7 +3568,9 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
       ? Math.abs(((r.price ?? price) - price) / price) * 100
       : r.kind === "unpin-card"
         ? (r.fromPct ?? 0)
-        : Math.abs((r.toPct ?? 0) - (r.fromPct ?? 0));
+        : r.kind === "unpin-pair"
+          ? (r.fromPct ?? 0) + (r.fromPct2 ?? 0)
+          : Math.abs((r.toPct ?? 0) - (r.fromPct ?? 0));
   remedies.sort(
     (a, b) =>
       rankOf(a) - rankOf(b) ||
@@ -3501,7 +3621,7 @@ export function pinShortfallHumanCopy(args: {
       }.${exactBit} The pins interlock: unpin two or more cards to give the tuner room — or use Approve edited pool to write the typed odds verbatim.`;
     }
     if (args.sweepComplete === false) {
-      return `${head}${why} No verified fix surfaced before the remedy search hit its solve budget — with this many pins not every raise, lower and unpin could be tried. The pins interlock: unpin two or more cards, or rebuild the pin set.`;
+      return `${head}${why} No verified fix surfaced before the remedy search hit its solve budget — the single unpins are probed first (cheapest fixes), then the raises and lowers until the budget runs out. The pins interlock: unpin two or more cards, or rebuild the pin set.`;
     }
     return `${head}${why} No single-pin change fixes this — every raise, lower, unpin and in-budget price move was tried against the solver. The pins interlock: unpin two or more cards, or rebuild the pin set.`;
   }

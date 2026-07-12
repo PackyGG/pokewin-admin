@@ -587,6 +587,132 @@ check("pinShortfallHumanCopy: refusal detail rides along + the smallest verified
   assert(/2 more verified options available/.test(copy), "the catalog depth is named");
 });
 
+// ── 3d. Cheap-first sweep + fair-share + pair-unpin (owner 2026-07-12) ────
+// Side Eyes live incident: 4 pins, every cheap card pinned (the $7.69 dust
+// at 79%), price pinned. The raise/lower scans cost up to ~100 solves per
+// pin and used to run FIRST — the budget died inside them and the 1-solve
+// unpin probes never ran: the owner got "No verified fix surfaced before the
+// remedy search hit its solve budget" while "unpin the dust card" verifies
+// on its first solve.
+const SIDE = (() => {
+  const values = [715.58, 478.8, 329.24, 60, 55.06, 52.31, 7.69];
+  const livePcts = [4, 6, 9, 1, 0.5, 0.5, 79];
+  const weights = livePcts.map((p) => Math.round(p * 1000));
+  const price = 104.63;
+  const before = computePackRisk({
+    cards: values.map((v, i) => ({ value: v, weight: weights[i]! })),
+    price,
+  });
+  const top = Math.max(...values);
+  const t = autoRetuneTargets(price, CFG, undefined, top, {
+    winRate: before.winRate,
+    nearMiss: before.nearMiss,
+    edge: before.edge,
+    topValue: top,
+  });
+  return {
+    input: {
+      cards: values.map((v) => ({ value: v })),
+      cardIds: values.map((_, i) => `side-${i}`),
+      currentWeights: weights,
+      price,
+      targetEdge: t.targetEdge,
+      targetWinRate: t.targetWinRate,
+      nearMissMin: t.nearMissMin,
+      maxWinCap: t.maxWinCap,
+      pinPrice: true as const,
+    },
+    pins: [
+      { index: 3, share: 0.005 },
+      { index: 4, share: 0.0025 },
+      { index: 5, share: 0.0025 },
+      { index: 6, share: 0.79 },
+    ] as ShapeWeightsPinnedShare[],
+  };
+})();
+
+check("cheap-first sweep (Side Eyes): a 5-solve starved budget STILL ships the verified unpin-dust chip", () => {
+  const meta = computePinRemediesMeta({
+    ...SIDE.input,
+    pinnedShares: SIDE.pins,
+    maxRemedies: 10,
+    maxSolves: 5,
+  });
+  assert(meta.sweepComplete === false, "5 solves cannot finish this sweep");
+  const unpin = meta.remedies.find((r) => r.kind === "unpin-card");
+  assert(
+    unpin !== undefined,
+    `the verified unpin must survive the starved budget, got [${meta.remedies.map((r) => r.kind).join(",")}]`,
+  );
+  assert(
+    unpin!.cardIndex === 6 && unpin!.cardId === "side-6",
+    `it unpins the 79% dust card (got c${unpin!.cardIndex})`,
+  );
+  assert(
+    unpin!.verified === true && unpin!.edge >= SIDE.input.targetEdge - 1e-9,
+    "solver-verified at target",
+  );
+  const full = computePinRemediesMeta({
+    ...SIDE.input,
+    pinnedShares: SIDE.pins,
+    maxRemedies: 10,
+    maxSolves: 120,
+  });
+  assert(full.sweepComplete === true, "120 solves complete this sweep");
+  assert(
+    full.remedies.some((r) => r.kind === "unpin-card" && r.cardIndex === 6),
+    "the unpin-dust chip is still in the full catalog",
+  );
+});
+
+check("fair-share budget: A5 at the production budget COMPLETES and ships a verified fix (was: starved empty)", () => {
+  const meta = computePinRemediesMeta({
+    ...tailsInput,
+    pinnedShares: PINS_A5,
+    maxRemedies: 10,
+    maxSolves: 120,
+  });
+  assert(meta.sweepComplete === true, "the fair-share caps land the sweep within 120 solves");
+  assert(meta.remedies.length > 0, "a verified remedy survives the budget");
+  assert(meta.remedies.every((r) => r.verified === true), "all survivors verified");
+  assert(
+    meta.remedies.some((r) => r.kind === "price-move"),
+    `the reserved price probes pay out — got [${meta.remedies.map((r) => r.kind).join(",")}]`,
+  );
+});
+
+check("pair-unpin last resort: no single change verifies in a lite budget ⇒ verified two-card cuts ship (never beside smaller fixes)", () => {
+  const meta = computePinRemediesMeta({
+    ...tailsInput,
+    pinnedShares: PINS_A5,
+    maxRemedies: 10,
+    maxSolves: 40,
+  });
+  assert(meta.remedies.length > 0, "the lite budget still ships a way out");
+  assert(
+    meta.remedies.every((r) => r.kind === "unpin-pair" && r.verified === true),
+    `pairs only — got [${meta.remedies.map((r) => r.kind).join(",")}]`,
+  );
+  const first = meta.remedies[0]!;
+  assert(first.cardIndex === 8, "seeded by the mass-dominant 55% dust pin");
+  assert(
+    typeof first.cardIndex2 === "number" && first.cardIndex2 !== first.cardIndex,
+    "carries the second card",
+  );
+  assert(
+    /together/.test(first.humanCopy) && /No single change/.test(first.humanCopy),
+    "copy owns the two-card cut",
+  );
+  const pins2 = PINS_A5.filter(
+    (p) => p.index !== first.cardIndex && p.index !== first.cardIndex2,
+  );
+  assert(tailsVerify(pins2) !== null, "the pair re-verifies independently");
+  assert(
+    remA5.every((r) => r.kind !== "unpin-pair"),
+    "the unbudgeted catalog has smaller fixes — no pair beside them",
+  );
+});
+
 // ── 4. tagged1pct: the remedy threshold on a LOTTERY tag ─────────────────
 const T1 = {
   cards: [250, 100, 75, 0.05, 0.02].map((v) => ({ value: v })),

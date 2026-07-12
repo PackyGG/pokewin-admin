@@ -1169,6 +1169,20 @@ export function RetuneWorkspace({
         void requestPlan(packId);
         return;
       }
+      // unpin-pair — drop BOTH named pins (the verified two-card cut; only
+      // ever offered when no single change verifies).
+      if (remedy.kind === "unpin-pair") {
+        if (typeof remedy.cardId2 !== "string" || remedy.cardId2.length === 0)
+          return;
+        const ids = new Set([remedy.cardId, remedy.cardId2]);
+        if (!sp.pinnedOdds.some((p) => ids.has(p.cardId))) return;
+        stagedApi.setStaged(packId, {
+          ...sp,
+          pinnedOdds: sp.pinnedOdds.filter((p) => !ids.has(p.cardId)),
+        });
+        void requestPlan(packId);
+        return;
+      }
       // raise-pin / lower-pin — retype the pin at the verified percent.
       if (!(typeof remedy.toPct === "number" && remedy.toPct > 0)) return;
       if (!sp.pinnedOdds.some((p) => p.cardId === remedy.cardId)) return;

@@ -556,6 +556,8 @@ export function pinRemedyKindLabel(kind: string): string {
       return "Lower pin";
     case "unpin-card":
       return "Unpin";
+    case "unpin-pair":
+      return "Unpin pair";
     case "price-move":
       return "Price move";
     default:
