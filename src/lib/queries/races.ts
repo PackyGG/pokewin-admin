@@ -3,6 +3,7 @@ import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import type { race_type } from "@/generated/prisma/enums";
 import { getRewardExpiry } from "@/lib/backend-api/reward-expiry";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
   computeRaceClaimWindow,
   type RaceClaimWindow,
@@ -64,6 +65,14 @@ export type RaceLeaderboardEntry = {
   // Both are null in the all-time ("all") view, which has no single period.
   hold: RaceClaimHoldInfo | null;
   claimedAt: string | null;
+  /**
+   * True when the user is on the admin excluded-users blacklist. The
+   * standings deliberately still INCLUDE them (so this view mirrors the
+   * real, user-facing leaderboard on packy.gg) and just flag them so an
+   * operator can tell they're excluded from analytics aggregates. Mirrors
+   * the same flag on the affiliate leaderboards (creators-leaderboards.ts).
+   */
+  excluded: boolean;
 };
 
 export async function getRacePrizeTiers() {
@@ -205,6 +214,13 @@ export async function getRaceLeaderboard(params: {
   });
   const unfinalized = (maxPosition._max.position ?? 0) === 0;
 
+  // Excluded-users blacklist — used only to FLAG rows, never to drop them.
+  // Mirrors the affiliate leaderboards: a blacklisted user who's actually #1
+  // still has to show as #1 here. Fail-soft to no flags.
+  const excludedSet = new Set(
+    await getExcludedUserIds().catch(() => [] as string[]),
+  );
+
   const [entries, total, tiers] = await Promise.all([
     db.race_leaderboard_snapshots.findMany({
       where,
@@ -279,6 +295,7 @@ export async function getRaceLeaderboard(params: {
         prizeAmountUsd: tierByPosition.get(rank) ?? null,
         hold: holdByUser.get(e.user_id) ?? null,
         claimedAt: claimedAtByUser.get(e.user_id) ?? null,
+        excluded: excludedSet.has(e.user_id),
       };
     }),
     total,
@@ -429,6 +446,10 @@ async function getAllTimeLeaderboard(params: {
 
   const total = Number(countResult[0]?.count ?? 0);
 
+  const excludedSet = new Set(
+    await getExcludedUserIds().catch(() => [] as string[]),
+  );
+
   return {
     data: rows.map((r, i) => ({
       id: r.user_id,
@@ -441,6 +462,7 @@ async function getAllTimeLeaderboard(params: {
       // (holds/claims) doesn't apply.
       hold: null,
       claimedAt: null,
+      excluded: excludedSet.has(r.user_id),
     })),
     total,
     page,

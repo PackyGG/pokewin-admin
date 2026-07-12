@@ -47,7 +47,23 @@ type Standing = {
   prizeAmountUsd: number | null;
   hold: HoldInfo | null;
   claimedAt: string | null;
+  /** On the admin excluded-users blacklist — still shown (mirrors the real leaderboard), just flagged. */
+  excluded: boolean;
 };
+
+// Mirrors the same flag on /creators/leaderboards' standings panel — a
+// blacklisted user still shows at their real place, just marked so an
+// operator knows they're excluded from analytics aggregates.
+function ExcludedBadge() {
+  return (
+    <span
+      title="Marked by an admin (on the excluded-users list) — shown here to mirror the real leaderboard, but excluded from analytics aggregates."
+      className="rounded-full border border-zinc-500/30 bg-zinc-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-600 dark:text-zinc-400"
+    >
+      marked by admin
+    </span>
+  );
+}
 
 function PrizeCell({ amount }: { amount: number | null }) {
   if (amount == null) {
@@ -301,12 +317,15 @@ export function StandingsTable({
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <Link
-                      href={`/users/${s.userId}`}
-                      className="block text-sm font-medium hover:underline truncate"
-                    >
-                      {s.username ?? s.userId.slice(0, 8)}
-                    </Link>
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <Link
+                        href={`/users/${s.userId}`}
+                        className="text-sm font-medium hover:underline truncate"
+                      >
+                        {s.username ?? s.userId.slice(0, 8)}
+                      </Link>
+                      {s.excluded && <ExcludedBadge />}
+                    </span>
                     {reviewable && (s.claimedAt || s.hold || claimWindow) && (
                       <div className="mt-0.5">
                         <StatusBadge s={s} claimWindow={claimWindow} />
@@ -353,12 +372,15 @@ export function StandingsTable({
                   <Badge variant="outline">#{e.position}</Badge>
                 </TableCell>
                 <TableCell>
-                  <Link
-                    href={`/users/${e.userId}`}
-                    className="hover:underline"
-                  >
-                    {e.username ?? e.userId.slice(0, 8)}
-                  </Link>
+                  <span className="inline-flex items-center gap-1.5">
+                    <Link
+                      href={`/users/${e.userId}`}
+                      className="hover:underline"
+                    >
+                      {e.username ?? e.userId.slice(0, 8)}
+                    </Link>
+                    {e.excluded && <ExcludedBadge />}
+                  </span>
                 </TableCell>
                 <TableCell>{formatCurrency(e.wageredUsd)}</TableCell>
                 {showPrizes && (
