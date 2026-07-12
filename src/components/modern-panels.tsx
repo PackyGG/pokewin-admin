@@ -110,6 +110,26 @@ export const TILE_COLORS: Record<
  *
  * Paired with `PageHeroIdentity` (below), which now renders only the page
  * controls (back + action) instead of the icon-chip + title + subtitle block.
+ *
+ * `empty:m-0` — layout-regression fix (dead gap above page content):
+ * `PageHeroIdentity` already renders `null` when a page has neither
+ * `back`/`backHref` nor `action` (see below), so on those pages this `<div>`
+ * is a legitimately empty DOM node. But every call site still wraps `<PageHero>`
+ * in its own `space-y-*` stack, and Tailwind v4's `space-y-*` utility assigns
+ * `margin-block-end` to every non-last child via `:where(& > :not(:last-child))`
+ * — a zero-specificity selector that applies purely by DOM position, NOT by
+ * whether that child actually rendered anything. So an empty PageHero still
+ * "occupies a slot" and still gets that margin, which (since it has zero
+ * height/content of its own) shows up as a dead gap pushed onto the section
+ * below it — exactly where the old title card used to justify the space.
+ * `empty:m-0` is a real utility class (non-zero specificity) that wins over
+ * the `:where()`-wrapped space-y rule ONLY when this div is truly empty
+ * (`:empty` — zero DOM children), zeroing that stolen margin out so the next
+ * section sits flush, same as if `<PageHero>` weren't rendered at all. It is
+ * inert (no-op) whenever PageHero has real content — including pages that
+ * nest extra JSX inside `<PageHero>` beyond `PageHeroIdentity` (e.g. the
+ * `/insights/real-numbers` "as of" byline) — so no other call site's spacing
+ * changes.
  */
 export function PageHero({
   children,
@@ -118,7 +138,7 @@ export function PageHero({
   children: React.ReactNode;
   className?: string;
 }) {
-  return <div className={cn(className)}>{children}</div>;
+  return <div className={cn("empty:m-0", className)}>{children}</div>;
 }
 
 // ─── PageHeroIdentity ─────────────────────────────────────────────
