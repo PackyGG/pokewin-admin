@@ -392,52 +392,46 @@ export function AdminHeader({
               the chevron while the menu is open. */}
           <DropdownMenuTrigger
             className={cn(
-              "group flex items-center gap-2.5 rounded-xl p-0.5 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
-              // sm+: a roomy, premium identity card — wider avatar-to-chevron
-              // span via a min-width floor that grows on large screens, more
-              // L↔R padding and a larger gap. Kept deliberately short vertically
-              // (py-1 + a size-10 avatar sits well inside the h-14 header) so it
-              // reads WIDE + spacious, never tall/bulky.
-              "sm:gap-3.5 sm:rounded-2xl sm:border sm:border-border/60 sm:bg-muted/30 sm:py-1 sm:pl-1.5 sm:pr-3.5 sm:min-w-[14.5rem] lg:min-w-[17rem] sm:hover:border-border sm:hover:bg-muted/50",
+              "group flex items-center gap-2 rounded-full p-1 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+              // sm+: a compact, content-sized identity chip — avatar + name +
+              // one role badge + chevron, all inline on a single line. No
+              // min-width floor (the chevron sits right after the content, no
+              // dead space) and no border/tint — just a light hover — so it
+              // reads small + tidy, never boxy.
+              "sm:py-1 sm:pl-1.5 sm:pr-2.5",
             )}
             aria-label="Open profile menu"
             title={label}
           >
-            <Avatar className="size-10 rounded-lg after:rounded-lg sm:rounded-xl sm:after:rounded-xl">
+            <Avatar className="size-8 shrink-0">
               {hasAvatar && (
                 <AvatarImage
                   src={`/api/admin/avatar/${adminId}`}
                   alt={label}
-                  className="rounded-lg sm:rounded-xl"
                 />
               )}
-              <AvatarFallback className="rounded-lg text-sm font-semibold sm:rounded-xl">
+              <AvatarFallback className="text-xs font-semibold">
                 {initials(label)}
               </AvatarFallback>
             </Avatar>
-            {/* Name (line 1) over role badge(s) (line 2). Hidden on phones —
-                the dropdown menu already carries both there. */}
-            <div className="hidden min-w-0 flex-col items-start gap-1 sm:flex">
-              <span className="max-w-[16rem] truncate text-sm font-semibold leading-tight text-foreground">
-                {label}
-              </span>
-              <span className="flex flex-wrap items-center gap-1">
-                {roleList.map((r) => (
-                  <Badge
-                    key={r}
-                    variant="outline"
-                    className={cn(
-                      "h-[18px] gap-0.5 px-2 text-[10px] font-bold uppercase leading-none tracking-wide",
-                      ROLE_COLORS[r],
-                    )}
-                  >
-                    <ShieldCheck className="size-3" />
-                    {r.replace("_", " ")}
-                  </Badge>
-                ))}
-              </span>
-            </div>
-            <ChevronDown className="hidden size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[popup-open]:rotate-180 sm:ml-auto sm:block" />
+            {/* Name + ONE role badge, inline on a single line (sm+). Hidden on
+                phones — the dropdown menu already carries the name + full role
+                set there, so the trigger stays a compact avatar-only tap
+                target below sm. */}
+            <span className="hidden max-w-[9rem] truncate text-sm font-semibold leading-tight text-foreground sm:block">
+              {label}
+            </span>
+            <Badge
+              variant="outline"
+              className={cn(
+                "hidden h-[18px] shrink-0 gap-0.5 px-1.5 text-[10px] font-bold uppercase leading-none tracking-wide sm:inline-flex",
+                ROLE_COLORS[role],
+              )}
+            >
+              <ShieldCheck className="size-3" />
+              {role.replace("_", " ")}
+            </Badge>
+            <ChevronDown className="hidden size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[popup-open]:rotate-180 sm:block" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-[220px]">
             <DropdownMenuGroup>
