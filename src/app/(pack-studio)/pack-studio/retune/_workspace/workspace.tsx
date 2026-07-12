@@ -1238,13 +1238,18 @@ export function RetuneWorkspace({
     void requestPlan(packId);
   }, [stagedApi, requestPlan]);
 
-  // Raise the edge target by raising the price — NO odds changes. Computes
-  // the price that produces the desired edge at the current planned EV:
-  //   EV = priceAfter * (1 - after.edge)  →  newPrice = EV / (1 - desiredEdge)
-  // Then PINS every current planned odd so the planner can't reshape them,
-  // stages the new price (pinned) + edge target override, and re-plans.
-  // The planner verifies the pinned odds at the new price — odds stay exact,
-  // only the price (and therefore the edge) changes.
+  // Raise the edge target by raising the price. Two paths:
+  //
+  // 1. Current plan is CLEAN (snapped): pin every planned odd + the computed
+  //    price. The odds are already on the nice grid, so they stay clean. Only
+  //    the price changes — exactly what the owner wants.
+  //
+  // 2. Current plan is DIRTY (not snapped): just set the edge target override
+  //    and let the price FLOAT. The planner searches the band for a price
+  //    where clean odds exist at the new target. Odds will change, but that's
+  //    unavoidable — you can't have "same odds" AND "clean odds" when the
+  //    current odds aren't clean. The planner will find the closest clean
+  //    solution at the desired edge.
   const setEdgeTarget = React.useCallback(
     (desiredEdge: number) => {
       const packId = selectedRef.current;
@@ -1253,29 +1258,38 @@ export function RetuneWorkspace({
       const entry = planByPackRef.current.get(packId);
       const plan = entry?.plan ?? null;
       if (!plan?.after || !plan.priceAfter) return;
-      const currentEV = plan.priceAfter * (1 - plan.after.edge);
-      const newPrice = currentEV / (1 - desiredEdge);
       const sp = ensureStaged(packId);
       if (!sp) return;
-      // Pin every current planned odd so the solver can't touch them.
-      const inPool = new Set(sp.cards.map((c) => c.cardId));
-      const capDropped = new Set(plan.capDroppedCardIds);
-      const allPinned = plan.planned
-        .filter(
-          (p) =>
-            inPool.has(p.cardId) &&
-            !capDropped.has(p.cardId) &&
-            p.pct > 0,
-        )
-        .map((p) => ({ cardId: p.cardId, pct: p.pct }));
-      stagedApi.setStaged(packId, {
-        ...sp,
-        price: newPrice,
-        pinPrice: true,
-        edgeTargetOverride: desiredEdge,
-        pinnedOdds: allPinned,
-      });
-      setPriceText(priceInputText(newPrice));
+
+      if (plan.snapped !== false) {
+        // Clean plan: pin all odds + computed price. Odds stay exact.
+        const currentEV = plan.priceAfter * (1 - plan.after.edge);
+        const newPrice = currentEV / (1 - desiredEdge);
+        const inPool = new Set(sp.cards.map((c) => c.cardId));
+        const capDropped = new Set(plan.capDroppedCardIds);
+        const allPinned = plan.planned
+          .filter(
+            (p) =>
+              inPool.has(p.cardId) &&
+              !capDropped.has(p.cardId) &&
+              p.pct > 0,
+          )
+          .map((p) => ({ cardId: p.cardId, pct: p.pct }));
+        stagedApi.setStaged(packId, {
+          ...sp,
+          price: newPrice,
+          pinPrice: true,
+          edgeTargetOverride: desiredEdge,
+          pinnedOdds: allPinned,
+        });
+        setPriceText(priceInputText(newPrice));
+      } else {
+        // Dirty plan: just set the edge override, let the planner search.
+        stagedApi.setStaged(packId, {
+          ...sp,
+          edgeTargetOverride: desiredEdge,
+        });
+      }
       void requestPlan(packId);
     },
     [ensureStaged, stagedApi, requestPlan],
