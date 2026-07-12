@@ -1816,6 +1816,12 @@ export function RetuneWorkspace({
     const plan = planForBasis;
     const rescue = plan?.cleanRescue ?? null;
     if (!plan || rescue === null) return;
+    // Don't auto-adopt when the user set an explicit edge target override —
+    // the rescue would override their target with a flexed one (e.g. user
+    // asks for 11.1%, rescue flexes to 10.85% and auto-adopts, defeating the
+    // user's intent). The rescue stays available as a manual suggestion.
+    const currentSp = stagedApi.getStaged(selectedPackId);
+    if (currentSp?.edgeTargetOverride !== undefined) return;
     // Dirty in EITHER sense adopts (owner 2026-07-12): off the clean ladder,
     // or — tagged — snapped but off the human-nice grid (tier N repairs it).
     const offNice = plan.intendedHitRate !== null && plan.allNice === false;
