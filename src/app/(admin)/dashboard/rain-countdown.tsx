@@ -21,8 +21,9 @@ function format(ms: number): string {
 }
 
 /**
- * `initialRemainingMs` is computed ONCE on the server (in ActiveRainChip,
- * `endsAt − Date.now()` at request time) and serialized down. The first client
+ * `initialRemainingMs` is computed ONCE on the server (in the rain chip's
+ * server component, `endsAt − Date.now()` at request time) and serialized
+ * down. The first client
  * paint renders from that SAME number, so it is byte-identical to the SSR
  * markup — no hydration mismatch. Reading `Date.now()` during render instead
  * (the previous approach) made the server tick and the first client tick

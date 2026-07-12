@@ -1,4 +1,4 @@
-import { CloudRain } from "lucide-react";
+import { CloudRain, Users } from "lucide-react";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { getActiveRain } from "@/lib/queries/dashboard";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
@@ -21,10 +21,10 @@ function endsInLabel(endsAtIso: string): string {
 }
 
 /**
- * Compact live-rain countdown chip for the admin header — a smaller sibling
- * of the dashboard's ActiveRainChip that sits just to the LEFT of the profile
- * menu. A cyan-tinted pill with a rain glyph + the live countdown (reusing
- * RainCountdown); the entrant count, pool, and ends-in live in the tooltip.
+ * Compact live-rain countdown chip for the admin header — a cyan-tinted pill
+ * that sits just to the LEFT of the profile menu. A rain glyph + the live
+ * entrant count + the live countdown (reusing RainCountdown); the pool and
+ * ends-in live in the tooltip.
  *
  * Reads the single active/drawing rains row via the SAME read the dashboard
  * chip uses (getActiveRain), wrapped in safeQuery so a failed/slow lookup
@@ -58,6 +58,18 @@ export async function HeaderRainChip() {
       )} pool · ${drawing ? "drawing winner" : endsInLabel(rain.endsAt)}`}
     >
       <CloudRain className="size-3.5 shrink-0" aria-hidden />
+      {/* Live entrant count — surfaced IN the chip (not just the tooltip) so
+          the headline number is visible at a glance. Pool + ends-in stay in
+          the tooltip to keep the header pill compact. */}
+      <span className="inline-flex items-center gap-1">
+        <Users className="size-3 shrink-0" aria-hidden />
+        <span className="tabular-nums">
+          {formatNumber(rain.participantCount)}
+        </span>
+      </span>
+      <span className="text-cyan-700/40 dark:text-cyan-400/40" aria-hidden>
+        ·
+      </span>
       {drawing ? (
         <span>drawing</span>
       ) : (

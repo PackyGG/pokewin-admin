@@ -11,7 +11,7 @@ import { ChartRowSkeleton, TodayTileSkeleton } from "./dashboard-skeletons";
  * Mirrors page.tsx 1:1 so the route-transition skeleton and the in-page
  * Suspense fallbacks agree, and the real content swaps in with zero layout
  * shift:
- *   • PageHero (with the trailing Active-Rain action chip).
+ *   • PageHero.
  *   • Today tiles — 3-up at xl, matches the P&L Today · Reward + Creators
  *     Costs (merged) · Upgrader + Double Down (merged) row that page.tsx
  *     renders FIRST (directly under the hero). All three now render as the
@@ -36,9 +36,7 @@ import { ChartRowSkeleton, TodayTileSkeleton } from "./dashboard-skeletons";
 export default function DashboardLoading() {
   return (
     <SkeletonBoundary label="Loading dashboard…" className="space-y-6">
-      {/* `action` reserves room for the hero's Active-Rain chip so the
-          right edge doesn't jump when it streams in. */}
-      <PageHeroSkeleton action />
+      <PageHeroSkeleton />
 
       {/* Today tiles — P&L Today · Reward + Creators Costs (merged) ·
           Upgrader + Double Down (merged) (3-up at xl). Rendered ABOVE the

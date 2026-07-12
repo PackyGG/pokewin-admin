@@ -1,9 +1,6 @@
 import { Suspense } from "react";
 import { LayoutDashboard, LineChart } from "lucide-react";
-import {
-  getDashboardStats,
-  getActiveRain,
-} from "@/lib/queries/dashboard";
+import { getDashboardStats } from "@/lib/queries/dashboard";
 import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDoubleDownDashboardStats } from "@/lib/queries/double-down";
 import { getDailyPnl } from "@/lib/queries/pnl";
@@ -43,14 +40,12 @@ import {
 // The widget now docks on every admin page so the dashboard body no longer
 // renders the in-page Activity card.
 // LiveMoneyChat also lives in the admin shell layout (same dock pattern).
-import { ActiveRainChip } from "./active-rain-chip";
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import {
   SkeletonKpiStrip,
   SkeletonChart,
 } from "@/components/ux";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   ChartRowSkeleton,
   TodayTileSkeleton,
@@ -91,19 +86,6 @@ export default async function DashboardPage() {
           icon={LayoutDashboard}
           title="Dashboard"
           subtitle="Live platform overview — revenue, users, and recent activity."
-          // Top-right action chip: the live Active Rain entrant count,
-          // behind its own tiny Suspense so the hero paints instantly.
-          action={
-            <div className="flex flex-wrap items-center gap-2">
-              <Suspense
-                fallback={
-                  <Skeleton className="h-9 w-44 rounded-full" />
-                }
-              >
-                <DashboardActiveRain />
-              </Suspense>
-            </div>
-          }
         />
       </PageHero>
 
@@ -576,25 +558,6 @@ async function DashboardRewardAndCreatorCostsToday() {
       }}
     />
   );
-}
-
-/**
- * Active Rain box. Its own lightweight query (a single rains row), streamed
- * behind its own Suspense so it never blocks the heavy stats aggregate and
- * refreshes on the dashboard's 60s tick.
- */
-async function DashboardActiveRain() {
-  // Wrapped in safeQuery so a failed rains lookup degrades this hero chip
-  // to its idle ("No active rain") state instead of throwing up the route
-  // boundary — a decorative chip must never take the page down. On error
-  // we pass `null`, which ActiveRainChip already renders as the idle chip.
-  const { data: rain } = await safeQuery(
-    () => getActiveRain(),
-    null,
-    "dashboard.activeRain",
-    REWARD_QUERY_TIMEOUT_MS,
-  );
-  return <ActiveRainChip rain={rain} />;
 }
 
 /**
