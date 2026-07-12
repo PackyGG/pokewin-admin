@@ -241,6 +241,73 @@ check("pins-infeasible (cap-dropped): pin above maxWinCap refused with the raise
   );
 });
 
+// ── 3d. PINS-AWARE no-dust routing (owner incident 2026-07-12) ──────────
+// Side Eyes: the only cheap card (Darkrai $7.69) was PINNED at 79%, so the
+// FREE slot lists had no dust and the engine refused with "Pool has no DUST
+// card — add cards under $52" — factually wrong (the pool HAS dust) and the
+// wrong remedy (a pool edit for a pins problem). The refusal must route to
+// `pins-infeasible` so the remedy sweep offers verified unpin/adjust chips.
+const sideEyesLike = {
+  cards: [
+    { value: 2127 },
+    { value: 715.58 },
+    { value: 478.8 },
+    { value: 329.24 },
+    { value: 7.69 },
+  ],
+  price: 104.63,
+  targetEdge: 0.11293,
+  targetWinRate: 0.2,
+  maxWinCap: 10463,
+  nearMissMin: 0,
+  winRateTol: 0.02,
+  currentWeights: [100, 300, 4000, 15000, 80000],
+};
+
+check("pins-aware no-dust: pinned-only dust routes to pins-infeasible with the unpin remedy", () => {
+  const r = shapeWeights({
+    ...sideEyesLike,
+    pinnedShares: [{ index: 4, share: 0.79 }],
+  });
+  assert("error" in r, "expected the error arm");
+  assert(r.limit.kind === "pins-infeasible", `kind ${r.limit.kind} (was no-dust-cards)`);
+  assert(
+    /is pinned/.test(r.limit.detail),
+    `detail must say the dust is pinned — got: ${r.limit.detail}`,
+  );
+  assert(
+    /Clear the pin/.test(r.limit.suggestion) && r.limit.suggestion.includes("$7.69"),
+    `suggestion must name the unpin remedy + the card value — got: ${r.limit.suggestion}`,
+  );
+});
+
+check("no-dust-cards unchanged when the pool genuinely has no dust (with and without pins)", () => {
+  // EV target ($88.71 at $100 / 11.29%) sits inside [min $60, max $200] so
+  // the EV-bounds checks pass and the refusal genuinely reaches limit 4.
+  const noDustPool = {
+    cards: [{ value: 200 }, { value: 90 }, { value: 60 }],
+    price: 100,
+    targetEdge: 0.1129,
+    targetWinRate: 0.2,
+    maxWinCap: 10000,
+    nearMissMin: 0,
+    winRateTol: 0.02,
+    currentWeights: [1000, 40000, 59000],
+  };
+  const bare = shapeWeights(noDustPool);
+  assert("error" in bare, "expected the error arm (no pins)");
+  assert(bare.limit.kind === "no-dust-cards", `kind ${bare.limit.kind}`);
+  const pinnedNonDust = shapeWeights({
+    ...noDustPool,
+    pinnedShares: [{ index: 0, share: 0.0025 }],
+  });
+  assert("error" in pinnedNonDust, "expected the error arm (non-dust pin)");
+  assert(
+    pinnedNonDust.limit.kind === "no-dust-cards",
+    `a non-dust pin must not reroute the structural refusal — kind ${pinnedNonDust.limit.kind}`,
+  );
+});
+
 // ── 4. FULLY-PINNED pools ───────────────────────────────────────────────
 check("fully-pinned pool ACCEPTED when the edge lands in [target, target+0.25pp]", () => {
   // EV = 0.442211·10 + 0.557789·0.05 = 4.45 → edge exactly 11.00% at $5.

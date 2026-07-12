@@ -46,8 +46,10 @@ import {
   TAGGED_WINRATE_TOLERANCE,
   bandEvForBeta,
   buildLawEnv,
+  isOnNiceGridPct,
   lawfulTagFitRange,
   monotoneEvWindow,
+  nearestNiceRungsPct,
   waterFillWinEv,
   searchBestPriceForCleanSnap,
   shapeWeights,
@@ -1891,6 +1893,13 @@ export function computeCleanRescue(input: {
    */
   landedShares?: readonly number[];
   cardIds?: readonly string[];
+  /**
+   * Tier N (tagged off-nice repair): the landed plan's niceness-EXEMPT row
+   * indexes (dust residual buffer / forced single free winner) — the same
+   * set `countOffNicePct` skips, so the repair detector and the `allNice`
+   * judge can never disagree about which rows are off. Ignored untagged.
+   */
+  niceExemptIdx?: readonly number[];
   maxSearches?: number;
   /** Tier P's own combo budget (defaults to CLEAN_RESCUE_PIN_REPAIR_BUDGET). */
   maxPinRepairSolves?: number;
@@ -1913,12 +1922,16 @@ export function computeCleanRescue(input: {
   const search = input.searchFn ?? searchBestPriceForCleanSnap;
 
   // ── Tier A: adopt the already-proven wide-probe landing (0 searches) ────
+  // Tagged bar includes NICE (owner 2026-07-12): a rescue that lands snapped
+  // but off the human-nice grid just moves the problem — for tagged packs a
+  // landing only counts as clean when `allNice === true`.
   if (
     !pricePinned &&
     wideProbe !== null &&
     wideProbe.feasible &&
     wideProbe.snapped === true &&
     (!tagged || wideProbe.taggedAccuracyHit !== false) &&
+    (!tagged || wideProbe.allNice === true) &&
     wideProbe.shapeDegenerate !== true &&
     Math.abs(wideProbe.price - currentPrice) > 0.01
   ) {
@@ -1965,6 +1978,7 @@ export function computeCleanRescue(input: {
       if ("error" in shaped) continue;
       if (shaped.snapped !== true) continue;
       if (tagged && res.taggedAccuracyHit === false) continue;
+      if (tagged && shaped.allNice !== true) continue;
       // Degeneracy veto: never swap dirty odds for a collapsed ladder.
       const total = shaped.weights.reduce(
         (a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0),
@@ -1990,25 +2004,42 @@ export function computeCleanRescue(input: {
     }
   }
 
-  // ── Tier P: pin-repair at the pack's OWN edge target ────────────────────
+  // ── Tier P/N: pin-repair at the pack's OWN edge target ──────────────────
   // The owner's hand-move, mechanized: when only a FEW rows sit off the
-  // clean ladder, pin each to its nearest rung(s) and let the SAME solve
-  // re-verify — the free rows re-shape and snap around them. Edge target is
-  // NOT flexed here (the pins move EV by fractions of a cent); the price
-  // search stays in-budget (pinned price ⇒ band 0). Cheapest total nudge
-  // first, its own budget, same acceptance bars as B/C.
+  // grid, pin each to its nearest rung(s) and let the SAME solve re-verify —
+  // the free rows re-shape and snap around them. Edge target is NOT flexed
+  // here (the pins move EV by fractions of a cent); the price search stays
+  // in-budget (pinned price ⇒ band 0). Cheapest total nudge first, its own
+  // budget, same acceptance bars as B/C.
+  //
+  // TWO detectors, one repair (owner 2026-07-12 "works on all packs"):
+  // - UNTAGGED (tier P): rows off the human step grid → nearest step rungs.
+  // - TAGGED (tier N): rows off the HUMAN-NICE grid (the `allNice` judge,
+  //   exempt rows skipped) → nearest NICE rungs. Rungs come from the NICE
+  //   grid itself so the pinned row genuinely reads clean — never a pin AT
+  //   the ugly decimal that would merely exempt it from the accounting.
+  //   This catches BOTH tagged failure modes: snapped=false (dirty decimals
+  //   are off-nice too) and snapped=true/allNice=false (the Abyssal case —
+  //   integer per-100k tickets like 0.047% that no human reads as clean).
   const landed = input.landedShares;
   if (landed !== undefined && landed.length === values.length) {
+    const exempt = new Set(input.niceExemptIdx ?? []);
     type OffRow = { index: number; pct: number; rungs: number[] };
     const offRows: OffRow[] = [];
     for (let i = 0; i < landed.length; i++) {
       const pct = (landed[i] ?? 0) * 100;
       if (!(pct > 0)) continue;
-      const lo = roundPct(floorToStep(pct));
-      const hi = roundPct(ceilToStep(pct));
-      const onGrid = Math.abs(pct - lo) < 1e-9 || Math.abs(pct - hi) < 1e-9;
-      if (onGrid) continue;
-      const rungs = [...new Set([lo, hi])].filter((r) => r > 0);
+      let rungs: number[];
+      if (tagged) {
+        if (exempt.has(i) || isOnNiceGridPct(pct)) continue;
+        rungs = nearestNiceRungsPct(pct).filter((r) => r > 0);
+      } else {
+        const lo = roundPct(floorToStep(pct));
+        const hi = roundPct(ceilToStep(pct));
+        const onGrid = Math.abs(pct - lo) < 1e-9 || Math.abs(pct - hi) < 1e-9;
+        if (onGrid) continue;
+        rungs = [...new Set([lo, hi])].filter((r) => r > 0);
+      }
       if (rungs.length === 0) return null;
       offRows.push({ index: i, pct, rungs });
       if (offRows.length > CLEAN_RESCUE_PIN_REPAIR_MAX_ROWS) break;
@@ -2064,6 +2095,7 @@ export function computeCleanRescue(input: {
         if ("error" in shaped) continue;
         if (shaped.snapped !== true) continue;
         if (tagged && res.taggedAccuracyHit === false) continue;
+        if (tagged && shaped.allNice !== true) continue;
         const total = shaped.weights.reduce(
           (a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0),
           0,

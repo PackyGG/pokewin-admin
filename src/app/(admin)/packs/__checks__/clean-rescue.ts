@@ -32,6 +32,12 @@
  *      edge target under tier P's OWN budget; on-grid landings and >4
  *      off-rows skip the tier; repairs carry cardIds for the one-click
  *      staging.
+ *  10. Tier N (owner 2026-07-12, "works on all packs"): TAGGED pools use the
+ *      HUMAN-NICE grid as the off-row detector (exempt rows skipped) and pin
+ *      off-nice rows to genuine NICE rungs — catching the snapped=true /
+ *      allNice=false state (e.g. 0.047%) the wide probe used to answer with
+ *      a stale far-price move. Tagged acceptance everywhere now also
+ *      requires `allNice === true`, so a rescue can never land off-nice.
  *
  * Exit code 0 = all passed; 1 = at least one failure (printed).
  */
@@ -128,6 +134,7 @@ function baseInput(overrides?: {
   landedShares?: number[];
   cardIds?: string[];
   maxPinRepairSolves?: number;
+  niceExemptIdx?: number[];
 }): Parameters<typeof computeCleanRescue>[0] {
   return {
     mkParams,
@@ -154,6 +161,9 @@ function baseInput(overrides?: {
       : {}),
     ...(overrides?.maxPinRepairSolves !== undefined
       ? { maxPinRepairSolves: overrides.maxPinRepairSolves }
+      : {}),
+    ...(overrides?.niceExemptIdx !== undefined
+      ? { niceExemptIdx: overrides.niceExemptIdx }
       : {}),
   };
 }
@@ -505,6 +515,118 @@ check("tier P: skipped on clean landings and on >4 off-ladder rows", () => {
     tooMany === null && n2.pinned === 0,
     "5 off-ladder rows exceed the 4-row cap ⇒ tier P never solves",
   );
+});
+
+// ── 10. Tier N: tagged off-NICE repair (owner 2026-07-12) ──────────────────
+// Landed rows 0.047% (47 per-100k units — off-nice; NICE rungs 40/50 ⇒
+// 0.04%/0.05%) and 14.953% (rungs 10%/15%) fail the nice grid; 25% (2.5e4)
+// and 50% (5e4) pass — note 60% would NOT (mantissa 6 is not on the grid).
+// Cheapest total nudge = {0.05, 15} (Δ 0.003 + 0.047 pp) — first combo.
+const LANDED_OFF_NICE = [0.00047, 0.14953, 0.25, 0.5];
+
+check("tier N: tagged off-nice rows pinned to genuine NICE rungs", () => {
+  const n = { unpinned: 0, pinned: 0 };
+  const r = computeCleanRescue(
+    baseInput({
+      tagged: true,
+      searchFn: pinAcceptingStub(n),
+      landedShares: LANDED_OFF_NICE,
+      cardIds: CARD_IDS,
+    }),
+  );
+  assert(r !== null, "expected the tier N pin-repair rescue");
+  assert(r!.tier === "pin-repair", `tier ${r!.tier}`);
+  assert(r!.edgeTargetOverride === null, "tier N must NOT flex the edge target");
+  const reps = r!.pinRepairs ?? [];
+  assert(reps.length === 2, `expected 2 repairs, got ${reps.length}`);
+  assert(
+    reps[0]!.index === 0 && Math.abs(reps[0]!.pct - 0.05) < 1e-9,
+    `repair 0: got ${reps[0]!.index}@${reps[0]!.pct}, want 0@0.05 (nearest NICE rung)`,
+  );
+  assert(
+    reps[1]!.index === 1 && Math.abs(reps[1]!.pct - 15) < 1e-9,
+    `repair 1: got ${reps[1]!.index}@${reps[1]!.pct}, want 1@15 (nearest NICE rung)`,
+  );
+  assert(n.pinned === 1, `cheapest combo first — ${n.pinned} pinned solves`);
+});
+
+check("tier N: exempt rows are never flagged (the allNice judge's own set)", () => {
+  const n = { unpinned: 0, pinned: 0 };
+  const r = computeCleanRescue(
+    baseInput({
+      tagged: true,
+      searchFn: pinAcceptingStub(n),
+      landedShares: LANDED_OFF_NICE,
+      cardIds: CARD_IDS,
+      niceExemptIdx: [0],
+    }),
+  );
+  assert(r !== null, "expected a rescue on the one non-exempt off row");
+  const reps = r!.pinRepairs ?? [];
+  assert(
+    reps.length === 1 && reps[0]!.index === 1,
+    `only row 1 may be repaired, got ${reps.map((p) => p.index).join(",")}`,
+  );
+});
+
+check("tier N: an all-nice tagged landing never solves pinned combos", () => {
+  const n = { unpinned: 0, pinned: 0 };
+  const r = computeCleanRescue(
+    baseInput({
+      tagged: true,
+      searchFn: pinAcceptingStub(n),
+      // 5% / 15% / 30% / 50% — every rung on the NICE grid.
+      landedShares: [0.05, 0.15, 0.3, 0.5],
+      maxSearches: 2,
+    }),
+  );
+  assert(r === null, "nothing off-nice ⇒ no tier N rescue");
+  assert(n.pinned === 0, `no pinned solves expected, got ${n.pinned}`);
+});
+
+check("tagged acceptance: every tier rejects an allNice=false landing", () => {
+  // Tier A: a snapped wide probe that is off-nice must not be adopted.
+  const neverCall: SearchFn = (() => {
+    return okResult(BASE_PRICE, { snapped: false });
+  }) as SearchFn;
+  const rA = computeCleanRescue(
+    baseInput({
+      tagged: true,
+      wideProbe: { ...CLEAN_WIDE_PROBE, allNice: false },
+      searchFn: neverCall,
+      maxSearches: 1,
+    }),
+  );
+  assert(rA === null || rA.tier !== "wide-price", "tier A must reject off-nice");
+  // Tier B/C: first candidate snaps but lands off-nice, second is nice.
+  let m = 0;
+  const stub: SearchFn = ((p: Parameters<SearchFn>[0]) => {
+    m++;
+    return okResult(10.75, { allNice: m === 1 ? false : true, edge: p.targetEdge });
+  }) as SearchFn;
+  const rB = computeCleanRescue(baseInput({ tagged: true, searchFn: stub }));
+  assert(rB !== null, "expected a rescue on the second (nice) candidate");
+  assert(rB!.searchesSpent === 2, `spent ${rB!.searchesSpent}`);
+  // Tier N: pinned combos that land off-nice are refused ⇒ honest null.
+  let pinnedOffNice = 0;
+  const offNiceStub: SearchFn = ((p: Parameters<SearchFn>[0]) => {
+    const pins = (p as { pinnedShares?: unknown[] }).pinnedShares;
+    if (pins !== undefined && pins.length > 0) {
+      pinnedOffNice++;
+      return okResult(BASE_PRICE, { snapped: true, allNice: false });
+    }
+    return okResult(BASE_PRICE, { snapped: false });
+  }) as SearchFn;
+  const rN = computeCleanRescue(
+    baseInput({
+      tagged: true,
+      searchFn: offNiceStub,
+      landedShares: LANDED_OFF_NICE,
+      maxSearches: 2,
+    }),
+  );
+  assert(rN === null, "off-nice pinned combos must never be adopted");
+  assert(pinnedOffNice === 4, `all 4 combos tried, got ${pinnedOffNice}`);
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────

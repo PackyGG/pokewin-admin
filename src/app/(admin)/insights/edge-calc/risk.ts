@@ -2466,6 +2466,33 @@ export function isOnNiceGridPct(pct: number): boolean {
 }
 
 /**
+ * Nearest HUMAN-NICE rungs (as percents) bracketing `pct` — the floor and
+ * ceil of the {@link NICE_UNITS} grid at per-100k resolution. Used by the
+ * clean rescue's tagged pin-repair (tier N): an off-nice row is pinned to a
+ * rung from THIS grid so the row genuinely READS clean (0.05%, 0.25%, 2.5%…)
+ * rather than being auto-pinned at its ugly decimal merely to exempt it from
+ * the niceness accounting. Returns 1–2 distinct positive percents; [] only
+ * for non-finite / non-positive input.
+ */
+export function nearestNiceRungsPct(pct: number): number[] {
+  if (!Number.isFinite(pct) || !(pct > 0)) return [];
+  const units = pct * 1000;
+  let floor: number | null = null;
+  let ceil: number | null = null;
+  for (const u of NICE_UNITS) {
+    if (u <= units + 1e-9) floor = u;
+    if (u >= units - 1e-9) {
+      ceil = u;
+      break;
+    }
+  }
+  const out = new Set<number>();
+  if (floor !== null) out.add(floor / 1000);
+  if (ceil !== null) out.add(ceil / 1000);
+  return [...out];
+}
+
+/**
  * Count the planned cards OFF the human-nice grid: positive-weight cards,
  * minus the exempt indexes (dust buffer / owner pins / forced single free
  * winner), whose probability fails {@link isOnNiceGridPct}. THE shared
@@ -5408,6 +5435,27 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // The one-sided-up edge enforcement nudges the cheapest DUST card, so a dust
   // card must exist to carry the losing mass and the post-quantize EV slack.
   if (dust.length === 0) {
+    // Pins-aware routing: `dust` holds only FREE slots, so a pool whose only
+    // cheap cards are all PINNED lands here too — but "add cheap cards" would
+    // be the wrong remedy (the pool HAS dust; the pins starve the free solve
+    // of it). Route that case to `pins-infeasible` so the remedy sweep can
+    // offer solver-verified one-click fixes (unpin the dust card, adjust a
+    // pin, exact price) instead of sending the owner to the Builder.
+    if (hasPins) {
+      const pinnedDustValues: number[] = [];
+      for (const idx of pinnedShareByIdx.keys()) {
+        const v = input.cards[idx]!.value;
+        if (v > 0 && v < dustHi && (maxWinCap === undefined || v <= maxWinCap))
+          pinnedDustValues.push(v);
+      }
+      if (pinnedDustValues.length > 0) {
+        const cheapest = Math.min(...pinnedDustValues);
+        return pinsRefusal(
+          `every card cheap enough to host the losing mass (< $${dustHi.toFixed(2)}, half the $${price.toFixed(2)} price) is pinned — the free solve has no dust card left to carry the losing opens and the rounding slack.`,
+          `Clear the pin on the cheapest dust card ($${cheapest.toFixed(2)}) so the solver can balance the losing mass on it — or pin every row (pins totalling exactly 100%) to take the whole layout by hand.`,
+        );
+      }
+    }
     // Price-independent variant (§Rule Set fix): a dust card demands
     // `price > 2·minValue` while a winner demands `price ≤ maxValue` — when
     // `2·minValue ≥ maxValue` the two demands are disjoint at EVERY price, so

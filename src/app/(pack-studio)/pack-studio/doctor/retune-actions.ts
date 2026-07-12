@@ -2944,8 +2944,13 @@ async function planPackTuneLiveUncached(
   // least invasive first; pool edits stay suggestions) for a solver-proven
   // clean landing the workspace auto-adopts. The live arm never carries pins,
   // so no pin gate is needed here.
+  // Arms on BOTH dirty states (owner 2026-07-12 "works on all packs"):
+  // snapped=false (off the clean ladder) and — tagged only — snapped=true
+  // with allNice=false (integer per-100k tickets a human still reads as
+  // dirty, e.g. 0.047%; the Abyssal case that used to get a stale wide
+  // price-move suggestion instead of a repair).
   const cleanRescue =
-    shaped.snapped === false
+    shaped.snapped === false || (tagged && shaped.allNice === false)
       ? computeCleanRescue({
           mkParams: (te, band) => ({
             ...buildRetuneSearchParams("live", {
@@ -2971,9 +2976,9 @@ async function planPackTuneLiveUncached(
           tagged,
           currentPrice: search.bestPrice,
           wideProbe: liveWideProbe,
-          // Tier P (owner 2026-07-11): the dirty landing's own shares — the
-          // few off-ladder rows get pinned to their nearest rungs and
-          // re-verified at the pack's OWN edge target.
+          // Tier P/N (owner 2026-07-11): the dirty landing's own shares — the
+          // few off-ladder / off-nice rows get pinned to their nearest rungs
+          // and re-verified at the pack's OWN edge target.
           landedShares:
             shapeTotal > 0
               ? shaped.weights.map((w) =>
@@ -2981,6 +2986,7 @@ async function planPackTuneLiveUncached(
                 )
               : undefined,
           cardIds: cards.map((c) => c.cardId),
+          niceExemptIdx: shaped.niceExemptIdx,
         })
       : null;
 
@@ -3435,7 +3441,10 @@ async function planPackTuneStagedUncached(
   const stagedCleanRescue =
     !lite &&
     outcome.ok &&
-    outcome.snapped === false &&
+    // Both dirty states arm (owner 2026-07-12): off the clean ladder, or —
+    // tagged only — snapped but off the human-nice grid (tier N repairs it).
+    (outcome.snapped === false ||
+      (taggedStaged && outcome.allNice === false)) &&
     (input.pinnedOdds === undefined || input.pinnedOdds.length === 0)
       ? computeCleanRescue({
           mkParams: (te, band) => ({
@@ -3471,8 +3480,9 @@ async function planPackTuneStagedUncached(
           tagged: taggedStaged,
           currentPrice: r.priceAfter,
           wideProbe: stagedWideProbe,
-          // Tier P (owner 2026-07-11): pin the dirty landing's few off-ladder
-          // rows to their nearest rungs at the pack's OWN edge target.
+          // Tier P/N (owner 2026-07-11): pin the dirty landing's few
+          // off-ladder / off-nice rows to their nearest rungs at the pack's
+          // OWN edge target.
           landedShares: (() => {
             const t = outcome.weights.reduce(
               (a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0),
@@ -3485,6 +3495,7 @@ async function planPackTuneStagedUncached(
               : undefined;
           })(),
           cardIds: input.cards.map((c) => c.cardId),
+          niceExemptIdx: outcome.niceExemptIdx ?? undefined,
         })
       : null;
 

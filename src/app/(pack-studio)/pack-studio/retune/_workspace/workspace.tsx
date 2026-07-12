@@ -1710,7 +1710,11 @@ export function RetuneWorkspace({
     if (!selectedPackId || status !== "planned") return;
     const plan = planForBasis;
     const rescue = plan?.cleanRescue ?? null;
-    if (!plan || rescue === null || plan.snapped !== false) return;
+    if (!plan || rescue === null) return;
+    // Dirty in EITHER sense adopts (owner 2026-07-12): off the clean ladder,
+    // or — tagged — snapped but off the human-nice grid (tier N repairs it).
+    const offNice = plan.intendedHitRate !== null && plan.allNice === false;
+    if (plan.snapped !== false && !offNice) return;
     const sig = `${rescue.price.toFixed(2)}|${
       rescue.edgeTargetOverride !== null
         ? rescue.edgeTargetOverride.toFixed(4)
