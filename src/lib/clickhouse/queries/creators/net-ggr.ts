@@ -66,18 +66,18 @@ import { CH_DB, chDateTime } from "@/lib/clickhouse/queries/_shared";
  * lifetime ("all") window (no lower bound), matching periodToSinceDate.
  */
 
-export type NetGgrLedgerRow = {
+type NetGgrLedgerRow = {
   creator_id: string;
   wager: string;
   ledger_payout: string;
 };
-export type NetGgrInvRow = { creator_id: string; inv_payout: string };
-export type NetGgrUpgRow = {
+type NetGgrInvRow = { creator_id: string; inv_payout: string };
+type NetGgrUpgRow = {
   creator_id: string;
   upg_wager: string;
   upg_payout: string;
 };
-export type NetGgrScans = {
+type NetGgrScans = {
   ledgerRows: NetGgrLedgerRow[];
   invRows: NetGgrInvRow[];
   upgRows: NetGgrUpgRow[];
