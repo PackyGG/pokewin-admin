@@ -585,7 +585,7 @@ export function PoolTable({
           onClick={onPinToggle}
           disabled={disabled}
           aria-pressed={pinPrice}
-          title="Pin the ticket price — the planner solves odds-only at this exact price instead of searching the band. Rare escape hatch; the search is the default."
+          title="Pin the pack price — the planner solves odds-only at this exact price instead of searching the band. Rare escape hatch; the search is the default."
           className={cn(
             pinPrice && "bg-amber-500/10 text-amber-600 dark:text-amber-400",
           )}

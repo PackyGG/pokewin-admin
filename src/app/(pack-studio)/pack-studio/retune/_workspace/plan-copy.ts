@@ -54,7 +54,7 @@ export function limitHeadline(
     case "empty-pool":
       return "This pack has no cards. Add cards in the Builder first.";
     case "no-win-cards":
-      return `Nothing in this pool is worth the ticket price — there is no card a player can win. Add at least one card worth ${formatCurrency(price)} or more.`;
+      return `Nothing in this pool is worth the pack price — there is no card a player can win. Add at least one card worth ${formatCurrency(price)} or more.`;
     case "no-win-band-card":
       return limit.suggestedRange
         ? `The pool jumps from cheap cards straight to jackpots. Add a mid-size winner (${formatCurrency(limit.suggestedRange.min)}–${formatCurrency(limit.suggestedRange.max)}) so the math has something to balance with.`

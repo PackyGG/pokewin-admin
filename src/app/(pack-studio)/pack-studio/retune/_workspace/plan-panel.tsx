@@ -1530,7 +1530,7 @@ export function PlanPanel({
             />
           </PlanMetric>
           <PlanMetric
-            label="Ticket price"
+            label="Pack price"
             icon={Ticket}
             accent="blue"
             sub={

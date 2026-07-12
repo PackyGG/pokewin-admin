@@ -30,7 +30,7 @@ const LEGEND: LegendTerm[] = [
   },
   {
     term: "Clean odds",
-    def: "Every card's chance is a round, human-readable number on the clean ladder. Clean odds are a MUST to push — the planner moves the ticket price inside the allowed band to land them.",
+    def: "Every card's chance is a round, human-readable number on the clean ladder. Clean odds are a MUST to push — the planner moves the pack price inside the allowed band to land them.",
   },
   {
     term: "Near-miss",
@@ -38,7 +38,7 @@ const LEGEND: LegendTerm[] = [
   },
   {
     term: "Max-win / Max-mult",
-    def: "The single highest card value in the pool (the jackpot), and that value as a multiple of the ticket price.",
+    def: "The single highest card value in the pool (the jackpot), and that value as a multiple of the pack price.",
   },
   {
     term: "CV · Tier (T1–T5)",

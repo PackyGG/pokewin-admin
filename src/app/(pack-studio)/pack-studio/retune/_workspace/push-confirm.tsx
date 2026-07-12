@@ -152,7 +152,7 @@ export function PushConfirm({
             )}
             <div className="rounded-lg border px-3 py-1.5">
               <DeltaLine
-                label="Ticket price"
+                label="Pack price"
                 before={plan.price}
                 after={plan.priceAfter}
                 format={formatCurrency}
