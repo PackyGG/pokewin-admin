@@ -106,7 +106,7 @@ import {
  */
 
 /** One creator-cost line on the box. */
-export type CreatorCostLine = {
+type CreatorCostLine = {
   /** Stable key for React. */
   key: string;
   /** Operator-friendly label. */
@@ -115,7 +115,7 @@ export type CreatorCostLine = {
   amount: number;
 };
 
-export type CreatorCostsToday = {
+type CreatorCostsToday = {
   /**
    * Total creator cost today — creator withdrawals + tips + sponsored
    * battles + the FULL leaderboard gross (every leaderboard prize is a
@@ -421,7 +421,7 @@ export type LeaderboardGrossBoard = {
 };
 
 /** One claimant's prize within a leaderboard group. */
-export type LeaderboardGrossClaimant = {
+type LeaderboardGrossClaimant = {
   userId: string;
   username: string | null;
   /** This claimant's gross prize on this board today (Σ |amount|). */
