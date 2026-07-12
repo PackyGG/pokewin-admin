@@ -26,24 +26,16 @@ import {
   useState,
   useEffect,
   useTransition,
-  use,
-  Suspense,
 } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  Wallet,
-  TrendingUp,
-  TrendingDown,
   Swords,
   Gem,
   Gift,
-  Coins,
   ShieldCheck,
   Activity,
-  Hourglass,
   Sparkles,
-  Percent,
   Calendar,
   MapPin,
   Megaphone,
@@ -56,7 +48,7 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
-import { formatCurrency, formatCompactUsd } from "@/lib/utils/format";
+import { formatCurrency } from "@/lib/utils/format";
 import { RelativeTime } from "@/components/relative-time";
 import { ROLE_COLORS, USER_STATUS_COLORS } from "@/lib/constants";
 import {
@@ -73,7 +65,6 @@ import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
 import type { UserBalanceWeighting } from "@/lib/queries/users-balance-weighting";
 import type { UserRewardPackOpensResult } from "@/lib/queries/users-reward-pack-opens";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
-import { TILE_COLORS } from "./user-view-modern-panels";
 import {
   OverviewTab,
   RewardsTab,
@@ -311,49 +302,15 @@ export function UserViewModern({
     user.selfExcludedUntil,
   );
 
-  // KPIs surfaced in the hero strip.
-  // P&L is expressed from the HOUSE perspective:
-  //   pnl = deposits - withdrawals
-  //   > 0  we made money (user deposited more than they withdrew)  → GREEN
-  //   < 0  we lost money (user holds more than they deposited net) → RED
-  //
-  // Note: matches the Platform P&L panel below — includes on-site balance
-  // and inventory value as liabilities so paper wins flip the sign to red.
-  const totalValue =
-    (balances?.availableBalance ?? 0) + (balances?.inventoryValue ?? 0);
-  const deposits = balances?.totalDeposited ?? 0;
-  const withdrawals = balances?.totalWithdrawn ?? 0;
-  const onSiteBalance =
-    (balances?.availableBalance ?? 0) + (balances?.lockedBalance ?? 0);
-  const inventoryValue = balances?.inventoryValue ?? 0;
+  // Unclaimed voucher value — surfaced as a House-liability flag chip in the
+  // hero utility strip (HeroFlagsStrip). The hero's KPI display tiles (Total
+  // Value, P&L, Wager Left, Multiplier, House Edge) were removed per owner
+  // 2026-07-12; those figures live on the Overview tab (Balances / Platform-
+  // P&L panels) and the Account tab (wager cards).
   const vouchersValue = balances?.vouchersValue ?? 0;
-  const pnl =
-    deposits - withdrawals - onSiteBalance - inventoryValue - vouchersValue;
-  const wagerMultiplier =
-    balances && balances.totalDeposited > 0
-      ? balances.totalWagered / balances.totalDeposited
-      : 0;
-  const houseEdge =
-    balances && balances.totalWagered > 0
-      ? ((balances.totalWagered - balances.totalWon) / balances.totalWagered) *
-        100
-      : 0;
 
   const displayName =
     user.displayUsername ?? user.username ?? user.name ?? "—";
-
-  // The hero KPI tiles sit in a dense capped-width 4-col grid on the lg
-  // band (~1024–1280px), where a full-precision 6/7-figure currency string
-  // ("$2,345,678.90" / "-$456,789.22") overflows the tile and gets clipped
-  // by `truncate`, hiding the most significant digits. For values at/above
-  // $100K we render the compact form ("$2.3M" / "$456.8K") so the magnitude
-  // stays fully readable in the tile; the EXACT figure is always one panel
-  // down in the Overview Balances / Platform-P&L panels (full
-  // `formatCurrency`). Below $100K — the overwhelming majority of real
-  // users — the tile fits, so we keep the exact dollars-and-cents value.
-  // Sign is preserved for P&L by the formatter.
-  const heroMoney = (v: number): string =>
-    Math.abs(v) >= 100_000 ? formatCompactUsd(v) : formatCurrency(v);
 
   // ── HERO ──────────────────────────────────────────────────────────
   // Extracted as a node so UserHeroSticky can render it inline AND derive
@@ -362,165 +319,100 @@ export function UserViewModern({
   // untouched (the condensed bar layers above it on z-index).
   const heroNode = (
     <div className="rounded-xl border bg-card shadow-sm">
-        {/* Flat hero: solid bg-card + hairline border + a single very soft
-            shadow. No gradient fill, no corner-glow blobs (flat standard).
-            Redesigned into a SLIM two-row band (owner 2026-07-12: hero was
-            "too big and ugly" → wanted "thinner, cleaner, more professional
-            … all in one line … pfp a bit bigger … work for all sizes"):
-              • Row A = the primary line — identity (bigger avatar + name +
-                role/status) LEFT, the 5 KPI tiles RIGHT; one horizontal band
-                on xl+, tiles drop full-width below on smaller screens.
-              • Row B = a thin utility strip under a hairline divider —
-                secondary metadata chips LEFT, the admin-action cluster RIGHT.
-            The old tall stacked LEFT column was the height that read as big. */}
-        <div className="p-3 sm:p-4">
-          {/* ── ROW A · primary band line: identity + KPIs ──────────────
-              On xl+ identity (LEFT) and the KPI tiles (RIGHT) sit on ONE
-              horizontal line; below xl the tiles drop full-width under the
-              identity. The old tall LEFT column (name→email→toolbar→badges→
-              meta→flags stacked as ~6 rows) is gone — that stacking was the
-              height the owner flagged as "too big". */}
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:gap-5">
-            <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-4">
-              {/* Compact back-to-users button — tucked into the band's left. */}
-              {backSlot}
-              <div className="relative shrink-0">
-                {/* Slightly bigger avatar — it anchors the slim band. */}
-                <Avatar className="size-14 sm:size-16 ring-2 ring-background shadow-sm">
-                  {user.image && <AvatarImage src={user.image} alt="" />}
-                  <AvatarFallback className="text-base font-semibold">
-                    {(user.username ?? user.email ?? "?")
-                      .slice(0, 2)
-                      .toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-                <span
-                  className={cn(
-                    "absolute -bottom-0.5 -right-0.5 size-4 rounded-full border-2 border-background",
-                    statusKey === "active" && "bg-emerald-500",
-                    statusKey === "locked" && "bg-amber-500",
-                    statusKey === "banned" && "bg-rose-500",
-                  )}
-                  aria-label={statusLabel}
-                />
-              </div>
-
-              <div className="min-w-0 flex-1 space-y-0.5">
-                {/* Line 1 — username (heading) + copy + the two highest-signal
-                    badges inline: site role + moderation status. The name
-                    truncates so the shrink-0 badges always stay visible. */}
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <h2 className="min-w-0 truncate text-lg font-bold leading-tight sm:text-xl">
-                    {displayName}
-                  </h2>
-                  <CopyButton value={displayName} label="Username" />
-                  <Badge
-                    variant="outline"
-                    className={cn("h-5 shrink-0 py-0 text-[10px]", ROLE_COLORS[user.role] ?? "")}
-                  >
-                    {user.role}
-                  </Badge>
-                  <Badge
-                    variant="outline"
-                    className={cn("h-5 shrink-0 py-0 text-[10px]", USER_STATUS_COLORS[statusKey] ?? "")}
-                  >
-                    {statusLabel}
-                  </Badge>
-                </div>
-                {/* Line 2 — email (muted) + verified ✓ + copy. */}
-                <p className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-                  <span className="truncate">{user.email}</span>
-                  {user.emailVerified && (
-                    <span className="shrink-0 text-[10px] font-semibold text-emerald-500">
-                      ✓
-                    </span>
-                  )}
-                  {user.email && (
-                    <CopyButton value={user.email} label="Email" />
-                  )}
-                </p>
-              </div>
+      {/* Flat hero: solid bg-card + hairline border + a single very soft
+          shadow. No gradient fill, no corner-glow blobs (flat standard).
+          Collapsed to a SLIM SINGLE-ROW band (owner 2026-07-12: after the
+          two-row remake the owner still wanted it smaller → "remove all
+          display boxes from the top bar and make the second row into the
+          first so the height is even smaller"). The 5 KPI display tiles
+          (Total Value, P&L, Wager Left, Multiplier, House Edge) were removed
+          entirely — those metrics still live one panel down on the Overview
+          tab (Balances / Platform-P&L) and the Account tab (wager cards). The
+          old Row B (secondary chips + admin-action cluster) merged UP onto
+          the identity line, so the hero is now ~avatar-height + padding.
+            • lg+  : ONE line — identity LEFT (avatar + name + role/status +
+                     email), the chip strip + admin-action cluster RIGHT.
+            • <lg  : identity on top, the chips + actions wrap onto their own
+                     rows beneath it (never overflow, name always truncates). */}
+      <div className="p-3 sm:p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-4">
+          {/* ── IDENTITY (left on lg+, top on <lg) — back button + avatar +
+              name + the two highest-signal badges (site role + moderation
+              status) + email. The name truncates so the shrink-0 badges stay
+              visible at every width. */}
+          <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-4">
+            {/* Compact back-to-users button — tucked into the band's left. */}
+            {backSlot}
+            <div className="relative shrink-0">
+              {/* Prominent avatar — it anchors the slim band. */}
+              <Avatar className="size-14 sm:size-16 ring-2 ring-background shadow-sm">
+                {user.image && <AvatarImage src={user.image} alt="" />}
+                <AvatarFallback className="text-base font-semibold">
+                  {(user.username ?? user.email ?? "?")
+                    .slice(0, 2)
+                    .toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              <span
+                className={cn(
+                  "absolute -bottom-0.5 -right-0.5 size-4 rounded-full border-2 border-background",
+                  statusKey === "active" && "bg-emerald-500",
+                  statusKey === "locked" && "bg-amber-500",
+                  statusKey === "banned" && "bg-rose-500",
+                )}
+                aria-label={statusLabel}
+              />
             </div>
 
-            {/* KPI tiles — RIGHT side of the band on xl+, full-width below.
-                Five flat equal-width tiles that fit in ONE row from sm+
-                (grid-cols-5). Unchanged from before: heroMoney compact-
-                currency, the Suspense-streamed Wager-Left cell, House-POV
-                accents, and the phone (2-col) full-width 5th tile. Only the
-                placement moved — this now sits inline as the band's right
-                column instead of a block underneath the identity. */}
-            <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-5 xl:w-[clamp(26rem,40vw,38rem)] xl:shrink-0">
-              <KpiTile
-                label="Total Value"
-                value={heroMoney(totalValue)}
-                icon={Wallet}
-                accent="blue"
-              />
-              <KpiTile
-                label="P&L"
-                value={`${pnl >= 0 ? "+" : ""}${heroMoney(pnl)}`}
-                icon={pnl >= 0 ? TrendingUp : TrendingDown}
-                accent={pnl >= 0 ? "emerald" : "rose"}
-              />
-              {/* Wager Left — weighted wager remaining before this user can
-                  withdraw balance. Neutral info (cyan). Streamed so the
-                  per-user wager read never blocks the identity hero. The
-                  Suspense wraps this single grid cell so the cell stays
-                  uniform (its fallback is the same KpiTile). */}
-              {wagerProgressPromise ? (
-                <Suspense
-                  fallback={
-                    <KpiTile
-                      label="Wager Left"
-                      value="…"
-                      icon={Hourglass}
-                      accent="cyan"
-                    />
-                  }
+            <div className="min-w-0 flex-1 space-y-0.5">
+              {/* Line 1 — username (heading) + copy + the two highest-signal
+                  badges inline: site role + moderation status. The name
+                  truncates so the shrink-0 badges always stay visible. */}
+              <div className="flex min-w-0 items-center gap-1.5">
+                <h2 className="min-w-0 truncate text-lg font-bold leading-tight sm:text-xl">
+                  {displayName}
+                </h2>
+                <CopyButton value={displayName} label="Username" />
+                <Badge
+                  variant="outline"
+                  className={cn("h-5 shrink-0 py-0 text-[10px]", ROLE_COLORS[user.role] ?? "")}
                 >
-                  <WagerLeftHeroTile promise={wagerProgressPromise} />
-                </Suspense>
-              ) : (
-                <KpiTile
-                  label="Wager Left"
-                  value="—"
-                  sub="no data"
-                  icon={Hourglass}
-                  accent="cyan"
-                />
-              )}
-              <KpiTile
-                label="Multiplier"
-                value={wagerMultiplier > 0 ? `${wagerMultiplier.toFixed(2)}×` : "—"}
-                sub="wager / deposit"
-                icon={Coins}
-                accent="amber"
-              />
-              {/* Last tile — spans both mobile columns so a 5-tile grid on
-                  a 2-col phone layout ends on a full-width row instead of
-                  leaving one empty cell dangling next to it. Reverts to a
-                  normal single cell from sm+ where the grid is 5-wide. */}
-              <div className="col-span-2 sm:col-span-1">
-                <KpiTile
-                  label="House Edge"
-                  value={balances && balances.totalWagered > 0 ? `${houseEdge.toFixed(2)}%` : "—"}
-                  icon={Percent}
-                  accent="purple"
-                />
+                  {user.role}
+                </Badge>
+                <Badge
+                  variant="outline"
+                  className={cn("h-5 shrink-0 py-0 text-[10px]", USER_STATUS_COLORS[statusKey] ?? "")}
+                >
+                  {statusLabel}
+                </Badge>
               </div>
+              {/* Line 2 — email (muted) + verified ✓ + copy. */}
+              <p className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                <span className="truncate">{user.email}</span>
+                {user.emailVerified && (
+                  <span className="shrink-0 text-[10px] font-semibold text-emerald-500">
+                    ✓
+                  </span>
+                )}
+                {user.email && (
+                  <CopyButton value={user.email} label="Email" />
+                )}
+              </p>
             </div>
           </div>
 
-          {/* ── ROW B · utility strip: metadata chips + admin actions ─────
-              A thin second line under a hairline divider. LEFT = one dense,
-              wrap-safe chip row merging the old badges-strip + meta-strip +
-              flags-strip (role + status moved up to the name line; the
-              standalone self-exclusion badges were dropped as duplicates of
-              the HeroFlagsStrip chips below — no signal lost, full
-              since/until/reason lives on the Account tab). RIGHT = the admin-
-              action cluster, so it never adds height to the identity block.
-              On xl+ the two share one justified line; below xl they stack. */}
-          <div className="mt-3 flex flex-col gap-2 border-t border-border/60 pt-3 xl:flex-row xl:items-center xl:justify-between xl:gap-4">
+          {/* ── RIGHT CLUSTER (right on lg+, wraps below identity on <lg) —
+              the secondary metadata chips + the admin-action cluster, merged
+              up from the old Row B so they no longer add a second band. Own
+              flex-wrap so on narrow widths the chips take one row and the
+              admin controls flow onto the next — never overflowing. */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 lg:shrink-0 lg:justify-end">
+            {/* Secondary metadata chips — one dense, wrap-safe row (ex-creator
+                + 2FA + affiliate + country + joined + short id + active-state
+                flags). Role/status live on the name line above; the standalone
+                self-exclusion badges were dropped as duplicates of the
+                HeroFlagsStrip chips — no signal lost, full since/until/reason
+                lives on the Account tab. */}
             <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
               {/* Ex-creator flag — they aren't a creator now but were one
                   before (audit role-change to creator, or own creator-only
@@ -587,10 +479,8 @@ export function UserViewModern({
               />
             </div>
 
-            {/* Admin-action cluster — right-aligned on xl+, its own wrap row
-                below xl so it never crams the identity. Every control is
-                preserved. */}
-            <div className="flex flex-wrap items-center gap-1.5 xl:shrink-0 xl:justify-end">
+            {/* Admin-action cluster — every control preserved. */}
+            <div className="flex flex-wrap items-center gap-1.5">
               {/* Quick-link to the creator detail page. Only shown when the
                   viewed user is an on-site creator — the /creators/<id> route
                   shares the same main-site user id space as /users/<id>. */}
@@ -636,6 +526,7 @@ export function UserViewModern({
           </div>
         </div>
       </div>
+    </div>
   );
 
   return (
@@ -720,50 +611,6 @@ export function UserViewModern({
         )}
       </FadeIn>
     </div>
-  );
-}
-
-// ───────────────────────────────────────────────────────────────────
-//  WAGER-LEFT HERO TILE — streamed island
-//
-//  Surfaces the remaining weighted wager before withdrawal as a hero KPI,
-//  so an operator sees "how far from cashing out" without opening the
-//  Account tab. use()s the always-kicked wager-progress promise; null /
-//  exempt / met / backend-unavailable each render a clear state. Neutral
-//  (cyan) — "wager left" is informational, not a house gain/loss.
-// ───────────────────────────────────────────────────────────────────
-
-function WagerLeftHeroTile({
-  promise,
-}: {
-  promise: Promise<UserWagerProgress | null>;
-}) {
-  const wp = use(promise);
-  if (!wp) {
-    return (
-      <KpiTile label="Wager Left" value="—" sub="no data" icon={Hourglass} accent="cyan" />
-    );
-  }
-  if (wp.exempt) {
-    return (
-      <KpiTile label="Wager Left" value="Exempt" sub="0× requirement" icon={Hourglass} accent="cyan" />
-    );
-  }
-  // remainingUsd is the authoritative frozen debt (always column-sourced now,
-  // never null) — 0 means the requirement is met and the balance is free.
-  if (wp.remainingUsd <= 0) {
-    return (
-      <KpiTile label="Wager Left" value="Met ✓" sub="can withdraw" icon={Hourglass} accent="cyan" />
-    );
-  }
-  return (
-    <KpiTile
-      label="Wager Left"
-      value={formatCurrency(wp.remainingUsd)}
-      sub="to withdraw"
-      icon={Hourglass}
-      accent="cyan"
-    />
   );
 }
 
@@ -973,55 +820,6 @@ function ScrollableTabBar({
           })}
         </div>
       </div>
-    </div>
-  );
-}
-
-// ───────────────────────────────────────────────────────────────────
-//  KPI TILE — hero-only; tabs use ModernMetricTile from the panels file.
-// ───────────────────────────────────────────────────────────────────
-
-function KpiTile({
-  label,
-  value,
-  sub,
-  icon: Icon,
-  accent = "blue",
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  icon: React.ElementType;
-  accent?: keyof typeof TILE_COLORS;
-}) {
-  const colors = TILE_COLORS[accent] ?? TILE_COLORS.blue;
-  // Flat KPI tile: neutral bg-card surface + hairline border, completely
-  // static (no hover shadow, no sheen). h-full + w-full so the tile still
-  // fills its equal-width grid cell (the grid owns sizing). The accent
-  // survives only on the icon + the value number — House-POV tint for
-  // money/P&L, the informational hue for the rest. Kept compact so the
-  // dense hero KPI grid still fits beside the identity column.
-  return (
-    <div className="h-full w-full min-w-0 rounded-lg border bg-card px-2.5 py-2">
-      <div className="flex items-center gap-1.5">
-        <Icon className={cn("size-3 shrink-0", colors.icon)} />
-        <span className="truncate text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-          {label}
-        </span>
-      </div>
-      <p
-        className={cn(
-          "mt-1 truncate text-sm font-bold tracking-tight tabular-nums leading-tight sm:text-base",
-          colors.text,
-        )}
-      >
-        {value}
-      </p>
-      {sub && (
-        <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-          {sub}
-        </p>
-      )}
     </div>
   );
 }
