@@ -3,7 +3,7 @@
 import * as React from "react";
 import { toast } from "sonner";
 import { useTheme } from "next-themes";
-import { Sun, Moon, Monitor, Sparkles, Clock, CalendarDays } from "lucide-react";
+import { Sun, Moon, Monitor, Sparkles, Sparkle, Clock, CalendarDays } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -239,6 +239,14 @@ export function PreferencesForm({
             icon={Sparkles}
             label="Grailed Dark"
             hint="Premium blue"
+          />
+          <ThemeRadio
+            value="grailed-light"
+            active={theme}
+            onSelect={setThemeLocal}
+            icon={Sparkle}
+            label="Grailed Light"
+            hint="Grey-white"
           />
           <ThemeRadio
             value="system"

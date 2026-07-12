@@ -9,6 +9,7 @@ import {
   Moon,
   Monitor,
   Sparkles,
+  Sparkle,
   Clock,
   Check,
   Database,
@@ -94,7 +95,9 @@ function ThemeSubmenu() {
   // For the checkmark we care about the explicit choice.
   const active = theme ?? "system";
 
-  async function pick(next: "light" | "dark" | "system" | "grailed") {
+  async function pick(
+    next: "light" | "dark" | "system" | "grailed" | "grailed-light",
+  ) {
     setTheme(next);
     try {
       await updatePreferences({ theme: next });
@@ -124,6 +127,11 @@ function ThemeSubmenu() {
           <Sparkles className="size-4" />
           <span>Grailed Dark</span>
           {active === "grailed" && <Check className="ml-auto size-4" />}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => pick("grailed-light")}>
+          <Sparkle className="size-4" />
+          <span>Grailed Light</span>
+          {active === "grailed-light" && <Check className="ml-auto size-4" />}
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => pick("system")}>
           <Monitor className="size-4" />

@@ -10,10 +10,11 @@
 export type AdminPreferences = {
   /**
    * UI theme. Falls back to "system" when the column is unset.
-   * "grailed" is a third, dark-family theme (premium blue/purple palette);
-   * theme-conditional consumers treat it as dark.
+   * "grailed" is a dark-family theme (premium indigo/cyan palette);
+   * theme-conditional consumers treat it as dark. "grailed-light" is its
+   * LIGHT-family sibling (grey-white indigo-tinted ramp) — treated as light.
    */
-  theme: "light" | "dark" | "system" | "grailed";
+  theme: "light" | "dark" | "system" | "grailed" | "grailed-light";
   /**
    * IANA timezone identifier (e.g. "Europe/Berlin"). `null` means
    * "use the browser's detected timezone" — the client provider falls
@@ -34,6 +35,7 @@ export const THEME_VALUES: ReadonlyArray<AdminPreferences["theme"]> = [
   "dark",
   "system",
   "grailed",
+  "grailed-light",
 ];
 
 export const DATE_FORMAT_VALUES: ReadonlyArray<

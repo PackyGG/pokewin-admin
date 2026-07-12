@@ -8,9 +8,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
   const { theme = "system" } = useTheme()
 
   // Sonner only understands light | dark | system. "grailed" is a
-  // dark-family theme, so map it to "dark" — otherwise toasts render
-  // light-styled under Grailed.
-  const sonnerTheme = theme === "grailed" ? "dark" : theme
+  // dark-family theme (→ "dark") and "grailed-light" is its light sibling
+  // (→ "light") — otherwise toasts render with the wrong scheme under the
+  // Grailed themes.
+  const sonnerTheme =
+    theme === "grailed" ? "dark" : theme === "grailed-light" ? "light" : theme
 
   return (
     <Sonner

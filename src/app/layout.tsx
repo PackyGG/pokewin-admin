@@ -112,7 +112,7 @@ export default function RootLayout({
           attribute="class"
           defaultTheme="grailed"
           enableSystem
-          themes={["light", "dark", "grailed"]}
+          themes={["light", "dark", "grailed", "grailed-light"]}
         >
           <TooltipProvider>
             {children}

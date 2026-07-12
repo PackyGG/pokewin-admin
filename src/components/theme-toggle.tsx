@@ -1,7 +1,7 @@
 "use client";
 
 import { useTheme } from "next-themes";
-import { Sun, Moon, Sparkles } from "lucide-react";
+import { Sun, Moon, Sparkles, Sparkle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function ThemeToggle() {
@@ -21,7 +21,7 @@ export function ThemeToggle() {
         <span className="sr-only">Toggle light / dark</span>
       </Button>
 
-      {/* Grailed Dark — new, same size, sits next to the light/dark toggle */}
+      {/* Grailed Dark — same size, sits next to the light/dark toggle */}
       <Button
         variant="ghost"
         size="icon"
@@ -31,6 +31,18 @@ export function ThemeToggle() {
       >
         <Sparkles className="size-4" />
         <span className="sr-only">Grailed Dark theme</span>
+      </Button>
+
+      {/* Grailed Light — light sibling, distinct single-sparkle icon */}
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={() => setTheme("grailed-light")}
+        className="size-8"
+        title="Grailed Light"
+      >
+        <Sparkle className="size-4" />
+        <span className="sr-only">Grailed Light theme</span>
       </Button>
     </div>
   );

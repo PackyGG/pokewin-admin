@@ -228,11 +228,73 @@
   --radius: 0.5rem; /* ~8px, compact */
 }
 
+/* ── "Grailed Light" — light sibling of Grailed Dark ─────────────────
+   A grey-white, faint-indigo-tinted ramp: white cards float on a light
+   grey page, near-black indigo accent (the dark theme's bright cyan
+   #65E3FF fails contrast on white). Same Chakra Petch typeface + 8px
+   radius so it still reads as Grailed. Deliberately NOT added to the
+   `dark` custom-variant above, so the app's `dark:` utilities render in
+   their LIGHT form under this theme. */
+.grailed-light {
+  color-scheme: light;
+
+  font-family: var(--font-grailed), ui-sans-serif, system-ui, sans-serif;
+
+  --background: #F5F5FA;        /* faint indigo-tinted light grey page */
+  --foreground: #1A1A29;        /* Grailed darkest indigo as near-black text */
+
+  --card: #FFFFFF;              /* white cards float above the grey page */
+  --card-foreground: #1A1A29;
+
+  --popover: #FFFFFF;
+  --popover-foreground: #1A1A29;
+
+  --primary: #1A1A29;           /* authentic Grailed black-on-white accent */
+  --primary-foreground: #F1F1FE;
+
+  --secondary: #ECECF3;
+  --secondary-foreground: #1A1A29;
+
+  --muted: #ECECF3;
+  --muted-foreground: #656582;  /* mid indigo — nudged one step darker than
+                                    #6A6A8A so it clears AA (≥4.5) on the
+                                    muted surface too, not just on card/page */
+
+  --accent: #E8E8F0;            /* hover surface */
+  --accent-foreground: #1A1A29;
+
+  --destructive: #DC2626;       /* red that reads on light */
+
+  --border: #DADAE6;            /* solid light indigo hairline (Grailed uses solid borders) */
+  --input: #DADAE6;
+  --ring: #1A1A29;
+
+  /* Same 5 Grailed hues (cyan/green/gold/red/blue) deepened so they read on white */
+  --chart-1: #0891B2;
+  --chart-2: #16A34A;
+  --chart-3: #D97706;
+  --chart-4: #DC2626;
+  --chart-5: #2563EB;
+
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #656582; /* matches --muted-foreground for AA on hover surface */
+  --sidebar-primary: #1A1A29;
+  --sidebar-primary-foreground: #F1F1FE;
+  --sidebar-accent: #ECECF3;
+  --sidebar-accent-foreground: #1A1A29;
+  --sidebar-border: #DADAE6;
+  --sidebar-ring: #1A1A29;
+
+  --radius: 0.5rem;
+}
+
 /* ── Grailed structural design-language (scoped) ─────────────────────
-   Everything below is scoped under `.grailed` so the light + dark
-   themes render byte-identical. These recreate the Grailed dashboard's
-   component language on our OWN shadcn primitives via their class /
-   data-slot hooks — no component logic or props change. */
+   Everything below is scoped under `.grailed` / `.grailed-light` so the
+   non-Grailed light + dark themes render byte-identical (untouched).
+   These recreate the Grailed dashboard's component language on our OWN
+   shadcn primitives via their class / data-slot hooks — no component
+   logic or props change. The card box-shadow is the one exception: dark
+   and light get separate rules (heavy black vs soft indigo lift). */
 
 /* KPI / metric tile accent bar — Grailed's signature left rule. The
    tiles (KpiTile / MetricTile) already render a 2px `bg-current` bar
@@ -240,7 +302,7 @@
    firm up its opacity so it reads as the Grailed accent rule. Targets
    the `.tile-accent-bar` hook on those bars. Unlayered so it wins over
    the `w-0.5` / `opacity-50` utilities. */
-.grailed .tile-accent-bar {
+:is(.grailed, .grailed-light) .tile-accent-bar {
   width: 3px;
   opacity: 0.85;
 }
@@ -257,9 +319,18 @@
     0 10px 26px -16px color-mix(in oklch, black 55%, transparent);
 }
 
+/* Grailed Light cards — same lift, but a soft INDIGO-tinted shadow tuned
+   for the light grey page. The dark theme's heavy black shadows above
+   would look muddy on white, so light gets its own lighter rule. */
+.grailed-light [data-slot="card"] {
+  box-shadow:
+    0 1px 2px -1px color-mix(in oklch, #1A1A29 12%, transparent),
+    0 10px 26px -18px color-mix(in oklch, #1A1A29 18%, transparent);
+}
+
 /* Sidebar group labels → uppercase tracked micro-caps, the Grailed nav
    treatment. The label is otherwise `text-xs font-medium`. */
-.grailed [data-slot="sidebar-group-label"] {
+:is(.grailed, .grailed-light) [data-slot="sidebar-group-label"] {
   text-transform: uppercase;
   letter-spacing: 0.1em;
 }
@@ -269,7 +340,7 @@
    → dark indigo card, indigo hairline, 8px radius). This only catches
    charts that fall back to Recharts' built-in tooltip, giving them the
    same dark indigo popover surface instead of the library's white box. */
-.grailed .recharts-default-tooltip {
+:is(.grailed, .grailed-light) .recharts-default-tooltip {
   background-color: var(--popover) !important;
   border-color: var(--border) !important;
   border-radius: var(--radius) !important;
