@@ -8,6 +8,7 @@ import {
   Gauge,
   Layers,
   Loader2,
+  LockOpen,
   PinOff,
   Plus,
   RotateCcw,
@@ -784,6 +785,7 @@ export function PlanPanel({
   onDiscardRehydrated,
   onSelectPack,
   onClearAllPins,
+  onUnpinPrice,
   children,
 }: {
   row: RetuneRailRow;
@@ -855,6 +857,8 @@ export function PlanPanel({
   onSelectPack: (packId: string) => void;
   /** Clear every owner pin on this pack (control near the plan header). */
   onClearAllPins: () => void;
+  /** Unpin the staged price — lets the planner search the band for clean odds. */
+  onUnpinPrice: () => void;
   /** The pool zone (§5d) — rendered between the banner slot and the push row. */
   children: React.ReactNode;
 }) {
@@ -1118,6 +1122,20 @@ export function PlanPanel({
             onApplyPinRemedy={onApplyPinRemedy}
           />
           <p>{qualityLine}</p>
+          {staged?.pinPrice && verdict.kind === "unsnapped" && (
+            <div className="mt-1">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={onUnpinPrice}
+                className="h-7"
+              >
+                <LockOpen className="size-3.5" />
+                Unpin price — let the planner search for clean odds
+              </Button>
+            </div>
+          )}
           {hasGuidance && (
             <GuidanceSuggestions
               guidance={plan.guidance!}

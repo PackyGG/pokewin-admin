@@ -585,17 +585,21 @@ export function PoolTable({
           onClick={onPinToggle}
           disabled={disabled}
           aria-pressed={pinPrice}
-          title="Pin the pack price — the planner solves odds-only at this exact price instead of searching the band. Rare escape hatch; the search is the default."
+          title={
+            pinPrice
+              ? "Unpin the price — let the planner search the band for clean odds at any candidate price."
+              : "Pin the pack price — the planner solves odds-only at this exact price instead of searching the band. Rare escape hatch; the search is the default."
+          }
           className={cn(
             pinPrice && "bg-amber-500/10 text-amber-600 dark:text-amber-400",
           )}
         >
           {pinPrice ? (
-            <Lock className="size-3.5" />
-          ) : (
             <LockOpen className="size-3.5" />
+          ) : (
+            <Lock className="size-3.5" />
           )}
-          {pinPrice ? "Price pinned" : "Pin price"}
+          {pinPrice ? "Unpin price" : "Pin price"}
         </Button>
 
         <p className="basis-full text-[11px] text-muted-foreground">

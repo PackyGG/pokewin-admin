@@ -2177,6 +2177,7 @@ export function RetuneWorkspace({
                   discardRehydrated(selectedRow.packId)
                 }
                 onClearAllPins={clearAllPins}
+                onUnpinPrice={togglePin}
                 onSelectPack={(packId) => {
                   select(packId);
                   document
