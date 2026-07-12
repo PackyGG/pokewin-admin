@@ -94,21 +94,17 @@ const CHANGELOG_SOURCE_EVENT_TYPES = [
  * creator-marketing feed cares about. Used as the `EVENT_DISPLAY` key set
  * and the KPI-tally key set.
  */
-export const CREATOR_CHANGELOG_EVENT_TYPES = [
-  "user_made_creator",
-  "creator_deal_created",
-  "creator_deal_updated",
-  "creator_webhook_created",
-  "creator_webhook_updated",
-  "creator_webhook_deleted",
-  "creator_force_reset_to_user",
-  "creator_removed",
-  "excluded_user_added",
-  "excluded_user_removed",
-] as const;
-
-export type CreatorChangelogEventType =
-  (typeof CREATOR_CHANGELOG_EVENT_TYPES)[number];
+type CreatorChangelogEventType =
+  | "user_made_creator"
+  | "creator_deal_created"
+  | "creator_deal_updated"
+  | "creator_webhook_created"
+  | "creator_webhook_updated"
+  | "creator_webhook_deleted"
+  | "creator_force_reset_to_user"
+  | "creator_removed"
+  | "excluded_user_added"
+  | "excluded_user_removed";
 
 /** House-POV accent for an event's badge (per CLAUDE.md color rules). */
 export type ChangelogTone = "emerald" | "blue" | "amber" | "rose";
