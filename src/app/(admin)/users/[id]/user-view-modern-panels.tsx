@@ -96,7 +96,10 @@ export function SectionHeading({
   title: string;
 }) {
   return (
-    <div className="flex items-center gap-2">
+    // px-3 matches CollapsibleSection's trigger padding so a plain
+    // SectionHeading's icon/title lines up with a collapsible box's icon/
+    // title directly above or below it, instead of sitting flush left.
+    <div className="flex items-center gap-2 px-3">
       <div className="rounded-md bg-primary/10 p-1.5">
         <Icon className="size-4 text-primary" />
       </div>
