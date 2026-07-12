@@ -2354,8 +2354,10 @@ export function applyLotterySkew(input: {
 // weights. The caller decides whether to keep the snapped result (when edge
 // stays within tolerance) or fall back to the precise weights (safe default).
 
-/** Base magnitudes of the clean ladder — multiplied across decades below. */
-const CLEAN_LADDER_BASE = [1, 1.5, 2, 2.5, 3, 4, 5, 7.5, 10, 15, 20, 25, 30, 40, 50, 75] as const;
+/** Base magnitudes of the clean ladder — multiplied across decades below.
+ * Dense enough that common pack-design percentages (6%, 8%, 9%, 12.5%, 60%,
+ * 70%) land on the grid instead of forcing 20pp snaps to the nearest rung. */
+const CLEAN_LADDER_BASE = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5, 8, 9, 10, 12.5, 15, 20, 25, 30, 40, 50, 60, 70, 75] as const;
 
 /**
  * Full clean ladder (in PERCENT units), scaled across decades from 1e-6%
@@ -2417,14 +2419,13 @@ export function isOnPer100kGridPct(pct: number): boolean {
 
 /**
  * HUMAN-NICE mantissas for TAGGED rungs: the {@link CLEAN_LADDER_BASE}
- * mantissa set (1/1.5/2/2.5/3/4/5/7.5) PLUS 3.5 — owner-named ("0.35%",
- * "3.5%") and absent from the log ladder. INTENTIONALLY not added to
- * `CLEAN_LADDER_BASE` itself: extending the untagged ladder would silently
- * shift every untagged snap's nearest-rung mapping and break the pinned
- * untagged goldens ("untagged targets byte-identical"). The two grids diverge
- * by exactly this one mantissa, and the divergence is tagged-only by design.
+ * mantissa set plus 3.5 (owner-named "0.35%", "3.5%"). Extended with 6, 7,
+ * 8, 9, 12.5 to fill the gaps that forced 20pp snaps (5→7.5, 7.5→10,
+ * 10→15, 50→75). Without these, packs with odds at 6%/8%/9%/12.5%/70%
+ * can never land clean — the planner jumps 20+pp to the nearest rung and
+ * compensates by reshaping other cards.
  */
-const NICE_MANTISSAS = [1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 7.5] as const;
+const NICE_MANTISSAS = [1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 7.5, 8, 9, 12.5] as const;
 
 /**
  * The tagged HUMAN-NICE rung grid, in per-100k integer units:
