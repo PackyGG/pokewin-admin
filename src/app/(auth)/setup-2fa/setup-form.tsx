@@ -20,9 +20,9 @@ export function SetupForm({
     <div className="space-y-6">
       {!hasRecoveryCodes && (
         <>
-          {/* QR Code */}
+          {/* QR Code — kept on a white tile so the code stays scannable. */}
           <div className="flex justify-center">
-            <div className="rounded-lg bg-white p-3">
+            <div className="rounded-lg border border-border bg-white p-3">
               <Image src={qrCodeDataUrl} alt="TOTP QR Code" width={200} height={200} />
             </div>
           </div>
@@ -31,13 +31,13 @@ export function SetupForm({
           <form action={formAction} className="space-y-4">
             <input type="hidden" name="step" value="verify" />
             {state?.error && (
-              <div className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
                 {state.error}
               </div>
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="code" className="text-sm font-medium">
+              <Label htmlFor="code" className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Enter the 6-digit code from your app
               </Label>
               <Input
@@ -50,14 +50,14 @@ export function SetupForm({
                 placeholder="000000"
                 required
                 autoComplete="one-time-code"
-                className="h-12 rounded-lg border-white/10 bg-white/5 px-4 text-center text-lg font-mono tracking-widest placeholder:text-muted-foreground/50"
+                className="h-12 text-center text-lg font-mono tracking-[0.35em]"
               />
             </div>
 
             <Button
               type="submit"
               disabled={pending}
-              className="h-12 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+              className="h-11 w-full text-sm font-semibold"
             >
               {pending ? "Verifying..." : "Verify & Enable 2FA"}
             </Button>
@@ -68,8 +68,8 @@ export function SetupForm({
       {hasRecoveryCodes && (
         <>
           {/* Recovery codes display */}
-          <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-4">
-            <p className="mb-2 text-sm font-semibold text-yellow-400">
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
+            <p className="mb-2 text-sm font-semibold text-amber-400">
               Save your recovery codes
             </p>
             <p className="mb-3 text-xs text-muted-foreground">
@@ -77,7 +77,7 @@ export function SetupForm({
             </p>
             <div className="grid grid-cols-2 gap-2">
               {state.recoveryCodes!.map((code) => (
-                <code key={code} className="rounded bg-white/5 px-2 py-1 text-center text-xs font-mono">
+                <code key={code} className="rounded border border-border bg-muted px-2 py-1 text-center text-xs font-mono text-foreground">
                   {code}
                 </code>
               ))}
@@ -90,7 +90,7 @@ export function SetupForm({
             <Button
               type="submit"
               disabled={pending}
-              className="h-12 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+              className="h-11 w-full text-sm font-semibold"
             >
               {pending ? "Redirecting..." : "I've saved my recovery codes"}
             </Button>

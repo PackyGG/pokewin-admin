@@ -21,14 +21,17 @@ export default async function Setup2FAPage() {
     const session = await getSession();
     if (!session) redirect("/login");
     return (
-      <div className="relative w-[520px] max-w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6 sm:rounded-3xl sm:p-12 shadow-2xl shadow-black/30 backdrop-blur-xl">
-        {/* Hairline top light-catch — crisp lifted glass edge. Decorative. */}
+      <div className="relative w-full overflow-hidden rounded-xl border border-border bg-card p-6 shadow-2xl shadow-black/40 sm:p-10">
+        {/* Hairline top light-catch — a crisp cyan lifted edge. Decorative. */}
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"
+          className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent"
         />
         <div className="relative mb-8 text-center">
-          <h1 className="text-xl font-semibold tracking-tight text-foreground">Set up Two-Factor Authentication</h1>
+          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+            Secure Access
+          </p>
+          <h1 className="mt-1.5 text-xl font-semibold tracking-tight text-foreground sm:text-2xl">Set up Two-Factor Authentication</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Two-factor authentication is required. Finishing setup…
           </p>
@@ -52,14 +55,17 @@ export default async function Setup2FAPage() {
   const qrCodeDataUrl = await generateQRCode(uri);
 
   return (
-    <div className="relative w-[520px] max-w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6 sm:rounded-3xl sm:p-12 shadow-2xl shadow-black/30 backdrop-blur-xl">
-      {/* Hairline top light-catch — crisp lifted glass edge. Decorative. */}
+    <div className="relative w-full overflow-hidden rounded-xl border border-border bg-card p-6 shadow-2xl shadow-black/40 sm:p-10">
+      {/* Hairline top light-catch — a crisp cyan lifted edge. Decorative. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"
+        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent"
       />
       <div className="relative mb-8 text-center">
-        <h1 className="text-xl font-semibold tracking-tight text-foreground">Set up Two-Factor Authentication</h1>
+        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+          Secure Access
+        </p>
+        <h1 className="mt-1.5 text-xl font-semibold tracking-tight text-foreground sm:text-2xl">Set up Two-Factor Authentication</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.)
         </p>

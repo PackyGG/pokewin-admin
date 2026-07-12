@@ -51,16 +51,16 @@ export function VerifyForm({ hasPasskeys = false }: { hasPasskeys?: boolean }) {
 
   return (
     <div className="space-y-6">
-      <form action={formAction} className="space-y-6">
+      <form action={formAction} className="space-y-5">
         {(state?.error || passkeyError) && (
-          <div className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {state?.error || passkeyError}
           </div>
         )}
 
         {!useRecovery ? (
           <div className="space-y-2">
-            <Label htmlFor="code" className="text-sm font-medium">
+            <Label htmlFor="code" className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Authentication Code
             </Label>
             <Input
@@ -73,12 +73,12 @@ export function VerifyForm({ hasPasskeys = false }: { hasPasskeys?: boolean }) {
               placeholder="000000"
               required
               autoComplete="one-time-code"
-              className="h-12 rounded-lg border-white/10 bg-white/5 px-4 text-center text-lg font-mono tracking-widest placeholder:text-muted-foreground/50"
+              className="h-12 text-center text-lg font-mono tracking-[0.35em]"
             />
           </div>
         ) : (
           <div className="space-y-2">
-            <Label htmlFor="recoveryCode" className="text-sm font-medium">
+            <Label htmlFor="recoveryCode" className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Recovery Code
             </Label>
             <Input
@@ -87,7 +87,7 @@ export function VerifyForm({ hasPasskeys = false }: { hasPasskeys?: boolean }) {
               type="text"
               placeholder="Enter recovery code"
               required
-              className="h-12 rounded-lg border-white/10 bg-white/5 px-4 text-center text-sm font-mono tracking-widest placeholder:text-muted-foreground/50"
+              className="h-12 text-center text-sm font-mono tracking-[0.2em]"
             />
           </div>
         )}
@@ -97,7 +97,7 @@ export function VerifyForm({ hasPasskeys = false }: { hasPasskeys?: boolean }) {
         <Button
           type="submit"
           disabled={pending || passkeyPending}
-          className="h-12 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+          className="h-11 w-full text-sm font-semibold"
         >
           {pending ? "Verifying..." : "Verify"}
         </Button>
@@ -106,16 +106,16 @@ export function VerifyForm({ hasPasskeys = false }: { hasPasskeys?: boolean }) {
       {hasPasskeys && !useRecovery && (
         <>
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
-            <span className="h-px flex-1 bg-white/10" />
+            <span className="h-px flex-1 bg-border" />
             or
-            <span className="h-px flex-1 bg-white/10" />
+            <span className="h-px flex-1 bg-border" />
           </div>
           <Button
             type="button"
             variant="outline"
             onClick={handlePasskey}
             disabled={pending || passkeyPending}
-            className="h-12 w-full rounded-lg border-white/10 bg-white/5 text-sm font-semibold hover:bg-white/10"
+            className="h-11 w-full text-sm font-semibold"
           >
             <Fingerprint className="size-4" />
             {passkeyPending ? "Waiting for passkey..." : "Use a passkey"}
@@ -127,7 +127,7 @@ export function VerifyForm({ hasPasskeys = false }: { hasPasskeys?: boolean }) {
         <button
           type="button"
           onClick={() => setUseRecovery(!useRecovery)}
-          className="text-xs text-muted-foreground hover:text-foreground underline"
+          className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
         >
           {useRecovery ? "Use authenticator code instead" : "Use a recovery code"}
         </button>

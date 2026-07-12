@@ -1,34 +1,44 @@
-"use client";
-
-import Aurora from "@/components/Aurora";
-import { DiamondGrid, SparkleField } from "@/components/decor";
-
+/**
+ * Auth (login / 2FA) layout.
+ *
+ * Forced Grailed: the root wrapper carries the `grailed` class, so the whole
+ * auth subtree resolves the Grailed indigo/cyan tokens (defined by the
+ * `.grailed` rule in globals.css) AND fires every `dark:` utility (the `dark`
+ * custom-variant matches `.grailed *`) — regardless of the visitor's chosen
+ * theme on <html>. `.grailed` also sets `color-scheme: dark`, so native
+ * controls render dark. No next-themes involvement, so there's no flash and no
+ * interaction with the app-wide theme toggle. Pure Server Component — no
+ * client JS ships for the shell.
+ */
 export default function AuthLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background p-4">
-      <div className="absolute inset-0">
-        <Aurora
-          colorStops={["#00A1FF", "#003366", "#00A1FF"]}
-          amplitude={1.2}
-          blend={0.6}
-          speed={0.5}
-        />
-      </div>
-      {/* Liquid-Glass ornaments over the aurora backdrop:
-          - SparkleField: warm champagne 4-point glints fading radially
-            from the top-right corner (the owner-reference treatment).
-          - DiamondGrid: a diamond checkerboard anchored bottom-left,
-            fading out along the diagonal.
-          Both are single pattern-based SVGs, aria-hidden and
-          pointer-events-none; tints are theme-aware (faint primary/ink
-          in light mode, champagne/white on dark). */}
-      <SparkleField className="inset-y-0 right-0 w-[42rem] max-w-full text-primary/[0.08] dark:text-amber-100/20" />
-      <DiamondGrid className="bottom-0 left-0 h-80 w-[28rem] max-w-full text-foreground/[0.06] [mask-image:linear-gradient(45deg,black,transparent_75%)] dark:text-white/[0.14]" />
-      <div className="relative z-10">{children}</div>
+    <div className="grailed relative flex min-h-screen items-center justify-center overflow-hidden bg-background p-4">
+      {/* Premium Grailed backdrop — a deep indigo top-lit vignette, two soft
+          color glows (cyan primary + blue accent) and a faint masked grid.
+          Every layer is static (no animation), so it's inherently
+          reduced-motion safe, and decorative + inert (aria-hidden,
+          pointer-events-none). Colors come from Grailed tokens. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(125%_125%_at_50%_-10%,var(--card),var(--background)_45%,var(--sidebar))]"
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 opacity-[0.15] [background-image:linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] [background-size:46px_46px] [mask-image:radial-gradient(circle_at_50%_38%,black,transparent_72%)]"
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -top-40 -left-40 size-[32rem] rounded-full bg-primary/20 blur-[130px]"
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -right-32 -bottom-48 size-[34rem] rounded-full bg-chart-5/15 blur-[140px]"
+      />
+      <div className="relative z-10 w-full max-w-[460px]">{children}</div>
     </div>
   );
 }

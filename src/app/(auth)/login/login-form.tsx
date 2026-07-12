@@ -28,29 +28,34 @@ export function LoginForm() {
   }, [state]);
 
   return (
-    <div className="relative w-full sm:w-[520px] max-w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6 sm:rounded-3xl sm:p-12 shadow-2xl shadow-black/30 backdrop-blur-xl">
-      {/* Hairline top light-catch — crisp lifted glass edge. Decorative. */}
+    <div className="relative w-full overflow-hidden rounded-xl border border-border bg-card p-6 shadow-2xl shadow-black/40 sm:p-10">
+      {/* Hairline top light-catch — a crisp cyan lifted edge. Decorative. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"
+        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent"
       />
-      {/* Logo */}
-      <div className="relative mb-10 text-center">
-        <div className="mb-4 flex justify-center">
+      {/* Logo + heading */}
+      <div className="relative mb-8 text-center">
+        <div className="mb-5 flex justify-center">
           <Image src="/logo.png" alt="Pokewin" width={200} height={36} priority />
         </div>
-        <h1 className="text-page-title tracking-tight text-foreground">Welcome back</h1>
+        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+          Secure Access
+        </p>
+        <h1 className="mt-1.5 text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
+          Welcome back
+        </h1>
       </div>
 
-      <form action={formAction} className="space-y-6">
+      <form action={formAction} className="space-y-5">
         {state?.error && (
-          <div className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {state.error}
           </div>
         )}
 
         <div className="space-y-2">
-          <Label htmlFor="email" className="text-sm font-medium">
+          <Label htmlFor="email" className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Email
           </Label>
           <Input
@@ -60,12 +65,12 @@ export function LoginForm() {
             placeholder="admin@pokewin.gg"
             required
             autoComplete="email"
-            className="h-12 rounded-lg border-white/10 bg-white/5 px-4 text-sm placeholder:text-muted-foreground/50"
+            className="h-11 px-3.5 text-sm"
           />
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="password" className="text-sm font-medium">
+          <Label htmlFor="password" className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Password
           </Label>
           <Input
@@ -74,14 +79,14 @@ export function LoginForm() {
             type="password"
             required
             autoComplete="current-password"
-            className="h-12 rounded-lg border-white/10 bg-white/5 px-4 text-sm placeholder:text-muted-foreground/50"
+            className="h-11 px-3.5 text-sm"
           />
         </div>
 
         <Button
           type="submit"
           disabled={pending || redirecting}
-          className="h-12 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+          className="mt-2 h-11 w-full text-sm font-semibold"
         >
           {pending || redirecting ? "Signing in..." : "Sign in"}
         </Button>

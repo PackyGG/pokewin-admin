@@ -104,12 +104,13 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} ${chakraPetch.variable}`} suppressHydrationWarning>
       <body className="antialiased overflow-x-hidden">
-        {/* Dark mode stays the project default (CLAUDE.md). `enableSystem`
-            is on so the admin preferences dropdown can offer a "System"
-            option that follows the OS setting. */}
+        {/* Grailed is the default theme for a new visitor with no saved
+            preference. `enableSystem` stays on so the preferences dropdown
+            can still offer "System"; existing users keep their saved theme
+            and can switch to dark/light via the toggle. */}
         <ThemeProvider
           attribute="class"
-          defaultTheme="dark"
+          defaultTheme="grailed"
           enableSystem
           themes={["light", "dark", "grailed"]}
         >
