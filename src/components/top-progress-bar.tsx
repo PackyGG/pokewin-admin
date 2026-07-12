@@ -83,21 +83,10 @@ export function TopProgressBar() {
           : `width ${DURATION.slow}ms ${EASE_STANDARD}, opacity ${DURATION.base}ms ${EASE_OUT}`,
       }}
     >
-      {/* Clean gradient fill — reads clearly against both light and dark admin
-          chrome. Kept FLAT (no outer glow) so the bar isn't a shiny halo
-          (owner 2026-07-12: "too much shadow / shine around it"). */}
-      <div className="h-full w-full rounded-r-full bg-gradient-to-r from-primary/70 via-primary to-primary" />
-      {/* Leading-edge highlight — a subtle nprogress "comet" cap so the sweep
-          still reads, toned WAY down from the old double halo (owner: less
-          shine): a single small glow, no rotation. */}
-      <div
-        aria-hidden
-        className="absolute right-0 top-1/2 h-full w-8 -translate-y-1/2"
-        style={{
-          boxShadow: "0 0 5px 1px var(--color-primary)",
-          transform: "translateY(-50%)",
-        }}
-      />
+      {/* Flat matte bar — solid primary fill, NO gradient, NO glow, NO comet
+          highlight. Owner asked to remove even more shine (2026-07-12), so the
+          bar is now just a clean colored line with a rounded right cap. */}
+      <div className="h-full w-full rounded-r-full bg-primary" />
     </div>
   );
 }
