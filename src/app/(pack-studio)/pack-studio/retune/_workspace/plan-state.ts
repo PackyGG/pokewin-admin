@@ -161,7 +161,14 @@ export type RemedyChip = {
 export type PendingPreflightView =
   | { status: "loading" }
   | { status: "error" }
-  | { status: "ready"; feasible: true; priceAfter: number; edgePct: number }
+  | {
+      status: "ready";
+      feasible: true;
+      priceAfter: number;
+      edgePct: number;
+      /** The pack's target edge — when edgePct < targetEdgePct, the bar warns. */
+      targetEdgePct: number;
+    }
   | {
       status: "ready";
       feasible: false;

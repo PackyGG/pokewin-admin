@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { formatNumber } from "@/lib/utils/format";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
 import { BuilderCardPicker } from "../../builder/builder-card-picker";
 import type { BuilderCardItem } from "../../builder/actions";
@@ -372,8 +372,17 @@ function PendingEditsBar({
               {PREFLIGHT_ERROR_LINE}
             </p>
           ) : preflight.feasible ? (
-            <p className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-              {preflightSuccessLine(preflight.priceAfter, preflight.edgePct)}
+            <p
+              className={cn(
+                "text-[11px] font-medium",
+                preflight.edgePct < preflight.targetEdgePct - 1e-9
+                  ? "text-rose-600 dark:text-rose-400"
+                  : "text-emerald-600 dark:text-emerald-400",
+              )}
+            >
+              {preflight.edgePct < preflight.targetEdgePct - 1e-9
+                ? `These odds solve at ${formatCurrency(preflight.priceAfter)} · edge ${preflight.edgePct.toFixed(2)}% — below the ${preflight.targetEdgePct.toFixed(2)}% target. Apply anyway and raise the edge after, or adjust your odds.`
+                : preflightSuccessLine(preflight.priceAfter, preflight.edgePct)}
             </p>
           ) : (
             <div className="space-y-1">

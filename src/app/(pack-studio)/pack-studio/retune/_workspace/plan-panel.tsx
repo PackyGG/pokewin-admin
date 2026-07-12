@@ -1545,12 +1545,12 @@ export function PlanPanel({
               }
             />
             {plan && plan.after && plan.priceAfter > 0 && !showEstimate && (
-              <div className="mt-1 flex items-center gap-1">
+              <div className="mt-1.5 flex basis-full items-center gap-1 text-xs font-normal">
                 <Input
                   type="text"
                   inputMode="decimal"
-                  placeholder="Set %"
-                  className="h-5 w-16 rounded-md text-xs tabular-nums"
+                  placeholder="11.1"
+                  className="h-7 w-20 rounded-md text-xs font-normal tabular-nums"
                   title="Type a desired edge % and press Enter — raises the price to hit it, no odds changes."
                   defaultValue=""
                   onKeyDown={(e) => {
@@ -1564,7 +1564,7 @@ export function PlanPanel({
                     }
                   }}
                 />
-                <span className="text-[10px] text-muted-foreground">% edge</span>
+                <span className="text-[10px] text-muted-foreground">% edge — raises price, no odds changes</span>
               </div>
             )}
           </PlanMetric>

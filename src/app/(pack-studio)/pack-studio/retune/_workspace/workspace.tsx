@@ -1711,6 +1711,7 @@ export function RetuneWorkspace({
         feasible: true,
         priceAfter: p.priceAfter,
         edgePct: p.after.edge * 100,
+        targetEdgePct: p.targets.targetEdge * 100,
       };
     }
     // Refusal view from the SERVER verdict (wave 2c): its detail carries the
