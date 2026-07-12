@@ -30,7 +30,7 @@ import { calculateWindowedPnl, type WindowedPnl } from "./pnl";
  * matching every other dashboard aggregate.
  */
 
-export type TodayPnl = WindowedPnl & {
+type TodayPnl = WindowedPnl & {
   /** ISO timestamp of the window start (today 00:00 UTC) — drives the
    *  date header on the card so it reads e.g. "2026-06-03". */
   dayStartIso: string;
