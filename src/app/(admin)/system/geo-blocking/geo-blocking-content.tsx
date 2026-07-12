@@ -57,6 +57,18 @@ countries.registerLocale(enLocale);
  * stays source of truth via each action's revalidatePath; the effect below
  * re-syncs the local rows to a genuine prop change unless a write is in
  * flight, and a failed action rolls the specific field back + toasts.
+ *
+ * Per-row pending (2026-07-12, owner: "when i click blocked it takes rly
+ * long to load"): the value itself already flips optimistically via
+ * `patchRow` above, but every control across ALL ~250 rows used to share one
+ * `useTransition().isPending` flag, so clicking a single switch dimmed and
+ * disabled the entire table (see the Switch primitive's
+ * `data-disabled:opacity-50`) until that one write round-tripped — reading
+ * as "everything just froze," independent of how fast the write actually
+ * was. `pendingCodes` tracks in-flight country codes individually so only
+ * the row being edited disables; `isPending` (the transition flag) is still
+ * used below purely to gate the prop-resync effect against ANY in-flight
+ * write.
  */
 
 // Map a boolean field key → the camelCase property on CountryRestrictionRow.
@@ -108,6 +120,20 @@ export function GeoBlockingContent({
   const [rows, setRows] = useState(countryRestrictions);
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<"restricted" | "all">("restricted");
+  // In-flight country codes — see the "Per-row pending" note above.
+  const [pendingCodes, setPendingCodes] = useState<Set<string>>(new Set());
+
+  function beginPending(countryCode: string) {
+    setPendingCodes((prev) => new Set(prev).add(countryCode));
+  }
+  function endPending(countryCode: string) {
+    setPendingCodes((prev) => {
+      if (!prev.has(countryCode)) return prev;
+      const next = new Set(prev);
+      next.delete(countryCode);
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (isPending) return;
@@ -129,6 +155,7 @@ export function GeoBlockingContent({
     const next = !currentValue;
     const prop = BOOL_PROP[field];
     patchRow(countryCode, prop, next);
+    beginPending(countryCode);
     startTransition(async () => {
       try {
         await toggleCountryRestriction(countryCode, field, next);
@@ -136,6 +163,8 @@ export function GeoBlockingContent({
       } catch (e) {
         patchRow(countryCode, prop, currentValue);
         toast.error(e instanceof Error ? e.message : "Failed");
+      } finally {
+        endPending(countryCode);
       }
     });
   }
@@ -148,6 +177,7 @@ export function GeoBlockingContent({
   ) {
     const prop = ARRAY_PROP[field];
     patchRow(countryCode, prop, newValues);
+    beginPending(countryCode);
     startTransition(async () => {
       try {
         await updateCountryRestrictionArray(countryCode, field, newValues);
@@ -155,6 +185,8 @@ export function GeoBlockingContent({
       } catch (e) {
         patchRow(countryCode, prop, previousValues);
         toast.error(e instanceof Error ? e.message : "Failed");
+      } finally {
+        endPending(countryCode);
       }
     });
   }
@@ -206,7 +238,7 @@ export function GeoBlockingContent({
           <RestrictionsTable
             rows={restrictedRows}
             codeLabel="Country"
-            isPending={isPending}
+            pendingCodes={pendingCodes}
             onToggle={handleToggle}
             onArrayChange={handleArrayChange}
             emptyState={
@@ -226,7 +258,7 @@ export function GeoBlockingContent({
           <RestrictionsTable
             rows={searched}
             codeLabel="Country"
-            isPending={isPending}
+            pendingCodes={pendingCodes}
             onToggle={handleToggle}
             onArrayChange={handleArrayChange}
             emptyState={{ title: "No countries match your search" }}

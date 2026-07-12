@@ -363,7 +363,7 @@ function RestrictionSummaryBadge({ row }: { row: RestrictionRowData }) {
 export function RestrictionsTable({
   rows,
   codeLabel = "Code",
-  isPending,
+  pendingCodes,
   onToggle,
   onArrayChange,
   emptyState,
@@ -371,7 +371,13 @@ export function RestrictionsTable({
   rows: RestrictionRowData[];
   /** Header label for the leading column — "Country" today, "State" later. */
   codeLabel?: string;
-  isPending: boolean;
+  /**
+   * Country/state codes with an in-flight write. Scoped per-row (rather
+   * than one table-wide `isPending` flag) so editing one row doesn't dim +
+   * disable every other row's controls while its write round-trips — see
+   * the "Per-row pending" note in geo-blocking-content.tsx.
+   */
+  pendingCodes: Set<string>;
   onToggle: (code: string, field: BooleanField, currentValue: boolean) => void;
   onArrayChange: (code: string, field: ArrayField, previousValues: string[], newValues: string[]) => void;
   emptyState: { title: string; description?: string };
@@ -414,6 +420,7 @@ export function RestrictionsTable({
           <TableBody>
             {rows.map((row) => {
               const isOpen = expanded.has(row.code);
+              const rowPending = pendingCodes.has(row.code);
               return (
                 <Fragment key={row.code}>
                   <TableRow>
@@ -433,7 +440,7 @@ export function RestrictionsTable({
                         <Switch
                           checked={row.blocked}
                           onCheckedChange={() => onToggle(row.code, "blocked", row.blocked)}
-                          disabled={isPending}
+                          disabled={rowPending}
                         />
                         <span
                           className={cn(
@@ -466,7 +473,7 @@ export function RestrictionsTable({
                       <TableCell colSpan={3} className="bg-muted/20 p-0">
                         <RowDetail
                           row={row}
-                          isPending={isPending}
+                          isPending={rowPending}
                           onToggle={onToggle}
                           onArrayChange={onArrayChange}
                         />
@@ -485,6 +492,7 @@ export function RestrictionsTable({
       <div className="space-y-2 md:hidden">
         {rows.map((row) => {
           const isOpen = expanded.has(row.code);
+          const rowPending = pendingCodes.has(row.code);
           return (
             <div key={row.code} className="rounded-xl border bg-card p-3">
               <div className="flex items-center justify-between gap-2">
@@ -499,7 +507,7 @@ export function RestrictionsTable({
                   <Switch
                     checked={row.blocked}
                     onCheckedChange={() => onToggle(row.code, "blocked", row.blocked)}
-                    disabled={isPending}
+                    disabled={rowPending}
                   />
                   <span
                     className={cn(
@@ -528,7 +536,7 @@ export function RestrictionsTable({
                 <div className="mt-2 -mx-3 -mb-3 rounded-b-xl border-t bg-muted/20">
                   <RowDetail
                     row={row}
-                    isPending={isPending}
+                    isPending={rowPending}
                     onToggle={onToggle}
                     onArrayChange={onArrayChange}
                   />
