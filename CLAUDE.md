@@ -100,6 +100,8 @@ Warum: Beide Pfade sind die einzigen, die unter realer Last + Concurrency auf de
 
 **Hard floor — this rule does NOT override these (NEVER skipped):** MAIN / prod-DB stays strictly read-only; never commit `.env` / secrets / `src/generated` / `recent-pushes.json`; the Index-or-ClickHouse backend rule; and honest reporting. Speed means cutting *verification overhead* — NEVER skipping *safety* rules or misreporting what was actually checked.
 
+**Speed = wall-clock time to ship, NOT token count (Owner, 2026-07-12, verbatim: "faster work speed / faster shipping of things = higher token usage is fine for me").** Everything in this rule is about cutting *steps that add wall-clock delay* (agent dispatch, worktrees, builds, Playwright, doc bloat) — it is NOT about minimizing tokens spent. Token usage is explicitly **not a constraint**. Read as much context as actually helps get the answer right and the change shipped correctly and fast — don't skip a Read, truncate an investigation, or under-check something to save tokens. If spending more tokens on this turn (more context read, more thorough inline verification) ships a correct result faster than a cheaper-but-riskier shortcut would, spend them.
+
 ---
 
 ## ⚡ Arbeitsmodus — Standard ist inline (User-Override, 2026-07-12, ersetzt die alte Parallel-Pflicht)
