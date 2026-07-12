@@ -5,8 +5,6 @@ import {
   Check,
   Info,
   Loader2,
-  Lock,
-  LockOpen,
   Pencil,
   Plus,
   TriangleAlert,
@@ -411,7 +409,6 @@ export function PoolTable({
   contextPrice,
   autoHintByCardId,
   priceText,
-  pinPrice,
   disabled,
   pendingCount,
   pendingPreflight,
@@ -432,7 +429,6 @@ export function PoolTable({
   onDiscardPending,
   onPriceTextChange,
   onPriceCommit,
-  onPinToggle,
   onOpenPicker,
   onMoveCard,
 }: {
@@ -441,7 +437,6 @@ export function PoolTable({
   contextPrice: number;
   autoHintByCardId: Map<string, string>;
   priceText: string;
-  pinPrice: boolean;
   /** Blocks edits while a push is in flight. */
   disabled: boolean;
   /** Number of typed-but-not-yet-applied edits in the buffer (0 hides the bar). */
@@ -471,7 +466,6 @@ export function PoolTable({
   onPriceTextChange: (text: string) => void;
   /** Enter/blur — commit the typed price immediately (flushes the debounce). */
   onPriceCommit: () => void;
-  onPinToggle: () => void;
   onOpenPicker: () => void;
   /** Move a card one step up/down in the display order (sets pack_cards.order). */
   onMoveCard: (cardId: string, direction: "up" | "down") => void;
@@ -587,34 +581,8 @@ export function PoolTable({
           />
         </div>
 
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={onPinToggle}
-          disabled={disabled}
-          aria-pressed={pinPrice}
-          title={
-            pinPrice
-              ? "Unpin the price — let the planner search the band for clean odds at any candidate price."
-              : "Pin the pack price — the planner solves odds-only at this exact price instead of searching the band. Rare escape hatch; the search is the default."
-          }
-          className={cn(
-            pinPrice && "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-          )}
-        >
-          {pinPrice ? (
-            <LockOpen className="size-3.5" />
-          ) : (
-            <Lock className="size-3.5" />
-          )}
-          {pinPrice ? "Unpin price" : "Pin price"}
-        </Button>
-
         <p className="basis-full text-[11px] text-muted-foreground">
-          {pinPrice
-            ? "Pinned — the planner keeps this exact price and shapes odds only."
-            : PRICE_INPUT_HINT}
+          {PRICE_INPUT_HINT}
         </p>
       </div>
 

@@ -105,9 +105,6 @@ function exclusionFor(plan: PackTunePlan | null): {
       return { excluded: "Planned win-rate misses the tag.", tone: "rose" };
     }
   }
-  if (plan.snapped === false) {
-    return { excluded: "Dirty odds — clean odds are required to push.", tone: "amber" };
-  }
   return { excluded: null, tone: null };
 }
 

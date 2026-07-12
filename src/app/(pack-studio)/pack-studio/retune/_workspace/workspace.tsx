@@ -997,15 +997,6 @@ export function RetuneWorkspace({
     [ensureStaged, stagedApi, requestPlan],
   );
 
-  const togglePin = React.useCallback(() => {
-    const packId = selectedRef.current;
-    if (!packId) return;
-    const sp = ensureStaged(packId);
-    if (!sp) return;
-    stagedApi.setStaged(packId, { ...sp, pinPrice: !sp.pinPrice });
-    void requestPlan(packId); // pin toggle → immediate
-  }, [ensureStaged, stagedApi, requestPlan]);
-
   const resetToLive = React.useCallback(
     (packId: string) => {
       // Toast only when the reset actually dropped something — an idle
@@ -2240,7 +2231,6 @@ export function RetuneWorkspace({
                   discardRehydrated(selectedRow.packId)
                 }
                 onClearAllPins={clearAllPins}
-                onUnpinPrice={togglePin}
                 onSelectPack={(packId) => {
                   select(packId);
                   document
@@ -2290,7 +2280,6 @@ export function RetuneWorkspace({
                       }
                       autoHintByCardId={autoHintByCardId}
                       priceText={priceText}
-                      pinPrice={selectedStaged?.pinPrice ?? false}
                       disabled={pushing}
                       pendingCount={selectedPending.length}
                       pendingPreflight={pendingPreflight}
@@ -2343,7 +2332,6 @@ export function RetuneWorkspace({
                         }
                         commitPrice(selectedRow.packId, priceText, "flush");
                       }}
-                      onPinToggle={togglePin}
                       onOpenPicker={() => openPicker(null)}
                       onMoveCard={moveCard}
                     />

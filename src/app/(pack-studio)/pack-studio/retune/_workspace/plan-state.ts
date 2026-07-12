@@ -286,8 +286,11 @@ export function deriveStatus(args: {
  *   ∧ no tag contradiction
  *   ∧ tagged packs are tag-exact (`taggedAccuracyHit !== false` AND the
  *     after win-rate is within `TAGGED_WRITE_WINRATE_TOLERANCE` of the tag)
- *   ∧ clean odds (`snapped !== false`) — the owner's MUST — with the ONE
- *     escape hatch: a staged-arm plan under an explicit price pin.
+ *
+ * Dirty odds (snapped === false) no longer block push — the banner stays
+ * informational (amber), but the owner can push exact-but-ugly odds when
+ * the edge and win rate are correct. The clean-ladder grid is a cosmetic
+ * preference, not a safety gate.
  */
 export function isPushEnabled(args: {
   status: WorkspaceStatus;
@@ -297,7 +300,7 @@ export function isPushEnabled(args: {
   /** Size of the pack's pending-edits buffer — any typed odds block the push. */
   pendingCount: number;
 }): boolean {
-  const { status, plan, arm, pinPrice, pendingCount } = args;
+  const { status, plan, pendingCount } = args;
   if (pendingCount > 0) return false;
   if (status !== "planned" || plan === null || plan.after === null) return false;
   if (plan.tagContradiction !== null) return false;
@@ -310,7 +313,6 @@ export function isPushEnabled(args: {
       return false;
     }
   }
-  if (plan.snapped === false && !(arm === "staged" && pinPrice)) return false;
   return true;
 }
 

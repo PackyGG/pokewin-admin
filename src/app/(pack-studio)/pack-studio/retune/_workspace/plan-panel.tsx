@@ -8,7 +8,6 @@ import {
   Gauge,
   Layers,
   Loader2,
-  LockOpen,
   PinOff,
   Plus,
   RotateCcw,
@@ -80,7 +79,6 @@ import {
   PLAN_PROGRESS_VERY_SLOW_HINT,
   PUSH_BLOCKED_EDGE_FLOOR,
   PUSH_BLOCKED_EDGE_BELOW_TARGET,
-  PUSH_DISABLED_DIRTY,
   PUSH_DISABLED_FIX_POOL,
   PUSH_DISABLED_INFEASIBLE,
   PUSH_DISABLED_OFF_TAG,
@@ -788,7 +786,6 @@ export function PlanPanel({
   onDiscardRehydrated,
   onSelectPack,
   onClearAllPins,
-  onUnpinPrice,
   children,
 }: {
   row: RetuneRailRow;
@@ -866,8 +863,6 @@ export function PlanPanel({
   onSelectPack: (packId: string) => void;
   /** Clear every owner pin on this pack (control near the plan header). */
   onClearAllPins: () => void;
-  /** Unpin the staged price — lets the planner search the band for clean odds. */
-  onUnpinPrice: () => void;
   /** The pool zone (§5d) — rendered between the banner slot and the push row. */
   children: React.ReactNode;
 }) {
@@ -1131,20 +1126,6 @@ export function PlanPanel({
             onApplyPinRemedy={onApplyPinRemedy}
           />
           <p>{qualityLine}</p>
-          {staged?.pinPrice && verdict.kind === "unsnapped" && (
-            <div className="mt-1">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={onUnpinPrice}
-                className="h-7"
-              >
-                <LockOpen className="size-3.5" />
-                Unpin price — let the planner search for clean odds
-              </Button>
-            </div>
-          )}
           {hasGuidance && (
             <GuidanceSuggestions
               guidance={plan.guidance!}
@@ -1265,8 +1246,6 @@ export function PlanPanel({
     if (pendingCount > 0) return pushDisabledPendingLabel(pendingCount);
     if (plan && (plan.taggedAccuracyHit === false || plan.tagContradiction))
       return PUSH_DISABLED_OFF_TAG;
-    if (plan && plan.feasible && plan.snapped === false)
-      return PUSH_DISABLED_DIRTY;
     if (plan && !plan.feasible) return PUSH_DISABLED_INFEASIBLE;
     return PUSH_DISABLED_FIX_POOL;
   })();
