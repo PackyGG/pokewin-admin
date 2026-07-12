@@ -88,7 +88,7 @@ import { RealNumbersTabNav, type RealNumbersTab } from "./tab-nav";
 import { CrmTab } from "./crm-tab";
 import { AnalyticsTab } from "./analytics-tab";
 
-export const metadata = { title: "Analytics" };
+export const metadata = { title: "Real Numbers" };
 
 /**
  * /insights/real-numbers — the SOURCE OF TRUTH page.
@@ -123,17 +123,17 @@ export default async function RealNumbersPage({
   await requirePageAccess("/insights/real-numbers");
 
   const params = await searchParams;
-  // Three tabs on the Insights Overview: Analytics (the LANDING / default —
-  // deposit-cadence figures moved off the dashboard), Real Numbers (the
-  // source-of-truth reconciled headline, demoted from the landing to a tab),
-  // and Player CRM (the former standalone /crm page, which now 308-redirects
+  // Three tabs on the Insights Overview: Real Numbers (the LANDING / default —
+  // the source-of-truth reconciled headline), Analytics (deposit-cadence
+  // figures moved off the dashboard, demoted from the landing to a tab), and
+  // Player CRM (the former standalone /crm page, which now 308-redirects
   // here). Only the active tab's body streams (active-tab-only).
   const tab: RealNumbersTab =
     params.tab === "crm"
       ? "crm"
-      : params.tab === "real-numbers"
-        ? "real-numbers"
-        : "analytics";
+      : params.tab === "analytics"
+        ? "analytics"
+        : "real-numbers";
   const asOf = formatDateTime(new Date());
 
   return (

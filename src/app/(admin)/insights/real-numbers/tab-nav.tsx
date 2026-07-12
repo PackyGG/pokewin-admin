@@ -10,12 +10,13 @@ import { LinkPendingShell } from "@/components/ux";
 export type RealNumbersTab = "analytics" | "real-numbers" | "crm";
 
 const TABS: { value: RealNumbersTab; label: string; icon: typeof Sigma }[] = [
-  // Analytics — the LANDING view (default). Carries the deposit-cadence
-  // figures (Avg Deposit + Deposits / Hour) moved off the dashboard KPI strip.
-  { value: "analytics", label: "Analytics", icon: LineChart },
-  // Real Numbers — the source-of-truth reconciled headline (wager / GGR /
-  // reward cost / NGR / realized P&L), demoted from the landing to a tab.
+  // Real Numbers — the LANDING view (default). The source-of-truth
+  // reconciled headline (wager / GGR / reward cost / NGR / realized P&L).
   { value: "real-numbers", label: "Real Numbers", icon: Sigma },
+  // Analytics — carries the deposit-cadence figures (Avg Deposit + Deposits
+  // / Hour) moved off the dashboard KPI strip. Demoted from the landing to
+  // a tab.
+  { value: "analytics", label: "Analytics", icon: LineChart },
   // Player CRM — folded out of the former standalone /crm page so the
   // lifecycle / VIP / win-back segmentation shares the Insights Overview
   // hero instead of carrying its own owner-gated route.
@@ -45,7 +46,7 @@ export function RealNumbersTabNav() {
   // The in-flight target set on click; drives the active pill optimistically
   // until the URL commits. `null` when nothing is pending.
   const [pending, setPending] = useState<RealNumbersTab | null>(null);
-  const committed = (searchParams.get("tab") ?? "analytics") as RealNumbersTab;
+  const committed = (searchParams.get("tab") ?? "real-numbers") as RealNumbersTab;
 
   // Once the navigation commits (URL caught up) or the transition finished,
   // the optimistic target is stale — drop it so the pill tracks the real URL.

@@ -29,7 +29,8 @@ function signedCurrency(value: number): string {
 }
 
 /**
- * Analytics tab — the Insights Overview LANDING view.
+ * Analytics tab — a secondary view on the Insights Overview (Real Numbers is
+ * the landing tab).
  *
  * Surfaces the lifetime / fixed-window snapshot figures that used to live on
  * the dashboard KPI strip, moved here so the dashboard stays a live-ops board

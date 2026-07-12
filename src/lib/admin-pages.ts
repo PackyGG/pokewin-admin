@@ -38,17 +38,17 @@ export const ADMIN_PAGES: AdminPage[] = [
   // group sitting directly below Overview. Separate from the per-feature
   // analytics keys (e.g. /rewards/analytics) so role grants can be
   // managed independently.
-  // Insights Overview — a tabbed page: Analytics (the landing tab, deposit
-  // cadence & platform analytics) + Real Numbers (the source-of-truth headline,
-  // demoted to a tab) + Player CRM. Sidebar label "Analytics". Reads the
-  // canonical corrected metric layer (creators + staff + blacklist excluded;
-  // borrow-net basis) and shows the reconciled lifetime headline (wager / GGR /
-  // reward cost / NGR / realized P&L), a per-game GGR split, both the
-  // gaming-margin and balance-sheet waterfalls, the GGR↔P&L reconciliation, and
-  // plain-language definitions. The former standalone /insights hub page was
-  // removed; /insights now 308-redirects here (next.config.ts). Own grantable
-  // key (route + permission unchanged).
-  { group: "Insights", label: "Analytics (Real Numbers)", key: "/insights/real-numbers" },
+  // Insights Overview — a tabbed page: Real Numbers (the landing tab, the
+  // source-of-truth headline) + Analytics (deposit cadence & platform
+  // analytics, demoted to a tab) + Player CRM. Sidebar label "Real Numbers".
+  // Reads the canonical corrected metric layer (creators + staff + blacklist
+  // excluded; borrow-net basis) and shows the reconciled lifetime headline
+  // (wager / GGR / reward cost / NGR / realized P&L), a per-game GGR split,
+  // both the gaming-margin and balance-sheet waterfalls, the GGR↔P&L
+  // reconciliation, and plain-language definitions. The former standalone
+  // /insights hub page was removed; /insights now 308-redirects here
+  // (next.config.ts). Own grantable key (route + permission unchanged).
+  { group: "Insights", label: "Real Numbers (Analytics)", key: "/insights/real-numbers" },
   // Cost Breakdown — the full wager → P&L leakage waterfall (every cost
   // category itemized). Route is KEPT and reachable via a link on the
   // Insights Overview page, but it no longer has its own sidebar nav entry.

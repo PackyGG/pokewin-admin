@@ -289,21 +289,21 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
 
   // ── Insights (sidebar-only; absent from palette today) ─────────────────
   {
-    // Insights Overview — a tabbed page: Analytics (the landing tab, deposit
-    // cadence & platform analytics) + Real Numbers (the source-of-truth
-    // headline, demoted to a tab) + Player CRM. The former standalone /insights
-    // hub page was removed; /insights 308-redirects here (next.config.ts).
-    // Labeled "Analytics" in the sidebar (Analytics is now the landing tab) but
-    // keeps its own /insights/real-numbers route + permission key. Icon stays
-    // `Sigma` (registered in the ICONS map in `src/components/app-sidebar.tsx`)
-    // — using an unregistered icon string (e.g. LineChart) would trip React
-    // #130 at runtime. Sits first in the group so the section landing is
-    // reachable directly from the sidebar. The Cost Breakdown page (route kept)
-    // is reachable via a link on this page; it no longer has its own sidebar
-    // entry.
+    // Insights Overview — a tabbed page: Real Numbers (the landing tab, the
+    // source-of-truth headline) + Analytics (deposit cadence & platform
+    // analytics, demoted to a tab) + Player CRM. The former standalone
+    // /insights hub page was removed; /insights 308-redirects here
+    // (next.config.ts). Labeled "Real Numbers" in the sidebar (Real Numbers is
+    // now the landing tab) but keeps its own /insights/real-numbers route +
+    // permission key. Icon stays `Sigma` (registered in the ICONS map in
+    // `src/components/app-sidebar.tsx`) — using an unregistered icon string
+    // (e.g. LineChart) would trip React #130 at runtime. Sits first in the
+    // group so the section landing is reachable directly from the sidebar.
+    // The Cost Breakdown page (route kept) is reachable via a link on this
+    // page; it no longer has its own sidebar entry.
     id: "nav.insights.real-numbers",
     group: "Insights",
-    label: "Analytics",
+    label: "Real Numbers",
     href: "/insights/real-numbers",
     pageKey: "/insights/real-numbers",
     icon: "Sigma",
