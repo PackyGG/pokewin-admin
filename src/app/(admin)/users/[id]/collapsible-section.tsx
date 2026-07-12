@@ -16,23 +16,22 @@ import { cn } from "@/lib/utils";
  * state so it can run side effects on toggle (e.g. reset pagination on
  * re-open).
  *
- * Trigger + content live inside ONE continuous bordered/rounded box (not two
- * separately-floating blocks) so an open section visibly reads as "this
- * content belongs to this header": the header fills the top of the box, a
- * `border-t` divider marks the seam, and the content fills the rest — the
- * outer box never gaps or re-borders itself between the two.
+ * Design: FLAT + NEUTRAL, matching the rest of the admin (no colored fills /
+ * gradients / glows). Trigger + content live inside ONE continuous
+ * `bg-card` box with a hairline border and `rounded-xl`, so an open section
+ * reads as one card: the header sits at the top, a neutral `border-t` marks
+ * the seam, and the content fills the rest.
  *
- * State affordance (must be readable at a glance, not just from the chevron):
- *   • COLLAPSED — a tinted (`bg-muted/30`) neutral header row with a hover
- *     affordance (`cursor-pointer` + `hover:bg-muted/50` + border /
- *     text-foreground shift), chevron pointing RIGHT.
- *   • OPEN — the header switches to a primary-tinted background + border
- *     (`bg-primary/10` / `border-primary/25`) and the icon chip goes from
- *     outline-y (`bg-primary/10`) to filled (`bg-primary/20`), so an open
- *     section is unmistakable even at a glance. Chevron rotates DOWN.
- * The chevron rotation + panel height transition are `motion-safe:` so
- * reduced-motion users get the state instantly with no tween; the
- * background/border tint switch is a plain color transition either way.
+ * State affordance (calm, not loud):
+ *   • COLLAPSED — transparent header, chevron points RIGHT. A subtle
+ *     `hover:bg-muted/40` gives the row a clickable affordance.
+ *   • OPEN — the header takes a faint NEUTRAL wash (`bg-muted/30`) to seat
+ *     the content beneath it, and the chevron rotates DOWN. No accent color
+ *     is used for state — the open content + rotated chevron carry it.
+ *
+ * The chevron rotation is `motion-reduce:`-gated; the panel height tween is
+ * handled globally (`[data-slot="collapsible-content"]` in globals.css,
+ * 280ms ease-out, reduced-motion aware).
  */
 export function CollapsibleSection({
   icon: Icon,
@@ -54,8 +53,7 @@ export function CollapsibleSection({
       open={open}
       onOpenChange={onOpenChange}
       className={cn(
-        "overflow-hidden rounded-lg border transition-colors",
-        open ? "border-primary/25" : "border-border/60 hover:border-border",
+        "overflow-hidden rounded-xl border border-border/60 bg-card",
         className,
       )}
     >
@@ -64,36 +62,25 @@ export function CollapsibleSection({
           <button
             type="button"
             className={cn(
-              "group flex w-full cursor-pointer items-center justify-between gap-3 px-3 py-2.5 text-left transition-colors",
-              open
-                ? "bg-primary/10 hover:bg-primary/15"
-                : "bg-muted/30 hover:bg-muted/50",
+              "group flex w-full cursor-pointer items-center gap-2.5 px-4 py-3 text-left transition-colors",
+              open ? "bg-muted/30 hover:bg-muted/50" : "hover:bg-muted/40",
             )}
           >
-            <span className="flex min-w-0 items-center gap-2">
-              <span
-                className={cn(
-                  "shrink-0 rounded-md p-1.5 transition-colors",
-                  open ? "bg-primary/20" : "bg-primary/10",
-                )}
-              >
-                <Icon className="size-4 text-primary" />
-              </span>
-              <span className="truncate text-base font-semibold text-foreground/90 group-hover:text-foreground">
-                {title}
-              </span>
+            <Icon className="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+              {title}
             </span>
             <ChevronDown
               className={cn(
-                "size-5 shrink-0 text-muted-foreground group-hover:text-foreground motion-safe:transition-transform motion-safe:duration-200",
-                open ? "rotate-0 text-primary" : "-rotate-90",
+                "size-4 shrink-0 text-muted-foreground/70 transition-transform duration-200 group-hover:text-foreground motion-reduce:transition-none",
+                open ? "rotate-0" : "-rotate-90",
               )}
             />
           </button>
         }
       />
       <CollapsibleContent>
-        <div className="border-t border-primary/15 px-3 py-4 sm:py-5">
+        <div className="border-t border-border/60 px-4 py-4 sm:py-5">
           {children}
         </div>
       </CollapsibleContent>
