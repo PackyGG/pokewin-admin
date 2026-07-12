@@ -312,166 +312,174 @@ export function UserViewModern({
   const displayName =
     user.displayUsername ?? user.username ?? user.name ?? "—";
 
+  // ── Meta line items — country / joined / short id / 2FA / affiliate /
+  // ex-creator. Demoted from colored badges to ONE quiet uniform muted line
+  // (owner 2026-07-12 hero redesign): each is an inline-flex chip with a
+  // size-3 lucide icon, and only 2FA-OFF carries a mild amber security tint.
+  // The affiliate + ex-creator entries are conditional, so the row is built
+  // as an array and dot-separated at render time (no leading/trailing/double
+  // dots regardless of which entries are present).
+  const metaItems: { key: string; node: React.ReactNode }[] = [
+    {
+      key: "country",
+      node: (
+        <span className="inline-flex items-center gap-1">
+          <MapPin className="size-3" />
+          {user.country ?? user.countryCode ?? "Unknown"}
+        </span>
+      ),
+    },
+    {
+      key: "joined",
+      node: (
+        <span className="inline-flex items-center gap-1">
+          <Calendar className="size-3" />
+          <RelativeTime date={user.createdAt} />
+        </span>
+      ),
+    },
+    {
+      // User ID — short form shown, FULL id copied.
+      key: "id",
+      node: (
+        <span
+          className="inline-flex items-center gap-1 font-mono"
+          title={user.id}
+        >
+          {user.id.slice(0, 8)}
+          <CopyButton value={user.id} label="User ID" />
+        </span>
+      ),
+    },
+    {
+      // 2FA state — muted when ON, a mild amber tint when OFF (a real, low
+      // grade security signal). No badge fill either way.
+      key: "2fa",
+      node: (
+        <span
+          className={cn(
+            "inline-flex items-center gap-1",
+            !user.twoFactorEnabled && "text-amber-600 dark:text-amber-500",
+          )}
+        >
+          <ShieldCheck className="size-3" />
+          2FA {user.twoFactorEnabled ? "on" : "off"}
+        </span>
+      ),
+    },
+  ];
+  if (user.affiliateCode) {
+    metaItems.push({
+      key: "affiliate",
+      node: (
+        <span className="inline-flex items-center gap-1">
+          <Ticket className="size-3" />
+          {user.affiliateCode}
+        </span>
+      ),
+    });
+  }
+  if (data.wasCreator) {
+    metaItems.push({
+      // Ex-creator — not a creator now but was one before (audit role-change
+      // to creator, or own creator-only affiliate codes). Muted text; the
+      // full context stays in the hover tooltip.
+      key: "ex-creator",
+      node: (
+        <span
+          title={
+            data.creatorSince
+              ? `Previously had the creator role — creator since ${data.creatorSince.slice(0, 10)}`
+              : "Previously had the creator role"
+          }
+        >
+          Ex-creator
+        </span>
+      ),
+    });
+  }
+
   // ── HERO ──────────────────────────────────────────────────────────
   // Extracted as a node so UserHeroSticky can render it inline AND derive
   // a thin condensed bar (avatar + name + balance) that appears once the
   // hero scrolls out of view. The tab bar's own sticky behaviour is
   // untouched (the condensed bar layers above it on z-index).
+  //
+  // Layout (owner 2026-07-12 "redesign it properly" pass) — a FLAT card
+  // (solid bg-card + hairline border + one soft shadow; no gradient, no
+  // corner-glow) with a clear LEFT identity / RIGHT action-cluster split and
+  // a strict THREE-TIER text hierarchy so nothing wraps at the same visual
+  // weight anymore:
+  //   LEFT  = backSlot + avatar (+ status dot) + text column:
+  //             tier 1 name line  → name + copy + role/status/alert badges
+  //                                  (the ONLY colored badges in the hero)
+  //             tier 2 email line → email + verified ✓ + copy (muted)
+  //             tier 3 meta line  → country · joined · id · 2FA · affiliate ·
+  //                                  ex-creator — ONE calm greyscale line
+  //   RIGHT = creator-page link + site-role group + admin actions + tags,
+  //           uniformly sm-sized, top-aligned with the name line
+  //           (outer row is lg:items-start).
+  // On <lg the RIGHT cluster wraps below the identity block; the name always
+  // truncates so the badges stay visible at every width.
   const heroNode = (
     <div className="rounded-xl border bg-card shadow-sm">
-      {/* Flat hero: solid bg-card + hairline border + a single very soft
-          shadow. No gradient fill, no corner-glow blobs (flat standard).
-          Collapsed to a SLIM SINGLE-ROW band (owner 2026-07-12: after the
-          two-row remake the owner still wanted it smaller → "remove all
-          display boxes from the top bar and make the second row into the
-          first so the height is even smaller"). The 5 KPI display tiles
-          (Total Value, P&L, Wager Left, Multiplier, House Edge) were removed
-          entirely — those metrics still live one panel down on the Overview
-          tab (Balances / Platform-P&L) and the Account tab (wager cards). The
-          old Row B (secondary chips + admin-action cluster) merged UP onto
-          the identity line, so the hero is now ~avatar-height + padding.
-            • lg+  : ONE line — identity LEFT (avatar + name + role/status +
-                     email), the chip strip + admin-action cluster RIGHT.
-            • <lg  : identity on top, the chips + actions wrap onto their own
-                     rows beneath it (never overflow, name always truncates). */}
-      <div className="p-3 sm:p-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-4">
-          {/* ── IDENTITY (left on lg+, top on <lg) — back button + avatar +
-              name + the two highest-signal badges (site role + moderation
-              status) + email. The name truncates so the shrink-0 badges stay
-              visible at every width. */}
-          <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-4">
-            {/* Compact back-to-users button — tucked into the band's left. */}
-            {backSlot}
-            <div className="relative shrink-0">
-              {/* Prominent avatar — it anchors the slim band. */}
-              <Avatar className="size-14 sm:size-16 ring-2 ring-background shadow-sm">
-                {user.image && <AvatarImage src={user.image} alt="" />}
-                <AvatarFallback className="text-base font-semibold">
-                  {(user.username ?? user.email ?? "?")
-                    .slice(0, 2)
-                    .toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
-              <span
-                className={cn(
-                  "absolute -bottom-0.5 -right-0.5 size-4 rounded-full border-2 border-background",
-                  statusKey === "active" && "bg-emerald-500",
-                  statusKey === "locked" && "bg-amber-500",
-                  statusKey === "banned" && "bg-rose-500",
-                )}
-                aria-label={statusLabel}
-              />
-            </div>
-
-            <div className="min-w-0 flex-1 space-y-0.5">
-              {/* Line 1 — username (heading) + copy + the two highest-signal
-                  badges inline: site role + moderation status. The name
-                  truncates so the shrink-0 badges always stay visible. */}
-              <div className="flex min-w-0 items-center gap-1.5">
-                <h2 className="min-w-0 truncate text-lg font-bold leading-tight sm:text-xl">
-                  {displayName}
-                </h2>
-                <CopyButton value={displayName} label="Username" />
-                <Badge
-                  variant="outline"
-                  className={cn("h-5 shrink-0 py-0 text-[10px]", ROLE_COLORS[user.role] ?? "")}
-                >
-                  {user.role}
-                </Badge>
-                <Badge
-                  variant="outline"
-                  className={cn("h-5 shrink-0 py-0 text-[10px]", USER_STATUS_COLORS[statusKey] ?? "")}
-                >
-                  {statusLabel}
-                </Badge>
-              </div>
-              {/* Line 2 — email (muted) + verified ✓ + copy. */}
-              <p className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-                <span className="truncate">{user.email}</span>
-                {user.emailVerified && (
-                  <span className="shrink-0 text-[10px] font-semibold text-emerald-500">
-                    ✓
-                  </span>
-                )}
-                {user.email && (
-                  <CopyButton value={user.email} label="Email" />
-                )}
-              </p>
-            </div>
+      <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
+        {/* ── LEFT — identity block ─────────────────────────────────── */}
+        <div className="flex min-w-0 flex-1 items-start gap-4">
+          {/* Compact back-to-users button — tucked left of the avatar. */}
+          {backSlot}
+          <div className="relative shrink-0">
+            {/* Prominent avatar — anchors the identity block. */}
+            <Avatar className="size-14 sm:size-16 ring-2 ring-background shadow-sm">
+              {user.image && <AvatarImage src={user.image} alt="" />}
+              <AvatarFallback className="text-base font-semibold">
+                {(user.username ?? user.email ?? "?").slice(0, 2).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            <span
+              className={cn(
+                "absolute -bottom-0.5 -right-0.5 size-4 rounded-full border-2 border-background",
+                statusKey === "active" && "bg-emerald-500",
+                statusKey === "locked" && "bg-amber-500",
+                statusKey === "banned" && "bg-rose-500",
+              )}
+              aria-label={statusLabel}
+            />
           </div>
 
-          {/* ── RIGHT CLUSTER (right on lg+, wraps below identity on <lg) —
-              the secondary metadata chips + the admin-action cluster, merged
-              up from the old Row B so they no longer add a second band. Own
-              flex-wrap so on narrow widths the chips take one row and the
-              admin controls flow onto the next — never overflowing. */}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 lg:shrink-0 lg:justify-end">
-            {/* Secondary metadata chips — one dense, wrap-safe row (ex-creator
-                + 2FA + affiliate + country + joined + short id + active-state
-                flags). Role/status live on the name line above; the standalone
-                self-exclusion badges were dropped as duplicates of the
-                HeroFlagsStrip chips — no signal lost, full since/until/reason
-                lives on the Account tab. */}
-            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
-              {/* Ex-creator flag — they aren't a creator now but were one
-                  before (audit role-change to creator, or own creator-only
-                  affiliate codes). */}
-              {data.wasCreator && (
-                <Badge
-                  variant="outline"
-                  className="h-5 border-purple-500/40 bg-purple-500/10 py-0 text-[10px] text-purple-600 dark:text-purple-400"
-                  title={
-                    data.creatorSince
-                      ? `Previously had the creator role — creator since ${data.creatorSince.slice(0, 10)}`
-                      : "Previously had the creator role"
-                  }
-                >
-                  Ex-creator
-                </Badge>
-              )}
+          {/* Text column — three tiers (name / email / meta). */}
+          <div className="min-w-0 flex-1 space-y-1">
+            {/* Tier 1 — name + copy + the colored signal badges (site role,
+                moderation status, and the real alert chips). These are the
+                ONLY colored badges in the whole hero. The name truncates so
+                the shrink-0 badges always stay visible. */}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <h2 className="min-w-0 truncate text-lg font-bold leading-tight sm:text-xl">
+                {displayName}
+              </h2>
+              <CopyButton value={displayName} label="Username" />
               <Badge
                 variant="outline"
                 className={cn(
-                  "h-5 py-0 text-[10px]",
-                  user.twoFactorEnabled
-                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                    : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
+                  "h-5 shrink-0 py-0 text-[10px]",
+                  ROLE_COLORS[user.role] ?? "",
                 )}
               >
-                2FA {user.twoFactorEnabled ? "On" : "Off"}
+                {user.role}
               </Badge>
-              {user.affiliateCode && (
-                <Badge
-                  variant="outline"
-                  className="h-5 border-purple-500/30 bg-purple-500/15 py-0 text-[10px] text-purple-600 dark:text-purple-400"
-                >
-                  <Sparkles className="mr-0.5 size-2.5" />
-                  {user.affiliateCode}
-                </Badge>
-              )}
-              {/* Meta facts — muted inline text. */}
-              <span className="inline-flex items-center gap-0.5 text-[11px] text-muted-foreground">
-                <MapPin className="size-2.5" />
-                {user.country ?? user.countryCode ?? "Unknown"}
-              </span>
-              <span className="inline-flex items-center gap-0.5 text-[11px] text-muted-foreground">
-                <Calendar className="size-2.5" />
-                <RelativeTime date={user.createdAt} />
-              </span>
-              {/* User ID — short form shown, FULL id copied. */}
-              <span
-                className="inline-flex items-center gap-1 font-mono text-[11px] text-muted-foreground"
-                title={user.id}
+              <Badge
+                variant="outline"
+                className={cn(
+                  "h-5 shrink-0 py-0 text-[10px]",
+                  USER_STATUS_COLORS[statusKey] ?? "",
+                )}
               >
-                {user.id.slice(0, 8)}
-                <CopyButton value={user.id} label="User ID" />
-              </span>
-              {/* Active-state flags (banned / locked / self-excl / vouchers) —
-                  gated on real signals already fetched for this view; the
-                  strip's chips flow inline into this row via display:contents,
-                  and it collapses to nothing for a clean user. House-POV
-                  coloring per CLAUDE.md. */}
+                {statusLabel}
+              </Badge>
+              {/* Real ALERT chips (banned / locked / self-excluded / held
+                  vouchers) — genuine warnings, so they KEEP color and belong
+                  grouped with the status badge. Collapses to nothing for a
+                  clean user (display:contents strip). */}
               <HeroFlagsStrip
                 statusKey={statusKey}
                 selfExclusion={selfExclusion}
@@ -479,51 +487,74 @@ export function UserViewModern({
               />
             </div>
 
-            {/* Admin-action cluster — every control preserved. */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              {/* Quick-link to the creator detail page. Only shown when the
-                  viewed user is an on-site creator — the /creators/<id> route
-                  shares the same main-site user id space as /users/<id>. */}
-              {user.role === "creator" && (
-                <Link
-                  href={`/creators/${user.id}`}
-                  className={cn(
-                    buttonVariants({ variant: "outline", size: "sm" }),
-                    "border-purple-500/40 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10",
+            {/* Tier 2 — email (muted) + verified ✓ + copy. */}
+            <div className="flex min-w-0 items-center gap-1 text-sm text-muted-foreground">
+              <span className="truncate">{user.email}</span>
+              {user.emailVerified && (
+                <span className="shrink-0 text-xs font-semibold text-emerald-500">
+                  ✓
+                </span>
+              )}
+              {user.email && <CopyButton value={user.email} label="Email" />}
+            </div>
+
+            {/* Tier 3 — meta line: one calm greyscale row of quiet facts,
+                dot-separated. No colored badge confetti. */}
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-muted-foreground">
+              {metaItems.map((item, i) => (
+                <React.Fragment key={item.key}>
+                  {i > 0 && (
+                    <span aria-hidden className="text-muted-foreground/40">
+                      ·
+                    </span>
                   )}
-                >
-                  <Megaphone className="size-3.5" />
-                  Creator page
-                </Link>
-              )}
-              {/* Site-role controls — changes the user's role on the game
-                  platform (user / creator / support / admin), NOT their
-                  admin-panel access. Grouped + labelled so the distinction is
-                  unmistakable. */}
-              {canChangeUserRoles && (
-                <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-dashed border-border/70 px-2 py-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Site role
-                  </span>
-                  <ChangeRoleDialog userId={user.id} currentRole={user.role} />
-                  {/* Quick escape hatch when /creators backend demote gets
-                      stuck — only renders for current creators. */}
-                  <ResetRoleToUserButton
-                    userId={user.id}
-                    currentRole={user.role}
-                  />
-                </div>
-              )}
-              <UserAdminActions
-                user={user}
-                isAdmin={isAdmin}
-                capabilities={capabilities}
-              />
-              {/* VIP tags dropdown — pre-rendered in page.tsx and threaded in
-                  as a serializable ReactNode. */}
-              {tagsSlot}
+                  {item.node}
+                </React.Fragment>
+              ))}
             </div>
           </div>
+        </div>
+
+        {/* ── RIGHT — action cluster ────────────────────────────────── */}
+        <div className="flex flex-wrap items-center gap-1.5 lg:shrink-0 lg:justify-end">
+          {/* Quick-link to the creator detail page — only for on-site
+              creators (the /creators/<id> route shares the main-site user id
+              space). One accented nav button is acceptable. */}
+          {user.role === "creator" && (
+            <Link
+              href={`/creators/${user.id}`}
+              className={cn(
+                buttonVariants({ variant: "outline", size: "sm" }),
+                "border-purple-500/40 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10",
+              )}
+            >
+              <Megaphone className="size-3.5" />
+              Creator page
+            </Link>
+          )}
+          {/* Site-role controls — changes the user's role on the game
+              platform (user / creator / support / admin), NOT their
+              admin-panel access. Grouped + labelled so the distinction is
+              unmistakable. Clean solid subtle group (no dashed box). */}
+          {canChangeUserRoles && (
+            <div className="flex items-center gap-1 rounded-lg border bg-muted/40 px-2 py-1">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Site role
+              </span>
+              <ChangeRoleDialog userId={user.id} currentRole={user.role} />
+              {/* Quick escape hatch when /creators backend demote gets
+                  stuck — only renders for current creators. */}
+              <ResetRoleToUserButton userId={user.id} currentRole={user.role} />
+            </div>
+          )}
+          <UserAdminActions
+            user={user}
+            isAdmin={isAdmin}
+            capabilities={capabilities}
+          />
+          {/* VIP tags dropdown — pre-rendered in page.tsx and threaded in as
+              a serializable ReactNode. */}
+          {tagsSlot}
         </div>
       </div>
     </div>
