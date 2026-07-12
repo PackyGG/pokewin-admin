@@ -6,26 +6,7 @@ import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-
-async function refreshSiteConfig() {
-  const headers: Record<string, string> = {
-    "x-api-key": process.env.BACKEND_API_KEY!,
-  };
-  const bypassSecret =
-    process.env.CF_BYPASS_SECRET || process.env.BACKEND_BYPASS_SECRET;
-  if (bypassSecret) {
-    headers["x-bypass-secret"] = bypassSecret;
-  }
-
-  const res = await fetch(
-    `${process.env.BACKEND_API_URL}/admin/refresh_site_config`,
-    { method: "POST", headers },
-  );
-
-  if (!res.ok) {
-    console.error("Failed to refresh site config:", await res.text().catch(() => "Unknown error"));
-  }
-}
+import { refreshSiteConfig } from "@/lib/refresh-site-config";
 
 export async function upsertSiteConfig(
   key: string,

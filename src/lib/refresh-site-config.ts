@@ -15,7 +15,7 @@ import { backendApi, BackendApiError } from "@/lib/backend-api";
  */
 export async function refreshSiteConfig(): Promise<void> {
   try {
-    await backendApi.post("/admin/refresh_site_config");
+    await backendApi.post("/admin/refresh-site-config");
     console.log("[refreshSiteConfig] backend ok");
   } catch (e) {
     if (e instanceof BackendApiError) {
