@@ -12,7 +12,6 @@ export type {
 } from "./creators-types";
 
 export { getCreatorPnl } from "./creators-pnl";
-export { searchNonCreatorUsers, getCreators } from "./creators-list";
 export {
   getCreatorDetail,
   getCreatorDetailCached,
