@@ -77,7 +77,7 @@ Warum: Beide Pfade sind die einzigen, die unter realer Last + Concurrency auf de
 2. `page.tsx` = Shell sofort + `<Suspense>` + `loading.tsx` (kein Top-Level-await des heavy Reads).
 3. `safeQuery`/Timeout + `unstable_cache` (Active-Timeframe-Only, keine hidden Tabs/Timespans eager laden).
 4. Money Decimal-safe (`toString(sum)`→`toNumber`, nie Float), House-POV-Farben.
-5. tsc + lint + `npm run build` grün; bei UI Browser-/Render-Check.
+5. tsc + lint grün (+ `npm run build` wenn die Änderungsklasse es verlangt, § Minimal-Overhead). Browser-/Render-Check nur wenn der Owner das in der Message explizit anfragt — sonst push ohne Render (§ Minimal-Overhead, 2026-07-12).
 6. CH-Twin (falls gebaut) bleibt dormant (off/comparison) bis cent/count-exakte Parität (`TZ=UTC`, zweimal) **und** Logged-in-Render-Check — erst dann in `CUTOVER_DEFAULT_CLICKHOUSE`.
 
 **Volle Mechanik (Caching, Suspense-Streaming, Active-Timeframe-Only, `safeQuery`, House-POV-Farben, Checkliste neue Page):** **`docs/BACKEND_QUERY_SYSTEM.md`** — vor jeder Read-/Page-Arbeit lesen. Diese Regel hebt KEINE der Prod-DB-Regeln auf (MAIN bleibt read-only).
@@ -161,7 +161,7 @@ _The parallel-by-default mandate this section used to carry is gone (see § Arbe
 
 ## 🔒 Browser-Verifikation & Done-Kriterien (CRITICAL)
 
-> **Owner-Override (2026-07-02, gilt für alle Agents/Modelle in diesem Repo):** Keine Browser-Verifikation nötig, bevor gepusht wird — einfach pushen. Und nach dem Push muss NICHT bestätigt werden, ob der Push/Deploy live gegangen ist oder sonst irgendwas dazu nachgeprüft werden. `tsc` + `lint` grün (+ `npm run build` wo praktikabel) reichen als Gate; Punkt 5 ("Bei UI-/Admin-Aufgaben: Browser-Verifikation erfolgt") in der Done-Checkliste unten ist damit ausgesetzt. Der Rest der Sektion (Definition of Done Punkte 1–4/6, Regression-Sweep, Incident-Modus, Honest Reporting) bleibt unverändert gültig.
+> **Owner-Override (2026-07-02, verschärft 2026-07-12, gilt für alle Agents/Modelle in diesem Repo):** Keine Browser-Verifikation nötig, bevor gepusht wird — einfach pushen. Und nach dem Push muss NICHT bestätigt werden, ob der Push/Deploy live gegangen ist oder sonst irgendwas dazu nachgeprüft werden. `tsc` + `lint` grün (+ `npm run build` wo praktikabel) reichen als Gate; Punkt 5 ("Bei UI-/Admin-Aufgaben: Browser-Verifikation erfolgt") in der Done-Checkliste unten ist damit ausgesetzt. **Punkt 7 (Playwright-Fallback-Mechanik) ist ebenfalls kein Default mehr** — die Minimal-Overhead-Regel (2026-07-12) sagt explizit: kein Rendering/Playwright vor dem Push, außer der Owner fragt es in der jeweiligen Message an. Der Rest der Sektion (Definition of Done Punkte 1–4/6, Regression-Sweep, Incident-Modus, Honest Reporting) bleibt unverändert gültig.
 
 Für jede Aufgabe, die UI, Routing, Rendering, Interaktionen, Filter, Search, Pagination, Tabs, Drawers, Modals, Charts, KPI-Panels oder sichtbare Daten im Admin betrifft, gilt:
 
@@ -223,8 +223,8 @@ Erlaubte Status-Wörter:
 
 **"DONE" ohne Verifikation ist verboten.**
 
-### 7. UI-Verifikation ohne Live-Browser (Fallback-Mechanik, Session-Learning 2026-06-05)
-Wenn **kein** live eingeloggter Browser verfügbar ist (Chrome-Extension offline), ist der `npm run build`-Gate **nicht genug** — trotzdem rendern:
+### 7. UI-Verifikation ohne Live-Browser (nur wenn der Owner Browser-Check explizit angefragt hat, Session-Learning 2026-06-05)
+**Kein Default-Pfad mehr** (§ Minimal-Overhead, 2026-07-12: kein Rendering/Playwright vor dem Push ohne explizite Owner-Anfrage). Nur relevant, wenn der Owner in der Message tatsächlich einen Browser-Check will UND **kein** live eingeloggter Browser verfügbar ist (Chrome-Extension offline):
 - **Admin-Session minten:** ein `admin_session` JWT signieren (mit `SESSION_SECRET`, exakt nach `src/lib/session.ts`; einen aktiven Admin **read-only** aus der ADMIN-DB lesen) und **Playwright** über die Routen fahren. Wiederverwendbarer Harness: `e2e/responsive/*` + `playwright.responsive.config.ts` (Mint-Helper: `e2e/responsive/mint-session.ts`).
 - **Lokale Game-DB ist stale** (fehlende Tables → live Admin-Pages werfen lokal). Pages, die deshalb nicht rendern, über **dev-only Fixtures** rendern: `src/app/responsive-fixture/*`.
 - **Ehrlich bleiben:** build-verified + fixture-/minted-session-gerendert ist **NICHT** dasselbe wie ein echter eingeloggter Click-Through. Wenn nur so verifiziert wurde, ist der Status **`PARTIAL`** (Verifikations-Gap nennen), nicht `DONE` — und einen echten Logged-in-Pass empfehlen.
