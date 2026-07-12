@@ -39,7 +39,7 @@ import { CH_DB, chDateTime, toNumber, nonCreatorOwnerCh } from "../_shared";
  * Decimal-string sums (same as the PG twin, which also combines in JS).
  */
 
-export type NetHoldingsHolderCh = {
+type NetHoldingsHolderCh = {
   userId: string;
   username: string | null;
   balanceChange: number;
