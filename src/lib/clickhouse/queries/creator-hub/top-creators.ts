@@ -30,14 +30,14 @@ import { CH_DB, chDateTime } from "@/lib/clickhouse/queries/_shared";
  * no Postgres client.
  */
 
-export type TopCreatorDepositRow = {
+type TopCreatorDepositRow = {
   creator_id: string;
   username: string | null;
   image: string | null;
   deposits: string;
 };
 
-export type CreatorHubTopPeriod = "3d" | "7d" | "14d";
+type CreatorHubTopPeriod = "3d" | "7d" | "14d";
 
 const PERIOD_DAYS: Record<CreatorHubTopPeriod, number> = {
   "3d": 3,
