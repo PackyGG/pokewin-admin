@@ -2,7 +2,7 @@ import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
-import { parseRewardsPeriod, type RewardsPeriod } from "./rewards-analytics";
+import type { RewardsPeriod } from "./rewards-analytics";
 import {
   getDepositBonusCategoryAnalytics,
   type CategoryAnalytics,
@@ -129,10 +129,6 @@ export async function getDepositBonusAnalytics(
     capHitRate,
   };
 }
-
-// Re-export the period parser used by the analytics page so callers
-// outside the page don't need a second import path.
-export { parseRewardsPeriod };
 
 // ── Cohort + distribution extras ──────────────────────────────────────
 
