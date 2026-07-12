@@ -612,7 +612,7 @@ function KpiStrip({
         icon={pnlPos ? TrendingUp : TrendingDown}
         accent={pnlPos ? "emerald" : "rose"}
         value={`${pnlPos ? "+" : "−"}${formatCurrency(Math.abs(pnl))}`}
-        sub="Cash basis · the true bottom line"
+        sub="Lifetime · cash basis · the true bottom line"
       />
       {held !== null && (
         <KpiTile
