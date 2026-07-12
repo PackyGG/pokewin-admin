@@ -15,7 +15,13 @@ function createClient() {
       connectionString:
         process.env.ADMIN_DATABASE_URL_POOLED ?? process.env.ADMIN_DATABASE_URL,
       min: 0,
-      max: 5,
+      // Serverless: EVERY warm lambda holds its own pool against the same
+      // small admin Postgres — a concurrent plan burst at max 5 exhausted
+      // max_connections ("sorry, too many clients already", live incident
+      // 2026-07-12) and auth died first. One Vercel lambda serves one
+      // request; 2 covers intra-request Promise.all fan-out while keeping
+      // the fleet-wide ceiling ~2×instances. Local dev/build keeps 5.
+      max: process.env.VERCEL ? 2 : 5,
       idleTimeoutMillis: 10_000,
       connectionTimeoutMillis: 10_000,
       maxLifetimeSeconds: 600,
@@ -57,8 +63,14 @@ function isConnectionError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const code = (error as { code?: string }).code;
   if (code === "P1017" || code === "P1001" || code === "P2024") return true;
+  // Postgres 53300 too_many_connections: the failure happens BEFORE any
+  // query runs, so the backoff-retry is always safe — by the second attempt
+  // another lambda's idle connections have usually been reaped.
+  if (code === "53300") return true;
   const msg = error.message;
   if (
+    msg.includes("too many clients") ||
+    msg.includes("too many connections") ||
     msg.includes("Connection terminated") ||
     msg.includes("terminated unexpectedly") ||
     msg.includes("connection lost") ||
