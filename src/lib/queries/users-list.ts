@@ -1479,3 +1479,46 @@ const cachedUsersListStats = unstable_cache(
 export async function getUsersListStats(): Promise<UsersListStats> {
   return cachedUsersListStats();
 }
+
+export type MatchingAffiliateCode = {
+  code: string;
+  ownerUserId: string;
+  ownerUsername: string | null;
+};
+
+/**
+ * Affiliate/creator codes matching a case-insensitive PREFIX, with their
+ * owner. Powers the "Matching codes" panel on /users when "Affiliate code
+ * only" search is on, so a code search can jump straight to the code's stats
+ * page (`/creators/codes/<code>`) — not only surface the owner user row
+ * ("option between both", owner 2026-07-12). Read-only; `affiliate_codes` is
+ * ~1k rows so the UPPER(code) prefix scan is sub-ms (same seq-scan note as the
+ * codeSearch leg above — index #32 is flagged in prisma/recommended-indexes.sql).
+ * Escaping mirrors the codeSearch leg (LIKE meta-chars escaped, bound param).
+ */
+export async function getMatchingAffiliateCodes(
+  prefix: string,
+  limit = 24,
+): Promise<MatchingAffiliateCode[]> {
+  const term = prefix.trim();
+  if (!term) return [];
+  const db = await getDb();
+  const lim = Math.max(1, Math.min(100, Math.floor(limit)));
+  const escaped = term.toUpperCase().replace(/[\\%_]/g, (m) => `\\${m}`);
+  const rows = await db.$queryRawUnsafe<
+    { code: string; user_id: string; username: string | null }[]
+  >(
+    `SELECT ac.code, ac.user_id, u.username
+       FROM affiliate_codes ac
+       JOIN "user" u ON u.id = ac.user_id
+      WHERE UPPER(ac.code) LIKE $1 ESCAPE '\\'
+      ORDER BY ac.code ASC
+      LIMIT ${lim}`,
+    `${escaped}%`,
+  );
+  return rows.map((r) => ({
+    code: r.code,
+    ownerUserId: r.user_id,
+    ownerUsername: r.username,
+  }));
+}

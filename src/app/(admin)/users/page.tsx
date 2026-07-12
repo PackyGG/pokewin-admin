@@ -1,9 +1,9 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Users, Ban, Archive, UserPlus, AlertTriangle, X } from "lucide-react";
-import { getUsers, getUsersListStats } from "@/lib/queries/users";
+import { Users, Ban, Archive, UserPlus, AlertTriangle, X, Ticket, ArrowRight } from "lucide-react";
+import { getUsers, getUsersListStats, getMatchingAffiliateCodes } from "@/lib/queries/users";
 import { requirePageAccess } from "@/lib/dal";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, safeQueryOrNull } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
   parseUsersSearchParams,
@@ -250,6 +250,16 @@ export default async function UsersPage({
               {gates.canExportAll && <ExportAllUsersButton />}
             </DataTableToolbar>
           </Suspense>
+          {/* "Affiliate code only" mode: surface the matched CODES as links to
+              their stats page (/creators/codes/<code>) ABOVE the owner rows, so
+              a code search can open the code's stats — not only the owner user
+              ("option between both", owner 2026-07-12). Own Suspense boundary so
+              the code lookup never blocks the user table. */}
+          {params.codeSearch && params.search?.trim() ? (
+            <Suspense fallback={<Skeleton className="h-20 w-full rounded-xl" />}>
+              <MatchingCodesPanel term={params.search.trim()} />
+            </Suspense>
+          ) : null}
           <Suspense
             key={tableKey}
             fallback={
@@ -266,6 +276,45 @@ export default async function UsersPage({
             />
           </Suspense>
         </FadeIn>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Matching codes" panel — shown above the user table when "Affiliate code
+ * only" search is active. Lists each affiliate/creator code matching the typed
+ * prefix as a link to the code's stats page (`/creators/codes/<code>`), so a
+ * code search can open the CODE'S stats — while the owner user rows below stay
+ * reachable ("option between both"). Own Suspense boundary + safeQueryOrNull so
+ * a slow/failed lookup degrades to nothing, never blocks the table.
+ */
+async function MatchingCodesPanel({ term }: { term: string }) {
+  const { data: codes } = await safeQueryOrNull(
+    () => getMatchingAffiliateCodes(term, 24),
+    "users.matchingCodes",
+  );
+  if (!codes || codes.length === 0) return null;
+  return (
+    <div className="rounded-xl border bg-card p-3">
+      <p className="mb-2 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        <Ticket className="size-3.5" />
+        Matching codes — open the code’s stats page
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {codes.map((c) => (
+          <Link
+            key={c.code}
+            href={`/creators/codes/${encodeURIComponent(c.code)}`}
+            className="group inline-flex items-center gap-2 rounded-lg border bg-background px-2.5 py-1.5 text-sm transition-colors hover:bg-muted/50"
+          >
+            <span className="font-mono font-semibold">{c.code}</span>
+            {c.ownerUsername ? (
+              <span className="text-xs text-muted-foreground">· {c.ownerUsername}</span>
+            ) : null}
+            <ArrowRight className="size-3.5 shrink-0 text-muted-foreground transition-transform motion-safe:group-hover:translate-x-0.5" />
+          </Link>
+        ))}
       </div>
     </div>
   );
