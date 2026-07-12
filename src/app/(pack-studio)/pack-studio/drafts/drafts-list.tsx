@@ -205,9 +205,16 @@ function useDraftActions(packId: string, onChange: () => void) {
       if ("refusedMessage" in r) {
         toast.error(r.refusedMessage);
       } else {
-        toast.success(
-          `Pushed to MAIN · edge ${pct(r.before.edge)} → ${pct(r.after.edge)} · price ${formatCurrency(r.before.price)} → ${formatCurrency(r.after.price)}`,
-        );
+        const edgeDown = r.after.edge < r.before.edge - 1e-9;
+        const msg =
+          `Pushed to MAIN · edge ${pct(r.before.edge)} → ${pct(r.after.edge)} · price ${formatCurrency(r.before.price)} → ${formatCurrency(r.after.price)}`;
+        if (edgeDown) {
+          toast.warning(msg, {
+            description: "House edge decreased — verify this was intended.",
+          });
+        } else {
+          toast.success(msg);
+        }
         onChange();
       }
     } catch (err) {
@@ -222,7 +229,13 @@ function useDraftActions(packId: string, onChange: () => void) {
 
 // ─── Diff dropdown ───────────────────────────────────────────────────────
 
-function WeightChangeTable({ rows }: { rows: WeightChangeRow[] }) {
+function WeightChangeTable({
+  rows,
+  packPrice,
+}: {
+  rows: WeightChangeRow[];
+  packPrice: number;
+}) {
   if (rows.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -242,13 +255,21 @@ function WeightChangeTable({ rows }: { rows: WeightChangeRow[] }) {
       <ul className="divide-y">
         {rows.map((r) => {
           // House-POV: a card whose weight WENT UP shifts mass toward that
-          // outcome. If the card is high-value (≥ price worth of a win for
-          // the user) that's BAD for the house → rose. If it's low value
-          // (junk floor) that's GOOD for the house → emerald. We don't have
-          // the price here cheaply, so we color by raw delta as a neutral
-          // proxy (operator reads the absolute numbers + edge tone above).
+          // outcome. If the card is high-value (≥ pack price = a win for the
+          // user) that's BAD for the house → rose. If it's low value (junk
+          // floor, < pack price) that's GOOD for the house → emerald.
+          // Vice versa for weight decreases.
+          const isWinCard = r.value >= packPrice;
           const tone: Tone =
-            r.delta === 0 ? "neutral" : r.delta > 0 ? "emerald" : "rose";
+            r.delta === 0
+              ? "neutral"
+              : r.delta > 0
+                ? isWinCard
+                  ? "rose"
+                  : "emerald"
+                : isWinCard
+                  ? "emerald"
+                  : "rose";
           return (
             <li
               key={r.cardId}
@@ -409,7 +430,7 @@ function DraftDiff({ row }: { row: PendingDraftRow }) {
         <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
           Top weight changes
         </div>
-        <WeightChangeTable rows={weightRows} />
+        <WeightChangeTable rows={weightRows} packPrice={row.proposedPrice} />
       </div>
 
       {row.notes && (
