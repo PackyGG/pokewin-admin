@@ -69,7 +69,7 @@ import { CH_DB, chDateTime, toNumber, nonCreatorOwnerCh } from "../_shared";
  * getExcludedUserIds) so this module never imports a Postgres client.
  */
 
-export type DashboardWindowedPnl = {
+type DashboardWindowedPnl = {
   deposits: number;
   withdrawals: number;
   balanceChange: number;
