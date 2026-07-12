@@ -77,8 +77,8 @@ Warum: Beide Pfade sind die einzigen, die unter realer Last + Concurrency auf de
 2. `page.tsx` = Shell sofort + `<Suspense>` + `loading.tsx` (kein Top-Level-await des heavy Reads).
 3. `safeQuery`/Timeout + `unstable_cache` (Active-Timeframe-Only, keine hidden Tabs/Timespans eager laden).
 4. Money Decimal-safe (`toString(sum)`→`toNumber`, nie Float), House-POV-Farben.
-5. tsc + lint grün (+ `npm run build` wenn die Änderungsklasse es verlangt, § Minimal-Overhead). Browser-/Render-Check nur wenn der Owner das in der Message explizit anfragt — sonst push ohne Render (§ Minimal-Overhead, 2026-07-12).
-6. CH-Twin (falls gebaut) bleibt dormant (off/comparison) bis cent/count-exakte Parität (`TZ=UTC`, zweimal) **und** Logged-in-Render-Check — erst dann in `CUTOVER_DEFAULT_CLICKHOUSE`.
+5. tsc + lint grün (+ `npm run build` wenn die Änderungsklasse es verlangt, § Minimal-Overhead). **Kein Playwright/Render-Check — niemals, auch nicht für neue Pages** (§ Done-Kriterien, 2026-07-12).
+6. CH-Twin (falls gebaut) bleibt dormant (off/comparison) bis cent/count-exakte Parität (`TZ=UTC`, zweimal) **durch den automatisierten Parity-Harness** (kein Playwright-Render) — erst dann in `CUTOVER_DEFAULT_CLICKHOUSE`.
 
 **Volle Mechanik (Caching, Suspense-Streaming, Active-Timeframe-Only, `safeQuery`, House-POV-Farben, Checkliste neue Page):** **`docs/BACKEND_QUERY_SYSTEM.md`** — vor jeder Read-/Page-Arbeit lesen. Diese Regel hebt KEINE der Prod-DB-Regeln auf (MAIN bleibt read-only).
 
@@ -96,7 +96,7 @@ Warum: Beide Pfade sind die einzigen, die unter realer Last + Concurrency auf de
   - Run the full **`npm run build` ONLY when the change can break what ONLY the build catches**: Server↔Client (RSC) boundaries, new/changed imports or exports, types, data flow, new deps, or route/config/prisma-generate changes.
 - **No redundant re-verification:** skip the separate composed-main build unless MULTIPLE agents changed INTERDEPENDENT code in the same area. One fitting gate → push.
 - **No unneeded ceremony:** no browser render unless asked; no belt-and-suspenders double-checks; don't spin a fresh worktree + full `npm install` for a trivial edit that can be shipped cleanly without it.
-- **NO headless rendering / Playwright / screenshots to verify UI before pushing (Owner, 2026-07-12, EXPLICIT — verbatim: "u dont need to render or playwright anything, just push"):** for ANY UI/design change, do NOT start the dev server, the responsive Playwright harness (`e2e/responsive/*`), the dev fixtures (`src/app/responsive-fixture/*`), or any screenshot/visual-verify pass as a pre-push gate. The gate for a UI change is `npx tsc --noEmit` + `npm run lint` (full `npm run build` only when the change-class above requires it) → then **push**. The OWNER reviews the visual result himself in his browser. This applies to the main agent AND every background/workflow/sub-agent — never brief an agent to render/screenshot a UI change. Rendering/Playwright happens ONLY when the owner explicitly asks for it in that message.
+- **NO headless rendering / Playwright / screenshots — EVER, absolute, permanent ban (Owner, 2026-07-12, EXPLICIT — verbatim: "never do playwright render check, never ever fucking do such useless shit!"; earlier verbatim: "u dont need to render or playwright anything, just push"):** for ANY UI/design change, do NOT start the dev server, the responsive Playwright harness (`e2e/responsive/*`), the dev fixtures (`src/app/responsive-fixture/*`), or any screenshot/visual-verify pass as a pre-push OR post-push gate — not even for a new page, not even for a redesign, not even when it "feels like it should be checked visually." The gate for a UI change is `npx tsc --noEmit` + `npm run lint` (full `npm run build` only when the change-class above requires it) → then **push**. The OWNER reviews the visual result himself in his browser. This applies to the main agent AND every background/workflow/sub-agent — never brief an agent to render/screenshot a UI change, and never let an agent decide on its own that "this case needs a visual check." The old JWT-mint + Playwright fallback mechanic for when no live browser is available is **removed entirely**, not just de-prioritized (§ Done-Kriterien). The ONLY exception: the owner explicitly asks for a live interactive check in that exact message — a deliberate one-off request, never a standing default or an agent's own judgment call.
 
 **Hard floor — this rule does NOT override these (NEVER skipped):** MAIN / prod-DB stays strictly read-only; never commit `.env` / secrets / `src/generated` / `recent-pushes.json`; the Index-or-ClickHouse backend rule; and honest reporting. Speed means cutting *verification overhead* — NEVER skipping *safety* rules or misreporting what was actually checked.
 
@@ -159,40 +159,35 @@ _The parallel-by-default mandate this section used to carry is gone (see § Arbe
 
 ---
 
-## 🔒 Browser-Verifikation & Done-Kriterien (CRITICAL)
+## 🔒 Done-Kriterien — KEIN Playwright/Render-Check, absolut, ausnahmslos (CRITICAL, neu geschrieben 2026-07-12)
 
-> **Owner-Override (2026-07-02, verschärft 2026-07-12, gilt für alle Agents/Modelle in diesem Repo):** Keine Browser-Verifikation nötig, bevor gepusht wird — einfach pushen. Und nach dem Push muss NICHT bestätigt werden, ob der Push/Deploy live gegangen ist oder sonst irgendwas dazu nachgeprüft werden. `tsc` + `lint` grün (+ `npm run build` wo praktikabel) reichen als Gate; Punkt 5 ("Bei UI-/Admin-Aufgaben: Browser-Verifikation erfolgt") in der Done-Checkliste unten ist damit ausgesetzt. **Punkt 7 (Playwright-Fallback-Mechanik) ist ebenfalls kein Default mehr** — die Minimal-Overhead-Regel (2026-07-12) sagt explizit: kein Rendering/Playwright vor dem Push, außer der Owner fragt es in der jeweiligen Message an. Der Rest der Sektion (Definition of Done Punkte 1–4/6, Regression-Sweep, Incident-Modus, Honest Reporting) bleibt unverändert gültig.
+**Owner (verbatim, 2026-07-12): "never do playwright render check, never ever fucking do such useless shit!"** Das ist ein **permanentes, absolutes Verbot** — kein Default, der wieder anspringen darf. **Kein Agent, kein Background-Agent, kein Workflow-Schritt minted jemals eine Session, startet Playwright, fährt den `e2e/responsive/*`-Harness / `mint-session.ts` / die Dev-Fixtures, oder macht einen Screenshot-Pass, um eine Änderung vor oder nach dem Push zu "verifizieren".** Das gilt auch wenn die Aufgabe UI-lastig wirkt, auch bei einem Redesign, auch wenn "eigentlich visuell geprüft werden sollte" — der Owner prüft visuell selbst, in seinem eigenen Browser, wenn er will. Ein Agent, der sich selbst per Playwright "bestätigt", IST genau das verschwendete-Zeit-Muster, das hier verboten ist. Einzige Ausnahme: der Owner fragt in der AKTUELLEN Message explizit einen interaktiven Live-Check an — das ist eine bewusste Einzelanfrage in dem Moment, kein automatischer Agent-Reflex, und fällt nicht unter dieses Verbot.
+
+**Alte Fallback-Mechanik (JWT minten + Playwright-Harness fahren, ehemals Punkt 7) ist ersatzlos gestrichen** — nicht nur "kein Default mehr", sondern komplett aus dem Workflow entfernt. Kein Agent soll sie überhaupt in Betracht ziehen.
 
 Für jede Aufgabe, die UI, Routing, Rendering, Interaktionen, Filter, Search, Pagination, Tabs, Drawers, Modals, Charts, KPI-Panels oder sichtbare Daten im Admin betrifft, gilt:
 
-### 1. Browser-Verifikation ist Pflicht
-- Eine Aufgabe gilt **nicht** als erledigt, nur weil Code geschrieben wurde, `tsc` grün ist oder `lint` grün ist.
-- Wenn die betroffene Änderung im Browser sichtbar oder testbar ist, muss sie **im Browser verifiziert** werden, bevor "fertig", "fixed" oder "done" gesagt wird.
-- "Sollte funktionieren", "likely fixed", "wahrscheinlich", "bitte hard refreshen" sind **verbotene Abschlussformulierungen**, wenn keine echte Browser-Prüfung gemacht wurde.
-- Wenn Browser-Zugriff verfügbar ist, ist Browser-Verifikation der Standard, nicht die Ausnahme.
-
-### 2. Definition of Done (verbindlich)
+### 1. Definition of Done (verbindlich)
 Eine Aufgabe ist nur dann `DONE`, wenn **alle** Punkte erfüllt sind:
 1. Relevanter Code ist umgesetzt.
 2. `tsc --noEmit` ist grün.
-3. `npm run lint` ist grün.
-4. Der betroffene Flow / die betroffene Route wurde real validiert.
-5. Bei UI-/Admin-Aufgaben: Browser-Verifikation erfolgt.
-6. Keine offensichtliche Regression in direkt betroffenen Nachbar-Flows.
+3. `npm run lint` ist grün (+ `npm run build` nur wenn die Änderungsklasse es verlangt, § Minimal-Overhead).
+4. Der betroffene Flow wurde durch Code-/Datenpfad-Lesen validiert — **nicht durch Rendern**.
+5. Keine offensichtliche Regression in direkt betroffenen Nachbar-Flows (per Code-Lesen geprüft, nicht per Click-Through).
 
 Wenn einer dieser Punkte fehlt:
 - Status = `IN PROGRESS`, `PARTIAL`, `PROPOSED` oder `BLOCKED`, **nicht** `DONE`.
 
-### 3. Regression-Sweep bei Shared Changes
+### 2. Regression-Sweep bei Shared Changes
 Wenn eine Änderung eine Shared-Datei betrifft (z. B. Hooks, Query-Utilities, Layout, Table-Komponenten, Filter-Bar, Panels, gemeinsame UI-Komponenten, gemeinsame Server-Queries), dann reicht die Verifikation der Ursprungsseite nicht aus.
 
-Dann müssen zusätzlich alle offensichtlichen Consumer geprüft werden:
+Dann müssen zusätzlich alle offensichtlichen Consumer **per Code-Lesen** geprüft werden:
 - gleiche Komponente auf anderen Seiten,
 - gleiche Query-/Filter-Logik in Schwester-Routen,
 - gleiche Layout-/Toolbar-Struktur,
 - gleiche KPI-/Chart-/Table-Container.
 
-### 4. Incident-Modus bei "still broken"
+### 3. Incident-Modus bei "still broken"
 Wenn der User Formulierungen benutzt wie:
 - "still broken"
 - "immer noch kaputt"
@@ -204,30 +199,24 @@ dann gilt automatisch Incident-Modus:
 - kein nice-to-have scope creep,
 - kein vorzeitiges Zusammenfassen,
 - kein Wechsel auf Nebenthemen,
-- Fokus auf reproduzieren → fixen → browser-verifizieren → nochmal prüfen.
+- Fokus auf reproduzieren (per Code/Daten/Logs, nicht per Playwright) → fixen → nochmal am Code prüfen → pushen.
 
-In Incident-Modus ist die Aufgabe erst abgeschlossen, wenn das Problem auf der betroffenen Live-/Admin-Route im Browser nicht mehr reproduzierbar ist.
+In Incident-Modus ist die Aufgabe erst abgeschlossen, wenn der Fix im Code nachweislich sitzt (Root-Cause benannt + behoben) — der Owner bestätigt das Live-Verhalten selbst.
 
-### 5. Performance-Verifikation für Tabs / Timespans
+### 4. Performance-Verifikation für Tabs / Timespans
 Bei Seiten mit Perioden-/Timeframe-/Tab-Umschaltung gilt zusätzlich:
 - Initial darf nur der aktive Tab + aktive Zeitraum laden.
 - Versteckte Tabs oder andere Zeitfenster dürfen nicht eager geladen werden.
-- Nach Änderungen an solchen Seiten muss geprüft werden, dass dieses Verhalten eingehalten wird.
+- Nach Änderungen an solchen Seiten wird dieses Verhalten **im Code** geprüft (welche Fetches feuern bei welchem State) — nicht per Browser-Klick-Through.
 
-### 6. Honest Completion Reporting
+### 5. Honest Completion Reporting
 Erlaubte Status-Wörter:
 - `DONE` = vollständig umgesetzt und verifiziert
 - `PARTIAL` = teils umgesetzt, aber noch nicht vollständig verifiziert oder noch offene Punkte
 - `PROPOSED` = nur analysiert / Patch vorgeschlagen, nicht angewendet
 - `BLOCKED` = konnte nicht abgeschlossen werden, Grund nennen
 
-**"DONE" ohne Verifikation ist verboten.**
-
-### 7. UI-Verifikation ohne Live-Browser (nur wenn der Owner Browser-Check explizit angefragt hat, Session-Learning 2026-06-05)
-**Kein Default-Pfad mehr** (§ Minimal-Overhead, 2026-07-12: kein Rendering/Playwright vor dem Push ohne explizite Owner-Anfrage). Nur relevant, wenn der Owner in der Message tatsächlich einen Browser-Check will UND **kein** live eingeloggter Browser verfügbar ist (Chrome-Extension offline):
-- **Admin-Session minten:** ein `admin_session` JWT signieren (mit `SESSION_SECRET`, exakt nach `src/lib/session.ts`; einen aktiven Admin **read-only** aus der ADMIN-DB lesen) und **Playwright** über die Routen fahren. Wiederverwendbarer Harness: `e2e/responsive/*` + `playwright.responsive.config.ts` (Mint-Helper: `e2e/responsive/mint-session.ts`).
-- **Lokale Game-DB ist stale** (fehlende Tables → live Admin-Pages werfen lokal). Pages, die deshalb nicht rendern, über **dev-only Fixtures** rendern: `src/app/responsive-fixture/*`.
-- **Ehrlich bleiben:** build-verified + fixture-/minted-session-gerendert ist **NICHT** dasselbe wie ein echter eingeloggter Click-Through. Wenn nur so verifiziert wurde, ist der Status **`PARTIAL`** (Verifikations-Gap nennen), nicht `DONE` — und einen echten Logged-in-Pass empfehlen.
+**"DONE" ohne Verifikation ist verboten — aber Verifikation heißt Gates + Code-Lesen, NICHT Playwright/Render.**
 
 ---
 
