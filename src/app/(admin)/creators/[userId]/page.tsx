@@ -10,7 +10,6 @@ import {
   HandCoins,
   Info,
   MousePointerClick,
-  Star,
   TrendingUp,
   UserPlus,
   Users,
@@ -24,16 +23,12 @@ import {
 } from "@/lib/queries/creators";
 import { requirePageAccess } from "@/lib/dal";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
-import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PageHero, SectionHeading, KpiTile } from "@/components/modern-panels";
+import { SectionHeading, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
-import { MaskedEmail } from "./masked-email";
-import { HeaderSocials } from "./header-socials";
 import { RoleSelect } from "./role-select";
 import { FunnelTable } from "./funnel-table";
 import { WagerBreakdownCard } from "./wager-breakdown-card";
@@ -47,7 +42,6 @@ import { compareCreatorsDetailAggregates } from "@/lib/clickhouse/compare/creato
 
 import { parseCreatorDetailSearchParams } from "./_lib/search-params";
 import { getCreatorDealData } from "./_queries/get-creator-deal-data";
-import { getCreatorHeaderSocials } from "./_queries/header-socials";
 import { getCodeAndWagerByUser } from "../_queries/code-and-wager-by-user";
 import { DealTabs } from "./_components/deal-tabs";
 import { DealsTab } from "./_components/deals-tab";
@@ -146,68 +140,25 @@ export default async function CreatorDetailPage({
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <div className="flex items-start gap-2.5 sm:gap-3 flex-wrap">
-          <Link
-            href="/creators"
-            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
-          >
-            <ArrowLeft className="size-4" />
-          </Link>
-          <Avatar className="size-10 sm:size-11 shrink-0">
-            {header.image && <AvatarImage src={header.image} alt="" />}
-            <AvatarFallback className="text-xs font-semibold">
-              {(header.username ?? header.email ?? "?")
-                .slice(0, 2)
-                .toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
-          <div className="hidden sm:flex size-10 items-center justify-center rounded-xl bg-pink-500/10 shrink-0">
-            <Star className="size-5 text-pink-500" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex min-w-0 items-center gap-2 flex-wrap">
-              <Link
-                href={`/users/${header.userId}`}
-                className="min-w-0 text-xl sm:text-2xl font-bold leading-tight hover:underline line-clamp-1"
-              >
-                {header.username ?? header.email}
-              </Link>
-              {header.code ? (
-                <Badge variant="outline" className="font-mono text-[11px]">
-                  {header.code}
-                </Badge>
-              ) : (
-                <Badge variant="secondary" className="text-[11px]">
-                  No affiliate code
-                </Badge>
-              )}
-              <span className="hidden sm:inline text-muted-foreground/40">·</span>
-              <RoleSelect userId={header.userId} currentRole={header.role} />
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-              {header.email && <MaskedEmail email={header.email} />}
-              {/* Socials chips stream in their own boundary so the hero
-                  text paints instantly; a thin admin-DB read (not the heavy
-                  analytics aggregate) backs them. */}
-              <Suspense
-                fallback={
-                  <span className="inline-flex items-center rounded-md border border-dashed px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                    …
-                  </span>
-                }
-              >
-                <HeaderSocialsStreamed userId={header.userId} />
-              </Suspense>
-            </div>
-          </div>
+      {/* Controls row — the creator identity header (avatar / name / code /
+          role chip / email / socials) went with the de-boxed hero; the
+          page-level controls stay: back to the list on the left, the role
+          selector + API-key dialog on the right. */}
+      <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
+        <Link
+          href="/creators"
+          aria-label="Back to creators"
+          className="inline-flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
+        >
+          <ArrowLeft className="size-4" />
+        </Link>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <RoleSelect userId={header.userId} currentRole={header.role} />
           {header.role === "creator" && (
-            <div className="ml-auto shrink-0">
-              <ApiKeyDialog userId={header.userId} />
-            </div>
+            <ApiKeyDialog userId={header.userId} />
           )}
         </div>
-      </PageHero>
+      </div>
 
       <FadeIn className="space-y-4 sm:space-y-6">
         {/* 1 ── Display boxes (KPI strip) — top of page. Owns the FIRST
@@ -310,17 +261,6 @@ export default async function CreatorDetailPage({
       </FadeIn>
     </div>
   );
-}
-
-// ── Streamed header socials ──────────────────────────────────────────
-//
-// Thin admin-DB read of the creator's connected-social chips, streamed so
-// the hero text never waits on it. Best-effort: a failure renders the
-// "No socials linked" empty state (HeaderSocials with []) rather than
-// crashing the hero.
-async function HeaderSocialsStreamed({ userId }: { userId: string }) {
-  const socials = await getCreatorHeaderSocials(userId).catch(() => []);
-  return <HeaderSocials socials={socials} />;
 }
 
 // ── Shared getCreatorDetail() result ──────────────────────────────────

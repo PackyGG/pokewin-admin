@@ -3,7 +3,6 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { pressable } from "@/components/ux/motion";
-import { SparkleField } from "@/components/decor";
 
 /**
  * Shared modern UI primitives. Extracted so every admin page can apply
@@ -12,7 +11,13 @@ import { SparkleField } from "@/components/decor";
  *
  * Primitives:
  *   - TILE_COLORS         — accent color tokens (blue / emerald / rose / …)
- *   - PageHero            — gradient hero block with soft corner glows
+ *   - PageHero            — de-boxed page-top slot (renders its children in a
+ *                           plain container; the old gradient/glow title box
+ *                           was dropped per owner direction)
+ *   - PageHeroIdentity    — controls-only page-top row (back on the left,
+ *                           action on the right); the generic icon-chip +
+ *                           title + subtitle block it used to render was
+ *                           removed as useless chrome
  *   - SectionHeading      — icon chip + title, used to open a section
  *   - KpiTile             — compact flat stat tile; accent tints icon + value only
  *   - StatPanel           — larger flat stat card (solid bg-card + soft shadow)
@@ -23,8 +28,10 @@ import { SparkleField } from "@/components/decor";
  * FILL, the diagonal white sheen, and the blurred corner-glow blobs were the
  * layered noise that read as "not clean" — dropped. TILE_COLORS now drives
  * ONLY the icon + the value number (and the small StatPanel icon chip), never
- * the tile background. PageHero keeps its hero treatment (it is a hero, not a
- * tile) and is intentionally left unchanged.
+ * the tile background. PageHero itself was later de-boxed too: the owner found
+ * the generic page-title header box (gradient + corner glows + sparkle) to be
+ * useless chrome, so PageHero now renders its children in a plain container and
+ * PageHeroIdentity renders only the page controls (back + action).
  */
 
 export type AccentColor =
@@ -86,20 +93,23 @@ export const TILE_COLORS: Record<
 // ─── PageHero ─────────────────────────────────────────────────────
 
 /**
- * Rounded gradient container with subtle blue/purple corner glows.
- * Use at the top of a page instead of a bare <h1>. Children go inside
- * the relative padded area.
+ * De-boxed page-top slot.
  *
- * Mobile-first responsive notes:
- *   - Padding scales from p-4 (16px) on phones to p-6 (24px) on tablets+.
- *     Less inner padding lets the hero breathe on narrow viewports
- *     instead of swallowing half the screen with chrome.
- *   - Corner glows shrink to size-48 (12rem) on phones — at 24rem the
- *     blur covers the entire hero on a 360px screen and bleeds the
- *     accent into surrounding content. Sized up to 18rem at sm and the
- *     original 18rem stays at md+.
- *   - Border-radius narrows on phones (rounded-xl → rounded-2xl) so the
- *     hero hugs the screen edges instead of leaving large empty corners.
+ * Historically this was a rounded gradient container with blurred corner
+ * glows + a sparkle texture — the "hero box" at the top of every admin page.
+ * The owner found that generic title box to be useless chrome, so the whole
+ * decorative treatment (gradient, three `blur-3xl` glows, `SparkleField`,
+ * `surface-sheen`/`surface-raise`, border, `rounded-2xl/3xl`, the heavy
+ * `p-5 sm:p-6` padding, and the top hairline highlight) was dropped.
+ *
+ * PageHero now renders its children in a plain container with no visual
+ * chrome. Vertical separation from the section below is owned by the parent
+ * page's `space-y-*` stack (every call site wraps the page in one), exactly
+ * as before — the old box carried no margin of its own either. The
+ * `className` passthrough is preserved so a caller can still tweak the slot.
+ *
+ * Paired with `PageHeroIdentity` (below), which now renders only the page
+ * controls (back + action) instead of the icon-chip + title + subtitle block.
  */
 export function PageHero({
   children,
@@ -108,86 +118,33 @@ export function PageHero({
   children: React.ReactNode;
   className?: string;
 }) {
-  return (
-    <div
-      className={cn(
-        "surface-sheen surface-raise relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/50 sm:rounded-3xl",
-        className,
-      )}
-    >
-      {/* Corner glows — slightly richer than before (0.06 → 0.10) and a
-          third subtle cyan wash at top-center for depth. Still soft and
-          low-opacity so the hero reads premium, not gaudy. Purely
-          decorative, so each glow hides under `prefers-reduced-motion`
-          via `motion-reduce:opacity-0` / `motion-safe:opacity-100`. The
-          base opacity stays at 100% for reduced-motion-unaware browsers
-          and is explicitly held to 100% under `motion-safe` so the
-          intent is symmetric and obvious in the markup. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-24 -top-24 size-56 rounded-full bg-blue-500/[0.10] blur-3xl motion-reduce:opacity-0 motion-safe:opacity-100 sm:size-80"
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -left-24 -bottom-24 size-56 rounded-full bg-purple-500/[0.09] blur-3xl motion-reduce:opacity-0 motion-safe:opacity-100 sm:size-80"
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute left-1/2 -top-32 size-64 -translate-x-1/2 rounded-full bg-cyan-500/[0.04] blur-3xl motion-reduce:opacity-0 motion-safe:opacity-100"
-      />
-      {/* Sparkle texture — the owner-supplied 4-point-star ornament,
-          tucked into the top-right corner and fading out radially. Warm
-          champagne at a whisper on dark; a faint primary tint on light.
-          Pattern-based single <svg>, aria-hidden, pointer-events-none —
-          pure texture, never behind dense data. */}
-      <SparkleField className="inset-y-0 right-0 w-72 text-primary/[0.05] sm:w-96 dark:text-amber-100/[0.09]" />
-      {/* Hairline top highlight — a crisp light catch along the very top
-          edge that makes the panel feel lifted on the dark theme. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent"
-      />
-      <div className="relative p-5 sm:p-6">{children}</div>
-    </div>
-  );
+  return <div className={cn(className)}>{children}</div>;
 }
 
 // ─── PageHeroIdentity ─────────────────────────────────────────────
-// Optional helper that captures the dominant page-hero pattern across
-// the codebase: icon-chip + title + subtitle, with a flex slot that
-// stacks under the identity block on phones (instead of fighting it
-// for horizontal space). Existing pages composing PageHero by hand
-// keep working — this is purely opt-in.
+// Controls-only page-top row.
 //
-// Optional, additive props (all default to the original behaviour when
-// omitted, so existing call sites render identically):
-//   - accent      — tints the icon chip with a TILE_COLORS token
-//                   (rose / pink / amber / emerald / cyan / …). When
-//                   omitted the chip stays on the neutral `primary`
-//                   tint, exactly as before.
-//   - backHref    — renders the standard leading ArrowLeft link (the
-//                   detail-page "back to list" affordance). Markup
-//                   matches the hand-rolled `<Link>` blocks it replaces.
-//   - back        — escape hatch for a custom leading node (e.g. the
-//                   <BackButton> client component that calls
-//                   router.back()). Takes precedence over backHref.
-//   - badges      — inline nodes rendered after the title (status /
-//                   type badges on detail pages).
-//   - titleClassName / subtitleClassName — extra classes appended to
-//                   the title / subtitle (e.g. `font-mono` for code
-//                   and id headers).
+// This used to render the dominant page-hero pattern (icon-chip + title +
+// subtitle + optional status badges). The owner found that generic title
+// block to be useless chrome, so it was removed. PageHeroIdentity now renders
+// ONLY the page controls, in a slim horizontal row:
+//   • the leading back affordance (`back` / `backHref`) on the LEFT, and
+//   • the `action` slot (page buttons / filters / period selectors) on the
+//     RIGHT.
+//
+// The full prop signature is intentionally kept intact. Every existing call
+// site still passes `icon` / `title` / `subtitle` / `accent` / `badges` /
+// `titleClassName` / `subtitleClassName`; those props are still ACCEPTED (so
+// all call sites compile unchanged) but are no longer rendered. Only `action`,
+// `backHref`, and `back` drive output.
+//
+// When a call site passes NEITHER a back affordance NOR an action, there is
+// nothing to show and the component renders `null` (no empty chrome).
 
 export function PageHeroIdentity({
-  icon: Icon,
-  title,
-  subtitle,
   action,
-  accent,
   backHref,
   back,
-  badges,
-  titleClassName,
-  subtitleClassName,
 }: {
   icon: React.ElementType;
   title: React.ReactNode;
@@ -200,12 +157,12 @@ export function PageHeroIdentity({
   titleClassName?: string;
   subtitleClassName?: string;
 }) {
-  const colors = accent ? TILE_COLORS[accent] : null;
-  // Leading back affordance: an explicit node wins, otherwise a
-  // backHref renders the standard ArrowLeft link used across detail
-  // pages. Nothing renders when neither is supplied.
-  const backNode = back ?? (
-    backHref ? (
+  // Leading back affordance: an explicit node wins, otherwise a backHref
+  // renders the standard ArrowLeft link used across detail pages. Nothing
+  // renders when neither is supplied.
+  const backNode =
+    back ??
+    (backHref ? (
       <Link
         href={backHref}
         aria-label="Back to previous list"
@@ -213,65 +170,24 @@ export function PageHeroIdentity({
       >
         <ArrowLeft className="size-4" aria-hidden />
       </Link>
-    ) : null
-  );
+    ) : null);
+
+  // No back + no action → render nothing. The de-boxed hero has no title to
+  // stand in for, so an empty row would just be dead space at the page top.
+  if (!backNode && !action) return null;
+
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-      <div className="flex min-w-0 items-center gap-3">
-        {backNode}
-        <div
-          className={cn(
-            "flex size-9 shrink-0 items-center justify-center rounded-xl border shadow-sm ring-1 ring-inset ring-white/10 sm:size-10",
-            colors ? colors.bg : "border-primary/20 bg-primary/10",
-          )}
-        >
-          <Icon
-            className={cn(
-              "size-[18px] sm:size-5",
-              colors ? colors.icon : "text-primary",
-            )}
-          />
-        </div>
-        <div className="min-w-0">
-          {/* Wrap title + badges in a flex row only when badges are
-              present; without them the h1 stays a plain block child so
-              existing call sites render byte-for-byte the same. */}
-          {badges ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <h1
-                className={cn(
-                  "text-lg font-bold leading-tight tracking-tight sm:text-xl md:text-2xl",
-                  titleClassName,
-                )}
-              >
-                {title}
-              </h1>
-              {badges}
-            </div>
-          ) : (
-            <h1
-              className={cn(
-                "text-lg font-bold leading-tight tracking-tight sm:text-xl md:text-2xl",
-                titleClassName,
-              )}
-            >
-              {title}
-            </h1>
-          )}
-          {subtitle && (
-            <p
-              className={cn(
-                "text-xs text-muted-foreground sm:text-sm",
-                subtitleClassName,
-              )}
-            >
-              {subtitle}
-            </p>
-          )}
-        </div>
-      </div>
+    // Slim, compact controls row. Wraps on very narrow viewports so a wide
+    // action cluster can drop below the back button instead of overflowing.
+    // `mb-4 sm:mb-6` gives the content below breathing room (and collapses
+    // harmlessly into the page's own `space-y-*` stack where one is used).
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-2 sm:mb-6 sm:gap-3">
+      {/* Back on the left (own min-w-0 cell, so it anchors the row even when
+          empty — keeps a lone action pinned to the right via justify-between). */}
+      <div className="flex min-w-0 items-center gap-2">{backNode}</div>
+      {/* Action on the right (page buttons / filters / period selectors). */}
       {action && (
-        <div className="flex shrink-0 items-center gap-2 sm:self-center">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {action}
         </div>
       )}

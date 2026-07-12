@@ -5,7 +5,6 @@ import Link from "next/link";
 import { AlertTriangle, ArrowLeft, RotateCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { PageHero } from "@/components/modern-panels";
 
 /**
  * Segment-level error boundary for `/creator-hub/tips-sponsors`.
@@ -35,7 +34,7 @@ export default function CreatorHubTipsSponsorsError({
 
   return (
     <div className="space-y-5 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
-      <PageHero>
+      <div className="rounded-xl border bg-card p-5 sm:p-6">
         <div className="flex items-start gap-3">
           <div className="flex size-11 items-center justify-center rounded-xl bg-rose-500/10 ring-1 ring-rose-500/30">
             <AlertTriangle className="size-5 text-rose-500" />
@@ -56,7 +55,7 @@ export default function CreatorHubTipsSponsorsError({
             </p>
           </div>
         </div>
-      </PageHero>
+      </div>
 
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <p className="text-xs text-muted-foreground">

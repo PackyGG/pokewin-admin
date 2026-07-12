@@ -8,8 +8,6 @@ import {
   getCodeReferrals,
 } from "@/lib/queries/creators";
 import { requirePageAccess } from "@/lib/dal";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SectionHeadingSkeleton } from "@/components/loading-skeletons";
 import {
@@ -20,7 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PageHero, SectionHeading } from "@/components/modern-panels";
+import { SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
@@ -59,45 +57,18 @@ export default async function CreatorUsersPage({
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <div className="flex items-start gap-3 flex-wrap">
-          <Link
-            href={`/creators/${userId}`}
-            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
-            aria-label="Back to creator detail"
-          >
-            <ArrowLeft className="size-4" />
-          </Link>
-          <Avatar className="size-10 sm:size-11 shrink-0">
-            {profile.image && <AvatarImage src={profile.image} alt="" />}
-            <AvatarFallback className="text-xs font-semibold">
-              {(profile.username ?? profile.email ?? "?").slice(0, 2).toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <Link
-                href={`/creators/${userId}`}
-                className="text-xl sm:text-2xl font-bold leading-tight hover:underline truncate"
-              >
-                {profile.username ?? profile.email}
-              </Link>
-              {profile.code ? (
-                <Badge variant="outline" className="font-mono text-[11px]">
-                  {profile.code}
-                </Badge>
-              ) : (
-                <Badge variant="secondary" className="text-[11px]">
-                  No affiliate code
-                </Badge>
-              )}
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
-              Users who signed up, deposited, or wagered on this creator&apos;s code.
-            </p>
-          </div>
-        </div>
-      </PageHero>
+      {/* Controls row — the creator identity (avatar / name / code / blurb)
+          went with the de-boxed hero; the back-to-detail link stays. The
+          CodeActivityNav pill tabs below still switch between users / wagers. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Link
+          href={`/creators/${userId}`}
+          className="inline-flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
+          aria-label="Back to creator detail"
+        >
+          <ArrowLeft className="size-4" />
+        </Link>
+      </div>
 
       {/* Pill-tab nav so the admin can flip between the two
           code-activity views without going back to the creator page. */}

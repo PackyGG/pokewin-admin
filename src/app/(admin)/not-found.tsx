@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { FileQuestion, ArrowLeft, LayoutDashboard } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { PageHero } from "@/components/modern-panels";
 
 /**
  * 404 boundary for the entire `(admin)` route group.
@@ -33,7 +32,7 @@ export default function AdminNotFound() {
 
   return (
     <div className="space-y-5 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
-      <PageHero>
+      <div className="rounded-xl border bg-card p-5 sm:p-6">
         <div className="flex items-start gap-3">
           <div className="flex size-11 items-center justify-center rounded-xl bg-blue-500/10 ring-1 ring-blue-500/30">
             <FileQuestion className="size-5 text-blue-500" />
@@ -49,7 +48,7 @@ export default function AdminNotFound() {
             </p>
           </div>
         </div>
-      </PageHero>
+      </div>
 
       <div className="flex flex-wrap items-center gap-2">
         <Button

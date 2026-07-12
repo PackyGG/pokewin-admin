@@ -20,51 +20,31 @@ import { cn } from "@/lib/utils";
 // ─── PageHero ─────────────────────────────────────────────────────────────
 
 /**
- * Mirrors <PageHero> — gradient shell with soft corner glows, icon chip,
- * title line, subtitle line. Set `action` to reserve room for the trailing
- * button/filter that lives on the right side of the hero.
+ * Mirrors the de-boxed <PageHero> / <PageHeroIdentity> (see modern-panels).
  *
- * Responsive shape matches PageHero exactly: smaller corner glows on
- * phones, softer rounded-xl on phones, padding p-4 → p-6 across
- * breakpoints, and the action slot stacks under the identity block at
- * <sm so it doesn't compete with the title on a 360px viewport.
+ * The gradient hero title box was removed as useless chrome — the real hero
+ * now renders ONLY the page controls (a slim back + action row), or nothing at
+ * all when a page has no controls. This skeleton matches that so loading never
+ * flashes the old box:
+ *   • no `action` → render NOTHING (the loaded hero has no controls either),
+ *   • with `action` → a slim right-aligned control placeholder.
+ *
+ * `subtitle` is still accepted for call-site compatibility but has no effect
+ * (the de-boxed hero has no title/subtitle to mirror).
  */
 export function PageHeroSkeleton({
-  subtitle = true,
   action = false,
 }: {
-  /** Render a subtitle line under the title. Defaults to true. */
+  /** Accepted for call-site compatibility; no longer rendered. */
   subtitle?: boolean;
-  /** Reserve trailing space for a hero-level button / filter. */
+  /** Reserve trailing space for a page-level control (period selector /
+   *  button) shown in the de-boxed hero's controls row. */
   action?: boolean;
 }) {
+  if (!action) return null;
   return (
-    // Mirrors PageHero's Liquid-Glass shape exactly: rounded-2xl →
-    // rounded-3xl at sm, p-5 → p-6 at sm — so the skeleton reserves the
-    // same box the real hero paints into (zero CLS).
-    <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/60 sm:rounded-3xl">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-24 -top-24 size-48 rounded-full bg-blue-500/[0.06] blur-3xl sm:size-72"
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -left-24 -bottom-24 size-48 rounded-full bg-purple-500/[0.06] blur-3xl sm:size-72"
-      />
-      <div className="relative p-5 sm:p-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <Skeleton className="size-9 shrink-0 rounded-xl sm:size-10" />
-            <div className="min-w-0 space-y-2">
-              <Skeleton className="h-5 w-32 sm:h-6 sm:w-40" />
-              {subtitle && <Skeleton className="h-3 w-48 sm:h-4 sm:w-64" />}
-            </div>
-          </div>
-          {action && (
-            <Skeleton className="h-9 w-full max-w-[160px] rounded-md sm:w-32" />
-          )}
-        </div>
-      </div>
+    <div className="mb-4 flex items-center justify-end sm:mb-6">
+      <Skeleton className="h-9 w-full max-w-[160px] rounded-md sm:w-32" />
     </div>
   );
 }
