@@ -88,13 +88,6 @@ export async function getUserInventory(
         rarity: card?.rarity ?? null,
         value: toNumber(item.value_at_obtained),
         sourceType: item.source_type,
-        // The originating game_sessions.id for pack/reward/battle/upgrader
-        // rows (verified against prod: 100% for pack/battle, ~100% for
-        // reward). Null for exchange (never set) and unresolved for raffle
-        // (set but doesn't reference game_sessions) — the origin lookup
-        // handles both by falling back to "no linked session" rather than
-        // fabricating a join that doesn't exist.
-        sourceId: item.source_id ?? null,
         obtainedAt: item.obtained_at.toISOString(),
         soldAt: item.sold_at?.toISOString() ?? null,
         exchangedAt: item.exchanged_at?.toISOString() ?? null,
