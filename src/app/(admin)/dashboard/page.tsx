@@ -20,8 +20,6 @@ import { compareDashboardCreatorCostsToday } from "@/lib/clickhouse/compare/dash
 import { compareDashboardAffiliateReferredPnlToday } from "@/lib/clickhouse/compare/dashboard-affiliate-referred-pnl-today";
 import { compareDashboardRewardCostsToday } from "@/lib/clickhouse/compare/dashboard-reward-costs-today";
 import { requirePageAccess } from "@/lib/dal";
-import { formatRelative } from "@/lib/utils/format";
-import { LoadTimeIndicator } from "./load-time-indicator";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
@@ -93,10 +91,8 @@ export default async function DashboardPage() {
           icon={LayoutDashboard}
           title="Dashboard"
           subtitle="Live platform overview — revenue, users, and recent activity."
-          // Top-right action chips: the live Active Rain entrant count and
-          // the data-freshness ("Updated Ns ago") indicator, each behind its
-          // own tiny Suspense so the hero paints instantly. Wrap so they sit
-          // side by side and wrap onto a second line on narrow phones.
+          // Top-right action chip: the live Active Rain entrant count,
+          // behind its own tiny Suspense so the hero paints instantly.
           action={
             <div className="flex flex-wrap items-center gap-2">
               <Suspense
@@ -105,13 +101,6 @@ export default async function DashboardPage() {
                 }
               >
                 <DashboardActiveRain />
-              </Suspense>
-              <Suspense
-                fallback={
-                  <Skeleton className="h-[26px] w-40 rounded-full" />
-                }
-              >
-                <DashboardLoadTime />
               </Suspense>
             </div>
           }
@@ -226,35 +215,6 @@ export default async function DashboardPage() {
 
 /** Fixed period for trend charts — always 30-day daily buckets. */
 const DASHBOARD_CHART_PERIOD = "30d" as const;
-
-/**
- * Data-freshness chip for the hero action slot. Streams behind its own tiny
- * Suspense; reads the same React-cached getDashboardStats used by the charts,
- * so it adds no extra query — it just surfaces the generatedAt timestamp the
- * aggregate already records for the "Updated Ns ago" label.
- */
-async function DashboardLoadTime() {
-  // Wrapped in safeQuery so a failing/slow stats aggregate degrades this
-  // hero chip to nothing instead of throwing up the route boundary (the
-  // chip is decorative — a missing freshness indicator must never take
-  // the page down). The KPI strip surfaces the same failure as a tile
-  // fallback, so the operator still sees the degraded state there.
-  const { data: stats, error } = await safeQuery(
-    () => getDashboardStats(DASHBOARD_CHART_PERIOD),
-    null,
-    "dashboard.loadTime",
-    REWARD_QUERY_TIMEOUT_MS,
-  );
-  if (error || !stats) return null;
-  return (
-    <LoadTimeIndicator
-      generatedAt={stats.generatedAt}
-      // Formatted server-side so the first client paint is byte-identical to
-      // the SSR markup (no #418); the client re-derives it after mount.
-      initialRelative={formatRelative(stats.generatedAt)}
-    />
-  );
-}
 
 /**
  * Eager-renders the dashboard's period-bound KPI boxes for the DEFAULT "today"

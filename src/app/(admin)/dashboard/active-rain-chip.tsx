@@ -20,10 +20,9 @@ function endsInLabel(endsAtIso: string): string {
 }
 
 /**
- * Compact "Active Rain" chip for the dashboard hero's action slot, sitting
- * next to the load-time indicator. Headline is the live entrant count of
- * the current rain; pool + countdown live in the tooltip. Renders a muted
- * idle chip between rains.
+ * Compact "Active Rain" chip for the dashboard hero's action slot. Headline
+ * is the live entrant count of the current rain; pool + countdown live in
+ * the tooltip. Renders a muted idle chip between rains.
  */
 export function ActiveRainChip({ rain }: { rain: ActiveRainSummary }) {
   if (!rain) {
