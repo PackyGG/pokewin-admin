@@ -47,7 +47,7 @@ import { CH_DB, chDateTime, customerScopeCte, toNumber } from "../_shared";
  * (keeping the CQRS boundary Prisma-free); the blacklist is passed IN by the caller.
  */
 
-export type RewardCostsTodayDbCh = {
+type RewardCostsTodayDbCh = {
   depositBonus: number;
   dailyPacks: number;
   signupBalance: number;
