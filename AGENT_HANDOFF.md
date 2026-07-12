@@ -39,6 +39,30 @@
 
 ## Shipped (recent -- on main)
 
+**2026-07-12 (part 26) — wave 16b + full audit fix sweep (4 commits: `82daed7b`, `84ec9009`, `2aa58667`, `a07f4c4e`)**
+
+Owner: "literally fix all possible things, all options or scenarios i want it perfect!"
+
+1. **`82daed7b` — applyPackEdit refusal-as-data fix:** same prod-masking pattern as `applyStagedPackEditAndRetune`/`applyPackRetune` (incident 2026-07-11). `applyPackEdit` renamed to `applyPackEditInner`; exported wrapper catches throws → returns `{ refusedMessage }`. `pushDraftToProd`/`pushAllDrafts` wrapped same way. Client `drafts-list.tsx` handles `refusedMessage` returns. `unstable_rethrow` added to `pushAllDraftsInner` catch (audit M6).
+
+2. **`84ec9009` — wave 16b dead-card-removal rescue + full audit fixes:**
+   - **Engine (`tag-guidance.ts`):** New Tier D in `computeCleanRescue` — after all other tiers fail, near-zero-weight cards (<0.1% share) are removed one at a time (cheapest first) and the reduced pool re-solves at the pack's OWN edge target. Owner-pinned rows never removed; `pinnedShares` indices remapped; `currentWeights` filtered; own budget (`CLEAN_RESCUE_DEAD_CARD_BUDGET=4`); degeneracy veto on reduced pool. `CleanRescue` gains `removedCardIds`. `buildCleanRescueSuggestion` now emits a `remove-dead-card` fallback chip for tier D (was: null when `edgeTargetOverride===null` — no visible path when auto-adopt fails; audit C1+H1).
+   - **Workspace (`workspace.tsx`):** Auto-adopt effect: new `dead-card-removal` branch removes card(s) from staged pool + drops pins + pins proven price, then re-plans. Global per-pack adoption cap (`RESCUE_GLOBAL_CAP=6`) as backstop against unbounded oscillation across basis changes (audit H3); cleared on reset-to-live and push success (audit L1/L3 memory). Pending pct range validation: reject ≤0 or >100 (audit M5s). `applyPinRemedy`: basis staleness guard (audit H4) + toast on stale no-op (audit M2).
+   - **Copy (`plan-copy.ts`):** `priceMoveSub` defaults to honest "still don't land clean" when `landedClean` is not explicitly `true` (audit L2s). `autoCleanAppliedToast`: new dead-card-removal branch.
+   - **Plan panel (`plan-panel.tsx`):** `pushDisabledLabel` explicit infeasible case (audit M1) — "Infeasible — try a suggested fix above" instead of misleading "Fix the pool first" catch-all.
+   - **Harness:** clean-rescue 20→25 (+5 tier D checks: removal, owner-pin skip, no-dead-cards skip, budget law, suggestion builder).
+   - **Gates:** tsc 0 · lint 0 · build 0 · 13/13 suites green (364 checks).
+
+3. **`a07f4c4e` — drafts house-POV colors + edge regression toast:** `WeightChangeTable` now receives `packPrice` and colors by house-POV (weight up on win card ≥ price = rose/bad; weight up on junk = emerald/good; vice versa) — was raw delta as neutral proxy (audit M3). `runPush` uses `toast.warning` when house edge decreased (audit M4).
+
+**Adversarial audit findings DEFERRED (LOW priority, not blocking):**
+- H2 (picker race — card added to wrong pack on rapid selection switch): would need capturing packId at `stagePoolEdit` call time and threading through picker; complex change, low real-world probability
+- M5 (tier D multi-card removal combinations): current single-card-only is by design (owner removed one card by hand); pairs would need bounded budget expansion
+- L3s (deriveStatus returns "infeasible" for out-of-scope): workspace already handles via separate `outOfScope` check; adding new status would require changing `WorkspaceStatus` type + all consumers
+- L4s (isPushEnabled allows push on dirty plan under staged pin): documented escape hatch by design
+
+**Open retune items (unchanged):** wave 14 concrete add-card pick; dust cap + floor comfort mechanic; degenerate-carrier copy calibration.
+
 **Full pre-2026-06-16 feature-by-feature shipped log (ClickHouse CQRS milestones M1-M4, owner/role
 rework, dropdown onSelect fix, etc. -- all still true/live, just no longer "recent") moved to
 `AGENT_HANDOFF_ARCHIVE.md` section Shipped-feature detail log.** Recent work is narrated in CURRENT STATE
