@@ -46,7 +46,7 @@ import { type DashboardPeriod } from "@/lib/queries/dashboard-period";
  * inlined to keep the import graph Postgres-free.
  */
 
-export type CreatorCostSeriesCh = {
+type CreatorCostSeriesCh = {
   granularity: "day" | "hour";
   buckets: { bucketIso: string; costUsd: number }[];
 };
