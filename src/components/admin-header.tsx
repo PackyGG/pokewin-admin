@@ -394,27 +394,25 @@ export function AdminHeader({
             whole cluster is the trigger so the click target stays as
             large as the pre-dropdown Link was. */}
         <DropdownMenu>
-          {/* All-in-one identity card — rounded-square avatar + a two-line
-              name/role stack + a chevron, wrapped in a single bordered,
-              tinted pill (sm+). On phones it stays a compact avatar-only tap
-              target so it never crowds a 360px header (name + roles live in
-              the dropdown there). The whole card is the trigger, so the click
-              target stays large. `group` + base-ui's `data-popup-open` flips
-              the chevron while the menu is open. */}
+          {/* All-in-one identity card — a subtly bordered, tinted pill (sm+)
+              holding the avatar, a two-line name-over-role stack, a gap, then
+              the chevron. Content-sized (no min-width) so it hugs its content
+              and never reads boxy-empty. On phones it collapses to a compact
+              avatar-only tap target so it never crowds a 360px header (name +
+              roles live in the dropdown there). The whole card is the trigger,
+              so the click target stays large. `group` + base-ui's
+              `data-popup-open` flips the chevron while the menu is open. */}
           <DropdownMenuTrigger
             className={cn(
-              "group flex items-center gap-2 rounded-full p-1 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
-              // sm+: a compact, content-sized identity chip — avatar + name +
-              // one role badge + chevron, all inline on a single line. No
-              // min-width floor (the chevron sits right after the content, no
-              // dead space) and no border/tint — just a light hover — so it
-              // reads small + tidy, never boxy.
-              "sm:py-1 sm:pl-1.5 sm:pr-2.5",
+              // A subtle bordered, tinted pill — content-sized (NO min-width).
+              // Symmetric p-1 keeps the phone avatar-only target tidy; sm+
+              // opens the right side (pr-2) so the chevron has room.
+              "group flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 p-1 outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring sm:pr-2",
             )}
             aria-label="Open profile menu"
             title={label}
           >
-            <Avatar className="size-8 shrink-0">
+            <Avatar className="size-7 shrink-0">
               {hasAvatar && (
                 <AvatarImage
                   src={`/api/admin/avatar/${adminId}`}
@@ -425,24 +423,26 @@ export function AdminHeader({
                 {initials(label)}
               </AvatarFallback>
             </Avatar>
-            {/* Name + ONE role badge, inline on a single line (sm+). Hidden on
-                phones — the dropdown menu already carries the name + full role
-                set there, so the trigger stays a compact avatar-only tap
-                target below sm. */}
-            <span className="hidden max-w-[9rem] truncate text-sm font-semibold leading-tight text-foreground sm:block">
-              {label}
+            {/* Name over role — a two-line stack (name on top, role badge on
+                the line below), hidden on phones where the dropdown carries
+                the name + full role set instead. items-start keeps the badge
+                content-sized + left-aligned under the name. */}
+            <span className="hidden flex-col items-start sm:flex">
+              <span className="max-w-[10rem] truncate text-sm font-medium leading-tight text-foreground">
+                {label}
+              </span>
+              <Badge
+                variant="outline"
+                className={cn(
+                  "mt-0.5 inline-flex h-[18px] shrink-0 gap-0.5 px-1.5 text-[10px] font-bold uppercase leading-none tracking-wide",
+                  ROLE_COLORS[role],
+                )}
+              >
+                <ShieldCheck className="size-3" />
+                {role.replace("_", " ")}
+              </Badge>
             </span>
-            <Badge
-              variant="outline"
-              className={cn(
-                "hidden h-[18px] shrink-0 gap-0.5 px-1.5 text-[10px] font-bold uppercase leading-none tracking-wide sm:inline-flex",
-                ROLE_COLORS[role],
-              )}
-            >
-              <ShieldCheck className="size-3" />
-              {role.replace("_", " ")}
-            </Badge>
-            <ChevronDown className="hidden size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[popup-open]:rotate-180 sm:block" />
+            <ChevronDown className="ml-1.5 hidden size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[popup-open]:rotate-180 sm:block" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-[220px]">
             <DropdownMenuGroup>
