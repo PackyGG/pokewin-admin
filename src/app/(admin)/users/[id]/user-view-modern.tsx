@@ -532,20 +532,17 @@ export function UserViewModern({
               Creator page
             </Link>
           )}
-          {/* Site-role controls — changes the user's role on the game
-              platform (user / creator / support / admin), NOT their
-              admin-panel access. Grouped + labelled so the distinction is
-              unmistakable. Clean solid subtle group (no dashed box). */}
+          {/* Site-role controls — change the user's role on the game platform
+              (user / creator / support / admin), NOT admin-panel access.
+              Rendered inline as plain buttons (no wrapping box/label) so they
+              match the size of the other action-cluster buttons. */}
           {canChangeUserRoles && (
-            <div className="flex items-center gap-1 rounded-lg border bg-muted/40 px-2 py-1">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Site role
-              </span>
+            <>
               <ChangeRoleDialog userId={user.id} currentRole={user.role} />
-              {/* Quick escape hatch when /creators backend demote gets
-                  stuck — only renders for current creators. */}
+              {/* Quick escape hatch when /creators backend demote gets stuck —
+                  only renders for current creators. */}
               <ResetRoleToUserButton userId={user.id} currentRole={user.role} />
-            </div>
+            </>
           )}
           <UserAdminActions
             user={user}

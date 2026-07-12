@@ -1416,7 +1416,7 @@ export function ChangeRoleDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger
-        render={<Button variant="outline" size="sm" className="h-8 gap-1.5" />}
+        render={<Button variant="outline" size="sm" className="gap-1.5" />}
       >
         <ShieldCheck className="size-3.5" />
         Change Role
@@ -1592,7 +1592,7 @@ export function ResetRoleToUserButton({
           <Button
             variant="outline"
             size="sm"
-            className="h-8 gap-1.5 border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10"
+            className="gap-1.5 border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10"
             title="Force role back to 'user' (calls backend demote + direct DB write)"
           />
         }
