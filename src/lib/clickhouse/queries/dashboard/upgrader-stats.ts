@@ -32,7 +32,7 @@ import { CH_DB, customerScopeCte, toNumber } from "../_shared";
  * module never imports a Postgres client.
  */
 
-export type DashboardUpgraderStats = {
+type DashboardUpgraderStats = {
   wager: number;
   payouts: number;
   pnl: number;
