@@ -1238,12 +1238,13 @@ export function RetuneWorkspace({
     void requestPlan(packId);
   }, [stagedApi, requestPlan]);
 
-  // Raise the edge target by raising the price — no odds changes. Computes
+  // Raise the edge target by raising the price — NO odds changes. Computes
   // the price that produces the desired edge at the current planned EV:
   //   EV = priceAfter * (1 - after.edge)  →  newPrice = EV / (1 - desiredEdge)
-  // Stages the new price (pinned) + edge target override, then re-plans.
-  // The planner re-solves at the new price, but since the price is computed
-  // from the current EV, the odds should barely move.
+  // Then PINS every current planned odd so the planner can't reshape them,
+  // stages the new price (pinned) + edge target override, and re-plans.
+  // The planner verifies the pinned odds at the new price — odds stay exact,
+  // only the price (and therefore the edge) changes.
   const setEdgeTarget = React.useCallback(
     (desiredEdge: number) => {
       const packId = selectedRef.current;
@@ -1256,11 +1257,23 @@ export function RetuneWorkspace({
       const newPrice = currentEV / (1 - desiredEdge);
       const sp = ensureStaged(packId);
       if (!sp) return;
+      // Pin every current planned odd so the solver can't touch them.
+      const inPool = new Set(sp.cards.map((c) => c.cardId));
+      const capDropped = new Set(plan.capDroppedCardIds);
+      const allPinned = plan.planned
+        .filter(
+          (p) =>
+            inPool.has(p.cardId) &&
+            !capDropped.has(p.cardId) &&
+            p.pct > 0,
+        )
+        .map((p) => ({ cardId: p.cardId, pct: p.pct }));
       stagedApi.setStaged(packId, {
         ...sp,
         price: newPrice,
         pinPrice: true,
         edgeTargetOverride: desiredEdge,
+        pinnedOdds: allPinned,
       });
       setPriceText(priceInputText(newPrice));
       void requestPlan(packId);
