@@ -718,6 +718,8 @@ export const PUSH_LABEL = "Push to production";
 export const MIN_PUSH_EDGE = 0.105;
 export const PUSH_BLOCKED_EDGE_FLOOR =
   "Blocked — edge 10.5% floor (owner law). This plan lands below it.";
+export const PUSH_BLOCKED_EDGE_BELOW_TARGET =
+  "Blocked — edge is below this pack's target. Adjust odds or price to raise the edge.";
 export const PUSH_DISABLED_REPLANNING = "Re-planning…";
 export const PUSH_DISABLED_FIX_POOL = "Fix the pool first";
 export const PUSH_DISABLED_INFEASIBLE = "Infeasible — try a suggested fix above";

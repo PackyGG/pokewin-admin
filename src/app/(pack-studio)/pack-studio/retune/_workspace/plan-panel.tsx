@@ -78,6 +78,7 @@ import {
   PLAN_PROGRESS_SLOW_HINT,
   PLAN_PROGRESS_VERY_SLOW_HINT,
   PUSH_BLOCKED_EDGE_FLOOR,
+  PUSH_BLOCKED_EDGE_BELOW_TARGET,
   PUSH_DISABLED_DIRTY,
   PUSH_DISABLED_FIX_POOL,
   PUSH_DISABLED_INFEASIBLE,
@@ -1229,8 +1230,24 @@ export function PlanPanel({
     plan.after !== null &&
     plan.after.edge < MIN_PUSH_EDGE - 1e-9;
 
+  // Client mirror of the server's edge-below-target assert: the server refuses
+  // any plan whose edge < targetEdge. Without this client check, the user
+  // could click Push on a plan that looks fine (edge above the 10.5% floor)
+  // only to get a server refusal — wasting their time. This is especially
+  // common when manual pins push the edge below target.
+  const edgeBelowTarget =
+    plan !== null &&
+    plan.after !== null &&
+    plan.targets.targetEdge > 0 &&
+    plan.after.edge < plan.targets.targetEdge - 1e-9;
+
   const pushDisabledLabel = ((): string | null => {
-    if (pushEnabled) return edgeFloorBlocked ? PUSH_BLOCKED_EDGE_FLOOR : null;
+    if (pushEnabled)
+      return edgeFloorBlocked
+        ? PUSH_BLOCKED_EDGE_FLOOR
+        : edgeBelowTarget
+          ? PUSH_BLOCKED_EDGE_BELOW_TARGET
+          : null;
     if (status === "pushed") return PUSH_LABEL; // F14 — re-stage to re-arm
     if (status === "pushing") return PUSH_DISABLED_PUSHING;
     if (status === "planning" || status === "stale" || status === "drifted")
@@ -1633,12 +1650,12 @@ export function PlanPanel({
         <Button
           type="button"
           onClick={onPush}
-          disabled={!pushEnabled || pushing || edgeFloorBlocked}
+          disabled={!pushEnabled || pushing || edgeFloorBlocked || edgeBelowTarget}
         >
           {pushing && <Loader2 className="size-4 animate-spin" />}
           {pushDisabledLabel ?? PUSH_LABEL}
         </Button>
-        {plan && pushEnabled && !edgeFloorBlocked && (
+        {plan && pushEnabled && !edgeFloorBlocked && !edgeBelowTarget && (
           <p className="text-right text-[11px] text-muted-foreground">
             {pushSubLine({
               priceAfter: plan.priceAfter,
