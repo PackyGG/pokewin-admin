@@ -414,6 +414,13 @@ export function autoCleanAppliedToast(rescue: CleanRescue): string {
       .join(", ");
     return `Auto-clean applied: pinned ${n} off-ladder ${n === 1 ? "row" : "rows"} to the nearest clean rung (${rows}) at price ${formatCurrency(rescue.price)} (pinned) — same edge target, solver-proven clean (edge ${(rescue.landedEdge * 100).toFixed(2)}%, win rate ${(rescue.landedWinRate * 100).toFixed(2)}%). Re-verifying now; review, then push.`;
   }
+  if (
+    rescue.tier === "dead-card-removal" &&
+    (rescue.removedCardIds?.length ?? 0) > 0
+  ) {
+    const n = rescue.removedCardIds!.length;
+    return `Auto-clean applied: removed ${n} dead ${n === 1 ? "card" : "cards"} from the pool (near-zero weight, not contributing to the odds) at price ${formatCurrency(rescue.price)} (pinned) — same edge target, solver-proven clean (edge ${(rescue.landedEdge * 100).toFixed(2)}%, win rate ${(rescue.landedWinRate * 100).toFixed(2)}%). Re-verifying now; review, then push.`;
+  }
   const price = `price ${formatCurrency(rescue.price)} (pinned)`;
   const edge =
     rescue.edgeTargetOverride !== null
@@ -658,9 +665,9 @@ export const WIN_RATE_OVER_TAG = "users win more than designed";
  */
 export function priceMoveSub(delta: number, landedClean?: boolean): string {
   const move = `Price moves ${delta >= 0 ? "+" : "−"}$${Math.abs(delta).toFixed(2)}`;
-  return landedClean === false
-    ? `${move} — the odds still don't land clean at this price.`
-    : `${move} so the odds land clean.`;
+  return landedClean === true
+    ? `${move} so the odds land clean.`
+    : `${move} — the odds still don't land clean at this price.`;
 }
 
 /**

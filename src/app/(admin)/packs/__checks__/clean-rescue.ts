@@ -38,6 +38,12 @@
  *      allNice=false state (e.g. 0.047%) the wide probe used to answer with
  *      a stale far-price move. Tagged acceptance everywhere now also
  *      requires `allNice === true`, so a rescue can never land off-nice.
+ *  11. Tier D dead-card-removal (wave 16b, Abyssal Depths' Finneon): after
+ *      all other tiers fail, near-zero-weight cards (<0.1% share) are
+ *      removed one at a time (cheapest first) and the reduced pool re-solves
+ *      at the pack's OWN edge target. Owner-pinned rows are never removed;
+ *      the tier has its own budget; the rescue carries `removedCardIds` for
+ *      the workspace auto-adopt to stage the pool edit.
  *
  * Exit code 0 = all passed; 1 = at least one failure (printed).
  */
@@ -134,6 +140,7 @@ function baseInput(overrides?: {
   landedShares?: number[];
   cardIds?: string[];
   maxPinRepairSolves?: number;
+  maxDeadCardSolves?: number;
   niceExemptIdx?: number[];
   ownerPinnedIdx?: number[];
   mkParams?: Parameters<typeof computeCleanRescue>[0]["mkParams"];
@@ -163,6 +170,9 @@ function baseInput(overrides?: {
       : {}),
     ...(overrides?.maxPinRepairSolves !== undefined
       ? { maxPinRepairSolves: overrides.maxPinRepairSolves }
+      : {}),
+    ...(overrides?.maxDeadCardSolves !== undefined
+      ? { maxDeadCardSolves: overrides.maxDeadCardSolves }
       : {}),
     ...(overrides?.niceExemptIdx !== undefined
       ? { niceExemptIdx: overrides.niceExemptIdx }
@@ -394,6 +404,23 @@ check("suggestion: tier A → null; edge tiers → price-edge-exact row", () => 
   assert(Number(s!.params.autoClean) === 1, "autoClean marker expected");
   assert(s!.humanCopy.startsWith("Auto-clean:"), s!.humanCopy);
   assert(s!.proof.solverVerified === true, "solver-verified proof expected");
+});
+check("suggestion: tier D → remove-dead-card row", () => {
+  const tierD: CleanRescue = {
+    tier: "dead-card-removal",
+    price: 10,
+    edgeTargetOverride: null,
+    landedEdge: 0.06,
+    landedWinRate: 0.15,
+    allNice: true,
+    searchesSpent: 1,
+    removedCardIds: ["c4"],
+  };
+  const s = buildCleanRescueSuggestion(tierD, BASE_PRICE);
+  assert(s !== null, "tier D must mint a fallback suggestion");
+  assert(s!.kind === "remove-dead-card", `kind ${s!.kind}`);
+  assert(s!.proof.solverVerified === true, "solver-verified proof expected");
+  assert(s!.humanCopy.startsWith("Auto-clean:"), s!.humanCopy);
 });
 
 // ── 9. Tier P: pin-repair (the owner's hand-proven move, mechanized) ───────
@@ -721,6 +748,122 @@ check("tagged acceptance: every tier rejects an allNice=false landing", () => {
   );
   assert(rN === null, "off-nice pinned combos must never be adopted");
   assert(pinnedOffNice === 4, `all 4 combos tried, got ${pinnedOffNice}`);
+});
+
+// ── 11. Tier D: dead-card-removal (Abyssal Depths' Finneon) ──────────────
+// A near-zero-weight card (the engine parked it at ~0) gets removed and the
+// reduced pool re-solves clean at the same price. The tier runs ONLY after
+// edge-flex + pin-repair fail. Owner-pinned rows are never removed.
+
+check("tier D removes a near-zero-weight card and lands clean", () => {
+  // 5-card pool: the 5th card ($1) is "dead" — landed at 0.0005 share (0.05%).
+  const vals = [50, 20, 5, 2, 1];
+  const live = [0.05, 0.1, 0.25, 0.3, 0.3];
+  const landed = [0.05, 0.1, 0.25, 0.5995, 0.0005]; // card 4 is near-zero
+  const ids = ["c0", "c1", "c2", "c3", "c4"];
+  const stub: SearchFn = ((p: Parameters<SearchFn>[0]) => {
+    // Edge-flex candidates (6 rungs) all fail to snap.
+    // Pin-repair candidates all fail to snap.
+    // Dead-card removal: when the cards array has 4 cards (c4 removed), land clean.
+    if (p.cards.length === 4) {
+      return okResult(BASE_PRICE, { snapped: true, allNice: true, edge: TARGET_EDGE });
+    }
+    return okResult(BASE_PRICE, { snapped: false });
+  }) as SearchFn;
+  const r = computeCleanRescue(
+    baseInput({
+      values: vals,
+      liveShares: live,
+      landedShares: landed,
+      cardIds: ids,
+      searchFn: stub,
+      maxSearches: 0, // skip edge-flex entirely
+      maxPinRepairSolves: 0, // skip pin-repair entirely
+    }),
+  );
+  assert(r !== null, "expected a dead-card-removal rescue");
+  assert(r!.tier === "dead-card-removal", `tier ${r!.tier}`);
+  assert(r!.removedCardIds?.length === 1, `removedCardIds ${r!.removedCardIds}`);
+  assert(r!.removedCardIds?.[0] === "c4", `cardId ${r!.removedCardIds?.[0]}`);
+  assert(r!.price === BASE_PRICE, `price ${r!.price}`);
+  assert(r!.edgeTargetOverride === null, "dead-card keeps pack target");
+  assert(r!.allNice === true, `allNice ${r!.allNice}`);
+});
+
+check("tier D never removes an owner-pinned card", () => {
+  const vals = [50, 20, 5, 2, 1];
+  const live = [0.05, 0.1, 0.25, 0.3, 0.3];
+  const landed = [0.0005, 0.1, 0.25, 0.5995, 0.05]; // card 0 is near-zero BUT owner-pinned
+  const ids = ["c0", "c1", "c2", "c3", "c4"];
+  const stub: SearchFn = (() => {
+    // Any search fails to snap.
+    return okResult(BASE_PRICE, { snapped: false });
+  }) as SearchFn;
+  const r = computeCleanRescue(
+    baseInput({
+      values: vals,
+      liveShares: live,
+      landedShares: landed,
+      cardIds: ids,
+      searchFn: stub,
+      maxSearches: 0,
+      maxPinRepairSolves: 0,
+      ownerPinnedIdx: [0], // card 0 is owner-pinned — never removed
+    }),
+  );
+  assert(r === null, "owner-pinned dead card must not be removed");
+});
+
+check("tier D skips when no near-zero-weight cards exist", () => {
+  const vals = [50, 20, 5, 2, 1];
+  const live = [0.05, 0.1, 0.25, 0.3, 0.3];
+  const landed = [0.05, 0.1, 0.25, 0.3, 0.3]; // all meaningful weights
+  const ids = ["c0", "c1", "c2", "c3", "c4"];
+  let calls = 0;
+  const stub: SearchFn = (() => {
+    calls++;
+    return okResult(BASE_PRICE, { snapped: false });
+  }) as SearchFn;
+  const r = computeCleanRescue(
+    baseInput({
+      values: vals,
+      liveShares: live,
+      landedShares: landed,
+      cardIds: ids,
+      searchFn: stub,
+      maxSearches: 0,
+      maxPinRepairSolves: 0,
+    }),
+  );
+  assert(r === null, "no dead cards ⇒ no dead-card-removal");
+  assert(calls === 0, `search should not be called, got ${calls}`);
+});
+
+check("tier D respects its own budget", () => {
+  // 5 dead-card candidates, budget 2 ⇒ only 2 searches.
+  const vals = [50, 20, 5, 2, 1];
+  const live = [0.2, 0.2, 0.2, 0.2, 0.2];
+  const landed = [0.0001, 0.0002, 0.0003, 0.0004, 0.999]; // 4 dead cards
+  const ids = ["c0", "c1", "c2", "c3", "c4"];
+  let calls = 0;
+  const stub: SearchFn = (() => {
+    calls++;
+    return okResult(BASE_PRICE, { snapped: false });
+  }) as SearchFn;
+  const r = computeCleanRescue(
+    baseInput({
+      values: vals,
+      liveShares: live,
+      landedShares: landed,
+      cardIds: ids,
+      searchFn: stub,
+      maxSearches: 0,
+      maxPinRepairSolves: 0,
+      maxDeadCardSolves: 2,
+    }),
+  );
+  assert(r === null, "none snapped ⇒ null");
+  assert(calls === 2, `budget 2 ⇒ 2 searches, got ${calls}`);
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────

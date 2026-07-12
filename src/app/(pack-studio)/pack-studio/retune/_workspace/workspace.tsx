@@ -682,6 +682,8 @@ export function RetuneWorkspace({
           ? pool.cards.some((c) => c.cardId === cardId)
           : (planForRows?.planned.some((p) => p.cardId === cardId) ?? false);
       if (!inPool) return;
+      // Validate pct range (M5s fix): reject negative or >100 values.
+      if (!(pct > 0 && pct <= 100)) return;
       const buffer = stagedApi.getPending(packId);
       const existing = buffer.find((p) => p.cardId === cardId);
       if (existing && existing.pct === pct) return; // no-op
@@ -1013,6 +1015,10 @@ export function RetuneWorkspace({
         stagedApi.getPending(packId).length > 0;
       stagedApi.clearStaged(packId);
       stagedApi.clearPending(packId); // drop any un-applied typed edits too
+      // Clear rescue adoption tracking for this pack (both per-basis and
+      // global) so a fresh start gets a fresh rescue budget.
+      rescueAdoptedRef.current.delete(packId);
+      rescueGlobalCountRef.current.delete(packId);
       setDriftPrompts((prev) => delSet(prev, packId));
       setRebasedPacks((prev) => delSet(prev, packId));
       setFixLoopPacks((prev) => delSet(prev, packId));
@@ -1269,6 +1275,9 @@ export function RetuneWorkspace({
   const handleWriteSuccess = React.useCallback(
     (pp: PendingPush, result: WriteResult) => {
       stagedApi.clearStaged(pp.packId);
+      // Clear rescue adoption tracking on successful push.
+      rescueAdoptedRef.current.delete(pp.packId);
+      rescueGlobalCountRef.current.delete(pp.packId);
       // LAW P: a push NEVER silently deletes typed odds. The gate keeps a
       // push from starting over a non-empty buffer, so edits here were typed
       // while the write was in flight — keep them and say so (they simply
@@ -1723,6 +1732,13 @@ export function RetuneWorkspace({
   // basis burns its own cap, every adopt is a solver-proven strictly-cleaner
   // landing. Pool edits are NEVER auto-applied.
   const rescueAdoptedRef = React.useRef(new Map<string, string[]>());
+  // Global per-pack adoption cap (audit H3 backstop): the per-basis cap resets
+  // on every adoption (each adoption mints a new basis). This global counter
+  // bounds the total chain across all bases for a pack — a hard backstop
+  // against oscillation if the rescue claim and the re-plan verification
+  // disagree. Cleared on reset-to-live and after a successful push.
+  const rescueGlobalCountRef = React.useRef(new Map<string, number>());
+  const RESCUE_GLOBAL_CAP = 6;
   React.useEffect(() => {
     if (!selectedPackId || status !== "planned") return;
     const plan = planForBasis;
@@ -1738,10 +1754,17 @@ export function RetuneWorkspace({
         : ""
     }|${(rescue.pinRepairs ?? [])
       .map((p) => `${p.cardId ?? p.index}@${p.pct}`)
-      .join(",")}`;
+      .join(",")}|${(rescue.removedCardIds ?? []).join(",")}`;
     const capKey = `${selectedPackId}|${selectedBasis ?? ""}`;
     const seen = rescueAdoptedRef.current.get(capKey) ?? [];
     if (seen.includes(sig) || seen.length >= 2) return;
+    // Global per-pack cap (H3 backstop): bound the total adoption chain
+    // across all bases. Without this, each adoption mints a fresh basis with
+    // a fresh per-basis cap of 2, so the chain never terminates if the rescue
+    // and re-plan disagree.
+    const globalCount = rescueGlobalCountRef.current.get(selectedPackId) ?? 0;
+    if (globalCount >= RESCUE_GLOBAL_CAP) return;
+    rescueGlobalCountRef.current.set(selectedPackId, globalCount + 1);
     rescueAdoptedRef.current.set(capKey, [...seen, sig]);
     if (rescue.tier === "pin-repair" && (rescue.pinRepairs?.length ?? 0) > 0) {
       // Tier P: stage the repair pins (the owner's hand-move, mechanized) +
@@ -1765,6 +1788,31 @@ export function RetuneWorkspace({
           ...sp.pinnedOdds.filter((p) => !repairIds.has(p.cardId)),
           ...repairs.map((p) => ({ cardId: p.cardId, pct: p.pct })),
         ],
+      });
+      setPriceText(priceInputText(rescue.price));
+      void requestPlan(packId);
+    } else if (
+      rescue.tier === "dead-card-removal" &&
+      (rescue.removedCardIds?.length ?? 0) > 0
+    ) {
+      // Tier D: stage the dead-card removal (the owner's hand-move,
+      // mechanized — Abyssal Depths' Finneon). Remove the dead card(s)
+      // from the staged pool + drop their pins + pin the proven price.
+      // The re-plan re-verifies fail-closed through the full engine.
+      const packId = selectedPackId;
+      const sp = ensureStaged(packId);
+      if (!sp) return;
+      const removeIds = new Set(rescue.removedCardIds ?? []);
+      const removedNow = sp.cards.filter(
+        (c) => removeIds.has(c.cardId) && !c.added,
+      );
+      stagedApi.setStaged(packId, {
+        ...sp,
+        cards: sp.cards.filter((c) => !removeIds.has(c.cardId)),
+        removed: [...sp.removed, ...removedNow],
+        pinnedOdds: sp.pinnedOdds.filter((p) => !removeIds.has(p.cardId)),
+        price: rescue.price,
+        pinPrice: true,
       });
       setPriceText(priceInputText(rescue.price));
       void requestPlan(packId);

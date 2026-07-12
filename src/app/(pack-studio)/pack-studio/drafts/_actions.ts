@@ -934,6 +934,7 @@ async function pushAllDraftsInner(): Promise<PushAllDraftsResult> {
       const r = await pushDraftToProdInner(d.pack_id);
       pushed.push(r);
     } catch (err) {
+      unstable_rethrow(err);
       failed.push({
         packId: d.pack_id,
         draftId: d.id,

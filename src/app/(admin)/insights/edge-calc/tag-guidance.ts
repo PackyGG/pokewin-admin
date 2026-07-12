@@ -1823,7 +1823,8 @@ export type CleanRescueTier =
   | "wide-price"
   | "edge-flex"
   | "edge-flex-wide"
-  | "pin-repair";
+  | "pin-repair"
+  | "dead-card-removal";
 
 export type CleanRescue = {
   tier: CleanRescueTier;
@@ -1849,6 +1850,12 @@ export type CleanRescue = {
    * ±0.005pp beats a −28% price move every time. Undefined for A/B/C.
    */
   pinRepairs?: { index: number; cardId: string | null; pct: number }[];
+  /**
+   * Dead-card-removal payload: the cardId(s) to remove from the pool. The
+   * workspace auto-adopt drops them from the staged pool and re-plans at
+   * the proven price. Undefined for A/B/C/P.
+   */
+  removedCardIds?: string[];
 };
 
 /** Total search-call budget for one rescue sweep (≈ the wide probe ×8 worst case). */
@@ -1861,6 +1868,14 @@ export const CLEAN_RESCUE_EDGE_FLEX_MAX_STEPS = 3;
 export const CLEAN_RESCUE_PIN_REPAIR_MAX_ROWS = 4;
 /** Tier P: its OWN solve budget (rung combos, cheapest total nudge first). */
 export const CLEAN_RESCUE_PIN_REPAIR_BUDGET = 8;
+/**
+ * Tier D (dead-card-removal): max near-zero-weight cards to try removing
+ * (1 search each — cheapest removal first). Its own budget, separate from
+ * the edge-flex and pin-repair budgets.
+ */
+export const CLEAN_RESCUE_DEAD_CARD_BUDGET = 4;
+/** Threshold: a landed share below this fraction is a "dead card" candidate. */
+export const CLEAN_RESCUE_DEAD_CARD_SHARE = 0.001;
 
 export function computeCleanRescue(input: {
   /**
@@ -1911,6 +1926,8 @@ export function computeCleanRescue(input: {
   maxSearches?: number;
   /** Tier P's own combo budget (defaults to CLEAN_RESCUE_PIN_REPAIR_BUDGET). */
   maxPinRepairSolves?: number;
+  /** Tier D's own budget (defaults to CLEAN_RESCUE_DEAD_CARD_BUDGET). */
+  maxDeadCardSolves?: number;
   /** Harness seam — defaults to the real engine search. */
   searchFn?: typeof searchBestPriceForCleanSnap;
 }): CleanRescue | null {
@@ -2151,6 +2168,95 @@ export function computeCleanRescue(input: {
       }
     }
   }
+
+  // ── Tier D: dead-card-removal ───────────────────────────────────────────
+  // The owner's hand-move, mechanized (Abyssal Depths: Finneon, a 45% dust
+  // twin, was parked at ~0 by the engine but never emitted "remove dead
+  // card"; the owner removed it by hand and the pool went clean at the same
+  // $12.17). When all other tiers fail, try removing each near-zero-weight
+  // card (1 search each, cheapest first) and re-solve at the pack's OWN edge
+  // target. The reduced pool must STILL land feasible + snapped + tag-accurate
+  // + non-degenerate — the degeneracy veto catches removals that collapse the
+  // ladder. Owner-pinned rows are never removed (pins are owner law).
+  if (landed !== undefined && landed.length === values.length) {
+    const deadCandidates: { index: number; share: number }[] = [];
+    for (let i = 0; i < landed.length; i++) {
+      const share = landed[i] ?? 0;
+      if (share > 0 && share < CLEAN_RESCUE_DEAD_CARD_SHARE && !ownerPinned.has(i)) {
+        deadCandidates.push({ index: i, share });
+      }
+    }
+    // Cheapest first (smallest share = most dead).
+    deadCandidates.sort((a, b) => a.share - b.share);
+    const deadBudget =
+      input.maxDeadCardSolves ?? CLEAN_RESCUE_DEAD_CARD_BUDGET;
+    let deadSpent = 0;
+    for (const cand of deadCandidates) {
+      if (deadSpent >= deadBudget) break;
+      deadSpent++;
+      const deadIdx = cand.index;
+      // Build a reduced card list + remap pinned indices.
+      const params = mkParams(targetEdge, pricePinned ? 0 : priceBudgetPct);
+      const reducedCards = params.cards.filter((_, i) => i !== deadIdx);
+      if (reducedCards.length === 0) continue;
+      // Remap pinnedShares indices: anything > deadIdx shifts down by 1.
+      const ownerShares = (params.pinnedShares ?? []).map((p) => ({
+        index: p.index > deadIdx ? p.index - 1 : p.index,
+        share: p.share,
+      })).filter((p) => p.index !== deadIdx);
+      // Also remap currentWeights if present.
+      const reducedWeights = params.currentWeights
+        ? params.currentWeights.filter((_, i) => i !== deadIdx)
+        : undefined;
+      let res: ReturnType<typeof search>;
+      try {
+        res = search({
+          ...params,
+          cards: reducedCards,
+          pinnedShares: ownerShares,
+          ...(reducedWeights !== undefined
+            ? { currentWeights: reducedWeights }
+            : {}),
+        });
+      } catch {
+        continue;
+      }
+      const shaped = res.bestResult;
+      if ("error" in shaped) continue;
+      if (shaped.snapped !== true) continue;
+      if (tagged && res.taggedAccuracyHit === false) continue;
+      if (tagged && shaped.allNice !== true) continue;
+      const total = shaped.weights.reduce(
+        (a, w) => a + (Number.isFinite(w) && w > 0 ? w : 0),
+        0,
+      );
+      if (total <= 0) continue;
+      // Degeneracy veto on the REDUCED pool: use reducedCards values.
+      const reducedValues = values.filter((_, i) => i !== deadIdx);
+      const reducedLive = liveShares.filter((_, i) => i !== deadIdx);
+      const degenerate = ladderShape(
+        reducedValues,
+        reducedLive,
+        shaped.weights.map((w) =>
+          Number.isFinite(w) && w > 0 ? w / total : 0,
+        ),
+        res.bestPrice,
+      ).degenerate;
+      if (degenerate) continue;
+      const cardId = input.cardIds?.[deadIdx] ?? null;
+      if (cardId === null) continue;
+      return {
+        tier: "dead-card-removal",
+        price: res.bestPrice,
+        edgeTargetOverride: null,
+        landedEdge: shaped.risk.edge,
+        landedWinRate: shaped.risk.winRate,
+        allNice: shaped.allNice ?? null,
+        searchesSpent: spent + deadSpent,
+        removedCardIds: [cardId],
+      };
+    }
+  }
   return null;
 }
 
@@ -2166,6 +2272,30 @@ export function buildCleanRescueSuggestion(
   rescue: CleanRescue,
   basePrice: number,
 ): TuneSuggestion | null {
+  // Tier D: emit a remove-dead-card suggestion so the operator has a visible
+  // fallback chip when the auto-adopt fails (pool not loaded) or the cap is
+  // hit. The chip carries the proven price + the cardId to remove.
+  if (
+    rescue.tier === "dead-card-removal" &&
+    (rescue.removedCardIds?.length ?? 0) > 0
+  ) {
+    return {
+      kind: "remove-dead-card",
+      params: {
+        price: rescue.price,
+        autoClean: 1,
+        edge: rescue.landedEdge,
+        winRate: rescue.landedWinRate,
+      },
+      humanCopy: `Auto-clean: remove ${rescue.removedCardIds!.length === 1 ? "a dead card" : `${rescue.removedCardIds!.length} dead cards`} (near-zero weight, not contributing to the odds) and keep the price at ${usd(rescue.price)} — solver-proven clean (edge ${(rescue.landedEdge * 100).toFixed(2)}%, win rate ${(rescue.landedWinRate * 100).toFixed(2)}%).`,
+      proof: {
+        evMinAfter: rescue.price * (1 - rescue.landedEdge),
+        evMaxAfter: rescue.price * (1 - rescue.landedEdge),
+        feasibleAfter: true,
+        solverVerified: true,
+      },
+    };
+  }
   if (rescue.edgeTargetOverride === null) return null;
   const deltaPct =
     basePrice > 0 ? ((rescue.price - basePrice) / basePrice) * 100 : 0;
