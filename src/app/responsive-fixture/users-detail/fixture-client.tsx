@@ -22,7 +22,6 @@ import type {
   PnlBreakdown,
   PaginatedTransactions,
   PaginatedInventory,
-  AdminNote,
 } from "@/app/(admin)/users/[id]/user-tabs-types";
 import type { UserRewards } from "@/lib/queries/users";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
@@ -155,8 +154,6 @@ const REWARD_PACK_OPENS: UserRewardPackOpensResult = {
     },
   ],
 };
-
-const NOTES: AdminNote[] = [];
 
 const NOW_ISO = new Date().toISOString();
 
@@ -311,11 +308,8 @@ export function UserDetailFixtureClient() {
       adjustmentsTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       rewardsPromise={ok<UserRewards>(REWARDS)}
       rewardPackOpensPromise={ok<UserRewardPackOpensResult>(REWARD_PACK_OPENS)}
-      notesPromise={ok<AdminNote[]>(NOTES)}
       inventoryPromise={ok<PaginatedInventory>(EMPTY_INVENTORY)}
       disposedInventoryPromise={ok<PaginatedInventory>(EMPTY_INVENTORY)}
-      cardSaleTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
-      battleVoucherTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       wagerRequirementPromise={Promise.resolve(null)}
       featureLocksPromise={Promise.resolve(null)}
       kycPromise={Promise.resolve(null)}

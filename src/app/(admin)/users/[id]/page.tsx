@@ -15,7 +15,6 @@ import {
   getUserFinancialTransactionsCached,
   resolveUserIdCritical,
 } from "@/lib/queries/users-detail-cache";
-import { getNotesForUser } from "@/lib/queries/admin-notes";
 import { getUserTags } from "@/lib/queries/user-tags";
 import { getUserCreatorHistory } from "@/lib/queries/user-role-history";
 import { requirePageAccess, getUserPermissions } from "@/lib/dal";
@@ -90,19 +89,6 @@ const GAMING_TYPES = [
   // Gaming. It's a voucher GRANT (a held item, voucher == card), so it now
   // sits with the inventory it created.
 ];
-// Battle-win voucher GRANT shown on the INVENTORY tab — the leftover voucher
-// leg of a battle win (voucher == card per house rules). NOT a sale/cash-out
-// like CARD_SALE_TYPES; it's the win-grant of a held item, so it gets its own
-// "Battle Win Vouchers" section on the inventory tab. Moved off Gaming per
-// owner (the paired battle_bet row already carries the full win P&L). Keep in
-// sync with BATTLE_VOUCHER_TX_TYPES in user-tabs-types.ts.
-const BATTLE_VOUCHER_TYPES = ["battle_excess_to_voucher"];
-// Item cash-OUTS shown on the INVENTORY tab — selling a won (card_sale) or
-// reward (reward_card_sale) card back to balance, OR cashing a won voucher
-// back to balance (voucher_redeemed). All realize a held item into cash, so
-// they sit next to the items they came from (moved off the Gaming tab per
-// owner). Keep in sync with CARD_SALE_TX_TYPES in user-tabs-types.ts.
-const CARD_SALE_TYPES = ["card_sale", "reward_card_sale", "voucher_redeemed"];
 // FINANCIAL covers deposits, withdrawals (card_withdrawal +
 // withdrawal_shipping_fee) and direct cash payouts (rakeback / affiliate /
 // rain / race / gift / promo). The win-realization rows (card_sale /
@@ -503,32 +489,6 @@ async function UserDetailBody({
           USER_DETAIL_QUERY_TIMEOUT_MS,
         )
       : null;
-  // Card-sale cash-outs (card_sale / reward_card_sale) — Inventory tab only
-  // (Active-Timeframe-Only). Moved off Gaming per owner: these realize a won
-  // card into balance, so they belong with the inventory the card came from.
-  const cardSaleTxPromise =
-    initialTab === "inventory"
-      ? safeQuery(
-          () => getUserTransactions(id, 1, 10, { types: CARD_SALE_TYPES }),
-          EMPTY_TX_PAGE,
-          "users.detail.cardSaleTx",
-          USER_DETAIL_QUERY_TIMEOUT_MS,
-        )
-      : null;
-  // Battle-win voucher grants (battle_excess_to_voucher) — Inventory tab only
-  // (Active-Timeframe-Only), gated identically to cardSaleTxPromise. Moved off
-  // Gaming per owner: the paired battle_bet row already shows the full win
-  // P&L, so the voucher leg is redundant there; here it sits with the held
-  // item it created (voucher == card).
-  const battleVoucherTxPromise =
-    initialTab === "inventory"
-      ? safeQuery(
-          () => getUserTransactions(id, 1, 10, { types: BATTLE_VOUCHER_TYPES }),
-          EMPTY_TX_PAGE,
-          "users.detail.battleVoucherTx",
-          USER_DETAIL_QUERY_TIMEOUT_MS,
-        )
-      : null;
 
   // Rewards tab: one_time reward count + rakeback claimable/claimed.
   const rewardsPromise =
@@ -555,14 +515,9 @@ async function UserDetailBody({
         )
       : null;
 
-  // Account tab: admin notes (admin-DB, cheap) + the backend-API
-  // wager-requirement override. The latter keeps its own catch→null
-  // wrapper (null → the card's muted "awaiting backend deploy" state) —
-  // just kicked instead of serially awaited.
-  const notesPromise =
-    initialTab === "account"
-      ? safeQuery(() => getNotesForUser(id), [], "users.detail.notes")
-      : null;
+  // Account tab: the backend-API wager-requirement override. Keeps its own
+  // catch→null wrapper (null → the card's muted "awaiting backend deploy"
+  // state) — just kicked instead of serially awaited.
   const wagerRequirementPromise =
     initialTab === "account"
       ? getUserWagerRequirement(id).catch(() => null)
@@ -768,11 +723,8 @@ async function UserDetailBody({
       adjustmentsTxPromise={adjustmentsTxPromise}
       rewardsPromise={rewardsPromise}
       rewardPackOpensPromise={rewardPackOpensPromise}
-      notesPromise={notesPromise}
       inventoryPromise={inventoryPromise}
       disposedInventoryPromise={disposedInventoryPromise}
-      cardSaleTxPromise={cardSaleTxPromise}
-      battleVoucherTxPromise={battleVoucherTxPromise}
       wagerRequirementPromise={wagerRequirementPromise}
       featureLocksPromise={featureLocksPromise}
       kycPromise={kycPromise}

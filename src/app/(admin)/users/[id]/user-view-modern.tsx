@@ -63,7 +63,6 @@ import {
   type UserDetail,
   type PaginatedTransactions,
   type PnlBreakdown,
-  type AdminNote,
 } from "./user-tabs";
 import type { UserRewards } from "@/lib/queries/users";
 import type { PaginatedInventory } from "./user-tabs-types";
@@ -171,11 +170,8 @@ export function UserViewModern({
   adjustmentsTxPromise,
   rewardsPromise,
   rewardPackOpensPromise,
-  notesPromise,
   inventoryPromise,
   disposedInventoryPromise,
-  cardSaleTxPromise,
-  battleVoucherTxPromise,
   wagerRequirementPromise,
   featureLocksPromise,
   kycPromise,
@@ -223,15 +219,9 @@ export function UserViewModern({
   rewardPackOpensPromise: Promise<
     SafeQueryResult<UserRewardPackOpensResult>
   > | null;
-  // Account tab:
-  notesPromise: Promise<SafeQueryResult<AdminNote[]>> | null;
   // Inventory tab:
   inventoryPromise: Promise<SafeQueryResult<PaginatedInventory>> | null;
   disposedInventoryPromise: Promise<SafeQueryResult<PaginatedInventory>> | null;
-  // Inventory tab — card-sale cash-out ledger (card_sale / reward_card_sale),
-  // moved off Gaming. null = tab not active (Active-Timeframe-Only).
-  cardSaleTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
-  battleVoucherTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   // Account tab — per-user withdrawal wager-requirement override (backend
   // API, NOT the MAIN DB; plain nullable value, its own catch→null wrapper
   // in page.tsx). null resolution = the card's muted degraded state.
@@ -748,15 +738,12 @@ export function UserViewModern({
             data={data}
             inventoryPromise={inventoryPromise}
             disposedInventoryPromise={disposedInventoryPromise}
-            cardSaleTxPromise={cardSaleTxPromise}
-            battleVoucherTxPromise={battleVoucherTxPromise}
           />
         )}
 
         {activeTab === "account" && (
           <AccountTab
             data={data}
-            notesPromise={notesPromise}
             pnlResultPromise={pnlResultPromise}
             wagerRequirementPromise={wagerRequirementPromise}
             featureLocksPromise={featureLocksPromise}

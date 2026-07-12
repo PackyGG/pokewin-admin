@@ -69,7 +69,6 @@ import {
   type UserDetail,
   type PaginatedTransactions,
   type PnlBreakdown,
-  type AdminNote,
   CategoryTransactionsTable,
   AccountDetailsSection,
   FeatureLocksCard,
@@ -788,14 +787,6 @@ export function InventoryTab({
   // moving the owned page out of the body gate costs the hero nothing.
   inventoryPromise: Promise<SafeQueryResult<PaginatedInventory>> | null;
   disposedInventoryPromise: Promise<SafeQueryResult<PaginatedInventory>> | null;
-  // NOTE: `cardSaleTxPromise` / `battleVoucherTxPromise` are still created in
-  // page.tsx and threaded through user-view-modern → InventoryTab. The fetch
-  // contract is deliberately left unchanged, but the "Card & Voucher Sales" and
-  // "Battle Win Vouchers" sections were removed from this tab per owner, so the
-  // props are no longer destructured or rendered here — they stay on the type
-  // only to keep the upstream prop contract intact.
-  cardSaleTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
-  battleVoucherTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
 }) {
   const { user } = data;
   // Sold & Exchanged is collapsed by default so the Inventory tab opens clean.
@@ -1759,13 +1750,6 @@ export function AccountTab({
   viewerIsAdjustmentOwner,
 }: {
   data: UserDetail;
-  // Admin Notes was removed from this tab's rendering (owner request). The
-  // prop stays on the type — but is no longer destructured/rendered — only
-  // to match what page.tsx → UserViewModern → AccountTab still threads
-  // through (UserViewModern's prop contract is a different file's scope).
-  // Same pattern as cardSaleTxPromise/battleVoucherTxPromise on InventoryTab
-  // above: kept on the type only to keep the upstream prop contract intact.
-  notesPromise: Promise<SafeQueryResult<AdminNote[]>> | null;
   pnlResultPromise: Promise<SafeQueryResult<PnlBreakdown>>;
   // Backend-API read (NOT the MAIN DB). Resolves to null when the backend
   // branch isn't deployed / the read failed — the card renders its muted
