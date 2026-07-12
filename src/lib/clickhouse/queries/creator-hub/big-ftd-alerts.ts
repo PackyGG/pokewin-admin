@@ -23,7 +23,7 @@ import { CH_DB, chDateTime } from "@/lib/clickhouse/queries/_shared";
  *     LIMIT 1); '' when none (the consumer skips falsy creator ids).
  */
 
-export type BigFtdAlertRow = {
+type BigFtdAlertRow = {
   ledger_tx_id: string;
   user_id: string;
   amount: string;
