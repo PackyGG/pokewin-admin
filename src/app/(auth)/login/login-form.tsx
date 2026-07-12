@@ -39,10 +39,7 @@ export function LoginForm() {
         <div className="mb-5 flex justify-center">
           <Image src="/logo.png" alt="Pokewin" width={200} height={36} priority />
         </div>
-        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
-          Secure Access
-        </p>
-        <h1 className="mt-1.5 text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
+        <h1 className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
           Welcome back
         </h1>
       </div>

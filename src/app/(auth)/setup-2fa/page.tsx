@@ -28,10 +28,7 @@ export default async function Setup2FAPage() {
           className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent"
         />
         <div className="relative mb-8 text-center">
-          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
-            Secure Access
-          </p>
-          <h1 className="mt-1.5 text-xl font-semibold tracking-tight text-foreground sm:text-2xl">Set up Two-Factor Authentication</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">Set up Two-Factor Authentication</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Two-factor authentication is required. Finishing setup…
           </p>
@@ -62,10 +59,7 @@ export default async function Setup2FAPage() {
         className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent"
       />
       <div className="relative mb-8 text-center">
-        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
-          Secure Access
-        </p>
-        <h1 className="mt-1.5 text-xl font-semibold tracking-tight text-foreground sm:text-2xl">Set up Two-Factor Authentication</h1>
+        <h1 className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">Set up Two-Factor Authentication</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.)
         </p>
