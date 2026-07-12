@@ -15,7 +15,7 @@ import { CH_DB, chDateTime } from "@/lib/clickhouse/queries/_shared";
  * grouping by the id alone with `any(username)` is identical.
  */
 
-export type HubSignupLeaderRow = {
+type HubSignupLeaderRow = {
   creator_id: string;
   username: string | null;
   value: string;
