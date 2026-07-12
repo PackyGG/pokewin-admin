@@ -53,7 +53,7 @@ import { CH_DB, chDateTime, toNumber } from "../_shared";
  *     prod enum simply matches zero rows (matches the PG ENUM-SAFE `$0` read).
  */
 
-export type CreatorCostsTodayCh = {
+type CreatorCostsTodayCh = {
   total: number;
   creatorWithdrawals: number;
   tips: number;
