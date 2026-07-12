@@ -109,16 +109,3 @@ export function depositBonusCappedTailCutoff(
   const days = daysForInsightsPeriod(period) ?? LIFETIME_PAIRING_LOOKBACK_DAYS;
   return chDateTime(new Date(now.getTime() - (days + tailDays) * MS_PER_DAY));
 }
-
-/**
- * Window-start cutoff literal — the lower bound the period opens at, used for
- * `created_at < windowStart` "prior to window" tests (mirrors the PG
- * `windowStartExpr`). Returns `null` for the lifetime window where the PG
- * expression is `-infinity` (every row is "in window", nothing is "prior").
- */
-export function depositBonusWindowStart(
-  period: InsightsRewardsPeriod,
-  now: Date,
-): string | null {
-  return depositBonusCutoff(period, now);
-}
