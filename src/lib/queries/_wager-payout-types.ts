@@ -29,7 +29,7 @@
  * lines 96-138) — it's revenue captured from the user when shipping costs
  * are deducted from the withdrawal amount.
  */
-export const WAGER_PAYOUT_WAGER_TYPES = [
+const WAGER_PAYOUT_WAGER_TYPES = [
   "pack_opening",
   "battle_bet",
   "battle_sponsorship",
@@ -42,7 +42,7 @@ export const WAGER_PAYOUT_WAGER_TYPES = [
  * refunds, prizes, redemptions, claims). Subtracted from wagers to
  * compute GGR.
  */
-export const WAGER_PAYOUT_PAYOUT_TYPES = [
+const WAGER_PAYOUT_PAYOUT_TYPES = [
   "battle_refund",
   "upgrader_payout",
   "card_sale",
