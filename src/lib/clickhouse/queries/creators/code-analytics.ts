@@ -60,7 +60,7 @@ import { CH_DB, toNumber } from "../_shared";
  * is a pure ClickHouse read.
  */
 
-export type CodeAnalyticsSnapshot = {
+type CodeAnalyticsSnapshot = {
   code: string;
   ownerUserId: string;
   ownerUsername: string | null;
