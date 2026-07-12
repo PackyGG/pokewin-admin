@@ -720,6 +720,7 @@ export const PUSH_BLOCKED_EDGE_FLOOR =
   "Blocked — edge 10.5% floor (owner law). This plan lands below it.";
 export const PUSH_DISABLED_REPLANNING = "Re-planning…";
 export const PUSH_DISABLED_FIX_POOL = "Fix the pool first";
+export const PUSH_DISABLED_INFEASIBLE = "Infeasible — try a suggested fix above";
 export const PUSH_DISABLED_OFF_TAG = "Off tag — can't push";
 export const PUSH_DISABLED_DIRTY = "Dirty odds — can't push";
 export const PUSH_DISABLED_PUSHING = "Pushing…";

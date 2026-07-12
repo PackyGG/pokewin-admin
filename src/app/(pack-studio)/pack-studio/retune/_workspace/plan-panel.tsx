@@ -79,6 +79,7 @@ import {
   PUSH_BLOCKED_EDGE_FLOOR,
   PUSH_DISABLED_DIRTY,
   PUSH_DISABLED_FIX_POOL,
+  PUSH_DISABLED_INFEASIBLE,
   PUSH_DISABLED_OFF_TAG,
   PUSH_DISABLED_PUSHING,
   PUSH_DISABLED_REPLANNING,
@@ -1223,6 +1224,7 @@ export function PlanPanel({
       return PUSH_DISABLED_OFF_TAG;
     if (plan && plan.feasible && plan.snapped === false)
       return PUSH_DISABLED_DIRTY;
+    if (plan && !plan.feasible) return PUSH_DISABLED_INFEASIBLE;
     return PUSH_DISABLED_FIX_POOL;
   })();
 

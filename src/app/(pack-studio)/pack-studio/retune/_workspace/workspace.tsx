@@ -1156,6 +1156,16 @@ export function RetuneWorkspace({
     (remedy: PinRemedy) => {
       const packId = selectedRef.current;
       if (!packId) return;
+      // Basis staleness guard (audit H4): if the plan's basis doesn't match
+      // the current staged pool, the remedy was verified for a DIFFERENT
+      // state. Re-plan first so the remedy refreshes against the current pool.
+      const sp = stagedApi.getStaged(packId);
+      const entry = planByPackRef.current.get(packId);
+      if (sp && entry && entry.basisKey !== basisKey(packId, sp)) {
+        toast.info("The plan changed — re-planning to refresh the fixes.");
+        void requestPlan(packId);
+        return;
+      }
       if (remedy.kind === "price-move") {
         if (typeof remedy.price === "number" && remedy.price > 0) {
           applyPriceSuggestion({ price: remedy.price });
@@ -1164,10 +1174,12 @@ export function RetuneWorkspace({
       }
       if (typeof remedy.cardId !== "string" || remedy.cardId.length === 0)
         return;
-      const sp = stagedApi.getStaged(packId);
       if (!sp) return;
       if (remedy.kind === "unpin-card") {
-        if (!sp.pinnedOdds.some((p) => p.cardId === remedy.cardId)) return;
+        if (!sp.pinnedOdds.some((p) => p.cardId === remedy.cardId)) {
+          toast.info("This fix is stale — re-plan to refresh the suggestions.");
+          return;
+        }
         stagedApi.setStaged(packId, {
           ...sp,
           pinnedOdds: sp.pinnedOdds.filter((p) => p.cardId !== remedy.cardId),
@@ -1181,7 +1193,10 @@ export function RetuneWorkspace({
         if (typeof remedy.cardId2 !== "string" || remedy.cardId2.length === 0)
           return;
         const ids = new Set([remedy.cardId, remedy.cardId2]);
-        if (!sp.pinnedOdds.some((p) => ids.has(p.cardId))) return;
+        if (!sp.pinnedOdds.some((p) => ids.has(p.cardId))) {
+          toast.info("This fix is stale — re-plan to refresh the suggestions.");
+          return;
+        }
         stagedApi.setStaged(packId, {
           ...sp,
           pinnedOdds: sp.pinnedOdds.filter((p) => !ids.has(p.cardId)),
@@ -1191,7 +1206,10 @@ export function RetuneWorkspace({
       }
       // raise-pin / lower-pin — retype the pin at the verified percent.
       if (!(typeof remedy.toPct === "number" && remedy.toPct > 0)) return;
-      if (!sp.pinnedOdds.some((p) => p.cardId === remedy.cardId)) return;
+      if (!sp.pinnedOdds.some((p) => p.cardId === remedy.cardId)) {
+        toast.info("This fix is stale — re-plan to refresh the suggestions.");
+        return;
+      }
       stagedApi.setStaged(packId, {
         ...sp,
         pinnedOdds: sp.pinnedOdds.map((p) =>
