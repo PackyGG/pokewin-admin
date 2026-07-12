@@ -61,6 +61,9 @@ import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
  *     dropdown filters that bind to a URL param.
  *   - `leading` — node rendered BEFORE the search input (e.g. a tab pill
  *     row that pairs with the search box).
+ *   - `afterSearch` — node rendered immediately AFTER (right of) the search
+ *     input, for a control that changes what the search matches (e.g. the
+ *     /users "Affiliate code only" checkbox).
  *   - `searchSlot` — replaces the built-in search input entirely (for
  *     client-side instant search that owns the term).
  *   - `children` — node rendered AFTER the filter dropdowns (e.g. a

@@ -12,6 +12,7 @@ import {
 import { getUsersPageGates } from "./_lib/admin-gates";
 import { ensureSupportBaseline } from "@/lib/support-baseline";
 import { UsersDataTable } from "./data-table";
+import { CodeSearchToggle } from "./code-search-toggle";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Button } from "@/components/ui/button";
@@ -110,6 +111,7 @@ export default async function UsersPage({
     params.sortOrder,
     params.affiliateCode,
     params.affiliateOwnerId,
+    params.codeSearch,
   ].join("|");
 
   // "Clear" href for the affiliateCode / affiliateOwnerId filter chip below
@@ -212,7 +214,12 @@ export default async function UsersPage({
           )}
           <Suspense fallback={<Skeleton className="h-10 w-full" />}>
             <DataTableToolbar
-              searchPlaceholder="Search by username, email, user ID, Discord ID, or affiliate code..."
+              searchPlaceholder={
+                params.codeSearch
+                  ? "Search affiliate/creator codes (type a code, find its owner)..."
+                  : "Search by username, email, user ID, Discord ID, or affiliate code..."
+              }
+              afterSearch={<CodeSearchToggle />}
               filters={[
                 {
                   name: "Role",
@@ -351,6 +358,9 @@ async function UsersTableSection({
         // URL `?match=contains` → slower interior-substring search;
         // anything else (the default) → left-anchored prefix match.
         searchMode: params.match === "contains" ? "substring" : "prefix",
+        // "Affiliate code only" toolbar checkbox — restrict the search to
+        // affiliate/creator codes (prefix) and return the code owners.
+        codeSearch: params.codeSearch,
         includeExcludedInSearch,
         affiliateCode: params.affiliateCode,
         affiliateOwnerId: params.affiliateOwnerId,

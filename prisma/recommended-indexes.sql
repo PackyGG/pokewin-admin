@@ -1160,3 +1160,36 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vouchers_user_id
 -- flagged, currently-cheap Seq Scan) and re-verify once applied:
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_affiliate_codes_upper_code
   ON affiliate_codes (UPPER(code));
+
+-- #32 ----------------------------------------------------------------
+-- affiliate_codes.code — /users "Affiliate code only" search (code PREFIX)
+-- ===================================================================
+-- Added by the 2026-07-12 /users code-search toggle (the "Affiliate code
+-- only" toolbar checkbox → getUsers `codeSearch`). In that mode
+-- buildUserListWhereClause matches the term against affiliate_codes.code by
+-- case-insensitive PREFIX and returns the code owners:
+--   SELECT user_id FROM affiliate_codes WHERE UPPER(code) LIKE $N ESCAPE '\'
+-- (pattern = uppercased+escaped term + '%').
+--
+-- Neither existing/recommended affiliate_codes index serves this:
+--   • #31 idx_affiliate_codes_upper_code = a PLAIN btree on UPPER(code) — it
+--     serves `UPPER(code) = $N` (exact) but NOT a `LIKE 'X%'` prefix (a
+--     default-collation btree cannot do left-anchored pattern matching).
+--   • #21 idx_affiliate_codes_code_prefix = text_pattern_ops but on the RAW
+--     `code`, not `UPPER(code)`, so it can't serve the case-folded prefix.
+-- To make the code-PREFIX search a true index range scan, the indexed
+-- expression must match the query EXACTLY: UPPER(code) with text_pattern_ops
+-- (same shape idx_user_lower_username_prefix (#15) uses for handle prefixes,
+-- just UPPER instead of LOWER to match this file's code case-fold convention):
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_affiliate_codes_upper_code_prefix
+--     ON affiliate_codes (UPPER(code) text_pattern_ops);
+--
+-- NOT APPLIED — flagged only. EXPLAIN ANALYZE (read-only, prod 2026-07-12) of
+-- the exact code-only prefix leg is a Seq Scan over 1,040 rows at 0.44 ms —
+-- sub-millisecond at today's size, so the feature ships now (correct,
+-- negligible-cost, consistent with the #21/#31 precedent). Per the
+-- Index-or-ClickHouse rule this leg is BLOCKED from being a true index-backed
+-- read until the owner applies the statement above; re-verify once applied.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_affiliate_codes_upper_code_prefix
+  ON affiliate_codes (UPPER(code) text_pattern_ops);

@@ -111,6 +111,17 @@ type UserListFilterInput = {
    * not a code string.
    */
   affiliateOwnerId: string | undefined;
+  /**
+   * "Affiliate code only" search mode (URL flag `?codeSearch=1`, toolbar
+   * checkbox). When TRUE and a `searchTerm` is present, the search matches
+   * ONLY `affiliate_codes.code` by case-insensitive PREFIX and returns the
+   * code OWNERS — it deliberately does NOT also match username / email / id.
+   * This is the "type a code → find who owns it" mode. When false (default),
+   * the normal multi-column search runs (which already surfaces a code's
+   * owner as ONE union leg, but only on an EXACT code match and mixed in with
+   * handle/email hits). No effect without a search term.
+   */
+  codeSearch: boolean;
   /** packy.gg user_ids from admin `excluded_users` — hidden from list results. */
   excludedUserIds: string[];
 };
@@ -312,6 +323,7 @@ function buildUserListWhereClause(
     isEmailLike,
     isDiscordId,
     searchMode,
+    codeSearch,
     role,
     status,
     affiliateCode,
@@ -320,7 +332,31 @@ function buildUserListWhereClause(
   const whereSql: string[] = [];
   const params: unknown[] = [];
   if (searchTerm) {
-    if (isExactId) {
+    if (codeSearch) {
+      // "Affiliate code only" mode — match ONLY affiliate_codes.code by
+      // case-insensitive PREFIX and return the code OWNERS. Deliberately does
+      // NOT also match username / email / id: the admin has opted into "type a
+      // code, find its owner". UPPER(code) case-fold matches every other
+      // code-driven query in this file (12 of 1,040 prod rows are NOT
+      // canonical-uppercase, read-only check 2026-07-12, so a plain
+      // `code = UPPER(term)` would silently miss them). PREFIX (not exact) so a
+      // partial code resolves ("MALL" → MALL, MALLGG, …) — the default
+      // search's owner leg is exact-only, which is why a partial/creator code
+      // typed there could come back empty. Pattern built + escaped in JS
+      // (`\` / `%` / `_` → literal) and bound as a param ($1), never
+      // interpolated. NOT yet index-backed: UPPER(code)'s recommended plain
+      // btree (#31) cannot serve a LIKE prefix, and #21's text_pattern_ops
+      // index is on the RAW `code`, not `UPPER(code)` — so this is a Seq Scan
+      // today. affiliate_codes is ~1,040 rows so it's sub-millisecond
+      // (EXPLAIN ANALYZE, read-only prod 2026-07-12: 0.44 ms); the matching
+      // `UPPER(code) text_pattern_ops` index is flagged as #32 in
+      // prisma/recommended-indexes.sql for the owner to apply.
+      const escaped = searchTerm.toUpperCase().replace(/[\\%_]/g, "\\$&");
+      params.push(`${escaped}%`); // $1 — UPPER(code) prefix pattern
+      whereSql.push(
+        `u.id IN (SELECT user_id FROM affiliate_codes WHERE UPPER(code) LIKE $${params.length} ESCAPE '\\')`,
+      );
+    } else if (isExactId) {
       params.push(searchTerm);
       // Primary-key lookup — exact match first, then case-insensitive fallback
       // for pasted ids with different casing (nanoid ids are mixed-case).
@@ -567,7 +603,7 @@ async function fetchColumnSortUserIds(
 
 const cachedFilteredColumnSortUserIds = unstable_cache(
   fetchColumnSortUserIds,
-  ["users-column-sort-filtered-v3"],
+  ["users-column-sort-filtered-v4"],
   { revalidate: 30, tags: ["users-list"] },
 );
 
@@ -922,6 +958,14 @@ export async function getUsers(params: {
    */
   searchMode?: UserSearchMode;
   /**
+   * "Affiliate code only" search mode (URL flag `?codeSearch=1`). When true
+   * AND a search term is present, the term is matched ONLY against
+   * `affiliate_codes.code` by case-insensitive PREFIX and the code OWNERS are
+   * returned (no username / email / id matching). See the `codeSearch` field
+   * on {@link UserListFilterInput}. No effect without a search term.
+   */
+  codeSearch?: boolean;
+  /**
    * When true AND a search term is present, excluded (blacklisted) users
    * are included in results. Only set after `canCurrentAdminIncludeExcludedInSearch`.
    */
@@ -950,6 +994,7 @@ export async function getUsers(params: {
     sortBy = "created_at",
     sortOrder = "desc",
     searchMode = "prefix",
+    codeSearch: codeSearchParam = false,
     includeExcludedInSearch = false,
     affiliateCode: affiliateCodeParam,
     affiliateOwnerId: affiliateOwnerIdParam,
@@ -957,6 +1002,9 @@ export async function getUsers(params: {
 
   const searchTerm = search?.trim();
   const isAnySearch = !!searchTerm;
+  // "Affiliate code only" mode only means anything with a term to match —
+  // the checkbox alone (empty search box) leaves the list unfiltered.
+  const codeSearch = codeSearchParam && isAnySearch;
   const affiliateOwnerId = affiliateOwnerIdParam?.trim() || undefined;
   // affiliateOwnerId (all codes) takes precedence over affiliateCode
   // (one code) if both were somehow passed — see buildUserListWhereClause.
@@ -999,18 +1047,27 @@ export async function getUsers(params: {
   //      default. The rarer "match an interior fragment" case is still
   //      available via searchMode === "substring" (legacy `contains` /
   //      `%term%`), which needs the pg_trgm GIN index to be fast.
+  // In "affiliate code only" mode every shape fast-path is suppressed: the
+  // term must be matched against affiliate_codes.code (by prefix), NEVER
+  // against the id / email / discord columns — even when the code happens to
+  // be shaped like a user id, an email, or a snowflake. Forcing these false
+  // routes the request to the free-form raw-SQL path (isFreeFormTextSearch
+  // below becomes true), where buildUserListWhereClause emits the code-only
+  // prefix leg.
   const isExactId =
-    !!searchTerm && (isUuid(searchTerm) || isUserId(searchTerm));
+    !codeSearch && !!searchTerm && (isUuid(searchTerm) || isUserId(searchTerm));
   // Cheap email shape check — anything with an @ that isn't trivially
   // malformed. We don't require a full RFC-compliant match; the unique
   // email index settles the result either way.
   const isEmailLike =
-    !!searchTerm && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(searchTerm);
+    !codeSearch &&
+    !!searchTerm &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(searchTerm);
   // Discord snowflake IDs are 17-20 digit numeric strings. We match the
   // linked Discord account (account.providerId = 'discord', account.accountId
   // = snowflake) only when the search looks like one — otherwise a generic
   // numeric username would trigger an unnecessary join.
-  const isDiscordId = /^\d{17,20}$/.test(searchTerm ?? "");
+  const isDiscordId = !codeSearch && /^\d{17,20}$/.test(searchTerm ?? "");
   const isFreeFormTextSearch =
     !!searchTerm && !isExactId && !isEmailLike && !isDiscordId;
   // Free-form / exact-match SEARCH must not run the computed-sort ranking
@@ -1028,6 +1085,7 @@ export async function getUsers(params: {
     isEmailLike,
     isDiscordId,
     searchMode,
+    codeSearch,
     role,
     status,
     affiliateCode,
@@ -1118,7 +1176,18 @@ export async function getUsers(params: {
   }
 
   if (searchTerm) {
-    if (isExactId) {
+    if (codeSearch) {
+      // "Affiliate code only" mode — match ONLY affiliate_codes.code by
+      // case-insensitive PREFIX, returning the code owners. Mirrors the
+      // raw-SQL code-only leg in buildUserListWhereClause. This Prisma `where`
+      // is DEAD for codeSearch today (a code search is always free-form-shaped
+      // → routes to the raw-SQL column-sort path below), but kept in sync per
+      // this file's documented Prisma-path/raw-SQL-path invariant so the two
+      // can never diverge if the routing ever changes.
+      where.affiliate_codes = {
+        some: { code: { startsWith: searchTerm, mode: "insensitive" } },
+      };
+    } else if (isExactId) {
       // Primary-key lookup — single index hit. mode insensitive so pasted
       // ids with different casing still resolve (nanoid ids are mixed-case).
       where.id = { equals: searchTerm, mode: "insensitive" };
