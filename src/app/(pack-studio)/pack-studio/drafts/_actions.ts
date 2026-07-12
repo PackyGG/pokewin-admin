@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath, revalidateTag } from "next/cache";
+import { unstable_rethrow } from "next/navigation";
 import { z } from "zod";
 
 import { adminDb } from "@/lib/admin-db";
@@ -37,6 +38,7 @@ import {
   type EditPoolCard,
   type EditPoolInputCard,
   type ApplyPackEditResult,
+  type WriteRefusal,
 } from "@/app/(pack-studio)/pack-studio/doctor/retune-actions";
 
 import {
@@ -277,6 +279,7 @@ export type PushAllDraftsResult = {
   pushed: PushDraftResult[];
   failed: { packId: string; draftId: string | null; error: string }[];
 };
+type DraftWriteRefusal = { refusedMessage: string };
 
 // ─── seedDraftForPack ───────────────────────────────────────────────────
 
@@ -776,8 +779,25 @@ export async function discardDraft(
  *
  * Any failure inside `applyPackEdit` bubbles up verbatim and the draft stays
  * in 'draft' status — the operator can fix and re-push.
+ *
+ * REFUSALS ARE DATA, NOT THROWS (incident 2026-07-11): the exported action
+ * catches inner throws and returns `{ refusedMessage }` so the drafts client
+ * sees the real reason in prod (Next.js masks server-action throws).
  */
 export async function pushDraftToProd(
+  packId: string,
+): Promise<PushDraftResult | DraftWriteRefusal> {
+  try {
+    return await pushDraftToProdInner(packId);
+  } catch (err) {
+    unstable_rethrow(err);
+    return {
+      refusedMessage:
+        err instanceof Error ? err.message : "The push failed unexpectedly.",
+    };
+  }
+}
+async function pushDraftToProdInner(
   packId: string,
 ): Promise<PushDraftResult> {
   const session = await requireDraftOperator();
@@ -807,10 +827,17 @@ export async function pushDraftToProd(
   const token = await signRetuneToken(session.userId);
 
   // THE ONLY MAIN WRITE — runs through `applyPackEdit`'s full guard rail.
-  const result: ApplyPackEditResult = await applyPackEdit(packId, token, {
-    cards: pool,
-    price,
-  });
+  // applyPackEdit returns `{ refusedMessage }` instead of throwing (incident
+  // 2026-07-11 fix) — propagate it so the client sees the real reason.
+  const writeResult: ApplyPackEditResult | WriteRefusal = await applyPackEdit(
+    packId,
+    token,
+    { cards: pool, price },
+  );
+  if ("refusedMessage" in writeResult) {
+    throw new Error(writeResult.refusedMessage);
+  }
+  const result: ApplyPackEditResult = writeResult;
 
   // Flip the draft to 'pushed' (kept as audit). Best-effort wrt admin-DB: the
   // MAIN write already committed, so a failure here is logged but NOT thrown.
@@ -877,7 +904,20 @@ export async function pushDraftToProd(
  * abort the run. Each per-pack push mints its own synthetic token (no shared
  * token state to worry about).
  */
-export async function pushAllDrafts(): Promise<PushAllDraftsResult> {
+export async function pushAllDrafts(): Promise<
+  PushAllDraftsResult | DraftWriteRefusal
+> {
+  try {
+    return await pushAllDraftsInner();
+  } catch (err) {
+    unstable_rethrow(err);
+    return {
+      refusedMessage:
+        err instanceof Error ? err.message : "The push failed unexpectedly.",
+    };
+  }
+}
+async function pushAllDraftsInner(): Promise<PushAllDraftsResult> {
   const session = await requireDraftOperator();
 
   const drafts = await adminDb.pack_retune_drafts.findMany({
@@ -891,7 +931,7 @@ export async function pushAllDrafts(): Promise<PushAllDraftsResult> {
 
   for (const d of drafts) {
     try {
-      const r = await pushDraftToProd(d.pack_id);
+      const r = await pushDraftToProdInner(d.pack_id);
       pushed.push(r);
     } catch (err) {
       failed.push({

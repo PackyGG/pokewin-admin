@@ -587,8 +587,26 @@ async function enforcePackCreatorLiveGate(
  * writes via the SAME delete-all-then-createMany `pack_cards` transaction
  * `updatePack` / `applyPackRetune` use, audits "pack_edited_via_retune" with
  * before/after card counts + a risk summary, and refreshes the ADMIN risk row.
+ *
+ * REFUSALS ARE DATA, NOT THROWS (incident 2026-07-11): same wrapper as
+ * `applyStagedPackEditAndRetune` / `applyPackRetune` — the exported action
+ * catches the inner throw and returns `{ refusedMessage }` so the drafts
+ * publish client can route the real reason instead of the masked prod text.
  */
 export async function applyPackEdit(
+  ...args: Parameters<typeof applyPackEditInner>
+): Promise<ApplyPackEditResult | WriteRefusal> {
+  try {
+    return await applyPackEditInner(...args);
+  } catch (err) {
+    unstable_rethrow(err);
+    return {
+      refusedMessage:
+        err instanceof Error ? err.message : "The write failed unexpectedly.",
+    };
+  }
+}
+async function applyPackEditInner(
   packId: string,
   token: string,
   input: EditPoolInput,

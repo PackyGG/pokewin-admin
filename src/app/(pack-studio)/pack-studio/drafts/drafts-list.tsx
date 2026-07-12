@@ -202,10 +202,14 @@ function useDraftActions(packId: string, onChange: () => void) {
     setBusy("push");
     try {
       const r = await pushDraftToProd(packId);
-      toast.success(
-        `Pushed to MAIN · edge ${pct(r.before.edge)} → ${pct(r.after.edge)} · price ${formatCurrency(r.before.price)} → ${formatCurrency(r.after.price)}`,
-      );
-      onChange();
+      if ("refusedMessage" in r) {
+        toast.error(r.refusedMessage);
+      } else {
+        toast.success(
+          `Pushed to MAIN · edge ${pct(r.before.edge)} → ${pct(r.after.edge)} · price ${formatCurrency(r.before.price)} → ${formatCurrency(r.after.price)}`,
+        );
+        onChange();
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Push failed.");
     } finally {
@@ -659,22 +663,26 @@ export function DraftsTopActions({ pendingCount }: { pendingCount: number }) {
     setBusy("push-all");
     try {
       const r = await pushAllDrafts();
-      const pushed = r.pushed.length;
-      const failed = r.failed.length;
-      if (pushed > 0 && failed === 0) {
-        toast.success(`Pushed ${pushed} draft${pushed === 1 ? "" : "s"} to MAIN.`);
-      } else if (pushed > 0 && failed > 0) {
-        toast.warning(`Pushed ${pushed}, failed ${failed}.`, {
-          description: r.failed[0]?.error ?? "",
-        });
-      } else if (failed > 0) {
-        toast.error(`All ${failed} pushes failed.`, {
-          description: r.failed[0]?.error ?? "",
-        });
+      if ("refusedMessage" in r) {
+        toast.error(r.refusedMessage);
       } else {
-        toast.message("Nothing pushed.");
+        const pushed = r.pushed.length;
+        const failed = r.failed.length;
+        if (pushed > 0 && failed === 0) {
+          toast.success(`Pushed ${pushed} draft${pushed === 1 ? "" : "s"} to MAIN.`);
+        } else if (pushed > 0 && failed > 0) {
+          toast.warning(`Pushed ${pushed}, failed ${failed}.`, {
+            description: r.failed[0]?.error ?? "",
+          });
+        } else if (failed > 0) {
+          toast.error(`All ${failed} pushes failed.`, {
+            description: r.failed[0]?.error ?? "",
+          });
+        } else {
+          toast.message("Nothing pushed.");
+        }
+        refresh();
       }
-      refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Push all failed.");
     } finally {
