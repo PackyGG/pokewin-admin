@@ -286,11 +286,7 @@ export function deriveStatus(args: {
  *   ∧ no tag contradiction
  *   ∧ tagged packs are tag-exact (`taggedAccuracyHit !== false` AND the
  *     after win-rate is within `TAGGED_WRITE_WINRATE_TOLERANCE` of the tag)
- *
- * Dirty odds (snapped === false) no longer block push — the banner stays
- * informational (amber), but the owner can push exact-but-ugly odds when
- * the edge and win rate are correct. The clean-ladder grid is a cosmetic
- * preference, not a safety gate.
+ *   ∧ clean odds (`snapped !== false`) — required to push.
  */
 export function isPushEnabled(args: {
   status: WorkspaceStatus;
@@ -313,6 +309,7 @@ export function isPushEnabled(args: {
       return false;
     }
   }
+  if (plan.snapped === false) return false;
   return true;
 }
 

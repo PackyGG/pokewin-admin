@@ -1235,12 +1235,11 @@ export function RetuneWorkspace({
   //    price. The odds are already on the nice grid, so they stay clean. Only
   //    the price changes — exactly what the owner wants.
   //
-  // 2. Current plan is DIRTY (not snapped): just set the edge target override
-  //    and let the price FLOAT. The planner searches the band for a price
-  //    where clean odds exist at the new target. Odds will change, but that's
-  //    unavoidable — you can't have "same odds" AND "clean odds" when the
-  //    current odds aren't clean. The planner will find the closest clean
-  //    solution at the desired edge.
+  // 2. Current plan is DIRTY (not snapped): compute the new price from the
+  //    current EV, set it as the search anchor (NOT pinned), set the edge
+  //    target override, and let the planner search for clean odds at the new
+  //    price + edge target. The planner has freedom to reshape odds onto the
+  //    clean grid at the new price.
   const setEdgeTarget = React.useCallback(
     (desiredEdge: number) => {
       const packId = selectedRef.current;
@@ -1249,13 +1248,13 @@ export function RetuneWorkspace({
       const entry = planByPackRef.current.get(packId);
       const plan = entry?.plan ?? null;
       if (!plan?.after || !plan.priceAfter) return;
+      const currentEV = plan.priceAfter * (1 - plan.after.edge);
+      const newPrice = currentEV / (1 - desiredEdge);
       const sp = ensureStaged(packId);
       if (!sp) return;
 
       if (plan.snapped !== false) {
         // Clean plan: pin all odds + computed price. Odds stay exact.
-        const currentEV = plan.priceAfter * (1 - plan.after.edge);
-        const newPrice = currentEV / (1 - desiredEdge);
         const inPool = new Set(sp.cards.map((c) => c.cardId));
         const capDropped = new Set(plan.capDroppedCardIds);
         const allPinned = plan.planned
@@ -1273,14 +1272,16 @@ export function RetuneWorkspace({
           edgeTargetOverride: desiredEdge,
           pinnedOdds: allPinned,
         });
-        setPriceText(priceInputText(newPrice));
       } else {
-        // Dirty plan: just set the edge override, let the planner search.
+        // Dirty plan: set new price as search anchor + edge override.
+        // The planner searches the band around newPrice for clean odds.
         stagedApi.setStaged(packId, {
           ...sp,
+          price: newPrice,
           edgeTargetOverride: desiredEdge,
         });
       }
+      setPriceText(priceInputText(newPrice));
       void requestPlan(packId);
     },
     [ensureStaged, stagedApi, requestPlan],

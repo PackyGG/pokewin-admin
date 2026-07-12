@@ -79,6 +79,7 @@ import {
   PLAN_PROGRESS_VERY_SLOW_HINT,
   PUSH_BLOCKED_EDGE_FLOOR,
   PUSH_BLOCKED_EDGE_BELOW_TARGET,
+  PUSH_DISABLED_DIRTY,
   PUSH_DISABLED_FIX_POOL,
   PUSH_DISABLED_INFEASIBLE,
   PUSH_DISABLED_OFF_TAG,
@@ -1246,6 +1247,8 @@ export function PlanPanel({
     if (pendingCount > 0) return pushDisabledPendingLabel(pendingCount);
     if (plan && (plan.taggedAccuracyHit === false || plan.tagContradiction))
       return PUSH_DISABLED_OFF_TAG;
+    if (plan && plan.feasible && plan.snapped === false)
+      return PUSH_DISABLED_DIRTY;
     if (plan && !plan.feasible) return PUSH_DISABLED_INFEASIBLE;
     return PUSH_DISABLED_FIX_POOL;
   })();
