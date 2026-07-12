@@ -26,7 +26,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { Suspense } from "react";
+import { Suspense, cache } from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
@@ -42,7 +42,6 @@ import {
   SectionHeadingSkeleton,
   ChartRowSkeleton,
 } from "@/components/loading-skeletons";
-import { Skeleton } from "@/components/ui/skeleton";
 import { SkeletonText } from "@/components/ux";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -239,69 +238,135 @@ export default async function RealNumbersPage({
           <CrmTab />
         </Suspense>
       ) : (
-        <Suspense key="real-numbers" fallback={<RealNumbersBodySkeleton />}>
-          <RealNumbersBody />
-        </Suspense>
+        <FadeIn>
+          <div className="space-y-6">
+            <Suspense fallback={<KpiStripSkeleton count={6} />}>
+              <KpiStripSection />
+            </Suspense>
+
+            <CollapsibleSection
+              icon="layers"
+              title="GGR by game — packs · battles · upgrader"
+            >
+              <Suspense fallback={<PanelSkeleton lines={10} />}>
+                <GameSplitSection />
+              </Suspense>
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              icon="scale"
+              title="Gaming-margin waterfall — wager → GGR → NGR"
+            >
+              <Suspense fallback={<PanelSkeleton lines={6} />}>
+                <GamingWaterfallSection />
+              </Suspense>
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              icon="receipt"
+              title="Reward & bonus spend — itemized · every penny, where & why"
+              defaultOpen={false}
+            >
+              <Suspense fallback={<PanelSkeleton lines={10} />}>
+                <RewardSpendSection />
+              </Suspense>
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              icon="banknote"
+              title="Balance-sheet P&L — the cash-basis bottom line"
+            >
+              <Suspense fallback={<PanelSkeleton lines={8} />}>
+                <BalanceSheetSection />
+              </Suspense>
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              icon="piggyBank"
+              title="Why GGR ≠ realized P&L — two different scoreboards"
+              defaultOpen={false}
+            >
+              <Suspense fallback={<PanelSkeleton lines={8} />}>
+                <ReconciliationSection />
+              </Suspense>
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              icon="scale"
+              title="GGR → realized P&L — the complete closing waterfall 2.0"
+            >
+              <Suspense fallback={<PanelSkeleton lines={14} />}>
+                <GgrToNgrBridgeSection />
+              </Suspense>
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              icon="sparkles"
+              title="Creator program cost — what the house actually funds"
+              defaultOpen={false}
+            >
+              <Suspense fallback={<PanelSkeleton lines={8} />}>
+                <CreatorProgramCostSection />
+              </Suspense>
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              icon="info"
+              title="Definitions — what each number means"
+              defaultOpen={false}
+            >
+              <Suspense fallback={<PanelSkeleton lines={10} />}>
+                <DefinitionsSection />
+              </Suspense>
+            </CollapsibleSection>
+          </div>
+        </FadeIn>
       )}
     </div>
   );
 }
 
 /**
- * Body-only fallback for the streamed `<RealNumbersBody>` boundary. The shell
- * (PageHero) is already painted by the page above, so this mirrors only the
- * data body below the hero — the 6-tile KPI strip + the first section
- * silhouettes — using the same layout-matching shapes as `loading.tsx` so
- * nothing jumps when the 9 heavy lifetime reads land.
+ * Generic panel-body fallback for a single `CollapsibleSection`'s streamed
+ * content. The trigger row above it is already painted synchronously by
+ * `RealNumbersPage` (see `CollapsibleSection` usages above) — this only
+ * mirrors the card-shaped panel body while that section's own
+ * `getRealNumbersPageData()` read resolves, so nothing jumps when it lands.
  */
-function RealNumbersBodySkeleton() {
+function PanelSkeleton({ lines = 8 }: { lines?: number }) {
   return (
-    <div className="space-y-6">
-      <KpiStripSkeleton count={6} />
-      <div className="space-y-3">
-        <SectionHeadingSkeleton titleWidth={240} />
-        <div className="rounded-2xl border bg-card p-4 sm:p-5">
-          <SkeletonText lines={5} />
-        </div>
-      </div>
-      <div className="space-y-3">
-        <SectionHeadingSkeleton titleWidth={280} />
-        <div className="rounded-xl border bg-card p-3 sm:p-4">
-          <SkeletonText lines={10} />
-        </div>
-      </div>
-      <div className="space-y-3">
-        <SectionHeadingSkeleton titleWidth={220} />
-        <div className="rounded-xl border bg-card p-3 sm:p-4">
-          <Skeleton className="h-40 w-full rounded-lg" />
-        </div>
-      </div>
+    <div className="rounded-xl border bg-card p-3 sm:p-4">
+      <SkeletonText lines={lines} />
     </div>
   );
 }
 
 /**
- * The data body — the 9 heavy lifetime reads + the full waterfall/bridge UI.
+ * Shared data fetch for the "real-numbers" tab — the 9 heavy lifetime reads.
  *
- * Split out of the page shell so the PageHero streams to first paint
- * immediately (active-timeframe-only spirit: the shell is not gated on the
- * lifetime aggregates). All 9 reads stay in ONE `Promise.all` (so they still
- * run concurrently, and the shared `cost`/`snapshot`/`wager` values are fetched
- * exactly once and threaded into every section) — only the FIRST-PAINT gate
- * moved off the hero. Each read is still cached (`unstable_cache`, 365d-capped
- * lifetime) and `safeQuery`-timeout-wrapped, so a slow leg degrades to its
- * fallback instead of hanging the boundary. Math, shapes and House-POV colours
- * are unchanged.
+ * Wrapped in React `cache()` so each `CollapsibleSection` panel's own tiny
+ * async wrapper below can independently `await` this and still de-duplicate
+ * onto ONE underlying `Promise.all` call per render (the same `cache()`
+ * fan-out-dedupe pattern `getCreatorPnlCached` uses in
+ * `creators/[userId]/_queries/_pnl-cache.ts`). This split is what lets the
+ * `CollapsibleSection` TRIGGERS render synchronously in `RealNumbersPage`
+ * (outside any Suspense boundary) — their `useState` mounts once and is
+ * never discarded by a re-suspending boundary — while only each panel's
+ * inner content streams behind its own small `<Suspense>`. Each read is
+ * still cached (`unstable_cache`, 365d-capped lifetime) and
+ * `safeQuery`-timeout-wrapped, so a slow leg degrades to its fallback
+ * instead of hanging a boundary. Math, shapes and House-POV colours are
+ * unchanged.
+ *
+ * PERF/CH-CANDIDATE: 6 of these 9 lifetime aggregates are heavy PG-only reads
+ * with NO ClickHouse twin yet — getRewardSpendItemization, getCreatorNetCashDetail,
+ * getCreatorProgramCost, getCustomerRecyclingDetail, getRealNumbersGameSplit,
+ * getInsightsHubWager. They should get CH twins in a later cutover wave (wired
+ * through resolveAdminRead + compareRealNumbers, parity-proven before cutover).
+ * Until then each stays safeQuery-wrapped so a pool-timeout degrades one
+ * section, never the whole route. Do not change their logic here.
  */
-async function RealNumbersBody() {
-  // Lifetime, 365d-capped — the same window the insights hub + /ggr use.
-  // PERF/CH-CANDIDATE: 6 of these 9 lifetime aggregates are heavy PG-only reads
-  // with NO ClickHouse twin yet — getRewardSpendItemization, getCreatorNetCashDetail,
-  // getCreatorProgramCost, getCustomerRecyclingDetail, getRealNumbersGameSplit,
-  // getInsightsHubWager. They should get CH twins in a later cutover wave (wired
-  // through resolveAdminRead + compareRealNumbers, parity-proven before cutover).
-  // Until then each stays safeQuery-wrapped so a pool-timeout degrades one
-  // section, never the whole route. Do not change their logic here.
+const getRealNumbersPageData = cache(async function getRealNumbersPageData() {
   const [
     { data: cost, error: costErr },
     { data: wager },
@@ -405,125 +470,225 @@ async function RealNumbersBody() {
     recycling,
   });
 
+  return {
+    cost,
+    costErr,
+    wager,
+    split,
+    snapshot,
+    rewardSpend,
+    creatorDetail,
+    creatorProgram,
+    customerCash,
+    recycling,
+  };
+});
+
+/**
+ * Per-`CollapsibleSection` async wrappers — each independently `await`s the
+ * shared `cache()`-deduped `getRealNumbersPageData()` (so only ONE
+ * `Promise.all` actually runs per render) and renders the same panel
+ * component the old monolithic `RealNumbersBody` did, unchanged. Splitting
+ * one fetch per section — instead of one shared Suspense around the whole
+ * body — is what lets the `CollapsibleSection` triggers in `RealNumbersPage`
+ * render synchronously and keep their `open` state across re-suspends.
+ */
+
+async function KpiStripSection() {
+  const { cost, costErr, wager, snapshot } = await getRealNumbersPageData();
   return costErr || !cost ? (
-        <TileErrorFallback
-          label="Real Numbers"
-          hint="The canonical cost-breakdown helper failed. Server logs hold the digest."
-          size="panel"
-        />
-      ) : (
-        <FadeIn>
-          <div className="space-y-6">
-            <KpiStrip cost={cost} wager={wager ?? 0} snapshot={snapshot} />
+    <TileErrorFallback
+      label="Real Numbers"
+      hint="The canonical cost-breakdown helper failed. Server logs hold the digest."
+      size="panel"
+    />
+  ) : (
+    <KpiStrip cost={cost} wager={wager ?? 0} snapshot={snapshot} />
+  );
+}
 
-            <CollapsibleSection
-              icon="layers"
-              title="GGR by game — packs · battles · upgrader"
-            >
-              {split ? (
-                <GameSplitPanel split={split} headlineGgr={cost.ggr} />
-              ) : (
-                <TileErrorFallback
-                  label="Per-game GGR"
-                  hint="The per-game split failed to load. The headline GGR above is unaffected."
-                  size="panel"
-                />
-              )}
-            </CollapsibleSection>
+async function GameSplitSection() {
+  const { cost, costErr, split } = await getRealNumbersPageData();
+  if (costErr || !cost) {
+    return (
+      <TileErrorFallback
+        label="GGR by game"
+        hint="The canonical cost-breakdown helper failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
+  return split ? (
+    <GameSplitPanel split={split} headlineGgr={cost.ggr} />
+  ) : (
+    <TileErrorFallback
+      label="Per-game GGR"
+      hint="The per-game split failed to load. The headline GGR above is unaffected."
+      size="panel"
+    />
+  );
+}
 
-            <CollapsibleSection
-              icon="scale"
-              title="Gaming-margin waterfall — wager → GGR → NGR"
-            >
-              <GamingWaterfall
-                cost={cost}
-                wager={wager ?? 0}
-                netRain={rewardSpend?.netRain ?? null}
-              />
-            </CollapsibleSection>
+async function GamingWaterfallSection() {
+  const { cost, costErr, wager, rewardSpend } = await getRealNumbersPageData();
+  if (costErr || !cost) {
+    return (
+      <TileErrorFallback
+        label="Gaming-margin waterfall"
+        hint="The canonical cost-breakdown helper failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
+  return (
+    <GamingWaterfall
+      cost={cost}
+      wager={wager ?? 0}
+      netRain={rewardSpend?.netRain ?? null}
+    />
+  );
+}
 
-            <CollapsibleSection
-              icon="receipt"
-              title="Reward & bonus spend — itemized · every penny, where & why"
-              defaultOpen={false}
-            >
-              {rewardSpend ? (
-                <RewardSpendPanel
-                  itemization={rewardSpend}
-                  headlineRewardCost={cost.rewardPayouts}
-                />
-              ) : (
-                <TileErrorFallback
-                  label="Reward-spend itemization"
-                  hint="The itemized reward-spend breakdown failed to load. The headline reward cost above is unaffected."
-                  size="panel"
-                />
-              )}
-            </CollapsibleSection>
+async function RewardSpendSection() {
+  const { cost, costErr, rewardSpend } = await getRealNumbersPageData();
+  if (costErr || !cost) {
+    return (
+      <TileErrorFallback
+        label="Reward & bonus spend"
+        hint="The canonical cost-breakdown helper failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
+  return rewardSpend ? (
+    <RewardSpendPanel
+      itemization={rewardSpend}
+      headlineRewardCost={cost.rewardPayouts}
+    />
+  ) : (
+    <TileErrorFallback
+      label="Reward-spend itemization"
+      hint="The itemized reward-spend breakdown failed to load. The headline reward cost above is unaffected."
+      size="panel"
+    />
+  );
+}
 
-            {snapshot && (
-              <CollapsibleSection
-                icon="banknote"
-                title="Balance-sheet P&L — the cash-basis bottom line"
-              >
-                <BalanceSheetWaterfall snapshot={snapshot} />
-              </CollapsibleSection>
-            )}
+async function BalanceSheetSection() {
+  const { cost, costErr, snapshot } = await getRealNumbersPageData();
+  if (costErr || !cost) {
+    return (
+      <TileErrorFallback
+        label="Balance-sheet P&L"
+        hint="The canonical cost-breakdown helper failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
+  return snapshot ? (
+    <BalanceSheetWaterfall snapshot={snapshot} />
+  ) : (
+    <TileErrorFallback
+      label="Balance-sheet P&L"
+      hint="The realized P&L snapshot failed to load."
+      size="panel"
+    />
+  );
+}
 
-            {snapshot && (
-              <CollapsibleSection
-                icon="piggyBank"
-                title="Why GGR ≠ realized P&L — two different scoreboards"
-                defaultOpen={false}
-              >
-                <ReconciliationCallout cost={cost} snapshot={snapshot} />
-              </CollapsibleSection>
-            )}
+async function ReconciliationSection() {
+  const { cost, costErr, snapshot } = await getRealNumbersPageData();
+  if (costErr || !cost) {
+    return (
+      <TileErrorFallback
+        label="Why GGR ≠ realized P&L"
+        hint="The canonical cost-breakdown helper failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
+  return snapshot ? (
+    <ReconciliationCallout cost={cost} snapshot={snapshot} />
+  ) : (
+    <TileErrorFallback
+      label="Why GGR ≠ realized P&L"
+      hint="The realized P&L snapshot failed to load."
+      size="panel"
+    />
+  );
+}
 
-            <CollapsibleSection
-              icon="scale"
-              title="GGR → realized P&L — the complete closing waterfall 2.0"
-            >
-              <GgrToNgrBridge
-                cost={cost}
-                snapshot={snapshot}
-                wager={wager ?? 0}
-                split={split}
-                rewardSpend={rewardSpend}
-                customerCashMargin={customerCash?.pnl ?? null}
-                recycling={recycling}
-              />
-            </CollapsibleSection>
+async function GgrToNgrBridgeSection() {
+  const {
+    cost,
+    costErr,
+    snapshot,
+    wager,
+    split,
+    rewardSpend,
+    customerCash,
+    recycling,
+  } = await getRealNumbersPageData();
+  if (costErr || !cost) {
+    return (
+      <TileErrorFallback
+        label="GGR → realized P&L bridge"
+        hint="The canonical cost-breakdown helper failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
+  return (
+    <GgrToNgrBridge
+      cost={cost}
+      snapshot={snapshot}
+      wager={wager ?? 0}
+      split={split}
+      rewardSpend={rewardSpend}
+      customerCashMargin={customerCash?.pnl ?? null}
+      recycling={recycling}
+    />
+  );
+}
 
-            <CollapsibleSection
-              icon="sparkles"
-              title="Creator program cost — what the house actually funds"
-              defaultOpen={false}
-            >
-              {creatorProgram ? (
-                <CreatorProgramCostPanel
-                  program={creatorProgram}
-                  creatorNetCash={creatorDetail?.netCash ?? null}
-                />
-              ) : (
-                <TileErrorFallback
-                  label="Creator program cost"
-                  hint="The creator-program cost breakdown failed to load. The bridge above is unaffected."
-                  size="panel"
-                />
-              )}
-            </CollapsibleSection>
+async function CreatorProgramCostSection() {
+  const { cost, costErr, creatorProgram, creatorDetail } =
+    await getRealNumbersPageData();
+  if (costErr || !cost) {
+    return (
+      <TileErrorFallback
+        label="Creator program cost"
+        hint="The canonical cost-breakdown helper failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
+  return creatorProgram ? (
+    <CreatorProgramCostPanel
+      program={creatorProgram}
+      creatorNetCash={creatorDetail?.netCash ?? null}
+    />
+  ) : (
+    <TileErrorFallback
+      label="Creator program cost"
+      hint="The creator-program cost breakdown failed to load. The bridge above is unaffected."
+      size="panel"
+    />
+  );
+}
 
-            <CollapsibleSection
-              icon="info"
-              title="Definitions — what each number means"
-              defaultOpen={false}
-            >
-              <Definitions cost={cost} snapshot={snapshot} />
-            </CollapsibleSection>
-          </div>
-        </FadeIn>
-      );
+async function DefinitionsSection() {
+  const { cost, costErr, snapshot } = await getRealNumbersPageData();
+  if (costErr || !cost) {
+    return (
+      <TileErrorFallback
+        label="Definitions"
+        hint="The canonical cost-breakdown helper failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
+  return <Definitions cost={cost} snapshot={snapshot} />;
 }
 
 // ─── KPI strip ──────────────────────────────────────────────────────
