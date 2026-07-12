@@ -92,13 +92,6 @@ export type DashboardTrendSeries = {
   chartHourlyBuckets: boolean;
 };
 
-export type FtdDailyRow = {
-  date: string;
-  count: number;
-  total: number;
-  avg: number;
-};
-
 /** JS Date (UTC) → ClickHouse DateTime64 literal 'YYYY-MM-DD HH:MM:SS.fff'. */
 function chDateTime(d: Date): string {
   return d.toISOString().replace("T", " ").replace("Z", "");
@@ -408,24 +401,4 @@ export async function getDashboardTrendSeriesFromClickHouse(
     dailyWagerAttribution,
     chartHourlyBuckets: dashboardChartHourlyBuckets(period),
   };
-}
-
-/**
- * Standalone FTD-daily series read from ClickHouse — the same per-day first-
- * deposit buckets the trend series carries, exposed on its own for callers that
- * only need the FTD chart. Shares the exact first-deposit-per-user semantics
- * (min created_at, earliest amount) and customer scope (role NOT IN
- * admin/support, creators KEPT) as the trend series above.
- */
-export async function getFtdDailyFromClickHouse(
-  period: DashboardPeriod,
-  blacklist: string[],
-  now: Date = new Date(),
-): Promise<FtdDailyRow[]> {
-  const series = await getDashboardTrendSeriesFromClickHouse(
-    period,
-    blacklist,
-    now,
-  );
-  return series.dailyFtds;
 }
