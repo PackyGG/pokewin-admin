@@ -212,7 +212,7 @@ export default async function UsersPage({
           )}
           <Suspense fallback={<Skeleton className="h-10 w-full" />}>
             <DataTableToolbar
-              searchPlaceholder="Search by username, email, user ID, or Discord ID..."
+              searchPlaceholder="Search by username, email, user ID, Discord ID, or affiliate code..."
               filters={[
                 {
                   name: "Role",

@@ -1041,18 +1041,37 @@ export async function getUsers(params: {
   // insensitive). This is what admins paste from the URL bar.
   if (isAnySearch && (isExactId || isEmailLike || isDiscordId)) {
     const exactWhere: Prisma.UserWhereInput = {};
+    // The shape-specific exact lookup (id PK / unique email / discord
+    // account) OR the affiliate-code owner. A creator-chosen affiliate code
+    // can be shaped like a user id (21-64 alnum chars), a Discord snowflake
+    // (17-20 digits), or even an email — in which case the search routes to
+    // THIS exact fast path and would otherwise SKIP the affiliate_codes
+    // owner resolution the free-form branch (buildUserListWhereClause) does,
+    // so a code of any of those shapes could never be searched back to its
+    // owner. Including the same affiliate_codes leg the free-form / Prisma
+    // paths already use keeps "search a code → its owner" working for EVERY
+    // code shape, not just the free-form ones. (affiliate_codes is ~1k rows,
+    // so the extra case-insensitive code match is a sub-millisecond scan and
+    // only runs on the rare exact-shaped search.)
+    const shapeOr: Prisma.UserWhereInput[] = [];
     if (isExactId) {
-      exactWhere.OR = [
+      shapeOr.push(
         { id: searchTerm },
         { id: { equals: searchTerm, mode: "insensitive" } },
-      ];
+      );
     } else if (isEmailLike) {
-      exactWhere.email = { equals: searchTerm, mode: "insensitive" };
+      shapeOr.push({ email: { equals: searchTerm, mode: "insensitive" } });
     } else if (isDiscordId) {
-      exactWhere.account = {
-        some: { providerId: "discord", accountId: searchTerm },
-      };
+      shapeOr.push({
+        account: { some: { providerId: "discord", accountId: searchTerm } },
+      });
     }
+    shapeOr.push({
+      affiliate_codes: {
+        some: { code: { equals: searchTerm, mode: "insensitive" } },
+      },
+    });
+    exactWhere.OR = shapeOr;
     if (role && role !== "all" && USER_ROLES.has(role)) {
       exactWhere.role = role as user_role;
     }
