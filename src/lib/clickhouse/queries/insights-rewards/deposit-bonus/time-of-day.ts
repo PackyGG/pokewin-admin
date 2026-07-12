@@ -20,7 +20,7 @@ import { cutoffClause, depositBonusCutoff, depositBonusScopeCte } from "./_share
  * `windowDateFilter` cutoff.
  */
 
-export type DepositBonusTimeOfDayCh = {
+type DepositBonusTimeOfDayCh = {
   totalCount: number;
   totalVolume: number;
 };
