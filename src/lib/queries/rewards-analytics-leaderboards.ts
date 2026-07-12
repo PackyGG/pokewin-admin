@@ -199,13 +199,6 @@ export type LifetimePrizesByRaceType = {
   claims: number;
 };
 
-export type LifetimePrizesTopWinner = {
-  userId: string;
-  username: string | null;
-  total: number;
-  claims: number;
-};
-
 export type LifetimePrizesBreakdown = {
   /** Per-race-type rows. Same total as the headline KPI by construction. */
   byRaceType: LifetimePrizesByRaceType[];
@@ -238,43 +231,6 @@ export async function getLifetimePrizesBreakdown(): Promise<LifetimePrizesBreakd
   const total = byRaceType.reduce((a, r) => a + r.total, 0);
   const claims = byRaceType.reduce((a, r) => a + r.claims, 0);
   return { byRaceType, total, claims };
-}
-
-/**
- * Top lifetime prize winners across every race type.
- */
-export async function getLifetimePrizesTopWinners(
-  limit = 10,
-): Promise<LifetimePrizesTopWinner[]> {
-  const safeLimit = Math.max(1, Math.min(limit, 50));
-  const db = await getDb();
-  const userScopeSql = await raceClaimsUserScopeSql();
-  const rows = await db.$queryRawUnsafe<
-    {
-      user_id: string;
-      username: string | null;
-      total: string;
-      claims: string;
-    }[]
-  >(`
-    SELECT
-      rc.user_id,
-      u.username,
-      SUM(rc.prize_amount_usd::numeric)::text AS total,
-      COUNT(*)::text AS claims
-    FROM race_claims rc
-    JOIN "user" u ON u.id = rc.user_id
-    WHERE rc.${userScopeSql}
-    GROUP BY rc.user_id, u.username
-    ORDER BY SUM(rc.prize_amount_usd::numeric) DESC
-    LIMIT ${safeLimit}
-  `);
-  return rows.map((r) => ({
-    userId: r.user_id,
-    username: r.username,
-    total: toNumber(r.total),
-    claims: Number(r.claims),
-  }));
 }
 
 export type PrizeBudgetTierRow = {
