@@ -104,14 +104,17 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} ${chakraPetch.variable}`} suppressHydrationWarning>
       <body className="antialiased overflow-x-hidden">
-        {/* Grailed is the default theme for a new visitor with no saved
-            preference. `enableSystem` stays on so the preferences dropdown
-            can still offer "System"; existing users keep their saved theme
-            and can switch to dark/light via the toggle. */}
+        {/* Grailed Dark is THE default theme for everyone (owner 2026-07-12).
+            `storageKey` is bumped to "pokewin-theme-v2" so previously-saved
+            themes (under the old default "theme" key) are invalidated — every
+            existing user falls back to `defaultTheme="grailed"` once, then any
+            new toggle choice persists under the new key. `enableSystem` stays
+            on so "System" is still selectable; users can still switch. */}
         <ThemeProvider
           attribute="class"
           defaultTheme="grailed"
           enableSystem
+          storageKey="pokewin-theme-v2"
           themes={["light", "dark", "grailed", "grailed-light"]}
         >
           <TooltipProvider>

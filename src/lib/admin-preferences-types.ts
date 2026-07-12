@@ -26,7 +26,9 @@ export type AdminPreferences = {
 };
 
 export const DEFAULT_PREFERENCES: AdminPreferences = {
-  theme: "system",
+  // Grailed Dark is the default for everyone (owner 2026-07-12); the
+  // next-themes client default matches (see src/app/layout.tsx).
+  theme: "grailed",
   timezone: null,
 };
 
