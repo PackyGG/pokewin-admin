@@ -15,31 +15,6 @@
 
 export type DoubleDownPeriod = "24h" | "7d" | "30d" | "90d" | "all";
 
-export const DOUBLE_DOWN_PERIODS: readonly DoubleDownPeriod[] = [
-  "24h",
-  "7d",
-  "30d",
-  "90d",
-  "all",
-] as const;
-
-export const DEFAULT_DOUBLE_DOWN_PERIOD: DoubleDownPeriod = "30d";
-
-export function parseDoubleDownPeriod(
-  value: string | undefined,
-): DoubleDownPeriod {
-  switch (value) {
-    case "24h":
-    case "7d":
-    case "30d":
-    case "90d":
-    case "all":
-      return value;
-    default:
-      return DEFAULT_DOUBLE_DOWN_PERIOD;
-  }
-}
-
 export function doubleDownPeriodLabel(p: DoubleDownPeriod): string {
   switch (p) {
     case "24h":
@@ -62,7 +37,7 @@ export function doubleDownPeriodLabel(p: DoubleDownPeriod): string {
  * INSIGHTS_LIFETIME_LOOKBACK_DAYS used by the reward sweeps and covers all
  * currently-relevant Double Down activity (the feature is new).
  */
-export const DOUBLE_DOWN_LIFETIME_LOOKBACK_DAYS = 365;
+const DOUBLE_DOWN_LIFETIME_LOOKBACK_DAYS = 365;
 
 /** Day count for a window; `all` resolves to the capped lifetime lookback. */
 export function daysForDoubleDownPeriodCapped(p: DoubleDownPeriod): number {

@@ -24,13 +24,7 @@ import {
 // the row TYPES live in `double-down-shared.ts` (no server-only graph) so
 // client components can import them without pulling getDb / Prisma into the
 // browser bundle.
-export {
-  DOUBLE_DOWN_PERIODS,
-  DEFAULT_DOUBLE_DOWN_PERIOD,
-  DOUBLE_DOWN_LIFETIME_LOOKBACK_DAYS,
-  parseDoubleDownPeriod,
-  doubleDownPeriodLabel,
-} from "@/lib/queries/double-down-shared";
+export { doubleDownPeriodLabel } from "@/lib/queries/double-down-shared";
 export type {
   DoubleDownPeriod,
   DoubleDownResult,
