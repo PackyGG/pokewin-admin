@@ -11,7 +11,11 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
-type Period = { periodStart: string; participants: number };
+type Period = {
+  periodStart: string;
+  participants: number;
+  isActive: boolean;
+};
 
 // Human label for a period_start. Snapshots only store the start day, so the
 // label is derived from race_type: a month name for monthly, a week-of for
@@ -82,9 +86,14 @@ export function PeriodSelect({
         {periods.map((p) => (
           <SelectItem key={p.periodStart} value={p.periodStart}>
             {formatPeriodLabel(raceType, p.periodStart)}
+            {p.isActive && (
+              <span className="ml-1.5 font-medium text-foreground">Active</span>
+            )}
             <span className="text-muted-foreground">
-              {" "}
-              · {p.participants} player{p.participants === 1 ? "" : "s"}
+              {" · "}
+              {p.isActive && p.participants === 0
+                ? "standings at period end"
+                : `${p.participants} player${p.participants === 1 ? "" : "s"}`}
             </span>
           </SelectItem>
         ))}

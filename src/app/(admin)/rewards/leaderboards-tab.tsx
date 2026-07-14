@@ -170,6 +170,12 @@ async function StandingsSubTab({
           periods.some((p) => p.periodStart === params.periodStart)
         ? params.periodStart
         : periods[0]?.periodStart;
+  // Is the selected period the currently-running race? A running monthly race
+  // has no snapshot rows yet (they're generated when the period ends), so its
+  // standings table is empty — flagged here so it renders an honest
+  // "race in progress" state instead of the generic "no data".
+  const isActivePeriod =
+    periods.find((p) => p.periodStart === effectivePeriod)?.isActive ?? false;
   // Wrap the standings + claim-window reads (getRaceStandingsClaimWindow also
   // fans out to the reward-expiry backend API) so a slow / failing read shows
   // the inline amber band + empty table rather than nuking the page.
@@ -246,6 +252,7 @@ async function StandingsSubTab({
           raceType={raceType}
           periodStart={effectivePeriod}
           claimWindow={claimWindow}
+          isActivePeriod={isActivePeriod}
         />
       </FadeIn>
       <DataTablePagination

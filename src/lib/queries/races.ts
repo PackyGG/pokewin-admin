@@ -136,14 +136,27 @@ export async function getRaceClaims(params: {
 export type RaceLeaderboardPeriod = {
   periodStart: string;
   participants: number;
+  /**
+   * True when this period_start is the currently-running race (its race_periods
+   * row is status='active'). A running MONTHLY race has NO snapshot rows yet —
+   * snapshots are generated when a period ENDS, and only daily/weekly get live
+   * snapshots while running (verified read-only against prod: the active
+   * monthly period had 0 snapshot rows while the active weekly had 153). Such a
+   * race is injected here with participants=0 so the Standings view surfaces +
+   * defaults to the current race instead of silently falling back to the last
+   * ENDED period.
+   */
+  isActive: boolean;
 };
 
 /**
- * The actual leaderboards that exist for a race type, taken straight from
- * race_leaderboard_snapshots (one group per period_start). This is what the
- * Standings period selector is populated from — instead of guessing a calendar
- * date that may not line up with any real period (monthly races run on custom
- * cadences, so a "1st of the month" guess shows nothing). Most-recent first.
+ * The leaderboards selectable for a race type. Primarily the periods that
+ * actually exist in race_leaderboard_snapshots (one group per period_start) —
+ * instead of guessing a calendar date that may not line up with any real
+ * period (monthly races run on custom cadences, so a "1st of the month" guess
+ * shows nothing). The currently-active race (from race_periods) is always
+ * included even when it has no snapshot rows yet, so the running race is never
+ * missing from the picker. Most-recent first.
  */
 export async function getRaceLeaderboardPeriods(params: {
   raceType: string;
@@ -155,18 +168,53 @@ export async function getRaceLeaderboardPeriods(params: {
   // All-time has no single period — nothing to select.
   if (!raceType || raceType === "all") return [];
 
-  const groups = await db.race_leaderboard_snapshots.groupBy({
-    by: ["period_start"],
-    where: { race_type: raceType as race_type },
-    _count: { _all: true },
-    orderBy: { period_start: "desc" },
-    take: limit,
+  const [groups, activePeriod] = await Promise.all([
+    db.race_leaderboard_snapshots.groupBy({
+      by: ["period_start"],
+      where: { race_type: raceType as race_type },
+      _count: { _all: true },
+      orderBy: { period_start: "desc" },
+      take: limit,
+    }),
+    // Tiny lookup — one active row per race type (seq scan is optimal, same
+    // read-only pattern as getRacePeriodsOverview). Used to surface a running
+    // race that has no snapshot rows yet.
+    db.race_periods.findFirst({
+      where: { race_type: raceType as race_type, status: "active" },
+      orderBy: { starts_at: "desc" },
+      select: { starts_at: true },
+    }),
+  ]);
+
+  // Snapshots key their period_start to the calendar day the period started
+  // (verified against prod: an ended period's snapshots sit under
+  // DATE(starts_at)), so the active period's key is derived the same way.
+  const activeStart = activePeriod
+    ? activePeriod.starts_at.toISOString().slice(0, 10)
+    : null;
+
+  const periods: RaceLeaderboardPeriod[] = groups.map((g) => {
+    const periodStart = g.period_start.toISOString().slice(0, 10);
+    return {
+      periodStart,
+      participants: g._count._all,
+      isActive: activeStart === periodStart,
+    };
   });
 
-  return groups.map((g) => ({
-    periodStart: g.period_start.toISOString().slice(0, 10),
-    participants: g._count._all,
-  }));
+  // Inject the running race when it has no snapshot rows yet (the monthly
+  // case). Daily/weekly active periods already appear via `groups` (live
+  // snapshots), so this only ever adds a missing entry, never a duplicate.
+  if (activeStart && !periods.some((p) => p.periodStart === activeStart)) {
+    periods.push({ periodStart: activeStart, participants: 0, isActive: true });
+  }
+
+  // Most-recent first; the active period sorts to the top by its start date.
+  periods.sort((a, b) =>
+    a.periodStart < b.periodStart ? 1 : a.periodStart > b.periodStart ? -1 : 0,
+  );
+
+  return periods;
 }
 
 export async function getRaceLeaderboard(params: {

@@ -134,11 +134,18 @@ export function StandingsTable({
   raceType,
   periodStart,
   claimWindow,
+  isActivePeriod = false,
 }: {
   data: Standing[];
   raceType: string;
   periodStart?: string;
   claimWindow?: RaceClaimWindow | null;
+  /**
+   * The selected period is the currently-running race. A running monthly race
+   * has no snapshot rows yet (snapshots are generated when a period ends), so
+   * an empty table here means "in progress", not "no data".
+   */
+  isActivePeriod?: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
 
@@ -280,6 +287,15 @@ export function StandingsTable({
 
   const colCount = (showPrizes ? 1 : 0) + (reviewable ? 5 : 3);
 
+  // Empty-state copy. When the running race has no snapshot rows yet (a monthly
+  // race is only snapshotted when the period ends), say so plainly instead of
+  // the generic "no data" — the standings are pending, not missing.
+  const emptyTitle = isActivePeriod ? "Race in progress" : "No leaderboard data";
+  const emptyDescription =
+    isActivePeriod && raceType === "monthly"
+      ? "This monthly race is still running. Its standings are recorded when the period ends — check back after it closes, or pick a finalized period from the selector above."
+      : "Standings populate as players wager during this race period.";
+
   return (
     <>
       {/* Mobile card list (<lg) */}
@@ -288,8 +304,8 @@ export function StandingsTable({
           <div className="rounded-md border">
             <EmptyState
               icon={Trophy}
-              title="No leaderboard data"
-              description="Standings populate as players wager during this race period."
+              title={emptyTitle}
+              description={emptyDescription}
               compact
             />
           </div>
@@ -405,8 +421,8 @@ export function StandingsTable({
                 <TableCell colSpan={colCount} className="p-0">
                   <EmptyState
                     icon={Trophy}
-                    title="No leaderboard data"
-                    description="Standings populate as players wager during this race period."
+                    title={emptyTitle}
+                    description={emptyDescription}
                     compact
                   />
                 </TableCell>
