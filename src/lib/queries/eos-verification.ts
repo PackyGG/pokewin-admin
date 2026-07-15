@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { isUuid } from "@/lib/utils/ids";
+import type { BattleMode, SimParticipant, SimRound } from "@/lib/eos/battle-mode-sim";
 
 export type EosBattleSummary = {
   id: string;
@@ -19,6 +20,12 @@ export type EosBattleSummary = {
    * but the join is defensive) or `winnerTeam` is null.
    */
   creatorWon: boolean | null;
+  /** Total wagered across every seat — `betAmount × participantCount`. */
+  totalPotUsd: number;
+  /** 0–100. % of every participant's bet the house fronted (borrow). */
+  borrowPercentage: number;
+  /** USD the house fronted across the whole battle. 0 when not borrowed. */
+  borrowedAmountUsd: number;
   createdAt: string;
 };
 
@@ -51,6 +58,7 @@ export async function getRecentCompletedBattles(params: {
         players_per_team: true,
         bet_amount: true,
         winner_team: true,
+        borrow_percentage: true,
         created_at: true,
         user: { select: { username: true } },
         battle_participants: { select: { user_id: true, team_number: true } },
@@ -69,16 +77,26 @@ export async function getRecentCompletedBattles(params: {
           ? creatorTeam === b.winner_team
           : null;
 
+      const betAmount = toNumber(b.bet_amount);
+      const participantCount = b.battle_participants.length;
+      const totalPotUsd = betAmount * participantCount;
+      const borrowPercentage = b.borrow_percentage ?? 0;
+      const borrowedAmountUsd =
+        borrowPercentage > 0 ? totalPotUsd * (borrowPercentage / 100) : 0;
+
       return {
         id: b.id,
         creatorUsername: b.user?.username ?? null,
         mode: b.mode,
         teams: b.teams,
         playersPerTeam: b.players_per_team,
-        betAmount: toNumber(b.bet_amount),
+        betAmount,
         winnerTeam: b.winner_team,
-        participantCount: b.battle_participants.length,
+        participantCount,
         creatorWon,
+        totalPotUsd,
+        borrowPercentage,
+        borrowedAmountUsd,
         createdAt: b.created_at.toISOString(),
       };
     }),
@@ -106,4 +124,95 @@ export async function getBattleEosBlockHash(
   if (!battle) return null;
 
   return { eosBlockHash: battle.eos_block_hash };
+}
+
+export type BattleSimulationContext = {
+  battleId: string;
+  mode: BattleMode;
+  isCrazyMode: boolean;
+  /** AES-256-GCM ciphertext — never decrypted here, only in the server action. */
+  serverSeedEncrypted: string;
+  /** The battle creator's team, for a "would the creator have won" read same as `EosBattleSummary.creatorWon`. Null if the creator isn't among the participants. */
+  creatorTeam: number | null;
+  participants: SimParticipant[];
+  rounds: SimRound[];
+};
+
+/**
+ * Everything needed to recompute what a battle's outcome WOULD have been for
+ * a candidate EOS block hash — the battle's mode/settings, every
+ * participant's team, and each round's pack cards (price/hp/weight) in the
+ * exact order backend draws them (`pack_cards.order` ascending). Pure reads
+ * only; `server_seed` comes back still encrypted, decrypted only inside the
+ * "show result" server action right before use. Backs the EOS-verification
+ * page's per-block "Show result" simulation, never eager-loaded for a whole
+ * page of battles.
+ */
+export async function getBattleSimulationContext(
+  battleId: string,
+): Promise<BattleSimulationContext | null> {
+  if (!isUuid(battleId)) return null;
+  const db = await getDb();
+
+  const battle = await db.battles.findUnique({
+    where: { id: battleId },
+    select: {
+      user_id: true,
+      mode: true,
+      pack_ids: true,
+      additional_settings: true,
+      server_seed: true,
+    },
+  });
+  if (!battle) return null;
+
+  const participants = await db.battle_participants.findMany({
+    where: { battle_id: battleId },
+    select: { id: true, team_number: true, user_id: true },
+  });
+
+  const uniquePackIds = [...new Set(battle.pack_ids)];
+  const packs = await db.packs.findMany({
+    where: { id: { in: uniquePackIds } },
+    select: {
+      id: true,
+      cards_per_open: true,
+      pack_cards: {
+        orderBy: { order: "asc" },
+        select: {
+          weight: true,
+          cards: { select: { id: true, price: true, hp: true } },
+        },
+      },
+    },
+  });
+  const packMap = new Map(packs.map((p) => [p.id, p]));
+
+  const rounds: SimRound[] = [];
+  for (const packId of battle.pack_ids) {
+    const pack = packMap.get(packId);
+    if (!pack) continue;
+    rounds.push({
+      cardsPerOpen: pack.cards_per_open,
+      cards: pack.pack_cards.map((pc) => ({
+        cardId: pc.cards.id,
+        price: toNumber(pc.cards.price),
+        hp: pc.cards.hp ?? 0,
+        weight: pc.weight,
+      })),
+    });
+  }
+
+  const creatorTeam =
+    participants.find((p) => p.user_id === battle.user_id)?.team_number ?? null;
+
+  return {
+    battleId,
+    mode: battle.mode as BattleMode,
+    isCrazyMode: battle.additional_settings.includes("crazy_mode"),
+    serverSeedEncrypted: battle.server_seed,
+    creatorTeam,
+    participants: participants.map((p) => ({ id: p.id, teamNumber: p.team_number })),
+    rounds,
+  };
 }
