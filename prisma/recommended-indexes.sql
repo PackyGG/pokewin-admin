@@ -1225,13 +1225,12 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_affiliate_codes_upper_code_prefix
 --     Rows Removed by Filter: 61175
 --   Execution Time: 17.838 ms
 --
--- NOT APPLIED — flagged only. At today's 60.8k-row / 16MB size a full scan
--- is ~17ms, negligible (well inside the safeQuery 15s timeout), so the
--- feature ships now per the same "small/cheap-today, flagged, re-verify
--- once applied" precedent as #21/#31/#32 above. chat_messages has no
--- period-bounded prior art on this table, though, so unlike those it WILL
--- keep growing daily with no cap — re-verify (EXPLAIN ANALYZE) once the
--- table is materially bigger, and apply the statement below well before a
--- 17ms scan becomes a multi-hundred-ms one:
+-- APPLIED (2026-07-15, valid) — owner applied this index same-day; re-verified
+-- read-only against prod (pg_indexes/pg_index.indisvalid = true). The today-
+-- window query now plans as `Index Only Scan using
+-- idx_chat_messages_created_at_user_id` (Heap Fetches: 0 — the partial index
+-- fully covers user_id + the is_deleted predicate):
+--   cost=8.49 (was cost=3076.83 forced-Seq-Scan baseline)
+--   Execution Time: 0.458 ms (was 17.838 ms)
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chat_messages_created_at_user_id
   ON chat_messages (created_at, user_id) WHERE is_deleted = false;

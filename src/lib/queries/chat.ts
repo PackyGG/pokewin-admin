@@ -231,12 +231,10 @@ type TopChatterRow = {
  * Cached compute (20s) of today's top chatters, keyed on env + the exact
  * UTC day window so the cache naturally rolls over at 00:00 UTC.
  *
- * Index-safety: `chat_messages` has no index on `user_id`/`created_at` today
- * (flagged as prisma/recommended-indexes.sql #33). At today's prod size
- * (~61k lifetime rows, 16MB) a forced Seq Scan over the whole table costs
- * ~17ms (verified read-only via EXPLAIN ANALYZE, 2026-07-15) — negligible,
- * so this ships now per the same precedent as #21/#31/#32 in that file
- * (small/cheap-today, flagged for the owner to apply, re-verify once live).
+ * Index-safety: backed by `idx_chat_messages_created_at_user_id` (partial,
+ * `WHERE is_deleted = false`) — see prisma/recommended-indexes.sql #33. Owner
+ * applied it 2026-07-15; re-verified read-only that the query now plans as
+ * an Index Only Scan (0.458ms, was a 17.8ms Seq Scan before the index).
  */
 const cachedTopChattersToday = unstable_cache(
   async (
