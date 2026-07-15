@@ -71,6 +71,7 @@ export const BALANCE_ADJUSTMENT_CATEGORY_KEYS = [
   "deposit_bonus",
   "bugs",
   "reload",
+  "trivia",
   "lossback",
   "leaderboard",
   "remove_locked_balance",
@@ -287,6 +288,13 @@ export const BALANCE_ADJUSTMENT_CATEGORY_META: Record<
     label: "Reload",
     costLabel: "Reload credits",
     why: "Reload bonus credited to a user's balance. A house-funded retention cost.",
+    counted: true,
+  },
+  trivia: {
+    key: "trivia",
+    label: "Trivia",
+    costLabel: "Trivia credits",
+    why: "Balance credited as a trivia-event prize. A house-funded marketing cost.",
     counted: true,
   },
   lossback: {

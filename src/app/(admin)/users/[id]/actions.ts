@@ -220,6 +220,7 @@ type ResolvedAdjustmentMeta = {
  *   bonus           → exact reason, min 20 chars
  *   bugs            → explanation, min 30 chars
  *   reload          → (no input)
+ *   trivia          → (no input)
  *   lossback        → 7d PnL value + % lossback + OPTIONAL explanation
  *   other           → free-text, min 20 chars (NOT counted)
  *
@@ -289,6 +290,10 @@ function validateAdjustmentCategory(
       return { ok: true, meta: { ...base, reasonText } };
     }
     case "reload": {
+      // No required inputs.
+      return { ok: true, meta: base };
+    }
+    case "trivia": {
       // No required inputs.
       return { ok: true, meta: base };
     }

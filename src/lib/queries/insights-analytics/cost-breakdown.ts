@@ -1223,7 +1223,7 @@ export async function getCostBreakdown(
     key: "other",
     label: "Other rewards",
     amountUsd: Math.max(0, onSiteRewardCostUsd - namedProgramTotal),
-    note: "Waitlist prizes + counted balance-adjustment credits (giveaway / bonus / reload / lossback / deposit-problem / withdrawal-failed) + remaining reward ledger types.",
+    note: "Waitlist prizes + counted balance-adjustment credits (giveaway / bonus / reload / trivia / lossback / deposit-problem / withdrawal-failed) + remaining reward ledger types.",
   });
   const programSpend: RewardProgramSpendBlock = {
     programs: programRows,

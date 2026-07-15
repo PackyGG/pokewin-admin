@@ -111,6 +111,7 @@ const COUNTED_ADJ_CATEGORY_KEYS = [
   "deposit_bonus",
   "bugs",
   "reload",
+  "trivia",
   "lossback",
 ] as const;
 const COUNTED_ADJ_CATEGORIES_SQL = `(${COUNTED_ADJ_CATEGORY_KEYS.map(

@@ -53,6 +53,7 @@ const COUNTED_ADJ_CATEGORY_KEYS = [
   "deposit_bonus",
   "bugs",
   "reload",
+  "trivia",
   "lossback",
 ] as const;
 
