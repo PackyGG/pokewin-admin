@@ -504,10 +504,23 @@ export async function deleteAdminUser(
         data: { created_by_id: null },
       });
       // creator_deal_estimates is NOT a Prisma model on the admin client
-      // (table provisioned outside the schema, NO-ACTION FK). NULL its
-      // created_by_id via parameterized raw SQL — keep the estimate, drop
-      // who created it.
-      await tx.$executeRaw`UPDATE "creator_deal_estimates" SET "created_by_id" = NULL WHERE "created_by_id" = ${adminUserId}::uuid`;
+      // (table provisioned outside the schema, NO-ACTION FK) and is a KNOWN
+      // drift table that may be ABSENT in a given admin DB. When present, NULL
+      // its created_by_id via parameterized raw SQL — keep the estimate, drop
+      // who created it. When absent, skip: a raw UPDATE on a missing relation
+      // throws 42P01, and inside this interactive transaction that poisons the
+      // whole tx so the admin_users.delete below would never land (the reported
+      // "Delete failed: relation creator_deal_estimates does not exist" bug).
+      // to_regclass() returns NULL (not an error) for a missing table, so this
+      // existence probe is safe inside the transaction. Mirrors the
+      // "catch P2021/42P01 and degrade gracefully" contract in
+      // prisma/admin/sql/20260606_creator_hub_substrate.sql.
+      const estimatesProbe = await tx.$queryRaw<Array<{ has_table: boolean }>>`
+        SELECT to_regclass('"creator_deal_estimates"') IS NOT NULL AS has_table
+      `;
+      if (estimatesProbe[0]?.has_table) {
+        await tx.$executeRaw`UPDATE "creator_deal_estimates" SET "created_by_id" = NULL WHERE "created_by_id" = ${adminUserId}::uuid`;
+      }
 
       // ── Pure admin action-logs / orphan rows — safe to DELETE (no business
       // data; consistent with the gift-card / voucher action deletes below).
