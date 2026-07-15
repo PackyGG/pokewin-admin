@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   Loader2,
   Play,
+  ListChecks,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +21,7 @@ import type { EosBattleSummary } from "@/lib/queries/eos-verification";
 import {
   revealBattleEosVerification,
   simulateBattleOutcomeForBlock,
+  simulateAllBlockOutcomes,
   type BattleEosVerification,
   type BlockSimulationResult,
 } from "./actions";
@@ -47,6 +49,50 @@ export function BattleRow({ battle }: { battle: EosBattleSummary }) {
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [simResults, setSimResults] = useState<Record<number, BlockSimState>>({});
+  const [isSolvingAll, setIsSolvingAll] = useState(false);
+
+  const handleSolveAll = (blocks: { blockNum: number; status: string; blockHash?: string }[]) => {
+    const solvable = blocks.filter(
+      (b): b is { blockNum: number; status: string; blockHash: string } =>
+        b.status === "ok" && typeof b.blockHash === "string",
+    );
+    if (solvable.length === 0) return;
+
+    setIsSolvingAll(true);
+    setSimResults((prev) => {
+      const next = { ...prev };
+      for (const b of solvable) next[b.blockNum] = { status: "loading" };
+      return next;
+    });
+
+    void (async () => {
+      try {
+        const results = await simulateAllBlockOutcomes(
+          battle.id,
+          solvable.map((b) => ({ blockNum: b.blockNum, blockHash: b.blockHash })),
+        );
+        setSimResults((prev) => {
+          const next = { ...prev };
+          for (const [blockNumStr, res] of Object.entries(results)) {
+            next[Number(blockNumStr)] =
+              res.status === "error"
+                ? { status: "error", message: res.error }
+                : { status: "ok", result: res };
+          }
+          return next;
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to simulate.";
+        setSimResults((prev) => {
+          const next = { ...prev };
+          for (const b of solvable) next[b.blockNum] = { status: "error", message };
+          return next;
+        });
+      } finally {
+        setIsSolvingAll(false);
+      }
+    })();
+  };
 
   const handleSimulate = (blockNum: number, blockHash: string) => {
     setSimResults((prev) => ({ ...prev, [blockNum]: { status: "loading" } }));
@@ -121,12 +167,6 @@ export function BattleRow({ battle }: { battle: EosBattleSummary }) {
           amountUsd={battle.borrowedAmountUsd}
           size="sm"
         />
-        {battle.winnerTeam !== null && (
-          <span className="flex items-center gap-1 text-xs text-muted-foreground">
-            <Trophy className="size-3.5 text-yellow-500" />
-            Team {battle.winnerTeam} won
-          </span>
-        )}
         <span className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <span className="text-sm font-semibold text-foreground">
@@ -187,12 +227,25 @@ export function BattleRow({ battle }: { battle: EosBattleSummary }) {
                       </div>
                     ) : detail.blockHistory?.status === "ok" ? (
                       <>
-                        <div className="flex items-center gap-1.5 text-xs">
-                          <CheckCircle2 className="size-3.5 text-emerald-500" />
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <CheckCircle2 className="size-3.5 shrink-0 text-emerald-500" />
                           <span className="text-muted-foreground">
                             Confirmed via {stripProtocol(detail.blockHistory.endpoint)} ·
                             block plus the 4 before it
                           </span>
+                          <button
+                            type="button"
+                            onClick={() => handleSolveAll(detail.blockHistory!.status === "ok" ? detail.blockHistory!.blocks : [])}
+                            disabled={isSolvingAll}
+                            className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-muted/50 px-2.5 py-1 text-[10px] font-semibold text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+                          >
+                            {isSolvingAll ? (
+                              <Loader2 className="size-3 animate-spin" />
+                            ) : (
+                              <ListChecks className="size-3" />
+                            )}
+                            Solve all
+                          </button>
                         </div>
                         <p className="text-[10px] text-muted-foreground">
                           &quot;Show result&quot; recomputes the battle&apos;s outcome as if that

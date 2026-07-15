@@ -96,9 +96,18 @@ function drawCardsForRound(params: {
   const { round, serverSeed, blockHash, participantId, roundIndex } = params;
   const cumulativeWeights = computeCumulativeWeights(round.cards);
 
+  // `${blockHash}:${participantId}` is the ONLY client seed ever fed into the
+  // HMAC (see generateParticipantClientSeed in card-roll.service.ts) — round
+  // and card index vary the *nonce*/*cursor*, never the seed string itself.
+  // generateCardClientSeed's per-card seed is used solely to relabel the
+  // stored `client_seed` for display after the ticket is already drawn; it
+  // never participates in the actual draw. Baking roundIndex/cardIndex into
+  // the seed string here would double-encode them and produce a different
+  // ticket than the real battle.
+  const clientSeed = `${blockHash}:${participantId}`;
+
   const drawn: DrawnCard[] = [];
   for (let cardIndex = 0; cardIndex < round.cardsPerOpen; cardIndex++) {
-    const clientSeed = `${blockHash}:${participantId}:${roundIndex}:${cardIndex}`;
     const { ticket } = generateProvablyFairInt(serverSeed, clientSeed, roundIndex, cardIndex);
     const card = findCardForTicket(ticket, round.cards, cumulativeWeights);
     if (card) drawn.push({ ...card, ticket });

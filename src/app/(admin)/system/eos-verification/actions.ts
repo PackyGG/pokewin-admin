@@ -14,6 +14,7 @@ import {
   simulateBattleOutcomeForBlockHash,
   type SimulatedBattleOutcome,
 } from "@/lib/eos/battle-mode-sim";
+import type { BattleSimulationContext } from "@/lib/queries/eos-verification";
 
 export type BattleEosVerification = {
   eosBlockHash: string | null;
@@ -55,43 +56,39 @@ export type BlockSimulationResult =
     };
 
 /**
- * Recomputes what a battle's outcome WOULD have been if `blockHash` (one of
- * the 5 blocks shown on the row — the real one or one of the 4 before it)
- * had been the battle's `eos_block_hash`, using the battle's REAL server
- * seed, participants, mode, and packs. Backend derives every battle client
- * seed from the block hash (`${blockHash}:${participantId}[...]`), so
- * swapping the hash and replaying the same deterministic math is enough to
- * answer "would the same side have won" — no backend call needed, decrypt
- * happens with the local SERVER_SEED_PEPPER copy only, and the plaintext
- * seed never leaves this function.
+ * Shared fetch-context + decrypt-seed step for both the single-block and
+ * "solve all" actions, so a 5-block "solve all" only hits the DB and runs
+ * the decrypt ONCE instead of 5 times — the context and server seed are
+ * identical for every candidate block of the same battle.
  */
-export async function simulateBattleOutcomeForBlock(
+async function loadDecryptedSimContext(
   battleId: string,
-  blockHash: string,
-): Promise<BlockSimulationResult> {
-  await requirePageAccess("/system/eos-verification");
-
+): Promise<{ context: BattleSimulationContext; serverSeed: string } | { error: string }> {
   const pepper = process.env.PEPPER;
-  if (!pepper) {
-    return { status: "error", error: "PEPPER env var is not configured." };
-  }
+  if (!pepper) return { error: "PEPPER env var is not configured." };
 
   const context = await getBattleSimulationContext(battleId);
-  if (!context) return { status: "error", error: "Battle not found." };
+  if (!context) return { error: "Battle not found." };
   if (context.rounds.length === 0) {
-    return { status: "error", error: "No pack data available to simulate this battle." };
+    return { error: "No pack data available to simulate this battle." };
   }
 
-  let serverSeed: string;
   try {
-    serverSeed = decryptServerSeed(context.serverSeedEncrypted, pepper);
+    const serverSeed = decryptServerSeed(context.serverSeedEncrypted, pepper);
+    return { context, serverSeed };
   } catch {
-    return { status: "error", error: "Failed to decrypt this battle's server seed — wrong pepper?" };
+    return { error: "Failed to decrypt this battle's server seed — wrong pepper?" };
   }
+}
 
+function simulateWithContext(
+  context: BattleSimulationContext,
+  serverSeed: string,
+  blockHash: string,
+): Extract<BlockSimulationResult, { status: "ok" }> {
   const outcome = simulateBattleOutcomeForBlockHash({
     mode: context.mode,
-    battleId,
+    battleId: context.battleId,
     blockHash,
     serverSeed,
     isCrazyMode: context.isCrazyMode,
@@ -105,4 +102,50 @@ export async function simulateBattleOutcomeForBlock(
       : null;
 
   return { status: "ok", outcome, creatorWon };
+}
+
+/**
+ * Recomputes what a battle's outcome WOULD have been if `blockHash` (one of
+ * the 5 blocks shown on the row — the real one or one of the 4 before it)
+ * had been the battle's `eos_block_hash`, using the battle's REAL server
+ * seed, participants, mode, and packs. Backend derives every battle client
+ * seed from the block hash alone (`${blockHash}:${participantId}` — round
+ * and card index only vary the nonce/cursor, never the seed string), so
+ * swapping the hash and replaying the same deterministic math is enough to
+ * answer "would the same side have won" — no backend call needed, decrypt
+ * happens with the local PEPPER copy only, and the plaintext seed never
+ * leaves this function.
+ */
+export async function simulateBattleOutcomeForBlock(
+  battleId: string,
+  blockHash: string,
+): Promise<BlockSimulationResult> {
+  await requirePageAccess("/system/eos-verification");
+
+  const loaded = await loadDecryptedSimContext(battleId);
+  if ("error" in loaded) return { status: "error", error: loaded.error };
+
+  return simulateWithContext(loaded.context, loaded.serverSeed, blockHash);
+}
+
+/**
+ * Same simulation as `simulateBattleOutcomeForBlock`, but for every block on
+ * the row in one call ("Solve all") — one DB fetch + one decrypt shared
+ * across all candidate blocks instead of one round-trip per block.
+ */
+export async function simulateAllBlockOutcomes(
+  battleId: string,
+  blocks: { blockNum: number; blockHash: string }[],
+): Promise<Record<number, BlockSimulationResult>> {
+  await requirePageAccess("/system/eos-verification");
+
+  const loaded = await loadDecryptedSimContext(battleId);
+  if ("error" in loaded) {
+    const errorResult: BlockSimulationResult = { status: "error", error: loaded.error };
+    return Object.fromEntries(blocks.map((b) => [b.blockNum, errorResult]));
+  }
+
+  return Object.fromEntries(
+    blocks.map((b) => [b.blockNum, simulateWithContext(loaded.context, loaded.serverSeed, b.blockHash)]),
+  );
 }
