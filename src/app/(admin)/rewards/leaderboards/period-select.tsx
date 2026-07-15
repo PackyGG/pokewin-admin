@@ -92,7 +92,7 @@ export function PeriodSelect({
             <span className="text-muted-foreground">
               {" · "}
               {p.isActive && p.participants === 0
-                ? "standings at period end"
+                ? "live"
                 : `${p.participants} player${p.participants === 1 ? "" : "s"}`}
             </span>
           </SelectItem>

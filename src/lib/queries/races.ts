@@ -1,4 +1,7 @@
-import { getDb } from "@/lib/db";
+import { unstable_cache } from "next/cache";
+import { getDb, dbForEnv } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
+import { Prisma } from "@/generated/prisma/client";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import type { race_type } from "@/generated/prisma/enums";
@@ -168,7 +171,7 @@ export async function getRaceLeaderboardPeriods(params: {
   // All-time has no single period — nothing to select.
   if (!raceType || raceType === "all") return [];
 
-  const [groups, activePeriod] = await Promise.all([
+  const [groups, activeRows] = await Promise.all([
     db.race_leaderboard_snapshots.groupBy({
       by: ["period_start"],
       where: { race_type: raceType as race_type },
@@ -178,20 +181,24 @@ export async function getRaceLeaderboardPeriods(params: {
     }),
     // Tiny lookup — one active row per race type (seq scan is optimal, same
     // read-only pattern as getRacePeriodsOverview). Used to surface a running
-    // race that has no snapshot rows yet.
-    db.race_periods.findFirst({
-      where: { race_type: raceType as race_type, status: "active" },
-      orderBy: { starts_at: "desc" },
-      select: { starts_at: true },
-    }),
+    // race that has no snapshot rows yet. `starts_at` is `timestamp without
+    // time zone`; read its calendar day DB-side as a UTC-naive string
+    // (to_char) instead of round-tripping through a JS Date, whose parsing of
+    // that column type is driver-dependent. This key equals `starts_at::date`,
+    // the same value getLiveRaceLeaderboard matches on.
+    db.$queryRaw<{ start_date: string }[]>`
+      SELECT to_char(starts_at, 'YYYY-MM-DD') AS start_date
+      FROM race_periods
+      WHERE race_type::text = ${raceType} AND status = 'active'
+      ORDER BY starts_at DESC
+      LIMIT 1
+    `,
   ]);
 
   // Snapshots key their period_start to the calendar day the period started
   // (verified against prod: an ended period's snapshots sit under
   // DATE(starts_at)), so the active period's key is derived the same way.
-  const activeStart = activePeriod
-    ? activePeriod.starts_at.toISOString().slice(0, 10)
-    : null;
+  const activeStart = activeRows[0]?.start_date ?? null;
 
   const periods: RaceLeaderboardPeriod[] = groups.map((g) => {
     const periodStart = g.period_start.toISOString().slice(0, 10);
@@ -288,6 +295,24 @@ export async function getRaceLeaderboard(params: {
     }),
   ]);
 
+  // No snapshot rows for this period. If it's the currently-RUNNING race,
+  // compute standings LIVE from game_sessions — a monthly race is only
+  // snapshotted when it ENDS (daily/weekly get live snapshot rows and are
+  // served by the path above, so this only ever fires for the monthly gap).
+  // Validated read-only against prod: SUM(race-eligible bet_amount) over the
+  // race window reproduces the finalized snapshot wagered_usd cent-exact.
+  if (total === 0 && periodStart) {
+    const live = await getLiveRaceLeaderboard({
+      raceType,
+      periodStart,
+      search,
+      page,
+      perPage,
+      excludedUserIds: [...excludedSet],
+    });
+    if (live) return live;
+  }
+
   const tierByPosition = new Map(
     tiers.map((t) => [t.position, toNumber(t.prize_amount_usd)] as const),
   );
@@ -352,6 +377,215 @@ export async function getRaceLeaderboard(params: {
     totalPages: Math.ceil(total / perPage),
   };
 }
+
+/**
+ * Live standings for a RUNNING race, computed from game_sessions.
+ *
+ * Why this exists: a monthly race is only written into
+ * race_leaderboard_snapshots when it ENDS (daily/weekly get live snapshot rows
+ * while running, so those are served from the snapshot path). Without this the
+ * admin sees nothing for the current monthly race until it closes.
+ *
+ * Source of truth: the race leaderboard is the sum of each user's
+ * race-eligible wager over the period window. Verified read-only against prod
+ * by reconstructing the last FINALIZED monthly race — SUM(bet_amount) of
+ * race_eligible game_sessions over [starts_at, ends_at) matched every
+ * snapshot's wagered_usd cent-exact (per-game leaderboard weights are 1×
+ * today, so the raw bet is the weighted contribution). If non-1× leaderboard
+ * weights are ever set, this live view would drift from the weighted board
+ * for wagers placed after that change — same caveat the affiliate "live"
+ * leaderboard path documents.
+ *
+ * Returns null when `periodStart` is NOT a currently-active race period, so
+ * the caller falls back to its empty result (this never fabricates standings
+ * for an ended period that simply has no snapshots).
+ */
+export async function getLiveRaceLeaderboard(params: {
+  raceType: string;
+  periodStart: string;
+  search?: string;
+  page?: number;
+  perPage?: number;
+  /** Excluded-users blacklist, resolved by the caller (admin DB, can't run in the cache scope). */
+  excludedUserIds: string[];
+}): Promise<PaginatedResult<RaceLeaderboardEntry> | null> {
+  const {
+    raceType,
+    periodStart,
+    search,
+    page = 1,
+    perPage = 20,
+    excludedUserIds,
+  } = params;
+  if (!raceType || raceType === "all") return null;
+
+  const db = await getDb();
+
+  // Only the currently-RUNNING race gets a live view. Match the active
+  // race_period by its (UTC-naive) start DATE == periodStart, and read the
+  // window bounds DB-side as UTC-naive strings. Both game_sessions.created_at
+  // and race_periods.starts_at/ends_at are `timestamp without time zone` on the
+  // SAME UTC-naive clock, so the window is a direct naive comparison — no
+  // timezone conversion and no driver-dependent Date round-trip (verified: the
+  // pg driver parses that column type as LOCAL, which would shift the window
+  // hours off). No active match → not live; return null so the caller falls
+  // back to its empty result (never fabricates standings for an ended period).
+  const win = await db.$queryRaw<
+    { starts_naive: string; ends_naive: string }[]
+  >`
+    SELECT
+      to_char(starts_at, 'YYYY-MM-DD HH24:MI:SS') AS starts_naive,
+      to_char(ends_at,   'YYYY-MM-DD HH24:MI:SS') AS ends_naive
+    FROM race_periods
+    WHERE race_type::text = ${raceType}
+      AND status = 'active'
+      AND starts_at::date = ${periodStart}::date
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  const activeWindow = win[0];
+  if (!activeWindow) return null;
+
+  // Resolve env in the request scope (cookie), then compute inside the cache
+  // keyed on that env so the prod/dev toggle is respected (dbForEnv pattern).
+  const env = await readDbEnv();
+  const { rows, total, tiers } = await cachedLiveRaceStandings(
+    env,
+    raceType,
+    activeWindow.starts_naive,
+    activeWindow.ends_naive,
+    search?.trim() ? search.trim() : null,
+    page,
+    perPage,
+  );
+
+  const tierByPosition = new Map(tiers.map((t) => [t.position, t.prize] as const));
+  const excluded = new Set(excludedUserIds);
+
+  return {
+    data: rows.map((r) => ({
+      id: r.user_id,
+      userId: r.user_id,
+      username: r.username,
+      position: r.position,
+      wageredUsd: toNumber(r.wagered),
+      prizeAmountUsd: tierByPosition.get(r.position) ?? null,
+      // A running race has no finalized claims/holds yet.
+      hold: null,
+      claimedAt: null,
+      excluded: excluded.has(r.user_id),
+    })),
+    total,
+    page,
+    perPage,
+    totalPages: Math.max(1, Math.ceil(total / perPage)),
+  };
+}
+
+type LiveStandingRow = {
+  user_id: string;
+  username: string | null;
+  wagered: string;
+  position: number;
+};
+
+/**
+ * Cached live-standings compute (30s), keyed on env + window + paging + search
+ * so it only ever holds the ACTIVE period's window (Active-Timeframe-Only).
+ *
+ * Index-safety: `startsNaive`/`endsNaive` are UTC-naive strings compared
+ * directly against `game_sessions.created_at` (also UTC-naive) as `::timestamp`
+ * constants, `created_at` bare — the range hits
+ * idx_game_sessions_created_at_user_bet (verified read-only via EXPLAIN: Bitmap
+ * Index Scan, ~37ms over a month window, no seq scan). `race_eligible` mirrors
+ * the backend's race inclusion. ROW_NUMBER over the aggregated (~1k) users
+ * assigns each user their TRUE global position, so a searched user still shows
+ * their real rank.
+ */
+const cachedLiveRaceStandings = unstable_cache(
+  async (
+    env: DbEnv,
+    raceType: string,
+    startsNaive: string,
+    endsNaive: string,
+    search: string | null,
+    page: number,
+    perPage: number,
+  ): Promise<{
+    rows: LiveStandingRow[];
+    total: number;
+    tiers: { position: number; prize: number }[];
+  }> => {
+    const db = dbForEnv(env);
+    const offset = (page - 1) * perPage;
+    const like = search ? `%${search}%` : null;
+    const idEq = search ?? "";
+
+    const [rows, countRes, tiers] = await Promise.all([
+      db.$queryRaw<LiveStandingRow[]>`
+        WITH agg AS (
+          SELECT g.user_id, SUM(g.bet_amount) AS wagered
+          FROM game_sessions g
+          WHERE g.race_eligible = true
+            AND g.user_id IS NOT NULL
+            AND g.created_at >= ${startsNaive}::timestamp
+            AND g.created_at <  ${endsNaive}::timestamp
+          GROUP BY g.user_id
+          HAVING SUM(g.bet_amount) > 0
+        ),
+        ranked AS (
+          SELECT
+            user_id,
+            wagered,
+            (ROW_NUMBER() OVER (ORDER BY wagered DESC, user_id ASC))::int AS position
+          FROM agg
+        )
+        SELECT r.user_id, u.username, r.wagered::text AS wagered, r.position
+        FROM ranked r
+        JOIN "user" u ON u.id = r.user_id
+        WHERE (${like}::text IS NULL
+               OR u.username ILIKE ${like}
+               OR u.email ILIKE ${like}
+               OR r.user_id = ${idEq})
+        ORDER BY r.position
+        LIMIT ${perPage} OFFSET ${offset}
+      `,
+      db.$queryRaw<{ count: bigint }[]>`
+        SELECT COUNT(*)::bigint AS count FROM (
+          SELECT g.user_id
+          FROM game_sessions g
+          ${like ? Prisma.sql`JOIN "user" u ON u.id = g.user_id` : Prisma.empty}
+          WHERE g.race_eligible = true
+            AND g.user_id IS NOT NULL
+            AND g.created_at >= ${startsNaive}::timestamp
+            AND g.created_at <  ${endsNaive}::timestamp
+            ${
+              like
+                ? Prisma.sql`AND (u.username ILIKE ${like} OR u.email ILIKE ${like} OR g.user_id = ${idEq})`
+                : Prisma.empty
+            }
+          GROUP BY g.user_id
+          HAVING SUM(g.bet_amount) > 0
+        ) t
+      `,
+      db.race_prize_tiers.findMany({
+        where: { race_type: raceType as race_type },
+        select: { position: true, prize_amount_usd: true },
+      }),
+    ]);
+
+    return {
+      rows,
+      total: Number(countRes[0]?.count ?? 0),
+      tiers: tiers.map((t) => ({
+        position: t.position,
+        prize: toNumber(t.prize_amount_usd),
+      })),
+    };
+  },
+  ["race-live-standings-v1"],
+  { revalidate: 30 },
+);
 
 /**
  * Active period for each race type and the most recently ended one as a

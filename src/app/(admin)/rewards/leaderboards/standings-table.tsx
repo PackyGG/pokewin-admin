@@ -287,14 +287,12 @@ export function StandingsTable({
 
   const colCount = (showPrizes ? 1 : 0) + (reviewable ? 5 : 3);
 
-  // Empty-state copy. When the running race has no snapshot rows yet (a monthly
-  // race is only snapshotted when the period ends), say so plainly instead of
-  // the generic "no data" — the standings are pending, not missing.
+  // Empty-state copy. A running race shows LIVE standings computed from wagers,
+  // so an empty table here means "no race-eligible wagers yet", not "no data".
   const emptyTitle = isActivePeriod ? "Race in progress" : "No leaderboard data";
-  const emptyDescription =
-    isActivePeriod && raceType === "monthly"
-      ? "This monthly race is still running. Its standings are recorded when the period ends — check back after it closes, or pick a finalized period from the selector above."
-      : "Standings populate as players wager during this race period.";
+  const emptyDescription = isActivePeriod
+    ? "Standings update live as players wager. No race-eligible wagers have counted for this period yet."
+    : "Standings populate as players wager during this race period.";
 
   return (
     <>
