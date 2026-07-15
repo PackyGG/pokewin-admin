@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { MessageSquare, Trophy, AlertTriangle } from "lucide-react";
 
-import { requirePageAccess } from "@/lib/dal";
+import { requireTopChattersAccess } from "@/lib/top-chatters-access";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { FadeIn } from "@/components/fade-in";
 import {
@@ -41,9 +41,12 @@ const POSITION_COLORS: Record<number, string> = {
  *
  * Shell-first: the hero paints immediately; the leaderboard fetch lives in
  * its own Suspense leg below (see loading.tsx for the matching skeleton).
+ *
+ * Access restricted to a hard-coded username allowlist (see
+ * `requireTopChattersAccess`) — not the generic admin/owner bypass.
  */
 export default async function TopChattersPage() {
-  await requirePageAccess("/top-chatters");
+  await requireTopChattersAccess();
 
   return (
     <div className="space-y-6">
