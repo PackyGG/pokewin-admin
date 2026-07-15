@@ -1,6 +1,4 @@
-import { unstable_cache } from "next/cache";
-import { getDb, dbForEnv } from "@/lib/db";
-import { readDbEnv, type DbEnv } from "@/lib/db-env";
+import { getDb } from "@/lib/db";
 import type { PaginatedResult } from "@/lib/types";
 
 export type ChatMessageItem = {
@@ -228,48 +226,49 @@ type TopChatterRow = {
 };
 
 /**
- * Cached compute (20s) of today's top chatters, keyed on env + the exact
- * UTC day window so the cache naturally rolls over at 00:00 UTC.
+ * Live (uncached) compute of today's top chatters.
+ *
+ * Was wrapped in `unstable_cache` (20s revalidate) — dropped 2026-07-15
+ * after the live admin kept showing "no chatters" while a direct read-only
+ * probe against the same prod DB, running this exact SQL, returned rows
+ * (Index Only Scan, sub-ms). DB connectivity and every other admin surface
+ * reading `chat_messages` were confirmed fine, so caching was the only
+ * unverified link in the chain — and the code's own prior comment already
+ * called it "not a real load concern at current chat volume". Removed
+ * rather than debugged further since it wasn't load-bearing.
  *
  * Index-safety: backed by `idx_chat_messages_created_at_user_id` (partial,
- * `WHERE is_deleted = false`) — see prisma/recommended-indexes.sql #33. Owner
- * applied it 2026-07-15; re-verified read-only that the query now plans as
- * an Index Only Scan (0.458ms, was a 17.8ms Seq Scan before the index).
+ * `WHERE is_deleted = false`) — see prisma/recommended-indexes.sql #33.
  */
-const cachedTopChattersToday = unstable_cache(
-  async (
-    env: DbEnv,
-    startNaive: string,
-    endNaive: string,
-    limit: number,
-  ): Promise<{ rows: TopChatterRow[]; totalChatters: number }> => {
-    const db = dbForEnv(env);
-    const [rows, totalRes] = await Promise.all([
-      db.$queryRaw<TopChatterRow[]>`
-        SELECT cm.user_id, u.username, u.image, u.role::text AS role,
-               COUNT(*)::bigint AS msg_count
-        FROM chat_messages cm
-        JOIN "user" u ON u.id = cm.user_id
-        WHERE cm.is_deleted = false
-          AND cm.created_at >= ${startNaive}::timestamp
-          AND cm.created_at <  ${endNaive}::timestamp
-        GROUP BY cm.user_id, u.username, u.image, u.role
-        ORDER BY msg_count DESC, cm.user_id ASC
-        LIMIT ${limit}
-      `,
-      db.$queryRaw<{ count: bigint }[]>`
-        SELECT COUNT(DISTINCT cm.user_id)::bigint AS count
-        FROM chat_messages cm
-        WHERE cm.is_deleted = false
-          AND cm.created_at >= ${startNaive}::timestamp
-          AND cm.created_at <  ${endNaive}::timestamp
-      `,
-    ]);
-    return { rows, totalChatters: Number(totalRes[0]?.count ?? 0) };
-  },
-  ["top-chatters-today-v1"],
-  { revalidate: 20 },
-);
+async function queryTopChattersToday(
+  startNaive: string,
+  endNaive: string,
+  limit: number,
+): Promise<{ rows: TopChatterRow[]; totalChatters: number }> {
+  const db = await getDb();
+  const [rows, totalRes] = await Promise.all([
+    db.$queryRaw<TopChatterRow[]>`
+      SELECT cm.user_id, u.username, u.image, u.role::text AS role,
+             COUNT(*)::bigint AS msg_count
+      FROM chat_messages cm
+      JOIN "user" u ON u.id = cm.user_id
+      WHERE cm.is_deleted = false
+        AND cm.created_at >= ${startNaive}::timestamp
+        AND cm.created_at <  ${endNaive}::timestamp
+      GROUP BY cm.user_id, u.username, u.image, u.role
+      ORDER BY msg_count DESC, cm.user_id ASC
+      LIMIT ${limit}
+    `,
+    db.$queryRaw<{ count: bigint }[]>`
+      SELECT COUNT(DISTINCT cm.user_id)::bigint AS count
+      FROM chat_messages cm
+      WHERE cm.is_deleted = false
+        AND cm.created_at >= ${startNaive}::timestamp
+        AND cm.created_at <  ${endNaive}::timestamp
+    `,
+  ]);
+  return { rows, totalChatters: Number(totalRes[0]?.count ?? 0) };
+}
 
 /**
  * Most active chat senders for the CURRENT UTC calendar day (resets at
@@ -281,10 +280,8 @@ const cachedTopChattersToday = unstable_cache(
 export async function getTopChattersToday(
   limit = TOP_CHATTERS_LIMIT,
 ): Promise<{ entries: TopChatterEntry[]; totalChatters: number }> {
-  const env = await readDbEnv();
   const { startNaive, endNaive } = utcTodayWindowNaive();
-  const { rows, totalChatters } = await cachedTopChattersToday(
-    env,
+  const { rows, totalChatters } = await queryTopChattersToday(
     startNaive,
     endNaive,
     limit,
