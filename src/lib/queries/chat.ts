@@ -1,4 +1,6 @@
-import { getDb } from "@/lib/db";
+import { unstable_cache } from "next/cache";
+import { getDb, dbForEnv } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import type { PaginatedResult } from "@/lib/types";
 
 export type ChatMessageItem = {
@@ -185,5 +187,120 @@ export async function getMutes(params: {
     page,
     perPage,
     totalPages: Math.ceil(total / perPage),
+  };
+}
+
+export type TopChatterEntry = {
+  userId: string;
+  username: string | null;
+  image: string | null;
+  role: string;
+  messageCount: number;
+  position: number;
+};
+
+const TOP_CHATTERS_LIMIT = 200;
+
+/** UTC calendar-day window as naive 'YYYY-MM-DD HH:MM:SS' strings (no JS
+ *  Date round-trip through the pg driver) so the range compares directly
+ *  against `chat_messages.created_at` (`timestamp without time zone`) with
+ *  no timezone conversion — same convention `src/lib/queries/races.ts`'s live
+ *  standings use for game_sessions/race_periods (also naive timestamp
+ *  columns). A fixed UTC calendar day, not a rolling 24h window. */
+function utcTodayWindowNaive(): { startNaive: string; endNaive: string } {
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const d = now.getUTCDate();
+  const fmt = (dt: Date) => dt.toISOString().slice(0, 19).replace("T", " ");
+  return {
+    startNaive: fmt(new Date(Date.UTC(y, m, d))),
+    endNaive: fmt(new Date(Date.UTC(y, m, d + 1))),
+  };
+}
+
+type TopChatterRow = {
+  user_id: string;
+  username: string | null;
+  image: string | null;
+  role: string;
+  msg_count: bigint;
+};
+
+/**
+ * Cached compute (20s) of today's top chatters, keyed on env + the exact
+ * UTC day window so the cache naturally rolls over at 00:00 UTC.
+ *
+ * Index-safety: `chat_messages` has no index on `user_id`/`created_at` today
+ * (flagged as prisma/recommended-indexes.sql #33). At today's prod size
+ * (~61k lifetime rows, 16MB) a forced Seq Scan over the whole table costs
+ * ~17ms (verified read-only via EXPLAIN ANALYZE, 2026-07-15) — negligible,
+ * so this ships now per the same precedent as #21/#31/#32 in that file
+ * (small/cheap-today, flagged for the owner to apply, re-verify once live).
+ */
+const cachedTopChattersToday = unstable_cache(
+  async (
+    env: DbEnv,
+    startNaive: string,
+    endNaive: string,
+    limit: number,
+  ): Promise<{ rows: TopChatterRow[]; totalChatters: number }> => {
+    const db = dbForEnv(env);
+    const [rows, totalRes] = await Promise.all([
+      db.$queryRaw<TopChatterRow[]>`
+        SELECT cm.user_id, u.username, u.image, u.role::text AS role,
+               COUNT(*)::bigint AS msg_count
+        FROM chat_messages cm
+        JOIN "user" u ON u.id = cm.user_id
+        WHERE cm.is_deleted = false
+          AND cm.created_at >= ${startNaive}::timestamp
+          AND cm.created_at <  ${endNaive}::timestamp
+        GROUP BY cm.user_id, u.username, u.image, u.role
+        ORDER BY msg_count DESC, cm.user_id ASC
+        LIMIT ${limit}
+      `,
+      db.$queryRaw<{ count: bigint }[]>`
+        SELECT COUNT(DISTINCT cm.user_id)::bigint AS count
+        FROM chat_messages cm
+        WHERE cm.is_deleted = false
+          AND cm.created_at >= ${startNaive}::timestamp
+          AND cm.created_at <  ${endNaive}::timestamp
+      `,
+    ]);
+    return { rows, totalChatters: Number(totalRes[0]?.count ?? 0) };
+  },
+  ["top-chatters-today-v1"],
+  { revalidate: 20 },
+);
+
+/**
+ * Most active chat senders for the CURRENT UTC calendar day (resets at
+ * 00:00 UTC — a fixed calendar day, not a rolling 24h window). Computed
+ * live from `chat_messages` — there is no daily chat-activity snapshot
+ * table, so "today" always has to be a live aggregate (same reasoning as
+ * the running-race live standings in `src/lib/queries/races.ts`).
+ */
+export async function getTopChattersToday(
+  limit = TOP_CHATTERS_LIMIT,
+): Promise<{ entries: TopChatterEntry[]; totalChatters: number }> {
+  const env = await readDbEnv();
+  const { startNaive, endNaive } = utcTodayWindowNaive();
+  const { rows, totalChatters } = await cachedTopChattersToday(
+    env,
+    startNaive,
+    endNaive,
+    limit,
+  );
+
+  return {
+    entries: rows.map((r, i) => ({
+      userId: r.user_id,
+      username: r.username,
+      image: r.image,
+      role: r.role,
+      messageCount: Number(r.msg_count),
+      position: i + 1,
+    })),
+    totalChatters,
   };
 }

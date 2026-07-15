@@ -1193,3 +1193,45 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_affiliate_codes_upper_code
 -- read until the owner applies the statement above; re-verify once applied.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_affiliate_codes_upper_code_prefix
   ON affiliate_codes (UPPER(code) text_pattern_ops);
+
+-- #33 -----------------------------------------------------------------
+-- chat_messages (created_at, user_id) — Players → Top Chatters (2026-07-15)
+-- ===================================================================
+-- New admin page: a live leaderboard of the most active packy chat senders
+-- for the CURRENT UTC calendar day (getTopChattersToday in
+-- src/lib/queries/chat.ts). Query shape:
+--   SELECT cm.user_id, COUNT(*) FROM chat_messages cm
+--   WHERE cm.is_deleted = false
+--     AND cm.created_at >= <today 00:00 UTC> AND cm.created_at < <tomorrow 00:00 UTC>
+--   GROUP BY cm.user_id ORDER BY COUNT(*) DESC
+--
+-- chat_messages has NO index on user_id or created_at alone — only
+-- idx_chat_messages_embed_battle_id_created_at (embed_battle_id, created_at)
+-- and a partial index on reply_to_id (both pre-existing, unrelated to this
+-- query). This is a genuinely new access pattern: no prior query in this
+-- codebase grouped/ranked chat_messages by sender over a date range.
+--
+-- EXPLAIN ANALYZE (read-only, prod, 2026-07-15). chat_messages is small
+-- today: 60,834 rows total, 16 MB (pg_class.reltuples / pg_total_relation_size,
+-- catalog-only, no scan). The planner actually picks an Index Scan on the
+-- EXISTING (embed_battle_id, created_at) index for the today-window query
+-- (0.71ms) simply because it's narrower than the full row — but that's
+-- coincidental, not a real created_at-leading index. Forcing a genuine Seq
+-- Scan baseline (`SET LOCAL enable_indexscan/bitmapscan/indexonlyscan = off`,
+-- rolled back, no schema/data change) gives the true cost:
+--   Seq Scan on chat_messages  (cost=0.00..3076.83 rows=1 width=33)
+--     (actual time=17.630..17.631 rows=0 loops=1)
+--     Filter: ((NOT is_deleted) AND (created_at >= ...) AND (created_at < ...))
+--     Rows Removed by Filter: 61175
+--   Execution Time: 17.838 ms
+--
+-- NOT APPLIED — flagged only. At today's 60.8k-row / 16MB size a full scan
+-- is ~17ms, negligible (well inside the safeQuery 15s timeout), so the
+-- feature ships now per the same "small/cheap-today, flagged, re-verify
+-- once applied" precedent as #21/#31/#32 above. chat_messages has no
+-- period-bounded prior art on this table, though, so unlike those it WILL
+-- keep growing daily with no cap — re-verify (EXPLAIN ANALYZE) once the
+-- table is materially bigger, and apply the statement below well before a
+-- 17ms scan becomes a multi-hundred-ms one:
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chat_messages_created_at_user_id
+  ON chat_messages (created_at, user_id) WHERE is_deleted = false;

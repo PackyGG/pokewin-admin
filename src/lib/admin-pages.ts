@@ -15,6 +15,9 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Navigation", label: "Users", key: "/users" },
   // Gates the new VIPs page (Players sidebar section, lists users tagged vip).
   { group: "Navigation", label: "VIPs", key: "/vips" },
+  // Top Chatters (Players sidebar section) — live leaderboard of the most
+  // active packy chat senders for the current UTC calendar day.
+  { group: "Navigation", label: "Top Chatters", key: "/top-chatters" },
   // Player CRM was folded into the owner-only Insights Overview as a tab
   // (/insights/real-numbers?tab=crm); /crm now 308-redirects there and its
   // permission inherits from /insights/real-numbers, so the standalone /crm

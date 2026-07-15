@@ -202,6 +202,18 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    id: "nav.top-chatters",
+    group: "Players",
+    label: "Top Chatters",
+    href: "/top-chatters",
+    pageKey: "/top-chatters",
+    icon: "MessageSquare",
+    description: "Most active packy chat senders today",
+    keywords: ["chat", "chatters", "active", "leaderboard", "today"],
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     // Rewards hub — the former "Rewards" sidebar SECTION was collapsed into
     // this single tabbed hub (Rain | Challenges | XP Sales | Rakeback | Promo
     // Codes | Leaderboards | Deposit Bonus | Level Up | Affiliate | Settings)
