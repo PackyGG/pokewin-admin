@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, ShieldAlert } from "lucide-react";
 import {
   getRaceLeaderboard,
   getRaceLeaderboardPeriods,
@@ -8,9 +8,11 @@ import {
   getRaceClaims,
   getRacePeriodsOverview,
   getRaceStandingsClaimWindow,
+  getRaceMarkedPrizeExposure,
   type RaceLeaderboardPeriod,
 } from "@/lib/queries/races";
 import { safeQuery } from "@/lib/errors/safe-query";
+import { formatCurrency } from "@/lib/utils/format";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import {
   TableSkeleton,
@@ -49,6 +51,42 @@ function LeaderboardsLoadErrorBand({ what }: { what: string }) {
         <span className="font-medium">request error, not zero results</span>.
         Refresh to retry.
       </p>
+    </div>
+  );
+}
+
+/**
+ * Fraud-exposure pill shown by the standings toolbar: total prize currently
+ * projected for players flagged "marked by admin" (on the excluded-users list)
+ * who sit in a prize-winning position on this leaderboard. Amber — a
+ * review/attention signal matching the on-hold + freeze affordances in the
+ * table, not a House-POV P&L figure. Their claims can be frozen row-by-row.
+ */
+function MarkedPrizeExposure({
+  total,
+  count,
+}: {
+  total: number;
+  count: number;
+}) {
+  return (
+    <div
+      title="Total prize currently projected for players flagged “marked by admin” (on the excluded-users list) who sit in a prize-winning position on this leaderboard. Freeze individual claims from the table below."
+      className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 text-sm"
+    >
+      <ShieldAlert aria-hidden className="size-4 shrink-0 text-amber-500" />
+      <span className="whitespace-nowrap text-amber-700 dark:text-amber-300">
+        Marked prize{" "}
+        <span className="font-semibold tabular-nums">
+          {formatCurrency(total)}
+        </span>
+        {count > 0 && (
+          <span className="text-amber-600/70 dark:text-amber-400/70">
+            {" · "}
+            {count} flagged
+          </span>
+        )}
+      </span>
     </div>
   );
 }
@@ -179,34 +217,52 @@ async function StandingsSubTab({
   // Wrap the standings + claim-window reads (getRaceStandingsClaimWindow also
   // fans out to the reward-expiry backend API) so a slow / failing read shows
   // the inline amber band + empty table rather than nuking the page.
-  const [{ data: result, error: standingsError }, { data: claimWindow }] =
-    await Promise.all([
-      safeQuery(
-        () =>
-          getRaceLeaderboard({
-            raceType,
-            periodStart: effectivePeriod,
-            search,
-            page,
-            perPage,
-          }),
-        { data: [], total: 0, page, perPage, totalPages: 1 },
-        "races.leaderboard",
-        15_000,
-      ),
-      raceType !== "all" && effectivePeriod
-        ? safeQuery(
-            () =>
-              getRaceStandingsClaimWindow({
-                raceType,
-                periodStart: effectivePeriod,
-              }),
-            null,
-            "races.standingsClaimWindow",
-            15_000,
-          )
-        : Promise.resolve({ data: null, error: null } as const),
-    ]);
+  const [
+    { data: result, error: standingsError },
+    { data: claimWindow },
+    { data: markedExposure },
+  ] = await Promise.all([
+    safeQuery(
+      () =>
+        getRaceLeaderboard({
+          raceType,
+          periodStart: effectivePeriod,
+          search,
+          page,
+          perPage,
+        }),
+      { data: [], total: 0, page, perPage, totalPages: 1 },
+      "races.leaderboard",
+      15_000,
+    ),
+    raceType !== "all" && effectivePeriod
+      ? safeQuery(
+          () =>
+            getRaceStandingsClaimWindow({
+              raceType,
+              periodStart: effectivePeriod,
+            }),
+          null,
+          "races.standingsClaimWindow",
+          15_000,
+        )
+      : Promise.resolve({ data: null, error: null } as const),
+    // Fraud-exposure counter: prize $ currently projected for marked-by-admin
+    // players in a prize position. Independent of the page/search shown.
+    // safeQuery so it degrades to no-pill instead of breaking the tab.
+    raceType !== "all" && effectivePeriod
+      ? safeQuery(
+          () =>
+            getRaceMarkedPrizeExposure({
+              raceType,
+              periodStart: effectivePeriod,
+            }),
+          null,
+          "races.markedPrizeExposure",
+          15_000,
+        )
+      : Promise.resolve({ data: null, error: null } as const),
+  ]);
   const standingsFailed = standingsError !== null;
 
   return (
@@ -239,9 +295,19 @@ async function StandingsSubTab({
           />
         )}
       </div>
-      <Suspense>
-        <DataTableToolbar searchPlaceholder="Search by username, email, or ID..." />
-      </Suspense>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+        <div className="min-w-0 sm:flex-1">
+          <Suspense>
+            <DataTableToolbar searchPlaceholder="Search by username, email, or ID..." />
+          </Suspense>
+        </div>
+        {markedExposure && (
+          <MarkedPrizeExposure
+            total={markedExposure.total}
+            count={markedExposure.count}
+          />
+        )}
+      </div>
       {standingsFailed && <LeaderboardsLoadErrorBand what="standings" />}
       {claimWindow && (
         <RaceClaimExpiryBanner window={claimWindow} raceType={raceType} />

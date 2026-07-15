@@ -588,6 +588,54 @@ const cachedLiveRaceStandings = unstable_cache(
 );
 
 /**
+ * Total prize currently projected for players flagged "marked by admin"
+ * (the excluded-users blacklist) on a single leaderboard — a fraud-exposure
+ * counter: "how much prize money is a flagged player currently in line to win".
+ *
+ * A prize only exists for the top positions (race_prize_tiers), so this ranks
+ * exactly the prize range and sums the tier prize for every marked player in
+ * it. Reuses getRaceLeaderboard so it shares the SAME ranking (finalized
+ * snapshot, live position-0 snapshot, OR the live game_sessions path) plus the
+ * same `excluded` flag + prize-tier mapping the table renders — the number can
+ * never disagree with the standings shown. Independent of the operator's
+ * current page/search (always the whole prize range of the selected period).
+ */
+export async function getRaceMarkedPrizeExposure(params: {
+  raceType: string;
+  periodStart?: string;
+}): Promise<{ total: number; count: number }> {
+  const { raceType, periodStart } = params;
+  const empty = { total: 0, count: 0 };
+  if (!raceType || raceType === "all") return empty;
+
+  // Prize range = the top N positions that carry a tier prize.
+  const tiers = await getRacePrizeTiers();
+  const maxTierPos = tiers.reduce(
+    (m, t) => (t.raceType === raceType && t.position > m ? t.position : m),
+    0,
+  );
+  if (maxTierPos === 0) return empty;
+
+  const board = await getRaceLeaderboard({
+    raceType,
+    periodStart,
+    page: 1,
+    perPage: maxTierPos,
+  });
+
+  // Sum in integer cents so a handful of tier prizes never drifts on float.
+  let cents = 0;
+  let count = 0;
+  for (const e of board.data) {
+    if (e.excluded && e.prizeAmountUsd != null && e.prizeAmountUsd > 0) {
+      cents += Math.round(e.prizeAmountUsd * 100);
+      count += 1;
+    }
+  }
+  return { total: cents / 100, count };
+}
+
+/**
  * Active period for each race type and the most recently ended one as a
  * compact history. Used by the Periods tab on /rewards/leaderboards so admins
  * can see at a glance which races are running, when they end, and whether
