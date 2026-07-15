@@ -11,6 +11,14 @@ export type EosBattleSummary = {
   betAmount: number;
   winnerTeam: number | null;
   participantCount: number;
+  /**
+   * Whether the battle's CREATOR won (their team === winner_team) — house
+   * POV: creator won = house paid out = house lost money; creator lost =
+   * house kept the pot. Null when the creator isn't found among the
+   * battle's own participants (shouldn't happen for a completed battle,
+   * but the join is defensive) or `winnerTeam` is null.
+   */
+  creatorWon: boolean | null;
   createdAt: string;
 };
 
@@ -37,6 +45,7 @@ export async function getRecentCompletedBattles(params: {
       take: perPage,
       select: {
         id: true,
+        user_id: true,
         mode: true,
         teams: true,
         players_per_team: true,
@@ -44,51 +53,49 @@ export async function getRecentCompletedBattles(params: {
         winner_team: true,
         created_at: true,
         user: { select: { username: true } },
-        _count: { select: { battle_participants: true } },
+        battle_participants: { select: { user_id: true, team_number: true } },
       },
     }),
     db.battles.count({ where: { status: "completed" } }),
   ]);
 
   return {
-    items: rows.map((b) => ({
-      id: b.id,
-      creatorUsername: b.user?.username ?? null,
-      mode: b.mode,
-      teams: b.teams,
-      playersPerTeam: b.players_per_team,
-      betAmount: toNumber(b.bet_amount),
-      winnerTeam: b.winner_team,
-      participantCount: b._count.battle_participants,
-      createdAt: b.created_at.toISOString(),
-    })),
+    items: rows.map((b) => {
+      const creatorTeam = b.battle_participants.find(
+        (p) => p.user_id === b.user_id,
+      )?.team_number;
+      const creatorWon =
+        creatorTeam != null && b.winner_team != null
+          ? creatorTeam === b.winner_team
+          : null;
+
+      return {
+        id: b.id,
+        creatorUsername: b.user?.username ?? null,
+        mode: b.mode,
+        teams: b.teams,
+        playersPerTeam: b.players_per_team,
+        betAmount: toNumber(b.bet_amount),
+        winnerTeam: b.winner_team,
+        participantCount: b.battle_participants.length,
+        creatorWon,
+        createdAt: b.created_at.toISOString(),
+      };
+    }),
     total,
   };
 }
 
-export type EosParticipant = {
-  id: string;
-  userId: string | null;
-  username: string | null;
-  isBot: boolean;
-  teamNumber: number;
-  teamPosition: number;
-  clientSeed: string;
-};
-
 /**
- * A single battle's stored `eos_block_hash` plus every participant (real
- * users AND bots, both teams) — not just the battle's creator. Participant
- * lookup is by `battle_id`, backed by `idx_battle_participants_battle_id`
- * (verified read-only via EXPLAIN: Bitmap Index Scan, 2026-07-15).
- *
- * Returns `null` when `battleId` isn't a real battle (including a
- * malformed/non-UUID id — guarded before hitting Postgres so a bad id
- * can't throw `22P02 invalid input syntax for type uuid`).
+ * A single battle's stored `eos_block_hash`, by id — backs the on-demand
+ * EOS block lookup behind the battle-row expand action. Returns `null`
+ * when `battleId` isn't a real battle (including a malformed/non-UUID id
+ * — guarded before hitting Postgres so a bad id can't throw `22P02
+ * invalid input syntax for type uuid`).
  */
-export async function getBattleParticipantsForVerification(
+export async function getBattleEosBlockHash(
   battleId: string,
-): Promise<{ eosBlockHash: string | null; participants: EosParticipant[] } | null> {
+): Promise<{ eosBlockHash: string | null } | null> {
   if (!isUuid(battleId)) return null;
   const db = await getDb();
 
@@ -98,31 +105,5 @@ export async function getBattleParticipantsForVerification(
   });
   if (!battle) return null;
 
-  const participants = await db.battle_participants.findMany({
-    where: { battle_id: battleId },
-    orderBy: [{ team_number: "asc" }, { team_position: "asc" }],
-    select: {
-      id: true,
-      user_id: true,
-      bot_id: true,
-      team_number: true,
-      team_position: true,
-      client_seed: true,
-      user: { select: { username: true } },
-      bots: { select: { username: true } },
-    },
-  });
-
-  return {
-    eosBlockHash: battle.eos_block_hash,
-    participants: participants.map((p) => ({
-      id: p.id,
-      userId: p.user_id,
-      username: p.user?.username ?? p.bots?.username ?? null,
-      isBot: p.bot_id !== null,
-      teamNumber: p.team_number,
-      teamPosition: p.team_position,
-      clientSeed: p.client_seed,
-    })),
-  };
+  return { eosBlockHash: battle.eos_block_hash };
 }

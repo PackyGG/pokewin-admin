@@ -1,13 +1,10 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import Link from "next/link";
 import {
   ChevronRight,
   Hash,
   Trophy,
-  Bot,
-  User as UserIcon,
   CheckCircle2,
   XCircle,
   AlertTriangle,
@@ -89,7 +86,22 @@ export function BattleRow({ battle }: { battle: EosBattleSummary }) {
           </span>
         )}
         <span className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
-          <span>by {battle.creatorUsername ?? "—"}</span>
+          <span className="flex items-center gap-1.5">
+            by <span className="font-medium text-foreground">{battle.creatorUsername ?? "—"}</span>
+            {battle.creatorWon !== null && (
+              <Badge
+                variant="outline"
+                className={cn(
+                  "h-4 px-1.5 text-[9px] uppercase",
+                  battle.creatorWon
+                    ? "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
+                    : "border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+                )}
+              >
+                {battle.creatorWon ? "Won" : "Lost"}
+              </Badge>
+            )}
+          </span>
           <span>{formatRelative(battle.createdAt)}</span>
         </span>
       </button>
@@ -99,7 +111,7 @@ export function BattleRow({ battle }: { battle: EosBattleSummary }) {
           {isPending && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" />
-              Fetching participants and the EOS block plus the 4 before it...
+              Fetching the EOS block plus the 4 before it...
             </div>
           )}
 
@@ -194,55 +206,6 @@ export function BattleRow({ battle }: { battle: EosBattleSummary }) {
                     No EOS block recorded for this battle.
                   </p>
                 )}
-              </div>
-
-              <div className="space-y-2">
-                <div className="text-xs font-semibold text-muted-foreground">
-                  Participants ({detail.participants.length})
-                </div>
-                <div className="divide-y rounded-md border">
-                  {detail.participants.map((p) => (
-                    <div
-                      key={p.id}
-                      className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs"
-                    >
-                      {p.isBot ? (
-                        <Bot className="size-3.5 shrink-0 text-muted-foreground" />
-                      ) : (
-                        <UserIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                      )}
-                      <span className="shrink-0 text-muted-foreground">
-                        Team {p.teamNumber} · #{p.teamPosition}
-                      </span>
-                      {p.isBot || !p.userId ? (
-                        <span className="font-medium">
-                          {p.username ?? "Unknown"}
-                          {p.isBot && (
-                            <Badge
-                              variant="outline"
-                              className="ml-1.5 h-4 px-1 text-[9px] uppercase"
-                            >
-                              Bot
-                            </Badge>
-                          )}
-                        </span>
-                      ) : (
-                        <Link
-                          href={`/users/${p.userId}`}
-                          className="font-medium hover:underline"
-                        >
-                          {p.username ?? p.userId.slice(0, 8)}
-                        </Link>
-                      )}
-                      <code
-                        className="ml-auto max-w-[280px] truncate rounded bg-muted px-1.5 py-0.5 text-[10px]"
-                        title={p.clientSeed}
-                      >
-                        {p.clientSeed}
-                      </code>
-                    </div>
-                  ))}
-                </div>
               </div>
             </>
           )}
