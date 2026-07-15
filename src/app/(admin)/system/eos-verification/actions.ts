@@ -6,22 +6,23 @@ import {
   type EosParticipant,
 } from "@/lib/queries/eos-verification";
 import {
-  verifyEosBlockAcrossEndpoints,
-  type EosEndpointCheck,
+  verifyEosBlockWithHistory,
+  type EosBlockHistory,
 } from "@/lib/eos/verify";
 
 export type BattleEosVerification = {
   eosBlockHash: string | null;
   participants: EosParticipant[];
-  endpointChecks: EosEndpointCheck[];
+  blockHistory: EosBlockHistory | null;
 };
 
 /**
  * On-demand (row-expand only) fetch of a battle's participants + a live
- * cross-check of its stored `eos_block_hash` against all 13 public EOS RPC
- * providers. Never called for a whole page of battles up front — only for
- * the one row an admin actually opens, matching the Active-Timeframe-Only
- * convention for expensive/external work behind collapsed UI.
+ * resolve of its stored `eos_block_hash` (plus the 4 blocks before it) via
+ * the public EOS RPC providers. Never called for a whole page of battles
+ * up front — only for the one row an admin actually opens, matching the
+ * Active-Timeframe-Only convention for expensive/external work behind
+ * collapsed UI.
  */
 export async function revealBattleEosVerification(
   battleId: string,
@@ -31,13 +32,13 @@ export async function revealBattleEosVerification(
   const detail = await getBattleParticipantsForVerification(battleId);
   if (!detail) return null;
 
-  const endpointChecks = detail.eosBlockHash
-    ? await verifyEosBlockAcrossEndpoints(detail.eosBlockHash)
-    : [];
+  const blockHistory = detail.eosBlockHash
+    ? await verifyEosBlockWithHistory(detail.eosBlockHash)
+    : null;
 
   return {
     eosBlockHash: detail.eosBlockHash,
     participants: detail.participants,
-    endpointChecks,
+    blockHistory,
   };
 }

@@ -25,8 +25,9 @@ const LIST_TIMEOUT_MS = 15_000;
  *
  * Latest completed battles, 5/page, each row collapsible. Expanding a row
  * fetches (on-demand, via a Server Action) every participant in that battle
- * plus a live cross-check of the battle's stored `eos_block_hash` against
- * all 13 public EOS RPC providers — see actions.ts / lib/eos/verify.ts.
+ * plus a live resolve of the battle's stored `eos_block_hash` (and the 4
+ * blocks before it) against the public EOS RPC providers — see actions.ts
+ * / lib/eos/verify.ts.
  *
  * Shell-first: the hero paints immediately; the battle list fetch lives in
  * its own Suspense leg below (see loading.tsx for the matching skeleton).

@@ -60,9 +60,6 @@ export function BattleRow({ battle }: { battle: EosBattleSummary }) {
     }
   };
 
-  const okCount = detail?.endpointChecks.filter((c) => c.status === "ok").length ?? 0;
-  const totalEndpoints = detail?.endpointChecks.length ?? 0;
-
   return (
     <div className="rounded-xl border bg-card">
       <button
@@ -102,8 +99,7 @@ export function BattleRow({ battle }: { battle: EosBattleSummary }) {
           {isPending && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" />
-              Fetching participants and cross-checking the EOS block against{" "}
-              {totalEndpoints || 13} nodes...
+              Fetching participants and the EOS block plus the 4 before it...
             </div>
           )}
 
@@ -126,48 +122,72 @@ export function BattleRow({ battle }: { battle: EosBattleSummary }) {
                     <code className="block break-all rounded-md bg-muted px-2 py-1.5 text-xs">
                       {detail.eosBlockHash}
                     </code>
-                    <div className="flex items-center gap-1.5 text-xs">
-                      {okCount === totalEndpoints ? (
-                        <CheckCircle2 className="size-3.5 text-emerald-500" />
-                      ) : okCount > 0 ? (
-                        <AlertTriangle className="size-3.5 text-amber-500" />
-                      ) : (
-                        <XCircle className="size-3.5 text-rose-500" />
-                      )}
-                      <span className="text-muted-foreground">
-                        {okCount}/{totalEndpoints} public EOS nodes confirmed this exact
-                        block
-                      </span>
-                    </div>
-                    <div className="mt-2 grid gap-1 sm:grid-cols-2">
-                      {detail.endpointChecks.map((check) => (
-                        <div
-                          key={check.endpoint}
-                          className="flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px]"
-                        >
-                          {check.status === "ok" ? (
-                            <CheckCircle2 className="size-3 shrink-0 text-emerald-500" />
-                          ) : (
-                            <XCircle className="size-3 shrink-0 text-rose-500" />
-                          )}
-                          <span className="truncate font-medium">
-                            {stripProtocol(check.endpoint)}
+                    {detail.blockHistory?.status === "error" ? (
+                      <div className="flex items-start gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2">
+                        <XCircle className="mt-0.5 size-3.5 shrink-0 text-rose-500" />
+                        <p className="text-xs text-rose-700 dark:text-rose-300">
+                          {detail.blockHistory.error}
+                        </p>
+                      </div>
+                    ) : detail.blockHistory?.status === "ok" ? (
+                      <>
+                        <div className="flex items-center gap-1.5 text-xs">
+                          <CheckCircle2 className="size-3.5 text-emerald-500" />
+                          <span className="text-muted-foreground">
+                            Confirmed via {stripProtocol(detail.blockHistory.endpoint)} ·
+                            block plus the 4 before it
                           </span>
-                          {check.status === "ok" ? (
-                            <span className="ml-auto shrink-0 text-muted-foreground">
-                              #{check.blockNum} · {check.producer}
-                            </span>
-                          ) : (
-                            <span
-                              className="ml-auto shrink-0 truncate text-muted-foreground"
-                              title={check.error}
-                            >
-                              {check.error}
-                            </span>
-                          )}
                         </div>
-                      ))}
-                    </div>
+                        <div className="mt-2 space-y-1">
+                          {detail.blockHistory.blocks.map((block, i) => (
+                            <div
+                              key={block.blockNum}
+                              className={cn(
+                                "flex flex-wrap items-center gap-2 rounded-md border px-2 py-1.5 text-[11px]",
+                                i === 0 && "border-cyan-500/40 bg-cyan-500/5",
+                              )}
+                            >
+                              {block.status === "ok" ? (
+                                <CheckCircle2 className="size-3 shrink-0 text-emerald-500" />
+                              ) : (
+                                <XCircle className="size-3 shrink-0 text-rose-500" />
+                              )}
+                              <span className="shrink-0 font-semibold tabular-nums">
+                                #{block.blockNum}
+                              </span>
+                              {i === 0 && (
+                                <Badge
+                                  variant="outline"
+                                  className="h-4 shrink-0 px-1 text-[9px] uppercase"
+                                >
+                                  Battle block
+                                </Badge>
+                              )}
+                              {block.status === "ok" ? (
+                                <>
+                                  <code
+                                    className="min-w-0 flex-1 truncate text-muted-foreground"
+                                    title={block.blockHash}
+                                  >
+                                    {block.blockHash}
+                                  </code>
+                                  <span className="ml-auto shrink-0 text-muted-foreground">
+                                    {block.producer}
+                                  </span>
+                                </>
+                              ) : (
+                                <span
+                                  className="ml-auto truncate text-muted-foreground"
+                                  title={block.error}
+                                >
+                                  {block.error}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : null}
                   </>
                 ) : (
                   <p className="text-xs text-muted-foreground">
