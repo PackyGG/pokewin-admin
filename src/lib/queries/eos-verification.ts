@@ -134,6 +134,10 @@ export type BattleSimulationContext = {
   serverSeedEncrypted: string;
   /** The battle creator's team, for a "would the creator have won" read same as `EosBattleSummary.creatorWon`. Null if the creator isn't among the participants. */
   creatorTeam: number | null;
+  /** The creator's own `borrow_percentage` — the house-fronted share of their stake is excluded from both their payout and their profit (mirrors settlement.service.ts's `calculateBorrowFactor`). 0 if the creator isn't among the participants. */
+  creatorBorrowPercentage: number;
+  /** Per-seat stake (`battles.bet_amount`) — what the creator personally wagered to enter. */
+  betAmountUsd: number;
   participants: SimParticipant[];
   rounds: SimRound[];
 };
@@ -162,13 +166,14 @@ export async function getBattleSimulationContext(
       pack_ids: true,
       additional_settings: true,
       server_seed: true,
+      bet_amount: true,
     },
   });
   if (!battle) return null;
 
   const participants = await db.battle_participants.findMany({
     where: { battle_id: battleId },
-    select: { id: true, team_number: true, user_id: true },
+    select: { id: true, team_number: true, user_id: true, borrow_percentage: true },
   });
 
   const uniquePackIds = [...new Set(battle.pack_ids)];
@@ -203,15 +208,16 @@ export async function getBattleSimulationContext(
     });
   }
 
-  const creatorTeam =
-    participants.find((p) => p.user_id === battle.user_id)?.team_number ?? null;
+  const creatorParticipant = participants.find((p) => p.user_id === battle.user_id);
 
   return {
     battleId,
     mode: battle.mode as BattleMode,
     isCrazyMode: battle.additional_settings.includes("crazy_mode"),
     serverSeedEncrypted: battle.server_seed,
-    creatorTeam,
+    creatorTeam: creatorParticipant?.team_number ?? null,
+    creatorBorrowPercentage: creatorParticipant?.borrow_percentage ?? 0,
+    betAmountUsd: toNumber(battle.bet_amount),
     participants: participants.map((p) => ({ id: p.id, teamNumber: p.team_number })),
     rounds,
   };

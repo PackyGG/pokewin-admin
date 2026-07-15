@@ -45,6 +45,10 @@ export type SimulatedBattleOutcome = {
   scoreUnit: "value" | "hp" | "points" | "n/a";
   teamScores: Record<number, number>;
   participants: SimulatedParticipantOutcome[];
+  /** Total USD value of every card drawn by every participant, all rounds — the pot a winning team splits. Always price-based, regardless of mode (mirrors backend's `settlement.service.ts` `totalValue`). */
+  potValueUsd: number;
+  /** Count of ALL members of the winning team, bots included — the pot is split this many ways (`expectedValuePerMember = totalValue / allWinningTeamMembers.length` in settlement.service.ts). Null when there's no winner. */
+  winningTeamSize: number | null;
 };
 
 function computeCumulativeWeights(cards: SimPackCard[]): number[] {
@@ -349,6 +353,9 @@ export function simulateBattleOutcomeForBlockHash(params: {
   }
 
   const totalRounds = rounds.length;
+  const priceTeamScores = sumTeamScores(participants, participantResults, "price");
+  const potValueUsd = Array.from(priceTeamScores.values()).reduce((sum, v) => sum + v, 0);
+
   let winnerTeam: number | null;
   let teamScores: Map<number, number>;
   let scoreUnit: SimulatedBattleOutcome["scoreUnit"];
@@ -356,7 +363,7 @@ export function simulateBattleOutcomeForBlockHash(params: {
 
   if (mode === "group") {
     winnerTeam = 1;
-    teamScores = sumTeamScores(participants, participantResults, "price");
+    teamScores = priceTeamScores;
     scoreUnit = "n/a";
   } else if (mode === "hp_rush") {
     teamScores = sumTeamScores(participants, participantResults, "hp");
@@ -386,11 +393,11 @@ export function simulateBattleOutcomeForBlockHash(params: {
     usedTiebreaker = resolved.usedTiebreaker;
     scoreUnit = "points";
   } else if (mode === "jackpot") {
-    teamScores = sumTeamScores(participants, participantResults, "price");
+    teamScores = priceTeamScores;
     winnerTeam = resolveJackpot({
       participants,
       participantResults,
-      teamScores,
+      teamScores: priceTeamScores,
       isCrazyMode,
       serverSeed,
       blockHash,
@@ -399,9 +406,9 @@ export function simulateBattleOutcomeForBlockHash(params: {
     });
     scoreUnit = "value";
   } else {
-    teamScores = sumTeamScores(participants, participantResults, "price");
+    teamScores = priceTeamScores;
     const resolved = resolveByScoreComparison({
-      teamScores,
+      teamScores: priceTeamScores,
       isCrazyMode,
       serverSeed,
       blockHash,
@@ -413,12 +420,17 @@ export function simulateBattleOutcomeForBlockHash(params: {
     scoreUnit = "value";
   }
 
+  const winningTeamSize =
+    winnerTeam !== null ? participants.filter((p) => p.teamNumber === winnerTeam).length : null;
+
   return {
     mode,
     winnerTeam,
     usedTiebreaker,
     scoreUnit,
     teamScores: Object.fromEntries(teamScores),
+    potValueUsd,
+    winningTeamSize,
     participants: participants.map((p) => ({
       participantId: p.id,
       teamNumber: p.teamNumber,

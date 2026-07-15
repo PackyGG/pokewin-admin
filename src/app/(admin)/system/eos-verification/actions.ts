@@ -53,7 +53,14 @@ export type BlockSimulationResult =
       outcome: SimulatedBattleOutcome;
       /** creatorWon for THIS candidate block, same House-POV semantics as `EosBattleSummary.creatorWon`. */
       creatorWon: boolean | null;
+      /** USD profit the creator would walk away with if their team wins — (pot share − stake), borrow-adjusted exactly like settlement.service.ts's `calculateBorrowFactor`. Null unless `creatorWon === true`. */
+      creatorProfitUsd: number | null;
     };
+
+/** Mirrors settlement.service.ts's `calculateBorrowFactor` — the house-fronted share of a borrowed stake belongs to the house, not the player. */
+function calculateBorrowFactor(borrowPercentage: number): number {
+  return borrowPercentage > 0 ? 1 - borrowPercentage / 100 : 1;
+}
 
 /**
  * Shared fetch-context + decrypt-seed step for both the single-block and
@@ -101,7 +108,17 @@ function simulateWithContext(
       ? context.creatorTeam === outcome.winnerTeam
       : null;
 
-  return { status: "ok", outcome, creatorWon };
+  // settlement.service.ts: expectedValuePerMember = totalValue / allWinningTeamMembers.length
+  // (bots included in the split), then borrow-adjusted per member. Profit is
+  // that borrow-adjusted payout minus the borrow-adjusted stake actually put
+  // in — i.e. `-instantLoss` from the winner's XP bookkeeping, sign-flipped.
+  const creatorProfitUsd =
+    creatorWon && outcome.winningTeamSize
+      ? calculateBorrowFactor(context.creatorBorrowPercentage) *
+        (outcome.potValueUsd / outcome.winningTeamSize - context.betAmountUsd)
+      : null;
+
+  return { status: "ok", outcome, creatorWon, creatorProfitUsd };
 }
 
 /**

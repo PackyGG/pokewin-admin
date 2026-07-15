@@ -368,7 +368,7 @@ function BlockSimPanel({
     );
   }
 
-  const { outcome, creatorWon } = state.result;
+  const { outcome, creatorWon, creatorProfitUsd } = state.result;
   const matchesRecorded =
     recordedWinnerTeam !== null && outcome.winnerTeam !== null
       ? outcome.winnerTeam === recordedWinnerTeam
@@ -397,6 +397,19 @@ function BlockSimPanel({
           >
             Creator {creatorWon ? "would win" : "would lose"}
           </Badge>
+        )}
+        {creatorProfitUsd !== null && (
+          <span
+            className={cn(
+              "font-semibold tabular-nums",
+              creatorProfitUsd >= 0
+                ? "text-rose-600 dark:text-rose-400"
+                : "text-emerald-600 dark:text-emerald-400",
+            )}
+          >
+            Creator profit: {creatorProfitUsd >= 0 ? "+" : ""}
+            {formatCurrency(creatorProfitUsd)}
+          </span>
         )}
         {outcome.usedTiebreaker && (
           <Badge variant="outline" className="h-4 px-1 text-[9px] uppercase">
