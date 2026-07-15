@@ -569,6 +569,22 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    // EOS Verification — latest completed battles, collapsible rows reveal
+    // every participant + a live cross-check of the battle's stored
+    // eos_block_hash against all 13 public EOS RPC providers. Icon "Hash"
+    // is already registered in the ICONS map (no React #130 risk).
+    id: "nav.system.eos-verification",
+    group: "System",
+    label: "EOS Verification",
+    href: "/system/eos-verification",
+    pageKey: "/system/eos-verification",
+    icon: "Hash",
+    description: "Verify battle EOS blocks & participants",
+    keywords: ["eos", "battle", "provably fair", "block", "verify"],
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     // Excluded Users — sidebar-only, ROOT-OWNER-ONLY (motha). Not in ADMIN_PAGES
     // as the security boundary (page + actions enforce requireExcludedUsersAccess
     // → requireMainOwner server-side); listed in ADMIN_PAGES only so the key
