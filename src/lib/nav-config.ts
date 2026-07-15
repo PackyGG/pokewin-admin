@@ -202,11 +202,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // Top Chatters — sidebar-only visible to a hard-coded two-username
-    // allowlist (motha, hifoen); the route itself enforces
-    // `requireTopChattersAccess` server-side (src/lib/top-chatters-access.ts).
-    // `strictUsernameAllowlist` keeps it hidden from every other admin/owner —
-    // the generic owner bypass does NOT apply here.
     id: "nav.top-chatters",
     group: "Players",
     label: "Top Chatters",
@@ -215,8 +210,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     icon: "MessageSquare",
     description: "Most active packy chat senders today",
     keywords: ["chat", "chatters", "active", "leaderboard", "today"],
-    usernameAllowlist: ["motha", "hifoen"],
-    strictUsernameAllowlist: true,
     inSidebar: true,
     inPalette: true,
   },
