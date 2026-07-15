@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { StepUpField } from "@/components/step-up-field";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -86,7 +87,9 @@ export function RepinCustomButton({
   const stopRef = React.useRef(false);
 
   const total = plan?.toReprice.length ?? 0;
-  const totpValid = /^\d{6}$/.test(totp.trim());
+  // Non-empty is enough client-side: the value is either a 6-digit TOTP or a
+  // passkey step-up proof token. require2FA validates the real format server-side.
+  const totpValid = totp.trim().length > 0;
   const confirmReady =
     phase === "ready" &&
     plan !== null &&
@@ -317,20 +320,7 @@ export function RepinCustomButton({
                         spellCheck={false}
                       />
                     </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="repin-totp">2FA code</Label>
-                      <Input
-                        id="repin-totp"
-                        inputMode="numeric"
-                        autoComplete="one-time-code"
-                        maxLength={6}
-                        value={totp}
-                        onChange={(e) => setTotp(e.target.value.replace(/\D/g, ""))}
-                        placeholder="123456"
-                        className="w-40 tracking-[0.3em]"
-                        aria-invalid={totp.length > 0 && !totpValid}
-                      />
-                    </div>
+                    <StepUpField value={totp} onChange={setTotp} />
                   </div>
                 ) : (
                   <p className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">

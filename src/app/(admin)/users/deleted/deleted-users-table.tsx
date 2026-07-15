@@ -6,8 +6,7 @@ import { toast } from "sonner";
 import { Archive, RefreshCw, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { StepUpField } from "@/components/step-up-field";
 import {
   Table,
   TableBody,
@@ -260,18 +259,7 @@ export function DeletedUsersTable({ rows }: { rows: DeletedUserRow[] }) {
                 )}
               </p>
             )}
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">2FA Code</Label>
-              <Input
-                type="text"
-                inputMode="numeric"
-                placeholder="Enter your 6-digit code"
-                value={totpCode}
-                onChange={(e) => setTotpCode(e.target.value)}
-                maxLength={6}
-                autoComplete="one-time-code"
-              />
-            </div>
+            <StepUpField value={totpCode} onChange={setTotpCode} />
           </div>
           <DialogFooter>
             <Button

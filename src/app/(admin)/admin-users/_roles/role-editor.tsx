@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { StepUpField } from "@/components/step-up-field";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -604,24 +605,7 @@ function EditableRoleEditor({ data }: { data: RoleEditorData }) {
                     : "This cannot be undone."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
-              <div className="space-y-1.5">
-                <Label
-                  htmlFor="role-delete-code"
-                  className="text-xs text-muted-foreground"
-                >
-                  2FA Code
-                </Label>
-                <Input
-                  id="role-delete-code"
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="Enter your 6-digit code"
-                  value={deleteCode}
-                  onChange={(e) => setDeleteCode(e.target.value)}
-                  maxLength={6}
-                  autoComplete="one-time-code"
-                />
-              </div>
+              <StepUpField value={deleteCode} onChange={setDeleteCode} />
               <AlertDialogFooter>
                 <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
                 <AlertDialogAction
@@ -751,18 +735,7 @@ function EditableRoleEditor({ data }: { data: RoleEditorData }) {
               Saving applies these changes to the role. Enter your 2FA code to
               confirm.
             </p>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">2FA Code</Label>
-              <Input
-                type="text"
-                inputMode="numeric"
-                placeholder="Enter your 6-digit code"
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                maxLength={6}
-                autoComplete="one-time-code"
-              />
-            </div>
+            <StepUpField value={code} onChange={setCode} />
           </div>
           <DialogFooter className="border-t p-4">
             <Button

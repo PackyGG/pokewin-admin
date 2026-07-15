@@ -6,6 +6,7 @@ import { KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { StepUpField } from "@/components/step-up-field";
 import { Spinner } from "@/components/ux";
 import { changeOwnPassword } from "./password-actions";
 
@@ -49,8 +50,11 @@ export function PasswordForm() {
       toast.error("New password must be different from your current password");
       return;
     }
-    if (!/^\d{6}$/.test(twoFactorCode.trim())) {
-      toast.error("Enter the 6-digit code from your authenticator app");
+    // Either a 6-digit TOTP or a passkey step-up proof token satisfies the
+    // gate; require2FA validates the real format server-side. Client-side we
+    // only require a non-empty value.
+    if (!twoFactorCode.trim()) {
+      toast.error("Enter your 2FA code, or verify with a passkey");
       return;
     }
 
@@ -120,22 +124,13 @@ export function PasswordForm() {
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="password-2fa">2FA code</Label>
-        <Input
-          id="password-2fa"
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          placeholder="123456"
-          maxLength={6}
+        <StepUpField
           value={twoFactorCode}
-          onChange={(e) =>
-            setTwoFactorCode(e.target.value.replace(/\D/g, "").slice(0, 6))
-          }
+          onChange={setTwoFactorCode}
           disabled={saving}
-          className="max-w-[160px] tracking-[0.3em] tabular-nums"
         />
         <p className="text-xs text-muted-foreground">
-          Enter the current 6-digit code from your authenticator app.
+          Confirm with your current 6-digit authenticator code, or a passkey.
         </p>
       </div>
 
@@ -147,7 +142,7 @@ export function PasswordForm() {
           currentPassword === "" ||
           newPassword === "" ||
           confirmPassword === "" ||
-          twoFactorCode.length !== 6
+          twoFactorCode.trim() === ""
         }
       >
         {saving ? (

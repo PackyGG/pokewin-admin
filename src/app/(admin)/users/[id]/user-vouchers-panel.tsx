@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
+import { StepUpField } from "@/components/step-up-field";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
@@ -310,18 +310,11 @@ function VoucherRemoveDialog({
             </p>
           </div>
           <AbuserTagToggles state={abuser} disabled={isPending} />
-          <div className="space-y-1.5">
-            <Label htmlFor="voucher-remove-2fa">2FA code</Label>
-            <Input
-              id="voucher-remove-2fa"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              placeholder="000000"
-              value={totpCode}
-              onChange={(e) => setTotpCode(e.target.value)}
-              disabled={isPending}
-            />
-          </div>
+          <StepUpField
+            value={totpCode}
+            onChange={setTotpCode}
+            disabled={isPending}
+          />
         </div>
         <DialogFooter className="gap-2 sm:gap-0">
           <Button

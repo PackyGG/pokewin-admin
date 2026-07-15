@@ -44,6 +44,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { StepUpField } from "@/components/step-up-field";
 import { Spinner } from "@/components/ux";
 import type { RoleSummary } from "./roles-overview-data";
 import { deleteRole, duplicateRole } from "./custom-roles-actions";
@@ -310,21 +311,7 @@ function DuplicateDialog({
               autoFocus
             />
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="dup-code" className="text-xs text-muted-foreground">
-              2FA Code
-            </Label>
-            <Input
-              id="dup-code"
-              type="text"
-              inputMode="numeric"
-              placeholder="Enter your 6-digit code"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              maxLength={6}
-              autoComplete="one-time-code"
-            />
-          </div>
+          <StepUpField value={code} onChange={setCode} />
         </div>
         <DialogFooter>
           <Button
@@ -427,21 +414,7 @@ function RenameDialog({
               autoFocus
             />
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="rename-code" className="text-xs text-muted-foreground">
-              2FA Code
-            </Label>
-            <Input
-              id="rename-code"
-              type="text"
-              inputMode="numeric"
-              placeholder="Enter your 6-digit code"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              maxLength={6}
-              autoComplete="one-time-code"
-            />
-          </div>
+          <StepUpField value={code} onChange={setCode} />
         </div>
         <DialogFooter>
           <Button
@@ -517,21 +490,7 @@ function DeleteDialog({
               : "This cannot be undone."}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <div className="space-y-1.5">
-          <Label htmlFor="del-code" className="text-xs text-muted-foreground">
-            2FA Code
-          </Label>
-          <Input
-            id="del-code"
-            type="text"
-            inputMode="numeric"
-            placeholder="Enter your 6-digit code"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            maxLength={6}
-            autoComplete="one-time-code"
-          />
-        </div>
+        <StepUpField value={code} onChange={setCode} />
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
           <AlertDialogAction

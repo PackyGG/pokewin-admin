@@ -28,6 +28,7 @@ import {
 import { ROLES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { transition } from "@/components/ux";
+import { StepUpField } from "@/components/step-up-field";
 import { formatCurrency } from "@/lib/utils/format";
 import { parseUsdAmount } from "@/lib/utils/money";
 import {
@@ -977,18 +978,7 @@ export function BalanceAdjustDialog({
               </p>
             )}
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">2FA Code</Label>
-            <Input
-              type="text"
-              inputMode="numeric"
-              placeholder="Enter your 6-digit code"
-              value={totpCode}
-              onChange={(e) => setTotpCode(e.target.value)}
-              maxLength={6}
-              autoComplete="one-time-code"
-            />
-          </div>
+          <StepUpField value={totpCode} onChange={setTotpCode} />
         </div>
         <DialogFooter>
           <Button
@@ -1208,18 +1198,7 @@ export function ManualWithdrawalDialog({
               />
             )}
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">2FA Code</Label>
-            <Input
-              type="text"
-              inputMode="numeric"
-              placeholder="Enter your 6-digit code"
-              value={totpCode}
-              onChange={(e) => setTotpCode(e.target.value)}
-              maxLength={6}
-              autoComplete="one-time-code"
-            />
-          </div>
+          <StepUpField value={totpCode} onChange={setTotpCode} />
         </div>
         <DialogFooter>
           <Button
@@ -1305,18 +1284,7 @@ export function XpAdjustDialog({
               rows={2}
             />
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">2FA Code</Label>
-            <Input
-              type="text"
-              inputMode="numeric"
-              placeholder="Enter your 6-digit code"
-              value={totpCode}
-              onChange={(e) => setTotpCode(e.target.value)}
-              maxLength={6}
-              autoComplete="one-time-code"
-            />
-          </div>
+          <StepUpField value={totpCode} onChange={setTotpCode} />
         </div>
         <DialogFooter>
           <Button
@@ -1473,18 +1441,7 @@ export function ChangeRoleDialog({
               <span className="font-medium text-foreground">{currentRole}</span>
             </p>
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">2FA Code</Label>
-            <Input
-              type="text"
-              inputMode="numeric"
-              placeholder="Enter your 6-digit code"
-              value={totpCode}
-              onChange={(e) => setTotpCode(e.target.value)}
-              maxLength={6}
-              autoComplete="one-time-code"
-            />
-          </div>
+          <StepUpField value={totpCode} onChange={setTotpCode} />
         </div>
         <DialogFooter>
           <Button
@@ -1623,18 +1580,7 @@ export function ResetRoleToUserButton({
             user&apos;s pre-creator numbers haven&apos;t come back to
             P&amp;L.
           </p>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">2FA Code</Label>
-            <Input
-              type="text"
-              inputMode="numeric"
-              placeholder="Enter your 6-digit code"
-              value={totpCode}
-              onChange={(e) => setTotpCode(e.target.value)}
-              maxLength={6}
-              autoComplete="one-time-code"
-            />
-          </div>
+          <StepUpField value={totpCode} onChange={setTotpCode} />
         </div>
         <DialogFooter>
           <Button

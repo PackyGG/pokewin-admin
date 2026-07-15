@@ -35,6 +35,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { StepUpField } from "@/components/step-up-field";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -817,7 +818,9 @@ function RevertDialog({
 
   const open = target !== null;
   const busy = phase === "applying";
-  const totpValid = /^\d{6}$/.test(totp.trim());
+  // Non-empty is enough client-side: the value is either a 6-digit TOTP or a
+  // passkey step-up proof token. require2FA validates the real format server-side.
+  const totpValid = totp.trim().length > 0;
   const ready =
     !busy &&
     confirmText.trim().toUpperCase() === CONFIRM_PHRASE &&
@@ -921,21 +924,11 @@ function RevertDialog({
               />
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="rev-totp">2FA code</Label>
-              <Input
-                id="rev-totp"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={6}
-                value={totp}
-                onChange={(e) => setTotp(e.target.value.replace(/\D/g, ""))}
-                placeholder="123456"
-                className="w-40 tracking-[0.3em]"
-                aria-invalid={totp.length > 0 && !totpValid}
-                disabled={busy}
-              />
-            </div>
+            <StepUpField
+              value={totp}
+              onChange={setTotp}
+              disabled={busy}
+            />
           </div>
         )}
 

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { StepUpField } from "@/components/step-up-field";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -192,16 +192,7 @@ export function BalanceAdjustmentEditDialog({
               />
             </div>
 
-            <div className="space-y-2">
-              <Label>2FA code</Label>
-              <Input
-                value={totpCode}
-                onChange={(e) => setTotpCode(e.target.value)}
-                placeholder="6-digit authenticator code"
-                autoComplete="one-time-code"
-                inputMode="numeric"
-              />
-            </div>
+            <StepUpField value={totpCode} onChange={setTotpCode} />
           </div>
         )}
 

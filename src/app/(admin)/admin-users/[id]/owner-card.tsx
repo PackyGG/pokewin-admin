@@ -8,8 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { StepUpField } from "@/components/step-up-field";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -145,18 +144,7 @@ export function OwnerCard({
                 : `${username} will lose ultra-admin access. Enter your 2FA code to confirm.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">2FA Code</Label>
-            <Input
-              type="text"
-              inputMode="numeric"
-              placeholder="Enter your 6-digit code"
-              value={totpCode}
-              onChange={(e) => setTotpCode(e.target.value)}
-              maxLength={6}
-              autoComplete="one-time-code"
-            />
-          </div>
+          <StepUpField value={totpCode} onChange={setTotpCode} />
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
             <Button

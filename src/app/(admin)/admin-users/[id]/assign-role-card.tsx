@@ -6,8 +6,8 @@ import { toast } from "sonner";
 import { KeyRound, Layers } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { StepUpField } from "@/components/step-up-field";
 import {
   Select,
   SelectContent,
@@ -141,19 +141,11 @@ export function RolesCard({
             rolesColumnExists={rolesColumnExists}
             disabled={savingRoles}
           />
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">2FA Code</Label>
-            <Input
-              type="text"
-              inputMode="numeric"
-              placeholder="Enter your 6-digit code"
-              value={totpCode}
-              onChange={(e) => setTotpCode(e.target.value)}
-              maxLength={6}
-              autoComplete="one-time-code"
-              disabled={savingRoles}
-            />
-          </div>
+          <StepUpField
+            value={totpCode}
+            onChange={setTotpCode}
+            disabled={savingRoles}
+          />
           <div className="flex justify-end">
             <Button
               size="sm"
@@ -223,19 +215,11 @@ export function RolesCard({
                   ))}
                 </SelectContent>
               </Select>
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">2FA Code</Label>
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="Enter your 6-digit code"
-                  value={presetCode}
-                  onChange={(e) => setPresetCode(e.target.value)}
-                  maxLength={6}
-                  autoComplete="one-time-code"
-                  disabled={savingPreset}
-                />
-              </div>
+              <StepUpField
+                value={presetCode}
+                onChange={setPresetCode}
+                disabled={savingPreset}
+              />
               <div className="flex items-center justify-end gap-2">
                 {preset !== PRESET_NONE && currentPresetId !== null && (
                   <Button

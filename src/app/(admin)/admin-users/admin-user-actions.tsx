@@ -18,9 +18,8 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { MoreHorizontal, ShieldCheck, UserCog, Power, Trash2 } from "lucide-react";
+import { StepUpField } from "@/components/step-up-field";
 import type { AdminRole } from "@/lib/dal";
 import { Spinner } from "@/components/ux";
 import { RolesEditor } from "./_components/roles-editor";
@@ -261,19 +260,11 @@ export function AdminUserActions({
               />
             )}
 
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">2FA Code</Label>
-              <Input
-                type="text"
-                inputMode="numeric"
-                placeholder="Enter your 6-digit code"
-                value={totpCode}
-                onChange={(e) => setTotpCode(e.target.value)}
-                maxLength={6}
-                autoComplete="one-time-code"
-                autoFocus={mode !== "editRoles"}
-              />
-            </div>
+            <StepUpField
+              value={totpCode}
+              onChange={setTotpCode}
+              autoFocus={mode !== "editRoles"}
+            />
           </div>
           <DialogFooter>
             <Button

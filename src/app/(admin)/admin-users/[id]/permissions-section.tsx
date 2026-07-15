@@ -15,8 +15,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { StepUpField } from "@/components/step-up-field";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -422,18 +421,7 @@ function OverrideEditor({ detail }: { detail: AdminUserDetail }) {
               Saving re-materializes this user&apos;s access. Enter your 2FA code
               to confirm.
             </p>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">2FA Code</Label>
-              <Input
-                type="text"
-                inputMode="numeric"
-                placeholder="Enter your 6-digit code"
-                value={totpCode}
-                onChange={(e) => setTotpCode(e.target.value)}
-                maxLength={6}
-                autoComplete="one-time-code"
-              />
-            </div>
+            <StepUpField value={totpCode} onChange={setTotpCode} />
           </div>
           <DialogFooter className="border-t p-4">
             <Button

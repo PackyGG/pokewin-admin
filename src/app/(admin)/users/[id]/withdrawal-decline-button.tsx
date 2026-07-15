@@ -14,9 +14,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
+import { StepUpField } from "@/components/step-up-field";
 import { cancelWithdrawal } from "@/app/(admin)/withdrawals/actions";
 
 /**
@@ -90,18 +89,7 @@ export function WithdrawalDeclineButton({
             value={reason}
             onChange={(e) => setReason(e.target.value)}
           />
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">2FA Code</Label>
-            <Input
-              type="text"
-              inputMode="numeric"
-              placeholder="Enter your 6-digit code"
-              value={totpCode}
-              onChange={(e) => setTotpCode(e.target.value)}
-              maxLength={6}
-              autoComplete="one-time-code"
-            />
-          </div>
+          <StepUpField value={totpCode} onChange={setTotpCode} />
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <Button

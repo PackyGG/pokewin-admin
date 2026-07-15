@@ -160,7 +160,11 @@ export async function deletePendingSession() {
 
 type WebauthnChallengePayload = {
   challenge: string;
-  type: "register" | "auth";
+  // "register" = profile passkey enrollment; "auth" = passkey at the login 2FA
+  // step; "stepup" = passkey satisfying an in-app action gate (require2FA).
+  // Pinning the ceremony keeps a challenge from one flow being replayed into
+  // another (e.g. a login-time "auth" challenge can't clear a money-action gate).
+  type: "register" | "auth" | "stepup";
   adminUserId: string;
   expiresAt: string;
 };
@@ -193,5 +197,56 @@ export async function getWebauthnChallenge(): Promise<WebauthnChallengePayload |
 export async function deleteWebauthnChallenge() {
   const cookieStore = await cookies();
   cookieStore.delete(WEBAUTHN_CHALLENGE_COOKIE);
+}
+
+// --- Step-up proof token (passkey → action gate) ---
+//
+// A passkey can satisfy the same in-app 2FA gate a TOTP code does (require2FA).
+// The ceremony (assert a registered passkey) happens in its own server action;
+// on success it mints THIS short-lived signed token, which the client then
+// passes to the privileged action exactly where it would have passed the
+// 6-digit code. `require2FA` accepts either: a real step-up token clears the
+// gate, anything else falls through to TOTP verification.
+//
+// The token is a bearer proof scoped to ONE admin (`adminUserId`) and pinned by
+// `purpose` so a pending-login or challenge token (same signing key) can never
+// be replayed as a step-up. TTL is deliberately short — a couple of minutes,
+// matching the practical replay window of a typed TOTP code (neither is bound
+// to a single action), so this is security-parity with the existing gate, not a
+// weakening of it. Stateless by design (no DB/cookie state) so it behaves
+// identically across serverless instances.
+
+const STEP_UP_PURPOSE = "admin_stepup";
+// Kept in sync with the JWT expiry string passed to encryptGeneric below.
+const STEP_UP_TOKEN_TTL = "2m";
+
+type StepUpTokenPayload = {
+  purpose: typeof STEP_UP_PURPOSE;
+  adminUserId: string;
+};
+
+/** Mint a step-up proof token for `adminUserId`. Caller must have already
+ * verified a passkey assertion for that same admin. */
+export async function createStepUpToken(adminUserId: string): Promise<string> {
+  return encryptGeneric(
+    { purpose: STEP_UP_PURPOSE, adminUserId },
+    STEP_UP_TOKEN_TTL,
+  );
+}
+
+/** True iff `token` is a currently-valid step-up proof for `adminUserId`.
+ * Returns false on a missing/expired/tampered token, a wrong purpose, or a
+ * token minted for a different admin — never throws, so callers can treat a
+ * non-token string (e.g. a 6-digit TOTP code) as simply "not a proof". */
+export async function verifyStepUpToken(
+  token: string,
+  adminUserId: string,
+): Promise<boolean> {
+  const payload = await decryptGeneric<StepUpTokenPayload>(token);
+  return (
+    !!payload &&
+    payload.purpose === STEP_UP_PURPOSE &&
+    payload.adminUserId === adminUserId
+  );
 }
 

@@ -7,7 +7,7 @@ import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
+import { StepUpField } from "@/components/step-up-field";
 import {
   Dialog,
   DialogContent,
@@ -142,18 +142,11 @@ export function InventoryBulkDeleteDialog({
             </p>
           </div>
           <AbuserTagToggles state={abuser} disabled={isPending} />
-          <div className="space-y-1.5">
-            <Label htmlFor="inventory-bulk-delete-2fa">2FA code</Label>
-            <Input
-              id="inventory-bulk-delete-2fa"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              placeholder="000000"
-              value={totpCode}
-              onChange={(e) => setTotpCode(e.target.value)}
-              disabled={isPending}
-            />
-          </div>
+          <StepUpField
+            value={totpCode}
+            onChange={setTotpCode}
+            disabled={isPending}
+          />
         </div>
         <DialogFooter className="gap-2 sm:gap-0">
           <Button

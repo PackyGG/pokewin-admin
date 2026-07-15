@@ -35,6 +35,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { StepUpField } from "@/components/step-up-field";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import {
   assignAffiliateCode,
@@ -523,19 +524,11 @@ export function SetAffiliateCodeDialog({
             {/* 2FA gate — same shape as the adjustBalance dialog. The
                 server re-verifies, the field here is just to collect
                 the code so the action call can succeed. */}
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">2FA Code</Label>
-              <Input
-                type="text"
-                inputMode="numeric"
-                placeholder="Enter your 6-digit code"
-                value={totpCode}
-                onChange={(e) => setTotpCode(e.target.value)}
-                maxLength={6}
-                autoComplete="one-time-code"
-                disabled={isPending}
-              />
-            </div>
+            <StepUpField
+              value={totpCode}
+              onChange={setTotpCode}
+              disabled={isPending}
+            />
           </div>
         )}
         <DialogFooter>

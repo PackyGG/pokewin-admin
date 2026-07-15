@@ -21,7 +21,7 @@ import {
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { StepUpField } from "@/components/step-up-field";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -677,18 +677,7 @@ function VaultFreezeDialog({
               rows={2}
             />
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">2FA Code</Label>
-            <Input
-              type="text"
-              inputMode="numeric"
-              placeholder="Enter your 6-digit code"
-              value={totpCode}
-              onChange={(e) => setTotpCode(e.target.value)}
-              maxLength={6}
-              autoComplete="one-time-code"
-            />
-          </div>
+          <StepUpField value={totpCode} onChange={setTotpCode} />
         </div>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
