@@ -387,14 +387,19 @@ export async function getRaceLeaderboard(params: {
  * admin sees nothing for the current monthly race until it closes.
  *
  * Source of truth: the race leaderboard is the sum of each user's
- * race-eligible wager over the period window. Verified read-only against prod
- * by reconstructing the last FINALIZED monthly race — SUM(bet_amount) of
- * race_eligible game_sessions over [starts_at, ends_at) matched every
- * snapshot's wagered_usd cent-exact (per-game leaderboard weights are 1×
- * today, so the raw bet is the weighted contribution). If non-1× leaderboard
- * weights are ever set, this live view would drift from the weighted board
- * for wagers placed after that change — same caveat the affiliate "live"
- * leaderboard path documents.
+ * race-eligible LEADERBOARD-WEIGHTED wager over the period window —
+ * `game_sessions.weighted_bet_amount`, not raw `bet_amount`. Per-game
+ * leaderboard weights (packs/battles/upgrader, admin-configurable in bps on
+ * /security) are applied at wager time and frozen on the row, so a game
+ * whose weight was temporarily reduced (verified read-only against prod:
+ * upgrader_bps was cut to 6000 then 5000 on 2026-06-13/14 before later
+ * returning to 10000) leaves `weighted_bet_amount < bet_amount` for wagers
+ * placed in that window. Summing raw `bet_amount` instead over-counts those
+ * users and can misrank them relative to the real (weighted) leaderboard —
+ * confirmed against prod for the active monthly race starting 2026-06-19,
+ * where it swapped two adjacent standings. `weighted_bet_amount` is
+ * COALESCEd to `bet_amount` for the (pre-2026-06-13) rows that predate the
+ * column, where the two are equal anyway.
  *
  * Returns null when `periodStart` is NOT a currently-active race period, so
  * the caller falls back to its empty result (this never fabricates standings
@@ -497,10 +502,17 @@ type LiveStandingRow = {
  * directly against `game_sessions.created_at` (also UTC-naive) as `::timestamp`
  * constants, `created_at` bare — the range hits
  * idx_game_sessions_created_at_user_bet (verified read-only via EXPLAIN: Bitmap
- * Index Scan, ~37ms over a month window, no seq scan). `race_eligible` mirrors
- * the backend's race inclusion. ROW_NUMBER over the aggregated (~1k) users
+ * Index Scan, ~47ms over a month window, no seq scan — unchanged by reading
+ * `weighted_bet_amount`, since the `race_eligible` filter already forces a
+ * heap fetch on every matched row regardless). `race_eligible` mirrors the
+ * backend's race inclusion. ROW_NUMBER over the aggregated (~1k) users
  * assigns each user their TRUE global position, so a searched user still shows
  * their real rank.
+ *
+ * Sums `weighted_bet_amount` (COALESCEd to `bet_amount` for pre-2026-06-13
+ * rows that predate the column, where the two are equal), NOT raw
+ * `bet_amount` — see the leaderboard-weighting caveat on
+ * `getLiveRaceLeaderboard` above.
  */
 const cachedLiveRaceStandings = unstable_cache(
   async (
@@ -524,14 +536,14 @@ const cachedLiveRaceStandings = unstable_cache(
     const [rows, countRes, tiers] = await Promise.all([
       db.$queryRaw<LiveStandingRow[]>`
         WITH agg AS (
-          SELECT g.user_id, SUM(g.bet_amount) AS wagered
+          SELECT g.user_id, SUM(COALESCE(g.weighted_bet_amount, g.bet_amount)) AS wagered
           FROM game_sessions g
           WHERE g.race_eligible = true
             AND g.user_id IS NOT NULL
             AND g.created_at >= ${startsNaive}::timestamp
             AND g.created_at <  ${endsNaive}::timestamp
           GROUP BY g.user_id
-          HAVING SUM(g.bet_amount) > 0
+          HAVING SUM(COALESCE(g.weighted_bet_amount, g.bet_amount)) > 0
         ),
         ranked AS (
           SELECT
@@ -565,7 +577,7 @@ const cachedLiveRaceStandings = unstable_cache(
                 : Prisma.empty
             }
           GROUP BY g.user_id
-          HAVING SUM(g.bet_amount) > 0
+          HAVING SUM(COALESCE(g.weighted_bet_amount, g.bet_amount)) > 0
         ) t
       `,
       db.race_prize_tiers.findMany({
