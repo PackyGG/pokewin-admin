@@ -175,12 +175,18 @@ const typeColumn: ColumnDef<TransactionListItem> = {
 
 const coinColumn: ColumnDef<TransactionListItem> = {
   accessorKey: "cryptoAsset",
-  header: "Coin",
+  header: "Payment method",
   cell: ({ row }) => {
     const asset = row.original.cryptoAsset;
     const amount = row.original.cryptoAmount;
     if (!asset) {
       return <span className="text-muted-foreground">—</span>;
+    }
+    if (asset === "FIAT") {
+      return <span className="text-xs font-medium">Credit card · Whop</span>;
+    }
+    if (asset === "CARD") {
+      return <span className="text-xs font-medium">Credit card · Legacy</span>;
     }
     return (
       <span className="font-mono text-xs">

@@ -4,11 +4,15 @@ import {
   AlertTriangle,
   ArrowDownToLine,
   ArrowUpFromLine,
+  CreditCard,
+  DatabaseZap,
   ListChecks,
   Receipt,
 } from "lucide-react";
 import { getDepositTransactions } from "@/lib/queries/transactions";
+import { getCardPayments } from "@/lib/queries/card-payments";
 import { getWithdrawals } from "@/lib/queries/withdrawals";
+import { readDbEnv } from "@/lib/db-env";
 import { requirePageAccess } from "@/lib/dal";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TransactionsDataTable } from "../data-table";
@@ -33,6 +37,7 @@ import { FadeIn } from "@/components/fade-in";
 import { LinkPendingShell } from "@/components/ux";
 import { AutoRefresh } from "@/app/(admin)/dashboard/auto-refresh";
 import { BigDepositsToggle } from "./big-deposits-toggle";
+import { CardPaymentsTable } from "./card-payments-table";
 
 export const metadata = { title: "Transactions" };
 
@@ -47,6 +52,11 @@ const TABS = [
     value: "deposits",
     label: "Deposits",
     icon: ArrowDownToLine,
+  },
+  {
+    value: "card-payments",
+    label: "Card Payments",
+    icon: CreditCard,
   },
   {
     value: "withdrawals",
@@ -64,7 +74,12 @@ export default async function TransactionsPage({
 }) {
   await requirePageAccess("/transactions/deposits");
   const params = await searchParams;
-  const tab: TabValue = params.tab === "withdrawals" ? "withdrawals" : "deposits";
+  const tab: TabValue =
+    params.tab === "withdrawals"
+      ? "withdrawals"
+      : params.tab === "card-payments"
+        ? "card-payments"
+        : "deposits";
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
@@ -84,7 +99,9 @@ export default async function TransactionsPage({
           icon={Receipt}
           title="Transactions"
           subtitle={
-            tab === "deposits"
+            tab === "card-payments"
+              ? "Mirrored Whop card-payment lifecycle, fees, and ledger reconciliation."
+              : tab === "deposits"
               ? "All inbound deposit transactions across users."
               : "All physical and crypto withdrawal requests — filter by status and method."
           }
@@ -116,7 +133,7 @@ export default async function TransactionsPage({
             const href =
               t.value === "deposits"
                 ? "/transactions/deposits"
-                : "/transactions/deposits?tab=withdrawals";
+                : `/transactions/deposits?tab=${t.value}`;
             return (
               <Link
                 key={t.value}
@@ -143,6 +160,8 @@ export default async function TransactionsPage({
 
       {tab === "deposits" ? (
         <DepositsTab page={page} perPage={perPage} params={params} />
+      ) : tab === "card-payments" ? (
+        <CardPaymentsTab page={page} perPage={perPage} params={params} />
       ) : (
         <WithdrawalsTab page={page} perPage={perPage} params={params} />
       )}
@@ -293,6 +312,142 @@ async function DepositsTableSection({
 // data-table the legacy /withdrawals page used. The redirect at
 // /withdrawals/page.tsx funnels old links here so bookmarks / sidebar
 // crumbs / external references stay working.
+
+function CardPaymentsTab({
+  page,
+  perPage,
+  params,
+}: {
+  page: number;
+  perPage: number;
+  params: Record<string, string | undefined>;
+}) {
+  const sectionKey = `card|${page}|${perPage}|${params.status ?? ""}|${params.search ?? ""}`;
+
+  return (
+    <>
+      <div className="space-y-4">
+        <Suspense fallback={<Skeleton className="h-10 w-full" />}>
+          <DataTableToolbar
+            searchPlaceholder="Search user, intent, checkout, or payment ID..."
+            filters={[
+              {
+                name: "Status",
+                paramKey: "status",
+                options: [
+                  { label: "Created", value: "created" },
+                  { label: "Checkout creating", value: "checkout_creating" },
+                  { label: "Checkout ready", value: "checkout_ready" },
+                  { label: "Pending", value: "pending" },
+                  { label: "Completed", value: "completed" },
+                  { label: "Review", value: "review" },
+                  { label: "Failed", value: "failed" },
+                  { label: "Canceled", value: "canceled" },
+                  { label: "Partially refunded", value: "partially_refunded" },
+                  { label: "Refunded", value: "refunded" },
+                  { label: "Disputed", value: "disputed" },
+                ],
+              },
+            ]}
+          />
+        </Suspense>
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <SectionHeading icon={CreditCard} title="Card payments" />
+          <div className="inline-flex items-center gap-1.5 rounded-full border bg-muted/40 px-2.5 py-1 text-[11px] text-muted-foreground">
+            <DatabaseZap className="size-3" />
+            ClickHouse mirror
+          </div>
+        </div>
+        <Suspense
+          key={sectionKey}
+          fallback={
+            <>
+              <TableSkeleton rows={Math.min(perPage, 15)} columns={8} />
+              <PaginationSkeleton />
+            </>
+          }
+        >
+          <CardPaymentsTableSection
+            page={page}
+            perPage={perPage}
+            search={params.search}
+            status={params.status}
+          />
+        </Suspense>
+      </div>
+    </>
+  );
+}
+
+async function CardPaymentsTableSection({
+  page,
+  perPage,
+  search,
+  status,
+}: {
+  page: number;
+  perPage: number;
+  search?: string;
+  status?: string;
+}) {
+  const env = await readDbEnv();
+  if (env === "dev") {
+    return (
+      <MirrorUnavailableNotice message="A development ClickHouse mirror is not configured. Card payments are intentionally hidden to prevent production data from appearing while DEV is selected." />
+    );
+  }
+
+  const empty = {
+    data: [],
+    total: 0,
+    page,
+    perPage,
+    totalPages: 0,
+  } satisfies Awaited<ReturnType<typeof getCardPayments>>;
+
+  const listResult = await safeQuery(
+    () => getCardPayments({ page, perPage, search, status }),
+    empty,
+    "transactions.card-payments.list",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+
+  return (
+    <>
+      {listResult.error && (
+        <MirrorUnavailableNotice message="Card-payment mirror data could not be loaded. Verify ClickHouse credentials and that the Whop payment tables are included in the PeerDB mirror." />
+      )}
+      <FadeIn>
+        <CardPaymentsTable data={listResult.data.data} />
+      </FadeIn>
+      <FadeIn speed="fast">
+        <DataTablePagination
+          page={listResult.data.page}
+          totalPages={listResult.data.totalPages}
+          total={listResult.data.total}
+          perPage={listResult.data.perPage}
+          degraded={listResult.error !== null}
+        />
+      </FadeIn>
+    </>
+  );
+}
+
+function MirrorUnavailableNotice({ message }: { message: string }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
+    >
+      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
+      <p className="text-xs text-amber-700 dark:text-amber-300">{message}</p>
+    </div>
+  );
+}
 
 function WithdrawalsTab({
   page,
