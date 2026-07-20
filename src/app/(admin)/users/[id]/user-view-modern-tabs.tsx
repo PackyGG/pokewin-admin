@@ -72,7 +72,6 @@ import {
   CategoryTransactionsTable,
   AccountDetailsSection,
   FeatureLocksCard,
-  ModerationSection,
   DisposedCardsTable,
   InventoryGrid,
   GAMING_TX_TYPES,
@@ -1779,7 +1778,7 @@ export function AccountTab({
   // never sees it (defence-in-depth; the server already returns zero rows).
   viewerIsAdjustmentOwner: boolean;
 }) {
-  const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, battleLimits, mutes, capabilities } = data;
+  const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, battleLimits, capabilities } = data;
   // Local open/close state for each collapsible Account-tab section. All
   // default OPEN so first paint is unchanged from before these became
   // collapsible — collapsing is an admin convenience, not a new
@@ -1792,7 +1791,6 @@ export function AccountTab({
   const [wagerProgressOpen, setWagerProgressOpen] = useState(true);
   const [balanceWeightingOpen, setBalanceWeightingOpen] = useState(true);
   const [manualWithdrawalOpen, setManualWithdrawalOpen] = useState(true);
-  const [moderationOpen, setModerationOpen] = useState(true);
   const [fraudLocksOpen, setFraudLocksOpen] = useState(true);
   const [kycOpen, setKycOpen] = useState(true);
   return (
@@ -1992,19 +1990,6 @@ export function AccountTab({
           />
         </CollapsibleSection>
       )}
-
-      <CollapsibleSection
-        icon={ShieldCheck}
-        title="Moderation"
-        open={moderationOpen}
-        onOpenChange={setModerationOpen}
-      >
-        <Card>
-          <CardContent>
-            <ModerationSection user={user} mutes={mutes} />
-          </CardContent>
-        </Card>
-      </CollapsibleSection>
 
       {/* Affiliate — folded in from the old standalone Affiliate tab.
           AffiliateSection renders the referrer card, attribution journey,
