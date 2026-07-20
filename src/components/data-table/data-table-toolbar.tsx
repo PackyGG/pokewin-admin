@@ -106,7 +106,10 @@ export function DataTableToolbar({
   const searchParamsRef = useRef(searchParams);
   searchParamsRef.current = searchParams;
 
-  const IGNORED_PARAMS = useMemo(() => new Set(["page", "perPage", "sortBy", "sortOrder"]), []);
+  const IGNORED_PARAMS = useMemo(
+    () => new Set(["page", "perPage", "sortBy", "sortOrder", "tab"]),
+    [],
+  );
   const hasActiveFilters = useMemo(
     () => Array.from(searchParams.keys()).some((key) => !IGNORED_PARAMS.has(key)),
     [searchParams, IGNORED_PARAMS]
@@ -114,7 +117,11 @@ export function DataTableToolbar({
 
   function clearFilters() {
     setSearchValue("");
-    startTransition(() => router.replace(pathname));
+    const tab = searchParams.get("tab");
+    const destination = tab
+      ? `${pathname}?${new URLSearchParams({ tab }).toString()}`
+      : pathname;
+    startTransition(() => router.replace(destination));
   }
 
   const updateParam = useCallback((key: string, value: string) => {

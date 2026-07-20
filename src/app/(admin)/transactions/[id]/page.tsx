@@ -169,6 +169,7 @@ async function TransactionDetailBody({
   // "−", independent of the house-POV color above.
   const amountSign = balanceMovementSign(data.balanceBefore, data.balanceAfter);
   const absAmount = Math.abs(data.amount);
+  const cardPaymentIntentId = resolveCardPaymentIntentId(data.metadata);
 
   return (
     <div className="space-y-6">
@@ -241,6 +242,16 @@ async function TransactionDetailBody({
                 <InfoRow label="Description">{data.description}</InfoRow>
                 <InfoRow label="Created">{formatDateTime(data.createdAt)}</InfoRow>
                 <InfoRow label="Updated">{formatDateTime(data.updatedAt)}</InfoRow>
+                {cardPaymentIntentId && (
+                  <InfoRow label="Card Payment">
+                    <Link
+                      href={`/transactions/card-payments/${cardPaymentIntentId}`}
+                      className="font-mono text-xs hover:underline"
+                    >
+                      {cardPaymentIntentId}
+                    </Link>
+                  </InfoRow>
+                )}
                 {data.failureReason && (
                   <InfoRow label="Failure Reason">
                     <span className="text-rose-400">{data.failureReason}</span>
@@ -744,6 +755,14 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
       <span className="text-sm min-w-0 break-words">{children}</span>
     </div>
   );
+}
+
+function resolveCardPaymentIntentId(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return null;
+  }
+  const value = (metadata as Record<string, unknown>).deposit_intent_id;
+  return typeof value === "string" && isUuid(value) ? value : null;
 }
 
 /**
