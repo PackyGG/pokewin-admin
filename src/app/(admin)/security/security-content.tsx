@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Table,
   TableBody,
@@ -18,12 +19,92 @@ import {
 } from "@/components/ui/table";
 import { upsertSiteConfig, deleteSiteConfig } from "./actions";
 import type { SiteConfigRow } from "@/lib/queries/security";
-import { CloudRain, Trash2, Plus } from "lucide-react";
+import { CloudRain, Trash2, Plus, ChevronDown } from "lucide-react";
 import { CollapsibleSecuritySection } from "./collapsible-security-section";
 import { EmptyState } from "@/components/empty-state";
 
 function isBoolean(value: string) {
   return value === "true" || value === "false";
+}
+
+/**
+ * Known array-shaped site_config keys that get a per-value toggle popover
+ * instead of the raw-JSON EditableText field. Each option's `value` is what
+ * the backend expects inside the JSON array; only keys listed here opt in —
+ * every other config row (including locked_deposits_crypto, whose full valid
+ * option set isn't confirmed) keeps the plain text editor.
+ */
+const ARRAY_TOGGLE_FIELDS: Record<string, { value: string; label: string }[]> = {
+  locked_deposits_fiat: [
+    { value: "credit_card", label: "Credit Card" },
+    { value: "paypal", label: "PayPal" },
+    { value: "paysafecard", label: "Paysafecard" },
+    { value: "pulse", label: "Pulse" },
+    { value: "apple_pay", label: "Apple Pay" },
+    { value: "google_pay", label: "Google Pay" },
+    { value: "bank_transfer", label: "Bank Transfer" },
+  ],
+};
+
+/** Parses a site_config JSON-array value defensively — malformed/empty falls back to []. */
+function parseArrayValue(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function ArrayToggleField({
+  values,
+  options,
+  disabled,
+  onToggleValue,
+}: {
+  values: string[];
+  options: { value: string; label: string }[];
+  disabled: boolean;
+  onToggleValue: (optionValue: string, nextChecked: boolean) => void;
+}) {
+  const lockedCount = options.filter((o) => values.includes(o.value)).length;
+  return (
+    <Popover>
+      <PopoverTrigger
+        disabled={disabled}
+        className="flex items-center gap-1 rounded border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+      >
+        {lockedCount === 0 ? (
+          <span className="text-muted-foreground">None locked</span>
+        ) : (
+          <span className="font-medium text-rose-600 dark:text-rose-400">
+            {lockedCount}/{options.length} locked
+          </span>
+        )}
+        <ChevronDown className="h-3 w-3" />
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-56 p-2">
+        <div className="flex flex-col gap-1">
+          {options.map((opt) => {
+            const checked = values.includes(opt.value);
+            return (
+              <div
+                key={opt.value}
+                className="flex items-center justify-between gap-2 rounded px-2 py-1 text-sm"
+              >
+                <span>{opt.label}</span>
+                <Switch
+                  checked={checked}
+                  onCheckedChange={(next) => onToggleValue(opt.value, next)}
+                  disabled={disabled}
+                />
+              </div>
+            );
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 export function SecurityContent({
@@ -137,7 +218,20 @@ export function SecurityContent({
                 <TableRow key={row.key}>
                   <TableCell className="font-mono text-sm">{row.key}</TableCell>
                   <TableCell>
-                    {isBoolean(row.value) ? (
+                    {ARRAY_TOGGLE_FIELDS[row.key] ? (
+                      <ArrayToggleField
+                        values={parseArrayValue(row.value)}
+                        options={ARRAY_TOGGLE_FIELDS[row.key]}
+                        disabled={isPending}
+                        onToggleValue={(optionValue, nextChecked) => {
+                          const current = parseArrayValue(row.value);
+                          const next = nextChecked
+                            ? [...current, optionValue]
+                            : current.filter((v) => v !== optionValue);
+                          handleUpdate(row, { value: JSON.stringify(next) });
+                        }}
+                      />
+                    ) : isBoolean(row.value) ? (
                       <Switch
                         checked={row.value === "true"}
                         onCheckedChange={() =>
