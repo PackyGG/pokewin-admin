@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { AlertTriangle, ShieldAlert } from "lucide-react";
+import { AlertTriangle, ShieldAlert, Trophy as TrophyIcon } from "lucide-react";
 import {
   getRaceLeaderboard,
   getRaceLeaderboardPeriods,
@@ -9,6 +9,7 @@ import {
   getRacePeriodsOverview,
   getRaceStandingsClaimWindow,
   getRaceMarkedPrizeExposure,
+  getRaceTotalClaimed,
   type RaceLeaderboardPeriod,
 } from "@/lib/queries/races";
 import { safeQuery } from "@/lib/errors/safe-query";
@@ -84,6 +85,35 @@ function MarkedPrizeExposure({
           <span className="text-amber-600/70 dark:text-amber-400/70">
             {" · "}
             {count} flagged
+          </span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Total-claimed pill shown next to the marked-prize exposure pill: how much
+ * prize money winners have ALREADY been paid for this leaderboard period.
+ * Rose — house-POV (money paid out to users is a house cost), distinct from
+ * the amber "at risk" signal of MarkedPrizeExposure.
+ */
+function TotalClaimedPill({ total, count }: { total: number; count: number }) {
+  return (
+    <div
+      title="Total prize money already claimed by winners for this leaderboard period."
+      className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 text-sm"
+    >
+      <TrophyIcon aria-hidden className="size-4 shrink-0 text-rose-500" />
+      <span className="whitespace-nowrap text-rose-700 dark:text-rose-300">
+        Total claimed{" "}
+        <span className="font-semibold tabular-nums">
+          {formatCurrency(total)}
+        </span>
+        {count > 0 && (
+          <span className="text-rose-600/70 dark:text-rose-400/70">
+            {" · "}
+            {count} claimed
           </span>
         )}
       </span>
@@ -221,6 +251,7 @@ async function StandingsSubTab({
     { data: result, error: standingsError },
     { data: claimWindow },
     { data: markedExposure },
+    { data: totalClaimed },
   ] = await Promise.all([
     safeQuery(
       () =>
@@ -259,6 +290,21 @@ async function StandingsSubTab({
             }),
           null,
           "races.markedPrizeExposure",
+          15_000,
+        )
+      : Promise.resolve({ data: null, error: null } as const),
+    // Total prize $ already paid out for this period, shown next to the
+    // marked-prize pill. safeQuery so a failing read degrades to no-pill
+    // instead of breaking the tab.
+    raceType !== "all" && effectivePeriod
+      ? safeQuery(
+          () =>
+            getRaceTotalClaimed({
+              raceType,
+              periodStart: effectivePeriod,
+            }),
+          null,
+          "races.totalClaimed",
           15_000,
         )
       : Promise.resolve({ data: null, error: null } as const),
@@ -301,11 +347,21 @@ async function StandingsSubTab({
             <DataTableToolbar searchPlaceholder="Search by username, email, or ID..." />
           </Suspense>
         </div>
-        {markedExposure && (
-          <MarkedPrizeExposure
-            total={markedExposure.total}
-            count={markedExposure.count}
-          />
+        {(markedExposure || totalClaimed) && (
+          <div className="flex flex-wrap items-center gap-2">
+            {markedExposure && (
+              <MarkedPrizeExposure
+                total={markedExposure.total}
+                count={markedExposure.count}
+              />
+            )}
+            {totalClaimed && (
+              <TotalClaimedPill
+                total={totalClaimed.total}
+                count={totalClaimed.count}
+              />
+            )}
+          </div>
         )}
       </div>
       {standingsFailed && <LeaderboardsLoadErrorBand what="standings" />}
