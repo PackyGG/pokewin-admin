@@ -597,6 +597,7 @@ export async function getUserDetail(id: string) {
     activeSeed,
     depositAddresses,
     depositAgg,
+    fiatDepositAgg,
     withdrawalCount,
     userPnl,
     wagerBreakdownResolved,
@@ -686,6 +687,19 @@ export async function getUserDetail(id: string) {
         status: "completed",
       },
       _count: { _all: true },
+      _sum: { amount: true },
+    }),
+    // Fiat (non-crypto) deposits only — completed deposit-ledger rows with no
+    // crypto_asset. Splits the completed-deposit total into fiat vs crypto so
+    // the P&L / KYC / dashboard surfaces can show "of which $X fiat". Same
+    // filter as depositAgg above, plus crypto_asset IS NULL.
+    db.ledger_transactions.aggregate({
+      where: {
+        user_id: id,
+        type: "deposit",
+        status: "completed",
+        crypto_asset: null,
+      },
       _sum: { amount: true },
     }),
     db.card_withdrawal_requests.count({
@@ -985,6 +999,10 @@ export async function getUserDetail(id: string) {
           // P&L components come from the shared helper so this view can
           // never drift from users-list / dashboard.
           totalDeposited: userPnl.deposits,
+          // Fiat (non-crypto / card) portion of completed deposits — from the
+          // fiatDepositAgg query above. Lifetime; surfaced on the P&L box, KYC
+          // decision panel, and Account tab as an "of which fiat" figure.
+          fiatDeposits: toNumber(fiatDepositAgg._sum.amount ?? 0),
           // Blacklisted user → hide the lifetime withdrawn total. Every
           // consumer composes the displayed P&L client-side as
           // `deposits − totalWithdrawn − onSiteBalance − inventory − vouchers`

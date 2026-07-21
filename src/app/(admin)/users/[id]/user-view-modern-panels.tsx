@@ -711,6 +711,7 @@ export function ModernPnlPanel({
   // user has more sitting on-site than they've deposited (paper win),
   // the number goes negative and we show red.
   const deposits = balances?.totalDeposited ?? 0;
+  const fiatDeposits = balances?.fiatDeposits ?? 0;
   const withdrawals = balances?.totalWithdrawn ?? 0;
   const onSiteBalance =
     (balances?.availableBalance ?? 0) + (balances?.lockedBalance ?? 0);
@@ -737,7 +738,11 @@ export function ModernPnlPanel({
         </p>
       </div>
       <div className="mt-4 grid grid-cols-2 gap-2 border-t pt-3">
-        <PanelStat label="Deposited" value={formatCurrency(deposits)} />
+        <PanelStat
+          label="Deposited"
+          value={formatCurrency(deposits)}
+          sub={fiatDeposits > 0 ? `${formatCurrency(fiatDeposits)} fiat` : null}
+        />
         <PanelStat label="Withdrawn" value={formatCurrency(withdrawals)} />
         {vouchersValue > 0 ? (
           <PanelStat

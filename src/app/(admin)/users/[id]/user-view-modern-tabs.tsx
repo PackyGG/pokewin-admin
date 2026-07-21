@@ -2022,7 +2022,7 @@ export function AccountTab({
             as direct children of the tab's top-level space-y list. */}
         <div className="space-y-4">
           <Suspense fallback={<SkeletonCard lines={3} />}>
-            <WindowedStripsStreamed pnlResultPromise={pnlResultPromise} />
+            <WindowedStripsStreamed pnlResultPromise={pnlResultPromise} balances={balances} />
           </Suspense>
         </div>
       </CollapsibleSection>
@@ -2315,7 +2315,17 @@ function KycDecisionInfo({
             <div className="space-y-2">
               <InfoRow
                 label="Deposited"
-                value={formatCurrency(balances?.totalDeposited ?? 0)}
+                value={
+                  <>
+                    {formatCurrency(balances?.totalDeposited ?? 0)}
+                    {(balances?.fiatDeposits ?? 0) > 0 ? (
+                      <span className="text-muted-foreground/70">
+                        {" "}
+                        · {formatCurrency(balances?.fiatDeposits ?? 0)} fiat
+                      </span>
+                    ) : null}
+                  </>
+                }
               />
               <InfoRow
                 label="Withdrawn"
@@ -2347,8 +2357,10 @@ function KycDecisionInfo({
 // admin would read as "quiet user").
 function WindowedStripsStreamed({
   pnlResultPromise,
+  balances,
 }: {
   pnlResultPromise: Promise<SafeQueryResult<PnlBreakdown>>;
+  balances: UserDetail["balances"];
 }) {
   const r = use(pnlResultPromise);
   if (r.error) {
@@ -2368,6 +2380,17 @@ function WindowedStripsStreamed({
       <SectionHeading icon={TrendingUp} title="Windowed P&L" />
       <WindowedPnlStrip pnlBreakdown={pnlBreakdown} />
       <SectionHeading icon={Banknote} title="Windowed Deposits" />
+      {/* Lifetime deposit total + its fiat (non-crypto) portion — context for
+          the windowed tiles below, and the Account-tab home for the fiat
+          figure that also shows on Overview's P&L box + the KYC panel. */}
+      {balances ? (
+        <p className="-mt-3 px-3 text-xs text-muted-foreground">
+          Lifetime {formatCurrency(balances.totalDeposited)}
+          {balances.fiatDeposits > 0
+            ? ` · ${formatCurrency(balances.fiatDeposits)} fiat`
+            : ""}
+        </p>
+      ) : null}
       <WindowedDepositsStrip pnlBreakdown={pnlBreakdown} />
       <SectionHeading icon={Coins} title="Windowed Wager" />
       <WindowedWagerStrip pnlBreakdown={pnlBreakdown} />

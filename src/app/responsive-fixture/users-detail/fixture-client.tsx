@@ -216,6 +216,7 @@ const DATA: UserDetail = {
     wagerLocked: 0,
     wagerProgress: 0,
     totalDeposited: 2_345_678.9,
+    fiatDeposits: 1_234_567.5,
     totalWithdrawn: 1_111_111.11,
     totalWagered: 9_876_543.21,
     totalWon: 8_765_432.1,

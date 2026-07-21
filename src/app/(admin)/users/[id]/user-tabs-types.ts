@@ -115,6 +115,8 @@ export type UserDetail = {
      */
     wagerProgress: number | null;
     totalDeposited: number;
+    /** Fiat (non-crypto / card) portion of totalDeposited — lifetime. */
+    fiatDeposits: number;
     totalWithdrawn: number;
     totalWagered: number;
     totalWon: number;
