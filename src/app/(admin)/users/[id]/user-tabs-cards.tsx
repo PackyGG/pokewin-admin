@@ -35,6 +35,7 @@ import { InfoRow, PnlValue } from "./user-tabs-shared";
 import {
   BalanceAdjustDialog,
   EditEmailDialog,
+  VerifyEmailButton,
   XpAdjustDialog,
 } from "./user-tabs-dialogs";
 
@@ -670,13 +671,18 @@ export const AccountDetailsSection = React.memo(function AccountDetailsSection({
               value={
                 <span className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate">{user.email ?? "-"}</span>
-                  {user.emailVerified && (
+                  {user.emailVerified ? (
                     <span
                       className="shrink-0 text-xs font-semibold text-emerald-500"
                       title="Verified"
                     >
                       ✓
                     </span>
+                  ) : (
+                    canEditIdentity &&
+                    user.email && (
+                      <VerifyEmailButton userId={user.id} email={user.email} />
+                    )
                   )}
                   {canEditIdentity && (
                     <EditEmailDialog userId={user.id} currentEmail={user.email} />

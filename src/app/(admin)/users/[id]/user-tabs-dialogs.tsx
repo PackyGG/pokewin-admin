@@ -3,7 +3,13 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ArrowDownToLine, Mail, ShieldAlert, ShieldCheck } from "lucide-react";
+import {
+  ArrowDownToLine,
+  CheckCircle2,
+  Mail,
+  ShieldAlert,
+  ShieldCheck,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -1565,6 +1571,49 @@ export function EditEmailDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Verify Email — one-click mark-as-verified for an unverified address,
+// no edit needed. Reuses updateUserIdentity with the SAME email (the
+// action always sets email_verified = true whenever email is provided,
+// changed or not), so no separate backend endpoint exists for this.
+// ---------------------------------------------------------------------------
+
+export function VerifyEmailButton({
+  userId,
+  email,
+}: {
+  userId: string;
+  email: string;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+
+  function handleVerify() {
+    startTransition(async () => {
+      const result = await updateUserIdentity(userId, { email });
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success("Email verified");
+      router.refresh();
+    });
+  }
+
+  return (
+    <Button
+      variant="ghost"
+      size="xs"
+      className="h-5 gap-1 px-1.5 text-[10px] text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400"
+      disabled={isPending}
+      onClick={handleVerify}
+    >
+      <CheckCircle2 className="size-3" />
+      {isPending ? "Verifying..." : "Verify"}
+    </Button>
   );
 }
 
