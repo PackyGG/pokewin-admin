@@ -9,6 +9,9 @@ import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { invalidateCountryRestrictionsCache } from "@/lib/invalidate-country-restrictions-cache";
 import { GEO_BLOCKING_CACHE_TAG } from "@/lib/queries/geo-blocking";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
+import { backendApi } from "@/lib/backend-api";
+import { resolveBackendApiConfig } from "@/lib/backend-api/config";
 
 /**
  * Geo Blocking (formerly "Country Restrictions") server actions — relocated
@@ -173,4 +176,51 @@ export async function toggleCountryRestriction(
   });
   revalidateTag(GEO_BLOCKING_CACHE_TAG);
   revalidatePath("/system/geo-blocking");
+}
+
+/**
+ * Manually bust the game backend's country-restriction Redis cache NOW instead
+ * of waiting for its ~1h TTL, and report WHICH backend env was hit.
+ *
+ * Unlike the fire-and-forget `invalidateCountryRestrictionsCache()` on every
+ * toggle (which swallows its result), this AWAITS the call so a failure
+ * surfaces to the operator, and returns the requested vs. resolved env. When
+ * the admin is in `dev` mode but the dev backend isn't configured
+ * (`BACKEND_API_URL_DEV` / `BACKEND_ADMIN_KEY_DEV` missing), `resolveEffective
+ * Env` silently falls back to the PROD backend — so a "dev" reload would bust
+ * the prod cache and look like it worked while the dev cache stayed stale.
+ * Returning both envs lets the UI warn on that mismatch. Audited; writes no DB.
+ */
+export async function reloadCountryRestrictionsCache(): Promise<{
+  requestedEnv: DbEnv;
+  resolvedEnv: DbEnv;
+}> {
+  const session = await requireAdmin();
+  await requireCapability(
+    session,
+    "__can_toggle_country_restriction",
+    "reload country restriction cache",
+  );
+
+  const [requestedEnv, config] = await Promise.all([
+    readDbEnv(),
+    resolveBackendApiConfig(),
+  ]);
+  const resolvedEnv = config.env;
+
+  // Direct + awaited (NOT the swallowing helper) so a backend/CF failure
+  // throws back to the button instead of vanishing into a logged catch.
+  await backendApi.post("/admin/invalidate-country-restrictions-cache");
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "country_restriction_updated",
+    metadata: {
+      action: "reload_cache",
+      requested_env: requestedEnv,
+      resolved_env: resolvedEnv,
+    },
+  });
+
+  return { requestedEnv, resolvedEnv };
 }

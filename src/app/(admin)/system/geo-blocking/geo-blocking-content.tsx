@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { KpiTile, SectionHeading } from "@/components/modern-panels";
 import { CollapsibleSection } from "./collapsible-section";
 import {
+  reloadCountryRestrictionsCache,
   seedMissingCountryRestrictions,
   toggleCountryRestriction,
   updateCountryRestrictionArray,
@@ -152,6 +153,27 @@ export function GeoBlockingContent({
   // In-flight country codes — see the "Per-row pending" note above.
   const [pendingCodes, setPendingCodes] = useState<Set<string>>(new Set());
   const [seeding, setSeeding] = useState(false);
+  const [reloadingCache, setReloadingCache] = useState(false);
+
+  async function handleReloadCache() {
+    setReloadingCache(true);
+    try {
+      const res = await reloadCountryRestrictionsCache();
+      if (res.requestedEnv !== res.resolvedEnv) {
+        const want = res.requestedEnv.toUpperCase();
+        toast.warning(
+          `Busted the ${res.resolvedEnv.toUpperCase()} cache, but you're in ${want} mode — the ${want} backend isn't configured, so the ${want} cache was NOT reloaded. Set BACKEND_API_URL_${want} + BACKEND_ADMIN_KEY_${want}.`,
+          { duration: 12000 },
+        );
+      } else {
+        toast.success(`Reloaded the ${res.resolvedEnv.toUpperCase()} country-restriction cache`);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to reload cache");
+    } finally {
+      setReloadingCache(false);
+    }
+  }
 
   async function handleSeed() {
     setSeeding(true);
@@ -323,18 +345,33 @@ export function GeoBlockingContent({
             className="pl-8"
           />
         </div>
-        {/* One-time backfill: add a row for every ISO country missing one (item withdrawal
-            off baseline) so all countries are present + editable. Idempotent — safe to
-            re-run; writes the prod game DB. */}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleSeed}
-          disabled={seeding}
-          title="Add a country_restrictions row for every ISO country missing one (item/physical withdrawal off), so every country is editable here."
-        >
-          {seeding ? "Seeding…" : "Seed missing countries"}
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* Force the game backend to reload its country-restriction Redis
+              cache now (it otherwise self-expires on a ~1h TTL). Reports which
+              backend env (prod/dev) was actually busted, so a dev reload that
+              silently falls back to prod is visible instead of looking done. */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleReloadCache}
+            disabled={reloadingCache}
+            title="Force the game backend to reload its country-restriction cache now instead of waiting for the ~1h TTL. Reports which env (prod/dev) was reloaded."
+          >
+            {reloadingCache ? "Reloading…" : "Reload cache"}
+          </Button>
+          {/* One-time backfill: add a row for every ISO country missing one (item withdrawal
+              off baseline) so all countries are present + editable. Idempotent — safe to
+              re-run; writes the prod game DB. */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSeed}
+            disabled={seeding}
+            title="Add a country_restrictions row for every ISO country missing one (item/physical withdrawal off), so every country is editable here."
+          >
+            {seeding ? "Seeding…" : "Seed missing countries"}
+          </Button>
+        </div>
       </div>
 
       <Tabs
