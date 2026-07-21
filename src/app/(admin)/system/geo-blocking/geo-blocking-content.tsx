@@ -4,10 +4,11 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import countries from "i18n-iso-countries";
 import enLocale from "i18n-iso-countries/langs/en.json";
-import { Ban, Globe, Search, ShieldCheck } from "lucide-react";
+import { Ban, CreditCard, Globe, Layers, Search, ShieldCheck } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { KpiTile, SectionHeading } from "@/components/modern-panels";
+import { CollapsibleSection } from "./collapsible-section";
 import {
   toggleCountryRestriction,
   updateCountryRestrictionArray,
@@ -26,49 +27,40 @@ countries.registerLocale(enLocale);
 /**
  * Geo Blocking — relocated from the old `/settings` "Country Restrictions"
  * section into its own /system/geo-blocking page. Reworked 2026-07-12 for
- * usability (owner: "kinda bad overview and hard to use"):
+ * usability, then reworked AGAIN 2026-07-21 (owner: "it shows restricted 250
+ * but that is just item withdrawal but not geo blocked... whole ui is messy
+ * and hard to use... bundled and collapsable"):
  *
- *   - The flat 249-row / 9-column table gave every country equal visual
- *     weight, so the handful of actually-restricted countries were lost in
- *     a sea of fully-open rows. Now split into "Restricted" (default tab,
- *     shows what's ALREADY blocked at a glance) vs "All countries" (browse
- *     + search everything, e.g. to add a new restriction).
+ *   - The old single "Restricted" bucket lumped a TRUE geo-block
+ *     (`blocked=true`, verified read-only: only 1 country) together with
+ *     ~250 countries whose ONLY restriction is `physical_withdrawal=false`
+ *     (item/card withdrawal off — a bulk baseline, not a curated geo-block)
+ *     and a handful of other partial restrictions (digital withdrawal /
+ *     gift card / promo code / locked currencies — verified: ~5 countries
+ *     total). That conflation is exactly what made "Restricted: 250" read as
+ *     "250 countries are geo-blocked" when only 1 actually is.
+ *   - `classifyRow` below sorts every country into exactly ONE of four
+ *     buckets (blocked / item-withdrawal-only / other-restricted / open),
+ *     each with its own KPI tile + tab, so the handful of REAL restrictions
+ *     are never buried in the bulk baseline.
+ *   - The bulk "item withdrawal disabled" bucket is the one most likely to
+ *     be huge (hundreds of countries all sharing the same non-curated
+ *     default), so its tab renders as ONE collapsed summary card (bundled +
+ *     collapsible per owner request) instead of dumping the full table —
+ *     expand it only when you actually need to review/search that list.
  *   - Raw ISO codes ("US", "DE") are resolved to readable country names
- *     (`i18n-iso-countries`, already a dependency — see
- *     creators/[userId]/country-breakdown.tsx for the existing precedent)
- *     with a flag emoji derived directly from the alpha-2 code (regional
- *     indicator symbols — no extra dependency).
- *   - A KPI strip surfaces the counts (Total / Restricted / Unrestricted)
- *     that used to require scrolling the whole table to eyeball.
- *   - The 9 flat columns collapsed to 3 (Country / Blocked / Restrictions)
- *     with the 4 finer-grained capability toggles + 3 locked-currency
- *     multi-selects moved into a per-row expandable detail — see
- *     `./restrictions-table.tsx` for that (now reusable) piece.
+ *     (`i18n-iso-countries`) with a flag emoji derived from the alpha-2 code.
  *
  * Same server actions as before (`toggleCountryRestriction` /
  * `updateCountryRestrictionArray`); this file only reworks the client-side
- * presentation. The optimistic-update / no-router-refresh scroll-fix
- * documented below is unchanged from the prior version.
+ * presentation — see `./restrictions-table.tsx` for the shared per-row
+ * expandable-detail table these tabs all reuse.
  *
- * Scroll-fix: every toggle / multi-select updates a LOCAL optimistic copy of
- * the rows in place and runs its action WITHOUT a router.refresh(). A full
- * refresh re-fetched every server component and dumped the admin at a random
- * scroll position on a page that can list hundreds of countries. The server
- * stays source of truth via each action's revalidatePath; the effect below
- * re-syncs the local rows to a genuine prop change unless a write is in
- * flight, and a failed action rolls the specific field back + toasts.
- *
- * Per-row pending (2026-07-12, owner: "when i click blocked it takes rly
- * long to load"): the value itself already flips optimistically via
- * `patchRow` above, but every control across ALL ~250 rows used to share one
- * `useTransition().isPending` flag, so clicking a single switch dimmed and
- * disabled the entire table (see the Switch primitive's
- * `data-disabled:opacity-50`) until that one write round-tripped — reading
- * as "everything just froze," independent of how fast the write actually
- * was. `pendingCodes` tracks in-flight country codes individually so only
- * the row being edited disables; `isPending` (the transition flag) is still
- * used below purely to gate the prop-resync effect against ANY in-flight
- * write.
+ * Scroll-fix / per-row pending: unchanged from the prior version — every
+ * toggle / multi-select updates a LOCAL optimistic copy of the rows in place
+ * and runs its action WITHOUT a router.refresh() (the server stays source of
+ * truth via each action's revalidatePath); `pendingCodes` tracks in-flight
+ * country codes individually so only the row being edited disables.
  */
 
 // Map a boolean field key → the camelCase property on CountryRestrictionRow.
@@ -94,6 +86,16 @@ function flagEmoji(alpha2: string): string {
     .replace(/./g, (c) => String.fromCodePoint(127397 + c.charCodeAt(0)));
 }
 
+// Pure module-level filter (no component-scoped closure) so callers can
+// memoize on `[list, search]` directly without an exhaustive-deps warning.
+function filterByTerm(list: RestrictionRowData[], search: string): RestrictionRowData[] {
+  const term = search.trim().toLowerCase();
+  if (!term) return list;
+  return list.filter(
+    (r) => r.name.toLowerCase().includes(term) || r.code.toLowerCase().includes(term),
+  );
+}
+
 function toRestrictionRow(c: CountryRestrictionRow): RestrictionRowData {
   return {
     code: c.countryCode,
@@ -110,6 +112,29 @@ function toRestrictionRow(c: CountryRestrictionRow): RestrictionRowData {
   };
 }
 
+type RowBucket = "blocked" | "itemWithdrawalOnly" | "other" | "open";
+
+/**
+ * Sorts a row into exactly ONE bucket (see the file-header note). Priority
+ * order matters: a genuinely geo-blocked country is "blocked" even if it
+ * also happens to have item withdrawal off; "itemWithdrawalOnly" only fires
+ * when NOTHING else is restricted alongside it.
+ */
+function classifyRow(row: RestrictionRowData): RowBucket {
+  if (row.blocked) return "blocked";
+  const onlyItemWithdrawalOff =
+    !row.physicalWithdrawal &&
+    row.digitalWithdrawal &&
+    row.giftCardDeposit &&
+    row.promoCodeDeposit &&
+    row.lockedDepositsCrypto.length === 0 &&
+    row.lockedDepositsFiat.length === 0 &&
+    row.lockedWithdrawalsCrypto.length === 0;
+  if (onlyItemWithdrawalOff) return "itemWithdrawalOnly";
+  if (isRowRestricted(row)) return "other";
+  return "open";
+}
+
 export function GeoBlockingContent({
   countryRestrictions,
 }: {
@@ -119,7 +144,8 @@ export function GeoBlockingContent({
   // Local optimistic copy of the rows — see the "Scroll-fix" note above.
   const [rows, setRows] = useState(countryRestrictions);
   const [search, setSearch] = useState("");
-  const [tab, setTab] = useState<"restricted" | "all">("restricted");
+  const [tab, setTab] = useState<"blocked" | "other" | "itemWithdrawal" | "all">("blocked");
+  const [itemWithdrawalOpen, setItemWithdrawalOpen] = useState(false);
   // In-flight country codes — see the "Per-row pending" note above.
   const [pendingCodes, setPendingCodes] = useState<Set<string>>(new Set());
 
@@ -193,30 +219,78 @@ export function GeoBlockingContent({
 
   const restrictionRows = useMemo(() => rows.map(toRestrictionRow), [rows]);
   const totalCount = restrictionRows.length;
-  const restrictedCount = useMemo(
-    () => restrictionRows.filter(isRowRestricted).length,
-    [restrictionRows],
+
+  const buckets = useMemo(() => {
+    const blocked: RestrictionRowData[] = [];
+    const itemWithdrawalOnly: RestrictionRowData[] = [];
+    const other: RestrictionRowData[] = [];
+    const open: RestrictionRowData[] = [];
+    for (const row of restrictionRows) {
+      switch (classifyRow(row)) {
+        case "blocked":
+          blocked.push(row);
+          break;
+        case "itemWithdrawalOnly":
+          itemWithdrawalOnly.push(row);
+          break;
+        case "other":
+          other.push(row);
+          break;
+        default:
+          open.push(row);
+      }
+    }
+    return { blocked, itemWithdrawalOnly, other, open };
+  }, [restrictionRows]);
+
+  const searched = useMemo(
+    () => filterByTerm(restrictionRows, search),
+    [restrictionRows, search],
   );
-  const openCount = totalCount - restrictedCount;
 
-  const searched = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (!term) return restrictionRows;
-    return restrictionRows.filter(
-      (r) => r.name.toLowerCase().includes(term) || r.code.toLowerCase().includes(term),
-    );
-  }, [restrictionRows, search]);
-
-  const restrictedRows = useMemo(() => searched.filter(isRowRestricted), [searched]);
+  const blockedRows = useMemo(
+    () => filterByTerm(buckets.blocked, search),
+    [buckets.blocked, search],
+  );
+  const otherRows = useMemo(
+    () => filterByTerm(buckets.other, search),
+    [buckets.other, search],
+  );
+  const itemWithdrawalRows = useMemo(
+    () => filterByTerm(buckets.itemWithdrawalOnly, search),
+    [buckets.itemWithdrawalOnly, search],
+  );
 
   return (
     <div className="space-y-4">
       <SectionHeading icon={Globe} title="Geo Blocking" />
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <KpiTile label="Countries" value={String(totalCount)} icon={Globe} accent="blue" />
-        <KpiTile label="Restricted" value={String(restrictedCount)} icon={Ban} accent="rose" />
-        <KpiTile label="Unrestricted" value={String(openCount)} icon={ShieldCheck} accent="emerald" />
+        <KpiTile
+          label="Geo-Blocked"
+          value={String(buckets.blocked.length)}
+          icon={Ban}
+          accent="rose"
+        />
+        <KpiTile
+          label="Other Restrictions"
+          value={String(buckets.other.length)}
+          icon={Layers}
+          accent="amber"
+        />
+        <KpiTile
+          label="Item Withdrawal Disabled"
+          value={String(buckets.itemWithdrawalOnly.length)}
+          icon={CreditCard}
+          accent="orange"
+        />
+        <KpiTile
+          label="Fully Open"
+          value={String(buckets.open.length)}
+          icon={ShieldCheck}
+          accent="emerald"
+        />
       </div>
 
       <div className="relative w-full sm:max-w-sm">
@@ -229,14 +303,22 @@ export function GeoBlockingContent({
         />
       </div>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as "restricted" | "all")}>
-        <TabsList>
-          <TabsTrigger value="restricted">Restricted ({restrictedRows.length})</TabsTrigger>
-          <TabsTrigger value="all">All countries ({searched.length})</TabsTrigger>
+      <Tabs
+        value={tab}
+        onValueChange={(v) => setTab(v as "blocked" | "other" | "itemWithdrawal" | "all")}
+      >
+        <TabsList className="flex-wrap h-auto">
+          <TabsTrigger value="blocked">Geo-Blocked ({blockedRows.length})</TabsTrigger>
+          <TabsTrigger value="other">Other Restrictions ({otherRows.length})</TabsTrigger>
+          <TabsTrigger value="itemWithdrawal">
+            Item Withdrawal Disabled ({itemWithdrawalRows.length})
+          </TabsTrigger>
+          <TabsTrigger value="all">All Countries ({searched.length})</TabsTrigger>
         </TabsList>
-        <TabsContent value="restricted">
+
+        <TabsContent value="blocked">
           <RestrictionsTable
-            rows={restrictedRows}
+            rows={blockedRows}
             codeLabel="Country"
             pendingCodes={pendingCodes}
             onToggle={handleToggle}
@@ -244,16 +326,65 @@ export function GeoBlockingContent({
             emptyState={
               search
                 ? {
-                    title: "No restricted countries match your search",
-                    description: "Try the All countries tab to search everything.",
+                    title: "No geo-blocked countries match your search",
+                    description: "Try the All Countries tab to search everything.",
                   }
                 : {
-                    title: "No countries are currently restricted",
-                    description: "Every country is fully open. Switch to All countries to add a restriction.",
+                    title: "No countries are geo-blocked",
+                    description: "Switch to All Countries to block one.",
                   }
             }
           />
         </TabsContent>
+
+        <TabsContent value="other">
+          <RestrictionsTable
+            rows={otherRows}
+            codeLabel="Country"
+            pendingCodes={pendingCodes}
+            onToggle={handleToggle}
+            onArrayChange={handleArrayChange}
+            emptyState={
+              search
+                ? {
+                    title: "No countries match your search",
+                    description: "Try the All Countries tab to search everything.",
+                  }
+                : {
+                    title: "No other partial restrictions",
+                    description:
+                      "No country has a digital-withdrawal / gift-card / promo-code / locked-currency restriction beyond the item-withdrawal baseline.",
+                  }
+            }
+          />
+        </TabsContent>
+
+        <TabsContent value="itemWithdrawal">
+          {/* Bundled + collapsed by default (owner request) — hundreds of
+              countries can share this exact restriction, so it stays folded
+              into one summary line until an admin actually needs to search
+              or edit that list. */}
+          <CollapsibleSection
+            icon={CreditCard}
+            title={`${itemWithdrawalRows.length} countries — item/physical withdrawal disabled`}
+            subtitle="Bulk baseline restriction, not a curated geo-block. Expand to search or edit."
+            open={itemWithdrawalOpen}
+            onOpenChange={setItemWithdrawalOpen}
+          >
+            <RestrictionsTable
+              rows={itemWithdrawalRows}
+              codeLabel="Country"
+              pendingCodes={pendingCodes}
+              onToggle={handleToggle}
+              onArrayChange={handleArrayChange}
+              emptyState={{
+                title: "No countries match your search",
+                description: "Try the All Countries tab to search everything.",
+              }}
+            />
+          </CollapsibleSection>
+        </TabsContent>
+
         <TabsContent value="all">
           <RestrictionsTable
             rows={searched}
