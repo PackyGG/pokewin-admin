@@ -37,6 +37,7 @@ export {
   AccountDetailsSection,
   BalanceHistoryChart,
   NotesSection,
+  formatSignupProvider,
 } from "./user-tabs-cards";
 export { CategoryTransactionsTable } from "./user-tabs-transactions";
 export { InventoryGrid, DisposedCardsTable } from "./user-tabs-inventory";

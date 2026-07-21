@@ -608,7 +608,7 @@ export const FeatureLocksCard = React.memo(function FeatureLocksCard({
  * `credentials` depending on BetterAuth version) as plain "Email".
  * Unknown providers are surfaced verbatim so we never hide data.
  */
-function formatSignupProvider(provider: string | null): string {
+export function formatSignupProvider(provider: string | null): string {
   if (!provider) return "-";
   const key = provider.toLowerCase();
   switch (key) {

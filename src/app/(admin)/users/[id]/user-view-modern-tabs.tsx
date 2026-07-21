@@ -69,6 +69,7 @@ import {
   ShieldAlert,
   BadgeCheck,
   Users,
+  Fingerprint,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { CollapsibleSection } from "./collapsible-section";
@@ -78,6 +79,7 @@ import { SkeletonCard, SkeletonTable } from "@/components/ux";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatDateTime, formatNumber } from "@/lib/utils/format";
 import { RelativeTime } from "@/components/relative-time";
+import { InfoRow } from "./user-tabs-shared";
 import {
   type UserDetail,
   type PaginatedTransactions,
@@ -90,6 +92,7 @@ import {
   GAMING_TX_TYPES,
   FINANCIAL_TX_TYPES,
   ADJUSTMENT_TX_TYPES,
+  formatSignupProvider,
 } from "./user-tabs";
 import { UserBattleLimitsCard } from "./user-battle-limits-card";
 import { UserVouchersPanel } from "./user-vouchers-panel";
@@ -2190,21 +2193,29 @@ export function AccountTab({
 //  skeleton exactly as it did inside the Account tab.
 // ───────────────────────────────────────────────────────────────────
 export function KycTab({
-  userId,
+  data,
   kycPromise,
   canManage,
 }: {
-  userId: string;
+  data: UserDetail;
   kycPromise: Promise<UserKycStatus | null> | null;
   canManage: boolean;
 }) {
+  const { user, balances } = data;
   return (
     <div className="space-y-6">
+      {/* Decision basics FIRST — the signals an admin scans to decide whether
+          to require identity verification: who they are, where they signed up
+          from (IP / geo), and how much money is in play. All read from the
+          already-loaded user detail — no extra query, no streaming. */}
+      <SectionHeading icon={Fingerprint} title="KYC Decision Info" />
+      <KycDecisionInfo user={user} balances={balances} />
+
       <SectionHeading icon={BadgeCheck} title="KYC (Sumsub)" />
       {kycPromise ? (
         <Suspense fallback={<SkeletonCard lines={3} />}>
           <KycStreamed
-            userId={userId}
+            userId={user.id}
             kycPromise={kycPromise}
             canManage={canManage}
           />
@@ -2213,6 +2224,119 @@ export function KycTab({
         <SkeletonCard lines={3} />
       )}
     </div>
+  );
+}
+
+// Compact, read-only "should we KYC this person?" panel. Three plain columns
+// of InfoRows (same primitive + column-group styling as AccountDetailsSection)
+// — Identity, Location & IP, Financial exposure. Everything comes from the
+// already-fetched UserDetail, so it paints instantly with the tab. `balances`
+// can be null (schema drift / no balance row) → the money rows show $0.00.
+function KycDecisionInfo({
+  user,
+  balances,
+}: {
+  user: UserDetail["user"];
+  balances: UserDetail["balances"];
+}) {
+  return (
+    <Card>
+      <CardContent className="space-y-4">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {/* Identity */}
+          <div className="min-w-0">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Identity
+            </p>
+            <div className="space-y-2">
+              <InfoRow label="Email" value={user.email ?? "—"} truncate />
+              <InfoRow
+                label="Email verified"
+                value={user.emailVerified ? "Yes" : "No"}
+              />
+              <InfoRow
+                label="Signed up with"
+                value={formatSignupProvider(user.signupProvider)}
+              />
+              <InfoRow
+                label="2FA"
+                value={user.twoFactorEnabled ? "On" : "Off"}
+              />
+              <InfoRow
+                label="Registered"
+                value={
+                  <>
+                    {formatDateTime(user.createdAt)}{" "}
+                    <span className="text-muted-foreground/70">
+                      (<RelativeTime date={user.createdAt} />)
+                    </span>
+                  </>
+                }
+              />
+            </div>
+          </div>
+
+          {/* Location & IP */}
+          <div className="min-w-0">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Location &amp; IP
+            </p>
+            <div className="space-y-2">
+              <InfoRow
+                label="Signup IP"
+                value={user.signupIp ?? "—"}
+                mono
+                truncate
+              />
+              <InfoRow
+                label="Country"
+                value={
+                  [user.country, user.countryCode]
+                    .filter(Boolean)
+                    .join(" · ") || "—"
+                }
+              />
+              <InfoRow
+                label="City / State"
+                value={
+                  [user.city, user.state].filter(Boolean).join(", ") || "—"
+                }
+              />
+              <InfoRow label="Continent" value={user.continentCode || "—"} />
+            </div>
+          </div>
+
+          {/* Financial exposure */}
+          <div className="min-w-0">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Financial
+            </p>
+            <div className="space-y-2">
+              <InfoRow
+                label="Deposited"
+                value={formatCurrency(balances?.totalDeposited ?? 0)}
+              />
+              <InfoRow
+                label="Withdrawn"
+                value={formatCurrency(balances?.totalWithdrawn ?? 0)}
+              />
+              <InfoRow
+                label="Wagered"
+                value={formatCurrency(balances?.totalWagered ?? 0)}
+              />
+              <InfoRow
+                label="Balance"
+                value={formatCurrency(balances?.availableBalance ?? 0)}
+              />
+              <InfoRow
+                label="Inventory"
+                value={formatCurrency(balances?.inventoryValue ?? 0)}
+              />
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

@@ -646,7 +646,7 @@ export function UserViewModern({
         )}
 
         {activeTab === "kyc" && (
-          <KycTab userId={user.id} kycPromise={kycPromise} canManage={isAdmin} />
+          <KycTab data={data} kycPromise={kycPromise} canManage={isAdmin} />
         )}
       </FadeIn>
     </div>
