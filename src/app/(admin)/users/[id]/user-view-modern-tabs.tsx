@@ -1912,7 +1912,6 @@ export function AccountTab({
   pnlResultPromise,
   wagerRequirementPromise,
   featureLocksPromise,
-  kycPromise,
   wagerProgressPromise,
   balanceWeightingPromise,
   adjustmentsTxPromise,
@@ -1929,9 +1928,6 @@ export function AccountTab({
   // refund/chargeback). Same catch→null convention as the wager-requirement
   // override above.
   featureLocksPromise: Promise<UserFeatureLocks | null> | null;
-  // Backend-owned Sumsub KYC status + admin control. Same catch→null
-  // convention as the fraud-locks read above.
-  kycPromise: Promise<UserKycStatus | null> | null;
   // Read-only wager-requirement PROGRESS from the backend-written `balances`
   // columns (dev-only). null = prod / no-balance / read failed → muted card.
   wagerProgressPromise: Promise<UserWagerProgress | null> | null;
@@ -1962,7 +1958,6 @@ export function AccountTab({
   const [balanceWeightingOpen, setBalanceWeightingOpen] = useState(true);
   const [manualWithdrawalOpen, setManualWithdrawalOpen] = useState(true);
   const [fraudLocksOpen, setFraudLocksOpen] = useState(true);
-  const [kycOpen, setKycOpen] = useState(true);
   return (
     <div className="space-y-4">
       <SectionHeading icon={Dices} title="Wagering Stats" />
@@ -2055,24 +2050,6 @@ export function AccountTab({
         )}
       </CollapsibleSection>
 
-      <CollapsibleSection
-        icon={BadgeCheck}
-        title="KYC (Sumsub)"
-        open={kycOpen}
-        onOpenChange={setKycOpen}
-      >
-        {kycPromise ? (
-          <Suspense fallback={<SkeletonCard lines={3} />}>
-            <KycStreamed
-              userId={user.id}
-              kycPromise={kycPromise}
-              canManage={data.sessionRole === "admin"}
-            />
-          </Suspense>
-        ) : (
-          <SkeletonCard lines={3} />
-        )}
-      </CollapsibleSection>
       <CollapsibleSection
         icon={Dices}
         title="Custom Battle Limits"
@@ -2171,6 +2148,43 @@ export function AccountTab({
           CollapsibleSection below. */}
       <SectionHeading icon={Sparkles} title="Affiliate" />
       <AffiliateSection data={data} />
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  KYC TAB — Sumsub identity verification status + admin controls.
+//  Split out of the Account tab into its own tab (owner request) so the
+//  verification state + Require/Review actions get a dedicated surface
+//  instead of being one collapsible among the account-management stack.
+//  The read is the same backend-owned catch→null promise, now kicked by
+//  page.tsx only when ?tab=kyc is active (Active-Timeframe-Only) — so the
+//  `null` prop still renders the card's muted "awaiting backend deploy"
+//  skeleton exactly as it did inside the Account tab.
+// ───────────────────────────────────────────────────────────────────
+export function KycTab({
+  userId,
+  kycPromise,
+  canManage,
+}: {
+  userId: string;
+  kycPromise: Promise<UserKycStatus | null> | null;
+  canManage: boolean;
+}) {
+  return (
+    <div className="space-y-6">
+      <SectionHeading icon={BadgeCheck} title="KYC (Sumsub)" />
+      {kycPromise ? (
+        <Suspense fallback={<SkeletonCard lines={3} />}>
+          <KycStreamed
+            userId={userId}
+            kycPromise={kycPromise}
+            canManage={canManage}
+          />
+        </Suspense>
+      ) : (
+        <SkeletonCard lines={3} />
+      )}
     </div>
   );
 }

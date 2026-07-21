@@ -43,6 +43,7 @@ import {
   Lock,
   Ticket,
   ShieldBan,
+  BadgeCheck,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -71,6 +72,7 @@ import {
   GamingTab,
   InventoryTab,
   AccountTab,
+  KycTab,
 } from "./user-view-modern-tabs";
 import { FadeIn } from "@/components/fade-in";
 import { DURATION } from "@/components/ux";
@@ -92,6 +94,7 @@ export {
   GamingTab,
   InventoryTab,
   AccountTab,
+  KycTab,
 } from "./user-view-modern-tabs";
 export {
   TILE_COLORS,
@@ -127,6 +130,11 @@ const TABS: TabDef[] = [
   // referral code there. Account is the catch-all for account-level admin
   // surfaces (moderation, feature locks, wager req, affiliate).
   { key: "account", label: "Account", icon: ShieldCheck },
+  // KYC (Sumsub) identity verification — split out of the Account tab into its
+  // own tab so the verification status + Require/Review controls get a
+  // dedicated surface. The read is Active-Timeframe-Only (page.tsx kicks it
+  // only when ?tab=kyc is active).
+  { key: "kyc", label: "KYC", icon: BadgeCheck },
 ];
 
 // ---------------------------------------------------------------------------
@@ -630,12 +638,15 @@ export function UserViewModern({
             pnlResultPromise={pnlResultPromise}
             wagerRequirementPromise={wagerRequirementPromise}
             featureLocksPromise={featureLocksPromise}
-            kycPromise={kycPromise}
             wagerProgressPromise={wagerProgressPromise}
             balanceWeightingPromise={balanceWeightingPromise}
             adjustmentsTxPromise={adjustmentsTxPromise}
             viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
           />
+        )}
+
+        {activeTab === "kyc" && (
+          <KycTab userId={user.id} kycPromise={kycPromise} canManage={isAdmin} />
         )}
       </FadeIn>
     </div>
