@@ -8,6 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -310,6 +317,16 @@ export const ModerationSection = React.memo(function ModerationSection({
 // client doesn't need to gate — any user without permission gets an
 // error toast when they submit.
 
+// Preset ban reasons so the common cases are a click, not typing — "Custom"
+// falls back to the free-text box. Values map to the exact string stored in
+// `user.banned_reason`; add more presets here as new categories come up.
+const BAN_REASON_OPTIONS: { value: string; label: string }[] = [
+  { value: "Multi", label: "Multi" },
+  { value: "CC Fraud", label: "CC Fraud" },
+  { value: "Abuse", label: "Abuse" },
+  { value: "custom", label: "Custom" },
+];
+
 function BanButton({
   userId,
   onSuccess,
@@ -318,24 +335,33 @@ function BanButton({
   onSuccess: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState("");
+  const [reasonOption, setReasonOption] = useState<string | null>(null);
+  const [customReason, setCustomReason] = useState("");
   const [isPending, startTransition] = useTransition();
 
+  const isCustom = reasonOption === "custom";
+  const effectiveReason = isCustom ? customReason.trim() : (reasonOption ?? "");
+
   function submit() {
-    if (!reason.trim()) {
+    if (!reasonOption) {
+      toast.error("Select a reason");
+      return;
+    }
+    if (!effectiveReason) {
       toast.error("Reason required");
       return;
     }
     startTransition(async () => {
       // ServerActionResult — branch on result.success instead of try/catch.
-      const result = await banUser(userId, reason.trim());
+      const result = await banUser(userId, effectiveReason);
       if (!result.success) {
         toast.error(result.error);
         return;
       }
       toast.success("User banned");
       setOpen(false);
-      setReason("");
+      setReasonOption(null);
+      setCustomReason("");
       // No `router.refresh()` and no route re-render — the action flushes
       // narrow tags only; `onSuccess` flips the optimistic Ban→Unban state
       // in UserAdminActions instantly, server truth re-syncs via the tags.
@@ -344,7 +370,16 @@ function BanButton({
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) {
+          setReasonOption(null);
+          setCustomReason("");
+        }
+      }}
+    >
       <Button
         variant="outline"
         size="sm"
@@ -359,12 +394,27 @@ function BanButton({
         </DialogHeader>
         <div className="space-y-2">
           <Label className="text-xs text-muted-foreground">Reason</Label>
-          <Textarea
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Why is this user being banned?"
-            rows={3}
-          />
+          <Select value={reasonOption ?? undefined} onValueChange={setReasonOption}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select a reason" />
+            </SelectTrigger>
+            <SelectContent>
+              {BAN_REASON_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {isCustom && (
+            <Textarea
+              value={customReason}
+              onChange={(e) => setCustomReason(e.target.value)}
+              placeholder="Why is this user being banned?"
+              rows={3}
+              autoFocus
+            />
+          )}
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => setOpen(false)}>
@@ -372,7 +422,7 @@ function BanButton({
           </Button>
           <Button
             variant="destructive"
-            disabled={isPending}
+            disabled={isPending || !reasonOption || !effectiveReason}
             onClick={submit}
           >
             {isPending ? "Banning..." : "Confirm ban"}
