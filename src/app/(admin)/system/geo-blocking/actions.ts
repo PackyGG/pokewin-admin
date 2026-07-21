@@ -2,6 +2,7 @@
 
 import { revalidatePath, revalidateTag } from "next/cache";
 import { after } from "next/server";
+import countries from "i18n-iso-countries";
 import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -79,6 +80,63 @@ export async function updateCountryRestrictionArray(
   });
   revalidateTag(GEO_BLOCKING_CACHE_TAG);
   revalidatePath("/system/geo-blocking");
+}
+
+/**
+ * Backfill any ISO country that has no `country_restrictions` row yet, so every country is
+ * present and editable on the page (owner: "item withdrawal is disabled for all countries,
+ * not just 247"). Idempotent — only INSERTs the missing codes, never touches existing rows —
+ * so it's safe to re-run. New rows get the item/physical-withdrawal-OFF baseline
+ * (`physical_withdrawal=false`); everything else falls to the schema defaults (not blocked,
+ * digital/promo allowed, no locked currencies).
+ *
+ * NOTE: the country universe is `i18n-iso-countries`' alpha-2 set (~249) — the SAME list the
+ * page resolves names/flags from. If the game needs a broader list (territories / custom
+ * codes to reach ~301), swap the source here; the insert stays idempotent. Operator-triggered
+ * (a button on the page) + audited, since it WRITES the prod game DB.
+ */
+export async function seedMissingCountryRestrictions(): Promise<{
+  seeded: number;
+  total: number;
+}> {
+  const db = await getDb();
+  const session = await requireAdmin();
+  await requireCapability(
+    session,
+    "__can_toggle_country_restriction",
+    "seed country restrictions",
+  );
+
+  const existing = await db.country_restrictions.findMany({
+    select: { country_code: true },
+  });
+  const existingSet = new Set(existing.map((r) => r.country_code));
+
+  const allCodes = Object.keys(countries.getAlpha2Codes());
+  const missing = allCodes.filter((code) => !existingSet.has(code));
+
+  if (missing.length === 0) {
+    return { seeded: 0, total: existingSet.size };
+  }
+
+  await db.country_restrictions.createMany({
+    // Item/physical withdrawal OFF baseline; the rest use the schema defaults.
+    data: missing.map((country_code) => ({ country_code, physical_withdrawal: false })),
+    skipDuplicates: true,
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "country_restrictions_seeded",
+    metadata: { seeded_count: missing.length, seeded_codes: missing },
+  });
+
+  after(() => {
+    invalidateCountryRestrictionsCache().catch(() => {});
+  });
+  revalidateTag(GEO_BLOCKING_CACHE_TAG);
+  revalidatePath("/system/geo-blocking");
+  return { seeded: missing.length, total: existingSet.size + missing.length };
 }
 
 export async function toggleCountryRestriction(

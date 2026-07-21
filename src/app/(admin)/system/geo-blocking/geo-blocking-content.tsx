@@ -10,9 +10,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { KpiTile, SectionHeading } from "@/components/modern-panels";
 import { CollapsibleSection } from "./collapsible-section";
 import {
+  seedMissingCountryRestrictions,
   toggleCountryRestriction,
   updateCountryRestrictionArray,
 } from "./actions";
+import { Button } from "@/components/ui/button";
 import {
   RestrictionsTable,
   isRowRestricted,
@@ -122,10 +124,11 @@ type RowBucket = "blocked" | "itemWithdrawalOnly" | "other" | "open";
  */
 function classifyRow(row: RestrictionRowData): RowBucket {
   if (row.blocked) return "blocked";
+  // gift_card_deposit is intentionally omitted — the product has no gift cards, so that
+  // flag is dead and must not affect bucketing (mirrors isRowRestricted in the table).
   const onlyItemWithdrawalOff =
     !row.physicalWithdrawal &&
     row.digitalWithdrawal &&
-    row.giftCardDeposit &&
     row.promoCodeDeposit &&
     row.lockedDepositsCrypto.length === 0 &&
     row.lockedDepositsFiat.length === 0 &&
@@ -148,6 +151,23 @@ export function GeoBlockingContent({
   const [itemWithdrawalOpen, setItemWithdrawalOpen] = useState(false);
   // In-flight country codes — see the "Per-row pending" note above.
   const [pendingCodes, setPendingCodes] = useState<Set<string>>(new Set());
+  const [seeding, setSeeding] = useState(false);
+
+  async function handleSeed() {
+    setSeeding(true);
+    try {
+      const res = await seedMissingCountryRestrictions();
+      toast.success(
+        res.seeded === 0
+          ? `All ${res.total} countries already present`
+          : `Seeded ${res.seeded} missing ${res.seeded === 1 ? "country" : "countries"} (${res.total} total)`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to seed countries");
+    } finally {
+      setSeeding(false);
+    }
+  }
 
   function beginPending(countryCode: string) {
     setPendingCodes((prev) => new Set(prev).add(countryCode));
@@ -293,14 +313,28 @@ export function GeoBlockingContent({
         />
       </div>
 
-      <div className="relative w-full sm:max-w-sm">
-        <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-        <Input
-          placeholder="Search by country name or code..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-8"
-        />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="relative w-full sm:max-w-sm">
+          <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by country name or code..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-8"
+          />
+        </div>
+        {/* One-time backfill: add a row for every ISO country missing one (item withdrawal
+            off baseline) so all countries are present + editable. Idempotent — safe to
+            re-run; writes the prod game DB. */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleSeed}
+          disabled={seeding}
+          title="Add a country_restrictions row for every ISO country missing one (item/physical withdrawal off), so every country is editable here."
+        >
+          {seeding ? "Seeding…" : "Seed missing countries"}
+        </Button>
       </div>
 
       <Tabs
