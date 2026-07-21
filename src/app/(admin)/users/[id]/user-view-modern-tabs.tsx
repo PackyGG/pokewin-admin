@@ -11,7 +11,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { useState, useTransition, use, Suspense } from "react";
+import { useState, useEffect, useTransition, use, Suspense } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,10 +26,22 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { assignAffiliateCode, fetchUserAttributionJourney } from "./actions";
+import {
+  assignAffiliateCode,
+  fetchUserAttributionJourney,
+  transferAffiliateCode,
+} from "./actions";
 import type { AttributionJourneyEntry } from "@/lib/queries/users";
 import { SetAffiliateCodeDialog } from "./user-tabs-creator";
 import { ManualWithdrawalDialog } from "./user-tabs-dialogs";
+import { StepUpField } from "@/components/step-up-field";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import {
   Wallet,
   TrendingUp,
@@ -44,6 +56,7 @@ import {
   Banknote,
   ArrowUpFromLine,
   ArrowUpRight,
+  ArrowLeftRight,
   Sparkles,
   Dices,
   Percent,
@@ -1599,6 +1612,7 @@ function OwnCodeCard({
                 referralCount={c.referralCount}
                 userRole={user.role}
                 userId={user.id}
+                ownerLabel={user.username ?? user.email ?? user.id.slice(0, 8)}
               />
             ))}
           </div>
@@ -1613,8 +1627,9 @@ function OwnCodeCard({
           <span className="font-mono">affiliate_codes</span> table. Each
           row above is a code this user owns and can hand out to refer
           others. Codes are added via &quot;Add another code&quot; or
-          on /creators/[id]. To remove or transfer a code, use the
-          /creators dashboard.
+          on /creators/[id]; use a row&apos;s &quot;Transfer&quot; button to
+          move it to another account. To remove a code, use the /creators
+          dashboard.
         </p>
       </CardContent>
       <SetAffiliateCodeDialog
@@ -1643,13 +1658,17 @@ function OwnedCodeRow({
   referralCount,
   userRole,
   userId,
+  ownerLabel,
 }: {
   code: string;
   createdAt: string;
   referralCount: number;
   userRole: string;
   userId: string;
+  /** Current owner's display label (username/email/id-prefix), shown in the transfer dialog. */
+  ownerLabel: string;
 }) {
+  const [transferOpen, setTransferOpen] = useState(false);
   const codeHref =
     userRole === "creator"
       ? `/creators/${userId}`
@@ -1679,11 +1698,162 @@ function OwnedCodeRow({
           <Users className="size-3" />
           View referrals
         </Button>
+        <Button
+          size="xs"
+          variant="ghost"
+          className="text-muted-foreground"
+          onClick={() => setTransferOpen(true)}
+        >
+          <ArrowLeftRight className="size-3" />
+          Transfer
+        </Button>
       </div>
       <span className="text-[11px] text-muted-foreground">
         added <RelativeTime date={createdAt} />
       </span>
+      <TransferCodeDialog
+        open={transferOpen}
+        onOpenChange={setTransferOpen}
+        code={code}
+        fromLabel={ownerLabel}
+      />
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  Transfer Code Dialog — moves an owned affiliate code to another
+//  account. Defaults the target to "motha" (the super-owner's own game
+//  account, username "motha" per MAIN_OWNER_USERNAME in @/lib/owners —
+//  hardcoded here rather than imported since that module also pulls in
+//  server-only deps not safe to bundle client-side), editable to any
+//  other username or user id. Same 2FA-gated transferAffiliateCode
+//  action SetAffiliateCodeDialog's conflict flow uses — the previous
+//  owner gets a random replacement code so they're never codeless.
+// ─────────────────────────────────────────────────────────────────────
+
+const DEFAULT_TRANSFER_TARGET = "motha";
+
+function TransferCodeDialog({
+  open,
+  onOpenChange,
+  code,
+  fromLabel,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  code: string;
+  fromLabel: string;
+}) {
+  const router = useRouter();
+  const [targetInput, setTargetInput] = useState(DEFAULT_TRANSFER_TARGET);
+  const [totpCode, setTotpCode] = useState("");
+  const [isPending, startTransition] = useTransition();
+
+  useEffect(() => {
+    if (open) {
+      setTargetInput(DEFAULT_TRANSFER_TARGET);
+      setTotpCode("");
+    }
+  }, [open]);
+
+  function close() {
+    onOpenChange(false);
+  }
+
+  function handleSubmit() {
+    const target = targetInput.trim();
+    if (!target) {
+      toast.error("Enter a target username or user id");
+      return;
+    }
+    if (!totpCode.trim()) {
+      toast.error("Please enter your 2FA code");
+      return;
+    }
+    startTransition(async () => {
+      const result = await transferAffiliateCode({
+        toUserId: target,
+        code,
+        totpCode: totpCode.trim(),
+      });
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(
+        `Transferred "${code}" from @${fromLabel} → ${target}. Their replacement code: ${result.replacementCode}`,
+        { duration: 8000 },
+      );
+      close();
+      router.refresh();
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Transfer affiliate code</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <p className="text-xs text-muted-foreground">
+            Moves{" "}
+            <span className="font-mono font-medium text-foreground">
+              {code}
+            </span>{" "}
+            from{" "}
+            <span className="font-medium text-foreground">@{fromLabel}</span>{" "}
+            to another account. The current owner gets a random
+            replacement code so they&apos;re never codeless — their
+            historical referrals + earnings stay attributed to them.
+          </p>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">
+              Target username or user ID
+            </Label>
+            <Input
+              value={targetInput}
+              onChange={(e) => setTargetInput(e.target.value)}
+              placeholder="e.g. motha"
+              disabled={isPending}
+              autoFocus
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Defaults to &quot;motha&quot; (the super-owner account) —
+              overwrite to transfer somewhere else instead.
+            </p>
+          </div>
+          {/* 2FA gate — same shape as SetAffiliateCodeDialog's transfer flow. */}
+          <StepUpField
+            value={totpCode}
+            onChange={setTotpCode}
+            disabled={isPending}
+          />
+        </div>
+        <DialogFooter>
+          <Button
+            variant="ghost"
+            onClick={close}
+            disabled={isPending}
+            className="w-full sm:w-auto"
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={isPending || !targetInput.trim() || !totpCode.trim()}
+            className="w-full sm:w-auto bg-amber-600 hover:bg-amber-600/90 text-white"
+          >
+            {isPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              "Transfer"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -3340,8 +3340,9 @@ export async function transferAffiliateCode(args: {
 
   const code = args.code.trim();
   if (!code) return { success: false, error: "Code cannot be empty" };
-  if (!z.string().uuid().or(z.string().min(8)).safeParse(args.toUserId).success) {
-    return { success: false, error: "Invalid target user id" };
+  const targetIdentifier = args.toUserId.trim();
+  if (!targetIdentifier) {
+    return { success: false, error: "Target user is required" };
   }
 
   // Verify current ownership and target user exist + are different.
@@ -3355,14 +3356,27 @@ export async function transferAffiliateCode(args: {
       error: "That code doesn't exist anymore — refresh and try again",
     };
   }
-  if (codeRow.user_id === args.toUserId) {
+
+  // `toUserId` accepts either a real user id OR a username (case-insensitive)
+  // — the id-transfer callers (SetAffiliateCodeDialog) always pass a real
+  // id, which matches on the first lookup; the username fallback lets the
+  // Account tab's "Transfer to another account" dialog take a typed username
+  // (e.g. the default "motha") without a separate resolve round-trip.
+  const target =
+    (await db.user.findUnique({
+      where: { id: targetIdentifier },
+      select: { id: true },
+    })) ??
+    (await db.user.findFirst({
+      where: { username: { equals: targetIdentifier, mode: "insensitive" } },
+      select: { id: true },
+    }));
+  if (!target) return { success: false, error: "Target user not found" };
+  const toUserId = target.id;
+
+  if (codeRow.user_id === toUserId) {
     return { success: false, error: "Target user already owns that code" };
   }
-  const target = await db.user.findUnique({
-    where: { id: args.toUserId },
-    select: { id: true },
-  });
-  if (!target) return { success: false, error: "Target user not found" };
 
   const previousOwnerId = codeRow.user_id;
   const replacementCode = await generateRandomAffiliateCode(db);
@@ -3371,7 +3385,7 @@ export async function transferAffiliateCode(args: {
     // Move the code row to the target user.
     await tx.affiliate_codes.update({
       where: { id: codeRow.id },
-      data: { user_id: args.toUserId, updated_at: new Date() },
+      data: { user_id: toUserId, updated_at: new Date() },
     });
     // Give the previous owner a random replacement code.
     await tx.affiliate_codes.create({
@@ -3379,8 +3393,8 @@ export async function transferAffiliateCode(args: {
     });
     // Make sure both sides have an affiliate_accounts row.
     await tx.affiliate_accounts.upsert({
-      where: { user_id: args.toUserId },
-      create: { user_id: args.toUserId },
+      where: { user_id: toUserId },
+      create: { user_id: toUserId },
       update: {},
     });
     await tx.affiliate_accounts.upsert({
@@ -3399,7 +3413,7 @@ export async function transferAffiliateCode(args: {
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "affiliate_code_transferred",
-    targetUserId: args.toUserId,
+    targetUserId: toUserId,
     metadata: {
       code,
       previousOwnerId,
@@ -3411,7 +3425,7 @@ export async function transferAffiliateCode(args: {
     },
   });
 
-  invalidateUserCaches(args.toUserId);
+  invalidateUserCaches(toUserId);
   invalidateUserCaches(previousOwnerId);
   return { success: true, replacementCode, previousOwnerId };
 }
