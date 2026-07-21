@@ -347,37 +347,51 @@ function AdminAdjustmentsStreamed({
   adjustmentsTxPromise,
   isAdmin,
   canEditBalanceAdjustments,
+  open,
+  onOpenChange,
 }: {
   userId: string;
   adjustmentsTxPromise: Promise<SafeQueryResult<PaginatedTransactions>>;
   isAdmin: boolean;
   canEditBalanceAdjustments: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   const r = use(adjustmentsTxPromise);
   // Load failure → a VISIBLE compact error card. The owner must be able to
   // tell "no adjustments exist" (genuine empty → block self-hides below)
   // from "the adjustments query failed" — silently self-hiding on failure
-  // would hide real adjustments behind a transient error.
+  // would hide real adjustments behind a transient error. The collapsible
+  // lives INSIDE this component (not wrapped around it in AccountTab) so the
+  // whole section still self-hides when the user has zero adjustments.
   if (r.error) {
     return (
-      <>
-        <SectionHeading icon={Coins} title="Admin balance adjustments" />
+      <CollapsibleSection
+        icon={Coins}
+        title="Admin balance adjustments"
+        open={open}
+        onOpenChange={onOpenChange}
+      >
         <InlineError
           compact
           title="Couldn't load admin balance adjustments"
           hint="This is a load failure, not an empty history — retry to re-run the query."
         />
-      </>
+      </CollapsibleSection>
     );
   }
   const adjustmentsTx = r.data;
   if (adjustmentsTx.total <= 0) return null;
   const mothaOnly = isMothaOnlyAdjustmentsProfile(userId);
   return (
-    <>
-      <SectionHeading icon={Coins} title="Admin balance adjustments" />
+    <CollapsibleSection
+      icon={Coins}
+      title="Admin balance adjustments"
+      open={open}
+      onOpenChange={onOpenChange}
+    >
       {mothaOnly ? (
-        <p className="text-xs text-muted-foreground -mt-2 mb-1">
+        <p className="mb-2 text-xs text-muted-foreground">
           Motha adjustments only — other admins&apos; balance changes are hidden on this profile.
         </p>
       ) : null}
@@ -389,7 +403,7 @@ function AdminAdjustmentsStreamed({
         isAdmin={isAdmin}
         canEditBalanceAdjustments={canEditBalanceAdjustments}
       />
-    </>
+    </CollapsibleSection>
   );
 }
 
@@ -913,14 +927,14 @@ function AffiliateSection({ data }: { data: UserDetail }) {
   // Each distinct sub-part below was already separately headed (own
   // SectionHeading) before this pass — collapsing them individually reads
   // better than one giant Affiliate block, and matches the granularity of
-  // every other section on this tab. All default OPEN (same convention as
-  // the rest of the tab — collapsing is an admin convenience, not a new
-  // default-hidden state).
-  const [creatorDashboardOpen, setCreatorDashboardOpen] = useState(true);
-  const [referrerOpen, setReferrerOpen] = useState(true);
-  const [attributionOpen, setAttributionOpen] = useState(true);
-  const [ownCodeOpen, setOwnCodeOpen] = useState(true);
-  const [affiliateStatsOpen, setAffiliateStatsOpen] = useState(true);
+  // every other section on this tab. All default COLLAPSED (owner request —
+  // same as the rest of the Account tab, which now opens with every section
+  // collapsed beneath the pinned, non-collapsible Account Details block).
+  const [creatorDashboardOpen, setCreatorDashboardOpen] = useState(false);
+  const [referrerOpen, setReferrerOpen] = useState(false);
+  const [attributionOpen, setAttributionOpen] = useState(false);
+  const [ownCodeOpen, setOwnCodeOpen] = useState(false);
+  const [affiliateStatsOpen, setAffiliateStatsOpen] = useState(false);
   return (
     <div className="space-y-4">
       {/* Creator deep-link — only for users actually flagged creator.
@@ -1945,23 +1959,48 @@ export function AccountTab({
   viewerIsAdjustmentOwner: boolean;
 }) {
   const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, battleLimits, capabilities } = data;
-  // Local open/close state for each collapsible Account-tab section. All
-  // default OPEN so first paint is unchanged from before these became
-  // collapsible — collapsing is an admin convenience, not a new
-  // default-hidden state. Same controlled pattern as the Deposits &
-  // Withdrawals collapsible on the Overview tab (CollapsibleSection).
-  const [accountDetailsOpen, setAccountDetailsOpen] = useState(true);
-  const [featureLocksOpen, setFeatureLocksOpen] = useState(true);
-  const [battleLimitsOpen, setBattleLimitsOpen] = useState(true);
-  const [wagerRequirementOpen, setWagerRequirementOpen] = useState(true);
-  const [wagerProgressOpen, setWagerProgressOpen] = useState(true);
-  const [balanceWeightingOpen, setBalanceWeightingOpen] = useState(true);
-  const [manualWithdrawalOpen, setManualWithdrawalOpen] = useState(true);
-  const [fraudLocksOpen, setFraudLocksOpen] = useState(true);
+  // Local open/close state for each collapsible Account-tab section. Every
+  // section now defaults to COLLAPSED (owner request) so the tab opens
+  // compact — only the non-collapsible "Account Details" block pinned at the
+  // top is always shown; the admin expands the rest as needed. Same
+  // controlled pattern as the Deposits & Withdrawals collapsible on the
+  // Overview tab (CollapsibleSection).
+  const [wageringStatsOpen, setWageringStatsOpen] = useState(false);
+  const [windowedStatsOpen, setWindowedStatsOpen] = useState(false);
+  const [adminAdjustmentsOpen, setAdminAdjustmentsOpen] = useState(false);
+  const [featureLocksOpen, setFeatureLocksOpen] = useState(false);
+  const [battleLimitsOpen, setBattleLimitsOpen] = useState(false);
+  const [wagerRequirementOpen, setWagerRequirementOpen] = useState(false);
+  const [wagerProgressOpen, setWagerProgressOpen] = useState(false);
+  const [balanceWeightingOpen, setBalanceWeightingOpen] = useState(false);
+  const [manualWithdrawalOpen, setManualWithdrawalOpen] = useState(false);
+  const [fraudLocksOpen, setFraudLocksOpen] = useState(false);
   return (
     <div className="space-y-4">
-      <SectionHeading icon={Dices} title="Wagering Stats" />
-      <WageringStatsCard balances={balances} />
+      {/* Account Details — pinned at the TOP and NOT collapsible (owner
+          request): the identity / shipping / vault / deposit-address block is
+          the first thing an admin looks at, so it's always expanded above the
+          collapsed account-management stack below. */}
+      <SectionHeading icon={ShieldCheck} title="Account Details" />
+      <Card>
+        <CardContent>
+          <AccountDetailsSection
+            user={user}
+            shippingAddress={shippingAddress}
+            vault={vault}
+            depositAddresses={depositAddresses}
+          />
+        </CardContent>
+      </Card>
+
+      <CollapsibleSection
+        icon={Dices}
+        title="Wagering Stats"
+        open={wageringStatsOpen}
+        onOpenChange={setWageringStatsOpen}
+      >
+        <WageringStatsCard balances={balances} />
+      </CollapsibleSection>
       {/* Windowed P&L / Deposits / Wager strips — all three are fed by the
           same getUserPnlBreakdown call as the Overview tab's Rolling P&L
           ladder, so they stream as one cluster on pnlResultPromise (and the
@@ -1969,16 +2008,20 @@ export function AccountTab({
           band error, never five neutral $0.00 tiles. House POV per
           CLAUDE.md: positive P&L (user lost net) → emerald, negative (user
           gained net) → rose. */}
-      <Suspense
-        fallback={
-          <>
-            <SectionHeading icon={TrendingUp} title="Windowed P&L" />
-            <SkeletonCard lines={3} />
-          </>
-        }
+      <CollapsibleSection
+        icon={TrendingUp}
+        title="Windowed Stats"
+        open={windowedStatsOpen}
+        onOpenChange={setWindowedStatsOpen}
       >
-        <WindowedStripsStreamed pnlResultPromise={pnlResultPromise} />
-      </Suspense>
+        {/* Inner space-y restores the vertical gaps the strips got for free
+            as direct children of the tab's top-level space-y list. */}
+        <div className="space-y-4">
+          <Suspense fallback={<SkeletonCard lines={3} />}>
+            <WindowedStripsStreamed pnlResultPromise={pnlResultPromise} />
+          </Suspense>
+        </div>
+      </CollapsibleSection>
 
       {/* Admin balance adjustments — OWNER ONLY (motha). Moved here from the
           Overview tab. Non-owner admins never see this block: the server
@@ -1996,27 +2039,11 @@ export function AccountTab({
             adjustmentsTxPromise={adjustmentsTxPromise}
             isAdmin={data.sessionRole === "admin"}
             canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
+            open={adminAdjustmentsOpen}
+            onOpenChange={setAdminAdjustmentsOpen}
           />
         </Suspense>
       )}
-
-      <CollapsibleSection
-        icon={ShieldCheck}
-        title="Account Details"
-        open={accountDetailsOpen}
-        onOpenChange={setAccountDetailsOpen}
-      >
-        <Card>
-          <CardContent>
-            <AccountDetailsSection
-              user={user}
-              shippingAddress={shippingAddress}
-              vault={vault}
-              depositAddresses={depositAddresses}
-            />
-          </CardContent>
-        </Card>
-      </CollapsibleSection>
 
       <CollapsibleSection
         icon={ShieldCheck}
