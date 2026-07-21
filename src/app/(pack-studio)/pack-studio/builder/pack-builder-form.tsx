@@ -13,25 +13,40 @@ import {
   AlertTriangle,
   CheckCircle2,
   Flame,
+  Gauge,
   Layers,
+  Rocket,
+  Save,
   ShieldCheck,
   Target,
   Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
   KpiTile,
   SectionHeading,
   StatPanel,
   PanelRow,
 } from "@/components/modern-panels";
+import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
 import { uploadImageClient } from "@/lib/upload-image-client";
 
@@ -52,7 +67,10 @@ import {
   type SortableCard,
 } from "@/app/(admin)/packs/sortable-card-table";
 
+import { RiskLevelSlider } from "@/app/(admin)/packs/risk-level-slider";
+
 import { RiskLevelBar } from "../_components/risk-level-bar";
+import { PackRiskBarPreview } from "../_components/pack-risk-bar-preview";
 import { BuilderCardPicker } from "./builder-card-picker";
 import type { BuilderCardItem } from "./actions";
 
@@ -238,6 +256,15 @@ export function PackBuilderForm({
   const [maxWinCap, setMaxWinCap] = useState(String(defaultMaxWinCap));
   const [nearMissPct, setNearMissPct] = useState(10); // % → 0.10
   const [spiciness, setSpiciness] = useState<Spiciness>("balanced");
+  // Player-facing risk level (0..1) — the on-site `difficulty` dial. Manual,
+  // NOT derived from the CV tier (they are different measures). Defaults to 0
+  // so, like the create/edit pack forms, an untouched pack ships `difficulty:
+  // null` (no on-site bar) until the operator sets a level.
+  const [difficulty, setDifficulty] = useState(0);
+  // Controlled so the confirm can be closed explicitly on push (the shared
+  // AlertDialogAction is a plain button, not a Close — it wouldn't auto-close
+  // on the error path otherwise).
+  const [activateConfirmOpen, setActivateConfirmOpen] = useState(false);
 
   const packPrice = parseFloat(price) || 0;
   const capValue = parseFloat(maxWinCap);
@@ -395,7 +422,7 @@ export function PackBuilderForm({
     );
   }
 
-  // ── Submit → buildPack (owner-gated, server re-shapes, active:false) ──
+  // ── Submit → buildPack (owner-gated, server re-shapes; draft OR live) ──
   const canSubmit =
     canBuild &&
     !isPending &&
@@ -406,7 +433,11 @@ export function PackBuilderForm({
     !shapeError &&
     Boolean(shapeOk);
 
-  function handleSubmit() {
+  // `activate:true` pushes the pack LIVE on-site the instant it's created;
+  // `false` creates it inactive (a draft to review/activate later). Difficulty
+  // is sent raw — the server normalizes 0 → null (no on-site bar), matching the
+  // create/edit pack forms.
+  function handleSubmit(activate: boolean) {
     if (!canSubmit) return;
     startTransition(async () => {
       try {
@@ -420,6 +451,8 @@ export function PackBuilderForm({
           slug: slug.trim(),
           imageUrl,
           price: packPrice,
+          difficulty,
+          activate,
           cards: cards.map((c) => ({ cardId: c.cardId })),
           targets: {
             // The pack's OWN per-pack target edge (edge curve), so the server
@@ -438,7 +471,7 @@ export function PackBuilderForm({
         }
 
         toast.success(
-          `Pack created (inactive) · edge ${(result.edge * 100).toFixed(2)}% · win-rate ${(result.winRate * 100).toFixed(1)}%`,
+          `${result.active ? "Pack pushed LIVE" : "Pack created (inactive)"} · edge ${(result.edge * 100).toFixed(2)}% · win-rate ${(result.winRate * 100).toFixed(1)}%`,
         );
         router.push(`/packs/${result.packId}`);
         router.refresh();
@@ -648,12 +681,51 @@ export function PackBuilderForm({
                 </p>
               </div>
             </div>
+
+            {/* Player-facing risk bar — the on-site `difficulty` dial (0..1).
+                Manual product choice, same control the create/edit pack forms
+                use; NOT the house CV tier. Preview lives in the right column. */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label>Player-facing risk bar</Label>
+                <span className="text-sm font-medium tabular-nums">
+                  {Math.round(difficulty * 100)}%
+                </span>
+              </div>
+              <RiskLevelSlider value={difficulty} onChange={setDifficulty} />
+              <p className="text-xs text-muted-foreground">
+                The green→red risk level players see on the pack card — preview
+                on the right. This is a display choice, separate from the house
+                CV risk tier. Leave at 0% to ship no bar.
+              </p>
+            </div>
           </div>
         </div>
 
         {/* ── Right: live preview ── */}
         <div className="space-y-4">
           <SectionHeading icon={Flame} title="Live preview" />
+
+          {/* On-site risk bar — a faithful replica of the player-facing bar
+              (game-site parity). Shown always: it only needs the difficulty
+              dial, not the card pool, so the operator sees exactly how the pack
+              will look the moment it is pushed. */}
+          <div className="space-y-3 rounded-xl border bg-card/50 p-4">
+            <div className="flex items-center gap-2">
+              <div className="flex size-7 items-center justify-center rounded-lg bg-muted">
+                <Gauge className="size-4 text-muted-foreground" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold leading-none">
+                  On-site risk bar
+                </p>
+                <p className="mt-1 text-[11px] leading-none text-muted-foreground">
+                  How players see this pack if you push it now
+                </p>
+              </div>
+            </div>
+            <PackRiskBarPreview difficulty={difficulty > 0 ? difficulty : null} />
+          </div>
 
           {!previewRisk ? (
             <div className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
@@ -750,15 +822,68 @@ export function PackBuilderForm({
                 </div>
               )}
 
-              <Button
-                onClick={handleSubmit}
-                disabled={!canSubmit}
-                className="w-full"
-              >
-                {isPending ? "Creating..." : "Create pack (inactive)"}
-              </Button>
+              <div className="space-y-2">
+                {/* Push & activate — creates the pack AND flips it live on-site
+                    the instant it's confirmed. Guarded by an explicit confirm
+                    because it exposes a real pack to real players/money. */}
+                <AlertDialog
+                  open={activateConfirmOpen}
+                  onOpenChange={setActivateConfirmOpen}
+                >
+                  <AlertDialogTrigger
+                    disabled={!canSubmit}
+                    className={cn(buttonVariants(), "w-full gap-2")}
+                  >
+                    <Rocket className="size-4" />
+                    {isPending ? "Working…" : "Push & activate (live now)"}
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Push this pack live now?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        &ldquo;{name.trim() || "This pack"}&rdquo; will be created{" "}
+                        <strong>and activated immediately</strong> — it goes
+                        on-site for real players at {formatCurrency(packPrice)} the
+                        moment you confirm. House edge {edgePct.toFixed(2)}% ·
+                        win-rate{" "}
+                        {previewRisk ? (previewRisk.winRate * 100).toFixed(1) : "0"}
+                        %
+                        {difficulty > 0
+                          ? ` · risk bar ${Math.round(difficulty * 100)}%`
+                          : " · no risk bar"}
+                        .
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => {
+                          setActivateConfirmOpen(false);
+                          handleSubmit(true);
+                        }}
+                      >
+                        Push live
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+
+                {/* Push as an inactive draft — the safe default (previous
+                    behavior): review & activate later on the pack page. */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => handleSubmit(false)}
+                  disabled={!canSubmit}
+                  className="w-full gap-2"
+                >
+                  <Save className="size-4" />
+                  {isPending ? "Working…" : "Push as draft (inactive)"}
+                </Button>
+              </div>
               <p className="text-center text-[11px] text-muted-foreground">
-                Created inactive — review &amp; activate it on the pack page.
+                Draft is created inactive — review &amp; activate it later on the
+                pack page. Push &amp; activate goes on-site instantly.
               </p>
             </>
           )}

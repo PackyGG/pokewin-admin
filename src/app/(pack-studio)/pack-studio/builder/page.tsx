@@ -27,7 +27,8 @@ import { PackBuilderForm } from "./pack-builder-form";
  * cap) streams behind a `<Suspense>` boundary. All reads here are light + MAIN
  * read-only (sets/rarities) or ADMIN read-only (max-win cap); the heavy card
  * search runs client-side on demand via the builder's own server action, and
- * pack creation goes through the owner-gated `buildPack` action (active:false).
+ * pack creation goes through the owner-gated `buildPack` action (created as an
+ * inactive draft, or activated live on-site via the "Push & activate" option).
  */
 
 /** Shell-matching fallback shared by the page <Suspense> and `loading.tsx`. */

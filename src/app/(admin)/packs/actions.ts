@@ -2471,6 +2471,12 @@ const buildPackSchema = z.object({
   imageUrl: z.string().trim().url().optional(),
   price: z.number().positive("Price must be greater than 0"),
   cardsPerOpen: z.number().int().positive().optional(),
+  // Player-facing on-site risk bar level (0..1). Optional; 0/undefined → null
+  // (no bar shown to players), matching the create/edit pack forms.
+  difficulty: z.number().min(0).max(1).optional(),
+  // When true the pack is created AND activated (live on-site instantly). When
+  // false/omitted it is created inactive (a draft to review + activate later).
+  activate: z.boolean().optional(),
   cards: z.array(buildPackCardSchema).min(1, "At least one card is required"),
   targets: z.object({
     targetEdge: z.number().positive().lt(1).optional(),
@@ -2484,16 +2490,23 @@ const buildPackSchema = z.object({
 export type BuildPackInput = z.input<typeof buildPackSchema>;
 
 export type BuildPackResult =
-  | { ok: true; packId: string; edge: number; winRate: number }
+  | { ok: true; packId: string; edge: number; winRate: number; active: boolean }
   | { ok: false; error: string };
 
 /**
- * Create a NEW inactive pack whose card weights are shaped to a target edge +
- * win-rate. Owner-only. Validates input with Zod, resolves each card's VALUE
- * (read fresh from `cards.price` when a cardId is given), runs `shapeWeights`
- * for feasibility (returns `{ok:false,error}` and creates NOTHING if infeasible),
- * then creates the pack (`official`, active:false — the type every Pack-Studio
- * tool scopes to) reusing createPack's transaction shape.
+ * Create a NEW pack whose card weights are shaped to a target edge + win-rate.
+ * Owner-only. Validates input with Zod, resolves each card's VALUE (read fresh
+ * from `cards.price` when a cardId is given), runs `shapeWeights` for
+ * feasibility (returns `{ok:false,error}` and creates NOTHING if infeasible),
+ * then creates the pack (`official` — the type every Pack-Studio tool scopes to)
+ * reusing createPack's transaction shape.
+ *
+ * The pack is created INACTIVE by default (a draft to review + activate later).
+ * When `activate:true` it is created AND flipped live on-site instantly — that
+ * path additionally requires the `__can_toggle_pack_active` capability (the same
+ * gate `togglePackActive` enforces) so going live is never a weaker check than
+ * activating an existing pack. `difficulty` sets the player-facing on-site risk
+ * bar (0 → null, no bar).
  */
 export async function buildPack(input: BuildPackInput): Promise<BuildPackResult> {
   const session = await requirePageAccess("/packs");
@@ -2508,6 +2521,19 @@ export async function buildPack(input: BuildPackInput): Promise<BuildPackResult>
   }
   const data = parsed.data;
   const targetEdge = resolveRetuneTargetEdge(data.targets.targetEdge);
+
+  // Going live instantly is the same privileged act as activating an existing
+  // pack — require the toggle-active capability on top of create when activating.
+  const activate = data.activate === true;
+  if (activate) {
+    await requireCapability(
+      session,
+      "__can_toggle_pack_active",
+      "activate packs",
+    );
+  }
+  // On-site risk bar: 0/undefined ships null (no bar), same as create/edit forms.
+  const difficulty = data.difficulty && data.difficulty > 0 ? data.difficulty : null;
 
   const db = await getDb();
 
@@ -2586,13 +2612,16 @@ export async function buildPack(input: BuildPackInput): Promise<BuildPackResult>
         image_url: data.imageUrl ?? null,
         price: data.price,
         cards_per_open: data.cardsPerOpen ?? 1,
+        // Player-facing on-site risk bar level (null → no bar shown).
+        difficulty,
         // "official" — the entire cash-pack tooling scope (reprice, retune,
         // Doctor risk scoring, Overview KPIs) covers pack_type "official" only
         // (REPRICE_INCLUDED_PACK_TYPES / REPRICE_OR_RETUNE_PACK_TYPES /
         // PACK_STUDIO_CASH_PACK_TYPES); any other type would orphan the new
-        // pack from all of it. Created inactive, so nothing goes live.
+        // pack from all of it. `active` is the operator's push choice: false =
+        // draft (default), true = live on-site instantly.
         pack_type: "official",
-        active: false,
+        active: activate,
       },
     });
     if (cardRows.length > 0) {
@@ -2611,6 +2640,8 @@ export async function buildPack(input: BuildPackInput): Promise<BuildPackResult>
       name: data.name,
       via: "pack_builder",
       card_count: cardRows.length,
+      active: activate,
+      difficulty,
       target: {
         targetEdge,
         targetWinRate: data.targets.targetWinRate,
@@ -2623,8 +2654,26 @@ export async function buildPack(input: BuildPackInput): Promise<BuildPackResult>
     },
   });
 
+  // Mirror `togglePackActive`: a build-and-activate also emits the dedicated
+  // activation event so anything tracking "when did this pack go live?" catches
+  // packs pushed live straight from the builder, not just toggled-on later.
+  if (activate) {
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "pack_activated",
+      metadata: { pack_id: pack.id, via: "pack_builder" },
+    });
+  }
+
   reloadPacks();
   revalidatePath("/packs");
+  revalidatePath(`/packs/${pack.id}`);
 
-  return { ok: true, packId: pack.id, edge: shaped.risk.edge, winRate: shaped.risk.winRate };
+  return {
+    ok: true,
+    packId: pack.id,
+    edge: shaped.risk.edge,
+    winRate: shaped.risk.winRate,
+    active: activate,
+  };
 }
