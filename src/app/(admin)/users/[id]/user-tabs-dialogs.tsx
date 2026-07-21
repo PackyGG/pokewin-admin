@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ArrowDownToLine, ShieldAlert, ShieldCheck } from "lucide-react";
+import { ArrowDownToLine, Mail, ShieldAlert, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -51,6 +51,7 @@ import {
   forceResetCreatorToUser,
   recordManualWithdrawal,
   setUserTag,
+  updateUserIdentity,
 } from "./actions";
 
 // Balance-adjust categories OFFERED IN THE PICKER — the strict, canonical
@@ -1460,6 +1461,106 @@ export function ChangeRoleDialog({
             className="w-full sm:w-auto"
           >
             {isPending ? "Updating..." : "Change role"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Edit Email — admin override for a user's email. `updateUserIdentity`
+// auto-verifies the address the moment it's changed (email_verified is set
+// unconditionally on the server), so there's no separate "verified" toggle
+// here — saving a new email IS the verification.
+// ---------------------------------------------------------------------------
+
+export function EditEmailDialog({
+  userId,
+  currentEmail,
+}: {
+  userId: string;
+  currentEmail: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState(currentEmail ?? "");
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+
+  const trimmed = email.trim();
+  const isUnchanged = trimmed.toLowerCase() === (currentEmail ?? "").toLowerCase();
+
+  function handleOpenChange(v: boolean) {
+    setOpen(v);
+    if (!v) setEmail(currentEmail ?? "");
+  }
+
+  function handleSubmit() {
+    if (!trimmed) {
+      toast.error("Email cannot be empty");
+      return;
+    }
+    if (isUnchanged) {
+      toast.error("Enter a different email");
+      return;
+    }
+    startTransition(async () => {
+      const result = await updateUserIdentity(userId, { email: trimmed });
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success("Email updated and verified");
+      setOpen(false);
+      router.refresh();
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger
+        render={
+          <Button variant="ghost" size="icon" className="size-6 shrink-0" />
+        }
+      >
+        <Mail className="size-3.5 text-muted-foreground" />
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Edit email</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-2 py-2">
+          <Label className="text-xs text-muted-foreground">Email</Label>
+          <Input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="user@example.com"
+            disabled={isPending}
+            autoFocus
+          />
+          <p className="text-xs text-muted-foreground">
+            Saving marks the new address as verified immediately — no
+            confirmation email is sent.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setOpen(false)}
+            disabled={isPending}
+            className="w-full sm:w-auto"
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            onClick={handleSubmit}
+            disabled={isPending || !trimmed || isUnchanged}
+            className="w-full sm:w-auto"
+          >
+            {isPending ? "Saving..." : "Save email"}
           </Button>
         </DialogFooter>
       </DialogContent>

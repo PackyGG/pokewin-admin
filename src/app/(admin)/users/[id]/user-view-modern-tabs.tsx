@@ -1992,6 +1992,7 @@ export function AccountTab({
             shippingAddress={shippingAddress}
             vault={vault}
             depositAddresses={depositAddresses}
+            canEditIdentity={capabilities.canEditIdentity}
           />
         </CardContent>
       </Card>

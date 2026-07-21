@@ -32,7 +32,11 @@ import type {
   UserDetail,
 } from "./user-tabs-types";
 import { InfoRow, PnlValue } from "./user-tabs-shared";
-import { BalanceAdjustDialog, XpAdjustDialog } from "./user-tabs-dialogs";
+import {
+  BalanceAdjustDialog,
+  EditEmailDialog,
+  XpAdjustDialog,
+} from "./user-tabs-dialogs";
 
 export const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
   balances,
@@ -641,11 +645,14 @@ export const AccountDetailsSection = React.memo(function AccountDetailsSection({
   shippingAddress,
   vault,
   depositAddresses,
+  canEditIdentity,
 }: {
   user: UserDetail["user"];
   shippingAddress: UserDetail["shippingAddress"];
   vault: UserDetail["vault"];
   depositAddresses: UserDetail["depositAddresses"];
+  /** Gates the Edit-email affordance — same __can_edit_identity capability updateUserIdentity checks server-side. */
+  canEditIdentity: boolean;
 }) {
   return (
     <div className="space-y-4">
@@ -657,6 +664,26 @@ export const AccountDetailsSection = React.memo(function AccountDetailsSection({
             Account
           </p>
           <div className="space-y-2">
+            <InfoRow
+              label="Email"
+              truncate
+              value={
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate">{user.email ?? "-"}</span>
+                  {user.emailVerified && (
+                    <span
+                      className="shrink-0 text-xs font-semibold text-emerald-500"
+                      title="Verified"
+                    >
+                      ✓
+                    </span>
+                  )}
+                  {canEditIdentity && (
+                    <EditEmailDialog userId={user.id} currentEmail={user.email} />
+                  )}
+                </span>
+              }
+            />
             <InfoRow
               label="Signed up with"
               value={formatSignupProvider(user.signupProvider)}
