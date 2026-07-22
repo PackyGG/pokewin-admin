@@ -48,6 +48,8 @@ const ProgramInputSchema = z.object({
   codes: CodesSchema,
   thresholdUsd: z.number().finite().positive().max(1_000_000),
   rewardUsd: z.number().finite().positive().max(100_000),
+  /** Uplift rate for `vip`-tagged players. null = everyone earns the standard rate. */
+  vipRewardUsd: z.number().finite().positive().max(100_000).nullable(),
   maxRewardPerUserUsd: z.number().finite().positive().max(1_000_000).nullable(),
 });
 
@@ -64,9 +66,20 @@ export type ActionResult<T = undefined> =
 function sanityCheckRates(
   thresholdUsd: number,
   rewardUsd: number,
+  vipRewardUsd: number | null,
 ): string | null {
   if (rewardUsd >= thresholdUsd) {
     return "Reward must be smaller than the wager threshold — otherwise every unit loses money.";
+  }
+  if (vipRewardUsd != null) {
+    if (vipRewardUsd >= thresholdUsd) {
+      return "VIP reward must be smaller than the wager threshold — otherwise every unit loses money.";
+    }
+    // Not a money-pump, but almost certainly a typo: a "VIP" rate that pays
+    // less than standard would quietly punish the tag it's meant to reward.
+    if (vipRewardUsd < rewardUsd) {
+      return "VIP reward must be at least the standard reward.";
+    }
   }
   return null;
 }
@@ -77,6 +90,7 @@ export async function createCreatorRewardProgram(input: {
   codes: string[];
   thresholdUsd: number;
   rewardUsd: number;
+  vipRewardUsd: number | null;
   maxRewardPerUserUsd: number | null;
 }): Promise<ActionResult> {
   await requirePageAccess("/rewards");
@@ -91,7 +105,11 @@ export async function createCreatorRewardProgram(input: {
   }
   const d = parsed.data;
 
-  const rateError = sanityCheckRates(d.thresholdUsd, d.rewardUsd);
+  const rateError = sanityCheckRates(
+    d.thresholdUsd,
+    d.rewardUsd,
+    d.vipRewardUsd,
+  );
   if (rateError) return { success: false, error: rateError };
 
   // The creator must be real. Accept a current creator only — a program is a
@@ -136,6 +154,7 @@ export async function createCreatorRewardProgram(input: {
       codes,
       threshold_usd: d.thresholdUsd,
       reward_usd: d.rewardUsd,
+      vip_reward_usd: d.vipRewardUsd,
       max_reward_per_user_usd: d.maxRewardPerUserUsd,
       accrual_start_at: accrualStartAt,
       created_by: session.userId,
@@ -153,6 +172,7 @@ export async function createCreatorRewardProgram(input: {
       codes,
       threshold_usd: d.thresholdUsd,
       reward_usd: d.rewardUsd,
+      vip_reward_usd: d.vipRewardUsd,
       max_reward_per_user_usd: d.maxRewardPerUserUsd,
       accrual_start_at: accrualStartAt.toISOString(),
     },
@@ -426,6 +446,8 @@ export async function previewCreatorRewardEntitlement(input: {
   ActionResult<{
     userId: string;
     username: string | null;
+    isVip: boolean;
+    appliedRewardUsd: number;
     qualifyingWagerUsd: number;
     lifetimeWagerUsd: number;
     forfeitedWagerUsd: number;
@@ -474,6 +496,8 @@ export async function previewCreatorRewardEntitlement(input: {
     data: {
       userId: user.id,
       username: user.username ?? user.email ?? null,
+      isVip: e.isVip,
+      appliedRewardUsd: e.appliedRewardUsd,
       qualifyingWagerUsd: e.qualifyingWagerUsd,
       lifetimeWagerUsd: e.lifetimeWagerUsd,
       forfeitedWagerUsd: e.forfeitedWagerUsd,

@@ -45,6 +45,8 @@ export type CreatorRewardProgram = {
   codes: string[];
   thresholdUsd: number;
   rewardUsd: number;
+  /** Per-unit rate for `vip`-tagged players. null = no uplift. */
+  vipRewardUsd: number | null;
   isActive: boolean;
   accrualStartAt: string;
   maxRewardPerUserUsd: number | null;
@@ -71,6 +73,13 @@ export type CreatorRewardEntitlement = {
   programId: string;
   programName: string;
   creatorUserId: string;
+  /**
+   * Did this player hold the `vip` tag at the moment of THIS check? Re-read
+   * live every time — never cached, because the tag can be removed.
+   */
+  isVip: boolean;
+  /** The per-unit rate actually used: the VIP rate if earned, else standard. */
+  appliedRewardUsd: number;
   /**
    * Σ SPENDABLE wager — under the program's codes, on the CURRENT run only.
    * Leaving for another creator's code resets this.

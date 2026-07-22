@@ -57,10 +57,28 @@ export type ProgramForCompute = {
   codes: string[];
   threshold_usd: unknown;
   reward_usd: unknown;
+  vip_reward_usd: unknown;
   is_active: boolean;
   accrual_start_at: Date;
   max_reward_per_user_usd: unknown;
 };
+
+/**
+ * Does this player hold the `vip` tag RIGHT NOW?
+ *
+ * Deliberately a live read on every eligibility check, never cached and never
+ * copied onto the claim as a source of truth. VIP is an `admin_user_tags` row
+ * that staff can remove at any moment; a cached flag would keep paying the
+ * uplift to someone who has already lost it. The lookup is a point read on
+ * the (target_user_id, tag) unique pair.
+ */
+async function isVipNow(userId: string): Promise<boolean> {
+  const row = await adminDb.admin_user_tags.findFirst({
+    where: { target_user_id: userId, tag: "vip" },
+    select: { id: true },
+  });
+  return row !== null;
+}
 
 /**
  * When did this user's CURRENT run on the program's codes begin?
@@ -179,7 +197,7 @@ export async function computeEntitlement(
   userId: string,
 ): Promise<CreatorRewardEntitlement> {
   const thresholdCents = toCents(toNumber(program.threshold_usd));
-  const rewardCents = toCents(toNumber(program.reward_usd));
+  const standardRewardCents = toCents(toNumber(program.reward_usd));
   const capUsd =
     program.max_reward_per_user_usd == null
       ? null
@@ -193,6 +211,8 @@ export async function computeEntitlement(
 
   const empty: CreatorRewardEntitlement = {
     ...base,
+    isVip: false,
+    appliedRewardUsd: fromCents(standardRewardCents),
     qualifyingWagerUsd: 0,
     lifetimeWagerUsd: 0,
     forfeitedWagerUsd: 0,
@@ -210,7 +230,7 @@ export async function computeEntitlement(
   if (!program.is_active) {
     return { ...empty, blockedReason: "This program is not active." };
   }
-  if (thresholdCents <= 0 || rewardCents <= 0) {
+  if (thresholdCents <= 0 || standardRewardCents <= 0) {
     return { ...empty, blockedReason: "This program is misconfigured." };
   }
   // A creator can't farm their own program. `useCode` already refuses a user's
@@ -232,11 +252,24 @@ export async function computeEntitlement(
     program.accrual_start_at,
   );
 
-  const [wagerUsd, lifetimeWagerUsd, prior] = await Promise.all([
+  const [wagerUsd, lifetimeWagerUsd, prior, vip] = await Promise.all([
     wagerUsdSince(userId, program.codes, runStart),
     wagerUsdSince(userId, program.codes, program.accrual_start_at),
     priorHoldings(program.id, userId, runStart),
+    isVipNow(userId),
   ]);
+
+  // The rate is decided HERE, live, from the tag as it stands this instant —
+  // so losing VIP drops the player back to the standard rate on their very
+  // next check, with no migration or cleanup.
+  const vipRewardCents =
+    program.vip_reward_usd == null
+      ? null
+      : toCents(toNumber(program.vip_reward_usd));
+  const rewardCents =
+    vip && vipRewardCents != null && vipRewardCents > 0
+      ? vipRewardCents
+      : standardRewardCents;
 
   const wagerCents = toCents(wagerUsd);
   const consumedCents = toCents(prior.consumedUsd);
@@ -271,6 +304,8 @@ export async function computeEntitlement(
 
   return {
     ...base,
+    isVip: vip,
+    appliedRewardUsd: fromCents(rewardCents),
     qualifyingWagerUsd: fromCents(wagerCents),
     lifetimeWagerUsd: fromCents(lifetimeCents),
     forfeitedWagerUsd: fromCents(forfeitedCents),

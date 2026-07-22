@@ -69,6 +69,8 @@ export async function getProgramsWithStats(): Promise<
       codes: p.codes,
       thresholdUsd: toNumber(p.threshold_usd),
       rewardUsd: toNumber(p.reward_usd),
+      vipRewardUsd:
+        p.vip_reward_usd == null ? null : toNumber(p.vip_reward_usd),
       isActive: p.is_active,
       accrualStartAt: p.accrual_start_at.toISOString(),
       maxRewardPerUserUsd:
@@ -100,6 +102,8 @@ export type CreatorRewardClaimRow = {
   consumedWagerUsd: number;
   units: number;
   amountUsd: number;
+  appliedRewardUsd: number;
+  wasVip: boolean;
   status: CreatorRewardClaimStatus;
   requestedAt: string;
   reviewedBy: string | null;
@@ -160,6 +164,8 @@ export async function getClaims(params: {
     consumedWagerUsd: toNumber(c.consumed_wager_usd),
     units: c.units,
     amountUsd: toNumber(c.amount_usd),
+    appliedRewardUsd: toNumber(c.applied_reward_usd),
+    wasVip: c.was_vip,
     status: c.status as CreatorRewardClaimStatus,
     requestedAt: c.requested_at.toISOString(),
     reviewedBy: c.reviewed_by,
@@ -235,6 +241,8 @@ export async function createClaimRequest(params: {
         consumed_wager_usd: entitlement.consumesWagerUsd,
         units: entitlement.units,
         amount_usd: entitlement.amountUsd,
+        applied_reward_usd: entitlement.appliedRewardUsd,
+        was_vip: entitlement.isVip,
         status: "pending",
       },
       select: { id: true },

@@ -223,6 +223,14 @@ function ProgramRow({ program }: { program: CreatorRewardProgramWithStats }) {
           <span className="text-rose-600 tabular-nums dark:text-rose-400">
             {formatCurrency(program.rewardUsd)}
           </span>
+          {program.vipRewardUsd != null && (
+            <>
+              <span className="mx-1.5 text-muted-foreground">· VIP</span>
+              <span className="text-rose-600 tabular-nums dark:text-rose-400">
+                {formatCurrency(program.vipRewardUsd)}
+              </span>
+            </>
+          )}
         </div>
 
         <div className="text-xs text-muted-foreground">
@@ -287,6 +295,8 @@ function RaiseClaimDialog({
   const [preview, setPreview] = useState<{
     userId: string;
     username: string | null;
+    isVip: boolean;
+    appliedRewardUsd: number;
     qualifyingWagerUsd: number;
     lifetimeWagerUsd: number;
     forfeitedWagerUsd: number;
@@ -381,8 +391,22 @@ function RaiseClaimDialog({
 
           {preview && (
             <div className="space-y-2 rounded-md border p-3 text-sm">
-              <div className="font-medium">
-                {preview.username ?? preview.userId}
+              <div className="flex items-center gap-2">
+                <span className="font-medium">
+                  {preview.username ?? preview.userId}
+                </span>
+                {preview.isVip && (
+                  <Badge
+                    variant="outline"
+                    className="bg-purple-500/15 text-[10px] text-purple-600 dark:text-purple-400"
+                  >
+                    VIP
+                  </Badge>
+                )}
+                <span className="text-xs text-muted-foreground">
+                  {formatCurrency(preview.appliedRewardUsd)} per{" "}
+                  {formatCurrency(program.thresholdUsd)}
+                </span>
               </div>
               <div className="flex justify-between text-xs text-muted-foreground">
                 <span>Wagered since {formatDateTime(preview.runStartedAt)}</span>
@@ -468,16 +492,22 @@ function CreateProgramDialog({
   const [pickedCodes, setPickedCodes] = useState<string[]>([]);
   const [threshold, setThreshold] = useState("1000");
   const [reward, setReward] = useState("5");
+  const [vipReward, setVipReward] = useState("");
   const [cap, setCap] = useState("");
   const [isPending, startTransition] = useTransition();
   const [searching, startSearch] = useTransition();
 
   const thresholdNum = Number(threshold);
   const rewardNum = Number(reward);
+  const vipRewardNum = vipReward.trim() === "" ? null : Number(vipReward);
   const ratesInvalid =
-    Number.isFinite(thresholdNum) &&
-    Number.isFinite(rewardNum) &&
-    rewardNum >= thresholdNum;
+    (Number.isFinite(thresholdNum) &&
+      Number.isFinite(rewardNum) &&
+      rewardNum >= thresholdNum) ||
+    (vipRewardNum != null &&
+      (!Number.isFinite(vipRewardNum) ||
+        vipRewardNum >= thresholdNum ||
+        vipRewardNum < rewardNum));
 
   function reset() {
     setName("");
@@ -487,6 +517,7 @@ function CreateProgramDialog({
     setPickedCodes([]);
     setThreshold("1000");
     setReward("5");
+    setVipReward("");
     setCap("");
   }
 
@@ -516,6 +547,7 @@ function CreateProgramDialog({
         codes: pickedCodes,
         thresholdUsd: thresholdNum,
         rewardUsd: rewardNum,
+        vipRewardUsd: vipRewardNum,
         maxRewardPerUserUsd: cap.trim() === "" ? null : Number(cap),
       });
       if (!res.success) {
@@ -685,10 +717,30 @@ function CreateProgramDialog({
             </div>
           </div>
 
+          <div className="space-y-1.5">
+            <Label className="text-xs">
+              VIP reward ($) — optional
+            </Label>
+            <Input
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={vipReward}
+              onChange={(e) => setVipReward(e.target.value)}
+              placeholder="Same as standard"
+              disabled={isPending}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Paid instead of the standard rate to players carrying the VIP
+              tag. Checked live on every claim — losing the tag drops them back
+              to the standard rate immediately.
+            </p>
+          </div>
+
           {ratesInvalid && (
             <p className="text-sm text-rose-600 dark:text-rose-400">
-              Reward must be smaller than the threshold — otherwise every unit
-              loses money.
+              Rewards must be smaller than the threshold, and the VIP rate
+              can&apos;t be below the standard one.
             </p>
           )}
 
@@ -815,6 +867,14 @@ function ClaimRow({ claim }: { claim: CreatorRewardClaimRow }) {
             <span className="font-medium">
               {claim.username ?? claim.userId}
             </span>
+            {claim.wasVip && (
+              <Badge
+                variant="outline"
+                className="bg-purple-500/15 text-[10px] text-purple-600 dark:text-purple-400"
+              >
+                VIP
+              </Badge>
+            )}
             {statusBadge}
           </div>
           <div className="mt-0.5 text-xs text-muted-foreground">
@@ -845,7 +905,8 @@ function ClaimRow({ claim }: { claim: CreatorRewardClaimRow }) {
             <span className="tabular-nums">
               {formatCurrency(claim.consumedWagerUsd)}
             </span>{" "}
-            for {claim.units} unit{claim.units === 1 ? "" : "s"}
+            for {claim.units} unit{claim.units === 1 ? "" : "s"} @{" "}
+            {formatCurrency(claim.appliedRewardUsd)}
           </div>
         </div>
 

@@ -1994,8 +1994,15 @@ model creator_reward_programs {
   codes                   String[] @default([])
   /// Qualifying wager (USD) per reward unit. e.g. 1000.00
   threshold_usd           Decimal  @db.Decimal(20, 2)
-  /// Reward (USD) credited per completed unit. e.g. 5.00
+  /// Reward (USD) credited per completed unit at the STANDARD rate. e.g. 5.00
   reward_usd              Decimal  @db.Decimal(20, 2)
+  /// Reward (USD) per unit for players carrying the `vip` tag
+  /// (`admin_user_tags`). NULL = no VIP uplift; everyone earns `reward_usd`.
+  ///
+  /// VIP status is re-read from `admin_user_tags` on EVERY eligibility check
+  /// and never cached on the user — the tag can be removed at any time, and a
+  /// stale copy would keep paying the uplift to someone who has lost it.
+  vip_reward_usd          Decimal? @db.Decimal(20, 2)
   is_active               Boolean  @default(true)
   /// Accrual start — wager booked BEFORE this instant NEVER counts. Defaults
   /// to program creation time. This is the guard against a new program
@@ -2060,8 +2067,15 @@ model creator_reward_claims {
   consumed_wager_usd  Decimal                 @db.Decimal(20, 2)
   /// Completed threshold units this claim pays for.
   units               Int
-  /// Payout (USD) = units × reward_usd, after any per-user cap.
+  /// Payout (USD) = units × the rate that applied, after any per-user cap.
   amount_usd          Decimal                 @db.Decimal(20, 2)
+  /// AUDIT: the per-unit rate actually used, and whether the VIP tag was
+  /// present at request time. Pinned because VIP is re-evaluated live — a
+  /// player can lose the tag between claiming and review, and without this
+  /// the reviewer would have no way to tell whether the uplift was legitimate
+  /// when it was granted.
+  applied_reward_usd  Decimal                 @default(0) @db.Decimal(20, 2)
+  was_vip             Boolean                 @default(false)
   /// "pending" | "approved" | "rejected"
   status              String                  @default("pending")
   requested_at        DateTime                @default(now()) @db.Timestamptz(6)
