@@ -107,16 +107,23 @@ type UserListFilterInput = {
   searchMode: UserSearchMode;
   role: string | undefined;
   status: string | undefined;
+  // NOTE: the five fields below are set ONLY by getUserIdsMatchingFilters
+  // (the bulk-ban resolver). They were briefly exposed as /users toolbar
+  // dropdowns too; that UI was dropped once the bulk-ban dialog grew its own
+  // criteria, and duplicating them in two places was just clutter. The
+  // predicates stay because the resolver reuses this same WHERE builder —
+  // that shared builder is what guarantees the ban targets exactly what a
+  // preview counted.
   /** "yes" = has a completed deposit, "no" = never deposited. */
-  deposited: string | undefined;
+  deposited?: string;
   /** discord | google | steam | credential (has a linked account of that type). */
-  provider: string | undefined;
+  provider?: string;
   /** "yes"/"no" — another account signed up from the same IP. */
-  sharedIp: string | undefined;
+  sharedIp?: string;
   /** "yes" — shares a device visitor_id with another account. */
-  sharedDevice: string | undefined;
+  sharedDevice?: string;
   /** rain | reward — claimed that free value AND never deposited. */
-  freeOnly: string | undefined;
+  freeOnly?: string;
   /**
    * Restrict to users referred via this SPECIFIC affiliate/creator code —
    * matched against `affiliate_code_usages.code` (case-insensitively, same
@@ -832,15 +839,7 @@ function cachedRankedUserIds(
     (!!input.role && input.role !== "all") ||
     !!input.status ||
     !!input.affiliateCode ||
-    !!input.affiliateOwnerId ||
-    // These MUST be here. Omitting a filter sends the request down
-    // cachedGlobalRankedUserIds, which ranks the WHOLE user base and would
-    // hand back ids that the filter excludes.
-    !!input.deposited ||
-    !!input.provider ||
-    !!input.sharedIp ||
-    !!input.sharedDevice ||
-    !!input.freeOnly;
+    !!input.affiliateOwnerId;
   return isFiltered
     ? cachedFilteredRankedUserIds(input)
     : cachedGlobalRankedUserIds(input);
@@ -1174,12 +1173,6 @@ export async function getUsers(params: {
   search?: string;
   role?: string;
   status?: string;
-  /** Audit filters — see UserListFilterInput for each one's meaning. */
-  deposited?: string;
-  provider?: string;
-  sharedIp?: string;
-  sharedDevice?: string;
-  freeOnly?: string;
   sortBy?: string;
   sortOrder?: string;
   /**
@@ -1227,11 +1220,6 @@ export async function getUsers(params: {
     sortBy = "created_at",
     sortOrder = "desc",
     searchMode = "prefix",
-    deposited,
-    provider,
-    sharedIp,
-    sharedDevice,
-    freeOnly,
     codeSearch: codeSearchParam = false,
     includeExcludedInSearch = false,
     affiliateCode: affiliateCodeParam,
@@ -1326,11 +1314,6 @@ export async function getUsers(params: {
     codeSearch,
     role,
     status,
-    deposited,
-    provider,
-    sharedIp,
-    sharedDevice,
-    freeOnly,
     affiliateCode,
     affiliateOwnerId,
     excludedUserIds,
