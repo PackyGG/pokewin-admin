@@ -8,18 +8,17 @@ import {
 import { SkeletonTable } from "@/components/ux";
 
 /**
- * Matches /users: hero, 2-tile KPI strip (Total Users · Signups 24h — the
- * banned count is a sub line inside Total Users, not its own tile), "All
- * Users" section heading, toolbar (search + role + status), users table,
- * pagination. Shapes mirror page.tsx 1:1 so the real content swaps in
- * without layout jump — the real strip renders exactly 2 tiles in a
- * `grid-cols-2`, so the skeleton must too.
+ * Matches /users: hero, 3-tile KPI strip (Total Users · Banned · Signups
+ * 24h), "All Users" section heading, toolbar (search + role + status),
+ * users table, pagination. Shapes mirror page.tsx 1:1 so the real content
+ * swaps in without layout jump — the real strip renders exactly 3 tiles in
+ * a `grid-cols-3`, so the skeleton must too.
  */
 export default function UsersLoading() {
   return (
     <div className="space-y-6">
       <PageHeroSkeleton />
-      <KpiStripSkeleton count={2} />
+      <KpiStripSkeleton count={3} />
       <div className="space-y-3">
         <SectionHeadingSkeleton titleWidth={120} />
         <div className="space-y-4">

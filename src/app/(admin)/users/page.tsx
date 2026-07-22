@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Users, UserPlus, AlertTriangle, X, Ticket, ArrowRight } from "lucide-react";
+import { Users, Ban, UserPlus, AlertTriangle, X, Ticket, ArrowRight } from "lucide-react";
 import { getUsers, getUsersListStats, getMatchingAffiliateCodes } from "@/lib/queries/users";
 import { requirePageAccess } from "@/lib/dal";
 import { safeQuery, safeQueryOrNull } from "@/lib/errors/safe-query";
@@ -148,14 +148,14 @@ export default async function UsersPage({
         />
       </PageHero>
 
-      {/* KPI strip — GLOBAL aggregates (Total Users incl. its banned sub,
-          Signups 24h), NOT the paginated slice, so the read-out stays stable
-          while admins paginate/refine. Own Suspense leg (unkeyed — global
-          stats don't depend on table params) + safeQuery inside, so a slow or
-          failed aggregate degrades to TileErrorFallback without touching
-          the table below. Skeleton tile count must match the real strip (2)
-          or the swap-in shifts the page. */}
-      <Suspense fallback={<KpiStripSkeleton count={2} />}>
+      {/* KPI strip — GLOBAL aggregates (Total Users, Banned, Signups 24h),
+          NOT the paginated slice, so the read-out stays stable while admins
+          paginate/refine. Own Suspense leg (unkeyed — global stats don't
+          depend on table params) + safeQuery inside, so a slow or failed
+          aggregate degrades to TileErrorFallback without touching the table
+          below. Skeleton tile count must match the real strip (3) or the
+          swap-in shifts the page. */}
+      <Suspense fallback={<KpiStripSkeleton count={3} />}>
         <UsersKpiStrip />
       </Suspense>
 
@@ -328,20 +328,33 @@ async function UsersKpiStrip() {
   }
 
   return (
-    <div className="grid grid-cols-2 gap-3">
-      {/* Banned is no longer its own tile (owner, 2026-07-23) — a moderation
-          count doesn't deserve the same visual weight as the user base. It
-          rides along as the small bottom-right sub of Total Users. The
-          drill-in it used to carry lives on in the toolbar's Status → Banned
-          filter, which hits the same `?status=banned` param. */}
+    <div className="grid grid-cols-3 gap-3">
       <KpiTile
         label="Total Users"
         value={formatNumber(stats.totalUsers)}
-        sub={`${formatNumber(stats.totalBanned)} banned`}
-        subAlign="right"
         icon={Users}
         accent="blue"
       />
+      {/* Banned owns its own tile again (owner, 2026-07-23) — it briefly rode
+          along as a sub line of Total Users and was too easy to miss.
+          Clickable drill-in: the list already supports `?status=banned`
+          (users-list.ts adds `u.is_banned = true`), so the tile links into the
+          filter that exists rather than needing its own page. `interactive`
+          opts this tile into press feedback — the house rule is that KPI tiles
+          stay static unless they're actually clickable. */}
+      <Link
+        href="/users?status=banned"
+        className="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label={`Banned users: ${formatNumber(stats.totalBanned)} — view the banned list`}
+      >
+        <KpiTile
+          label="Banned"
+          value={formatNumber(stats.totalBanned)}
+          icon={Ban}
+          accent="rose"
+          interactive
+        />
+      </Link>
       <KpiTile
         label="Signups (24h)"
         value={formatNumber(stats.signups24h)}
