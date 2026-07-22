@@ -9,6 +9,10 @@ import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
 import { getDistinctUserCountries } from "@/lib/queries/users-export";
+import {
+  getUserIdsMatchingFilters,
+  BULK_BAN_MAX,
+} from "@/lib/queries/users-list";
 import { requireUsersExportAdmin } from "@/lib/users-export/motha-gate";
 import {
   getAllUsersForExport,
@@ -372,4 +376,143 @@ export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
   // ranking ids and the global KPI counts.
   revalidateTag("users-list");
   revalidateTag("users-list-stats");
+}
+
+/**
+ * Bulk-ban every user matching a set of /users list filters.
+ *
+ * Stricter than {@link banUser} on purpose: single bans are a support
+ * capability (`__can_ban_users` sits in the support baseline), but a bulk ban
+ * can restructure the user base in one click, so this is ADMIN/OWNER ONLY.
+ *
+ * There is deliberately NO bulk delete. Deleting would orphan
+ * `ledger_transactions` (money history), break the hash-chained audit trail,
+ * and null out `fingerprints.user_id` — destroying the very alt-detection
+ * evidence that justifies the ban. Banning is reversible and keeps all of it.
+ *
+ * Safety rails, in order:
+ *   1. admin/owner only, re-checked server-side (not a render gate)
+ *   2. a non-empty reason is required — it becomes the cohort marker
+ *   3. `expectedCount` must match what the server independently resolves;
+ *      a moving target aborts rather than banning a different population
+ *   4. BULK_BAN_MAX ceiling on blast radius
+ *   5. already-banned and staff accounts are excluded by the resolver
+ */
+export async function bulkBanFilteredUsers(input: {
+  filters: {
+    role?: string;
+    status?: string;
+    deposited?: string;
+    provider?: string;
+    sharedIp?: string;
+    sharedDevice?: string;
+    freeOnly?: string;
+    affiliateCode?: string;
+    affiliateOwnerId?: string;
+  };
+  reason: string;
+  expectedCount: number;
+}): Promise<ServerActionResult<{ bannedCount: number }>> {
+  const session = await requirePageAccess("/users");
+
+  // Admin OR owner. Re-verified here because the button's visibility is a
+  // render gate, and a render gate is not a security boundary.
+  const isAdmin = session.roles?.includes("admin") ?? session.role === "admin";
+  if (!isAdmin && !session.isOwner) {
+    return fail("Bulk ban is restricted to admins and owners.", "FORBIDDEN");
+  }
+
+  const reason = input.reason?.trim();
+  if (!reason) {
+    return fail("A ban reason is required.", "VALIDATION");
+  }
+
+  // At least one filter — an empty filter set would match the entire
+  // customer base, which is never a thing anyone means to do.
+  const hasFilter = Object.values(input.filters).some((v) => !!v);
+  if (!hasFilter) {
+    return fail(
+      "Select at least one filter — refusing to ban an unfiltered list.",
+      "VALIDATION",
+    );
+  }
+
+  let userIds: string[];
+  try {
+    userIds = await getUserIdsMatchingFilters(input.filters);
+  } catch (err) {
+    logError("users.bulkBan", "failed to resolve matching users", err);
+    return fail("Couldn't resolve the matching users — please try again.");
+  }
+
+  if (userIds.length > BULK_BAN_MAX) {
+    return fail(
+      `That filter matches more than ${BULK_BAN_MAX.toLocaleString()} accounts. Narrow it down.`,
+      "VALIDATION",
+    );
+  }
+  if (userIds.length === 0) {
+    return fail("No accounts match that filter.", "VALIDATION");
+  }
+  // The count the operator confirmed must still be the count we found. If
+  // signups landed (or someone else banned) between preview and confirm, stop.
+  if (userIds.length !== input.expectedCount) {
+    return fail(
+      `The matching set changed (${input.expectedCount.toLocaleString()} → ${userIds.length.toLocaleString()}). Re-check the filter and try again.`,
+      "CONFLICT",
+    );
+  }
+
+  const db = await getDb();
+  const issuerMainUserId = await resolveAdminMainUserId(session.userId);
+  const bannedAt = new Date();
+
+  // Chunked so one statement never carries 25k ids.
+  const CHUNK = 1_000;
+  let bannedCount = 0;
+  try {
+    for (let i = 0; i < userIds.length; i += CHUNK) {
+      const chunk = userIds.slice(i, i + CHUNK);
+      const [updated] = await db.$transaction([
+        db.user.updateMany({
+          where: { id: { in: chunk }, is_banned: false },
+          data: {
+            is_banned: true,
+            banned_reason: reason,
+            banned_at: bannedAt,
+            banned_by: issuerMainUserId,
+          },
+        }),
+        // Kick them out immediately, same as the single-user ban.
+        db.session.deleteMany({ where: { userId: { in: chunk } } }),
+      ]);
+      bannedCount += updated.count;
+    }
+  } catch (err) {
+    logError("users.bulkBan", "bulk ban transaction failed", err);
+    // Partial progress is possible across chunks — report it rather than
+    // implying nothing happened.
+    return fail(
+      `Ban failed after ${bannedCount.toLocaleString()} accounts. Re-run to finish the rest.`,
+    );
+  }
+
+  // ONE audit event carrying the full id list, so the action is completely
+  // reconstructable (and reversible) from the trail without 25k rows.
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "accounts_bulk_banned",
+    metadata: {
+      reason,
+      filters: input.filters,
+      requested: userIds.length,
+      banned: bannedCount,
+      issuer_main_user_id: issuerMainUserId,
+      user_ids: userIds,
+    },
+  });
+
+  revalidateTag("users-list");
+  revalidateTag("users-list-stats");
+  return ok({ bannedCount });
 }
