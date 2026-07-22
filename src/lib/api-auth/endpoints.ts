@@ -39,6 +39,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
       "Body { discordUserId }. Returns { linked: boolean } — whether that Discord account is linked to a Packy account. Boolean only, no profile data.",
     scopes: ["discord:read"],
   },
+  {
+    method: "POST",
+    path: "/api/v1/discord/rewards",
+    summary:
+      "Body { discordUserId }. Returns { claimable: [...] } — unopened one-time rewards plus unclaimed rakeback (summed per cadence). Empty array = nothing to claim; 404 not_linked if the Discord account isn't linked.",
+    scopes: ["discord:rewards:read"],
+  },
 ];
 
 /** What a given endpoint touches, derived from its scopes (for the UI badge). */

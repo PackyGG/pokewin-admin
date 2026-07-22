@@ -82,7 +82,64 @@ access logs, proxy logs and error trackers. A POST body keeps it out of all of t
 
 ---
 
-## 4. Examples
+## 4. What can they claim? — `POST /api/v1/discord/rewards`
+
+**Scope required:** `discord:rewards:read` (separate from `discord:read`)
+
+Powers `/check`. Takes the Discord ID and resolves the Packy account
+server-side — the bot never needs a Packy identifier.
+
+### Request
+
+```http
+POST /api/v1/discord/rewards
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{ "discordUserId": "123456789012345678" }
+```
+
+### Response `200`
+
+```json
+{
+  "data": {
+    "discordUserId": "123456789012345678",
+    "claimable": [
+      { "id": "ur_9f1c…", "name": "Welcome Pack" },
+      { "id": "rb_daily", "name": "Daily Rakeback", "amount": 5.5, "currency": "USD" }
+    ]
+  }
+}
+```
+
+- **`id` and `name` are always present.** `amount` + `currency` appear only when
+  there genuinely is a cash value — many rewards grant **packs**, not cash, and
+  we'd rather omit the field than imply `$0`.
+- **Nothing to claim → `200` with `"claimable": []`.** Never a 404, never an
+  error. Only an explicit empty array means "you have nothing".
+- **Unlinked → `404` with code `not_linked`.** Deliberately *not* an empty
+  array, so the bot can't tell an unlinked user they have no rewards.
+
+### What's included
+
+| Entry | Source | Included when |
+|---|---|---|
+| `ur_<id>` | One-time rewards | Granted but not yet opened |
+| `rb_<cadence>` | Rakeback | Accrued but not yet claimed, **summed per cadence** |
+
+Rakeback is aggregated because a player accrues one row per period — dozens of
+`$0.02` lines would be noise. Recurring *daily* rewards are excluded: their
+availability depends on the daily-unlock rule, not just "unopened", so listing
+them would promise something that hasn't unlocked yet.
+
+> **No `expiresAt`.** No reward or claim table has an expiry column — expiry is
+> a global config rule, not a per-row timestamp. The field is omitted rather
+> than fabricated.
+
+---
+
+## 5. Examples
 
 ### Node (discord.js)
 
@@ -123,10 +180,42 @@ def is_linked(discord_user_id: str) -> bool:
     return r.json()["data"]["linked"]
 ```
 
+### `/check` — Node
+
+```js
+async function getClaimable(discordUserId) {
+  const res = await fetch(`${process.env.PACKY_API_URL}/api/v1/discord/rewards`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.PACKY_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ discordUserId }),
+  });
+
+  if (res.status === 404) return null;          // not_linked → prompt to link
+  if (!res.ok) throw new Error(`packy api ${res.status}`); // never say "nothing"
+
+  const { data } = await res.json();
+  return data.claimable;                        // [] means genuinely nothing
+}
+```
+
+> The `null` vs `[]` split is the important bit: only an explicit `[]` means
+> "you have nothing to claim". On any error, say you couldn't check — never
+> that they have nothing.
+
 ### curl
 
 ```bash
+# is the account linked?
 curl -s -X POST https://pokewin-admin.vercel.app/api/v1/discord/linked \
+  -H "Authorization: Bearer $PACKY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"discordUserId":"123456789012345678"}'
+
+# what can they claim?
+curl -s -X POST https://pokewin-admin.vercel.app/api/v1/discord/rewards \
   -H "Authorization: Bearer $PACKY_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"discordUserId":"123456789012345678"}'
@@ -134,7 +223,7 @@ curl -s -X POST https://pokewin-admin.vercel.app/api/v1/discord/linked \
 
 ---
 
-## 5. Responses & errors
+## 6. Responses & errors
 
 Success is always wrapped in `data`; failures always in `error`.
 
@@ -148,7 +237,8 @@ Success is always wrapped in `data`; failures always in `error`.
 | 400 | `invalid_json` | Body wasn't valid JSON | Fix the request |
 | 400 | `invalid_request` | `discordUserId` missing or not a numeric Discord ID | Fix the request |
 | 401 | `invalid_api_key` | Missing, malformed, unknown, revoked or expired key | Check/rotate the token |
-| 403 | `insufficient_scope` | Key lacks `discord:read` | Re-issue with the scope |
+| 403 | `insufficient_scope` | Key lacks the endpoint's scope | Re-issue with the scope |
+| 404 | `not_linked` | Discord account isn't linked to a Packy account | Tell the user to link first |
 | 429 | `rate_limited` | Over the key's per-minute budget | Back off — honour `Retry-After` |
 | 500 | `internal_error` | Something broke on our side | Retry with backoff; report if persistent |
 
@@ -157,7 +247,7 @@ wrong secret, revoked, expired) — it can't be used to probe which keys exist.
 
 ---
 
-## 6. Rate limits
+## 7. Rate limits
 
 Each key has a per-minute budget (default **120 req/min**, set when the key is
 created). Every response carries:
@@ -173,7 +263,7 @@ back off rather than retrying in a tight loop.
 
 ---
 
-## 7. Operational notes
+## 8. Operational notes
 
 - **HTTPS only.** Never send the token over plain HTTP.
 - **Never commit the token** or paste it into Discord — treat it like a password.
