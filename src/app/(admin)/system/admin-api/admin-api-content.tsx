@@ -39,7 +39,13 @@ import { EmptyState } from "@/components/empty-state";
 import { CopyButton } from "@/components/copy-button";
 import { RelativeTime } from "@/components/relative-time";
 import { cn } from "@/lib/utils";
-import { API_SCOPES, ALL_API_SCOPES, type ApiScope } from "@/lib/api-auth/scopes";
+import {
+  API_SCOPES,
+  FULL_ACCESS_SCOPE,
+  GRANULAR_API_SCOPES,
+  hasFullAccess,
+  type ApiScope,
+} from "@/lib/api-auth/scopes";
 import { createApiKeyAction, revokeApiKeyAction } from "./actions";
 
 export type ApiKeyRow = {
@@ -57,6 +63,69 @@ export type ApiKeyRow = {
 };
 
 type Status = { label: string; className: string };
+
+const ACCESS_BADGE: Record<string, { label: string; className: string }> = {
+  full: {
+    label: "full access",
+    className: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
+  },
+  "admin-write": {
+    label: "admin DB write",
+    className: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  },
+  "prod-read": {
+    label: "prod read-only",
+    className: "bg-muted text-muted-foreground",
+  },
+};
+
+/** One selectable scope row in the create dialog. */
+function ScopeOption({
+  scope,
+  checked,
+  disabled,
+  onToggle,
+}: {
+  scope: ApiScope;
+  checked: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+}) {
+  const meta = API_SCOPES[scope];
+  const badge = ACCESS_BADGE[meta.access] ?? ACCESS_BADGE["prod-read"]!;
+  const isFull = scope === FULL_ACCESS_SCOPE;
+  return (
+    <label
+      className={cn(
+        "flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5 transition-colors",
+        checked
+          ? isFull
+            ? "border-rose-500/40 bg-rose-500/5"
+            : "border-primary/40 bg-primary/5"
+          : "hover:bg-muted/40",
+      )}
+    >
+      <Checkbox
+        checked={checked}
+        onCheckedChange={onToggle}
+        disabled={disabled}
+        className="mt-0.5"
+      />
+      <span className="min-w-0">
+        <span className="flex flex-wrap items-center gap-2">
+          <code className="font-mono text-xs font-medium">{scope}</code>
+          <span className="text-xs font-medium">{meta.label}</span>
+          <Badge variant="outline" className={cn("text-[10px]", badge.className)}>
+            {badge.label}
+          </Badge>
+        </span>
+        <span className="mt-0.5 block text-xs text-muted-foreground">
+          {meta.description}
+        </span>
+      </span>
+    </label>
+  );
+}
 
 function statusOf(key: ApiKeyRow): Status {
   if (key.revokedAt || !key.isActive) {
@@ -143,6 +212,15 @@ export function ApiKeysContent({ keys }: { keys: ApiKeyRow[] }) {
                       <span className="flex flex-wrap gap-1">
                         {key.scopes.length === 0 ? (
                           <span className="text-xs text-muted-foreground">none</span>
+                        ) : hasFullAccess(key.scopes) ? (
+                          // Loud on purpose: a wildcard key is materially
+                          // different from a scoped one at a glance.
+                          <Badge
+                            variant="outline"
+                            className="bg-rose-500/15 text-[10px] text-rose-600 dark:text-rose-400"
+                          >
+                            full access
+                          </Badge>
                         ) : (
                           key.scopes.map((s) => (
                             <Badge key={s} variant="outline" className="text-[10px]">
@@ -269,9 +347,18 @@ function CreateKeyDialog({
     setRateLimit("120");
   }
 
+  const fullAccess = hasFullAccess(scopes);
+
   function toggleScope(scope: ApiScope) {
     setScopes((prev) =>
       prev.includes(scope) ? prev.filter((s) => s !== scope) : [...prev, scope],
+    );
+  }
+
+  /** Wildcard supersedes the rest — store it alone so the grant is unambiguous. */
+  function toggleFullAccess() {
+    setScopes((prev) =>
+      hasFullAccess(prev) ? [] : [FULL_ACCESS_SCOPE as ApiScope],
     );
   }
 
@@ -328,46 +415,44 @@ function CreateKeyDialog({
 
           <div className="space-y-2">
             <Label>Scopes</Label>
-            <div className="space-y-1.5">
-              {ALL_API_SCOPES.map((scope) => {
-                const meta = API_SCOPES[scope];
-                const checked = scopes.includes(scope);
-                return (
-                  <label
-                    key={scope}
-                    className={cn(
-                      "flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5 transition-colors",
-                      checked ? "border-primary/40 bg-primary/5" : "hover:bg-muted/40",
-                    )}
-                  >
-                    <Checkbox
-                      checked={checked}
-                      onCheckedChange={() => toggleScope(scope)}
-                      disabled={isPending}
-                      className="mt-0.5"
-                    />
-                    <span className="min-w-0">
-                      <span className="flex flex-wrap items-center gap-2">
-                        <code className="font-mono text-xs font-medium">{scope}</code>
-                        <Badge
-                          variant="outline"
-                          className={cn(
-                            "text-[10px]",
-                            meta.access === "admin-write"
-                              ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                              : "bg-muted text-muted-foreground",
-                          )}
-                        >
-                          {meta.access === "admin-write" ? "admin DB write" : "prod read-only"}
-                        </Badge>
-                      </span>
-                      <span className="mt-0.5 block text-xs text-muted-foreground">
-                        {meta.description}
-                      </span>
-                    </span>
-                  </label>
-                );
-              })}
+
+            {/* Wildcard first, visually separated — it supersedes everything
+                below, so burying it among the granular options would make it
+                easy to tick by accident. */}
+            <ScopeOption
+              scope={FULL_ACCESS_SCOPE}
+              checked={fullAccess}
+              disabled={isPending}
+              onToggle={toggleFullAccess}
+            />
+
+            {fullAccess && (
+              <div className="flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">
+                <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+                <span>
+                  This key can call <strong>every</strong> endpoint — including ones
+                  added in future, without being re-issued. Only grant it to a
+                  trusted first-party consumer.
+                </span>
+              </div>
+            )}
+
+            <div
+              className={cn(
+                "space-y-1.5",
+                fullAccess && "pointer-events-none opacity-40",
+              )}
+              aria-disabled={fullAccess}
+            >
+              {GRANULAR_API_SCOPES.map((scope) => (
+                <ScopeOption
+                  key={scope}
+                  scope={scope}
+                  checked={scopes.includes(scope)}
+                  disabled={isPending || fullAccess}
+                  onToggle={() => toggleScope(scope)}
+                />
+              ))}
             </div>
           </div>
 

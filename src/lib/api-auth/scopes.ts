@@ -16,7 +16,25 @@
  *    add a new one and revoke the old keys.
  */
 
+/**
+ * Wildcard scope. A key holding it satisfies EVERY scope check, including
+ * scopes that don't exist yet — so an endpoint added next month is
+ * immediately callable without re-issuing the key.
+ *
+ * That convenience is exactly the risk: it is a standing grant to the whole
+ * surface. Prefer granular scopes for anything third-party (the Discord bot
+ * gets `discord:*`, not this). Reach for it for a trusted first-party
+ * consumer, or while prototyping.
+ */
+export const FULL_ACCESS_SCOPE = "*";
+
 export const API_SCOPES = {
+  "*": {
+    label: "Full access",
+    description:
+      "Satisfies every scope check, including endpoints added later. Grant only to a trusted first-party consumer — prefer the granular scopes below.",
+    access: "full",
+  },
   "discord:read": {
     label: "Check Discord links",
     description:
@@ -46,12 +64,21 @@ export const API_SCOPES = {
   },
 } as const satisfies Record<
   string,
-  { label: string; description: string; access: "prod-read" | "admin-write" }
+  {
+    label: string;
+    description: string;
+    access: "prod-read" | "admin-write" | "full";
+  }
 >;
 
 export type ApiScope = keyof typeof API_SCOPES;
 
 export const ALL_API_SCOPES = Object.keys(API_SCOPES) as ApiScope[];
+
+/** Granular scopes only — the wildcard is presented separately in the UI. */
+export const GRANULAR_API_SCOPES = ALL_API_SCOPES.filter(
+  (scope) => scope !== FULL_ACCESS_SCOPE,
+);
 
 export function isApiScope(value: string): value is ApiScope {
   return Object.prototype.hasOwnProperty.call(API_SCOPES, value);
@@ -60,4 +87,23 @@ export function isApiScope(value: string): value is ApiScope {
 /** Narrow an untrusted string[] (DB column) to known scopes, dropping stale ones. */
 export function toApiScopes(values: readonly string[]): ApiScope[] {
   return values.filter(isApiScope);
+}
+
+/** True when the key holds the wildcard grant. */
+export function hasFullAccess(granted: readonly string[]): boolean {
+  return granted.includes(FULL_ACCESS_SCOPE);
+}
+
+/**
+ * Which of `required` the key does NOT hold. Empty = authorized.
+ *
+ * The wildcard short-circuits: a `*` key is missing nothing, which is what
+ * makes future endpoints work without re-issuing it.
+ */
+export function missingScopes(
+  granted: readonly string[],
+  required: readonly ApiScope[],
+): ApiScope[] {
+  if (hasFullAccess(granted)) return [];
+  return required.filter((scope) => !granted.includes(scope));
 }

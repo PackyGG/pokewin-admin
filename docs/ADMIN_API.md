@@ -13,8 +13,14 @@ Machine-to-machine API for the rewards Discord bot and in-house scripts.
 
 In the dashboard: **System → Admin API → New key**.
 
-Pick the narrowest scopes that work. For the link check you only need
-**`discord:read`**.
+Pick the narrowest scopes that work. The rewards bot needs **`discord:read`**
+(link check) and **`discord:rewards:read`** (`/check`).
+
+There is also a **`*` full-access** option. A `*` key satisfies every scope
+check — *including endpoints added later*, so it never needs re-issuing. That's
+the convenience and the risk: it's a standing grant to the whole surface. Use it
+for a trusted first-party consumer or while prototyping; give third-party
+consumers (the bot included) granular scopes.
 
 > The token is shown **once** and stored hashed — we cannot recover it. Save it
 > straight into the bot's secret manager. If it leaks, revoke it in the same UI;

@@ -4,7 +4,7 @@ import { after } from "next/server";
 
 import { adminDb } from "@/lib/admin-db";
 import { checkApiRateLimit, type ApiRateLimitResult } from "./rate-limit";
-import { toApiScopes, type ApiScope } from "./scopes";
+import { missingScopes, toApiScopes, type ApiScope } from "./scopes";
 import { parseTokenPrefix, safeEqualHex, sha256Hex } from "./token";
 
 /**
@@ -163,7 +163,9 @@ export async function authenticateApiRequest(
   }
 
   const scopes = toApiScopes(row.scopes);
-  const missing = required.filter((scope) => !scopes.includes(scope));
+  // `missingScopes` short-circuits on the wildcard grant, so a full-access key
+  // passes every check — including endpoints that don't exist yet.
+  const missing = missingScopes(scopes, required);
   if (missing.length > 0) {
     auditAuthFailure("insufficient_scope", request, prefix);
     return {
