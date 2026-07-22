@@ -122,7 +122,16 @@ export type LedgerTransactionType =
   | "creator_multiplier_forfeiture"
   | "creator_lb_deposit"
   | "upgrader_bet"
-  | "upgrader_payout";
+  | "upgrader_payout"
+  // Keno (prod enum, verified read-only 2026-07-22). UNLIKE upgrader, keno is
+  // fully ON-ledger on both legs — keno.service.ts debits `keno_bet` on every
+  // bet and credits `keno_payout` on every win — so they go straight onto the
+  // active WAGER / GAMING_PAYOUT sets rather than being isolated behind a flag.
+  // No `pnl.ts` balance-movement correction is needed for the same reason: the
+  // win credit IS a ledger row, so `balance_after − balance_before` already
+  // captures it.
+  | "keno_bet"
+  | "keno_payout";
 
 // ─── WAGER ───────────────────────────────────────────────────────────
 
@@ -142,6 +151,13 @@ export const WAGER_TYPES = [
   "pack_opening",
   "battle_bet",
   "battle_sponsorship",
+  // Keno's stake leg. Safe to sit here (unlike `upgrader_bet`) because keno
+  // writes BOTH legs to the ledger, so wager and payout stay symmetric — the
+  // exact condition the upgrader isolation exists to avoid violating.
+  // NOTE: this makes keno stake count toward headline wager/GGR for the first
+  // time. Previously keno matched no set, so its revenue was invisible in
+  // every GGR surface — not misattributed, just missing.
+  "keno_bet",
 ] as const satisfies readonly LedgerTransactionType[];
 
 // ─── FEE ─────────────────────────────────────────────────────────────
@@ -203,6 +219,10 @@ export const FEE_TYPES = [
 export const GAMING_PAYOUT_TYPES = [
   "battle_refund",
   "battle_excess_to_voucher",
+  // Keno's win credit — the cash leg written by createKenoPayout. Pairs with
+  // `keno_bet` in WAGER_TYPES so keno's GGR (stake − payout) reconciles the
+  // same way battles do.
+  "keno_payout",
 ] as const satisfies readonly LedgerTransactionType[];
 
 // ─── NEUTRAL ─────────────────────────────────────────────────────────

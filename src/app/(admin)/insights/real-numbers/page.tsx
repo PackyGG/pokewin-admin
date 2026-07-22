@@ -10,6 +10,7 @@ import {
   Trophy,
   Package,
   Swords,
+  Dices,
   ArrowUpCircle,
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -801,6 +802,7 @@ const GAME_VISUAL: Record<
   packs: { icon: Package, accent: "base" },
   battles: { icon: Swords, accent: "base" },
   upgrader: { icon: ArrowUpCircle, accent: "base" },
+  keno: { icon: Dices, accent: "base" },
 };
 
 /**
