@@ -198,29 +198,14 @@ export default async function UsersPage({
             )
           )}
           <Suspense fallback={<Skeleton className="h-10 w-full" />}>
+            {/* No `filters` — the All Roles / All Statuses dropdowns were
+                removed (owner, 2026-07-23). The `?role=` / `?status=` params
+                themselves still work and are still validated: "Top user net
+                worth" pins role=user, and the Banned KPI tile links to
+                status=banned. Either one raises the toolbar's own "Clear"
+                chip, so a filter set that way can always be undone. */}
             <DataTableToolbar
               searchPlaceholder="Search by username, email, user ID, Discord ID, or affiliate code..."
-              filters={[
-                {
-                  name: "Role",
-                  paramKey: "role",
-                  options: [
-                    { label: "Admin", value: "admin" },
-                    { label: "Support", value: "support" },
-                    { label: "Creator", value: "creator" },
-                    { label: "User", value: "user" },
-                  ],
-                },
-                {
-                  name: "Status",
-                  paramKey: "status",
-                  options: [
-                    { label: "Active", value: "active" },
-                    { label: "Banned", value: "banned" },
-                    { label: "Locked", value: "locked" },
-                  ],
-                },
-              ]}
             >
               {gates.canBulkBan && <BulkBanButton />}
               <SortByPnlLosersButton />
