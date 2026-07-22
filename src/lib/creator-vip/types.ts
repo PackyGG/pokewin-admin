@@ -71,8 +71,21 @@ export type CreatorRewardEntitlement = {
   programId: string;
   programName: string;
   creatorUserId: string;
-  /** Σ qualifying wager under the program's codes since `accrualStartAt`. */
+  /**
+   * Σ SPENDABLE wager — under the program's codes, on the CURRENT run only.
+   * Leaving for another creator's code resets this.
+   */
   qualifyingWagerUsd: number;
+  /**
+   * Σ wager under these codes across ALL runs since `accrualStartAt`.
+   * AUDIT ONLY — never spendable. Exists so a reset is visible rather than
+   * silent.
+   */
+  lifetimeWagerUsd: number;
+  /** lifetimeWagerUsd − qualifyingWagerUsd: cleared by earlier code switches. */
+  forfeitedWagerUsd: number;
+  /** When the current run began (the last switch away, or the accrual start). */
+  runStartedAt: string;
   /** Basis already held by this user's pending + approved claims. */
   priorConsumedUsd: number;
   /** qualifyingWagerUsd − priorConsumedUsd, floored at 0. */

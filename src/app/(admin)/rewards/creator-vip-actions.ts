@@ -427,6 +427,9 @@ export async function previewCreatorRewardEntitlement(input: {
     userId: string;
     username: string | null;
     qualifyingWagerUsd: number;
+    lifetimeWagerUsd: number;
+    forfeitedWagerUsd: number;
+    runStartedAt: string;
     availableWagerUsd: number;
     priorConsumedUsd: number;
     units: number;
@@ -472,6 +475,9 @@ export async function previewCreatorRewardEntitlement(input: {
       userId: user.id,
       username: user.username ?? user.email ?? null,
       qualifyingWagerUsd: e.qualifyingWagerUsd,
+      lifetimeWagerUsd: e.lifetimeWagerUsd,
+      forfeitedWagerUsd: e.forfeitedWagerUsd,
+      runStartedAt: e.runStartedAt,
       availableWagerUsd: e.availableWagerUsd,
       priorConsumedUsd: e.priorConsumedUsd,
       units: e.units,

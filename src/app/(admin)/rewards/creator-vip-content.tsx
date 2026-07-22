@@ -288,6 +288,9 @@ function RaiseClaimDialog({
     userId: string;
     username: string | null;
     qualifyingWagerUsd: number;
+    lifetimeWagerUsd: number;
+    forfeitedWagerUsd: number;
+    runStartedAt: string;
     availableWagerUsd: number;
     priorConsumedUsd: number;
     units: number;
@@ -382,11 +385,19 @@ function RaiseClaimDialog({
                 {preview.username ?? preview.userId}
               </div>
               <div className="flex justify-between text-xs text-muted-foreground">
-                <span>Wagered under this program</span>
+                <span>Wagered since {formatDateTime(preview.runStartedAt)}</span>
                 <span className="tabular-nums text-emerald-600 dark:text-emerald-400">
                   {formatCurrency(preview.qualifyingWagerUsd)}
                 </span>
               </div>
+              {preview.forfeitedWagerUsd > 0 && (
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Lost to a code switch</span>
+                  <span className="tabular-nums">
+                    −{formatCurrency(preview.forfeitedWagerUsd)}
+                  </span>
+                </div>
+              )}
               {preview.priorConsumedUsd > 0 && (
                 <div className="flex justify-between text-xs text-muted-foreground">
                   <span>Already claimed against</span>
@@ -820,6 +831,13 @@ function ClaimRow({ claim }: { claim: CreatorRewardClaimRow }) {
             </span>
             {claim.priorConsumedUsd > 0 && (
               <> · {formatCurrency(claim.priorConsumedUsd)} already used</>
+            )}
+            {claim.forfeitedWagerUsd > 0 && (
+              <>
+                {" "}
+                · {formatCurrency(claim.forfeitedWagerUsd)} lost to a code
+                switch
+              </>
             )}
           </div>
           <div>

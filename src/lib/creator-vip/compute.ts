@@ -63,14 +63,52 @@ export type ProgramForCompute = {
 };
 
 /**
- * Σ qualifying wager this user has booked under `codes` since `since`.
+ * When did this user's CURRENT run on the program's codes begin?
+ *
+ * Progress RESETS when a player leaves for another creator's code. The reset
+ * point is the last moment we have evidence they were attached elsewhere —
+ * i.e. the newest `affiliate_code_usages` row (of ANY kind: signup, deposit or
+ * wager) whose code is not one of this program's. Wager booked before that
+ * moment belongs to a previous run and no longer counts.
+ *
+ * Bounded to `accrualStart` on both ends: a switch that happened before the
+ * program existed is irrelevant, and the run can never start earlier than the
+ * program itself.
+ *
+ * KNOWN LIMIT: a player who switches codes and then generates NO activity at
+ * all under the new one leaves no trace in `affiliate_code_usages`, so there
+ * is nothing to detect and their run continues. Attribution is only ever
+ * recorded when something actually happens, so this is a floor on what the
+ * data can support, not a gap in the rule.
+ */
+async function runStartedAt(
+  userId: string,
+  codes: readonly string[],
+  accrualStart: Date,
+): Promise<Date> {
+  const db = getProdDb();
+  const upper = codes.map((c) => c.toUpperCase());
+
+  const rows = await db.$queryRaw<{ boundary: Date | null }[]>`
+    SELECT MAX(created_at) AS boundary
+      FROM affiliate_code_usages
+     WHERE referred_user_id = ${userId}
+       AND UPPER(code) <> ALL(${upper}::text[])
+       AND created_at >= ${accrualStart}
+  `;
+  const boundary = rows[0]?.boundary ?? null;
+  return boundary && boundary > accrualStart ? boundary : accrualStart;
+}
+
+/**
+ * Σ wager this user booked under `codes` between `since` and now.
  *
  * Codes are matched case-insensitively: `affiliate_codes` casing is MIXED for
  * rows the 0068 migration backfilled, and `affiliate_code_usages` mirrors
  * whatever casing the caller resolved — so an exact match would silently miss
  * a legacy creator's entire history.
  */
-async function qualifyingWagerUsd(
+async function wagerUsdSince(
   userId: string,
   codes: readonly string[],
   since: Date,
@@ -97,6 +135,7 @@ async function qualifyingWagerUsd(
 async function priorHoldings(
   programId: string,
   userId: string,
+  runStart: Date,
 ): Promise<{ consumedUsd: number; approvedRewardUsd: number }> {
   const [held, approved] = await Promise.all([
     adminDb.creator_reward_claims.aggregate({
@@ -104,9 +143,18 @@ async function priorHoldings(
         program_id: programId,
         user_id: userId,
         status: { in: [...BASIS_HOLDING_STATUSES] },
+        // Consumption is scoped to the CURRENT run for the same reason the
+        // wager is: when a player leaves and comes back they start clean, so
+        // basis they burned on a previous run must not eat into the new one.
+        // Without this the reset would be one-sided — wager cleared, debt
+        // kept — and a returning player could never claim again.
+        requested_at: { gte: runStart },
       },
       _sum: { consumed_wager_usd: true },
     }),
+    // The per-user reward CAP is deliberately NOT run-scoped — it is a
+    // lifetime ceiling on what one player can extract from the program, so
+    // switching away and back must not reset it.
     adminDb.creator_reward_claims.aggregate({
       where: { program_id: programId, user_id: userId, status: "approved" },
       _sum: { amount_usd: true },
@@ -146,6 +194,9 @@ export async function computeEntitlement(
   const empty: CreatorRewardEntitlement = {
     ...base,
     qualifyingWagerUsd: 0,
+    lifetimeWagerUsd: 0,
+    forfeitedWagerUsd: 0,
+    runStartedAt: program.accrual_start_at.toISOString(),
     priorConsumedUsd: 0,
     availableWagerUsd: 0,
     units: 0,
@@ -172,9 +223,19 @@ export async function computeEntitlement(
     };
   }
 
-  const [wagerUsd, prior] = await Promise.all([
-    qualifyingWagerUsd(userId, program.codes, program.accrual_start_at),
-    priorHoldings(program.id, userId),
+  // The current run's start gates everything below it, so it is resolved
+  // first; the lifetime figure alongside it is audit-only (never spendable) —
+  // it is what makes a reset visible instead of silent.
+  const runStart = await runStartedAt(
+    userId,
+    program.codes,
+    program.accrual_start_at,
+  );
+
+  const [wagerUsd, lifetimeWagerUsd, prior] = await Promise.all([
+    wagerUsdSince(userId, program.codes, runStart),
+    wagerUsdSince(userId, program.codes, program.accrual_start_at),
+    priorHoldings(program.id, userId, runStart),
   ]);
 
   const wagerCents = toCents(wagerUsd);
@@ -201,9 +262,19 @@ export async function computeEntitlement(
   const remainderCents = availableCents % thresholdCents;
   const toNextCents = units > 0 ? 0 : thresholdCents - remainderCents;
 
+  // Wager booked under these codes on PREVIOUS runs — cleared by a switch and
+  // no longer spendable. Kept purely so the reset is auditable: an operator
+  // can see "$600 was forfeited when they moved to another code" rather than
+  // watching a balance quietly disappear.
+  const lifetimeCents = toCents(lifetimeWagerUsd);
+  const forfeitedCents = Math.max(0, lifetimeCents - wagerCents);
+
   return {
     ...base,
     qualifyingWagerUsd: fromCents(wagerCents),
+    lifetimeWagerUsd: fromCents(lifetimeCents),
+    forfeitedWagerUsd: fromCents(forfeitedCents),
+    runStartedAt: runStart.toISOString(),
     priorConsumedUsd: fromCents(consumedCents),
     availableWagerUsd: fromCents(availableCents),
     units,

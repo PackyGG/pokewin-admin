@@ -2043,8 +2043,17 @@ model creator_reward_claims {
   discord_user_id     String?
   /// SNAPSHOT of the computation at request time, so a reviewer three weeks
   /// later can see exactly what the number was based on without re-running it.
-  /// Total qualifying wager observed under the program's codes at request time.
+  /// SPENDABLE wager observed at request time (current run only).
   wager_basis_usd     Decimal                 @db.Decimal(20, 2)
+  /// AUDIT: total wager under these codes across ALL runs at request time.
+  /// Together with `forfeited_wager_usd` this pins what a code switch cleared,
+  /// so the history stays readable even if the reset rule is ever changed —
+  /// a derived number would silently rewrite itself, a stored one can't.
+  lifetime_wager_usd  Decimal                 @default(0) @db.Decimal(20, 2)
+  /// AUDIT: wager cleared by earlier code switches at request time.
+  forfeited_wager_usd Decimal                 @default(0) @db.Decimal(20, 2)
+  /// AUDIT: when the run this claim was earned on began.
+  run_started_at      DateTime?               @db.Timestamptz(6)
   /// Basis already consumed by earlier pending/approved claims at request time.
   prior_consumed_usd  Decimal                 @db.Decimal(20, 2)
   /// Basis THIS claim consumes (= units × threshold_usd).

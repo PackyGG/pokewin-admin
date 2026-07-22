@@ -94,6 +94,8 @@ export type CreatorRewardClaimRow = {
   username: string | null;
   discordUserId: string | null;
   wagerBasisUsd: number;
+  lifetimeWagerUsd: number;
+  forfeitedWagerUsd: number;
   priorConsumedUsd: number;
   consumedWagerUsd: number;
   units: number;
@@ -152,6 +154,8 @@ export async function getClaims(params: {
     username: names.get(c.user_id) ?? null,
     discordUserId: c.discord_user_id,
     wagerBasisUsd: toNumber(c.wager_basis_usd),
+    lifetimeWagerUsd: toNumber(c.lifetime_wager_usd),
+    forfeitedWagerUsd: toNumber(c.forfeited_wager_usd),
     priorConsumedUsd: toNumber(c.prior_consumed_usd),
     consumedWagerUsd: toNumber(c.consumed_wager_usd),
     units: c.units,
@@ -224,6 +228,9 @@ export async function createClaimRequest(params: {
         user_id: params.userId,
         discord_user_id: params.discordUserId ?? null,
         wager_basis_usd: entitlement.qualifyingWagerUsd,
+        lifetime_wager_usd: entitlement.lifetimeWagerUsd,
+        forfeited_wager_usd: entitlement.forfeitedWagerUsd,
+        run_started_at: new Date(entitlement.runStartedAt),
         prior_consumed_usd: entitlement.priorConsumedUsd,
         consumed_wager_usd: entitlement.consumesWagerUsd,
         units: entitlement.units,
