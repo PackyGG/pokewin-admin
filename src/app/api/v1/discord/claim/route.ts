@@ -47,13 +47,27 @@ export const dynamic = "force-dynamic";
 const CLAIMABLE_ID =
   /^(vip|ftd)_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
+/**
+ * Deliberately NOT `.strict()`.
+ *
+ * Rejecting unknown keys sounds like hardening but buys nothing here: fields
+ * we don't declare are never read, so ignoring them is exactly as safe as
+ * refusing them. What it DOES do is break every caller that sends harmless
+ * extra context — a Discord bot forwarding a guild id, an interaction id or a
+ * username alongside the payload — turning a working integration into a 400
+ * on every request. That is precisely what happened on 2026-07-22: `.strict()`
+ * shipped at 23:50 and every endpoint began failing for the live bot.
+ *
+ * The real validation is below and is unchanged: the Discord id must be a
+ * numeric snowflake, and a claim id must be a well-formed prefixed UUID.
+ */
 const BodySchema = z.object({
   discordUserId: z
     .string()
     .trim()
     .regex(/^\d{15,21}$/, "discordUserId must be a numeric Discord user ID"),
   claimableId: z.string().trim().min(1).max(64),
-}).strict();
+});
 
 export const POST = withApiKey(
   { scopes: ["discord:rewards:claim"] },
