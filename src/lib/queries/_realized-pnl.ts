@@ -1,6 +1,6 @@
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getProdDb } from "@/lib/db";
 import { withTiming } from "@/lib/observability/query-timings";
 import { compareRealizedPnl } from "@/lib/clickhouse/comparison";
 import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
@@ -26,6 +26,23 @@ import {
  * they aren't yet on the user's balance row. The per-user P&L (users-list /
  * users-detail) sticks to the canonical five terms so the User Detail page
  * stays in sync with what the user themselves would see.
+ *
+ * CAVEAT (verified against prod 2026-07-22): `unclaimedRakeback` is
+ * structurally ALWAYS 0 today, so it is not in practice what separates this
+ * snapshot from the per-user formula. `rakeback_claims.claimed_at` carries a
+ * DB-level `@default(now())`, i.e. a claim row is born already claimed — all
+ * 12,080 rows on prod have a non-NULL `claimed_at` and $0 is outstanding. The
+ * term is KEPT (not deleted) so the liability is picked up automatically if
+ * the game backend ever starts inserting genuinely unclaimed rows, but do not
+ * read a non-zero value into it when reconciling numbers.
+ *
+ * The `balances.total_withdrawn` leg is NOT dead legacy data — it is the
+ * mechanism behind the admin "record off-platform payout" action
+ * (src/app/(admin)/users/[id]/actions.ts, `manual_withdrawal_recorded`),
+ * which bumps the counter so a payout made outside the
+ * card_withdrawal_requests flow still lands in the `withdrawals` term. The
+ * normal card/crypto flow does NOT move it, so summing both legs is correct
+ * and does not double-count. Prod carries exactly 2 such records.
  *
  * Withdrawal continuity: the `withdrawals` term counts card_withdrawal_requests
  * with status IN ('pending','processing','shipped','completed') — i.e.
@@ -84,7 +101,14 @@ export const getRealizedPnlSnapshot = cache(
 );
 
 async function realizedPnlSnapshotPg(): Promise<RealizedPnlSnapshot> {
-  const db = await getDb();
+  // PROD-PINNED ON PURPOSE. This snapshot is cached under a STATIC key (no
+  // env arg), so a dev-DB render must never be able to populate the shared
+  // entry and serve dev numbers to every admin for the next 5 minutes.
+  // It previously called the cookie-aware `getDb()` and was prod-only by
+  // accident: `cookies()` throws inside an `unstable_cache` callback and
+  // `readDbEnv` swallows that into a "prod" fallback. Pin it explicitly so
+  // the guarantee survives any future change to that fallback.
+  const db = getProdDb();
   // Pull the blacklist alongside the role-based staff exclusion so
   // admin-managed exclusions (the /system/excluded-users page) drop
   // out of lifetime PnL too. Empty list → no extra filter, query

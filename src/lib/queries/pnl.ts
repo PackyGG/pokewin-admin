@@ -73,7 +73,9 @@ export function adminVoucherRemovalClaimedSql(
  *   pnl < 0  → House is down (user holds more than they net-deposited)     → 🔴 rose
  *
  * `onSiteBalance` = available_balance + locked_balance.
- * `withdrawals`    = balances.total_withdrawn (legacy ledger withdrawals) +
+ * `withdrawals`    = balances.total_withdrawn (off-platform payouts only —
+ *                    bumped solely by the admin "record off-platform payout"
+ *                    action; the card/crypto flow never moves it) +
  *                    sum(card_withdrawal_requests.total_value_usd) for
  *                    IN-FLIGHT + DONE requests, i.e. status IN
  *                    ('pending','processing','shipped','completed').
@@ -100,10 +102,19 @@ export function adminVoucherRemovalClaimedSql(
  * withdrawal — crypto OR physical — bundles `inventory_item_ids` and on
  * creation sets `withdrawal_locked_at` on those rows; `total_value_usd`
  * equals the bundled value. `balances.total_withdrawn` is NOT moved for
- * card/crypto withdrawals (it stayed 0 across the snapshot while
- * completed withdrawals existed) — there is no `card_withdrawal` ledger
- * type, so the request's `total_value_usd` is the sole record of the
- * outflow.
+ * card/crypto withdrawals — the request's `total_value_usd` is the
+ * authoritative record of the outflow, and the counter is reserved for
+ * admin-recorded off-platform payouts (see the `withdrawals` note above).
+ *
+ * CORRECTION (re-verified against prod 2026-07-22): an earlier version of
+ * this note claimed "there is no `card_withdrawal` ledger type". That is
+ * WRONG — both `card_withdrawal` and `balance_withdrawal` ledger types
+ * exist and mirror the request rows (completed: $897,688.52 across 4,201
+ * `card_withdrawal` + $229,497.13 across 1,403 `balance_withdrawal`, vs
+ * $899,203.43 crypto + $229,497.13 balance completed requests; the crypto
+ * gap is the hidden exchange-rate fee spread). They are NOT summed into the
+ * `withdrawals` term — the request rows are — but do not reconcile against
+ * this file assuming those ledger types are absent.
  *
  * Lifecycle:
  *   pending/processing → value is locked inventory (left open inventory,

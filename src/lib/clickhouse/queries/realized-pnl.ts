@@ -19,7 +19,12 @@ import { toNumber } from "@/lib/utils/decimal";
  *
  * Component definitions (each scoped to real customers — see scope note):
  *   • deposits        = SUM(balances.total_deposited)
- *   • withdrawals     = SUM(balances.total_withdrawn)                       (legacy ledger leg)
+ *   • withdrawals     = SUM(balances.total_withdrawn)                       (off-platform payout leg)
+ *                       — NOT legacy: this counter is bumped only by the
+ *                       admin "record off-platform payout" action
+ *                       (`manual_withdrawal_recorded`). The normal card/crypto
+ *                       flow never moves it, so summing both legs is correct
+ *                       and does not double-count.
  *                     + SUM(card_withdrawal_requests.total_value_usd)       (card/crypto leg)
  *                       WHERE status IN ('pending','processing','shipped','completed')
  *                       — the WITHDRAWAL_LIABILITY_STATUSES set: in-flight

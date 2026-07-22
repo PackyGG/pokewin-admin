@@ -95,7 +95,9 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
           formatKind="currency"
           subtitle="See breakdown below"
           icon={TrendingUp}
-          color="green"
+          // House POV — emerald when the house is up, rose when it is down.
+          // Was hardcoded "green", which stayed green on a negative P&L.
+          color={data.realizedProfit >= 0 ? "emerald" : "rose"}
         />
         <StatCard
           title="GGR (Gross Gaming Revenue)"
