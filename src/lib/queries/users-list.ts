@@ -806,6 +806,15 @@ type UserListItem = {
   hasDeviceId: boolean;
   /** Newest FingerprintJS visitor_id — the device ID, null when uncaptured. */
   deviceVisitorId: string | null;
+  /**
+   * HOW this user signed up — the raw BetterAuth `account.providerId` of
+   * their EARLIEST linked account (`discord` / `google` / `steam` /
+   * `credential` = email+password). Same definition users-detail.ts resolves
+   * for the single-user page. Null only when the user has no account row at
+   * all (0 such users on prod, read-only check 2026-07-22) or when the
+   * best-effort lookup below failed.
+   */
+  signupProvider: string | null;
 };
 
 /** One grouped `fingerprints` row per user on the current page. */
@@ -813,6 +822,12 @@ type DeviceRow = {
   user_id: string;
   suspected_alt: boolean | null;
   visitor_id: string | null;
+};
+
+/** Earliest `account` row per user on the current page — the signup provider. */
+type SignupProviderRow = {
+  user_id: string;
+  provider: string | null;
 };
 
 const USER_LIST_SELECT = {
@@ -895,7 +910,12 @@ async function hydrateUserListPage(
   const emptyDeposits: Array<{ user_id: string; _count: { _all: number } }> =
     [];
 
-  const [pnlByUserId, depositCountRows, suspectedAltRows] = await Promise.all([
+  const [
+    pnlByUserId,
+    depositCountRows,
+    suspectedAltRows,
+    signupProviderRows,
+  ] = await Promise.all([
     userIds.length > 0
       ? calculateUsersPnlBatch(userIds)
       : Promise.resolve(new Map<string, UserPnl>()),
@@ -933,6 +953,29 @@ async function hydrateUserListPage(
           return [] as DeviceRow[];
         })
       : Promise.resolve([] as DeviceRow[]),
+    // Signup provider (HOW the user signed up), scoped to just this page's
+    // ids. `DISTINCT ON (userId) … ORDER BY userId, created_at ASC NULLS
+    // LAST` = the EARLIEST linked account, the same definition
+    // users-detail.ts resolves for the single-user page and the same one
+    // insights-rewards/signup/source.ts uses for its provider breakdown —
+    // one meaning of "signup source" across the admin, not three.
+    // Index-backed: Bitmap Index Scan on idx_account_user_id, 0.58 ms for a
+    // 20-id page (read-only EXPLAIN ANALYZE against prod, 2026-07-22).
+    // Best-effort like the fingerprint leg above: a failure degrades this
+    // page's rows to "—" rather than breaking the list render.
+    userIds.length > 0
+      ? db.$queryRaw<SignupProviderRow[]>`
+          SELECT DISTINCT ON (a."userId")
+                 a."userId" AS user_id,
+                 a."providerId" AS provider
+            FROM account a
+           WHERE a."userId" = ANY(${userIds})
+           ORDER BY a."userId", a.created_at ASC NULLS LAST
+        `.catch((e) => {
+          console.error("[getUsers] signup provider lookup failed:", e);
+          return [] as SignupProviderRow[];
+        })
+      : Promise.resolve([] as SignupProviderRow[]),
   ]);
 
   const depositCountMap = new Map(
@@ -941,6 +984,9 @@ async function hydrateUserListPage(
   // Present in the map ⇒ a fingerprint row exists for that user (device was
   // captured). The row carries the alt flag and the newest visitor_id.
   const deviceByUserId = new Map(suspectedAltRows.map((r) => [r.user_id, r]));
+  const signupProviderByUserId = new Map(
+    signupProviderRows.map((r) => [r.user_id, r.provider]),
+  );
 
   return {
     data: users.map((u) => {
@@ -984,6 +1030,7 @@ async function hydrateUserListPage(
         suspectedAlt: deviceByUserId.get(u.id)?.suspected_alt === true,
         hasDeviceId: deviceByUserId.has(u.id),
         deviceVisitorId: deviceByUserId.get(u.id)?.visitor_id ?? null,
+        signupProvider: signupProviderByUserId.get(u.id) ?? null,
       };
     }),
     total,

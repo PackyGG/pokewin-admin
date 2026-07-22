@@ -74,8 +74,10 @@ const COMPARATORS: Record<string, (a: UserRow, b: UserRow) => number> = {
     (a.country ?? a.countryCode ?? "").localeCompare(
       b.country ?? b.countryCode ?? "",
     ),
-  affiliate_code: (a, b) =>
-    (a.affiliateCode ?? "").localeCompare(b.affiliateCode ?? ""),
+  // No `affiliate_code` comparator — the "Code / Affiliate" column was
+  // removed (owner, 2026-07-22), so nothing can request that sort from the
+  // UI. A stale `?sortBy=affiliate_code` URL still sorts server-side and
+  // simply skips the local re-sort (sortRowsLocally returns rows unchanged).
 };
 
 export function sortRowsLocally(

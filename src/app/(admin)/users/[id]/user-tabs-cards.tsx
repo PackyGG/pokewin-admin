@@ -21,6 +21,7 @@ import {
   formatDateTime,
   formatRelative,
 } from "@/lib/utils/format";
+import { formatSignupProvider } from "@/lib/utils/signup-provider";
 import { EmptyState } from "@/components/empty-state";
 import { toggleFeatureLock } from "./actions";
 import { createNote, deleteNote } from "./note-actions";
@@ -605,41 +606,6 @@ export const FeatureLocksCard = React.memo(function FeatureLocksCard({
     </Card>
   );
 });
-
-/**
- * Pretty-print the BetterAuth `account.providerId` for the Account
- * card. Maps the common OAuth provider IDs to capitalised display
- * names, and treats the email/password provider (`credential` or
- * `credentials` depending on BetterAuth version) as plain "Email".
- * Unknown providers are surfaced verbatim so we never hide data.
- */
-export function formatSignupProvider(provider: string | null): string {
-  if (!provider) return "-";
-  const key = provider.toLowerCase();
-  switch (key) {
-    case "credential":
-    case "credentials":
-    case "email":
-    case "email-password":
-      return "Email";
-    case "discord":
-      return "Discord";
-    case "google":
-      return "Google";
-    case "steam":
-      return "Steam";
-    case "twitch":
-      return "Twitch";
-    case "github":
-      return "GitHub";
-    case "apple":
-      return "Apple";
-    case "facebook":
-      return "Facebook";
-    default:
-      return provider;
-  }
-}
 
 export const AccountDetailsSection = React.memo(function AccountDetailsSection({
   user,

@@ -37,8 +37,10 @@ export {
   AccountDetailsSection,
   BalanceHistoryChart,
   NotesSection,
-  formatSignupProvider,
 } from "./user-tabs-cards";
+// Shared with the /users list column (Signup) — one display mapping for
+// `account.providerId`, not two.
+export { formatSignupProvider } from "@/lib/utils/signup-provider";
 export { CategoryTransactionsTable } from "./user-tabs-transactions";
 export { InventoryGrid, DisposedCardsTable } from "./user-tabs-inventory";
 export { CreatorSection } from "./user-tabs-creator";

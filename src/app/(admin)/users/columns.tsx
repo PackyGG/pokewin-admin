@@ -8,6 +8,10 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { UsersSortHeader } from "./sort-header";
 import { ROLE_COLORS, USER_STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency } from "@/lib/utils/format";
+import {
+  formatSignupProvider,
+  signupProviderBadgeClass,
+} from "@/lib/utils/signup-provider";
 import { useFormatDateTime } from "@/components/timezone-provider";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +29,11 @@ export type UserRow = {
    * up under, if any (null = organic signup). See users-list.ts
    * USER_LIST_SELECT comment for why this reads the plain column rather
    * than the fuller historical resolution users-detail.ts does.
+   *
+   * NOT rendered as a column today — the "Code / Affiliate" column was
+   * removed on the owner's request (2026-07-22, "for now"). The field stays
+   * on the row (it's a free scalar already on the fetched user row) so
+   * restoring the column is a self-contained change here.
    */
   affiliateCode: string | null;
   availableBalance: number;
@@ -42,6 +51,11 @@ export type UserRow = {
   hasDeviceId: boolean;
   /** Newest FingerprintJS visitor_id, null when never captured. */
   deviceVisitorId: string | null;
+  /**
+   * Raw BetterAuth `account.providerId` of the earliest linked account —
+   * how the user signed up (discord / google / steam / credential = email).
+   */
+  signupProvider: string | null;
 };
 
 function PnlCell({ value }: { value: number }) {
@@ -211,24 +225,28 @@ export const columns: ColumnDef<UserRow>[] = [
     },
   },
   {
-    // Affiliate/referral code this user signed up under (`user.affiliate_code`).
-    // Blue badge mirrors the referrer-code chip on /users/[id] (ReferrerCard);
-    // "—" mirrors the Country cell's organic/no-data fallback above.
-    accessorKey: "affiliateCode",
+    // HOW the user signed up — Discord / Google / Steam OAuth, or email +
+    // password (`credential`). Reads the raw BetterAuth providerId of the
+    // user's earliest linked account (see users-list.ts hydration) and prints
+    // it through the same shared display mapping the user-detail Account card
+    // uses. Not sortable — there's no backend sort key for it, same as the
+    // Device ID column above.
+    id: "signupProvider",
     header: () => (
-      <UsersSortHeader title="Code / Affiliate" sortKey="affiliate_code" />
+      <span className="text-xs font-medium text-muted-foreground">Signup</span>
     ),
     cell: ({ row }) => {
-      const code = row.original.affiliateCode;
-      if (!code) {
+      const provider = row.original.signupProvider;
+      if (!provider) {
         return <span className="text-sm text-muted-foreground">—</span>;
       }
       return (
         <Badge
           variant="outline"
-          className="bg-blue-500/15 font-mono text-xs text-blue-600 border-blue-500/30 dark:text-blue-400"
+          className={cn("text-xs", signupProviderBadgeClass(provider))}
+          title={`Signed up with ${formatSignupProvider(provider)} (providerId: ${provider})`}
         >
-          {code}
+          {formatSignupProvider(provider)}
         </Badge>
       );
     },
