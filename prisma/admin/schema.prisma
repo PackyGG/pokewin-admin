@@ -475,6 +475,45 @@ model admin_audit_events {
   @@index([target_user_id], map: "admin_audit_events_target_user_id_idx")
 }
 
+/// Machine-to-machine API keys for the `/api/v1/*` surface (Discord bot +
+/// in-house consumers).
+///
+/// SECURITY MODEL — the plaintext token is shown EXACTLY ONCE at creation and
+/// is never persisted. Only the non-secret `prefix` and `key_hash` (SHA-256 of
+/// the full token) are stored, so a leaked DB dump cannot be replayed as a
+/// credential. Auth looks the row up by `prefix` (indexed, no table scan) and
+/// then does a CONSTANT-TIME hash compare — never a string ===.
+///
+/// Every key is least-privilege: `scopes` gates which endpoints it may call,
+/// `expires_at` bounds its lifetime, `is_active`/`revoked_at` kill it
+/// instantly, and `rate_limit_per_min` caps its blast radius.
+model api_keys {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Human label shown in the admin UI ("Discord bot", "Ops script").
+  name               String
+  /// PUBLIC, non-secret identifier embedded in the token before the ".".
+  /// Used to locate the row before the constant-time compare.
+  prefix             String    @unique
+  /// SHA-256 (hex) of the FULL token. Never the token itself.
+  key_hash           String
+  /// Least-privilege scope list; each endpoint declares what it requires.
+  scopes             String[]  @default([])
+  is_active          Boolean   @default(true)
+  expires_at         DateTime? @db.Timestamptz(6)
+  last_used_at       DateTime? @db.Timestamptz(6)
+  last_used_ip       String?
+  request_count      Int       @default(0)
+  /// Per-minute request ceiling for this key (abuse / DoS guard).
+  rate_limit_per_min Int       @default(120)
+  created_by         String?   @db.Uuid
+  created_at         DateTime  @default(now()) @db.Timestamptz(6)
+  revoked_at         DateTime? @db.Timestamptz(6)
+  revoked_by         String?   @db.Uuid
+
+  @@index([is_active], map: "api_keys_is_active_idx")
+  @@index([created_at(sort: Desc)], map: "api_keys_created_at_idx")
+}
+
 model admin_gift_card_actions {
   id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   gift_card_id     String    @db.Uuid

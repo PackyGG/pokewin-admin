@@ -585,6 +585,22 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    // API Keys — machine-to-machine credentials for the /api/v1 surface
+    // (Discord bot + in-house consumers). Icon string `KeyRound` is already
+    // registered in the ICONS map in `src/components/app-sidebar.tsx`
+    // (no React #130 risk).
+    id: "nav.system.api-keys",
+    group: "System",
+    label: "API Keys",
+    href: "/system/api-keys",
+    pageKey: "/system/api-keys",
+    icon: "KeyRound",
+    description: "Machine-to-machine keys for the /api/v1 surface",
+    keywords: ["api", "key", "token", "bot", "discord", "integration", "scope"],
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     // EOS Verification — latest completed battles, collapsible rows reveal
     // every participant + a live cross-check of the battle's stored
     // eos_block_hash against all 13 public EOS RPC providers. Icon "Hash"
