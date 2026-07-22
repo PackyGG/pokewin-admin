@@ -45,7 +45,6 @@ export type UserRow = {
   totalDeposited: number;
   totalWithdrawn: number;
   totalWagered: number;
-  depositCount: number;
   pnl: number;
   createdAt: string;
   /** Device-fingerprint alt-account signal (fingerprints.suspected_alt_triggered). */
@@ -327,17 +326,6 @@ export const columns: ColumnDef<UserRow>[] = [
     cell: ({ row }) => (
       <span className="tabular-nums">
         {formatCurrency(row.original.totalDeposited)}
-      </span>
-    ),
-  },
-  {
-    accessorKey: "depositCount",
-    header: () => (
-      <UsersSortHeader title="# Deposits" sortKey="depositCount" />
-    ),
-    cell: ({ row }) => (
-      <span className="tabular-nums text-muted-foreground">
-        {row.original.depositCount}
       </span>
     ),
   },

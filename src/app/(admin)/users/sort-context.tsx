@@ -53,18 +53,18 @@ const COMPARATORS: Record<string, (a: UserRow, b: UserRow) => number> = {
   // expression in SQL so client + server agree on ordering.
   netHoldings: (a, b) => a.netHoldings - b.netHoldings,
   pnl: (a, b) => a.pnl - b.pnl,
-  depositCount: (a, b) => a.depositCount - b.depositCount,
   status: (a, b) =>
     (STATUS_RANK[a.status] ?? -1) - (STATUS_RANK[b.status] ?? -1),
   country: (a, b) =>
     (a.country ?? a.countryCode ?? "").localeCompare(
       b.country ?? b.countryCode ?? "",
     ),
-  // No comparators for `affiliate_code`, `role` or `balance` — those three
-  // columns were removed from the table (owner, 2026-07-22), so nothing can
-  // request those sorts from the UI. A stale URL (`?sortBy=balance`, …) still
-  // sorts server-side and simply skips the local re-sort (sortRowsLocally
-  // returns rows unchanged when no comparator matches).
+  // No comparators for `affiliate_code`, `role`, `balance` or `depositCount`
+  // — those columns were removed from the table (owner, 2026-07-22), so
+  // nothing can request those sorts from the UI. A stale URL
+  // (`?sortBy=balance`, …) still sorts server-side and simply skips the local
+  // re-sort (sortRowsLocally returns rows unchanged when no comparator
+  // matches).
 };
 
 export function sortRowsLocally(

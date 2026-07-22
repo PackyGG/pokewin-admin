@@ -770,7 +770,6 @@ type UserListItem = {
   totalDeposited: number;
   totalWithdrawn: number;
   totalWagered: number;
-  depositCount: number;
   pnl: number;
   /**
    * Combined on-platform holdings = available + locked balance +
@@ -912,7 +911,13 @@ type UserListRow = Prisma.UserGetPayload<{ select: typeof USER_LIST_SELECT }>;
  *    THROWS so the page-level safeQuery shows the visible failure band.
  *    Money columns are the page's core content; silently falling back to
  *    the balances row would render numbers that are confidently wrong.
- *  • deposit-count groupBy (Prisma enum literal — drift-safe).
+ *  • best-effort enrichment legs (device fingerprint, signup provider,
+ *    shared signup IP) — each degrades its own cell, never the render.
+ *
+ * The per-page deposit-COUNT groupBy that used to run here is gone with
+ * the "# Deposits" column (owner, 2026-07-22). The `depositCount` SORT
+ * still works: its ranking runs in the `dc` CTE inside
+ * computeRankedUserIds, which never depended on this hydration.
  */
 async function hydrateUserListPage(
   users: UserListRow[],
@@ -925,12 +930,9 @@ async function hydrateUserListPage(
   const signupIps = [
     ...new Set(users.map((u) => u.signup_ip).filter((ip): ip is string => !!ip)),
   ];
-  const emptyDeposits: Array<{ user_id: string; _count: { _all: number } }> =
-    [];
 
   const [
     pnlByUserId,
-    depositCountRows,
     suspectedAltRows,
     signupProviderRows,
     sharedIpRows,
@@ -938,17 +940,6 @@ async function hydrateUserListPage(
     userIds.length > 0
       ? calculateUsersPnlBatch(userIds)
       : Promise.resolve(new Map<string, UserPnl>()),
-    userIds.length > 0
-      ? db.ledger_transactions.groupBy({
-          by: ["user_id"],
-          where: {
-            user_id: { in: userIds },
-            type: "deposit",
-            status: "completed",
-          },
-          _count: { _all: true },
-        })
-      : Promise.resolve(emptyDeposits),
     // Device-fingerprint state, scoped to just this page's ids (index-backed:
     // idx_fingerprints_user_id). ONE grouped query carries both facts: a row
     // exists ⇒ the device was captured; suspected_alt says whether the alt
@@ -1015,9 +1006,6 @@ async function hydrateUserListPage(
       : Promise.resolve([] as SharedIpRow[]),
   ]);
 
-  const depositCountMap = new Map(
-    depositCountRows.map((d) => [d.user_id, d._count._all]),
-  );
   // Present in the map ⇒ a fingerprint row exists for that user (device was
   // captured). The row carries the alt flag and the newest visitor_id.
   const deviceByUserId = new Map(suspectedAltRows.map((r) => [r.user_id, r]));
@@ -1065,7 +1053,6 @@ async function hydrateUserListPage(
         totalDeposited,
         totalWithdrawn,
         totalWagered,
-        depositCount: depositCountMap.get(u.id) ?? 0,
         pnl,
         createdAt: u.created_at.toISOString(),
         suspectedAlt: deviceByUserId.get(u.id)?.suspected_alt === true,
