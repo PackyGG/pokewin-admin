@@ -78,11 +78,12 @@ export function DataTableToolbar({
   /**
    * Optional slot rendered immediately AFTER (to the right of) the search
    * input — for a control that pairs directly with the search box rather than
-   * the trailing filter dropdowns (e.g. the /users "Affiliate code only"
-   * checkbox that changes WHAT the search matches). Defaults to `undefined`,
-   * so every existing consumer renders byte-identically. On phones it stacks
-   * below the search input (like `leading` stacks above); at sm+ it sits
-   * inline to the right of the search.
+   * the trailing filter dropdowns (e.g. a switch that changes WHAT the search
+   * matches). Defaults to `undefined`, so every existing consumer renders
+   * byte-identically. On phones it stacks below the search input (like
+   * `leading` stacks above); at sm+ it sits inline to the right of the
+   * search. No caller uses it today — /users had the only one (its
+   * "Affiliate code only" checkbox, removed 2026-07-23).
    */
   afterSearch?: React.ReactNode;
 }) {
@@ -199,10 +200,9 @@ export function DataTableToolbar({
         </div>
       )}
       {afterSearch && (
-        // Adornment that pairs with the search input (e.g. the /users
-        // "Affiliate code only" checkbox). `shrink-0` keeps it from being
-        // squeezed; on phones it stacks below the full-width search, at sm+ it
-        // sits inline to the right of it.
+        // Adornment that pairs with the search input. `shrink-0` keeps it from
+        // being squeezed; on phones it stacks below the full-width search, at
+        // sm+ it sits inline to the right of it.
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
           {afterSearch}
         </div>

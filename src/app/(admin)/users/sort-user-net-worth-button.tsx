@@ -52,7 +52,10 @@ export function SortByUserNetWorthButton() {
       size="sm"
       onClick={handleClick}
       disabled={isActive || isPending}
-      className={cn(isActive && "cursor-default")}
+      // h-9 px-3 to match the rest of the toolbar row (search input, filter
+      // selects, Clear) — `size="sm"` alone is h-7. Same override as the PnL
+      // sort buttons beside it.
+      className={cn("h-9 px-3", isActive && "cursor-default")}
       title="Rank player accounts by balance + inventory — creators excluded"
     >
       {isPending ? (

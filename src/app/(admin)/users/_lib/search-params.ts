@@ -165,17 +165,12 @@ const UsersSearchParamsSchema = z.object({
   // interior-substring match. `.catch("prefix")` keeps a fuzzed value
   // from forcing the slow path.
   match: UsersMatchMode.default("prefix").catch("prefix"),
-  // "Affiliate code only" search toggle (URL flag `?codeSearch=1`, set by the
-  // toolbar checkbox). When on AND a search term is present, the term matches
-  // ONLY affiliate/creator codes (affiliate_codes.code) by prefix and returns
-  // the code owners — see getUsers' `codeSearch`. Parsed leniently from the
-  // string param: "1"/"true" → true, anything else (incl. absent) → false, so
-  // a fuzzed value can never break the parse (`.catch(false)` for safety).
-  codeSearch: z
-    .string()
-    .optional()
-    .transform((v) => v === "1" || v === "true")
-    .catch(false),
+  // No `codeSearch` flag — the "Affiliate code only" search mode and its
+  // toolbar checkbox were removed (owner, 2026-07-23). The DEFAULT search
+  // still resolves a code to its owner as one of its union legs, so typing a
+  // code in the normal search box keeps working; there's just no mode that
+  // restricts the match to codes alone. A stale `?codeSearch=1` on a
+  // bookmarked URL is now simply ignored.
   // `.catch(undefined)` on every filter / sort field so a single bad
   // value (e.g. ?role=bogus) drops ONLY that filter instead of failing
   // the whole parse and resetting every other valid param to its default.

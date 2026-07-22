@@ -64,7 +64,15 @@ function SortByPnlButton({
       size="sm"
       onClick={handleClick}
       disabled={isActive || isPending}
-      className={cn(isActive && "cursor-default", isActive && activeClass)}
+      // h-9 px-3 — `size="sm"` is h-7, which left these sitting two pixels
+      // shy of every other control in the toolbar (h-9 search input, h-9
+      // filter selects, h-9 Clear + bulk-ban). Same override the toolbar's
+      // own Clear button uses, so the whole row shares one control height.
+      className={cn(
+        "h-9 px-3",
+        isActive && "cursor-default",
+        isActive && activeClass,
+      )}
       title={title}
     >
       {isPending ? (
