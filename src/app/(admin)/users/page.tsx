@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Users, Ban, UserPlus, AlertTriangle, X, Ticket, ArrowRight } from "lucide-react";
+import { Users, Ban, UserPlus, Wallet, AlertTriangle, X, Ticket, ArrowRight } from "lucide-react";
 import { getUsers, getUsersListStats, getMatchingAffiliateCodes } from "@/lib/queries/users";
 import { requirePageAccess } from "@/lib/dal";
 import { safeQuery, safeQueryOrNull } from "@/lib/errors/safe-query";
@@ -148,14 +148,14 @@ export default async function UsersPage({
         />
       </PageHero>
 
-      {/* KPI strip — GLOBAL aggregates (Total Users, Banned, Signups 24h),
-          NOT the paginated slice, so the read-out stays stable while admins
-          paginate/refine. Own Suspense leg (unkeyed — global stats don't
-          depend on table params) + safeQuery inside, so a slow or failed
-          aggregate degrades to TileErrorFallback without touching the table
-          below. Skeleton tile count must match the real strip (3) or the
+      {/* KPI strip — GLOBAL aggregates (Total Users, Banned, Depositors,
+          Signups 24h), NOT the paginated slice, so the read-out stays stable
+          while admins paginate/refine. Own Suspense leg (unkeyed — global
+          stats don't depend on table params) + safeQuery inside, so a slow or
+          failed aggregate degrades to TileErrorFallback without touching the
+          table below. Skeleton tile count must match the real strip (4) or the
           swap-in shifts the page. */}
-      <Suspense fallback={<KpiStripSkeleton count={3} />}>
+      <Suspense fallback={<KpiStripSkeleton count={4} />}>
         <UsersKpiStrip />
       </Suspense>
 
@@ -328,10 +328,15 @@ async function UsersKpiStrip() {
   }
 
   return (
-    <div className="grid grid-cols-3 gap-3">
+    <div className="grid grid-cols-4 gap-3">
+      {/* Banned accounts are NOT counted here (owner, 2026-07-23) — this
+          reads as the live user base, and the banned population is the tile
+          next to it. The `sub` says so out loud so the number is never
+          mistaken for every row in `user`. */}
       <KpiTile
         label="Total Users"
-        value={formatNumber(stats.totalUsers)}
+        value={formatNumber(stats.totalNonBanned)}
+        sub="excl. banned"
         icon={Users}
         accent="blue"
       />
@@ -355,11 +360,22 @@ async function UsersKpiStrip() {
           interactive
         />
       </Link>
+      {/* Depositors — users who have EVER deposited (lifetime, not a
+          window). Emerald per the house-POV rule: money in is house-good.
+          Counted off `balances.total_deposited > 0`, the same column the
+          list's "Deposited" figures come from, so tile and rows agree. */}
+      <KpiTile
+        label="Depositors"
+        value={formatNumber(stats.depositors)}
+        sub="deposited ≥ 1×"
+        icon={Wallet}
+        accent="emerald"
+      />
       <KpiTile
         label="Signups (24h)"
         value={formatNumber(stats.signups24h)}
         icon={UserPlus}
-        accent="emerald"
+        accent="cyan"
       />
     </div>
   );

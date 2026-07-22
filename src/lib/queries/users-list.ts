@@ -1659,7 +1659,8 @@ export async function getUsers(params: {
 // Three COUNT(*) FILTER aggregates over the user table in a single
 // round-trip — Postgres folds them into a single sequential scan with
 // FILTER predicates, so it's strictly cheaper than three Prisma
-// .count() calls.
+// .count() calls. The depositor count lives on a different table
+// (`balances`) so it's a second, parallel statement.
 //
 // Cached cross-request (60s revalidate) so spamming the search box
 // doesn't fan into the DB on every keystroke. unstable_cache also
@@ -1667,38 +1668,70 @@ export async function getUsers(params: {
 // happens to call this twice gets one query.
 
 export type UsersListStats = {
-  /** All users in the DB, regardless of role or status. */
-  totalUsers: number;
+  /**
+   * Users with `is_banned = false` — banned accounts are EXCLUDED (owner,
+   * 2026-07-23: "total users should show the amount without banned"). The
+   * banned population is its own tile; adding the two gives every row in
+   * `user`.
+   */
+  totalNonBanned: number;
   /** Users with `is_banned = true`. */
   totalBanned: number;
   /** Users created in the rolling last 24h. */
   signups24h: number;
+  /**
+   * Users who have deposited at least once, counted as
+   * `balances.total_deposited > 0`.
+   *
+   * That maintained aggregate is the SAME column the list's "Deposited"
+   * column shows (via calculateUsersPnlBatch), so the tile can never
+   * disagree with the rows underneath it. Verified equal to the canonical
+   * ledger definition — `COUNT(DISTINCT user_id)` over completed
+   * `deposit` ledger rows — against prod, read-only, 2026-07-23: both
+   * return 1,774 with zero rows differing in either direction, and the
+   * balances form measures 3.2 ms vs 108 ms.
+   */
+  depositors: number;
 };
 
 const cachedUsersListStats = unstable_cache(
   async (): Promise<UsersListStats> => {
     const db = await getDb();
-    const rows = await db.$queryRaw<
-      {
-        total: string;
-        banned: string;
-        signups_24h: string;
-      }[]
-    >`
-      SELECT
-        COUNT(*)::text                                                                   AS total,
-        COUNT(*) FILTER (WHERE is_banned = true)::text                                   AS banned,
-        COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::text          AS signups_24h
-      FROM "user"
-    `;
-    const r = rows[0];
+    const [userRows, depositorRows] = await Promise.all([
+      db.$queryRaw<
+        {
+          non_banned: string;
+          banned: string;
+          signups_24h: string;
+        }[]
+      >`
+        SELECT
+          COUNT(*) FILTER (WHERE is_banned = false)::text                                 AS non_banned,
+          COUNT(*) FILTER (WHERE is_banned = true)::text                                  AS banned,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::text         AS signups_24h
+        FROM "user"
+      `,
+      // Deliberate SEQ SCAN, not an index miss: `balances` is one row per
+      // user (16.5k rows / 626 pages today) and this counts ~11% of them,
+      // so a btree on total_deposited would be read in full anyway while
+      // adding write cost to a table every bet touches. Measured 3.2 ms
+      // end-to-end (EXPLAIN ANALYZE, read-only prod 2026-07-23) behind a
+      // 60s cache. Revisit if `balances` ever grows an order of magnitude.
+      db.$queryRaw<{ depositors: string }[]>`
+        SELECT COUNT(*)::text AS depositors
+          FROM balances
+         WHERE total_deposited > 0
+      `,
+    ]);
+    const r = userRows[0];
     return {
-      totalUsers: Number(r?.total ?? 0),
+      totalNonBanned: Number(r?.non_banned ?? 0),
       totalBanned: Number(r?.banned ?? 0),
       signups24h: Number(r?.signups_24h ?? 0),
+      depositors: Number(depositorRows[0]?.depositors ?? 0),
     };
   },
-  ["users-list-stats-v1"],
+  ["users-list-stats-v2"],
   { revalidate: 60, tags: ["users-list-stats"] },
 );
 
