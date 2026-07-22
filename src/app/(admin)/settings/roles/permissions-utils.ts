@@ -747,6 +747,13 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "System",
   },
   {
+    key: "__can_send_user_notifications",
+    label: "Send User Notifications",
+    description:
+      "Send personal notifications straight into a user's feed — one row per recipient, including bulk campaigns with per-user payloads",
+    group: "System",
+  },
+  {
     key: "__can_upsert_site_config",
     label: "Upsert Site Config",
     description: "Create or update site-wide security / config entries",
