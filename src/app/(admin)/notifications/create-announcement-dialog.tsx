@@ -217,7 +217,7 @@ export function CreateAnnouncementDialog({
       setBody,
     );
     autoSetPayload("url", packUrl(p.slug));
-    autoSetPayload("ctaLabel", "Open pack");
+    autoSetPayload("ctaLabel", "Open now");
     // Every pack image on prod is ImageKit-hosted, but a pack can have none
     // (14 image-less packs, all inactive) — never push an unusable value.
     if (p.imageUrl && isImageKitUrl(p.imageUrl)) {
@@ -310,8 +310,15 @@ export function CreateAnnouncementDialog({
 
   const imageInvalid =
     payload.imageUrl.trim() !== "" && !isImageKitUrl(payload.imageUrl.trim());
-  // A bad image blocks Publish, so never let it hide behind a collapsed section.
-  const linkExpanded = linkOpen || imageInvalid;
+  // A pack announcement fills link, image and button from the pack itself, so
+  // the whole section is noise there — it collapses to a one-line escape hatch.
+  // The exceptions force it open: a bad image blocks Publish, and a pack with
+  // no image is the one case where there IS something to do by hand.
+  const packAutoFilled = template === "pack";
+  const linkExpanded =
+    linkOpen ||
+    imageInvalid ||
+    (packAutoFilled && pack != null && !pack.imageUrl);
   const filledParts = [
     payload.imageUrl.trim() ? "Image" : null,
     payload.url.trim() ? "Link" : null,
@@ -475,82 +482,78 @@ export function CreateAnnouncementDialog({
             />
           </div>
 
-          <div className="rounded-md border">
-            <button
-              type="button"
-              onClick={() => setLinkOpen((v) => !v)}
-              className="flex w-full items-center gap-1.5 px-3 py-2 text-left"
-            >
-              {linkExpanded ? (
-                <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-              ) : (
-                <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+          {packAutoFilled ? (
+            <div className="space-y-2">
+              {linkExpanded && (
+                <div className="rounded-md border p-3">
+                  <PayloadFields
+                    payload={payload}
+                    onChange={(patch) =>
+                      setPayload((cur) => ({ ...cur, ...patch }))
+                    }
+                    imageInvalid={imageInvalid}
+                    uploading={uploading}
+                    disabled={isPending}
+                    onUpload={handleUpload}
+                  />
+                </div>
               )}
-              <span className="text-xs font-medium">
-                Link, image &amp; button
-              </span>
-              <span
-                className={`ml-auto truncate text-[11px] ${
-                  imageInvalid
-                    ? "text-rose-600 dark:text-rose-400"
-                    : "text-muted-foreground"
-                }`}
+              <button
+                type="button"
+                onClick={() => setLinkOpen((v) => !v)}
+                className="text-[11px] text-muted-foreground hover:text-foreground"
               >
-                {imageInvalid
-                  ? "Image needs attention"
-                  : filledParts.length > 0
-                    ? filledParts.join(" · ")
-                    : "Text only"}
-              </span>
-            </button>
+                {linkExpanded
+                  ? "Hide link, image & button"
+                  : "Edit link, image & button"}
+              </button>
+            </div>
+          ) : (
+            <div className="rounded-md border">
+              <button
+                type="button"
+                onClick={() => setLinkOpen((v) => !v)}
+                className="flex w-full items-center gap-1.5 px-3 py-2 text-left"
+              >
+                {linkExpanded ? (
+                  <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+                )}
+                <span className="text-xs font-medium">
+                  Link, image &amp; button
+                </span>
+                <span
+                  className={`ml-auto truncate text-[11px] ${
+                    imageInvalid
+                      ? "text-rose-600 dark:text-rose-400"
+                      : "text-muted-foreground"
+                  }`}
+                >
+                  {imageInvalid
+                    ? "Image needs attention"
+                    : filledParts.length > 0
+                      ? filledParts.join(" · ")
+                      : "Text only"}
+                </span>
+              </button>
 
-            {linkExpanded && (
-              <div className="space-y-3 border-t p-3">
-                <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">
-                    Link (optional)
-                  </Label>
-                  <Input
-                    value={payload.url}
-                    onChange={(e) =>
-                      setPayload((cur) => ({ ...cur, url: e.target.value }))
+              {linkExpanded && (
+                <div className="border-t p-3">
+                  <PayloadFields
+                    payload={payload}
+                    onChange={(patch) =>
+                      setPayload((cur) => ({ ...cur, ...patch }))
                     }
-                    placeholder="https://packy.gg/games/packs/…"
+                    imageInvalid={imageInvalid}
+                    uploading={uploading}
                     disabled={isPending}
+                    onUpload={handleUpload}
                   />
                 </div>
-
-                <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">
-                    Button label (optional)
-                  </Label>
-                  <Input
-                    value={payload.ctaLabel}
-                    onChange={(e) =>
-                      setPayload((cur) => ({
-                        ...cur,
-                        ctaLabel: e.target.value,
-                      }))
-                    }
-                    placeholder="e.g. Open pack"
-                    maxLength={ANNOUNCEMENT_CTA_MAX}
-                    disabled={isPending}
-                  />
-                </div>
-
-                <ImageField
-                  value={payload.imageUrl}
-                  invalid={imageInvalid}
-                  uploading={uploading}
-                  disabled={isPending}
-                  onChange={(v) =>
-                    setPayload((cur) => ({ ...cur, imageUrl: v }))
-                  }
-                  onUpload={handleUpload}
-                />
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
           <AnnouncementPreview
             title={title}
@@ -675,6 +678,60 @@ export function CreateAnnouncementDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** The three payload inputs, shared by both containers (bordered collapsible
+ * on the text/page/promo templates, bare escape hatch on the pack one). */
+function PayloadFields({
+  payload,
+  onChange,
+  imageInvalid,
+  uploading,
+  disabled,
+  onUpload,
+}: {
+  payload: AnnouncementPayloadDraft;
+  onChange: (patch: Partial<AnnouncementPayloadDraft>) => void;
+  imageInvalid: boolean;
+  uploading: boolean;
+  disabled: boolean;
+  onUpload: (file: File) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1">
+        <Label className="text-xs text-muted-foreground">Link (optional)</Label>
+        <Input
+          value={payload.url}
+          onChange={(e) => onChange({ url: e.target.value })}
+          placeholder="https://packy.gg/games/packs/…"
+          disabled={disabled}
+        />
+      </div>
+
+      <div className="space-y-1">
+        <Label className="text-xs text-muted-foreground">
+          Button label (optional)
+        </Label>
+        <Input
+          value={payload.ctaLabel}
+          onChange={(e) => onChange({ ctaLabel: e.target.value })}
+          placeholder="e.g. Open now"
+          maxLength={ANNOUNCEMENT_CTA_MAX}
+          disabled={disabled}
+        />
+      </div>
+
+      <ImageField
+        value={payload.imageUrl}
+        invalid={imageInvalid}
+        uploading={uploading}
+        disabled={disabled}
+        onChange={(v) => onChange({ imageUrl: v })}
+        onUpload={onUpload}
+      />
+    </div>
   );
 }
 
