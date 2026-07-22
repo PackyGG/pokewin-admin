@@ -53,36 +53,22 @@ export function WagerWeightsSection({
         <TabsTrigger value="multiplier">Multiplier Tiers</TabsTrigger>
       </TabsList>
 
-      <TabsContent value="leaderboard" className="space-y-2">
-        <p className="text-xs text-muted-foreground">
-          Weight BY GAME (packs / battles / upgrader) — feeds official races
-          and creator/affiliate leaderboards.
-        </p>
+      {/* Each card already carries its own CardTitle + CardDescription
+          explaining its axis — no extra caption here, that was just the
+          same text shown twice on every tab switch. */}
+      <TabsContent value="leaderboard">
         <LeaderboardWagerWeightsCard initial={leaderboardWeights} />
       </TabsContent>
 
-      <TabsContent value="rakeback" className="space-y-2">
-        <p className="text-xs text-muted-foreground">
-          Weight BY GAME (packs / battles / upgrader) — feeds the rakeback
-          wager base. Same axis as Leaderboards, different destination.
-        </p>
+      <TabsContent value="rakeback">
         <RakebackWagerWeightsCard initial={rakebackWeights} />
       </TabsContent>
 
-      <TabsContent value="source" className="space-y-2">
-        <p className="text-xs text-muted-foreground">
-          Weight BY WHERE THE MONEY CAME FROM (deposit vs race prize, rain,
-          rakeback, affiliate, tips) — across withdrawal, rakeback, and
-          leaderboard destinations at once.
-        </p>
+      <TabsContent value="source">
         <SourceWagerWeightsCard initial={sourceWeights} />
       </TabsContent>
 
-      <TabsContent value="multiplier" className="space-y-2">
-        <p className="text-xs text-muted-foreground">
-          Weight BY PAYOUT MULTIPLIER the player picked (upgrader only) —
-          discounts near-guaranteed low-multiplier bets.
-        </p>
+      <TabsContent value="multiplier">
         <MultiplierWagerWeightsCard initial={multiplierWeights} />
       </TabsContent>
     </Tabs>
