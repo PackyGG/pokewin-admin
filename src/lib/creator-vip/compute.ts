@@ -81,26 +81,53 @@ async function isVipNow(userId: string): Promise<boolean> {
 }
 
 /**
- * Account standing, re-read live on every check.
+ * Account standing + the code the player is CURRENTLY on, re-read live on
+ * every check.
  *
- * A banned or locked player must not be able to file claims — the bot is a
- * side door into a payout, and it would be absurd for someone banned on the
- * site to keep earning through Discord. Checked HERE rather than only at the
- * API boundary so the admin preview and the bot agree, and so a future caller
- * can't accidentally skip it.
+ * Two independent guards, one read:
+ *
+ *  • Banned / locked players must not be able to file claims. The bot is a
+ *    side door into a payout, and it would be absurd for someone banned on
+ *    the site to keep earning through Discord.
+ *
+ *  • `activeCode` is the code the player is attached to RIGHT NOW. It mirrors
+ *    the backend's own `getActiveAffiliateCode`: a code counts as active only
+ *    when it is set, flagged active, and its 7-day attribution has not
+ *    lapsed. Once it has, the player is on no code at all and their wager
+ *    stops booking to anyone — so they must not be able to keep claiming.
+ *
+ * Checked HERE rather than at the API boundary so the admin preview and the
+ * bot agree, and so a future caller can't accidentally skip it.
  *
  * Returns null when the user row is missing entirely, which is itself a
  * refusal: an id that resolves to nothing is not a real claimant.
  */
-async function accountStanding(
-  userId: string,
-): Promise<{ banned: boolean; locked: boolean } | null> {
+async function userStanding(userId: string): Promise<{
+  banned: boolean;
+  locked: boolean;
+  activeCode: string | null;
+} | null> {
   const row = await getProdDb().user.findUnique({
     where: { id: userId },
-    select: { is_banned: true, is_locked: true },
+    select: {
+      is_banned: true,
+      is_locked: true,
+      affiliate_code: true,
+      affiliate_code_active: true,
+      affiliate_code_expires_at: true,
+    },
   });
   if (!row) return null;
-  return { banned: row.is_banned, locked: row.is_locked };
+
+  const notLapsed =
+    row.affiliate_code_expires_at != null &&
+    row.affiliate_code_expires_at.getTime() > Date.now();
+  const activeCode =
+    row.affiliate_code && row.affiliate_code_active === true && notLapsed
+      ? row.affiliate_code.toUpperCase()
+      : null;
+
+  return { banned: row.is_banned, locked: row.is_locked, activeCode };
 }
 
 /**
@@ -266,7 +293,7 @@ export async function computeEntitlement(
     };
   }
 
-  const standing = await accountStanding(userId);
+  const standing = await userStanding(userId);
   if (!standing) {
     return { ...empty, blockedReason: "No such player." };
   }
@@ -275,6 +302,21 @@ export async function computeEntitlement(
   }
   if (standing.locked) {
     return { ...empty, blockedReason: "This account is locked." };
+  }
+
+  // MUST still be actively on one of the program's codes. Progress is earned
+  // by staying under the creator, so someone who has moved to another code —
+  // or whose 7-day attribution has simply lapsed — cannot keep cashing in the
+  // wager they built up here. Re-entering the code makes them eligible again
+  // (the run itself is unaffected; only claiming is gated).
+  const upperCodes = program.codes.map((c) => c.toUpperCase());
+  if (!standing.activeCode || !upperCodes.includes(standing.activeCode)) {
+    return {
+      ...empty,
+      blockedReason: standing.activeCode
+        ? "No longer on this creator's code — they've moved to another one."
+        : "Not currently on this creator's code — re-enter it to claim.",
+    };
   }
 
   // The current run's start gates everything below it, so it is resolved

@@ -875,6 +875,14 @@ function ClaimRow({ claim }: { claim: CreatorRewardClaimRow }) {
                 VIP
               </Badge>
             )}
+            {claim.stillOnCode === false && (
+              <Badge
+                variant="outline"
+                className="bg-amber-500/15 text-[10px] text-amber-600 dark:text-amber-400"
+              >
+                Left the code
+              </Badge>
+            )}
             {statusBadge}
           </div>
           <div className="mt-0.5 text-xs text-muted-foreground">
@@ -1005,6 +1013,14 @@ function ApproveDialog({
             {claim.programName}.
           </DialogDescription>
         </DialogHeader>
+
+        {claim.stillOnCode === false && (
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+            This player is no longer on the code. They earned this before
+            leaving, so it&apos;s still payable — but they can&apos;t claim
+            again unless they come back.
+          </div>
+        )}
 
         <div className="space-y-3">
           <div className="space-y-1.5">

@@ -111,6 +111,17 @@ export type CreatorRewardClaimRow = {
   reviewedAt: string | null;
   reviewNote: string | null;
   ledgerTxId: string | null;
+  /**
+   * PENDING rows only: is the player STILL actively on one of the program's
+   * codes right now?
+   *
+   * Claims are not auto-voided when someone leaves — a claim filed on day 6
+   * and reviewed on day 8 was legitimately earned, and the 7-day attribution
+   * window means that gap is routine, so blocking it would strand honest
+   * claims purely because review was slow. Instead the reviewer is TOLD, and
+   * decides. `null` for already-reviewed rows, where it's no longer relevant.
+   */
+  stillOnCode: boolean | null;
 };
 
 export async function getClaims(params: {
@@ -134,6 +145,44 @@ export async function getClaims(params: {
     ...claims.map((c) => c.user_id),
     ...claims.map((c) => c.program.creator_user_id),
   ]);
+
+  // One batched read for every pending claimant's CURRENT code, rather than a
+  // per-row probe. Mirrors the same active-code rule the eligibility engine
+  // uses (set + flagged active + attribution not lapsed).
+  const pendingUserIds = [
+    ...new Set(
+      claims.filter((c) => c.status === "pending").map((c) => c.user_id),
+    ),
+  ];
+  const activeCodeByUser = new Map<string, string | null>();
+  if (pendingUserIds.length > 0) {
+    try {
+      const rows = await getProdDb().user.findMany({
+        where: { id: { in: pendingUserIds } },
+        select: {
+          id: true,
+          affiliate_code: true,
+          affiliate_code_active: true,
+          affiliate_code_expires_at: true,
+        },
+      });
+      for (const r of rows) {
+        const live =
+          r.affiliate_code_expires_at != null &&
+          r.affiliate_code_expires_at.getTime() > Date.now();
+        activeCodeByUser.set(
+          r.id,
+          r.affiliate_code && r.affiliate_code_active === true && live
+            ? r.affiliate_code.toUpperCase()
+            : null,
+        );
+      }
+    } catch (err) {
+      // Leave the map empty → `stillOnCode` reports null (unknown) rather than
+      // a confident "they left", which would be worse than saying nothing.
+      console.error("[creator-vip] active-code lookup failed:", err);
+    }
+  }
 
   // Reviewer names come from the ADMIN DB (they're admin users, not players).
   const reviewerIds = [
@@ -175,6 +224,12 @@ export async function getClaims(params: {
     reviewedAt: c.reviewed_at?.toISOString() ?? null,
     reviewNote: c.review_note,
     ledgerTxId: c.ledger_tx_id,
+    stillOnCode:
+      c.status !== "pending" || !activeCodeByUser.has(c.user_id)
+        ? null
+        : c.program.codes
+            .map((code) => code.toUpperCase())
+            .includes(activeCodeByUser.get(c.user_id) ?? ""),
   }));
 }
 
