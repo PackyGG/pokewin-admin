@@ -2042,7 +2042,15 @@ model creator_reward_programs {
 model creator_reward_claims {
   id                  String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   program_id          String                  @db.Uuid
-  program             creator_reward_programs @relation(fields: [program_id], references: [id], onDelete: Cascade)
+  /// RESTRICT, deliberately NOT Cascade. An approved claim is a financial
+  /// record: it is the authorization behind a real balance credit, and its id
+  /// is stamped on that prod ledger row (`metadata.vip_claim_id`). Cascading
+  /// would let deleting a program silently destroy the audit trail for money
+  /// already paid, leaving ledger rows pointing at a claim that no longer
+  /// exists. Deactivate a program (`is_active = false`) instead of deleting;
+  /// if a program genuinely must go, its claims have to be dealt with first,
+  /// as an explicit decision.
+  program             creator_reward_programs @relation(fields: [program_id], references: [id], onDelete: Restrict)
   /// MAIN-DB `user.id` of the claimant. Loose column (cross-DB).
   user_id             String
   /// Discord id the claim came in on — provenance only. NEVER used to resolve
