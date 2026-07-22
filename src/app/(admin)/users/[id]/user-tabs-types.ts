@@ -47,6 +47,13 @@ export type UserDetail = {
     state: string | null;
     continentCode: string;
     signupIp: string | null;
+    /**
+     * Other accounts that signed up from the same IP. 0 = unique. A count,
+     * not a flag: ~33% of users share a signup IP and nine addresses carry
+     * ~1,490 of them (CGNAT / VPN / office NAT), so only a SMALL cluster is
+     * meaningful.
+     */
+    signupIpSharedCount: number;
     referredBy: string | null;
     referredByUsername: string | null;
     /**

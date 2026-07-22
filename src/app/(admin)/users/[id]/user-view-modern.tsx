@@ -45,6 +45,7 @@ import {
   ShieldBan,
   BadgeCheck,
   Fingerprint,
+  Network,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -500,6 +501,7 @@ export function UserViewModern({
                 deviceConfidence={user.deviceConfidence}
                 deviceVisitorId={user.deviceVisitorId}
                 deviceVisitorIdCount={user.deviceVisitorIdCount}
+                signupIpSharedCount={user.signupIpSharedCount}
               />
             </div>
 
@@ -674,6 +676,13 @@ export function UserViewModern({
 //  "Wager Left" KPI tile already surfaces it, so a chip would duplicate it.
 // ───────────────────────────────────────────────────────────────────
 
+/**
+ * Above this many OTHER accounts on one signup IP, sharing stops being
+ * evidence. Prod distribution: 11,043 unique IPs, ~1,000 pairs, then a long
+ * tail to a single address with 667 users.
+ */
+const IP_CLUSTER_SUSPICIOUS_MAX = 4;
+
 function FlagChip({
   icon: Icon,
   label,
@@ -708,6 +717,7 @@ function HeroFlagsStrip({
   deviceConfidence,
   deviceVisitorId,
   deviceVisitorIdCount,
+  signupIpSharedCount,
 }: {
   statusKey: "active" | "locked" | "banned";
   selfExclusion: SelfExclusionState;
@@ -726,6 +736,8 @@ function HeroFlagsStrip({
   deviceVisitorId: string | null;
   /** Distinct visitor_ids for this user (>1 = seen on multiple devices). */
   deviceVisitorIdCount: number;
+  /** Other accounts sharing this user's signup IP. 0 = unique to them. */
+  signupIpSharedCount: number;
 }) {
   return (
     // `display: contents` — the strip owns no box of its own; its chips
@@ -857,6 +869,28 @@ function HeroFlagsStrip({
           />
         );
       })()}
+      {/* Shared signup IP. Amber ONLY for a small cluster — that band is
+          where sharing is actually worth investigating. Bigger clusters are
+          CGNAT / VPN exits / office NAT (nine IPs on prod carry ~1,490 users
+          between them), so they render muted and informational. Never rose:
+          rose belongs to the device fingerprint, which is the high-confidence
+          signal, and a second red would flatten that distinction. */}
+      {signupIpSharedCount > 0 && (
+        <FlagChip
+          icon={Network}
+          label={`IP ×${signupIpSharedCount}`}
+          className={
+            signupIpSharedCount <= IP_CLUSTER_SUSPICIOUS_MAX
+              ? "border-amber-500/30 bg-amber-500/15 text-amber-600 dark:text-amber-400"
+              : "border-border/60 bg-muted/50 text-muted-foreground"
+          }
+          title={
+            signupIpSharedCount <= IP_CLUSTER_SUSPICIOUS_MAX
+              ? `Signup IP shared with ${signupIpSharedCount} other account${signupIpSharedCount === 1 ? "" : "s"} — a cluster this small is worth a look`
+              : `Signup IP shared with ${signupIpSharedCount} other accounts — a cluster this large is almost always CGNAT, a VPN exit or office NAT, not alts`
+          }
+        />
+      )}
       {/* Wager requirement is intentionally NOT surfaced here — the
           dedicated "Wager Left" KPI tile in the hero already shows the
           remaining requirement (met / $X left / exempt), so a duplicate
