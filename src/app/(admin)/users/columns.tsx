@@ -40,6 +40,8 @@ export type UserRow = {
   suspectedAlt: boolean;
   /** A fingerprint row exists — false means capture never happened. */
   hasDeviceId: boolean;
+  /** Newest FingerprintJS visitor_id, null when never captured. */
+  deviceVisitorId: string | null;
 };
 
 function PnlCell({ value }: { value: number }) {
@@ -161,6 +163,52 @@ export const columns: ColumnDef<UserRow>[] = [
           (row.original.countryCode ? row.original.countryCode : "—")}
       </span>
     ),
+  },
+  {
+    // Device fingerprint (FingerprintJS visitor_id). Not sortable — there's
+    // no backend sort key for it, and it's an identifier rather than a
+    // measure. Mirrors the affiliate-code cell's badge + "—" convention.
+    // Rose when the alt heuristic fired, muted otherwise; an amber "none"
+    // marks a user we never identified, which is a coverage gap rather than
+    // a clean bill of health.
+    id: "deviceVisitorId",
+    header: () => (
+      <span className="text-xs font-medium text-muted-foreground">
+        Device ID
+      </span>
+    ),
+    cell: ({ row }) => {
+      const id = row.original.deviceVisitorId;
+      if (!id) {
+        return (
+          <Badge
+            variant="outline"
+            className="border-amber-500/30 bg-amber-500/15 font-mono text-xs text-amber-600 dark:text-amber-400"
+            title="No device fingerprint captured — alt-detection cannot evaluate this account"
+          >
+            none
+          </Badge>
+        );
+      }
+      return (
+        <Badge
+          variant="outline"
+          className={cn(
+            "font-mono text-xs",
+            row.original.suspectedAlt
+              ? "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
+              : "border-border/60 bg-muted/50 text-muted-foreground",
+          )}
+          title={
+            row.original.suspectedAlt
+              ? `Suspected alt. Device ID (visitor_id): ${id}`
+              : `Device ID (visitor_id): ${id}`
+          }
+        >
+          {id.slice(0, 12)}
+        </Badge>
+      );
+    },
   },
   {
     // Affiliate/referral code this user signed up under (`user.affiliate_code`).

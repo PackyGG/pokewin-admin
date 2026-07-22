@@ -804,6 +804,15 @@ type UserListItem = {
    * gap worth seeing rather than a clean bill of health.
    */
   hasDeviceId: boolean;
+  /** Newest FingerprintJS visitor_id — the device ID, null when uncaptured. */
+  deviceVisitorId: string | null;
+};
+
+/** One grouped `fingerprints` row per user on the current page. */
+type DeviceRow = {
+  user_id: string;
+  suspected_alt: boolean | null;
+  visitor_id: string | null;
 };
 
 const USER_LIST_SELECT = {
@@ -909,28 +918,29 @@ async function hydrateUserListPage(
     // degrades every row on this page to "unknown" rather than breaking the
     // list render.
     userIds.length > 0
-      ? db.$queryRaw<{ user_id: string; suspected_alt: boolean | null }[]>`
-          SELECT user_id, bool_or(suspected_alt_triggered) AS suspected_alt
+      ? db.$queryRaw<DeviceRow[]>`
+          SELECT
+            user_id,
+            bool_or(suspected_alt_triggered) AS suspected_alt,
+            -- Newest visitor_id: a user can accumulate several across
+            -- devices / storage clears; the latest is the one worth showing.
+            (array_agg(visitor_id ORDER BY created_at DESC))[1] AS visitor_id
           FROM fingerprints
           WHERE user_id = ANY(${userIds})
           GROUP BY user_id
         `.catch((e) => {
           console.error("[getUsers] device fingerprint lookup failed:", e);
-          return [] as { user_id: string; suspected_alt: boolean | null }[];
+          return [] as DeviceRow[];
         })
-      : Promise.resolve(
-          [] as { user_id: string; suspected_alt: boolean | null }[],
-        ),
+      : Promise.resolve([] as DeviceRow[]),
   ]);
 
   const depositCountMap = new Map(
     depositCountRows.map((d) => [d.user_id, d._count._all]),
   );
   // Present in the map ⇒ a fingerprint row exists for that user (device was
-  // captured). The boolean is the alt flag on top of that.
-  const deviceByUserId = new Map(
-    suspectedAltRows.map((r) => [r.user_id, r.suspected_alt === true]),
-  );
+  // captured). The row carries the alt flag and the newest visitor_id.
+  const deviceByUserId = new Map(suspectedAltRows.map((r) => [r.user_id, r]));
 
   return {
     data: users.map((u) => {
@@ -971,8 +981,9 @@ async function hydrateUserListPage(
         depositCount: depositCountMap.get(u.id) ?? 0,
         pnl,
         createdAt: u.created_at.toISOString(),
-        suspectedAlt: deviceByUserId.get(u.id) === true,
+        suspectedAlt: deviceByUserId.get(u.id)?.suspected_alt === true,
         hasDeviceId: deviceByUserId.has(u.id),
+        deviceVisitorId: deviceByUserId.get(u.id)?.visitor_id ?? null,
       };
     }),
     total,
