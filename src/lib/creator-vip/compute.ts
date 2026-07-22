@@ -90,11 +90,25 @@ async function isVipNow(userId: string): Promise<boolean> {
  *    side door into a payout, and it would be absurd for someone banned on
  *    the site to keep earning through Discord.
  *
- *  • `activeCode` is the code the player is attached to RIGHT NOW. It mirrors
- *    the backend's own `getActiveAffiliateCode`: a code counts as active only
- *    when it is set, flagged active, and its 7-day attribution has not
- *    lapsed. Once it has, the player is on no code at all and their wager
- *    stops booking to anyone — so they must not be able to keep claiming.
+ *  • `currentCode` is whatever code is SET on the player right now — read
+ *    straight off the column, with NO expiry test.
+ *
+ * ── EXPIRING IS FINE. SWITCHING IS NOT. ───────────────────────────────────
+ * These are very different events and only one of them is the player's doing:
+ *
+ *   EXPIRED  — the 7-day attribution simply lapsed. The code is still the one
+ *              they chose; they did nothing. Wager stops booking until they
+ *              re-enter it, but everything already earned stays claimable.
+ *
+ *   SWITCHED — they deliberately moved to a different creator's code. That is
+ *              a choice to leave, and it forfeits the right to keep cashing
+ *              in wager built up here.
+ *
+ * So the gate is "is the code still THEIRS", not "is the code still live" —
+ * which is why `affiliate_code_expires_at` is deliberately NOT consulted here
+ * (`/discord/info` still reports the remaining time, for the player's sake).
+ * A NULL code is treated as not-a-switch: an admin clearing someone's code,
+ * or a lapse that nulled it, should never silently confiscate earned rewards.
  *
  * Checked HERE rather than at the API boundary so the admin preview and the
  * bot agree, and so a future caller can't accidentally skip it.
@@ -105,7 +119,8 @@ async function isVipNow(userId: string): Promise<boolean> {
 async function userStanding(userId: string): Promise<{
   banned: boolean;
   locked: boolean;
-  activeCode: string | null;
+  currentCode: string | null;
+  codeExpiresAt: Date | null;
 } | null> {
   const row = await getProdDb().user.findUnique({
     where: { id: userId },
@@ -113,21 +128,17 @@ async function userStanding(userId: string): Promise<{
       is_banned: true,
       is_locked: true,
       affiliate_code: true,
-      affiliate_code_active: true,
       affiliate_code_expires_at: true,
     },
   });
   if (!row) return null;
 
-  const notLapsed =
-    row.affiliate_code_expires_at != null &&
-    row.affiliate_code_expires_at.getTime() > Date.now();
-  const activeCode =
-    row.affiliate_code && row.affiliate_code_active === true && notLapsed
-      ? row.affiliate_code.toUpperCase()
-      : null;
-
-  return { banned: row.is_banned, locked: row.is_locked, activeCode };
+  return {
+    banned: row.is_banned,
+    locked: row.is_locked,
+    currentCode: row.affiliate_code ? row.affiliate_code.toUpperCase() : null,
+    codeExpiresAt: row.affiliate_code_expires_at,
+  };
 }
 
 /**
@@ -304,18 +315,14 @@ export async function computeEntitlement(
     return { ...empty, blockedReason: "This account is locked." };
   }
 
-  // MUST still be actively on one of the program's codes. Progress is earned
-  // by staying under the creator, so someone who has moved to another code —
-  // or whose 7-day attribution has simply lapsed — cannot keep cashing in the
-  // wager they built up here. Re-entering the code makes them eligible again
-  // (the run itself is unaffected; only claiming is gated).
+  // Blocked ONLY on a deliberate switch to a different creator's code. An
+  // expired (or cleared) code is not a switch — the player didn't choose to
+  // leave, so what they already earned stays claimable. See `userStanding`.
   const upperCodes = program.codes.map((c) => c.toUpperCase());
-  if (!standing.activeCode || !upperCodes.includes(standing.activeCode)) {
+  if (standing.currentCode && !upperCodes.includes(standing.currentCode)) {
     return {
       ...empty,
-      blockedReason: standing.activeCode
-        ? "No longer on this creator's code — they've moved to another one."
-        : "Not currently on this creator's code — re-enter it to claim.",
+      blockedReason: `Switched to another creator's code (${standing.currentCode}) — rewards earned here can no longer be claimed.`,
     };
   }
 

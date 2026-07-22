@@ -878,12 +878,12 @@ function ClaimRow({ claim }: { claim: CreatorRewardClaimRow }) {
                 VIP
               </Badge>
             )}
-            {claim.stillOnCode === false && (
+            {claim.switchedAway === true && (
               <Badge
                 variant="outline"
                 className="bg-amber-500/15 text-[10px] text-amber-600 dark:text-amber-400"
               >
-                Left the code
+                Switched code
               </Badge>
             )}
             {claim.reinstatedAt && (
@@ -1127,11 +1127,11 @@ function ApproveDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {claim.stillOnCode === false && (
+        {claim.switchedAway === true && (
           <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
-            This player is no longer on the code. They earned this before
-            leaving, so it&apos;s still payable — but they can&apos;t claim
-            again unless they come back.
+            This player has since switched to another creator&apos;s code. They
+            earned this before leaving, so it&apos;s still payable — but they
+            can&apos;t claim here again unless they come back.
           </div>
         )}
 

@@ -4,7 +4,7 @@ import { adminDb } from "@/lib/admin-db";
 import { getProdDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
-import { computeEntitlement } from "./compute";
+import { computeAllEntitlements, computeEntitlement } from "./compute";
 import type {
   CreatorRewardClaimStatus,
   CreatorRewardProgramWithStats,
@@ -114,16 +114,18 @@ export type CreatorRewardClaimRow = {
   /** Set when this claim was rejected and later put back into review. */
   reinstatedAt: string | null;
   /**
-   * PENDING rows only: is the player STILL actively on one of the program's
-   * codes right now?
+   * PENDING rows only: has the player deliberately SWITCHED to a different
+   * creator's code since filing?
    *
-   * Claims are not auto-voided when someone leaves — a claim filed on day 6
-   * and reviewed on day 8 was legitimately earned, and the 7-day attribution
-   * window means that gap is routine, so blocking it would strand honest
-   * claims purely because review was slow. Instead the reviewer is TOLD, and
-   * decides. `null` for already-reviewed rows, where it's no longer relevant.
+   * Only a switch counts. An expired code is not one — the attribution simply
+   * lapsed and the player did nothing, so it is no reason to flag the claim.
+   *
+   * Claims are never auto-voided either way: one filed on day 6 and reviewed
+   * on day 8 was legitimately earned, and with a 7-day window that gap is
+   * routine. The reviewer is TOLD and decides. `null` for already-reviewed
+   * rows, and when the lookup failed.
    */
-  stillOnCode: boolean | null;
+  switchedAway: boolean | null;
 };
 
 export async function getClaims(params: {
@@ -149,8 +151,8 @@ export async function getClaims(params: {
   ]);
 
   // One batched read for every pending claimant's CURRENT code, rather than a
-  // per-row probe. Mirrors the same active-code rule the eligibility engine
-  // uses (set + flagged active + attribution not lapsed).
+  // per-row probe. Mirrors the eligibility engine: the raw column, with NO
+  // expiry test — expiring is not switching.
   const pendingUserIds = [
     ...new Set(
       claims.filter((c) => c.status === "pending").map((c) => c.user_id),
@@ -161,27 +163,17 @@ export async function getClaims(params: {
     try {
       const rows = await getProdDb().user.findMany({
         where: { id: { in: pendingUserIds } },
-        select: {
-          id: true,
-          affiliate_code: true,
-          affiliate_code_active: true,
-          affiliate_code_expires_at: true,
-        },
+        select: { id: true, affiliate_code: true },
       });
       for (const r of rows) {
-        const live =
-          r.affiliate_code_expires_at != null &&
-          r.affiliate_code_expires_at.getTime() > Date.now();
         activeCodeByUser.set(
           r.id,
-          r.affiliate_code && r.affiliate_code_active === true && live
-            ? r.affiliate_code.toUpperCase()
-            : null,
+          r.affiliate_code ? r.affiliate_code.toUpperCase() : null,
         );
       }
     } catch (err) {
-      // Leave the map empty → `stillOnCode` reports null (unknown) rather than
-      // a confident "they left", which would be worse than saying nothing.
+      // Leave the map empty → `switchedAway` reports null (unknown) rather
+      // than a confident "they left", which is worse than saying nothing.
       console.error("[creator-vip] active-code lookup failed:", err);
     }
   }
@@ -227,13 +219,87 @@ export async function getClaims(params: {
     reviewNote: c.review_note,
     ledgerTxId: c.ledger_tx_id,
     reinstatedAt: c.reinstated_at?.toISOString() ?? null,
-    stillOnCode:
-      c.status !== "pending" || !activeCodeByUser.has(c.user_id)
-        ? null
-        : c.program.codes
-            .map((code) => code.toUpperCase())
-            .includes(activeCodeByUser.get(c.user_id) ?? ""),
+    switchedAway: (() => {
+      if (c.status !== "pending" || !activeCodeByUser.has(c.user_id)) {
+        return null;
+      }
+      const now = activeCodeByUser.get(c.user_id) ?? null;
+      // No code set is not a switch — only being on a DIFFERENT one is.
+      if (!now) return false;
+      return !c.program.codes.map((x) => x.toUpperCase()).includes(now);
+    })(),
   }));
+}
+
+export type PlayerRewardSummary = {
+  userId: string;
+  username: string | null;
+  /** The code currently set on the player, UPPERCASE. Null if they have none. */
+  code: string | null;
+  /** When the 7-day attribution lapses. Null when no code / no expiry set. */
+  codeExpiresAt: string | null;
+  /**
+   * Seconds until the attribution lapses, floored at 0. Null when unknown.
+   * An expired code is NOT a problem for claiming — see `computeEntitlement`
+   * — but the player still wants to know, so it's reported either way.
+   */
+  codeSecondsRemaining: number | null;
+  /** True once the window has passed. Wager stops booking until they re-enter. */
+  codeExpired: boolean;
+  /** Claimable right now, summed across every program they qualify on. */
+  openRewardsUsd: number;
+  /** Already filed and waiting on staff review. */
+  pendingReviewUsd: number;
+  /** Approved and paid out, lifetime. */
+  totalClaimedUsd: number;
+};
+
+/**
+ * Everything the bot's `/info` command shows about one player.
+ *
+ * Deliberately built from the SAME `computeAllEntitlements` the `/check`
+ * command uses, so the two commands can never quote different numbers.
+ */
+export async function getPlayerRewardSummary(
+  userId: string,
+): Promise<PlayerRewardSummary> {
+  const [user, entitlements, claimTotals] = await Promise.all([
+    getProdDb().user.findUnique({
+      where: { id: userId },
+      select: {
+        username: true,
+        affiliate_code: true,
+        affiliate_code_expires_at: true,
+      },
+    }),
+    computeAllEntitlements(userId),
+    adminDb.creator_reward_claims.groupBy({
+      by: ["status"],
+      where: { user_id: userId },
+      _sum: { amount_usd: true },
+    }),
+  ]);
+
+  const expiresAt = user?.affiliate_code_expires_at ?? null;
+  const msLeft = expiresAt ? expiresAt.getTime() - Date.now() : null;
+
+  const sumFor = (status: string) =>
+    toNumber(
+      claimTotals.find((t) => t.status === status)?._sum.amount_usd ?? 0,
+    );
+
+  return {
+    userId,
+    username: user?.username ?? null,
+    code: user?.affiliate_code ? user.affiliate_code.toUpperCase() : null,
+    codeExpiresAt: expiresAt?.toISOString() ?? null,
+    codeSecondsRemaining:
+      msLeft === null ? null : Math.max(0, Math.floor(msLeft / 1000)),
+    codeExpired: msLeft !== null && msLeft <= 0,
+    openRewardsUsd: entitlements.reduce((sum, e) => sum + e.amountUsd, 0),
+    pendingReviewUsd: sumFor("pending"),
+    totalClaimedUsd: sumFor("approved"),
+  };
 }
 
 export type CreateClaimResult =

@@ -48,6 +48,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/info",
+    summary:
+      "Body { discordUserId }. The player's summary card: username, user id, current code, seconds left on the code, and rewards open / pending review / claimed. RETURNS PROFILE DATA — separate scope on purpose.",
+    scopes: ["discord:info:read"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/claim",
     summary:
       "Body { discordUserId, claimableId }. Files a claim request for a creator VIP wager reward (the `vip_*` ids returned by /discord/rewards). Eligibility is recomputed server-side — the caller never supplies an amount. Creates a PENDING row for staff review; no balance moves until a human approves.",

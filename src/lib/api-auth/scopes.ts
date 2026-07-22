@@ -47,6 +47,12 @@ export const API_SCOPES = {
       "List what a Discord-linked player can currently claim (names + amounts). Separate from discord:read so reward data can be granted independently.",
     access: "prod-read",
   },
+  "discord:info:read": {
+    label: "Read a player's reward summary",
+    description:
+      "Username, user id, current code + time left on it, and rewards open / pending / claimed. UNLIKE the other Discord scopes this returns PROFILE DATA — grant it only to a bot that renders a player-facing card.",
+    access: "prod-read",
+  },
   "discord:verify": {
     label: "Run Discord verification",
     description:
