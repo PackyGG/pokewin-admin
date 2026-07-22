@@ -1,19 +1,22 @@
 "use client";
 
 /**
- * Bulk-ban control for /users. Admin/owner only — the parent decides whether
- * to render it, and `bulkBanFilteredUsers` re-checks server-side because a
- * render gate is not a security boundary.
+ * Self-contained bulk-ban dialog for /users. Criteria are picked INSIDE the
+ * popup — it does not read the page's URL filters, so the audit flow is one
+ * entry point rather than "set the list up first, then find the button".
+ *
+ * Admin/owner only. The parent decides whether to render it and BOTH server
+ * actions re-check, because a render gate is not a security boundary.
  *
  * There is no delete counterpart, by design: deleting would orphan ledger
  * rows, break the hash-chained audit trail, and null out `fingerprints.user_id`
- * — destroying the alt-detection evidence that justifies the ban in the first
- * place. Ban is reversible; delete is not.
+ * — destroying the alt-detection evidence that justifies the ban. Ban is
+ * reversible; delete is not.
  */
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Ban, Loader2 } from "lucide-react";
+import { Ban, Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -22,69 +25,170 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { bulkBanFilteredUsers } from "./actions";
+import { bulkBanFilteredUsers, previewBulkBanCount } from "./actions";
 
-/** Typed verbatim to arm the button — a deliberate speed bump. */
+/** Typed verbatim to arm the ban — a deliberate speed bump. */
 const CONFIRM_PHRASE = "BAN";
+/** Sentinel for "no preference" — Select can't hold undefined. */
+const ANY = "__any";
+/** Mirrors BULK_BAN_MAX server-side; display only, the server enforces it. */
+const MAX_DISPLAY = 25_000;
 
-export type BulkBanFilters = {
-  role?: string;
-  status?: string;
+type Criteria = {
   deposited?: string;
   provider?: string;
   sharedIp?: string;
   sharedDevice?: string;
   freeOnly?: string;
-  affiliateCode?: string;
-  affiliateOwnerId?: string;
+  status?: string;
 };
 
-export function BulkBanButton({
-  filters,
-  matchCount,
-}: {
-  filters: BulkBanFilters;
-  /**
-   * Rows the CURRENT filter matched. Sent back to the server, which aborts
-   * if its own count disagrees — so a signup landing between preview and
-   * confirm can't silently widen the blast radius.
-   */
-  matchCount: number;
-}) {
+const FIELDS: Array<{
+  key: keyof Criteria;
+  label: string;
+  hint?: string;
+  options: Array<{ value: string; label: string }>;
+}> = [
+  {
+    key: "freeOnly",
+    label: "Claimed free value, never deposited",
+    hint: "The farming shape — took a payout and never paid in.",
+    options: [
+      { value: "reward", label: "Reward pack, no deposit" },
+      { value: "rain", label: "Rain, no deposit" },
+    ],
+  },
+  {
+    key: "sharedIp",
+    label: "Signup IP",
+    options: [
+      { value: "yes", label: "Shared with other accounts" },
+      { value: "no", label: "Unique to this account" },
+    ],
+  },
+  {
+    key: "sharedDevice",
+    label: "Device",
+    hint: "Fingerprint capture started 2026-07-22 — near-empty for older accounts.",
+    options: [{ value: "yes", label: "Shared with other accounts" }],
+  },
+  {
+    key: "deposited",
+    label: "Deposited",
+    options: [
+      { value: "no", label: "Never deposited" },
+      { value: "yes", label: "Has deposited" },
+    ],
+  },
+  {
+    key: "provider",
+    label: "Signed up with",
+    options: [
+      { value: "discord", label: "Discord" },
+      { value: "google", label: "Google" },
+      { value: "steam", label: "Steam" },
+      { value: "credential", label: "Email + password" },
+    ],
+  },
+  {
+    key: "status",
+    label: "Status",
+    hint: "Already-banned accounts are skipped regardless.",
+    options: [
+      { value: "active", label: "Active" },
+      { value: "locked", label: "Locked" },
+    ],
+  },
+];
+
+export function BulkBanButton() {
   const [open, setOpen] = useState(false);
+  const [criteria, setCriteria] = useState<Criteria>({});
+  const [count, setCount] = useState<number | null>(null);
+  const [capped, setCapped] = useState(false);
   const [reason, setReason] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [pending, startTransition] = useTransition();
+  const [counting, startCount] = useTransition();
+  const [banning, startBan] = useTransition();
   const router = useRouter();
 
-  const activeFilters = Object.entries(filters).filter(([, v]) => !!v);
+  const activeCount = Object.values(criteria).filter(Boolean).length;
+  const busy = counting || banning;
+
+  const reset = () => {
+    setCriteria({});
+    setCount(null);
+    setCapped(false);
+    setReason("");
+    setConfirm("");
+  };
+
+  /**
+   * Any criteria edit invalidates the preview, so a stale count can never be
+   * the number that gets banned. The server independently re-checks it too.
+   */
+  const setField = (key: keyof Criteria, value: string) => {
+    setCriteria((prev) => ({
+      ...prev,
+      [key]: value === ANY ? undefined : value,
+    }));
+    setCount(null);
+    setCapped(false);
+    setConfirm("");
+  };
+
+  const preview = () => {
+    startCount(async () => {
+      const result = await previewBulkBanCount(criteria);
+      if (!result.success) {
+        toast.error(result.error);
+        setCount(null);
+        return;
+      }
+      setCount(result.data.count);
+      setCapped(result.data.capped);
+    });
+  };
+
   const armed =
+    count !== null &&
+    count > 0 &&
+    !capped &&
     reason.trim().length > 0 &&
     confirm === CONFIRM_PHRASE &&
-    matchCount > 0 &&
-    activeFilters.length > 0 &&
-    !pending;
+    !busy;
 
   const submit = () => {
-    if (!armed) return;
-    startTransition(async () => {
+    if (!armed || count === null) return;
+    startBan(async () => {
       const result = await bulkBanFilteredUsers({
-        filters,
+        filters: criteria,
         reason: reason.trim(),
-        expectedCount: matchCount,
+        expectedCount: count,
       });
       if (!result.success) {
         toast.error(result.error);
+        // Most likely the matching set moved — force a fresh preview.
+        setCount(null);
+        setConfirm("");
         return;
       }
       toast.success(
-        `Banned ${result.data.bannedCount.toLocaleString()} account${result.data.bannedCount === 1 ? "" : "s"}.`,
+        `Banned ${result.data.bannedCount.toLocaleString()} account${
+          result.data.bannedCount === 1 ? "" : "s"
+        }.`,
       );
       setOpen(false);
-      setReason("");
-      setConfirm("");
+      reset();
       router.refresh();
     });
   };
@@ -94,48 +198,87 @@ export function BulkBanButton({
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        if (!next) {
-          setReason("");
-          setConfirm("");
-        }
+        if (!next) reset();
       }}
     >
-      {/* Base UI (not Radix): Trigger renders its own <button>, so the
-          styles go straight on it — there is no `asChild`. */}
+      {/* Base UI (not Radix): Trigger renders its own <button>, so styles go
+          straight on it — there is no `asChild`. */}
       <DialogTrigger className="inline-flex h-9 items-center gap-1.5 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 text-xs font-medium text-rose-600 transition-colors hover:bg-rose-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-rose-400">
         <Ban className="size-3.5" />
         Bulk ban
       </DialogTrigger>
 
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
         <DialogTitle className="flex items-center gap-2">
           <Ban className="size-4 text-rose-500" />
-          Ban {matchCount.toLocaleString()} account
-          {matchCount === 1 ? "" : "s"}
+          Bulk ban
         </DialogTitle>
         <DialogDescription>
-          Every account matching the current filter is banned and signed out
-          immediately. Already-banned accounts, admins and support are skipped.
-          Nothing is deleted — this is reversible.
+          Pick criteria, preview how many accounts match, then ban them. Admins,
+          support and already-banned accounts are always skipped. Nothing is
+          deleted — this is reversible.
         </DialogDescription>
 
-        <div className="rounded-md border border-border bg-muted/40 p-3 text-xs">
-          <div className="mb-1.5 font-medium text-muted-foreground">
-            Matching on
+        <div className="space-y-3">
+          {FIELDS.map((f) => (
+            <div key={f.key} className="space-y-1">
+              <Label htmlFor={`bulk-${f.key}`}>{f.label}</Label>
+              <Select
+                value={criteria[f.key] ?? ANY}
+                onValueChange={(v) => setField(f.key, v ?? ANY)}
+              >
+                <SelectTrigger id={`bulk-${f.key}`}>
+                  <SelectValue placeholder="Any" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ANY}>Any</SelectItem>
+                  {f.options.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {f.hint && (
+                <p className="text-xs text-muted-foreground">{f.hint}</p>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-3 rounded-md border border-border bg-muted/40 p-3">
+          <button
+            type="button"
+            onClick={preview}
+            disabled={activeCount === 0 || busy}
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {counting ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Search className="size-3.5" />
+            )}
+            Preview
+          </button>
+          <div className="min-w-0 text-xs">
+            {activeCount === 0 ? (
+              <span className="text-muted-foreground">
+                Select at least one criterion.
+              </span>
+            ) : count === null ? (
+              <span className="text-muted-foreground">
+                Preview to see how many accounts match.
+              </span>
+            ) : capped ? (
+              <span className="text-rose-500">
+                Over the {MAX_DISPLAY.toLocaleString()} limit — narrow it down.
+              </span>
+            ) : (
+              <span className="font-medium">
+                {count.toLocaleString()} account{count === 1 ? "" : "s"} match
+              </span>
+            )}
           </div>
-          {activeFilters.length === 0 ? (
-            <p className="text-rose-500">
-              No filters active — select at least one first.
-            </p>
-          ) : (
-            <ul className="space-y-0.5 font-mono text-muted-foreground">
-              {activeFilters.map(([k, v]) => (
-                <li key={k}>
-                  {k} = {v}
-                </li>
-              ))}
-            </ul>
-          )}
         </div>
 
         <div className="space-y-1.5">
@@ -162,6 +305,7 @@ export function BulkBanButton({
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
             autoComplete="off"
+            disabled={count === null || count === 0 || capped}
           />
         </div>
 
@@ -179,8 +323,12 @@ export function BulkBanButton({
             disabled={!armed}
             className="inline-flex h-9 items-center gap-1.5 rounded-md bg-rose-600 px-3 text-xs font-medium text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {pending && <Loader2 className="size-3.5 animate-spin" />}
-            {pending ? "Banning…" : `Ban ${matchCount.toLocaleString()}`}
+            {banning && <Loader2 className="size-3.5 animate-spin" />}
+            {banning
+              ? "Banning…"
+              : count === null
+                ? "Ban"
+                : `Ban ${count.toLocaleString()}`}
           </button>
         </div>
       </DialogContent>

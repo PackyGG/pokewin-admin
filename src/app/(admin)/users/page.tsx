@@ -268,6 +268,7 @@ export default async function UsersPage({
                 },
               ]}
             >
+              {gates.canBulkBan && <BulkBanButton />}
               <SortByPnlLosersButton />
               <SortByPnlWinnersButton />
               <SortByUserNetWorthButton />
@@ -296,7 +297,6 @@ export default async function UsersPage({
             <UsersTableSection
               params={params}
               includeExcludedInSearch={gates.includeExcludedInSearch}
-              canBulkBan={gates.canBulkBan}
             />
           </Suspense>
         </FadeIn>
@@ -410,11 +410,9 @@ async function UsersKpiStrip() {
 async function UsersTableSection({
   params,
   includeExcludedInSearch,
-  canBulkBan,
 }: {
   params: UsersSearchParams;
   includeExcludedInSearch: boolean;
-  canBulkBan: boolean;
 }) {
   const { page, perPage } = params;
   const isSearch = Boolean(params.search?.trim());
@@ -502,40 +500,6 @@ async function UsersTableSection({
           )}
         </div>
       )}
-      {/* Bulk ban — admin/owner only, and only once an audit filter narrows
-          the set. Search is excluded on purpose: a free-text term routes
-          through the ranked/exact-match paths, so the ban resolver (which
-          uses the plain WHERE clause) could target a different population
-          than the screen is showing. `result.total` is the live match count
-          and the server re-checks it before acting. */}
-      {canBulkBan &&
-        !params.search?.trim() &&
-        !listFailed &&
-        result.total > 0 &&
-        (params.deposited ||
-          params.provider ||
-          params.sharedIp ||
-          params.sharedDevice ||
-          params.freeOnly ||
-          params.status ||
-          params.role) && (
-          <div className="flex justify-end">
-            <BulkBanButton
-              matchCount={result.total}
-              filters={{
-                role: params.role,
-                status: params.status,
-                deposited: params.deposited,
-                provider: params.provider,
-                sharedIp: params.sharedIp,
-                sharedDevice: params.sharedDevice,
-                freeOnly: params.freeOnly,
-                affiliateCode: params.affiliateCode,
-                affiliateOwnerId: params.affiliateOwnerId,
-              }}
-            />
-          </div>
-        )}
       <UsersDataTable data={result.data} degraded={listFailed} />
       <FadeIn speed="fast">
         <DataTablePagination

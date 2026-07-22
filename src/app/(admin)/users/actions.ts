@@ -378,6 +378,53 @@ export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
   revalidateTag("users-list-stats");
 }
 
+/** Admin OR owner. Bulk actions are stricter than the support-level single ban. */
+function isBulkBanAuthorized(session: {
+  role?: string;
+  roles?: string[];
+  isOwner?: boolean;
+}): boolean {
+  return (
+    (session.roles?.includes("admin") ?? session.role === "admin") ||
+    Boolean(session.isOwner)
+  );
+}
+
+/**
+ * How many accounts a criteria set would ban, WITHOUT banning anything.
+ *
+ * Powers the dialog's live preview. Resolves through the exact same
+ * `getUserIdsMatchingFilters` the ban itself uses — so the number shown is
+ * the number acted on, not an approximation from a different query.
+ */
+export async function previewBulkBanCount(filters: {
+  role?: string;
+  status?: string;
+  deposited?: string;
+  provider?: string;
+  sharedIp?: string;
+  sharedDevice?: string;
+  freeOnly?: string;
+}): Promise<ServerActionResult<{ count: number; capped: boolean }>> {
+  const session = await requirePageAccess("/users");
+  if (!isBulkBanAuthorized(session)) {
+    return fail("Bulk ban is restricted to admins and owners.", "FORBIDDEN");
+  }
+  if (!Object.values(filters).some((v) => !!v)) {
+    return fail("Select at least one criterion.", "VALIDATION");
+  }
+  try {
+    const ids = await getUserIdsMatchingFilters(filters);
+    return ok({
+      count: Math.min(ids.length, BULK_BAN_MAX),
+      capped: ids.length > BULK_BAN_MAX,
+    });
+  } catch (err) {
+    logError("users.bulkBanPreview", "preview count failed", err);
+    return fail("Couldn't count the matching accounts — please try again.");
+  }
+}
+
 /**
  * Bulk-ban every user matching a set of /users list filters.
  *
@@ -417,8 +464,7 @@ export async function bulkBanFilteredUsers(input: {
 
   // Admin OR owner. Re-verified here because the button's visibility is a
   // render gate, and a render gate is not a security boundary.
-  const isAdmin = session.roles?.includes("admin") ?? session.role === "admin";
-  if (!isAdmin && !session.isOwner) {
+  if (!isBulkBanAuthorized(session)) {
     return fail("Bulk ban is restricted to admins and owners.", "FORBIDDEN");
   }
 
