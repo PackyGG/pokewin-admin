@@ -97,13 +97,23 @@ export async function sendRewardCampaignChunkAction(
   if (!Number.isFinite(input.valueUsd) || input.valueUsd <= 0) {
     return { success: false, error: "Reward amount must be greater than zero" };
   }
-  if (input.valueUsd > REWARD_MAX_VALUE_USD) {
+  // Normalise to whole cents ONCE, up front, and use this value everywhere
+  // below. `promo_codes.value` is Decimal(20,2), so Postgres would quietly
+  // round 5.005 to 5.00 — while the notification payload carried the
+  // unrounded 5.005, telling the recipient an amount their code is not
+  // actually worth. Rounding here keeps the row, the payload and the audit
+  // entry describing the same money.
+  const valueUsd = Math.round(input.valueUsd * 100) / 100;
+  if (valueUsd <= 0) {
+    return { success: false, error: "Reward amount rounds to $0.00 — raise it above one cent" };
+  }
+  if (valueUsd > REWARD_MAX_VALUE_USD) {
     // Policy ceiling, not a backend limit. This is the boundary — the
     // composer checks the same number, but a server action is callable
     // directly, so the cap has to hold here regardless of what the form did.
     return {
       success: false,
-      error: `Reward amount is capped at $${REWARD_MAX_VALUE_USD} per code (got $${input.valueUsd}).`,
+      error: `Reward amount is capped at $${REWARD_MAX_VALUE_USD} per code (got $${valueUsd}).`,
     };
   }
 
@@ -161,7 +171,7 @@ export async function sendRewardCampaignChunkAction(
     await db.promo_codes.createMany({
       data: toMint.map((p) => ({
         code_hash: p.codeHash,
-        value: input.valueUsd,
+        value: valueUsd,
         region: p.region,
         // Single use, and bound to the one account it was minted for —
         // `metadata.bound_user_id` is enforced at redeem by the backend
@@ -189,7 +199,7 @@ export async function sendRewardCampaignChunkAction(
       type: REWARD_NOTIFICATION_TYPE,
       items: planned.map((p) => ({
         user_id: p.userId,
-        payload: { code: p.code, value: input.valueUsd },
+        payload: { code: p.code, value: valueUsd },
         dedupe_key: dedupeKeyFor(campaign, p.userId),
       })),
     });
@@ -213,7 +223,7 @@ export async function sendRewardCampaignChunkAction(
     metadata: {
       env: availability.backendEnv,
       campaign,
-      valueUsd: input.valueUsd,
+      valueUsd,
       expiresAt: expiresAt?.toISOString() ?? null,
       chunkIndex: input.chunkIndex,
       chunkCount: input.chunkCount,
@@ -224,7 +234,7 @@ export async function sendRewardCampaignChunkAction(
       deduped: result.deduped,
       unknownUsers: [...new Set([...unknownUsers, ...result.unknown_users])],
       // Money moved per recipient — the number an audit reader needs most.
-      totalValueUsd: Number((toMint.length * input.valueUsd).toFixed(2)),
+      totalValueUsd: Number((toMint.length * valueUsd).toFixed(2)),
     },
   });
 

@@ -78,6 +78,7 @@ export function RewardCampaignForm() {
     truncated: boolean;
   } | null>(null);
   const [resolving, startResolving] = useTransition();
+  const [stale, setStale] = useState(false);
 
   const [campaign, setCampaign] = useState("");
   const [amount, setAmount] = useState("5");
@@ -97,17 +98,31 @@ export function RewardCampaignForm() {
   // Re-resolve whenever the filter changes. The count has to track the
   // controls or the operator is reading a stale number right above a button
   // that spends money.
+  //
+  // Debounced because the affiliate-code field is free text: without this,
+  // every keystroke fires a filtered scan over the users table. The dropdowns
+  // pay the same 350ms, which is imperceptible next to the query itself.
+  // `stale` covers the debounce window itself: for those 350ms the previous
+  // count is still on screen, and without this the Send button would stay
+  // enabled against a number that no longer matches the filters. Sending the
+  // wrong population is a money mistake, so the button waits.
   useEffect(() => {
     if (mode !== "filter") return;
-    startResolving(async () => {
-      const res = await resolveRewardAudienceAction(filters);
-      if (!res.success) {
-        setAudience(null);
-        toast.error(res.error);
-        return;
-      }
-      setAudience(res.audience);
-    });
+    setStale(true);
+    const timer = setTimeout(() => {
+      startResolving(async () => {
+        const res = await resolveRewardAudienceAction(filters);
+        if (!res.success) {
+          setAudience(null);
+          setStale(false);
+          toast.error(res.error);
+          return;
+        }
+        setAudience(res.audience);
+        setStale(false);
+      });
+    }, 350);
+    return () => clearTimeout(timer);
   }, [mode, filters]);
 
   const recipientIds = useMemo(
@@ -153,6 +168,7 @@ export function RewardCampaignForm() {
   const readyToSend =
     !sending &&
     !resolving &&
+    !stale &&
     recipientCount > 0 &&
     !audience?.truncated &&
     !slugError &&
@@ -326,10 +342,14 @@ export function RewardCampaignForm() {
             </div>
 
             <div className="flex items-center gap-2 text-xs">
-              {resolving ? (
+              {resolving || stale ? (
                 <>
                   <Spinner size={13} label="Counting users" />
-                  <span className="text-muted-foreground">Counting…</span>
+                  <span className="text-muted-foreground">
+                    {audience
+                      ? `Updating from ${formatNumber(audience.count)}…`
+                      : "Counting…"}
+                  </span>
                 </>
               ) : audience ? (
                 <span
