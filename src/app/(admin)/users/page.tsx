@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Users, Ban, Archive, UserPlus, AlertTriangle, X, Ticket, ArrowRight } from "lucide-react";
+import { Users, Ban, UserPlus, AlertTriangle, X, Ticket, ArrowRight } from "lucide-react";
 import { getUsers, getUsersListStats, getMatchingAffiliateCodes } from "@/lib/queries/users";
 import { requirePageAccess } from "@/lib/dal";
 import { safeQuery, safeQueryOrNull } from "@/lib/errors/safe-query";
@@ -15,7 +15,6 @@ import { UsersDataTable } from "./data-table";
 import { CodeSearchToggle } from "./code-search-toggle";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   PageHero,
@@ -136,26 +135,14 @@ export default async function UsersPage({
   return (
     <div className="space-y-6">
       <PageHero>
+        {/* No hero action — the "Deleted users" button was removed (owner,
+            2026-07-22). /users/deleted still exists and is reachable by URL;
+            it gates itself with requirePageAccess("/users/deleted"), so
+            dropping the link changes discoverability, not access. */}
         <PageHeroIdentity
           icon={Users}
           title="Users"
           subtitle="Browse, search, and filter every user on the platform."
-          action={
-            gates.canSeeDeletedUsers ? (
-              <Button
-                variant="outline"
-                size="sm"
-                // Rendering as <Link> makes the element an <a>; Base UI's
-                // Button defaults nativeButton:true and logs a console
-                // error on every render for non-<button> elements.
-                nativeButton={false}
-                render={<Link href="/users/deleted" />}
-              >
-                <Archive className="mr-2 size-4" />
-                Deleted users
-              </Button>
-            ) : undefined
-          }
         />
       </PageHero>
 

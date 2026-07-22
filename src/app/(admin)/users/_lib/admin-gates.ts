@@ -1,5 +1,4 @@
 import { adminDb } from "@/lib/admin-db";
-import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { isExcludedSearchOwnerRow } from "@/lib/excluded-users/search-gate";
 import { logError } from "@/lib/errors/logger";
 import type { SessionPayload } from "@/lib/session";
@@ -9,51 +8,36 @@ import type { SessionPayload } from "@/lib/session";
  * admin-DB read.
  *
  * The page previously issued three sequential, unguarded adminDb lookups
- * before first paint: the `allowed_pages` read (non-admins), an owner
- * check for the (since-removed) "Export all" button, and the
- * `canCurrentAdminIncludeExcludedInSearch` check — the last two reading
- * the SAME `admin_users` row twice. Any adminDb hiccup bypassed the
- * page's safeQuery wrappers entirely and crashed the whole view to
- * error.tsx.
+ * before first paint (an `allowed_pages` read for the Deleted-users
+ * button, an owner check for the Export-all button, and the
+ * excluded-search check — the last two reading the SAME `admin_users` row
+ * twice). Any adminDb hiccup bypassed the page's safeQuery wrappers
+ * entirely and crashed the whole view to error.tsx.
  *
- * This helper collapses them into a single `findUnique` on the session's
- * admin row, wrapped in try/catch. On failure it logs and FAILS CLOSED
- * (everything false except `canSeeDeletedUsers` for real admins, which
- * needs no DB read) — safe because every flag here is render-cosmetic:
- * the real boundaries are the server actions themselves (the delete
- * capability checks, the excluded-search override), which all re-verify
- * independently.
+ * Both button gates are gone with their buttons (owner, 2026-07-22), so
+ * one flag is left — but the consolidated shape stays: it's still a single
+ * `findUnique` on the session's admin row wrapped in try/catch, and it's
+ * where any future /users render gate belongs. On failure it logs and
+ * FAILS CLOSED — safe because the flag is render-cosmetic; the real
+ * boundary is the excluded-search override re-verifying server-side.
  */
 export type UsersPageGates = {
-  /** Show the "Deleted users" hero button (admins always; others need the page key + capability). */
-  canSeeDeletedUsers: boolean;
   /** Let an active search surface excluded (blacklisted) users. */
   includeExcludedInSearch: boolean;
 };
 
 export async function getUsersPageGates(
-  session: Pick<SessionPayload, "userId" | "role">,
+  session: Pick<SessionPayload, "userId">,
 ): Promise<UsersPageGates> {
-  const isAdmin = session.role === "admin";
   try {
     const row = await adminDb.admin_users.findUnique({
       where: { id: session.userId },
-      select: { username: true, is_active: true, is_owner: true, allowed_pages: true },
+      select: { username: true, is_active: true, is_owner: true },
     });
     const active = Boolean(row?.is_active);
-    const pages = row?.allowed_pages ?? [];
-    const username = row?.username ?? "";
-    const isOwner = row?.is_owner ?? false;
     return {
-      // Same rule as before the consolidation: real admins always pass;
-      // non-admins need BOTH the /users/deleted page key AND the
-      // __can_delete_user capability (mirrors the delete action's gate).
-      canSeeDeletedUsers:
-        isAdmin ||
-        (active &&
-          pages.includes("/users/deleted") &&
-          hasCapability(pages, "__can_delete_user")),
-      includeExcludedInSearch: active && isExcludedSearchOwnerRow(username, isOwner),
+      includeExcludedInSearch:
+        active && isExcludedSearchOwnerRow(row?.username ?? "", row?.is_owner ?? false),
     };
   } catch (err) {
     logError(
@@ -62,7 +46,6 @@ export async function getUsersPageGates(
       err,
     );
     return {
-      canSeeDeletedUsers: isAdmin,
       includeExcludedInSearch: false,
     };
   }
