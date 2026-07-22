@@ -16,8 +16,16 @@ URL where it lands in access logs, proxy logs and error trackers.
 ## 1. What the bot is for
 
 Players link their Discord to their Packy account and use the bot to see and
-claim **creator VIP wager rewards** — a per-creator deal of the shape *"wager
-$1,000 under my code, get $5"*.
+claim **creator rewards**. There are two kinds, both configured per creator and
+both claimed the same way:
+
+| Type | Shape | Frequency |
+|---|---|---|
+| `wager` | *"wager $1,000 under my code, get $5"* | Repeats, every time they clear another threshold |
+| `ftd_lossback` | *"lose your first deposit, get 5% back"* | **Once, ever** |
+
+`/check` tells you which is which via `rewardType`. They need different
+wording — see §2.
 
 The bot **never** moves money. A claim it files is a **request**; staff approve
 it by hand in the dashboard, and only then is the player's balance credited.
@@ -79,6 +87,49 @@ drops back to the standard rate immediately. Never cache a rate.
 
 An approved claim permanently uses up the wager it paid for. A pending claim
 reserves it immediately, so a player cannot file twice against the same wager.
+
+---
+
+## 2b. First-deposit lossback — the rules
+
+This type is one-off and easy to describe wrongly, so be precise in copy.
+
+**To qualify, all of these:**
+
+1. They **signed up** under the creator's code. Entering the code later does
+   not count — this reward pays for acquisition.
+2. It is their **first ever deposit**, and it met the minimum (e.g. $50).
+3. That deposit happened after the program existed.
+4. They have **not deposited again** (see below).
+5. They have actually lost some of it.
+
+**There is only one first deposit.** If theirs was below the minimum, they are
+permanently ineligible — depositing a bigger amount later does not create a new
+chance. Say so plainly rather than implying they can retry.
+
+### A second deposit closes the window
+
+Once a second deposit lands, the lossback can no longer be claimed. There is no
+honest way to say which deposit a later loss came from, and the alternative
+would mean *"deposit $50, don't lose, deposit $1,000, lose it all, get paid"*.
+
+**This matters for your copy.** A player who has lost their first deposit
+should be nudged to claim *before* topping up. Once they re-deposit, the
+`/check` entry disappears and `/claim` refuses with `not_eligible`. Wording
+that helps: *"Claim your lossback before you deposit again — a new deposit
+closes it."*
+
+### How "lost" is measured
+
+    lost = first deposit − what they still hold
+
+"What they still hold" is **cash and cards**: balance, locked balance,
+inventory value, and unclaimed vouchers. Someone who spent their whole deposit
+on packs and is sitting on the cards has **not** lost anything yet. Never tell a
+player they have "lost" money the site still counts as theirs.
+
+The payout is `lossbackPct` × that figure, and it can only ever be a fraction of
+their first deposit.
 
 ---
 
@@ -216,9 +267,14 @@ Everything the player can claim.
     "claimable": [
       { "id": "ur_9f1c…", "name": "Welcome Pack" },
       { "id": "rb_daily", "name": "Daily Rakeback", "amount": 5.5, "currency": "USD" },
-      { "id": "vip_3b7c…", "name": "Jimmy VIP reward", "amount": 10, "currency": "USD", "claimable": true },
-      { "id": "vip_8e2a…", "name": "Sarah VIP reward", "claimable": false,
-        "progress": "$340.00 more wagered to unlock the next reward" }
+      { "id": "vip_3b7c…", "name": "Jimmy VIP reward", "rewardType": "wager",
+        "amount": 10, "currency": "USD", "claimable": true },
+      { "id": "vip_8e2a…", "name": "Sarah VIP reward", "rewardType": "wager",
+        "claimable": false,
+        "progress": "$340.00 more wagered to unlock the next reward" },
+      { "id": "vip_1d4f…", "name": "Jimmy first-deposit lossback",
+        "rewardType": "ftd_lossback",
+        "amount": 2.5, "currency": "USD", "claimable": true }
     ]
   }
 }
@@ -231,6 +287,11 @@ and link them there.
 
 - `claimable: true` → render a **Claim** button.
 - `claimable: false` → show `progress` verbatim. Do not offer a button.
+- `rewardType` distinguishes the two kinds. Use it for wording — a lossback is
+  a one-off and should never be described as "keep wagering to earn more".
+- **Entries that can't qualify are omitted entirely**, not returned as blocked.
+  A player who never signed up under the code, or who has already deposited
+  twice, simply won't see that program. So an absent lossback is not a bug.
 - `id` and `name` are always present; `amount` only when there genuinely is a
   cash value (many rewards grant packs, not cash — don't render `$0`).
 - **Nothing to claim → `200` with `"claimable": []`.** Never a 404. Only an
@@ -274,8 +335,8 @@ Claim-specific failures:
 | Status | `code` | Meaning |
 |---|---|---|
 | 409 | `already_pending` | They already have a claim in the queue for this program. Say "we're already on it" — this is not an error. |
-| 400 | `nothing_claimable` | Not enough wager yet. The message carries how much more is needed. |
-| 400 | `not_eligible` | Blocked — switched code, banned, locked, program inactive. Message explains which. |
+| 400 | `nothing_claimable` | Nothing payable yet. On a wager program the message carries how much more wager is needed. |
+| 400 | `not_eligible` | Blocked — switched code, banned, locked, program inactive, or (lossback) already claimed / deposited again / first deposit under the minimum. The message explains which; it is safe to show verbatim. |
 | 400 | `not_claimable_here` | A non-`vip_*` id. That reward is claimed on the site. |
 | 404 | `program_not_found` | Program no longer exists. |
 
@@ -419,5 +480,9 @@ curl -s -X POST https://pokewin-admin.vercel.app/api/v1/discord/info \
 - Every auth failure is logged to the admin audit trail (key prefix + IP +
   path — never the token), so repeated failures are visible.
 - Responses are `no-store`; do not put them in a shared cache.
-- **Don't cache reward figures.** VIP status, code standing and wager all move
-  independently; always re-read before showing or claiming.
+- **Don't cache reward figures.** VIP status, code standing, wager and
+  holdings all move independently; always re-read before showing or claiming.
+- **A lossback figure moves as they play.** It is a live measure of what they
+  are down, so it can rise, fall, or vanish between `/check` and the Claim
+  button. The server recomputes on claim and pays what is true then — so quote
+  the amount as current, not promised.

@@ -74,8 +74,16 @@ type ClaimableItem = {
    * use this flag to decide whether to offer a Claim button at all.
    */
   claimable?: boolean;
-  /** Progress copy for a VIP reward that hasn't reached a full unit yet. */
+  /** Progress copy for a reward that isn't payable yet. */
   progress?: string;
+  /**
+   * Which kind of creator reward this is, on `vip_*` entries only:
+   *   "wager"        — recurring, earned by wagering under the code
+   *   "ftd_lossback" — one-off, a % back on a lost first deposit
+   * The two need different wording, so the bot is told which it has rather
+   * than having to infer it from the presence of other fields.
+   */
+  rewardType?: "wager" | "ftd_lossback";
 };
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;
@@ -195,15 +203,20 @@ export const POST = withApiKey(
     for (const e of await computeAllEntitlements(userId)) {
       if (e.blockedReason) continue;
       const ready = e.units > 0;
+      // Progress wording is per TYPE. A lossback has no wager threshold, so the
+      // wager copy would read "$0.00 more wagered" — true of the field, and
+      // nonsense to the player.
+      const progress =
+        e.type === "ftd_lossback"
+          ? "Nothing back yet — this pays a share of losses on your first deposit"
+          : `$${e.wagerToNextUnitUsd.toFixed(2)} more wagered to unlock the next reward`;
       claimable.push({
         id: `vip_${e.programId}`,
         name: e.programName,
+        rewardType: e.type,
         ...(ready
           ? { amount: e.amountUsd, currency: "USD", claimable: true }
-          : {
-              claimable: false,
-              progress: `$${e.wagerToNextUnitUsd.toFixed(2)} more wagered to unlock the next reward`,
-            }),
+          : { claimable: false, progress }),
       });
     }
 
