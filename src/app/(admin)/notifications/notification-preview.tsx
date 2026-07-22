@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, TriangleAlert } from "lucide-react";
+import { Bell, Copy, TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   previewNotificationText,
@@ -43,6 +43,14 @@ export function NotificationPreview({
           <p className="line-clamp-2 text-xs text-muted-foreground">
             {preview.body}
           </p>
+          {preview.code && (
+            <span className="mt-1.5 flex items-center gap-2 rounded-md border bg-background px-2 py-1">
+              <span className="min-w-0 flex-1 truncate font-mono text-xs font-semibold tracking-wider">
+                {preview.code}
+              </span>
+              <Copy className="size-3 shrink-0 text-muted-foreground" />
+            </span>
+          )}
         </div>
         <Badge
           variant="outline"
@@ -80,6 +88,18 @@ export function NotificationPreview({
               the unread count and the websocket event all fire.
             </p>
           </div>
+        </div>
+      )}
+
+      {preview.known && !preview.code && preview.usedKeys.includes("code") && (
+        <div className="flex gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <p className="text-[11px] text-amber-700 dark:text-amber-300">
+            This template renders a copyable code, but the payload has no{" "}
+            <code className="font-mono">code</code> key — recipients would get
+            a notification telling them to redeem something they can&apos;t
+            see. Add <code className="font-mono">code</code> to the payload.
+          </p>
         </div>
       )}
 

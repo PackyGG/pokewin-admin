@@ -32,6 +32,8 @@
 export type NotificationPreview = {
   title: string;
   body: string;
+  /** Rendered by the site as a monospace copy-to-clipboard chip. */
+  code?: string;
   /** False when the site falls back to the generic template. */
   known: boolean;
   /** Payload keys the site's template actually reads for this type. */
@@ -43,7 +45,21 @@ export const KNOWN_NOTIFICATION_TYPES: Record<string, string[]> = {
   deposit_pending: ["amount_usd"],
   deposit_completed: ["amount_usd"],
   reward_credited: ["amount_usd"],
+  promo_code_granted: ["code", "value", "amount_usd"],
 };
+
+/** Mirrors the frontend's `formatUsd` — tolerant of number-or-string because
+ * admin payloads are typed by hand (CSV column vs JSON body). */
+function formatUsd(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return `$${value % 1 === 0 ? value : value.toFixed(2)}`;
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const trimmed = value.trim();
+    return trimmed.startsWith("$") ? trimmed : `$${trimmed}`;
+  }
+  return "";
+}
 
 export function previewNotificationText(
   type: string,
@@ -76,6 +92,22 @@ export function previewNotificationText(
         known: true,
         usedKeys: KNOWN_NOTIFICATION_TYPES.reward_credited,
       };
+    case "promo_code_granted": {
+      // Shipped in PackyGG/frontend#749 — the code renders as a chip the user
+      // taps to copy, and the realtime toast carries its own Copy action.
+      const code =
+        typeof payload?.code === "string" && payload.code.trim() !== ""
+          ? payload.code.trim()
+          : undefined;
+      const worth = formatUsd(payload?.value ?? payload?.amount_usd);
+      return {
+        title: worth ? `${worth} promo code for you` : "Promo code for you",
+        body: "Redeem it in your wallet.",
+        code,
+        known: true,
+        usedKeys: KNOWN_NOTIFICATION_TYPES.promo_code_granted,
+      };
+    }
     default:
       return {
         title: "Notification",
