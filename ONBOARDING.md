@@ -113,7 +113,7 @@ The backend was fully reworked. **Every read is served by exactly one of two pat
   |---|---|---|
   | Rakeback | daily **0.25%** / weekly **0.1%** / monthly **0.05%** (= 0.40% blended) | `rakeback_config`; pre-claim/instant-claim lever modeled |
   | Affiliate | **8 tiers, 3%→10%**, thresholds $0→$1.5M | `affiliate_level_configs`; the "1× wager req" is a modeled what-if, not a confirmed stored toggle. **Commission basis (RESOLVED, see `system-edge-plan/_model.ts`): `commission_rate` is a share of referred house edge / GGR, NOT a % of wager — wager drag = edge_share × house_edge (tier 8 = 10% of edge @ 10.5% edge → 1.05% of referred wager).** |
-  | Deposit bonus | match 100%, **cap $100/24h**, real spend ~$17,364 | settings live in game backend |
+  | Deposit bonus | fixed **5% of each deposit**, capped at **$20 per rolling 6h** (live `deposit_bonus_cap_per_period_usd` = 20; `deposit_bonus_period_hours` never written → backend default). Cap binds hard → **effective ~2.7%**, not 5% | rebuilt 2026-06-17, replacing the old match-100% / $100-24h regime; settings live in game backend, edited from /security |
   | Races | `race_prize`, real ~$6,907.50 | on-site competitive races |
   | Raffles | reconstructed from raffle `prizes` JSON (no ledger type), ~$15.59 | tickets per $X wagered; distinct from races |
   | Daily packs | ~$9.27 (`getDailyPacksTotalCost`) | free daily packs; EV editable; 30-day XP-unlock %; wager-loss (under active rework) |

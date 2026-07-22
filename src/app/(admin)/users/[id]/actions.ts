@@ -3161,9 +3161,10 @@ export async function assignAffiliateCode(userId: string, affiliateCode: string 
         affiliate_code_active: true,
         // No frontend lock on an admin override: a null expiry leaves
         // the code active for attribution while letting the user change
-        // it again on the site. (The 1h lock only applies to fresh
-        // frontend entries; setting a code here REPLACES any pending
-        // lock.)
+        // it again on the site. (Entering a code in the site UI sets
+        // expires_at = entry + 7 DAYS and the user is bound until it
+        // lapses — verified read-only against prod 2026-07-22 across
+        // 6,208 rows. Setting a code here REPLACES any pending lock.)
         affiliate_code_expires_at: null,
       },
     }),
