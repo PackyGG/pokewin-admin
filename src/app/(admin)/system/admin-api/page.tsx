@@ -63,6 +63,12 @@ export default async function ApiKeysPage() {
 
 async function ApiKeysBody() {
   const rows = await adminDb.api_keys.findMany({
+    // Revoked keys are HIDDEN, not deleted: the row stays for the audit trail
+    // (who revoked it, when, how many requests it made) but a dead credential
+    // is noise in the operator's list. Mirrors `statusOf` in the client, which
+    // treats either flag as revoked. Expired keys still show — they're
+    // recoverable context, not dead weight.
+    where: { revoked_at: null, is_active: true },
     orderBy: { created_at: "desc" },
     // key_hash intentionally omitted — never leaves the DB.
     select: {

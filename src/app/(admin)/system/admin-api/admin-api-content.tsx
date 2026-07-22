@@ -171,10 +171,12 @@ export function ApiKeysContent({ keys }: { keys: ApiKeyRow[] }) {
 
       {keys.length === 0 ? (
         <div className="rounded-xl border">
+          {/* "active" is deliberate — revoked keys are filtered out server-side,
+              so this state can also mean "every key was revoked". */}
           <EmptyState
             icon={KeyRound}
-            title="No API keys yet"
-            description="Create one to give the Discord bot (or an in-house script) scoped access."
+            title="No active API keys"
+            description="Create one to give the Discord bot (or an in-house script) scoped access. Revoked keys are hidden."
             compact
           />
         </div>
