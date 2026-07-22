@@ -741,6 +741,12 @@ export const CAPABILITIES: CapabilityDef[] = [
 
   // ── System (site-wide security capabilities) ──────────────────────────
   {
+    key: "__can_manage_announcements",
+    label: "Manage Announcements",
+    description: "Create and revoke site-wide broadcast announcements — reaches every user matching the audience",
+    group: "System",
+  },
+  {
     key: "__can_upsert_site_config",
     label: "Upsert Site Config",
     description: "Create or update site-wide security / config entries",

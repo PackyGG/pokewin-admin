@@ -101,6 +101,9 @@ export const ADMIN_PAGES: AdminPage[] = [
   // was NOT part of the Transactions→Content merge); its picker group is
   // left unchanged.
   { group: "Transactions", label: "Transactions", key: "/transactions/deposits" },
+  // Notifications — global broadcast announcements (backend /v1/admin/announcements).
+  // Sits in the Overview sidebar group, below Transactions.
+  { group: "Notifications", label: "Notifications", key: "/notifications" },
   // Content
   { group: "Content", label: "Packs", key: "/packs" },
   // Shard Packs (/rewards/shards) — the shard-pack system was disabled at

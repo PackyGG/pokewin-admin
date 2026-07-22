@@ -298,6 +298,22 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inSidebar: false,
     inPalette: true,
   },
+  {
+    // Notifications — global broadcast announcements. Backend
+    // /v1/admin/announcements; per-user notifications have no admin
+    // endpoint yet. Icon "Megaphone" is already registered in the ICONS
+    // map (app-sidebar.tsx), reused here to avoid a React #130 miss.
+    id: "nav.notifications",
+    group: "Overview",
+    label: "Notifications",
+    href: "/notifications",
+    pageKey: "/notifications",
+    icon: "Megaphone",
+    description: "Send a site-wide announcement to all users",
+    keywords: ["announcement", "broadcast", "notify", "alert", "news"],
+    inSidebar: true,
+    inPalette: true,
+  },
 
   // ── Insights (sidebar-only; absent from palette today) ─────────────────
   {
@@ -662,6 +678,7 @@ const PALETTE_ORDER: string[] = [
   "nav.crm",
   "nav.deposits",
   "nav.withdrawals",
+  "nav.notifications",
   "nav.creators",
   "nav.creators.analytics",
   "nav.packs",
