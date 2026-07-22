@@ -1,12 +1,13 @@
 import { Suspense } from "react";
-import { KeyRound } from "lucide-react";
+import { KeyRound, Plug } from "lucide-react";
 
 import { adminDb } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
-import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { SectionHeadingSkeleton, TableSkeleton } from "@/components/loading-skeletons";
 import { ApiKeysContent, type ApiKeyRow } from "./api-keys-content";
+import { ApiEndpointsSection } from "./api-endpoints-section";
 
 export const metadata = { title: "API Keys" };
 
@@ -44,6 +45,18 @@ export default async function ApiKeysPage() {
       >
         <ApiKeysBody />
       </Suspense>
+
+      {/* Static catalogue — no DB read, so it paints immediately instead of
+          waiting behind the key table's Suspense boundary. */}
+      <div className="space-y-3">
+        <SectionHeading icon={Plug} title="Endpoints" />
+        <p className="text-sm text-muted-foreground">
+          Base URL is this dashboard&apos;s origin. Authenticate every request with{" "}
+          <code className="font-mono text-xs">Authorization: Bearer &lt;token&gt;</code> —
+          never a query string or cookie.
+        </p>
+        <ApiEndpointsSection />
+      </div>
     </div>
   );
 }
