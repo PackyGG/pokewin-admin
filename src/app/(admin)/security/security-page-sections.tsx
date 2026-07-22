@@ -3,10 +3,7 @@
 import { CollapsibleSecuritySection } from "./collapsible-security-section";
 import { SecurityContent } from "./security-content";
 import { WagerRequirementCard } from "./wager-requirement-card";
-import { LeaderboardWagerWeightsCard } from "./leaderboard-wager-weights-card";
-import { RakebackWagerWeightsCard } from "./rakeback-wager-weights-card";
-import { SourceWagerWeightsCard } from "./source-wager-weights-card";
-import { MultiplierWagerWeightsCard } from "./multiplier-wager-weights-card";
+import { WagerWeightsSection } from "./wager-weights-section";
 import { RewardExpiryCard } from "./reward-expiry-card";
 import { CryptoFeesCard } from "./crypto-fees-card";
 import { DepositBonusConfigCard } from "./deposit-bonus-config-card";
@@ -61,20 +58,13 @@ export function SecurityPageSections({
         <WagerRequirementCard initial={wagerDefaults} />
       </CollapsibleSecuritySection>
 
-      <CollapsibleSecuritySection icon="trophy" title="Leaderboard Wager Weights">
-        <LeaderboardWagerWeightsCard initial={leaderboardWeights} />
-      </CollapsibleSecuritySection>
-
-      <CollapsibleSecuritySection icon="percent" title="Rakeback Wager Weights">
-        <RakebackWagerWeightsCard initial={rakebackWeights} />
-      </CollapsibleSecuritySection>
-
-      <CollapsibleSecuritySection icon="coins" title="Funding-Source Wager Weights">
-        <SourceWagerWeightsCard initial={sourceWeights} />
-      </CollapsibleSecuritySection>
-
-      <CollapsibleSecuritySection icon="gauge" title="Multiplier Wager Weights">
-        <MultiplierWagerWeightsCard initial={multiplierWeights} />
+      <CollapsibleSecuritySection icon="gauge" title="Wager Weights">
+        <WagerWeightsSection
+          leaderboardWeights={leaderboardWeights}
+          rakebackWeights={rakebackWeights}
+          sourceWeights={sourceWeights}
+          multiplierWeights={multiplierWeights}
+        />
       </CollapsibleSecuritySection>
 
       <CollapsibleSecuritySection icon="hourglass" title="Reward Expiry">

@@ -57,7 +57,7 @@ export function CollapsibleSecuritySection({
   icon,
   title,
   children,
-  defaultOpen = true,
+  defaultOpen = false,
 }: {
   icon: SecuritySectionIcon;
   title: React.ReactNode;
