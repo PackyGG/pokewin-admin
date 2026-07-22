@@ -328,7 +328,11 @@ async function UsersKpiStrip() {
   }
 
   return (
-    <div className="grid grid-cols-4 gap-3">
+    // grid-cols-2 md:grid-cols-4 — the same breakpoints KpiStripSkeleton
+    // uses for count={4}, so the skeleton→content swap doesn't reflow on
+    // phones/tablets (the old flat grid-cols-4 both cramped mobile and
+    // mismatched the fallback's 2-up).
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
       {/* Banned accounts are NOT counted here (owner, 2026-07-23) — this
           reads as the live user base, and the banned population is the tile
           next to it. The `sub` says so out loud so the number is never
@@ -347,9 +351,12 @@ async function UsersKpiStrip() {
           filter that exists rather than needing its own page. `interactive`
           opts this tile into press feedback — the house rule is that KPI tiles
           stay static unless they're actually clickable. */}
+      {/* block h-full: the <a> is the grid item here, so it has to pass the
+          stretched cell height down to the tile inside it — without it the
+          Banned box shrink-wraps and sits shorter than its neighbours. */}
       <Link
         href="/users?status=banned"
-        className="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="block h-full rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-label={`Banned users: ${formatNumber(stats.totalBanned)} — view the banned list`}
       >
         <KpiTile

@@ -334,7 +334,14 @@ export function KpiTile({
       role="group"
       aria-label={ariaLabel}
       className={cn(
-        "rounded-lg border bg-card px-3 py-2.5 sm:px-4 sm:py-3",
+        // h-full so a strip of tiles is one clean row even when only some of
+        // them carry a `sub` line, and so a tile wrapped in a <Link> (the
+        // drill-in pattern) fills its grid cell instead of shrink-wrapping
+        // one line shorter than its neighbours. In a grid/flex row the cell
+        // is already stretched, so this just passes that height down; in a
+        // plain block context `height: 100%` of an auto-height parent is
+        // auto, i.e. no change for the 90-odd existing callers.
+        "h-full rounded-lg border bg-card px-3 py-2.5 sm:px-4 sm:py-3",
         interactive && cn(pressable("scale"), "active:brightness-95"),
       )}
     >
