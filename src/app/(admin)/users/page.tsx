@@ -350,12 +350,24 @@ async function UsersKpiStrip() {
         icon={Users}
         accent="blue"
       />
-      <KpiTile
-        label="Banned"
-        value={formatNumber(stats.totalBanned)}
-        icon={Ban}
-        accent="rose"
-      />
+      {/* Clickable drill-in: the list already supports `?status=banned`
+          (users-list.ts adds `u.is_banned = true`), so the tile just links
+          into the filter that exists rather than needing its own page.
+          `interactive` opts this tile into press feedback — the house rule
+          is that KPI tiles stay static unless they're actually clickable. */}
+      <Link
+        href="/users?status=banned"
+        className="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label={`Banned users: ${formatNumber(stats.totalBanned)} — view the banned list`}
+      >
+        <KpiTile
+          label="Banned"
+          value={formatNumber(stats.totalBanned)}
+          icon={Ban}
+          accent="rose"
+          interactive
+        />
+      </Link>
       <KpiTile
         label="Signups (24h)"
         value={formatNumber(stats.signups24h)}
