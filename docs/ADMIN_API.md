@@ -16,16 +16,20 @@ URL where it lands in access logs, proxy logs and error trackers.
 ## 1. What the bot is for
 
 Players link their Discord to their Packy account and use the bot to see and
-claim **creator rewards**. There are two kinds, both configured per creator and
-both claimed the same way:
+claim **creator rewards**.
 
-| Type | Shape | Frequency |
-|---|---|---|
-| `wager` | *"wager $1,000 under my code, get $5"* | Repeats, every time they clear another threshold |
-| `ftd_lossback` | *"lose your first deposit, get 5% back"* | **Once, ever** |
+A creator runs ONE program, and that program can hand out **two different
+rewards** — usually both at once:
 
-`/check` tells you which is which via `rewardType`. They need different
-wording — see §2.
+| Leg | Shape | Frequency | id prefix |
+|---|---|---|---|
+| `wager` | *"wager $1,000 under my code, get $5"* | Repeats, every time they clear another threshold | `vip_` |
+| `ftd_lossback` | *"lose your first deposit, get 5% back"* | **Once, ever** | `ftd_` |
+
+**They are earned and claimed independently.** A player can have both waiting at
+the same time, and claiming one does not touch the other. `/check` returns one
+entry per leg, each with its own id and its own `rewardType`, so treat them as
+two separate buttons — never as one reward with two modes.
 
 The bot **never** moves money. A claim it files is a **request**; staff approve
 it by hand in the dashboard, and only then is the player's balance credited.
@@ -287,8 +291,11 @@ and link them there.
 
 - `claimable: true` → render a **Claim** button.
 - `claimable: false` → show `progress` verbatim. Do not offer a button.
-- `rewardType` distinguishes the two kinds. Use it for wording — a lossback is
+- `rewardType` distinguishes the two legs. Use it for wording — a lossback is
   a one-off and should never be described as "keep wagering to earn more".
+- **The same creator can appear twice**, once per leg, with the same program
+  name. That is expected, not a duplicate. Distinguish them by `rewardType`
+  (and the `vip_` / `ftd_` id prefix), not by name.
 - **Entries that can't qualify are omitted entirely**, not returned as blocked.
   A player who never signed up under the code, or who has already deposited
   twice, simply won't see that program. So an absent lossback is not a bug.
@@ -326,6 +333,14 @@ Send **only** the Discord ID and the `claimableId` from `/check`. Never send an
 amount — the server recomputes eligibility from scratch and pays what is
 actually true at write time, so a stale number the player saw two minutes ago
 cannot inflate anything.
+
+**The id prefix carries which reward is being claimed** — `vip_` for wager
+milestones, `ftd_` for the lossback. Pass the id back exactly as `/check` gave
+it; don't rebuild it from a program id, or you will claim the wrong leg.
+
+A player may hold one open claim **per leg**, so a pending wager claim does not
+block a lossback claim (and vice versa). `already_pending` therefore means
+"already queued for THIS reward", not "already queued for this creator".
 
 **Nothing is paid here.** Say "submitted for review". They are credited when
 staff approve, which may be hours later.

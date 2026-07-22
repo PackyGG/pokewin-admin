@@ -9,7 +9,11 @@ import {
   type CreatorRewardEntitlement,
   type CreatorRewardType,
 } from "./types";
-import { computeFtdLossback } from "./ftd-lossback";
+import {
+  computeFtdLossback,
+  firstDeposits,
+  holdingsUsd,
+} from "./ftd-lossback";
 
 /**
  * The ONE eligibility engine for creator VIP wager rewards.
@@ -260,6 +264,7 @@ async function priorHoldings(
 export async function computeEntitlement(
   program: ProgramForCompute,
   userId: string,
+  facts?: UserFacts,
 ): Promise<CreatorRewardEntitlement> {
   const thresholdCents = toCents(toNumber(program.threshold_usd));
   const standardRewardCents = toCents(toNumber(program.reward_usd));
@@ -311,7 +316,7 @@ export async function computeEntitlement(
     };
   }
 
-  const standing = await userStanding(userId);
+  const standing = facts?.standing ?? (await userStanding(userId));
   if (!standing) {
     return { ...empty, blockedReason: "No such player." };
   }
@@ -346,7 +351,7 @@ export async function computeEntitlement(
     wagerUsdSince(userId, program.codes, runStart),
     wagerUsdSince(userId, program.codes, program.accrual_start_at),
     priorHoldings(program.id, userId, runStart),
-    isVipNow(userId),
+    facts?.isVip ?? isVipNow(userId),
   ]);
 
   // The rate is decided HERE, live, from the tag as it stands this instant —
@@ -417,6 +422,35 @@ export async function computeEntitlement(
 }
 
 
+
+/**
+ * Per-user facts that do NOT vary by program.
+ *
+ * A player can have several programs, each offering two legs, and a naive
+ * fan-out re-reads all of this for every one of them — including the two
+ * expensive ones (the deposit lookup, and the whole P&L aggregate behind
+ * holdings). Loading them ONCE per request and threading them down turns an
+ * O(programs × legs) read pattern into O(1) for these, leaving only the
+ * genuinely program-scoped reads (wager sums, run start, prior claims,
+ * signup-under-code) in the loop.
+ */
+export type UserFacts = {
+  standing: Awaited<ReturnType<typeof userStanding>>;
+  isVip: boolean;
+  holdingsUsd: number;
+  deposits: { amountUsd: number; at: Date }[];
+};
+
+export async function loadUserFacts(userId: string): Promise<UserFacts> {
+  const [standing, vip, holdings, deposits] = await Promise.all([
+    userStanding(userId),
+    isVipNow(userId),
+    holdingsUsd(userId),
+    firstDeposits(userId),
+  ]);
+  return { standing, isVip: vip, holdingsUsd: holdings, deposits };
+}
+
 /**
  * The LOSSBACK leg of a program, normalised into the same entitlement shape as
  * the wager leg so every caller (bot `/check`, `/info`, the claim path, the
@@ -429,6 +463,7 @@ export async function computeEntitlement(
 export async function computeLossbackEntitlement(
   program: ProgramForCompute,
   userId: string,
+  facts?: UserFacts,
 ): Promise<CreatorRewardEntitlement> {
   const base = {
     programId: program.id,
@@ -468,7 +503,7 @@ export async function computeLossbackEntitlement(
     };
   }
 
-  const standing = await userStanding(userId);
+  const standing = facts?.standing ?? (await userStanding(userId));
   if (!standing) return { ...empty, blockedReason: "No such player." };
   if (standing.banned) return { ...empty, blockedReason: "This account is banned." };
   if (standing.locked) return { ...empty, blockedReason: "This account is locked." };
@@ -483,7 +518,7 @@ export async function computeLossbackEntitlement(
     };
   }
 
-  const ftd = await computeFtdLossback(program, userId);
+  const ftd = await computeFtdLossback(program, userId, facts);
 
   // The per-user cap applies to BOTH legs. It was previously enforced on the
   // wager leg only, so a capped program still paid an uncapped lossback.
@@ -536,13 +571,14 @@ function legConfigured(
 export async function computeProgramOffers(
   program: ProgramForCompute,
   userId: string,
+  facts?: UserFacts,
 ): Promise<CreatorRewardEntitlement[]> {
   const legs: Promise<CreatorRewardEntitlement>[] = [];
   if (legConfigured(program, "wager")) {
-    legs.push(computeEntitlement(program, userId));
+    legs.push(computeEntitlement(program, userId, facts));
   }
   if (legConfigured(program, "ftd_lossback")) {
-    legs.push(computeLossbackEntitlement(program, userId));
+    legs.push(computeLossbackEntitlement(program, userId, facts));
   }
   return Promise.all(legs);
 }
@@ -564,8 +600,14 @@ export async function computeAllEntitlements(
   });
   if (programs.length === 0) return [];
 
+  // Load the program-independent facts ONCE, then fan out. Without this a
+  // player with 4 programs would trigger 4 deposit lookups and 4 full P&L
+  // aggregates for answers that are identical every time.
+  const facts = await loadUserFacts(userId);
   const results = (
-    await Promise.all(programs.map((p) => computeProgramOffers(p, userId)))
+    await Promise.all(
+      programs.map((p) => computeProgramOffers(p, userId, facts)),
+    )
   ).flat();
   // Only surface programs the player is actually attached to. For a WAGER
   // program that means they've wagered something under the code; for an FTD

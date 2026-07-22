@@ -102,8 +102,21 @@ async function signedUpUnderCode(
   return rows[0]?.hit === true;
 }
 
-/** The player's first two completed deposits, oldest first. */
-async function firstDeposits(
+/**
+ * The player's first two completed deposits, oldest first.
+ *
+ * The most expensive read on this path: `ledger_transactions` is 1.27M rows
+ * / 675 MB, and while the user_id index is used, Postgres still has to fetch
+ * every ledger row for that user and top-N sort them (measured 7.96 ms, 724
+ * pages read, against prod 2026-07-23). A partial index on
+ * (user_id, created_at) WHERE type='deposit' AND status='completed' turns it
+ * into a 2-row index scan — see prisma/recommended-indexes.sql. MAIN is
+ * read-only here, so that index is the owner's to apply.
+ *
+ * Until then the cost is contained by hoisting: `loadUserFacts` runs this
+ * ONCE per player per request, not once per program.
+ */
+export async function firstDeposits(
   userId: string,
 ): Promise<{ amountUsd: number; at: Date }[]> {
   const rows = await getProdDb().$queryRaw<
@@ -137,7 +150,7 @@ async function firstDeposits(
  * open = neither sold nor exchanged nor withdrawal-locked), and vouchers are
  * gated on `claimed_at`, not a `redeemed_at`.
  */
-async function holdingsUsd(userId: string): Promise<number> {
+export async function holdingsUsd(userId: string): Promise<number> {
   const pnl = await calculateUserPnl(userId);
   return pnl.onSiteBalance + pnl.inventoryValue + pnl.unclaimedVouchers;
 }
@@ -155,6 +168,12 @@ export async function computeFtdLossback(
     min_deposit_usd: unknown;
   },
   userId: string,
+  /**
+   * Per-user facts already loaded by the caller. Passing them is what stops
+   * a player with N programs paying for N deposit lookups and N P&L reads —
+   * neither depends on the program. Omit and they are loaded here.
+   */
+  facts?: { deposits: { amountUsd: number; at: Date }[]; holdingsUsd: number },
 ): Promise<FtdLossbackState> {
   const pct = program.lossback_pct == null ? 0 : toNumber(program.lossback_pct);
   const minDeposit =
@@ -178,8 +197,9 @@ export async function computeFtdLossback(
   }
 
   const [signedUp, deposits] = await Promise.all([
+    // Program-specific — cannot be hoisted.
     signedUpUnderCode(userId, program.codes),
-    firstDeposits(userId),
+    facts?.deposits ?? firstDeposits(userId),
   ]);
 
   if (!signedUp) {
@@ -225,7 +245,7 @@ export async function computeFtdLossback(
     };
   }
 
-  const holdings = await holdingsUsd(userId);
+  const holdings = facts?.holdingsUsd ?? (await holdingsUsd(userId));
   const depositCents = toCents(first.amountUsd);
   const lostCents = Math.min(
     depositCents,

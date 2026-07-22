@@ -1234,3 +1234,32 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_affiliate_codes_upper_code_prefix
 --   Execution Time: 0.458 ms (was 17.838 ms)
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chat_messages_created_at_user_id
   ON chat_messages (created_at, user_id) WHERE is_deleted = false;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Creator VIP rewards — first-time-deposit lossback (2026-07-23)
+--
+-- The FTD-lossback leg needs a player's FIRST (and second) completed deposit:
+--
+--   SELECT amount, created_at FROM ledger_transactions
+--    WHERE user_id = $1 AND type = 'deposit' AND status = 'completed'
+--    ORDER BY created_at ASC LIMIT 2
+--
+-- MEASURED against prod 2026-07-23 (EXPLAIN ANALYZE, read-only):
+--   Limit -> Sort (top-N heapsort) -> user_id index
+--   Execution Time: 7.956 ms
+--   Buffers: shared hit=37 read=724      <- 724 pages fetched from disk
+--
+-- It is not a Seq Scan, but the user_id index alone can't satisfy the ORDER BY:
+-- Postgres fetches EVERY ledger row for that user (a heavy player has
+-- thousands, on a 1.27M-row / 675 MB table) and top-N sorts them, just to
+-- return 2. This partial index makes it a 2-row index scan with no sort.
+--
+-- Partial on purpose: deposits are a small slice of ledger_transactions, so the
+-- index stays tiny and the predicate matches the query exactly.
+--
+-- NOT APPLIED — MAIN is read-only for the admin dashboard. Owner to apply.
+-- Until then the cost is contained by `loadUserFacts`, which runs this lookup
+-- once per player per request rather than once per program.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ledger_user_deposit_created
+  ON ledger_transactions (user_id, created_at)
+  WHERE type = 'deposit' AND status = 'completed';
