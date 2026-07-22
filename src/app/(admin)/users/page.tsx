@@ -84,11 +84,12 @@ export default async function UsersPage({
   // execute. See ./_lib/search-params.ts.
   const params = parseUsersSearchParams(await searchParams);
 
-  // ONE consolidated, fail-closed adminDb read for every render-cosmetic
-  // gate flag (Deleted-users button, excluded-users search override).
-  // Replaces three sequential unguarded lookups
-  // that could crash the whole page to error.tsx on an adminDb hiccup.
-  // See ./_lib/admin-gates.ts — every action re-verifies server-side.
+  // ONE consolidated, fail-closed adminDb read for the page's render-cosmetic
+  // gate flags — down to just the excluded-users search override now that the
+  // Deleted-users and Export buttons are gone. Replaces three sequential
+  // unguarded lookups that could crash the whole page to error.tsx on an
+  // adminDb hiccup. See ./_lib/admin-gates.ts — every action re-verifies
+  // server-side.
   const gates = await getUsersPageGates(session);
 
   // Key the table leg on every param that changes its result so a param
