@@ -148,13 +148,14 @@ export default async function UsersPage({
         />
       </PageHero>
 
-      {/* KPI strip — GLOBAL aggregates (Total Users, Banned, Signups 24h),
-          NOT the paginated slice, so the read-out stays stable while
-          admins paginate/refine. Own Suspense leg (unkeyed — global stats
-          don't depend on table params) + safeQuery inside, so a slow or
+      {/* KPI strip — GLOBAL aggregates (Total Users incl. its banned sub,
+          Signups 24h), NOT the paginated slice, so the read-out stays stable
+          while admins paginate/refine. Own Suspense leg (unkeyed — global
+          stats don't depend on table params) + safeQuery inside, so a slow or
           failed aggregate degrades to TileErrorFallback without touching
-          the table below. */}
-      <Suspense fallback={<KpiStripSkeleton count={3} />}>
+          the table below. Skeleton tile count must match the real strip (2)
+          or the swap-in shifts the page. */}
+      <Suspense fallback={<KpiStripSkeleton count={2} />}>
         <UsersKpiStrip />
       </Suspense>
 
