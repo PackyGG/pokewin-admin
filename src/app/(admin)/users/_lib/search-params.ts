@@ -87,6 +87,21 @@ export type UsersSortBy = z.infer<typeof UsersSortBy>;
 export const UsersStatusFilter = z.enum(["active", "banned", "locked"]);
 export type UsersStatusFilter = z.infer<typeof UsersStatusFilter>;
 
+// ── Audit filters (bonus-farming triage) ────────────────────────────────
+/** Has a completed `deposit` ledger row, or has never deposited. */
+export const UsersDepositedFilter = z.enum(["yes", "no"]);
+/** BetterAuth `account.providerId` — how the user got in. */
+export const UsersProviderFilter = z.enum([
+  "discord",
+  "google",
+  "steam",
+  "credential",
+]);
+/** Another account signed up from the same IP / used the same device. */
+export const UsersSharedFilter = z.enum(["yes", "no"]);
+/** Claimed free value of this kind AND never deposited. */
+export const UsersFreeOnlyFilter = z.enum(["rain", "reward"]);
+
 /**
  * Role filter values surfaced in the toolbar. These map onto the game
  * DB's `user_role` enum members the list filters by. `getUsers` already
@@ -180,6 +195,15 @@ const UsersSearchParamsSchema = z.object({
   // the whole parse and resetting every other valid param to its default.
   role: UsersRoleFilter.optional().catch(undefined),
   status: UsersStatusFilter.optional().catch(undefined),
+  deposited: UsersDepositedFilter.optional().catch(undefined),
+  provider: UsersProviderFilter.optional().catch(undefined),
+  sharedIp: UsersSharedFilter.optional().catch(undefined),
+  // Device sharing is yes-only in the UI — "no" would mostly mean "we never
+  // captured a fingerprint", which is a different statement from "this device
+  // is unique". Parsed as the same enum so a hand-typed ?sharedDevice=no
+  // still validates rather than 500ing; the query simply ignores it.
+  sharedDevice: UsersSharedFilter.optional().catch(undefined),
+  freeOnly: UsersFreeOnlyFilter.optional().catch(undefined),
   // Referral filter — restricts the list to users referred via THIS
   // specific affiliate/creator code (matched against
   // `affiliate_code_usages.code`, the same authoritative join

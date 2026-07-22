@@ -82,6 +82,20 @@ export type UserSearchMode = "prefix" | "substring";
  * computed once in getUsers and threaded through so the cached SQL build
  * matches the Prisma-path routing exactly.
  */
+/** Whitelist for the `provider` filter — inlined into raw SQL. */
+const SIGNUP_PROVIDERS = new Set(["discord", "google", "steam", "credential"]);
+
+/**
+ * `freeOnly` filter → the ledger type that represents "claimed free value".
+ * `reward_card_sale` is the signup/reward pack being cashed out — it touches
+ * 10,842 users, i.e. most of the base, which is exactly why pairing it with
+ * "never deposited" is the discriminating query rather than either alone.
+ */
+const FREE_ONLY_TYPES = new Map([
+  ["rain", "rain_win"],
+  ["reward", "reward_card_sale"],
+]);
+
 type UserListFilterInput = {
   searchTerm: string | undefined;
   isExactId: boolean;
@@ -91,6 +105,16 @@ type UserListFilterInput = {
   searchMode: UserSearchMode;
   role: string | undefined;
   status: string | undefined;
+  /** "yes" = has a completed deposit, "no" = never deposited. */
+  deposited: string | undefined;
+  /** discord | google | steam | credential (has a linked account of that type). */
+  provider: string | undefined;
+  /** "yes"/"no" — another account signed up from the same IP. */
+  sharedIp: string | undefined;
+  /** "yes" — shares a device visitor_id with another account. */
+  sharedDevice: string | undefined;
+  /** rain | reward — claimed that free value AND never deposited. */
+  freeOnly: string | undefined;
   /**
    * Restrict to users referred via this SPECIFIC affiliate/creator code —
    * matched against `affiliate_code_usages.code` (case-insensitively, same
@@ -326,6 +350,11 @@ function buildUserListWhereClause(
     codeSearch,
     role,
     status,
+    deposited,
+    provider,
+    sharedIp,
+    sharedDevice,
+    freeOnly,
     affiliateCode,
     affiliateOwnerId,
   } = input;
@@ -450,6 +479,64 @@ function buildUserListWhereClause(
   else if (status === "locked") whereSql.push("u.is_locked = true");
   else if (status === "active")
     whereSql.push("u.is_banned = false AND u.is_locked = false");
+
+  // ── Audit filters ──────────────────────────────────────────────────
+  // Added for hunting bonus-farming cohorts. Every value is whitelisted
+  // against a Set before interpolation — these are inlined into raw SQL
+  // exactly like the `role` filter above, so an un-whitelisted value would
+  // be an injection. Each predicate is index-backed:
+  //   deposited / freeOnly → ledger_transactions (user_id, type, status, …)
+  //   provider             → account ("userId")
+  //   sharedIp             → user (signup_ip)
+  //   sharedDevice         → fingerprints (user_id) + (visitor_id)
+  const DEPOSIT_EXISTS = `EXISTS (
+    SELECT 1 FROM ledger_transactions lt
+     WHERE lt.user_id = u.id AND lt.type = 'deposit'
+       AND lt.status = 'completed'
+  )`;
+
+  if (deposited === "yes") whereSql.push(DEPOSIT_EXISTS);
+  else if (deposited === "no") whereSql.push(`NOT ${DEPOSIT_EXISTS}`);
+
+  if (provider && SIGNUP_PROVIDERS.has(provider)) {
+    whereSql.push(`EXISTS (
+      SELECT 1 FROM account a
+       WHERE a."userId" = u.id AND a."providerId" = '${provider}'
+    )`);
+  }
+
+  // "Someone else signed up from this exact IP." NULL signup_ip never
+  // matches, so those users fall out of BOTH yes and no — deliberate: we
+  // can't say either way about a user we have no IP for.
+  const SHARED_IP_EXISTS = `EXISTS (
+    SELECT 1 FROM "user" u2
+     WHERE u2.signup_ip = u.signup_ip AND u2.id <> u.id
+  )`;
+  if (sharedIp === "yes")
+    whereSql.push(`u.signup_ip IS NOT NULL AND ${SHARED_IP_EXISTS}`);
+  else if (sharedIp === "no")
+    whereSql.push(`u.signup_ip IS NOT NULL AND NOT ${SHARED_IP_EXISTS}`);
+
+  // Same physical device as another account, by FingerprintJS visitor_id.
+  // Only meaningful for users we actually captured — capture started
+  // 2026-07-22, so this returns almost nothing for older accounts.
+  if (sharedDevice === "yes") {
+    whereSql.push(`EXISTS (
+      SELECT 1 FROM fingerprints f1
+        JOIN fingerprints f2
+          ON f2.visitor_id = f1.visitor_id AND f2.user_id <> f1.user_id
+       WHERE f1.user_id = u.id
+    )`);
+  }
+
+  // "Took free value, never paid" — the core farming shape.
+  if (freeOnly && FREE_ONLY_TYPES.has(freeOnly)) {
+    whereSql.push(`EXISTS (
+      SELECT 1 FROM ledger_transactions lt
+       WHERE lt.user_id = u.id
+         AND lt.type = '${FREE_ONLY_TYPES.get(freeOnly)}'
+    ) AND NOT ${DEPOSIT_EXISTS}`);
+  }
   // affiliateOwnerId (all codes this owner has ever had) and affiliateCode
   // (one specific code) are alternatives — only one applies at a time.
   // affiliateOwnerId takes precedence in the (edge-case, not the main path)
@@ -743,7 +830,15 @@ function cachedRankedUserIds(
     (!!input.role && input.role !== "all") ||
     !!input.status ||
     !!input.affiliateCode ||
-    !!input.affiliateOwnerId;
+    !!input.affiliateOwnerId ||
+    // These MUST be here. Omitting a filter sends the request down
+    // cachedGlobalRankedUserIds, which ranks the WHOLE user base and would
+    // hand back ids that the filter excludes.
+    !!input.deposited ||
+    !!input.provider ||
+    !!input.sharedIp ||
+    !!input.sharedDevice ||
+    !!input.freeOnly;
   return isFiltered
     ? cachedFilteredRankedUserIds(input)
     : cachedGlobalRankedUserIds(input);
@@ -1077,6 +1172,12 @@ export async function getUsers(params: {
   search?: string;
   role?: string;
   status?: string;
+  /** Audit filters — see UserListFilterInput for each one's meaning. */
+  deposited?: string;
+  provider?: string;
+  sharedIp?: string;
+  sharedDevice?: string;
+  freeOnly?: string;
   sortBy?: string;
   sortOrder?: string;
   /**
@@ -1124,6 +1225,11 @@ export async function getUsers(params: {
     sortBy = "created_at",
     sortOrder = "desc",
     searchMode = "prefix",
+    deposited,
+    provider,
+    sharedIp,
+    sharedDevice,
+    freeOnly,
     codeSearch: codeSearchParam = false,
     includeExcludedInSearch = false,
     affiliateCode: affiliateCodeParam,
@@ -1218,6 +1324,11 @@ export async function getUsers(params: {
     codeSearch,
     role,
     status,
+    deposited,
+    provider,
+    sharedIp,
+    sharedDevice,
+    freeOnly,
     affiliateCode,
     affiliateOwnerId,
     excludedUserIds,
