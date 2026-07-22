@@ -772,79 +772,53 @@ function CreateProgramDialog({
                     before attaching a money program to it. */}
                 {results.length > 0 ? (
                   <div className="max-h-56 space-y-0.5 overflow-y-auto rounded-md border p-1">
-                    {results.map((r) => {
-                      const isCreator = r.role === "creator";
-                      return (
-                        <button
-                          key={r.userId}
-                          type="button"
-                          // A program can only attach to a role=creator
-                          // account (createCreatorRewardProgram refuses the
-                          // rest). Code owners who aren't creators are still
-                          // LISTED — otherwise searching their code looks
-                          // broken — but they can't be picked, and the chip
-                          // says why.
-                          disabled={!isCreator || isPending}
-                          onClick={() => {
-                            setSelected(r);
-                            setPickedCodes(r.codes);
-                          }}
-                          className={cn(
-                            "flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left text-sm",
-                            isCreator
-                              ? "hover:bg-muted"
-                              : "cursor-not-allowed opacity-60",
-                          )}
-                          title={
-                            isCreator
-                              ? `User ID: ${r.userId}`
-                              : `${r.username ?? r.userId} is not a creator — make them one before attaching a program. User ID: ${r.userId}`
-                          }
-                        >
-                          <span className="flex min-w-0 items-center gap-1.5">
-                            <span className="truncate">
-                              {r.username ?? r.userId}
-                            </span>
-                            {!isCreator && (
-                              <Badge
-                                variant="outline"
-                                className="shrink-0 text-[10px] text-muted-foreground"
+                    {/* Every row is a creator — the query returns no other
+                        role — so all of them are selectable. */}
+                    {results.map((r) => (
+                      <button
+                        key={r.userId}
+                        type="button"
+                        disabled={isPending}
+                        onClick={() => {
+                          setSelected(r);
+                          setPickedCodes(r.codes);
+                        }}
+                        className="flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left text-sm hover:bg-muted"
+                        title={`User ID: ${r.userId}`}
+                      >
+                        <span className="min-w-0 truncate">
+                          {r.username ?? r.userId}
+                        </span>
+                        {r.codes.length > 0 ? (
+                          <span className="flex shrink-0 flex-wrap justify-end gap-1">
+                            {r.codes.slice(0, 4).map((c) => (
+                              <span
+                                key={c}
+                                className="rounded border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
                               >
-                                not a creator
-                              </Badge>
+                                {c}
+                              </span>
+                            ))}
+                            {r.codes.length > 4 && (
+                              <span className="text-[10px] text-muted-foreground">
+                                +{r.codes.length - 4}
+                              </span>
                             )}
                           </span>
-                          {r.codes.length > 0 ? (
-                            <span className="flex shrink-0 flex-wrap justify-end gap-1">
-                              {r.codes.slice(0, 4).map((c) => (
-                                <span
-                                  key={c}
-                                  className="rounded border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
-                                >
-                                  {c}
-                                </span>
-                              ))}
-                              {r.codes.length > 4 && (
-                                <span className="text-[10px] text-muted-foreground">
-                                  +{r.codes.length - 4}
-                                </span>
-                              )}
-                            </span>
-                          ) : (
-                            <span className="shrink-0 text-[10px] text-muted-foreground">
-                              no codes
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
+                        ) : (
+                          <span className="shrink-0 text-[10px] text-muted-foreground">
+                            no codes
+                          </span>
+                        )}
+                      </button>
+                    ))}
                   </div>
                 ) : (
                   searched &&
                   !searching && (
                     <p className="text-xs text-muted-foreground">
                       {query.trim()
-                        ? "No creator or code owner matches that."
+                        ? "No creator matches that. A code owned by a non-creator account won't show — make them a creator first."
                         : "No creators yet."}
                     </p>
                   )

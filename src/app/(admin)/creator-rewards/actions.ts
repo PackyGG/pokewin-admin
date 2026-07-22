@@ -713,14 +713,13 @@ export type CreatorSearchResult = {
  * 2026-07-23). Typing a code resolves to whoever owns it, which is how an
  * operator who only knows the code finds the account.
  *
- * Only users who can actually carry a program come back: `role = 'creator'`
- * OR anyone who owns at least one affiliate code. Both matter — a code owner
- * is often NOT role creator (prod: PACKYGGG belongs to a plain `user`), and a
- * newly-made creator with no codes yet still has to be selectable. A plain
- * handle match that is neither shows nothing, rather than filling the list
- * with accounts that have no code to attach.
+ * ONLY `role = 'creator'` accounts come back (owner, 2026-07-23). That is the
+ * same set `createCreatorRewardProgram` will accept, so everything listed can
+ * actually be picked. The consequence is deliberate: a code owned by a plain
+ * `user` (prod has plenty — PACKYGGG among them) resolves to nothing here.
+ * Make the account a creator first, then it appears.
  *
- * Creators sort first, then by username. Read-only against MAIN; measured
+ * Ordered by username. Read-only against MAIN; measured
  * 1.5 ms (EXPLAIN ANALYZE, prod 2026-07-23) — the union legs are index
  * searches, `affiliate_codes` is ~1k rows. Empty query lists creators so the
  * dialog opens with something to pick.
@@ -754,8 +753,7 @@ export async function searchCreatorsWithCodes(
       FROM matched m
       JOIN "user" u ON u.id = m.id
      WHERE u.role = 'creator'::user_role
-        OR EXISTS (SELECT 1 FROM affiliate_codes ac WHERE ac.user_id = u.id)
-     ORDER BY (u.role = 'creator'::user_role) DESC, u.username ASC NULLS LAST
+     ORDER BY u.username ASC NULLS LAST
      LIMIT 20`;
 
   let rows: Row[];
