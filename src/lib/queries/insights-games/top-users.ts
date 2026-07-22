@@ -53,7 +53,7 @@ export type GamesTopUsersData = {
 
 export type GamesTopUsersFilters = {
   /** Restrict the wager+payout join to one product (or all). */
-  game: "all" | "packs" | "battles" | "upgrader";
+  game: "all" | "packs" | "battles" | "upgrader" | "keno";
   /** Drop users whose total wager < min. */
   minWager: number;
   /** ISO 3166-1 alpha-2 country code, or null = all countries. */
@@ -71,7 +71,8 @@ export function parseTopUsersFilters(params: {
   if (
     params.game === "packs" ||
     params.game === "battles" ||
-    params.game === "upgrader"
+    params.game === "upgrader" ||
+    params.game === "keno"
   ) {
     game = params.game;
   }
@@ -128,14 +129,17 @@ export async function getGamesTopUsers(
     const includeOnPacks = filters.game === "all" || filters.game === "packs";
     const includeOnBattles = filters.game === "all" || filters.game === "battles";
     const includeOnUpgrader = filters.game === "all" || filters.game === "upgrader";
+    const includeOnKeno = filters.game === "all" || filters.game === "keno";
 
-    // Ledger wager arm covers pack/battle ONLY — the upgrader wager is
+    // Ledger wager arm covers pack/battle/KENO — the upgrader wager is
     // sourced from upgrader_games (canonical: upgrader is not on the
     // ledger), folded in via `upgrader_src` below when the filter
-    // includes upgrader.
+    // includes upgrader. Keno IS on the ledger on both legs, so its stake
+    // rides this same arm and its payout gets `keno_payout_src` below.
     const wagerTypes: string[] = [];
     if (includeOnPacks) wagerTypes.push("'pack_opening'");
     if (includeOnBattles) wagerTypes.push("'battle_bet'", "'battle_sponsorship'");
+    if (includeOnKeno) wagerTypes.push("'keno_bet'");
     // Defensive: an empty types tuple is unreachable for the pack/battle
     // filters but a one-char placeholder keeps SQL well-formed when the
     // filter is upgrader-only (ledger wager arm contributes nothing then).
@@ -159,6 +163,11 @@ export async function getGamesTopUsers(
         "(lt.type::text = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))",
         "lt.type::text = 'battle_sponsorship'",
       );
+    }
+    if (includeOnKeno) {
+      // No borrow gate: keno has no borrow/sponsorship mechanic, so every
+      // completed keno_bet row is a real stake.
+      wagerSrcPredicates.push("lt.type::text = 'keno_bet'");
     }
     const wagerOrPredicate = wagerSrcPredicates.length > 0
       ? `AND (${wagerSrcPredicates.join(" OR ")})`
@@ -245,6 +254,29 @@ export async function getGamesTopUsers(
              )
              ${uiCutoff}
          )
+         ${includeOnKeno ? `,
+         keno_payout_src AS (
+           -- Keno's win credit. Unlike packs/battles (which pay out in
+           -- inventory) keno pays CASH, so its payout leg is a ledger row,
+           -- not a user_inventory row — it needs its own arm. play = 0
+           -- because the matching keno_bet in wager_src already counted the
+           -- play; counting it here too would double every keno play.
+           SELECT lt.user_id,
+                  0::numeric AS wager,
+                  ABS(lt.amount::numeric) AS payouts,
+                  0::int AS play
+           FROM ledger_transactions lt
+           WHERE lt.status = 'completed'
+             AND lt.type::text = 'keno_payout'
+             AND lt.user_id IN ${scope}
+             AND NOT EXISTS (
+               SELECT 1 FROM session_windows sw
+               WHERE sw.uid = lt.user_id
+                 AND lt.created_at >= sw.win_start
+                 AND lt.created_at <  sw.win_end
+             )
+             ${ltCutoff}
+         )` : ""}
          ${includeOnUpgrader ? `,
          upgrader_src AS (
            -- Upgrader wager + payout from upgrader_games (canonical
@@ -276,6 +308,7 @@ export async function getGamesTopUsers(
            SELECT * FROM wager_src
            UNION ALL
            SELECT * FROM inv_payout_src
+           ${includeOnKeno ? "UNION ALL SELECT * FROM keno_payout_src" : ""}
            ${includeOnUpgrader ? "UNION ALL SELECT * FROM upgrader_src" : ""}
          ) g
          JOIN "user" u ON u.id = g.user_id

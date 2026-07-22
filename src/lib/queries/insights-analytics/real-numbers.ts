@@ -110,7 +110,7 @@ import { INSIGHTS_HUB_WAGER_LOOKBACK_DAYS } from "./hub-wager";
 /** One game line's gaming-margin economics. */
 export type GameGgrRow = {
   /** Stable key. */
-  key: "packs" | "battles" | "upgrader";
+  key: "packs" | "battles" | "upgrader" | "keno";
   /** Display label. */
   label: string;
   /** Σ wager (stake placed), real customers, borrow-corrected. */
@@ -126,7 +126,7 @@ export type GameGgrRow = {
 };
 
 export type RealNumbersGameSplit = {
-  /** Per-product GGR rows in display order (packs, battles, upgrader). */
+  /** Per-product GGR rows in display order (packs, battles, upgrader, keno). */
   games: GameGgrRow[];
   /** Σ of the per-game wager (= canonical wager). */
   totalWager: number;
@@ -168,13 +168,22 @@ const cachedGameSplit = unstable_cache(
     battleLedgerPayout: number;
     upgraderWager: number;
     upgraderPayout: number;
+    kenoWager: number;
+    kenoPayout: number;
   }> => {
     const db = await getDb();
     const since = `'${cutoffIso}'::timestamptz`;
 
-    type WagerRow = { pack_wager: string; battle_wager: string };
+    type WagerRow = {
+      pack_wager: string;
+      battle_wager: string;
+      keno_wager: string;
+    };
     type InvRow = { pack_inv: string; battle_inv: string };
-    type LedgerPayoutRow = { battle_ledger_payout: string };
+    type LedgerPayoutRow = {
+      battle_ledger_payout: string;
+      keno_ledger_payout: string;
+    };
 
     const [wagerRows, invRows, ledgerPayoutRows, upg] = await Promise.all([
       // Per-product WAGER from the ledger, under the canonical WAGER_LEG_FILTER
@@ -187,10 +196,12 @@ const cachedGameSplit = unstable_cache(
            COALESCE(SUM(CASE WHEN type::text = 'pack_opening'
              THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager,
            COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship')
-             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager
+             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
+           COALESCE(SUM(CASE WHEN type::text = 'keno_bet'
+             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS keno_wager
          FROM ledger_transactions
          WHERE status = 'completed'
-           AND type::text IN ('pack_opening','battle_bet','battle_sponsorship')
+           AND type::text IN ('pack_opening','battle_bet','battle_sponsorship','keno_bet')
            AND user_id IN ${userScopeSql}
            AND ${notInCreatorSessionLedger}
            AND created_at >= ${since}
@@ -213,15 +224,21 @@ const cachedGameSplit = unstable_cache(
            AND obtained_at >= ${since}
            AND ${PAYOUT_LEG_FILTER}`,
       ),
-      // The LEDGER gaming-payout legs (battle_refund + battle_excess_to_voucher)
-      // — both are battle-win settlement legs, so they belong to battles. Same
-      // GAMING_PAYOUT_TYPES set + scope getGamingLegs sums; no borrow flag on
+      // The LEDGER gaming-payout legs. Same GAMING_PAYOUT_TYPES set + scope
+      // getGamingLegs sums (so the TOTAL still reconciles with the headline),
+      // but split per product: battle_refund + battle_excess_to_voucher are
+      // battle-win settlement legs, keno_payout is keno's win credit. Summing
+      // the whole set into one bucket — as this did before keno joined the set
+      // — would silently book keno payouts as battle payouts. No borrow flag on
       // these legs (summed unconditionally within the type filter), matching
       // the headline.
       db.$queryRawUnsafe<LedgerPayoutRow[]>(
         `WITH ${sessionWindowsCte}
          SELECT
-           COALESCE(SUM(ABS(amount::numeric)), 0)::text AS battle_ledger_payout
+           COALESCE(SUM(CASE WHEN type::text IN ('battle_refund','battle_excess_to_voucher')
+             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_ledger_payout,
+           COALESCE(SUM(CASE WHEN type::text = 'keno_payout'
+             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS keno_ledger_payout
          FROM ledger_transactions
          WHERE status = 'completed'
            AND type::text IN ${GAMING_PAYOUT_TYPES_SQL}
@@ -242,6 +259,8 @@ const cachedGameSplit = unstable_cache(
       battleLedgerPayout: toNumber(ledgerPayoutRows[0]?.battle_ledger_payout),
       upgraderWager: upg?.wager ?? 0,
       upgraderPayout: upg?.payout ?? 0,
+      kenoWager: toNumber(wagerRows[0]?.keno_wager),
+      kenoPayout: toNumber(ledgerPayoutRows[0]?.keno_ledger_payout),
     };
   },
   ["insights-real-numbers-game-split-v1"],
@@ -267,7 +286,7 @@ function makeRow(
 }
 
 /**
- * Per-product GGR split (packs / battles / upgrader) over the lifetime
+ * Per-product GGR split (packs / battles / upgrader / keno) over the lifetime
  * window, on the canonical real-customer + borrow-corrected scope.
  *
  * Reconciles with the headline `getCostBreakdown(...).ggr` /
@@ -307,7 +326,12 @@ export async function getRealNumbersGameSplit(): Promise<RealNumbersGameSplit> {
       legs.upgraderPayout,
     );
 
-    const games = [packs, battles, upgrader];
+    // Keno is 100% ledger-native on both legs (keno_bet / keno_payout), so
+    // unlike upgrader it needs no off-ledger table read — the same two ledger
+    // queries above already carry it.
+    const keno = makeRow("keno", "Keno", legs.kenoWager, legs.kenoPayout);
+
+    const games = [packs, battles, upgrader, keno];
     const totalWager = games.reduce((s, g) => s + g.wager, 0);
     const totalPayout = games.reduce((s, g) => s + g.payout, 0);
     const totalGgr = games.reduce((s, g) => s + g.ggr, 0);

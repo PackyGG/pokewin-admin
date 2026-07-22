@@ -1684,6 +1684,14 @@ enum game_type {
   pack
   battle
   upgrader
+  // Both present on the live prod enum (verified read-only 2026-07-22: prod
+  // has all five members). Generated-client sync only — NOT a DB migration.
+  // Without them a TYPED Prisma read of game_sessions throws on any keno or
+  // double-down row — e.g. `session.game_type === "pack"` in
+  // (admin)/users/[id]/actions.ts — so a user who played either game could
+  // break that path.
+  battle_double_down
+  keno
 }
 
 enum gift_card_region {
@@ -1768,6 +1776,19 @@ enum ledger_transaction_type {
   // sweepstakes model). Without it Prisma threw reading these ledger rows and
   // safeQuery silently emptied the Finances/transactions views.
   balance_withdrawal
+  // Present on the live prod enum (verified read-only 2026-07-22 — these two
+  // were the ONLY drift between the committed schema and prod's 58 members).
+  // Generated-client sync only — NOT a DB migration. Keno is fully ON-ledger,
+  // unlike upgrader: keno.service.ts debits keno_bet on every bet and credits
+  // keno_payout on every win (repositories.ledger.createKenoPayout), so both
+  // legs are real ledger rows and go straight onto the canonical wager/payout
+  // sets — no off-ledger `upgrader_games` correction is needed.
+  //
+  // Same failure mode as balance_withdrawal above: without these members
+  // Prisma throws decoding any keno ledger row (and any game_sessions row with
+  // game_type = 'keno'), which safeQuery turns into a silently empty view.
+  keno_bet
+  keno_payout
 }
 
 enum race_type {
