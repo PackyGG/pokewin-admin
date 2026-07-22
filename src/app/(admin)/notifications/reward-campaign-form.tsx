@@ -1,35 +1,44 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
   CheckCircle2,
   CopyCheck,
+  Filter,
   Play,
   RotateCcw,
   Ticket,
   TriangleAlert,
+  UserPlus,
   UserX,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import {
-  BULK_MAX_ITEMS,
-  REWARD_MAX_VALUE_USD,
-  parseRecipients,
-  validateCampaignSlug,
-} from "@/lib/user-notification";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Spinner } from "@/components/ux";
+import { cn } from "@/lib/utils";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { BULK_MAX_ITEMS, REWARD_MAX_VALUE_USD, validateCampaignSlug } from "@/lib/user-notification";
 import { sendRewardCampaignChunkAction } from "./reward-actions";
+import {
+  REWARD_AUDIENCE_MAX,
+  resolveRewardAudienceAction,
+  type AudienceFilters,
+  type PickedUser,
+} from "./audience-actions";
 import { NotificationUserPicker } from "./notification-user-picker";
 
-const RECIPIENT_PLACEHOLDER = `kX9mQ2pLr7vNa4bT8cZfE1yH6wJ3sD0g
-aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY
-
-one user id per line — or paste a CSV with a user_id column`;
+type Mode = "pick" | "filter";
+type Failure = { chunkIndex: number; error: string };
 
 type ChunkTotals = {
   requested: number;
@@ -40,28 +49,35 @@ type ChunkTotals = {
   unknown: string[];
 };
 
-type Failure = { chunkIndex: number; error: string };
+const ANY = "__any__";
 
 /**
- * Reward campaign — the "$ amount in, codes out" flow.
+ * Reward campaign composer.
  *
- * The operator supplies an amount and a recipient list; every code is minted
- * server-side (derived, single-use, bound to its recipient) and delivered as
- * a `promo_code_granted` notification. No payload JSON and no type field:
- * both are fixed by the flow, and letting them be edited here would only
- * create ways to send a code the site can't render.
+ * Recipients are chosen, never typed. The previous version asked the operator
+ * to paste user ids into a textarea, which nobody is going to do for a
+ * thousand-user campaign — so this offers the two ways the job is actually
+ * thought about: name specific people, or describe a group. The group path
+ * resolves through the same predicate builder the /users table renders from,
+ * so the count on screen is the population that gets paid.
  *
- * Chunks are sent one at a time against a snapshot taken when the send
- * starts, so editing the form after a failure can't change what a retry
- * sends. Retrying is safe by construction — codes are derived, so a replay
- * reuses them rather than minting a second set.
+ * Laid out as three steps rather than one wall of fields: who, what, send.
+ * The money total is stated before the button, not after.
  */
 export function RewardCampaignForm() {
+  const [mode, setMode] = useState<Mode>("pick");
+  const [picked, setPicked] = useState<PickedUser[]>([]);
+  const [filters, setFilters] = useState<AudienceFilters>({});
+  const [audience, setAudience] = useState<{
+    count: number;
+    sample: string[];
+    truncated: boolean;
+  } | null>(null);
+  const [resolving, startResolving] = useTransition();
+
   const [campaign, setCampaign] = useState("");
-  const [amount, setAmount] = useState("25");
+  const [amount, setAmount] = useState("5");
   const [expiresInDays, setExpiresInDays] = useState("");
-  const [recipientsText, setRecipientsText] = useState("");
-  const [chunkSize, setChunkSize] = useState(BULK_MAX_ITEMS);
 
   const [sending, setSending] = useState(false);
   const [currentChunk, setCurrentChunk] = useState(0);
@@ -74,46 +90,42 @@ export function RewardCampaignForm() {
     expiresInDays: number | null;
   } | null>(null);
 
+  // Re-resolve whenever the filter changes. The count has to track the
+  // controls or the operator is reading a stale number right above a button
+  // that spends money.
+  useEffect(() => {
+    if (mode !== "filter") return;
+    startResolving(async () => {
+      const res = await resolveRewardAudienceAction(filters);
+      if (!res.success) {
+        setAudience(null);
+        toast.error(res.error);
+        return;
+      }
+      setAudience(res.audience);
+    });
+  }, [mode, filters]);
+
+  const recipientIds = useMemo(
+    () => (mode === "pick" ? picked.map((p) => p.id) : (audience?.sample ?? [])),
+    [mode, picked, audience],
+  );
+  const recipientCount = recipientIds.length;
+
   const slugError = campaign.trim() ? validateCampaignSlug(campaign) : null;
   const valueUsd = Number(amount);
   const amountError =
     amount.trim() === ""
       ? "Amount is required"
       : !Number.isFinite(valueUsd) || valueUsd <= 0
-        ? "Amount must be greater than zero"
+        ? "Must be greater than zero"
         : valueUsd > REWARD_MAX_VALUE_USD
           ? `Capped at $${REWARD_MAX_VALUE_USD} per code`
           : null;
 
-  const parsed = useMemo(
-    () => (recipientsText.trim() ? parseRecipients(recipientsText) : null),
-    [recipientsText],
-  );
-
-  /** Unique recipient ids, chunked. Payload columns in a pasted CSV are
-   * ignored here — the payload of a reward notification is the minted code,
-   * not anything the operator types. */
-  const chunks = useMemo(() => {
-    if (!parsed?.ok) return null;
-    const ids = [...new Set(parsed.recipients.map((r) => r.userId))];
-    if (ids.length === 0) return null;
-    const size = Math.min(Math.max(1, chunkSize || 1), BULK_MAX_ITEMS);
-    const out: string[][] = [];
-    for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
-    return out;
-  }, [parsed, chunkSize]);
-
-  const recipientCount = chunks?.reduce((n, c) => n + c.length, 0) ?? 0;
-
   const totals = useMemo(() => {
     const unknown = new Set<string>();
-    const acc = {
-      requested: 0,
-      created: 0,
-      deduped: 0,
-      codesMinted: 0,
-      codesReused: 0,
-    };
+    const acc = { requested: 0, created: 0, deduped: 0, codesMinted: 0, codesReused: 0 };
     for (const r of results) {
       acc.requested += r.requested;
       acc.created += r.created;
@@ -125,10 +137,20 @@ export function RewardCampaignForm() {
     return { ...acc, unknown: [...unknown] };
   }, [results]);
 
+  const exposure = recipientCount * (Number.isFinite(valueUsd) ? valueUsd : 0);
+  const chunks = useMemo(() => {
+    const out: string[][] = [];
+    for (let i = 0; i < recipientIds.length; i += BULK_MAX_ITEMS) {
+      out.push(recipientIds.slice(i, i + BULK_MAX_ITEMS));
+    }
+    return out;
+  }, [recipientIds]);
+
   const readyToSend =
     !sending &&
-    chunks !== null &&
-    chunks.length > 0 &&
+    !resolving &&
+    recipientCount > 0 &&
+    !audience?.truncated &&
     !slugError &&
     !amountError &&
     campaign.trim() !== "";
@@ -149,7 +171,7 @@ export function RewardCampaignForm() {
         });
         if (!res.success) {
           setFailure({ chunkIndex: i, error: res.error });
-          toast.error(`Chunk ${i + 1} failed — retrying it is safe`);
+          toast.error(`Batch ${i + 1} failed — retrying it is safe`);
           return;
         }
         setResults((prev) => [
@@ -171,16 +193,14 @@ export function RewardCampaignForm() {
   }
 
   function handleStart() {
-    if (!chunks) return;
+    if (chunks.length === 0) return;
     const days = Number(expiresInDays);
     const plan = {
       chunks,
       campaign: campaign.trim(),
       valueUsd,
       expiresInDays:
-        expiresInDays.trim() !== "" && Number.isFinite(days) && days > 0
-          ? days
-          : null,
+        expiresInDays.trim() !== "" && Number.isFinite(days) && days > 0 ? days : null,
     };
     setSent(plan);
     setResults([]);
@@ -188,299 +208,468 @@ export function RewardCampaignForm() {
     void run(plan, 0);
   }
 
-  function handleReset() {
-    setResults([]);
-    setFailure(null);
-    setCurrentChunk(0);
-    setSent(null);
-  }
-
   const done = results.length;
-  const total = sent?.chunks.length ?? chunks?.length ?? 0;
+  const total = sent?.chunks.length ?? chunks.length;
   const progressPct = total > 0 ? Math.round((done / total) * 100) : 0;
-  const exposure = recipientCount * (Number.isFinite(valueUsd) ? valueUsd : 0);
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">Campaign slug</Label>
-          <Input
-            value={campaign}
-            onChange={(e) => setCampaign(e.target.value)}
-            placeholder="summer_promo_2026"
-            className="font-mono text-xs"
+      {/* ── 1 · Who ────────────────────────────────────────────────── */}
+      <Step n={1} title="Who gets it">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <ModeCard
+            active={mode === "pick"}
+            icon={UserPlus}
+            title="Pick users"
+            hint="Search by name or email"
+            onClick={() => setMode("pick")}
             disabled={sending}
           />
-          <p
-            className={`text-[11px] ${slugError ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}
-          >
-            {slugError ?? "Also seeds each code. Keep it stable — a retry reuses codes."}
-          </p>
-        </div>
-
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">Amount per user</Label>
-          <div className="relative">
-            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-              $
-            </span>
-            <Input
-              type="number"
-              min={0}
-              max={REWARD_MAX_VALUE_USD}
-              step="0.01"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="pl-6"
-              disabled={sending}
-            />
-          </div>
-          <p
-            className={`text-[11px] ${amountError ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}
-          >
-            {amountError ??
-              `One single-use code each, max $${REWARD_MAX_VALUE_USD} per code.`}
-          </p>
-        </div>
-
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">
-            Expires in (days)
-          </Label>
-          <Input
-            type="number"
-            min={0}
-            value={expiresInDays}
-            onChange={(e) => setExpiresInDays(e.target.value)}
-            placeholder="never"
+          <ModeCard
+            active={mode === "filter"}
+            icon={Filter}
+            title="Match a group"
+            hint="Everyone fitting a filter"
+            onClick={() => setMode("filter")}
             disabled={sending}
           />
-          <p className="text-[11px] text-muted-foreground">
-            Leave empty for no expiry.
-          </p>
         </div>
-      </div>
 
-      <div className="space-y-1">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <Label className="text-xs text-muted-foreground">Recipients</Label>
-          <div className="w-56">
-            <NotificationUserPicker
-              disabled={sending}
-              label="Add a user to the list…"
-              onSelect={(u) =>
-                setRecipientsText((cur) =>
-                  cur.trim() ? `${cur.replace(/\s+$/, "")}\n${u.id}` : u.id,
-                )
-              }
-            />
+        {mode === "pick" ? (
+          <div className="space-y-2">
+            <div className="sm:max-w-xs">
+              <NotificationUserPicker
+                disabled={sending}
+                label="Search for a user…"
+                onSelect={(u) =>
+                  setPicked((cur) =>
+                    cur.some((p) => p.id === u.id) ? cur : [...cur, u],
+                  )
+                }
+              />
+            </div>
+            {picked.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">
+                No one selected yet.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {picked.map((u) => (
+                  <span
+                    key={u.id}
+                    className="inline-flex items-center gap-1.5 rounded-full border bg-muted/40 py-1 pl-2.5 pr-1 text-xs"
+                  >
+                    {u.username ?? u.email ?? u.id}
+                    <button
+                      type="button"
+                      disabled={sending}
+                      onClick={() =>
+                        setPicked((cur) => cur.filter((p) => p.id !== u.id))
+                      }
+                      className="rounded-full p-0.5 text-muted-foreground hover:text-rose-600"
+                      aria-label={`Remove ${u.username ?? u.id}`}
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
-        <Textarea
-          value={recipientsText}
-          onChange={(e) => setRecipientsText(e.target.value)}
-          rows={8}
-          spellCheck={false}
-          className="font-mono text-xs"
-          placeholder={RECIPIENT_PLACEHOLDER}
-          disabled={sending}
-        />
-        {parsed && !parsed.ok ? (
-          <p className="text-[11px] text-rose-600 dark:text-rose-400">
-            {parsed.error}
-          </p>
         ) : (
-          <p className="text-[11px] text-muted-foreground">
-            {parsed?.ok
-              ? `${formatNumber(recipientCount)} unique recipients${
-                  parsed.recipients.length !== recipientCount
-                    ? ` (${parsed.recipients.length - recipientCount} duplicate id(s) collapsed)`
-                    : ""
-                }`
-              : "One user id per line. CSV payload columns are ignored — the payload is the minted code."}
-          </p>
-        )}
-      </div>
+          <div className="space-y-2">
+            <div className="grid gap-2 sm:grid-cols-3">
+              <FilterSelect
+                label="Deposited"
+                value={filters.deposited ?? ANY}
+                disabled={sending}
+                onChange={(v) =>
+                  setFilters((f) => ({ ...f, deposited: v === ANY ? undefined : v }))
+                }
+                options={[
+                  { value: ANY, label: "Any" },
+                  { value: "yes", label: "Has deposited" },
+                  { value: "no", label: "Never deposited" },
+                ]}
+              />
+              <FilterSelect
+                label="Status"
+                value={filters.status ?? ANY}
+                disabled={sending}
+                onChange={(v) =>
+                  setFilters((f) => ({ ...f, status: v === ANY ? undefined : v }))
+                }
+                options={[
+                  { value: ANY, label: "Any" },
+                  { value: "active", label: "Active" },
+                  { value: "locked", label: "Locked" },
+                ]}
+              />
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">
+                  Affiliate code
+                </Label>
+                <Input
+                  value={filters.affiliateCode ?? ""}
+                  onChange={(e) =>
+                    setFilters((f) => ({ ...f, affiliateCode: e.target.value }))
+                  }
+                  placeholder="any"
+                  className="font-mono text-xs uppercase"
+                  disabled={sending}
+                />
+              </div>
+            </div>
 
-      <div className="space-y-1 sm:w-40">
-        <Label className="text-xs text-muted-foreground">Chunk size</Label>
-        <Input
-          type="number"
-          min={1}
-          max={BULK_MAX_ITEMS}
-          value={chunkSize}
-          onChange={(e) => setChunkSize(Number(e.target.value))}
-          className="text-xs"
-          disabled={sending}
-        />
-      </div>
-
-      <PreviewCard valueUsd={valueUsd} />
-
-      {recipientCount > 0 && !amountError && (
-        <div className="flex gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
-          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-          <p className="text-xs text-amber-700 dark:text-amber-300">
-            This mints <strong>{formatNumber(recipientCount)}</strong> real
-            promo codes worth{" "}
-            <strong>{formatCurrency(exposure)}</strong> in total, across{" "}
-            {formatNumber(total)} request{total === 1 ? "" : "s"}. Each code is
-            single-use and only redeemable by the account it was minted for.
-          </p>
-        </div>
-      )}
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={handleStart} disabled={!readyToSend} className="gap-1.5">
-          <Play className="size-4" />
-          {sending
-            ? `Sending chunk ${currentChunk + 1} of ${total}…`
-            : `Send ${formatNumber(recipientCount)} rewards`}
-        </Button>
-        {failure && sent && (
-          <Button
-            variant="outline"
-            onClick={() => void run(sent, failure.chunkIndex)}
-            disabled={sending}
-            className="gap-1.5"
-          >
-            <RotateCcw className="size-4" />
-            Retry from chunk {failure.chunkIndex + 1}
-          </Button>
-        )}
-        {(results.length > 0 || failure) && !sending && (
-          <Button variant="ghost" size="sm" onClick={handleReset}>
-            Clear results
-          </Button>
-        )}
-      </div>
-
-      {(sending || results.length > 0) && total > 0 && (
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-            <span>
-              Chunk {Math.min(done + (sending ? 1 : 0), total)} of {total}
-            </span>
-            <span className="tabular-nums">{progressPct}%</span>
-          </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-foreground/70 transition-all duration-300"
-              style={{ width: `${progressPct}%` }}
-            />
-          </div>
-        </div>
-      )}
-
-      {failure && (
-        <div className="space-y-1 rounded-md border border-rose-500/30 bg-rose-500/10 p-3">
-          <p className="text-xs font-medium text-rose-700 dark:text-rose-300">
-            Chunk {failure.chunkIndex + 1} failed
-          </p>
-          <p className="text-xs text-rose-700/90 dark:text-rose-300/90">
-            {failure.error}
-          </p>
-          <p className="text-[11px] text-rose-700/70 dark:text-rose-300/70">
-            Codes are derived from the campaign slug, so a retry reuses any
-            already minted instead of creating a second set.
-          </p>
-        </div>
-      )}
-
-      {results.length > 0 && (
-        <div className="space-y-3 rounded-md border p-3">
-          <p className="text-xs font-medium">
-            {done} of {total} chunk{total === 1 ? "" : "s"} ·{" "}
-            {formatNumber(totals.requested)} recipients ·{" "}
-            {formatCurrency(totals.codesMinted * (sent?.valueUsd ?? 0))} newly
-            issued
-          </p>
-
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            <CountTile
-              icon={Ticket}
-              label="Codes minted"
-              value={totals.codesMinted}
-              accent="text-emerald-600 dark:text-emerald-400"
-              hint="New single-use codes created"
-            />
-            <CountTile
-              icon={CopyCheck}
-              label="Codes reused"
-              value={totals.codesReused}
-              accent="text-blue-600 dark:text-blue-400"
-              hint="Already existed from an earlier attempt"
-            />
-            <CountTile
-              icon={CheckCircle2}
-              label="Delivered"
-              value={totals.created}
-              accent="text-emerald-600 dark:text-emerald-400"
-              hint="Notification rows inserted"
-            />
-            <CountTile
-              icon={UserX}
-              label="Unknown users"
-              value={totals.unknown.length}
-              accent="text-amber-600 dark:text-amber-400"
-              hint="Ids that don't exist — no code minted"
-            />
-          </div>
-
-          {totals.deduped > 0 && (
+            <div className="flex items-center gap-2 text-xs">
+              {resolving ? (
+                <>
+                  <Spinner size={13} label="Counting users" />
+                  <span className="text-muted-foreground">Counting…</span>
+                </>
+              ) : audience ? (
+                <span
+                  className={
+                    audience.truncated
+                      ? "text-rose-600 dark:text-rose-400"
+                      : "text-muted-foreground"
+                  }
+                >
+                  <strong className="text-foreground">
+                    {formatNumber(audience.count)}
+                  </strong>{" "}
+                  users match
+                  {audience.truncated &&
+                    ` — over the ${formatNumber(REWARD_AUDIENCE_MAX)} cap, narrow the filter`}
+                </span>
+              ) : null}
+            </div>
             <p className="text-[11px] text-muted-foreground">
-              {formatNumber(totals.deduped)} notification
-              {totals.deduped === 1 ? "" : "s"} already delivered — normal on a
-              retry, not an error.
+              Banned accounts and staff are always excluded.
+            </p>
+          </div>
+        )}
+      </Step>
+
+      {/* ── 2 · What ───────────────────────────────────────────────── */}
+      <Step n={2} title="What they get">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Amount each</Label>
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                $
+              </span>
+              <Input
+                type="number"
+                min={0}
+                max={REWARD_MAX_VALUE_USD}
+                step="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="pl-6 text-base font-semibold"
+                disabled={sending}
+              />
+            </div>
+            <p
+              className={`text-[11px] ${amountError ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}
+            >
+              {amountError ?? `Max $${REWARD_MAX_VALUE_USD} per code`}
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Campaign name</Label>
+            <Input
+              value={campaign}
+              onChange={(e) => setCampaign(e.target.value)}
+              placeholder="summer_promo_2026"
+              className="font-mono text-xs"
+              disabled={sending}
+            />
+            <p
+              className={`text-[11px] ${slugError ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}
+            >
+              {slugError ?? "Keep it stable — reruns reuse the same codes"}
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Expires in</Label>
+            <div className="relative">
+              <Input
+                type="number"
+                min={0}
+                value={expiresInDays}
+                onChange={(e) => setExpiresInDays(e.target.value)}
+                placeholder="never"
+                className="pr-12"
+                disabled={sending}
+              />
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                days
+              </span>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Empty = no expiry
+            </p>
+          </div>
+        </div>
+      </Step>
+
+      {/* ── 3 · Send ───────────────────────────────────────────────── */}
+      <Step n={3} title="Review &amp; send">
+        <div className="rounded-lg border bg-muted/30 p-4">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
+            <strong className="text-lg tabular-nums">
+              {formatNumber(recipientCount)}
+            </strong>
+            <span className="text-muted-foreground">
+              user{recipientCount === 1 ? "" : "s"} ×
+            </span>
+            <strong className="text-lg tabular-nums">
+              {formatCurrency(Number.isFinite(valueUsd) ? valueUsd : 0)}
+            </strong>
+            <span className="text-muted-foreground">=</span>
+            <strong className="text-lg tabular-nums text-rose-600 dark:text-rose-400">
+              {formatCurrency(exposure)}
+            </strong>
+            <span className="text-xs text-muted-foreground">
+              in single-use codes
+            </span>
+          </div>
+          {total > 1 && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Sent as {formatNumber(total)} batches of up to{" "}
+              {formatNumber(BULK_MAX_ITEMS)}, one at a time.
             </p>
           )}
+        </div>
 
-          {totals.unknown.length > 0 && (
-            <pre className="max-h-32 overflow-auto rounded bg-muted/50 p-2 font-mono text-[10px] leading-relaxed">
-              {totals.unknown.join("\n")}
-            </pre>
+        {recipientCount > 0 && !amountError && (
+          <div className="flex gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
+            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <p className="text-xs text-amber-700 dark:text-amber-300">
+              Each code is single-use and rejected for any account other than
+              the one it was minted for. Re-running the same campaign name
+              reuses codes instead of issuing new ones.
+            </p>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={handleStart} disabled={!readyToSend} className="gap-1.5">
+            <Play className="size-4" />
+            {sending
+              ? `Sending batch ${currentChunk + 1} of ${total}…`
+              : `Send ${formatNumber(recipientCount)} reward${recipientCount === 1 ? "" : "s"}`}
+          </Button>
+          {failure && sent && (
+            <Button
+              variant="outline"
+              onClick={() => void run(sent, failure.chunkIndex)}
+              disabled={sending}
+              className="gap-1.5"
+            >
+              <RotateCcw className="size-4" />
+              Retry batch {failure.chunkIndex + 1}
+            </Button>
+          )}
+          {(results.length > 0 || failure) && !sending && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setResults([]);
+                setFailure(null);
+                setCurrentChunk(0);
+                setSent(null);
+              }}
+            >
+              Clear results
+            </Button>
           )}
         </div>
-      )}
+
+        {(sending || results.length > 0) && total > 0 && (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>
+                Batch {Math.min(done + (sending ? 1 : 0), total)} of {total}
+              </span>
+              <span className="tabular-nums">{progressPct}%</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-foreground/70 transition-all duration-300"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {failure && (
+          <div className="space-y-1 rounded-md border border-rose-500/30 bg-rose-500/10 p-3">
+            <p className="text-xs font-medium text-rose-700 dark:text-rose-300">
+              Batch {failure.chunkIndex + 1} failed
+            </p>
+            <p className="text-xs text-rose-700/90 dark:text-rose-300/90">
+              {failure.error}
+            </p>
+            <p className="text-[11px] text-rose-700/70 dark:text-rose-300/70">
+              Retrying reuses any codes already minted — it can&apos;t pay twice.
+            </p>
+          </div>
+        )}
+
+        {results.length > 0 && (
+          <div className="space-y-3 rounded-md border p-3">
+            <p className="text-xs font-medium">
+              {done} of {total} batch{total === 1 ? "" : "es"} ·{" "}
+              {formatCurrency(totals.codesMinted * (sent?.valueUsd ?? 0))} newly
+              issued
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <CountTile
+                icon={Ticket}
+                label="Codes minted"
+                value={totals.codesMinted}
+                accent="text-emerald-600 dark:text-emerald-400"
+                hint="New single-use codes"
+              />
+              <CountTile
+                icon={CopyCheck}
+                label="Codes reused"
+                value={totals.codesReused}
+                accent="text-blue-600 dark:text-blue-400"
+                hint="Existed from an earlier run"
+              />
+              <CountTile
+                icon={CheckCircle2}
+                label="Delivered"
+                value={totals.created}
+                accent="text-emerald-600 dark:text-emerald-400"
+                hint="Notifications inserted"
+              />
+              <CountTile
+                icon={UserX}
+                label="Unknown"
+                value={totals.unknown.length}
+                accent="text-amber-600 dark:text-amber-400"
+                hint="Ids that don't exist"
+              />
+            </div>
+            {totals.deduped > 0 && (
+              <p className="text-[11px] text-muted-foreground">
+                {formatNumber(totals.deduped)} already delivered — normal on a
+                rerun, not an error.
+              </p>
+            )}
+          </div>
+        )}
+      </Step>
     </div>
   );
 }
 
-/** The recipient's view. The code shown is a shape, not a real one — codes
- * are derived server-side from a secret the browser never sees. */
-function PreviewCard({ valueUsd }: { valueUsd: number }) {
-  const worth = Number.isFinite(valueUsd) && valueUsd > 0 ? valueUsd : 0;
+/** Numbered section — keeps the flow readable instead of one wall of fields. */
+function Step({
+  n,
+  title,
+  children,
+}: {
+  n: number;
+  title: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="space-y-1.5">
-      <p className="text-xs font-medium text-muted-foreground">
-        What the user sees
-      </p>
-      <div className="flex gap-3 rounded-md border bg-muted/30 p-3">
-        <div className="mt-0.5 shrink-0 rounded-lg bg-primary/10 p-1.5">
-          <Ticket className="size-3.5 text-primary" />
-        </div>
-        <div className="min-w-0 flex-1 space-y-0.5">
-          <p className="text-sm font-medium">
-            {worth ? `${formatCurrency(worth)} promo code for you` : "Promo code for you"}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Redeem it in your wallet.
-          </p>
-          <span className="mt-1.5 flex items-center gap-2 rounded-md border bg-background px-2 py-1">
-            <span className="flex-1 truncate font-mono text-xs font-semibold tracking-wider text-muted-foreground">
-              PACKY-••••-••••-••••
-            </span>
-            <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
-              tap to copy
-            </Badge>
-          </span>
-        </div>
+    <section className="space-y-3 rounded-lg border p-4">
+      <div className="flex items-center gap-2">
+        <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+          {n}
+        </span>
+        <h3 className="text-sm font-medium">{title}</h3>
       </div>
-      <p className="text-[11px] text-muted-foreground">
-        Each recipient gets a different code, single-use, and rejected for any
-        account other than theirs.
-      </p>
+      {children}
+    </section>
+  );
+}
+
+function ModeCard({
+  active,
+  icon: Icon,
+  title,
+  hint,
+  onClick,
+  disabled,
+}: {
+  active: boolean;
+  icon: typeof UserPlus;
+  title: string;
+  hint: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={active}
+      className={cn(
+        "flex items-start gap-2.5 rounded-lg border p-3 text-left transition-colors",
+        active
+          ? "border-primary/40 bg-primary/5"
+          : "hover:bg-muted/50 disabled:opacity-60",
+      )}
+    >
+      <Icon
+        className={cn(
+          "mt-0.5 size-4 shrink-0",
+          active ? "text-primary" : "text-muted-foreground",
+        )}
+      />
+      <span className="min-w-0">
+        <span className="block text-sm font-medium">{title}</span>
+        <span className="block text-[11px] text-muted-foreground">{hint}</span>
+      </span>
+    </button>
+  );
+}
+
+function FilterSelect({
+  label,
+  value,
+  options,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      {/* base-ui hands back `string | null`; a null clear would blank the
+          control, so it falls through to "any" rather than undefined. */}
+      <Select
+        value={value}
+        onValueChange={(v: string | null) => onChange(v ?? ANY)}
+      >
+        <SelectTrigger className="w-full" disabled={disabled}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((o) => (
+            <SelectItem key={o.value} value={o.value}>
+              {o.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }
