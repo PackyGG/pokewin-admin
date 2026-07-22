@@ -53,7 +53,11 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
 import { RelativeTime } from "@/components/relative-time";
-import { ROLE_COLORS, USER_STATUS_COLORS } from "@/lib/constants";
+import {
+  IP_CLUSTER_SUSPICIOUS_MAX,
+  ROLE_COLORS,
+  USER_STATUS_COLORS,
+} from "@/lib/constants";
 import {
   type UserDetail,
   type PaginatedTransactions,
@@ -675,13 +679,6 @@ export function UserViewModern({
 //  Wager requirement is deliberately NOT a chip here — the hero's dedicated
 //  "Wager Left" KPI tile already surfaces it, so a chip would duplicate it.
 // ───────────────────────────────────────────────────────────────────
-
-/**
- * Above this many OTHER accounts on one signup IP, sharing stops being
- * evidence. Prod distribution: 11,043 unique IPs, ~1,000 pairs, then a long
- * tail to a single address with 667 users.
- */
-const IP_CLUSTER_SUSPICIOUS_MAX = 4;
 
 function FlagChip({
   icon: Icon,

@@ -6,7 +6,11 @@ import { Fingerprint, Network } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { UsersSortHeader } from "./sort-header";
-import { ROLE_COLORS, USER_STATUS_COLORS } from "@/lib/constants";
+import {
+  IP_CLUSTER_SUSPICIOUS_MAX,
+  ROLE_COLORS,
+  USER_STATUS_COLORS,
+} from "@/lib/constants";
 import { formatCurrency } from "@/lib/utils/format";
 import {
   formatSignupProvider,
@@ -59,14 +63,6 @@ export type UserRow = {
    */
   signupProvider: string | null;
 };
-
-/**
- * Above this many OTHER accounts on the same signup IP, sharing stops being
- * evidence: prod's distribution is 11,043 unique IPs, ~1,000 pairs, then a
- * long tail up to a single IP with 667 users. Small clusters are worth a
- * look; large ones are infrastructure.
- */
-const IP_CLUSTER_SUSPICIOUS_MAX = 4;
 
 function PnlCell({ value }: { value: number }) {
   // User-perspective P&L:

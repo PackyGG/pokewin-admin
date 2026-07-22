@@ -57,3 +57,18 @@ export const USER_STATUS_COLORS: Record<string, string> = {
   banned: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
   locked: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
 };
+
+/**
+ * Above this many OTHER accounts on the same `signup_ip`, sharing stops being
+ * evidence of anything.
+ *
+ * Measured against prod (read-only, 2026-07-22): 16,521 users, 12,458 distinct
+ * signup IPs — 11,043 unique, ~1,000 pairs, then a long tail up to a single
+ * address carrying 667 users. 33% of the user base shares an IP, and nine
+ * addresses alone account for ~1,490 of them (CGNAT, VPN exits, office NAT).
+ *
+ * So a small cluster is worth a look and a large one is infrastructure. Shared
+ * by the /users list icon and the /users/[id] hero chip so the two can never
+ * disagree about what "suspicious" means.
+ */
+export const IP_CLUSTER_SUSPICIOUS_MAX = 4;
