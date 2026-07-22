@@ -23,6 +23,12 @@ export const ADMIN_PAGES: AdminPage[] = [
   // permission inherits from /insights/real-numbers, so the standalone /crm
   // page key was retired (mirrors how /map dropped its key into /analytics).
   { group: "Navigation", label: "Creators", key: "/creators" },
+  // Creator Rewards — VIP wager-milestone programs + the manual claim-review
+  // queue. Its own grantable key, NOT inherited from /rewards: approving a
+  // claim credits a player's balance, so access to it is a strictly bigger
+  // grant than the read-mostly /rewards config hub it used to live in. (The
+  // server actions additionally require the admin role.)
+  { group: "Navigation", label: "Creator Rewards", key: "/creator-rewards" },
   // XP Sales was merged into the /rewards tab hub (XP Sales tab); the page
   // now gates on /rewards, so the standalone /xp-sales key was retired. The
   // ClickHouse twin + insights-xp-sales data layer are unaffected.
