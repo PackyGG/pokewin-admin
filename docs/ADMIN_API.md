@@ -1,4 +1,4 @@
-# Admin API — bot integration guide
+# Admin API — Discord bot integration guide
 
 Machine-to-machine API for the rewards Discord bot and in-house scripts.
 
@@ -7,94 +7,207 @@ Machine-to-machine API for the rewards Discord bot and in-house scripts.
 - **Content type:** `application/json`
 - **Manage keys:** admin dashboard → **System → Admin API**
 
+Everything is `POST` with a JSON body, even the read-only endpoints. That is
+deliberate: a Discord user ID is personal data, and a GET would put it in the
+URL where it lands in access logs, proxy logs and error trackers.
+
 ---
 
-## 1. Get a key
+## 1. What the bot is for
 
-In the dashboard: **System → Admin API → New key**.
+Players link their Discord to their Packy account and use the bot to see and
+claim **creator VIP wager rewards** — a per-creator deal of the shape *"wager
+$1,000 under my code, get $5"*.
 
-Pick the narrowest scopes that work. The rewards bot needs **`discord:read`**
-(link check) and **`discord:rewards:read`** (`/check`).
+The bot **never** moves money. A claim it files is a **request**; staff approve
+it by hand in the dashboard, and only then is the player's balance credited.
+Design the UX around that: the honest message after a successful claim is
+"submitted for review", never "paid".
 
-There is also a **`*` full-access** option. A `*` key satisfies every scope
-check — *including endpoints added later*, so it never needs re-issuing. That's
-the convenience and the risk: it's a standing grant to the whole surface. Use it
-for a trusted first-party consumer or while prototyping; give third-party
-consumers (the bot included) granular scopes.
+### The four commands
 
-> The token is shown **once** and stored hashed — we cannot recover it. Save it
-> straight into the bot's secret manager. If it leaks, revoke it in the same UI;
-> revocation takes effect on the very next request.
+| Command | Endpoint | What it does |
+|---|---|---|
+| `/verify` | `POST /api/v1/discord/verify` | Confirms the account is linked, and records that they verified |
+| `/info` | `POST /api/v1/discord/info` | Their summary card: code, time left, totals |
+| `/check` | `POST /api/v1/discord/rewards` | What they can claim right now |
+| *(Claim button)* | `POST /api/v1/discord/claim` | Files a claim for staff review |
+
+---
+
+## 2. Rules you need to model correctly
+
+These are the parts that are easy to get subtly wrong in bot copy.
+
+### Wager only counts while attached to the code
+
+A player's bets are recorded against whichever affiliate code was active at the
+time. Wager placed while on someone else's code is invisible to this program —
+it isn't lost, it just belongs to that other code.
+
+### The code attribution lasts 7 days
+
+Entering a code binds the player to it for **7 days**. During that window they
+cannot switch to a different code. After it lapses, no code is active and their
+wager stops counting toward anything until they re-enter one.
+
+### Expiring is fine. Switching is not.
+
+This distinction matters and the bot must not blur it:
+
+| Event | What happened | Effect on rewards |
+|---|---|---|
+| **Expired** | The 7-day window lapsed. Same code, player did nothing. | **Nothing is lost.** Everything already earned stays claimable. New wager stops counting until they re-enter the code. |
+| **Switched** | They deliberately moved to a *different* creator's code. | **They can no longer claim** rewards built up under the old one, and progress on it resets. |
+
+`/info` returns `codeSecondsRemaining` and `codeExpired` so you can nudge
+players to re-enter their code — but **never** tell an expired player they have
+lost their rewards. They haven't.
+
+### Partial progress doesn't pay
+
+Only whole thresholds pay out. At $5 per $1,000, someone who has wagered $1,999
+gets **$5**, and the remaining $999 stays banked toward their next one.
+
+### VIP is checked live, every time
+
+Some programs pay a higher rate to VIP-tagged players (e.g. $7.50 instead of
+$5). The tag is re-read on **every** check and claim — a player who loses it
+drops back to the standard rate immediately. Never cache a rate.
+
+### Claiming consumes wager
+
+An approved claim permanently uses up the wager it paid for. A pending claim
+reserves it immediately, so a player cannot file twice against the same wager.
+
+---
+
+## 3. Get a key
+
+In the dashboard: **System → Admin API → New key**. Pick the narrowest scopes
+that work.
+
+| Scope | Unlocks |
+|---|---|
+| `discord:verify` | `/discord/verify` |
+| `discord:info:read` | `/discord/info` |
+| `discord:rewards:read` | `/discord/rewards` |
+| `discord:rewards:claim` | `/discord/claim` |
+| `discord:read` | `/discord/linked` (only needed for a bare link check) |
+
+A full rewards bot needs the first four.
+
+> **`discord:info:read` is the sensitive one.** It is the only endpoint that
+> returns a username and internal user id. Every other endpoint is built so a
+> leaked token cannot enumerate or profile players. Grant it only to a bot that
+> genuinely renders a player-facing card, and never bundle it into a key that
+> just needs link checks.
+
+There is also a **`*` full-access** option. It satisfies every scope check —
+including endpoints added later — so it never needs re-issuing. That is both
+the convenience and the risk: a standing grant to the whole surface. Use it for
+a trusted first-party consumer or while prototyping; give the bot granular
+scopes.
+
+> The token is shown **once** and stored hashed — it cannot be recovered. Save
+> it straight into the bot's secret manager. If it leaks, revoke it in the same
+> UI; revocation takes effect on the very next request.
 
 ### Lock the key to your server's IP (recommended)
 
 The create dialog has an **Allowed IPs** field. Leave it blank and the key works
-from anywhere; fill it in and the key is rejected from every other address —
-so a leaked token is useless off your Railway box.
+from anywhere; fill it in and the key is rejected from every other address, so a
+leaked token is useless off your box.
 
-- Comma-separated, **exact addresses** (no CIDR ranges — list each one).
-- Put your Railway **static egress IP** here. If egress can rotate, list every
+- Comma-separated, **exact addresses** — no CIDR ranges, list each one.
+- Use your Railway **static egress IP**. If egress can rotate, list every
   possible address, or leave it blank rather than risk locking the bot out.
 - Requests from a non-listed IP get `403 ip_not_allowed`, and the attempt is
   audited.
 
-This is defence in depth, not a replacement for the token — keep both.
+Defence in depth, not a replacement for the token — keep both.
 
 ---
 
-## 2. Is a Discord user linked? — `POST /api/v1/discord/linked`
+## 4. `/verify` — `POST /api/v1/discord/verify`
 
-**Scope required:** `discord:read`
+**Scope:** `discord:verify`
 
-### Request
+Confirms the link **and records the verification**, so you can greet a
+first-timer differently from someone re-running it.
 
 ```http
-POST /api/v1/discord/linked
+POST /api/v1/discord/verify
 Authorization: Bearer <token>
 Content-Type: application/json
 
 { "discordUserId": "123456789012345678" }
 ```
-
-### Response `200`
 
 ```json
-{ "data": { "discordUserId": "123456789012345678", "linked": true } }
+{
+  "data": {
+    "discordUserId": "123456789012345678",
+    "linked": true,
+    "alreadyVerified": false,
+    "firstVerifiedAt": "2026-05-03T18:22:41.000Z",
+    "verifyCount": 1
+  }
+}
 ```
 
-`linked` is `true` when that Discord account is connected to a Packy account
-(linked or signed up with Discord), `false` otherwise.
-
-> It is a **boolean only** — deliberately no user id, username, email or
-> balance. The bot can confirm a link for an ID it already knows, but the
-> endpoint can never be used to enumerate or profile players. If you need more
-> fields later, ask and we'll add a separate, explicitly-scoped endpoint.
-
-### Why POST and not GET
-
-The Discord ID is personal data. In a GET it would sit in the URL and end up in
-access logs, proxy logs and error trackers. A POST body keeps it out of all of them.
+- `alreadyVerified: false` → first successful verify. Send the welcome message,
+  post the channel notification, assign the role.
+- `alreadyVerified: true` → they have done this before. Show a short
+  "you're already verified, since 3 May" and **suppress the channel
+  notification** — re-running the command must not re-announce them.
+- Not linked → `404 not_linked`. Nothing is recorded, so an unlinked probe
+  leaves no trace. Tell them to link on the site and try again.
 
 ---
 
-## 3. What can they claim? — `POST /api/v1/discord/rewards`
+## 5. `/info` — `POST /api/v1/discord/info`
 
-**Scope required:** `discord:rewards:read` (separate from `discord:read`)
+**Scope:** `discord:info:read`
 
-Powers `/check`. Takes the Discord ID and resolves the Packy account
-server-side — the bot never needs a Packy identifier.
+The player's summary card.
 
-### Request
-
-```http
-POST /api/v1/discord/rewards
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{ "discordUserId": "123456789012345678" }
+```json
+{
+  "data": {
+    "discordUserId": "123456789012345678",
+    "userId": "u_9f1c…",
+    "username": "kartos",
+    "code": "JIMMY",
+    "codeExpiresAt": "2026-07-29T19:58:47.000Z",
+    "codeSecondsRemaining": 384210,
+    "codeExpired": false,
+    "openRewardsUsd": 15,
+    "pendingReviewUsd": 5,
+    "totalClaimedUsd": 60
+  }
+}
 ```
 
-### Response `200`
+| Field | Meaning |
+|---|---|
+| `code` | The code they're on now. `null` if none. |
+| `codeSecondsRemaining` | Until the 7-day attribution lapses. `null` if unknown. |
+| `codeExpired` | Window has passed. **Informational only** — see §2. |
+| `openRewardsUsd` | Claimable right now, across all their programs. |
+| `pendingReviewUsd` | Filed, waiting on staff. |
+| `totalClaimedUsd` | Approved and paid, lifetime. |
+
+Good copy for an expired code: *"Your code has expired — re-enter JIMMY on the
+site to keep earning. Your $15 is safe."* Bad copy: *"You lost your rewards."*
+
+---
+
+## 6. `/check` — `POST /api/v1/discord/rewards`
+
+**Scope:** `discord:rewards:read`
+
+Everything the player can claim.
 
 ```json
 {
@@ -102,151 +215,118 @@ Content-Type: application/json
     "discordUserId": "123456789012345678",
     "claimable": [
       { "id": "ur_9f1c…", "name": "Welcome Pack" },
-      { "id": "rb_daily", "name": "Daily Rakeback", "amount": 5.5, "currency": "USD" }
+      { "id": "rb_daily", "name": "Daily Rakeback", "amount": 5.5, "currency": "USD" },
+      { "id": "vip_3b7c…", "name": "Jimmy VIP reward", "amount": 10, "currency": "USD", "claimable": true },
+      { "id": "vip_8e2a…", "name": "Sarah VIP reward", "claimable": false,
+        "progress": "$340.00 more wagered to unlock the next reward" }
     ]
   }
 }
 ```
 
-- **`id` and `name` are always present.** `amount` + `currency` appear only when
-  there genuinely is a cash value — many rewards grant **packs**, not cash, and
-  we'd rather omit the field than imply `$0`.
-- **Nothing to claim → `200` with `"claimable": []`.** Never a 404, never an
-  error. Only an explicit empty array means "you have nothing".
-- **Unlinked → `404` with code `not_linked`.** Deliberately *not* an empty
-  array, so the bot can't tell an unlinked user they have no rewards.
+**Only `vip_*` entries can be claimed through the bot.** They carry
+`claimable: true` when something is ready. Everything else — `ur_*` (unopened
+rewards) and `rb_*` (rakeback) — is claimed on the site; show it as information
+and link them there.
 
-### What's included
-
-| Entry | Source | Included when |
-|---|---|---|
-| `ur_<id>` | One-time rewards | Granted but not yet opened |
-| `rb_<cadence>` | Rakeback | Accrued but not yet claimed, **summed per cadence** |
-
-Rakeback is aggregated because a player accrues one row per period — dozens of
-`$0.02` lines would be noise. Recurring *daily* rewards are excluded: their
-availability depends on the daily-unlock rule, not just "unopened", so listing
-them would promise something that hasn't unlocked yet.
-
-> **No `expiresAt`.** No reward or claim table has an expiry column — expiry is
-> a global config rule, not a per-row timestamp. The field is omitted rather
-> than fabricated.
+- `claimable: true` → render a **Claim** button.
+- `claimable: false` → show `progress` verbatim. Do not offer a button.
+- `id` and `name` are always present; `amount` only when there genuinely is a
+  cash value (many rewards grant packs, not cash — don't render `$0`).
+- **Nothing to claim → `200` with `"claimable": []`.** Never a 404. Only an
+  explicit empty array means "you have nothing".
+- **Unlinked → `404 not_linked`**, deliberately *not* an empty array, so you
+  can never tell an unlinked player they have no rewards.
 
 ---
 
-## 4. Examples
+## 7. Claim — `POST /api/v1/discord/claim`
 
-### Node (discord.js)
+**Scope:** `discord:rewards:claim`
 
-```js
-async function isLinked(discordUserId) {
-  const res = await fetch(`${process.env.PACKY_API_URL}/api/v1/discord/linked`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.PACKY_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ discordUserId }),
-  });
+```http
+{ "discordUserId": "123456789012345678", "claimableId": "vip_3b7c…" }
+```
 
-  if (!res.ok) {
-    const { error } = await res.json().catch(() => ({}));
-    throw new Error(`packy api ${res.status}: ${error?.code ?? "unknown"}`);
+```json
+{
+  "data": {
+    "claimId": "c_1a2b…",
+    "amount": 10,
+    "currency": "USD",
+    "units": 2,
+    "status": "pending_review",
+    "message": "Your claim has been submitted and is awaiting staff review. You'll be credited once it's approved."
   }
-
-  const { data } = await res.json();
-  return data.linked;
 }
 ```
 
-### Python
+Send **only** the Discord ID and the `claimableId` from `/check`. Never send an
+amount — the server recomputes eligibility from scratch and pays what is
+actually true at write time, so a stale number the player saw two minutes ago
+cannot inflate anything.
 
-```python
-import os, requests
+**Nothing is paid here.** Say "submitted for review". They are credited when
+staff approve, which may be hours later.
 
-def is_linked(discord_user_id: str) -> bool:
-    r = requests.post(
-        f"{os.environ['PACKY_API_URL']}/api/v1/discord/linked",
-        headers={"Authorization": f"Bearer {os.environ['PACKY_API_KEY']}"},
-        json={"discordUserId": discord_user_id},
-        timeout=10,
-    )
-    r.raise_for_status()
-    return r.json()["data"]["linked"]
-```
+Claim-specific failures:
 
-### `/check` — Node
-
-```js
-async function getClaimable(discordUserId) {
-  const res = await fetch(`${process.env.PACKY_API_URL}/api/v1/discord/rewards`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.PACKY_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ discordUserId }),
-  });
-
-  if (res.status === 404) return null;          // not_linked → prompt to link
-  if (!res.ok) throw new Error(`packy api ${res.status}`); // never say "nothing"
-
-  const { data } = await res.json();
-  return data.claimable;                        // [] means genuinely nothing
-}
-```
-
-> The `null` vs `[]` split is the important bit: only an explicit `[]` means
-> "you have nothing to claim". On any error, say you couldn't check — never
-> that they have nothing.
-
-### curl
-
-```bash
-# is the account linked?
-curl -s -X POST https://pokewin-admin.vercel.app/api/v1/discord/linked \
-  -H "Authorization: Bearer $PACKY_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"discordUserId":"123456789012345678"}'
-
-# what can they claim?
-curl -s -X POST https://pokewin-admin.vercel.app/api/v1/discord/rewards \
-  -H "Authorization: Bearer $PACKY_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"discordUserId":"123456789012345678"}'
-```
+| Status | `code` | Meaning |
+|---|---|---|
+| 409 | `already_pending` | They already have a claim in the queue for this program. Say "we're already on it" — this is not an error. |
+| 400 | `nothing_claimable` | Not enough wager yet. The message carries how much more is needed. |
+| 400 | `not_eligible` | Blocked — switched code, banned, locked, program inactive. Message explains which. |
+| 400 | `not_claimable_here` | A non-`vip_*` id. That reward is claimed on the site. |
+| 404 | `program_not_found` | Program no longer exists. |
 
 ---
 
-## 5. Responses & errors
+## 8. Link check only — `POST /api/v1/discord/linked`
 
-Success is always wrapped in `data`; failures always in `error`.
+**Scope:** `discord:read`
+
+```json
+{ "data": { "discordUserId": "123456789012345678", "linked": true } }
+```
+
+A boolean and nothing else — no user id, username, email or balance. Use
+`/verify` for the actual `/verify` command; this exists for a bare check that
+must not write anything.
+
+---
+
+## 9. Errors
+
+Success is always wrapped in `data`, failures always in `error`.
 
 ```json
 { "error": { "code": "invalid_api_key", "message": "Invalid or missing API key." } }
 ```
 
-| Status | `code` | Meaning | What to do |
-|---|---|---|---|
-| 200 | — | OK | — |
-| 400 | `invalid_json` | Body wasn't valid JSON | Fix the request |
-| 400 | `invalid_request` | `discordUserId` missing or not a numeric Discord ID | Fix the request |
-| 401 | `invalid_api_key` | Missing, malformed, unknown, revoked or expired key | Check/rotate the token |
-| 403 | `insufficient_scope` | Key lacks the endpoint's scope | Re-issue with the scope |
-| 403 | `ip_not_allowed` | Caller IP is not on the key's allowlist | Add the IP, or clear the allowlist |
-| 404 | `not_linked` | Discord account isn't linked to a Packy account | Tell the user to link first |
-| 429 | `rate_limited` | Over the key's per-minute budget | Back off — honour `Retry-After` |
-| 500 | `internal_error` | Something broke on our side | Retry with backoff; report if persistent |
+| Status | `code` | What to do |
+|---|---|---|
+| 400 | `invalid_json` | Fix the request |
+| 400 | `invalid_request` | Body malformed, or carries unexpected keys — bodies are strict |
+| 401 | `invalid_api_key` | Missing, malformed, unknown, revoked or expired key |
+| 403 | `insufficient_scope` | Re-issue the key with the scope |
+| 403 | `ip_not_allowed` | Caller IP not on the key's allowlist |
+| 404 | `not_linked` | Tell the user to link their Discord on the site |
+| 409 | `already_pending` | Already in the review queue |
+| 429 | `rate_limited` | Back off — honour `Retry-After` |
+| 500 | `internal_error` | Retry with backoff; report if it persists |
 
-`401` is intentionally identical for every credential problem (unknown key,
-wrong secret, revoked, expired) — it can't be used to probe which keys exist.
+`401` is intentionally identical for every credential problem, so it can't be
+used to probe which keys exist.
+
+**Never report "you have nothing" on an error.** Only an explicit empty
+`claimable` array means that. On any failure, say you couldn't check.
 
 ---
 
-## 6. Rate limits
+## 10. Rate limits
 
-Each key has a per-minute budget (default **120 req/min**, set when the key is
-created). Every response carries:
+Each key has a per-minute budget (default **120 req/min**, set at creation).
+Every response carries:
 
 ```
 RateLimit-Limit: 120
@@ -254,16 +334,90 @@ RateLimit-Remaining: 118
 RateLimit-Reset: 47
 ```
 
-On `429` a `Retry-After` header (seconds) is included — wait that long. Please
-back off rather than retrying in a tight loop.
+On `429` a `Retry-After` header (seconds) is included. Back off rather than
+retrying in a tight loop.
 
 ---
 
-## 7. Operational notes
+## 11. Example — Node / discord.js
+
+```js
+const API = process.env.PACKY_API_URL;
+const KEY = process.env.PACKY_API_KEY;
+
+async function call(path, body) {
+  const res = await fetch(`${API}/api/v1/discord/${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(json?.error?.message ?? `HTTP ${res.status}`);
+    err.code = json?.error?.code ?? "unknown";
+    err.status = res.status;
+    throw err;
+  }
+  return json.data;
+}
+
+// /verify — announce only on the FIRST successful verify.
+async function verify(discordUserId) {
+  const data = await call("verify", { discordUserId });
+  if (!data.alreadyVerified) {
+    await postChannelNotification(discordUserId);
+    return "Verified — welcome aboard!";
+  }
+  const since = new Date(data.firstVerifiedAt).toLocaleDateString();
+  return `You're already verified (since ${since}).`;
+}
+
+// /check — only vip_* entries get a Claim button.
+async function check(discordUserId) {
+  const { claimable } = await call("rewards", { discordUserId });
+  return {
+    claimNow: claimable.filter((r) => r.claimable === true),
+    progress: claimable.filter((r) => r.claimable === false),
+    onSite: claimable.filter((r) => r.claimable === undefined),
+  };
+}
+
+// Claim button — submitted, NOT paid.
+async function claim(discordUserId, claimableId) {
+  try {
+    const data = await call("claim", { discordUserId, claimableId });
+    return `Claim for $${data.amount} submitted — staff will review it shortly.`;
+  } catch (e) {
+    if (e.code === "already_pending") return "You've already got a claim in the queue.";
+    if (e.code === "nothing_claimable") return e.message; // carries how much more is needed
+    if (e.code === "not_eligible") return e.message;
+    throw e;
+  }
+}
+```
+
+### curl
+
+```bash
+curl -s -X POST https://pokewin-admin.vercel.app/api/v1/discord/info \
+  -H "Authorization: Bearer $PACKY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"discordUserId":"123456789012345678"}'
+```
+
+---
+
+## 12. Operational notes
 
 - **HTTPS only.** Never send the token over plain HTTP.
-- **Never commit the token** or paste it into Discord — treat it like a password.
+- **Never commit the token** or paste it into Discord — treat it as a password.
 - **Rotate** by creating a new key, deploying it, then revoking the old one.
-- Every auth failure is logged to the admin audit trail (prefix + IP + path —
-  never the token), so repeated failures are visible to us.
-- Responses are `no-store`; do not cache them in a shared cache.
+- Every auth failure is logged to the admin audit trail (key prefix + IP +
+  path — never the token), so repeated failures are visible.
+- Responses are `no-store`; do not put them in a shared cache.
+- **Don't cache reward figures.** VIP status, code standing and wager all move
+  independently; always re-read before showing or claiming.
