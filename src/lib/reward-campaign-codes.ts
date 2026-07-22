@@ -2,6 +2,8 @@ import "server-only";
 
 import { createHash, createHmac } from "crypto";
 
+import { readDbEnv } from "@/lib/db-env";
+
 /**
  * Per-recipient promo codes for a reward campaign.
  *
@@ -38,14 +40,36 @@ const GROUP_LEN = 4;
 
 export const REWARD_CODE_PREFIX = "PACKY";
 
-function requirePepper(): string {
-  const pepper = process.env.GIFT_CARD_PEPPER;
+/**
+ * The pepper for the environment we are writing to.
+ *
+ * THIS IS PER-ENVIRONMENT, and getting it wrong mints codes that look perfect
+ * and cannot be redeemed. A stored `code_hash` is `sha256(code + pepper)`; at
+ * redeem the backend recomputes it with ITS OWN pepper and looks the row up by
+ * hash. Two different peppers means the lookup misses and the user is told
+ * "Code not found" — which is exactly what happened on 2026-07-23: the admin
+ * held one `GIFT_CARD_PEPPER` (prod's) while writing rows into the dev game
+ * database, whose backend peppers with a different value.
+ *
+ * So the pepper has to follow the same env split the rest of the admin already
+ * uses (`DATABASE_URL` / `DEV_DATABASE_URL`,
+ * `BACKEND_API_URL_PROD` / `_DEV`): pick by the resolved db env, and refuse to
+ * mint if the one we need is absent rather than silently peppering with "".
+ */
+export async function resolveCodePepper(): Promise<string> {
+  const env = await readDbEnv();
+  const pepper =
+    env === "dev"
+      ? (process.env.GIFT_CARD_PEPPER_DEV?.trim() ??
+        process.env.DEV_GIFT_CARD_PEPPER?.trim())
+      : (process.env.GIFT_CARD_PEPPER_PROD?.trim() ??
+        process.env.GIFT_CARD_PEPPER?.trim());
+
   if (!pepper) {
-    // Without the pepper the hash we store would not match what the backend
-    // computes at redeem time, so every code would be silently unredeemable.
-    // Fail loudly instead of minting thousands of dead codes.
     throw new Error(
-      "GIFT_CARD_PEPPER is not set — reward codes would hash to values the backend can't resolve.",
+      env === "dev"
+        ? "GIFT_CARD_PEPPER_DEV is not set. Codes minted against the dev game DB must be peppered with the DEV backend's secret, or they hash to values it can't resolve and every one comes back 'Code not found'."
+        : "GIFT_CARD_PEPPER is not set — reward codes would hash to values the backend can't resolve.",
     );
   }
   return pepper;
@@ -55,8 +79,12 @@ function requirePepper(): string {
  * `PACKY-XXXX-XXXX-XXXX` — 12 characters over a 30-symbol alphabet (~59 bits).
  * Deterministic for a given (campaign, userId).
  */
-export function deriveRewardCode(campaign: string, userId: string): string {
-  const mac = createHmac("sha256", requirePepper())
+export function deriveRewardCode(
+  campaign: string,
+  userId: string,
+  pepper: string,
+): string {
+  const mac = createHmac("sha256", pepper)
     .update(`${DERIVATION_DOMAIN}:${campaign}:${userId}`)
     .digest();
 
@@ -80,9 +108,9 @@ export function deriveRewardCode(campaign: string, userId: string): string {
  * packy-backend `utils/gift-card-hash`) — a mismatch means the code the user
  * types can never be resolved.
  */
-export function hashRewardCode(code: string): string {
+export function hashRewardCode(code: string, pepper: string): string {
   return createHash("sha256")
-    .update(code.toUpperCase().trim() + requirePepper())
+    .update(code.toUpperCase().trim() + pepper)
     .digest("hex");
 }
 

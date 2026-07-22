@@ -12,6 +12,7 @@ import {
   deriveRewardCode,
   hashRewardCode,
   regionForContinent,
+  resolveCodePepper,
 } from "@/lib/reward-campaign-codes";
 import {
   dedupeKeyFor,
@@ -142,12 +143,18 @@ export async function sendRewardCampaignChunkAction(
     };
   }
 
+  // Peppered for the environment we are writing to — see resolveCodePepper.
+  // Throws (rather than defaulting to "") if the env's secret is missing, so a
+  // misconfiguration surfaces here instead of as thousands of codes that hash
+  // to something the backend can never resolve.
+  const pepper = await resolveCodePepper();
+
   const planned = users.map((u) => {
-    const code = deriveRewardCode(campaign, u.id);
+    const code = deriveRewardCode(campaign, u.id, pepper);
     return {
       userId: u.id,
       code,
-      codeHash: hashRewardCode(code),
+      codeHash: hashRewardCode(code, pepper),
       region: regionForContinent(u.continent_code),
     };
   });

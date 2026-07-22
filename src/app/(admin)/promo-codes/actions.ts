@@ -6,6 +6,7 @@ import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createHash } from "crypto";
+import { resolveCodePepper } from "@/lib/reward-campaign-codes";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { safeQuery } from "@/lib/errors/safe-query";
 import {
@@ -67,7 +68,13 @@ export async function createPromoCode(
   }
   const v = parsed.data;
 
-  const pepper = process.env.GIFT_CARD_PEPPER ?? "";
+  // Per-environment, and it must match the backend that will resolve the code.
+  // This was `process.env.GIFT_CARD_PEPPER ?? ""`, which silently peppered with
+  // the empty string when unset and with PROD's secret while the admin was
+  // toggled to dev — either way producing a hash the target backend can never
+  // look up, so the code redeems as "Code not found". `resolveCodePepper`
+  // picks by env and throws rather than minting an unredeemable code.
+  const pepper = await resolveCodePepper();
   const normalizedCode = v.code.toUpperCase().trim();
   const codeHash = createHash("sha256").update(normalizedCode + pepper).digest("hex");
 
