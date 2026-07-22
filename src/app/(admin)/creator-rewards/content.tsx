@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
   BadgeCheck,
@@ -35,6 +35,7 @@ import { cn } from "@/lib/utils";
 import type { CreatorRewardProgramWithStats } from "@/lib/creator-vip/types";
 import type { CreatorRewardClaimRow } from "@/lib/creator-vip/queries";
 
+import type { CreatorSearchResult } from "./actions";
 import {
   approveCreatorRewardClaim,
   createCreatorRewardProgram,
@@ -548,14 +549,14 @@ function CreateProgramDialog({
 }) {
   const [name, setName] = useState("");
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<
-    { userId: string; username: string | null; codes: string[] }[]
-  >([]);
-  const [selected, setSelected] = useState<{
-    userId: string;
-    username: string | null;
-    codes: string[];
-  } | null>(null);
+  const [results, setResults] = useState<CreatorSearchResult[]>([]);
+  /**
+   * True once a search has actually answered, so the "nothing matched" line
+   * only shows after a real round-trip — not in the blank moment before the
+   * first one lands.
+   */
+  const [searched, setSearched] = useState(false);
+  const [selected, setSelected] = useState<CreatorSearchResult | null>(null);
   const [pickedCodes, setPickedCodes] = useState<string[]>([]);
   // Both legs can run at once — creators hand them out together.
   const [wagerOn, setWagerOn] = useState(true);
@@ -600,6 +601,7 @@ function CreateProgramDialog({
     setName("");
     setQuery("");
     setResults([]);
+    setSearched(false);
     setSelected(null);
     setPickedCodes([]);
     setWagerOn(true);
@@ -612,15 +614,33 @@ function CreateProgramDialog({
     setCap("");
   }
 
-  function search() {
+  const runSearch = useRef((_term: string) => {});
+  runSearch.current = (term: string) => {
     startSearch(async () => {
       try {
-        setResults(await searchCreatorsWithCodes(query));
+        setResults(await searchCreatorsWithCodes(term));
+        setSearched(true);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Search failed");
       }
     });
-  }
+  };
+
+  /**
+   * Live search as the operator types — no Search button to press. 300 ms
+   * debounce, the same pause the /users toolbar uses, so a typed handle is one
+   * round-trip per pause rather than one per keystroke. Runs on an empty box
+   * too: that's the "just show me the creators" case the dialog opens with.
+   *
+   * Skipped entirely once a creator is picked (the list is replaced by the
+   * selection), so re-opening the picker with `Change` re-runs it from the
+   * term still in the box.
+   */
+  useEffect(() => {
+    if (!open || selected) return;
+    const t = setTimeout(() => runSearch.current(query), 300);
+    return () => clearTimeout(t);
+  }, [open, selected, query]);
 
   function submit() {
     if (!selected) {
@@ -740,47 +760,94 @@ function CreateProgramDialog({
               </div>
             ) : (
               <>
-                <div className="flex gap-2">
-                  <Input
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        search();
-                      }
-                    }}
-                    placeholder="Search creators…"
-                    disabled={isPending}
-                  />
-                  <Button
-                    variant="outline"
-                    onClick={search}
-                    disabled={searching || isPending}
-                  >
-                    {searching ? "…" : "Search"}
-                  </Button>
-                </div>
-                {results.length > 0 && (
-                  <div className="max-h-44 space-y-1 overflow-y-auto rounded-md border p-1">
-                    {results.map((r) => (
-                      <button
-                        key={r.userId}
-                        type="button"
-                        onClick={() => {
-                          setSelected(r);
-                          setPickedCodes(r.codes);
-                        }}
-                        className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm hover:bg-muted"
-                      >
-                        <span>{r.username ?? r.userId}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {r.codes.length} code
-                          {r.codes.length === 1 ? "" : "s"}
-                        </span>
-                      </button>
-                    ))}
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Username, affiliate code, or user ID…"
+                  disabled={isPending}
+                />
+                {/* Results sit directly under the box: who they are on the
+                    left, the codes they own on the right — the operator
+                    usually knows the CODE and needs to confirm the account
+                    before attaching a money program to it. */}
+                {results.length > 0 ? (
+                  <div className="max-h-56 space-y-0.5 overflow-y-auto rounded-md border p-1">
+                    {results.map((r) => {
+                      const isCreator = r.role === "creator";
+                      return (
+                        <button
+                          key={r.userId}
+                          type="button"
+                          // A program can only attach to a role=creator
+                          // account (createCreatorRewardProgram refuses the
+                          // rest). Code owners who aren't creators are still
+                          // LISTED — otherwise searching their code looks
+                          // broken — but they can't be picked, and the chip
+                          // says why.
+                          disabled={!isCreator || isPending}
+                          onClick={() => {
+                            setSelected(r);
+                            setPickedCodes(r.codes);
+                          }}
+                          className={cn(
+                            "flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left text-sm",
+                            isCreator
+                              ? "hover:bg-muted"
+                              : "cursor-not-allowed opacity-60",
+                          )}
+                          title={
+                            isCreator
+                              ? `User ID: ${r.userId}`
+                              : `${r.username ?? r.userId} is not a creator — make them one before attaching a program. User ID: ${r.userId}`
+                          }
+                        >
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="truncate">
+                              {r.username ?? r.userId}
+                            </span>
+                            {!isCreator && (
+                              <Badge
+                                variant="outline"
+                                className="shrink-0 text-[10px] text-muted-foreground"
+                              >
+                                not a creator
+                              </Badge>
+                            )}
+                          </span>
+                          {r.codes.length > 0 ? (
+                            <span className="flex shrink-0 flex-wrap justify-end gap-1">
+                              {r.codes.slice(0, 4).map((c) => (
+                                <span
+                                  key={c}
+                                  className="rounded border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+                                >
+                                  {c}
+                                </span>
+                              ))}
+                              {r.codes.length > 4 && (
+                                <span className="text-[10px] text-muted-foreground">
+                                  +{r.codes.length - 4}
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="shrink-0 text-[10px] text-muted-foreground">
+                              no codes
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
+                ) : (
+                  searched &&
+                  !searching && (
+                    <p className="text-xs text-muted-foreground">
+                      {query.trim()
+                        ? "No creator or code owner matches that."
+                        : "No creators yet."}
+                    </p>
+                  )
                 )}
               </>
             )}
