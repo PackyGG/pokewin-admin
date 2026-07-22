@@ -498,6 +498,10 @@ model api_keys {
   key_hash           String
   /// Least-privilege scope list; each endpoint declares what it requires.
   scopes             String[]  @default([])
+  /// Optional IP allowlist. EMPTY = no restriction (callable from anywhere).
+  /// Non-empty = the key is only accepted when the resolved client IP matches
+  /// one of these, which contains the blast radius of a leaked token.
+  allowed_ips        String[]  @default([])
   is_active          Boolean   @default(true)
   expires_at         DateTime? @db.Timestamptz(6)
   last_used_at       DateTime? @db.Timestamptz(6)

@@ -26,6 +26,20 @@ consumers (the bot included) granular scopes.
 > straight into the bot's secret manager. If it leaks, revoke it in the same UI;
 > revocation takes effect on the very next request.
 
+### Lock the key to your server's IP (recommended)
+
+The create dialog has an **Allowed IPs** field. Leave it blank and the key works
+from anywhere; fill it in and the key is rejected from every other address —
+so a leaked token is useless off your Railway box.
+
+- Comma-separated, **exact addresses** (no CIDR ranges — list each one).
+- Put your Railway **static egress IP** here. If egress can rotate, list every
+  possible address, or leave it blank rather than risk locking the bot out.
+- Requests from a non-listed IP get `403 ip_not_allowed`, and the attempt is
+  audited.
+
+This is defence in depth, not a replacement for the token — keep both.
+
 ---
 
 ## 2. Smoke test — `GET /api/v1/whoami`
@@ -244,6 +258,7 @@ Success is always wrapped in `data`; failures always in `error`.
 | 400 | `invalid_request` | `discordUserId` missing or not a numeric Discord ID | Fix the request |
 | 401 | `invalid_api_key` | Missing, malformed, unknown, revoked or expired key | Check/rotate the token |
 | 403 | `insufficient_scope` | Key lacks the endpoint's scope | Re-issue with the scope |
+| 403 | `ip_not_allowed` | Caller IP is not on the key's allowlist | Add the IP, or clear the allowlist |
 | 404 | `not_linked` | Discord account isn't linked to a Packy account | Tell the user to link first |
 | 429 | `rate_limited` | Over the key's per-minute budget | Back off — honour `Retry-After` |
 | 500 | `internal_error` | Something broke on our side | Retry with backoff; report if persistent |

@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { KeyRound, Plus, ShieldAlert, TriangleAlert } from "lucide-react";
+import { KeyRound, Lock, Plus, ShieldAlert, TriangleAlert } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -53,6 +53,7 @@ export type ApiKeyRow = {
   name: string;
   prefix: string;
   scopes: string[];
+  allowedIps: string[];
   isActive: boolean;
   expiresAt: string | null;
   lastUsedAt: string | null;
@@ -209,6 +210,19 @@ export function ApiKeysContent({ keys }: { keys: ApiKeyRow[] }) {
                       <code className="font-mono text-xs text-muted-foreground">
                         {key.prefix}…
                       </code>
+                      {/* An IP-locked key is meaningfully safer than an open
+                          one — surface which is which without a click. */}
+                      {key.allowedIps.length > 0 && (
+                        <span
+                          className="mt-0.5 flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400"
+                          title={key.allowedIps.join(", ")}
+                        >
+                          <Lock className="size-2.5" />
+                          {key.allowedIps.length === 1
+                            ? key.allowedIps[0]
+                            : `${key.allowedIps.length} IPs`}
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <span className="flex flex-wrap gap-1">
@@ -340,6 +354,7 @@ function CreateKeyDialog({
   const [scopes, setScopes] = useState<ApiScope[]>([]);
   const [expiresInDays, setExpiresInDays] = useState("365");
   const [rateLimit, setRateLimit] = useState("120");
+  const [allowedIps, setAllowedIps] = useState("");
   const [isPending, startTransition] = useTransition();
 
   function reset() {
@@ -347,6 +362,7 @@ function CreateKeyDialog({
     setScopes([]);
     setExpiresInDays("365");
     setRateLimit("120");
+    setAllowedIps("");
   }
 
   const fullAccess = hasFullAccess(scopes);
@@ -381,6 +397,10 @@ function CreateKeyDialog({
         scopes,
         expiresInDays: days,
         rateLimitPerMin: rpm,
+        allowedIps: allowedIps
+          .split(",")
+          .map((entry) => entry.trim())
+          .filter(Boolean),
       });
       if (res.success) {
         toast.success("API key created");
@@ -480,6 +500,22 @@ function CreateKeyDialog({
                 disabled={isPending}
               />
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="api-key-ips">Allowed IPs (optional)</Label>
+            <Input
+              id="api-key-ips"
+              placeholder="blank = any IP · e.g. 203.0.113.7, 203.0.113.8"
+              value={allowedIps}
+              onChange={(e) => setAllowedIps(e.target.value)}
+              disabled={isPending}
+            />
+            <p className="text-xs text-muted-foreground">
+              Comma-separated. Lock the key to your Railway egress IP so a leaked
+              token is useless from anywhere else. Exact addresses only (no CIDR
+              ranges) — list each one.
+            </p>
           </div>
 
           <div className="flex items-start gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">

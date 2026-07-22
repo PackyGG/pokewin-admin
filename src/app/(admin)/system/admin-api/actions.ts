@@ -7,6 +7,7 @@ import { adminDb } from "@/lib/admin-db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { requireAdmin } from "@/lib/dal";
 import { generateApiKey } from "@/lib/api-auth/token";
+import { looksLikeIp, normalizeIp } from "@/lib/api-auth/ip";
 import { ALL_API_SCOPES, isApiScope } from "@/lib/api-auth/scopes";
 
 /**
@@ -27,6 +28,8 @@ const CreateSchema = z.object({
   /** Optional lifetime bound, in days. Null/omitted = no expiry. */
   expiresInDays: z.number().int().min(1).max(3650).nullable().optional(),
   rateLimitPerMin: z.number().int().min(1).max(10_000).default(120),
+  /** Optional IP allowlist. Empty = callable from anywhere. */
+  allowedIps: z.array(z.string()).max(20).optional(),
 });
 
 export type CreateApiKeyResult =
@@ -38,6 +41,7 @@ export async function createApiKeyAction(input: {
   scopes: string[];
   expiresInDays?: number | null;
   rateLimitPerMin?: number;
+  allowedIps?: string[];
 }): Promise<CreateApiKeyResult> {
   const session = await requireAdmin();
 
@@ -52,6 +56,20 @@ export async function createApiKeyAction(input: {
     return { success: false, error: "Select at least one scope" };
   }
 
+  // Normalise + de-dupe so "1.2.3.4 " and "::ffff:1.2.3.4" can't both be
+  // stored as distinct entries that then fail to match at request time.
+  const allowedIps = [
+    ...new Set(
+      (parsed.data.allowedIps ?? [])
+        .map((entry) => normalizeIp(entry))
+        .filter(Boolean),
+    ),
+  ];
+  const invalidIp = allowedIps.find((entry) => !looksLikeIp(entry));
+  if (invalidIp) {
+    return { success: false, error: `Not a valid IP address: ${invalidIp}` };
+  }
+
   const { token, prefix, keyHash } = generateApiKey();
   const expiresAt =
     parsed.data.expiresInDays != null
@@ -64,6 +82,7 @@ export async function createApiKeyAction(input: {
       prefix,
       key_hash: keyHash,
       scopes,
+      allowed_ips: allowedIps,
       expires_at: expiresAt,
       rate_limit_per_min: parsed.data.rateLimitPerMin,
       created_by: session.userId,
@@ -79,6 +98,7 @@ export async function createApiKeyAction(input: {
       name: parsed.data.name,
       prefix,
       scopes,
+      allowed_ips: allowedIps,
       expires_at: expiresAt?.toISOString() ?? null,
       rate_limit_per_min: parsed.data.rateLimitPerMin,
     },

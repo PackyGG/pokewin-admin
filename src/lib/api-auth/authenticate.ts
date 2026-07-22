@@ -3,6 +3,7 @@ import "server-only";
 import { after } from "next/server";
 
 import { adminDb } from "@/lib/admin-db";
+import { isIpAllowed, resolveClientIp } from "./ip";
 import { checkApiRateLimit, type ApiRateLimitResult } from "./rate-limit";
 import { missingScopes, toApiScopes, type ApiScope } from "./scopes";
 import { parseTokenPrefix, safeEqualHex, sha256Hex } from "./token";
@@ -42,7 +43,11 @@ export type ApiPrincipal = {
 export type ApiAuthFailure = {
   ok: false;
   status: 401 | 403 | 429;
-  code: "invalid_api_key" | "insufficient_scope" | "rate_limited";
+  code:
+    | "invalid_api_key"
+    | "insufficient_scope"
+    | "ip_not_allowed"
+    | "rate_limited";
   message: string;
   /** Present only for 429 so the handler can emit Retry-After. */
   rateLimit?: ApiRateLimitResult;
@@ -64,14 +69,12 @@ const INVALID: ApiAuthFailure = {
   message: "Invalid or missing API key.",
 };
 
-/** Client IP from the proxy chain (Vercel sets x-forwarded-for). */
+/**
+ * Client IP, resolved from the most-trustworthy proxy header available.
+ * Re-exported for callers that already imported it from here.
+ */
 export function clientIpFrom(request: Request): string | null {
-  const fwd = request.headers.get("x-forwarded-for");
-  if (fwd) {
-    const first = fwd.split(",")[0]?.trim();
-    if (first) return first.slice(0, 100);
-  }
-  return request.headers.get("x-real-ip")?.slice(0, 100) ?? null;
+  return resolveClientIp(request);
 }
 
 function bearerToken(request: Request): string | null {
@@ -133,6 +136,7 @@ export async function authenticateApiRequest(
       prefix: true,
       key_hash: true,
       scopes: true,
+      allowed_ips: true,
       is_active: true,
       expires_at: true,
       revoked_at: true,
@@ -176,6 +180,20 @@ export async function authenticateApiRequest(
     };
   }
 
+  // IP allowlist — checked AFTER the secret so an attacker without a valid
+  // token learns nothing about it. Empty list = unrestricted; a configured
+  // list with an unresolvable IP fails CLOSED (see isIpAllowed).
+  const ip = resolveClientIp(request);
+  if (!isIpAllowed(ip, row.allowed_ips)) {
+    auditAuthFailure("ip_not_allowed", request, prefix);
+    return {
+      ok: false,
+      status: 403,
+      code: "ip_not_allowed",
+      message: "This API key is not permitted from your IP address.",
+    };
+  }
+
   const rate = await checkApiRateLimit(row.id, row.rate_limit_per_min);
   if (!rate.allowed) {
     return {
@@ -188,7 +206,6 @@ export async function authenticateApiRequest(
   }
 
   // Usage bookkeeping is best-effort and MUST NOT delay or fail the request.
-  const ip = clientIpFrom(request);
   after(() => {
     adminDb.api_keys
       .update({
