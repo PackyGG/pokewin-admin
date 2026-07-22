@@ -217,20 +217,49 @@ function ProgramRow({ program }: { program: CreatorRewardProgramWithStats }) {
           ))}
         </div>
 
+        {/* Terms read differently per program type: a wager program is
+            "spend X, get Y", a first-deposit lossback is "lose your first
+            deposit, get N% back". `thresholdUsd` / `rewardUsd` are null on a
+            lossback, so this must branch rather than coerce — rendering
+            "$0 wagered → $0" would misstate the terms of a live money
+            program. */}
         <div className="text-sm">
-          <span className="text-emerald-600 tabular-nums dark:text-emerald-400">
-            {formatCurrency(program.thresholdUsd)}
-          </span>
-          <span className="mx-1.5 text-muted-foreground">wagered →</span>
-          <span className="text-rose-600 tabular-nums dark:text-rose-400">
-            {formatCurrency(program.rewardUsd)}
-          </span>
-          {program.vipRewardUsd != null && (
+          {program.type === "ftd_lossback" ? (
             <>
-              <span className="mx-1.5 text-muted-foreground">· VIP</span>
               <span className="text-rose-600 tabular-nums dark:text-rose-400">
-                {formatCurrency(program.vipRewardUsd)}
+                {program.lossbackPct != null
+                  ? `${program.lossbackPct}%`
+                  : "—"}
               </span>
+              <span className="mx-1.5 text-muted-foreground">
+                of a lost first deposit
+              </span>
+              {program.minDepositUsd != null && (
+                <span className="text-muted-foreground">
+                  · min{" "}
+                  <span className="tabular-nums text-emerald-600 dark:text-emerald-400">
+                    {formatCurrency(program.minDepositUsd)}
+                  </span>
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              <span className="text-emerald-600 tabular-nums dark:text-emerald-400">
+                {formatCurrency(program.thresholdUsd ?? 0)}
+              </span>
+              <span className="mx-1.5 text-muted-foreground">wagered →</span>
+              <span className="text-rose-600 tabular-nums dark:text-rose-400">
+                {formatCurrency(program.rewardUsd ?? 0)}
+              </span>
+              {program.vipRewardUsd != null && (
+                <>
+                  <span className="mx-1.5 text-muted-foreground">· VIP</span>
+                  <span className="text-rose-600 tabular-nums dark:text-rose-400">
+                    {formatCurrency(program.vipRewardUsd)}
+                  </span>
+                </>
+              )}
             </>
           )}
         </div>
@@ -406,8 +435,11 @@ function RaiseClaimDialog({
                   </Badge>
                 )}
                 <span className="text-xs text-muted-foreground">
-                  {formatCurrency(preview.appliedRewardUsd)} per{" "}
-                  {formatCurrency(program.thresholdUsd)}
+                  {formatCurrency(preview.appliedRewardUsd)}
+                  {/* "per $X" only means something on a wager program — a
+                      lossback has no per-unit threshold. */}
+                  {program.thresholdUsd != null &&
+                    ` per ${formatCurrency(program.thresholdUsd)}`}
                 </span>
               </div>
               <div className="flex justify-between text-xs text-muted-foreground">
@@ -443,7 +475,10 @@ function RaiseClaimDialog({
                   {preview.blockedReason}
                 </p>
               ) : (
-                preview.units === 0 && (
+                // "more wager needed for the next $Y" is wager-program
+                // wording; a lossback pays off the deposit, not off units.
+                preview.units === 0 &&
+                program.rewardUsd != null && (
                   <p className="text-xs text-muted-foreground">
                     {formatCurrency(preview.wagerToNextUnitUsd)} more wager
                     needed for the next {formatCurrency(program.rewardUsd)}.
