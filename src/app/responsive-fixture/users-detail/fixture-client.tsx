@@ -184,6 +184,8 @@ const DATA: UserDetail = {
     selfExcludedReason: "Taking a break (self-requested)",
     selfExcludedAt: "2026-06-10T12:00:00.000Z",
     selfExcludedUntil: "2026-07-10T12:00:00.000Z",
+    suspectedAlt: false,
+    linkedDeviceAccountCount: 0,
     country: "Germany",
     countryCode: "DE",
     city: "Berlin",

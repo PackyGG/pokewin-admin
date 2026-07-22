@@ -582,6 +582,48 @@ export async function getUserDetail(id: string) {
   // surface to the page error boundary.
   const userPnlPromise = calculateUserPnl(id);
 
+  // Device-fingerprint alt-account signal (fingerprints table — device
+  // fingerprinting on signup/login, index-backed on user_id + visitor_id;
+  // see idx_fingerprints_user_id / idx_fingerprints_visitor_id). Two parts:
+  //   - suspectedAlt mirrors the platform's OWN heuristic
+  //     (fingerprints.suspected_alt_triggered) for this user.
+  //   - linkedDeviceAccountCount counts OTHER accounts that share ANY of
+  //     this user's device visitor_ids — a broader, purely-derived overlap
+  //     signal that can be non-zero even when the platform flag never
+  //     fired. `my_fp` empty (no fingerprint rows yet — the feature is new,
+  //     table is empty on prod as of 2026-07-22) degrades both to
+  //     false/0 via COALESCE / the empty-set IN, not an error.
+  // Best-effort: a failure degrades to "no signal" rather than blocking the
+  // whole fan-out.
+  const fingerprintSignalPromise = db
+    .$queryRaw<
+      { suspected_alt: boolean | null; linked_count: bigint | number | null }[]
+    >`
+      WITH my_fp AS (
+        SELECT visitor_id, suspected_alt_triggered
+        FROM fingerprints
+        WHERE user_id = ${id}
+      )
+      SELECT
+        COALESCE(bool_or(suspected_alt_triggered), false) AS suspected_alt,
+        (
+          SELECT COUNT(DISTINCT f.user_id)
+          FROM fingerprints f
+          WHERE f.visitor_id IN (SELECT visitor_id FROM my_fp)
+            AND f.user_id IS NOT NULL
+            AND f.user_id != ${id}
+        ) AS linked_count
+      FROM my_fp
+    `
+    .then((rows) => ({
+      suspectedAlt: rows[0]?.suspected_alt ?? false,
+      linkedDeviceAccountCount: Number(rows[0]?.linked_count ?? 0),
+    }))
+    .catch((e) => {
+      console.error("[getUserDetail] fingerprint signal query failed:", e);
+      return { suspectedAlt: false, linkedDeviceAccountCount: 0 };
+    });
+
   const [
     user,
     balances,
@@ -607,6 +649,7 @@ export async function getUserDetail(id: string) {
     balancePoints,
     wagerLockedAgg,
     liveAffiliateRows,
+    fingerprintSignal,
   ] = await Promise.all([
     db.user.findUnique({
       where: { id },
@@ -775,6 +818,7 @@ export async function getUserDetail(id: string) {
       console.error("[getUserDetail] live affiliate aggregate query failed:", e);
       return [] as Array<{ total_referred: bigint | number | null; total_wager_volume_usd: string | null }>;
     }),
+    fingerprintSignalPromise,
   ]);
 
   const depositCount = depositAgg._count._all;
@@ -926,6 +970,12 @@ export async function getUserDetail(id: string) {
       selfExcludedReason: user.self_excluded_reason,
       selfExcludedAt: user.self_excluded_at?.toISOString() ?? null,
       selfExcludedUntil: user.self_excluded_until?.toISOString() ?? null,
+      // Device-fingerprint alt-account signal — see fingerprintSignalPromise
+      // above. suspectedAlt mirrors the platform's own heuristic;
+      // linkedDeviceAccountCount is the broader device-overlap count (can be
+      // >0 even when suspectedAlt is false).
+      suspectedAlt: fingerprintSignal.suspectedAlt,
+      linkedDeviceAccountCount: fingerprintSignal.linkedDeviceAccountCount,
       country: user.country,
       countryCode: user.country_code,
       city: user.city,

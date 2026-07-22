@@ -27,6 +27,10 @@ export type UserDetail = {
     selfExcludedReason: string | null;
     selfExcludedAt: string | null;
     selfExcludedUntil: string | null;
+    /** Device-fingerprint alt-account signal — platform's own heuristic. */
+    suspectedAlt: boolean;
+    /** Other accounts sharing any of this user's device visitor_ids. */
+    linkedDeviceAccountCount: number;
     country: string | null;
     countryCode: string | null;
     city: string | null;

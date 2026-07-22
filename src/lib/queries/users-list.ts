@@ -790,6 +790,14 @@ type UserListItem = {
    */
   netHoldings: number;
   createdAt: string;
+  /**
+   * Device-fingerprint alt-account signal (fingerprints.suspected_alt_triggered)
+   * — display only, NOT filterable from the list today (see
+   * hydrateUserListPage: a post-fetch enrichment over just this page's ids,
+   * not a WHERE-clause predicate, to avoid touching the dual-path
+   * search/rank query builder this file's incident history warns against).
+   */
+  suspectedAlt: boolean;
 };
 
 const USER_LIST_SELECT = {
@@ -872,7 +880,7 @@ async function hydrateUserListPage(
   const emptyDeposits: Array<{ user_id: string; _count: { _all: number } }> =
     [];
 
-  const [pnlByUserId, depositCountRows] = await Promise.all([
+  const [pnlByUserId, depositCountRows, suspectedAltRows] = await Promise.all([
     userIds.length > 0
       ? calculateUsersPnlBatch(userIds)
       : Promise.resolve(new Map<string, UserPnl>()),
@@ -887,11 +895,25 @@ async function hydrateUserListPage(
           _count: { _all: true },
         })
       : Promise.resolve(emptyDeposits),
+    // Device-fingerprint alt-account flag, scoped to just this page's ids
+    // (index-backed: idx_fingerprints_user_id). Best-effort — a failure
+    // degrades every row on this page to unflagged rather than breaking the
+    // list render.
+    userIds.length > 0
+      ? db.$queryRaw<{ user_id: string }[]>`
+          SELECT DISTINCT user_id FROM fingerprints
+          WHERE user_id = ANY(${userIds}) AND suspected_alt_triggered = true
+        `.catch((e) => {
+          console.error("[getUsers] suspected-alt fingerprint lookup failed:", e);
+          return [] as { user_id: string }[];
+        })
+      : Promise.resolve([] as { user_id: string }[]),
   ]);
 
   const depositCountMap = new Map(
     depositCountRows.map((d) => [d.user_id, d._count._all]),
   );
+  const suspectedAltUserIds = new Set(suspectedAltRows.map((r) => r.user_id));
 
   return {
     data: users.map((u) => {
@@ -932,6 +954,7 @@ async function hydrateUserListPage(
         depositCount: depositCountMap.get(u.id) ?? 0,
         pnl,
         createdAt: u.created_at.toISOString(),
+        suspectedAlt: suspectedAltUserIds.has(u.id),
       };
     }),
     total,

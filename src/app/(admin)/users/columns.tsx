@@ -2,6 +2,7 @@
 
 import { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
+import { Fingerprint } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { UsersSortHeader } from "./sort-header";
@@ -35,6 +36,8 @@ export type UserRow = {
   depositCount: number;
   pnl: number;
   createdAt: string;
+  /** Device-fingerprint alt-account signal (fingerprints.suspected_alt_triggered). */
+  suspectedAlt: boolean;
 };
 
 function PnlCell({ value }: { value: number }) {
@@ -109,8 +112,18 @@ export const columns: ColumnDef<UserRow>[] = [
           </AvatarFallback>
         </Avatar>
         <div className="min-w-0">
-          <div className="truncate font-medium hover:underline">
-            {row.original.username ?? row.original.email ?? "—"}
+          <div className="flex items-center gap-1.5">
+            <span className="truncate font-medium hover:underline">
+              {row.original.username ?? row.original.email ?? "—"}
+            </span>
+            {row.original.suspectedAlt && (
+              <span
+                title="Suspected alt — device fingerprinting flagged this account at signup/login"
+                className="shrink-0"
+              >
+                <Fingerprint className="size-3 text-rose-500" />
+              </span>
+            )}
           </div>
           <div className="truncate text-xs text-muted-foreground">
             {row.original.email}

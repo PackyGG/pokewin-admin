@@ -44,6 +44,7 @@ import {
   Ticket,
   ShieldBan,
   BadgeCheck,
+  Fingerprint,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -492,6 +493,8 @@ export function UserViewModern({
                 statusKey={statusKey}
                 selfExclusion={selfExclusion}
                 vouchersValue={vouchersValue}
+                suspectedAlt={user.suspectedAlt}
+                linkedDeviceAccountCount={user.linkedDeviceAccountCount}
               />
             </div>
 
@@ -693,10 +696,16 @@ function HeroFlagsStrip({
   statusKey,
   selfExclusion,
   vouchersValue,
+  suspectedAlt,
+  linkedDeviceAccountCount,
 }: {
   statusKey: "active" | "locked" | "banned";
   selfExclusion: SelfExclusionState;
   vouchersValue: number;
+  /** Device-fingerprint alt-account signal (fingerprints.suspected_alt_triggered). */
+  suspectedAlt: boolean;
+  /** Other accounts sharing any of this user's device visitor_ids. */
+  linkedDeviceAccountCount: number;
 }) {
   return (
     // `display: contents` — the strip owns no box of its own; its chips
@@ -753,6 +762,24 @@ function HeroFlagsStrip({
           label={`Vouchers ${formatCurrency(vouchersValue)}`}
           className="border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
           title="User holds unclaimed voucher value (counts against Platform P&L)"
+        />
+      )}
+      {/* Device-fingerprint alt-account flag — the platform's own signup/
+          login fingerprinting heuristic. Rose (a real fraud-review signal,
+          same weight as banned/locked). The linked-device count (other
+          accounts sharing a device with this one) rides in the tooltip
+          rather than its own chip — it's supporting detail for this flag,
+          not a separate independent signal. */}
+      {suspectedAlt && (
+        <FlagChip
+          icon={Fingerprint}
+          label="Suspected Alt"
+          className="border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
+          title={
+            linkedDeviceAccountCount > 0
+              ? `Device fingerprinting flagged this account as a suspected alt at signup/login. ${linkedDeviceAccountCount} other account${linkedDeviceAccountCount === 1 ? "" : "s"} share a device with this one.`
+              : "Device fingerprinting flagged this account as a suspected alt at signup/login."
+          }
         />
       )}
       {/* Wager requirement is intentionally NOT surfaced here — the
