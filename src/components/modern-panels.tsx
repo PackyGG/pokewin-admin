@@ -280,6 +280,7 @@ export function KpiTile({
   label,
   value,
   sub,
+  subAlign = "left",
   icon: Icon,
   accent = "blue",
   action,
@@ -288,6 +289,13 @@ export function KpiTile({
   label: string;
   value: string;
   sub?: string;
+  /**
+   * Where the sub line sits. Default "left" (under the value, same edge —
+   * every existing tile). "right" parks it in the tile's bottom-right
+   * corner, for a secondary figure that qualifies the headline number
+   * without competing with it (e.g. "1,234 banned" under Total Users).
+   */
+  subAlign?: "left" | "right";
   icon: React.ElementType;
   accent?: AccentColor;
   /**
@@ -354,7 +362,12 @@ export function KpiTile({
         // (mt-0.5 → mt-1) so it stops touching the value's baseline.
         // Still secondary (muted-foreground) so the hierarchy stays
         // value > label > sub.
-        <p className="mt-1 truncate text-xs text-muted-foreground">
+        <p
+          className={cn(
+            "mt-1 truncate text-xs text-muted-foreground",
+            subAlign === "right" && "text-right",
+          )}
+        >
           {sub}
         </p>
       )}

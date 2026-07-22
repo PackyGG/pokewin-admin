@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Users, Ban, UserPlus, AlertTriangle, X, Ticket, ArrowRight } from "lucide-react";
+import { Users, UserPlus, AlertTriangle, X, Ticket, ArrowRight } from "lucide-react";
 import { getUsers, getUsersListStats, getMatchingAffiliateCodes } from "@/lib/queries/users";
 import { requirePageAccess } from "@/lib/dal";
 import { safeQuery, safeQueryOrNull } from "@/lib/errors/safe-query";
@@ -367,31 +367,20 @@ async function UsersKpiStrip() {
   }
 
   return (
-    <div className="grid grid-cols-3 gap-3">
+    <div className="grid grid-cols-2 gap-3">
+      {/* Banned is no longer its own tile (owner, 2026-07-23) — a moderation
+          count doesn't deserve the same visual weight as the user base. It
+          rides along as the small bottom-right sub of Total Users. The
+          drill-in it used to carry lives on in the toolbar's Status → Banned
+          filter, which hits the same `?status=banned` param. */}
       <KpiTile
         label="Total Users"
         value={formatNumber(stats.totalUsers)}
+        sub={`${formatNumber(stats.totalBanned)} banned`}
+        subAlign="right"
         icon={Users}
         accent="blue"
       />
-      {/* Clickable drill-in: the list already supports `?status=banned`
-          (users-list.ts adds `u.is_banned = true`), so the tile just links
-          into the filter that exists rather than needing its own page.
-          `interactive` opts this tile into press feedback — the house rule
-          is that KPI tiles stay static unless they're actually clickable. */}
-      <Link
-        href="/users?status=banned"
-        className="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        aria-label={`Banned users: ${formatNumber(stats.totalBanned)} — view the banned list`}
-      >
-        <KpiTile
-          label="Banned"
-          value={formatNumber(stats.totalBanned)}
-          icon={Ban}
-          accent="rose"
-          interactive
-        />
-      </Link>
       <KpiTile
         label="Signups (24h)"
         value={formatNumber(stats.signups24h)}
