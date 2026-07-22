@@ -812,10 +812,11 @@ function HeroFlagsStrip({
           deviceVisitorIdCount > 1
             ? ` Seen on ${deviceVisitorIdCount} distinct devices.`
             : "";
-        // visitor_id is ~20 chars — too long for a chip in a dense row, so
-        // the chip carries a recognisable prefix and the tooltip the full
-        // value to copy into a query.
-        const shortId = deviceVisitorId ? deviceVisitorId.slice(0, 12) : null;
+        // FULL visitor_id here, unlike the /users list which truncates to fit
+        // a table cell. The detail page has the room, and a truncated
+        // identifier can't be matched against the DB or a log line by eye —
+        // which is the whole reason to surface it.
+        const idLabel = deviceVisitorId;
         const idTitle = deviceVisitorId
           ? `Device ID (FingerprintJS visitor_id): ${deviceVisitorId}`
           : "";
@@ -825,7 +826,7 @@ function HeroFlagsStrip({
           return (
             <FlagChip
               icon={Fingerprint}
-              label={shortId ? `Alt · ${shortId}` : "Suspected Alt"}
+              label={idLabel ? `Alt · ${idLabel}` : "Suspected Alt"}
               className="border-rose-500/30 bg-rose-500/15 font-mono text-rose-600 dark:text-rose-400"
               title={`Suspected alt — device fingerprinting flagged this account at signup/login.${sharedLabel}${devicesLabel}\n${idTitle}`}
             />
@@ -850,7 +851,7 @@ function HeroFlagsStrip({
         return (
           <FlagChip
             icon={Fingerprint}
-            label={shortId ?? "Device ID"}
+            label={idLabel ?? "Device ID"}
             className="border-border/60 bg-muted/50 font-mono text-muted-foreground"
             title={`${idTitle}\nCaptured ${capturedLabel}${confidenceLabel}. No alt flag.${sharedLabel}${devicesLabel}`}
           />
