@@ -23,6 +23,7 @@
  *  - wager_weight_packs_bps                     pack wager weight
  *  - wager_weight_battles_bps                battle wager weight
  *  - wager_weight_upgrader_bps               upgrader wager weight
+ *  - wager_weight_keno_bps                   keno wager weight
  */
 export const WAGER_REQUIREMENT_SITE_CONFIG_KEYS: readonly string[] = [
   "withdrawal_wager_requirement_bps",
@@ -35,4 +36,5 @@ export const WAGER_REQUIREMENT_SITE_CONFIG_KEYS: readonly string[] = [
   "wager_weight_packs_bps",
   "wager_weight_battles_bps",
   "wager_weight_upgrader_bps",
+  "wager_weight_keno_bps",
 ];

@@ -15,9 +15,11 @@
  *  - rakeback_wager_weight_packs_bps     pack wager weight
  *  - rakeback_wager_weight_battles_bps   battle wager weight
  *  - rakeback_wager_weight_upgrader_bps  upgrader wager weight
+ *  - rakeback_wager_weight_keno_bps      keno wager weight
  */
 export const RAKEBACK_WAGER_WEIGHT_SITE_CONFIG_KEYS: readonly string[] = [
   "rakeback_wager_weight_packs_bps",
   "rakeback_wager_weight_battles_bps",
   "rakeback_wager_weight_upgrader_bps",
+  "rakeback_wager_weight_keno_bps",
 ];

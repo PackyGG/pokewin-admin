@@ -5,7 +5,7 @@ import { backendApi } from "./client";
 /**
  * Leaderboard wager-weight admin API.
  *
- * The game backend lets packs / battles / upgrader wagers count at
+ * The game backend lets packs / battles / upgrader / keno wagers count at
  * different rates toward LEADERBOARDS — official races (daily/weekly/
  * monthly) AND creator/affiliate leaderboards share ONE weight set. All
  * values are basis points (10000 bps = 1×; 8000 = a $100 bet counts as
@@ -33,6 +33,8 @@ export type LeaderboardWagerWeights = {
   battles_bps: number;
   /** How much upgrader wagers count toward leaderboards, in bps (10000 = 1×). */
   upgrader_bps: number;
+  /** How much keno wagers count toward leaderboards, in bps (10000 = 1×). */
+  keno_bps: number;
 };
 
 /**

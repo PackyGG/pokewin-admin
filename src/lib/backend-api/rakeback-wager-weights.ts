@@ -5,7 +5,7 @@ import { backendApi } from "./client";
 /**
  * Rakeback wager-weight admin API.
  *
- * The game backend lets packs / battles / upgrader wagers count at
+ * The game backend lets packs / battles / upgrader / keno wagers count at
  * different rates toward RAKEBACK — i.e. how much of a game's bets feed the
  * rakeback wager base (which is then multiplied by the per-tier rakeback
  * percentage). All values are basis points (10000 bps = 1×; 8000 = a $100
@@ -35,6 +35,8 @@ export type RakebackWagerWeights = {
   battles_bps: number;
   /** How much upgrader wagers count toward rakeback, in bps (10000 = 1×). */
   upgrader_bps: number;
+  /** How much keno wagers count toward rakeback, in bps (10000 = 1×). */
+  keno_bps: number;
 };
 
 /**
