@@ -144,9 +144,50 @@ type UserListFilterInput = {
    * not a code string.
    */
   affiliateOwnerId: string | undefined;
+  /**
+   * `c:<code>` search syntax — the admin typed e.g. `c:packygg`. When TRUE,
+   * `searchTerm` holds only the part AFTER the prefix and it is matched ONLY
+   * against `affiliate_codes.code` (case-insensitive prefix), returning the
+   * code OWNERS and nothing else: no username / email / id leg at all.
+   *
+   * Parsed from the search term itself in {@link getUsers} — there is no
+   * separate URL flag, so the raw `c:…` text stays in `?search=` and in the
+   * toolbar input where the admin can see what they typed.
+   */
+  codeSearch: boolean;
   /** packy.gg user_ids from admin `excluded_users` — hidden from list results. */
   excludedUserIds: string[];
 };
+
+/**
+ * The `c:` search prefix that switches /users into "find this code's owner"
+ * mode (owner request, 2026-07-23: type `c:packygg`, get PACKYGG's owner and
+ * nothing else). Lives on the TERM rather than a separate param/checkbox so
+ * it survives a copy-pasted URL and needs no extra control in the toolbar.
+ */
+const CODE_SEARCH_PREFIX_RE = /^c:(.*)$/i;
+
+/**
+ * Split a raw search box value into `{ codeSearch, term }`.
+ *
+ * `c:packygg` → code-only search for "packygg". A bare `c:` (prefix typed,
+ * code not yet) is treated as NO search rather than a literal search for
+ * "c:", so the list stays whole mid-keystroke instead of flashing an empty
+ * result. Anything else passes through untouched.
+ */
+function parseSearchTerm(raw: string | undefined): {
+  codeSearch: boolean;
+  term: string | undefined;
+} {
+  const trimmed = raw?.trim();
+  if (!trimmed) return { codeSearch: false, term: undefined };
+  const match = CODE_SEARCH_PREFIX_RE.exec(trimmed);
+  if (!match) return { codeSearch: false, term: trimmed };
+  const code = match[1].trim();
+  return code
+    ? { codeSearch: true, term: code }
+    : { codeSearch: false, term: undefined };
+}
 
 /** AND-wrap a Prisma where with the analytics blacklist exclusion. */
 function withExcludedUsers(
@@ -345,6 +386,7 @@ function buildUserListWhereClause(
     isEmailLike,
     isDiscordId,
     searchMode,
+    codeSearch,
     role,
     status,
     deposited,
@@ -358,13 +400,50 @@ function buildUserListWhereClause(
   const whereSql: string[] = [];
   const params: unknown[] = [];
   if (searchTerm) {
-    // NOTE: the "Affiliate code only" mode that used to own the first branch
-    // here (match affiliate_codes.code by prefix, return the owners) was
-    // removed with its toolbar checkbox (owner, 2026-07-23). The DEFAULT
-    // free-form branch below still carries an affiliate-code leg, so typing a
-    // code still resolves to its owner — on an EXACT match, mixed in with the
-    // handle/email hits.
-    if (isExactId) {
+    if (codeSearch) {
+      // `c:<code>` — match ONLY affiliate_codes.code and return the code
+      // OWNERS. Deliberately no username / email / id leg: the admin asked
+      // for this code's owner and nothing else.
+      //
+      // EXACT WINS, prefix is the fallback. Typing a whole code has to give
+      // exactly that code's owner — on prod `c:packygg` prefix-matches
+      // PACKYGG, PACKYGGFREE and PACKYGGG, i.e. three unrelated owners for a
+      // search the admin meant as one code. So: if any code equals the term,
+      // only its owner comes back; if none does, the term is treated as a
+      // partial and every code starting with it resolves (`c:mall` → MALL,
+      // MALLGG, …). The NOT EXISTS makes that switch inside one statement, so
+      // the cached-ids path stays purely serializable (no extra round trip).
+      //
+      // UPPER(code) case-folding matches every other code-driven query in
+      // this file — 12 of ~1,040 prod rows are NOT canonical-uppercase, so a
+      // plain `code = term` would silently miss them. Both the exact value
+      // and the LIKE pattern are escaped in JS (`\` / `%` / `_` → literal)
+      // and bound as params, never interpolated.
+      //
+      // NOT index-backed: `UPPER(code)` has no index (the unique index is on
+      // the raw column and can't serve a folded comparison). affiliate_codes
+      // is ~1k rows / 18 pages, so this measures 0.41 ms as a seq scan
+      // (EXPLAIN ANALYZE, read-only prod 2026-07-23); index #32 in
+      // prisma/recommended-indexes.sql is the matching `UPPER(code)
+      // text_pattern_ops` for the owner to apply if that table ever grows.
+      const upper = searchTerm.toUpperCase();
+      const escaped = upper.replace(/[\\%_]/g, "\\$&");
+      params.push(upper); // exact (case-folded) code
+      const exactParam = params.length;
+      params.push(`${escaped}%`); // prefix pattern for the fallback
+      const prefixParam = params.length;
+      whereSql.push(
+        `u.id IN (
+          SELECT ac.user_id FROM affiliate_codes ac
+           WHERE UPPER(ac.code) = $${exactParam}
+              OR (UPPER(ac.code) LIKE $${prefixParam} ESCAPE '\\'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM affiliate_codes e
+                     WHERE UPPER(e.code) = $${exactParam}
+                  ))
+        )`,
+      );
+    } else if (isExactId) {
       params.push(searchTerm);
       // Primary-key lookup — exact match first, then case-insensitive fallback
       // for pasted ids with different casing (nanoid ids are mixed-case).
@@ -1140,6 +1219,14 @@ async function hydrateUserListPage(
 export async function getUsers(params: {
   page?: number;
   perPage?: number;
+  /**
+   * Raw search box value. Two shapes:
+   *   • `c:<code>` (e.g. `c:packygg`) — match ONLY affiliate/creator codes by
+   *     case-insensitive prefix and return the code OWNERS, nothing else.
+   *   • anything else — the normal multi-column search (handle / display
+   *     name / email / partial id, plus an exact affiliate-code leg).
+   * Parsed by {@link parseSearchTerm}; the prefix never reaches the SQL.
+   */
   search?: string;
   role?: string;
   status?: string;
@@ -1187,7 +1274,10 @@ export async function getUsers(params: {
     affiliateOwnerId: affiliateOwnerIdParam,
   } = params;
 
-  const searchTerm = search?.trim();
+  // `c:<code>` → code-only search; everything else is the normal term. See
+  // parseSearchTerm: `searchTerm` is already stripped of the prefix, so every
+  // branch below matches the CODE, not the literal "c:packygg" string.
+  const { codeSearch, term: searchTerm } = parseSearchTerm(search);
   const isAnySearch = !!searchTerm;
   const affiliateOwnerId = affiliateOwnerIdParam?.trim() || undefined;
   // affiliateOwnerId (all codes) takes precedence over affiliateCode
@@ -1231,18 +1321,26 @@ export async function getUsers(params: {
   //      default. The rarer "match an interior fragment" case is still
   //      available via searchMode === "substring" (legacy `contains` /
   //      `%term%`), which needs the pg_trgm GIN index to be fast.
+  //
+  // In `c:<code>` mode every shape fast path is suppressed: the term must be
+  // matched against affiliate_codes.code, NEVER against id / email / discord
+  // — even when the code happens to be shaped like a user id, an email or a
+  // snowflake. Forcing all three false routes the request to the free-form
+  // raw-SQL path, where buildUserListWhereClause emits the code-only leg.
   const isExactId =
-    !!searchTerm && (isUuid(searchTerm) || isUserId(searchTerm));
+    !codeSearch && !!searchTerm && (isUuid(searchTerm) || isUserId(searchTerm));
   // Cheap email shape check — anything with an @ that isn't trivially
   // malformed. We don't require a full RFC-compliant match; the unique
   // email index settles the result either way.
   const isEmailLike =
-    !!searchTerm && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(searchTerm);
+    !codeSearch &&
+    !!searchTerm &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(searchTerm);
   // Discord snowflake IDs are 17-20 digit numeric strings. We match the
   // linked Discord account (account.providerId = 'discord', account.accountId
   // = snowflake) only when the search looks like one — otherwise a generic
   // numeric username would trigger an unnecessary join.
-  const isDiscordId = /^\d{17,20}$/.test(searchTerm ?? "");
+  const isDiscordId = !codeSearch && /^\d{17,20}$/.test(searchTerm ?? "");
   const isFreeFormTextSearch =
     !!searchTerm && !isExactId && !isEmailLike && !isDiscordId;
   // Free-form / exact-match SEARCH must not run the computed-sort ranking
@@ -1260,6 +1358,7 @@ export async function getUsers(params: {
     isEmailLike,
     isDiscordId,
     searchMode,
+    codeSearch,
     role,
     status,
     affiliateCode,
@@ -1350,7 +1449,20 @@ export async function getUsers(params: {
   }
 
   if (searchTerm) {
-    if (isExactId) {
+    if (codeSearch) {
+      // `c:<code>` — owners of the matching code(s), nothing else. Mirrors
+      // the raw-SQL code-only leg in buildUserListWhereClause, with one
+      // documented gap: Prisma can't express that leg's "exact match wins,
+      // prefix only when no code equals the term" switch in a single `where`,
+      // so this approximates it with the prefix half. Harmless today — this
+      // branch is UNREACHABLE (a code search is always free-form-shaped, so
+      // getUsers routes it to the raw-SQL column-sort path) — and it's kept
+      // per this file's Prisma-path/raw-SQL-path invariant. The raw-SQL leg
+      // is the authority; if routing ever changes, port the NOT EXISTS.
+      where.affiliate_codes = {
+        some: { code: { startsWith: searchTerm, mode: "insensitive" } },
+      };
+    } else if (isExactId) {
       // Primary-key lookup — single index hit. mode insensitive so pasted
       // ids with different casing still resolve (nanoid ids are mixed-case).
       where.id = { equals: searchTerm, mode: "insensitive" };
@@ -1724,6 +1836,8 @@ export async function getUserIdsMatchingFilters(params: {
     isEmailLike: false,
     isDiscordId: false,
     searchMode: "prefix",
+    // No search term at all here, so the `c:` code mode can't apply.
+    codeSearch: false,
     role: params.role,
     status: params.status,
     deposited: params.deposited,

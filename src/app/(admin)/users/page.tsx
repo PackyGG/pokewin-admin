@@ -205,7 +205,7 @@ export default async function UsersPage({
                 status=banned. Either one raises the toolbar's own "Clear"
                 chip, so a filter set that way can always be undone. */}
             <DataTableToolbar
-              searchPlaceholder="Search by username, email, user ID, Discord ID, or affiliate code..."
+              searchPlaceholder="Search username, email, user ID, Discord ID — or c:CODE for a code's owner (e.g. c:packygg)"
             >
               {gates.canBulkBan && <BulkBanButton />}
               <SortByPnlLosersButton />

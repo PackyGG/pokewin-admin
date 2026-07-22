@@ -165,12 +165,13 @@ const UsersSearchParamsSchema = z.object({
   // interior-substring match. `.catch("prefix")` keeps a fuzzed value
   // from forcing the slow path.
   match: UsersMatchMode.default("prefix").catch("prefix"),
-  // No `codeSearch` flag — the "Affiliate code only" search mode and its
-  // toolbar checkbox were removed (owner, 2026-07-23). The DEFAULT search
-  // still resolves a code to its owner as one of its union legs, so typing a
-  // code in the normal search box keeps working; there's just no mode that
-  // restricts the match to codes alone. A stale `?codeSearch=1` on a
-  // bookmarked URL is now simply ignored.
+  // No `codeSearch` flag — the old "Affiliate code only" checkbox and its
+  // `?codeSearch=1` param are gone (owner, 2026-07-23). Code-only search now
+  // rides on the TERM instead: `?search=c:packygg` returns the owners of
+  // codes matching "packygg" and nothing else (see parseSearchTerm in
+  // users-list.ts). That keeps the mode inside the value `search` already
+  // validates here — bounded to 200 chars, trimmed — with no second param to
+  // keep in sync, and it survives a copy-pasted URL.
   // `.catch(undefined)` on every filter / sort field so a single bad
   // value (e.g. ?role=bogus) drops ONLY that filter instead of failing
   // the whole parse and resetting every other valid param to its default.
