@@ -2,7 +2,7 @@
 
 Machine-to-machine API for the rewards Discord bot and in-house scripts.
 
-- **Base URL:** the admin dashboard's origin (e.g. `https://admin.example.com`)
+- **Base URL:** the admin dashboard's origin (e.g. `https://pokewin-admin.vercel.app`)
 - **Auth:** `Authorization: Bearer <token>` on every request
 - **Content type:** `application/json`
 - **Manage keys:** admin dashboard → **System → Admin API**
@@ -28,7 +28,7 @@ Confirms the token works and shows what it is allowed to do. Needs a valid key
 but no particular scope.
 
 ```bash
-curl -s https://YOUR-ADMIN-HOST/api/v1/whoami \
+curl -s https://pokewin-admin.vercel.app/api/v1/whoami \
   -H "Authorization: Bearer $PACKY_API_KEY"
 ```
 
@@ -126,7 +126,7 @@ def is_linked(discord_user_id: str) -> bool:
 ### curl
 
 ```bash
-curl -s -X POST https://YOUR-ADMIN-HOST/api/v1/discord/linked \
+curl -s -X POST https://pokewin-admin.vercel.app/api/v1/discord/linked \
   -H "Authorization: Bearer $PACKY_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"discordUserId":"123456789012345678"}'
