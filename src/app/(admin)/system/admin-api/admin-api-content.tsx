@@ -2,7 +2,14 @@
 
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { KeyRound, Lock, Plus, ShieldAlert, TriangleAlert } from "lucide-react";
+import {
+  KeyRound,
+  Lock,
+  Plus,
+  ShieldAlert,
+  ShieldCheck,
+  TriangleAlert,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,12 +51,14 @@ import {
   FULL_ACCESS_SCOPE,
   GRANULAR_API_SCOPES,
   hasFullAccess,
+  toApiScopes,
   type ApiScope,
 } from "@/lib/api-auth/scopes";
 import {
   createApiKeyAction,
   revokeApiKeyAction,
   updateApiKeyIpsAction,
+  updateApiKeyScopesAction,
 } from "./actions";
 
 export type ApiKeyRow = {
@@ -132,6 +141,72 @@ function ScopeOption({
   );
 }
 
+/**
+ * The scope picker, shared by "new key" and "edit access" so the two can't
+ * drift on the wildcard rule: ticking full access CLEARS the granular
+ * selection and stores `*` alone, because it already satisfies every check and
+ * a mixed list would read as narrower than the grant really is.
+ */
+function ScopePicker({
+  scopes,
+  onChange,
+  disabled,
+}: {
+  scopes: ApiScope[];
+  onChange: (next: ApiScope[]) => void;
+  disabled: boolean;
+}) {
+  const fullAccess = hasFullAccess(scopes);
+
+  return (
+    <div className="space-y-2">
+      {/* Wildcard first, visually separated — it supersedes everything below,
+          so burying it among the granular options would make it easy to tick
+          by accident. */}
+      <ScopeOption
+        scope={FULL_ACCESS_SCOPE}
+        checked={fullAccess}
+        disabled={disabled}
+        onToggle={() =>
+          onChange(fullAccess ? [] : [FULL_ACCESS_SCOPE as ApiScope])
+        }
+      />
+
+      {fullAccess && (
+        <div className="flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">
+          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+          <span>
+            This key can call <strong>every</strong> endpoint — including ones
+            added in future, without being re-issued. Only grant it to a trusted
+            first-party consumer.
+          </span>
+        </div>
+      )}
+
+      <div
+        className={cn("space-y-1.5", fullAccess && "pointer-events-none opacity-40")}
+        aria-disabled={fullAccess}
+      >
+        {GRANULAR_API_SCOPES.map((scope) => (
+          <ScopeOption
+            key={scope}
+            scope={scope}
+            checked={scopes.includes(scope)}
+            disabled={disabled || fullAccess}
+            onToggle={() =>
+              onChange(
+                scopes.includes(scope)
+                  ? scopes.filter((s) => s !== scope)
+                  : [...scopes, scope],
+              )
+            }
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function statusOf(key: ApiKeyRow): Status {
   if (key.revokedAt || !key.isActive) {
     return { label: "Revoked", className: "bg-rose-500/15 text-rose-600 dark:text-rose-400" };
@@ -146,6 +221,7 @@ export function ApiKeysContent({ keys }: { keys: ApiKeyRow[] }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<ApiKeyRow | null>(null);
   const [ipTarget, setIpTarget] = useState<ApiKeyRow | null>(null);
+  const [scopeTarget, setScopeTarget] = useState<ApiKeyRow | null>(null);
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -268,6 +344,15 @@ export function ApiKeysContent({ keys }: { keys: ApiKeyRow[] }) {
                           size="sm"
                           variant="ghost"
                           disabled={revoked || isPending}
+                          onClick={() => setScopeTarget(key)}
+                        >
+                          <ShieldCheck className="mr-1 size-3.5" />
+                          Access
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={revoked || isPending}
                           onClick={() => setIpTarget(key)}
                         >
                           <Lock className="mr-1 size-3.5" />
@@ -299,6 +384,11 @@ export function ApiKeysContent({ keys }: { keys: ApiKeyRow[] }) {
           setCreateOpen(false);
           setIssuedToken(token);
         }}
+      />
+
+      <EditScopesDialog
+        target={scopeTarget}
+        onClose={() => setScopeTarget(null)}
       />
 
       <EditIpsDialog
@@ -359,6 +449,110 @@ export function ApiKeysContent({ keys }: { keys: ApiKeyRow[] }) {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+/**
+ * Edit an existing key's scopes without re-issuing the token — grant a
+ * newly-added endpoint to a live bot, or cut a key back to least privilege,
+ * with no redeploy on the consumer's side.
+ *
+ * Removing a scope is a BREAKING change for that caller (403 on the affected
+ * endpoints from the next request onwards), so the pending removals are spelled
+ * out before saving rather than left as a diff the operator has to compute.
+ *
+ * Keyed on `target.id` so the selection re-initialises per key instead of
+ * holding the previously-opened key's scopes.
+ */
+function EditScopesDialog({
+  target,
+  onClose,
+}: {
+  target: ApiKeyRow | null;
+  onClose: () => void;
+}) {
+  const [scopes, setScopes] = useState<ApiScope[]>(() =>
+    toApiScopes(target?.scopes ?? []),
+  );
+  const [isPending, startTransition] = useTransition();
+
+  // Re-seed whenever a different key is opened.
+  const [seededFor, setSeededFor] = useState(target?.id ?? null);
+  if (target && seededFor !== target.id) {
+    setSeededFor(target.id);
+    setScopes(toApiScopes(target.scopes));
+  }
+
+  // Compare against the key's CURRENT scopes, narrowed the same way, so a
+  // stale scope left on the row doesn't show up as a removal the operator
+  // never made.
+  const current = toApiScopes(target?.scopes ?? []);
+  const added = scopes.filter((s) => !current.includes(s));
+  const removed = current.filter((s) => !scopes.includes(s));
+  const unchanged = added.length === 0 && removed.length === 0;
+
+  function submit() {
+    if (!target) return;
+    startTransition(async () => {
+      const res = await updateApiKeyScopesAction({ keyId: target.id, scopes });
+      if (res.success) {
+        toast.success(
+          hasFullAccess(res.scopes)
+            ? `"${target.name}" now has full access`
+            : `"${target.name}" updated — ${res.scopes.length} scope${res.scopes.length === 1 ? "" : "s"}`,
+        );
+        onClose();
+      } else {
+        toast.error(res.error);
+      }
+    });
+  }
+
+  return (
+    <Dialog open={target !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Access — {target?.name}</DialogTitle>
+          <DialogDescription>
+            Takes effect on the next request. The token itself is unchanged, so
+            the consumer needs no redeploy.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="max-h-[55vh] overflow-y-auto pr-0.5">
+          <ScopePicker scopes={scopes} onChange={setScopes} disabled={isPending} />
+        </div>
+
+        {removed.length > 0 && (
+          <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              Removing{" "}
+              {removed.map((scope, i) => (
+                <span key={scope}>
+                  {i > 0 && ", "}
+                  <code className="font-mono">{scope}</code>
+                </span>
+              ))}{" "}
+              — calls to those endpoints start failing with{" "}
+              <strong>403</strong> immediately.
+            </span>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button
+            onClick={submit}
+            disabled={isPending || scopes.length === 0 || unchanged}
+          >
+            {isPending ? "Saving…" : "Save access"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -485,21 +679,6 @@ function CreateKeyDialog({
     setAllowedIps("");
   }
 
-  const fullAccess = hasFullAccess(scopes);
-
-  function toggleScope(scope: ApiScope) {
-    setScopes((prev) =>
-      prev.includes(scope) ? prev.filter((s) => s !== scope) : [...prev, scope],
-    );
-  }
-
-  /** Wildcard supersedes the rest — store it alone so the grant is unambiguous. */
-  function toggleFullAccess() {
-    setScopes((prev) =>
-      hasFullAccess(prev) ? [] : [FULL_ACCESS_SCOPE as ApiScope],
-    );
-  }
-
   function submit() {
     const days = expiresInDays.trim() === "" ? null : Number(expiresInDays);
     if (days !== null && (!Number.isInteger(days) || days < 1)) {
@@ -557,45 +736,7 @@ function CreateKeyDialog({
 
           <div className="space-y-2">
             <Label>Scopes</Label>
-
-            {/* Wildcard first, visually separated — it supersedes everything
-                below, so burying it among the granular options would make it
-                easy to tick by accident. */}
-            <ScopeOption
-              scope={FULL_ACCESS_SCOPE}
-              checked={fullAccess}
-              disabled={isPending}
-              onToggle={toggleFullAccess}
-            />
-
-            {fullAccess && (
-              <div className="flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">
-                <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-                <span>
-                  This key can call <strong>every</strong> endpoint — including ones
-                  added in future, without being re-issued. Only grant it to a
-                  trusted first-party consumer.
-                </span>
-              </div>
-            )}
-
-            <div
-              className={cn(
-                "space-y-1.5",
-                fullAccess && "pointer-events-none opacity-40",
-              )}
-              aria-disabled={fullAccess}
-            >
-              {GRANULAR_API_SCOPES.map((scope) => (
-                <ScopeOption
-                  key={scope}
-                  scope={scope}
-                  checked={scopes.includes(scope)}
-                  disabled={isPending || fullAccess}
-                  onToggle={() => toggleScope(scope)}
-                />
-              ))}
-            </div>
+            <ScopePicker scopes={scopes} onChange={setScopes} disabled={isPending} />
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">

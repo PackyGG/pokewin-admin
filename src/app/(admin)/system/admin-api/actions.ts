@@ -8,7 +8,12 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { requireAdmin } from "@/lib/dal";
 import { generateApiKey } from "@/lib/api-auth/token";
 import { looksLikeIp, normalizeIp } from "@/lib/api-auth/ip";
-import { ALL_API_SCOPES, isApiScope } from "@/lib/api-auth/scopes";
+import {
+  ALL_API_SCOPES,
+  FULL_ACCESS_SCOPE,
+  hasFullAccess,
+  isApiScope,
+} from "@/lib/api-auth/scopes";
 
 /**
  * API-key management for the `/api/v1/*` surface.
@@ -53,6 +58,29 @@ function parseAllowedIps(
   return { ok: true, value };
 }
 
+/**
+ * Narrow an operator-supplied scope list to the registry.
+ *
+ * Two invariants, shared by create + update so the two can't drift:
+ *  - anything not in `API_SCOPES` is DROPPED — a client can never invent a
+ *    scope, and a stale one from an older UI build can't be re-attached.
+ *  - the wildcard is stored ALONE. It already satisfies every check, so
+ *    keeping granular entries alongside it would make the row read as
+ *    narrower than the grant actually is.
+ */
+function parseScopes(
+  input: readonly string[],
+): { ok: true; value: string[] } | { ok: false; error: string } {
+  const known = [...new Set(input.filter(isApiScope))];
+  if (known.length === 0) {
+    return { ok: false, error: "Select at least one scope" };
+  }
+  return {
+    ok: true,
+    value: hasFullAccess(known) ? [FULL_ACCESS_SCOPE] : known,
+  };
+}
+
 export type CreateApiKeyResult =
   | { success: true; token: string; prefix: string }
   | { success: false; error: string };
@@ -71,11 +99,9 @@ export async function createApiKeyAction(input: {
     return { success: false, error: "Invalid input" };
   }
 
-  // Drop anything not in the registry — a client can never invent a scope.
-  const scopes = [...new Set(parsed.data.scopes.filter(isApiScope))];
-  if (scopes.length === 0) {
-    return { success: false, error: "Select at least one scope" };
-  }
+  const parsedScopes = parseScopes(parsed.data.scopes);
+  if (!parsedScopes.ok) return { success: false, error: parsedScopes.error };
+  const scopes = parsedScopes.value;
 
   const ips = parseAllowedIps(parsed.data.allowedIps);
   if (!ips.ok) return { success: false, error: ips.error };
@@ -189,6 +215,85 @@ export async function updateApiKeyIpsAction(input: {
 
   revalidatePath("/system/admin-api");
   return { success: true, allowedIps: ips.value };
+}
+
+export type UpdateApiKeyScopesResult =
+  | { success: true; scopes: string[] }
+  | { success: false; error: string };
+
+/**
+ * Replace an existing key's scope set (SET semantics, not append) without
+ * re-issuing the token — so a live consumer can be granted a newly-added
+ * endpoint, or cut back to least privilege, with no redeploy on their side.
+ *
+ * Takes effect on the NEXT request: `authenticateApiRequest` re-reads the row
+ * every time and there is no token/scope cache.
+ *
+ * Removing a scope is a breaking change for the caller (403 insufficient_scope
+ * on the affected endpoints), and adding one is a privilege grant — both
+ * directions are audited with the before/after sets.
+ */
+export async function updateApiKeyScopesAction(input: {
+  keyId: string;
+  scopes: string[];
+}): Promise<UpdateApiKeyScopesResult> {
+  const session = await requireAdmin();
+
+  const parsed = z
+    .object({
+      keyId: z.string().uuid(),
+      scopes: z.array(z.string()).max(ALL_API_SCOPES.length),
+    })
+    .safeParse(input);
+  if (!parsed.success) {
+    return { success: false, error: "Invalid input" };
+  }
+
+  const scopes = parseScopes(parsed.data.scopes);
+  if (!scopes.ok) return { success: false, error: scopes.error };
+
+  const existing = await adminDb.api_keys.findUnique({
+    where: { id: parsed.data.keyId },
+    select: { id: true, name: true, prefix: true, scopes: true, revoked_at: true },
+  });
+  if (!existing) return { success: false, error: "Key not found" };
+  // A revoked key is already dead; editing it would imply it still works.
+  if (existing.revoked_at) {
+    return { success: false, error: "Key is revoked" };
+  }
+
+  const added = scopes.value.filter((s) => !existing.scopes.includes(s));
+  const removed = existing.scopes.filter((s) => !scopes.value.includes(s));
+  if (added.length === 0 && removed.length === 0) {
+    // Nothing to write — skip the update and the audit noise.
+    return { success: true, scopes: scopes.value };
+  }
+
+  await adminDb.api_keys.update({
+    where: { id: existing.id },
+    data: { scopes: scopes.value },
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "api_key_scopes_updated",
+    metadata: {
+      api_key_id: existing.id,
+      name: existing.name,
+      prefix: existing.prefix,
+      old_scopes: existing.scopes,
+      new_scopes: scopes.value,
+      // Widening is the security-relevant direction — greppable rather than a
+      // diff the reader has to compute.
+      added,
+      removed,
+      granted_full_access:
+        hasFullAccess(scopes.value) && !hasFullAccess(existing.scopes),
+    },
+  });
+
+  revalidatePath("/system/admin-api");
+  return { success: true, scopes: scopes.value };
 }
 
 export type RevokeApiKeyResult =
