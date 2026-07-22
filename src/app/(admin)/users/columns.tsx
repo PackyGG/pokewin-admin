@@ -38,6 +38,8 @@ export type UserRow = {
   createdAt: string;
   /** Device-fingerprint alt-account signal (fingerprints.suspected_alt_triggered). */
   suspectedAlt: boolean;
+  /** A fingerprint row exists — false means capture never happened. */
+  hasDeviceId: boolean;
 };
 
 function PnlCell({ value }: { value: number }) {
@@ -116,14 +118,32 @@ export const columns: ColumnDef<UserRow>[] = [
             <span className="truncate font-medium hover:underline">
               {row.original.username ?? row.original.email ?? "—"}
             </span>
-            {row.original.suspectedAlt && (
-              <span
-                title="Suspected alt — device fingerprinting flagged this account at signup/login"
-                className="shrink-0"
-              >
-                <Fingerprint className="size-3 text-rose-500" />
-              </span>
-            )}
+            {/* Device-fingerprint state — shown on EVERY row, not just
+                flagged ones. Muted for a normal capture so it reads as
+                texture rather than an alert; amber when nothing was ever
+                captured (a coverage gap that used to look identical to a
+                clean account); rose only for a real alt flag. */}
+            <span
+              title={
+                row.original.suspectedAlt
+                  ? "Suspected alt — device fingerprinting flagged this account at signup/login"
+                  : row.original.hasDeviceId
+                    ? "Device fingerprint captured at signup"
+                    : "No device fingerprint captured — alt-detection cannot evaluate this account"
+              }
+              className="shrink-0"
+            >
+              <Fingerprint
+                className={cn(
+                  "size-3",
+                  row.original.suspectedAlt
+                    ? "text-rose-500"
+                    : row.original.hasDeviceId
+                      ? "text-muted-foreground/40"
+                      : "text-amber-500/70",
+                )}
+              />
+            </span>
           </div>
           <div className="truncate text-xs text-muted-foreground">
             {row.original.email}

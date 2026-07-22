@@ -798,6 +798,12 @@ type UserListItem = {
    * search/rank query builder this file's incident history warns against).
    */
   suspectedAlt: boolean;
+  /**
+   * A device fingerprint exists for this user. False means capture never
+   * happened — alt-detection has nothing to work with, which is a coverage
+   * gap worth seeing rather than a clean bill of health.
+   */
+  hasDeviceId: boolean;
 };
 
 const USER_LIST_SELECT = {
@@ -895,25 +901,36 @@ async function hydrateUserListPage(
           _count: { _all: true },
         })
       : Promise.resolve(emptyDeposits),
-    // Device-fingerprint alt-account flag, scoped to just this page's ids
-    // (index-backed: idx_fingerprints_user_id). Best-effort — a failure
-    // degrades every row on this page to unflagged rather than breaking the
+    // Device-fingerprint state, scoped to just this page's ids (index-backed:
+    // idx_fingerprints_user_id). ONE grouped query carries both facts: a row
+    // exists ⇒ the device was captured; suspected_alt says whether the alt
+    // heuristic fired. Deliberately not two queries — the row set is the same
+    // and a second round-trip would buy nothing. Best-effort: a failure
+    // degrades every row on this page to "unknown" rather than breaking the
     // list render.
     userIds.length > 0
-      ? db.$queryRaw<{ user_id: string }[]>`
-          SELECT DISTINCT user_id FROM fingerprints
-          WHERE user_id = ANY(${userIds}) AND suspected_alt_triggered = true
+      ? db.$queryRaw<{ user_id: string; suspected_alt: boolean | null }[]>`
+          SELECT user_id, bool_or(suspected_alt_triggered) AS suspected_alt
+          FROM fingerprints
+          WHERE user_id = ANY(${userIds})
+          GROUP BY user_id
         `.catch((e) => {
-          console.error("[getUsers] suspected-alt fingerprint lookup failed:", e);
-          return [] as { user_id: string }[];
+          console.error("[getUsers] device fingerprint lookup failed:", e);
+          return [] as { user_id: string; suspected_alt: boolean | null }[];
         })
-      : Promise.resolve([] as { user_id: string }[]),
+      : Promise.resolve(
+          [] as { user_id: string; suspected_alt: boolean | null }[],
+        ),
   ]);
 
   const depositCountMap = new Map(
     depositCountRows.map((d) => [d.user_id, d._count._all]),
   );
-  const suspectedAltUserIds = new Set(suspectedAltRows.map((r) => r.user_id));
+  // Present in the map ⇒ a fingerprint row exists for that user (device was
+  // captured). The boolean is the alt flag on top of that.
+  const deviceByUserId = new Map(
+    suspectedAltRows.map((r) => [r.user_id, r.suspected_alt === true]),
+  );
 
   return {
     data: users.map((u) => {
@@ -954,7 +971,8 @@ async function hydrateUserListPage(
         depositCount: depositCountMap.get(u.id) ?? 0,
         pnl,
         createdAt: u.created_at.toISOString(),
-        suspectedAlt: suspectedAltUserIds.has(u.id),
+        suspectedAlt: deviceByUserId.get(u.id) === true,
+        hasDeviceId: deviceByUserId.has(u.id),
       };
     }),
     total,
