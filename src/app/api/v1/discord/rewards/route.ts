@@ -200,7 +200,18 @@ export const POST = withApiKey(
     // would make an engaged player look like they have no program at all.
     // This read is admin-DB + a per-user index probe per program, so it adds
     // no meaningful cost to the response.
-    for (const e of await computeAllEntitlements(userId)) {
+    // Creator-reward offers are ISOLATED: this subsystem reads more tables
+    // than the rest of the endpoint, and a player's rakeback and unopened
+    // rewards must still be listed if it fails. A throw here would
+    // otherwise 500 the entire /check command.
+    let offers: Awaited<ReturnType<typeof computeAllEntitlements>> = [];
+    try {
+      offers = await computeAllEntitlements(userId);
+    } catch (err) {
+      console.error("[api/v1] creator-reward offers failed:", err);
+    }
+
+    for (const e of offers) {
       if (e.blockedReason) continue;
       const ready = e.units > 0;
       // Progress wording is per TYPE. A lossback has no wager threshold, so the

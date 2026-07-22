@@ -2,7 +2,6 @@ import "server-only";
 
 import { adminDb } from "@/lib/admin-db";
 import { getProdDb } from "@/lib/db";
-import { calculateUserPnl } from "@/lib/queries/pnl";
 import { toNumber } from "@/lib/utils/decimal";
 
 import { BASIS_HOLDING_STATUSES } from "./types";
@@ -139,20 +138,57 @@ export async function firstDeposits(
 /**
  * Everything the player still holds — cash AND card value.
  *
- * Reuses the CANONICAL per-user P&L helper rather than a local query. Its
- * `onSiteBalance + inventoryValue + unclaimedVouchers` is exactly the "what
- * the house still owes this user" side of the P&L identity in CLAUDE.md, and
- * getting it from there means this reward can never drift from the figures
- * shown on the user-detail page.
+ * These three sums ARE the "what the house still owes this user" side of the
+ * canonical P&L identity (`src/lib/queries/pnl.ts`: onSiteBalance +
+ * inventoryValue + unclaimedVouchers). They are computed directly here rather
+ * than by calling `calculateUserPnl`, deliberately:
  *
- * That also avoids two traps a hand-rolled query walks straight into:
- * `user_inventory` has no `value`/`status` columns (it is `value_at_obtained`,
- * open = neither sold nor exchanged nor withdrawal-locked), and vouchers are
- * gated on `claimed_at`, not a `redeemed_at`.
+ * that helper is a DASHBOARD query. Importing it pulls ClickHouse read
+ * resolution, Edge Config feature flags, the excluded-users cache and the
+ * daily-P&L comparison harness into what is otherwise a three-index-probe
+ * Discord endpoint — an enormous dependency graph for one number, and every
+ * one of those is a way for a bot command to fail for reasons that have
+ * nothing to do with the bot.
+ *
+ * The column semantics are the fiddly part and are mirrored exactly (verified
+ * against prod 2026-07-23, all three index-served, 0.16–0.20 ms):
+ *   • open inventory = neither sold, nor exchanged, nor locked for an
+ *     in-flight withdrawal — and valued at `value_at_obtained` (there is no
+ *     `value` column on user_inventory)
+ *   • outstanding vouchers gate on `claimed_at IS NULL` (not `redeemed_at`)
+ *   • on-site balance is available + locked
+ *
+ * If the canonical definition in pnl.ts ever changes, this must follow.
  */
 export async function holdingsUsd(userId: string): Promise<number> {
-  const pnl = await calculateUserPnl(userId);
-  return pnl.onSiteBalance + pnl.inventoryValue + pnl.unclaimedVouchers;
+  const db = getProdDb();
+
+  const [balance, inventory, vouchers] = await Promise.all([
+    db.balances
+      .findUnique({
+        where: { user_id: userId },
+        select: { available_balance: true, locked_balance: true },
+      })
+      .then((b) =>
+        b ? toNumber(b.available_balance) + toNumber(b.locked_balance) : 0,
+      ),
+    db.$queryRaw<{ total: string }[]>`
+      SELECT COALESCE(SUM(value_at_obtained::numeric), 0)::text AS total
+        FROM user_inventory
+       WHERE user_id = ${userId}
+         AND sold_at IS NULL
+         AND exchanged_at IS NULL
+         AND withdrawal_locked_at IS NULL
+    `.then((rows) => toNumber(rows[0]?.total ?? 0)),
+    db.$queryRaw<{ total: string }[]>`
+      SELECT COALESCE(SUM(value::numeric), 0)::text AS total
+        FROM vouchers
+       WHERE user_id = ${userId}
+         AND claimed_at IS NULL
+    `.then((rows) => toNumber(rows[0]?.total ?? 0)),
+  ]);
+
+  return balance + inventory + vouchers;
 }
 
 /**

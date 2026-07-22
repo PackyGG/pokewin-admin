@@ -275,6 +275,14 @@ export type PlayerRewardSummary = {
 export async function getPlayerRewardSummary(
   userId: string,
 ): Promise<PlayerRewardSummary> {
+  // The entitlement sweep is isolated for the same reason as in /check: the
+  // player's code, timer and claim totals are useful on their own, and must
+  // not disappear because the offers engine tripped.
+  const safeEntitlements = computeAllEntitlements(userId).catch((err) => {
+    console.error("[creator-vip] summary offers failed:", err);
+    return [] as Awaited<ReturnType<typeof computeAllEntitlements>>;
+  });
+
   const [user, entitlements, claimTotals] = await Promise.all([
     getProdDb().user.findUnique({
       where: { id: userId },
@@ -284,7 +292,7 @@ export async function getPlayerRewardSummary(
         affiliate_code_expires_at: true,
       },
     }),
-    computeAllEntitlements(userId),
+    safeEntitlements,
     adminDb.creator_reward_claims.groupBy({
       by: ["status"],
       where: { user_id: userId },
