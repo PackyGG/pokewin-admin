@@ -39,6 +39,37 @@
 
 ## Shipped (recent -- on main)
 
+**2026-07-22 — /notifications: full announcement payload support (`c7aaf444`)**
+
+The announcement API always accepted a structured payload next to title/body — the composer never
+exposed it, so every broadcast shipped as bare text. Contract (mirrored 1:1 in the new shared
+`src/lib/announcement-payload.ts`, verified against backend `src/schemas/websocket.ts`
+`AnnouncementPayloadSchema`): `url` http(s) only, `image_url` **ImageKit-only**
+(`https://ik.imagekit.io/scrkflpgw/…` — the frontend's next/image allowlist), `cta_label` ≤ 60 chars.
+**Unknown keys are stripped by the backend**, so there is no `promo_code` key — a code has to live in
+the body copy (flagged to the dev as a possible backend addition).
+
+Composer (`create-announcement-dialog.tsx`, extracted out of `announcements-content.tsx`) now has four
+templates: **Message / Pack / Page / Promo code**. Pack picker → fills the pack's ImageKit image +
+`/games/packs/<slug>` link + button (all 268 imaged packs on prod are ImageKit-hosted; 14 image-less
+ones are inactive — probed read-only). Page → preset public routes verified against the live frontend
+nav (`nav-dropdown`/`mobile-bottom-nav`/`footer`), stored in `MAIN_SITE_PAGES` in
+`src/lib/utils/main-site.ts` alongside a new `packUrl()`/`mainSiteUrl()`. Promo → picks a live code
+(plaintext lives in `promo_codes.metadata.code`, the column itself is a hash) and composes the copy;
+there is **no deep link to the wallet promo tab**, so the code in the body is what users copy.
+Image field does a direct ImageKit upload (same `uploadImageClient` path as the pack/card forms) or
+manual URL, with preview + non-ImageKit guard; live preview of the rendered notification; per-template
+`type` tag (`pack_release` / `page_release` / `promo_code`, default `admin_announcement`) editable
+under Advanced so the site can key an icon off it.
+
+Lookups (`composer-actions.ts`) are MAIN-DB **read-only**, gated on `/notifications` page access +
+`__can_manage_announcements`; the promo list additionally soft-gates on `/promo-codes` access →
+otherwise `restricted: true` and manual code entry. `packs` (282 rows) / `promo_codes` (3 rows) are
+tiny catalog tables — bounded `findMany`, same read shape as the existing /challenges + /rewards
+pickers. List table now renders the payload (thumbnail, link, button label, type) and the create
+action validates payload + title/body/type lengths and records the payload in the audit event.
+Gates: tsc + lint + `npm run build` all green. No render check (owner rule).
+
 **2026-07-22 — /security → Telegram Notifications section (`ab1bbf22`)**
 
 New collapsible section: min-deposit `$` input + new-signup toggle, wired to the backend's
