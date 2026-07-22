@@ -237,6 +237,46 @@ export default async function UsersPage({
                     { label: "Locked", value: "locked" },
                   ],
                 },
+                // ── Audit filters (bonus-farming triage) ──────────────
+                {
+                  name: "Deposited",
+                  paramKey: "deposited",
+                  options: [
+                    { label: "Has deposited", value: "yes" },
+                    { label: "Never deposited", value: "no" },
+                  ],
+                },
+                {
+                  name: "Signup",
+                  paramKey: "provider",
+                  options: [
+                    { label: "Discord", value: "discord" },
+                    { label: "Google", value: "google" },
+                    { label: "Steam", value: "steam" },
+                    { label: "Email + password", value: "credential" },
+                  ],
+                },
+                {
+                  name: "Signup IP",
+                  paramKey: "sharedIp",
+                  options: [
+                    { label: "Shared with others", value: "yes" },
+                    { label: "Unique to user", value: "no" },
+                  ],
+                },
+                {
+                  name: "Device",
+                  paramKey: "sharedDevice",
+                  options: [{ label: "Shared with others", value: "yes" }],
+                },
+                {
+                  name: "Free value only",
+                  paramKey: "freeOnly",
+                  options: [
+                    { label: "Rain, no deposit", value: "rain" },
+                    { label: "Reward, no deposit", value: "reward" },
+                  ],
+                },
               ]}
             >
               <SortByPnlLosersButton />
@@ -408,6 +448,11 @@ async function UsersTableSection({
         search: params.search,
         role: params.role,
         status: params.status,
+        deposited: params.deposited,
+        provider: params.provider,
+        sharedIp: params.sharedIp,
+        sharedDevice: params.sharedDevice,
+        freeOnly: params.freeOnly,
         sortBy: params.sortBy,
         sortOrder: params.sortOrder,
         // URL `?match=contains` → slower interior-substring search;
