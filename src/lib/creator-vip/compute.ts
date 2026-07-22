@@ -229,6 +229,10 @@ async function priorHoldings(
       where: {
         program_id: programId,
         user_id: userId,
+        // WAGER leg only. A lossback claim consumes no wager basis (it writes
+        // 0), so today this changes nothing — but leaving the legs mixed here
+        // would silently break the moment a lossback ever recorded a basis.
+        leg: "wager",
         status: { in: [...BASIS_HOLDING_STATUSES] },
         // Consumption is scoped to the CURRENT run for the same reason the
         // wager is: when a player leaves and comes back they start clean, so

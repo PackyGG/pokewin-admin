@@ -185,10 +185,15 @@ export async function computeFtdLossback(
 
   // Already taken. One claim ever — pending counts, so a queued request can't
   // be duplicated while it waits.
+  //
+  // SCOPED TO THIS LEG. A program can also run wager milestones, and those
+  // share this table: without the `leg` filter a single pending wager claim
+  // would report the lossback as "already claimed" and silently withhold it.
   const existing = await adminDb.creator_reward_claims.count({
     where: {
       program_id: program.id,
       user_id: userId,
+      leg: "ftd_lossback",
       status: { in: [...BASIS_HOLDING_STATUSES] },
     },
   });
