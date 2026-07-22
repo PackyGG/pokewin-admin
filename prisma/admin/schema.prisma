@@ -1967,3 +1967,105 @@ model pack_retune_drafts {
   @@index([status, last_edited_at(sort: Desc)], map: "pack_retune_drafts_status_edited_idx")
   @@index([created_at(sort: Desc)], map: "pack_retune_drafts_created_at_idx")
 }
+
+/// Creator VIP wager-reward programs — "wager $X under my code, get $Y".
+///
+/// Lives ENTIRELY in the ADMIN DB. Nothing here is written to the prod game
+/// DB; the only prod-side effect is the balance credit on approval, which
+/// goes through the existing audited `adjustBalance` path (a ledger row with
+/// `metadata.adjustment_category = 'creator_vip_reward'` +
+/// `metadata.creator_id`), NOT a bespoke write.
+///
+/// The qualifying wager itself is READ from the prod DB
+/// (`affiliate_code_usages`, `usage_type = 'wager'`, matched on UPPER(code))
+/// and never mutated — "spending" a user's accrued wager is modelled as
+/// admin-side CONSUMPTION rows (see `creator_reward_claims.consumed_wager_usd`),
+/// so the prod side stays a pure, replayable source of truth.
+model creator_reward_programs {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Operator-facing label, e.g. "Jimmy VIP wager reward".
+  name                    String
+  /// MAIN-DB `user.id` of the creator this program belongs to. Loose column,
+  /// no Prisma relation — cross-DB joins don't exist (see CLAUDE.md).
+  creator_user_id         String
+  /// Affiliate codes the program accrues on. Stored UPPERCASE; matched with
+  /// `UPPER(acu.code) = ANY(...)` because `affiliate_codes` casing is mixed
+  /// for legacy rows. A creator may run one program across several codes.
+  codes                   String[] @default([])
+  /// Qualifying wager (USD) per reward unit. e.g. 1000.00
+  threshold_usd           Decimal  @db.Decimal(20, 2)
+  /// Reward (USD) credited per completed unit. e.g. 5.00
+  reward_usd              Decimal  @db.Decimal(20, 2)
+  is_active               Boolean  @default(true)
+  /// Accrual start — wager booked BEFORE this instant NEVER counts. Defaults
+  /// to program creation time. This is the guard against a new program
+  /// instantly owing against years of historical wager (there is ~$3.0M of
+  /// attributed wager already in `affiliate_code_usages`).
+  accrual_start_at        DateTime @db.Timestamptz(6)
+  /// Optional lifetime ceiling on total reward USD one user can earn here.
+  /// NULL = uncapped.
+  max_reward_per_user_usd Decimal? @db.Decimal(20, 2)
+  /// admin_users.id of the operator who created / last edited. Loose UUIDs,
+  /// same convention as pack_state_snapshots.captured_by.
+  created_by              String   @db.Uuid
+  created_at              DateTime @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  claims                  creator_reward_claims[]
+
+  @@index([is_active], map: "creator_reward_programs_is_active_idx")
+  @@index([creator_user_id], map: "creator_reward_programs_creator_idx")
+}
+
+/// One claim request. Created by the Discord bot via the API (server
+/// recomputes eligibility from scratch — the bot's payload is only a Discord
+/// id + which claimable), then manually reviewed by staff.
+///
+/// DOUBLE-CLAIM SAFETY: a claim CONSUMES wager basis. Total consumed for a
+/// (program, user) = SUM(consumed_wager_usd) over rows with status IN
+/// ('pending','approved') — so a pending claim reserves the basis immediately
+/// and a REJECTED claim releases it automatically by falling out of that
+/// filter. No mutation of prod data, and replaying the computation always
+/// yields the same answer.
+///
+/// A partial unique index (`creator_reward_claims_one_pending_per_user`, ON
+/// (program_id, user_id) WHERE status = 'pending') enforces at most one open
+/// request per user per program — Prisma can't model partial uniques, so it
+/// is applied via `prisma db execute` and the action layer catches P2002.
+model creator_reward_claims {
+  id                  String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  program_id          String                  @db.Uuid
+  program             creator_reward_programs @relation(fields: [program_id], references: [id], onDelete: Cascade)
+  /// MAIN-DB `user.id` of the claimant. Loose column (cross-DB).
+  user_id             String
+  /// Discord id the claim came in on — provenance only. NEVER used to resolve
+  /// the account (the server resolves that itself from `account.accountId`).
+  discord_user_id     String?
+  /// SNAPSHOT of the computation at request time, so a reviewer three weeks
+  /// later can see exactly what the number was based on without re-running it.
+  /// Total qualifying wager observed under the program's codes at request time.
+  wager_basis_usd     Decimal                 @db.Decimal(20, 2)
+  /// Basis already consumed by earlier pending/approved claims at request time.
+  prior_consumed_usd  Decimal                 @db.Decimal(20, 2)
+  /// Basis THIS claim consumes (= units × threshold_usd).
+  consumed_wager_usd  Decimal                 @db.Decimal(20, 2)
+  /// Completed threshold units this claim pays for.
+  units               Int
+  /// Payout (USD) = units × reward_usd, after any per-user cap.
+  amount_usd          Decimal                 @db.Decimal(20, 2)
+  /// "pending" | "approved" | "rejected"
+  status              String                  @default("pending")
+  requested_at        DateTime                @default(now()) @db.Timestamptz(6)
+  /// admin_users.id of the reviewer; NULL while pending.
+  reviewed_by         String?                 @db.Uuid
+  reviewed_at         DateTime?               @db.Timestamptz(6)
+  /// Free-text reason — required on reject, optional on approve.
+  review_note         String?
+  /// MAIN-DB `ledger_transactions.id` of the balance credit written on
+  /// approval. Loose column (cross-DB); NULL unless approved.
+  ledger_tx_id        String?                 @db.Uuid
+
+  @@index([status, requested_at(sort: Desc)], map: "creator_reward_claims_status_requested_idx")
+  @@index([program_id, user_id], map: "creator_reward_claims_program_user_idx")
+  @@index([user_id], map: "creator_reward_claims_user_idx")
+}

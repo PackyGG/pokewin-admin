@@ -77,6 +77,7 @@ export const BALANCE_ADJUSTMENT_CATEGORY_KEYS = [
   "remove_locked_balance",
   "fraud_abuse",
   "official_stream",
+  "creator_vip_reward",
   "other",
 ] as const;
 
@@ -134,6 +135,7 @@ export function isRemovalOnlyAdjustmentCategory(
 export const CREATOR_LINKED_ADJUSTMENT_CATEGORY_KEYS = [
   "leaderboard",
   "official_stream",
+  "creator_vip_reward",
 ] as const;
 
 export type CreatorLinkedAdjustmentCategory =
@@ -167,10 +169,14 @@ export const COUNTED_ADJUSTMENT_CATEGORY_KEYS = BALANCE_ADJUSTMENT_CATEGORY_KEYS
   (k) =>
     k !== "other" &&
     k !== "official_stream" &&
+    k !== "creator_vip_reward" &&
     !isRemovalOnlyAdjustmentCategory(k),
 ) as readonly Exclude<
   BalanceAdjustmentCategory,
-  "other" | "official_stream" | RemovalOnlyAdjustmentCategory
+  | "other"
+  | "official_stream"
+  | "creator_vip_reward"
+  | RemovalOnlyAdjustmentCategory
 >[];
 
 /**
@@ -181,6 +187,13 @@ export const COUNTED_ADJUSTMENT_CATEGORY_KEYS = BALANCE_ADJUSTMENT_CATEGORY_KEYS
  * `leaderboard`) STAY selectable — the dialog gates them to the
  * remove-balance direction at render time rather than removing them here.
  *
+ * `creator_vip_reward` is ALSO excluded, for a different reason: it must be
+ * unforgeable by hand. The ONLY writer is `approveCreatorRewardClaim`, so
+ * every such ledger row provably traces back to an approved
+ * `creator_reward_claims` row (whose id it carries in `metadata.vip_claim_id`).
+ * If an admin could pick it from this dropdown, that invariant — and the
+ * per-user consumed-wager accounting that depends on it — would be a lie.
+ *
  * IMPORTANT — this is a PICKER-ONLY filter, not a removal from the model:
  * `other` stays a fully valid `BalanceAdjustmentCategory` and stays in
  * {@link BALANCE_ADJUSTMENT_CATEGORY_KEYS} + {@link BALANCE_ADJUSTMENT_CATEGORY_META}.
@@ -190,8 +203,11 @@ export const COUNTED_ADJUSTMENT_CATEGORY_KEYS = BALANCE_ADJUSTMENT_CATEGORY_KEYS
  * in GGR/NGR/cost exactly as before. Only the dropdown stops offering it.
  */
 export const SELECTABLE_ADJUSTMENT_CATEGORY_KEYS = BALANCE_ADJUSTMENT_CATEGORY_KEYS.filter(
-  (k) => k !== "other",
-) as readonly Exclude<BalanceAdjustmentCategory, "other">[];
+  (k) => k !== "other" && k !== "creator_vip_reward",
+) as readonly Exclude<
+  BalanceAdjustmentCategory,
+  "other" | "creator_vip_reward"
+>[];
 
 /** Type-guard: is this string one of the canonical category keys? */
 export function isBalanceAdjustmentCategory(
@@ -215,6 +231,7 @@ export function isCountedAdjustmentCategory(
   return (
     category !== "other" &&
     category !== "official_stream" &&
+    category !== "creator_vip_reward" &&
     !isRemovalOnlyAdjustmentCategory(category)
   );
 }
@@ -330,6 +347,13 @@ export const BALANCE_ADJUSTMENT_CATEGORY_META: Record<
     label: "Official stream",
     costLabel: "Official-stream adjustments (uncounted)",
     why: "Balance adjustment linked to a creator's official stream (can ADD or REMOVE balance). NOT counted in GGR/NGR/cost here — it only persists the creator link (`metadata.creator_id`). Cost accounting is a deliberate follow-up, exactly like `leaderboard`.",
+    counted: false,
+  },
+  creator_vip_reward: {
+    key: "creator_vip_reward",
+    label: "Creator VIP reward",
+    costLabel: "Creator VIP wager rewards (uncounted)",
+    why: "Wager-milestone reward paid to a user under a creator's VIP program (\"wager $X under my code, get $Y\"). Written ONLY by an approved `creator_reward_claims` row, never by hand — the ledger row carries `metadata.creator_id`, `metadata.vip_claim_id` and `metadata.vip_program_id` so every payout traces back to the claim and the program that authorized it. NOT counted in GGR/NGR/cost YET — it follows the `leaderboard` / `official_stream` precedent of persisting the creator link first; lifting it into reward cost requires updating the INLINED counted-category lists in the ClickHouse twins in lockstep (see COUNTED_ADJUSTMENT_CATEGORY_KEYS) so PG and CH can't drift.",
     counted: false,
   },
   other: {

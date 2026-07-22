@@ -10,6 +10,7 @@ import {
   Coins,
   TrendingUp,
   Users,
+  Crown,
   Settings,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
@@ -30,6 +31,7 @@ import { LeaderboardsTab } from "./leaderboards-tab";
 import { DepositBonusTab } from "./deposit-bonus-tab";
 import { LevelUpTab } from "./level-up-tab";
 import { AffiliateTab } from "./affiliate-tab";
+import { CreatorVipTab } from "./creator-vip-tab";
 import { SettingsTab } from "./settings-tab";
 
 export const metadata = { title: "Rewards" };
@@ -44,6 +46,7 @@ const TABS = [
   { value: "deposit-bonus", label: "Deposit Bonus", icon: Coins },
   { value: "level-up", label: "Level Up", icon: TrendingUp },
   { value: "affiliate", label: "Affiliate", icon: Users },
+  { value: "creator-vip", label: "Creator VIP", icon: Crown },
   { value: "settings", label: "Settings", icon: Settings },
 ] as const;
 
@@ -57,6 +60,7 @@ const KPI_SHAPED_TABS = new Set<TabValue>([
   "xp-sales",
   "deposit-bonus",
   "affiliate",
+  "creator-vip",
   "settings",
 ]);
 
@@ -135,6 +139,7 @@ export default async function RewardsPage({
           {tab === "deposit-bonus" && <DepositBonusTab params={params} />}
           {tab === "level-up" && <LevelUpTab params={params} />}
           {tab === "affiliate" && <AffiliateTab />}
+          {tab === "creator-vip" && <CreatorVipTab />}
           {tab === "settings" && <SettingsTab />}
         </Suspense>
       </div>

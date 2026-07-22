@@ -170,6 +170,13 @@ const adjustmentDetailsSchema = z
     // leaderboard — the linked creator (main-DB user id, better-auth
     // nanoid). Required + validated per-category below.
     creatorId: z.string().trim().min(1).max(64).optional(),
+    // creator_vip_reward — the admin-DB `creator_reward_claims` row (and its
+    // program) that authorized this payout. Stamped onto the ledger metadata
+    // so the prod row is self-describing: you can go from a credit straight
+    // back to the claim + program without a cross-DB hunt. Supplied ONLY by
+    // `approveCreatorRewardClaim`, never by the dialog.
+    vipClaimId: z.string().uuid().optional(),
+    vipProgramId: z.string().uuid().optional(),
   })
   .optional();
 
@@ -211,6 +218,9 @@ type ResolvedAdjustmentMeta = {
   creatorId: string | null;
   /** Set only for `giveaway` — drives the legacy /marketing/giveaway feed. */
   giveawaySource: { url: string; sourceType: "twitter" | "discord" | "other" } | null;
+  /** Set only for `creator_vip_reward` — the claim + program that authorized it. */
+  vipClaimId: string | null;
+  vipProgramId: string | null;
 };
 
 /**
@@ -243,6 +253,8 @@ function validateAdjustmentCategory(
     pnl7dUsd: null,
     creatorId: null,
     giveawaySource: null,
+    vipClaimId: null,
+    vipProgramId: null,
   };
 
   switch (category) {
@@ -403,6 +415,46 @@ function validateAdjustmentCategory(
       }
       return { ok: true, meta: { ...base, creatorId } };
     }
+    case "creator_vip_reward": {
+      // Creator-linked CREDIT only — this category pays a user out for a
+      // wager milestone reached under a creator's code, so a debit makes no
+      // sense and would silently corrupt the consumed-wager accounting that
+      // `creator_reward_claims` keeps on the admin side.
+      //
+      // NOT admin-selectable (see SELECTABLE_ADJUSTMENT_CATEGORY_KEYS): the
+      // only caller is `approveCreatorRewardClaim`, which supplies the
+      // creator id from the program row. Reaching here from anywhere else
+      // means the invariant has already been broken, so the guards below are
+      // deliberately absolute rather than friendly.
+      if (amount <= 0) {
+        return {
+          ok: false,
+          error: "Creator VIP rewards must credit balance (positive amount)",
+        };
+      }
+      const creatorId = (d.creatorId ?? "").trim();
+      if (!creatorId) {
+        return {
+          ok: false,
+          error: "Creator VIP reward requires a linked creator",
+        };
+      }
+      if (!d.vipClaimId || !d.vipProgramId) {
+        return {
+          ok: false,
+          error: "Creator VIP reward requires the authorizing claim",
+        };
+      }
+      return {
+        ok: true,
+        meta: {
+          ...base,
+          creatorId,
+          vipClaimId: d.vipClaimId,
+          vipProgramId: d.vipProgramId,
+        },
+      };
+    }
     case "other": {
       const reasonText = (d.reasonText ?? "").trim();
       if (reasonText.length < 20) {
@@ -427,8 +479,12 @@ export async function adjustBalance(data: {
     lossbackPercent?: number;
     pnl7dUsd?: number;
     creatorId?: string;
+    vipClaimId?: string;
+    vipProgramId?: string;
   };
-}): Promise<{ success: true } | { success: false; error: string }> {
+}): Promise<
+  { success: true; ledgerTxId: string } | { success: false; error: string }
+> {
   const db = await getDb();
   const session = await requirePageAccess("/users");
 
@@ -675,6 +731,16 @@ export async function adjustBalance(data: {
             ...(accruesWagerDebt
               ? { wager_requirement_bps: adminAdjustmentWagerBps }
               : {}),
+            // `creator_vip_reward` only — makes the prod row self-describing:
+            // from a credit you can reach the exact admin-DB claim (and its
+            // program) that authorized it, with no cross-DB hunt. The reverse
+            // link is `creator_reward_claims.ledger_tx_id`.
+            ...(meta.vipClaimId && meta.vipProgramId
+              ? {
+                  vip_claim_id: meta.vipClaimId,
+                  vip_program_id: meta.vipProgramId,
+                }
+              : {}),
           },
           status: "completed",
         },
@@ -828,7 +894,10 @@ export async function adjustBalance(data: {
     });
 
   invalidateUserCaches(parsed.userId);
-  return { success: true };
+  // `ledgerTxId` is returned so a programmatic caller can persist the link to
+  // the row it just created (see `approveCreatorRewardClaim`, which stores it
+  // on the claim). Purely additive — the dialog ignores it.
+  return { success: true, ledgerTxId };
 }
 
 // ---------------------------------------------------------------------------
