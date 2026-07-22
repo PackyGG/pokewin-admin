@@ -14,9 +14,17 @@ import { backendApi } from "./client";
  * LIVE VALUES ≠ the defaults below (verified read-only on prod 2026-07-22):
  * `deposit_bonus_cap_per_period_usd` is set to **20**, and
  * `deposit_bonus_period_hours` has never been written to site_config at all —
- * so the window runs on the backend default. The cap binds hard: over the 14d
- * to 2026-07-22, $590.49 of bonus on $21,748 of deposits = an effective 2.7%,
- * not the nominal 5%. Read the live key before quoting a cap anywhere.
+ * so the window runs on the backend default. Read the live key before quoting
+ * a cap anywhere.
+ *
+ * THE CAP IS THE SECOND FILTER, NOT THE FIRST. A deposit only earns the 5% at
+ * all if it lands inside a **30-minute** window (`user.affiliate_bonus_expires_at`,
+ * `DEPOSIT_BONUS_WINDOW_MS` in the backend's `affiliate.service.ts`), opened when
+ * the user applies a code, re-applies the same code, or signs up via a referral
+ * link. Staff and creators are excluded outright. Over the 14d to 2026-07-22
+ * only $21,748 of $59,378 deposited (37%) was in-window, and the $20 cap then
+ * clamped 5% → 2.7% on that slice: $590.49 total, i.e. ~1% of all deposits.
+ * Neither the 30-min window nor the 5% rate is editable from this surface.
  *
  * Changes apply to deposits from now on — bonuses already credited are never
  * re-touched.
