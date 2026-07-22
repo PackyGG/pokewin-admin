@@ -37,6 +37,30 @@
 ---
 
 
+## ⚠️ GOTCHA — admin-schema columns must be `db push`ed BEFORE the deploy lands (2026-07-23)
+
+**Symptom (live, /creator-rewards):** BOTH "Couldn't load the programs" and "Couldn't load the claim
+requests" notices at once, with empty lists underneath.
+
+**Cause:** a commit added columns to `creator_reward_programs` (`lossback_pct`, `min_deposit_usd`,
+`vip_reward_usd`) and `creator_reward_claims` (`leg`, `ftd_deposit_usd`, `ftd_loss_usd`) — commits
+`211d1654` / `08b7a385` — and deployed before the admin DB got its `db push`. Prisma `findMany`
+selects EVERY scalar column in the model, so one missing column fails the WHOLE read (P2022). Both
+page reads do a full-column findMany on those two tables → both degrade together, which is exactly
+what the two notices are. `safeQueryOrNull` only returns its null sentinel on a THROW, never on an
+empty result, so "both notices + empty lists" always means the queries threw, never "no rows yet".
+
+**Rule:** an admin-schema column addition is only shipped once
+`npx prisma db push --schema=prisma/admin/schema.prisma --config=prisma/admin/prisma.config.ts`
+has run against the admin DB. Push the schema FIRST (additive columns are backward-compatible — the
+older running build simply doesn't select them), then deploy the code. The reverse order takes the
+affected pages down for the whole window in between. **Refreshing never clears this** — if a page
+degrades and a refresh doesn't fix it, check for drift before looking anywhere else. `db push`
+reports "already in sync" when there is none (verified 2026-07-23: the admin DB is fully in sync,
+34/100 connections, both tables present and empty, equivalent raw SQL ~24 ms).
+
+---
+
 ## Shipped (recent -- on main)
 
 **2026-07-22 — /notifications: full announcement payload support (`c7aaf444`)**
