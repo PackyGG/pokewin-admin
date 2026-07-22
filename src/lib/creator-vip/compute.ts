@@ -7,6 +7,7 @@ import { toNumber } from "@/lib/utils/decimal";
 import {
   BASIS_HOLDING_STATUSES,
   type CreatorRewardEntitlement,
+  type CreatorRewardType,
 } from "./types";
 import { computeFtdLossback } from "./ftd-lossback";
 
@@ -54,8 +55,6 @@ const fromCents = (cents: number): number => cents / 100;
 export type ProgramForCompute = {
   id: string;
   name: string;
-  /** "wager" | "ftd_lossback" — decides which branch below runs. */
-  type: string;
   creator_user_id: string;
   codes: string[];
   threshold_usd: unknown;
@@ -299,27 +298,8 @@ export async function computeEntitlement(
     return { ...empty, blockedReason: "This program is not active." };
   }
 
-  // FTD lossback is a completely different shape of reward — one-off, keyed on
-  // the first deposit rather than accumulated wager — so it branches out here
-  // before any of the wager machinery below runs. It is normalised into the
-  // same entitlement type so every caller (bot /check, /info, the claim path,
-  // the admin preview) keeps ONE code path.
-  if (program.type === "ftd_lossback") {
-    const ftd = await computeFtdLossback(program, userId);
-    return {
-      ...empty,
-      type: "ftd_lossback",
-      ftd,
-      // A lossback is all-or-nothing: one "unit", or none.
-      units: ftd.payoutUsd > 0 ? 1 : 0,
-      amountUsd: ftd.payoutUsd,
-      appliedRewardUsd: ftd.payoutUsd,
-      blockedReason: ftd.blockedReason,
-    };
-  }
-
   if (thresholdCents <= 0 || standardRewardCents <= 0) {
-    return { ...empty, blockedReason: "This program is misconfigured." };
+    return { ...empty, blockedReason: "The wager leg isn't configured." };
   }
   // A creator can't farm their own program. `useCode` already refuses a user's
   // own affiliate code, but a program may span several codes and may be
@@ -436,6 +416,137 @@ export async function computeEntitlement(
   };
 }
 
+
+/**
+ * The LOSSBACK leg of a program, normalised into the same entitlement shape as
+ * the wager leg so every caller (bot `/check`, `/info`, the claim path, the
+ * admin preview) keeps ONE code path.
+ *
+ * Kept separate from `computeEntitlement` because a program can run BOTH legs
+ * and a player earns them independently — a single function returning one
+ * answer per program could not express that.
+ */
+export async function computeLossbackEntitlement(
+  program: ProgramForCompute,
+  userId: string,
+): Promise<CreatorRewardEntitlement> {
+  const base = {
+    programId: program.id,
+    programName: program.name,
+    creatorUserId: program.creator_user_id,
+  };
+  const empty: CreatorRewardEntitlement = {
+    ...base,
+    type: "ftd_lossback",
+    ftd: null,
+    isVip: false,
+    appliedRewardUsd: 0,
+    qualifyingWagerUsd: 0,
+    lifetimeWagerUsd: 0,
+    forfeitedWagerUsd: 0,
+    runStartedAt: program.accrual_start_at.toISOString(),
+    priorConsumedUsd: 0,
+    availableWagerUsd: 0,
+    units: 0,
+    amountUsd: 0,
+    consumesWagerUsd: 0,
+    wagerToNextUnitUsd: 0,
+    cappedByUserLimit: false,
+    blockedReason: null,
+  };
+
+  if (!program.is_active) {
+    return { ...empty, blockedReason: "This program is not active." };
+  }
+  if (program.lossback_pct == null || program.min_deposit_usd == null) {
+    return { ...empty, blockedReason: "The lossback leg isn't configured." };
+  }
+  if (program.creator_user_id === userId) {
+    return {
+      ...empty,
+      blockedReason: "A creator cannot claim their own program.",
+    };
+  }
+
+  const standing = await userStanding(userId);
+  if (!standing) return { ...empty, blockedReason: "No such player." };
+  if (standing.banned) return { ...empty, blockedReason: "This account is banned." };
+  if (standing.locked) return { ...empty, blockedReason: "This account is locked." };
+
+  // Same switch rule as the wager leg: leaving for another creator's code
+  // forfeits it, an expired code does not.
+  const upperCodes = program.codes.map((c) => c.toUpperCase());
+  if (standing.currentCode && !upperCodes.includes(standing.currentCode)) {
+    return {
+      ...empty,
+      blockedReason: `Switched to another creator's code (${standing.currentCode}) — rewards earned here can no longer be claimed.`,
+    };
+  }
+
+  const ftd = await computeFtdLossback(program, userId);
+
+  // The per-user cap applies to BOTH legs. It was previously enforced on the
+  // wager leg only, so a capped program still paid an uncapped lossback.
+  let payout = ftd.payoutUsd;
+  let capped = false;
+  if (program.max_reward_per_user_usd != null) {
+    const approved = await adminDb.creator_reward_claims.aggregate({
+      where: { program_id: program.id, user_id: userId, status: "approved" },
+      _sum: { amount_usd: true },
+    });
+    const remainingCents = Math.max(
+      0,
+      toCents(toNumber(program.max_reward_per_user_usd)) -
+        toCents(toNumber(approved._sum.amount_usd ?? 0)),
+    );
+    if (toCents(payout) > remainingCents) {
+      payout = fromCents(remainingCents);
+      capped = true;
+    }
+  }
+
+  return {
+    ...empty,
+    ftd: { ...ftd, payoutUsd: payout },
+    units: payout > 0 ? 1 : 0,
+    amountUsd: payout,
+    appliedRewardUsd: payout,
+    cappedByUserLimit: capped,
+    blockedReason:
+      capped && payout === 0
+        ? "This user has reached the program's per-user reward cap."
+        : ftd.blockedReason,
+  };
+}
+
+/** Is this leg configured on the program at all? */
+function legConfigured(
+  program: ProgramForCompute,
+  leg: CreatorRewardType,
+): boolean {
+  return leg === "wager"
+    ? program.threshold_usd != null && program.reward_usd != null
+    : program.lossback_pct != null && program.min_deposit_usd != null;
+}
+
+/**
+ * Every offer a program makes to one player — one per CONFIGURED leg. A
+ * program running both returns two, and the player can claim each separately.
+ */
+export async function computeProgramOffers(
+  program: ProgramForCompute,
+  userId: string,
+): Promise<CreatorRewardEntitlement[]> {
+  const legs: Promise<CreatorRewardEntitlement>[] = [];
+  if (legConfigured(program, "wager")) {
+    legs.push(computeEntitlement(program, userId));
+  }
+  if (legConfigured(program, "ftd_lossback")) {
+    legs.push(computeLossbackEntitlement(program, userId));
+  }
+  return Promise.all(legs);
+}
+
 /**
  * Every entitlement a user has across the ACTIVE programs whose codes they've
  * actually wagered under. Drives both the bot's `/check` and the admin's
@@ -453,9 +564,9 @@ export async function computeAllEntitlements(
   });
   if (programs.length === 0) return [];
 
-  const results = await Promise.all(
-    programs.map((p) => computeEntitlement(p, userId)),
-  );
+  const results = (
+    await Promise.all(programs.map((p) => computeProgramOffers(p, userId)))
+  ).flat();
   // Only surface programs the player is actually attached to. For a WAGER
   // program that means they've wagered something under the code; for an FTD
   // lossback there is no wager basis at all, so the test is whether they have

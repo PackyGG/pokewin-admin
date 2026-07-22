@@ -37,8 +37,15 @@ import { createClaimRequest } from "@/lib/creator-vip/queries";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** `vip_<uuid>` — the id shape `/discord/rewards` hands out. */
-const VIP_ID = /^vip_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+/**
+ * The two claimable id shapes `/discord/rewards` hands out. The PREFIX
+ * carries which leg of the program is being claimed — a program can offer
+ * both, and they are earned and claimed independently.
+ *   vip_<uuid> → wager milestones
+ *   ftd_<uuid> → first-deposit lossback
+ */
+const CLAIMABLE_ID =
+  /^(vip|ftd)_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
 const BodySchema = z.object({
   discordUserId: z
@@ -73,15 +80,16 @@ export const POST = withApiKey(
     // Only VIP rewards are claimable through the bot. Everything else in the
     // /discord/rewards list (unopened rewards, rakeback) is claimed on-site,
     // and saying so plainly is more useful to a bot author than a generic 400.
-    const match = VIP_ID.exec(claimableId);
-    if (!match?.[1]) {
+    const match = CLAIMABLE_ID.exec(claimableId);
+    if (!match?.[1] || !match?.[2]) {
       return apiError(
         400,
         "not_claimable_here",
         "That reward can't be claimed through Discord — it's claimed on the site.",
       );
     }
-    const programId = match[1];
+    const leg = match[1].toLowerCase() === "ftd" ? "ftd_lossback" : "wager";
+    const programId = match[2];
 
     // Same single index probe the sibling routes use. providerId is asserted
     // so a same-valued account on another provider can't resolve to a Packy
@@ -100,6 +108,7 @@ export const POST = withApiKey(
 
     const result = await createClaimRequest({
       programId,
+      leg,
       userId: account.userId,
       discordUserId,
     });

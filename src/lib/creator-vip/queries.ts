@@ -4,11 +4,16 @@ import { adminDb } from "@/lib/admin-db";
 import { getProdDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
-import { computeAllEntitlements, computeEntitlement } from "./compute";
+import {
+  computeAllEntitlements,
+  computeEntitlement,
+  computeLossbackEntitlement,
+} from "./compute";
 import {
   isCreatorRewardType,
   type CreatorRewardClaimStatus,
   type CreatorRewardProgramWithStats,
+  type CreatorRewardType,
 } from "./types";
 
 /**
@@ -68,7 +73,6 @@ export async function getProgramsWithStats(): Promise<
       creatorUserId: p.creator_user_id,
       creatorUsername: names.get(p.creator_user_id) ?? null,
       codes: p.codes,
-      type: isCreatorRewardType(p.type) ? p.type : "wager",
       thresholdUsd: p.threshold_usd == null ? null : toNumber(p.threshold_usd),
       rewardUsd: p.reward_usd == null ? null : toNumber(p.reward_usd),
       lossbackPct: p.lossback_pct == null ? null : toNumber(p.lossback_pct),
@@ -100,6 +104,8 @@ export type CreatorRewardClaimRow = {
   userId: string;
   username: string | null;
   discordUserId: string | null;
+  /** Which leg of the program this claim is for. */
+  leg: CreatorRewardType;
   wagerBasisUsd: number;
   lifetimeWagerUsd: number;
   forfeitedWagerUsd: number;
@@ -205,6 +211,7 @@ export async function getClaims(params: {
     userId: c.user_id,
     username: names.get(c.user_id) ?? null,
     discordUserId: c.discord_user_id,
+    leg: isCreatorRewardType(c.leg) ? c.leg : "wager",
     wagerBasisUsd: toNumber(c.wager_basis_usd),
     lifetimeWagerUsd: toNumber(c.lifetime_wager_usd),
     forfeitedWagerUsd: toNumber(c.forfeited_wager_usd),
@@ -330,6 +337,8 @@ export type CreateClaimResult =
  */
 export async function createClaimRequest(params: {
   programId: string;
+  /** Which leg is being claimed. A program can offer both. */
+  leg: CreatorRewardType;
   userId: string;
   discordUserId?: string | null;
 }): Promise<CreateClaimResult> {
@@ -340,7 +349,10 @@ export async function createClaimRequest(params: {
     return { ok: false, error: "Program not found.", code: "program_not_found" };
   }
 
-  const entitlement = await computeEntitlement(program, params.userId);
+  const entitlement =
+    params.leg === "ftd_lossback"
+      ? await computeLossbackEntitlement(program, params.userId)
+      : await computeEntitlement(program, params.userId);
   if (entitlement.blockedReason) {
     return {
       ok: false,
@@ -363,6 +375,7 @@ export async function createClaimRequest(params: {
     const created = await adminDb.creator_reward_claims.create({
       data: {
         program_id: program.id,
+        leg: params.leg,
         user_id: params.userId,
         discord_user_id: params.discordUserId ?? null,
         // FTD lossback has no wager basis; its own snapshot lives in the
@@ -399,7 +412,7 @@ export async function createClaimRequest(params: {
     ) {
       return {
         ok: false,
-        error: "You already have a claim awaiting review on this program.",
+        error: "You already have a claim awaiting review for this reward.",
         code: "already_pending",
       };
     }

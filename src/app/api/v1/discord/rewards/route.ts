@@ -210,8 +210,10 @@ export const POST = withApiKey(
         e.type === "ftd_lossback"
           ? "Nothing back yet — this pays a share of losses on your first deposit"
           : `$${e.wagerToNextUnitUsd.toFixed(2)} more wagered to unlock the next reward`;
+      // The PREFIX carries the leg, so a program offering both produces two
+      // independently claimable entries rather than one ambiguous id.
       claimable.push({
-        id: `vip_${e.programId}`,
+        id: `${e.type === "ftd_lossback" ? "ftd" : "vip"}_${e.programId}`,
         name: e.programName,
         rewardType: e.type,
         ...(ready

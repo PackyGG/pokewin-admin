@@ -1985,11 +1985,14 @@ model creator_reward_programs {
   id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// Operator-facing label, e.g. "Jimmy VIP wager reward".
   name                    String
-  /// "wager"        — recurring: wager $threshold under the code, earn $reward.
-  /// "ftd_lossback" — one-off: % back on losses from the FIRST deposit only.
-  /// Which columns below are required depends on this; the action validates
-  /// per type, which is why the type-specific ones are all nullable.
-  type                    String   @default("wager")
+  /// A program offers one or BOTH reward legs, and a player can earn each
+  /// independently:
+  ///   WAGER LEG   — set `threshold_usd` + `reward_usd`. Recurring.
+  ///   LOSSBACK LEG— set `lossback_pct` + `min_deposit_usd`. Once, ever.
+  /// There is deliberately no `type` discriminator: creators hand out both
+  /// together, so forcing two separate programs would have meant two rows,
+  /// two code lists and two things to keep in sync. The action requires at
+  /// least one leg to be configured.
   /// MAIN-DB `user.id` of the creator this program belongs to. Loose column,
   /// no Prisma relation — cross-DB joins don't exist (see CLAUDE.md).
   creator_user_id         String
@@ -1997,14 +2000,14 @@ model creator_reward_programs {
   /// `UPPER(acu.code) = ANY(...)` because `affiliate_codes` casing is mixed
   /// for legacy rows. A creator may run one program across several codes.
   codes                   String[] @default([])
-  /// WAGER type only. Qualifying wager (USD) per reward unit. e.g. 1000.00
+  /// WAGER LEG. Qualifying wager (USD) per reward unit. e.g. 1000.00
   threshold_usd           Decimal? @db.Decimal(20, 2)
-  /// WAGER type only. Reward (USD) per unit at the STANDARD rate. e.g. 5.00
+  /// WAGER LEG. Reward (USD) per unit at the STANDARD rate. e.g. 5.00
   reward_usd              Decimal? @db.Decimal(20, 2)
-  /// FTD_LOSSBACK only. Percent of the first deposit's realised loss paid
-  /// back, e.g. 5.00 = 5%.
+  /// LOSSBACK LEG. Percent of the first deposit's realised loss paid back,
+  /// e.g. 5.00 = 5%.
   lossback_pct            Decimal? @db.Decimal(6, 2)
-  /// FTD_LOSSBACK only. Smallest qualifying first deposit, e.g. 50.00. A
+  /// LOSSBACK LEG. Smallest qualifying first deposit, e.g. 50.00. A
   /// smaller first deposit makes the player permanently ineligible — there is
   /// only ever one first deposit.
   min_deposit_usd         Decimal? @db.Decimal(20, 2)
@@ -2048,8 +2051,8 @@ model creator_reward_programs {
 /// yields the same answer.
 ///
 /// A partial unique index (`creator_reward_claims_one_pending_per_user`, ON
-/// (program_id, user_id) WHERE status = 'pending') enforces at most one open
-/// request per user per program — Prisma can't model partial uniques, so it
+/// (program_id, user_id, leg) WHERE status = 'pending') enforces at most one
+/// open request per user per LEG — Prisma can't model partial uniques, so it
 /// is applied via `prisma db execute` and the action layer catches P2002.
 model creator_reward_claims {
   id                  String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -2065,6 +2068,10 @@ model creator_reward_claims {
   program             creator_reward_programs @relation(fields: [program_id], references: [id], onDelete: Restrict)
   /// MAIN-DB `user.id` of the claimant. Loose column (cross-DB).
   user_id             String
+  /// Which leg of the program this claim is for: "wager" | "ftd_lossback".
+  /// A player can hold one open claim per LEG, not per program — the two are
+  /// earned independently and must not block each other.
+  leg                 String                  @default("wager")
   /// Discord id the claim came in on — provenance only. NEVER used to resolve
   /// the account (the server resolves that itself from `account.accountId`).
   discord_user_id     String?
@@ -2081,7 +2088,7 @@ model creator_reward_claims {
   forfeited_wager_usd Decimal                 @default(0) @db.Decimal(20, 2)
   /// AUDIT: when the run this claim was earned on began.
   run_started_at      DateTime?               @db.Timestamptz(6)
-  /// FTD_LOSSBACK claims only — the snapshot the payout was computed from.
+  /// LOSSBACK-leg claims only — the snapshot the payout was computed from.
   /// The qualifying first deposit, and how much of it had been lost at claim
   /// time. Stored because both move afterwards: the player keeps playing, and
   /// a reviewer days later must see the numbers as they actually stood.

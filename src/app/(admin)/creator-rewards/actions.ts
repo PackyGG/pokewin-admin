@@ -8,10 +8,13 @@ import { getProdDb } from "@/lib/db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { requireAdmin, requirePageAccess } from "@/lib/dal";
 import { adjustBalance } from "@/app/(admin)/users/[id]/actions";
-import { computeEntitlement } from "@/lib/creator-vip/compute";
+import { computeProgramOffers } from "@/lib/creator-vip/compute";
 import { createClaimRequest } from "@/lib/creator-vip/queries";
 import { sanitizeProgramName } from "@/lib/creator-vip/sanitize";
-import { CREATOR_REWARD_TYPES } from "@/lib/creator-vip/types";
+import {
+  CREATOR_REWARD_TYPES,
+  type CreatorRewardType,
+} from "@/lib/creator-vip/types";
 
 /**
  * Creator VIP wager-reward programs + the manual claim-review queue.
@@ -114,7 +117,6 @@ export async function createCreatorRewardProgram(input: {
   name: string;
   creatorUserId: string;
   codes: string[];
-  type: string;
   thresholdUsd: number | null;
   rewardUsd: number | null;
   vipRewardUsd: number | null;
@@ -188,7 +190,6 @@ export async function createCreatorRewardProgram(input: {
       name,
       creator_user_id: d.creatorUserId,
       codes,
-      type: d.type,
       threshold_usd: d.thresholdUsd,
       reward_usd: d.rewardUsd,
       vip_reward_usd: d.vipRewardUsd,
@@ -209,7 +210,6 @@ export async function createCreatorRewardProgram(input: {
       program_id: created.id,
       name,
       codes,
-      type: d.type,
       threshold_usd: d.thresholdUsd,
       reward_usd: d.rewardUsd,
       vip_reward_usd: d.vipRewardUsd,
@@ -539,6 +539,7 @@ export async function reinstateCreatorRewardClaim(input: {
  */
 export async function raiseCreatorRewardClaimForUser(input: {
   programId: string;
+  leg: CreatorRewardType;
   userId: string;
 }): Promise<ActionResult<{ amountUsd: number; units: number }>> {
   await requirePageAccess("/creator-rewards");
@@ -547,6 +548,7 @@ export async function raiseCreatorRewardClaimForUser(input: {
   const parsed = z
     .object({
       programId: z.string().uuid(),
+      leg: z.enum(CREATOR_REWARD_TYPES),
       userId: z.string().trim().min(1).max(64),
     })
     .safeParse(input);
@@ -554,6 +556,7 @@ export async function raiseCreatorRewardClaimForUser(input: {
 
   const result = await createClaimRequest({
     programId: parsed.data.programId,
+    leg: parsed.data.leg,
     userId: parsed.data.userId,
     discordUserId: null,
   });
@@ -566,6 +569,7 @@ export async function raiseCreatorRewardClaimForUser(input: {
     metadata: {
       claim_id: result.claimId,
       program_id: parsed.data.programId,
+      leg: parsed.data.leg,
       units: result.units,
       amount_usd: result.amountUsd,
     },
@@ -592,6 +596,11 @@ export async function previewCreatorRewardEntitlement(input: {
   ActionResult<{
     userId: string;
     username: string | null;
+    /** Which leg this preview is describing. */
+    leg: CreatorRewardType;
+    /** Lossback leg only. */
+    ftdLostUsd: number | null;
+    ftdDepositUsd: number | null;
     isVip: boolean;
     appliedRewardUsd: number;
     qualifyingWagerUsd: number;
@@ -635,13 +644,22 @@ export async function previewCreatorRewardEntitlement(input: {
   });
   if (!user) return { success: false, error: "No user matches that" };
 
-  const e = await computeEntitlement(program, user.id);
+  const offers = await computeProgramOffers(program, user.id);
+  // The preview shows the leg with something payable; failing that, the
+  // first configured one, so the operator still sees WHY nothing is due.
+  const e = offers.find((o) => o.units > 0) ?? offers[0];
+  if (!e) {
+    return { success: false, error: "This program has no rewards configured" };
+  }
 
   return {
     success: true,
     data: {
       userId: user.id,
       username: user.username ?? user.email ?? null,
+      leg: e.type,
+      ftdLostUsd: e.ftd?.lostUsd ?? null,
+      ftdDepositUsd: e.ftd?.firstDepositUsd ?? null,
       isVip: e.isVip,
       appliedRewardUsd: e.appliedRewardUsd,
       qualifyingWagerUsd: e.qualifyingWagerUsd,

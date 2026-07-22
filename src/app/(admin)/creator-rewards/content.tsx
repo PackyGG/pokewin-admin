@@ -135,43 +135,50 @@ export function CreatorVipContent({
  * the reward we pay out is ROSE (money we owe).
  */
 function describeTerms(program: CreatorRewardProgramWithStats) {
-  if (program.type === "ftd_lossback") {
-    return (
-      <span>
-        <span className="text-rose-600 tabular-nums dark:text-rose-400">
-          {program.lossbackPct ?? 0}%
-        </span>
-        <span className="mx-1.5 text-muted-foreground">
-          back on a lost first deposit ≥
-        </span>
-        <span className="text-emerald-600 tabular-nums dark:text-emerald-400">
-          {formatCurrency(program.minDepositUsd ?? 0)}
-        </span>
-      </span>
-    );
-  }
+  const hasWager = program.thresholdUsd != null && program.rewardUsd != null;
+  const hasLossback =
+    program.lossbackPct != null && program.minDepositUsd != null;
+
   return (
-    <span>
-      <span className="text-emerald-600 tabular-nums dark:text-emerald-400">
-        {formatCurrency(program.thresholdUsd ?? 0)}
-      </span>
-      <span className="mx-1.5 text-muted-foreground">wagered →</span>
-      <span className="text-rose-600 tabular-nums dark:text-rose-400">
-        {formatCurrency(program.rewardUsd ?? 0)}
-      </span>
-      {program.vipRewardUsd != null && (
-        <>
-          <span className="mx-1.5 text-muted-foreground">· VIP</span>
-          <span className="text-rose-600 tabular-nums dark:text-rose-400">
-            {formatCurrency(program.vipRewardUsd)}
+    <div className="space-y-0.5">
+      {hasWager && (
+        <div>
+          <span className="text-emerald-600 tabular-nums dark:text-emerald-400">
+            {formatCurrency(program.thresholdUsd ?? 0)}
           </span>
-        </>
+          <span className="mx-1.5 text-muted-foreground">wagered →</span>
+          <span className="text-rose-600 tabular-nums dark:text-rose-400">
+            {formatCurrency(program.rewardUsd ?? 0)}
+          </span>
+          {program.vipRewardUsd != null && (
+            <>
+              <span className="mx-1.5 text-muted-foreground">· VIP</span>
+              <span className="text-rose-600 tabular-nums dark:text-rose-400">
+                {formatCurrency(program.vipRewardUsd)}
+              </span>
+            </>
+          )}
+        </div>
       )}
-    </span>
+      {hasLossback && (
+        <div>
+          <span className="text-rose-600 tabular-nums dark:text-rose-400">
+            {program.lossbackPct}%
+          </span>
+          <span className="mx-1.5 text-muted-foreground">
+            back on a lost first deposit ≥
+          </span>
+          <span className="text-emerald-600 tabular-nums dark:text-emerald-400">
+            {formatCurrency(program.minDepositUsd ?? 0)}
+          </span>
+        </div>
+      )}
+      {!hasWager && !hasLossback && (
+        <span className="text-muted-foreground">No rewards configured</span>
+      )}
+    </div>
   );
 }
-
-
 
 function ProgramsPanel({
   programs,
@@ -328,6 +335,9 @@ function RaiseClaimDialog({
   const [preview, setPreview] = useState<{
     userId: string;
     username: string | null;
+    leg: "wager" | "ftd_lossback";
+    ftdLostUsd: number | null;
+    ftdDepositUsd: number | null;
     isVip: boolean;
     appliedRewardUsd: number;
     qualifyingWagerUsd: number;
@@ -364,6 +374,9 @@ function RaiseClaimDialog({
     startRaise(async () => {
       const res = await raiseCreatorRewardClaimForUser({
         programId: program.id,
+        // The preview already resolved WHICH leg has something payable, so
+        // the claim is filed against that same leg — no second guess.
+        leg: preview.leg,
         userId: preview.userId,
       });
       if (!res.success) {
@@ -436,19 +449,36 @@ function RaiseClaimDialog({
                     VIP
                   </Badge>
                 )}
-                {program.type === "wager" && program.thresholdUsd != null && (
+                {preview.leg === "wager" && program.thresholdUsd != null && (
                   <span className="text-xs text-muted-foreground">
                     {formatCurrency(preview.appliedRewardUsd)} per{" "}
                     {formatCurrency(program.thresholdUsd)}
                   </span>
                 )}
               </div>
+              {preview.leg === "ftd_lossback" ? (
+                <>
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>First deposit</span>
+                    <span className="tabular-nums text-emerald-600 dark:text-emerald-400">
+                      {formatCurrency(preview.ftdDepositUsd ?? 0)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Lost so far</span>
+                    <span className="tabular-nums">
+                      {formatCurrency(preview.ftdLostUsd ?? 0)}
+                    </span>
+                  </div>
+                </>
+              ) : (
               <div className="flex justify-between text-xs text-muted-foreground">
                 <span>Wagered since {formatDateTime(preview.runStartedAt)}</span>
                 <span className="tabular-nums text-emerald-600 dark:text-emerald-400">
                   {formatCurrency(preview.qualifyingWagerUsd)}
                 </span>
               </div>
+              )}
               {preview.forfeitedWagerUsd > 0 && (
                 <div className="flex justify-between text-xs text-muted-foreground">
                   <span>Lost to a code switch</span>
@@ -477,7 +507,7 @@ function RaiseClaimDialog({
                 </p>
               ) : (
                 preview.units === 0 &&
-                program.type === "wager" &&
+                preview.leg === "wager" &&
                 program.rewardUsd != null && (
                   <p className="text-xs text-muted-foreground">
                     {formatCurrency(preview.wagerToNextUnitUsd)} more wager
@@ -527,7 +557,9 @@ function CreateProgramDialog({
     codes: string[];
   } | null>(null);
   const [pickedCodes, setPickedCodes] = useState<string[]>([]);
-  const [type, setType] = useState<"wager" | "ftd_lossback">("wager");
+  // Both legs can run at once — creators hand them out together.
+  const [wagerOn, setWagerOn] = useState(true);
+  const [lossbackOn, setLossbackOn] = useState(true);
   const [threshold, setThreshold] = useState("1000");
   const [reward, setReward] = useState("5");
   const [vipReward, setVipReward] = useState("");
@@ -537,7 +569,6 @@ function CreateProgramDialog({
   const [isPending, startTransition] = useTransition();
   const [searching, startSearch] = useTransition();
 
-  const isLossback = type === "ftd_lossback";
   const thresholdNum = Number(threshold);
   const rewardNum = Number(reward);
   const vipRewardNum = vipReward.trim() === "" ? null : Number(vipReward);
@@ -546,19 +577,24 @@ function CreateProgramDialog({
 
   // Mirrors validateTerms() on the server. The server stays authoritative;
   // this only stops the operator submitting what it would refuse.
-  const ratesInvalid = isLossback
-    ? !Number.isFinite(lossbackPctNum) ||
-      lossbackPctNum <= 0 ||
-      lossbackPctNum >= 100 ||
-      !Number.isFinite(minDepositNum) ||
-      minDepositNum <= 0
-    : (Number.isFinite(thresholdNum) &&
-        Number.isFinite(rewardNum) &&
-        rewardNum >= thresholdNum) ||
+  const wagerInvalid =
+    wagerOn &&
+    ((Number.isFinite(thresholdNum) &&
+      Number.isFinite(rewardNum) &&
+      rewardNum >= thresholdNum) ||
       (vipRewardNum != null &&
         (!Number.isFinite(vipRewardNum) ||
           vipRewardNum >= thresholdNum ||
-          vipRewardNum < rewardNum));
+          vipRewardNum < rewardNum)));
+  const lossbackInvalid =
+    lossbackOn &&
+    (!Number.isFinite(lossbackPctNum) ||
+      lossbackPctNum <= 0 ||
+      lossbackPctNum >= 100 ||
+      !Number.isFinite(minDepositNum) ||
+      minDepositNum <= 0);
+  const nothingOn = !wagerOn && !lossbackOn;
+  const ratesInvalid = wagerInvalid || lossbackInvalid || nothingOn;
 
   function reset() {
     setName("");
@@ -566,7 +602,8 @@ function CreateProgramDialog({
     setResults([]);
     setSelected(null);
     setPickedCodes([]);
-    setType("wager");
+    setWagerOn(true);
+    setLossbackOn(true);
     setThreshold("1000");
     setReward("5");
     setVipReward("");
@@ -599,12 +636,11 @@ function CreateProgramDialog({
         name: name.trim(),
         creatorUserId: selected.userId,
         codes: pickedCodes,
-        type,
-        thresholdUsd: isLossback ? null : thresholdNum,
-        rewardUsd: isLossback ? null : rewardNum,
-        vipRewardUsd: isLossback ? null : vipRewardNum,
-        lossbackPct: isLossback ? lossbackPctNum : null,
-        minDepositUsd: isLossback ? minDepositNum : null,
+        thresholdUsd: wagerOn ? thresholdNum : null,
+        rewardUsd: wagerOn ? rewardNum : null,
+        vipRewardUsd: wagerOn ? vipRewardNum : null,
+        lossbackPct: lossbackOn ? lossbackPctNum : null,
+        minDepositUsd: lossbackOn ? minDepositNum : null,
         maxRewardPerUserUsd: cap.trim() === "" ? null : Number(cap),
       });
       if (!res.success) {
@@ -635,35 +671,42 @@ function CreateProgramDialog({
 
         <div className="space-y-4">
           <div className="space-y-1.5">
-            <Label className="text-xs">Reward type</Label>
-            <div className="inline-flex gap-1 rounded-lg bg-muted p-1">
-              {(
-                [
-                  ["wager", "Wager milestones"],
-                  ["ftd_lossback", "First-deposit lossback"],
-                ] as const
-              ).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setType(value)}
+            <Label className="text-xs">Rewards this program gives</Label>
+            <div className="space-y-2 rounded-md border p-3">
+              <label className="flex items-start gap-2.5">
+                <Switch
+                  checked={wagerOn}
+                  onCheckedChange={setWagerOn}
                   disabled={isPending}
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                    type === value
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
+                />
+                <span className="text-sm">
+                  Wager milestones
+                  <span className="block text-[11px] text-muted-foreground">
+                    Recurring — pays every time they wager another full
+                    threshold under the code.
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2.5">
+                <Switch
+                  checked={lossbackOn}
+                  onCheckedChange={setLossbackOn}
+                  disabled={isPending}
+                />
+                <span className="text-sm">
+                  First-deposit lossback
+                  <span className="block text-[11px] text-muted-foreground">
+                    Once, ever — a % of what they lost from their FIRST deposit.
+                    Needs signup under the code; a second deposit closes it.
+                  </span>
+                </span>
+              </label>
             </div>
-            <p className="text-[11px] text-muted-foreground">
-              {isLossback
-                ? "One-off. Pays a % of what they lost from their FIRST deposit. Requires signup under the code, and a second deposit closes the window."
-                : "Recurring. Pays every time they wager another full threshold under the code."}
-            </p>
+            {nothingOn && (
+              <p className="text-[11px] text-rose-600 dark:text-rose-400">
+                Turn on at least one.
+              </p>
+            )}
           </div>
 
           <div className="space-y-1.5">
@@ -782,7 +825,7 @@ function CreateProgramDialog({
             </div>
           )}
 
-          {isLossback ? (
+          {lossbackOn && (
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs">Lossback (%)</Label>
@@ -807,7 +850,9 @@ function CreateProgramDialog({
                 />
               </div>
             </div>
-          ) : (
+          )}
+
+          {wagerOn && (
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs">Wager threshold ($)</Label>
@@ -833,7 +878,7 @@ function CreateProgramDialog({
             </div>
           )}
 
-          {!isLossback && (
+          {wagerOn && (
           <div className="space-y-1.5">
             <Label className="text-xs">
               VIP reward ($) — optional
@@ -857,9 +902,11 @@ function CreateProgramDialog({
 
           {ratesInvalid && (
             <p className="text-sm text-rose-600 dark:text-rose-400">
-              {isLossback
-                ? "Lossback must be between 0 and 100%, with a positive minimum deposit."
-                : "Rewards must be under the threshold, and the VIP rate at least the standard one."}
+              {nothingOn
+                ? "Turn on at least one reward."
+                : lossbackInvalid
+                  ? "Lossback must be between 0 and 100%, with a positive minimum deposit."
+                  : "Rewards must be under the threshold, and the VIP rate at least the standard one."}
             </p>
           )}
 
@@ -877,7 +924,7 @@ function CreateProgramDialog({
             />
           </div>
 
-          {!isLossback &&
+          {wagerOn &&
             Number.isFinite(thresholdNum) &&
             Number.isFinite(rewardNum) &&
             !ratesInvalid &&
