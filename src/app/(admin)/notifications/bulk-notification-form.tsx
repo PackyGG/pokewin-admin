@@ -40,6 +40,7 @@ import {
 } from "@/lib/user-notification";
 import { sendBulkNotificationChunkAction } from "./direct-actions";
 import { NotificationUserPicker } from "./notification-user-picker";
+import { NotificationPreview } from "./notification-preview";
 import type { BulkNotificationResult } from "@/lib/backend-api/user-notifications";
 
 const RECIPIENT_PLACEHOLDER = `user_id,code,value
@@ -67,7 +68,7 @@ type Failure = { chunkIndex: number; error: string };
  * always safe. Already-delivered items come back as `deduped`, which is why
  * that counter is presented as normal rather than as an error.
  */
-export function BulkNotificationForm({ disabled }: { disabled: boolean }) {
+export function BulkNotificationForm() {
   const [campaign, setCampaign] = useState("");
   const [category, setCategory] = useState<UserNotificationCategory>("rewards");
   const [type, setType] = useState("promo_code_granted");
@@ -127,7 +128,6 @@ export function BulkNotificationForm({ disabled }: { disabled: boolean }) {
   }, [results]);
 
   const readyToSend =
-    !disabled &&
     !sending &&
     chunks !== null &&
     chunks.length > 0 &&
@@ -200,7 +200,7 @@ export function BulkNotificationForm({ disabled }: { disabled: boolean }) {
             onChange={(e) => setCampaign(e.target.value)}
             placeholder="summer_promo_2026"
             className="font-mono text-xs"
-            disabled={disabled || sending}
+            disabled={sending}
           />
           <p
             className={`text-[11px] ${slugError ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}
@@ -217,7 +217,7 @@ export function BulkNotificationForm({ disabled }: { disabled: boolean }) {
               value={category}
               onValueChange={(v) => setCategory(v as UserNotificationCategory)}
             >
-              <SelectTrigger className="w-full" disabled={disabled || sending}>
+              <SelectTrigger className="w-full" disabled={sending}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -234,7 +234,7 @@ export function BulkNotificationForm({ disabled }: { disabled: boolean }) {
               placeholder="promo_code_granted"
               maxLength={NOTIFICATION_TYPE_MAX}
               className="font-mono text-xs"
-              disabled={disabled || sending}
+              disabled={sending}
             />
           </div>
         </div>
@@ -248,7 +248,7 @@ export function BulkNotificationForm({ disabled }: { disabled: boolean }) {
           <Label className="text-xs text-muted-foreground">Recipients</Label>
           <div className="w-56">
             <NotificationUserPicker
-              disabled={disabled || sending}
+              disabled={sending}
               label="Add a user to the list…"
               onSelect={(u) =>
                 setRecipientsText((cur) =>
@@ -265,7 +265,7 @@ export function BulkNotificationForm({ disabled }: { disabled: boolean }) {
           spellCheck={false}
           className="font-mono text-xs"
           placeholder={RECIPIENT_PLACEHOLDER}
-          disabled={disabled || sending}
+          disabled={sending}
         />
         <RecipientSummary parsed={parsed} />
       </div>
@@ -282,7 +282,7 @@ export function BulkNotificationForm({ disabled }: { disabled: boolean }) {
             spellCheck={false}
             className="font-mono text-xs"
             placeholder='{ "value": 25 }'
-            disabled={disabled || sending}
+            disabled={sending}
           />
           <p
             className={`text-[11px] ${sharedCheck.ok ? "text-muted-foreground" : "text-rose-600 dark:text-rose-400"}`}
@@ -301,7 +301,7 @@ export function BulkNotificationForm({ disabled }: { disabled: boolean }) {
             value={chunkSize}
             onChange={(e) => setChunkSize(Number(e.target.value))}
             className="text-xs"
-            disabled={disabled || sending}
+            disabled={sending}
           />
           <p className="text-[11px] text-muted-foreground">
             Max {BULK_MAX_ITEMS}. Chunks also close on body size, so a big
@@ -316,6 +316,8 @@ export function BulkNotificationForm({ disabled }: { disabled: boolean }) {
           <p className="text-xs text-rose-700 dark:text-rose-300">{planError}</p>
         </div>
       )}
+
+      <NotificationPreview type={type} payload={previewItem?.payload} />
 
       {chunks && chunks.length > 0 && (
         <ChunkPlan chunks={chunks} previewItem={previewItem} />

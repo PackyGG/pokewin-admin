@@ -1,0 +1,94 @@
+"use client";
+
+import { Bell, TriangleAlert } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import {
+  previewNotificationText,
+  unrenderedPayloadKeys,
+} from "@/lib/user-notification-templates";
+import type { NotificationPayload } from "@/lib/user-notification";
+
+/**
+ * What the recipient actually sees in their notification popover.
+ *
+ * The point of this panel is the warning, not the mockup: `type` is an i18n
+ * key and the site only has templates for a handful of them. Send an unknown
+ * key and the row renders as "Notification / <type with underscores stripped>"
+ * with the payload dropped on the floor — which reads as a broken feature
+ * unless you know that's the contract. Better to see it here than on a real
+ * account.
+ */
+export function NotificationPreview({
+  type,
+  payload,
+}: {
+  type: string;
+  payload: NotificationPayload | undefined;
+}) {
+  const preview = previewNotificationText(type, payload);
+  const unrendered = unrenderedPayloadKeys(type, payload);
+
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs font-medium text-muted-foreground">
+        What the user sees
+      </p>
+
+      <div className="flex gap-3 rounded-md border bg-muted/30 p-3">
+        <div className="mt-0.5 shrink-0 rounded-lg bg-primary/10 p-1.5">
+          <Bell className="size-3.5 text-primary" />
+        </div>
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <p className="truncate text-sm font-medium">{preview.title}</p>
+          <p className="line-clamp-2 text-xs text-muted-foreground">
+            {preview.body}
+          </p>
+        </div>
+        <Badge
+          variant="outline"
+          className={
+            preview.known
+              ? "shrink-0 self-start bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+              : "shrink-0 self-start bg-amber-500/15 text-amber-600 dark:text-amber-400"
+          }
+        >
+          {preview.known ? "Template exists" : "Fallback"}
+        </Badge>
+      </div>
+
+      {!preview.known && (
+        <div className="flex gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <div className="space-y-1 text-[11px] text-amber-700 dark:text-amber-300">
+            <p className="font-medium">
+              The site has no template for{" "}
+              <code className="font-mono">{type.trim() || "(empty)"}</code>.
+            </p>
+            <p className="text-amber-700/80 dark:text-amber-300/80">
+              The row is written and the API returns your payload, but the
+              popover falls back to the generic copy above and renders none of
+              it. Personal notifications also ignore{" "}
+              <code className="font-mono">payload.url</code> — only broadcast
+              announcements turn that into a link. Making a promo code visible
+              and redeemable needs a frontend change: a case for this type in{" "}
+              <code className="font-mono">notification-text.ts</code> that
+              reads the payload, plus a link through to the wallet&apos;s
+              deposit tab where codes are entered.
+            </p>
+            <p className="text-amber-700/80 dark:text-amber-300/80">
+              Sending is still useful for exercising the endpoint — the row,
+              the unread count and the websocket event all fire.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {preview.known && unrendered.length > 0 && (
+        <p className="text-[11px] text-muted-foreground">
+          Delivered but not rendered by this template:{" "}
+          <span className="font-mono">{unrendered.join(", ")}</span>
+        </p>
+      )}
+    </div>
+  );
+}

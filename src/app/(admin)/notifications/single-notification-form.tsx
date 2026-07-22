@@ -25,6 +25,7 @@ import {
 } from "@/lib/user-notification";
 import { sendDirectNotificationAction } from "./direct-actions";
 import { NotificationUserPicker } from "./notification-user-picker";
+import { NotificationPreview } from "./notification-preview";
 
 type Sent =
   | { kind: "ok"; message: string }
@@ -42,7 +43,7 @@ type Sent =
  *   • 404 is its own outcome (the backend checks the user explicitly), not a
  *     generic failure — it gets its own callout.
  */
-export function SingleNotificationForm({ disabled }: { disabled: boolean }) {
+export function SingleNotificationForm() {
   const [userId, setUserId] = useState("");
   const [userLabel, setUserLabel] = useState<string | null>(null);
   const [category, setCategory] = useState<UserNotificationCategory>("rewards");
@@ -66,7 +67,6 @@ export function SingleNotificationForm({ disabled }: { disabled: boolean }) {
   const typeError = validateNotificationType(type);
   const dedupeError = dedupeKey.trim() ? validateDedupeKey(dedupeKey) : null;
   const blocked =
-    disabled ||
     isPending ||
     !userId.trim() ||
     !payloadCheck.ok ||
@@ -105,7 +105,7 @@ export function SingleNotificationForm({ disabled }: { disabled: boolean }) {
       <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground">Recipient</Label>
         <NotificationUserPicker
-          disabled={disabled || isPending}
+          disabled={isPending}
           label={userLabel ?? "Find a user…"}
           onSelect={(u) => {
             setUserId(u.id);
@@ -120,7 +120,7 @@ export function SingleNotificationForm({ disabled }: { disabled: boolean }) {
           }}
           placeholder="…or paste a user id"
           className="font-mono text-xs"
-          disabled={disabled || isPending}
+          disabled={isPending}
         />
       </div>
 
@@ -131,7 +131,7 @@ export function SingleNotificationForm({ disabled }: { disabled: boolean }) {
             value={category}
             onValueChange={(v) => setCategory(v as UserNotificationCategory)}
           >
-            <SelectTrigger className="w-full" disabled={disabled || isPending}>
+            <SelectTrigger className="w-full" disabled={isPending}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -153,7 +153,7 @@ export function SingleNotificationForm({ disabled }: { disabled: boolean }) {
             placeholder="promo_code_granted"
             maxLength={NOTIFICATION_TYPE_MAX}
             className="font-mono text-xs"
-            disabled={disabled || isPending}
+            disabled={isPending}
           />
           <p
             className={`text-[11px] ${typeError ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}
@@ -186,7 +186,7 @@ export function SingleNotificationForm({ disabled }: { disabled: boolean }) {
           spellCheck={false}
           className="font-mono text-xs"
           placeholder='{ "code": "PACKY-A1B2-C3D4" }'
-          disabled={disabled || isPending}
+          disabled={isPending}
         />
         {payloadCheck.ok ? (
           <p className="text-[11px] text-muted-foreground">
@@ -200,6 +200,11 @@ export function SingleNotificationForm({ disabled }: { disabled: boolean }) {
         )}
       </div>
 
+      <NotificationPreview
+        type={type}
+        payload={payloadCheck.ok ? payloadCheck.payload : undefined}
+      />
+
       <div className="space-y-1">
         <Label className="text-xs text-muted-foreground">
           Dedupe key (optional)
@@ -210,7 +215,7 @@ export function SingleNotificationForm({ disabled }: { disabled: boolean }) {
           placeholder="summer_promo_2026:kX9mQ2pLr7vNa4bT8cZfE1yH6wJ3sD0g"
           maxLength={NOTIFICATION_DEDUPE_KEY_MAX}
           className="font-mono text-xs"
-          disabled={disabled || isPending}
+          disabled={isPending}
         />
         <p
           className={`text-[11px] ${dedupeError ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}

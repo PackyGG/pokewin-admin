@@ -4,8 +4,9 @@ import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { readDbEnvFromCookie } from "@/lib/db-env";
+import type { DbEnv } from "@/lib/db-env";
 import { BackendApiError } from "@/lib/backend-api/errors";
+import { getDirectNotificationAvailability } from "@/lib/backend-api/user-notifications-availability";
 import {
   sendBulkNotifications,
   sendUserNotification,
@@ -52,26 +53,22 @@ export type BulkChunkResult =
   | { success: false; error: string; status?: number };
 
 /**
- * Per-user notification sends are restricted to the DEV backend for now
- * (owner directive, 2026-07-22 — "this is for dev db and site only atm").
- * The backend endpoints are merged to `dev`; prod hasn't taken them yet, and
- * a real send reaches real users' feeds.
+ * Hard env gate. Resolves the env the request would ACTUALLY go to rather
+ * than the `admin_db_env` cookie — see the note in
+ * `@/lib/backend-api/user-notifications-availability`: the cookie is run
+ * through a fallback that can resolve "dev" to the prod backend when no dev
+ * backend is configured, so gating on the cookie would not have held.
  *
- * The env comes from the `admin_db_env` cookie, which the header toggle sets
- * and which `backendApi` already uses to pick the base URL + admin key — so
- * this gate and the request target can never disagree. Same shape as the
- * /test/creator tools' `requireDevEnv`. Lifting the restriction is one
- * constant away once the endpoints ship to prod.
+ * Returns an operator-facing reason, or null when the send may proceed.
  */
-const DEV_ENV_ONLY = true;
-
-async function requireDevEnv(): Promise<string | null> {
-  if (!DEV_ENV_ONLY) return null;
-  const env = await readDbEnvFromCookie();
-  if (env !== "dev") {
-    return "Direct notifications are dev-only right now. Switch the environment toggle in the header to DEV before sending.";
+async function requireSendableBackend(): Promise<
+  { error: string } | { env: DbEnv }
+> {
+  const availability = await getDirectNotificationAvailability();
+  if (!availability.ready || !availability.backendEnv) {
+    return { error: availability.reason ?? "Sending is not available." };
   }
-  return null;
+  return { env: availability.backendEnv };
 }
 
 async function authorize() {
@@ -101,8 +98,8 @@ export async function sendDirectNotificationAction(
   input: SendDirectNotificationInput,
 ): Promise<DirectSendResult> {
   const session = await authorize();
-  const envError = await requireDevEnv();
-  if (envError) return { success: false, error: envError };
+  const target = await requireSendableBackend();
+  if ("error" in target) return { success: false, error: target.error };
 
   const userId = input.userId.trim();
   if (!userId) return { success: false, error: "User id is required" };
@@ -151,6 +148,10 @@ export async function sendDirectNotificationAction(
     eventType: "user_notification_sent",
     targetUserId: userId,
     metadata: {
+      // Which site actually received it — the admin dash can be pointed at
+      // either backend, and the history table is read from the admin DB in
+      // both, so without this a dev send is indistinguishable from a prod one.
+      env: target.env,
       category: input.category,
       type,
       dedupeKey: dedupeKey ?? null,
@@ -193,8 +194,8 @@ export async function sendBulkNotificationChunkAction(
   input: SendBulkChunkInput,
 ): Promise<BulkChunkResult> {
   const session = await authorize();
-  const envError = await requireDevEnv();
-  if (envError) return { success: false, error: envError };
+  const target = await requireSendableBackend();
+  if ("error" in target) return { success: false, error: target.error };
 
   if (!isUserNotificationCategory(input.category)) {
     return { success: false, error: "Category must be rewards or system" };
@@ -253,6 +254,7 @@ export async function sendBulkNotificationChunkAction(
     adminUserId: session.userId,
     eventType: "user_notifications_bulk_sent",
     metadata: {
+      env: target.env,
       campaign: input.campaign,
       category: input.category,
       type,
@@ -263,6 +265,9 @@ export async function sendBulkNotificationChunkAction(
       deduped: result.deduped,
       unknownUsers: result.unknown_users,
       bodyBytes,
+      // One representative item so the history can answer "what did I
+      // actually send?" without storing 1000 payloads per chunk.
+      sampleItem: items[0] ?? null,
     },
   });
 
@@ -278,9 +283,20 @@ export type NotificationUserOption = {
 };
 
 /**
- * User search for the recipient picker — the same bounded, index-served
- * lookup shape the /vouchers picker uses (username / email prefix-contains or
- * exact id, capped at 10 rows). MAIN DB, SELECT only.
+ * User search for the recipient picker. MAIN DB, SELECT only.
+ *
+ * Matches username, email, an EXACT id, or an id PREFIX — a better-auth id is
+ * 32 opaque characters, so pasting a partial one (or the first chunk of a
+ * spreadsheet cell) has to resolve, otherwise the operator is left retyping a
+ * random string. Exact id stays first so a full paste is an index hit.
+ *
+ * Read shape: bounded `findMany` with `take: 10` over `users`, the same shape
+ * the /vouchers picker already uses on this table. The `contains` / prefix
+ * legs are a sequential scan, which is optimal here — the table is ~16.5k
+ * rows and any index would be ignored for a leading-wildcard match at that
+ * size. Nothing about this is unbounded: worst case is one small scan capped
+ * at 10 returned rows, behind a capability gate, fired only while the picker
+ * popover is open.
  */
 export async function searchNotificationUsers(
   query: string,
@@ -290,15 +306,18 @@ export async function searchNotificationUsers(
   const q = query.trim();
   if (q.length < 2) return [];
 
+  const or: Record<string, unknown>[] = [
+    { id: q },
+    { username: { contains: q, mode: "insensitive" } },
+    { email: { contains: q, mode: "insensitive" } },
+  ];
+  // Prefix matching only past 4 characters — below that nearly every id in
+  // the table would match and the 10-row cap would return noise.
+  if (q.length >= 4) or.push({ id: { startsWith: q } });
+
   const db = await getDb();
   const users = await db.user.findMany({
-    where: {
-      OR: [
-        { username: { contains: q, mode: "insensitive" } },
-        { email: { contains: q, mode: "insensitive" } },
-        { id: q },
-      ],
-    },
+    where: { OR: or },
     select: { id: true, username: true, email: true },
     take: 10,
   });

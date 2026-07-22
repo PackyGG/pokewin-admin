@@ -6,10 +6,11 @@ import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { TableSkeleton } from "@/components/loading-skeletons";
 import { safeQuery } from "@/lib/errors/safe-query";
-import { readDbEnvFromCookie } from "@/lib/db-env";
 import { getAnnouncements } from "@/lib/backend-api/announcements";
+import { getDirectNotificationAvailability } from "@/lib/backend-api/user-notifications-availability";
 import { AnnouncementsContent } from "./announcements-content";
 import { DirectNotificationsContent } from "./direct-notifications-content";
+import { DirectNotificationHistory } from "./direct-notification-history";
 import { NotificationsTabNav } from "./notifications-tab-nav";
 import { parseNotificationTab } from "./tabs";
 
@@ -45,6 +46,32 @@ async function AnnouncementsSection({
       loadError={error}
       canManage={canManage}
     />
+  );
+}
+
+/**
+ * Composer + send history. Availability resolves the env a send would ACTUALLY
+ * reach, so the "Backend not updated yet" card and the server-side gate can't
+ * disagree. The history streams behind its own boundary — it reads the admin
+ * DB and must never hold up the composer's first paint.
+ */
+async function DirectSection({ canSend }: { canSend: boolean }) {
+  const availability = await getDirectNotificationAvailability();
+
+  return (
+    <div className="space-y-8">
+      <DirectNotificationsContent
+        canSend={canSend}
+        ready={availability.ready}
+        reason={availability.reason}
+      />
+
+      {canSend && (
+        <Suspense fallback={<TableSkeleton rows={4} columns={8} />}>
+          <DirectNotificationHistory />
+        </Suspense>
+      )}
+    </div>
   );
 }
 
@@ -93,10 +120,7 @@ export default async function NotificationsPage({
 
       <FadeIn>
         {tab === "direct" ? (
-          <DirectNotificationsContent
-            canSend={canSendDirect}
-            dbEnv={await readDbEnvFromCookie()}
-          />
+          <DirectSection canSend={canSendDirect} />
         ) : (
           <Suspense
             key={page}

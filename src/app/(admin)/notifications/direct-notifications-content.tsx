@@ -1,13 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { Lock, Send, TriangleAlert, Users } from "lucide-react";
+import { AlertTriangle, Lock, Send, Users } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { SectionHeading } from "@/components/modern-panels";
 import { EmptyState } from "@/components/empty-state";
 import { SingleNotificationForm } from "./single-notification-form";
 import { BulkNotificationForm } from "./bulk-notification-form";
-import type { DbEnv } from "@/lib/db-env";
 
 type Mode = "single" | "bulk";
 
@@ -16,15 +22,20 @@ type Mode = "single" | "bulk";
  * row per recipient with its own payload. Announcements can't do that: they
  * are one row read by everyone, so they carry one shared payload.
  *
- * Sending is dev-only for now (owner directive) — the server actions enforce
- * it; this just makes the reason visible instead of failing at submit time.
+ * `ready` comes from `getDirectNotificationAvailability()`, which resolves the
+ * env a send would ACTUALLY reach (not the cookie — see that module). When the
+ * target backend doesn't have these endpoints, this renders the house
+ * "Backend not updated yet" card instead of the composer, same as the
+ * /security config cards.
  */
 export function DirectNotificationsContent({
   canSend,
-  dbEnv,
+  ready,
+  reason,
 }: {
   canSend: boolean;
-  dbEnv: DbEnv;
+  ready: boolean;
+  reason: string | null;
 }) {
   const [mode, setMode] = useState<Mode>("single");
 
@@ -38,26 +49,38 @@ export function DirectNotificationsContent({
     );
   }
 
-  const wrongEnv = dbEnv !== "dev";
+  if (!ready) {
+    return (
+      <Card className="border-dashed">
+        <CardHeader>
+          <CardTitle className="text-sm font-medium">
+            Direct notifications
+          </CardTitle>
+          <CardDescription>
+            Send a personal notification into one user&apos;s feed, or run a
+            bulk campaign with a per-user payload.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-start gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+            <div className="space-y-1">
+              <p className="font-medium">Backend not updated yet</p>
+              <p className="text-amber-600/80 dark:text-amber-400/80">
+                {reason ??
+                  "The per-user notification endpoints aren't reachable on the current backend deploy."}{" "}
+                This tab becomes usable once the feature ships to the backend
+                you&apos;re pointed at.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-4">
-      {wrongEnv && (
-        <div className="flex gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
-          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-          <div className="space-y-1">
-            <p className="text-xs font-medium text-amber-700 dark:text-amber-300">
-              Sending is disabled — you&apos;re pointed at {dbEnv.toUpperCase()}.
-            </p>
-            <p className="text-[11px] text-amber-700/80 dark:text-amber-300/80">
-              These endpoints are dev-only for now. Switch the environment
-              toggle in the header to DEV to send. The forms below still
-              validate and show you the exact request.
-            </p>
-          </div>
-        </div>
-      )}
-
       <Tabs value={mode} onValueChange={(v: string) => setMode(v as Mode)}>
         <TabsList variant="line" className="self-start">
           <TabsTrigger value="single">
@@ -79,7 +102,7 @@ export function DirectNotificationsContent({
             exists — it can&apos;t report created vs deduped, so use a 1-item
             bulk send when you need exact accounting.
           </p>
-          <SingleNotificationForm disabled={wrongEnv} />
+          <SingleNotificationForm />
         </div>
       ) : (
         <div className="space-y-3">
@@ -88,7 +111,7 @@ export function DirectNotificationsContent({
             One row per recipient, each with its own payload. Chunked at 1000
             items (or earlier by body size) and sent one request at a time.
           </p>
-          <BulkNotificationForm disabled={wrongEnv} />
+          <BulkNotificationForm />
         </div>
       )}
     </div>
