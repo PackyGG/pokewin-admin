@@ -3,27 +3,9 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, Megaphone, Plus, Trash2 } from "lucide-react";
+import { ExternalLink, Megaphone, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -35,26 +17,13 @@ import {
 import { EmptyState } from "@/components/empty-state";
 import { formatDateTime } from "@/lib/utils/format";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { createAnnouncementAction, revokeAnnouncementAction } from "./actions";
-import type {
-  Announcement,
-  AnnouncementAudienceRole,
-  AnnouncementCreateCategory,
-} from "@/lib/backend-api/announcements";
-
-const AUDIENCE_OPTIONS: { value: AnnouncementAudienceRole; label: string }[] = [
-  { value: "user", label: "Users" },
-  { value: "support", label: "Support staff" },
-  { value: "admin", label: "Admins" },
-  { value: "creator", label: "Creators" },
-];
-
-function audienceLabel(roles: AnnouncementAudienceRole[] | null): string {
-  if (!roles || roles.length === 0) return "Everyone";
-  return roles
-    .map((r) => AUDIENCE_OPTIONS.find((o) => o.value === r)?.label ?? r)
-    .join(", ");
-}
+import { shortUrlLabel } from "@/lib/announcement-payload";
+import { revokeAnnouncementAction } from "./actions";
+import {
+  CreateAnnouncementDialog,
+  audienceLabel,
+} from "./create-announcement-dialog";
+import type { Announcement } from "@/lib/backend-api/announcements";
 
 function announcementStatus(a: Announcement): {
   label: string;
@@ -192,23 +161,67 @@ export function AnnouncementsContent({
             )}
             {rows.map((a) => {
               const status = announcementStatus(a);
+              const imageUrl = a.payload?.image_url;
+              const url = a.payload?.url;
+              const ctaLabel = a.payload?.cta_label;
               return (
                 <TableRow key={a.id}>
-                  <TableCell className="max-w-[320px]">
-                    <p className="truncate font-medium">{a.title}</p>
-                    {a.body && (
-                      <p className="truncate text-xs text-muted-foreground">
-                        {a.body}
-                      </p>
-                    )}
+                  <TableCell className="max-w-[380px]">
+                    <div className="flex items-start gap-2">
+                      {imageUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={imageUrl}
+                          alt=""
+                          className="size-9 shrink-0 rounded border object-contain"
+                        />
+                      )}
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">{a.title}</p>
+                        {a.body && (
+                          <p className="truncate text-xs text-muted-foreground">
+                            {a.body}
+                          </p>
+                        )}
+                        {(url || ctaLabel) && (
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            {ctaLabel && (
+                              <Badge
+                                variant="outline"
+                                className="px-1.5 py-0 text-[10px]"
+                              >
+                                {ctaLabel}
+                              </Badge>
+                            )}
+                            {url && (
+                              <a
+                                href={url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                                title={url}
+                              >
+                                <ExternalLink className="size-3" />
+                                {shortUrlLabel(url)}
+                              </a>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </TableCell>
                   <TableCell className="text-sm">
                     {audienceLabel(a.audience_roles)}
                   </TableCell>
                   <TableCell>
-                    <Badge variant="outline" className="capitalize">
-                      {a.category}
-                    </Badge>
+                    <div className="flex flex-col items-start gap-1">
+                      <Badge variant="outline" className="capitalize">
+                        {a.category}
+                      </Badge>
+                      <span className="font-mono text-[10px] text-muted-foreground">
+                        {a.type}
+                      </span>
+                    </div>
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline" className={status.className}>
@@ -253,206 +266,5 @@ export function AnnouncementsContent({
         <CreateAnnouncementDialog open={createOpen} onOpenChange={setCreateOpen} />
       )}
     </div>
-  );
-}
-
-function CreateAnnouncementDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-}) {
-  const router = useRouter();
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [category, setCategory] = useState<AnnouncementCreateCategory>("news");
-  const [everyoneAudience, setEveryoneAudience] = useState(true);
-  const [audienceRoles, setAudienceRoles] = useState<Set<AnnouncementAudienceRole>>(
-    () => new Set(),
-  );
-  const [endsAt, setEndsAt] = useState("");
-  const [isPending, startTransition] = useTransition();
-
-  function reset() {
-    setTitle("");
-    setBody("");
-    setAdvancedOpen(false);
-    setCategory("news");
-    setEveryoneAudience(true);
-    setAudienceRoles(new Set());
-    setEndsAt("");
-  }
-
-  function handleOpenChange(v: boolean) {
-    onOpenChange(v);
-    if (!v) reset();
-  }
-
-  function toggleRole(role: AnnouncementAudienceRole) {
-    setAudienceRoles((prev) => {
-      const next = new Set(prev);
-      if (next.has(role)) next.delete(role);
-      else next.add(role);
-      return next;
-    });
-  }
-
-  function handleSubmit() {
-    if (!title.trim()) {
-      toast.error("Title is required");
-      return;
-    }
-    if (!everyoneAudience && audienceRoles.size === 0) {
-      toast.error("Pick at least one audience role, or choose Everyone");
-      return;
-    }
-    startTransition(async () => {
-      const result = await createAnnouncementAction({
-        title: title.trim(),
-        body: body.trim() || null,
-        category,
-        audienceRoles: everyoneAudience ? null : [...audienceRoles],
-        endsAt: endsAt ? new Date(endsAt).toISOString() : null,
-      });
-      if (!result.success) {
-        toast.error(result.error);
-        return;
-      }
-      toast.success("Announcement published");
-      handleOpenChange(false);
-      router.refresh();
-    });
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>New announcement</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3 py-2">
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Title</Label>
-            <Input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Scheduled maintenance tonight"
-              disabled={isPending}
-              autoFocus
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">
-              Message (optional)
-            </Label>
-            <Textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={3}
-              placeholder="More detail shown when a user opens it"
-              disabled={isPending}
-            />
-          </div>
-          <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2">
-            <span className="text-sm font-medium">Sends to</span>
-            <span className="text-sm text-muted-foreground">
-              {everyoneAudience ? "Everyone" : audienceLabel([...audienceRoles])}
-            </span>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setAdvancedOpen((v) => !v)}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            {advancedOpen ? (
-              <ChevronDown className="size-3" />
-            ) : (
-              <ChevronRight className="size-3" />
-            )}
-            Advanced options
-          </button>
-
-          {advancedOpen && (
-            <div className="space-y-3 rounded-md border p-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Audience</Label>
-                <label className="flex items-center gap-2 text-sm">
-                  <Checkbox
-                    checked={everyoneAudience}
-                    onCheckedChange={(v) => setEveryoneAudience(Boolean(v))}
-                  />
-                  Everyone
-                </label>
-                {!everyoneAudience && (
-                  <div className="ml-6 space-y-1">
-                    {AUDIENCE_OPTIONS.map((o) => (
-                      <label
-                        key={o.value}
-                        className="flex items-center gap-2 text-sm"
-                      >
-                        <Checkbox
-                          checked={audienceRoles.has(o.value)}
-                          onCheckedChange={() => toggleRole(o.value)}
-                        />
-                        {o.label}
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Category</Label>
-                <Select
-                  value={category}
-                  onValueChange={(v) => setCategory(v as AnnouncementCreateCategory)}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="news">News</SelectItem>
-                    <SelectItem value="system">System</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">
-                  Ends at (optional)
-                </Label>
-                <Input
-                  type="datetime-local"
-                  value={endsAt}
-                  onChange={(e) => setEndsAt(e.target.value)}
-                  disabled={isPending}
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  Leave empty to run until manually revoked.
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-        <DialogFooter>
-          <Button
-            variant="ghost"
-            onClick={() => handleOpenChange(false)}
-            disabled={isPending}
-            className="w-full sm:w-auto"
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={isPending || !title.trim()}
-            className="w-full sm:w-auto"
-          >
-            {isPending ? "Publishing..." : "Publish"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }

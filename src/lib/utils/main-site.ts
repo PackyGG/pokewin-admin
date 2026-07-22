@@ -21,3 +21,39 @@ export function mainSiteBase(): string {
 export function battleUrl(battleId: string): string {
   return `${mainSiteBase()}/games/battles/${battleId}`;
 }
+
+/**
+ * Pack page on the public site: `<base>/games/packs/<slug>`. The route
+ * resolves either a slug or a pack id (frontend `/games/packs/[slug]` →
+ * backend `GET /packs/{identifier}`), but the slug is the canonical form the
+ * site itself links to, so prefer it and fall back to the id.
+ */
+export function packUrl(slugOrId: string): string {
+  return `${mainSiteBase()}/games/packs/${encodeURIComponent(slugOrId)}`;
+}
+
+/** Absolute URL for any public-site path (`/races` → `https://packy.gg/races`). */
+export function mainSiteUrl(path: string): string {
+  return `${mainSiteBase()}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+/**
+ * Public destinations an announcement can point at — used by the
+ * /notifications composer's "Page" template ("new pages released etc.").
+ * Verified against the live frontend nav (`navigation/nav-dropdown.tsx`,
+ * `mobile-bottom-nav.tsx`, `footer.tsx`), not guessed.
+ */
+export const MAIN_SITE_PAGES: { label: string; path: string }[] = [
+  { label: "Home", path: "/" },
+  { label: "Packs", path: "/games/packs" },
+  { label: "Battles", path: "/games/battles" },
+  { label: "Upgrader", path: "/games/upgrader" },
+  { label: "Races", path: "/races" },
+  { label: "Raffles", path: "/raffles" },
+  { label: "Rewards", path: "/rewards" },
+  { label: "Inventory", path: "/inventory" },
+  { label: "Collections", path: "/collections" },
+  { label: "Exchange", path: "/exchange" },
+  { label: "Affiliate", path: "/settings/affiliate" },
+  { label: "Help center", path: "/help" },
+];

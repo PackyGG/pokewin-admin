@@ -1,6 +1,7 @@
 import "server-only";
 
 import { backendApi } from "./client";
+import type { AnnouncementPayload } from "@/lib/announcement-payload";
 
 /**
  * Announcements admin API — the GLOBAL broadcast side of the notification
@@ -27,11 +28,10 @@ export type AnnouncementCreateCategory = "news" | "system";
 
 export type AnnouncementAudienceRole = "user" | "support" | "admin" | "creator";
 
-export type AnnouncementPayload = {
-  url?: string | null;
-  image_url?: string | null;
-  cta_label?: string | null;
-};
+/** `{ url, image_url, cta_label }` — shape + validation rules live in
+ * `@/lib/announcement-payload` (importable from client components too, which
+ * this server-only module is not). */
+export type { AnnouncementPayload };
 
 export type Announcement = {
   id: string;
