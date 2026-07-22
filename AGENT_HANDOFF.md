@@ -46,8 +46,19 @@ New collapsible section: min-deposit `$` input + new-signup toggle, wired to the
 (backend-api module + `-keys`/`-actions`/`-card`), prod-cached read, fault-isolated leg,
 both site_config keys added to `movedKeys`. MAIN stays read-only — writes go through the
 backend admin API only. Added `bell` to `SECURITY_SECTION_ICONS`. Gates: tsc + lint + build all green.
-**⚠️ Depends on backend PR #455** (`motha/feat/telegram-signup-and-deposit-threshold`, open against
-`dev`) — until that merges + deploys, the card renders its "backend not updated yet" state by design.
+Backend shipped (#455/#456) and verified live on `/security`.
+
+**2026-07-22 — Telegram Notifications: master switch + per-alert toggles (in `196087b6`)**
+
+Card expanded from 2 knobs to full per-alert control: a master switch (off = nothing sent, card dims
+to make the override visible) plus one toggle per alert — deposit confirmed/failed, withdrawal
+requested/completed/failed, new signup — alongside the existing min-deposit `$` input. Backend side is
+`telegram_notifications_enabled` + `telegram_notify_<kind>` keys, all defaulting to true, read per-call
+so a toggle applies with no restart. Signup keeps its original
+`telegram_signup_notifications_enabled` key so an already-saved value isn't orphaned.
+Gates: tsc + lint + build all green.
+**⚠️ These 4 telegram files were swept into `196087b6` ("feat(users): show the actual device ID…") by a
+concurrent agent using `git add -A` — the code is correct and live, only the commit attribution is off.**
 
 **2026-07-12 (part 26) — wave 16b + full audit fix sweep (4 commits: `82daed7b`, `84ec9009`, `2aa58667`, `a07f4c4e`)**
 
