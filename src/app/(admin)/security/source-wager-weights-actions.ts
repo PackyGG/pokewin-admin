@@ -14,10 +14,10 @@ import {
 
 /**
  * Update the per-funding-source wager weights (withdrawal + rakeback +
- * leaderboard + shards).
+ * leaderboard).
  *
  * Admin-only — these knobs shape how much bonus-funded wager counts toward
- * the withdrawal gate, rakeback, race leaderboards and shard earning, so the
+ * the withdrawal gate, rakeback and race leaderboards, so the
  * action sits behind requireAdmin()
  * (rakeback / leaderboard-weights precedent) on top of the /security
  * page-access gate. The card sends only the fields the admin actually
@@ -44,11 +44,10 @@ const InputSchema = z
     withdrawal: PartialSourceWeights,
     rakeback: PartialSourceWeights,
     leaderboard: PartialSourceWeights,
-    shards: PartialSourceWeights,
   })
   .refine(
     (data) =>
-      [data.withdrawal, data.rakeback, data.leaderboard, data.shards].some(
+      [data.withdrawal, data.rakeback, data.leaderboard].some(
         (group) =>
           group && Object.values(group).some((v) => v !== undefined),
       ),

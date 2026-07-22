@@ -7,16 +7,15 @@ import { backendApi } from "./client";
  *
  * The game backend lets wager that was FUNDED BY a bonus source (race /
  * leaderboard prizes, rain + reward claims, rakeback, affiliate, tips) count
- * at a different rate toward the WITHDRAWAL requirement, RAKEBACK, RACE
- * LEADERBOARDS and SHARD earning than deposit-funded wager. All values are
+ * at a different rate toward the WITHDRAWAL requirement, RAKEBACK and RACE
+ * LEADERBOARDS than deposit-funded wager. All values are
  * basis points (10000 bps = 1× = counts the same as deposit-funded; 0 = that
  * source's wager doesn't count at all). Deposits and organic game winnings
  * are the implicit 100% baseline.
  *
- * Composes with the per-game weights. Withdrawal, leaderboard and shards are
+ * Composes with the per-game weights. Withdrawal and leaderboard are
  * frozen at wager time (changes affect future wagers only — race standings
- * never reshuffle retroactively and shards already earned are never
- * re-touched); rakeback is applied live at claim (lowering a rakeback weight
+ * never reshuffle retroactively); rakeback is applied live at claim (lowering a rakeback weight
  * shrinks rakeback on still-unclaimed periods, never settled claims). The
  * leaderboard destination covers official races only — creator/affiliate
  * leaderboard volume uses the per-game weights alone.
@@ -44,15 +43,18 @@ export type FundingSourceWeights = {
 };
 
 /**
- * The full 4×5 matrix returned by GET. `leaderboard` and `shards` are
- * optional so the card degrades per-destination while a backend deploy that
- * only knows withdrawal + rakeback is still live.
+ * The 3×5 matrix the admin manages from GET. `leaderboard` is optional so the
+ * card degrades per-destination while a backend deploy that only knows
+ * withdrawal + rakeback is still live.
+ *
+ * The backend may also return a `shards` destination — the shard system is
+ * retired on-site, so the admin no longer reads or writes it and the extra
+ * field is simply ignored.
  */
 export type SourceWagerWeights = {
   withdrawal: FundingSourceWeights;
   rakeback: FundingSourceWeights;
   leaderboard?: FundingSourceWeights;
-  shards?: FundingSourceWeights;
 };
 
 /**
@@ -64,7 +66,6 @@ export type UpdateSourceWagerWeightsInput = {
   withdrawal?: Partial<FundingSourceWeights>;
   rakeback?: Partial<FundingSourceWeights>;
   leaderboard?: Partial<FundingSourceWeights>;
-  shards?: Partial<FundingSourceWeights>;
 };
 
 type Success<T> = { success: boolean; data: T };

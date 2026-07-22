@@ -8,7 +8,7 @@
  * (`getSourceWagerWeights`) onto THIS user's current balance composition: of
  * their available balance, how much is deposit/organic (the 1× baseline) vs
  * each still-unwagered bonus source, and — per destination (withdrawal,
- * races/leaderboards, rakeback, shards) — how much of it would COUNT when
+ * races/leaderboards, rakeback) — how much of it would COUNT when
  * wagered (balance × weight) vs is excluded (weight < 1×).
  *
  * Weights apply at wager time, so these are forward-looking "earning power"

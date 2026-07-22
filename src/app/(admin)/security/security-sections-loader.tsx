@@ -5,8 +5,6 @@ import {
   getCachedLeaderboardWagerWeights,
   getCachedRakebackWagerWeights,
   getCachedSourceWagerWeights,
-  getCachedShardWagerWeights,
-  getCachedShardConfig,
   getCachedMultiplierWagerWeights,
   getCachedRewardExpiry,
   getCachedCryptoFees,
@@ -18,16 +16,13 @@ import { WAGER_REQUIREMENT_SITE_CONFIG_KEYS } from "./wager-requirement-keys";
 import { LEADERBOARD_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./leaderboard-wager-weights-keys";
 import { RAKEBACK_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./rakeback-wager-weights-keys";
 import { SOURCE_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./source-wager-weights-keys";
-import { SHARD_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./shard-wager-weights-keys";
-import { SHARD_CONFIG_SITE_CONFIG_KEYS } from "./shard-config-keys";
+import { RETIRED_SHARD_SITE_CONFIG_KEYS } from "./retired-shard-keys";
 import { DEPOSIT_BONUS_CONFIG_SITE_CONFIG_KEYS } from "./deposit-bonus-config-keys";
 import { REWARD_EXPIRY_SITE_CONFIG_KEYS } from "./reward-expiry-keys";
 import type { WagerRequirementDefaults } from "@/lib/backend-api/wager-requirements";
 import type { LeaderboardWagerWeights } from "@/lib/backend-api/leaderboard-wager-weights";
 import type { RakebackWagerWeights } from "@/lib/backend-api/rakeback-wager-weights";
 import type { SourceWagerWeights } from "@/lib/backend-api/source-wager-weights";
-import type { ShardWagerWeights } from "@/lib/backend-api/shard-wager-weights";
-import type { ShardConfig } from "@/lib/backend-api/shard-config";
 import type { MultiplierWagerWeights } from "@/lib/backend-api/multiplier-wager-weights";
 import type { RewardExpiry } from "@/lib/backend-api/reward-expiry";
 import type { CryptoFees } from "@/lib/backend-api/crypto-fees";
@@ -39,7 +34,7 @@ import type { DepositBonusConfig } from "@/lib/backend-api/deposit-bonus-config"
  * while this fan-out resolves and streams in.
  *
  * All section reads are independent (one MAIN-DB site_config/vault scan +
- * nine backend-API GETs with no cross-dependency). They run together via
+ * seven backend-API GETs with no cross-dependency). They run together via
  * Promise.allSettled so they resolve in parallel AND each failure is
  * fault-isolated: a rejected leg falls back to the SAME value its old
  * per-await catch produced ([] for config, null for each card), so the
@@ -55,8 +50,6 @@ export async function SecuritySectionsLoader() {
     leaderboardWeightsResult,
     rakebackWeightsResult,
     sourceWeightsResult,
-    shardWeightsResult,
-    shardConfigResult,
     multiplierWeightsResult,
     rewardExpiryResult,
     cryptoFeesResult,
@@ -68,8 +61,6 @@ export async function SecuritySectionsLoader() {
     getCachedLeaderboardWagerWeights(),
     getCachedRakebackWagerWeights(),
     getCachedSourceWagerWeights(),
-    getCachedShardWagerWeights(),
-    getCachedShardConfig(),
     getCachedMultiplierWagerWeights(),
     getCachedRewardExpiry(),
     getCachedCryptoFees(),
@@ -90,8 +81,9 @@ export async function SecuritySectionsLoader() {
     ...LEADERBOARD_WAGER_WEIGHT_SITE_CONFIG_KEYS,
     ...RAKEBACK_WAGER_WEIGHT_SITE_CONFIG_KEYS,
     ...SOURCE_WAGER_WEIGHT_SITE_CONFIG_KEYS,
-    ...SHARD_WAGER_WEIGHT_SITE_CONFIG_KEYS,
-    ...SHARD_CONFIG_SITE_CONFIG_KEYS,
+    // The shard cards are gone, but their retired keys stay filtered so they
+    // can't resurface as raw editable rows — see retired-shard-keys.ts.
+    ...RETIRED_SHARD_SITE_CONFIG_KEYS,
     ...DEPOSIT_BONUS_CONFIG_SITE_CONFIG_KEYS,
     ...REWARD_EXPIRY_SITE_CONFIG_KEYS,
   ]);
@@ -119,12 +111,6 @@ export async function SecuritySectionsLoader() {
     sourceWeightsResult.status === "fulfilled"
       ? sourceWeightsResult.value
       : null;
-
-  const shardWeights: ShardWagerWeights | null =
-    shardWeightsResult.status === "fulfilled" ? shardWeightsResult.value : null;
-
-  const shardConfig: ShardConfig | null =
-    shardConfigResult.status === "fulfilled" ? shardConfigResult.value : null;
 
   const multiplierWeights: MultiplierWagerWeights | null =
     multiplierWeightsResult.status === "fulfilled"
@@ -155,8 +141,6 @@ export async function SecuritySectionsLoader() {
       wagerDefaults={wagerDefaults}
       leaderboardWeights={leaderboardWeights}
       rakebackWeights={rakebackWeights}
-      shardConfig={shardConfig}
-      shardWeights={shardWeights}
       sourceWeights={sourceWeights}
       multiplierWeights={multiplierWeights}
       rewardExpiry={rewardExpiry}

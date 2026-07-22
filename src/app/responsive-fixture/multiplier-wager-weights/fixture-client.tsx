@@ -24,7 +24,6 @@ const FIXTURE_WEIGHTS: MultiplierWagerWeights = {
     ],
   },
   leaderboard: { enabled: true, tiers: [...DEFAULT_MULTIPLIER_TIERS] },
-  shards: { enabled: true, tiers: [] },
 };
 
 export function MultiplierWagerWeightsFixtureClient() {

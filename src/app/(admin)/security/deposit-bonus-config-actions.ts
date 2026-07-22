@@ -17,7 +17,7 @@ import {
  * length — and/or `cap_per_period_usd` — the max bonus USD per window).
  *
  * Admin-only — this moves real bonus payouts, so the action sits behind
- * requireAdmin() (shard-/crypto-fees precedent) on top of the /security
+ * requireAdmin() (crypto-fees precedent) on top of the /security
  * page-access gate. We read the old value first so the audit event records
  * exactly what moved (old → new), then write through the backend API (which
  * validates + refreshes its own cache).

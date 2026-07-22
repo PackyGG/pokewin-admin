@@ -7,8 +7,6 @@ import { getWagerRequirementDefaults } from "@/lib/backend-api/wager-requirement
 import { getLeaderboardWagerWeights } from "@/lib/backend-api/leaderboard-wager-weights";
 import { getRakebackWagerWeights } from "@/lib/backend-api/rakeback-wager-weights";
 import { getSourceWagerWeights } from "@/lib/backend-api/source-wager-weights";
-import { getShardWagerWeights } from "@/lib/backend-api/shard-wager-weights";
-import { getShardConfig } from "@/lib/backend-api/shard-config";
 import { getMultiplierWagerWeights } from "@/lib/backend-api/multiplier-wager-weights";
 import { getRewardExpiry } from "@/lib/backend-api/reward-expiry";
 import { getCryptoFees } from "@/lib/backend-api/crypto-fees";
@@ -81,18 +79,6 @@ const cachedRakebackWagerWeights = unstable_cache(
 const cachedSourceWagerWeights = unstable_cache(
   () => getSourceWagerWeights(),
   ["security-source-wager-weights-v1"],
-  { revalidate: REVALIDATE_SECONDS, tags: [SECURITY_CACHE_TAG] },
-);
-
-const cachedShardWagerWeights = unstable_cache(
-  () => getShardWagerWeights(),
-  ["security-shard-wager-weights-v1"],
-  { revalidate: REVALIDATE_SECONDS, tags: [SECURITY_CACHE_TAG] },
-);
-
-const cachedShardConfig = unstable_cache(
-  () => getShardConfig(),
-  ["security-shard-config-v1"],
   { revalidate: REVALIDATE_SECONDS, tags: [SECURITY_CACHE_TAG] },
 );
 
@@ -169,18 +155,6 @@ export async function getCachedSourceWagerWeights(): ReturnType<
 > {
   const env = await readDbEnv();
   return env === "prod" ? cachedSourceWagerWeights() : getSourceWagerWeights();
-}
-
-export async function getCachedShardWagerWeights(): ReturnType<
-  typeof getShardWagerWeights
-> {
-  const env = await readDbEnv();
-  return env === "prod" ? cachedShardWagerWeights() : getShardWagerWeights();
-}
-
-export async function getCachedShardConfig(): ReturnType<typeof getShardConfig> {
-  const env = await readDbEnv();
-  return env === "prod" ? cachedShardConfig() : getShardConfig();
 }
 
 export async function getCachedMultiplierWagerWeights(): ReturnType<

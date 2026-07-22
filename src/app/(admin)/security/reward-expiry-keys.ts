@@ -4,7 +4,7 @@
  * This file is NOT a "use server" module — it only exports a plain
  * constant. Next.js rejects non-async exports from a "use server" file at
  * build time, which is why the value lives here (same pattern as
- * shard-wager-weights-keys.ts / source-wager-weights-keys.ts).
+ * leaderboard-wager-weights-keys.ts / source-wager-weights-keys.ts).
  *
  * The /security page filters these keys out of its generic site_config
  * table (the `movedKeys` Set) so the same row isn't editable in two

@@ -15,7 +15,7 @@ import {
  * The game backend applies a FUNDING-SOURCE wager weight: wager that was
  * funded by a bonus source (race/leaderboard prizes, rain + reward/balance
  * claims, rakeback, affiliate, tips) counts at a different rate toward the
- * WITHDRAWAL requirement, RAKEBACK, RACE LEADERBOARDS and SHARD earning than
+ * WITHDRAWAL requirement, RAKEBACK and RACE LEADERBOARDS than
  * deposit-funded wager. Deposits + organic game winnings are the implicit
  * 100% (1×) baseline. All weights are basis points (10000 = 1×; 0 = that
  * source's wager doesn't count toward that destination at all). Source of the
@@ -66,14 +66,12 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
   ]).finally(() => clearTimeout(timer));
 }
 
-/** Destinations a wager can count toward. `leaderboard`/`shards` are optional
- *  in the backend payload, so they're only present when the config returns
- *  them. */
+/** Destinations a wager can count toward. `leaderboard` is optional in the
+ *  backend payload, so it's only present when the config returns it. */
 export type WeightDestinationKey =
   | "withdrawal"
   | "leaderboard"
-  | "rakeback"
-  | "shards";
+  | "rakeback";
 
 export type WeightDestination = {
   key: WeightDestinationKey;
@@ -101,7 +99,7 @@ export type BalanceWeightRow = {
 export type UserBalanceWeighting = {
   availableBalanceUsd: number;
   /** Destinations present in the live config (withdrawal + rakeback always;
-   *  leaderboard + shards when the backend returns them). */
+   *  leaderboard when the backend returns it). */
   destinations: WeightDestination[];
   /** One row per funding source that this user currently holds balance in
    *  (zero-balance sources are dropped), with the deposit/organic baseline
@@ -139,7 +137,6 @@ const DESTINATIONS: {
   { key: "withdrawal", label: "Withdrawal unlock", pick: (m) => m.withdrawal },
   { key: "leaderboard", label: "Races / Leaderboards", pick: (m) => m.leaderboard },
   { key: "rakeback", label: "Rakeback", pick: (m) => m.rakeback },
-  { key: "shards", label: "Shards", pick: (m) => m.shards },
 ];
 
 export async function getUserBalanceWeighting(
@@ -179,8 +176,8 @@ export async function getUserBalanceWeighting(
   const backendAvailable = matrix !== null;
 
   // Destinations present in the live config (withdrawal + rakeback are always
-  // returned; leaderboard + shards only on a newer backend). When the matrix
-  // is unreachable we still show all four labels with null weights.
+  // returned; leaderboard only on a newer backend). When the matrix
+  // is unreachable we still show all three labels with null weights.
   const destinations: WeightDestination[] = DESTINATIONS.filter(
     (d) => !matrix || d.pick(matrix) != null,
   ).map((d) => ({ key: d.key, label: d.label }));

@@ -15,12 +15,12 @@ import {
 
 /**
  * Update the odds-based (bet-multiplier) wager weights — per destination
- * (withdrawal / rakeback / leaderboard / shards) an enable toggle plus an
+ * (withdrawal / rakeback / leaderboard) an enable toggle plus an
  * ordered discount-tier list for low-multiplier upgrader bets.
  *
  * Admin-only — these knobs shape how much low-multiplier wager counts
- * toward the withdrawal gate, rakeback, race leaderboards and shard
- * earning, so the action sits behind requireAdmin() (same precedent as the
+ * toward the withdrawal gate, rakeback and race leaderboards, so the
+ * action sits behind requireAdmin() (same precedent as the
  * other wager-weight cards) on top of the /security page-access gate. The
  * card sends only the destinations the admin actually changed; a changed
  * tier list arrives as the FULL replacement list (the backend replaces
@@ -68,11 +68,10 @@ const InputSchema = z
     withdrawal: DestinationPatch,
     rakeback: DestinationPatch,
     leaderboard: DestinationPatch,
-    shards: DestinationPatch,
   })
   .refine(
     (data) =>
-      [data.withdrawal, data.rakeback, data.leaderboard, data.shards].some(
+      [data.withdrawal, data.rakeback, data.leaderboard].some(
         (group) =>
           group && (group.enabled !== undefined || group.tiers !== undefined),
       ),

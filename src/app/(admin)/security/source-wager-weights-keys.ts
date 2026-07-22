@@ -13,7 +13,7 @@
  * them directly — it goes through backendApi.put().
  *
  * Keys (managed by the backend's PUT /admin/source-wager-weights):
- *  - {withdrawal,rakeback,leaderboard,shards}_source_weight_{race_prize,
+ *  - {withdrawal,rakeback,leaderboard}_source_weight_{race_prize,
  *    bonus_other,rakeback,affiliate,tips}_bps
  */
 export const SOURCE_WAGER_WEIGHT_SITE_CONFIG_KEYS: readonly string[] = [
@@ -32,9 +32,4 @@ export const SOURCE_WAGER_WEIGHT_SITE_CONFIG_KEYS: readonly string[] = [
   "leaderboard_source_weight_rakeback_bps",
   "leaderboard_source_weight_affiliate_bps",
   "leaderboard_source_weight_tips_bps",
-  "shards_source_weight_race_prize_bps",
-  "shards_source_weight_bonus_other_bps",
-  "shards_source_weight_rakeback_bps",
-  "shards_source_weight_affiliate_bps",
-  "shards_source_weight_tips_bps",
 ];

@@ -5,8 +5,6 @@ import { SecurityContent } from "./security-content";
 import { WagerRequirementCard } from "./wager-requirement-card";
 import { LeaderboardWagerWeightsCard } from "./leaderboard-wager-weights-card";
 import { RakebackWagerWeightsCard } from "./rakeback-wager-weights-card";
-import { ShardConfigCard } from "./shard-config-card";
-import { ShardWagerWeightsCard } from "./shard-wager-weights-card";
 import { SourceWagerWeightsCard } from "./source-wager-weights-card";
 import { MultiplierWagerWeightsCard } from "./multiplier-wager-weights-card";
 import { RewardExpiryCard } from "./reward-expiry-card";
@@ -18,8 +16,6 @@ import type { WagerRequirementDefaults } from "@/lib/backend-api/wager-requireme
 import type { LeaderboardWagerWeights } from "@/lib/backend-api/leaderboard-wager-weights";
 import type { RakebackWagerWeights } from "@/lib/backend-api/rakeback-wager-weights";
 import type { SourceWagerWeights } from "@/lib/backend-api/source-wager-weights";
-import type { ShardWagerWeights } from "@/lib/backend-api/shard-wager-weights";
-import type { ShardConfig } from "@/lib/backend-api/shard-config";
 import type { MultiplierWagerWeights } from "@/lib/backend-api/multiplier-wager-weights";
 import type { RewardExpiry } from "@/lib/backend-api/reward-expiry";
 import type { CryptoFees } from "@/lib/backend-api/crypto-fees";
@@ -37,8 +33,6 @@ export function SecurityPageSections({
   wagerDefaults,
   leaderboardWeights,
   rakebackWeights,
-  shardConfig,
-  shardWeights,
   sourceWeights,
   multiplierWeights,
   rewardExpiry,
@@ -51,8 +45,6 @@ export function SecurityPageSections({
   wagerDefaults: WagerRequirementDefaults | null;
   leaderboardWeights: LeaderboardWagerWeights | null;
   rakebackWeights: RakebackWagerWeights | null;
-  shardConfig: ShardConfig | null;
-  shardWeights: ShardWagerWeights | null;
   sourceWeights: SourceWagerWeights | null;
   multiplierWeights: MultiplierWagerWeights | null;
   rewardExpiry: RewardExpiry | null;
@@ -75,14 +67,6 @@ export function SecurityPageSections({
 
       <CollapsibleSecuritySection icon="percent" title="Rakeback Wager Weights">
         <RakebackWagerWeightsCard initial={rakebackWeights} />
-      </CollapsibleSecuritySection>
-
-      <CollapsibleSecuritySection icon="sparkles" title="Shard Earn Rate">
-        <ShardConfigCard initial={shardConfig} />
-      </CollapsibleSecuritySection>
-
-      <CollapsibleSecuritySection icon="gem" title="Shard Wager Weights">
-        <ShardWagerWeightsCard initial={shardWeights} />
       </CollapsibleSecuritySection>
 
       <CollapsibleSecuritySection icon="coins" title="Funding-Source Wager Weights">

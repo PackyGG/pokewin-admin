@@ -55,7 +55,7 @@ const MAX_WEIGHT_BPS = 10000; // 100%
 const MAX_X = 100000;
 
 // Display order: leaderboard first (the owner's main farming concern),
-// then rakeback, shards, withdrawal.
+// then rakeback, withdrawal.
 const DESTINATIONS: {
   key: MultiplierWeightDestination;
   title: string;
@@ -70,11 +70,6 @@ const DESTINATIONS: {
     key: "rakeback",
     title: "Rakeback",
     help: "How much low-multiplier upgrader bets feed the rakeback base.",
-  },
-  {
-    key: "shards",
-    title: "Shard earning",
-    help: "How much low-multiplier upgrader bets count toward earning shards.",
   },
   {
     key: "withdrawal",
@@ -184,8 +179,8 @@ export function MultiplierWagerWeightsCard({
           </CardTitle>
           <CardDescription>
             Per-destination discount tiers for low-multiplier upgrader bets —
-            how much they count toward race leaderboards, rakeback, shard
-            earning and the withdrawal requirement.
+            how much they count toward race leaderboards, rakeback and the
+            withdrawal requirement.
           </CardDescription>
         </CardHeader>
         <CardContent>

@@ -13,12 +13,15 @@
  *   packy-backend/src/routes/v1/admin/multiplier-wager-weights.ts
  */
 
-/** All 4 destinations — GET always returns every one of them. */
+/**
+ * The 3 destinations the admin manages. GET may also return a retired
+ * `shards` destination — the shard system is no longer used on-site, so it's
+ * neither listed nor editable here and the extra field is ignored.
+ */
 export const MULTIPLIER_WEIGHT_DESTINATIONS = [
   "withdrawal",
   "rakeback",
   "leaderboard",
-  "shards",
 ] as const;
 
 export type MultiplierWeightDestination =
