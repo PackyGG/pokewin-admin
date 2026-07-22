@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import {
   BULK_MAX_ITEMS,
+  REWARD_MAX_VALUE_USD,
   parseRecipients,
   validateCampaignSlug,
 } from "@/lib/user-notification";
@@ -80,8 +81,8 @@ export function RewardCampaignForm() {
       ? "Amount is required"
       : !Number.isFinite(valueUsd) || valueUsd <= 0
         ? "Amount must be greater than zero"
-        : valueUsd > 10_000
-          ? "Above $10,000 per user — refused as a likely typo"
+        : valueUsd > REWARD_MAX_VALUE_USD
+          ? `Capped at $${REWARD_MAX_VALUE_USD} per code`
           : null;
 
   const parsed = useMemo(
@@ -227,6 +228,7 @@ export function RewardCampaignForm() {
             <Input
               type="number"
               min={0}
+              max={REWARD_MAX_VALUE_USD}
               step="0.01"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
@@ -237,7 +239,8 @@ export function RewardCampaignForm() {
           <p
             className={`text-[11px] ${amountError ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}
           >
-            {amountError ?? "Each recipient gets their own single-use code for this amount."}
+            {amountError ??
+              `One single-use code each, max $${REWARD_MAX_VALUE_USD} per code.`}
           </p>
         </div>
 

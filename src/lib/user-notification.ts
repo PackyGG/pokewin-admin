@@ -64,6 +64,17 @@ export const BULK_MAX_BODY_BYTES = 1_000_000;
  */
 export const BULK_BODY_BUDGET_BYTES = 900_000;
 
+/**
+ * Hard ceiling on a reward-campaign code's value (owner rule, 2026-07-23:
+ * "max max $100 per code"). Enforced BOTH in the composer and in the server
+ * action — the client check is a courtesy, the server one is the boundary.
+ *
+ * Lives here rather than next to the code-derivation helpers because those are
+ * `server-only` and the composer is a client component; a second copy of this
+ * number is exactly the kind of thing that drifts.
+ */
+export const REWARD_MAX_VALUE_USD = 100;
+
 /** Arbitrary interpolation data — the point of the contract. */
 export type NotificationPayload = Record<string, unknown>;
 

@@ -13,7 +13,11 @@ import {
   hashRewardCode,
   regionForContinent,
 } from "@/lib/reward-campaign-codes";
-import { dedupeKeyFor, validateCampaignSlug } from "@/lib/user-notification";
+import {
+  dedupeKeyFor,
+  validateCampaignSlug,
+  REWARD_MAX_VALUE_USD,
+} from "@/lib/user-notification";
 
 /**
  * Reward campaigns: mint one single-use promo code per recipient, bound to
@@ -93,10 +97,14 @@ export async function sendRewardCampaignChunkAction(
   if (!Number.isFinite(input.valueUsd) || input.valueUsd <= 0) {
     return { success: false, error: "Reward amount must be greater than zero" };
   }
-  if (input.valueUsd > 10_000) {
-    // Not a backend limit — a guard against a stray keystroke turning a $25
-    // campaign into a $2,500,000 one across a chunk.
-    return { success: false, error: "Reward amount above $10,000 per user — refusing as a likely typo" };
+  if (input.valueUsd > REWARD_MAX_VALUE_USD) {
+    // Policy ceiling, not a backend limit. This is the boundary — the
+    // composer checks the same number, but a server action is callable
+    // directly, so the cap has to hold here regardless of what the form did.
+    return {
+      success: false,
+      error: `Reward amount is capped at $${REWARD_MAX_VALUE_USD} per code (got $${input.valueUsd}).`,
+    };
   }
 
   const userIds = [...new Set(input.userIds.map((id) => id.trim()).filter(Boolean))];
