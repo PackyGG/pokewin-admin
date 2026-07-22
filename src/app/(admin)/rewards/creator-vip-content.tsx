@@ -37,6 +37,8 @@ import type { CreatorRewardClaimRow } from "@/lib/creator-vip/queries";
 import {
   approveCreatorRewardClaim,
   createCreatorRewardProgram,
+  previewCreatorRewardEntitlement,
+  raiseCreatorRewardClaimForUser,
   rejectCreatorRewardClaim,
   searchCreatorsWithCodes,
   setCreatorRewardProgramActive,
@@ -169,6 +171,7 @@ function ProgramsPanel({
 
 function ProgramRow({ program }: { program: CreatorRewardProgramWithStats }) {
   const [isPending, startTransition] = useTransition();
+  const [raiseOpen, setRaiseOpen] = useState(false);
 
   function toggle(next: boolean) {
     startTransition(async () => {
@@ -239,14 +242,198 @@ function ProgramRow({ program }: { program: CreatorRewardProgramWithStats }) {
           </div>
         </div>
 
-        <Switch
-          checked={program.isActive}
-          onCheckedChange={toggle}
-          disabled={isPending}
-          aria-label="Program active"
-        />
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setRaiseOpen(true)}
+            disabled={!program.isActive}
+          >
+            Check a player
+          </Button>
+          <Switch
+            checked={program.isActive}
+            onCheckedChange={toggle}
+            disabled={isPending}
+            aria-label="Program active"
+          />
+        </div>
       </CardContent>
+
+      <RaiseClaimDialog
+        program={program}
+        open={raiseOpen}
+        onOpenChange={setRaiseOpen}
+      />
     </Card>
+  );
+}
+
+/**
+ * Look a player up on this program, see what they'd get, and optionally raise
+ * the claim for them — the same server path the Discord bot will use, so the
+ * review queue can be exercised before any bot exists.
+ */
+function RaiseClaimDialog({
+  program,
+  open,
+  onOpenChange,
+}: {
+  program: CreatorRewardProgramWithStats;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [preview, setPreview] = useState<{
+    userId: string;
+    username: string | null;
+    qualifyingWagerUsd: number;
+    availableWagerUsd: number;
+    priorConsumedUsd: number;
+    units: number;
+    amountUsd: number;
+    wagerToNextUnitUsd: number;
+    blockedReason: string | null;
+  } | null>(null);
+  const [checking, startCheck] = useTransition();
+  const [raising, startRaise] = useTransition();
+
+  function check() {
+    startCheck(async () => {
+      const res = await previewCreatorRewardEntitlement({
+        programId: program.id,
+        query: query.trim(),
+      });
+      if (!res.success) {
+        setPreview(null);
+        toast.error(res.error);
+        return;
+      }
+      setPreview(res.data);
+    });
+  }
+
+  function raise() {
+    if (!preview) return;
+    startRaise(async () => {
+      const res = await raiseCreatorRewardClaimForUser({
+        programId: program.id,
+        userId: preview.userId,
+      });
+      if (!res.success) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(
+        `Claim raised for ${formatCurrency(res.data.amountUsd)} — it's in Requests`,
+      );
+      setPreview(null);
+      setQuery("");
+      onOpenChange(false);
+    });
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) {
+          setPreview(null);
+          setQuery("");
+        }
+        onOpenChange(v);
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Check a player</DialogTitle>
+          <DialogDescription>
+            See what they&apos;ve earned on {program.name}, and raise the claim
+            for them if you want.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  check();
+                }
+              }}
+              placeholder="Username, email or user ID"
+              disabled={checking || raising}
+            />
+            <Button
+              variant="outline"
+              onClick={check}
+              disabled={checking || raising || query.trim() === ""}
+            >
+              {checking ? "…" : "Check"}
+            </Button>
+          </div>
+
+          {preview && (
+            <div className="space-y-2 rounded-md border p-3 text-sm">
+              <div className="font-medium">
+                {preview.username ?? preview.userId}
+              </div>
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Wagered under this program</span>
+                <span className="tabular-nums text-emerald-600 dark:text-emerald-400">
+                  {formatCurrency(preview.qualifyingWagerUsd)}
+                </span>
+              </div>
+              {preview.priorConsumedUsd > 0 && (
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Already claimed against</span>
+                  <span className="tabular-nums">
+                    −{formatCurrency(preview.priorConsumedUsd)}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between border-t pt-2">
+                <span>Claimable now</span>
+                <span className="font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+                  {formatCurrency(preview.amountUsd)}
+                </span>
+              </div>
+              {preview.blockedReason ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  {preview.blockedReason}
+                </p>
+              ) : (
+                preview.units === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {formatCurrency(preview.wagerToNextUnitUsd)} more wager
+                    needed for the next {formatCurrency(program.rewardUsd)}.
+                  </p>
+                )
+              )}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={raising}
+          >
+            Close
+          </Button>
+          <Button
+            onClick={raise}
+            disabled={raising || !preview || preview.units < 1}
+          >
+            {raising ? "Raising…" : "Raise claim"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -8,6 +8,7 @@ import { getProdDb } from "@/lib/db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { requireAdmin, requirePageAccess } from "@/lib/dal";
 import { adjustBalance } from "@/app/(admin)/users/[id]/actions";
+import { computeEntitlement } from "@/lib/creator-vip/compute";
 import { createClaimRequest } from "@/lib/creator-vip/queries";
 
 /**
@@ -408,6 +409,76 @@ export async function raiseCreatorRewardClaimForUser(input: {
   return {
     success: true,
     data: { amountUsd: result.amountUsd, units: result.units },
+  };
+}
+
+/**
+ * Look a player up on a program and show what they'd get RIGHT NOW.
+ *
+ * Read-only — it runs the same `computeEntitlement` the claim path runs, so
+ * the preview and the resulting claim can't disagree. Accepts a username,
+ * email or raw user id so an operator can paste whatever they have.
+ */
+export async function previewCreatorRewardEntitlement(input: {
+  programId: string;
+  query: string;
+}): Promise<
+  ActionResult<{
+    userId: string;
+    username: string | null;
+    qualifyingWagerUsd: number;
+    availableWagerUsd: number;
+    priorConsumedUsd: number;
+    units: number;
+    amountUsd: number;
+    wagerToNextUnitUsd: number;
+    blockedReason: string | null;
+  }>
+> {
+  await requirePageAccess("/rewards");
+  await requireAdmin();
+
+  const parsed = z
+    .object({
+      programId: z.string().uuid(),
+      query: z.string().trim().min(1).max(80),
+    })
+    .safeParse(input);
+  if (!parsed.success) return { success: false, error: "Invalid input" };
+
+  const program = await adminDb.creator_reward_programs.findUnique({
+    where: { id: parsed.data.programId },
+  });
+  if (!program) return { success: false, error: "Program not found" };
+
+  const q = parsed.data.query;
+  const user = await getProdDb().user.findFirst({
+    where: {
+      OR: [
+        { id: q },
+        { username: { equals: q, mode: "insensitive" } },
+        { email: { equals: q, mode: "insensitive" } },
+      ],
+    },
+    select: { id: true, username: true, email: true },
+  });
+  if (!user) return { success: false, error: "No user matches that" };
+
+  const e = await computeEntitlement(program, user.id);
+
+  return {
+    success: true,
+    data: {
+      userId: user.id,
+      username: user.username ?? user.email ?? null,
+      qualifyingWagerUsd: e.qualifyingWagerUsd,
+      availableWagerUsd: e.availableWagerUsd,
+      priorConsumedUsd: e.priorConsumedUsd,
+      units: e.units,
+      amountUsd: e.amountUsd,
+      wagerToNextUnitUsd: e.wagerToNextUnitUsd,
+      blockedReason: e.blockedReason,
+    },
   };
 }
 
