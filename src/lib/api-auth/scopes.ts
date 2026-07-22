@@ -47,6 +47,12 @@ export const API_SCOPES = {
       "List what a Discord-linked player can currently claim (names + amounts). Separate from discord:read so reward data can be granted independently.",
     access: "prod-read",
   },
+  "discord:rewards:claim": {
+    label: "File reward claims",
+    description:
+      "Let a Discord-linked player file a claim request for a creator VIP wager reward. Writes ONLY a pending row in the admin DB — it never moves balance; a human still has to approve it.",
+    access: "admin-write",
+  },
   "users:read": {
     label: "Read users",
     description: "Read user profiles, balances and stats (prod DB, read-only).",

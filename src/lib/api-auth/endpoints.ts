@@ -39,6 +39,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
       "Body { discordUserId }. Returns { claimable: [...] } — unopened one-time rewards plus unclaimed rakeback (summed per cadence). Empty array = nothing to claim; 404 not_linked if the Discord account isn't linked.",
     scopes: ["discord:rewards:read"],
   },
+  {
+    method: "POST",
+    path: "/api/v1/discord/claim",
+    summary:
+      "Body { discordUserId, claimableId }. Files a claim request for a creator VIP wager reward (the `vip_*` ids returned by /discord/rewards). Eligibility is recomputed server-side — the caller never supplies an amount. Creates a PENDING row for staff review; no balance moves until a human approves.",
+    scopes: ["discord:rewards:claim"],
+  },
 ];
 
 /** What a given endpoint touches, derived from its scopes (for the UI badge). */

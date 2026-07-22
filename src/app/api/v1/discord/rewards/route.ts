@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getProdDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
+import { computeAllEntitlements } from "@/lib/creator-vip/compute";
 
 /**
  * POST /api/v1/discord/rewards — what can this Discord-linked player claim?
@@ -67,6 +68,14 @@ type ClaimableItem = {
   name: string;
   amount?: number;
   currency?: string;
+  /**
+   * Present on `vip_*` entries only. Those are the ONLY ids `/discord/claim`
+   * accepts — everything else in this list is claimed on-site, so the bot can
+   * use this flag to decide whether to offer a Claim button at all.
+   */
+  claimable?: boolean;
+  /** Progress copy for a VIP reward that hasn't reached a full unit yet. */
+  progress?: string;
 };
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;
@@ -171,6 +180,30 @@ export const POST = withApiKey(
           `${titleCase(row.rakeback_type)} Rakeback`,
         amount: total,
         currency: "USD",
+      });
+    }
+
+    // Creator VIP wager rewards. Unlike everything above — which the player
+    // claims on-site — these are claimed THROUGH the bot, so they carry
+    // `claimable: true` and their id is what /discord/claim expects.
+    //
+    // Entries with nothing ready yet are still listed, with `progress` copy:
+    // "you're $340 away" is the whole point of the command, and dropping them
+    // would make an engaged player look like they have no program at all.
+    // This read is admin-DB + a per-user index probe per program, so it adds
+    // no meaningful cost to the response.
+    for (const e of await computeAllEntitlements(userId)) {
+      if (e.blockedReason) continue;
+      const ready = e.units > 0;
+      claimable.push({
+        id: `vip_${e.programId}`,
+        name: e.programName,
+        ...(ready
+          ? { amount: e.amountUsd, currency: "USD", claimable: true }
+          : {
+              claimable: false,
+              progress: `$${e.wagerToNextUnitUsd.toFixed(2)} more wagered to unlock the next reward`,
+            }),
       });
     }
 
