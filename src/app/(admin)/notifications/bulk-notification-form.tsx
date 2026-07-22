@@ -135,20 +135,39 @@ export function BulkNotificationForm() {
     !typeError &&
     campaign.trim() !== "";
 
-  async function run(fromChunk: number) {
-    if (!chunks) return;
+  /**
+   * The chunk list AND the envelope as they were when the send started.
+   *
+   * A failed chunk leaves the form editable so the operator can react, which
+   * means `chunks` can change underneath a pending retry — "Retry from chunk
+   * 12" would then send a different chunk 12 than the one that failed, and
+   * `results` (indexed by position) would silently misalign. Retrying against
+   * the frozen snapshot is what makes the dedupe guarantee actually hold:
+   * same items, same keys, so replays come back as `deduped`.
+   */
+  const [sent, setSent] = useState<{
+    chunks: BulkNotificationItem[][];
+    category: UserNotificationCategory;
+    type: string;
+    campaign: string;
+  } | null>(null);
+
+  async function run(
+    plan: NonNullable<typeof sent>,
+    fromChunk: number,
+  ) {
     setSending(true);
     setFailure(null);
     try {
-      for (let i = fromChunk; i < chunks.length; i++) {
+      for (let i = fromChunk; i < plan.chunks.length; i++) {
         setCurrentChunk(i);
         const res = await sendBulkNotificationChunkAction({
-          category,
-          type: type.trim(),
-          items: chunks[i],
-          campaign: campaign.trim(),
+          category: plan.category,
+          type: plan.type,
+          items: plan.chunks[i],
+          campaign: plan.campaign,
           chunkIndex: i,
-          chunkCount: chunks.length,
+          chunkCount: plan.chunks.length,
         });
         if (!res.success) {
           setFailure({ chunkIndex: i, error: res.error });
@@ -164,15 +183,24 @@ export function BulkNotificationForm() {
   }
 
   function handleStart() {
+    if (!chunks) return;
+    const plan = {
+      chunks,
+      category,
+      type: type.trim(),
+      campaign: campaign.trim(),
+    };
+    setSent(plan);
     setResults([]);
     setCurrentChunk(0);
-    void run(0);
+    void run(plan, 0);
   }
 
   function handleReset() {
     setResults([]);
     setFailure(null);
     setCurrentChunk(0);
+    setSent(null);
   }
 
   async function copyUnknown() {
@@ -186,7 +214,9 @@ export function BulkNotificationForm() {
   }
 
   const done = results.length;
-  const total = chunks?.length ?? 0;
+  // Progress counts against the snapshot once a send has started — editing the
+  // form mid-failure must not rewrite the denominator of a run in flight.
+  const total = sent?.chunks.length ?? chunks?.length ?? 0;
   const progressPct = total > 0 ? Math.round((done / total) * 100) : 0;
   const previewItem = chunks?.[0]?.[0];
 
@@ -334,10 +364,10 @@ export function BulkNotificationForm() {
             ? `Sending chunk ${currentChunk + 1} of ${total}…`
             : `Send ${chunks ? formatNumber(chunks.reduce((n, c) => n + c.length, 0)) : "0"} notifications`}
         </Button>
-        {failure && (
+        {failure && sent && (
           <Button
             variant="outline"
-            onClick={() => void run(failure.chunkIndex)}
+            onClick={() => void run(sent, failure.chunkIndex)}
             disabled={sending}
             className="gap-1.5"
           >

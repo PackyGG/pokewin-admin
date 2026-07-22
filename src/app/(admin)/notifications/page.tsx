@@ -120,7 +120,12 @@ export default async function NotificationsPage({
 
       <FadeIn>
         {tab === "direct" ? (
-          <DirectSection canSend={canSendDirect} />
+          // Boundary so the hero + tab strip paint before availability
+          // resolves — an async child without one blocks the shell even when
+          // its work is cheap.
+          <Suspense fallback={<TableSkeleton rows={6} columns={4} />}>
+            <DirectSection canSend={canSendDirect} />
+          </Suspense>
         ) : (
           <Suspense
             key={page}
