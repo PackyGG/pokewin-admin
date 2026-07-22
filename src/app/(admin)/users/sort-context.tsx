@@ -27,17 +27,6 @@ const STATUS_RANK: Record<string, number> = {
   locked: 1,
   active: 0,
 };
-// Role lexical order matches the Postgres user_role enum sort order
-// closely enough that admins won't notice the brief between-click jump.
-// The server-side sort is the source of truth — these comparators only
-// drive the optimistic in-place re-sort on the currently visible rows.
-const ROLE_RANK: Record<string, number> = {
-  admin: 3,
-  support: 2,
-  creator: 1,
-  user: 0,
-};
-
 /**
  * Sort keys whose ORDER BY runs in SQL across the full filtered user base.
  * Never re-sort these client-side — local comparators only see the current
@@ -56,7 +45,6 @@ const COMPARATORS: Record<string, (a: UserRow, b: UserRow) => number> = {
   username: (a, b) =>
     (a.username ?? a.email ?? "").localeCompare(b.username ?? b.email ?? ""),
   created_at: (a, b) => a.createdAt.localeCompare(b.createdAt),
-  balance: (a, b) => a.availableBalance - b.availableBalance,
   totalDeposited: (a, b) => a.totalDeposited - b.totalDeposited,
   totalWithdrawn: (a, b) => a.totalWithdrawn - b.totalWithdrawn,
   totalWagered: (a, b) => a.totalWagered - b.totalWagered,
@@ -66,18 +54,17 @@ const COMPARATORS: Record<string, (a: UserRow, b: UserRow) => number> = {
   netHoldings: (a, b) => a.netHoldings - b.netHoldings,
   pnl: (a, b) => a.pnl - b.pnl,
   depositCount: (a, b) => a.depositCount - b.depositCount,
-  role: (a, b) =>
-    (ROLE_RANK[a.role] ?? -1) - (ROLE_RANK[b.role] ?? -1),
   status: (a, b) =>
     (STATUS_RANK[a.status] ?? -1) - (STATUS_RANK[b.status] ?? -1),
   country: (a, b) =>
     (a.country ?? a.countryCode ?? "").localeCompare(
       b.country ?? b.countryCode ?? "",
     ),
-  // No `affiliate_code` comparator — the "Code / Affiliate" column was
-  // removed (owner, 2026-07-22), so nothing can request that sort from the
-  // UI. A stale `?sortBy=affiliate_code` URL still sorts server-side and
-  // simply skips the local re-sort (sortRowsLocally returns rows unchanged).
+  // No comparators for `affiliate_code`, `role` or `balance` — those three
+  // columns were removed from the table (owner, 2026-07-22), so nothing can
+  // request those sorts from the UI. A stale URL (`?sortBy=balance`, …) still
+  // sorts server-side and simply skips the local re-sort (sortRowsLocally
+  // returns rows unchanged when no comparator matches).
 };
 
 export function sortRowsLocally(

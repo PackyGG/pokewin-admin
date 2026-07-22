@@ -8,7 +8,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { UsersSortHeader } from "./sort-header";
 import {
   IP_CLUSTER_SUSPICIOUS_MAX,
-  ROLE_COLORS,
   USER_STATUS_COLORS,
 } from "@/lib/constants";
 import { formatCurrency } from "@/lib/utils/format";
@@ -285,15 +284,6 @@ export const columns: ColumnDef<UserRow>[] = [
     },
   },
   {
-    accessorKey: "role",
-    header: () => <UsersSortHeader title="Role" sortKey="role" />,
-    cell: ({ row }) => (
-      <Badge variant="outline" className={ROLE_COLORS[row.original.role]}>
-        {row.original.role}
-      </Badge>
-    ),
-  },
-  {
     accessorKey: "status",
     header: () => <UsersSortHeader title="Status" sortKey="status" />,
     cell: ({ row }) => (
@@ -306,21 +296,12 @@ export const columns: ColumnDef<UserRow>[] = [
     ),
   },
   {
-    accessorKey: "availableBalance",
-    header: () => <UsersSortHeader title="Balance" sortKey="balance" />,
-    cell: ({ row }) => (
-      <span className="font-medium tabular-nums">
-        {formatCurrency(row.original.availableBalance)}
-      </span>
-    ),
-  },
-  {
-    // Combined Balance + Inventory column — answers "who's holding the
-    // most on-platform right now" in one sort click. Colored amber
-    // because every dollar here is a direct house liability (we owe
-    // the user that much in cash + cards). Tooltip-free for now;
-    // admins can hover Balance / Inventory individually if they need
-    // the breakdown.
+    // Combined cash + locked vault + inventory + unclaimed vouchers —
+    // the user's whole on-site position, which is what the standalone
+    // "Balance" column was a partial view of (removed 2026-07-22 on the
+    // owner's request: Net already contains it). Colored amber because
+    // every dollar here is a direct house liability (we owe the user
+    // that much in cash + cards).
     accessorKey: "netHoldings",
     header: () => <UsersSortHeader title="Net" sortKey="netHoldings" />,
     cell: ({ row }) => (
