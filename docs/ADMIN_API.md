@@ -42,32 +42,7 @@ This is defence in depth, not a replacement for the token — keep both.
 
 ---
 
-## 2. Smoke test — `GET /api/v1/whoami`
-
-Confirms the token works and shows what it is allowed to do. Needs a valid key
-but no particular scope.
-
-```bash
-curl -s https://pokewin-admin.vercel.app/api/v1/whoami \
-  -H "Authorization: Bearer $PACKY_API_KEY"
-```
-
-```json
-{
-  "data": {
-    "keyId": "2b7c...",
-    "name": "Rewards bot",
-    "prefix": "pwa_xR3k9…",
-    "scopes": ["discord:read"]
-  }
-}
-```
-
-If this returns `401`, the token is wrong/revoked. Fix that before anything else.
-
----
-
-## 3. Is a Discord user linked? — `POST /api/v1/discord/linked`
+## 2. Is a Discord user linked? — `POST /api/v1/discord/linked`
 
 **Scope required:** `discord:read`
 
@@ -102,7 +77,7 @@ access logs, proxy logs and error trackers. A POST body keeps it out of all of t
 
 ---
 
-## 4. What can they claim? — `POST /api/v1/discord/rewards`
+## 3. What can they claim? — `POST /api/v1/discord/rewards`
 
 **Scope required:** `discord:rewards:read` (separate from `discord:read`)
 
@@ -159,7 +134,7 @@ them would promise something that hasn't unlocked yet.
 
 ---
 
-## 5. Examples
+## 4. Examples
 
 ### Node (discord.js)
 
@@ -243,7 +218,7 @@ curl -s -X POST https://pokewin-admin.vercel.app/api/v1/discord/rewards \
 
 ---
 
-## 6. Responses & errors
+## 5. Responses & errors
 
 Success is always wrapped in `data`; failures always in `error`.
 
@@ -268,7 +243,7 @@ wrong secret, revoked, expired) — it can't be used to probe which keys exist.
 
 ---
 
-## 7. Rate limits
+## 6. Rate limits
 
 Each key has a per-minute budget (default **120 req/min**, set when the key is
 created). Every response carries:
@@ -284,7 +259,7 @@ back off rather than retrying in a tight loop.
 
 ---
 
-## 8. Operational notes
+## 7. Operational notes
 
 - **HTTPS only.** Never send the token over plain HTTP.
 - **Never commit the token** or paste it into Discord — treat it like a password.

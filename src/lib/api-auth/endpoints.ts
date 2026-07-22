@@ -26,13 +26,6 @@ export type ApiEndpoint = {
 
 export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   {
-    method: "GET",
-    path: "/api/v1/whoami",
-    summary:
-      "Credential self-check — returns the calling key's name and scopes. Useful as a bot smoke test.",
-    scopes: [],
-  },
-  {
     method: "POST",
     path: "/api/v1/discord/linked",
     summary:
