@@ -603,6 +603,8 @@ export async function getUserDetail(id: string) {
         capture_count: number | null;
         captured_at: Date | null;
         best_confidence: number | null;
+        visitor_id: string | null;
+        distinct_visitor_ids: number | null;
       }[]
     >`
       WITH my_fp AS (
@@ -615,6 +617,11 @@ export async function getUserDetail(id: string) {
         COUNT(*)::int AS capture_count,
         MAX(created_at) AS captured_at,
         MAX(confidence) AS best_confidence,
+        -- The MOST RECENT visitor_id, not an arbitrary one: a user can have
+        -- several (new device, cleared storage), and the newest is the one
+        -- that matters when reviewing the account now.
+        (array_agg(visitor_id ORDER BY created_at DESC))[1] AS visitor_id,
+        COUNT(DISTINCT visitor_id)::int AS distinct_visitor_ids,
         (
           SELECT COUNT(DISTINCT f.user_id)
           FROM fingerprints f
@@ -634,6 +641,8 @@ export async function getUserDetail(id: string) {
       deviceCaptureCount: Number(rows[0]?.capture_count ?? 0),
       deviceCapturedAt: rows[0]?.captured_at?.toISOString() ?? null,
       deviceConfidence: rows[0]?.best_confidence ?? null,
+      deviceVisitorId: rows[0]?.visitor_id ?? null,
+      deviceVisitorIdCount: Number(rows[0]?.distinct_visitor_ids ?? 0),
     }))
     .catch((e) => {
       console.error("[getUserDetail] fingerprint signal query failed:", e);
@@ -643,6 +652,8 @@ export async function getUserDetail(id: string) {
         deviceCaptureCount: 0,
         deviceCapturedAt: null,
         deviceConfidence: null,
+        deviceVisitorId: null,
+        deviceVisitorIdCount: 0,
       };
     });
 
@@ -1001,6 +1012,8 @@ export async function getUserDetail(id: string) {
       deviceCaptureCount: fingerprintSignal.deviceCaptureCount,
       deviceCapturedAt: fingerprintSignal.deviceCapturedAt,
       deviceConfidence: fingerprintSignal.deviceConfidence,
+      deviceVisitorId: fingerprintSignal.deviceVisitorId,
+      deviceVisitorIdCount: fingerprintSignal.deviceVisitorIdCount,
       country: user.country,
       countryCode: user.country_code,
       city: user.city,

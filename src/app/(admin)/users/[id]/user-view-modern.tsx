@@ -498,6 +498,8 @@ export function UserViewModern({
                 deviceCaptureCount={user.deviceCaptureCount}
                 deviceCapturedAt={user.deviceCapturedAt}
                 deviceConfidence={user.deviceConfidence}
+                deviceVisitorId={user.deviceVisitorId}
+                deviceVisitorIdCount={user.deviceVisitorIdCount}
               />
             </div>
 
@@ -704,6 +706,8 @@ function HeroFlagsStrip({
   deviceCaptureCount,
   deviceCapturedAt,
   deviceConfidence,
+  deviceVisitorId,
+  deviceVisitorIdCount,
 }: {
   statusKey: "active" | "locked" | "banned";
   selfExclusion: SelfExclusionState;
@@ -718,6 +722,10 @@ function HeroFlagsStrip({
   deviceCapturedAt: string | null;
   /** Best confidence across captures (0–1), null when never captured. */
   deviceConfidence: number | null;
+  /** visitor_id of the most recent capture — the actual device identifier. */
+  deviceVisitorId: string | null;
+  /** Distinct visitor_ids for this user (>1 = seen on multiple devices). */
+  deviceVisitorIdCount: number;
 }) {
   return (
     // `display: contents` — the strip owns no box of its own; its chips
@@ -800,15 +808,26 @@ function HeroFlagsStrip({
           linkedDeviceAccountCount > 0
             ? ` ${linkedDeviceAccountCount} other account${linkedDeviceAccountCount === 1 ? "" : "s"} share a device with this one.`
             : "";
+        const devicesLabel =
+          deviceVisitorIdCount > 1
+            ? ` Seen on ${deviceVisitorIdCount} distinct devices.`
+            : "";
+        // visitor_id is ~20 chars — too long for a chip in a dense row, so
+        // the chip carries a recognisable prefix and the tooltip the full
+        // value to copy into a query.
+        const shortId = deviceVisitorId ? deviceVisitorId.slice(0, 12) : null;
+        const idTitle = deviceVisitorId
+          ? `Device ID (FingerprintJS visitor_id): ${deviceVisitorId}`
+          : "";
 
         // Rose — a real fraud-review signal, same weight as banned/locked.
         if (suspectedAlt) {
           return (
             <FlagChip
               icon={Fingerprint}
-              label="Suspected Alt"
-              className="border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
-              title={`Device fingerprinting flagged this account as a suspected alt at signup/login.${sharedLabel}`}
+              label={shortId ? `Alt · ${shortId}` : "Suspected Alt"}
+              className="border-rose-500/30 bg-rose-500/15 font-mono text-rose-600 dark:text-rose-400"
+              title={`Suspected alt — device fingerprinting flagged this account at signup/login.${sharedLabel}${devicesLabel}\n${idTitle}`}
             />
           );
         }
@@ -831,9 +850,9 @@ function HeroFlagsStrip({
         return (
           <FlagChip
             icon={Fingerprint}
-            label="Device ID"
-            className="border-border/60 bg-muted/50 text-muted-foreground"
-            title={`Device fingerprint captured ${capturedLabel}${confidenceLabel}. No alt flag.${sharedLabel}`}
+            label={shortId ?? "Device ID"}
+            className="border-border/60 bg-muted/50 font-mono text-muted-foreground"
+            title={`${idTitle}\nCaptured ${capturedLabel}${confidenceLabel}. No alt flag.${sharedLabel}${devicesLabel}`}
           />
         );
       })()}

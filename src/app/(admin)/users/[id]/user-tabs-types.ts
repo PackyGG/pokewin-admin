@@ -37,6 +37,10 @@ export type UserDetail = {
     deviceCapturedAt: string | null;
     /** Best confidence across this user's captures (0–1), null if none. */
     deviceConfidence: number | null;
+    /** FingerprintJS visitor_id of the most recent capture — the device ID. */
+    deviceVisitorId: string | null;
+    /** Distinct visitor_ids for this user (>1 = seen on multiple devices). */
+    deviceVisitorIdCount: number;
     country: string | null;
     countryCode: string | null;
     city: string | null;

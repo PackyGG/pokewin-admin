@@ -29,18 +29,33 @@ import { backendApi } from "./client";
 
 /** Current Telegram notification settings. */
 export type TelegramNotificationSettings = {
+  /** Master switch — when false NOTHING is sent, whatever the toggles say. */
+  masterEnabled: boolean;
   /** Minimum deposit USD that triggers a "deposit confirmed" alert. */
   depositMinUsd: number;
-  /** Whether new-signup alerts are sent. */
+  /** Deposit confirmed (crypto + fiat). */
+  depositConfirmed: boolean;
+  /** Deposit failed (crypto + fiat). */
+  depositFailed: boolean;
+  withdrawalRequested: boolean;
+  withdrawalCompleted: boolean;
+  withdrawalFailed: boolean;
+  /** New user registration. */
   signupNotificationsEnabled: boolean;
 };
 
 /**
- * PUT payload — both fields optional (partial update), but the backend
+ * PUT payload — every field optional (partial update), but the backend
  * requires at least one. `depositMinUsd` must be >= 0.
  */
 export type UpdateTelegramNotificationSettingsInput = {
+  masterEnabled?: boolean;
   depositMinUsd?: number;
+  depositConfirmed?: boolean;
+  depositFailed?: boolean;
+  withdrawalRequested?: boolean;
+  withdrawalCompleted?: boolean;
+  withdrawalFailed?: boolean;
   signupNotificationsEnabled?: boolean;
 };
 

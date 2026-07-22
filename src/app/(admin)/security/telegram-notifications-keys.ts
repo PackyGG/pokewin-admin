@@ -12,10 +12,20 @@
  * panel never writes them directly — it goes through backendApi.put().
  *
  * Keys (managed by the backend's PUT /admin/telegram-notifications):
- *  - telegram_deposit_min_usd                minimum deposit USD that alerts
- *  - telegram_signup_notifications_enabled   send an alert on each signup
+ *  - telegram_notifications_enabled            master switch for all alerts
+ *  - telegram_deposit_min_usd                  minimum deposit USD that alerts
+ *  - telegram_notify_<kind>                    per-notification on/off
+ *  - telegram_signup_notifications_enabled     signup alerts (original key —
+ *      deliberately NOT renamed to telegram_notify_signup, so an already-saved
+ *      value isn't orphaned)
  */
 export const TELEGRAM_NOTIFICATION_SITE_CONFIG_KEYS: readonly string[] = [
+  "telegram_notifications_enabled",
   "telegram_deposit_min_usd",
+  "telegram_notify_deposit_confirmed",
+  "telegram_notify_deposit_failed",
+  "telegram_notify_withdrawal_requested",
+  "telegram_notify_withdrawal_completed",
+  "telegram_notify_withdrawal_failed",
   "telegram_signup_notifications_enabled",
 ];

@@ -30,15 +30,18 @@ const MAX_DEPOSIT_MIN_USD = 100_000;
 
 const InputSchema = z
   .object({
+    masterEnabled: z.boolean().optional(),
     depositMinUsd: z.number().min(0).max(MAX_DEPOSIT_MIN_USD).optional(),
+    depositConfirmed: z.boolean().optional(),
+    depositFailed: z.boolean().optional(),
+    withdrawalRequested: z.boolean().optional(),
+    withdrawalCompleted: z.boolean().optional(),
+    withdrawalFailed: z.boolean().optional(),
     signupNotificationsEnabled: z.boolean().optional(),
   })
-  .refine(
-    (data) =>
-      data.depositMinUsd !== undefined ||
-      data.signupNotificationsEnabled !== undefined,
-    { message: "At least one value is required" },
-  );
+  .refine((data) => Object.values(data).some((v) => v !== undefined), {
+    message: "At least one value is required",
+  });
 
 export async function updateTelegramNotificationsAction(
   input: UpdateTelegramNotificationSettingsInput,

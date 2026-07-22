@@ -189,6 +189,8 @@ const DATA: UserDetail = {
     deviceCaptureCount: 1,
     deviceCapturedAt: "2026-07-22T19:55:01.813Z",
     deviceConfidence: 0.99,
+    deviceVisitorId: "Ibk1527CUFmcnjLwIs4A",
+    deviceVisitorIdCount: 1,
     country: "Germany",
     countryCode: "DE",
     city: "Berlin",
