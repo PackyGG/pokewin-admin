@@ -78,6 +78,25 @@ function errorResponse(
   });
 }
 
+/**
+ * Build an error response from inside a handler, in the SAME envelope the
+ * wrapper uses for auth/scope/limit failures. Use this for validation errors
+ * so every failure on this surface looks identical to a client.
+ *
+ * Keep `message` operator-safe: describe the SHAPE that was wrong, never echo
+ * back internals (SQL, stack, row contents).
+ */
+export function apiError(
+  status: number,
+  code: string,
+  message: string,
+): Response {
+  return new Response(JSON.stringify({ error: { code, message } }), {
+    status,
+    headers: baseHeaders(),
+  });
+}
+
 export function withApiKey<P = Record<string, never>>(
   options: { scopes: readonly ApiScope[] },
   handler: Handler<P>,

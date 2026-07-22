@@ -17,6 +17,12 @@
  */
 
 export const API_SCOPES = {
+  "discord:read": {
+    label: "Check Discord links",
+    description:
+      "Check whether a Discord user ID is linked to a Packy account. Returns only a boolean — no profile data.",
+    access: "prod-read",
+  },
   "users:read": {
     label: "Read users",
     description: "Read user profiles, balances and stats (prod DB, read-only).",

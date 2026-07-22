@@ -32,6 +32,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
       "Credential self-check — returns the calling key's name and scopes. Useful as a bot smoke test.",
     scopes: [],
   },
+  {
+    method: "POST",
+    path: "/api/v1/discord/linked",
+    summary:
+      "Body { discordUserId }. Returns { linked: boolean } — whether that Discord account is linked to a Packy account. Boolean only, no profile data.",
+    scopes: ["discord:read"],
+  },
 ];
 
 /** What a given endpoint touches, derived from its scopes (for the UI badge). */
