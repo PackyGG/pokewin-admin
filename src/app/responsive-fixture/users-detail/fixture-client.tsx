@@ -191,6 +191,7 @@ const DATA: UserDetail = {
     deviceConfidence: 0.99,
     deviceVisitorId: "Ibk1527CUFmcnjLwIs4A",
     deviceVisitorIdCount: 1,
+    signupIpSharedCount: 2,
     country: "Germany",
     countryCode: "DE",
     city: "Berlin",

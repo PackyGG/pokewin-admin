@@ -2,11 +2,15 @@
 
 import { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
-import { Fingerprint } from "lucide-react";
+import { Fingerprint, Network } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { UsersSortHeader } from "./sort-header";
-import { ROLE_COLORS, USER_STATUS_COLORS } from "@/lib/constants";
+import {
+  IP_CLUSTER_SUSPICIOUS_MAX,
+  ROLE_COLORS,
+  USER_STATUS_COLORS,
+} from "@/lib/constants";
 import { formatCurrency } from "@/lib/utils/format";
 import {
   formatSignupProvider,
@@ -51,6 +55,8 @@ export type UserRow = {
   hasDeviceId: boolean;
   /** Newest FingerprintJS visitor_id, null when never captured. */
   deviceVisitorId: string | null;
+  /** Other accounts sharing this user's signup IP. 0 = unique to them. */
+  signupIpSharedCount: number;
   /**
    * Raw BetterAuth `account.providerId` of the earliest linked account —
    * how the user signed up (discord / google / steam / credential = email).
@@ -160,6 +166,33 @@ export const columns: ColumnDef<UserRow>[] = [
                 )}
               />
             </span>
+            {/* Shared signup IP. Amber only for a SMALL cluster — that's the
+                band where sharing is actually suspicious. Anything bigger is
+                CGNAT / VPN / campus NAT (nine IPs on prod carry ~1,490 users
+                between them), so it renders muted and informational rather
+                than as an accusation. Never rose: rose is reserved for the
+                device fingerprint, which is the high-confidence signal, and
+                two competing reds would flatten that distinction. */}
+            {row.original.signupIpSharedCount > 0 && (
+              <span
+                title={
+                  row.original.signupIpSharedCount <= IP_CLUSTER_SUSPICIOUS_MAX
+                    ? `Signup IP shared with ${row.original.signupIpSharedCount} other account${row.original.signupIpSharedCount === 1 ? "" : "s"} — small enough to be worth a look`
+                    : `Signup IP shared with ${row.original.signupIpSharedCount} other accounts — a cluster this large is almost always CGNAT, a VPN exit or office NAT, not alts`
+                }
+                className="shrink-0"
+              >
+                <Network
+                  className={cn(
+                    "size-3",
+                    row.original.signupIpSharedCount <=
+                      IP_CLUSTER_SUSPICIOUS_MAX
+                      ? "text-amber-500/80"
+                      : "text-muted-foreground/40",
+                  )}
+                />
+              </span>
+            )}
           </div>
           <div className="truncate text-xs text-muted-foreground">
             {row.original.email}

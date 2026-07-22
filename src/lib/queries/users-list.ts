@@ -815,7 +815,21 @@ type UserListItem = {
    * best-effort lookup below failed.
    */
   signupProvider: string | null;
+  /**
+   * How many OTHER accounts signed up from this user's `signup_ip`. 0 = the
+   * IP is unique to them.
+   *
+   * Deliberately a COUNT, not a boolean. A third of the user base already
+   * shares a signup IP (5,478 of 16,521), and nine addresses alone account
+   * for ~1,490 users — CGNAT, VPN exits, campus/office NAT. A binary "shared"
+   * flag would therefore mark ~33% of users and mean nothing; the cluster
+   * SIZE is what separates a plausible alt pair from an ISP.
+   */
+  signupIpSharedCount: number;
 };
+
+/** One grouped `user` row per distinct signup_ip on the current page. */
+type SharedIpRow = { signup_ip: string; n: bigint | number };
 
 /** One grouped `fingerprints` row per user on the current page. */
 type DeviceRow = {
@@ -840,6 +854,7 @@ const USER_LIST_SELECT = {
   is_locked: true,
   country: true,
   country_code: true,
+  signup_ip: true,
   // The live "affiliate/referral code this user is carrying" — written
   // together with `referred_by` when an admin sets a referrer, or by the
   // backend when the user signed up under a link/cookie (see the
@@ -907,6 +922,9 @@ async function hydrateUserListPage(
 ): Promise<PaginatedResult<UserListItem>> {
   const db = await getDb();
   const userIds = users.map((u) => u.id);
+  const signupIps = [
+    ...new Set(users.map((u) => u.signup_ip).filter((ip): ip is string => !!ip)),
+  ];
   const emptyDeposits: Array<{ user_id: string; _count: { _all: number } }> =
     [];
 
@@ -915,6 +933,7 @@ async function hydrateUserListPage(
     depositCountRows,
     suspectedAltRows,
     signupProviderRows,
+    sharedIpRows,
   ] = await Promise.all([
     userIds.length > 0
       ? calculateUsersPnlBatch(userIds)
@@ -976,6 +995,24 @@ async function hydrateUserListPage(
           return [] as SignupProviderRow[];
         })
       : Promise.resolve([] as SignupProviderRow[]),
+    // Shared-signup-IP counts, scoped to the distinct IPs on THIS page.
+    // WARNING: `user.signup_ip` is NOT indexed (verified against prod), so
+    // this is a sequential scan — tolerable at ~16.5k users, one scan per
+    // page load, but it wants `CREATE INDEX ON "user" (signup_ip)` in the
+    // backend repo before the table grows much further.
+    // Best-effort like the legs above: a failure degrades every row on this
+    // page to "unique" rather than breaking the list render.
+    signupIps.length > 0
+      ? db.$queryRaw<SharedIpRow[]>`
+          SELECT signup_ip, COUNT(*) AS n
+            FROM "user"
+           WHERE signup_ip = ANY(${signupIps})
+           GROUP BY signup_ip
+        `.catch((e) => {
+          console.error("[getUsers] shared signup_ip lookup failed:", e);
+          return [] as SharedIpRow[];
+        })
+      : Promise.resolve([] as SharedIpRow[]),
   ]);
 
   const depositCountMap = new Map(
@@ -984,6 +1021,10 @@ async function hydrateUserListPage(
   // Present in the map ⇒ a fingerprint row exists for that user (device was
   // captured). The row carries the alt flag and the newest visitor_id.
   const deviceByUserId = new Map(suspectedAltRows.map((r) => [r.user_id, r]));
+  // Count of OTHERS on the same IP, so a unique signup reads as 0, not 1.
+  const othersOnIp = new Map(
+    sharedIpRows.map((r) => [r.signup_ip, Math.max(0, Number(r.n) - 1)]),
+  );
   const signupProviderByUserId = new Map(
     signupProviderRows.map((r) => [r.user_id, r.provider]),
   );
@@ -1030,6 +1071,9 @@ async function hydrateUserListPage(
         suspectedAlt: deviceByUserId.get(u.id)?.suspected_alt === true,
         hasDeviceId: deviceByUserId.has(u.id),
         deviceVisitorId: deviceByUserId.get(u.id)?.visitor_id ?? null,
+        signupIpSharedCount: u.signup_ip
+          ? (othersOnIp.get(u.signup_ip) ?? 0)
+          : 0,
         signupProvider: signupProviderByUserId.get(u.id) ?? null,
       };
     }),

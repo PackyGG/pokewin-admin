@@ -595,6 +595,27 @@ export async function getUserDetail(id: string) {
   //     false/0 via COALESCE / the empty-set IN, not an error.
   // Best-effort: a failure degrades to "no signal" rather than blocking the
   // whole fan-out.
+  // Other accounts that signed up from the SAME IP. Best-effort, and
+  // deliberately a count rather than a flag — see UserDetail.signupIpSharedCount.
+  // `user.signup_ip` is NOT indexed (verified against prod), so this is a
+  // sequential scan over ~16.5k rows; cheap today, wants an index in the
+  // backend repo before the table grows much further.
+  // Keyed on the user ID, not on signup_ip, so it can run inside the same
+  // parallel fan-out — resolving the IP first would cost a sequential
+  // round-trip. GREATEST(...,0) keeps a NULL signup_ip at 0 rather than -1.
+  const signupIpSharedPromise = db
+    .$queryRaw<{ others: number | null }[]>`
+      SELECT GREATEST(COUNT(*) - 1, 0)::int AS others
+        FROM "user"
+       WHERE signup_ip IS NOT NULL
+         AND signup_ip = (SELECT signup_ip FROM "user" WHERE id = ${id})
+    `
+    .then((rows) => Number(rows[0]?.others ?? 0))
+    .catch((e) => {
+      console.error("[getUserDetail] shared signup_ip query failed:", e);
+      return 0;
+    });
+
   const fingerprintSignalPromise = db
     .$queryRaw<
       {
@@ -683,6 +704,7 @@ export async function getUserDetail(id: string) {
     wagerLockedAgg,
     liveAffiliateRows,
     fingerprintSignal,
+    signupIpSharedCount,
   ] = await Promise.all([
     db.user.findUnique({
       where: { id },
@@ -852,6 +874,7 @@ export async function getUserDetail(id: string) {
       return [] as Array<{ total_referred: bigint | number | null; total_wager_volume_usd: string | null }>;
     }),
     fingerprintSignalPromise,
+    signupIpSharedPromise,
   ]);
 
   const depositCount = depositAgg._count._all;
@@ -1020,6 +1043,7 @@ export async function getUserDetail(id: string) {
       state: user.state,
       continentCode: user.continent_code,
       signupIp: user.signup_ip,
+      signupIpSharedCount,
       referredBy: user.referred_by,
       referredByUsername,
       referredByCode,
