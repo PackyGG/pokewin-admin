@@ -5,9 +5,10 @@ import { getProdDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 import { computeAllEntitlements, computeEntitlement } from "./compute";
-import type {
-  CreatorRewardClaimStatus,
-  CreatorRewardProgramWithStats,
+import {
+  isCreatorRewardType,
+  type CreatorRewardClaimStatus,
+  type CreatorRewardProgramWithStats,
 } from "./types";
 
 /**
@@ -67,8 +68,12 @@ export async function getProgramsWithStats(): Promise<
       creatorUserId: p.creator_user_id,
       creatorUsername: names.get(p.creator_user_id) ?? null,
       codes: p.codes,
-      thresholdUsd: toNumber(p.threshold_usd),
-      rewardUsd: toNumber(p.reward_usd),
+      type: isCreatorRewardType(p.type) ? p.type : "wager",
+      thresholdUsd: p.threshold_usd == null ? null : toNumber(p.threshold_usd),
+      rewardUsd: p.reward_usd == null ? null : toNumber(p.reward_usd),
+      lossbackPct: p.lossback_pct == null ? null : toNumber(p.lossback_pct),
+      minDepositUsd:
+        p.min_deposit_usd == null ? null : toNumber(p.min_deposit_usd),
       vipRewardUsd:
         p.vip_reward_usd == null ? null : toNumber(p.vip_reward_usd),
       isActive: p.is_active,
@@ -346,7 +351,10 @@ export async function createClaimRequest(params: {
   if (entitlement.units < 1) {
     return {
       ok: false,
-      error: `Nothing to claim yet — $${entitlement.wagerToNextUnitUsd.toFixed(2)} more wager needed.`,
+      error:
+        entitlement.type === "ftd_lossback"
+          ? "Nothing to claim on this reward yet."
+          : `Nothing to claim yet — $${entitlement.wagerToNextUnitUsd.toFixed(2)} more wager needed.`,
       code: "nothing_claimable",
     };
   }
@@ -357,6 +365,11 @@ export async function createClaimRequest(params: {
         program_id: program.id,
         user_id: params.userId,
         discord_user_id: params.discordUserId ?? null,
+        // FTD lossback has no wager basis; its own snapshot lives in the
+        // ftd_* columns. The wager columns stay 0 rather than being reused for
+        // a different meaning.
+        ftd_deposit_usd: entitlement.ftd?.firstDepositUsd ?? null,
+        ftd_loss_usd: entitlement.ftd?.lostUsd ?? null,
         wager_basis_usd: entitlement.qualifyingWagerUsd,
         lifetime_wager_usd: entitlement.lifetimeWagerUsd,
         forfeited_wager_usd: entitlement.forfeitedWagerUsd,

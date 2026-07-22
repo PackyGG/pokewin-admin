@@ -11,6 +11,7 @@ import { adjustBalance } from "@/app/(admin)/users/[id]/actions";
 import { computeEntitlement } from "@/lib/creator-vip/compute";
 import { createClaimRequest } from "@/lib/creator-vip/queries";
 import { sanitizeProgramName } from "@/lib/creator-vip/sanitize";
+import { CREATOR_REWARD_TYPES } from "@/lib/creator-vip/types";
 
 /**
  * Creator VIP wager-reward programs + the manual claim-review queue.
@@ -45,12 +46,19 @@ const CodesSchema = z
 
 const ProgramInputSchema = z.object({
   name: z.string().trim().min(2).max(80),
+  type: z.enum(CREATOR_REWARD_TYPES),
   creatorUserId: z.string().trim().min(1).max(64),
   codes: CodesSchema,
-  thresholdUsd: z.number().finite().positive().max(1_000_000),
-  rewardUsd: z.number().finite().positive().max(100_000),
+  // WAGER only — required for that type, ignored for a lossback. Which is
+  // which is enforced in `validateTerms` rather than the schema, so the error
+  // can name the reward type instead of a bare "required".
+  thresholdUsd: z.number().finite().positive().max(1_000_000).nullable(),
+  rewardUsd: z.number().finite().positive().max(100_000).nullable(),
   /** Uplift rate for `vip`-tagged players. null = everyone earns the standard rate. */
   vipRewardUsd: z.number().finite().positive().max(100_000).nullable(),
+  // FTD_LOSSBACK only.
+  lossbackPct: z.number().finite().positive().max(100).nullable(),
+  minDepositUsd: z.number().finite().positive().max(1_000_000).nullable(),
   maxRewardPerUserUsd: z.number().finite().positive().max(1_000_000).nullable(),
 });
 
@@ -59,26 +67,43 @@ export type ActionResult<T = undefined> =
   | { success: false; error: string };
 
 /**
- * A reward that pays out more than it demands in wager is a money pump — the
- * house would lose on every single unit, forever. Cheap to typo ($5 threshold
- * / $1000 reward), catastrophic to ship, so it's refused outright rather than
- * warned about.
+ * Per-type terms validation.
+ *
+ * A reward that pays out more than it demands is a money pump — the house
+ * loses on every unit, forever. Cheap to typo ($5 threshold / $1000 reward),
+ * catastrophic to ship, so it is refused outright rather than warned about.
  */
-function sanityCheckRates(
-  thresholdUsd: number,
-  rewardUsd: number,
-  vipRewardUsd: number | null,
-): string | null {
-  if (rewardUsd >= thresholdUsd) {
+function validateTerms(d: {
+  type: string;
+  thresholdUsd: number | null;
+  rewardUsd: number | null;
+  vipRewardUsd: number | null;
+  lossbackPct: number | null;
+  minDepositUsd: number | null;
+}): string | null {
+  if (d.type === "ftd_lossback") {
+    if (d.lossbackPct == null) return "Lossback percent is required.";
+    if (d.minDepositUsd == null) return "Minimum deposit is required.";
+    // 100% back is not a reward, it is a refund with extra steps — and above
+    // that we would be paying more than the player ever put in.
+    if (d.lossbackPct >= 100) {
+      return "Lossback percent must be below 100% — otherwise we refund more than they deposited.";
+    }
+    return null;
+  }
+
+  if (d.thresholdUsd == null) return "Wager threshold is required.";
+  if (d.rewardUsd == null) return "Reward is required.";
+  if (d.rewardUsd >= d.thresholdUsd) {
     return "Reward must be smaller than the wager threshold — otherwise every unit loses money.";
   }
-  if (vipRewardUsd != null) {
-    if (vipRewardUsd >= thresholdUsd) {
+  if (d.vipRewardUsd != null) {
+    if (d.vipRewardUsd >= d.thresholdUsd) {
       return "VIP reward must be smaller than the wager threshold — otherwise every unit loses money.";
     }
-    // Not a money-pump, but almost certainly a typo: a "VIP" rate that pays
-    // less than standard would quietly punish the tag it's meant to reward.
-    if (vipRewardUsd < rewardUsd) {
+    // Not a money-pump, but almost certainly a typo: a "VIP" rate paying less
+    // than standard would quietly punish the tag it is meant to reward.
+    if (d.vipRewardUsd < d.rewardUsd) {
       return "VIP reward must be at least the standard reward.";
     }
   }
@@ -89,9 +114,12 @@ export async function createCreatorRewardProgram(input: {
   name: string;
   creatorUserId: string;
   codes: string[];
-  thresholdUsd: number;
-  rewardUsd: number;
+  type: string;
+  thresholdUsd: number | null;
+  rewardUsd: number | null;
   vipRewardUsd: number | null;
+  lossbackPct: number | null;
+  minDepositUsd: number | null;
   maxRewardPerUserUsd: number | null;
 }): Promise<ActionResult> {
   await requirePageAccess("/creator-rewards");
@@ -106,11 +134,7 @@ export async function createCreatorRewardProgram(input: {
   }
   const d = parsed.data;
 
-  const rateError = sanityCheckRates(
-    d.thresholdUsd,
-    d.rewardUsd,
-    d.vipRewardUsd,
-  );
+  const rateError = validateTerms(d);
   if (rateError) return { success: false, error: rateError };
 
   // The name is echoed by the Discord bot, where it is parsed as markdown and
@@ -164,9 +188,12 @@ export async function createCreatorRewardProgram(input: {
       name,
       creator_user_id: d.creatorUserId,
       codes,
+      type: d.type,
       threshold_usd: d.thresholdUsd,
       reward_usd: d.rewardUsd,
       vip_reward_usd: d.vipRewardUsd,
+      lossback_pct: d.lossbackPct,
+      min_deposit_usd: d.minDepositUsd,
       max_reward_per_user_usd: d.maxRewardPerUserUsd,
       accrual_start_at: accrualStartAt,
       created_by: session.userId,
@@ -182,9 +209,12 @@ export async function createCreatorRewardProgram(input: {
       program_id: created.id,
       name,
       codes,
+      type: d.type,
       threshold_usd: d.thresholdUsd,
       reward_usd: d.rewardUsd,
       vip_reward_usd: d.vipRewardUsd,
+      lossback_pct: d.lossbackPct,
+      min_deposit_usd: d.minDepositUsd,
       max_reward_per_user_usd: d.maxRewardPerUserUsd,
       accrual_start_at: accrualStartAt.toISOString(),
     },

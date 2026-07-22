@@ -8,6 +8,7 @@ import {
   BASIS_HOLDING_STATUSES,
   type CreatorRewardEntitlement,
 } from "./types";
+import { computeFtdLossback } from "./ftd-lossback";
 
 /**
  * The ONE eligibility engine for creator VIP wager rewards.
@@ -53,11 +54,15 @@ const fromCents = (cents: number): number => cents / 100;
 export type ProgramForCompute = {
   id: string;
   name: string;
+  /** "wager" | "ftd_lossback" — decides which branch below runs. */
+  type: string;
   creator_user_id: string;
   codes: string[];
   threshold_usd: unknown;
   reward_usd: unknown;
   vip_reward_usd: unknown;
+  lossback_pct: unknown;
+  min_deposit_usd: unknown;
   is_active: boolean;
   accrual_start_at: Date;
   max_reward_per_user_usd: unknown;
@@ -272,6 +277,8 @@ export async function computeEntitlement(
 
   const empty: CreatorRewardEntitlement = {
     ...base,
+    type: "wager",
+    ftd: null,
     isVip: false,
     appliedRewardUsd: fromCents(standardRewardCents),
     qualifyingWagerUsd: 0,
@@ -291,6 +298,26 @@ export async function computeEntitlement(
   if (!program.is_active) {
     return { ...empty, blockedReason: "This program is not active." };
   }
+
+  // FTD lossback is a completely different shape of reward — one-off, keyed on
+  // the first deposit rather than accumulated wager — so it branches out here
+  // before any of the wager machinery below runs. It is normalised into the
+  // same entitlement type so every caller (bot /check, /info, the claim path,
+  // the admin preview) keeps ONE code path.
+  if (program.type === "ftd_lossback") {
+    const ftd = await computeFtdLossback(program, userId);
+    return {
+      ...empty,
+      type: "ftd_lossback",
+      ftd,
+      // A lossback is all-or-nothing: one "unit", or none.
+      units: ftd.payoutUsd > 0 ? 1 : 0,
+      amountUsd: ftd.payoutUsd,
+      appliedRewardUsd: ftd.payoutUsd,
+      blockedReason: ftd.blockedReason,
+    };
+  }
+
   if (thresholdCents <= 0 || standardRewardCents <= 0) {
     return { ...empty, blockedReason: "This program is misconfigured." };
   }
@@ -387,6 +414,8 @@ export async function computeEntitlement(
 
   return {
     ...base,
+    type: "wager",
+    ftd: null,
     isVip: vip,
     appliedRewardUsd: fromCents(rewardCents),
     qualifyingWagerUsd: fromCents(wagerCents),
@@ -427,8 +456,14 @@ export async function computeAllEntitlements(
   const results = await Promise.all(
     programs.map((p) => computeEntitlement(p, userId)),
   );
-  // Only surface programs the user is actually attached to — a user who has
-  // never wagered under a creator's code shouldn't see that creator's program
-  // listed at all, let alone as "$0 available".
-  return results.filter((e) => e.qualifyingWagerUsd > 0);
+  // Only surface programs the player is actually attached to. For a WAGER
+  // program that means they've wagered something under the code; for an FTD
+  // lossback there is no wager basis at all, so the test is whether they have
+  // a qualifying first deposit. Filtering lossbacks on wager would have hidden
+  // every one of them.
+  return results.filter((e) =>
+    e.type === "ftd_lossback"
+      ? e.ftd?.firstDepositUsd != null
+      : e.qualifyingWagerUsd > 0,
+  );
 }

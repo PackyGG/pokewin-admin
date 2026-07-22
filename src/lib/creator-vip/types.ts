@@ -43,10 +43,16 @@ export type CreatorRewardProgram = {
   creatorUsername: string | null;
   /** UPPERCASE codes this program accrues on. */
   codes: string[];
-  thresholdUsd: number;
-  rewardUsd: number;
+  type: CreatorRewardType;
+  /** WAGER programs only; null on a lossback. */
+  thresholdUsd: number | null;
+  rewardUsd: number | null;
   /** Per-unit rate for `vip`-tagged players. null = no uplift. */
   vipRewardUsd: number | null;
+  /** FTD_LOSSBACK only: percent of the lost first deposit paid back. */
+  lossbackPct: number | null;
+  /** FTD_LOSSBACK only: smallest qualifying first deposit. */
+  minDepositUsd: number | null;
   isActive: boolean;
   accrualStartAt: string;
   maxRewardPerUserUsd: number | null;
@@ -69,10 +75,36 @@ export type CreatorRewardProgramWithStats = CreatorRewardProgram & {
  * prod wager rows plus the admin-side consumption ledger always yields the
  * same answer, which is what makes the claim endpoint safe to replay.
  */
+/** The two shapes of reward a program can offer. */
+export const CREATOR_REWARD_TYPES = ["wager", "ftd_lossback"] as const;
+export type CreatorRewardType = (typeof CREATOR_REWARD_TYPES)[number];
+
+export function isCreatorRewardType(v: unknown): v is CreatorRewardType {
+  return (
+    typeof v === "string" && (CREATOR_REWARD_TYPES as readonly string[]).includes(v)
+  );
+}
+
 export type CreatorRewardEntitlement = {
   programId: string;
   programName: string;
   creatorUserId: string;
+  /** Which branch of the engine produced this. */
+  type: CreatorRewardType;
+  /**
+   * FTD-lossback specifics — the first deposit, what they still hold, and how
+   * much of it is lost. Null for wager programs. Every other field below is
+   * wager-shaped and reads 0 on a lossback offer.
+   */
+  ftd: {
+    firstDepositUsd: number | null;
+    firstDepositAt: string | null;
+    hasSecondDeposit: boolean;
+    holdingsUsd: number;
+    lostUsd: number;
+    payoutUsd: number;
+    blockedReason: string | null;
+  } | null;
   /**
    * Did this player hold the `vip` tag at the moment of THIS check? Re-read
    * live every time — never cached, because the tag can be removed.

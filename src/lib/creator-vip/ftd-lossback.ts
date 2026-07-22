@@ -1,0 +1,248 @@
+import "server-only";
+
+import { adminDb } from "@/lib/admin-db";
+import { getProdDb } from "@/lib/db";
+import { calculateUserPnl } from "@/lib/queries/pnl";
+import { toNumber } from "@/lib/utils/decimal";
+
+import { BASIS_HOLDING_STATUSES } from "./types";
+import type { ProgramForCompute } from "./compute";
+
+/**
+ * First-time-deposit lossback: a one-off "% back on what you lost from your
+ * FIRST deposit" for players who signed up under a creator's code.
+ *
+ * ── THE RULES, AND WHY ────────────────────────────────────────────────────
+ *
+ *  1. SIGNED UP under one of the program's codes. Not merely "used the code
+ *     later" — this reward exists to pay for acquisition, so it keys off the
+ *     `signup` attribution row, which the backend writes once per referral.
+ *
+ *  2. FIRST deposit only, and it must clear `min_deposit_usd`. There is
+ *     exactly one first deposit, so a player whose first was below the floor
+ *     is permanently ineligible — they cannot "retry" with a bigger one.
+ *
+ *  3. A SECOND DEPOSIT CLOSES THE WINDOW. This is the judgement call in the
+ *     spec. Once fresh money is on the account there is no honest way to say
+ *     which deposit a later loss came from, and the alternative — keep paying
+ *     against the first deposit forever — is exactly the "deposit $50, don't
+ *     lose, deposit $1000, lose it all, get paid" case the owner ruled out.
+ *     So eligibility ends when deposit #2 lands.
+ *
+ *     TRADE-OFF, stated plainly: a player who genuinely loses their first
+ *     deposit and then re-deposits BEFORE claiming loses the reward. The bot
+ *     surfaces it as claimable the moment they are down, so the window is
+ *     real, but it is not unlimited. Freezing the figure at deposit #2 instead
+ *     would need the inventory value as it stood at that instant, which is not
+ *     reconstructable from the ledger — and guessing it would overpay.
+ *
+ *  4. ONCE, EVER. Enforced by the same claim rows every other reward uses.
+ *
+ * ── HOW "LOST" IS MEASURED ────────────────────────────────────────────────
+ *     lost = firstDeposit − whatTheyStillHold      (clamped to [0, deposit])
+ *
+ * `whatTheyStillHold` is cash AND card value — available + locked balance,
+ * plus inventory, plus unredeemed vouchers — mirroring the house P&L identity
+ * used everywhere else in this codebase. Counting cash alone would call a
+ * player who spent their whole deposit on packs "fully lost" while they sit on
+ * the cards, and pay out on a loss that hasn't happened.
+ *
+ * All reads are per-user and read-only against prod.
+ */
+
+/** Money in whole cents — all arithmetic is integer to avoid float drift. */
+const toCents = (usd: number): number => Math.round(usd * 100);
+const fromCents = (cents: number): number => cents / 100;
+
+export type FtdLossbackState = {
+  /** The qualifying first deposit, or null if they've never deposited. */
+  firstDepositUsd: number | null;
+  firstDepositAt: string | null;
+  /** True once a second deposit has landed — the window is then closed. */
+  hasSecondDeposit: boolean;
+  /** Everything they still hold: balance + locked + inventory + vouchers. */
+  holdingsUsd: number;
+  /** firstDeposit − holdings, clamped to [0, firstDeposit]. */
+  lostUsd: number;
+  /** pct × lost, after any cap. */
+  payoutUsd: number;
+  blockedReason: string | null;
+};
+
+const EMPTY: FtdLossbackState = {
+  firstDepositUsd: null,
+  firstDepositAt: null,
+  hasSecondDeposit: false,
+  holdingsUsd: 0,
+  lostUsd: 0,
+  payoutUsd: 0,
+  blockedReason: null,
+};
+
+/**
+ * Did this player SIGN UP under one of the program's codes?
+ *
+ * Case-insensitive because `affiliate_codes` casing is mixed for legacy rows
+ * and `affiliate_code_usages` mirrors whatever the caller resolved.
+ */
+async function signedUpUnderCode(
+  userId: string,
+  codes: readonly string[],
+): Promise<boolean> {
+  if (codes.length === 0) return false;
+  const upper = codes.map((c) => c.toUpperCase());
+  const rows = await getProdDb().$queryRaw<{ hit: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1 FROM affiliate_code_usages
+       WHERE referred_user_id = ${userId}
+         AND usage_type::text = 'signup'
+         AND UPPER(code) = ANY(${upper}::text[])
+    ) AS hit
+  `;
+  return rows[0]?.hit === true;
+}
+
+/** The player's first two completed deposits, oldest first. */
+async function firstDeposits(
+  userId: string,
+): Promise<{ amountUsd: number; at: Date }[]> {
+  const rows = await getProdDb().$queryRaw<
+    { amount: string; created_at: Date }[]
+  >`
+    SELECT amount::text, created_at
+      FROM ledger_transactions
+     WHERE user_id = ${userId}
+       AND type::text = 'deposit'
+       AND status = 'completed'
+     ORDER BY created_at ASC
+     LIMIT 2
+  `;
+  return rows.map((r) => ({
+    amountUsd: Math.abs(toNumber(r.amount)),
+    at: r.created_at,
+  }));
+}
+
+/**
+ * Everything the player still holds — cash AND card value.
+ *
+ * Reuses the CANONICAL per-user P&L helper rather than a local query. Its
+ * `onSiteBalance + inventoryValue + unclaimedVouchers` is exactly the "what
+ * the house still owes this user" side of the P&L identity in CLAUDE.md, and
+ * getting it from there means this reward can never drift from the figures
+ * shown on the user-detail page.
+ *
+ * That also avoids two traps a hand-rolled query walks straight into:
+ * `user_inventory` has no `value`/`status` columns (it is `value_at_obtained`,
+ * open = neither sold nor exchanged nor withdrawal-locked), and vouchers are
+ * gated on `claimed_at`, not a `redeemed_at`.
+ */
+async function holdingsUsd(userId: string): Promise<number> {
+  const pnl = await calculateUserPnl(userId);
+  return pnl.onSiteBalance + pnl.inventoryValue + pnl.unclaimedVouchers;
+}
+
+/**
+ * Compute the FTD-lossback position for one player on one program.
+ *
+ * Returns a fully-populated state even when nothing is payable, so the bot can
+ * explain WHY ("your first deposit was below $50") instead of silently showing
+ * nothing.
+ */
+export async function computeFtdLossback(
+  program: ProgramForCompute & {
+    lossback_pct: unknown;
+    min_deposit_usd: unknown;
+  },
+  userId: string,
+): Promise<FtdLossbackState> {
+  const pct = program.lossback_pct == null ? 0 : toNumber(program.lossback_pct);
+  const minDeposit =
+    program.min_deposit_usd == null ? 0 : toNumber(program.min_deposit_usd);
+
+  if (pct <= 0) {
+    return { ...EMPTY, blockedReason: "This program is misconfigured." };
+  }
+
+  // Already taken. One claim ever — pending counts, so a queued request can't
+  // be duplicated while it waits.
+  const existing = await adminDb.creator_reward_claims.count({
+    where: {
+      program_id: program.id,
+      user_id: userId,
+      status: { in: [...BASIS_HOLDING_STATUSES] },
+    },
+  });
+  if (existing > 0) {
+    return { ...EMPTY, blockedReason: "Already claimed." };
+  }
+
+  const [signedUp, deposits] = await Promise.all([
+    signedUpUnderCode(userId, program.codes),
+    firstDeposits(userId),
+  ]);
+
+  if (!signedUp) {
+    return {
+      ...EMPTY,
+      blockedReason: "This player didn't sign up under the creator's code.",
+    };
+  }
+
+  const first = deposits[0];
+  if (!first) {
+    return { ...EMPTY, blockedReason: "No deposit yet." };
+  }
+
+  // The first deposit must fall inside the program's life. A program created
+  // today cannot owe against a first deposit from months ago.
+  if (first.at < program.accrual_start_at) {
+    return {
+      ...EMPTY,
+      firstDepositUsd: first.amountUsd,
+      firstDepositAt: first.at.toISOString(),
+      blockedReason: "Their first deposit predates this program.",
+    };
+  }
+
+  if (first.amountUsd < minDeposit) {
+    return {
+      ...EMPTY,
+      firstDepositUsd: first.amountUsd,
+      firstDepositAt: first.at.toISOString(),
+      blockedReason: `First deposit was $${first.amountUsd.toFixed(2)} — below the $${minDeposit.toFixed(2)} minimum.`,
+    };
+  }
+
+  if (deposits.length > 1) {
+    return {
+      ...EMPTY,
+      firstDepositUsd: first.amountUsd,
+      firstDepositAt: first.at.toISOString(),
+      hasSecondDeposit: true,
+      blockedReason:
+        "They've deposited again — losses can no longer be tied to the first deposit.",
+    };
+  }
+
+  const holdings = await holdingsUsd(userId);
+  const depositCents = toCents(first.amountUsd);
+  const lostCents = Math.min(
+    depositCents,
+    Math.max(0, depositCents - toCents(holdings)),
+  );
+
+  // Percent applied in cents, then rounded once — never a float chain.
+  const payoutCents = Math.round((lostCents * pct) / 100);
+
+  return {
+    firstDepositUsd: first.amountUsd,
+    firstDepositAt: first.at.toISOString(),
+    hasSecondDeposit: false,
+    holdingsUsd: holdings,
+    lostUsd: fromCents(lostCents),
+    payoutUsd: fromCents(payoutCents),
+    blockedReason:
+      lostCents === 0 ? "They haven't lost any of their first deposit yet." : null,
+  };
+}

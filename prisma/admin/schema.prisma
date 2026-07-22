@@ -1985,6 +1985,11 @@ model creator_reward_programs {
   id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// Operator-facing label, e.g. "Jimmy VIP wager reward".
   name                    String
+  /// "wager"        — recurring: wager $threshold under the code, earn $reward.
+  /// "ftd_lossback" — one-off: % back on losses from the FIRST deposit only.
+  /// Which columns below are required depends on this; the action validates
+  /// per type, which is why the type-specific ones are all nullable.
+  type                    String   @default("wager")
   /// MAIN-DB `user.id` of the creator this program belongs to. Loose column,
   /// no Prisma relation — cross-DB joins don't exist (see CLAUDE.md).
   creator_user_id         String
@@ -1992,10 +1997,17 @@ model creator_reward_programs {
   /// `UPPER(acu.code) = ANY(...)` because `affiliate_codes` casing is mixed
   /// for legacy rows. A creator may run one program across several codes.
   codes                   String[] @default([])
-  /// Qualifying wager (USD) per reward unit. e.g. 1000.00
-  threshold_usd           Decimal  @db.Decimal(20, 2)
-  /// Reward (USD) credited per completed unit at the STANDARD rate. e.g. 5.00
-  reward_usd              Decimal  @db.Decimal(20, 2)
+  /// WAGER type only. Qualifying wager (USD) per reward unit. e.g. 1000.00
+  threshold_usd           Decimal? @db.Decimal(20, 2)
+  /// WAGER type only. Reward (USD) per unit at the STANDARD rate. e.g. 5.00
+  reward_usd              Decimal? @db.Decimal(20, 2)
+  /// FTD_LOSSBACK only. Percent of the first deposit's realised loss paid
+  /// back, e.g. 5.00 = 5%.
+  lossback_pct            Decimal? @db.Decimal(6, 2)
+  /// FTD_LOSSBACK only. Smallest qualifying first deposit, e.g. 50.00. A
+  /// smaller first deposit makes the player permanently ineligible — there is
+  /// only ever one first deposit.
+  min_deposit_usd         Decimal? @db.Decimal(20, 2)
   /// Reward (USD) per unit for players carrying the `vip` tag
   /// (`admin_user_tags`). NULL = no VIP uplift; everyone earns `reward_usd`.
   ///
@@ -2069,6 +2081,12 @@ model creator_reward_claims {
   forfeited_wager_usd Decimal                 @default(0) @db.Decimal(20, 2)
   /// AUDIT: when the run this claim was earned on began.
   run_started_at      DateTime?               @db.Timestamptz(6)
+  /// FTD_LOSSBACK claims only — the snapshot the payout was computed from.
+  /// The qualifying first deposit, and how much of it had been lost at claim
+  /// time. Stored because both move afterwards: the player keeps playing, and
+  /// a reviewer days later must see the numbers as they actually stood.
+  ftd_deposit_usd     Decimal?                @db.Decimal(20, 2)
+  ftd_loss_usd        Decimal?                @db.Decimal(20, 2)
   /// Basis already consumed by earlier pending/approved claims at request time.
   prior_consumed_usd  Decimal                 @db.Decimal(20, 2)
   /// Basis THIS claim consumes (= units × threshold_usd).
