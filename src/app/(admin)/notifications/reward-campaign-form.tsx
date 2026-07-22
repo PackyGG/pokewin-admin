@@ -27,10 +27,14 @@ import {
 import { Spinner } from "@/components/ux";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { BULK_MAX_ITEMS, REWARD_MAX_VALUE_USD, validateCampaignSlug } from "@/lib/user-notification";
+import {
+  BULK_MAX_ITEMS,
+  REWARD_AUDIENCE_MAX,
+  REWARD_MAX_VALUE_USD,
+  validateCampaignSlug,
+} from "@/lib/user-notification";
 import { sendRewardCampaignChunkAction } from "./reward-actions";
 import {
-  REWARD_AUDIENCE_MAX,
   resolveRewardAudienceAction,
   type AudienceFilters,
   type PickedUser,

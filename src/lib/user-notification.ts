@@ -75,6 +75,18 @@ export const BULK_BODY_BUDGET_BYTES = 900_000;
  */
 export const REWARD_MAX_VALUE_USD = 100;
 
+/**
+ * Ceiling on how many users one reward campaign may target. Matches the cap
+ * the shared `getUserIdsMatchingFilters` resolver applies, which fetches one
+ * row past it so an over-large audience is DETECTABLE rather than silently
+ * truncated — the composer refuses to send instead of paying a subset.
+ *
+ * Here rather than in `audience-actions.ts` for a hard reason: a `"use server"`
+ * module may only export async functions, so a plain const there is a build
+ * error (which `tsc` does not catch — only `next build` does).
+ */
+export const REWARD_AUDIENCE_MAX = 25_000;
+
 /** Arbitrary interpolation data — the point of the contract. */
 export type NotificationPayload = Record<string, unknown>;
 

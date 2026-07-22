@@ -4,6 +4,9 @@
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { getUserIdsMatchingFilters } from "@/lib/queries/users-list";
+// A "use server" module may only export async functions, so the cap lives in
+// the shared client-importable contract module.
+import { REWARD_AUDIENCE_MAX } from "@/lib/user-notification";
 
 /**
  * Who a reward campaign goes to, resolved server-side.
@@ -24,11 +27,6 @@ import { getUserIdsMatchingFilters } from "@/lib/queries/users-list";
 
 const PAGE_KEY = "/notifications";
 const CAPABILITY = "__can_send_user_notifications";
-
-/** Ceiling on one campaign. `getUserIdsMatchingFilters` fetches one row past
- * its own cap so an over-large audience is detectable rather than silently
- * truncated — surfaced as `truncated` and blocked in the UI. */
-export const REWARD_AUDIENCE_MAX = 25_000;
 
 export type AudienceFilters = {
   /** "yes" | "no" | undefined — has ever deposited. */
