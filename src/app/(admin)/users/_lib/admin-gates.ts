@@ -1,6 +1,5 @@
 import { adminDb } from "@/lib/admin-db";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
-import { isUsersExportOwnerRow } from "@/lib/users-export/motha-gate";
 import { isExcludedSearchOwnerRow } from "@/lib/excluded-users/search-gate";
 import { logError } from "@/lib/errors/logger";
 import type { SessionPayload } from "@/lib/session";
@@ -10,8 +9,8 @@ import type { SessionPayload } from "@/lib/session";
  * admin-DB read.
  *
  * The page previously issued three sequential, unguarded adminDb lookups
- * before first paint: the `allowed_pages` read (non-admins), the
- * `canExportAllUsers` motha check, and the
+ * before first paint: the `allowed_pages` read (non-admins), an owner
+ * check for the (since-removed) "Export all" button, and the
  * `canCurrentAdminIncludeExcludedInSearch` check — the last two reading
  * the SAME `admin_users` row twice. Any adminDb hiccup bypassed the
  * page's safeQuery wrappers entirely and crashed the whole view to
@@ -21,15 +20,13 @@ import type { SessionPayload } from "@/lib/session";
  * admin row, wrapped in try/catch. On failure it logs and FAILS CLOSED
  * (everything false except `canSeeDeletedUsers` for real admins, which
  * needs no DB read) — safe because every flag here is render-cosmetic:
- * the real boundaries are the server actions themselves
- * (`requireUsersExportAdmin`, the delete capability checks, the
- * excluded-search override), which all re-verify independently.
+ * the real boundaries are the server actions themselves (the delete
+ * capability checks, the excluded-search override), which all re-verify
+ * independently.
  */
 export type UsersPageGates = {
   /** Show the "Deleted users" hero button (admins always; others need the page key + capability). */
   canSeeDeletedUsers: boolean;
-  /** Show the motha-only "Export all" button. */
-  canExportAll: boolean;
   /** Let an active search surface excluded (blacklisted) users. */
   includeExcludedInSearch: boolean;
 };
@@ -56,10 +53,6 @@ export async function getUsersPageGates(
         (active &&
           pages.includes("/users/deleted") &&
           hasCapability(pages, "__can_delete_user")),
-      // Owner-gated now (was a `motha` username check): compute owner from the
-      // single row we already fetched (the permanent `motha` username OR the
-      // `is_owner` flag). The throwing action gates re-verify independently.
-      canExportAll: active && isUsersExportOwnerRow(username, isOwner),
       includeExcludedInSearch: active && isExcludedSearchOwnerRow(username, isOwner),
     };
   } catch (err) {
@@ -70,7 +63,6 @@ export async function getUsersPageGates(
     );
     return {
       canSeeDeletedUsers: isAdmin,
-      canExportAll: false,
       includeExcludedInSearch: false,
     };
   }

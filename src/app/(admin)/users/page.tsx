@@ -25,9 +25,6 @@ import {
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { formatNumber } from "@/lib/utils/format";
-import { ExportUsersButton } from "./export-dialog";
-import { ExportAllUsersButton } from "./export-all-users-button";
-import { SortByNetHoldingsButton } from "./sort-net-holdings-button";
 import { SortByUserNetWorthButton } from "./sort-user-net-worth-button";
 import {
   SortByPnlLosersButton,
@@ -89,8 +86,8 @@ export default async function UsersPage({
   const params = parseUsersSearchParams(await searchParams);
 
   // ONE consolidated, fail-closed adminDb read for every render-cosmetic
-  // gate flag (Deleted-users button, motha Export-all button, excluded-
-  // users search override). Replaces three sequential unguarded lookups
+  // gate flag (Deleted-users button, excluded-users search override).
+  // Replaces three sequential unguarded lookups
   // that could crash the whole page to error.tsx on an adminDb hiccup.
   // See ./_lib/admin-gates.ts — every action re-verifies server-side.
   const gates = await getUsersPageGates(session);
@@ -244,10 +241,7 @@ export default async function UsersPage({
             >
               <SortByPnlLosersButton />
               <SortByPnlWinnersButton />
-              <SortByNetHoldingsButton />
               <SortByUserNetWorthButton />
-              <ExportUsersButton />
-              {gates.canExportAll && <ExportAllUsersButton />}
             </DataTableToolbar>
           </Suspense>
           {/* "Affiliate code only" mode: surface the matched CODES as links to

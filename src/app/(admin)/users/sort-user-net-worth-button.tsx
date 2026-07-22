@@ -7,11 +7,23 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /**
- * Rank by combined on-site holdings (balance + inventory + vouchers)
- * for **player accounts only** — excludes creators, admins, and support.
+ * Rank by combined on-site holdings for **player accounts only** —
+ * `role=user` pinned, so creators / admins / support can't dominate the
+ * list. This is the ONLY net-worth shortcut on the toolbar since the
+ * unfiltered "Top balance + inventory" twin was removed (owner,
+ * 2026-07-22).
  *
- * Same `netHoldings` sort as {@link SortByNetHoldingsButton} with
- * `role=user` pinned so creator deal balances don't dominate the list.
+ * What it ranks by is the `netHoldings` sort key, and it is exactly the
+ * "Net" column the rows display:
+ *
+ *   available_balance + locked_balance + open inventory (cards) +
+ *   unclaimed vouchers − official_stream/remove_locked carve-out
+ *
+ * Inventory counts unsold, unexchanged, non-withdrawal-locked rows at
+ * `value_at_obtained`; vouchers count `claimed_at IS NULL`. ORDER BY and
+ * the displayed value share that one formula (users-list.ts
+ * buildRankingOrderExpr vs hydrateUserListPage) — verified cent-exact on
+ * the live top 15 against prod, read-only, 2026-07-22.
  */
 export function SortByUserNetWorthButton() {
   const router = useRouter();
