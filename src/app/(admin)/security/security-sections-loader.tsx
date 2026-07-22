@@ -9,6 +9,7 @@ import {
   getCachedRewardExpiry,
   getCachedCryptoFees,
   getCachedDepositBonusConfig,
+  getCachedTelegramNotificationSettings,
 } from "./_cached-reads";
 import { SecurityPageSections } from "./security-page-sections";
 import { RAIN_CONFIG_SITE_CONFIG_KEYS } from "../rain/config-keys";
@@ -19,6 +20,7 @@ import { SOURCE_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./source-wager-weights-key
 import { RETIRED_SHARD_SITE_CONFIG_KEYS } from "./retired-shard-keys";
 import { DEPOSIT_BONUS_CONFIG_SITE_CONFIG_KEYS } from "./deposit-bonus-config-keys";
 import { REWARD_EXPIRY_SITE_CONFIG_KEYS } from "./reward-expiry-keys";
+import { TELEGRAM_NOTIFICATION_SITE_CONFIG_KEYS } from "./telegram-notifications-keys";
 import type { WagerRequirementDefaults } from "@/lib/backend-api/wager-requirements";
 import type { LeaderboardWagerWeights } from "@/lib/backend-api/leaderboard-wager-weights";
 import type { RakebackWagerWeights } from "@/lib/backend-api/rakeback-wager-weights";
@@ -27,6 +29,7 @@ import type { MultiplierWagerWeights } from "@/lib/backend-api/multiplier-wager-
 import type { RewardExpiry } from "@/lib/backend-api/reward-expiry";
 import type { CryptoFees } from "@/lib/backend-api/crypto-fees";
 import type { DepositBonusConfig } from "@/lib/backend-api/deposit-bonus-config";
+import type { TelegramNotificationSettings } from "@/lib/backend-api/telegram-notifications";
 
 /**
  * Async data loader for the /security sections. Lives behind a <Suspense>
@@ -54,6 +57,7 @@ export async function SecuritySectionsLoader() {
     rewardExpiryResult,
     cryptoFeesResult,
     depositBonusConfigResult,
+    telegramNotificationsResult,
     vaultLockTimesResult,
   ] = await Promise.allSettled([
     getCachedSiteConfig(),
@@ -65,6 +69,7 @@ export async function SecuritySectionsLoader() {
     getCachedRewardExpiry(),
     getCachedCryptoFees(),
     getCachedDepositBonusConfig(),
+    getCachedTelegramNotificationSettings(),
     getCachedVaultLockTimes(),
   ]);
 
@@ -86,6 +91,7 @@ export async function SecuritySectionsLoader() {
     ...RETIRED_SHARD_SITE_CONFIG_KEYS,
     ...DEPOSIT_BONUS_CONFIG_SITE_CONFIG_KEYS,
     ...REWARD_EXPIRY_SITE_CONFIG_KEYS,
+    ...TELEGRAM_NOTIFICATION_SITE_CONFIG_KEYS,
   ]);
   const config = allConfig.filter((row) => !movedKeys.has(row.key));
   const hasMovedKeys = allConfig.some((row) =>
@@ -128,6 +134,11 @@ export async function SecuritySectionsLoader() {
       ? depositBonusConfigResult.value
       : null;
 
+  const telegramNotifications: TelegramNotificationSettings | null =
+    telegramNotificationsResult.status === "fulfilled"
+      ? telegramNotificationsResult.value
+      : null;
+
   const vaultLockTimes =
     vaultLockTimesResult.status === "fulfilled"
       ? vaultLockTimesResult.value
@@ -146,6 +157,7 @@ export async function SecuritySectionsLoader() {
       rewardExpiry={rewardExpiry}
       cryptoFees={cryptoFees}
       depositBonusConfig={depositBonusConfig}
+      telegramNotifications={telegramNotifications}
     />
   );
 }

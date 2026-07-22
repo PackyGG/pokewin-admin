@@ -11,6 +11,7 @@ import { getMultiplierWagerWeights } from "@/lib/backend-api/multiplier-wager-we
 import { getRewardExpiry } from "@/lib/backend-api/reward-expiry";
 import { getCryptoFees } from "@/lib/backend-api/crypto-fees";
 import { getDepositBonusConfig } from "@/lib/backend-api/deposit-bonus-config";
+import { getTelegramNotificationSettings } from "@/lib/backend-api/telegram-notifications";
 import { SECURITY_CACHE_TAG } from "./security-cache-tag";
 
 /**
@@ -106,6 +107,12 @@ const cachedDepositBonusConfig = unstable_cache(
   { revalidate: REVALIDATE_SECONDS, tags: [SECURITY_CACHE_TAG] },
 );
 
+const cachedTelegramNotificationSettings = unstable_cache(
+  () => getTelegramNotificationSettings(),
+  ["security-telegram-notifications-v1"],
+  { revalidate: REVALIDATE_SECONDS, tags: [SECURITY_CACHE_TAG] },
+);
+
 /**
  * Prod-cached / dev-direct read for each /security section. On a dev-toggled
  * admin every helper bypasses the cache and runs the live read so they always
@@ -185,4 +192,13 @@ export async function getCachedDepositBonusConfig(): ReturnType<
   return env === "prod"
     ? cachedDepositBonusConfig()
     : getDepositBonusConfig();
+}
+
+export async function getCachedTelegramNotificationSettings(): ReturnType<
+  typeof getTelegramNotificationSettings
+> {
+  const env = await readDbEnv();
+  return env === "prod"
+    ? cachedTelegramNotificationSettings()
+    : getTelegramNotificationSettings();
 }

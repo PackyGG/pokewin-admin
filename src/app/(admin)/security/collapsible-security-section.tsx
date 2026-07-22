@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
   Banknote,
+  Bell,
   Bitcoin,
   ChevronDown,
   Coins,
@@ -39,6 +40,7 @@ export const SECURITY_SECTION_ICONS = {
   dices: Dices,
   hourglass: Hourglass,
   bitcoin: Bitcoin,
+  bell: Bell,
   sliders: SlidersHorizontal,
   timer: Timer,
   plus: Plus,
