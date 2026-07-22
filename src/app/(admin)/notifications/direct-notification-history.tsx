@@ -1,4 +1,4 @@
-import { History, Send, Users } from "lucide-react";
+import { History, Send, Ticket, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/table";
 import { EmptyState } from "@/components/empty-state";
 import { SectionHeading } from "@/components/modern-panels";
-import { formatDateTime, formatNumber } from "@/lib/utils/format";
+import { formatCurrency, formatDateTime, formatNumber } from "@/lib/utils/format";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { getDirectNotificationHistory } from "./_queries/direct-history";
 
@@ -79,19 +79,27 @@ export async function DirectNotificationHistory() {
 
                 <TableCell className="max-w-[280px]">
                   <div className="flex items-start gap-2">
-                    {e.kind === "bulk" ? (
+                    {e.kind === "reward" ? (
+                      <Ticket className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                    ) : e.kind === "bulk" ? (
                       <Users className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
                     ) : (
                       <Send className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
                     )}
                     <div className="min-w-0">
                       <p className="truncate text-sm">
-                        {e.kind === "bulk"
-                          ? (e.campaign ?? "(no campaign)")
-                          : (e.targetUserId ?? "(unknown user)")}
+                        {e.kind === "single"
+                          ? (e.targetUserId ?? "(unknown user)")
+                          : (e.campaign ?? "(no campaign)")}
                       </p>
                       <div className="flex flex-wrap items-center gap-1.5">
-                        {e.kind === "bulk" && e.chunks > 1 && (
+                        {e.kind === "reward" && (
+                          <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                            {formatCurrency(e.valueUsd ?? 0)} ×{" "}
+                            {formatNumber(e.codesMinted)} minted
+                          </span>
+                        )}
+                        {e.kind !== "single" && e.chunks > 1 && (
                           <span className="text-[10px] text-muted-foreground">
                             {e.chunks} chunks
                           </span>

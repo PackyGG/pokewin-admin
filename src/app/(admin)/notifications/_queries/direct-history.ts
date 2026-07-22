@@ -22,7 +22,11 @@ import { adminDb } from "@/lib/admin-db";
  * and a unioned unknown-user list. Single sends stay as individual entries.
  */
 
-const EVENT_TYPES = ["user_notification_sent", "user_notifications_bulk_sent"];
+const EVENT_TYPES = [
+  "user_notification_sent",
+  "user_notifications_bulk_sent",
+  "reward_campaign_chunk_sent",
+];
 
 /** Audit rows scanned before folding. Bounded so a long-running admin can't
  * drag an unbounded set into the request; the folded output is capped lower
@@ -32,7 +36,7 @@ const RESULT_LIMIT = 40;
 
 export type DirectNotificationHistoryEntry = {
   id: string;
-  kind: "single" | "bulk";
+  kind: "single" | "bulk" | "reward";
   sentAt: string;
   /** Earliest chunk time for a bulk campaign; same as sentAt for a single. */
   startedAt: string;
@@ -52,6 +56,9 @@ export type DirectNotificationHistoryEntry = {
   unknownUsers: string[];
   /** Representative payload — the single send's own, or a bulk sample item's. */
   samplePayload: Record<string, unknown> | null;
+  /** Reward campaigns only — new codes minted, and the money they carry. */
+  codesMinted: number;
+  valueUsd: number | null;
 };
 
 const str = (v: unknown): string | null =>
@@ -113,10 +120,13 @@ export async function getDirectNotificationHistory(): Promise<
         deduped: 0,
         unknownUsers: [],
         samplePayload: asPayload(meta.payload),
+        codesMinted: 0,
+        valueUsd: null,
       });
       continue;
     }
 
+    const isReward = row.event_type === "reward_campaign_chunk_sent";
     const campaign = str(meta.campaign);
     // Same campaign re-run with a different type/category is a different send.
     const key = `${campaign ?? row.id}|${type ?? ""}|${category ?? ""}|${env ?? ""}`;
@@ -130,13 +140,14 @@ export async function getDirectNotificationHistory(): Promise<
       byCampaign.set(key, entries.length);
       entries.push({
         id: row.id,
-        kind: "bulk",
+        kind: isReward ? "reward" : "bulk",
         sentAt,
         startedAt: sentAt,
         adminUsername,
         env,
-        category,
-        type,
+        // A reward chunk has no free-form category/type — the flow fixes both.
+        category: isReward ? "rewards" : category,
+        type: isReward ? "promo_code_granted" : type,
         campaign,
         chunks: 1,
         targetUserId: null,
@@ -145,6 +156,8 @@ export async function getDirectNotificationHistory(): Promise<
         deduped: num(meta.deduped),
         unknownUsers: unknown,
         samplePayload: sampleItem ? asPayload(sampleItem.payload) : null,
+        codesMinted: isReward ? num(meta.codesMinted) : 0,
+        valueUsd: isReward ? num(meta.valueUsd) : null,
       });
       continue;
     }
@@ -161,6 +174,12 @@ export async function getDirectNotificationHistory(): Promise<
     }
     if (!entry.samplePayload && sampleItem) {
       entry.samplePayload = asPayload(sampleItem.payload);
+    }
+    if (isReward) {
+      entry.codesMinted += num(meta.codesMinted);
+      // Per-user amount, not a sum — every chunk of one campaign carries the
+      // same value, so folding must not add them up.
+      if (entry.valueUsd === null) entry.valueUsd = num(meta.valueUsd);
     }
   }
 

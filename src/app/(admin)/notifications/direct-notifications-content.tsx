@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, Lock, Send, Users } from "lucide-react";
+import { AlertTriangle, Lock, Send, Ticket, Users } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Card,
@@ -14,8 +14,9 @@ import { SectionHeading } from "@/components/modern-panels";
 import { EmptyState } from "@/components/empty-state";
 import { SingleNotificationForm } from "./single-notification-form";
 import { BulkNotificationForm } from "./bulk-notification-form";
+import { RewardCampaignForm } from "./reward-campaign-form";
 
-type Mode = "single" | "bulk";
+type Mode = "single" | "bulk" | "reward";
 
 /**
  * The "Direct to user" tab — writes into the PERSONAL notification feed, one
@@ -91,10 +92,24 @@ export function DirectNotificationsContent({
             <Users className="size-3.5" />
             Bulk campaign
           </TabsTrigger>
+          <TabsTrigger value="reward">
+            <Ticket className="size-3.5" />
+            Reward campaign
+          </TabsTrigger>
         </TabsList>
       </Tabs>
 
-      {mode === "single" ? (
+      {mode === "reward" ? (
+        <div className="space-y-3">
+          <SectionHeading icon={Ticket} title="Reward campaign" />
+          <p className="text-xs text-muted-foreground">
+            Set an amount and a recipient list. Every user gets their own
+            single-use promo code, minted server-side and redeemable only by
+            that account, delivered as a notification they can tap to copy.
+          </p>
+          <RewardCampaignForm />
+        </div>
+      ) : mode === "single" ? (
         <div className="space-y-3">
           <SectionHeading icon={Send} title="Send to one user" />
           <p className="text-xs text-muted-foreground">
