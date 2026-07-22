@@ -2095,6 +2095,13 @@ model creator_reward_claims {
   /// MAIN-DB `ledger_transactions.id` of the balance credit written on
   /// approval. Loose column (cross-DB); NULL unless approved.
   ledger_tx_id        String?                 @db.Uuid
+  /// Set when a REJECTED claim was put back into review (rejected → pending).
+  /// The rejection reason is deliberately kept in `review_note` so whoever
+  /// picks it up second sees why it was turned down the first time. Only ever
+  /// set on a claim that was rejected — an approved claim is never reopened,
+  /// because money has already moved.
+  reinstated_at       DateTime?               @db.Timestamptz(6)
+  reinstated_by       String?                 @db.Uuid
 
   @@index([status, requested_at(sort: Desc)], map: "creator_reward_claims_status_requested_idx")
   @@index([program_id, user_id], map: "creator_reward_claims_program_user_idx")

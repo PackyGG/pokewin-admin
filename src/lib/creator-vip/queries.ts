@@ -111,6 +111,8 @@ export type CreatorRewardClaimRow = {
   reviewedAt: string | null;
   reviewNote: string | null;
   ledgerTxId: string | null;
+  /** Set when this claim was rejected and later put back into review. */
+  reinstatedAt: string | null;
   /**
    * PENDING rows only: is the player STILL actively on one of the program's
    * codes right now?
@@ -224,6 +226,7 @@ export async function getClaims(params: {
     reviewedAt: c.reviewed_at?.toISOString() ?? null,
     reviewNote: c.review_note,
     ledgerTxId: c.ledger_tx_id,
+    reinstatedAt: c.reinstated_at?.toISOString() ?? null,
     stillOnCode:
       c.status !== "pending" || !activeCodeByUser.has(c.user_id)
         ? null

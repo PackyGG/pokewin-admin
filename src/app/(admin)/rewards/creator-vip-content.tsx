@@ -8,6 +8,7 @@ import {
   Crown,
   Inbox,
   Plus,
+  RotateCcw,
   ShieldQuestion,
   X,
 } from "lucide-react";
@@ -39,6 +40,7 @@ import {
   createCreatorRewardProgram,
   previewCreatorRewardEntitlement,
   raiseCreatorRewardClaimForUser,
+  reinstateCreatorRewardClaim,
   rejectCreatorRewardClaim,
   searchCreatorsWithCodes,
   setCreatorRewardProgramActive,
@@ -834,6 +836,7 @@ function RequestsPanel({ claims }: { claims: CreatorRewardClaimRow[] }) {
 function ClaimRow({ claim }: { claim: CreatorRewardClaimRow }) {
   const [approveOpen, setApproveOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [reopenOpen, setReopenOpen] = useState(false);
 
   const statusBadge =
     claim.status === "approved" ? (
@@ -883,12 +886,30 @@ function ClaimRow({ claim }: { claim: CreatorRewardClaimRow }) {
                 Left the code
               </Badge>
             )}
+            {claim.reinstatedAt && (
+              <Badge
+                variant="outline"
+                className="bg-sky-500/15 text-[10px] text-sky-600 dark:text-sky-400"
+              >
+                Reopened
+              </Badge>
+            )}
             {statusBadge}
           </div>
           <div className="mt-0.5 text-xs text-muted-foreground">
             {claim.programName} · {claim.creatorUsername ?? "creator"} ·{" "}
             {formatRelative(claim.requestedAt)}
           </div>
+          {/* A reopened claim is pending again, so the buttons replace the note
+              column — surface the original rejection here instead, or the
+              second reviewer repeats the first one's work blind. */}
+          {claim.status === "pending" &&
+            claim.reinstatedAt &&
+            claim.reviewNote && (
+              <div className="mt-1 text-xs text-sky-600 dark:text-sky-400">
+                Previously rejected: &ldquo;{claim.reviewNote}&rdquo;
+              </div>
+            )}
         </div>
 
         <div className="text-xs text-muted-foreground">
@@ -945,11 +966,23 @@ function ClaimRow({ claim }: { claim: CreatorRewardClaimRow }) {
             </Button>
           </div>
         ) : (
-          claim.reviewNote && (
-            <div className="max-w-[220px] text-xs text-muted-foreground">
-              &ldquo;{claim.reviewNote}&rdquo;
-            </div>
-          )
+          <div className="flex items-center gap-3">
+            {claim.reviewNote && (
+              <div className="max-w-[220px] text-xs text-muted-foreground">
+                &ldquo;{claim.reviewNote}&rdquo;
+              </div>
+            )}
+            {claim.status === "rejected" && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setReopenOpen(true)}
+              >
+                <RotateCcw className="size-3.5" />
+                Reopen
+              </Button>
+            )}
+          </div>
         )}
       </CardContent>
 
@@ -963,7 +996,87 @@ function ClaimRow({ claim }: { claim: CreatorRewardClaimRow }) {
         open={rejectOpen}
         onOpenChange={setRejectOpen}
       />
+      <ReopenDialog
+        claim={claim}
+        open={reopenOpen}
+        onOpenChange={setReopenOpen}
+      />
     </Card>
+  );
+}
+
+/** Undo for a wrongly-rejected claim: puts it back in the review queue. */
+function ReopenDialog({
+  claim,
+  open,
+  onOpenChange,
+}: {
+  claim: CreatorRewardClaimRow;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const [note, setNote] = useState("");
+  const [isPending, startTransition] = useTransition();
+
+  function submit() {
+    startTransition(async () => {
+      const res = await reinstateCreatorRewardClaim({
+        claimId: claim.id,
+        note: note.trim(),
+      });
+      if (!res.success) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success("Back in the review queue");
+      setNote("");
+      onOpenChange(false);
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Reopen this claim</DialogTitle>
+          <DialogDescription>
+            Puts it back in the queue for {formatCurrency(claim.amountUsd)} and
+            re-reserves the {formatCurrency(claim.consumedWagerUsd)} of wager it
+            was based on. Nothing is paid until someone approves it.
+          </DialogDescription>
+        </DialogHeader>
+
+        {claim.reviewNote && (
+          <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            Rejected because: &ldquo;{claim.reviewNote}&rdquo;
+          </div>
+        )}
+
+        <div className="space-y-1.5">
+          <Label className="text-xs">Why reopen it? (required)</Label>
+          <Textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={3}
+            placeholder="e.g. rejected by mistake — wrong row"
+            disabled={isPending}
+          />
+        </div>
+
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={isPending}
+          >
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={isPending || note.trim().length < 3}>
+            {isPending ? "Reopening…" : "Reopen"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

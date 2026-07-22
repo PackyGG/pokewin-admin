@@ -398,6 +398,110 @@ export async function rejectCreatorRewardClaim(input: {
 }
 
 /**
+ * Put a REJECTED claim back into review (rejected → pending).
+ *
+ * The undo for rejecting the wrong row. Rejection itself already demands a
+ * typed reason, so a stray click can't fire it — what this covers is the
+ * reviewer who rejected a claim they meant to keep.
+ *
+ * Only REJECTED claims can be reopened. An approved one never can: money has
+ * already moved, and "unapproving" would imply a clawback this action has no
+ * business performing silently.
+ *
+ * Reinstating re-reserves the wager basis (a pending claim holds it again),
+ * which is exactly why it can collide: if the player has since filed a fresh
+ * claim, the partial unique index refuses a second pending row. That P2002 is
+ * translated rather than surfaced as a crash — the reviewer is told to deal
+ * with the newer claim instead.
+ *
+ * The original rejection reason is deliberately KEPT in `review_note`, so
+ * whoever picks the claim up second can see why it was turned down first.
+ */
+export async function reinstateCreatorRewardClaim(input: {
+  claimId: string;
+  note: string;
+}): Promise<ActionResult> {
+  await requirePageAccess("/rewards");
+  const session = await requireAdmin();
+
+  const parsed = z
+    .object({
+      claimId: z.string().uuid(),
+      // Reopening a decision someone else made is itself a decision worth
+      // recording, so a reason is required here too.
+      note: z.string().trim().min(3).max(1000),
+    })
+    .safeParse(input);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "A reason is required",
+    };
+  }
+
+  const claim = await adminDb.creator_reward_claims.findUnique({
+    where: { id: parsed.data.claimId },
+    include: { program: true },
+  });
+  if (!claim) return { success: false, error: "Claim not found" };
+  if (claim.status !== "rejected") {
+    return {
+      success: false,
+      error:
+        claim.status === "approved"
+          ? "Already approved and paid — reopening isn't possible."
+          : "That claim is already awaiting review.",
+    };
+  }
+
+  try {
+    await adminDb.creator_reward_claims.update({
+      where: { id: claim.id },
+      data: {
+        status: "pending",
+        reinstated_at: new Date(),
+        reinstated_by: session.userId,
+        // Cleared so the row reads as genuinely awaiting review again; who
+        // rejected it, and why, is preserved in review_note + the audit trail.
+        reviewed_by: null,
+        reviewed_at: null,
+      },
+    });
+  } catch (err) {
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      (err as { code?: string }).code === "P2002"
+    ) {
+      return {
+        success: false,
+        error:
+          "This player already has a newer claim awaiting review — handle that one instead.",
+      };
+    }
+    throw err;
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "creator_reward_claim_reinstated",
+    targetUserId: claim.user_id,
+    metadata: {
+      claim_id: claim.id,
+      program_id: claim.program_id,
+      program_name: claim.program.name,
+      amount_usd: Number(claim.amount_usd),
+      original_rejection_note: claim.review_note,
+      originally_rejected_by: claim.reviewed_by,
+      reason: parsed.data.note,
+    },
+  });
+
+  revalidatePath("/rewards");
+  return { success: true };
+}
+
+/**
  * Raise a claim on a user's behalf — the same path the Discord bot will use
  * once the API lands, so the review queue can be exercised end-to-end before
  * any bot traffic exists. Eligibility is recomputed server-side; the operator
