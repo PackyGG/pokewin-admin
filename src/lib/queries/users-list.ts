@@ -12,6 +12,8 @@ import { calculateUsersPnlBatch, type UserPnl } from "./pnl";
 import { isUserId, isUuid } from "@/lib/utils/ids";
 import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-visible-override";
 import { escapeBlacklistIds } from "./_blacklist";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { STAFF_ROLES } from "./_exclude-staff";
 import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
 
 // Allowlist from the generated Prisma user_role enum — validate the
@@ -1762,4 +1764,75 @@ export async function getMatchingAffiliateCodes(
     ownerUserId: r.user_id,
     ownerUsername: r.username,
   }));
+}
+
+/**
+ * Hard ceiling on one bulk-ban. Not a performance limit — a blast-radius
+ * one. If a filter matches more than this, the operator is almost
+ * certainly not looking at what they think they are.
+ */
+export const BULK_BAN_MAX = 25_000;
+
+/**
+ * Every user id matching a set of list filters — the SAME
+ * `buildUserListWhereClause` the table itself uses, so "ban everything I'm
+ * looking at" can never target a different population than the screen shows.
+ * That shared builder is the whole point; re-deriving the predicates here
+ * would be a correctness bug waiting to happen.
+ *
+ * Excludes, unconditionally and regardless of filters:
+ *   • already-banned users (re-banning would overwrite the original reason
+ *     and `banned_at`, destroying why they were banned the first time)
+ *   • STAFF_ROLES (admin / support) — internal accounts are never bulk-banned
+ *
+ * Search is deliberately NOT accepted: a free-text term routes through the
+ * ranked/exact-match paths rather than this clause, so honouring it here
+ * would silently ban a different set than the search showed.
+ */
+export async function getUserIdsMatchingFilters(params: {
+  role?: string;
+  status?: string;
+  deposited?: string;
+  provider?: string;
+  sharedIp?: string;
+  sharedDevice?: string;
+  freeOnly?: string;
+  affiliateCode?: string;
+  affiliateOwnerId?: string;
+}): Promise<string[]> {
+  const db = await getDb();
+  const excludedUserIds = await getExcludedUserIds();
+
+  const whereClause = buildUserListWhereClause({
+    searchTerm: undefined,
+    isExactId: false,
+    isEmailLike: false,
+    isDiscordId: false,
+    searchMode: "prefix",
+    codeSearch: false,
+    role: params.role,
+    status: params.status,
+    deposited: params.deposited,
+    provider: params.provider,
+    sharedIp: params.sharedIp,
+    sharedDevice: params.sharedDevice,
+    freeOnly: params.freeOnly,
+    affiliateCode: params.affiliateCode,
+    affiliateOwnerId: params.affiliateOwnerId,
+    excludedUserIds,
+  });
+
+  const staffList = STAFF_ROLES.map((r) => `'${r}'`).join(",");
+  const rows = await db.$queryRawUnsafe<{ id: string }[]>(
+    `
+    SELECT u.id
+    FROM "user" u
+    ${whereClause.sql}
+      AND u.is_banned = false
+      AND u.role::text NOT IN (${staffList})
+    LIMIT ${BULK_BAN_MAX + 1}
+    `,
+    ...whereClause.params,
+  );
+  return rows.map((r) => r.id);
 }

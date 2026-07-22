@@ -24,11 +24,22 @@ import type { SessionPayload } from "@/lib/session";
 export type UsersPageGates = {
   /** Let an active search surface excluded (blacklisted) users. */
   includeExcludedInSearch: boolean;
+  /**
+   * Show the bulk-ban control. ADMIN/OWNER ONLY — stricter than the
+   * single-user ban, which is a support capability. Render-cosmetic:
+   * `bulkBanFilteredUsers` re-checks this server-side.
+   */
+  canBulkBan: boolean;
 };
 
 export async function getUsersPageGates(
-  session: Pick<SessionPayload, "userId">,
+  session: Pick<SessionPayload, "userId" | "role" | "roles" | "isOwner">,
 ): Promise<UsersPageGates> {
+  // Read off the session, which dal.ts already refreshed from the DB — no
+  // extra round-trip just to learn the caller is an admin.
+  const canBulkBan =
+    (session.roles?.includes("admin") ?? session.role === "admin") ||
+    Boolean(session.isOwner);
   try {
     const row = await adminDb.admin_users.findUnique({
       where: { id: session.userId },
@@ -38,6 +49,7 @@ export async function getUsersPageGates(
     return {
       includeExcludedInSearch:
         active && isExcludedSearchOwnerRow(row?.username ?? "", row?.is_owner ?? false),
+      canBulkBan,
     };
   } catch (err) {
     logError(
@@ -47,6 +59,8 @@ export async function getUsersPageGates(
     );
     return {
       includeExcludedInSearch: false,
+      // Fails closed like the flag above.
+      canBulkBan: false,
     };
   }
 }
