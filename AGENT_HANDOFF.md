@@ -39,6 +39,16 @@
 
 ## Shipped (recent -- on main)
 
+**2026-07-22 — /security → Telegram Notifications section (`ab1bbf22`)**
+
+New collapsible section: min-deposit `$` input + new-signup toggle, wired to the backend's
+`GET/PUT /admin/telegram-notifications`. Built on the deposit-bonus-config trio pattern
+(backend-api module + `-keys`/`-actions`/`-card`), prod-cached read, fault-isolated leg,
+both site_config keys added to `movedKeys`. MAIN stays read-only — writes go through the
+backend admin API only. Added `bell` to `SECURITY_SECTION_ICONS`. Gates: tsc + lint + build all green.
+**⚠️ Depends on backend PR #455** (`motha/feat/telegram-signup-and-deposit-threshold`, open against
+`dev`) — until that merges + deploys, the card renders its "backend not updated yet" state by design.
+
 **2026-07-12 (part 26) — wave 16b + full audit fix sweep (4 commits: `82daed7b`, `84ec9009`, `2aa58667`, `a07f4c4e`)**
 
 Owner: "literally fix all possible things, all options or scenarios i want it perfect!"
