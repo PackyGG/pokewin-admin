@@ -31,6 +31,12 @@ export type UserDetail = {
     suspectedAlt: boolean;
     /** Other accounts sharing any of this user's device visitor_ids. */
     linkedDeviceAccountCount: number;
+    /** How many fingerprint rows this user has. 0 = never captured. */
+    deviceCaptureCount: number;
+    /** Most recent capture (ISO), or null when never captured. */
+    deviceCapturedAt: string | null;
+    /** Best confidence across this user's captures (0–1), null if none. */
+    deviceConfidence: number | null;
     country: string | null;
     countryCode: string | null;
     city: string | null;

@@ -597,15 +597,24 @@ export async function getUserDetail(id: string) {
   // whole fan-out.
   const fingerprintSignalPromise = db
     .$queryRaw<
-      { suspected_alt: boolean | null; linked_count: bigint | number | null }[]
+      {
+        suspected_alt: boolean | null;
+        linked_count: bigint | number | null;
+        capture_count: number | null;
+        captured_at: Date | null;
+        best_confidence: number | null;
+      }[]
     >`
       WITH my_fp AS (
-        SELECT visitor_id, suspected_alt_triggered
+        SELECT visitor_id, suspected_alt_triggered, confidence, created_at
         FROM fingerprints
         WHERE user_id = ${id}
       )
       SELECT
         COALESCE(bool_or(suspected_alt_triggered), false) AS suspected_alt,
+        COUNT(*)::int AS capture_count,
+        MAX(created_at) AS captured_at,
+        MAX(confidence) AS best_confidence,
         (
           SELECT COUNT(DISTINCT f.user_id)
           FROM fingerprints f
@@ -618,10 +627,23 @@ export async function getUserDetail(id: string) {
     .then((rows) => ({
       suspectedAlt: rows[0]?.suspected_alt ?? false,
       linkedDeviceAccountCount: Number(rows[0]?.linked_count ?? 0),
+      // Capture facts — these drive the ALWAYS-visible device chip, so
+      // "never captured" is a state the admin can see rather than infer
+      // from the absence of a flag. Aggregates over an empty my_fp yield
+      // 0 / NULL (one row is still returned), never an error.
+      deviceCaptureCount: Number(rows[0]?.capture_count ?? 0),
+      deviceCapturedAt: rows[0]?.captured_at?.toISOString() ?? null,
+      deviceConfidence: rows[0]?.best_confidence ?? null,
     }))
     .catch((e) => {
       console.error("[getUserDetail] fingerprint signal query failed:", e);
-      return { suspectedAlt: false, linkedDeviceAccountCount: 0 };
+      return {
+        suspectedAlt: false,
+        linkedDeviceAccountCount: 0,
+        deviceCaptureCount: 0,
+        deviceCapturedAt: null,
+        deviceConfidence: null,
+      };
     });
 
   const [
@@ -976,6 +998,9 @@ export async function getUserDetail(id: string) {
       // >0 even when suspectedAlt is false).
       suspectedAlt: fingerprintSignal.suspectedAlt,
       linkedDeviceAccountCount: fingerprintSignal.linkedDeviceAccountCount,
+      deviceCaptureCount: fingerprintSignal.deviceCaptureCount,
+      deviceCapturedAt: fingerprintSignal.deviceCapturedAt,
+      deviceConfidence: fingerprintSignal.deviceConfidence,
       country: user.country,
       countryCode: user.country_code,
       city: user.city,

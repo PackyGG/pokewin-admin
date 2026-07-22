@@ -495,6 +495,9 @@ export function UserViewModern({
                 vouchersValue={vouchersValue}
                 suspectedAlt={user.suspectedAlt}
                 linkedDeviceAccountCount={user.linkedDeviceAccountCount}
+                deviceCaptureCount={user.deviceCaptureCount}
+                deviceCapturedAt={user.deviceCapturedAt}
+                deviceConfidence={user.deviceConfidence}
               />
             </div>
 
@@ -698,6 +701,9 @@ function HeroFlagsStrip({
   vouchersValue,
   suspectedAlt,
   linkedDeviceAccountCount,
+  deviceCaptureCount,
+  deviceCapturedAt,
+  deviceConfidence,
 }: {
   statusKey: "active" | "locked" | "banned";
   selfExclusion: SelfExclusionState;
@@ -706,6 +712,12 @@ function HeroFlagsStrip({
   suspectedAlt: boolean;
   /** Other accounts sharing any of this user's device visitor_ids. */
   linkedDeviceAccountCount: number;
+  /** Fingerprint rows for this user. 0 = capture never happened. */
+  deviceCaptureCount: number;
+  /** Most recent capture (ISO), null when never captured. */
+  deviceCapturedAt: string | null;
+  /** Best confidence across captures (0–1), null when never captured. */
+  deviceConfidence: number | null;
 }) {
   return (
     // `display: contents` — the strip owns no box of its own; its chips
@@ -770,18 +782,61 @@ function HeroFlagsStrip({
           accounts sharing a device with this one) rides in the tooltip
           rather than its own chip — it's supporting detail for this flag,
           not a separate independent signal. */}
-      {suspectedAlt && (
-        <FlagChip
-          icon={Fingerprint}
-          label="Suspected Alt"
-          className="border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
-          title={
-            linkedDeviceAccountCount > 0
-              ? `Device fingerprinting flagged this account as a suspected alt at signup/login. ${linkedDeviceAccountCount} other account${linkedDeviceAccountCount === 1 ? "" : "s"} share a device with this one.`
-              : "Device fingerprinting flagged this account as a suspected alt at signup/login."
-          }
-        />
-      )}
+      {(() => {
+        // ALWAYS rendered — unlike the chips above, the device signal shows
+        // in all three states. "Never captured" is itself worth seeing: a
+        // silent capture failure (missing cookie, blocked agent, a stale
+        // frontend build) is otherwise indistinguishable from a clean user,
+        // which is exactly how a multi-hour outage went unnoticed.
+        const capturedLabel =
+          deviceCapturedAt
+            ? `${deviceCapturedAt.replace("T", " ").slice(0, 16)} UTC`
+            : "unknown time";
+        const confidenceLabel =
+          deviceConfidence === null
+            ? ""
+            : ` at ${Math.round(deviceConfidence * 100)}% confidence`;
+        const sharedLabel =
+          linkedDeviceAccountCount > 0
+            ? ` ${linkedDeviceAccountCount} other account${linkedDeviceAccountCount === 1 ? "" : "s"} share a device with this one.`
+            : "";
+
+        // Rose — a real fraud-review signal, same weight as banned/locked.
+        if (suspectedAlt) {
+          return (
+            <FlagChip
+              icon={Fingerprint}
+              label="Suspected Alt"
+              className="border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
+              title={`Device fingerprinting flagged this account as a suspected alt at signup/login.${sharedLabel}`}
+            />
+          );
+        }
+
+        // Amber — coverage gap, NOT an accusation. No fingerprint row means
+        // we never identified this device, so alt-detection can't work here.
+        if (deviceCaptureCount === 0) {
+          return (
+            <FlagChip
+              icon={Fingerprint}
+              label="No device ID"
+              className="border-amber-500/30 bg-amber-500/15 text-amber-600 dark:text-amber-400"
+              title="No device fingerprint was captured for this account — alt-detection cannot evaluate it. Usually a missing fingerprint_request_id cookie at signup."
+            />
+          );
+        }
+
+        // Muted — captured and clean. Informational, so it must not compete
+        // with the genuine warning chips beside it.
+        return (
+          <FlagChip
+            icon={Fingerprint}
+            label="Device ID"
+            className="border-border/60 bg-muted/50 text-muted-foreground"
+            title={`Device fingerprint captured ${capturedLabel}${confidenceLabel}. No alt flag.${sharedLabel}`}
+          />
+        );
+      })()}
       {/* Wager requirement is intentionally NOT surfaced here — the
           dedicated "Wager Left" KPI tile in the hero already shows the
           remaining requirement (met / $X left / exempt), so a duplicate
