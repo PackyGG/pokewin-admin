@@ -84,7 +84,7 @@ export async function createApiKeyAction(input: {
     },
   });
 
-  revalidatePath("/system/api-keys");
+  revalidatePath("/system/admin-api");
   // ONLY time the plaintext token ever leaves this process.
   return { success: true, token, prefix };
 }
@@ -130,6 +130,6 @@ export async function revokeApiKeyAction(
     },
   });
 
-  revalidatePath("/system/api-keys");
+  revalidatePath("/system/admin-api");
   return { success: true };
 }

@@ -6,13 +6,13 @@ import { requireAdmin } from "@/lib/dal";
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { SectionHeadingSkeleton, TableSkeleton } from "@/components/loading-skeletons";
-import { ApiKeysContent, type ApiKeyRow } from "./api-keys-content";
+import { ApiKeysContent, type ApiKeyRow } from "./admin-api-content";
 import { ApiEndpointsSection } from "./api-endpoints-section";
 
-export const metadata = { title: "API Keys" };
+export const metadata = { title: "Admin API" };
 
 /**
- * /system/api-keys — manage machine-to-machine credentials for the
+ * /system/admin-api — manage machine-to-machine credentials for the
  * `/api/v1/*` surface (Discord bot + in-house consumers).
  *
  * Admin-gated at the page AND independently in every server action, so a
@@ -30,8 +30,8 @@ export default async function ApiKeysPage() {
       <PageHero>
         <PageHeroIdentity
           icon={KeyRound}
-          title="API Keys"
-          subtitle="Machine-to-machine credentials for the /api/v1 surface — scoped, rate-limited and revocable."
+          title="Admin API"
+          subtitle="Machine-to-machine keys and the endpoint catalogue for the /api/v1 surface — scoped, rate-limited and revocable."
         />
       </PageHero>
 

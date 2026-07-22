@@ -585,34 +585,18 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // API Keys — machine-to-machine credentials for the /api/v1 surface
-    // (Discord bot + in-house consumers). Icon string `KeyRound` is already
-    // registered in the ICONS map in `src/components/app-sidebar.tsx`
-    // (no React #130 risk).
-    id: "nav.system.api-keys",
+    // Admin API — machine-to-machine keys + the endpoint catalogue for the
+    // /api/v1 surface (Discord bot + in-house consumers). Icon string
+    // `KeyRound` is already registered in the ICONS map in
+    // `src/components/app-sidebar.tsx` (no React #130 risk).
+    id: "nav.system.admin-api",
     group: "System",
-    label: "API Keys",
-    href: "/system/api-keys",
-    pageKey: "/system/api-keys",
+    label: "Admin API",
+    href: "/system/admin-api",
+    pageKey: "/system/admin-api",
     icon: "KeyRound",
-    description: "Machine-to-machine keys for the /api/v1 surface",
-    keywords: ["api", "key", "token", "bot", "discord", "integration", "scope"],
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // EOS Verification — latest completed battles, collapsible rows reveal
-    // every participant + a live cross-check of the battle's stored
-    // eos_block_hash against all 13 public EOS RPC providers. Icon "Hash"
-    // is already registered in the ICONS map (no React #130 risk).
-    id: "nav.system.eos-verification",
-    group: "System",
-    label: "EOS Verification",
-    href: "/system/eos-verification",
-    pageKey: "/system/eos-verification",
-    icon: "Hash",
-    description: "Verify battle EOS blocks & participants",
-    keywords: ["eos", "battle", "provably fair", "block", "verify"],
+    description: "API keys + endpoint catalogue for the /api/v1 surface",
+    keywords: ["api", "key", "token", "bot", "discord", "integration", "scope", "endpoint"],
     inSidebar: true,
     inPalette: true,
   },

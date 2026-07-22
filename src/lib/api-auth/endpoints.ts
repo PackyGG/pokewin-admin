@@ -2,7 +2,7 @@ import { API_SCOPES, type ApiScope } from "./scopes";
 
 /**
  * Catalogue of every endpoint on the `/api/v1/*` surface, rendered on
- * /system/api-keys so an operator (or whoever is wiring the Discord bot) can
+ * /system/admin-api so an operator (or whoever is wiring the Discord bot) can
  * see what exists and which scope unlocks it.
  *
  * Deliberately NOT "server-only" — the admin page renders this client-side.
@@ -43,3 +43,66 @@ export function endpointAccess(
     ? "admin-write"
     : "prod-read";
 }
+
+/**
+ * INTERNAL routes — the dashboard's own endpoints under `src/app/api/`.
+ *
+ * These are NOT part of the key-authenticated surface: an API key will not
+ * open any of them. They authenticate with the admin session cookie (i.e. a
+ * signed-in browser) or a deploy secret, and exist to serve this app's own UI.
+ * Listed purely so the full HTTP surface is visible in one place.
+ */
+export type InternalEndpointAuth = "admin session" | "cron secret";
+
+export type InternalEndpoint = {
+  method: ApiEndpointMethod;
+  path: string;
+  summary: string;
+  auth: InternalEndpointAuth;
+};
+
+export const INTERNAL_ENDPOINTS: readonly InternalEndpoint[] = [
+  {
+    method: "GET",
+    path: "/api/admin/avatar/[id]",
+    summary: "Serves an admin user's avatar image.",
+    auth: "admin session",
+  },
+  {
+    method: "GET",
+    path: "/api/health/clickhouse",
+    summary: "ClickHouse health probe. No in-app caller — external monitoring only.",
+    auth: "admin session",
+  },
+  {
+    method: "GET",
+    path: "/api/imagekit-auth",
+    summary: "Short-lived ImageKit upload token for the client uploader.",
+    auth: "admin session",
+  },
+  {
+    method: "GET",
+    path: "/api/live/activity",
+    summary: "SSE stream powering the docked recent-activity feed.",
+    auth: "admin session",
+  },
+  {
+    method: "GET",
+    path: "/api/packy-live",
+    summary: "SSE proxy for the packy.gg live WebSocket (chat + activity).",
+    auth: "admin session",
+  },
+  {
+    method: "POST",
+    path: "/api/users/export",
+    summary: "Generates the filtered users CSV (contains PII — capability-gated).",
+    auth: "admin session",
+  },
+  {
+    method: "GET",
+    path: "/api/cron/warm",
+    summary:
+      "Keep-warm cron: pings ClickHouse and refreshes the hottest cached aggregates.",
+    auth: "cron secret",
+  },
+];

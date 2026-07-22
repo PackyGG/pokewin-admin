@@ -12,7 +12,11 @@ import {
 import { EmptyState } from "@/components/empty-state";
 import { Plug } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { API_ENDPOINTS, endpointAccess } from "@/lib/api-auth/endpoints";
+import {
+  API_ENDPOINTS,
+  INTERNAL_ENDPOINTS,
+  endpointAccess,
+} from "@/lib/api-auth/endpoints";
 
 /**
  * Read-only catalogue of the `/api/v1/*` surface — what exists, what it does
@@ -31,6 +35,15 @@ const METHOD_STYLES: Record<string, string> = {
 };
 
 export function ApiEndpointsSection() {
+  return (
+    <div className="space-y-6">
+      <PublicEndpointsTable />
+      <InternalEndpointsTable />
+    </div>
+  );
+}
+
+function PublicEndpointsTable() {
   if (API_ENDPOINTS.length === 0) {
     return (
       <div className="rounded-xl border">
@@ -105,6 +118,65 @@ export function ApiEndpointsSection() {
           })}
         </TableBody>
       </Table>
+    </div>
+  );
+}
+
+/**
+ * The dashboard's OWN routes. Deliberately separated and labelled: an API key
+ * does not open any of these — they authenticate with the admin session cookie
+ * or a deploy secret. Listed so the full HTTP surface is visible in one place.
+ */
+function InternalEndpointsTable() {
+  return (
+    <div className="space-y-3">
+      <div>
+        <h3 className="text-sm font-semibold">Internal endpoints</h3>
+        <p className="mt-0.5 text-sm text-muted-foreground">
+          The dashboard&apos;s own routes. <strong>Not reachable with an API key</strong> —
+          they authenticate with the admin session cookie or a deploy secret.
+        </p>
+      </div>
+      <div className="rounded-xl border overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-20">Method</TableHead>
+              <TableHead>Endpoint</TableHead>
+              <TableHead>Auth</TableHead>
+              <TableHead>Description</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {INTERNAL_ENDPOINTS.map((endpoint) => (
+              <TableRow key={`${endpoint.method} ${endpoint.path}`}>
+                <TableCell>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "font-mono text-[10px]",
+                      METHOD_STYLES[endpoint.method] ?? "text-muted-foreground",
+                    )}
+                  >
+                    {endpoint.method}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <code className="font-mono text-xs">{endpoint.path}</code>
+                </TableCell>
+                <TableCell>
+                  <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                    {endpoint.auth}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">
+                  {endpoint.summary}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }

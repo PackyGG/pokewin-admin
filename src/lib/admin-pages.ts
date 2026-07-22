@@ -188,17 +188,14 @@ export const ADMIN_PAGES: AdminPage[] = [
   // page). The page + actions enforce requireAdmin server-side; listed here
   // so the key is known to the permission system.
   { group: "System", label: "Geo Blocking", key: "/system/geo-blocking" },
-  // EOS Verification — latest completed battles w/ participant + EOS block
-  // cross-check (System sidebar section, admin-only audit tool).
-  { group: "System", label: "EOS Verification", key: "/system/eos-verification" },
   // motha-only — the page + actions enforce the gate server-side;
   // listing here just makes the key known to the permission system
   // so it doesn't fall through as "unknown page".
   { group: "System", label: "Excluded Users", key: "/system/excluded-users" },
-  // API Keys — machine-to-machine credentials + the /api/v1 endpoint
-  // catalogue. The page and every action enforce requireAdmin server-side;
-  // listed here so the key is known to the permission system.
-  { group: "System", label: "API Keys", key: "/system/api-keys" },
+  // Admin API — machine-to-machine keys + the /api/v1 endpoint catalogue.
+  // The page and every action enforce requireAdmin server-side; listed here
+  // so the key is known to the permission system.
+  { group: "System", label: "Admin API", key: "/system/admin-api" },
 ];
 
 export const ALL_PAGE_KEYS = ADMIN_PAGES.map((p) => p.key);
