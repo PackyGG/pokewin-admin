@@ -2092,3 +2092,36 @@ model creator_reward_claims {
   @@index([program_id, user_id], map: "creator_reward_claims_program_user_idx")
   @@index([user_id], map: "creator_reward_claims_user_idx")
 }
+
+/// Discord `/verify` history — who has linked-checked through the bot, and
+/// when they first did it.
+///
+/// Lives in the ADMIN DB because it is bot/CRM metadata, not game state: the
+/// prod `account` table already knows a Discord id is LINKED, but it has no
+/// idea whether the player ever ran `/verify`, and we can't write prod to
+/// record it. Keyed on the Discord id (not the Packy user) because that is
+/// the only identifier the bot ever holds.
+///
+/// `user_id` holds whichever Packy account the Discord id resolved to on the
+/// LATEST verify. If a Discord account is ever relinked to a different Packy
+/// account it is overwritten — the row tracks the verification, and
+/// `admin_audit_events` is where a history of changes would belong.
+model discord_verifications {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Discord snowflake. UNIQUE — one row per Discord account, upserted.
+  discord_user_id   String   @unique
+  /// MAIN-DB `user.id` the Discord account resolved to. Loose column
+  /// (cross-DB), resolved server-side and never supplied by the bot.
+  user_id           String
+  /// First successful `/verify`. Never moves — this is the "have they done it
+  /// already?" answer.
+  first_verified_at DateTime @default(now()) @db.Timestamptz(6)
+  /// Most recent successful `/verify`.
+  last_verified_at  DateTime @default(now()) @db.Timestamptz(6)
+  /// How many times they've run it. Cheap abuse signal — a Discord id
+  /// re-verifying hundreds of times is worth a look.
+  verify_count      Int      @default(1)
+
+  @@index([user_id], map: "discord_verifications_user_id_idx")
+  @@index([first_verified_at(sort: Desc)], map: "discord_verifications_first_verified_idx")
+}

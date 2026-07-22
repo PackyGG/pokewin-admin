@@ -47,6 +47,12 @@ export const API_SCOPES = {
       "List what a Discord-linked player can currently claim (names + amounts). Separate from discord:read so reward data can be granted independently.",
     access: "prod-read",
   },
+  "discord:verify": {
+    label: "Run Discord verification",
+    description:
+      "Confirm a Discord account is linked AND record that the player has verified (first/last time, count). Writes only that record in the admin DB — no profile data is returned.",
+    access: "admin-write",
+  },
   "discord:rewards:claim": {
     label: "File reward claims",
     description:

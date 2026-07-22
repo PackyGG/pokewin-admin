@@ -34,6 +34,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/verify",
+    summary:
+      "Body { discordUserId }. The bot's /verify command: confirms the link AND records the verification. Returns { linked, alreadyVerified, firstVerifiedAt, verifyCount } so the bot can tell a first-time verify from a repeat. 404 not_linked writes nothing.",
+    scopes: ["discord:verify"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/rewards",
     summary:
       "Body { discordUserId }. Returns { claimable: [...] } — unopened one-time rewards plus unclaimed rakeback (summed per cadence). Empty array = nothing to claim; 404 not_linked if the Discord account isn't linked.",
