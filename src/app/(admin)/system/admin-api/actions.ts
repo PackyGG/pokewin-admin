@@ -32,6 +32,27 @@ const CreateSchema = z.object({
   allowedIps: z.array(z.string()).max(20).optional(),
 });
 
+/**
+ * Normalise + de-dupe + validate an operator-supplied IP list.
+ *
+ * Normalising BEFORE storing matters: "1.2.3.4 ", "::ffff:1.2.3.4" and
+ * "1.2.3.4:80" all mean the same host, and storing them verbatim would produce
+ * entries that silently never match at request time (the auth path compares
+ * normalised forms). Shared by create + update so the two can't drift.
+ */
+function parseAllowedIps(
+  input: readonly string[] | undefined,
+): { ok: true; value: string[] } | { ok: false; error: string } {
+  const value = [
+    ...new Set((input ?? []).map((entry) => normalizeIp(entry)).filter(Boolean)),
+  ];
+  const invalid = value.find((entry) => !looksLikeIp(entry));
+  if (invalid) {
+    return { ok: false, error: `Not a valid IP address: ${invalid}` };
+  }
+  return { ok: true, value };
+}
+
 export type CreateApiKeyResult =
   | { success: true; token: string; prefix: string }
   | { success: false; error: string };
@@ -56,19 +77,9 @@ export async function createApiKeyAction(input: {
     return { success: false, error: "Select at least one scope" };
   }
 
-  // Normalise + de-dupe so "1.2.3.4 " and "::ffff:1.2.3.4" can't both be
-  // stored as distinct entries that then fail to match at request time.
-  const allowedIps = [
-    ...new Set(
-      (parsed.data.allowedIps ?? [])
-        .map((entry) => normalizeIp(entry))
-        .filter(Boolean),
-    ),
-  ];
-  const invalidIp = allowedIps.find((entry) => !looksLikeIp(entry));
-  if (invalidIp) {
-    return { success: false, error: `Not a valid IP address: ${invalidIp}` };
-  }
+  const ips = parseAllowedIps(parsed.data.allowedIps);
+  if (!ips.ok) return { success: false, error: ips.error };
+  const allowedIps = ips.value;
 
   const { token, prefix, keyHash } = generateApiKey();
   const expiresAt =
@@ -107,6 +118,77 @@ export async function createApiKeyAction(input: {
   revalidatePath("/system/admin-api");
   // ONLY time the plaintext token ever leaves this process.
   return { success: true, token, prefix };
+}
+
+export type UpdateApiKeyIpsResult =
+  | { success: true; allowedIps: string[] }
+  | { success: false; error: string };
+
+/**
+ * Replace an existing key's IP allowlist (SET semantics, not append) without
+ * re-issuing the token — so you can re-point a live bot at a new egress IP, or
+ * lock down / open up a key already in production.
+ *
+ * An empty array clears the restriction and makes the key callable from
+ * anywhere again, so the change is audited with both the old and new lists.
+ */
+export async function updateApiKeyIpsAction(input: {
+  keyId: string;
+  allowedIps: string[];
+}): Promise<UpdateApiKeyIpsResult> {
+  const session = await requireAdmin();
+
+  const parsed = z
+    .object({
+      keyId: z.string().uuid(),
+      allowedIps: z.array(z.string()).max(20),
+    })
+    .safeParse(input);
+  if (!parsed.success) {
+    return { success: false, error: "Invalid input" };
+  }
+
+  const ips = parseAllowedIps(parsed.data.allowedIps);
+  if (!ips.ok) return { success: false, error: ips.error };
+
+  const existing = await adminDb.api_keys.findUnique({
+    where: { id: parsed.data.keyId },
+    select: {
+      id: true,
+      name: true,
+      prefix: true,
+      allowed_ips: true,
+      revoked_at: true,
+    },
+  });
+  if (!existing) return { success: false, error: "Key not found" };
+  // A revoked key is already dead; editing it would imply it still works.
+  if (existing.revoked_at) {
+    return { success: false, error: "Key is revoked" };
+  }
+
+  await adminDb.api_keys.update({
+    where: { id: existing.id },
+    data: { allowed_ips: ips.value },
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "api_key_ips_updated",
+    metadata: {
+      api_key_id: existing.id,
+      name: existing.name,
+      prefix: existing.prefix,
+      old_allowed_ips: existing.allowed_ips,
+      new_allowed_ips: ips.value,
+      // Loosening a restriction is the security-relevant direction — make it
+      // greppable in the audit log rather than a diff the reader must compute.
+      cleared: existing.allowed_ips.length > 0 && ips.value.length === 0,
+    },
+  });
+
+  revalidatePath("/system/admin-api");
+  return { success: true, allowedIps: ips.value };
 }
 
 export type RevokeApiKeyResult =

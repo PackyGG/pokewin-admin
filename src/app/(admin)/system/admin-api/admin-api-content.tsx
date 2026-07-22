@@ -46,7 +46,11 @@ import {
   hasFullAccess,
   type ApiScope,
 } from "@/lib/api-auth/scopes";
-import { createApiKeyAction, revokeApiKeyAction } from "./actions";
+import {
+  createApiKeyAction,
+  revokeApiKeyAction,
+  updateApiKeyIpsAction,
+} from "./actions";
 
 export type ApiKeyRow = {
   id: string;
@@ -141,6 +145,7 @@ function statusOf(key: ApiKeyRow): Status {
 export function ApiKeysContent({ keys }: { keys: ApiKeyRow[] }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<ApiKeyRow | null>(null);
+  const [ipTarget, setIpTarget] = useState<ApiKeyRow | null>(null);
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -258,15 +263,26 @@ export function ApiKeysContent({ keys }: { keys: ApiKeyRow[] }) {
                       )}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-destructive"
-                        disabled={revoked || isPending}
-                        onClick={() => setRevokeTarget(key)}
-                      >
-                        Revoke
-                      </Button>
+                      <span className="flex items-center justify-end gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={revoked || isPending}
+                          onClick={() => setIpTarget(key)}
+                        >
+                          <Lock className="mr-1 size-3.5" />
+                          IPs
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive"
+                          disabled={revoked || isPending}
+                          onClick={() => setRevokeTarget(key)}
+                        >
+                          Revoke
+                        </Button>
+                      </span>
                     </TableCell>
                   </TableRow>
                 );
@@ -283,6 +299,11 @@ export function ApiKeysContent({ keys }: { keys: ApiKeyRow[] }) {
           setCreateOpen(false);
           setIssuedToken(token);
         }}
+      />
+
+      <EditIpsDialog
+        target={ipTarget}
+        onClose={() => setIpTarget(null)}
       />
 
       {/* Token is shown EXACTLY once — it is not recoverable afterwards. */}
@@ -338,6 +359,105 @@ export function ApiKeysContent({ keys }: { keys: ApiKeyRow[] }) {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+/**
+ * Edit an existing key's IP allowlist without re-issuing the token — so a live
+ * bot can be re-pointed at a new egress IP, or an already-deployed key locked
+ * down after the fact.
+ *
+ * Keyed on `target.id` by the caller so the input re-initialises per key
+ * instead of holding the previously-opened key's value.
+ */
+function EditIpsDialog({
+  target,
+  onClose,
+}: {
+  target: ApiKeyRow | null;
+  onClose: () => void;
+}) {
+  const [value, setValue] = useState(target?.allowedIps.join(", ") ?? "");
+  const [isPending, startTransition] = useTransition();
+
+  // Re-seed whenever a different key is opened.
+  const [seededFor, setSeededFor] = useState(target?.id ?? null);
+  if (target && seededFor !== target.id) {
+    setSeededFor(target.id);
+    setValue(target.allowedIps.join(", "));
+  }
+
+  function submit() {
+    if (!target) return;
+    const allowedIps = value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    startTransition(async () => {
+      const res = await updateApiKeyIpsAction({
+        keyId: target.id,
+        allowedIps,
+      });
+      if (res.success) {
+        toast.success(
+          res.allowedIps.length === 0
+            ? `"${target.name}" is now callable from any IP`
+            : `"${target.name}" locked to ${res.allowedIps.length} IP${res.allowedIps.length === 1 ? "" : "s"}`,
+        );
+        onClose();
+      } else {
+        toast.error(res.error);
+      }
+    });
+  }
+
+  const willClear = value.trim() === "" && (target?.allowedIps.length ?? 0) > 0;
+
+  return (
+    <Dialog open={target !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Allowed IPs — {target?.name}</DialogTitle>
+          <DialogDescription>
+            Takes effect on the next request. The token itself is unchanged, so
+            the bot needs no redeploy.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="edit-key-ips">IP addresses</Label>
+          <Input
+            id="edit-key-ips"
+            placeholder="blank = any IP · e.g. 203.0.113.7, 203.0.113.8"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            disabled={isPending}
+          />
+          <p className="text-xs text-muted-foreground">
+            Comma-separated, exact addresses (no CIDR ranges).
+          </p>
+        </div>
+
+        {willClear && (
+          <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              Clearing this removes the restriction — the key becomes callable
+              from <strong>any</strong> IP again.
+            </span>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={isPending}>
+            {isPending ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
