@@ -284,7 +284,8 @@ export function UserWagerProgressCard({
               <Gauge className="size-3.5" />
               Game weights — packs {formatX(gameWeights.packsBps)} · battles{" "}
               {formatX(gameWeights.battlesBps)} · upgrader{" "}
-              {formatX(gameWeights.upgraderBps)}
+              {formatX(gameWeights.upgraderBps)} · keno{" "}
+              {formatX(gameWeights.kenoBps)}
             </span>
           )}
           {shards > 0 && (

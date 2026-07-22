@@ -8,6 +8,7 @@ import { RewardExpiryCard } from "./reward-expiry-card";
 import { CryptoFeesCard } from "./crypto-fees-card";
 import { DepositBonusConfigCard } from "./deposit-bonus-config-card";
 import { VaultLockCard, type VaultLockTime } from "./vault-lock-card";
+import { KenoSettingsCard } from "./keno-settings-card";
 import type { SiteConfigRow } from "@/lib/queries/security";
 import type { WagerRequirementDefaults } from "@/lib/backend-api/wager-requirements";
 import type { LeaderboardWagerWeights } from "@/lib/backend-api/leaderboard-wager-weights";
@@ -77,6 +78,17 @@ export function SecurityPageSections({
 
       <CollapsibleSecuritySection icon="gift" title="Deposit Bonus Cap">
         <DepositBonusConfigCard initial={depositBonusConfig} />
+      </CollapsibleSecuritySection>
+
+      {/* Per-GAME view, deliberately last of the real sections: the cards
+          above are grouped by destination, this one gathers everything keno
+          in one place. Only the raw Site Configuration fallback sits below. */}
+      <CollapsibleSecuritySection icon="dices" title="Keno">
+        <KenoSettingsCard
+          wagerDefaults={wagerDefaults}
+          leaderboardWeights={leaderboardWeights}
+          rakebackWeights={rakebackWeights}
+        />
       </CollapsibleSecuritySection>
 
       <CollapsibleSecuritySection icon="sliders" title="Site Configuration">

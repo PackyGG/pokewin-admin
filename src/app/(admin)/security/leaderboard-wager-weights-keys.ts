@@ -16,9 +16,11 @@
  *  - leaderboard_wager_weight_packs_bps     pack wager weight
  *  - leaderboard_wager_weight_battles_bps   battle wager weight
  *  - leaderboard_wager_weight_upgrader_bps  upgrader wager weight
+ *  - leaderboard_wager_weight_keno_bps      keno wager weight
  */
 export const LEADERBOARD_WAGER_WEIGHT_SITE_CONFIG_KEYS: readonly string[] = [
   "leaderboard_wager_weight_packs_bps",
   "leaderboard_wager_weight_battles_bps",
   "leaderboard_wager_weight_upgrader_bps",
+  "leaderboard_wager_weight_keno_bps",
 ];

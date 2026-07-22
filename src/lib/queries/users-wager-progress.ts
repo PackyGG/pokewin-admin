@@ -145,6 +145,7 @@ export type UserWagerProgress = {
     packsBps: number;
     battlesBps: number;
     upgraderBps: number;
+    kenoBps: number;
   } | null;
   /** Per-source breakdown rows (informational context). */
   sources: WagerProgressSource[];
@@ -337,6 +338,7 @@ export async function getUserWagerProgress(
           packsBps: defaults.wager_weight_packs_bps,
           battlesBps: defaults.wager_weight_battles_bps,
           upgraderBps: defaults.wager_weight_upgrader_bps,
+          kenoBps: defaults.wager_weight_keno_bps,
         }
       : null,
     sources,

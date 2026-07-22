@@ -36,6 +36,7 @@ const InputSchema = z
     wager_weight_packs_bps: Bps.optional(),
     wager_weight_battles_bps: Bps.optional(),
     wager_weight_upgrader_bps: Bps.optional(),
+    wager_weight_keno_bps: Bps.optional(),
   })
   .refine((data) => Object.values(data).some((v) => v !== undefined), {
     message: "At least one value is required",

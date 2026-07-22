@@ -145,10 +145,17 @@ const FIELDS: {
       </>
     ),
   },
+  // Keno is deliberately absent: it is edited in the dedicated Keno section
+  // at the bottom of /security, so wager_weight_keno_bps has exactly one
+  // editable surface.
 ];
 
-function bpsToX(bps: number): string {
-  return String(bps / BPS_PER_X);
+// Tolerates a field the backend hasn't shipped yet (e.g. wager_weight_keno_bps
+// against an older deploy): an absent value seeds an EMPTY input rather than
+// "NaN", and handleSave's `raw === ""` guard then leaves it untouched unless an
+// admin actually types a value.
+function bpsToX(bps: number | undefined): string {
+  return typeof bps === "number" ? String(bps / BPS_PER_X) : "";
 }
 
 export function WagerRequirementCard({

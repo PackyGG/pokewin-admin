@@ -32,6 +32,7 @@ const InputSchema = z
     packs_bps: Bps.optional(),
     battles_bps: Bps.optional(),
     upgrader_bps: Bps.optional(),
+    keno_bps: Bps.optional(),
   })
   .refine((data) => Object.values(data).some((v) => v !== undefined), {
     message: "At least one value is required",

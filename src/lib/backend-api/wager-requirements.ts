@@ -69,6 +69,8 @@ export type WagerRequirementDefaults = {
   wager_weight_battles_bps: number;
   /** How much upgrader wagers count toward the requirement, in bps (10000 = 1×). */
   wager_weight_upgrader_bps: number;
+  /** How much keno wagers count toward the requirement, in bps (10000 = 1×). */
+  wager_weight_keno_bps: number;
 };
 
 /**
