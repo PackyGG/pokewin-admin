@@ -46,7 +46,7 @@ const BodySchema = z.object({
     .trim()
     .regex(/^\d{15,21}$/, "discordUserId must be a numeric Discord user ID"),
   claimableId: z.string().trim().min(1).max(64),
-});
+}).strict();
 
 export const POST = withApiKey(
   { scopes: ["discord:rewards:claim"] },

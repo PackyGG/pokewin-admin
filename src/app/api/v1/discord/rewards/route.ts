@@ -58,7 +58,7 @@ const BodySchema = z.object({
     .string()
     .trim()
     .regex(/^\d{15,21}$/, "discordUserId must be a numeric Discord user ID"),
-});
+}).strict();
 
 /** Defensive bound on the payload for an account with a large grant history. */
 const MAX_REWARD_ROWS = 50;

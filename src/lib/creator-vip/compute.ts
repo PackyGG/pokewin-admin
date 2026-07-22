@@ -81,6 +81,29 @@ async function isVipNow(userId: string): Promise<boolean> {
 }
 
 /**
+ * Account standing, re-read live on every check.
+ *
+ * A banned or locked player must not be able to file claims — the bot is a
+ * side door into a payout, and it would be absurd for someone banned on the
+ * site to keep earning through Discord. Checked HERE rather than only at the
+ * API boundary so the admin preview and the bot agree, and so a future caller
+ * can't accidentally skip it.
+ *
+ * Returns null when the user row is missing entirely, which is itself a
+ * refusal: an id that resolves to nothing is not a real claimant.
+ */
+async function accountStanding(
+  userId: string,
+): Promise<{ banned: boolean; locked: boolean } | null> {
+  const row = await getProdDb().user.findUnique({
+    where: { id: userId },
+    select: { is_banned: true, is_locked: true },
+  });
+  if (!row) return null;
+  return { banned: row.is_banned, locked: row.is_locked };
+}
+
+/**
  * When did this user's CURRENT run on the program's codes begin?
  *
  * Progress RESETS when a player leaves for another creator's code. The reset
@@ -241,6 +264,17 @@ export async function computeEntitlement(
       ...empty,
       blockedReason: "A creator cannot claim their own program.",
     };
+  }
+
+  const standing = await accountStanding(userId);
+  if (!standing) {
+    return { ...empty, blockedReason: "No such player." };
+  }
+  if (standing.banned) {
+    return { ...empty, blockedReason: "This account is banned." };
+  }
+  if (standing.locked) {
+    return { ...empty, blockedReason: "This account is locked." };
   }
 
   // The current run's start gates everything below it, so it is resolved

@@ -37,7 +37,7 @@ const BodySchema = z.object({
     .string()
     .trim()
     .regex(/^\d{15,21}$/, "discordUserId must be a numeric Discord user ID"),
-});
+}).strict();
 
 export const POST = withApiKey({ scopes: ["discord:read"] }, async (request) => {
   let raw: unknown;

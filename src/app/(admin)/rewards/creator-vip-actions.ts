@@ -10,6 +10,7 @@ import { requireAdmin, requirePageAccess } from "@/lib/dal";
 import { adjustBalance } from "@/app/(admin)/users/[id]/actions";
 import { computeEntitlement } from "@/lib/creator-vip/compute";
 import { createClaimRequest } from "@/lib/creator-vip/queries";
+import { sanitizeProgramName } from "@/lib/creator-vip/sanitize";
 
 /**
  * Creator VIP wager-reward programs + the manual claim-review queue.
@@ -112,6 +113,17 @@ export async function createCreatorRewardProgram(input: {
   );
   if (rateError) return { success: false, error: rateError };
 
+  // The name is echoed by the Discord bot, where it is parsed as markdown and
+  // mentions — so it is neutralised BEFORE storage, not on the way out. See
+  // sanitize.ts for why escaping-on-output would be the wrong fix.
+  const name = sanitizeProgramName(d.name);
+  if (name.length < 2) {
+    return {
+      success: false,
+      error: "Program name has no usable characters — try plain text.",
+    };
+  }
+
   // The creator must be real. Accept a current creator only — a program is a
   // forward-looking commitment, so unlike a leaderboard back-fill there is no
   // reason to allow attaching one to a retired account.
@@ -149,7 +161,7 @@ export async function createCreatorRewardProgram(input: {
 
   const created = await adminDb.creator_reward_programs.create({
     data: {
-      name: d.name,
+      name,
       creator_user_id: d.creatorUserId,
       codes,
       threshold_usd: d.thresholdUsd,
@@ -168,7 +180,7 @@ export async function createCreatorRewardProgram(input: {
     targetUserId: d.creatorUserId,
     metadata: {
       program_id: created.id,
-      name: d.name,
+      name,
       codes,
       threshold_usd: d.thresholdUsd,
       reward_usd: d.rewardUsd,
