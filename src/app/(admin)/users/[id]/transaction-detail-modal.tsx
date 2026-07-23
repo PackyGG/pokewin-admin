@@ -24,6 +24,10 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
+  BALANCE_ADJUSTMENT_CATEGORY_META,
+  isBalanceAdjustmentCategory,
+} from "@/lib/balance-adjustment-categories";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -583,6 +587,18 @@ export function TransactionDetailModal({
       recipient_username: "Recipient",
       creator_id: "Creator",
       creator_username: "Creator",
+      // Creator-spend trace (admin balance adjustments). `creator_spend` is
+      // the one flag every creator-linked category carries; the rest answer
+      // "under which code / program / leg" so a payout is attributable
+      // without opening the admin DB.
+      creator_spend: "Creator Spend",
+      creator_codes: "Creator Code(s)",
+      creator_program_name: "Reward Program",
+      creator_reward_leg: "Reward Leg",
+      adjustment_category: "Adjustment Type",
+      vip_claim_id: "Reward Claim",
+      vip_program_id: "Reward Program ID",
+      wager_requirement_bps: "Wager Requirement (bps)",
       tip_amount: "Tip Amount",
       voucher_id: "Voucher",
       voucher_code: "Voucher Code",
@@ -613,11 +629,28 @@ export function TransactionDetailModal({
     const knownEntries: { label: string; value: string }[] = [];
     const unknownEntries: Record<string, unknown> = {};
 
+    /**
+     * Render a metadata value as operator-facing text. Raw `String(val)` turns
+     * an array into "A,B" with no space and a boolean into "true", and it shows
+     * `adjustment_category` as the storage key ("creator_vip_reward") rather
+     * than the label the rest of the admin uses for the same thing.
+     */
+    const displayValue = (key: string, val: unknown): string => {
+      if (key === "adjustment_category" && typeof val === "string") {
+        return isBalanceAdjustmentCategory(val)
+          ? BALANCE_ADJUSTMENT_CATEGORY_META[val].label
+          : val;
+      }
+      if (typeof val === "boolean") return val ? "Yes" : "No";
+      if (Array.isArray(val)) return val.map((v) => String(v)).join(", ");
+      return String(val);
+    };
+
     for (const [key, val] of Object.entries(meta)) {
       if (t.soldCard && key === "inventory_item_id") continue; // already shown as card
       const label = KNOWN_LABELS[key];
       if (label && val != null) {
-        knownEntries.push({ label, value: String(val) });
+        knownEntries.push({ label, value: displayValue(key, val) });
       } else if (val != null) {
         unknownEntries[key] = val;
       }

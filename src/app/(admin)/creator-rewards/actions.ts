@@ -416,8 +416,13 @@ async function notifyBotOfDecision(params: {
  */
 export async function approveCreatorRewardClaim(input: {
   claimId: string;
+  /**
+   * TOTP code OR a passkey step-up proof token — `require2FA` (via
+   * `adjustBalance`) accepts either, so the field is deliberately not
+   * constrained to 6 digits. A proof token is far longer than a TOTP code;
+   * the old `max(10)` silently rejected every passkey approval.
+   */
   totpCode: string;
-  note?: string;
 }): Promise<ActionResult> {
   await requirePageAccess("/creator-rewards");
   const session = await requireAdmin();
@@ -425,8 +430,7 @@ export async function approveCreatorRewardClaim(input: {
   const parsed = z
     .object({
       claimId: z.string().uuid(),
-      totpCode: z.string().trim().min(6).max(10),
-      note: z.string().trim().max(1000).optional(),
+      totpCode: z.string().trim().min(6).max(2048),
     })
     .safeParse(input);
   if (!parsed.success) {
@@ -464,6 +468,14 @@ export async function approveCreatorRewardClaim(input: {
       creatorId: claim.program.creator_user_id,
       vipClaimId: claim.id,
       vipProgramId: claim.program_id,
+      // Trace fields — stamped onto the prod ledger row so this payout is
+      // attributable to the creator AND the codes that earned it without a
+      // cross-DB hunt. The program owns the codes, so they are recorded as the
+      // set the accrual ran under (the user's own code can change later; the
+      // program's cannot without an explicit edit).
+      creatorCodes: claim.program.codes,
+      creatorProgramName: claim.program.name,
+      creatorRewardLeg: claim.leg,
     },
   });
 
@@ -477,7 +489,10 @@ export async function approveCreatorRewardClaim(input: {
       status: "approved",
       reviewed_by: session.userId,
       reviewed_at: new Date(),
-      review_note: parsed.data.note ?? null,
+      // No approval note: the field was removed from the dialog (owner,
+      // 2026-07-23). Rejection/reopen still require one — those take money
+      // away or undo a decision, so the reason matters there.
+      review_note: null,
       ledger_tx_id: credit.ledgerTxId,
     },
   });
@@ -491,11 +506,14 @@ export async function approveCreatorRewardClaim(input: {
       program_id: claim.program_id,
       program_name: claim.program.name,
       creator_user_id: claim.program.creator_user_id,
+      // The codes + leg that earned it, so the audit row alone answers "which
+      // creator, under which code, for what" without opening the program.
+      creator_codes: claim.program.codes,
+      leg: claim.leg,
       units: claim.units,
       amount_usd: amountUsd,
       consumed_wager_usd: Number(claim.consumed_wager_usd),
       ledger_tx_id: credit.ledgerTxId,
-      note: parsed.data.note ?? null,
     },
   });
 

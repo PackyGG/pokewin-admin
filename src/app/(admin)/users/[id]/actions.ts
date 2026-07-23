@@ -177,6 +177,14 @@ const adjustmentDetailsSchema = z
     // `approveCreatorRewardClaim`, never by the dialog.
     vipClaimId: z.string().uuid().optional(),
     vipProgramId: z.string().uuid().optional(),
+    // creator_vip_reward — TRACE fields. The affiliate codes the program
+    // accrued under, its name, and which leg paid. Stamped so a ledger row
+    // answers "which creator, under which code, for what" on its own; the
+    // creator-spend reporting reads these instead of re-joining the admin DB
+    // per row. Supplied ONLY by `approveCreatorRewardClaim`.
+    creatorCodes: z.array(z.string().trim().min(1).max(64)).max(25).optional(),
+    creatorProgramName: z.string().trim().max(120).optional(),
+    creatorRewardLeg: z.string().trim().max(32).optional(),
   })
   .optional();
 
@@ -221,6 +229,13 @@ type ResolvedAdjustmentMeta = {
   /** Set only for `creator_vip_reward` — the claim + program that authorized it. */
   vipClaimId: string | null;
   vipProgramId: string | null;
+  /**
+   * Set only for `creator_vip_reward` — the codes/program/leg the accrual ran
+   * under, so creator spend is traceable per CODE and not just per creator id.
+   */
+  creatorCodes: string[] | null;
+  creatorProgramName: string | null;
+  creatorRewardLeg: string | null;
 };
 
 /**
@@ -255,6 +270,9 @@ function validateAdjustmentCategory(
     giveawaySource: null,
     vipClaimId: null,
     vipProgramId: null,
+    creatorCodes: null,
+    creatorProgramName: null,
+    creatorRewardLeg: null,
   };
 
   switch (category) {
@@ -452,6 +470,10 @@ function validateAdjustmentCategory(
           creatorId,
           vipClaimId: d.vipClaimId,
           vipProgramId: d.vipProgramId,
+          creatorCodes:
+            d.creatorCodes && d.creatorCodes.length > 0 ? d.creatorCodes : null,
+          creatorProgramName: d.creatorProgramName ?? null,
+          creatorRewardLeg: d.creatorRewardLeg ?? null,
         },
       };
     }
@@ -481,6 +503,10 @@ export async function adjustBalance(data: {
     creatorId?: string;
     vipClaimId?: string;
     vipProgramId?: string;
+    /** Creator-spend trace — see `adjustmentDetailsSchema`. */
+    creatorCodes?: string[];
+    creatorProgramName?: string;
+    creatorRewardLeg?: string;
   };
 }): Promise<
   { success: true; ledgerTxId: string } | { success: false; error: string }
@@ -536,6 +562,31 @@ export async function adjustBalance(data: {
           success: false,
           error: "Linked user was never a creator",
         };
+      }
+    }
+
+    // PER-CODE attribution for the categories that don't supply their own
+    // codes (leaderboard / official_stream come from the dialog, which only
+    // picks a creator). Resolve the codes that creator owned AT PAYMENT TIME
+    // and stamp them, so creator spend can be split per code straight off the
+    // ledger row instead of re-deriving it from whatever the creator owns
+    // today — codes get added and removed, and a historic payout must keep
+    // reading the way it was made. `creator_vip_reward` already passes the
+    // program's own codes, which are narrower, so it is left as-is.
+    //
+    // Index-served: EXPLAIN ANALYZE on prod (2026-07-23) gives an Index Scan
+    // on `idx_affiliate_codes_user_created_at` (user_id), 0.24 ms. NOTE that
+    // index is NOT declared in `prisma/schema.prisma` — it exists on the live
+    // DB only, so don't "fix" the schema by assuming it's missing.
+    if (!meta.creatorCodes) {
+      const ownedCodes = await db.affiliate_codes.findMany({
+        where: { user_id: meta.creatorId },
+        select: { code: true },
+        orderBy: { code: "asc" },
+        take: 25,
+      });
+      if (ownedCodes.length > 0) {
+        meta.creatorCodes = ownedCodes.map((c) => c.code.toUpperCase());
       }
     }
   }
@@ -723,7 +774,15 @@ export async function adjustBalance(data: {
             adjustment_category: parsed.category,
             ...(isCreatorLinkedAdjustmentCategory(parsed.category) &&
             meta.creatorId
-              ? { creator_id: meta.creatorId }
+              ? {
+                  creator_id: meta.creatorId,
+                  // ONE predicate for "this dollar was spent on a creator",
+                  // across every creator-linked category. Reporting asks
+                  // `metadata->>'creator_spend' = 'true'` instead of having to
+                  // know (and keep up with) the category list — a new
+                  // creator-linked category is covered the day it is added.
+                  creator_spend: true,
+                }
               : {}),
             // Record the frozen requirement so support can see WHY a giveaway
             // credit is locked (and at what rate). Only stamped when debt was
@@ -740,6 +799,17 @@ export async function adjustBalance(data: {
                   vip_claim_id: meta.vipClaimId,
                   vip_program_id: meta.vipProgramId,
                 }
+              : {}),
+            // Per-CODE attribution. `creator_id` says WHO was spent on;
+            // these say under which affiliate code(s), which program, and
+            // which leg — so spend can be split per code, not just per
+            // creator, straight off the ledger row.
+            ...(meta.creatorCodes ? { creator_codes: meta.creatorCodes } : {}),
+            ...(meta.creatorProgramName
+              ? { creator_program_name: meta.creatorProgramName }
+              : {}),
+            ...(meta.creatorRewardLeg
+              ? { creator_reward_leg: meta.creatorRewardLeg }
               : {}),
           },
           status: "completed",
