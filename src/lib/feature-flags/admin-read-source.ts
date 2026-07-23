@@ -57,10 +57,17 @@ export const REWARDS_ANALYTICS_SURFACE_KEYS = [
 
 
 /**
- * Phase 2B surface flag keys for the /analytics Top-performers + Revenue tab CH
+ * Phase 2B surface flag keys for the /analytics Top-performers + withdrawal CH
  * twins: `analytics_top` (all six leaderboards — depositors / wagerers / losers
- * / winners / creators / countries), `analytics_revenue` (the revenue-by-source
- * breakdown), and `analytics_revenue_withdrawals` (the withdrawn-coins card).
+ * / winners / creators / countries) and `analytics_revenue_withdrawals` (the
+ * withdrawn-cash-per-rail card, which outlived the Revenue tab and now renders
+ * on Overview — the key keeps its historical name so the Edge Config entry and
+ * its per-surface rollback stay valid).
+ *
+ * `analytics_revenue` (the revenue-by-source breakdown) is gone with that tab
+ * (owner, 2026-07-23) — PG query, CH twin and comparison harness all deleted,
+ * so there is no reader left to route.
+ *
  * Listed here for discoverability only; like every other surface key they carry
  * NO registration cost — `getAdminReadMode` resolves any unset key through the
  * precedence chain whose terminal default is `"off"`, so each defaults to
@@ -69,7 +76,6 @@ export const REWARDS_ANALYTICS_SURFACE_KEYS = [
  */
 export const ANALYTICS_TOP_REVENUE_SURFACE_KEYS = [
   "analytics_top",
-  "analytics_revenue",
   "analytics_revenue_withdrawals",
 ] as const;
 

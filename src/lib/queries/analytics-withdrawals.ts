@@ -5,7 +5,9 @@ import { blacklistNotInClause } from "./_blacklist";
 
 /**
  * Crypto-asset withdrawal breakdown — answers "which coins get withdrawn
- * the most" on the Analytics → Revenue tab.
+ * the most" on the Analytics → Overview tab (moved there when the Revenue
+ * tab was deleted, owner 2026-07-23: everything else on it restated the
+ * Cost Breakdown waterfall, this card was the one thing it alone owned).
  *
  * Source: `card_withdrawal_requests` filtered to status IN
  * (completed, shipped) — i.e. value that actually left the house. Each
@@ -22,7 +24,7 @@ import { blacklistNotInClause } from "./_blacklist";
  * admin/support roles excluded so internal accounts don't skew the
  * numbers.
  */
-export type WithdrawalsPeriod = "7d" | "30d" | "90d" | "all";
+export type WithdrawalsPeriod = "today" | "7d" | "30d" | "90d" | "all";
 
 export type WithdrawnAsset = {
   /** Asset symbol from the schema, e.g. "SOL", "ETH", "USDT_ERC20". */
@@ -56,6 +58,8 @@ const LIFETIME_LOOKBACK_DAYS = 365;
 
 function intervalSqlForPeriod(period: WithdrawalsPeriod): string | null {
   switch (period) {
+    case "today":
+      return "INTERVAL '1 day'";
     case "7d":
       return "INTERVAL '7 days'";
     case "30d":

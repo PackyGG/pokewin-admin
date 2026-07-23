@@ -11,8 +11,8 @@ import { CH_DB, chDateTime, toNumber } from "../_shared";
 
 /**
  * ClickHouse twin of `getWithdrawnCoinsBreakdown`
- * (`src/lib/queries/analytics-withdrawals.ts`) — the /analytics → Revenue tab
- * "Withdrawn coins" card.
+ * (`src/lib/queries/analytics-withdrawals.ts`) — the /analytics → Overview tab
+ * "Cash out, by rail" card.
  *
  * PARITY: `card_withdrawal_requests` filtered to status IN ('completed',
  * 'shipped'), bucketed crypto vs physical (`method = 'crypto'` → crypto, else
@@ -24,7 +24,7 @@ import { CH_DB, chDateTime, toNumber } from "../_shared";
  * creators are KEPT (2-role) — plus the excluded-users blacklist. This is NOT
  * the wholesale `customerScopeCte` 3-role scope, so it is written inline.
  *
- * Periods: 7d / 30d / 90d / all (lifetime, no lower bound).
+ * Periods: today (24h) / 7d / 30d / 90d / all (lifetime, capped at 365d).
  *
  * CH correctness: FINAL + `_peerdb_is_deleted = 0`; money/quantity stays Decimal
  * (`toString(sum(...))` → `toNumber`), never Float. The blacklist is passed in
@@ -40,6 +40,8 @@ const LIFETIME_LOOKBACK_DAYS = 365;
 
 function daysForPeriod(period: WithdrawalsPeriod): number | null {
   switch (period) {
+    case "today":
+      return 1;
     case "7d":
       return 7;
     case "30d":
