@@ -11,7 +11,6 @@ import {
   toInsightsPeriod,
 } from "./types";
 import { OverviewTab } from "./tab-overview";
-import { PurePnlTab } from "./tab-pure-pnl";
 import { DoubleDownTab } from "./tab-double-down";
 import { CrmTab } from "../insights/real-numbers/crm-tab";
 import { CostBreakdownTab } from "./tab-cost-breakdown";
@@ -31,7 +30,6 @@ export const metadata = { title: "Analytics" };
 function parseTab(value: string | undefined): AnalyticsTab {
   switch (value) {
     case "overview":
-    case "pure-pnl":
     case "crm":
     case "cost-breakdown":
     case "rewards":
@@ -50,7 +48,7 @@ function parseTab(value: string | undefined): AnalyticsTab {
  * Pick the Suspense fallback that matches the active tab's real shape, so
  * the swap from skeleton → content doesn't jump the layout:
  *   • top/packs → KPI strip + data table (leaderboard-style tabs)
- *   • everything else (overview, map, revenue, heatmap, pure-pnl) →
+ *   • everything else (overview, map, revenue) →
  *     KPIs + chart (the dominant shape).
  */
 function fallbackForTab(tab: AnalyticsTab): ReactNode {
@@ -73,10 +71,9 @@ function fallbackForTab(tab: AnalyticsTab): ReactNode {
  * the window you were looking at. They all read the page filter now,
  * translated by `toInsightsPeriod` / `toDoubleDownPeriod`.
  *
- * The absentees are genuine, not oversights: CRM and Pure P&L take no period
- * argument at all — Pure P&L returns a fixed set of rolling windows rather
- * than one selectable range. A filter there would be a dead knob, which is
- * exactly what this change removes everywhere else.
+ * The one absentee is genuine, not an oversight: CRM takes no period argument
+ * at all, so a filter there would be a dead knob — exactly what this change
+ * removes everywhere else.
  */
 const PERIOD_DRIVEN_TABS = new Set<AnalyticsTab>([
   "overview",
@@ -165,7 +162,6 @@ export default async function AnalyticsPage({
         fallback={fallbackForTab(tab)}
       >
         {tab === "overview" && <OverviewTab period={period} />}
-        {tab === "pure-pnl" && <PurePnlTab />}
         {tab === "double-down" && (
           <DoubleDownTab
             search={ddSearch}

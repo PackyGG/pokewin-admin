@@ -11,7 +11,6 @@ import {
   PieChart,
   Trophy,
   Package,
-  Coins,
   Globe,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -19,7 +18,6 @@ import { LinkPendingShell } from "@/components/ux";
 
 export type AnalyticsTab =
   | "overview"
-  | "pure-pnl"
   | "double-down"
   | "crm"
   | "cost-breakdown"
@@ -39,7 +37,6 @@ const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
   // realized + windowed P&L panels so admins can deep-link the
   // real-money-only gameplay outcome view without scrolling past the
   // rest. Excludes creator wagers AND borrow-mode plays.
-  { value: "pure-pnl", label: "Raw P&L", icon: Coins },
   // Absorbed from /insights/double-down (owner, 2026-07-23) — that route now
   // redirects here. Locked to 30d, so the page period filter doesn't apply.
   { value: "double-down", label: "Double Down", icon: Dices },

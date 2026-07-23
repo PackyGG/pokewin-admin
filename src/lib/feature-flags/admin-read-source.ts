@@ -55,15 +55,6 @@ export const REWARDS_ANALYTICS_SURFACE_KEYS = [
   "rewards_analytics_extras",
 ] as const;
 
-/**
- * Phase 2B surface flag key for the /analytics?tab=pure-pnl "Pack & Battle Pure
- * P&L" panel CH twin (`getPackBattlePurePnl`). Like every other surface key it
- * carries NO registration cost — `getAdminReadMode` resolves it through the
- * precedence chain whose terminal default is `"off"`, so it stays Postgres-only
- * until an explicit env/Edge-Config flip to `"comparison"`. NEVER flipped to
- * `"clickhouse"` in Phase 2B.
- */
-export const ANALYTICS_PURE_PNL_SURFACE_KEY = "pure_pnl";
 
 /**
  * Phase 2B surface flag keys for the /analytics Top-performers + Revenue tab CH
@@ -295,7 +286,8 @@ const CUTOVER_DEFAULT_CLICKHOUSE: ReadonlySet<string> = new Set([
   "analytics_revenue_withdrawals",
   "analytics_packs_profitability",
   "analytics_packs_stats",
-  "pure_pnl",
+  // pure_pnl dropped with the Raw P&L tab (owner, 2026-07-23) — its CH twin
+  // and comparison harness were deleted, so there is no reader left to route.
   // /creators + /rewards analytics (full-shape twins).
   "creators_analytics",
   // /creators net-GGR + lifetime-P&L twins (getAllCreatorsNetGgr /

@@ -8,7 +8,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   // Navigation
   { group: "Navigation", label: "Dashboard", key: "/dashboard" },
   { group: "Navigation", label: "Analytics", key: "/analytics" },
-  { group: "Navigation", label: "Raw P&L", key: "/analytics/pure-pnl" },
+  // Raw P&L was deleted (owner, 2026-07-23: "kinda useless"). Its tab, the
+  // legacy /analytics/pure-pnl redirect and this page key all went. The
+  // underlying getPackBattlePurePnl query STAYS — the Overview tab's
+  // game-mix section and the realized-P&L metric layer both still read it.
   // GGR moved to the Insights group below.
   // /map was folded into /analytics as a tab — its permission inherits
   // from /analytics. The standalone page no longer exists.
