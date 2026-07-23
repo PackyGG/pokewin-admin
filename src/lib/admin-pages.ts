@@ -18,9 +18,13 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Navigation", label: "Users", key: "/users" },
   // Gates the new VIPs page (Players sidebar section, lists users tagged vip).
   { group: "Navigation", label: "VIPs", key: "/vips" },
-  // Top Chatters (Players sidebar section) — live leaderboard of the most
-  // active packy chat senders for the current UTC calendar day.
-  { group: "Navigation", label: "Top Chatters", key: "/top-chatters" },
+  // Chat Raffle (Players sidebar section) — chat activity scored into
+  // tickets, drawn per prize place, paid out in balance. Replaced the old
+  // read-only "Top Chatters" leaderboard; the permission token was renamed
+  // in place (prisma/admin/sql/2026-07-23_chat_raffle.up.sql), so anyone who
+  // had /top-chatters granted keeps access. Note the PAYOUT step also
+  // requires /users — it goes through the normal balance-adjustment path.
+  { group: "Navigation", label: "Chat Raffle", key: "/chat-raffle" },
   // Player CRM was folded into the owner-only Insights Overview as a tab
   // (/insights/real-numbers?tab=crm); /crm now 308-redirects there and its
   // permission inherits from /insights/real-numbers, so the standalone /crm

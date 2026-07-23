@@ -108,6 +108,10 @@ model admin_users {
   user_tags              admin_user_tags[]
   passkeys               admin_passkeys[]
   withdrawal_unlocks     admin_withdrawal_unlocks[]
+  chat_raffle_rounds_drawn   chat_raffle_rounds[]      @relation("chat_raffle_rounds_drawn_by")
+  chat_raffle_rounds_created chat_raffle_rounds[]      @relation("chat_raffle_rounds_created_by")
+  chat_raffle_prizes_paid    chat_raffle_prizes[]
+  chat_raffle_adjustments    chat_raffle_adjustments[]
 }
 
 /// Per-user withdrawal UNLOCK override.
@@ -2202,4 +2206,175 @@ model creator_reward_program_windows {
   ended_at   DateTime?               @db.Timestamptz(6)
 
   @@index([program_id, started_at], map: "creator_reward_program_windows_program_idx")
+}
+
+// ─── Chat Raffle ───────────────────────────────────────────────────
+// Chat activity → points → tickets → a drawn winner, paid out in balance.
+// The ENTIRE system lives in the admin DB. The MAIN (prod game) DB is
+// read-only here: tickets are derived live from `chat_messages` (covered by
+// the partial index idx_chat_messages_created_at_user_id) and the only
+// main-DB write is the EXISTING balance-adjustment path when an operator pays
+// a winner. No prod schema change, no prod code change.
+//
+// Provisioned via `prisma db execute` of
+// prisma/admin/sql/2026-07-23_chat_raffle.up.sql — NOT a Prisma migration
+// (the admin DB has a drifted migration history; never `migrate deploy` /
+// `db push` on it). These model blocks are the typed MIRROR.
+
+/// One raffle round + the scoring config it runs under.
+///
+/// `status` is a lifecycle flag ONLY: "open" | "drawn" | "cancelled". The
+/// scheduled / running / ready-to-draw distinction is DERIVED from
+/// (starts_at, ends_at, now()) at read time — there is no cron in this admin,
+/// so nothing needs to flip a status on a timer (see `deriveRoundPhase` in
+/// src/lib/chat-raffle/config.ts).
+///
+/// Every scoring knob lives ON THE ROUND rather than in a global settings
+/// row, so a round is self-describing forever: retuning the weights next
+/// month can never retroactively rewrite how a past round was scored. The
+/// "new round" dialog pre-fills from the most recent round, which gives
+/// config continuity without a second table.
+model chat_raffle_rounds {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                      String
+  status                    String    @default("open")
+  starts_at                 DateTime  @db.Timestamptz(6)
+  ends_at                   DateTime  @db.Timestamptz(6)
+
+  /// Points every counted message is worth.
+  points_per_message        Int       @default(1)
+  /// Messages shorter than this (trimmed) score nothing at all.
+  min_message_chars         Int       @default(3)
+  /// Messages at least this long earn `long_message_bonus_points` extra.
+  long_message_chars        Int       @default(40)
+  long_message_bonus_points Int       @default(1)
+
+  /// Anti-farm rate cap — at most `max_messages_per_bucket` counted messages
+  /// per `bucket_minutes` window per user. Everything above the cap in a
+  /// bucket is dropped, which is what stops "spam 500 lines, win the raffle".
+  bucket_minutes            Int       @default(10)
+  max_messages_per_bucket   Int       @default(10)
+  /// Count an identical (trimmed, case-insensitive) message once per bucket.
+  dedupe_identical          Boolean   @default(true)
+
+  /// Per-user ceiling over the whole round (NULL = uncapped).
+  max_points_per_user       Int?
+  /// Floor a user must reach to be in the draw at all.
+  min_points_to_enter       Int       @default(1)
+
+  /// Drop admin/support/creator (the canonical CUSTOMER_EXCLUDED_ROLES).
+  exclude_staff             Boolean   @default(true)
+  /// Drop the admin-managed `excluded_users` blacklist.
+  exclude_blacklisted       Boolean   @default(true)
+  /// Drop users carrying an active chat mute.
+  exclude_muted             Boolean   @default(true)
+  /// Can one user take more than one prize in the same round?
+  allow_repeat_winners      Boolean   @default(false)
+
+  /// Draw provenance. `draw_seed` + the frozen `entries` snapshot make the
+  /// draw fully reproducible: winner N = HMAC-SHA256(seed, "<id>:<n>") mod
+  /// tickets (see src/lib/chat-raffle/draw.ts).
+  draw_seed                 String?
+  drawn_at                  DateTime? @db.Timestamptz(6)
+  drawn_by                  String?   @db.Uuid
+  entrants_at_draw          Int?
+  tickets_at_draw           Int?
+
+  notes                     String?
+  created_by                String?   @db.Uuid
+  created_at                DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at                DateTime  @updatedAt @db.Timestamptz(6)
+
+  drawn_by_admin   admin_users? @relation("chat_raffle_rounds_drawn_by", fields: [drawn_by], references: [id], onDelete: SetNull)
+  created_by_admin admin_users? @relation("chat_raffle_rounds_created_by", fields: [created_by], references: [id], onDelete: SetNull)
+  prizes           chat_raffle_prizes[]
+  entries          chat_raffle_entries[]
+  adjustments      chat_raffle_adjustments[]
+
+  @@index([status], map: "chat_raffle_rounds_status_idx")
+  @@index([ends_at(sort: Desc)], map: "chat_raffle_rounds_ends_at_idx")
+}
+
+/// A payable place in a round's prize ladder.
+///
+/// Winner columns stay NULL until the draw; payout columns stay NULL until an
+/// operator actually credits the balance — drawing and paying are deliberately
+/// separate steps so a draw can be reviewed before money moves.
+///
+/// `ledger_tx_id` is TEXT, not an FK: the main DB is a different Postgres
+/// cluster, so this is a cross-reference for auditing only.
+model chat_raffle_prizes {
+  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  round_id        String             @db.Uuid
+  /// 1 = first place, 2 = second, …
+  position        Int
+  amount_usd      Decimal            @db.Decimal(20, 2)
+  label           String?
+  /// packy.gg user.id (better-auth nanoid, text). Username is captured at
+  /// draw time so a later rename doesn't rewrite history.
+  winner_user_id  String?
+  winner_username String?
+  winner_tickets  Int?
+  /// The exact ticket number the seeded draw landed on (replay check).
+  winning_ticket  BigInt?
+  paid_at         DateTime?          @db.Timestamptz(6)
+  paid_by         String?            @db.Uuid
+  ledger_tx_id    String?
+  created_at      DateTime           @default(now()) @db.Timestamptz(6)
+
+  round           chat_raffle_rounds @relation(fields: [round_id], references: [id], onDelete: Cascade)
+  paid_by_admin   admin_users?       @relation(fields: [paid_by], references: [id], onDelete: SetNull)
+
+  @@unique([round_id, position], map: "chat_raffle_prizes_round_position_unique")
+  @@index([round_id], map: "chat_raffle_prizes_round_idx")
+}
+
+/// The FROZEN standings snapshot, written once at draw time.
+///
+/// This is what makes a past round auditable. The live query would re-score
+/// differently the moment a moderator soft-deletes an old message, so the
+/// numbers the draw actually ran on are persisted rather than recomputed.
+/// `ticket_start` is the entry's first ticket number in the cumulative range
+/// (entries ordered by position) so a third party can replay the draw.
+model chat_raffle_entries {
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  round_id          String             @db.Uuid
+  user_id           String
+  username          String?
+  message_count     Int                @default(0)
+  base_points       Int                @default(0)
+  adjustment_points Int                @default(0)
+  tickets           Int                @default(0)
+  ticket_start      BigInt             @default(0)
+  position          Int                @default(0)
+  created_at        DateTime           @default(now()) @db.Timestamptz(6)
+
+  round             chat_raffle_rounds @relation(fields: [round_id], references: [id], onDelete: Cascade)
+
+  @@unique([round_id, user_id], map: "chat_raffle_entries_round_user_unique")
+  @@index([round_id, position], map: "chat_raffle_entries_round_position_idx")
+}
+
+/// Operator-applied point corrections inside a round (+points for a helpful
+/// player, −points for someone gaming the counter).
+///
+/// Additive rows, never edited in place, so the correction history survives.
+/// They apply ON TOP of the scored base points and are folded into the ticket
+/// count before the draw.
+model chat_raffle_adjustments {
+  id         String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  round_id   String             @db.Uuid
+  /// packy.gg user.id (text — main DB is a separate cluster, no FK).
+  user_id    String
+  /// Signed point delta.
+  points     Int
+  reason     String
+  created_by String?            @db.Uuid
+  created_at DateTime           @default(now()) @db.Timestamptz(6)
+
+  round      chat_raffle_rounds @relation(fields: [round_id], references: [id], onDelete: Cascade)
+  admin_user admin_users?       @relation(fields: [created_by], references: [id], onDelete: SetNull)
+
+  @@index([round_id], map: "chat_raffle_adjustments_round_idx")
+  @@index([round_id, user_id], map: "chat_raffle_adjustments_round_user_idx")
 }

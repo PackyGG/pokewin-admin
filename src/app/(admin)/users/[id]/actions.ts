@@ -185,6 +185,13 @@ const adjustmentDetailsSchema = z
     creatorCodes: z.array(z.string().trim().min(1).max(64)).max(25).optional(),
     creatorProgramName: z.string().trim().max(120).optional(),
     creatorRewardLeg: z.string().trim().max(32).optional(),
+    // chat_raffle — the admin-DB round + prize place this payout settles.
+    // Stamped onto the ledger metadata so a prod row is self-describing: from
+    // the credit you can reach the exact draw that authorized it. Supplied
+    // ONLY by `payChatRafflePrize`, never by the dialog (the category is not
+    // in SELECTABLE_ADJUSTMENT_CATEGORY_KEYS).
+    chatRaffleRoundId: z.string().uuid().optional(),
+    chatRafflePosition: z.number().int().min(1).max(100).optional(),
   })
   .optional();
 
@@ -236,6 +243,9 @@ type ResolvedAdjustmentMeta = {
   creatorCodes: string[] | null;
   creatorProgramName: string | null;
   creatorRewardLeg: string | null;
+  /** Set only for `chat_raffle` — the round + place this payout settles. */
+  chatRaffleRoundId: string | null;
+  chatRafflePosition: number | null;
 };
 
 /**
@@ -273,6 +283,8 @@ function validateAdjustmentCategory(
     creatorCodes: null,
     creatorProgramName: null,
     creatorRewardLeg: null,
+    chatRaffleRoundId: null,
+    chatRafflePosition: null,
   };
 
   switch (category) {
@@ -326,6 +338,26 @@ function validateAdjustmentCategory(
     case "trivia": {
       // No required inputs.
       return { ok: true, meta: base };
+    }
+    case "chat_raffle": {
+      // Not hand-pickable (excluded from SELECTABLE_ADJUSTMENT_CATEGORY_KEYS):
+      // the only writer is `payChatRafflePrize`, which always supplies the
+      // drawn round + place. Require them, so a hypothetical future caller
+      // can't mint an untraceable "chat raffle" credit.
+      if (!d.chatRaffleRoundId || d.chatRafflePosition === undefined) {
+        return {
+          ok: false,
+          error: "Chat-raffle payouts must reference a drawn round and place",
+        };
+      }
+      return {
+        ok: true,
+        meta: {
+          ...base,
+          chatRaffleRoundId: d.chatRaffleRoundId,
+          chatRafflePosition: d.chatRafflePosition,
+        },
+      };
     }
     case "withdrawal_failed": {
       // Optional note — the operator usually pastes the failed withdrawal id
@@ -507,6 +539,9 @@ export async function adjustBalance(data: {
     creatorCodes?: string[];
     creatorProgramName?: string;
     creatorRewardLeg?: string;
+    /** Chat-raffle payout trace — see `adjustmentDetailsSchema`. */
+    chatRaffleRoundId?: string;
+    chatRafflePosition?: number;
   };
 }): Promise<
   { success: true; ledgerTxId: string } | { success: false; error: string }
@@ -810,6 +845,15 @@ export async function adjustBalance(data: {
               : {}),
             ...(meta.creatorRewardLeg
               ? { creator_reward_leg: meta.creatorRewardLeg }
+              : {}),
+            // `chat_raffle` only — from the credit you can reach the exact
+            // admin-DB round + prize place that authorized it. The reverse
+            // link is `chat_raffle_prizes.ledger_tx_id`.
+            ...(meta.chatRaffleRoundId && meta.chatRafflePosition !== null
+              ? {
+                  chat_raffle_round_id: meta.chatRaffleRoundId,
+                  chat_raffle_position: meta.chatRafflePosition,
+                }
               : {}),
           },
           status: "completed",

@@ -72,6 +72,7 @@ export const BALANCE_ADJUSTMENT_CATEGORY_KEYS = [
   "bugs",
   "reload",
   "trivia",
+  "chat_raffle",
   "lossback",
   "leaderboard",
   "remove_locked_balance",
@@ -194,6 +195,12 @@ export const COUNTED_ADJUSTMENT_CATEGORY_KEYS = BALANCE_ADJUSTMENT_CATEGORY_KEYS
  * If an admin could pick it from this dropdown, that invariant — and the
  * per-user consumed-wager accounting that depends on it — would be a lie.
  *
+ * `chat_raffle` is excluded on the SAME unforgeability grounds: its only
+ * writer is `payChatRafflePrize`, so every such ledger row traces back to a
+ * drawn `chat_raffle_prizes` row (whose id and round it carries in
+ * `metadata.chat_raffle_round_id` / `chat_raffle_position`). A hand-picked
+ * "chat raffle" credit with no draw behind it would break that.
+ *
  * IMPORTANT — this is a PICKER-ONLY filter, not a removal from the model:
  * `other` stays a fully valid `BalanceAdjustmentCategory` and stays in
  * {@link BALANCE_ADJUSTMENT_CATEGORY_KEYS} + {@link BALANCE_ADJUSTMENT_CATEGORY_META}.
@@ -203,10 +210,10 @@ export const COUNTED_ADJUSTMENT_CATEGORY_KEYS = BALANCE_ADJUSTMENT_CATEGORY_KEYS
  * in GGR/NGR/cost exactly as before. Only the dropdown stops offering it.
  */
 export const SELECTABLE_ADJUSTMENT_CATEGORY_KEYS = BALANCE_ADJUSTMENT_CATEGORY_KEYS.filter(
-  (k) => k !== "other" && k !== "creator_vip_reward",
+  (k) => k !== "other" && k !== "creator_vip_reward" && k !== "chat_raffle",
 ) as readonly Exclude<
   BalanceAdjustmentCategory,
-  "other" | "creator_vip_reward"
+  "other" | "creator_vip_reward" | "chat_raffle"
 >[];
 
 /** Type-guard: is this string one of the canonical category keys? */
@@ -312,6 +319,13 @@ export const BALANCE_ADJUSTMENT_CATEGORY_META: Record<
     label: "Trivia",
     costLabel: "Trivia credits",
     why: "Balance credited as a trivia-event prize. A house-funded marketing cost.",
+    counted: true,
+  },
+  chat_raffle: {
+    key: "chat_raffle",
+    label: "Chat raffle",
+    costLabel: "Chat-raffle prizes",
+    why: "Balance paid out to the drawn winner of a chat raffle round (tickets earned by chatting). A house-funded engagement cost. Only the /chat-raffle payout action writes this category — it always traces back to a drawn prize row.",
     counted: true,
   },
   lossback: {
