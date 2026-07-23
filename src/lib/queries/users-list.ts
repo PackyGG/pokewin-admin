@@ -11,7 +11,7 @@ import {
 import { calculateUsersPnlBatch, type UserPnl } from "./pnl";
 import { isUserId, isUuid } from "@/lib/utils/ids";
 import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-visible-override";
-import { escapeBlacklistIds } from "./_blacklist";
+import { blacklistNotInClause, escapeBlacklistIds } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { STAFF_ROLES } from "./_exclude-staff";
 import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
@@ -1708,8 +1708,9 @@ export async function getUsers(params: {
 // Three COUNT(*) FILTER aggregates over the user table in a single
 // round-trip — Postgres folds them into a single sequential scan with
 // FILTER predicates, so it's strictly cheaper than three Prisma
-// .count() calls. The depositor count lives on a different table
-// (`balances`) so it's a second, parallel statement.
+// .count() calls. The depositor count (`balances`) and the FTD-24h count
+// (`ledger_transactions`) live on other tables, so they run as two more
+// statements in parallel with it.
 //
 // Cached cross-request (60s revalidate) so spamming the search box
 // doesn't fan into the DB on every keystroke. unstable_cache also
@@ -1741,12 +1742,31 @@ export type UsersListStats = {
    * balances form measures 3.2 ms vs 108 ms.
    */
   depositors: number;
+  /**
+   * First-time depositors in the rolling last 24h — users whose FIRST
+   * completed `deposit` ledger row landed inside the window.
+   *
+   * SAME definition as the dashboard's `ftds24h` (dashboard.ts
+   * `cachedFtdCombined`, also surfaced on /insights/real-numbers), so the
+   * two surfaces can never print different FTD counts: staff
+   * (admin/support) and blacklisted users excluded, `status = 'completed'`
+   * only. Expressed as an anti-join instead of the dashboard's
+   * `DISTINCT ON (user_id)` over the whole deposit history — verified
+   * equal on prod (read-only, 2026-07-23: both return 3) at 0.3 ms vs
+   * 144 ms, because the anti-join form is fully index-served (see the
+   * query comment below).
+   */
+  ftds24h: number;
 };
 
 const cachedUsersListStats = unstable_cache(
-  async (): Promise<UsersListStats> => {
+  // `blacklistIdNotIn` is a pre-rendered `AND id NOT IN (…)` fragment
+  // (empty string when nothing is excluded). Passed in as an argument —
+  // not read inside — so the cache key tracks the admin-managed
+  // /system/excluded-users list and the tiles re-fetch when it changes.
+  async (blacklistIdNotIn: string): Promise<UsersListStats> => {
     const db = await getDb();
-    const [userRows, depositorRows] = await Promise.all([
+    const [userRows, depositorRows, ftdRows] = await Promise.all([
       db.$queryRaw<
         {
           non_banned: string;
@@ -1771,6 +1791,42 @@ const cachedUsersListStats = unstable_cache(
           FROM balances
          WHERE total_deposited > 0
       `,
+      // FTDs (24h). Fully index-served — EXPLAIN (ANALYZE, BUFFERS) on
+      // read-only prod, 2026-07-23, 0.31 ms execution / 86 shared hits:
+      //   • the window leg index-scans idx_ledger_tx_deposit_created_at
+      //     (partial `WHERE type = 'deposit'`, created_at DESC)
+      //   • the "already deposited before" leg is an ANTI JOIN served by
+      //     an INDEX-ONLY scan on idx_ledger_user_deposit_created
+      //   • the staff filter is a user_pkey lookup on the ~25 in-window rows
+      // Written as NOT EXISTS rather than the dashboard's DISTINCT ON so it
+      // never touches the deposit history outside the window: "first
+      // deposit is in the last 24h" ⟺ "deposited in the window AND has no
+      // completed deposit older than it".
+      db.$queryRaw<{ ftds_24h: string }[]>`
+        WITH d24 AS (
+          SELECT DISTINCT user_id
+            FROM ledger_transactions
+           WHERE type = 'deposit'
+             AND status = 'completed'
+             AND created_at >= NOW() - INTERVAL '24 hours'
+        )
+        SELECT COUNT(*)::text AS ftds_24h
+          FROM d24
+         WHERE NOT EXISTS (
+                 SELECT 1
+                   FROM ledger_transactions prev
+                  WHERE prev.user_id = d24.user_id
+                    AND prev.type = 'deposit'
+                    AND prev.status = 'completed'
+                    AND prev.created_at < NOW() - INTERVAL '24 hours'
+               )
+           AND d24.user_id IN (
+                 SELECT id
+                   FROM "user"
+                  WHERE role NOT IN ('admin', 'support')
+                    ${Prisma.raw(blacklistIdNotIn)}
+               )
+      `,
     ]);
     const r = userRows[0];
     return {
@@ -1778,14 +1834,16 @@ const cachedUsersListStats = unstable_cache(
       totalBanned: Number(r?.banned ?? 0),
       signups24h: Number(r?.signups_24h ?? 0),
       depositors: Number(depositorRows[0]?.depositors ?? 0),
+      ftds24h: Number(ftdRows[0]?.ftds_24h ?? 0),
     };
   },
-  ["users-list-stats-v2"],
+  ["users-list-stats-v3"],
   { revalidate: 60, tags: ["users-list-stats"] },
 );
 
 export async function getUsersListStats(): Promise<UsersListStats> {
-  return cachedUsersListStats();
+  const excludedUserIds = await getExcludedUserIds();
+  return cachedUsersListStats(blacklistNotInClause("id", excludedUserIds));
 }
 
 // `getMatchingAffiliateCodes` / `MatchingAffiliateCode` lived here and fed the

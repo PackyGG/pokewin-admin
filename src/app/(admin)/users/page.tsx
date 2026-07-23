@@ -1,6 +1,14 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Users, Ban, UserPlus, Wallet, AlertTriangle, X } from "lucide-react";
+import {
+  Users,
+  Ban,
+  UserPlus,
+  Wallet,
+  HandCoins,
+  AlertTriangle,
+  X,
+} from "lucide-react";
 import { getUsers, getUsersListStats } from "@/lib/queries/users";
 import { requirePageAccess } from "@/lib/dal";
 import { safeQuery } from "@/lib/errors/safe-query";
@@ -147,13 +155,13 @@ export default async function UsersPage({
       </PageHero>
 
       {/* KPI strip — GLOBAL aggregates (Total Users, Banned, Depositors,
-          Signups 24h), NOT the paginated slice, so the read-out stays stable
-          while admins paginate/refine. Own Suspense leg (unkeyed — global
-          stats don't depend on table params) + safeQuery inside, so a slow or
-          failed aggregate degrades to TileErrorFallback without touching the
-          table below. Skeleton tile count must match the real strip (4) or the
-          swap-in shifts the page. */}
-      <Suspense fallback={<KpiStripSkeleton count={4} />}>
+          Signups 24h, FTDs 24h), NOT the paginated slice, so the read-out
+          stays stable while admins paginate/refine. Own Suspense leg (unkeyed
+          — global stats don't depend on table params) + safeQuery inside, so a
+          slow or failed aggregate degrades to TileErrorFallback without
+          touching the table below. Skeleton tile count must match the real
+          strip (5) or the swap-in shifts the page. */}
+      <Suspense fallback={<KpiStripSkeleton count={5} />}>
         <UsersKpiStrip />
       </Suspense>
 
@@ -257,11 +265,10 @@ async function UsersKpiStrip() {
   }
 
   return (
-    // grid-cols-2 md:grid-cols-4 — the same breakpoints KpiStripSkeleton
-    // uses for count={4}, so the skeleton→content swap doesn't reflow on
-    // phones/tablets (the old flat grid-cols-4 both cramped mobile and
-    // mismatched the fallback's 2-up).
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+    // grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 — the same breakpoints
+    // KpiStripSkeleton uses for count={5}, so the skeleton→content swap
+    // doesn't reflow on phones/tablets.
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
       {/* Banned accounts are NOT counted here (owner, 2026-07-23) — this
           reads as the live user base, and the banned population is the tile
           next to it. The `sub` says so out loud so the number is never
@@ -312,6 +319,20 @@ async function UsersKpiStrip() {
         value={formatNumber(stats.signups24h)}
         icon={UserPlus}
         accent="cyan"
+      />
+      {/* FTDs (24h) — accounts whose FIRST completed deposit landed in the
+          window, i.e. how many of the signups next to it actually converted
+          to funded players. Same definition + same amber/HandCoins identity
+          as the FTD tile on /insights/real-numbers, so the two never read
+          as different metrics. Amber (not emerald) on purpose: this is a
+          COUNT of accounts, not a money figure, so the house-POV colour
+          rule doesn't apply — matching the existing FTD tile does. */}
+      <KpiTile
+        label="FTDs (24h)"
+        value={formatNumber(stats.ftds24h)}
+        sub="first-time depositors"
+        icon={HandCoins}
+        accent="amber"
       />
     </div>
   );
