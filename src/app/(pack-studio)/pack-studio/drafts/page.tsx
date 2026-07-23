@@ -42,6 +42,23 @@ import {
  * to their landing route — same contract `/pack-studio/retune` uses.
  */
 
+/**
+ * The PAGE reads are cheap (one cached ADMIN query), but this route also hosts
+ * the two bulk server actions, and a server action inherits its route segment's
+ * budget — `maxDuration` is not valid inside a `"use server"` file.
+ *
+ * `bulkSeedAllActiveDrafts` and `pushAllDrafts` walk the whole in-scope fleet
+ * (~183 active priced official packs) strictly sequentially, at roughly 6 and
+ * 14 round-trips per pack. On the default budget the platform killed them
+ * mid-loop, and the client surfaced a flat "failed" even though N packs had
+ * ALREADY been written to live MAIN — the worst possible reporting for a
+ * partially-applied bulk write. 300s is the ceiling already used elsewhere in
+ * this app; it does not make the loop safe by itself (see the honest
+ * partial-progress reporting the actions do), it just stops the common run
+ * from being cut off halfway.
+ */
+export const maxDuration = 300;
+
 async function DraftsListLoader() {
   // Cached ADMIN-DB read (no MAIN traffic). safeQuery-wrapped so a transient
   // admin-DB fault degrades to the empty-drafts state instead of throwing the

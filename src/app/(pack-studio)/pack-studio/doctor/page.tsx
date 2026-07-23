@@ -13,6 +13,7 @@ import { requirePackStudioPageAccess } from "@/lib/require-pack-studio-access";
 import { isPackStudioRetuneOperator } from "@/lib/reprice-access";
 import {
   getPackRiskRows,
+  getPackRiskRowsResult,
   type PackRiskFilters,
   type PackRiskSortKey,
 } from "../_queries/doctor";
@@ -103,7 +104,24 @@ async function DoctorGrid({
   filters: PackRiskFilters;
   owner: boolean;
 }) {
-  const rows = await getPackRiskRows(filters);
+  const { rows, error } = await getPackRiskRowsResult(filters);
+
+  // A FAILED read also yields zero rows, so it must be separated from a
+  // genuinely empty snapshot BEFORE the empty state below — otherwise an
+  // outage tells the operator to run a snapshot that already exists, and
+  // "Snapshot now" is the one action that cannot help. The reason string is
+  // not echoed (it is the raw driver message); it is logged server-side.
+  if (error) {
+    return (
+      <div className="rounded-md border border-rose-500/40 bg-rose-500/5">
+        <EmptyState
+          icon={Stethoscope}
+          title="Couldn't load the risk snapshot"
+          description="The read failed — this is not an empty snapshot. Reload to retry; if it persists, check the Pack Studio logs."
+        />
+      </div>
+    );
+  }
 
   // No rows AND no filters applied → there is no snapshot yet (or no in-scope
   // packs). Prompt the operator to run one. With filters applied, defer to the

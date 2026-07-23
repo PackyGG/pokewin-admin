@@ -728,9 +728,23 @@ export function PackBuilderForm({
           </div>
 
           {!previewRisk ? (
-            <div className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
-              Add cards and set a price to preview the pack.
-            </div>
+            // A FAILED solve is the common reason there is no preview: when
+            // `shapeWeights` refuses, the odds stay 0, so `previewRisk` is null
+            // and the KPI branch below — which owns the only `shapeError`
+            // banner — never renders. That left an infeasible pool showing
+            // "Add cards and set a price" while cards and a price were already
+            // set, hiding the solver's own explanation. Show the refusal here;
+            // fall back to the add-cards prompt only when nothing was entered.
+            shapeError ? (
+              <div className="flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2.5 text-xs text-rose-600 dark:text-rose-400">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                <span>{shapeError}</span>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
+                Add cards and set a price to preview the pack.
+              </div>
+            )
           ) : (
             <>
               <div className="grid grid-cols-2 gap-3">

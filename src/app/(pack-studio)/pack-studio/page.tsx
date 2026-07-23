@@ -8,25 +8,25 @@ import { requirePackStudioPageAccess } from "@/lib/require-pack-studio-access";
 import { sessionIsOwner } from "@/lib/dal";
 import { PackStudioOverviewContent } from "./_components/overview-content";
 import { PackStudioUserAccessSection } from "./_components/pack-studio-user-access-section";
-import { readPackSystemConfig } from "@/app/(admin)/packs/_lib/risk-config";
 
 /**
  * Pack Studio — Overview. Read-only risk & compliance dashboard.
  *
- * Shell-first: the PageHero (with a ramp-phase badge sourced from the cheap
- * single-key `pack_system_config` admin read) paints immediately, then the
- * heavy snapshot-derived KPIs / alerts / histogram stream in behind a
- * <Suspense> boundary whose fallback reuses the route loading skeleton.
+ * Shell-first: the shell paints immediately, then the heavy snapshot-derived
+ * KPIs / alerts / histogram stream in behind a <Suspense> boundary whose
+ * fallback is the same skeleton `loading.tsx` renders.
+ *
+ * PERF: this used to `await readPackSystemConfig()` here to label a ramp-phase
+ * badge on the hero — an ADMIN round-trip on the critical path before ANY
+ * pixel. It bought nothing: the de-boxed `PageHeroIdentity` no longer renders
+ * `icon` / `title` / `subtitle` / `badges` at all (it returns null without a
+ * `back` or `action`), so the awaited value was formatted and then dropped.
+ * The ramp phase is still shown — in the streamed "Ramp phase" panel, off the
+ * cached base read that was already loading it.
  */
 export default async function PackStudioOverviewPage() {
   const session = await requirePackStudioPageAccess();
   const isOwner = sessionIsOwner(session);
-
-  // Cheap single-row ADMIN read (admin_settings) — used only to label the
-  // hero badge; the heavy overview read happens inside the Suspense child.
-  const cfg = await readPackSystemConfig();
-  const phaseLabel =
-    typeof cfg?.phase === "string" && cfg.phase.length > 0 ? cfg.phase : null;
 
   return (
     <div className="space-y-6">
@@ -36,11 +36,6 @@ export default async function PackStudioOverviewPage() {
           accent="purple"
           title="Pack Studio"
           subtitle="Design, audit, and tune packs and cards in one workspace."
-          badges={
-            <span className="rounded-full border border-purple-500/30 bg-purple-500/10 px-2.5 py-0.5 text-xs font-medium text-purple-600 dark:text-purple-400">
-              {phaseLabel ? `Ramp · ${phaseLabel}` : "Ramp"}
-            </span>
-          }
         />
       </PageHero>
 

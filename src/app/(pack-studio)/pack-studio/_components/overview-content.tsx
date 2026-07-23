@@ -183,6 +183,25 @@ export async function PackStudioOverviewContent() {
     );
   }
 
+  // A snapshot EXISTS but matches no active pack on MAIN — every scored pack
+  // was deleted or deactivated since it ran (very reachable via the Studio's
+  // prod/dev DB toggle, which repoints the meta join at a different game DB).
+  // Every KPI below would be a legitimate zero, and the compliance section
+  // would render an emerald "All packs compliant" — a green all-clear that
+  // actually means "we are scoring nothing". Say what it is instead.
+  if (data.activeTotal === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-amber-500/40 bg-amber-500/5 p-8 text-center">
+        <Gauge className="mx-auto size-6 text-amber-500" aria-hidden />
+        <p className="mt-2 text-sm font-medium">Snapshot doesn&apos;t match any active pack</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Every scored pack is missing or inactive in the game DB, so there is
+          nothing to report on. Re-run the snapshot from Pack Doctor.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* ── KPI strip ──────────────────────────────────────────── */}
