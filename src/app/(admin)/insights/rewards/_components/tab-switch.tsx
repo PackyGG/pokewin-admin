@@ -55,14 +55,14 @@ export type InsightsRewardsTab = (typeof TABS)[number]["value"];
 
 export function InsightsRewardsTabSwitch() {
   const searchParams = useSearchParams();
-  const raw = searchParams.get("tab");
+  const raw = searchParams.get("rw");
   const current: InsightsRewardsTab = (TABS.map((t) => t.value) as string[]).includes(
     raw ?? "",
   )
     ? (raw as InsightsRewardsTab)
     : "overview";
-  const period = searchParams.get("period");
-  const carryPeriod = period ? `period=${encodeURIComponent(period)}` : "";
+  const period = searchParams.get("rwPeriod");
+  const carryPeriod = period ? `rwPeriod=${encodeURIComponent(period)}` : "";
 
   return (
     <div
@@ -72,9 +72,11 @@ export function InsightsRewardsTabSwitch() {
     >
       {TABS.map(({ value, label, Icon }) => {
         const active = current === value;
-        const tabParam = value === "overview" ? "" : `tab=${value}`;
-        const params = [tabParam, carryPeriod].filter(Boolean).join("&");
-        const href = params ? `/insights/rewards?${params}` : "/insights/rewards";
+        const subParam = value === "overview" ? "" : `rw=${value}`;
+        const params = ["tab=rewards", subParam, carryPeriod]
+          .filter(Boolean)
+          .join("&");
+        const href = `/analytics?${params}`;
         return (
           <Link
             key={value}

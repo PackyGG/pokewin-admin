@@ -5,6 +5,9 @@ import { usePathname, useSearchParams } from "next/navigation";
 import {
   BarChart3,
   Dices,
+  Gift,
+  Sigma,
+  TrendingDown,
   PieChart,
   Trophy,
   Clock,
@@ -19,6 +22,9 @@ export type AnalyticsTab =
   | "overview"
   | "pure-pnl"
   | "double-down"
+  | "real-numbers"
+  | "cost-breakdown"
+  | "rewards"
   | "revenue"
   | "top"
   | "heatmap"
@@ -39,6 +45,12 @@ const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
   // Absorbed from /insights/double-down (owner, 2026-07-23) — that route now
   // redirects here. Locked to 30d, so the page period filter doesn't apply.
   { value: "double-down", label: "Double Down", icon: Dices },
+  // Absorbed from the /insights section (owner, 2026-07-23) — those routes
+  // now redirect here. Each keeps its own sub-nav / period on namespaced
+  // params (?rn=, ?cbPeriod=, ?rw=/?rwPeriod=) so no two bars fight over one.
+  { value: "real-numbers", label: "Real Numbers", icon: Sigma },
+  { value: "cost-breakdown", label: "Cost Breakdown", icon: TrendingDown },
+  { value: "rewards", label: "Rewards", icon: Gift },
   { value: "revenue", label: "Revenue", icon: PieChart },
   { value: "top", label: "Top Performers", icon: Trophy },
   { value: "heatmap", label: "Activity Heatmap", icon: Clock },

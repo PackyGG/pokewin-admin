@@ -21,10 +21,7 @@ import {
   HandCoins,
   type LucideIcon,
 } from "lucide-react";
-import { requirePageAccess } from "@/lib/dal";
 import {
-  PageHero,
-  PageHeroIdentity,
   SectionHeading,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -52,15 +49,15 @@ import {
   type RealizedPnlSnapshot,
 } from "@/lib/queries/_realized-pnl";
 import { compareCostBreakdown } from "@/lib/clickhouse/compare/insights-cost-breakdown";
-import { CostBreakdownPeriodFilter } from "./period-filter";
-import { CostTrendChart } from "./trend-chart";
-import { WaterfallRow, WaterfallBand } from "./waterfall-row";
+import { CostBreakdownPeriodFilter } from "../insights/cost-breakdown/period-filter";
+import { CostTrendChart } from "../insights/cost-breakdown/trend-chart";
+import { WaterfallRow, WaterfallBand } from "../insights/cost-breakdown/waterfall-row";
 import {
   MetricInfoPopover,
   InfoRow,
   InfoTotal,
   ValueChip,
-} from "./_components";
+} from "../insights/cost-breakdown/_components";
 // SEMANTIC_TONES is imported from the DIRECTIVE-FREE `./tones` module (not
 // `./_components`, which is "use client"). This page is a Server Component
 // and reads `SEMANTIC_TONES[tone].face/.icon/…` while rendering its tiles
@@ -69,9 +66,7 @@ import {
 // `SEMANTIC_TONES[tone] ?? SEMANTIC_TONES.muted` collapses to `undefined`
 // and `.face` crashes during Flight serialize. The directive-free module
 // hands back the genuine object on both server and client.
-import { SEMANTIC_TONES, type SemanticTone } from "./tones";
-
-export const metadata = { title: "Cost Breakdown" };
+import { SEMANTIC_TONES, type SemanticTone } from "../insights/cost-breakdown/tones";
 
 /**
  * /insights/cost-breakdown — THE money-leakage page, rebuilt
@@ -124,39 +119,38 @@ export const metadata = { title: "Cost Breakdown" };
  *     loss, because it can still come back; and
  *   • the honest leftover → muted.
  */
-export default async function CostBreakdownPage({
-  searchParams,
+/**
+ * Cost Breakdown as an /analytics tab.
+ *
+ * Was `/insights/cost-breakdown` (owner, 2026-07-23). Body untouched; the
+ * PageHero is gone because /analytics renders one, and the period filter +
+ * export moved inline above the waterfall.
+ *
+ * Shell-first is preserved: the controls paint instantly from the URL — no DB
+ * — and the heavy assembly (the canonical metric layer + bridge terms +
+ * contributor sweep + lifetime realized-P&L snapshot, the heaviest read in
+ * the app) streams behind a Suspense keyed on `period`.
+ *
+ * Reads `?cbPeriod=` rather than `?period=`: /analytics already owns
+ * `?period=` for its own filter, and the two use different period vocabularies
+ * — sharing the param would feed this tab a value it can't parse.
+ */
+export async function CostBreakdownTab({
+  period,
 }: {
-  searchParams: Promise<Record<string, string | undefined>>;
+  period: ReturnType<typeof parseInsightsPeriod>;
 }) {
-  await requirePageAccess("/insights/cost-breakdown");
-  const params = await searchParams;
-  const period = parseInsightsPeriod(params.period);
-
-  // Shell-first (docs/BACKEND_QUERY_SYSTEM.md §3): paint the hero + static
-  // controls (period filter, export) instantly from `searchParams` — no DB —
-  // and stream the heavy cost-breakdown assembly (~the heaviest read in the
-  // app: the canonical metric layer + the bridge terms + the contributor
-  // sweep + the lifetime realized-P&L snapshot) in behind a Suspense
-  // boundary keyed on `period` so a period switch re-streams. First paint no
-  // longer blocks up to the read timeout. The `loading.tsx` sibling renders
-  // the same shell + waterfall skeleton for the route-level pending state.
   return (
     <div className="space-y-6">
-      <PageHero>
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-          <PageHeroIdentity
-            icon={TrendingDown}
-            accent="rose"
-            title="Cost Breakdown"
-            subtitle="Where the wager goes — wager → net result, every leak named"
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            <CostBreakdownPeriodFilter />
-            <ExportButton page="cost-breakdown" params={{ period }} />
-          </div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          Where the wager goes — wager → net result, every leak named
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <CostBreakdownPeriodFilter />
+          <ExportButton page="cost-breakdown" params={{ period }} />
         </div>
-      </PageHero>
+      </div>
 
       <Suspense key={period} fallback={<CostBreakdownBodySkeleton />}>
         <CostBreakdownBody period={period} />

@@ -46,7 +46,10 @@ export function RealNumbersTabNav() {
   // The in-flight target set on click; drives the active pill optimistically
   // until the URL commits. `null` when nothing is pending.
   const [pending, setPending] = useState<RealNumbersTab | null>(null);
-  const committed = (searchParams.get("tab") ?? "real-numbers") as RealNumbersTab;
+  // `?rn=`, NOT `?tab=` — Real Numbers is itself a tab on /analytics now
+  // (owner, 2026-07-23), and `?tab=` drives that outer bar. Two navs writing
+  // one param would knock each other off the page on every click.
+  const committed = (searchParams.get("rn") ?? "real-numbers") as RealNumbersTab;
 
   // Once the navigation commits (URL caught up) or the transition finished,
   // the optimistic target is stale — drop it so the pill tracks the real URL.
@@ -62,7 +65,10 @@ export function RealNumbersTabNav() {
 
   function hrefFor(tab: RealNumbersTab): string {
     const p = new URLSearchParams(searchParams.toString());
-    p.set("tab", tab);
+    p.set("rn", tab);
+    // Keep the outer analytics tab pinned — without this a sub-tab click
+    // would drop `?tab=real-numbers` and bounce back to Overview.
+    p.set("tab", "real-numbers");
     return `${pathname}?${p.toString()}`;
   }
 

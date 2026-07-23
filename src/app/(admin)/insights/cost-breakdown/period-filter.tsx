@@ -32,12 +32,15 @@ const LABEL_SHORT: Record<InsightsPeriod, string> = {
 export function CostBreakdownPeriodFilter() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const current = (searchParams.get("period") ??
+  const current = (searchParams.get("cbPeriod") ??
     DEFAULT_INSIGHTS_PERIOD) as InsightsPeriod;
 
   function hrefFor(p: InsightsPeriod): string {
     const params = new URLSearchParams(searchParams.toString());
-    params.set("period", p);
+    // `cbPeriod`, not `period`: /analytics owns `period` with a different
+    // vocabulary. `tab` is pinned so a period click stays on this tab.
+    params.set("cbPeriod", p);
+    params.set("tab", "cost-breakdown");
     return `${pathname}?${params.toString()}`;
   }
 

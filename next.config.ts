@@ -67,7 +67,7 @@ const nextConfig: NextConfig = {
         // v1 bookmark straight at the new Insights Overview (avoids a 308→308
         // double hop through the now-removed /insights/edge-plan-2).
         source: "/insights/system-edge-plan",
-        destination: "/insights/real-numbers",
+        destination: "/analytics?tab=real-numbers",
         permanent: true,
       },
       // ── Retired-route legacy bookmarks (in-render redirect() → HTTP 308) ──
@@ -105,13 +105,13 @@ const nextConfig: NextConfig = {
       {
         // Legacy games insights — superseded by /ggr.
         source: "/insights/games",
-        destination: "/insights/real-numbers",
+        destination: "/analytics?tab=real-numbers",
         permanent: true,
       },
       {
         // Legacy balance-adjustments insights — removed from the dashboard.
         source: "/insights/balance-adjustments",
-        destination: "/insights/real-numbers",
+        destination: "/analytics?tab=real-numbers",
         permanent: true,
       },
       // ── Insights → Analytics absorption (2026-07-23, owner) ───────────────
@@ -122,6 +122,28 @@ const nextConfig: NextConfig = {
       {
         source: "/insights/double-down",
         destination: "/analytics?tab=double-down",
+        permanent: true,
+      },
+      {
+        source: "/insights/real-numbers",
+        destination: "/analytics?tab=real-numbers",
+        permanent: true,
+      },
+      {
+        source: "/insights/cost-breakdown",
+        destination: "/analytics?tab=cost-breakdown",
+        permanent: true,
+      },
+      {
+        source: "/insights/rewards",
+        destination: "/analytics?tab=rewards",
+        permanent: true,
+      },
+      {
+        // The old hub + /crm both pointed at Real Numbers; retarget them at
+        // the tab rather than leave a redirect chain onto a dead route.
+        source: "/insights",
+        destination: "/analytics?tab=real-numbers",
         permanent: true,
       },
       // ── Insights IA restructure (2026-06-15) ──────────────────────────────
@@ -138,36 +160,36 @@ const nextConfig: NextConfig = {
       // correct here.
       {
         // Old Insights hub page → new Insights landing (Real Numbers).
-        source: "/insights",
-        destination: "/insights/real-numbers",
+        source: "/insights/hub",
+        destination: "/analytics?tab=real-numbers",
         permanent: true,
       },
       {
         source: "/insights/analytics",
-        destination: "/insights/real-numbers",
+        destination: "/analytics?tab=real-numbers",
         permanent: true,
       },
       {
         // GGR breakdown page removed.
         source: "/ggr",
-        destination: "/insights/real-numbers",
+        destination: "/analytics?tab=real-numbers",
         permanent: true,
       },
       {
         // Insights challenges analytics removed (the CRUD /challenges page
         // under Rewards is unaffected).
         source: "/insights/challenges",
-        destination: "/insights/real-numbers",
+        destination: "/analytics?tab=real-numbers",
         permanent: true,
       },
       {
         source: "/insights/edge-plan-2",
-        destination: "/insights/real-numbers",
+        destination: "/analytics?tab=real-numbers",
         permanent: true,
       },
       {
         source: "/insights/wager-liability",
-        destination: "/insights/real-numbers",
+        destination: "/analytics?tab=real-numbers",
         permanent: true,
       },
       {

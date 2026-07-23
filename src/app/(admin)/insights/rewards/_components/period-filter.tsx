@@ -27,16 +27,18 @@ const PERIODS = [
 export function InsightsRewardsPeriodFilter() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const current = searchParams.get("period") ?? "30d";
-  const tab = searchParams.get("tab");
-  const carryTab = tab ? `&tab=${encodeURIComponent(tab)}` : "";
+  // `rwPeriod` / `rw`: /analytics owns `period` and `tab`, so this tab
+  // namespaces its own. `tab=rewards` is pinned so a click stays here.
+  const current = searchParams.get("rwPeriod") ?? "30d";
+  const sub = searchParams.get("rw");
+  const carrySub = sub ? `&rw=${encodeURIComponent(sub)}` : "";
 
   return (
     <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/50 p-1">
       {PERIODS.map(({ label, value }) => (
         <Link
           key={value}
-          href={`${pathname}?period=${value}${carryTab}`}
+          href={`${pathname}?tab=rewards&rwPeriod=${value}${carrySub}`}
           replace
           prefetch={false}
           className={cn(

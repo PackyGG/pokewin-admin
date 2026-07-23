@@ -1,7 +1,4 @@
 import {
-  Sigma,
-  PieChart,
-  LineChart,
   Coins,
   TrendingUp,
   TrendingDown,
@@ -28,15 +25,10 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Suspense, cache } from "react";
-import Link from "next/link";
-import { ArrowRight } from "lucide-react";
-import { requirePageAccess } from "@/lib/dal";
 import {
-  PageHero,
-  PageHeroIdentity,
   KpiTile,
 } from "@/components/modern-panels";
-import { CollapsibleSection } from "./collapsible-section";
+import { CollapsibleSection } from "../insights/real-numbers/collapsible-section";
 import { FadeIn } from "@/components/fade-in";
 import {
   KpiStripSkeleton,
@@ -82,13 +74,11 @@ import { formatDateTime } from "@/lib/utils/format";
 import {
   WaterfallRow,
   WaterfallBand,
-} from "../cost-breakdown/waterfall-row";
-import { SEMANTIC_TONES, type SemanticTone } from "../cost-breakdown/tones";
-import { RealNumbersTabNav, type RealNumbersTab } from "./tab-nav";
-import { CrmTab } from "./crm-tab";
-import { AnalyticsTab } from "./analytics-tab";
-
-export const metadata = { title: "Real Numbers" };
+} from "../insights/cost-breakdown/waterfall-row";
+import { SEMANTIC_TONES, type SemanticTone } from "../insights/cost-breakdown/tones";
+import { RealNumbersTabNav, type RealNumbersTab } from "../insights/real-numbers/tab-nav";
+import { CrmTab } from "../insights/real-numbers/crm-tab";
+import { AnalyticsTab } from "../insights/real-numbers/analytics-tab";
 
 /**
  * /insights/real-numbers — the SOURCE OF TRUTH page.
@@ -115,87 +105,45 @@ export const metadata = { title: "Real Numbers" };
  * (CLAUDE.md): user gains → rose, user loses / house up → emerald, neutral
  * turnover / cash-in → blue.
  */
-export default async function RealNumbersPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | undefined>>;
-}) {
-  await requirePageAccess("/insights/real-numbers");
-
-  const params = await searchParams;
-  // Three tabs on the Insights Overview: Real Numbers (the LANDING / default —
-  // the source-of-truth reconciled headline), Analytics (deposit-cadence
-  // figures moved off the dashboard, demoted from the landing to a tab), and
-  // Player CRM (the former standalone /crm page, which now 308-redirects
-  // here). Only the active tab's body streams (active-tab-only).
+/**
+ * Real Numbers as an /analytics tab.
+ *
+ * Was the standalone page `/insights/real-numbers` (owner, 2026-07-23: the
+ * insights section shouldn't be its own place). Body is unchanged — what went
+ * is its PageHero, since /analytics renders one, and the "Cost Breakdown"
+ * link, since that page is now a sibling tab.
+ *
+ * Its three sub-views (Real Numbers / Analytics / Player CRM) keep their own
+ * nav, but on `?rn=` instead of `?tab=` — `?tab=` belongs to the analytics tab
+ * bar now, and two navs writing the same param would fight each other.
+ */
+export async function RealNumbersTab({ sub }: { sub: string | undefined }) {
   const tab: RealNumbersTab =
-    params.tab === "crm"
-      ? "crm"
-      : params.tab === "analytics"
-        ? "analytics"
-        : "real-numbers";
+    sub === "crm" ? "crm" : sub === "analytics" ? "analytics" : "real-numbers";
   const asOf = formatDateTime(new Date());
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        {tab === "analytics" ? (
-          <PageHeroIdentity
-            icon={LineChart}
-            accent="blue"
-            title="Analytics"
-            subtitle="Insights overview — deposit cadence & platform analytics. Real customers only (staff, creators & blacklisted users excluded)."
-          />
-        ) : tab === "crm" ? (
-          <PageHeroIdentity
-            icon={PieChart}
-            accent="purple"
-            title="Player CRM"
-            subtitle="Lifecycle, value tiers & win-back targets — real customers, last 365 days (borrow-corrected, House POV)"
-          />
-        ) : (
-          <>
-            <PageHeroIdentity
-              icon={Sigma}
-              accent="emerald"
-              title="Real Numbers"
-              subtitle="Source of truth · lifetime · real customers only (staff, creators & blacklisted users excluded) · reconciled to the ledger & balances"
-              action={
-                <Link
-                  href="/insights/cost-breakdown"
-                  className={cn(
-                    // Outline-button look without calling the client-only
-                    // buttonVariants() from this Server Component (that crashes
-                    // the RSC render). Mirrors button.tsx variant="outline"
-                    // size="sm": bordered, subtle hover, focus ring.
-                    "group/cb inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground shadow-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring",
-                  )}
-                >
-                  <TrendingDown className="size-4 text-rose-500" />
-                  <span>Cost Breakdown</span>
-                  <ArrowRight className="size-3.5 text-muted-foreground transition-transform motion-safe:group-hover/cb:translate-x-0.5" />
-                </Link>
-              }
-            />
-            <div className="mt-3 flex flex-col gap-1.5 border-t border-border/50 pt-3 text-[11px] leading-snug text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-              <p className="flex min-w-0 items-center gap-1.5">
-                <ScrollText className="size-3.5 shrink-0 text-muted-foreground/70" />
-                <span className="min-w-0">
-                  Sourced from the canonical metric layer (
-                  <span className="font-medium text-foreground/80">getCostBreakdown</span>
-                  {" · "}
-                  <span className="font-medium text-foreground/80">getInsightsHubWager</span>
-                  {" · "}
-                  <span className="font-medium text-foreground/80">getRealizedPnlSnapshot</span>
-                  ) — GGR is the verified inventory-delta model; borrow plays
-                  count at their real net basis.
-                </span>
-              </p>
-              <p className="shrink-0 tabular-nums">As of {asOf} · last {INSIGHTS_HUB_WAGER_LOOKBACK_DAYS}d</p>
-            </div>
-          </>
-        )}
-      </PageHero>
+      {tab === "real-numbers" && (
+        <div className="flex flex-col gap-1.5 text-[11px] leading-snug text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <p className="flex min-w-0 items-center gap-1.5">
+            <ScrollText className="size-3.5 shrink-0 text-muted-foreground/70" />
+            <span className="min-w-0">
+              Sourced from the canonical metric layer (
+              <span className="font-medium text-foreground/80">getCostBreakdown</span>
+              {" · "}
+              <span className="font-medium text-foreground/80">getInsightsHubWager</span>
+              {" · "}
+              <span className="font-medium text-foreground/80">getRealizedPnlSnapshot</span>
+              ) — GGR is the verified inventory-delta model; borrow plays count
+              at their real net basis.
+            </span>
+          </p>
+          <p className="shrink-0 tabular-nums">
+            As of {asOf} · last {INSIGHTS_HUB_WAGER_LOOKBACK_DAYS}d
+          </p>
+        </div>
+      )}
 
       <RealNumbersTabNav />
 

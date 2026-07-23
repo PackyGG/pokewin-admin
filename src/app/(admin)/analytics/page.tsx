@@ -9,6 +9,11 @@ import { parsePeriod } from "./types";
 import { OverviewTab } from "./tab-overview";
 import { PurePnlTab } from "./tab-pure-pnl";
 import { DoubleDownTab } from "./tab-double-down";
+import { RealNumbersTab } from "./tab-real-numbers";
+import { CostBreakdownTab } from "./tab-cost-breakdown";
+import { RewardsInsightsTab } from "./tab-rewards";
+import { parseInsightsPeriod } from "@/lib/queries/insights-analytics/period";
+import { parseInsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_period";
 import { RevenueTab } from "./tab-revenue";
 import { TopPerformersTab } from "./tab-top";
 import { HeatmapTab } from "./tab-heatmap";
@@ -26,6 +31,9 @@ function parseTab(value: string | undefined): AnalyticsTab {
   switch (value) {
     case "overview":
     case "pure-pnl":
+    case "real-numbers":
+    case "cost-breakdown":
+    case "rewards":
     case "double-down":
     case "revenue":
     case "top":
@@ -71,6 +79,13 @@ export default async function AnalyticsPage({
   const ddSearch = (params.q ?? "").trim();
   const ddPageRaw = Number.parseInt(params.page ?? "1", 10);
   const ddPage = Number.isFinite(ddPageRaw) && ddPageRaw > 0 ? ddPageRaw : 1;
+  // Absorbed-tab params, each namespaced so no two tab bars write the same
+  // key: `rn` = Real Numbers sub-view, `cbPeriod` = Cost Breakdown window,
+  // `rw` / `rwPeriod` = Rewards sub-view + window.
+  const rnSub = params.rn;
+  const cbPeriod = parseInsightsPeriod(params.cbPeriod);
+  const rwSub = params.rw;
+  const rwPeriod = parseInsightsRewardsPeriod(params.rwPeriod);
   const packsSort = params.packsSort;
   // Map tab uses its own URL param for the heat metric (users /
   // deposits / wagers / multiplier). Parsed here so the param flows
@@ -109,13 +124,18 @@ export default async function AnalyticsPage({
           chart for the rest) so the swap into real content doesn't jump the
           layout. */}
       <Suspense
-        key={`${tab}-${period}-${topTab ?? ""}-${packsSort ?? ""}-${mapMetric}-${ddSearch}-${ddPage}`}
+        key={`${tab}-${period}-${topTab ?? ""}-${packsSort ?? ""}-${mapMetric}-${ddSearch}-${ddPage}-${rnSub ?? ""}-${cbPeriod}-${rwSub ?? ""}-${rwPeriod}`}
         fallback={fallbackForTab(tab)}
       >
         {tab === "overview" && <OverviewTab period={period} />}
         {tab === "pure-pnl" && <PurePnlTab />}
         {tab === "double-down" && (
           <DoubleDownTab search={ddSearch} page={ddPage} />
+        )}
+        {tab === "real-numbers" && <RealNumbersTab sub={rnSub} />}
+        {tab === "cost-breakdown" && <CostBreakdownTab period={cbPeriod} />}
+        {tab === "rewards" && (
+          <RewardsInsightsTab period={rwPeriod} sub={rwSub} />
         )}
         {tab === "revenue" && <RevenueTab period={period} />}
         {tab === "top" && (

@@ -1,33 +1,25 @@
 import { Suspense } from "react";
-import { Gift } from "lucide-react";
-import { requirePageAccess } from "@/lib/dal";
-import {
-  PageHero,
-  PageHeroIdentity,
-} from "@/components/modern-panels";
 import { ExportButton } from "@/components/export-button";
 import {
   parseInsightsRewardsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { InsightsRewardsPeriodFilter } from "./_components/period-filter";
-import { InsightsRewardsTabSwitch } from "./_components/tab-switch";
+import { InsightsRewardsPeriodFilter } from "../insights/rewards/_components/period-filter";
+import { InsightsRewardsTabSwitch } from "../insights/rewards/_components/tab-switch";
 import {
   InsightsRewardsTabSkeleton,
   InsightsRewardsCompactTabSkeleton,
-} from "./_components/tab-skeleton";
-import { OverviewTab } from "./_components/overview-tab";
-import { DailyPacksTab } from "./_components/daily-packs-tab";
-import { CategoriesTab } from "./_components/categories-tab";
-import { RoiTab } from "./_components/roi-tab";
-import { RetentionTab } from "./_components/retention-tab";
-import { StackingTab } from "./_components/stacking-tab";
-import { CohortTab } from "./_components/cohort-tab";
-import { TopSpendersTab } from "./_components/top-spenders-tab";
-import { ForecastTab } from "./_components/forecast-tab";
-import { GeoTab } from "./_components/geo-tab";
-
-export const metadata = { title: "Rewards Insights" };
+} from "../insights/rewards/_components/tab-skeleton";
+import { OverviewTab } from "../insights/rewards/_components/overview-tab";
+import { DailyPacksTab } from "../insights/rewards/_components/daily-packs-tab";
+import { CategoriesTab } from "../insights/rewards/_components/categories-tab";
+import { RoiTab } from "../insights/rewards/_components/roi-tab";
+import { RetentionTab } from "../insights/rewards/_components/retention-tab";
+import { StackingTab } from "../insights/rewards/_components/stacking-tab";
+import { CohortTab } from "../insights/rewards/_components/cohort-tab";
+import { TopSpendersTab } from "../insights/rewards/_components/top-spenders-tab";
+import { ForecastTab } from "../insights/rewards/_components/forecast-tab";
+import { GeoTab } from "../insights/rewards/_components/geo-tab";
 
 type Tab =
   | "overview"
@@ -91,32 +83,37 @@ function parseTab(value: string | undefined): Tab {
  * House-POV everywhere: rewards are house cost → rose. ROI flips
  * emerald when subsequent gameplay GGR exceeds spend, rose otherwise.
  */
-export default async function InsightsRewardsPage({
-  searchParams,
+/**
+ * Rewards Insights as an /analytics tab.
+ *
+ * Was `/insights/rewards` (owner, 2026-07-23). Body untouched; the PageHero
+ * is gone (analytics renders one) and the period filter + export moved inline.
+ *
+ * Params are re-namespaced so the outer analytics tab bar and this one don't
+ * fight: `?rw=` picks the sub-view (was `?tab=`), `?rwPeriod=` the window (was
+ * `?period=`, which /analytics owns with a different vocabulary).
+ */
+export async function RewardsInsightsTab({
+  period,
+  sub,
 }: {
-  searchParams: Promise<Record<string, string | undefined>>;
+  period: ReturnType<typeof parseInsightsRewardsPeriod>;
+  sub: string | undefined;
 }) {
-  await requirePageAccess("/insights/rewards");
-  const params = await searchParams;
-  const period = parseInsightsRewardsPeriod(params.period);
-  const tab = parseTab(params.tab);
+  const tab = parseTab(sub);
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-          <PageHeroIdentity
-            icon={Gift}
-            accent="rose"
-            title="Rewards Insights"
-            subtitle="Cross-reward analysis, ROI, retention impact, cohort lift, marketing cost vs revenue."
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            <InsightsRewardsPeriodFilter />
-            <ExportButton page="rewards" params={{ period }} />
-          </div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          Cross-reward analysis, ROI, retention impact, cohort lift, marketing
+          cost vs revenue.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <InsightsRewardsPeriodFilter />
+          <ExportButton page="rewards" params={{ period }} />
         </div>
-      </PageHero>
+      </div>
 
       <InsightsRewardsTabSwitch />
 
