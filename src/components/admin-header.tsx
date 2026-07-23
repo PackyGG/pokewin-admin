@@ -111,7 +111,7 @@ function ThemeSubmenu() {
         <Sun className="size-4" />
         <span>Theme</span>
       </DropdownMenuSubTrigger>
-      <DropdownMenuSubContent className="min-w-[160px]">
+      <DropdownMenuSubContent className="min-w-[160px] rounded-md">
         <DropdownMenuItem onClick={() => pick("light")}>
           <Sun className="size-4" />
           <span>Light</span>
@@ -167,7 +167,7 @@ function TimezoneSubmenu({ onOpenProfile }: { onOpenProfile: () => void }) {
         <Clock className="size-4" />
         <span>Timezone</span>
       </DropdownMenuSubTrigger>
-      <DropdownMenuSubContent className="max-h-[60vh] min-w-[240px] overflow-y-auto">
+      <DropdownMenuSubContent className="max-h-[60vh] min-w-[240px] overflow-y-auto rounded-md">
         <DropdownMenuItem onClick={() => pick(null)}>
           <span>Detect from browser</span>
           {!ctx.explicit && <Check className="ml-auto size-4" />}
@@ -245,7 +245,7 @@ function DbEnvSubmenu({ active }: { active: DbEnv }) {
           {active}
         </span>
       </DropdownMenuSubTrigger>
-      <DropdownMenuSubContent className="min-w-[200px]">
+      <DropdownMenuSubContent className="min-w-[200px] rounded-md">
         <DropdownMenuItem onClick={() => pick("prod")} disabled={pending}>
           <span>Production</span>
           {active === "prod" && <Check className="ml-auto size-4" />}
@@ -448,7 +448,11 @@ export function AdminHeader({
             </span>
             <ChevronDown className="ml-1 hidden size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[popup-open]:rotate-180 sm:block" />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-[220px]">
+          {/* Tighter corners than the shared dropdown default (rounded-lg):
+              at this panel's width the full radius read as too round. Scoped
+              here on purpose — the primitive backs every dropdown in the
+              admin, so the override stays on the profile menu. */}
+          <DropdownMenuContent align="end" className="min-w-[220px] rounded-md">
             <DropdownMenuGroup>
               <DropdownMenuLabel className="font-normal">
                 <div className="flex flex-col gap-1.5 py-0.5">
