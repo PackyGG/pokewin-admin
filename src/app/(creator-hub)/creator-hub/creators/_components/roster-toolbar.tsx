@@ -22,27 +22,39 @@ import {
 } from "../_lib/roster-params";
 import { useRosterSearch } from "./roster-search-context";
 import { useRosterView } from "./roster-view-context";
+import { AddCreatorDialogV2 } from "./add-creator-dialog-v2";
 
 /**
  * Creator Hub roster toolbar — instant search + sort dropdown + grid/list
- * toggle, on one responsive row.
+ * toggle + Add Creator, on one responsive row.
  *
  *   • Search  — instant client-side filter over the already-fetched rows
  *               (RosterSearchProvider). Never refetches.
  *   • Sort    — drives `?sortBy=`; a new sort restarts at page 1 and is a
  *               `router.replace` (no history spam) inside a transition.
  *   • View    — grid / list, pure client presentation (RosterViewProvider).
+ *   • Add     — the Add Creator dialog trigger. It used to sit alone in the
+ *               page-top `PageHeroIdentity` action slot, where a single button
+ *               cost a whole row plus the stack gap above the roster. Folded
+ *               into this existing controls row it costs no extra height, and
+ *               it sits next to the roster it adds to. Hidden on the Past tab
+ *               (`?tab=past`) — you don't add a creator to the ex-roster.
  *
  * Client-safe: imports only UI primitives + the client-safe param enum/labels
- * + the two roster contexts — no server query-module value imports.
+ * + the two roster contexts + the (client) Add Creator dialog — no server
+ * query-module value imports.
  */
 export function RosterToolbar() {
+  const searchParams = useSearchParams();
+  const isPast = searchParams.get("tab") === "past";
+
   return (
     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
       <RosterSearchInput />
       <div className="flex items-center gap-2">
         <RosterSortControl />
         <RosterViewToggle />
+        {!isPast && <AddCreatorDialogV2 />}
       </div>
     </div>
   );

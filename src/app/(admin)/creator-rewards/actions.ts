@@ -51,6 +51,17 @@ import {
  * balance, and anyone allowed to do that should be allowed to see the player.
  */
 
+/**
+ * Both surfaces render the same programs + claim queue from the same queries:
+ * the admin page `/creator-rewards` and the Creator Hub page
+ * `/creator-hub/rewards`. Every mutation below must refresh both, or a change
+ * made from one shows stale on the other.
+ */
+function revalidateCreatorRewards(): void {
+  revalidatePath("/creator-rewards");
+  revalidatePath("/creator-hub/rewards");
+}
+
 const CodesSchema = z
   .array(z.string().trim().min(1).max(32))
   .min(1, "Pick at least one code")
@@ -252,7 +263,7 @@ export async function createCreatorRewardProgram(input: {
     },
   });
 
-  revalidatePath("/creator-rewards");
+  revalidateCreatorRewards();
   return { success: true };
 }
 
@@ -320,7 +331,7 @@ export async function setCreatorRewardProgramActive(input: {
     },
   });
 
-  revalidatePath("/creator-rewards");
+  revalidateCreatorRewards();
   return { success: true };
 }
 
@@ -500,7 +511,7 @@ export async function approveCreatorRewardClaim(input: {
     }),
   );
 
-  revalidatePath("/creator-rewards");
+  revalidateCreatorRewards();
   return { success: true };
 }
 
@@ -576,7 +587,7 @@ export async function rejectCreatorRewardClaim(input: {
     }),
   );
 
-  revalidatePath("/creator-rewards");
+  revalidateCreatorRewards();
   return { success: true };
 }
 
@@ -680,7 +691,7 @@ export async function reinstateCreatorRewardClaim(input: {
     },
   });
 
-  revalidatePath("/creator-rewards");
+  revalidateCreatorRewards();
   return { success: true };
 }
 
@@ -728,7 +739,7 @@ export async function raiseCreatorRewardClaimForUser(input: {
     },
   });
 
-  revalidatePath("/creator-rewards");
+  revalidateCreatorRewards();
   return {
     success: true,
     data: { amountUsd: result.amountUsd, units: result.units },
@@ -917,7 +928,7 @@ export async function resendClaimDecisionNotice(input: {
     select: { bot_notified_at: true, bot_notify_error: true },
   });
 
-  revalidatePath("/creator-rewards");
+  revalidateCreatorRewards();
   return after_?.bot_notified_at
     ? { success: true }
     : {

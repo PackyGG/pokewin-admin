@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ArrowLeft,
+  Crown,
   Gift,
   LayoutDashboard,
   Users,
@@ -37,9 +38,9 @@ import { LinkPending } from "@/components/ux";
  * identity: the Packy wordmark (same assets as the main sidebar), a
  * "Back to Admin" exit at the top, and its own nav list.
  *
- * Live nav: Dashboard, Creators, Tips & Sponsors, Socials Review,
- * Profitability, ROI Calculator. The theme toggle sits in the footer. Alerts
- * live on the right rail dock.
+ * Live nav: Dashboard, Creators, Tips & Sponsors, Creator Rewards, Socials
+ * Review, Profitability, ROI Calculator. The theme toggle sits in the footer.
+ * Alerts live on the right rail dock.
  *
  * Removed 2026-07-23 (owner): All Sessions, Leaderboards, Wager / Fraud
  * Abusers and Changelog. Leaderboards + Changelog still exist in the main
@@ -63,6 +64,11 @@ const HUB_NAV: HubNavItem[] = [
     label: "Tips & Sponsors",
     href: "/creator-hub/tips-sponsors",
     icon: Gift,
+  },
+  {
+    label: "Creator Rewards",
+    href: "/creator-hub/rewards",
+    icon: Crown,
   },
   {
     label: "Socials Review",

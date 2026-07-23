@@ -1,17 +1,11 @@
 import { Suspense } from "react";
-import { Coins, TrendingUp, UserX, Zap } from "lucide-react";
+import { Coins, UserX, Zap } from "lucide-react";
 
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
-import {
-  PageHero,
-  PageHeroIdentity,
-  SectionHeading,
-} from "@/components/modern-panels";
+import { SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DASHBOARD_PERIOD_LABELS } from "@/lib/queries/dashboard-period";
-
-import { AddCreatorDialogV2 } from "./_components/add-creator-dialog-v2";
 
 import { parseRosterSearchParams } from "./_lib/roster-params";
 import { listRosterCreators } from "./_queries/list-roster-creators";
@@ -39,34 +33,24 @@ export default async function CreatorHubRosterPage({
   const isMultiplier = params.tab === "multiplier";
   const windowLabel = DASHBOARD_PERIOD_LABELS[params.period];
 
-  const heroIcon = isPast ? UserX : isMultiplier ? Zap : Coins;
-  const heroTitle = isPast
+  // The page-top hero was dropped: `PageHeroIdentity` no longer renders a
+  // title/subtitle (owner removed that chrome), so it was a full row spent on
+  // one Add Creator button plus the stack gap above the roster. The button
+  // moved into `RosterToolbar`'s existing controls row, and the tab identity
+  // moved onto the section heading below — which actually renders.
+  const rosterIcon = isPast ? UserX : isMultiplier ? Zap : Coins;
+  const rosterTitle = isPast
     ? "Past Creators"
     : isMultiplier
       ? "Multiplier Creators"
       : "Fill Creators";
-  const heroSubtitle = isPast
-    ? "Canceled / role-removed ex-creators — historical roster."
-    : isMultiplier
-      ? "Creators on multiplier deals — search, rank, and drill in."
-      : "Creators on fill (weekly) deals — search, rank, and drill in.";
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={heroIcon}
-          accent="pink"
-          title={heroTitle}
-          subtitle={heroSubtitle}
-          action={isPast ? undefined : <AddCreatorDialogV2 />}
-        />
-      </PageHero>
-
       <div className="space-y-3">
         <SectionHeading
-          icon={TrendingUp}
-          title="Roster"
+          icon={rosterIcon}
+          title={rosterTitle}
           action={
             isPast ? (
               <RosterTabSwitch />
