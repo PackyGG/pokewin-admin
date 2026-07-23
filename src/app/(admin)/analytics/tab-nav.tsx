@@ -4,10 +4,6 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   BarChart3,
-  Users,
-  Filter,
-  TrendingUp,
-  Percent,
   PieChart,
   Trophy,
   Clock,
@@ -21,16 +17,16 @@ import { LinkPendingShell } from "@/components/ux";
 export type AnalyticsTab =
   | "overview"
   | "pure-pnl"
-  | "cohorts"
-  | "funnel"
-  | "ltv"
-  | "retention"
   | "revenue"
   | "top"
   | "heatmap"
   | "packs"
   | "map";
 
+// Cohorts / Funnel / Creator LTV / Retention were deleted (owner,
+// 2026-07-23: "never was used, over-engineered"). Their tab files, query
+// modules and ClickHouse twins went with them — this is not a hidden tab,
+// there is no code left behind it.
 const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
   { value: "overview", label: "Overview", icon: BarChart3 },
   // Raw pack/battle gambling margin — separate from Overview's broader
@@ -38,10 +34,6 @@ const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
   // real-money-only gameplay outcome view without scrolling past the
   // rest. Excludes creator wagers AND borrow-mode plays.
   { value: "pure-pnl", label: "Raw P&L", icon: Coins },
-  { value: "cohorts", label: "Cohorts", icon: Users },
-  { value: "funnel", label: "Funnel", icon: Filter },
-  { value: "ltv", label: "Creator LTV", icon: TrendingUp },
-  { value: "retention", label: "Retention", icon: Percent },
   { value: "revenue", label: "Revenue", icon: PieChart },
   { value: "top", label: "Top Performers", icon: Trophy },
   { value: "heatmap", label: "Activity Heatmap", icon: Clock },

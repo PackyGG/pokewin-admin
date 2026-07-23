@@ -103,16 +103,17 @@ export const ANALYTICS_OVERVIEW_PACKS_SURFACE_KEYS = [
 ] as const;
 
 /**
- * Surface flag keys for the /analytics FUNNEL, COHORTS, HEATMAP and MAP tab CH
- * twins. Listed here for discoverability only (these are already cut over in
+ * Surface flag keys for the /analytics HEATMAP and MAP tab CH twins. Listed
+ * here for discoverability only (these are already cut over in
  * `CUTOVER_DEFAULT_CLICKHOUSE` below); like every other surface key they carry
  * NO registration cost — `getAdminReadMode` resolves each through the
  * precedence chain, and per-surface Edge Config still overrides for instant
  * rollback.
+ *
+ * `analytics_funnel` / `analytics_cohorts` were removed with the Funnel and
+ * Cohorts tabs (owner, 2026-07-23) — no reader is left to gate.
  */
-export const ANALYTICS_FUNNEL_COHORT_MAP_SURFACE_KEYS = [
-  "analytics_funnel",
-  "analytics_cohorts",
+export const ANALYTICS_HEATMAP_MAP_SURFACE_KEYS = [
   "analytics_heatmap",
   "analytics_map",
 ] as const;
@@ -154,19 +155,9 @@ export const INSIGHTS_MOTHA_SURFACE_KEY = "insights_motha_overview";
  */
 export const INSIGHTS_RAFFLE_BASELINE_SURFACE_KEY = "insights_raffle_baseline";
 
-/**
- * Phase 2B surface flag keys for the /analytics retention + LTV tab CH twins
- * (`getRetentionCurve` / `getCreatorLtv`). Listed here for discoverability
- * only; like every other surface key they carry NO registration cost —
- * `getAdminReadMode` resolves any unset key through the precedence chain whose
- * terminal default is `"off"`, so each defaults to Postgres-only until an
- * explicit env/Edge-Config flip to `"comparison"`. NEVER flipped to
- * `"clickhouse"` in Phase 2B.
- */
-export const ANALYTICS_RETENTION_LTV_SURFACE_KEYS = [
-  "analytics_retention",
-  "analytics_ltv",
-] as const;
+// The /analytics retention + LTV surface keys were removed with their tabs
+// (owner, 2026-07-23). `getRetentionCurve` / `getCreatorLtv` and both CH twins
+// are gone, so there is nothing left to gate.
 
 /**
  * Phase 2B surface flag keys for the /creators/[userId] detail-page CH twins:
@@ -297,12 +288,10 @@ const CUTOVER_DEFAULT_CLICKHOUSE: ReadonlySet<string> = new Set([
   "insights_motha_overview",
   // /analytics tabs (full-shape twins; reduced revenue-breakdown excluded).
   "analytics_overview",
-  "analytics_funnel",
-  "analytics_cohorts",
-  "analytics_retention",
+  // analytics_funnel / _cohorts / _retention / _ltv dropped with their tabs
+  // (owner, 2026-07-23) — the readers and CH twins no longer exist.
   "analytics_heatmap",
   "analytics_map",
-  "analytics_ltv",
   "analytics_top",
   "analytics_revenue_withdrawals",
   "analytics_packs_profitability",
