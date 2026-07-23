@@ -86,10 +86,14 @@ async function loadHistory(
   // every pack that has history (the picker must not collapse to a single pack
   // just because the timeline is currently scoped). The scoped timeline then
   // reads only the selected pack's snapshots.
-  const allSnapshots = await getPackHistory(undefined, TIMELINE_LIMIT);
-  const snapshots = packId
-    ? await getPackHistory(packId, TIMELINE_LIMIT)
-    : allSnapshots;
+  //
+  // The two reads are independent, so they go out in ONE wave — filtering by
+  // pack used to cost two serial ADMIN round-trips before first paint.
+  const [allSnapshots, scoped] = await Promise.all([
+    getPackHistory(undefined, TIMELINE_LIMIT),
+    packId ? getPackHistory(packId, TIMELINE_LIMIT) : Promise.resolve(null),
+  ]);
+  const snapshots = scoped ?? allSnapshots;
 
   // One batched MAIN read for the union of pack ids across BOTH lists, so the
   // timeline rows and the picker options share resolved identity.
