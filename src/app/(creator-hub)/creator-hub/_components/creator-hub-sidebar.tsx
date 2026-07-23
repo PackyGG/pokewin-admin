@@ -8,6 +8,7 @@ import {
   Gift,
   LayoutDashboard,
   Users,
+  Trophy,
   ShieldCheck,
   Calculator,
   TrendingUp,
@@ -38,13 +39,15 @@ import { LinkPending } from "@/components/ux";
  * identity: the Packy wordmark (same assets as the main sidebar), a
  * "Back to Admin" exit at the top, and its own nav list.
  *
- * Live nav: Dashboard, Creators, Tips & Sponsors, Creator Rewards, Socials
- * Review, Profitability, ROI Calculator. The theme toggle sits in the footer.
- * Alerts live on the right rail dock.
+ * Live nav: Dashboard, Creators, Leaderboards, Tips & Sponsors, Creator
+ * Rewards, Socials Review, Profitability, ROI Calculator. The theme toggle
+ * sits in the footer. Alerts live on the right rail dock.
  *
- * Removed 2026-07-23 (owner): All Sessions, Leaderboards, Wager / Fraud
- * Abusers and Changelog. Leaderboards + Changelog still exist in the main
- * admin app (`/creators/leaderboards`, `/creators/changelog`).
+ * Removed 2026-07-23 (owner): All Sessions, Wager / Fraud Abusers and
+ * Changelog — Changelog still exists in the main admin app
+ * (`/creators/changelog`). Leaderboards was removed in the same pass and
+ * RESTORED at the owner's request; the admin surface
+ * (`/creators/leaderboards`) remains the write/approval side.
  *
  * Client-safe: no DB / server-only imports. Icons are direct
  * `lucide-react` component refs (not the string-keyed ICONS map the main
@@ -60,6 +63,7 @@ type HubNavItem = {
 const HUB_NAV: HubNavItem[] = [
   { label: "Dashboard", href: "/creator-hub", icon: LayoutDashboard },
   { label: "Creators", href: "/creator-hub/creators", icon: Users },
+  { label: "Leaderboards", href: "/creator-hub/leaderboards", icon: Trophy },
   {
     label: "Tips & Sponsors",
     href: "/creator-hub/tips-sponsors",

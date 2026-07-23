@@ -22,6 +22,7 @@ loadEnvFiles();
 const HUB_ROUTES = [
   "/creator-hub",
   "/creator-hub/creators",
+  "/creator-hub/leaderboards",
   "/creator-hub/socials-review",
   "/creator-hub/profitable-algo",
   // Legacy bookmark — should redirect to dashboard after gate.
