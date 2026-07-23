@@ -721,9 +721,37 @@ export async function computeAllEntitlements(
   });
   if (programs.length === 0) return [];
 
+  // SHORT-CIRCUIT. Both legs require an `affiliate_code_usages` row under one
+  // of the program's codes — the wager leg needs wager rows, the lossback leg
+  // needs the signup row. A player with none can qualify for neither, so one
+  // cheap EXISTS decides it before any of the expensive work happens.
+  //
+  // This matters because the expensive work is unconditional otherwise:
+  // loadUserFacts alone is four reads including the deposit lookup (the most
+  // costly query on the path), and each program adds more. For the common
+  // case — someone who simply isn't attached to a creator running a program —
+  // that is ~8 network round-trips spent to conclude "nothing".
+  //
+  // Cheap by construction: EXISTS stops at the first matching row, and the
+  // predicate is served by `idx_acu_upper_code` (verified index-served
+  // against prod).
+  const allCodes = [
+    ...new Set(programs.flatMap((p) => p.codes.map((c) => c.toUpperCase()))),
+  ];
+  if (allCodes.length === 0) return [];
+
+  const attached = await getProdDb().$queryRaw<{ hit: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1 FROM affiliate_code_usages
+       WHERE referred_user_id = ${userId}
+         AND UPPER(code) = ANY(${allCodes}::text[])
+    ) AS hit
+  `;
+  if (attached[0]?.hit !== true) return [];
+
   // Load the program-independent facts ONCE, then fan out. Without this a
-  // player with 4 programs would trigger 4 deposit lookups and 4 full P&L
-  // aggregates for answers that are identical every time.
+  // player with 4 programs would trigger 4 deposit lookups and 4 holdings
+  // reads for answers that are identical every time.
   const facts = await loadUserFacts(userId);
   const results = (
     await Promise.all(
