@@ -588,9 +588,8 @@ export async function computeProgramOffers(
 }
 
 /**
- * Every entitlement a user has across the ACTIVE programs whose codes they've
- * actually wagered under. Drives both the bot's `/check` and the admin's
- * per-user preview.
+ * Every entitlement a user has across the ACTIVE programs they are attached
+ * to. Drives both the bot's `/check` and the admin's per-user preview.
  *
  * Programs are fetched once and evaluated concurrently; each evaluation is two
  * index-served reads, so this stays cheap even as the program count grows.
@@ -613,14 +612,38 @@ export async function computeAllEntitlements(
       programs.map((p) => computeProgramOffers(p, userId, facts)),
     )
   ).flat();
-  // Only surface programs the player is actually attached to. For a WAGER
+
+  // Programs whose code the player is on RIGHT NOW. Being on the code is
+  // attachment on its own — it is what the creator told them to do, and it is
+  // what makes the offer theirs to work towards.
+  //
+  // Without this a program is invisible until its first wager lands, so a
+  // player who enters the code and immediately checks (or any player of a
+  // program created minutes ago) is told the code runs no rewards at all —
+  // which is both wrong and the exact opposite of what the copy is for.
+  // `currentCode` is already uppercase; program codes are stored uppercase but
+  // are re-normalised here rather than trusted.
+  const currentCode = facts.standing?.currentCode ?? null;
+  const onCodeProgramIds = new Set(
+    currentCode == null
+      ? []
+      : programs
+          .filter((p) => p.codes.some((c) => c.toUpperCase() === currentCode))
+          .map((p) => p.id),
+  );
+
+  // Otherwise, surface only programs the player has history with. For a WAGER
   // program that means they've wagered something under the code; for an FTD
   // lossback there is no wager basis at all, so the test is whether they have
   // a qualifying first deposit. Filtering lossbacks on wager would have hidden
   // every one of them.
-  return results.filter((e) =>
-    e.type === "ftd_lossback"
+  //
+  // Nothing here decides CLAIMABILITY — a surfaced offer with zero units still
+  // reports 0 and its own `blockedReason`, and every caller re-checks both.
+  return results.filter((e) => {
+    if (onCodeProgramIds.has(e.programId)) return true;
+    return e.type === "ftd_lossback"
       ? e.ftd?.firstDepositUsd != null
-      : e.qualifyingWagerUsd > 0,
-  );
+      : e.qualifyingWagerUsd > 0;
+  });
 }
