@@ -18,13 +18,12 @@ import { LinkPendingShell } from "@/components/ux";
 
 export type AnalyticsTab =
   | "overview"
-  | "double-down"
+  | "games"
   | "crm"
   | "cost-breakdown"
   | "rewards"
   | "revenue"
   | "top"
-  | "packs"
   | "map";
 
 // Cohorts / Funnel / Creator LTV / Retention were deleted (owner,
@@ -39,7 +38,11 @@ const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
   // rest. Excludes creator wagers AND borrow-mode plays.
   // Absorbed from /insights/double-down (owner, 2026-07-23) — that route now
   // redirects here. Locked to 30d, so the page period filter doesn't apply.
-  { value: "double-down", label: "Double Down", icon: Dices },
+  // Games — every mode a player can put money into: packs, battles,
+  // upgrader, double down (owner, 2026-07-23). Replaces the separate
+  // "Double Down" and "Pack & Battle" tabs, which answered the same
+  // question about different modes while Upgrader had no surface at all.
+  { value: "games", label: "Games", icon: Dices },
   // Absorbed from the /insights section (owner, 2026-07-23) — those routes
   // now redirect here. Each keeps its own sub-nav / period on namespaced
   // params (?rn=, ?cbPeriod=, ?rw=/?rwPeriod=) so no two bars fight over one.
@@ -52,7 +55,6 @@ const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
   { value: "rewards", label: "Rewards", icon: Gift },
   { value: "revenue", label: "Revenue", icon: PieChart },
   { value: "top", label: "Top Performers", icon: Trophy },
-  { value: "packs", label: "Pack & Battle", icon: Package },
   // Migrated from the standalone /map page — geographic breakdown of
   // users + per-country money flows. Lives here so it shares the
   // analytics hero's period filter instead of carrying its own.

@@ -61,10 +61,20 @@ function parseSort(v: string | undefined): SortKey {
 export async function PacksBattlesTab({
   period: heroPeriod,
   sortKey,
+  view = "both",
 }: {
   period: AnalyticsPeriod;
   sortKey: string | undefined;
+  /**
+   * Which half to render. The Games tab shows packs and battles as separate
+   * sub-views (owner, 2026-07-23) — the reads are shared, so this filters the
+   * RENDER, not the queries. "both" keeps the original combined layout for
+   * any caller that still wants it.
+   */
+  view?: "packs" | "battles" | "both";
 }) {
+  const showPacks = view !== "battles";
+  const showBattles = view !== "packs";
   const period: PacksPeriod =
     heroPeriod === "today"
       ? "7d"
@@ -176,7 +186,7 @@ export async function PacksBattlesTab({
   return (
     <FadeIn>
       <div className="space-y-4">
-        {topPacks24hResult.error || !topPacks24h ? (
+        {!showPacks ? null : topPacks24hResult.error || !topPacks24h ? (
           <TileErrorFallback
             label="Top packs — last 24h"
             hint="The 24h pack-opens query failed — other sections still rendered. Refresh to retry."
@@ -194,8 +204,8 @@ export async function PacksBattlesTab({
           />
         ) : (
           <div className="space-y-4">
-            <BattleModesSection stats={overview.battleStats} />
-            <PackPopularitySection stats={overview.packStats} />
+            {showBattles && <BattleModesSection stats={overview.battleStats} />}
+            {showPacks && <PackPopularitySection stats={overview.packStats} />}
           </div>
         )}
 
@@ -219,6 +229,7 @@ export async function PacksBattlesTab({
           <SortControl active={sort} />
         </div>
 
+        {showPacks && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -238,7 +249,9 @@ export async function PacksBattlesTab({
             )}
           </CardContent>
         </Card>
+        )}
 
+        {showBattles && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -258,6 +271,7 @@ export async function PacksBattlesTab({
             )}
           </CardContent>
         </Card>
+        )}
       </div>
     </FadeIn>
   );

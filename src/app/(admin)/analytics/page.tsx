@@ -11,13 +11,12 @@ import {
   toInsightsPeriod,
 } from "./types";
 import { OverviewTab } from "./tab-overview";
-import { DoubleDownTab } from "./tab-double-down";
+import { GamesTab, parseGameView } from "./tab-games";
 import { CrmTab } from "../insights/real-numbers/crm-tab";
 import { CostBreakdownTab } from "./tab-cost-breakdown";
 import { RewardsInsightsTab } from "./tab-rewards";
 import { RevenueTab } from "./tab-revenue";
 import { TopPerformersTab } from "./tab-top";
-import { PacksBattlesTab } from "./tab-packs";
 import { MapTab } from "./tab-map";
 import { parseMetric } from "./map/utils";
 import { TabSkeleton, TabSkeletonTable } from "./tab-skeleton";
@@ -33,10 +32,9 @@ function parseTab(value: string | undefined): AnalyticsTab {
     case "crm":
     case "cost-breakdown":
     case "rewards":
-    case "double-down":
+    case "games":
     case "revenue":
     case "top":
-    case "packs":
     case "map":
       return value;
     default:
@@ -54,7 +52,6 @@ function parseTab(value: string | undefined): AnalyticsTab {
 function fallbackForTab(tab: AnalyticsTab): ReactNode {
   switch (tab) {
     case "top":
-    case "packs":
       return <TabSkeletonTable />;
     default:
       return <TabSkeleton />;
@@ -79,11 +76,12 @@ const PERIOD_DRIVEN_TABS = new Set<AnalyticsTab>([
   "overview",
   "revenue",
   "top",
-  "packs",
   "map",
   "cost-breakdown",
   "rewards",
-  "double-down",
+  // Games drives every mode's window from the page filter — packs/battles
+  // profitability, and the Double Down log + charts.
+  "games",
 ]);
 
 export default async function AnalyticsPage({
@@ -99,6 +97,8 @@ export default async function AnalyticsPage({
   // Double Down tab params (absorbed from /insights/double-down): `q` is the
   // audit-log search, `page` its pagination. Parsed defensively — a fuzzed
   // ?page= must never reach the query's OFFSET.
+  // Games tab sub-view (?g=): packs | battles | upgrader | double-down.
+  const gameView = parseGameView(params.g);
   const ddSearch = (params.q ?? "").trim();
   const ddPageRaw = Number.parseInt(params.page ?? "1", 10);
   const ddPage = Number.isFinite(ddPageRaw) && ddPageRaw > 0 ? ddPageRaw : 1;
@@ -158,15 +158,18 @@ export default async function AnalyticsPage({
           chart for the rest) so the swap into real content doesn't jump the
           layout. */}
       <Suspense
-        key={`${tab}-${period}-${topTab ?? ""}-${packsSort ?? ""}-${mapMetric}-${ddSearch}-${ddPage}-${rwSub ?? ""}`}
+        key={`${tab}-${period}-${topTab ?? ""}-${packsSort ?? ""}-${mapMetric}-${gameView}-${ddSearch}-${ddPage}-${rwSub ?? ""}`}
         fallback={fallbackForTab(tab)}
       >
         {tab === "overview" && <OverviewTab period={period} />}
-        {tab === "double-down" && (
-          <DoubleDownTab
+        {tab === "games" && (
+          <GamesTab
+            view={gameView}
+            period={period}
+            ddPeriod={toDoubleDownPeriod(period)}
             search={ddSearch}
             page={ddPage}
-            period={toDoubleDownPeriod(period)}
+            packsSort={packsSort}
           />
         )}
         {tab === "crm" && <CrmTab />}
@@ -179,9 +182,6 @@ export default async function AnalyticsPage({
         {tab === "revenue" && <RevenueTab period={period} />}
         {tab === "top" && (
           <TopPerformersTab period={period} subTab={topTab} />
-        )}
-        {tab === "packs" && (
-          <PacksBattlesTab period={period} sortKey={packsSort} />
         )}
         {tab === "map" && <MapTab period={period} metric={mapMetric} />}
       </Suspense>
