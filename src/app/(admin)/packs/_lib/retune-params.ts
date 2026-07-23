@@ -46,21 +46,49 @@ import {
 const MIN_PRICE_BUDGET_PCT = 0.0001;
 
 /**
- * Max intended hit-rate that is a LOTTERY (rare-win) archetype eligible for the
- * strict tagged clean-snap path (the per-100k jackpot-ladder DFS + 320-candidate
- * accuracy search). The tags in play are 1% / 5% / 10% (all ≤ 0.12) plus the
- * `50/50` coin-flip (0.50). The lottery snapper is DESIGNED for rare wins: at a
- * high win-rate it must place a huge win mass across many win cards on clean
- * rungs — a combinatorial blow-up (measured: a 9-card `50/50` pack = ~4.7s pure
- * per solve → the ±10% price search ran it 320× → the route timed out → the
- * MAIN max:3 pool got exhausted → the WHOLE admin timed out, the pool-stampede
- * cascade). A coin-flip / high win-rate tag is NOT a lottery: it takes the
- * standard clean-ladder snap (fast: ~0.36s) with `holdWinRate` keeping the
- * achieved rate within +5pp of the tag — plenty exact for a "half the opens
- * win" product (the 0.01pp tagged tolerance only ever mattered for a *rare*
- * 1% tag). So tagged-lottery mode is gated to `intendedHitRate ≤ this`.
+ * RETIRED GATE — `LOTTERY_MAX_HIT_RATE = 0.12` (2026-07-03 → 2026-07-23).
+ *
+ * There used to be a hit-rate ceiling here: tagged mode ran only when
+ * `intendedHitRate ≤ 0.12` (the 1% / 5% / 10% tiers), so the `50/50` tier
+ * (0.50) was excluded. It was an INCIDENT HOTFIX, not a design rule — the
+ * tagged all-nice DFS was UNBOUNDED at the time, and a 9-card 50/50 pack cost
+ * ~4.7s per solve × 320 candidate prices, which exhausted the MAIN max:3 pool
+ * and timed out the whole admin (the pool-stampede cascade).
+ *
+ * That blow-up is now structurally unreachable: the tagged enumeration is
+ * hard-bounded by the plan-wide, band-proportional node budget
+ * ({@link taggedPlanNodeBudget}, 2.5M nodes at the ±10% default, wired into the
+ * snapper) and degrades N → P → G once spent. Tiers P and G are DFS-FREE and
+ * still TAG-EXACT — under budget pressure the snapper gives up round numbers,
+ * never the tag. The ceiling outlived the hazard it stood in for.
+ *
+ * WHY IT HAD TO GO (money bug, measured against all 17 live `50/50` packs): the
+ * ceiling turned tagged mode OFF for `50/50`, so the solver was never asked to
+ * hit 50% — while BOTH write paths (`applyPackRetune`,
+ * `applyStagedPackEditAndRetune`) still assert the achieved rate against the tag
+ * within {@link TAGGED_WRITE_WINRATE_TOLERANCE} (0.1pp) whenever an intended
+ * hit-rate exists. Plan and write were solving different problems — exactly the
+ * skew this one-brain module exists to make unconstructible. Live result: only
+ * 8 of 17 clean; 7 shaped a plan the writer refuses (the untagged soft float
+ * landed above the tag under a "50/50" label), 6 produced no plan at all.
+ *
+ * Every other consumer — `planPackTune`'s own `tagged` flag, the guidance
+ * engine, the verdict builder, both write asserts, and the
+ * `packs/__checks__/retune-params.ts` write-arm contract mirror — already
+ * treated `50/50` as tagged. This builder was the single dissenter.
+ *
+ * NO REPLACEMENT CEILING IS NEEDED: `intendedHitRate` is clamped to `(0, 0.5]`
+ * upstream (`parseArbitraryTag` / `parsePackHitRate` reject anything implying a
+ * >50% win share as "not a lottery"), so 0.50 IS the worst case — and it is the
+ * case measured above. The TAG decides tagged mode, not the arithmetic size of
+ * the tag.
+ *
+ * COST, ACCEPTED: a 50/50 solve is materially slower than the standard snap it
+ * used to take (seconds, not milliseconds). That is bounded and deterministic
+ * — the node budget caps it — and it lands inside the envelope the 40 already
+ * tagged lottery packs occupy in production today. The plan route's
+ * `maxDuration` was raised 60 → 120 to match the doctor page for this reason.
  */
-const LOTTERY_MAX_HIT_RATE = 0.12;
 
 /** Which solve arm the params are for (anchor semantics live at the caller). */
 export type RetuneArm = "live" | "staged";
@@ -203,17 +231,16 @@ export function buildRetuneSearchParams(
   arm: RetuneArm,
   i: RetuneSearchInputs,
 ): Parameters<typeof searchBestPriceForCleanSnap>[0] {
-  // Tagged gate: active iff (a) the tag is a LOTTERY (rare-win) archetype
-  // (`intendedHitRate ≤ LOTTERY_MAX_HIT_RATE` — the 1/5/10% tags) AND (b) the
-  // resolved target IS the tag (value equality) — an operator-pinned rate away
-  // from the tag never silently runs tagged mode. A high win-rate tag (the
-  // `50/50` coin-flip) is deliberately NOT tagged here: the lottery snapper
-  // blows up on it (see {@link LOTTERY_MAX_HIT_RATE}); it takes the fast
-  // standard snap + `holdWinRate` instead, which lands the rate within +5pp of
-  // the tag — exact enough for a half-the-opens-win product.
+  // Tagged gate: active iff (a) the pack CARRIES an intended hit-rate (a tag)
+  // AND (b) the resolved target IS that tag (value equality) — an
+  // operator-pinned rate away from the tag never silently runs tagged mode.
+  //
+  // The old hit-rate ceiling that excluded `50/50` is GONE (see the retired-gate
+  // note above): it made the solver skip the tag while both writers still
+  // asserted it, so the whole 50/50 tier was unpushable. The tag decides tagged
+  // mode; the node budget — not a hit-rate cutoff — bounds the cost.
   const tagged =
     i.intendedHitRate !== null &&
-    i.intendedHitRate <= LOTTERY_MAX_HIT_RATE &&
     Math.abs(i.intendedHitRate - i.targetWinRate) < 1e-9;
   // Owner pins ride the SAME shared constructor as everything else, so the
   // pinned solve the operator previews is byte-identically the pinned solve
