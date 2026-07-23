@@ -210,6 +210,8 @@ export async function computeFtdLossback(
    * neither depends on the program. Omit and they are loaded here.
    */
   facts?: { deposits: { amountUsd: number; at: Date }[]; holdingsUsd: number },
+  /** Live intervals — the deposit must fall inside one of them. */
+  windows?: { started_at: Date; ended_at: Date | null }[],
 ): Promise<FtdLossbackState> {
   const pct = program.lossback_pct == null ? 0 : toNumber(program.lossback_pct);
   const minDeposit =
@@ -255,14 +257,24 @@ export async function computeFtdLossback(
     return { ...EMPTY, blockedReason: "No deposit yet." };
   }
 
-  // The first deposit must fall inside the program's life. A program created
-  // today cannot owe against a first deposit from months ago.
-  if (first.at < program.accrual_start_at) {
+  // The first deposit must land while the program was actually LIVE — not
+  // merely after it was created. A deposit made while the program was
+  // paused earns nothing, same as wager placed during a pause.
+  const live = windows ?? [
+    { started_at: program.accrual_start_at, ended_at: null },
+  ];
+  const insideLiveWindow = live.some(
+    (w) => first.at >= w.started_at && (w.ended_at == null || first.at < w.ended_at),
+  );
+  if (!insideLiveWindow) {
     return {
       ...EMPTY,
       firstDepositUsd: first.amountUsd,
       firstDepositAt: first.at.toISOString(),
-      blockedReason: "Their first deposit predates this program.",
+      blockedReason:
+        first.at < program.accrual_start_at
+          ? "Their first deposit predates this program."
+          : "Their first deposit landed while this program was paused.",
     };
   }
 

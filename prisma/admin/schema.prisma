@@ -2034,6 +2034,7 @@ model creator_reward_programs {
   updated_at              DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   claims                  creator_reward_claims[]
+  windows                 creator_reward_program_windows[]
 
   @@index([is_active], map: "creator_reward_programs_is_active_idx")
   @@index([creator_user_id], map: "creator_reward_programs_creator_idx")
@@ -2164,4 +2165,30 @@ model discord_verifications {
 
   @@index([user_id], map: "discord_verifications_user_id_idx")
   @@index([first_verified_at(sort: Desc)], map: "discord_verifications_first_verified_idx")
+}
+
+/// The intervals during which a program was LIVE.
+///
+/// Wager only counts while the program is actually running. `accrual_start_at`
+/// alone can't express that: pause a program, let a player wager through the
+/// pause, resume, and a single start date would happily pay for the gap.
+///
+/// One row per active stretch. `ended_at IS NULL` means "still open". Creating
+/// a program opens the first window; deactivating closes it; reactivating
+/// opens a new one. Progress earned BEFORE a pause therefore survives it —
+/// only the paused stretch is excluded, which is the whole point of modelling
+/// intervals rather than moving the start date forward.
+///
+/// A program with NO window rows is treated as live since `accrual_start_at`
+/// (see `programWindows` in compute.ts), so nothing breaks if rows are ever
+/// missing.
+model creator_reward_program_windows {
+  id         String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  program_id String                  @db.Uuid
+  program    creator_reward_programs @relation(fields: [program_id], references: [id], onDelete: Cascade)
+  started_at DateTime                @db.Timestamptz(6)
+  /// NULL while the program is currently live.
+  ended_at   DateTime?               @db.Timestamptz(6)
+
+  @@index([program_id, started_at], map: "creator_reward_program_windows_program_idx")
 }

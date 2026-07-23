@@ -69,6 +69,11 @@ export type ProgramForCompute = {
   is_active: boolean;
   accrual_start_at: Date;
   max_reward_per_user_usd: unknown;
+  /**
+   * Live intervals, pre-loaded by the caller when available. Absent means
+   * "not fetched" (it is looked up), NOT "never live".
+   */
+  windows?: { started_at: Date; ended_at: Date | null }[];
 };
 
 /**
@@ -187,30 +192,97 @@ async function runStartedAt(
   return boundary && boundary > accrualStart ? boundary : accrualStart;
 }
 
+
 /**
- * Σ wager this user booked under `codes` between `since` and now.
+ * The intervals during which this program was LIVE.
+ *
+ * Wager only counts while the program is running, so every wager read is
+ * bounded by these rather than by a single start date. Without them a pause
+ * would be invisible: a program switched off for a week would still pay for
+ * everything wagered during that week once it came back.
+ *
+ * FALLBACK: a program with no rows is treated as live from `accrual_start_at`
+ * until now. That is the pre-windows behaviour, and it is the safe direction —
+ * a missing row must not silently erase a creator's whole program.
+ */
+async function programWindows(
+  program: ProgramForCompute,
+): Promise<{ started_at: Date; ended_at: Date | null }[]> {
+  const rows =
+    program.windows ??
+    (await adminDb.creator_reward_program_windows.findMany({
+      where: { program_id: program.id },
+      select: { started_at: true, ended_at: true },
+      orderBy: { started_at: "asc" },
+    }));
+  if (rows.length === 0) {
+    return [{ started_at: program.accrual_start_at, ended_at: null }];
+  }
+  return rows;
+}
+
+/**
+ * Clamp the live windows to start no earlier than `from` (the code-switch
+ * boundary), and drop any that end before it. Returns the parallel
+ * start/end arrays the wager query binds — an open window becomes `infinity`
+ * so the SQL needs no NULL handling.
+ */
+function windowBounds(
+  windows: { started_at: Date; ended_at: Date | null }[],
+  from: Date,
+): { starts: Date[]; ends: Date[] } {
+  const FAR_FUTURE = new Date("9999-12-31T00:00:00.000Z");
+  const starts: Date[] = [];
+  const ends: Date[] = [];
+  for (const w of windows) {
+    const end = w.ended_at ?? FAR_FUTURE;
+    if (end <= from) continue;
+    starts.push(w.started_at > from ? w.started_at : from);
+    ends.push(end);
+  }
+  return { starts, ends };
+}
+
+/**
+ * Σ wager this user booked under `codes`, counting ONLY time the program was
+ * live and only at or after `since` (the code-switch boundary).
+ *
+ * The windows are bound as parallel arrays and matched with an EXISTS over
+ * `unnest`, so a program with any number of pause/resume cycles stays a single
+ * query — no OR-chain built by string concatenation, and no per-window
+ * round-trip.
  *
  * Codes are matched case-insensitively: `affiliate_codes` casing is MIXED for
  * rows the 0068 migration backfilled, and `affiliate_code_usages` mirrors
  * whatever casing the caller resolved — so an exact match would silently miss
  * a legacy creator's entire history.
  */
-async function wagerUsdSince(
+async function wagerUsdInWindows(
   userId: string,
   codes: readonly string[],
   since: Date,
+  windows: { started_at: Date; ended_at: Date | null }[],
 ): Promise<number> {
   if (codes.length === 0) return 0;
+  const { starts, ends } = windowBounds(windows, since);
+  // Every live stretch ended before the boundary — nothing can qualify.
+  if (starts.length === 0) return 0;
+
   const db = getProdDb();
   const upper = codes.map((c) => c.toUpperCase());
 
   const rows = await db.$queryRaw<{ total: string }[]>`
-    SELECT COALESCE(SUM(wager_amount_usd::numeric), 0)::text AS total
-      FROM affiliate_code_usages
-     WHERE referred_user_id = ${userId}
-       AND usage_type::text = 'wager'
-       AND UPPER(code) = ANY(${upper}::text[])
-       AND created_at >= ${since}
+    SELECT COALESCE(SUM(acu.wager_amount_usd::numeric), 0)::text AS total
+      FROM affiliate_code_usages acu
+     WHERE acu.referred_user_id = ${userId}
+       AND acu.usage_type::text = 'wager'
+       AND UPPER(acu.code) = ANY(${upper}::text[])
+       AND acu.created_at >= ${since}
+       AND EXISTS (
+         SELECT 1
+           FROM unnest(${starts}::timestamp[], ${ends}::timestamp[]) AS w(s, e)
+          WHERE acu.created_at >= w.s AND acu.created_at < w.e
+       )
   `;
   return toNumber(rows[0]?.total ?? 0);
 }
@@ -351,9 +423,19 @@ export async function computeEntitlement(
     program.accrual_start_at,
   );
 
+  const windows = await programWindows(program);
+
   const [wagerUsd, lifetimeWagerUsd, prior, vip] = await Promise.all([
-    wagerUsdSince(userId, program.codes, runStart),
-    wagerUsdSince(userId, program.codes, program.accrual_start_at),
+    wagerUsdInWindows(userId, program.codes, runStart, windows),
+    // Audit total: same live-window bound, only without the code-switch
+    // clamp — so `forfeited` reflects switches alone and never counts
+    // paused time as something the player lost.
+    wagerUsdInWindows(
+      userId,
+      program.codes,
+      program.accrual_start_at,
+      windows,
+    ),
     priorHoldings(program.id, userId, runStart),
     facts?.isVip ?? isVipNow(userId),
   ]);
@@ -522,7 +604,12 @@ export async function computeLossbackEntitlement(
     };
   }
 
-  const ftd = await computeFtdLossback(program, userId, facts);
+  const ftd = await computeFtdLossback(
+    program,
+    userId,
+    facts,
+    await programWindows(program),
+  );
 
   // The per-user cap applies to BOTH legs. It was previously enforced on the
   // wager leg only, so a capped program still paid an uncapped lossback.
@@ -599,6 +686,14 @@ export async function computeAllEntitlements(
 ): Promise<CreatorRewardEntitlement[]> {
   const programs = await adminDb.creator_reward_programs.findMany({
     where: { is_active: true },
+    // Windows come along for the ride — otherwise every program would
+    // trigger its own lookup inside the fan-out.
+    include: {
+      windows: {
+        select: { started_at: true, ended_at: true },
+        orderBy: { started_at: "asc" },
+      },
+    },
     orderBy: { created_at: "desc" },
   });
   if (programs.length === 0) return [];

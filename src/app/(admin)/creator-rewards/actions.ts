@@ -206,6 +206,10 @@ export async function createCreatorRewardProgram(input: {
 
   const created = await adminDb.creator_reward_programs.create({
     data: {
+      // Opens the first live window. Wager only counts inside these, so a
+      // program with none would accrue nothing — it is created atomically
+      // with the program rather than as a follow-up write.
+      windows: { create: { started_at: accrualStartAt } },
       name,
       creator_user_id: d.creatorUserId,
       codes,
@@ -261,9 +265,34 @@ export async function setCreatorRewardProgramActive(input: {
   });
   if (!existing) return { success: false, error: "Program not found" };
 
-  await adminDb.creator_reward_programs.update({
-    where: { id: existing.id },
-    data: { is_active: parsed.data.isActive },
+  // Pausing CLOSES the open window; resuming OPENS a new one. Wager placed in
+  // between therefore never counts, while progress earned before the pause
+  // survives it — which is why this models intervals instead of moving the
+  // program's start date forward.
+  const now = new Date();
+  await adminDb.$transaction(async (tx) => {
+    await tx.creator_reward_programs.update({
+      where: { id: existing.id },
+      data: { is_active: parsed.data.isActive },
+    });
+
+    if (parsed.data.isActive) {
+      // Guard against double-open: only start a window if none is running.
+      const open = await tx.creator_reward_program_windows.findFirst({
+        where: { program_id: existing.id, ended_at: null },
+        select: { id: true },
+      });
+      if (!open) {
+        await tx.creator_reward_program_windows.create({
+          data: { program_id: existing.id, started_at: now },
+        });
+      }
+    } else {
+      await tx.creator_reward_program_windows.updateMany({
+        where: { program_id: existing.id, ended_at: null },
+        data: { ended_at: now },
+      });
+    }
   });
 
   await createAdminAuditEvent({
@@ -275,6 +304,10 @@ export async function setCreatorRewardProgramActive(input: {
       name: existing.name,
       was_active: existing.is_active,
       is_active: parsed.data.isActive,
+      // Which live-window edge this toggle produced, so the accrual gap is
+      // reconstructable from the audit trail alone.
+      window: parsed.data.isActive ? "opened" : "closed",
+      at: now.toISOString(),
     },
   });
 
