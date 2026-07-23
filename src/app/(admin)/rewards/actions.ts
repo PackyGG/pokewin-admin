@@ -9,6 +9,13 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { backendApi, BackendApiError } from "@/lib/backend-api";
 
 export async function reloadPacks() {
+  // A Server Action is a callable POST endpoint, so it carries its OWN
+  // authorization — the middleware only proves a session exists, it never
+  // checks role, and Next explicitly does not treat it as an action guard.
+  // Without this, any signed-in panel user (support / marketing / creator /
+  // pack_creator) could drive a privileged backend reload that every other
+  // action in this file gates behind `requireAdmin`.
+  await requireAdmin();
   // Routes through the central backendApi client so env-specific URL+key,
   // CF Access service tokens, and `x-bypass-secret` are all picked up.
   try {

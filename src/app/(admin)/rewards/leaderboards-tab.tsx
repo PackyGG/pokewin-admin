@@ -20,6 +20,7 @@ import {
   PaginationSkeleton,
 } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
+import { parsePagination } from "@/lib/utils/pagination";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { PeriodSelect } from "./leaderboards/period-select";
 import { RaceTiersTable } from "./leaderboards/race-tiers-table";
@@ -214,8 +215,7 @@ async function StandingsSubTab({
   params: Record<string, string | undefined>;
 }) {
   const raceType = params.raceType || "all";
-  const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 20;
+  const { page, perPage } = parsePagination(params);
   const search = params.search;
 
   // The selectable leaderboards come straight from the DB (the periods that
@@ -410,8 +410,7 @@ async function HistorySubTab({
 }: {
   params: Record<string, string | undefined>;
 }) {
-  const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 20;
+  const { page, perPage } = parsePagination(params);
   const raceType = params.raceType;
   const { data: claims, error } = await safeQuery(
     () => getRaceClaims({ page, perPage, raceType }),

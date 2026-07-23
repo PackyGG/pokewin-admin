@@ -15,6 +15,7 @@ import { InstantClaimSummaryBox } from "./rakeback/instant-claim-summary-box";
 import { FadeIn } from "@/components/fade-in";
 import { LinkPending } from "@/components/ux";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
+import { parsePagination } from "@/lib/utils/pagination";
 import {
   getRakebackInstantClaimConfig,
   getRakebackInstantClaimUsage,
@@ -65,8 +66,7 @@ export function RakebackTab({
   params: Record<string, string | undefined>;
 }) {
   const rbtab = params.rbtab || "claims";
-  const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 20;
+  const { page, perPage } = parsePagination(params);
   const icPeriod: InstantClaimPeriod = isInstantClaimPeriod(params.icPeriod)
     ? params.icPeriod
     : "30d";

@@ -14,6 +14,7 @@ import { getPromoCodesMoneyStats } from "@/lib/queries/promo-codes-stats";
 import { readDbEnv } from "@/lib/db-env";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { formatCurrency } from "@/lib/utils/format";
+import { parsePagination } from "@/lib/utils/pagination";
 import { PromoCodesDataTable } from "../promo-codes/data-table";
 import { PromoCodesSelectionProvider } from "../promo-codes/promo-codes-selection-context";
 import { PromoCodesQuickSelect } from "../promo-codes/promo-codes-quick-select";
@@ -208,8 +209,7 @@ async function PromoCodesListAsync({
 }: {
   params: Record<string, string | undefined>;
 }) {
-  const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 20;
+  const { page, perPage } = parsePagination(params);
 
   // safeQuery so a slow / failing list read degrades to an inline band +
   // empty table instead of throwing up the /rewards route boundary (which

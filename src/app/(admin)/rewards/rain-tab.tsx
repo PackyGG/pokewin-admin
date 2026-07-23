@@ -12,6 +12,7 @@ import {
   PaginationSkeleton,
 } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
+import { parsePagination } from "@/lib/utils/pagination";
 import { RainRangeFilters } from "../rain/range-filters";
 import { RainsTable } from "../rain/rains-table";
 import { RAIN_CONFIG_KEYS } from "../rain/config-keys";
@@ -147,8 +148,7 @@ async function RainsTableAsync({
 }: {
   params: Record<string, string | undefined>;
 }) {
-  const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 20;
+  const { page, perPage } = parsePagination(params);
 
   // Wrap in safeQuery so a slow / failing rain-list read degrades to an empty
   // table + an inline amber band instead of throwing the whole /rewards page

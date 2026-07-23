@@ -17,6 +17,7 @@ import { CostBreakdownTab } from "./tab-cost-breakdown";
 import { RewardsTab } from "./tab-rewards";
 import { MapTab } from "./tab-map";
 import { parseMetric } from "./map/utils";
+import { parsePage } from "@/lib/utils/pagination";
 import { TabSkeleton } from "./tab-skeleton";
 
 export const metadata = { title: "Analytics" };
@@ -78,8 +79,10 @@ export default async function AnalyticsPage({
   // Games tab sub-view (?g=): packs | battles | upgrader | double-down.
   const gameView = parseGameView(params.g);
   const ddSearch = (params.q ?? "").trim();
-  const ddPageRaw = Number.parseInt(params.page ?? "1", 10);
-  const ddPage = Number.isFinite(ddPageRaw) && ddPageRaw > 0 ? ddPageRaw : 1;
+  // Shared parser: rejects NaN / ≤ 0 / fractional like the hand-rolled guard
+  // this replaces, and additionally caps the reachable OFFSET so a fuzzed
+  // `?page=1e12` can't become a scan the planner has to walk.
+  const ddPage = parsePage(params.page);
   // Games → packs/battles sort column (?packsSort=), validated inside the
   // sub-tab so a fuzzed value falls back to "revenue" rather than reaching SQL.
   const packsSort = params.packsSort;

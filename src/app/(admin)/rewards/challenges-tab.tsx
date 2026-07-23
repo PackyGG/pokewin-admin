@@ -13,6 +13,7 @@ import {
   PaginationSkeleton,
 } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
+import { parsePagination } from "@/lib/utils/pagination";
 import { CreateChallengeButton } from "../challenges/create-challenge-button";
 import { ChallengesTable } from "../challenges/challenges-table";
 import { FadeIn } from "@/components/fade-in";
@@ -38,8 +39,7 @@ export function ChallengesTab({
 }: {
   params: Record<string, string | undefined>;
 }) {
-  const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 20;
+  const { page, perPage } = parsePagination(params);
   const status = normalizeStatus(params.status);
 
   const suspenseKey = `${page}|${perPage}|${params.status ?? ""}`;

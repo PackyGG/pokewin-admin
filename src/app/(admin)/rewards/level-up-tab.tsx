@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { getLevelUpRewards } from "@/lib/queries/rewards";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
+import { parsePagination } from "@/lib/utils/pagination";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import {
   TableSkeleton,
@@ -24,8 +25,7 @@ export function LevelUpTab({
 }: {
   params: Record<string, string | undefined>;
 }) {
-  const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 20;
+  const { page, perPage } = parsePagination(params);
 
   return (
     <div className="space-y-4">
