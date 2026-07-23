@@ -3,7 +3,7 @@ import {
   TAGGED_WRITE_WINRATE_TOLERANCE,
 } from "@/app/(admin)/packs/_lib/auto-targets";
 import {
-  getPackRiskRows,
+  getPackRiskRowsResult,
   type PackRiskRow,
 } from "../../_queries/doctor";
 
@@ -43,7 +43,8 @@ export async function getRetuneRailRows(): Promise<{
   error: string | null;
 }> {
   try {
-    const rows = await getPackRiskRows();
+    const { rows, error } = await getPackRiskRowsResult();
+    if (error) return { rows: [], error };
     const out: RetuneRailRow[] = rows
       .filter((r) => r.active === true && r.price > 0)
       .map((r) => {

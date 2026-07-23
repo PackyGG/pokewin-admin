@@ -139,7 +139,7 @@ function AlertGroup({
  * immediately.
  */
 export async function PackStudioOverviewContent() {
-  const data = await getPackStudioOverview();
+  const { data, error } = await getPackStudioOverview();
 
   const tierData = (["T1", "T2", "T3", "T4", "T5"] as const).map((tier) => ({
     tier,
@@ -151,6 +151,24 @@ export async function PackStudioOverviewContent() {
     data.alerts.overMaxWinCap.length +
     data.alerts.zeroNearMiss.length +
     data.alerts.overTier.length;
+
+  // A failed read also lands on the empty shape, so it must be distinguished
+  // FIRST — otherwise an outage renders as the benign "run the job" panel and
+  // the operator waits for a snapshot that already exists. The reason string
+  // is deliberately not echoed (it is the raw driver message — see safeQuery's
+  // SECURITY note); the failure is already logged server-side.
+  if (error) {
+    return (
+      <div className="rounded-xl border border-dashed border-rose-500/40 bg-rose-500/5 p-8 text-center">
+        <Gauge className="mx-auto size-6 text-rose-500" aria-hidden />
+        <p className="mt-2 text-sm font-medium">Couldn&apos;t load the risk snapshot</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          The read failed — this is not an empty snapshot. Reload to retry; if it
+          persists, check the Pack Studio logs.
+        </p>
+      </div>
+    );
+  }
 
   if (!data.hasSnapshot) {
     return (

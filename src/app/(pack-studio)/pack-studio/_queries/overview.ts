@@ -278,12 +278,20 @@ async function computeOverview(): Promise<PackStudioOverview> {
  * empty overview shape rather than crashing the page. Only the cookie-free base
  * read is cached ({@link getCachedOverviewBase}); the MAIN pack-meta join runs
  * fresh each call (cheap indexed PK read) because it reads the db-env cookie.
+ *
+ * The failure REASON is returned alongside the data: both a broken read and a
+ * genuinely empty snapshot yield `hasSnapshot: false`, but they mean opposite
+ * things to an operator ("the read broke" vs "run the snapshot job"). Without
+ * the flag every outage rendered as the benign "No risk snapshot yet" panel.
  */
-export async function getPackStudioOverview(): Promise<PackStudioOverview> {
-  const { data } = await safeQuery(
+export async function getPackStudioOverview(): Promise<{
+  data: PackStudioOverview;
+  error: string | null;
+}> {
+  const { data, error } = await safeQuery(
     () => computeOverview(),
     EMPTY_OVERVIEW,
     "pack-studio.overview",
   );
-  return data;
+  return { data, error };
 }

@@ -153,17 +153,25 @@ const getCachedScores = unstable_cache(
  * read) OUTSIDE the cache, then filter + sort in memory. A score row whose pack
  * no longer exists on MAIN is dropped (stale score). Any read failure degrades to
  * an empty grid rather than crashing the page.
+ *
+ * Returns the failure REASON alongside the rows so a caller can tell a genuine
+ * read failure apart from a legitimately empty snapshot. Both degrade to
+ * `rows: []`, but they mean opposite things to an operator: `error: null` is
+ * "no snapshot yet — compute one", while a non-null `error` is "the read
+ * broke". Collapsing the two (as the previous shape did) made every outage
+ * render as the benign "compute a snapshot" empty state.
  */
-export async function getPackRiskRows(
+export async function getPackRiskRowsResult(
   filters?: PackRiskFilters,
-): Promise<PackRiskRow[]> {
+): Promise<{ rows: PackRiskRow[]; error: string | null }> {
   try {
-    const { data: scores } = await safeQuery(
+    const { data: scores, error: scoresError } = await safeQuery(
       () => getCachedScores(),
       [] as CachedScore[],
       "pack-studio.doctor",
     );
-    if (scores.length === 0) return [];
+    if (scoresError) return { rows: [], error: scoresError };
+    if (scores.length === 0) return { rows: [], error: null };
 
     // MAIN pack-meta join OUTSIDE the cache (getDb reads the db-env cookie).
     // The per-pack edge curve is also resolved here (ADMIN-only, cookie-free)
@@ -216,8 +224,21 @@ export async function getPackRiskRows(
       return dir === "asc" ? cmp : -cmp;
     });
 
-    return rows;
-  } catch {
-    return [];
+    return { rows, error: null };
+  } catch (err) {
+    return {
+      rows: [],
+      error: err instanceof Error ? err.message : "Pack risk read failed.",
+    };
   }
+}
+
+/**
+ * Rows-only convenience for callers that render an empty grid either way (the
+ * Pack Doctor page). Failures are already logged by `safeQuery`.
+ */
+export async function getPackRiskRows(
+  filters?: PackRiskFilters,
+): Promise<PackRiskRow[]> {
+  return (await getPackRiskRowsResult(filters)).rows;
 }
