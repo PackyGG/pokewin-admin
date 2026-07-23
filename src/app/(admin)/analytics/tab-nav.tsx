@@ -8,9 +8,6 @@ import {
   Gift,
   Sigma,
   TrendingDown,
-  PieChart,
-  Trophy,
-  Package,
   Globe,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -22,14 +19,17 @@ export type AnalyticsTab =
   | "crm"
   | "cost-breakdown"
   | "rewards"
-  | "revenue"
-  | "top"
   | "map";
 
-// Cohorts / Funnel / Creator LTV / Retention were deleted (owner,
-// 2026-07-23: "never was used, over-engineered"). Their tab files, query
-// modules and ClickHouse twins went with them — this is not a hidden tab,
-// there is no code left behind it.
+// Cohorts / Funnel / Creator LTV / Retention / Top Performers were deleted
+// (owner, 2026-07-23: "never was used, over-engineered"). Their tab files,
+// query modules and ClickHouse twins went with them — these are not hidden
+// tabs, there is no code left behind them.
+//
+// Revenue went the same way (owner, 2026-07-23): its four source tables and
+// GGR/NGR tiles restated, less clearly, the numbers Cost Breakdown already
+// ties together in one waterfall. The only panel it alone owned — withdrawn
+// cash per crypto rail — moved to Overview rather than dying with it.
 const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
   { value: "overview", label: "Overview", icon: BarChart3 },
   // Raw pack/battle gambling margin — separate from Overview's broader
@@ -38,10 +38,8 @@ const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
   // rest. Excludes creator wagers AND borrow-mode plays.
   // Absorbed from /insights/double-down (owner, 2026-07-23) — that route now
   // redirects here. Locked to 30d, so the page period filter doesn't apply.
-  // Games — every mode a player can put money into: packs, battles,
-  // upgrader, double down (owner, 2026-07-23). Replaces the separate
-  // "Double Down" and "Pack & Battle" tabs, which answered the same
-  // question about different modes while Upgrader had no surface at all.
+  // Games — the modes a player can put money into. Packs and battles were
+  // dropped here too (owner, 2026-07-23), leaving upgrader + double down.
   { value: "games", label: "Games", icon: Dices },
   // Absorbed from the /insights section (owner, 2026-07-23) — those routes
   // now redirect here. Each keeps its own sub-nav / period on namespaced
@@ -53,8 +51,6 @@ const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
   { value: "crm", label: "Player CRM", icon: Sigma },
   { value: "cost-breakdown", label: "Cost Breakdown", icon: TrendingDown },
   { value: "rewards", label: "Rewards", icon: Gift },
-  { value: "revenue", label: "Revenue", icon: PieChart },
-  { value: "top", label: "Top Performers", icon: Trophy },
   // Migrated from the standalone /map page — geographic breakdown of
   // users + per-country money flows. Lives here so it shares the
   // analytics hero's period filter instead of carrying its own.
@@ -67,13 +63,13 @@ const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
  * across tab switches.
  *
  * Mobile UX:
- *   - Tabs are wider than a phone (9 chips × ~110px ≈ 990px), so the
+ *   - Tabs are wider than a phone (7 chips × ~110px ≈ 770px), so the
  *     row stays horizontally scrollable on touch — but on phones it's
  *     unclear whether more content lives off-screen. We fade the strip's
  *     own edges to transparent with a horizontal `mask-image` gradient,
  *     so off-screen chips dissolve at both edges regardless of what sits
  *     behind the strip (no background-color matching needed, unlike an
- *     overlay div). The mask is dropped at lg+ where all 9 chips fit.
+ *     overlay div). The mask is dropped at lg+ where all chips fit.
  *   - `overscroll-x-contain` keeps the momentum swipe inside the strip
  *     instead of bouncing the whole page.
  *   - Active chip is `scroll-mx-4` so when the page mounts mid-scroll the

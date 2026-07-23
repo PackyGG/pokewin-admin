@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Dices, LineChart, Package, Swords, ArrowUpCircle } from "lucide-react";
+import { Dices, LineChart, ArrowUpCircle } from "lucide-react";
 
 import { SectionHeading } from "@/components/modern-panels";
 import {

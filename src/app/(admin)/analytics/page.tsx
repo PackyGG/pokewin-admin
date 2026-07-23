@@ -15,17 +15,16 @@ import { GamesTab, parseGameView } from "./tab-games";
 import { CrmTab } from "../insights/real-numbers/crm-tab";
 import { CostBreakdownTab } from "./tab-cost-breakdown";
 import { RewardsInsightsTab } from "./tab-rewards";
-import { RevenueTab } from "./tab-revenue";
-import { TopPerformersTab } from "./tab-top";
 import { MapTab } from "./tab-map";
 import { parseMetric } from "./map/utils";
-import { TabSkeleton, TabSkeletonTable } from "./tab-skeleton";
-import type { ReactNode } from "react";
+import { TabSkeleton } from "./tab-skeleton";
 
 export const metadata = { title: "Analytics" };
 
-// A deleted tab's URL (?tab=cohorts, funnel, ltv, retention) falls through
-// to Overview rather than 404-ing — a stale bookmark lands somewhere useful.
+// A deleted tab's URL (?tab=cohorts, funnel, ltv, retention, top, packs,
+// revenue) falls through to Overview rather than 404-ing — a stale bookmark
+// lands somewhere useful, and for Revenue specifically Overview is where its
+// surviving panel (withdrawn cash per rail) now lives.
 function parseTab(value: string | undefined): AnalyticsTab {
   switch (value) {
     case "overview":
@@ -33,28 +32,10 @@ function parseTab(value: string | undefined): AnalyticsTab {
     case "cost-breakdown":
     case "rewards":
     case "games":
-    case "revenue":
-    case "top":
     case "map":
       return value;
     default:
       return "overview";
-  }
-}
-
-/**
- * Pick the Suspense fallback that matches the active tab's real shape, so
- * the swap from skeleton → content doesn't jump the layout:
- *   • top/packs → KPI strip + data table (leaderboard-style tabs)
- *   • everything else (overview, map, revenue) →
- *     KPIs + chart (the dominant shape).
- */
-function fallbackForTab(tab: AnalyticsTab): ReactNode {
-  switch (tab) {
-    case "top":
-      return <TabSkeletonTable />;
-    default:
-      return <TabSkeleton />;
   }
 }
 
@@ -74,13 +55,11 @@ function fallbackForTab(tab: AnalyticsTab): ReactNode {
  */
 const PERIOD_DRIVEN_TABS = new Set<AnalyticsTab>([
   "overview",
-  "revenue",
-  "top",
   "map",
   "cost-breakdown",
   "rewards",
-  // Games drives every mode's window from the page filter — packs/battles
-  // profitability, and the Double Down log + charts.
+  // Games drives every mode's window from the page filter — the Double Down
+  // log + charts.
   "games",
 ]);
 
@@ -93,11 +72,10 @@ export default async function AnalyticsPage({
   const params = await searchParams;
   const period = parsePeriod(params.period);
   const tab = parseTab(params.tab);
-  const topTab = params.topTab;
   // Double Down tab params (absorbed from /insights/double-down): `q` is the
   // audit-log search, `page` its pagination. Parsed defensively — a fuzzed
   // ?page= must never reach the query's OFFSET.
-  // Games tab sub-view (?g=): packs | battles | upgrader | double-down.
+  // Games tab sub-view (?g=): upgrader | double-down.
   const gameView = parseGameView(params.g);
   const ddSearch = (params.q ?? "").trim();
   const ddPageRaw = Number.parseInt(params.page ?? "1", 10);
@@ -107,7 +85,6 @@ export default async function AnalyticsPage({
   // a stale bookmark carrying one simply falls back to the global window.
   const rwSub = params.rw;
   const insightsPeriod = toInsightsPeriod(period);
-  const packsSort = params.packsSort;
   // Map tab uses its own URL param for the heat metric (users /
   // deposits / wagers / multiplier). Parsed here so the param flows
   // into the Suspense key and the tab segment re-renders when the
@@ -152,14 +129,12 @@ export default async function AnalyticsPage({
 
       {/* Each tab is an independent async segment. We render only the one
           that matches `tab` so nothing else hits the DB — important because
-          several of these tabs run heavy raw SQL. Suspense + per-tab skeleton
-          keeps navigation snappy between tabs. The fallback matches each
-          tab's real shape (a table for the leaderboard-style tabs, KPIs +
-          chart for the rest) so the swap into real content doesn't jump the
-          layout. */}
+          several of these tabs run heavy raw SQL. Suspense + a KPIs-over-chart
+          skeleton keeps navigation snappy between tabs without jumping the
+          layout on swap. */}
       <Suspense
-        key={`${tab}-${period}-${topTab ?? ""}-${packsSort ?? ""}-${mapMetric}-${gameView}-${ddSearch}-${ddPage}-${rwSub ?? ""}`}
-        fallback={fallbackForTab(tab)}
+        key={`${tab}-${period}-${mapMetric}-${gameView}-${ddSearch}-${ddPage}-${rwSub ?? ""}`}
+        fallback={<TabSkeleton />}
       >
         {tab === "overview" && <OverviewTab period={period} />}
         {tab === "games" && (
@@ -169,7 +144,6 @@ export default async function AnalyticsPage({
             ddPeriod={toDoubleDownPeriod(period)}
             search={ddSearch}
             page={ddPage}
-            packsSort={packsSort}
           />
         )}
         {tab === "crm" && <CrmTab />}
@@ -178,10 +152,6 @@ export default async function AnalyticsPage({
         )}
         {tab === "rewards" && (
           <RewardsInsightsTab period={insightsPeriod} sub={rwSub} />
-        )}
-        {tab === "revenue" && <RevenueTab period={period} />}
-        {tab === "top" && (
-          <TopPerformersTab period={period} subTab={topTab} />
         )}
         {tab === "map" && <MapTab period={period} metric={mapMetric} />}
       </Suspense>
