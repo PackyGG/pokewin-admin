@@ -1263,3 +1263,24 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chat_messages_created_at_user_id
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ledger_user_deposit_created
   ON ledger_transactions (user_id, created_at)
   WHERE type = 'deposit' AND status = 'completed';
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- promo_codes.code_hash — UNIQUE (currently only a plain index, 0140)
+--
+-- A code hash IS the identity of a code: redeem resolves a row by hash and
+-- takes the first match. Nothing today stops two rows sharing one hash.
+--
+-- The admin's reward campaigns derive each code from (campaign, user), check
+-- `code_hash IN (...)` and insert only what's missing — safe when batches run
+-- sequentially, which is how the composer drives them. Two operators starting
+-- the SAME campaign at the same moment could both see "not present" and both
+-- insert, leaving a duplicate row that shadows the other. A unique index makes
+-- that physically impossible rather than merely unlikely.
+--
+-- Check for existing duplicates before applying — this fails if any exist:
+--   SELECT code_hash, count(*) FROM promo_codes
+--    GROUP BY code_hash HAVING count(*) > 1;
+--
+-- NOT APPLIED — MAIN is read-only for the admin dashboard. Owner to apply.
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS promo_codes_code_hash_unique
+  ON promo_codes (code_hash);

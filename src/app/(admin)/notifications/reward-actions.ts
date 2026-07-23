@@ -263,26 +263,37 @@ export async function sendRewardCampaignChunkAction(
     };
   }
 
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "reward_campaign_chunk_sent",
-    metadata: {
-      env: availability.backendEnv,
-      campaign,
-      valueUsd,
-      expiresAt: expiresAt?.toISOString() ?? null,
-      chunkIndex: input.chunkIndex,
-      chunkCount: input.chunkCount,
-      requested: userIds.length,
-      codesMinted: toMint.length,
-      codesReused: planned.length - toMint.length,
-      created: result.created,
-      deduped: result.deduped,
-      unknownUsers: [...new Set([...unknownUsers, ...result.unknown_users])],
-      // Money moved per recipient — the number an audit reader needs most.
-      totalValueUsd: Number((toMint.length * valueUsd).toFixed(2)),
-    },
-  });
+  // The codes are minted and the notifications are delivered. An audit write
+  // that fails now must not be reported as a failed batch: the operator would
+  // read "batch 4 failed", retry, and be told nothing happened (it dedupes) —
+  // while the real money movement already succeeded. Logged and swallowed, so
+  // the result stays truthful about what actually happened to the users.
+  try {
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "reward_campaign_chunk_sent",
+      metadata: {
+        env: availability.backendEnv,
+        campaign,
+        valueUsd,
+        expiresAt: expiresAt?.toISOString() ?? null,
+        chunkIndex: input.chunkIndex,
+        chunkCount: input.chunkCount,
+        requested: userIds.length,
+        codesMinted: toMint.length,
+        codesReused: planned.length - toMint.length,
+        created: result.created,
+        deduped: result.deduped,
+        unknownUsers: [...new Set([...unknownUsers, ...result.unknown_users])],
+        // Money moved per recipient — the number an audit reader needs most.
+        totalValueUsd: Number((toMint.length * valueUsd).toFixed(2)),
+      },
+    });
+  } catch (err) {
+    console.log(
+      `[reward-campaign] audit write failed campaign=${campaign} chunk=${input.chunkIndex} minted=${toMint.length} err=${err instanceof Error ? err.message : "unknown"}`,
+    );
+  }
 
   return {
     success: true,
