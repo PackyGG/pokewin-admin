@@ -16,21 +16,18 @@ import {
  * by the existing `adjustBalance` server action — nowhere else.
  */
 
-/** The persisted row shape the scoring knobs live on. */
+/**
+ * The persisted row shape the scoring knobs live on.
+ *
+ * Eligibility (staff/blacklist/mute) and repeat winners are NOT here: they
+ * are fixed rules, not per-round columns — see CHAT_RAFFLE_FIXED_RULES.
+ */
 type RoundConfigColumns = {
   points_per_message: number;
   min_message_chars: number;
-  long_message_chars: number;
-  long_message_bonus_points: number;
   bucket_minutes: number;
   max_messages_per_bucket: number;
   dedupe_identical: boolean;
-  max_points_per_user: number | null;
-  min_points_to_enter: number;
-  exclude_staff: boolean;
-  exclude_blacklisted: boolean;
-  exclude_muted: boolean;
-  allow_repeat_winners: boolean;
 };
 
 /** DB row → the typed scoring config the scorer + the form both speak. */
@@ -38,17 +35,9 @@ export function scoringFromRow(row: RoundConfigColumns): ChatRaffleScoring {
   return {
     pointsPerMessage: row.points_per_message,
     minMessageChars: row.min_message_chars,
-    longMessageChars: row.long_message_chars,
-    longMessageBonusPoints: row.long_message_bonus_points,
     bucketMinutes: row.bucket_minutes,
     maxMessagesPerBucket: row.max_messages_per_bucket,
     dedupeIdentical: row.dedupe_identical,
-    maxPointsPerUser: row.max_points_per_user,
-    minPointsToEnter: row.min_points_to_enter,
-    excludeStaff: row.exclude_staff,
-    excludeBlacklisted: row.exclude_blacklisted,
-    excludeMuted: row.exclude_muted,
-    allowRepeatWinners: row.allow_repeat_winners,
   };
 }
 
@@ -57,17 +46,9 @@ export function scoringToColumns(s: ChatRaffleScoring): RoundConfigColumns {
   return {
     points_per_message: s.pointsPerMessage,
     min_message_chars: s.minMessageChars,
-    long_message_chars: s.longMessageChars,
-    long_message_bonus_points: s.longMessageBonusPoints,
     bucket_minutes: s.bucketMinutes,
     max_messages_per_bucket: s.maxMessagesPerBucket,
     dedupe_identical: s.dedupeIdentical,
-    max_points_per_user: s.maxPointsPerUser,
-    min_points_to_enter: s.minPointsToEnter,
-    exclude_staff: s.excludeStaff,
-    exclude_blacklisted: s.excludeBlacklisted,
-    exclude_muted: s.excludeMuted,
-    allow_repeat_winners: s.allowRepeatWinners,
   };
 }
 
@@ -97,7 +78,6 @@ export type ChatRaffleRoundView = {
   entrantsAtDraw: number | null;
   ticketsAtDraw: number | null;
   drawSeed: string | null;
-  notes: string | null;
   /** How many prizes still owe the winner their balance. */
   unpaidPrizes: number;
 };
@@ -112,7 +92,6 @@ type RoundWithPrizes = RoundConfigColumns & {
   draw_seed: string | null;
   entrants_at_draw: number | null;
   tickets_at_draw: number | null;
-  notes: string | null;
   prizes: {
     id: string;
     position: number;
@@ -164,7 +143,6 @@ function toRoundView(row: RoundWithPrizes, now: Date): ChatRaffleRoundView {
     entrantsAtDraw: row.entrants_at_draw,
     ticketsAtDraw: row.tickets_at_draw,
     drawSeed: row.draw_seed,
-    notes: row.notes,
     unpaidPrizes: prizes.filter((p) => p.winnerUserId && !p.paidAt).length,
   };
 }

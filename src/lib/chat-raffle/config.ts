@@ -18,22 +18,42 @@ import { z } from "zod";
  *      Everything above it in that bucket is dropped.
  *   4. With `dedupeIdentical`, the same text (trimmed, case-insensitive)
  *      counts once per bucket.
- *   5. A surviving message is worth `pointsPerMessage`, plus
- *      `longMessageBonusPoints` when it is at least `longMessageChars` long.
- *      That is the "weight" knob: it pays for saying something over spamming
- *      "gg".
+ *   5. A surviving message is worth `pointsPerMessage`.
  *   6. Manual per-user adjustments (chat_raffle_adjustments) are added.
- *   7. The total is clamped to `maxPointsPerUser` when set.
- *   8. Users below `minPointsToEnter` drop out of the draw entirely.
- *   9. 1 point = 1 ticket. Tickets are the draw weight.
+ *   7. Anyone left on 0 or fewer points is out; otherwise 1 point = 1 ticket.
  *
  * Every knob lives on the ROUND, not in a global settings row, so retuning
  * the weights can never retroactively rewrite how a past round was scored.
+ *
+ * ─── What is NOT configurable (deliberately) ─────────────────────────────
+ *
+ * The eligibility rules below are ALWAYS applied — see
+ * {@link CHAT_RAFFLE_FIXED_RULES}. They were briefly per-round toggles; the
+ * owner removed them because there is no legitimate round that wants staff
+ * winning a player raffle, and a muted user cannot chat in the first place.
+ * Removing the switches removes the way to get them wrong.
  */
 
 /** Lifecycle flag persisted on the row. */
 export const CHAT_RAFFLE_STATUSES = ["open", "drawn", "cancelled"] as const;
 export type ChatRaffleStatus = (typeof CHAT_RAFFLE_STATUSES)[number];
+
+/**
+ * The always-on rules, stated once so the UI can show them and the scorer
+ * can enforce them without either side inventing its own wording.
+ *
+ * Repeat winners are ALLOWED: tickets are the whole weighting model, so
+ * removing a winner from the pool between places would silently re-weight
+ * everyone else's odds mid-draw. Letting the pool stand keeps each place an
+ * independent draw at the published odds — and keeps the frozen snapshot's
+ * ticket ranges valid for every pick, not just the first.
+ */
+export const CHAT_RAFFLE_FIXED_RULES = [
+  "Staff, admins and creators never qualify",
+  "Blacklisted users never qualify",
+  "Muted users never qualify",
+  "One user can win more than one place",
+] as const;
 
 /**
  * What an operator actually sees. `scheduled` / `running` / `ready` are all
@@ -58,7 +78,7 @@ export const CHAT_RAFFLE_PHASE_LABEL: Record<ChatRafflePhase, string> = {
 /**
  * Phase badge colours. Neutral / informational states only — these are NOT
  * money figures, so the house-POV red/green rule does not apply here (that
- * rule governs amounts, and prize amounts below use it).
+ * rule governs amounts, and prize amounts use it).
  */
 export const CHAT_RAFFLE_PHASE_COLOR: Record<ChatRafflePhase, string> = {
   scheduled:
@@ -76,18 +96,9 @@ export const CHAT_RAFFLE_PHASE_COLOR: Record<ChatRafflePhase, string> = {
 export type ChatRaffleScoring = {
   pointsPerMessage: number;
   minMessageChars: number;
-  longMessageChars: number;
-  longMessageBonusPoints: number;
   bucketMinutes: number;
   maxMessagesPerBucket: number;
   dedupeIdentical: boolean;
-  /** null = uncapped. */
-  maxPointsPerUser: number | null;
-  minPointsToEnter: number;
-  excludeStaff: boolean;
-  excludeBlacklisted: boolean;
-  excludeMuted: boolean;
-  allowRepeatWinners: boolean;
 };
 
 /**
@@ -99,17 +110,9 @@ export type ChatRaffleScoring = {
 export const DEFAULT_CHAT_RAFFLE_SCORING: ChatRaffleScoring = {
   pointsPerMessage: 1,
   minMessageChars: 3,
-  longMessageChars: 40,
-  longMessageBonusPoints: 1,
   bucketMinutes: 10,
   maxMessagesPerBucket: 10,
   dedupeIdentical: true,
-  maxPointsPerUser: null,
-  minPointsToEnter: 1,
-  excludeStaff: true,
-  excludeBlacklisted: true,
-  excludeMuted: true,
-  allowRepeatWinners: false,
 };
 
 /**
@@ -120,8 +123,14 @@ export const DEFAULT_CHAT_RAFFLE_SCORING: ChatRaffleScoring = {
  */
 export const CHAT_RAFFLE_MAX_WINDOW_DAYS = 90;
 
-/** Most rows the live standings table will render / the draw will snapshot. */
-export const CHAT_RAFFLE_MAX_ENTRIES = 1000;
+/**
+ * Most entrants one round can snapshot. Generous on purpose: with no
+ * entry-points floor, EVERY user who sends one qualifying message is an
+ * entrant, so this is the only backstop against an unbounded snapshot. The
+ * draw refuses rather than silently clipping the pool (see the truncation
+ * handling in standings.ts / the draw action).
+ */
+export const CHAT_RAFFLE_MAX_ENTRIES = 10_000;
 
 /** Most prize places one round can pay out. */
 export const CHAT_RAFFLE_MAX_PRIZES = 20;
@@ -132,17 +141,9 @@ export const CHAT_RAFFLE_MAX_PRIZE_USD = 10_000;
 export const chatRaffleScoringSchema = z.object({
   pointsPerMessage: z.number().int().min(1).max(100),
   minMessageChars: z.number().int().min(1).max(500),
-  longMessageChars: z.number().int().min(1).max(2000),
-  longMessageBonusPoints: z.number().int().min(0).max(100),
   bucketMinutes: z.number().int().min(1).max(1440),
   maxMessagesPerBucket: z.number().int().min(1).max(1000),
   dedupeIdentical: z.boolean(),
-  maxPointsPerUser: z.number().int().min(1).max(1_000_000).nullable(),
-  minPointsToEnter: z.number().int().min(1).max(100_000),
-  excludeStaff: z.boolean(),
-  excludeBlacklisted: z.boolean(),
-  excludeMuted: z.boolean(),
-  allowRepeatWinners: z.boolean(),
 });
 
 /**
@@ -180,17 +181,8 @@ export function describeScoring(scoring: ChatRaffleScoring): string {
   const parts = [
     `${scoring.pointsPerMessage} pt/msg`,
     `≥${scoring.minMessageChars} chars`,
-  ];
-  if (scoring.longMessageBonusPoints > 0) {
-    parts.push(
-      `+${scoring.longMessageBonusPoints} at ${scoring.longMessageChars} chars`,
-    );
-  }
-  parts.push(
     `max ${scoring.maxMessagesPerBucket}/${scoring.bucketMinutes}min`,
-  );
-  if (scoring.maxPointsPerUser !== null) {
-    parts.push(`cap ${scoring.maxPointsPerUser} pts`);
-  }
+  ];
+  if (scoring.dedupeIdentical) parts.push("no repeats");
   return parts.join(" · ");
 }

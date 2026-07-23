@@ -164,9 +164,6 @@ async function RoundDetail({ id }: { id: string }) {
             against the snapshot below.
           </p>
         )}
-        {round.notes && (
-          <p className="mt-2 text-xs text-muted-foreground">{round.notes}</p>
-        )}
       </div>
 
       {/* ─── Winners ─────────────────────────────────────────────── */}

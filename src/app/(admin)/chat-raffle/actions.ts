@@ -78,7 +78,6 @@ const roundInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
   startsAt: z.string().datetime(),
   endsAt: z.string().datetime(),
-  notes: z.string().trim().max(2000).optional(),
   scoring: chatRaffleScoringSchema,
   prizes: z.array(prizeInputSchema).min(1).max(CHAT_RAFFLE_MAX_PRIZES),
 });
@@ -116,7 +115,6 @@ export async function createChatRaffleRound(input: {
   name: string;
   startsAt: string;
   endsAt: string;
-  notes?: string;
   scoring: z.infer<typeof chatRaffleScoringSchema>;
   prizes: { position: number; amountUsd: number; label?: string }[];
 }): Promise<ActionResult<{ roundId: string }>> {
@@ -141,7 +139,6 @@ export async function createChatRaffleRound(input: {
       status: "open",
       starts_at: startsAt,
       ends_at: endsAt,
-      notes: data.notes || null,
       created_by: session.userId,
       ...scoringToColumns(data.scoring),
       prizes: {
@@ -175,7 +172,6 @@ export async function updateChatRaffleRound(input: {
   name: string;
   startsAt: string;
   endsAt: string;
-  notes?: string;
   scoring: z.infer<typeof chatRaffleScoringSchema>;
   prizes: { position: number; amountUsd: number; label?: string }[];
 }): Promise<ActionResult> {
@@ -213,7 +209,6 @@ export async function updateChatRaffleRound(input: {
         name: data.name,
         starts_at: startsAt,
         ends_at: endsAt,
-        notes: data.notes || null,
         ...scoringToColumns(data.scoring),
         prizes: {
           create: data.prizes.map((p) => ({
@@ -382,7 +377,7 @@ export async function drawChatRaffleRound(input: {
     return {
       success: false,
       error:
-        "Too many entrants to snapshot safely — drawing now would give everyone past the cut a silent zero chance. Raise the minimum points to enter, then draw.",
+        "Too many entrants to snapshot safely — drawing now would give everyone past the cut a silent zero chance. Shorten the round window or raise the minimum message length, then draw.",
     };
   }
   if (entrants === 0 || totalTickets === 0) {
@@ -419,7 +414,6 @@ export async function drawChatRaffleRound(input: {
       tickets: s.tickets,
     })),
     prizeCount: round.prizes.length,
-    allowRepeatWinners: round.allow_repeat_winners,
   });
 
   const prizesByPosition = new Map(round.prizes.map((p) => [p.position, p]));

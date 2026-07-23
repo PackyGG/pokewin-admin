@@ -2,13 +2,12 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { Dices, Plus, Settings2, Trash2, Wallet, X } from "lucide-react";
+import { Check, Dices, Plus, Settings2, Trash2, Wallet, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -21,6 +20,7 @@ import {
 import { Spinner } from "@/components/ux";
 import { formatCurrency } from "@/lib/utils/format";
 import {
+  CHAT_RAFFLE_FIXED_RULES,
   CHAT_RAFFLE_MAX_PRIZES,
   DEFAULT_CHAT_RAFFLE_SCORING,
   type ChatRaffleScoring,
@@ -123,7 +123,6 @@ export type RoundFormValues = {
   name: string;
   startsAt: string;
   endsAt: string;
-  notes: string | null;
   scoring: ChatRaffleScoring;
   prizes: { position: number; amountUsd: number; label: string | null }[];
 };
@@ -161,7 +160,6 @@ export function RoundFormDialog({
       round?.endsAt ?? new Date(Date.now() + 7 * 86_400_000).toISOString(),
     ),
   );
-  const [notes, setNotes] = useState(round?.notes ?? "");
   const [scoring, setScoring] = useState<ChatRaffleScoring>(initialScoring);
   const [prizes, setPrizes] = useState<PrizeDraft[]>(
     round?.prizes.length
@@ -215,7 +213,6 @@ export function RoundFormDialog({
       name: name.trim(),
       startsAt: startsIso,
       endsAt: endsIso,
-      notes: notes.trim() || undefined,
       scoring,
       prizes: parsedPrizes,
     };
@@ -400,21 +397,6 @@ export function RoundFormDialog({
                 {...numField("minMessageChars")}
               />
               <NumberField
-                id="long-chars"
-                label="Long-message length"
-                min={1}
-                max={2000}
-                {...numField("longMessageChars")}
-              />
-              <NumberField
-                id="long-bonus"
-                label="Long-message bonus points"
-                hint="Pays for saying something instead of spamming 'gg'."
-                min={0}
-                max={100}
-                {...numField("longMessageBonusPoints")}
-              />
-              <NumberField
                 id="bucket-min"
                 label="Rate-cap window (minutes)"
                 min={1}
@@ -429,76 +411,28 @@ export function RoundFormDialog({
                 max={1000}
                 {...numField("maxMessagesPerBucket")}
               />
-              <NumberField
-                id="min-points"
-                label="Minimum points to enter"
-                min={1}
-                max={100000}
-                {...numField("minPointsToEnter")}
-              />
-              <NumberField
-                id="max-points"
-                label="Max points per user"
-                hint="Leave empty for no cap."
-                min={1}
-                placeholder="No cap"
-                value={
-                  scoring.maxPointsPerUser === null
-                    ? ""
-                    : String(scoring.maxPointsPerUser)
-                }
-                onChange={(v) =>
-                  setScoringField(
-                    "maxPointsPerUser",
-                    v === "" ? null : Math.max(1, Number(v)),
-                  )
-                }
-              />
             </div>
 
-            <div className="grid gap-2 sm:grid-cols-2">
-              <ToggleRow
-                label="Dedupe identical messages"
-                hint="Repeating the same line counts once per window."
-                checked={scoring.dedupeIdentical}
-                onChange={(v) => setScoringField("dedupeIdentical", v)}
-              />
-              <ToggleRow
-                label="Exclude staff & creators"
-                hint="Drops admin, support and creator accounts."
-                checked={scoring.excludeStaff}
-                onChange={(v) => setScoringField("excludeStaff", v)}
-              />
-              <ToggleRow
-                label="Exclude blacklisted users"
-                hint="Drops everyone on the excluded-users list."
-                checked={scoring.excludeBlacklisted}
-                onChange={(v) => setScoringField("excludeBlacklisted", v)}
-              />
-              <ToggleRow
-                label="Exclude muted users"
-                hint="Drops anyone carrying an active chat mute."
-                checked={scoring.excludeMuted}
-                onChange={(v) => setScoringField("excludeMuted", v)}
-              />
-              <ToggleRow
-                label="Allow repeat winners"
-                hint="Off: one user can take at most one place."
-                checked={scoring.allowRepeatWinners}
-                onChange={(v) => setScoringField("allowRepeatWinners", v)}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="round-notes">Notes (optional)</Label>
-            <Textarea
-              id="round-notes"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              maxLength={2000}
-              rows={2}
+            <ToggleRow
+              label="Dedupe identical messages"
+              hint="Repeating the same line counts once per window."
+              checked={scoring.dedupeIdentical}
+              onChange={(v) => setScoringField("dedupeIdentical", v)}
             />
+
+            {/* The rules an operator can't switch off. Stated here so the
+                form is honest about what it does NOT control. */}
+            <ul className="space-y-1 rounded-lg bg-muted/40 px-3 py-2.5">
+              {CHAT_RAFFLE_FIXED_RULES.map((rule) => (
+                <li
+                  key={rule}
+                  className="flex items-start gap-1.5 text-[11px] text-muted-foreground"
+                >
+                  <Check className="mt-px size-3 shrink-0" aria-hidden />
+                  {rule}
+                </li>
+              ))}
+            </ul>
           </div>
 
           <DialogFooter>

@@ -128,11 +128,12 @@ CREATE INDEX IF NOT EXISTS "chat_raffle_prizes_round_idx"
 -- ran on are persisted here instead of recomputed.
 --
 -- `ticket_start` is the entry's first ticket number in the cumulative range
--- (entries ordered by position) as the pool stood for the FIRST pick. When
--- repeat winners are disallowed each winner is then removed, so later picks
--- run against a smaller pool — a replay still reproduces them exactly (the
--- removal order is the recorded winner order), but by re-deriving the ranges
--- rather than reading `ticket_start` directly. See src/lib/chat-raffle/draw.ts.
+-- (entries ordered by position), so a third party can replay the draw.
+--
+-- NOTE this file is the ORIGINAL create — several of the columns it defines
+-- were dropped again on 2026-07-24 (see
+-- prisma/admin/sql/2026-07-24_chat_raffle_simplify.up.sql). Read both, or
+-- read prisma/admin/schema.prisma for the current shape.
 CREATE TABLE IF NOT EXISTS "chat_raffle_entries" (
   "id"                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   "round_id"          UUID           NOT NULL,

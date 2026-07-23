@@ -2234,6 +2234,15 @@ model creator_reward_program_windows {
 /// month can never retroactively rewrite how a past round was scored. The
 /// "new round" dialog pre-fills from the most recent round, which gives
 /// config continuity without a second table.
+///
+/// Eligibility is NOT stored here. Staff/admins/creators, blacklisted users
+/// and muted users are ALWAYS excluded, and repeat winners are ALWAYS allowed
+/// (see CHAT_RAFFLE_FIXED_RULES in src/lib/chat-raffle/config.ts). Those were
+/// per-round columns until 2026-07-24, when the owner removed the switches —
+/// no legitimate round wants staff winning a player raffle, and a muted user
+/// cannot chat anyway. Dropped by
+/// prisma/admin/sql/2026-07-24_chat_raffle_simplify.up.sql, along with the
+/// long-message bonus, the entry floor, the per-user cap and `notes`.
 model chat_raffle_rounds {
   id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name                      String
@@ -2245,9 +2254,6 @@ model chat_raffle_rounds {
   points_per_message        Int       @default(1)
   /// Messages shorter than this (trimmed) score nothing at all.
   min_message_chars         Int       @default(3)
-  /// Messages at least this long earn `long_message_bonus_points` extra.
-  long_message_chars        Int       @default(40)
-  long_message_bonus_points Int       @default(1)
 
   /// Anti-farm rate cap — at most `max_messages_per_bucket` counted messages
   /// per `bucket_minutes` window per user. Everything above the cap in a
@@ -2256,20 +2262,6 @@ model chat_raffle_rounds {
   max_messages_per_bucket   Int       @default(10)
   /// Count an identical (trimmed, case-insensitive) message once per bucket.
   dedupe_identical          Boolean   @default(true)
-
-  /// Per-user ceiling over the whole round (NULL = uncapped).
-  max_points_per_user       Int?
-  /// Floor a user must reach to be in the draw at all.
-  min_points_to_enter       Int       @default(1)
-
-  /// Drop admin/support/creator (the canonical CUSTOMER_EXCLUDED_ROLES).
-  exclude_staff             Boolean   @default(true)
-  /// Drop the admin-managed `excluded_users` blacklist.
-  exclude_blacklisted       Boolean   @default(true)
-  /// Drop users carrying an active chat mute.
-  exclude_muted             Boolean   @default(true)
-  /// Can one user take more than one prize in the same round?
-  allow_repeat_winners      Boolean   @default(false)
 
   /// Draw provenance. `draw_seed` + the frozen `entries` snapshot make the
   /// draw fully reproducible: winner N = HMAC-SHA256(seed, "<id>:<n>") mod
@@ -2280,7 +2272,6 @@ model chat_raffle_rounds {
   entrants_at_draw          Int?
   tickets_at_draw           Int?
 
-  notes                     String?
   created_by                String?   @db.Uuid
   created_at                DateTime  @default(now()) @db.Timestamptz(6)
   updated_at                DateTime  @updatedAt @db.Timestamptz(6)
@@ -2336,11 +2327,10 @@ model chat_raffle_prizes {
 /// numbers the draw actually ran on are persisted rather than recomputed.
 ///
 /// `ticket_start` is the entry's first ticket number in the cumulative range
-/// (entries ordered by position) as the pool stood for the FIRST pick. When
-/// repeat winners are disallowed each winner is then removed, so later picks
-/// run against a smaller pool — a replay still reproduces them exactly (the
-/// removal order is the recorded winner order), but by re-deriving the ranges
-/// rather than reading `ticket_start` directly. See src/lib/chat-raffle/draw.ts.
+/// (entries ordered by position). Because the pool never shrinks between
+/// prize places — repeat winners are always allowed — these ranges stay valid
+/// for EVERY pick, so a replay reads them directly. See
+/// src/lib/chat-raffle/draw.ts.
 model chat_raffle_entries {
   id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   round_id          String             @db.Uuid

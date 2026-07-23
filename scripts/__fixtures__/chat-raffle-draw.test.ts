@@ -12,13 +12,14 @@
 //   3. WEIGHTING         — a user with more tickets wins proportionally more
 //      often. Empirically checked over many seeds; a draw that ignored
 //      `tickets` would fail here.
-//   4. NO REPEAT WINNERS — with the flag off, one user can hold at most one
-//      place, and the pool draining is what allows a short pool to yield
-//      fewer winners than prizes rather than duplicating someone.
-//   5. REPEAT WINNERS ON — a single-entrant pool can legitimately sweep.
-//   6. POOL EXHAUSTION   — 5 prizes, 3 entrants, no repeats ⇒ 3 winners, not
-//      a crash and not an invented winner.
-//   7. ZERO-TICKET SAFETY — entries with 0 tickets never win and an all-zero
+//   4. INDEPENDENT PLACES — the pool does NOT shrink between prize places
+//      (repeat winners are always allowed, per CHAT_RAFFLE_FIXED_RULES), so
+//      every place is drawn at the same published odds and a lone entrant
+//      can legitimately sweep. This is the property that keeps the frozen
+//      snapshot's ticket ranges valid for every pick, not just the first.
+//   5. ALL PLACES FILLED — 5 prizes and 3 entrants still yields 5 winners
+//      (with repeats), not a crash and not an invented user.
+//   6. ZERO-TICKET SAFETY — entries with 0 tickets never win and an all-zero
 //      pool yields nothing (guards a mod-by-zero).
 //
 // Run via tsx:
@@ -52,7 +53,6 @@ test("same seed + same pool always yields the same winners", () => {
     seed: "a".repeat(48),
     entries: BASE,
     prizeCount: 3,
-    allowRepeatWinners: false,
   };
   const first = drawWinners(args);
   const second = drawWinners(args);
@@ -96,7 +96,6 @@ test("more tickets wins measurably more often", () => {
       seed: `seed-${i}`,
       entries: weighted,
       prizeCount: 1,
-      allowRepeatWinners: false,
     });
     if (winner.userId === "whale") whale++;
     else minnow++;
@@ -111,51 +110,60 @@ test("more tickets wins measurably more often", () => {
   );
 });
 
-test("no repeat winners: each user takes at most one place", () => {
+test("each place is an independent draw — the pool never shrinks", () => {
+  // Pick 1 of a 2-place draw must be identical to pick 1 of a 1-place draw:
+  // if the pool were being drained, the SECOND draw's odds would differ and
+  // this equality would eventually break across seeds.
   for (let i = 0; i < 100; i++) {
-    const winners = drawWinners({
+    const one = drawWinners({
       roundId: ROUND,
-      seed: `seed-${i}`,
+      seed: `indep-${i}`,
+      entries: BASE,
+      prizeCount: 1,
+    });
+    const three = drawWinners({
+      roundId: ROUND,
+      seed: `indep-${i}`,
       entries: BASE,
       prizeCount: 3,
-      allowRepeatWinners: false,
     });
-    const ids = winners.map((w) => w.userId);
     assert.equal(
-      new Set(ids).size,
-      ids.length,
-      `duplicate winner in seed-${i}: ${ids.join(", ")}`,
+      three[0].userId,
+      one[0].userId,
+      "adding more prize places must not change who wins place 1",
+    );
+    assert.equal(
+      three[0].winningTicket,
+      one[0].winningTicket,
+      "the landed ticket for place 1 must not move either",
     );
   }
 });
 
-test("repeat winners allowed: a lone entrant can sweep every place", () => {
+test("a lone entrant sweeps every place", () => {
   const winners = drawWinners({
     roundId: ROUND,
     seed: "solo",
     entries: pool(["only", 10]),
     prizeCount: 3,
-    allowRepeatWinners: true,
   });
   assert.equal(winners.length, 3);
   assert.ok(winners.every((w) => w.userId === "only"));
 });
 
-test("pool exhaustion yields fewer winners, never an invented one", () => {
+test("more prizes than entrants still fills every place", () => {
   const winners = drawWinners({
     roundId: ROUND,
     seed: "short-pool",
     entries: BASE, // 3 entrants
     prizeCount: 5, // 5 places
-    allowRepeatWinners: false,
   });
-  assert.equal(winners.length, 3, "only 3 eligible entrants exist");
-  assert.deepEqual(
-    winners.map((w) => w.position),
-    [1, 2, 3],
-    "unfilled places are simply absent, positions stay 1..n",
+  assert.equal(winners.length, 5, "repeats are allowed, so all 5 places fill");
+  assert.deepEqual(winners.map((w) => w.position), [1, 2, 3, 4, 5]);
+  assert.ok(
+    winners.every((w) => BASE.some((e) => e.userId === w.userId)),
+    "every winner must come from the pool — no invented users",
   );
-  assert.equal(new Set(winners.map((w) => w.userId)).size, 3);
 });
 
 test("zero-ticket entries never win and an empty pool draws nobody", () => {
@@ -166,13 +174,11 @@ test("zero-ticket entries never win and an empty pool draws nobody", () => {
       seed: `z-${i}`,
       entries: withZeros,
       prizeCount: 3,
-      allowRepeatWinners: false,
     });
     assert.ok(
-      winners.every((w) => w.tickets > 0),
+      winners.every((w) => w.userId === "real"),
       "a 0-ticket entry must never be drawn",
     );
-    assert.equal(winners.length, 1, "only one entry actually holds tickets");
   }
 
   assert.deepEqual(
@@ -181,7 +187,6 @@ test("zero-ticket entries never win and an empty pool draws nobody", () => {
       seed: "all-zero",
       entries: pool(["a", 0], ["b", 0]),
       prizeCount: 2,
-      allowRepeatWinners: false,
     }),
     [],
     "an all-zero pool must draw nobody (and not divide by zero)",
@@ -193,29 +198,25 @@ test("zero-ticket entries never win and an empty pool draws nobody", () => {
       seed: "empty",
       entries: [],
       prizeCount: 2,
-      allowRepeatWinners: false,
     }),
     [],
   );
 });
 
-test("the landed ticket always falls inside the pool it was drawn from", () => {
+test("the landed ticket always falls inside the full pool", () => {
+  const total = BASE.reduce((sum, e) => sum + e.tickets, 0);
   for (let i = 0; i < 100; i++) {
     const winners = drawWinners({
       roundId: ROUND,
       seed: `range-${i}`,
       entries: BASE,
       prizeCount: 3,
-      allowRepeatWinners: false,
     });
-    // Pool shrinks by the previous winner's tickets on each pick.
-    let remaining = BASE.reduce((sum, e) => sum + e.tickets, 0);
     for (const w of winners) {
       assert.ok(
-        w.winningTicket >= BigInt(0) && w.winningTicket < BigInt(remaining),
-        `ticket ${w.winningTicket} outside 0..${remaining} at place ${w.position}`,
+        w.winningTicket >= BigInt(0) && w.winningTicket < BigInt(total),
+        `ticket ${w.winningTicket} outside 0..${total} at place ${w.position}`,
       );
-      remaining -= w.tickets;
     }
   }
 });

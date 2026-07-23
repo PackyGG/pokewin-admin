@@ -182,7 +182,6 @@ async function ActiveRoundSection() {
                   name: round.name,
                   startsAt: round.startsAt,
                   endsAt: round.endsAt,
-                  notes: round.notes,
                   scoring: round.scoring,
                   prizes: round.prizes.map((p) => ({
                     position: p.position,

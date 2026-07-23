@@ -13,10 +13,20 @@ import { createHmac, randomBytes } from "node:crypto";
  *
  * Winner N is then:
  *
- *     HMAC-SHA256(seed, "<round id>:<n>") → first 64 bits → mod ticketsLeft
+ *     HMAC-SHA256(seed, "<round id>:<n>") → first 64 bits → mod totalTickets
  *
  * Anyone holding the seed and the snapshot can replay it and land on the same
  * user. Nothing here reads the clock or the RNG at replay time.
+ *
+ * ─── Every place is an independent draw ──────────────────────────────────
+ *
+ * The pool does NOT shrink between places, so one user can take more than one
+ * prize. That is deliberate (see CHAT_RAFFLE_FIXED_RULES in ./config.ts):
+ * tickets ARE the weighting model, so removing a winner mid-draw would
+ * silently re-weight everyone else's odds for the remaining places. Keeping
+ * the pool intact means each place pays out at exactly the odds the standings
+ * published — and it keeps the snapshot's `ticket_start` ranges valid for
+ * every pick, not just the first.
  *
  * Modulo bias: a 64-bit draw against a ticket pool that will realistically be
  * in the thousands biases the result by under 2^-40. Not worth a rejection
@@ -36,12 +46,7 @@ export type DrawWinner = {
   username: string | null;
   /** The winner's ticket count in the frozen snapshot. */
   tickets: number;
-  /**
-   * The 0-based ticket the draw landed on, WITHIN the pool as it stood for
-   * this pick. With `allowRepeatWinners = false` earlier winners are removed
-   * from the pool first, so this is an offset into the reduced pool — which
-   * is exactly what a replay reconstructs.
-   */
+  /** The 0-based ticket the draw landed on, within the full pool. */
   winningTicket: bigint;
 };
 
@@ -63,9 +68,8 @@ export function drawValue(seed: string, roundId: string, n: number): bigint {
 /**
  * Pick one winner per prize place, in position order.
  *
- * Returns fewer winners than `prizeCount` when the pool runs dry (e.g. 5
- * prizes but only 3 eligible entrants and no repeat winners allowed) — the
- * caller leaves those places unfilled rather than inventing a winner.
+ * Returns no winners at all when the pool holds no tickets — the caller
+ * leaves those places unfilled rather than inventing a winner.
  */
 export function drawWinners(params: {
   roundId: string;
@@ -73,16 +77,15 @@ export function drawWinners(params: {
   /** Frozen entries, already ordered by position. */
   entries: DrawPoolEntry[];
   prizeCount: number;
-  allowRepeatWinners: boolean;
 }): DrawWinner[] {
-  const { roundId, seed, prizeCount, allowRepeatWinners } = params;
+  const { roundId, seed, prizeCount } = params;
   const pool = params.entries.filter((e) => e.tickets > 0);
+  const total = pool.reduce((sum, e) => sum + e.tickets, 0);
+  if (total <= 0) return [];
+
   const winners: DrawWinner[] = [];
 
   for (let n = 1; n <= prizeCount; n++) {
-    const total = pool.reduce((sum, e) => sum + e.tickets, 0);
-    if (total <= 0 || pool.length === 0) break;
-
     const winningTicket = drawValue(seed, roundId, n) % BigInt(total);
 
     // Walk the cumulative ranges to find whose ticket that is.
@@ -104,8 +107,6 @@ export function drawWinners(params: {
       tickets: hit.tickets,
       winningTicket,
     });
-
-    if (!allowRepeatWinners) pool.splice(hitIndex, 1);
   }
 
   return winners;
