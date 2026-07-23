@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Dices, LineChart, ArrowUpCircle } from "lucide-react";
+import { Dices, LineChart, Package, Swords, ArrowUpCircle } from "lucide-react";
 
 import { SectionHeading } from "@/components/modern-panels";
 import {
@@ -17,31 +17,44 @@ import {
   doubleDownPeriodLabel,
   type DoubleDownPeriod,
 } from "@/lib/queries/double-down";
-import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
+import {
+  getUpgraderAnalytics,
+  upgraderPeriodLabel,
+} from "@/lib/queries/analytics-upgrader";
 import { DoubleDownSearchForm } from "../insights/double-down/search-form";
 import { DoubleDownStatsSection } from "../insights/double-down/stats-section";
 import { DoubleDownLogSection } from "../insights/double-down/log-section";
 import { DoubleDownChartsSection } from "../insights/double-down/charts-section";
+import { PacksBattlesTab } from "./tab-packs";
+import { UpgraderCharts } from "./upgrader-charts";
 import type { AnalyticsPeriod } from "./types";
 
 const LOG_PER_PAGE = 25;
 
 /**
- * The modes a player can put money into that still have a surface here.
- * Packs and battles were removed (owner, 2026-07-23) along with the Top
- * Performers tab — their tab files, query modules and ClickHouse twins went
- * with them, so `?g=packs` / `?g=battles` fall back to Upgrader.
+ * The four things a player can actually put money into.
+ *
+ * Packs and battles were briefly dropped here (2026-07-23) alongside the Top
+ * Performers tab and restored the same day — they are the two biggest modes
+ * on the site, so a "Games" tab without them answered almost nothing.
  */
-export const GAME_VIEWS = ["upgrader", "double-down"] as const;
+export const GAME_VIEWS = [
+  "packs",
+  "battles",
+  "upgrader",
+  "double-down",
+] as const;
 export type GameView = (typeof GAME_VIEWS)[number];
 
 export function parseGameView(value: string | undefined): GameView {
   return (GAME_VIEWS as readonly string[]).includes(value ?? "")
     ? (value as GameView)
-    : "upgrader";
+    : "packs";
 }
 
 const VIEW_META: { value: GameView; label: string; icon: typeof Dices }[] = [
+  { value: "packs", label: "Packs", icon: Package },
+  { value: "battles", label: "Battles", icon: Swords },
   { value: "upgrader", label: "Upgrader", icon: ArrowUpCircle },
   { value: "double-down", label: "Double Down", icon: Dices },
 ];
@@ -51,8 +64,7 @@ const VIEW_META: { value: GameView; label: string; icon: typeof Dices }[] = [
  *
  * Replaces the separate "Double Down" and "Pack & Battle" tabs (owner,
  * 2026-07-23). Upgrader had no analytics surface at all despite being
- * wagered on like the rest; packs and battles were dropped in the same
- * pass, so what's left is upgrader + double down.
+ * wagered on like the rest, so it gained one here.
  *
  * The sub-nav is plain links, not a client component: each view is a server
  * segment and the whole tab re-renders on `?g=` anyway, so there is nothing
@@ -65,12 +77,14 @@ export function GamesTab({
   ddPeriod,
   search,
   page,
+  packsSort,
 }: {
   view: GameView;
   period: AnalyticsPeriod;
   ddPeriod: DoubleDownPeriod;
   search: string;
   page: number;
+  packsSort: string | undefined;
 }) {
   return (
     <div className="space-y-6">
@@ -97,9 +111,26 @@ export function GamesTab({
         ))}
       </div>
 
+      {view === "packs" && (
+        <PacksBattlesTab period={period} sortKey={packsSort} view="packs" />
+      )}
+      {view === "battles" && (
+        <PacksBattlesTab period={period} sortKey={packsSort} view="battles" />
+      )}
       {view === "upgrader" && (
-        <Suspense fallback={<KpiStripSkeleton count={5} />}>
-          <UpgraderSection />
+        <Suspense
+          key={`upgrader-${period}`}
+          fallback={
+            <div className="space-y-4">
+              <KpiStripSkeleton count={5} />
+              <div className="grid gap-4 xl:grid-cols-2">
+                <ChartSkeleton height={220} />
+                <ChartSkeleton height={220} />
+              </div>
+            </div>
+          }
+        >
+          <UpgraderSection period={period} />
         </Suspense>
       )}
       {view === "double-down" && (
@@ -110,16 +141,26 @@ export function GamesTab({
 }
 
 /**
- * Upgrader — the mode that had no analytics page at all. Lifetime figures
- * from the same cached read the dashboard's Upgrader card uses, so the two
- * can't disagree.
+ * Upgrader — the mode that had no analytics page at all.
  *
- * House POV: `pnl` positive = the house kept it = emerald. `edge` is measured
- * hold, not the configured target.
+ * Was lifetime-only, reading the DASHBOARD's card query: the page's period
+ * chip did nothing here and there was no trend at all, just nine static
+ * numbers. It now reads the period-aware `getUpgraderAnalytics`, which
+ * returns the same primitives over the selected window PLUS the per-day
+ * series the charts below draw — from one scan, so the trend is free.
+ *
+ * House POV: `pnl` positive = the house kept it = emerald; `payout` is money
+ * back to the player = rose. `edge` is MEASURED hold, not the configured
+ * target, and arrives as a fraction (the dashboard read returns it
+ * pre-multiplied by 100 — rendering that one with a second ×100 is what made
+ * this strip print a 10% hold as "1000.00%").
  */
-async function UpgraderSection() {
+async function UpgraderSection({ period }: { period: AnalyticsPeriod }) {
   const { data, error } = await safeQuery(
-    () => getUpgraderStats(),
+    // No cast: AnalyticsPeriod and UpgraderPeriod carry the same members, so
+    // if either ever gains one the mismatch surfaces here instead of being
+    // silently swallowed.
+    () => getUpgraderAnalytics(period),
     null,
     "analytics.games.upgrader",
     REWARD_QUERY_TIMEOUT_MS,
@@ -135,10 +176,14 @@ async function UpgraderSection() {
   }
 
   const tiles = [
-    { label: "Wagered", value: formatCurrency(data.wager), tone: "" },
+    {
+      label: "Wagered",
+      value: formatCurrency(data.wager),
+      tone: "text-emerald-500",
+    },
     {
       label: "Paid out",
-      value: formatCurrency(data.payouts),
+      value: formatCurrency(data.payout),
       tone: "text-rose-500",
     },
     {
@@ -156,7 +201,10 @@ async function UpgraderSection() {
 
   return (
     <div className="space-y-4">
-      <SectionHeading icon={ArrowUpCircle} title="Upgrader — lifetime" />
+      <SectionHeading
+        icon={ArrowUpCircle}
+        title={`Upgrader — ${upgraderPeriodLabel(data.period).toLowerCase()}`}
+      />
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         {tiles.map((t) => (
           <div
@@ -194,6 +242,10 @@ async function UpgraderSection() {
           </div>
         ))}
       </div>
+
+      {/* Trend. Same scan as the tiles above — the query returns the daily
+          series alongside the totals, so the charts cost no extra read. */}
+      <UpgraderCharts data={data.daily} />
     </div>
   );
 }

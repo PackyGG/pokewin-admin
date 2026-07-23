@@ -75,11 +75,14 @@ export default async function AnalyticsPage({
   // Double Down tab params (absorbed from /insights/double-down): `q` is the
   // audit-log search, `page` its pagination. Parsed defensively — a fuzzed
   // ?page= must never reach the query's OFFSET.
-  // Games tab sub-view (?g=): upgrader | double-down.
+  // Games tab sub-view (?g=): packs | battles | upgrader | double-down.
   const gameView = parseGameView(params.g);
   const ddSearch = (params.q ?? "").trim();
   const ddPageRaw = Number.parseInt(params.page ?? "1", 10);
   const ddPage = Number.isFinite(ddPageRaw) && ddPageRaw > 0 ? ddPageRaw : 1;
+  // Games → packs/battles sort column (?packsSort=), validated inside the
+  // sub-tab so a fuzzed value falls back to "revenue" rather than reaching SQL.
+  const packsSort = params.packsSort;
   // Absorbed-tab sub-view param. The per-tab period params (`cbPeriod`,
   // `rwPeriod`) are gone — those tabs read the page-level `?period=` now, so
   // a stale bookmark carrying one simply falls back to the global window.
@@ -135,7 +138,7 @@ export default async function AnalyticsPage({
           skeleton keeps navigation snappy between tabs without jumping the
           layout on swap. */}
       <Suspense
-        key={`${tab}-${period}-${mapMetric}-${gameView}-${ddSearch}-${ddPage}-${rwSub ?? ""}-${rwProgram ?? ""}`}
+        key={`${tab}-${period}-${mapMetric}-${gameView}-${packsSort ?? ""}-${ddSearch}-${ddPage}-${rwSub ?? ""}-${rwProgram ?? ""}`}
         fallback={<TabSkeleton />}
       >
         {tab === "overview" && <OverviewTab period={period} />}
@@ -146,6 +149,7 @@ export default async function AnalyticsPage({
             ddPeriod={toDoubleDownPeriod(period)}
             search={ddSearch}
             page={ddPage}
+            packsSort={packsSort}
           />
         )}
         {tab === "crm" && <CrmTab />}
