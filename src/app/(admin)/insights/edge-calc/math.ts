@@ -130,6 +130,32 @@ export function clampRepriceTarget(target: number): number {
   return Math.min(REPRICE_TARGET_MAX, Math.max(REPRICE_TARGET_MIN, target));
 }
 
+/**
+ * Sentinel for a re-price run's target:
+ *   • a NUMBER — an explicit owner-chosen FLAT edge fraction (the global
+ *     re-price-all tool: every pack to the SAME edge the owner typed).
+ *   • `"per-pack"` — each pack targets ITS OWN edge-curve target (floor 10.99%
+ *     plus a risk premium that rises with max-win $ exposure + price), so a
+ *     calm/cheap pack lands at the floor and a pricey high-jackpot pack a touch
+ *     above it.
+ *   • `"floor-raise-only"` — every pack targets the curve FLOOR (10.99%) and
+ *     the price may only ever move UP. A pack already at or above the floor is
+ *     LEFT ALONE rather than re-priced down onto it — which is the whole
+ *     difference from passing the floor as a flat number.
+ *
+ * Lives here (a pure module) rather than in the `"use server"` pack actions so
+ * the plan side, the write side and the client can share one definition; a
+ * `"use server"` file may only export async functions.
+ */
+export type RepriceTarget = number | "per-pack" | "floor-raise-only";
+
+/** Targets whose edge comes from the live curve config, not an owner number. */
+export function isCurveRepriceTarget(
+  target: RepriceTarget,
+): target is "per-pack" | "floor-raise-only" {
+  return target === "per-pack" || target === "floor-raise-only";
+}
+
 export type RepriceAction = "reprice" | "unchanged" | "skip";
 
 export type PackReprisePlan = {

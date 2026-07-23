@@ -58,9 +58,11 @@ import {
 import {
   planPackReprice,
   clampRepriceTarget,
+  isCurveRepriceTarget,
   REPRICE_ACCEPT_TOLERANCE,
   REPRICE_HARD_TOLERANCE,
   type RepriceAction,
+  type RepriceTarget,
 } from "@/app/(admin)/insights/edge-calc/math";
 import {
   autoRetuneTargets,
@@ -150,11 +152,12 @@ export type CustomRepinRow = {
 export type CustomRepinPlan = {
   /**
    * How the plan's targets were chosen: `"per-pack"` (each pack to ITS edge-curve
-   * target — floor 10.99% + risk premium) or a flat number (every pack to the
-   * SAME edge). The write loop passes this same selector to
+   * target — floor 10.99% + risk premium), `"floor-raise-only"` (every pack to
+   * the curve FLOOR, and only ever by RAISING the price), or a flat number
+   * (every pack to the SAME edge). The write loop passes this same selector to
    * `repricePackToTargetEdge` so the dry-run and the write can't drift.
    */
-  target: number | "per-pack";
+  target: RepriceTarget;
   /** The edge FLOOR (10.99%) — the lowest target any pack can carry. Shown in UI. */
   targetFloor: number;
   /** Tolerances are RELATIVE to each pack's own target; these are at the floor. */
@@ -180,6 +183,11 @@ export type CustomRepinPlan = {
  *   • `"per-pack"` (default) — each pack targets ITS OWN edge-curve target
  *     ({@link autoTargetEdge}: floor 10.99% + a gentle risk premium driven by the
  *     pack's max-win $ exposure + price). Different packs get different targets.
+ *   • `"floor-raise-only"` — every pack targets the curve FLOOR (10.99%) and
+ *     only a price INCREASE is planned. A pack that would need its price cut to
+ *     land on the floor drops out as skipped, so nothing is ever cheapened. The
+ *     write re-asserts the raise on fresh truth, so this filter is a preview
+ *     convenience, not the guarantee.
  *   • a flat number — every pack targets the SAME edge (legacy/explicit).
  *
  * The SAME selector is returned in the plan and re-passed to
@@ -192,32 +200,36 @@ export type CustomRepinPlan = {
  */
 export async function planCustomRepin(
   packIds: string[],
-  target: number | "per-pack" = "per-pack",
+  target: RepriceTarget = "per-pack",
 ): Promise<CustomRepinPlan> {
   await requireRetuneOwner();
 
-  if (target !== "per-pack" && (!Number.isFinite(target) || target <= 0 || target >= 1)) {
+  const curveTarget = isCurveRepriceTarget(target);
+  if (!curveTarget && (!Number.isFinite(target) || target <= 0 || target >= 1)) {
     throw new Error("Invalid target edge.");
   }
 
   // The edge-curve config (floor / ceiling / coefficients) resolved ONCE for the
   // whole run, so every pack's per-pack target derives off the same source-of-
   // truth blob — matches what `repricePackToTargetEdge` reads on the write side.
-  const edgeCurve: EdgeCurveConfig =
-    target === "per-pack" ? await readEdgeCurveConfig() : DEFAULT_EDGE_CURVE;
+  const edgeCurve: EdgeCurveConfig = curveTarget
+    ? await readEdgeCurveConfig()
+    : DEFAULT_EDGE_CURVE;
 
-  /** This pack's target: its curve target in per-pack mode, else the flat one. */
+  /** This pack's target: curve target, curve FLOOR, or the flat number. */
   const targetFor = (p: { price: number; maxWin: number }): number =>
     target === "per-pack"
       ? clampRepriceTarget(autoTargetEdge({ price: p.price, maxWin: p.maxWin }, edgeCurve))
-      : target;
+      : target === "floor-raise-only"
+        ? clampRepriceTarget(edgeCurve.edgeFloor)
+        : target;
 
   const ids = packIds.filter((id) => isUuid(id));
   const comps = ids.length > 0 ? await getPacksPoolComposition({ packIds: ids }) : [];
 
-  // The floor target (10.99% in per-pack mode, or the flat target) — used for the
-  // header band display. Per-pack bands are RELATIVE to each pack's own target.
-  const targetFloor = target === "per-pack" ? edgeCurve.edgeFloor : target;
+  // The floor target (10.99% in either curve mode, or the flat target) — used for
+  // the header band display. Per-pack bands are RELATIVE to each pack's own target.
+  const targetFloor = curveTarget ? edgeCurve.edgeFloor : target;
 
   const rows: CustomRepinRow[] = comps.map((p) => {
     const packTarget = targetFor({ price: p.price, maxWin: p.maxValue });
@@ -253,6 +265,29 @@ export async function planCustomRepin(
       // would round differently.
       roundingMode: "up",
     });
+    // RAISE-ONLY: a plan that would CUT the price to land on the floor is not a
+    // candidate here — the pack already earns at or above the floor and this
+    // action never cheapens a pack. Demoted to `skip` so it shows up in the
+    // preview's skipped count with the reason, instead of silently vanishing.
+    if (
+      target === "floor-raise-only" &&
+      plan.action === "reprice" &&
+      plan.newPrice !== null &&
+      plan.newPrice <= p.price
+    ) {
+      return {
+        packId: p.id,
+        name: p.name,
+        slug: p.slug,
+        priceBefore: p.price,
+        priceAfter: null,
+        edgeBefore: plan.currentEdge,
+        edgeAfter: null,
+        target: packTarget,
+        action: "skip" as RepriceAction,
+        reason: "Left alone: already at or above the floor — this action only raises prices.",
+      };
+    }
     return {
       packId: p.id,
       name: p.name,

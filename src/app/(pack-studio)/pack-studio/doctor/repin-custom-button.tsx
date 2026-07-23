@@ -2,7 +2,14 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Pin, TriangleAlert, ArrowRight, ExternalLink } from "lucide-react";
+import {
+  Loader2,
+  Pin,
+  TriangleAlert,
+  ArrowRight,
+  ArrowUp,
+  ExternalLink,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -56,6 +63,36 @@ const CONFIRM_PHRASE = "REPRICE";
 /** The edge FLOOR every pack targets at minimum (the curve only goes UP from here). */
 const FLOOR_TARGET_PCT = "10.99";
 
+/**
+ * The two flavours this button ships in — same plan → confirm → per-pack write
+ * machinery, different target selector:
+ *
+ *  • `per-pack`        — each pack to ITS curve target (floor + risk premium).
+ *  • `floor-raise-only`— every pack to the FLOOR, and ONLY by raising the price.
+ *    A pack already at or above the floor is left alone instead of being made
+ *    cheaper. The server enforces the raise on fresh truth; this copy just
+ *    tells the operator what they're authorizing.
+ */
+type RepinMode = "per-pack" | "floor-raise-only";
+
+const MODE_COPY: Record<
+  RepinMode,
+  { button: string; title: string; running: string; success: string }
+> = {
+  "per-pack": {
+    button: `Re-pin packs to their target edge (≥ ${FLOOR_TARGET_PCT}%)`,
+    title: "Re-pin packs to their target edge",
+    running: "Re-pinning below-target packs…",
+    success: `to their target edge (≥ ${FLOOR_TARGET_PCT}%)`,
+  },
+  "floor-raise-only": {
+    button: `Raise price only to reach ≥ ${FLOOR_TARGET_PCT}%`,
+    title: `Raise price to reach ≥ ${FLOOR_TARGET_PCT}%`,
+    running: "Raising prices to the edge floor…",
+    success: `to ≥ ${FLOOR_TARGET_PCT}% by raising price`,
+  },
+};
+
 type Phase = "idle" | "planning" | "ready" | "running" | "done";
 
 function pct(edge: number | null): string {
@@ -65,11 +102,18 @@ function pct(edge: number | null): string {
 
 export function RepinCustomButton({
   candidateIds,
+  mode = "per-pack",
+  variant = "default",
 }: {
   /** Below-target pack ids from the current doctor snapshot. */
   candidateIds: string[];
+  /** Which target selector this button runs — see {@link RepinMode}. */
+  mode?: RepinMode;
+  variant?: "default" | "outline";
 }) {
   const router = useRouter();
+  const copy = MODE_COPY[mode];
+  const raiseOnly = mode === "floor-raise-only";
 
   const [phase, setPhase] = React.useState<Phase>("idle");
   const [confirmOpen, setConfirmOpen] = React.useState(false);
@@ -104,7 +148,7 @@ export function RepinCustomButton({
     setPhase("planning");
     setConfirmOpen(true);
     try {
-      const p = await planCustomRepin(candidateIds, "per-pack");
+      const p = await planCustomRepin(candidateIds, mode);
       setPlan(p);
       setPhase("ready");
     } catch (err) {
@@ -183,7 +227,7 @@ export function RepinCustomButton({
     } else if (failed > 0) {
       toast.warning(`Re-priced ${done} · ${failed} failed — see details.`);
     } else {
-      toast.success(`Re-pinned ${done} pack${done === 1 ? "" : "s"} to their target edge (≥ ${FLOOR_TARGET_PCT}%).`);
+      toast.success(`Re-pinned ${done} pack${done === 1 ? "" : "s"} ${copy.success}.`);
     }
     router.refresh();
   }
@@ -203,9 +247,13 @@ export function RepinCustomButton({
 
   return (
     <>
-      <Button size="sm" onClick={openAndPlan} disabled={disabled}>
-        <Pin className="mr-1 size-3.5" />
-        Re-pin packs to their target edge (≥ {FLOOR_TARGET_PCT}%)
+      <Button size="sm" variant={variant} onClick={openAndPlan} disabled={disabled}>
+        {raiseOnly ? (
+          <ArrowUp className="mr-1 size-3.5" />
+        ) : (
+          <Pin className="mr-1 size-3.5" />
+        )}
+        {copy.button}
         {candidateIds.length > 0 ? ` (${candidateIds.length})` : ""}
       </Button>
 
@@ -223,14 +271,28 @@ export function RepinCustomButton({
             <AlertDialogMedia className="bg-rose-500/10 text-rose-600 dark:text-rose-400">
               <TriangleAlert />
             </AlertDialogMedia>
-            <AlertDialogTitle>Re-pin packs to their target edge</AlertDialogTitle>
+            <AlertDialogTitle>{copy.title}</AlertDialogTitle>
             <AlertDialogDescription>
-              Re-prices every below-target pack back to <strong>its own</strong>{" "}
-              target edge — the floor {FLOOR_TARGET_PCT}% plus a gentle risk
-              premium for pricier, higher-jackpot packs. Only the pack{" "}
-              <strong>price</strong> changes —{" "}
-              <strong>card odds are never touched</strong>. Each pack is written one at a
-              time and the run is stoppable. Type{" "}
+              {raiseOnly ? (
+                <>
+                  Raises the price of every pack earning under{" "}
+                  {FLOOR_TARGET_PCT}% until it reaches{" "}
+                  <strong>{FLOOR_TARGET_PCT}% or above</strong>. Prices only ever
+                  go <strong>UP</strong> — a pack already at or above the floor is
+                  left untouched, never made cheaper. Only the pack{" "}
+                  <strong>price</strong> changes —{" "}
+                  <strong>card odds are never touched</strong>.
+                </>
+              ) : (
+                <>
+                  Re-prices every below-target pack back to <strong>its own</strong>{" "}
+                  target edge — the floor {FLOOR_TARGET_PCT}% plus a gentle risk
+                  premium for pricier, higher-jackpot packs. Only the pack{" "}
+                  <strong>price</strong> changes —{" "}
+                  <strong>card odds are never touched</strong>.
+                </>
+              )}{" "}
+              Each pack is written one at a time and the run is stoppable. Type{" "}
               <code className="rounded bg-muted px-1 py-0.5 font-mono">{CONFIRM_PHRASE}</code>{" "}
               and your 2FA code to run.
             </AlertDialogDescription>
@@ -253,10 +315,22 @@ export function RepinCustomButton({
                 </div>
 
                 <p className="text-xs text-muted-foreground">
-                  Each pack targets its own curve edge (floor{" "}
-                  {pct(plan.targetFloor)}, rising for pricier / higher-jackpot
-                  packs). Written only within ±0.05% of that pack&apos;s target;
-                  packs that can&apos;t hit it (1¢ step too coarse) are skipped.
+                  {raiseOnly ? (
+                    <>
+                      Every pack targets the {pct(plan.targetFloor)} floor, reached
+                      by <strong>raising</strong> the price only. Packs already at
+                      or above it — and any whose price would have to drop — are
+                      skipped, as are packs the 1¢ step can&apos;t land within
+                      ±0.05% of the floor.
+                    </>
+                  ) : (
+                    <>
+                      Each pack targets its own curve edge (floor{" "}
+                      {pct(plan.targetFloor)}, rising for pricier / higher-jackpot
+                      packs). Written only within ±0.05% of that pack&apos;s target;
+                      packs that can&apos;t hit it (1¢ step too coarse) are skipped.
+                    </>
+                  )}
                 </p>
 
                 {plan.toReprice.length > 0 && (
@@ -353,7 +427,7 @@ export function RepinCustomButton({
       <RetuneProgressDialog
         open={progressOpen}
         running={phase === "running"}
-        title={phase === "running" ? "Re-pinning below-target packs…" : "Re-pin complete"}
+        title={phase === "running" ? copy.running : "Re-pin complete"}
         runningLabel="Writing one pack at a time. You can stop after the current pack."
         verb="Re-pinned"
         processed={processed}

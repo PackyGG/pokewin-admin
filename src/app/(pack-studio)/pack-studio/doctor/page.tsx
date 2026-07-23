@@ -127,14 +127,29 @@ async function DoctorGrid({
 }
 
 /**
- * Owner-only "Re-pin below-target packs" hero action. Reads the below-target
+ * Owner-only "Re-pin below-target packs" hero actions. Reads the below-target
  * packs from the SAME persisted snapshot the grid renders (no MAIN write), so
  * the candidate set always matches what the operator sees. Streamed behind its
  * own boundary so it never blocks the hero's first paint.
+ *
+ * Two buttons over ONE candidate set — the read happens once and both flavours
+ * share it. Below-target is a superset of below-FLOOR (a pack's curve target is
+ * never under the floor), so the raise-only run sees every pack under 10.99%;
+ * the ones already at or above it drop out of its plan as skipped.
  */
 async function RepinAction() {
   const below = await getPackRiskRows({ belowTarget: true });
-  return <RepinCustomButton candidateIds={below.map((r) => r.packId)} />;
+  const candidateIds = below.map((r) => r.packId);
+  return (
+    <>
+      <RepinCustomButton candidateIds={candidateIds} />
+      <RepinCustomButton
+        candidateIds={candidateIds}
+        mode="floor-raise-only"
+        variant="outline"
+      />
+    </>
+  );
 }
 
 export default async function PackDoctorPage({

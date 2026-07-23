@@ -36,12 +36,14 @@ import {
   planPackReprice,
   repriceEdgeWithinHardBand,
   clampRepriceTarget,
+  isCurveRepriceTarget,
   REPRICE_TARGET_DEFAULT,
   REPRICE_TARGET_MIN,
   REPRICE_TARGET_MAX,
   REPRICE_ACCEPT_TOLERANCE,
   REPRICE_HARD_TOLERANCE,
   type RepriceAction,
+  type RepriceTarget,
 } from "@/app/(admin)/insights/edge-calc/math";
 import { require2FA } from "@/lib/require-2fa";
 import {
@@ -725,23 +727,15 @@ function resolveRepriceTarget(target: number | undefined): number {
 }
 
 /**
- * Sentinel for the re-price target: either an explicit owner-chosen FLAT edge
- * fraction (the global re-price-all tool — every pack to the SAME edge the owner
- * typed), or `"per-pack"` — derive each pack's target from the per-pack edge
- * curve ({@link autoTargetEdge}: floor 10.99% + a gentle risk premium that rises
- * with the pack's max-win $ exposure + price). The Pack-Doctor "re-pin to target
- * edge" flow uses `"per-pack"`; the global tool passes a number.
- */
-export type RepriceTarget = number | "per-pack";
-
-/**
  * Resolve the actual target edge for ONE pack. For an explicit number it's the
  * validated/clamped flat target (unchanged behavior). For `"per-pack"` it's the
  * pack's curve target — `autoTargetEdge({ price, maxWin })` clamped into the
  * re-price band — using the pack's FRESH price + max obtainable card value
  * (`maxValue` from its aggregate composition) and the edge-curve config resolved
- * once per run. `clampRepriceTarget` keeps it inside the tool's [1%, 50%] band;
- * the curve already caps at 11.50% so this is a defensive no-op for the curve.
+ * once per run. For `"floor-raise-only"` it's the curve's FLOOR — the same
+ * 10.99% source of truth, with no per-pack risk premium on top. `clampRepriceTarget`
+ * keeps it inside the tool's [1%, 50%] band; the curve already caps at 11.50% so
+ * this is a defensive no-op for the curve.
  */
 function resolvePerPackOrFlatTarget(
   target: RepriceTarget,
@@ -752,6 +746,9 @@ function resolvePerPackOrFlatTarget(
     return clampRepriceTarget(
       autoTargetEdge({ price: pack.price, maxWin: pack.maxWin }, edgeCurve),
     );
+  }
+  if (target === "floor-raise-only") {
+    return clampRepriceTarget(edgeCurve.edgeFloor);
   }
   return resolveRepriceTarget(target);
 }
@@ -962,9 +959,10 @@ export async function repricePackToTargetEdge(
   // For an explicit flat target, validate it UP FRONT (a bad owner override must
   // abort the whole run, not silently per-pack-skip). The per-pack curve target
   // is derived inside the try, once the pack's fresh price + max-win are known.
-  const edgeCurve =
-    targetEdge === "per-pack" ? await readEdgeCurveConfig() : DEFAULT_EDGE_CURVE;
-  if (targetEdge !== "per-pack") resolveRepriceTarget(targetEdge);
+  const edgeCurve = isCurveRepriceTarget(targetEdge)
+    ? await readEdgeCurveConfig()
+    : DEFAULT_EDGE_CURVE;
+  if (!isCurveRepriceTarget(targetEdge)) resolveRepriceTarget(targetEdge);
 
   // Everything pack-specific is wrapped so ONE pack's failure surfaces its REAL
   // message — a value returned from a server action is NOT masked the way a
@@ -1049,6 +1047,17 @@ export async function repricePackToTargetEdge(
         edgeAfter: plan.newEdge,
         reason: plan.reason,
       };
+    }
+
+    // RAISE-ONLY BACKSTOP — in `"floor-raise-only"` mode the price may only
+    // ever move UP. Enforced HERE, on fresh DB truth, and not merely filtered
+    // in the dry-run: a pack that rose above the floor between the preview and
+    // this write would otherwise be re-priced DOWN onto it, which is exactly
+    // what this mode exists to prevent. A non-raise is skipped, never written.
+    if (targetEdge === "floor-raise-only" && plan.newPrice <= comp.price) {
+      return skip(
+        `Left alone: reaching ${(target * 100).toFixed(2)}% would need the price to go from ${comp.price.toFixed(2)} to ${plan.newPrice.toFixed(2)} — this action only raises prices.`,
+      );
     }
 
     // HARD BACKSTOP — never persist a price whose edge escapes the hard
