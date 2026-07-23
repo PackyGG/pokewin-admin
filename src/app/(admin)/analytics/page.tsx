@@ -8,6 +8,7 @@ import { AnalyticsTabNav, type AnalyticsTab } from "./tab-nav";
 import { parsePeriod } from "./types";
 import { OverviewTab } from "./tab-overview";
 import { PurePnlTab } from "./tab-pure-pnl";
+import { DoubleDownTab } from "./tab-double-down";
 import { RevenueTab } from "./tab-revenue";
 import { TopPerformersTab } from "./tab-top";
 import { HeatmapTab } from "./tab-heatmap";
@@ -25,6 +26,7 @@ function parseTab(value: string | undefined): AnalyticsTab {
   switch (value) {
     case "overview":
     case "pure-pnl":
+    case "double-down":
     case "revenue":
     case "top":
     case "heatmap":
@@ -63,6 +65,12 @@ export default async function AnalyticsPage({
   const period = parsePeriod(params.period);
   const tab = parseTab(params.tab);
   const topTab = params.topTab;
+  // Double Down tab params (absorbed from /insights/double-down): `q` is the
+  // audit-log search, `page` its pagination. Parsed defensively — a fuzzed
+  // ?page= must never reach the query's OFFSET.
+  const ddSearch = (params.q ?? "").trim();
+  const ddPageRaw = Number.parseInt(params.page ?? "1", 10);
+  const ddPage = Number.isFinite(ddPageRaw) && ddPageRaw > 0 ? ddPageRaw : 1;
   const packsSort = params.packsSort;
   // Map tab uses its own URL param for the heat metric (users /
   // deposits / wagers / multiplier). Parsed here so the param flows
@@ -101,11 +109,14 @@ export default async function AnalyticsPage({
           chart for the rest) so the swap into real content doesn't jump the
           layout. */}
       <Suspense
-        key={`${tab}-${period}-${topTab ?? ""}-${packsSort ?? ""}-${mapMetric}`}
+        key={`${tab}-${period}-${topTab ?? ""}-${packsSort ?? ""}-${mapMetric}-${ddSearch}-${ddPage}`}
         fallback={fallbackForTab(tab)}
       >
         {tab === "overview" && <OverviewTab period={period} />}
         {tab === "pure-pnl" && <PurePnlTab />}
+        {tab === "double-down" && (
+          <DoubleDownTab search={ddSearch} page={ddPage} />
+        )}
         {tab === "revenue" && <RevenueTab period={period} />}
         {tab === "top" && (
           <TopPerformersTab period={period} subTab={topTab} />

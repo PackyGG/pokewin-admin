@@ -68,12 +68,15 @@ export const ADMIN_PAGES: AdminPage[] = [
   // standalone admin surface (2026-07); the page key was retired. The
   // affiliate code data model and the /insights/rewards?tab=affiliate
   // analytics tab are unaffected.
-  // Double Down — read-only tracking of the gamble-your-battle-winnings
-  // feature: global House-POV KPI strip + the full round-by-round audit log
-  // (who won / lost, staked, paid out, house cut). Own grantable key so it
-  // can be managed independently of the rewards rollup; the whole /insights
-  // tree is additionally owner-gated.
-  { group: "Insights", label: "Double Down", key: "/insights/double-down" },
+  // Double Down moved into /analytics as a tab (owner, 2026-07-23) and its
+  // route 308-redirects there, so access is now governed by the /analytics
+  // key. The key stays listed as legacy so existing role grants don't become
+  // "unknown" — it no longer gates anything on its own.
+  {
+    group: "Insights",
+    label: "Double Down (moved → Analytics)",
+    key: "/insights/double-down",
+  },
   // Legacy routes — thin redirects; keys retained for bookmark + role grants
   // so existing grants don't become "unknown". The pages were removed and
   // the routes 308-redirect to the Insights Overview (next.config.ts).

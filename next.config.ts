@@ -114,6 +114,16 @@ const nextConfig: NextConfig = {
         destination: "/insights/real-numbers",
         permanent: true,
       },
+      // ── Insights → Analytics absorption (2026-07-23, owner) ───────────────
+      // The insights section shouldn't be its own place: its surfaces become
+      // /analytics tabs. Double Down moved first; its route is deleted and
+      // 308s onto the tab so bookmarks keep working. Same static-config form
+      // as the retired routes above (never an in-render redirect).
+      {
+        source: "/insights/double-down",
+        destination: "/analytics?tab=double-down",
+        permanent: true,
+      },
       // ── Insights IA restructure (2026-06-15) ──────────────────────────────
       // The standalone /insights hub page was removed and "Real Numbers"
       // became the Insights landing/overview. These pages were deleted
