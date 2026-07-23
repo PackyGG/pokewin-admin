@@ -1,167 +1,146 @@
 import { Suspense } from "react";
+import Link from "next/link";
+import { LayoutGrid, Gift, Users } from "lucide-react";
 import { ExportButton } from "@/components/export-button";
+import { cn } from "@/lib/utils";
 import {
-  parseInsightsRewardsPeriod,
-  type InsightsRewardsPeriod,
-} from "@/lib/queries/insights-rewards/_period";
-import { InsightsRewardsTabSwitch } from "../insights/rewards/_components/tab-switch";
-import {
-  InsightsRewardsTabSkeleton,
-  InsightsRewardsCompactTabSkeleton,
-} from "../insights/rewards/_components/tab-skeleton";
-import { OverviewTab } from "../insights/rewards/_components/overview-tab";
-import { DailyPacksTab } from "../insights/rewards/_components/daily-packs-tab";
-import { CategoriesTab } from "../insights/rewards/_components/categories-tab";
-import { RoiTab } from "../insights/rewards/_components/roi-tab";
-import { RetentionTab } from "../insights/rewards/_components/retention-tab";
-import { StackingTab } from "../insights/rewards/_components/stacking-tab";
-import { CohortTab } from "../insights/rewards/_components/cohort-tab";
-import { TopSpendersTab } from "../insights/rewards/_components/top-spenders-tab";
-import { ForecastTab } from "../insights/rewards/_components/forecast-tab";
-import { GeoTab } from "../insights/rewards/_components/geo-tab";
+  KpiStripSkeleton,
+  ChartSkeleton,
+  TableSkeleton,
+} from "@/components/loading-skeletons";
+import type { InsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_period";
+import { fromInsightsPeriod } from "./types";
+import { RewardsOverviewView } from "./rewards/overview-view";
+import { RewardsProgramsView } from "./rewards/programs-view";
+import { RewardsPlayersView } from "./rewards/players-view";
 
-type Tab =
-  | "overview"
-  | "daily-packs"
-  | "categories"
-  | "roi"
-  | "retention"
-  | "stacking"
-  | "cohort"
-  | "top"
-  | "forecast"
-  | "geo";
+/**
+ * Analytics → Rewards.
+ *
+ * REBUILT 2026-07-23 (owner: "rewards page is ok but not clean — we only have
+ * deposit bonus, rakeback, daily packs, lossback, leaderboards, races and
+ * tips / sponsorships for creators").
+ *
+ * What was wrong:
+ *   • TEN sub-tabs — Overview, Daily Packs, Categories, ROI, Retention,
+ *     Stacking, Cohort, Top spenders, Forecast, Geo — most of them the same
+ *     over-engineering already deleted from the outer tab bar (Cohorts,
+ *     Funnel, LTV, Retention) for never being used.
+ *   • The spend was bucketed by LEDGER PLUMBING ("Bonuses & Promos",
+ *     "Rain / Race Prizes", "House Credits / Vouchers"), not by the programs
+ *     the business actually runs — so no line on the page matched anything
+ *     an operator could turn off, tune, or budget.
+ *   • Lossback and creator tips/sponsorships had no line at all; leaderboards
+ *     were buried inside "Affiliate Commissions"; the top-spender ranking
+ *     never even scanned the leaderboard prizes, which are the single largest
+ *     payout type.
+ *
+ * What it is now — three views, each answering one question:
+ *   Overview  — what did rewards cost, which program moved, how do they rank
+ *   Programs  — one program in depth: trend, composition, sub-breakdown
+ *   Players   — who receives it, and whether their play covered it
+ *
+ * `?rw=` picks the view, namespaced so the outer tab bar and this one don't
+ * fight over one key. `?p=` picks the program on the Programs view. Only the
+ * ACTIVE view renders, so nothing else touches the DB.
+ *
+ * PERIOD: reads the page-level `?period=` (translated by `toInsightsPeriod`)
+ * — one timespan control for the whole page.
+ */
 
-function parseTab(value: string | undefined): Tab {
-  switch (value) {
-    case "daily-packs":
-    case "categories":
-    case "roi":
-    case "retention":
-    case "stacking":
-    case "cohort":
-    case "top":
-    case "forecast":
-    case "geo":
-      return value;
-    default:
-      return "overview";
-  }
+const VIEWS = [
+  { value: "overview", label: "Overview", icon: LayoutGrid },
+  { value: "programs", label: "Programs", icon: Gift },
+  { value: "players", label: "Players", icon: Users },
+] as const;
+
+type RewardsView = (typeof VIEWS)[number]["value"];
+
+function parseView(value: string | undefined): RewardsView {
+  return (VIEWS.map((v) => v.value) as readonly string[]).includes(value ?? "")
+    ? (value as RewardsView)
+    : "overview";
 }
 
-/**
- * /insights/rewards — full-spectrum cross-reward analytics.
- *
- * Sits in the Insights sidebar group alongside Analytics / Games /
- * Streamers (each is a cross-cutting deep-dive page that subsumes a
- * thinner per-feature equivalent).
- *
- * The existing /rewards/analytics page stays as the per-category
- * deep-stats hub (one tab per category). This page sits ON TOP of it
- * and adds the cross-category layer:
- *
- *   1. Overview     — total spend, ROI vs platform GGR, period delta.
- *   2. Daily Packs  — free / daily reward-pack (pack_type='reward')
- *                     giveaway cost: value of cards handed out for ~$0
- *                     wager, a house cost no other reward surface counts.
- *   3. Categories   — per-category deep stats reusing the existing
- *                     `rewards-category-analytics` + `rewards-category-extras`
- *                     helpers + the shared CategoryDeepStatsPanel.
- *   4. ROI          — cost in window vs claimants' subsequent GGR.
- *   5. Retention    — claimants vs non-claimants 7d / 30d retention.
- *   6. Stacking     — multi-category claimants + LTV lift.
- *   7. Cohort       — signup cohort × reward usage × LTV.
- *   8. Top spenders — top 25 reward recipients across categories.
- *   9. Forecast     — 60d historical + 30d run-rate projection.
- *  10. Geo / Source — reward distribution by country / signup source.
- *
- * Period selector exposes 24h / 3d / 7d / 30d / 90d / lifetime —
- * wider than /rewards/analytics so admins can sanity-check shorter
- * spikes against longer trends without leaving the page.
- *
- * House-POV everywhere: rewards are house cost → rose. ROI flips
- * emerald when subsequent gameplay GGR exceeds spend, rose otherwise.
- */
-/**
- * Rewards Insights as an /analytics tab.
- *
- * Was `/insights/rewards` (owner, 2026-07-23). Body untouched; the PageHero
- * is gone (analytics renders one) and the period filter + export moved inline.
- *
- * `?rw=` picks the sub-view (was `?tab=`), re-namespaced so the outer tab bar
- * and this one don't fight over the same key.
- *
- * PERIOD: reads the page-level `?period=`, translated by `toInsightsPeriod`
- * (owner, 2026-07-23 — one timespan control for the whole page). It used to
- * own `?rwPeriod=` and render its own filter; the vocabulary difference is
- * now handled by one mapper in `analytics/types.ts`.
- */
-export async function RewardsInsightsTab({
+export function RewardsTab({
   period,
   sub,
+  program,
 }: {
-  period: ReturnType<typeof parseInsightsRewardsPeriod>;
+  period: InsightsRewardsPeriod;
   sub: string | undefined;
+  program: string | undefined;
 }) {
-  const tab = parseTab(sub);
+  const view = parseView(sub);
+  const periodParam = fromInsightsPeriod(period);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">
-          Cross-reward analysis, ROI, retention impact, cohort lift, marketing
-          cost vs revenue.
-        </p>
+        {/* Plain links, not a client component: every view is a server
+            segment and the whole tab re-renders on `?rw=` anyway. */}
+        <div className="flex gap-1 overflow-x-auto overscroll-x-contain rounded-lg border bg-muted/50 p-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {VIEWS.map(({ value, label, icon: Icon }) => (
+            <Link
+              key={value}
+              href={`/analytics?tab=rewards&rw=${value}&period=${periodParam}`}
+              replace
+              scroll={false}
+              prefetch={false}
+              aria-current={view === value ? "page" : undefined}
+              className={cn(
+                "flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                view === value
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Icon className="size-3.5" />
+              {label}
+            </Link>
+          ))}
+        </div>
         <ExportButton page="rewards" params={{ period }} />
       </div>
 
-      <InsightsRewardsTabSwitch />
-
-      {/* Suspense keyed on (tab, period) — flipping either re-renders
-          the skeleton instead of stalling on stale numbers. Each tab
-          is its own async server component that fetches its own data;
-          the cached query layer absorbs the round-trip cost. */}
+      {/* Keyed on (view, period, program) so flipping any of them shows the
+          skeleton instead of stalling on stale numbers. */}
       <Suspense
-        key={`${tab}:${period}`}
-        fallback={
-          tab === "stacking" || tab === "cohort"
-            ? <InsightsRewardsCompactTabSkeleton />
-            : <InsightsRewardsTabSkeleton />
-        }
+        key={`${view}:${period}:${program ?? ""}`}
+        fallback={<ViewSkeleton view={view} />}
       >
-        <TabContent tab={tab} period={period} />
+        {view === "overview" && <RewardsOverviewView period={period} />}
+        {view === "programs" && (
+          <RewardsProgramsView period={period} selected={program} />
+        )}
+        {view === "players" && <RewardsPlayersView period={period} />}
       </Suspense>
     </div>
   );
 }
 
-async function TabContent({
-  tab,
-  period,
-}: {
-  tab: Tab;
-  period: InsightsRewardsPeriod;
-}) {
-  switch (tab) {
-    case "overview":
-      return <OverviewTab period={period} />;
-    case "daily-packs":
-      return <DailyPacksTab period={period} />;
-    case "categories":
-      return <CategoriesTab period={period} />;
-    case "roi":
-      return <RoiTab period={period} />;
-    case "retention":
-      return <RetentionTab period={period} />;
-    case "stacking":
-      return <StackingTab period={period} />;
-    case "cohort":
-      return <CohortTab period={period} />;
-    case "top":
-      return <TopSpendersTab period={period} />;
-    case "forecast":
-      return <ForecastTab period={period} />;
-    case "geo":
-      return <GeoTab period={period} />;
+function ViewSkeleton({ view }: { view: RewardsView }) {
+  if (view === "players") {
+    return (
+      <div className="space-y-6">
+        <KpiStripSkeleton count={4} />
+        <TableSkeleton rows={10} />
+      </div>
+    );
   }
+  if (view === "programs") {
+    return (
+      <div className="space-y-5">
+        <KpiStripSkeleton count={5} />
+        <ChartSkeleton height={240} />
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-6">
+      <KpiStripSkeleton count={6} />
+      <ChartSkeleton height={300} />
+      <KpiStripSkeleton count={4} />
+    </div>
+  );
 }

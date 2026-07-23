@@ -14,7 +14,7 @@ import { OverviewTab } from "./tab-overview";
 import { GamesTab, parseGameView } from "./tab-games";
 import { CrmTab } from "../insights/real-numbers/crm-tab";
 import { CostBreakdownTab } from "./tab-cost-breakdown";
-import { RewardsInsightsTab } from "./tab-rewards";
+import { RewardsTab } from "./tab-rewards";
 import { MapTab } from "./tab-map";
 import { parseMetric } from "./map/utils";
 import { TabSkeleton } from "./tab-skeleton";
@@ -84,6 +84,9 @@ export default async function AnalyticsPage({
   // `rwPeriod`) are gone — those tabs read the page-level `?period=` now, so
   // a stale bookmark carrying one simply falls back to the global window.
   const rwSub = params.rw;
+  // Rewards → Programs view: which program's deep panel is open (`?p=`).
+  // Only that program's extra reads fire, so the other six stay untouched.
+  const rwProgram = params.p;
   const insightsPeriod = toInsightsPeriod(period);
   // Map tab uses its own URL param for the heat metric (users /
   // deposits / wagers / multiplier). Parsed here so the param flows
@@ -113,9 +116,8 @@ export default async function AnalyticsPage({
           stays pinned and visible however many tabs there are.
 
           It renders ONLY on tabs the page-level `?period=` actually drives.
-          Double Down is locked to 30d, Real Numbers is lifetime, and Cost
-          Breakdown / Rewards carry their own period control inside the tab —
-          showing a global filter there would be a dead knob. */}
+          Player CRM is the lone absentee: it takes no period argument at all,
+          so a filter there would be a dead knob. */}
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <AnalyticsTabNav />
@@ -133,7 +135,7 @@ export default async function AnalyticsPage({
           skeleton keeps navigation snappy between tabs without jumping the
           layout on swap. */}
       <Suspense
-        key={`${tab}-${period}-${mapMetric}-${gameView}-${ddSearch}-${ddPage}-${rwSub ?? ""}`}
+        key={`${tab}-${period}-${mapMetric}-${gameView}-${ddSearch}-${ddPage}-${rwSub ?? ""}-${rwProgram ?? ""}`}
         fallback={<TabSkeleton />}
       >
         {tab === "overview" && <OverviewTab period={period} />}
@@ -151,7 +153,11 @@ export default async function AnalyticsPage({
           <CostBreakdownTab period={insightsPeriod} />
         )}
         {tab === "rewards" && (
-          <RewardsInsightsTab period={insightsPeriod} sub={rwSub} />
+          <RewardsTab
+            period={insightsPeriod}
+            sub={rwSub}
+            program={rwProgram}
+          />
         )}
         {tab === "map" && <MapTab period={period} metric={mapMetric} />}
       </Suspense>

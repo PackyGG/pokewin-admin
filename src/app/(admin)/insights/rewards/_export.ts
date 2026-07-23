@@ -6,7 +6,8 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { getRewardsCrossCategorySummary } from "@/lib/queries/insights-rewards/cross-category-summary";
-import { getRewardsCategorySpendBreakdown } from "@/lib/queries/insights-rewards/category-spend-breakdown";
+import { getRewardProgramSpend } from "@/lib/queries/insights-rewards/program-spend";
+import { getRewardProgramRecipients } from "@/lib/queries/insights-rewards/program-recipients";
 import { getCreatorWithdrawalsSummary } from "@/lib/queries/insights-rewards/creator-withdrawals";
 import { getDailyPacksGiveaway } from "@/lib/queries/insights-rewards/daily-packs";
 import { settle, unwrap, buildSection } from "../_export-section";
@@ -14,34 +15,38 @@ import { settle, unwrap, buildSection } from "../_export-section";
 const AREA = "insights.export.rewards";
 
 /**
- * Export gatherer for /insights/rewards (the Overview tab — the
- * page's cross-category landing surface).
+ * Export gatherer for the Analytics → Rewards tab.
  *
- * Bundles the cross-category KPI summary, the per-category spend
- * breakdown (count / claimants / share), the per-category daily
- * time-series, and the creator-withdrawals summary for the active
- * period into one CSV.
+ * Mirrors what the page renders (owner, 2026-07-23): spend keyed on the seven
+ * PROGRAMS, not the old ledger-family categories. Exporting one shape while
+ * the screen shows another is how a spreadsheet ends up contradicting the
+ * dashboard it was pulled from, so the two move together.
  *
- * Reuses the same cached query helpers the overview tab renders.
- * Read-only. Server-only; auth is enforced by the route handler that
- * calls this (`/insights/export`), which gates on the same page-access
- * key as the page.
+ * Bundles: the KPI summary (spend vs GGR vs wager), per-program spend, the
+ * itemised residual, the per-program daily series, the top recipients, and
+ * the daily-pack per-pack detail.
+ *
+ * Reuses the same cached query helpers the views render — no extra scans.
+ * Read-only. Server-only; auth is enforced by the route handler that calls
+ * this (`/insights/export`), which gates on the same page-access key.
  */
 export async function gatherRewardsOverviewExportSections(
   period: InsightsRewardsPeriod,
 ): Promise<ExportSection[]> {
   // Settle (not await-throw) so one failed query degrades only its own
   // section(s) instead of crashing the gatherer → BOM-only download.
-  const [summaryR, spendR, creatorWdR, dailyPacksR] = await settle([
+  const [summaryR, spendR, creatorWdR, dailyPacksR, recipientsR] = await settle([
     getRewardsCrossCategorySummary(period),
-    getRewardsCategorySpendBreakdown(period),
+    getRewardProgramSpend(period),
     getCreatorWithdrawalsSummary(period),
     getDailyPacksGiveaway(period),
+    getRewardProgramRecipients(period),
   ]);
   const summary = () => unwrap(summaryR);
   const spend = () => unwrap(spendR);
   const creatorWd = () => unwrap(creatorWdR);
   const dailyPacks = () => unwrap(dailyPacksR);
+  const recipients = () => unwrap(recipientsR);
 
   const periodLabel = insightsRewardsPeriodLabel(period);
 
@@ -82,19 +87,51 @@ export async function gatherRewardsOverviewExportSections(
       ];
     }),
 
-    // ── Spend by category ─────────────────────────────────────────
+    // ── Spend by program ──────────────────────────────────────────
     buildSection(
       AREA,
-      "Spend by Category",
-      ["Category", "Total (USD)", "Payouts", "Claimants", "Share %"],
-      () => spend().rows.map((r) => [r.label, r.total, r.count, r.claimants, r.share]),
+      "Spend by Program",
+      [
+        "Program",
+        "Total (USD)",
+        "Payouts",
+        "Players reached",
+        "Share %",
+        "Avg per player (USD)",
+        "Avg per payout (USD)",
+      ],
+      () =>
+        spend().rows.map((r) => [
+          r.label,
+          r.total,
+          r.count,
+          r.claimants,
+          r.share,
+          r.avgPerClaimant,
+          r.avgPerPayout,
+        ]),
     ),
 
-    // ── Per-category daily time-series (long format) ──────────────
+    // ── The itemised residual ─────────────────────────────────────
+    // "Other house credits" is a bucket, so the CSV spells out what landed
+    // in it — same reason the page itemises it on screen.
     buildSection(
       AREA,
-      "Daily Marketing Cost by Category",
-      ["Date", "Category", "Total (USD)"],
+      "Other House Credits — Breakdown",
+      ["Program", "Source", "Total (USD)", "Payouts"],
+      () =>
+        spend()
+          .rows.filter((r) => r.components.length > 0)
+          .flatMap((r) =>
+            r.components.map((c) => [r.label, c.label, c.total, c.count]),
+          ),
+    ),
+
+    // ── Per-program daily time-series (long format) ───────────────
+    buildSection(
+      AREA,
+      "Daily Cost by Program",
+      ["Date", "Program", "Total (USD)"],
       () => {
         const dailyRows: (string | number)[][] = [];
         for (const row of spend().rows) {
@@ -109,6 +146,46 @@ export async function gatherRewardsOverviewExportSections(
         );
         return dailyRows;
       },
+    ),
+
+    // ── Top reward recipients ─────────────────────────────────────
+    // Ledger programs only — daily packs and the creator pool are excluded
+    // from the ranking (see program-recipients.ts), so the header says so
+    // rather than letting a reader assume the total is every program.
+    buildSection(
+      AREA,
+      "Top Reward Recipients (ledger programs only)",
+      [
+        "Rank",
+        "User ID",
+        "Username",
+        "Reward paid (USD)",
+        "Programs used",
+        "Deposit bonus (USD)",
+        "Rakeback (USD)",
+        "Lossback (USD)",
+        "Leaderboards (USD)",
+        "Races (USD)",
+        "Other (USD)",
+        "Their GGR (USD)",
+        "Net to house (USD)",
+      ],
+      () =>
+        recipients().map((r, i) => [
+          i + 1,
+          r.userId,
+          r.username ?? "",
+          r.total,
+          r.programCount,
+          r.perProgram.depositBonus,
+          r.perProgram.rakeback,
+          r.perProgram.lossback,
+          r.perProgram.leaderboards,
+          r.perProgram.races,
+          r.perProgram.other,
+          r.ggrInWindow,
+          r.netToHouse,
+        ]),
     ),
 
     // ── Daily / free pack giveaway — KPIs ─────────────────────────

@@ -22,6 +22,24 @@ export function toInsightsPeriod(
 }
 
 /**
+ * The inverse of {@link toInsightsPeriod} — turns an insights window back
+ * into the page-level `?period=` value.
+ *
+ * Needed because tabs absorbed from the /insights tree build their OWN links
+ * (sub-nav, program pickers) and have to hand the page vocabulary back. Emit
+ * `3d` and `parsePeriod` rejects it, silently resetting the operator's window
+ * to the 30d default — so the one window the two sets don't share resolves to
+ * its nearest page-level neighbour instead of falling through.
+ */
+export function fromInsightsPeriod(
+  p: "24h" | "3d" | "7d" | "30d" | "90d" | "all",
+): AnalyticsPeriod {
+  if (p === "24h") return "today";
+  if (p === "3d") return "7d";
+  return p;
+}
+
+/**
  * Double Down's own window set has no `3d`, but it does not need one — the
  * analytics vocabulary maps onto it exactly once `today` becomes `24h`.
  */
