@@ -57,7 +57,17 @@ const bodySchema = z.object({
     .nullish(),
 });
 
-export const maxDuration = 60;
+/**
+ * Matches `pack-studio/doctor/page.tsx`'s `maxDuration = 120` — the SAME wide-
+ * probe solve runs behind both surfaces, so a smaller budget here meant any
+ * pack whose solve took 60–120s worked from the doctor page and died from the
+ * workspace. That asymmetry is exactly the "pushed a pack, the next one takes
+ * minutes or never loads" class of symptom documented above. The slowest live
+ * pack solve measures ~12.3s today, so nothing sits in that window right now —
+ * but the search budget (`MAX_CANDIDATES`) is being raised, which pushes solve
+ * times up, so the two budgets are equalized before anything can land in it.
+ */
+export const maxDuration = 120;
 
 export async function POST(req: Request): Promise<NextResponse> {
   let raw: unknown;

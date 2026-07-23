@@ -30,6 +30,7 @@ import {
   readEdgeCurveConfig,
   type EdgeCurveConfig,
 } from "@/app/(admin)/packs/_lib/risk-config";
+import { computePoolFingerprint } from "@/app/(admin)/packs/_lib/pool-fingerprint";
 
 import {
   applyPackEdit,
@@ -190,6 +191,70 @@ function valueByCardFromSnapshot(
     if (cardId) out.set(cardId, value);
   }
   return out;
+}
+
+/**
+ * Derive the RC1 pool-freshness fingerprint of the LIVE pool this draft was
+ * authored against, straight out of `source_snapshot`.
+ *
+ * WHY THERE IS NO `source_pool_fingerprint` COLUMN. The fingerprint's inputs
+ * are exactly `(live price, sorted (cardId, weight) pairs)` — and the draft row
+ * ALREADY stores all of them: `seedDraftForPack` captures the live MAIN read
+ * verbatim into `source_snapshot` ({ price, pool[].{cardId, weight} }), and
+ * `source_snapshot` is written ONCE at seed and never updated afterwards (only
+ * `proposed_*` / `computed_risk` / status columns ever change). A stored hash
+ * would be a denormalized copy of data already in the same row — one more thing
+ * that can silently disagree with the snapshot it claims to describe. Deriving
+ * it keeps ONE source of truth and, critically, gives drafts seeded BEFORE this
+ * gate existed the identical protection with no backfill and no schema change.
+ *
+ * Semantics: `source_snapshot` IS the BEFORE column the operator reviews in the
+ * diff UI, so pinning its fingerprint means precisely "refuse unless live still
+ * equals the BEFORE the operator was shown" — a stronger, more honest invariant
+ * than an opaque token minted on the side.
+ *
+ * Comparable to the write side by construction: `getPackEditPool` (seed) reads
+ * `pack_cards` and joins `cards` for metadata, while `getPackCardValues` (write)
+ * INNER JOINs `cards`. Those two card sets can only diverge on an orphan
+ * `pack_cards` row, which the live FK `pack_cards_card_id_cards_id_fk`
+ * (ON DELETE CASCADE) makes impossible — verified read-only against prod:
+ * the constraint exists and there are zero orphan rows.
+ *
+ * STRICT parsing on purpose (unlike the lenient `valueByCardFromSnapshot`,
+ * which feeds display/EV math where a coerced 0 is harmless): this is a
+ * fail-closed freshness gate, so anything malformed yields `null` and the
+ * caller REFUSES with an honest "can't verify" message rather than silently
+ * fingerprinting a partial pool.
+ */
+function poolFingerprintFromSnapshot(
+  snapshot: Prisma.JsonValue,
+): string | null {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    return null;
+  }
+  const snap = snapshot as Record<string, unknown>;
+  const price = snap.price;
+  if (typeof price !== "number" || !Number.isFinite(price) || price <= 0) {
+    return null;
+  }
+  const pool = snap.pool;
+  // A seeded draft always mirrors a non-empty live pool; an empty/absent pool
+  // means the snapshot is unusable, not that the pack had no cards.
+  if (!Array.isArray(pool) || pool.length === 0) return null;
+
+  const cards: { cardId: string; weight: number }[] = [];
+  for (const raw of pool) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const r = raw as Record<string, unknown>;
+    const cardId = r.cardId;
+    const weight = r.weight;
+    if (typeof cardId !== "string" || cardId.length === 0) return null;
+    if (typeof weight !== "number" || !Number.isInteger(weight) || weight <= 0) {
+      return null;
+    }
+    cards.push({ cardId, weight });
+  }
+  return computePoolFingerprint(price, cards);
 }
 
 // ─── Public types ───────────────────────────────────────────────────────
@@ -666,14 +731,23 @@ export async function discardDraft(
  *   1. Loads the draft (must be status='draft').
  *   2. Mints a synthetic retune token via `signRetuneToken(session.userId)`
  *      — bypasses the TOTP prompt (NO 2FA on this surface per owner request).
- *   3. Calls `applyPackEdit(packId, syntheticToken, { cards, price })` —
- *      THE existing paranoid live writer (fresh MAIN re-read, every cardId
- *      validated, before/after risk, EDIT_EDGE_FLOOR backstop,
- *      pack_state_snapshots capture, transactional pack_cards delete-all-
- *      then-createMany, audit `pack_edited_via_retune`, ADMIN risk-row
- *      refresh).
- *   4. On success, flips the draft to status='pushed' and stamps push
+ *   3. Derives the RC1 pool-freshness fingerprint from `source_snapshot`
+ *      ({@link poolFingerprintFromSnapshot}) — the live pool state the draft
+ *      was authored against — and refuses outright if it can't be derived.
+ *   4. Calls `applyPackEdit(packId, syntheticToken, { cards, price,
+ *      approvedPoolFingerprint })` — THE existing paranoid live writer (fresh
+ *      MAIN re-read, every cardId validated, pool-freshness gate, before/after
+ *      risk, EDIT_EDGE_FLOOR backstop, pack_state_snapshots capture,
+ *      transactional pack_cards delete-all-then-createMany, audit
+ *      `pack_edited_via_retune`, ADMIN risk-row refresh).
+ *   5. On success, flips the draft to status='pushed' and stamps push
  *      metadata.
+ *
+ * The fingerprint pin is what makes a STALE draft fail closed: drafts are
+ * long-lived by design, so between authoring and push the live pool can drift
+ * (another operator's edit, a card swap, a reprice). Without the pin the write
+ * silently overwrote whatever was live with odds solved against a pool that no
+ * longer existed.
  *
  * Any failure inside `applyPackEdit` bubbles up verbatim and the draft stays
  * in 'draft' status — the operator can fix and re-push.
@@ -707,6 +781,7 @@ async function pushDraftToProdInner(
       id: true,
       proposed_price: true,
       proposed_pool: true,
+      source_snapshot: true,
     },
   });
   if (!draft) throw new Error("No pending draft for this pack.");
@@ -719,6 +794,27 @@ async function pushDraftToProdInner(
   }
   const price = Number(draft.proposed_price.toString());
 
+  // ── RC1 pool-freshness pin (fail closed) ────────────────────────────────
+  // Drafts are long-lived BY DESIGN — authored now, reviewed and pushed later
+  // — which made this the path MOST likely to have gone stale and, until now,
+  // the ONLY write path with no staleness protection: `applyPackEdit`'s gate
+  // is skipped entirely when the caller omits the token, so a draft authored
+  // against pool state X silently overwrote a pool that had since moved to Y,
+  // writing odds derived from card values that no longer existed.
+  //
+  // Pin the fingerprint of the live pool the draft was seeded from; the writer
+  // recomputes it over FRESH MAIN and refuses on mismatch. Fails closed both
+  // ways: a snapshot we cannot fingerprint refuses here rather than pushing
+  // unverified.
+  const approvedPoolFingerprint = poolFingerprintFromSnapshot(
+    draft.source_snapshot,
+  );
+  if (approvedPoolFingerprint === null) {
+    throw new Error(
+      "Refused: this draft's source snapshot is unusable, so its freshness against the live pool cannot be verified. Discard the draft and re-seed it before pushing.",
+    );
+  }
+
   // NO 2FA — owner-allowed bypass for the draft push surface (operators +
   // owners both skip TOTP here). Mint a synthetic retune token internally so
   // `applyPackEdit`'s `verifyRetuneToken` is satisfied.
@@ -730,7 +826,7 @@ async function pushDraftToProdInner(
   const writeResult: ApplyPackEditResult | WriteRefusal = await applyPackEdit(
     packId,
     token,
-    { cards: pool, price },
+    { cards: pool, price, approvedPoolFingerprint },
   );
   if ("refusedMessage" in writeResult) {
     throw new Error(writeResult.refusedMessage);
@@ -765,6 +861,9 @@ async function pushDraftToProdInner(
     ...(isPackStudioRetuneOperatorNonOwner(session) && {
       via_no_2fa_allowlist: true,
     }),
+    // The write cleared the RC1 pool-freshness gate (mirrors the
+    // `pool_fingerprint_verified` flag the retune writes audit).
+    pool_fingerprint_verified: true,
     price_before: result.priceBefore,
     price_after: result.priceAfter,
     edge_before: result.before.edge,
