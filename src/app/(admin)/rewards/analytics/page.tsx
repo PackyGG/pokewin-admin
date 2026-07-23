@@ -24,19 +24,19 @@ function mapPeriod(period: string | undefined): string {
 function insightsTarget(category: string | undefined): string {
   switch (category) {
     case "deposit-bonus":
-      return "/insights/rewards/deposit-bonus";
+      return "/analytics?tab=rewards&rw=categories";
     case "rakeback":
-      return "/insights/rewards/rakeback";
+      return "/analytics?tab=rewards&rw=categories";
     case "race":
-      return "/insights/rewards/race";
+      return "/analytics?tab=rewards&rw=categories";
     case "affiliate":
-      return "/insights/rewards/affiliate";
+      return "/analytics?tab=rewards&rw=categories";
     case "signup":
-      return "/insights/rewards?tab=categories";
+      return "/analytics?tab=rewards&rw=categories";
     case "daily-packs":
-      return "/insights/rewards?tab=daily-packs";
+      return "/analytics?tab=rewards&rw=daily-packs";
     default:
-      return "/insights/rewards";
+      return "/analytics?tab=rewards";
   }
 }
 

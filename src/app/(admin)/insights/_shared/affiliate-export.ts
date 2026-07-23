@@ -15,7 +15,7 @@ import { getAffiliateCodeSwitch } from "@/lib/queries/insights-rewards/affiliate
 import { getAffiliateGeoBreakdown } from "@/lib/queries/insights-rewards/affiliate/geo";
 import { getInactiveAffiliates } from "@/lib/queries/insights-rewards/affiliate/inactive";
 import { getAffiliateTierDistribution } from "@/lib/queries/insights-rewards/affiliate/tier-distribution";
-import { settle, unwrap, buildSection } from "../../_export-section";
+import { settle, unwrap, buildSection } from "../_export-section";
 
 const AREA = "insights.export.affiliate";
 

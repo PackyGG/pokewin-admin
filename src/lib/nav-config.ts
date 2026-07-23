@@ -33,7 +33,6 @@
 export type NavGroupKey =
   | "Overview"
   | "Players"
-  | "Insights"
   | "Content"
   | "Creator Portal"
   | "Test Tools"
@@ -106,7 +105,8 @@ export type NavEntry = {
 export const NAV_GROUP_META: NavGroupMeta[] = [
   { label: "Overview" },
   { label: "Players" },
-  { label: "Insights" },
+  // The "Insights" group is gone (owner, 2026-07-23) — every surface it held
+  // is an /analytics tab now, and its pages were deleted.
   { label: "Content" },
   { label: "Creator Portal", creatorOnly: true },
   { label: "Test Tools", devEnvOnly: true },
@@ -125,15 +125,6 @@ export const NAV_GROUP_META: NavGroupMeta[] = [
 // preserves the palette's distinct labels where they differed from the
 // sidebar's.
 // ---------------------------------------------------------------------------
-
-/**
- * Owner-only — applied to every entry in the Insights sidebar group. The
- * sidebar treats `usernameAllowlist` as a cosmetic gate that ANY owner bypasses
- * (see `AppSidebar`'s `isOwner` prop), so this list is just the permanent root
- * owner; the live audience is "any owner". The routes enforce
- * `requireInsightsOwner` (now owner-gated) server-side.
- */
-const INSIGHTS_USERNAME_ALLOWLIST = ["motha"] as const;
 
 const RAW_NAV_ENTRIES: NavEntry[] = [
   // ── Overview ──────────────────────────────────────────────────────────
@@ -316,113 +307,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
   },
 
   // ── Insights (sidebar-only; absent from palette today) ─────────────────
-  {
-    // Insights Overview — a tabbed page: Real Numbers (the landing tab, the
-    // source-of-truth headline) + Analytics (deposit cadence & platform
-    // analytics, demoted to a tab) + Player CRM. The former standalone
-    // /insights hub page was removed; /insights 308-redirects here
-    // (next.config.ts). Labeled "Real Numbers" in the sidebar (Real Numbers is
-    // now the landing tab) but keeps its own /insights/real-numbers route +
-    // permission key. Icon stays `Sigma` (registered in the ICONS map in
-    // `src/components/app-sidebar.tsx`) — using an unregistered icon string
-    // (e.g. LineChart) would trip React #130 at runtime. Sits first in the
-    // group so the section landing is reachable directly from the sidebar.
-    // The Cost Breakdown page (route kept) is reachable via a link on this
-    // page; it no longer has its own sidebar entry.
-    id: "nav.insights.real-numbers",
-    group: "Insights",
-    label: "Real Numbers",
-    href: "/insights/real-numbers",
-    pageKey: "/insights/real-numbers",
-    icon: "Sigma",
-    isNew: true,
-    inSidebar: true,
-    inPalette: false,
-  },
-  {
-    id: "nav.insights.rewards",
-    group: "Insights",
-    label: "Rewards",
-    href: "/insights/rewards",
-    pageKey: "/insights/rewards",
-    icon: "Gift",
-    isNew: true,
-    inSidebar: true,
-    inPalette: false,
-  },
-  {
-    // Double Down — read-only tracking of the gamble-your-battle-winnings
-    // feature (accept rate, win/lose, House-POV P&L + full audit log). Icon
-    // `Dices` is registered in the ICONS map in
-    // `src/components/app-sidebar.tsx` (required — React #130 otherwise).
-    id: "nav.insights.double-down",
-    group: "Insights",
-    label: "Double Down",
-    href: "/insights/double-down",
-    pageKey: "/insights/double-down",
-    icon: "Dices",
-    description: "Track gamble-your-winnings rounds — who won / lost + P&L",
-    keywords: ["double", "down", "gamble", "battle", "winnings", "wager"],
-    isNew: true,
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    id: "nav.insights.rewards.deposit-bonus",
-    group: "Insights",
-    label: "Deposit Bonus",
-    href: "/insights/rewards/deposit-bonus",
-    pageKey: "/insights/rewards/deposit-bonus",
-    icon: "Coins",
-    isNew: true,
-    inSidebar: false,
-    inPalette: false,
-  },
-  {
-    id: "nav.insights.rewards.rakeback",
-    group: "Insights",
-    label: "Rakeback",
-    href: "/insights/rewards/rakeback",
-    pageKey: "/insights/rewards/rakeback",
-    icon: "Wallet",
-    isNew: true,
-    inSidebar: false,
-    inPalette: false,
-  },
-  {
-    id: "nav.insights.rewards.expiry",
-    group: "Insights",
-    label: "Reward Expiry",
-    href: "/insights/rewards/expiry",
-    pageKey: "/insights/rewards/expiry",
-    icon: "Hourglass",
-    isNew: true,
-    inSidebar: false,
-    inPalette: false,
-  },
-  {
-    id: "nav.insights.rewards.race",
-    group: "Insights",
-    label: "Race",
-    href: "/insights/rewards/race",
-    pageKey: "/insights/rewards/race",
-    icon: "Flag",
-    isNew: true,
-    inSidebar: false,
-    inPalette: false,
-  },
-  {
-    id: "nav.insights.rewards.affiliate",
-    group: "Insights",
-    label: "Affiliate",
-    href: "/insights/rewards/affiliate",
-    pageKey: "/insights/rewards/affiliate",
-    icon: "Share2",
-    isNew: true,
-    inSidebar: false,
-    inPalette: false,
-  },
-
   {
     // Creator Rewards — VIP wager programs + the claim review queue. Promoted
     // out of the /rewards tab hub to its own page: it is an operational queue
@@ -639,15 +523,10 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
   },
 ];
 
-export const NAV_ENTRIES: NavEntry[] = RAW_NAV_ENTRIES.map((entry) =>
-  entry.group === "Insights"
-    ? {
-        ...entry,
-        usernameAllowlist:
-          entry.usernameAllowlist ?? [...INSIGHTS_USERNAME_ALLOWLIST],
-      }
-    : entry,
-);
+// The Insights group used to get a blanket owner-only allowlist applied here.
+// The group is gone (owner, 2026-07-23), so entries pass through untouched —
+// each one carries its own `usernameAllowlist` when it needs one.
+export const NAV_ENTRIES: NavEntry[] = RAW_NAV_ENTRIES;
 
 // ---------------------------------------------------------------------------
 // Derived views

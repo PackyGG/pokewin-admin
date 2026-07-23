@@ -139,6 +139,14 @@ const nextConfig: NextConfig = {
         destination: "/analytics?tab=rewards",
         permanent: true,
       },
+      // The per-reward drill-downs were deleted with the section (owner,
+      // 2026-07-23). Their content lives on as the Rewards tab's own
+      // sub-views, so every one lands on Categories rather than 404ing.
+      {
+        source: "/insights/rewards/:sub",
+        destination: "/analytics?tab=rewards&rw=categories",
+        permanent: true,
+      },
       {
         // The old hub + /crm both pointed at Real Numbers; retarget them at
         // the tab rather than leave a redirect chain onto a dead route.

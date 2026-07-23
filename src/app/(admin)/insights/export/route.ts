@@ -23,18 +23,18 @@ const UTF8_BOM = "﻿";
 // resolves the exact same window / lens / filter set the admin sees.
 import { parseInsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_period";
 import { parseInsightsPeriod } from "@/lib/queries/insights-analytics/period";
-import { parseRakebackRoiLookback } from "../rewards/rakeback/_constants";
+import { parseRakebackRoiLookback } from "../_shared/rakeback-constants";
 import { parseRakebackTopClaimerScope } from "@/lib/queries/insights-rewards/rakeback/top-claimers";
 
 // Export gatherers — plain server-only functions (no longer server
 // actions). Each returns the full `ExportSection[]` for its page; this
 // route is the single place that knows page → gatherer + page →
 // permission-key.
-import { gatherDepositBonusExportSections } from "../rewards/deposit-bonus/_export";
+import { gatherDepositBonusExportSections } from "../_shared/deposit-bonus-export";
 import { gatherRewardsOverviewExportSections } from "../rewards/_export";
-import { gatherRaceExportSections } from "../rewards/race/_export";
-import { gatherAffiliateExportSections } from "../rewards/affiliate/_export";
-import { gatherRakebackExportSections } from "../rewards/rakeback/_export";
+import { gatherRaceExportSections } from "../_shared/race-export";
+import { gatherAffiliateExportSections } from "../_shared/affiliate-export";
+import { gatherRakebackExportSections } from "../_shared/rakeback-export";
 import { gatherCostBreakdownExportSections } from "../cost-breakdown/_export";
 
 export const runtime = "nodejs";

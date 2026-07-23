@@ -6,7 +6,7 @@ import {
   insightsPeriodToCategoryPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import type { RakebackRoiLookback } from "./_constants";
+import type { RakebackRoiLookback } from "./rakeback-constants";
 import { getRakebackOverview } from "@/lib/queries/insights-rewards/rakeback/overview";
 import { getRakebackRateDistribution } from "@/lib/queries/insights-rewards/rakeback/rate-distribution";
 import { getRakebackCadence } from "@/lib/queries/insights-rewards/rakeback/cadence";
@@ -20,7 +20,7 @@ import {
 import { getRakebackDaily } from "@/lib/queries/insights-rewards/rakeback/daily";
 import { getRakebackGeoSource } from "@/lib/queries/insights-rewards/rakeback/geo-source";
 import { getRakebackExtras } from "@/lib/queries/rewards-category-extras";
-import { settle, unwrap, buildSection } from "../../_export-section";
+import { settle, unwrap, buildSection } from "../_export-section";
 
 const AREA = "insights.export.rakeback";
 

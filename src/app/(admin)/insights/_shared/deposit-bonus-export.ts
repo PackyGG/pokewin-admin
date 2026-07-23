@@ -31,7 +31,7 @@ import {
   getDepositBonusPostCapBehavior,
   getDepositBonusCapHitterCohorts,
 } from "@/lib/queries/insights-rewards/deposit-bonus/impact";
-import { settle, unwrap, buildSection } from "../../_export-section";
+import { settle, unwrap, buildSection } from "../_export-section";
 
 const AREA = "insights.export.deposit-bonus";
 

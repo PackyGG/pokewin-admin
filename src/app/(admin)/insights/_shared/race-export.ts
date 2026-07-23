@@ -13,7 +13,7 @@ import { getRaceInsightsRepeatWinners } from "@/lib/queries/insights-rewards/rac
 import { getRaceInsightsROI } from "@/lib/queries/insights-rewards/race/roi";
 import { getRaceInsightsCohort } from "@/lib/queries/insights-rewards/race/cohort";
 import { getRaceInsightsTopWinners } from "@/lib/queries/insights-rewards/race/top-winners";
-import { settle, unwrap, buildSection } from "../../_export-section";
+import { settle, unwrap, buildSection } from "../_export-section";
 
 const AREA = "insights.export.race";
 

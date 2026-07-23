@@ -14,7 +14,7 @@ import {
 import {
   RAKEBACK_ROI_LOOKBACK_DEFAULT,
   type RakebackRoiLookback,
-} from "@/app/(admin)/insights/rewards/rakeback/_constants";
+} from "@/app/(admin)/insights/_shared/rakeback-constants";
 import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
 import { getRakebackRoiFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/rakeback/roi";
 
@@ -27,8 +27,8 @@ export {
   RAKEBACK_ROI_LOOKBACK_DEFAULT,
   RAKEBACK_ROI_LOOKBACK_OPTIONS,
   parseRakebackRoiLookback,
-} from "@/app/(admin)/insights/rewards/rakeback/_constants";
-export type { RakebackRoiLookback } from "@/app/(admin)/insights/rewards/rakeback/_constants";
+} from "@/app/(admin)/insights/_shared/rakeback-constants";
+export type { RakebackRoiLookback } from "@/app/(admin)/insights/_shared/rakeback-constants";
 
 /**
  * Rakeback ROI — rakeback cost in window vs subsequent gameplay GGR
