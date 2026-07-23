@@ -22,24 +22,26 @@ import { DoubleDownSearchForm } from "../insights/double-down/search-form";
 import { DoubleDownStatsSection } from "../insights/double-down/stats-section";
 import { DoubleDownLogSection } from "../insights/double-down/log-section";
 import { DoubleDownChartsSection } from "../insights/double-down/charts-section";
-import { PacksBattlesTab } from "./tab-packs";
 import type { AnalyticsPeriod } from "./types";
 
 const LOG_PER_PAGE = 25;
 
-/** The four things a player can actually put money into. */
-export const GAME_VIEWS = ["packs", "battles", "upgrader", "double-down"] as const;
+/**
+ * The modes a player can put money into that still have a surface here.
+ * Packs and battles were removed (owner, 2026-07-23) along with the Top
+ * Performers tab — their tab files, query modules and ClickHouse twins went
+ * with them, so `?g=packs` / `?g=battles` fall back to Upgrader.
+ */
+export const GAME_VIEWS = ["upgrader", "double-down"] as const;
 export type GameView = (typeof GAME_VIEWS)[number];
 
 export function parseGameView(value: string | undefined): GameView {
   return (GAME_VIEWS as readonly string[]).includes(value ?? "")
     ? (value as GameView)
-    : "packs";
+    : "upgrader";
 }
 
 const VIEW_META: { value: GameView; label: string; icon: typeof Dices }[] = [
-  { value: "packs", label: "Packs", icon: Package },
-  { value: "battles", label: "Battles", icon: Swords },
   { value: "upgrader", label: "Upgrader", icon: ArrowUpCircle },
   { value: "double-down", label: "Double Down", icon: Dices },
 ];
@@ -48,9 +50,9 @@ const VIEW_META: { value: GameView; label: string; icon: typeof Dices }[] = [
  * Games — one tab for every mode a player can lose money in.
  *
  * Replaces the separate "Double Down" and "Pack & Battle" tabs (owner,
- * 2026-07-23). They were two tabs answering the same question about
- * different modes, while Upgrader had no analytics surface at all despite
- * being wagered on like the rest.
+ * 2026-07-23). Upgrader had no analytics surface at all despite being
+ * wagered on like the rest; packs and battles were dropped in the same
+ * pass, so what's left is upgrader + double down.
  *
  * The sub-nav is plain links, not a client component: each view is a server
  * segment and the whole tab re-renders on `?g=` anyway, so there is nothing
@@ -63,14 +65,12 @@ export function GamesTab({
   ddPeriod,
   search,
   page,
-  packsSort,
 }: {
   view: GameView;
   period: AnalyticsPeriod;
   ddPeriod: DoubleDownPeriod;
   search: string;
   page: number;
-  packsSort: string | undefined;
 }) {
   return (
     <div className="space-y-6">
@@ -97,12 +97,6 @@ export function GamesTab({
         ))}
       </div>
 
-      {view === "packs" && (
-        <PacksBattlesTab period={period} sortKey={packsSort} view="packs" />
-      )}
-      {view === "battles" && (
-        <PacksBattlesTab period={period} sortKey={packsSort} view="battles" />
-      )}
       {view === "upgrader" && (
         <Suspense fallback={<KpiStripSkeleton count={5} />}>
           <UpgraderSection />
