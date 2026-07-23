@@ -814,6 +814,15 @@ npx prisma db execute --file <sql>                        --config=prisma/admin/
 - `SESSION_SECRET` — JWT Signing Key
 - `ADMIN_SEED_PASSWORD` — Initial Admin Password (Default: "CHANGEME")
 
+**Optional — Discord rewards bot webhook** (`/creator-rewards` approve/decline
+DMs the player). Both must be set or the feature is simply off; approve/reject
+still work, they just notify nobody.
+
+- `DISCORD_BOT_WEBHOOK_URL` — e.g. `https://<bot-domain>/webhooks/packy`
+- `DISCORD_BOT_WEBHOOK_SECRET` — shared with the bot's `WEBHOOK_SECRET`,
+  32+ chars (`openssl rand -hex 32`). **Server-side only — never expose it.**
+  Contract + test vector: `Packy.GG-Rewards-Bot/docs/webhook.md`.
+
 ### Bekannte Gotchas / Fallen (aus Sessions gelernt — Stand 2026-06-05)
 
 Volle, aktuelle Liste in `AGENT_HANDOFF.md` (§ Gotchas) + `ONBOARDING.md` (§7). Die durablen:

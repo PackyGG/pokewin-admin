@@ -9,6 +9,7 @@ import {
   Inbox,
   Plus,
   RotateCcw,
+  Send,
   ShieldQuestion,
   X,
 } from "lucide-react";
@@ -42,6 +43,7 @@ import {
   previewCreatorRewardEntitlement,
   raiseCreatorRewardClaimForUser,
   reinstateCreatorRewardClaim,
+  resendClaimDecisionNotice,
   rejectCreatorRewardClaim,
   searchCreatorsWithCodes,
   setCreatorRewardProgramActive,
@@ -1092,6 +1094,14 @@ function ClaimRow({ claim }: { claim: CreatorRewardClaimRow }) {
                 Switched code
               </Badge>
             )}
+            {claim.botNotifyError && (
+              <Badge
+                variant="outline"
+                className="bg-amber-500/15 text-[10px] text-amber-600 dark:text-amber-400"
+              >
+                DM failed
+              </Badge>
+            )}
             {claim.reinstatedAt && (
               <Badge
                 variant="outline"
@@ -1178,6 +1188,7 @@ function ClaimRow({ claim }: { claim: CreatorRewardClaimRow }) {
                 &ldquo;{claim.reviewNote}&rdquo;
               </div>
             )}
+            {claim.botNotifyError && <ResendNoticeButton claim={claim} />}
             {claim.status === "rejected" && (
               <Button
                 size="sm"
@@ -1208,6 +1219,41 @@ function ClaimRow({ claim }: { claim: CreatorRewardClaimRow }) {
         onOpenChange={setReopenOpen}
       />
     </Card>
+  );
+}
+
+/**
+ * Retry the decision DM after a delivery failure.
+ *
+ * Safe to press repeatedly: the bot dedupes on an event id derived from the
+ * claim and the decision, so a press after a delivery that actually succeeded
+ * returns `duplicate` and sends no second DM.
+ */
+function ResendNoticeButton({ claim }: { claim: CreatorRewardClaimRow }) {
+  const [isPending, startTransition] = useTransition();
+
+  function resend() {
+    startTransition(async () => {
+      const res = await resendClaimDecisionNotice({ claimId: claim.id });
+      if (!res.success) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success("Notification delivered");
+    });
+  }
+
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={resend}
+      disabled={isPending}
+      title={claim.botNotifyError ?? undefined}
+    >
+      <Send className="size-3.5" />
+      {isPending ? "Sending…" : "Resend DM"}
+    </Button>
   );
 }
 

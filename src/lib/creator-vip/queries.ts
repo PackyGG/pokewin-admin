@@ -25,21 +25,66 @@ import {
  * MAIN read here is a `WHERE id IN (...)` point lookup on the primary key.
  */
 
-/** Resolve MAIN-DB display names for a set of user ids. Never throws. */
-async function resolveUsernames(
+/**
+ * The MAIN-DB profile behind a claim, as far as a reviewer needs it.
+ *
+ * More than a name because approving a claim moves money: who is asking, how
+ * old the account is, and whether it is already flagged all belong on the row
+ * that carries the Approve button. Reading them from the user page afterwards
+ * is a step nobody takes under a queue.
+ */
+type ClaimantProfile = {
+  name: string | null;
+  image: string | null;
+  createdAt: string | null;
+  isBanned: boolean;
+  isLocked: boolean;
+  suspectedAlt: boolean;
+  countryCode: string | null;
+};
+
+/** Resolve MAIN-DB profiles for a set of user ids. Never throws. */
+async function resolveUsers(
   userIds: readonly string[],
-): Promise<Map<string, string | null>> {
+): Promise<Map<string, ClaimantProfile>> {
   const unique = [...new Set(userIds)].filter(Boolean);
   if (unique.length === 0) return new Map();
   try {
+    // Still one `WHERE id IN (...)` point lookup on the primary key — this
+    // widens the projection, not the access path.
     const rows = await getProdDb().user.findMany({
       where: { id: { in: unique } },
-      select: { id: true, username: true, email: true },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        image: true,
+        created_at: true,
+        is_banned: true,
+        is_locked: true,
+        is_suspected_alt: true,
+        country_code: true,
+      },
     });
-    return new Map(rows.map((r) => [r.id, r.username ?? r.email ?? null]));
+    return new Map(
+      rows.map((r) => [
+        r.id,
+        {
+          name: r.username ?? r.email ?? null,
+          image: r.image,
+          createdAt: r.created_at.toISOString(),
+          isBanned: r.is_banned,
+          isLocked: r.is_locked,
+          suspectedAlt: r.is_suspected_alt,
+          countryCode: r.country_code,
+        },
+      ]),
+    );
   } catch (err) {
-    // A name is decoration; a failed lookup must not blank the whole table.
-    console.error("[creator-vip] username resolve failed:", err);
+    // A profile is decoration; a failed lookup must not blank the whole table.
+    // Every consumer below falls back to the raw id and to "not flagged" —
+    // which is why the flags render as absence-of-badge, never as "clean".
+    console.error("[creator-vip] user resolve failed:", err);
     return new Map();
   }
 }
@@ -59,7 +104,7 @@ export async function getProgramsWithStats(): Promise<
     _sum: { amount_usd: true },
   });
 
-  const names = await resolveUsernames(programs.map((p) => p.creator_user_id));
+  const users = await resolveUsers(programs.map((p) => p.creator_user_id));
 
   return programs.map((p) => {
     const rows = grouped.filter((g) => g.program_id === p.id);
@@ -71,7 +116,7 @@ export async function getProgramsWithStats(): Promise<
       id: p.id,
       name: p.name,
       creatorUserId: p.creator_user_id,
-      creatorUsername: names.get(p.creator_user_id) ?? null,
+      creatorUsername: users.get(p.creator_user_id)?.name ?? null,
       codes: p.codes,
       thresholdUsd: p.threshold_usd == null ? null : toNumber(p.threshold_usd),
       rewardUsd: p.reward_usd == null ? null : toNumber(p.reward_usd),
@@ -125,6 +170,14 @@ export type CreatorRewardClaimRow = {
   /** Set when this claim was rejected and later put back into review. */
   reinstatedAt: string | null;
   /**
+   * Discord-bot DM state for the decision. `botNotifiedAt` set = delivered;
+   * `botNotifyError` set = the last failure, and the row offers a resend.
+   * BOTH null on a pending claim, on a dashboard-raised claim with no Discord
+   * user, and when the webhook isn't configured — none of which is a fault.
+   */
+  botNotifiedAt: string | null;
+  botNotifyError: string | null;
+  /**
    * PENDING rows only: has the player deliberately SWITCHED to a different
    * creator's code since filing?
    *
@@ -156,7 +209,7 @@ export async function getClaims(params: {
   });
   if (claims.length === 0) return [];
 
-  const names = await resolveUsernames([
+  const users = await resolveUsers([
     ...claims.map((c) => c.user_id),
     ...claims.map((c) => c.program.creator_user_id),
   ]);
@@ -231,6 +284,8 @@ export async function getClaims(params: {
     reviewNote: c.review_note,
     ledgerTxId: c.ledger_tx_id,
     reinstatedAt: c.reinstated_at?.toISOString() ?? null,
+    botNotifiedAt: c.bot_notified_at?.toISOString() ?? null,
+    botNotifyError: c.bot_notify_error,
     switchedAway: (() => {
       if (c.status !== "pending" || !activeCodeByUser.has(c.user_id)) {
         return null;

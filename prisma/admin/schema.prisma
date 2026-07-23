@@ -2121,6 +2121,17 @@ model creator_reward_claims {
   /// MAIN-DB `ledger_transactions.id` of the balance credit written on
   /// approval. Loose column (cross-DB); NULL unless approved.
   ledger_tx_id        String?                 @db.Uuid
+  /// Discord-bot notification state for the approve/reject decision.
+  ///
+  /// The bot DMs the player when staff decide. Delivery is fired AFTER the
+  /// response (never blocking the button) and retried only for what a retry
+  /// can fix, so it can genuinely fail — and a player who is never told is
+  /// worse than a visible error. `bot_notify_error` holds the last failure so
+  /// the queue can show it and staff can resend; both stay NULL when the
+  /// webhook isn't configured at all.
+  bot_notified_at     DateTime?               @db.Timestamptz(6)
+  bot_notify_error    String?
+
   /// Set when a REJECTED claim was put back into review (rejected → pending).
   /// The rejection reason is deliberately kept in `review_note` so whoever
   /// picks it up second sees why it was turned down the first time. Only ever

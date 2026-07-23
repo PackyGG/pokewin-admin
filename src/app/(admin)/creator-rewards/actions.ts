@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { z } from "zod";
 
 import { adminDb } from "@/lib/admin-db";
@@ -11,6 +12,12 @@ import { adjustBalance } from "@/app/(admin)/users/[id]/actions";
 import { computeProgramOffers } from "@/lib/creator-vip/compute";
 import { createClaimRequest } from "@/lib/creator-vip/queries";
 import { sanitizeProgramName } from "@/lib/creator-vip/sanitize";
+import {
+  claimEventId,
+  isBotWebhookConfigured,
+  sendClaimDecision,
+  type ClaimDecisionEvent,
+} from "@/lib/creator-vip/bot-webhook";
 import {
   CREATOR_REWARD_TYPES,
   type CreatorRewardType,
@@ -315,6 +322,75 @@ export async function setCreatorRewardProgramActive(input: {
   return { success: true };
 }
 
+
+/**
+ * Tell the Discord bot about a decision, then record how that went.
+ *
+ * ── WHY THIS IS FIRE-AND-FORGET ───────────────────────────────────────────
+ * Called via `after()`, so the approve/reject response returns immediately.
+ * The webhook contract is explicit that a slow delivery must never make the
+ * button feel broken — and more importantly, the balance has ALREADY moved by
+ * the time this runs. A webhook failure must not be able to fail, retry or
+ * roll back a payment that succeeded.
+ *
+ * ── WHY IT RECORDS THE OUTCOME ────────────────────────────────────────────
+ * Delivery can genuinely fail (bot down, secret rotated, DMs closed upstream).
+ * Silently swallowing that means a player is never told their claim was
+ * decided, and nobody ever finds out. So the result lands on the claim row,
+ * the queue shows a warning, and staff can resend.
+ *
+ * NEVER THROWS. An exception here would surface as an unhandled rejection in a
+ * background task, long after the operator saw "approved".
+ */
+async function notifyBotOfDecision(params: {
+  claimId: string;
+  decision: "approved" | "rejected";
+  discordUserId: string | null;
+  amountUsd: number;
+  rewardName: string;
+  reason?: string | null;
+}): Promise<void> {
+  try {
+    // A claim raised by an admin on someone's behalf has no Discord id — there
+    // is no one to DM, and that is not an error worth flagging.
+    if (!params.discordUserId) return;
+    if (!isBotWebhookConfigured()) return;
+
+    const event: ClaimDecisionEvent = {
+      id: claimEventId(params.claimId, params.decision),
+      type: params.decision === "approved" ? "claim.approved" : "claim.rejected",
+      data: {
+        claimId: params.claimId,
+        discordUserId: params.discordUserId,
+        rewardName: params.rewardName,
+        // Amount ONLY on approval, and only when non-zero: the bot renders 0
+        // literally as "$0 has been credited". A rejection carries no amount.
+        ...(params.decision === "approved" && params.amountUsd > 0
+          ? { amount: params.amountUsd, currency: "USD" }
+          : {}),
+        // Shown to the player verbatim; the contract caps it at 300 chars,
+        // while our review note allows 1000.
+        ...(params.decision === "rejected" && params.reason
+          ? { reason: params.reason.slice(0, 300) }
+          : {}),
+      },
+    };
+
+    const result = await sendClaimDecision(event);
+
+    await adminDb.creator_reward_claims
+      .update({
+        where: { id: params.claimId },
+        data: result.ok
+          ? { bot_notified_at: new Date(), bot_notify_error: null }
+          : { bot_notify_error: result.error.slice(0, 500) },
+      })
+      .catch(() => {});
+  } catch (err) {
+    console.error("[creator-rewards] bot notification failed:", err);
+  }
+}
+
 /**
  * Approve a pending claim and pay it out.
  *
@@ -410,6 +486,18 @@ export async function approveCreatorRewardClaim(input: {
     },
   });
 
+  // AFTER the money has actually moved — the DM says "has been credited",
+  // which is only true once the ledger write above has succeeded.
+  after(() =>
+    notifyBotOfDecision({
+      claimId: claim.id,
+      decision: "approved",
+      discordUserId: claim.discord_user_id,
+      amountUsd,
+      rewardName: claim.program.name,
+    }),
+  );
+
   revalidatePath("/creator-rewards");
   return { success: true };
 }
@@ -474,6 +562,17 @@ export async function rejectCreatorRewardClaim(input: {
       note: parsed.data.note,
     },
   });
+
+  after(() =>
+    notifyBotOfDecision({
+      claimId: claim.id,
+      decision: "rejected",
+      discordUserId: claim.discord_user_id,
+      amountUsd: 0,
+      rewardName: claim.program.name,
+      reason: parsed.data.note,
+    }),
+  );
 
   revalidatePath("/creator-rewards");
   return { success: true };
@@ -757,6 +856,74 @@ export type CreatorSearchResult = {
  * searches, `affiliate_codes` is ~1k rows. Empty query lists creators so the
  * dialog opens with something to pick.
  */
+
+/**
+ * Resend the decision DM for a claim whose webhook failed.
+ *
+ * The retry budget inside `after()` is deliberately short (~36s — a serverless
+ * request cannot back off for ten minutes), so a bot that was down longer than
+ * that leaves a claim decided-but-unannounced. This is the recovery path.
+ *
+ * Safe to press repeatedly: the event id is derived from the claim and the
+ * decision, so the bot dedupes it. A second press after a successful delivery
+ * returns `200 duplicate` and sends no second DM.
+ */
+export async function resendClaimDecisionNotice(input: {
+  claimId: string;
+}): Promise<ActionResult> {
+  await requirePageAccess("/creator-rewards");
+  await requireAdmin();
+
+  const parsed = z
+    .object({ claimId: z.string().uuid() })
+    .safeParse(input);
+  if (!parsed.success) return { success: false, error: "Invalid input" };
+
+  if (!isBotWebhookConfigured()) {
+    return {
+      success: false,
+      error: "The Discord bot webhook isn't configured on this deployment.",
+    };
+  }
+
+  const claim = await adminDb.creator_reward_claims.findUnique({
+    where: { id: parsed.data.claimId },
+    include: { program: true },
+  });
+  if (!claim) return { success: false, error: "Claim not found" };
+  if (claim.status === "pending") {
+    return { success: false, error: "That claim hasn't been decided yet." };
+  }
+  if (!claim.discord_user_id) {
+    return {
+      success: false,
+      error: "This claim was raised in the dashboard — there's no Discord user to notify.",
+    };
+  }
+
+  await notifyBotOfDecision({
+    claimId: claim.id,
+    decision: claim.status === "approved" ? "approved" : "rejected",
+    discordUserId: claim.discord_user_id,
+    amountUsd: Number(claim.amount_usd),
+    rewardName: claim.program.name,
+    reason: claim.review_note,
+  });
+
+  const after_ = await adminDb.creator_reward_claims.findUnique({
+    where: { id: claim.id },
+    select: { bot_notified_at: true, bot_notify_error: true },
+  });
+
+  revalidatePath("/creator-rewards");
+  return after_?.bot_notified_at
+    ? { success: true }
+    : {
+        success: false,
+        error: after_?.bot_notify_error ?? "Delivery failed — try again shortly.",
+      };
+}
+
 export async function searchCreatorsWithCodes(
   query: string,
 ): Promise<CreatorSearchResult[]> {
