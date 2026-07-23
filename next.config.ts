@@ -9,6 +9,22 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
+  eslint: {
+    // `next build` lints as part of its "Linting and checking validity of
+    // types" phase — a straight DUPLICATE of the `npm run lint` gate that
+    // CLAUDE.md § Minimal-Overhead already requires before every push.
+    //
+    // Measured saving is modest: warm builds went 46.8s -> 44.1s (~3s). It is
+    // NOT the ~18s that a standalone `npm run lint` takes, because that lints
+    // the whole repo (scripts/, e2e/, configs) while the build only covers the
+    // app. Kept because it is free, but do not expect a step change here — the
+    // bulk of a warm build is the type-check + page-data-collection pass.
+    //
+    // Skipped LOCALLY only. Vercel and GitHub Actions both set CI=1, so
+    // production and CI builds still lint exactly as before — no safety traded.
+    // (Same `!process.env.CI` gate the Sentry `silent` option below uses.)
+    ignoreDuringBuilds: !process.env.CI,
+  },
   experimental: {
     staleTimes: {
       // Client Router Cache reuse window. Raised 30 → 120 so navigating BACK

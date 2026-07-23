@@ -40,6 +40,9 @@
     "admin-frontend",
     "e2e",
     "**/*.test.ts",
-    "**/*.test.tsx"
+    "**/*.test.tsx",
+    "_probe-*.ts",
+    "_verify-*.ts",
+    "audit-artifacts"
   ]
 }

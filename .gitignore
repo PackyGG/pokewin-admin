@@ -66,5 +66,10 @@ bun.lock
 # These touch the LIVE prod DB and must NEVER be committed — a stray
 # `git add -A` would otherwise pull them (and the connection string they load)
 # into history. Kept uncommitted + deleted after use.
-_probe-*.mjs
-_verify-*.mjs
+# Extension-agnostic on purpose: a stray `_probe-*.ts` at the repo root is
+# picked up by the tsconfig `**/*.ts` include and FAILS the type-check phase of
+# every `next build` (this happened — a leftover _probe-fleet-run.ts broke the
+# build). Matching all extensions keeps them out of git; the tsconfig `exclude`
+# below keeps them out of the build program.
+_probe-*
+_verify-*
