@@ -712,6 +712,17 @@ async function refreshPackRiskScore(
       update: riskRow,
       create: { pack_id: packId, ...riskRow },
     });
+
+    // Bust the caches that READ this row, here rather than at each call site.
+    // The Pack Doctor grid, the Overview KPIs and the Retune rail all serve
+    // from 60s `unstable_cache` entries tagged "pack-studio-overview". Two of
+    // the three callers (re-price and applyPackRetune) refreshed the row and
+    // never invalidated that tag, so those surfaces kept showing the PRE-write
+    // numbers for up to a minute while claiming to update immediately — and
+    // the Doctor hero's candidate count stayed at the old value, so a second
+    // run looked like it had done nothing. Invalidating inside the writer
+    // makes it impossible for a future caller to forget.
+    revalidateTag("pack-studio-overview");
   } catch (err) {
     console.error("refreshPackRiskScore: pack_risk_scores refresh failed", err);
   }

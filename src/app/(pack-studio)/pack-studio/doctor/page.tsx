@@ -188,16 +188,24 @@ export default async function PackDoctorPage({
   const sp = await searchParams;
   const filters = paramsToFilters(sp);
 
-  // Suspense key includes every filter + sort dimension so switching any of
-  // them re-suspends the grid (showing the skeleton) instead of holding stale
-  // rows during the re-read.
+  // Suspense key includes every FILTER dimension so changing one re-suspends
+  // the grid (showing the skeleton) instead of holding rows from the old
+  // filter during the re-read.
+  //
+  // SORT IS DELIBERATELY NOT IN THE KEY. A sort change returns the SAME row
+  // set in a different order, so remounting bought nothing — and it cost the
+  // operator real work: `DoctorTable` keeps its bulk-retune selection in
+  // client state, and a key change unmounts the subtree and throws that away.
+  // Selecting a dozen packs and then sorting to check one of them silently
+  // cleared the selection. Reusing the key lets React reconcile instead:
+  // selection survives, and there is no skeleton flash for a pure reorder.
+  // Safe for the filter path too — the table already prunes selected ids that
+  // are no longer in the row set.
   const suspenseKey = [
     filters.tier ?? "",
     filters.belowTarget ? "1" : "0",
     filters.overCap ? "1" : "0",
     filters.zeroNearMiss ? "1" : "0",
-    filters.sortBy ?? "riskScore",
-    filters.sortDir ?? "desc",
   ].join("|");
 
   return (
