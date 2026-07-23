@@ -63,6 +63,20 @@ function fallbackForTab(tab: AnalyticsTab): ReactNode {
   }
 }
 
+/**
+ * Tabs whose content is actually keyed on the page-level `?period=`. Every
+ * other tab either fixes its own window or ships its own filter, so the
+ * global one is hidden rather than left inert.
+ */
+const PERIOD_DRIVEN_TABS = new Set<AnalyticsTab>([
+  "overview",
+  "revenue",
+  "top",
+  "heatmap",
+  "packs",
+  "map",
+]);
+
 export default async function AnalyticsPage({
   searchParams,
 }: {
@@ -100,21 +114,34 @@ export default async function AnalyticsPage({
           force a fresh fetch when needed. */}
       <AutoRefresh intervalMs={300_000} />
       <PageHero>
-        {/* Identity + period filter stack vertically on phones — the
-            5-chip filter would otherwise wrap awkwardly under the
-            icon. At sm+ they go side-by-side so the hero scans cleanly
-            on tablets and desktops. Shared PageHeroIdentity primitive so
-            the icon chip, title ladder, and action slot match every
-            other admin hero. */}
         <PageHeroIdentity
           icon={BarChart3}
           title="Analytics"
           subtitle="Revenue, acquisition, and gameplay metrics over time."
-          action={<PeriodFilter />}
         />
       </PageHero>
 
-      <AnalyticsTabNav />
+      {/* Period filter rides the tab row instead of the hero (owner,
+          2026-07-23: the page was wasting height). On phones the hero used to
+          stack identity + a 5-chip filter vertically, costing a whole row
+          before any data; here it sits at the end of a row that already
+          exists. The tab strip keeps its own horizontal scroll, so the filter
+          stays pinned and visible however many tabs there are.
+
+          It renders ONLY on tabs the page-level `?period=` actually drives.
+          Double Down is locked to 30d, Real Numbers is lifetime, and Cost
+          Breakdown / Rewards carry their own period control inside the tab —
+          showing a global filter there would be a dead knob. */}
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <AnalyticsTabNav />
+        </div>
+        {PERIOD_DRIVEN_TABS.has(tab) && (
+          <div className="shrink-0">
+            <PeriodFilter />
+          </div>
+        )}
+      </div>
 
       {/* Each tab is an independent async segment. We render only the one
           that matches `tab` so nothing else hits the DB — important because
