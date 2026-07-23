@@ -2,19 +2,10 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import {
-  Loader2,
-  Pin,
-  TriangleAlert,
-  ArrowRight,
-  ArrowUp,
-  ExternalLink,
-} from "lucide-react";
+import { Loader2, Pin, ArrowRight, ArrowUp, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { StepUpField } from "@/components/step-up-field";
 import {
   AlertDialog,
@@ -22,7 +13,6 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
-  AlertDialogMedia,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { formatCurrency } from "@/lib/utils/format";
@@ -59,9 +49,10 @@ import {
  * grid can't force a bad write (out-of-scope / on-target packs drop out).
  */
 
-const CONFIRM_PHRASE = "REPRICE";
 /** The edge FLOOR every pack targets at minimum (the curve only goes UP from here). */
 const FLOOR_TARGET_PCT = "10.99";
+/** The edge CEILING a raise may never cross (the curve's cap). */
+const CEILING_TARGET_PCT = "11.50";
 
 /**
  * The two flavours this button ships in — same plan → confirm → per-pack write
@@ -77,19 +68,21 @@ type RepinMode = "per-pack" | "floor-raise-only";
 
 const MODE_COPY: Record<
   RepinMode,
-  { button: string; title: string; running: string; success: string }
+  { button: string; title: string; subtitle: string; running: string; success: string }
 > = {
   "per-pack": {
     button: `Re-pin packs to their target edge (≥ ${FLOOR_TARGET_PCT}%)`,
-    title: "Re-pin packs to their target edge",
+    title: "Re-pin to target edge",
+    subtitle: "Price only — card odds are never touched.",
     running: "Re-pinning below-target packs…",
     success: `to their target edge (≥ ${FLOOR_TARGET_PCT}%)`,
   },
   "floor-raise-only": {
     button: `Raise price only to reach ≥ ${FLOOR_TARGET_PCT}%`,
-    title: `Raise price to reach ≥ ${FLOOR_TARGET_PCT}%`,
-    running: "Raising prices to the edge floor…",
-    success: `to ≥ ${FLOOR_TARGET_PCT}% by raising price`,
+    title: `Raise price to ${FLOOR_TARGET_PCT}–${CEILING_TARGET_PCT}%`,
+    subtitle: "Price goes up only — card odds are never touched.",
+    running: "Raising prices…",
+    success: `to ${FLOOR_TARGET_PCT}–${CEILING_TARGET_PCT}% by raising price`,
   },
 };
 
@@ -119,7 +112,6 @@ export function RepinCustomButton({
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [progressOpen, setProgressOpen] = React.useState(false);
   const [plan, setPlan] = React.useState<CustomRepinPlan | null>(null);
-  const [confirmText, setConfirmText] = React.useState("");
   const [totp, setTotp] = React.useState("");
 
   // Progress.
@@ -133,17 +125,13 @@ export function RepinCustomButton({
   const total = plan?.toReprice.length ?? 0;
   // Non-empty is enough client-side: the value is either a 6-digit TOTP or a
   // passkey step-up proof token. require2FA validates the real format server-side.
+  // 2FA is the ONLY gate now — the type-to-confirm phrase was removed at the
+  // owner's request; the server-side operator + token checks are unchanged.
   const totpValid = totp.trim().length > 0;
-  const confirmReady =
-    phase === "ready" &&
-    plan !== null &&
-    total > 0 &&
-    confirmText.trim().toUpperCase() === CONFIRM_PHRASE &&
-    totpValid;
+  const confirmReady = phase === "ready" && plan !== null && total > 0 && totpValid;
 
   async function openAndPlan() {
     setPlan(null);
-    setConfirmText("");
     setTotp("");
     setPhase("planning");
     setConfirmOpen(true);
@@ -194,7 +182,16 @@ export function RepinCustomButton({
       const row = rows[i]!;
       setCurrentName(row.name);
       try {
-        const res = await repricePackToTargetEdge(row.packId, token, runTarget);
+        // A `failed` result is a returned VALUE, so it is usually transient (a
+        // DB hiccup, a lost connection) rather than a refusal — refusals come
+        // back as `skipped`. Retry a couple of times with a short backoff before
+        // recording it, so one blip doesn't leave a pack behind in a long run.
+        let res = await repricePackToTargetEdge(row.packId, token, runTarget);
+        for (let attempt = 0; res.status === "failed" && attempt < 2; attempt++) {
+          if (stopRef.current) break;
+          await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+          res = await repricePackToTargetEdge(row.packId, token, runTarget);
+        }
         if (res.status === "repriced") {
           done++;
         } else if (res.status === "failed") {
@@ -268,70 +265,29 @@ export function RepinCustomButton({
       >
         <AlertDialogContent className="sm:max-w-lg">
           <AlertDialogHeader>
-            <AlertDialogMedia className="bg-rose-500/10 text-rose-600 dark:text-rose-400">
-              <TriangleAlert />
-            </AlertDialogMedia>
             <AlertDialogTitle>{copy.title}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {raiseOnly ? (
-                <>
-                  Raises the price of every pack earning under{" "}
-                  {FLOOR_TARGET_PCT}% until it reaches{" "}
-                  <strong>{FLOOR_TARGET_PCT}% or above</strong>. Prices only ever
-                  go <strong>UP</strong> — a pack already at or above the floor is
-                  left untouched, never made cheaper. Only the pack{" "}
-                  <strong>price</strong> changes —{" "}
-                  <strong>card odds are never touched</strong>.
-                </>
-              ) : (
-                <>
-                  Re-prices every below-target pack back to <strong>its own</strong>{" "}
-                  target edge — the floor {FLOOR_TARGET_PCT}% plus a gentle risk
-                  premium for pricier, higher-jackpot packs. Only the pack{" "}
-                  <strong>price</strong> changes —{" "}
-                  <strong>card odds are never touched</strong>.
-                </>
-              )}{" "}
-              Each pack is written one at a time and the run is stoppable. Type{" "}
-              <code className="rounded bg-muted px-1 py-0.5 font-mono">{CONFIRM_PHRASE}</code>{" "}
-              and your 2FA code to run.
-            </AlertDialogDescription>
+            <AlertDialogDescription>{copy.subtitle}</AlertDialogDescription>
           </AlertDialogHeader>
 
           <div className="space-y-3 text-sm">
             {phase === "planning" && !plan && (
-              <div className="flex items-center justify-center gap-2 py-6 text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                Computing the re-pin plan…
+              <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground">
+                <Loader2 className="size-5 animate-spin" />
+                <span className="text-xs">Checking every pack…</span>
               </div>
             )}
 
             {plan && (
               <>
                 <div className="grid grid-cols-3 gap-2">
-                  <CountTile label="Will re-pin" value={plan.toReprice.length} accent="emerald" />
+                  <CountTile
+                    label={raiseOnly ? "Will raise" : "Will re-pin"}
+                    value={plan.toReprice.length}
+                    accent="emerald"
+                  />
                   <CountTile label="On target" value={plan.unchanged.length} accent="muted" />
                   <CountTile label="Skipped" value={plan.skipped.length} accent="amber" />
                 </div>
-
-                <p className="text-xs text-muted-foreground">
-                  {raiseOnly ? (
-                    <>
-                      Every pack targets the {pct(plan.targetFloor)} floor, reached
-                      by <strong>raising</strong> the price only. Packs already at
-                      or above it — and any whose price would have to drop — are
-                      skipped, as are packs the 1¢ step can&apos;t land within
-                      ±0.05% of the floor.
-                    </>
-                  ) : (
-                    <>
-                      Each pack targets its own curve edge (floor{" "}
-                      {pct(plan.targetFloor)}, rising for pricier / higher-jackpot
-                      packs). Written only within ±0.05% of that pack&apos;s target;
-                      packs that can&apos;t hit it (1¢ step too coarse) are skipped.
-                    </>
-                  )}
-                </p>
 
                 {plan.toReprice.length > 0 && (
                   <div className="rounded-lg border">
@@ -382,24 +338,13 @@ export function RepinCustomButton({
                 )}
 
                 {total > 0 ? (
-                  <div className="space-y-3 pt-1">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="repin-confirm">Type {CONFIRM_PHRASE} to confirm</Label>
-                      <Input
-                        id="repin-confirm"
-                        value={confirmText}
-                        onChange={(e) => setConfirmText(e.target.value)}
-                        placeholder={CONFIRM_PHRASE}
-                        autoComplete="off"
-                        spellCheck={false}
-                      />
-                    </div>
+                  <div className="pt-1">
                     <StepUpField value={totp} onChange={setTotp} />
                   </div>
                 ) : (
                   <p className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                    Nothing to re-pin — every below-target pack is already on target
-                    or can&apos;t be brought into the band.
+                    Nothing to do — every pack is already on target or can&apos;t be
+                    brought into the band.
                   </p>
                 )}
               </>
@@ -418,7 +363,7 @@ export function RepinCustomButton({
               Cancel
             </Button>
             <Button onClick={run} disabled={!confirmReady} className="w-full sm:w-auto">
-              Re-pin {total} pack{total === 1 ? "" : "s"}
+              {raiseOnly ? "Raise" : "Re-pin"} {total} pack{total === 1 ? "" : "s"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

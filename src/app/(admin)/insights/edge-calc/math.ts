@@ -156,6 +156,151 @@ export function isCurveRepriceTarget(
   return target === "per-pack" || target === "floor-raise-only";
 }
 
+/**
+ * Floating-point slack for the raise-only band. An edge is computed as
+ * `1 - ev/price`, so landing EXACTLY on 0.1099 can come out as 0.10989999…;
+ * without this a mathematically-on-target pack would be refused. One part in
+ * 10^9 is far tighter than a cent of price can move the edge, so it admits the
+ * representation error and nothing else.
+ */
+const FLOOR_RAISE_EPSILON = 1e-9;
+
+/**
+ * The absolute band a `"floor-raise-only"` write must land in: at or above the
+ * floor target (10.99%), never above the curve ceiling (11.50%).
+ *
+ * This is DELIBERATELY stricter than {@link REPRICE_ACCEPT_TOLERANCE}, which is
+ * two-sided (±0.05pp) and would admit an edge just UNDER the floor. "Up"
+ * rounding already puts every candidate at or above target — ceil(ideal) ≥
+ * ideal and edge is monotone in price — so this never rejects a legitimate
+ * write; it exists so the owner's rule ("10.99 or a bit higher, max 11.5%") is
+ * asserted rather than inferred from a tolerance that could later be retuned
+ * for other callers.
+ *
+ * Pure + shared by the dry-run and the write so the preview cannot promise a
+ * pack the write would then refuse.
+ */
+export function isWithinFloorRaiseBand(
+  edge: number,
+  target: number,
+  edgeCeiling: number,
+): boolean {
+  return (
+    Number.isFinite(edge) &&
+    edge >= target - FLOOR_RAISE_EPSILON &&
+    edge <= edgeCeiling + FLOOR_RAISE_EPSILON
+  );
+}
+
+/**
+ * Plan the "raise the price until the edge works" move: find the CHEAPEST whole
+ * cent, strictly above the pack's current price, whose resulting house edge
+ * lands inside [floor, ceiling] — 10.99% to 11.50%.
+ *
+ * WHY THIS EXISTS RATHER THAN `planPackReprice({ roundingMode: "up" })`:
+ * that planner aims at a POINT (the target) and accepts only ±0.05pp around it,
+ * so a pack whose next whole cent lands at, say, 11.48% gets SKIPPED as an
+ * overshoot — correct when 10.99% is a precise aim point, wrong when the owner's
+ * rule is a BAND ("10.99 or a bit higher, max 11.5"). Inside a band there is no
+ * overshoot until the ceiling, so a pack that the point-planner skips is priced
+ * here instead. That is the whole difference, and it is why skips nearly vanish.
+ *
+ * The edge is monotone increasing in price, so `ceil(ev / (1 − floor))` is the
+ * SMALLEST cent clearing the floor; anything above it only costs the player
+ * more. Hence: take that cent, and accept it iff it has not already blown past
+ * the ceiling. There is nothing to search — the answer is closed-form.
+ *
+ * Returns the same {@link PackReprisePlan} shape as `planPackReprice`:
+ *   • "reprice"   → `newPrice` is strictly greater than `currentPrice` and
+ *                   `newEdge` is inside the band. Safe to write.
+ *   • "unchanged" → the pack already earns at or above the floor, so raising is
+ *                   not needed. Never a price cut — this planner cannot lower.
+ *   • "skip"      → no priceable pool, or the 1¢ step is so coarse relative to
+ *                   this pack's price that the first cent clearing the floor
+ *                   already exceeds the ceiling (only very cheap packs).
+ */
+export function planFloorRaise(input: {
+  currentPrice: number;
+  cardsPerOpen: number;
+  totalWeight: number;
+  weightedPriceSum: number;
+  /** Lower bound of the allowed band (the edge curve's floor, 10.99%). */
+  floor: number;
+  /** Upper bound of the allowed band (the edge curve's ceiling, 11.50%). */
+  ceiling: number;
+}): PackReprisePlan {
+  const { currentPrice, cardsPerOpen, totalWeight, weightedPriceSum } = input;
+  const floor = clampRepriceTarget(input.floor);
+  // A ceiling below the floor would make every pack unpriceable; treat that
+  // config as "band collapses to the floor" rather than silently skipping all.
+  const ceiling = Math.max(floor, input.ceiling);
+
+  const ev = computePackEv({
+    pricePerOpen: currentPrice,
+    cardsPerOpen,
+    totalWeight,
+    weightedPriceSum,
+  });
+  const evPerOpen = ev.expectedPayoutPerOpen;
+  const currentEdge = ev.houseEdge;
+
+  if (!Number.isFinite(evPerOpen) || evPerOpen <= 0) {
+    return {
+      evPerOpen: Number.isFinite(evPerOpen) ? evPerOpen : 0,
+      currentEdge,
+      newPrice: null,
+      newEdge: null,
+      action: "skip",
+      reason: "No priceable card pool (EV ≤ 0).",
+    };
+  }
+
+  const idealCents = (evPerOpen / (1 - floor)) * 100;
+  // Nudge before ceil so a price that is mathematically exact (e.g. 125.0000001
+  // from float error) isn't pushed a whole cent higher than it needs to be.
+  const floorCents = Math.ceil(idealCents - FLOOR_RAISE_EPSILON * 100);
+  const currentCents = Math.round(currentPrice * 100);
+
+  if (floorCents <= currentCents) {
+    // Already at or above the floor. This action only ever raises, so there is
+    // nothing to do — never a cut back down onto the floor.
+    return {
+      evPerOpen,
+      currentEdge,
+      newPrice: null,
+      newEdge: null,
+      action: "unchanged",
+      reason: "Already at or above the floor — nothing to raise.",
+    };
+  }
+
+  const newPrice = floorCents / 100;
+  const newEdge = 1 - evPerOpen / newPrice;
+
+  if (newEdge > ceiling + FLOOR_RAISE_EPSILON) {
+    // The cheapest cent that clears the floor is already past the ceiling: one
+    // cent moves this pack's edge by more than the whole band is wide. Only
+    // reachable on very cheap packs, and raising further only makes it worse.
+    return {
+      evPerOpen,
+      currentEdge,
+      newPrice: null,
+      newEdge,
+      action: "skip",
+      reason: `A 1¢ step is too coarse here — the cheapest price clearing ${(floor * 100).toFixed(2)}% lands at ${(newEdge * 100).toFixed(2)}%, past the ${(ceiling * 100).toFixed(2)}% ceiling.`,
+    };
+  }
+
+  return {
+    evPerOpen,
+    currentEdge,
+    newPrice,
+    newEdge,
+    action: "reprice",
+    reason: "",
+  };
+}
+
 export type RepriceAction = "reprice" | "unchanged" | "skip";
 
 export type PackReprisePlan = {

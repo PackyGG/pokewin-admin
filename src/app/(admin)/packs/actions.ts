@@ -37,6 +37,8 @@ import {
   repriceEdgeWithinHardBand,
   clampRepriceTarget,
   isCurveRepriceTarget,
+  isWithinFloorRaiseBand,
+  planFloorRaise,
   REPRICE_TARGET_DEFAULT,
   REPRICE_TARGET_MIN,
   REPRICE_TARGET_MAX,
@@ -1020,21 +1022,36 @@ export async function repricePackToTargetEdge(
       edgeCurve,
     );
 
-    const plan = planPackReprice({
-      currentPrice: comp.price,
-      cardsPerOpen: comp.cardsPerOpen,
-      totalWeight: comp.totalWeight,
-      weightedPriceSum: comp.weightedPriceSum,
-      targetEdge: target,
-      // One-sided-up rounding: the chosen cent's edge is ALWAYS ≥ the pack's
-      // target — never the marginal under-target a "nearest" round could land
-      // within the ±ACCEPT tolerance. This enforces the owner's floor (a
-      // re-priced pack's edge is at or above target, never below). If no
-      // whole-cent price hits target without overshooting beyond ACCEPT, "up"
-      // returns skip (we never overcharge to force it). The dry-run preview uses
-      // the SAME mode, so there's no drift between what's shown and what's written.
-      roundingMode: "up",
-    });
+    const plan =
+      targetEdge === "floor-raise-only"
+        ? // BAND planner: the cheapest cent landing anywhere in [10.99%, 11.50%].
+          // Aiming at the floor as a POINT (±0.05pp) would skip a pack whose next
+          // cent lands at e.g. 11.48% — inside the owner's band, so not an
+          // overshoot at all. This is what keeps "skipped" down to the packs a 1¢
+          // step genuinely cannot fix.
+          planFloorRaise({
+            currentPrice: comp.price,
+            cardsPerOpen: comp.cardsPerOpen,
+            totalWeight: comp.totalWeight,
+            weightedPriceSum: comp.weightedPriceSum,
+            floor: target,
+            ceiling: edgeCurve.edgeCeiling,
+          })
+        : planPackReprice({
+            currentPrice: comp.price,
+            cardsPerOpen: comp.cardsPerOpen,
+            totalWeight: comp.totalWeight,
+            weightedPriceSum: comp.weightedPriceSum,
+            targetEdge: target,
+            // One-sided-up rounding: the chosen cent's edge is ALWAYS ≥ the pack's
+            // target — never the marginal under-target a "nearest" round could land
+            // within the ±ACCEPT tolerance. This enforces the owner's floor (a
+            // re-priced pack's edge is at or above target, never below). If no
+            // whole-cent price hits target without overshooting beyond ACCEPT, "up"
+            // returns skip (we never overcharge to force it). The dry-run preview uses
+            // the SAME mode, so there's no drift between what's shown and what's written.
+            roundingMode: "up",
+          });
 
     if (plan.action !== "reprice" || plan.newPrice === null || plan.newEdge === null) {
       return {
@@ -1049,21 +1066,35 @@ export async function repricePackToTargetEdge(
       };
     }
 
-    // RAISE-ONLY BACKSTOP — in `"floor-raise-only"` mode the price may only
-    // ever move UP. Enforced HERE, on fresh DB truth, and not merely filtered
-    // in the dry-run: a pack that rose above the floor between the preview and
-    // this write would otherwise be re-priced DOWN onto it, which is exactly
-    // what this mode exists to prevent. A non-raise is skipped, never written.
-    if (targetEdge === "floor-raise-only" && plan.newPrice <= comp.price) {
-      return skip(
-        `Left alone: reaching ${(target * 100).toFixed(2)}% would need the price to go from ${comp.price.toFixed(2)} to ${plan.newPrice.toFixed(2)} — this action only raises prices.`,
-      );
-    }
-
-    // HARD BACKSTOP — never persist a price whose edge escapes the hard
-    // tolerance of the target. Returned as a `failed` result (not thrown) so the
-    // run continues; unreachable in normal operation (accept ⊂ hard).
-    if (!repriceEdgeWithinHardBand(plan.newEdge, target)) {
+    if (targetEdge === "floor-raise-only") {
+      // ── RAISE-ONLY BACKSTOPS (owner rule: "only the price, up, to 10.99% or a
+      // bit higher, max 11.5%"). Asserted HERE, on fresh DB truth, so a pack
+      // that drifted since the preview fails closed instead of being written
+      // off-rule. `planFloorRaise` already guarantees both by construction —
+      // these exist so a future change to it cannot silently break the rule.
+      if (plan.newPrice <= comp.price) {
+        return skip(
+          `Left alone: reaching ${(target * 100).toFixed(2)}% would need the price to go from ${comp.price.toFixed(2)} to ${plan.newPrice.toFixed(2)} — this action only raises prices.`,
+        );
+      }
+      if (!isWithinFloorRaiseBand(plan.newEdge, target, edgeCurve.edgeCeiling)) {
+        return {
+          packId,
+          name: comp.name,
+          status: "failed",
+          priceBefore: comp.price,
+          priceAfter: null,
+          edgeBefore: plan.currentEdge,
+          edgeAfter: plan.newEdge,
+          reason: `Refused: ${(plan.newEdge * 100).toFixed(2)}% is outside the allowed ${(target * 100).toFixed(2)}%–${(edgeCurve.edgeCeiling * 100).toFixed(2)}% band for a price-raise.`,
+        };
+      }
+    } else if (!repriceEdgeWithinHardBand(plan.newEdge, target)) {
+      // HARD BACKSTOP for the POINT-targeted modes — never persist a price whose
+      // edge escapes the hard tolerance of the target. Deliberately NOT applied
+      // to the band mode: ±0.2pp around 10.99% stops at 11.19%, which would
+      // reject a perfectly legal 11.48% landing inside the owner's band. The
+      // band check above is that mode's equivalent guard.
       return {
         packId,
         name: comp.name,

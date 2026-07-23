@@ -29,12 +29,18 @@ import {
   planPackReprice,
   repriceEdgeWithinHardBand,
   clampRepriceTarget,
+  isWithinFloorRaiseBand,
+  planFloorRaise,
   REPRICE_TARGET_DEFAULT,
   REPRICE_TARGET_MIN,
   REPRICE_TARGET_MAX,
   REPRICE_ACCEPT_TOLERANCE,
   REPRICE_HARD_TOLERANCE,
 } from "../../insights/edge-calc/math";
+import {
+  DEFAULT_EDGE_FLOOR,
+  DEFAULT_EDGE_CEILING,
+} from "../_lib/auto-targets";
 
 let passes = 0;
 const failures: string[] = [];
@@ -289,6 +295,158 @@ check("round-up: $1.25/EV $1.1153 → skip (ceil cent $1.26→11.48% overshoots)
   const plan = planPackReprice({ ...poolForEv(1.1153, 1.25), roundingMode: "up" });
   assert(plan.action === "skip", `expected skip, got ${plan.action}`);
   assert(plan.newPrice === null, `skip must not expose a price, got ${plan.newPrice}`);
+});
+
+// ── 13. FLOOR-RAISE-ONLY: price only up, edge only in [10.99%, 11.50%] ──
+//
+// Pins the owner's rule for the Pack-Doctor "raise price to ≥ 10.99%" action:
+// only the PRICE moves, only UPWARDS, and the resulting edge lands at or above
+// the 10.99% floor and never above the 11.50% ceiling. Applies the two guards
+// exactly as `repricePackToTargetEdge` and `planCustomRepin` do — the raise
+// comparison plus the shared `isWithinFloorRaiseBand` — over a sweep of pool
+// shapes AND live prices, so a pack that is already above the floor is covered
+// as well as one that is under it.
+check("floor-raise-only: writes only raise price, only into [10.99%, 11.50%]", () => {
+  const FLOOR = DEFAULT_EDGE_FLOOR;
+  const CEILING = DEFAULT_EDGE_CEILING;
+  let written = 0;
+  let leftAlone = 0;
+  let skipped = 0;
+
+  for (const cardsPerOpen of [1, 3, 5]) {
+    for (let cents = 5; cents <= 20000; cents += 7) {
+      const ev = cents / 100;
+      // Sweep the LIVE price around the ideal so both directions are exercised:
+      // well under it (needs a raise), at it, and above it (must be left alone).
+      for (const priceFactor of [0.5, 0.8, 0.95, 1, 1.05, 1.5, 3]) {
+        const currentPrice = Math.max(0.01, Math.round(ev * priceFactor * 100) / 100);
+        const plan = planFloorRaise({
+          currentPrice,
+          cardsPerOpen,
+          totalWeight: cardsPerOpen,
+          weightedPriceSum: ev, // expectedCardValue = ev/cpo → EV = ev
+          floor: FLOOR,
+          ceiling: CEILING,
+        });
+
+        if (plan.action === "unchanged") {
+          leftAlone++;
+          // "unchanged" must NEVER carry a price — nothing may be written.
+          assert(
+            plan.newPrice === null,
+            `unchanged must not expose a price (ev=${ev}, price=${currentPrice})`,
+          );
+          continue;
+        }
+        if (plan.action === "skip") {
+          skipped++;
+          assert(
+            plan.newPrice === null,
+            `skip must not expose a price (ev=${ev}, price=${currentPrice})`,
+          );
+          continue;
+        }
+
+        // What actually reaches `packs.update`. Every invariant must hold.
+        written++;
+        assert(
+          plan.newPrice !== null && plan.newEdge !== null,
+          `reprice must carry price+edge (ev=${ev})`,
+        );
+        assert(
+          plan.newPrice! > currentPrice,
+          `written price ${plan.newPrice} must exceed ${currentPrice} (ev=${ev})`,
+        );
+        assert(
+          plan.newEdge! >= FLOOR - 1e-9,
+          `written edge ${plan.newEdge} below the ${FLOOR} floor (ev=${ev})`,
+        );
+        assert(
+          plan.newEdge! <= CEILING + 1e-9,
+          `written edge ${plan.newEdge} above the ${CEILING} ceiling (ev=${ev})`,
+        );
+        // The guards the write re-applies must agree with the planner, or the
+        // action would refuse a pack the preview promised.
+        assert(
+          isWithinFloorRaiseBand(plan.newEdge!, FLOOR, CEILING),
+          `planner output must satisfy the write's band guard (ev=${ev})`,
+        );
+        // CHEAPEST qualifying cent: one cent lower must NOT already clear the
+        // floor, or we would be overcharging by a cent.
+        const oneCentLower = Math.round(plan.newPrice! * 100) - 1;
+        if (oneCentLower > 0) {
+          const edgeLower = 1 - ev / (oneCentLower / 100);
+          assert(
+            edgeLower < FLOOR - 1e-9,
+            `a cheaper cent (${oneCentLower}) already clears the floor at ${edgeLower} (ev=${ev})`,
+          );
+        }
+      }
+    }
+  }
+  console.log(
+    `      floor-raise swept → ${written} raised / ${leftAlone} left alone / ${skipped} skip`,
+  );
+  assert(written > 0, "floor-raise sweep should produce writable raises");
+  assert(leftAlone > 0, "floor-raise sweep should leave at/above-floor packs alone");
+});
+
+// ── 13b. BAND planner prices what the POINT planner skipped ──────────
+check("floor-raise-only: the '1% 18 PLUS' shape is now PRICED, not skipped", () => {
+  // ideal = $1.2530 → ceil = $1.26 → 11.48%. The point-targeted planner skips
+  // this as an overshoot of the 10.99% aim; inside the owner's 10.99–11.50%
+  // BAND it is perfectly legal, so the raise planner must price it.
+  const pointPlan = planPackReprice({ ...poolForEv(1.1153, 1.25), roundingMode: "up" });
+  assert(pointPlan.action === "skip", `point planner should skip, got ${pointPlan.action}`);
+
+  const raisePlan = planFloorRaise({
+    currentPrice: 1.25,
+    cardsPerOpen: 1,
+    totalWeight: 1,
+    weightedPriceSum: 1.1153,
+    floor: DEFAULT_EDGE_FLOOR,
+    ceiling: DEFAULT_EDGE_CEILING,
+  });
+  assert(raisePlan.action === "reprice", `raise planner should price it, got ${raisePlan.action}`);
+  assert(raisePlan.newPrice === 1.26, `expected $1.26, got ${raisePlan.newPrice}`);
+  assert(
+    raisePlan.newEdge !== null && raisePlan.newEdge > 0.1147 && raisePlan.newEdge < 0.1149,
+    `expected ~11.48%, got ${raisePlan.newEdge}`,
+  );
+});
+
+// ── 13c. A pack already at/above the floor is never cut ──────────────
+check("floor-raise-only: an above-floor pack is left alone, never cheapened", () => {
+  // EV $8.901 at $10.00 → exactly 10.99%; at $12.00 → ~25.8% (well above).
+  for (const price of [10.0, 12.0, 50.0]) {
+    const plan = planFloorRaise({
+      currentPrice: price,
+      cardsPerOpen: 1,
+      totalWeight: 1,
+      weightedPriceSum: 8.901,
+      floor: DEFAULT_EDGE_FLOOR,
+      ceiling: DEFAULT_EDGE_CEILING,
+    });
+    assert(plan.action === "unchanged", `$${price} should be unchanged, got ${plan.action}`);
+    assert(plan.newPrice === null, `$${price} must not expose a price`);
+  }
+});
+
+// ── 14. FLOOR-RAISE band helper is strictly one-sided at the floor ───
+check("isWithinFloorRaiseBand: rejects under-floor, accepts floor..ceiling", () => {
+  const F = DEFAULT_EDGE_FLOOR;
+  const C = DEFAULT_EDGE_CEILING;
+  assert(isWithinFloorRaiseBand(F, F, C), "exactly the floor is allowed");
+  assert(isWithinFloorRaiseBand(C, F, C), "exactly the ceiling is allowed");
+  assert(isWithinFloorRaiseBand(0.111, F, C), "11.10% is allowed");
+  // The two-sided ±0.05pp accept tolerance would admit this; the raise-only
+  // band must NOT — the owner asked for 10.99% or higher.
+  assert(
+    !isWithinFloorRaiseBand(F - REPRICE_ACCEPT_TOLERANCE / 2, F, C),
+    "an edge inside accept but UNDER the floor must be rejected",
+  );
+  assert(!isWithinFloorRaiseBand(C + 0.0001, F, C), "above the ceiling is rejected");
+  assert(!isWithinFloorRaiseBand(NaN, F, C), "NaN is rejected");
 });
 
 // ── 13. WRITE-PATH WIRING: re-pin/reprice write is one-sided-up ─────

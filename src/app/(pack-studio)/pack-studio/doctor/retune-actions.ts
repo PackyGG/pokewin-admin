@@ -59,6 +59,7 @@ import {
   planPackReprice,
   clampRepriceTarget,
   isCurveRepriceTarget,
+  planFloorRaise,
   REPRICE_ACCEPT_TOLERANCE,
   REPRICE_HARD_TOLERANCE,
   type RepriceAction,
@@ -251,43 +252,32 @@ export async function planCustomRepin(
           : "Out of scope: pack has no price.",
       };
     }
-    const plan = planPackReprice({
-      currentPrice: p.price,
-      cardsPerOpen: p.cardsPerOpen,
-      totalWeight: p.totalWeight,
-      weightedPriceSum: p.weightedPriceSum,
-      targetEdge: packTarget,
-      // One-sided-up rounding — IDENTICAL to the `repricePackToTargetEdge` write
-      // this dry-run previews. Each re-pinned pack's edge lands ≥ its per-pack
-      // target (never below the 10.99% floor); a pack whose only round-up cent
-      // overshoots beyond ±ACCEPT is skipped, not overcharged. The preview and
-      // the write share this mode so the dry-run can't promise a write the action
-      // would round differently.
-      roundingMode: "up",
-    });
-    // RAISE-ONLY: a plan that would CUT the price to land on the floor is not a
-    // candidate here — the pack already earns at or above the floor and this
-    // action never cheapens a pack. Demoted to `skip` so it shows up in the
-    // preview's skipped count with the reason, instead of silently vanishing.
-    if (
-      target === "floor-raise-only" &&
-      plan.action === "reprice" &&
-      plan.newPrice !== null &&
-      plan.newPrice <= p.price
-    ) {
-      return {
-        packId: p.id,
-        name: p.name,
-        slug: p.slug,
-        priceBefore: p.price,
-        priceAfter: null,
-        edgeBefore: plan.currentEdge,
-        edgeAfter: null,
-        target: packTarget,
-        action: "skip" as RepriceAction,
-        reason: "Left alone: already at or above the floor — this action only raises prices.",
-      };
-    }
+    // The SAME planner the write runs for this mode — the band search for
+    // raise-only, the point-target round-up otherwise. Sharing the planner (not
+    // just the tolerances) is what stops the preview promising a pack the write
+    // would refuse, or skipping one the write would happily price.
+    const plan =
+      target === "floor-raise-only"
+        ? planFloorRaise({
+            currentPrice: p.price,
+            cardsPerOpen: p.cardsPerOpen,
+            totalWeight: p.totalWeight,
+            weightedPriceSum: p.weightedPriceSum,
+            floor: packTarget,
+            ceiling: edgeCurve.edgeCeiling,
+          })
+        : planPackReprice({
+            currentPrice: p.price,
+            cardsPerOpen: p.cardsPerOpen,
+            totalWeight: p.totalWeight,
+            weightedPriceSum: p.weightedPriceSum,
+            targetEdge: packTarget,
+            // One-sided-up rounding — IDENTICAL to the `repricePackToTargetEdge`
+            // write this dry-run previews. Each re-pinned pack's edge lands ≥ its
+            // per-pack target (never below the 10.99% floor); a pack whose only
+            // round-up cent overshoots beyond ±ACCEPT is skipped, not overcharged.
+            roundingMode: "up",
+          });
     return {
       packId: p.id,
       name: p.name,
