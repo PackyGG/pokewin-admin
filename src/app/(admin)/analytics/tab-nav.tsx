@@ -22,7 +22,7 @@ export type AnalyticsTab =
   | "overview"
   | "pure-pnl"
   | "double-down"
-  | "real-numbers"
+  | "crm"
   | "cost-breakdown"
   | "rewards"
   | "revenue"
@@ -48,7 +48,11 @@ const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
   // Absorbed from the /insights section (owner, 2026-07-23) — those routes
   // now redirect here. Each keeps its own sub-nav / period on namespaced
   // params (?rn=, ?cbPeriod=, ?rw=/?rwPeriod=) so no two bars fight over one.
-  { value: "real-numbers", label: "Real Numbers", icon: Sigma },
+  // Player CRM — lifecycle, value tiers and win-back targets. Came in with
+  // Real Numbers and OUTLIVED it: the Real Numbers view itself was deleted
+  // (owner, 2026-07-23) because Overview now answers the same question
+  // better, but this is a different tool and kept its place.
+  { value: "crm", label: "Player CRM", icon: Sigma },
   { value: "cost-breakdown", label: "Cost Breakdown", icon: TrendingDown },
   { value: "rewards", label: "Rewards", icon: Gift },
   { value: "revenue", label: "Revenue", icon: PieChart },

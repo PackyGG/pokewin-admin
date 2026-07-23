@@ -9,7 +9,7 @@ import { parsePeriod } from "./types";
 import { OverviewTab } from "./tab-overview";
 import { PurePnlTab } from "./tab-pure-pnl";
 import { DoubleDownTab } from "./tab-double-down";
-import { RealNumbersTab } from "./tab-real-numbers";
+import { CrmTab } from "../insights/real-numbers/crm-tab";
 import { CostBreakdownTab } from "./tab-cost-breakdown";
 import { RewardsInsightsTab } from "./tab-rewards";
 import { parseInsightsPeriod } from "@/lib/queries/insights-analytics/period";
@@ -31,7 +31,7 @@ function parseTab(value: string | undefined): AnalyticsTab {
   switch (value) {
     case "overview":
     case "pure-pnl":
-    case "real-numbers":
+    case "crm":
     case "cost-breakdown":
     case "rewards":
     case "double-down":
@@ -94,9 +94,8 @@ export default async function AnalyticsPage({
   const ddPageRaw = Number.parseInt(params.page ?? "1", 10);
   const ddPage = Number.isFinite(ddPageRaw) && ddPageRaw > 0 ? ddPageRaw : 1;
   // Absorbed-tab params, each namespaced so no two tab bars write the same
-  // key: `rn` = Real Numbers sub-view, `cbPeriod` = Cost Breakdown window,
-  // `rw` / `rwPeriod` = Rewards sub-view + window.
-  const rnSub = params.rn;
+  // key: `cbPeriod` = Cost Breakdown window, `rw` / `rwPeriod` = Rewards
+  // sub-view + window.
   const cbPeriod = parseInsightsPeriod(params.cbPeriod);
   const rwSub = params.rw;
   const rwPeriod = parseInsightsRewardsPeriod(params.rwPeriod);
@@ -151,7 +150,7 @@ export default async function AnalyticsPage({
           chart for the rest) so the swap into real content doesn't jump the
           layout. */}
       <Suspense
-        key={`${tab}-${period}-${topTab ?? ""}-${packsSort ?? ""}-${mapMetric}-${ddSearch}-${ddPage}-${rnSub ?? ""}-${cbPeriod}-${rwSub ?? ""}-${rwPeriod}`}
+        key={`${tab}-${period}-${topTab ?? ""}-${packsSort ?? ""}-${mapMetric}-${ddSearch}-${ddPage}-${cbPeriod}-${rwSub ?? ""}-${rwPeriod}`}
         fallback={fallbackForTab(tab)}
       >
         {tab === "overview" && <OverviewTab period={period} />}
@@ -159,7 +158,7 @@ export default async function AnalyticsPage({
         {tab === "double-down" && (
           <DoubleDownTab search={ddSearch} page={ddPage} />
         )}
-        {tab === "real-numbers" && <RealNumbersTab sub={rnSub} />}
+        {tab === "crm" && <CrmTab />}
         {tab === "cost-breakdown" && <CostBreakdownTab period={cbPeriod} />}
         {tab === "rewards" && (
           <RewardsInsightsTab period={rwPeriod} sub={rwSub} />
