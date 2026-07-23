@@ -199,10 +199,10 @@ function flattenCrmSnapshot(s: CrmSnapshot): Record<string, number> {
     out[`lc_${row.key}_deposits`] = row.deposits;
     out[`lc_${row.key}_ggr`] = row.ggr;
   }
-  for (const row of s.vipTiers) {
-    out[`vip_${row.key}_users`] = row.users;
-    out[`vip_${row.key}_deposits`] = row.deposits;
-    out[`vip_${row.key}_ggr`] = row.ggr;
+  for (const row of s.levelBands) {
+    out[`lvl_${row.key}_users`] = row.users;
+    out[`lvl_${row.key}_deposits`] = row.deposits;
+    out[`lvl_${row.key}_ggr`] = row.ggr;
   }
   return out;
 }
@@ -216,7 +216,7 @@ function crmMoneyKeys(s: CrmSnapshot): string[] {
     "avgDepositPerCustomer",
   ];
   for (const row of s.lifecycle) keys.push(`lc_${row.key}_deposits`, `lc_${row.key}_ggr`);
-  for (const row of s.vipTiers) keys.push(`vip_${row.key}_deposits`, `vip_${row.key}_ggr`);
+  for (const row of s.levelBands) keys.push(`lvl_${row.key}_deposits`, `lvl_${row.key}_ggr`);
   return keys;
 }
 

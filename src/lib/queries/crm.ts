@@ -21,7 +21,7 @@ import { bucketCrmSnapshot, type CrmAggregateRow, type CrmSnapshot } from "./crm
 // `@/lib/queries/crm` consumers (the /crm page) keep their import path.
 export type {
   LifecycleKey,
-  VipTierKey,
+  LevelBandKey,
   CrmSegmentRow,
   CrmPlayerRow,
   CrmSnapshot,
@@ -37,8 +37,10 @@ export { bucketCrmSnapshot } from "./crm-types";
  *
  *   • Lifecycle segments  — by recency (days since last money activity):
  *     Active ≤14d · At-Risk 15-30d · Dormant 31-90d · Churned >90d.
- *   • VIP value tiers      — by gross deposits in window
- *     (Diamond / Platinum / Gold / Silver / Bronze).
+ *   • Player level bands   — by the REAL `user_statistics.level` (XP-driven,
+ *     0–84 on prod). Replaced the invented "VIP value tiers" (Diamond /
+ *     Platinum / …), which were deposit brackets wearing product-sounding
+ *     names for a tier system that does not exist.
  *   • Dormant whales       — high-deposit players who've gone quiet
  *     (deposits ≥ $1k AND no activity in >30d) — the win-back alert list.
  *   • Top value players    — leaderboard by deposits with lifecycle + GGR.
@@ -188,6 +190,30 @@ async function computeCrmRowsPg(anchor: Date): Promise<RawRow[]> {
 }
 
 /**
+ * Real player level per user id, for the customers the aggregate actually
+ * returned.
+ *
+ * Read HERE and shared by BOTH read legs rather than derived inside each: the
+ * level lives in `user_statistics`, which ClickHouse does not mirror, so a CH
+ * leg computing its own would produce a snapshot the Postgres leg could never
+ * match. It is also current state, not a windowed metric — nothing about it
+ * belongs in the 365-day aggregate.
+ *
+ * Index-served: `user_statistics_user_id_unique` on `user_id`, probed with the
+ * ids already in hand (never a full-table read). A user with no stats row is
+ * simply absent and banks as level 0 upstream.
+ */
+async function fetchLevels(userIds: string[]): Promise<Map<string, number>> {
+  if (userIds.length === 0) return new Map();
+  const db = await getDb();
+  const rows = await db.user_statistics.findMany({
+    where: { user_id: { in: userIds } },
+    select: { user_id: true, level: true },
+  });
+  return new Map(rows.map((r) => [r.user_id, r.level]));
+}
+
+/**
  * CQRS serve-path for the `crm_snapshot` surface. Both legs return the same
  * per-customer aggregate rows, bucketed by the SAME pure `bucketCrmSnapshot`,
  * so the served snapshot is identical regardless of engine:
@@ -204,9 +230,14 @@ async function computeCrmRowsPg(anchor: Date): Promise<RawRow[]> {
 async function computeCrmSnapshot(blacklist: string[]): Promise<CrmSnapshot> {
   const anchor = new Date();
   return resolveAdminRead<CrmSnapshot>("crm_snapshot", {
-    pg: async () => bucketCrmSnapshot(await computeCrmRowsPg(anchor)),
-    ch: async () =>
-      bucketCrmSnapshot(await getCrmRowsFromClickHouse(anchor, blacklist)),
+    pg: async () => {
+      const rows = await computeCrmRowsPg(anchor);
+      return bucketCrmSnapshot(rows, await fetchLevels(rows.map((r) => r.user_id)));
+    },
+    ch: async () => {
+      const rows = await getCrmRowsFromClickHouse(anchor, blacklist);
+      return bucketCrmSnapshot(rows, await fetchLevels(rows.map((r) => r.user_id)));
+    },
     compare: (snapshot) => {
       void compareCrmSnapshot(anchor, blacklist, snapshot);
     },
