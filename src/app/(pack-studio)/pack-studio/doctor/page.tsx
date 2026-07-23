@@ -16,6 +16,7 @@ import {
   type PackRiskFilters,
   type PackRiskSortKey,
 } from "../_queries/doctor";
+import { readEdgeCurveConfig } from "@/app/(admin)/packs/_lib/risk-config";
 import { SnapshotButton } from "./snapshot-button";
 import { DoctorFilters } from "./doctor-filters";
 import { DoctorTable } from "./doctor-table";
@@ -127,29 +128,29 @@ async function DoctorGrid({
 }
 
 /**
- * Owner-only "Re-pin below-target packs" hero actions. Reads the below-target
- * packs from the SAME persisted snapshot the grid renders (no MAIN write), so
- * the candidate set always matches what the operator sees. Streamed behind its
- * own boundary so it never blocks the hero's first paint.
+ * Owner-only "raise price to the edge floor" hero action. Reads from the SAME
+ * persisted snapshot the grid renders (no MAIN write), so the candidate set
+ * always matches what the operator sees. Streamed behind its own boundary so it
+ * never blocks the hero's first paint.
  *
- * Two buttons over ONE candidate set — the read happens once and both flavours
- * share it. Below-target is a superset of below-FLOOR (a pack's curve target is
- * never under the floor), so the raise-only run sees every pack under 10.99%;
- * the ones already at or above it drop out of its plan as skipped.
+ * CANDIDATES ARE PACKS UNDER THE FLOOR, NOT "below target" (fixed 2026-07-23).
+ * The grid's `belowTarget` flag is judged against each pack's PER-PACK curve
+ * target — floor + a risk premium, up to 11.50% — so a pack sitting at 11.0%
+ * against an 11.1% curve target counts as below-target while being perfectly
+ * fine by this action's rule. Feeding those in made the button's count stick at
+ * the below-target number no matter how many packs the run had already lifted
+ * over 10.99%, and padded the plan with packs it could only report as
+ * "unchanged". The count now means what it says: packs earning under 10.99%.
  */
 async function RepinAction() {
-  const below = await getPackRiskRows({ belowTarget: true });
-  const candidateIds = below.map((r) => r.packId);
-  return (
-    <>
-      <RepinCustomButton candidateIds={candidateIds} />
-      <RepinCustomButton
-        candidateIds={candidateIds}
-        mode="floor-raise-only"
-        variant="outline"
-      />
-    </>
-  );
+  const [rows, edgeCurve] = await Promise.all([
+    getPackRiskRows(),
+    readEdgeCurveConfig(),
+  ]);
+  const candidateIds = rows
+    .filter((r) => r.edge < edgeCurve.edgeFloor)
+    .map((r) => r.packId);
+  return <RepinCustomButton candidateIds={candidateIds} />;
 }
 
 export default async function PackDoctorPage({
