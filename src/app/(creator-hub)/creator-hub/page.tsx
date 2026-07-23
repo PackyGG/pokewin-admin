@@ -82,7 +82,7 @@ export const maxDuration = 120;
  * Layout (matches the approved mockup):
  *   1. Slim hero ("Creator Hub" + window label).
  *   2. Quick-tools button row (My Creators / Leaderboards / ROI Calculator
- *      / Social Posts / Changelogs — placeholder links for v1).
+ *      / Changelogs).
  *   3. Overview KPI boxes (house-POV colors).
  *   4. 3-up row: Top Creators (ranked) + Wager chart + Deposits chart.
  *

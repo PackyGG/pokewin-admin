@@ -66,10 +66,15 @@ export function HubQuickTools() {
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {TOOLS.map((tool) => {
         const Icon = tool.icon;
-        const isPlaceholder = tool.href === "#";
-
-        const inner = (
-          <>
+        return (
+          <Link
+            key={tool.label}
+            href={tool.href}
+            className={cn(
+              "group flex items-center gap-3 rounded-2xl border bg-card p-3.5 outline-none transition-colors",
+              "hover:border-border/80 hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring",
+            )}
+          >
             <span
               className={cn(
                 "flex size-9 shrink-0 items-center justify-center rounded-xl",
@@ -83,37 +88,10 @@ export function HubQuickTools() {
                 {tool.label}
               </span>
               <span className="block truncate text-[11px] text-muted-foreground">
-                {isPlaceholder ? "Soon" : tool.sub}
+                {tool.sub}
               </span>
             </span>
             <ChevronRight className="size-4 shrink-0 text-muted-foreground/50 transition-transform motion-safe:group-hover:translate-x-0.5" />
-          </>
-        );
-
-        const baseClass = cn(
-          "group flex items-center gap-3 rounded-2xl border bg-card p-3.5 outline-none transition-colors",
-          "hover:border-border/80 hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring",
-        );
-
-        // Placeholder tools render as a non-interactive <div> — NO href and
-        // NO onClick (a function prop from this Server Component would crash
-        // the RSC render). Real tools render as a <Link>. This keeps the
-        // component server-safe (zero function props) while still blocking
-        // navigation on the v1 placeholders.
-        if (isPlaceholder) {
-          return (
-            <div
-              key={tool.label}
-              aria-disabled
-              className={cn(baseClass, "cursor-default")}
-            >
-              {inner}
-            </div>
-          );
-        }
-        return (
-          <Link key={tool.label} href={tool.href} className={baseClass}>
-            {inner}
           </Link>
         );
       })}

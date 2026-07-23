@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { cache, Suspense } from "react";
 import {
   Trophy,
   Coins,
@@ -57,6 +57,16 @@ const VIEW_SUBTITLES: Record<LiveLeaderboardView, string> = {
   all: "Every approved creator leaderboard — all lifecycle stages",
 };
 
+/**
+ * Per-request memo so the two streamed sections below (KPI strip + ranklist)
+ * share ONE `getLiveLeaderboards` execution instead of each paying for the
+ * username hydration + wager-map pass. Same args → one call per request.
+ */
+const loadLeaderboards = cache(
+  (rank: LiveLeaderboardRank, view: LiveLeaderboardView) =>
+    getLiveLeaderboards(rank, view),
+);
+
 export default async function CreatorHubLeaderboardsPage({
   searchParams,
 }: {
@@ -79,21 +89,48 @@ export default async function CreatorHubLeaderboardsPage({
         />
       </PageHero>
 
-      <Suspense key={`${view}:${rank}`} fallback={<RanklistSkeleton />}>
-        <LiveLeaderboardsSection rank={rank} view={view} />
+      {/* KPI strip — streams on its own; the filter/sort chips below stay
+          mounted in the shell so a filter switch never removes the control
+          the manager just clicked. */}
+      <Suspense key={`kpis:${view}:${rank}`} fallback={<KpiSkeleton />}>
+        <KpiSection rank={rank} view={view} />
       </Suspense>
+
+      <div className="space-y-3">
+        <SectionHeading icon={ListOrdered} title="Ranked boards" />
+        <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
+          <PeriodChips
+            items={VIEW_CHIPS}
+            current={view}
+            paramKey="view"
+            defaultValue="active"
+            ariaNoun="filter"
+          />
+          <PeriodChips
+            items={SORT_CHIPS}
+            current={rank}
+            paramKey="rank"
+            defaultValue="house_cost"
+            ariaNoun="sort"
+            className="xl:max-w-[720px]"
+          />
+        </div>
+        <Suspense key={`rows:${view}:${rank}`} fallback={<RanklistSkeleton />}>
+          <RanklistSection rank={rank} view={view} />
+        </Suspense>
+      </div>
     </div>
   );
 }
 
-async function LiveLeaderboardsSection({
+async function KpiSection({
   rank,
   view,
 }: {
   rank: LiveLeaderboardRank;
   view: LiveLeaderboardView;
 }) {
-  const data = await getLiveLeaderboards(rank, view);
+  const data = await loadLeaderboards(rank, view);
 
   const liveSub =
     view === "active"
@@ -105,7 +142,7 @@ async function LiveLeaderboardsSection({
         : `${formatNumber(data.rows.length)} in this view`;
 
   return (
-    <FadeIn className="space-y-6">
+    <FadeIn>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         <KpiTile
           label="Live Now"
@@ -143,49 +180,46 @@ async function LiveLeaderboardsSection({
           accent="rose"
         />
       </div>
-
-      <div className="space-y-3">
-        <SectionHeading icon={ListOrdered} title="Ranked boards" />
-        <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
-          <PeriodChips
-            items={VIEW_CHIPS}
-            current={view}
-            paramKey="view"
-            defaultValue="active"
-            ariaNoun="filter"
-          />
-          <PeriodChips
-            items={SORT_CHIPS}
-            current={rank}
-            paramKey="rank"
-            defaultValue="house_cost"
-            ariaNoun="sort"
-            className="xl:max-w-[720px]"
-          />
-        </div>
-        <LiveLeaderboardsRanklist
-          rows={data.rows}
-          view={view}
-          backendUnavailable={data.backendUnavailable}
-        />
-      </div>
     </FadeIn>
+  );
+}
+
+async function RanklistSection({
+  rank,
+  view,
+}: {
+  rank: LiveLeaderboardRank;
+  view: LiveLeaderboardView;
+}) {
+  const data = await loadLeaderboards(rank, view);
+
+  return (
+    <FadeIn>
+      <LiveLeaderboardsRanklist
+        rows={data.rows}
+        view={view}
+        backendUnavailable={data.backendUnavailable}
+      />
+    </FadeIn>
+  );
+}
+
+function KpiSkeleton() {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <Skeleton key={i} className="h-[88px] rounded-xl" />
+      ))}
+    </div>
   );
 }
 
 function RanklistSkeleton() {
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <Skeleton key={i} className="h-[88px] rounded-xl" />
-        ))}
-      </div>
-      <div className="space-y-2.5">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <Skeleton key={i} className="h-[80px] rounded-xl" />
-        ))}
-      </div>
+    <div className="space-y-2.5">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <Skeleton key={i} className="h-[80px] rounded-xl" />
+      ))}
     </div>
   );
 }

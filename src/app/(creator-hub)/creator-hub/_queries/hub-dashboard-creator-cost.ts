@@ -115,10 +115,3 @@ export async function getHubCreatorCostBreakdown(
   return cachedHubCreatorCost(period);
 }
 
-/** @deprecated Prefer {@link getHubCreatorCostBreakdown}. */
-export async function getHubCreatorCostUsd(
-  period: DashboardPeriod,
-): Promise<number> {
-  const breakdown = await getHubCreatorCostBreakdown(period);
-  return breakdown.total;
-}

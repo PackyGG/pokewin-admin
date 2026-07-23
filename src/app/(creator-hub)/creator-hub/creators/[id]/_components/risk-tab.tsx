@@ -11,7 +11,6 @@ import {
 
 import { SectionHeading, KpiTile } from "@/components/modern-panels";
 import { Card } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Avatar,
   AvatarFallback,
@@ -504,24 +503,4 @@ function formatCompactUsd(n: number): string {
 
 // ── Suspense fallback ────────────────────────────────────────────────
 
-export function RiskTabSkeleton() {
-  return (
-    <div className="space-y-5">
-      <div className="flex items-center gap-2.5">
-        <Skeleton className="size-7 rounded-lg" />
-        <Skeleton className="h-5 w-48" />
-      </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        {[0, 1, 2, 3, 4].map((i) => (
-          <Skeleton key={i} className="h-20 w-full rounded-xl" />
-        ))}
-      </div>
-      <Skeleton className="h-16 w-full rounded-lg" />
-      <Card size="sm" className="space-y-2 p-4">
-        {[0, 1, 2, 3, 4].map((i) => (
-          <Skeleton key={i} className="h-10 w-full" />
-        ))}
-      </Card>
-    </div>
-  );
-}
+

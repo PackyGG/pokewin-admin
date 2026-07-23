@@ -13,7 +13,8 @@ import {
 } from "./_components/overview-tab";
 import { CreatorMetadataTab } from "./_components/creator-metadata-tab";
 import { SessionsTab } from "./_components/sessions-tab";
-import { RiskTab, RiskTabSkeleton } from "./_components/risk-tab";
+import { RiskTab } from "./_components/risk-tab";
+import { CreatorTabSkeleton } from "./_components/creator-tab-skeleton";
 import { ForecastTab } from "./_components/forecast-tab";
 import { CohortsLtvTab } from "./_components/cohorts-ltv-tab";
 import { AltAccountsTab } from "./_components/alt-accounts-tab";
@@ -141,7 +142,7 @@ export default async function CreatorHubCreatorDetailPage({
           data is fetched. */}
       <Suspense
         key={`${tab}:${tab === "sessions" ? sessionsPage : ""}`}
-        fallback={<RiskTabSkeleton />}
+        fallback={<CreatorTabSkeleton />}
       >
         {tab === "overview" && (
           <OverviewTab

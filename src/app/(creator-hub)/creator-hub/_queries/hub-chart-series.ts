@@ -6,7 +6,6 @@ import {
   HUB_LIFETIME_LOOKBACK_DAYS,
 } from "./hub-period-sql";
 import {
-  type HubChartPoint,
   type HubDepositChartRow,
   type HubSignupsFtdsChartRow,
   type HubWagerChartRow,
@@ -19,11 +18,6 @@ export function chartDateForBucket(d: Date, period: DashboardPeriod): string {
     return d.toISOString().slice(11, 16);
   }
   return d.toISOString().slice(0, 10);
-}
-
-function bucketLabel(d: Date, hourly: boolean): string {
-  if (hourly) return d.toISOString().slice(11, 16);
-  return d.toISOString().slice(5, 10);
 }
 
 function bucketCount(period: DashboardPeriod): number {
@@ -47,39 +41,6 @@ function bucketCount(period: DashboardPeriod): number {
     case "24h":
       return 24;
   }
-}
-
-/**
- * Fill missing buckets with zero so recharts draws a continuous window
- * (hourly for 24h, daily for longer chips) instead of sparse dots.
- */
-export function padHubChartSeries(
-  points: HubChartPoint[],
-  period: DashboardPeriod,
-): HubChartPoint[] {
-  const hourly = hubBucketByHour(period);
-  const count = bucketCount(period);
-  const byLabel = new Map(points.map((p) => [p.label, p.value]));
-
-  const now = new Date();
-  const labels: string[] = [];
-
-  for (let i = count - 1; i >= 0; i--) {
-    const d = new Date(now);
-    if (hourly) {
-      d.setUTCMinutes(0, 0, 0);
-      d.setUTCHours(d.getUTCHours() - i);
-    } else {
-      d.setUTCHours(0, 0, 0, 0);
-      d.setUTCDate(d.getUTCDate() - i);
-    }
-    labels.push(bucketLabel(d, hourly));
-  }
-
-  return labels.map((label) => ({
-    label,
-    value: byLabel.get(label) ?? 0,
-  }));
 }
 
 export function padHubWagerChartSeries(
@@ -167,11 +128,4 @@ export function padHubSignupsFtdsChartSeries(
   }
 
   return out;
-}
-
-/** Human title suffix for hub chart cards (matches period chip). */
-export function hubChartTitleSuffix(period: DashboardPeriod): string {
-  if (hubBucketByHour(period)) return `${period} (hourly)`;
-  if (period === "all") return "365d";
-  return period;
 }

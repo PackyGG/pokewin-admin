@@ -127,7 +127,21 @@ export default async function CreatorHubProfitabilityPage({
 }
 
 async function ActiveProfitabilitySection() {
-  const { rows, totals, rosterUnavailable } = await getCreatorProfitability();
+  // Same hard error isolation as `PastDealsSection` below (digest 3304963582):
+  // `getCreatorProfitability` degrades its own legs, but an unexpected throw
+  // here — a Prisma connection drop, a transient rejection — would escape to
+  // (creator-hub)/error.tsx and take the hero + tab strip with it. This is the
+  // DEFAULT tab, so it is the likeliest path to hit; degrade to the roster
+  // error card and keep the shell painted.
+  let data: Awaited<ReturnType<typeof getCreatorProfitability>>;
+  try {
+    data = await getCreatorProfitability();
+  } catch (err) {
+    console.error("[creator-hub.profitability] section threw — roster error:", err);
+    return <RosterError />;
+  }
+
+  const { rows, totals, rosterUnavailable } = data;
 
   if (rosterUnavailable) {
     return <RosterError />;

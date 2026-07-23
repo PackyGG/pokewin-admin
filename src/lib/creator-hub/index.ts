@@ -4,14 +4,14 @@ import "server-only";
  * Creator-Hub shared server helpers — public surface.
  *
  * Exposes the per-creator activity-series helpers (used by the creator detail
- * Overview tab) plus the shared handle/normalization + cache config utilities
- * used across the Hub.
+ * Overview tab) plus the social-handle normalizer used by All Sessions and the
+ * admin socials query.
  *
  * NOTE: the Kick + Twitter/X RapidAPI data layer (`./kick`, `./twitter`), the
  * per-creator Kick/Twitter tabs, the "Creator Check" recon tool, and the
- * integration API-key Settings page were removed. `cache.ts` is kept because
- * `resolveLinkedHandle` (+ friends) are still consumed by All Sessions and the
- * admin socials queries.
+ * integration API-key Settings page were removed. Their cache/TTL/throttle +
+ * brand-keyword helpers went with them (`cache.ts` deleted); only the handle
+ * normalizer survives, in `handles.ts`.
  *
  * Everything is SERVER-ONLY (this module imports `server-only`); call from
  * Server Components / Server Actions, never from a client component.
@@ -30,18 +30,4 @@ export type {
   CreatorActivitySeries,
 } from "./creator-activity-series";
 
-export {
-  // Shared helpers / config
-  normalizeHandle,
-  resolveLinkedHandle,
-  isNoKeyConfigured,
-  matchBrandKeywords,
-  mentionsBrand,
-  getKickApiKey,
-  getTwitterApiKey,
-  INTEGRATION_SETTINGS_KEYS,
-  RAPIDAPI_HOSTS,
-  NO_KEY_CONFIGURED,
-  BRAND_KEYWORDS,
-} from "./cache";
-export type { NoKeyConfigured } from "./cache";
+export { normalizeHandle, resolveLinkedHandle } from "./handles";

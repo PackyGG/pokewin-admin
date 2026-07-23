@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { cache, Suspense } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -44,6 +44,52 @@ const PLATFORM_LABEL: Record<string, string> = {
 
 const LIMIT = 50;
 
+type SocialsPage = {
+  items: Awaited<ReturnType<typeof creatorsApi.listSocials>>["items"];
+  total: number;
+  loadError: { title: string; detail: string } | null;
+};
+
+/**
+ * One guarded fetch per (status, offset), memoized for the request so the KPI
+ * tile, the "showing N of M" counter and the list body can each stream in
+ * their own boundary without triple-fetching. A backend failure resolves to a
+ * describable error instead of throwing — a missing `creator_socials` table is
+ * an un-migrated environment, not an outage.
+ */
+const loadSocials = cache(
+  async (
+    status: CreatorSocialStatus,
+    offset: number,
+  ): Promise<SocialsPage> => {
+    try {
+      const result = await creatorsApi.listSocials({
+        status,
+        limit: LIMIT,
+        offset,
+      });
+      return { items: result.items, total: result.total, loadError: null };
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      const isMissingTable =
+        /relation .* does not exist|creator_socials/i.test(detail);
+      console.error("[creator-hub/socials-review] listSocials failed:", err);
+      return {
+        items: [],
+        total: 0,
+        loadError: {
+          title: isMissingTable
+            ? "Creator Socials feature not yet enabled"
+            : "Could not load social submissions",
+          detail: isMissingTable
+            ? "The creator_socials migration has not been applied on this environment yet. Run the migration to enable this page."
+            : detail,
+        },
+      };
+    }
+  },
+);
+
 /**
  * Creator Hub → Socials Review.
  *
@@ -56,9 +102,11 @@ const LIMIT = 50;
  * toggle is on) — NOT bare `requireRole`. The Hub layout already guards the
  * segment; this page adds the explicit gate per house convention.
  *
- * LAZY: the data-bearing queue is wrapped in a `<Suspense key={status-offset}>`
- * boundary so the hero paints immediately and each status tab (and pagination
- * page) loads on demand.
+ * SHELL-FIRST / LAZY: the hero, the card and the status tabs render
+ * immediately; only the data-bearing leaves (KPI, count, list) stream behind
+ * `<Suspense key={status-offset}>` boundaries. So a status switch or page turn
+ * fetches just that one view and never removes the tab control the reviewer
+ * just clicked. All three leaves share one memoized `loadSocials` fetch.
  */
 export default async function SocialsReviewPage({
   searchParams,
@@ -85,14 +133,66 @@ export default async function SocialsReviewPage({
         />
       </PageHero>
 
-      <Suspense key={`${status}-${offset}`} fallback={<QueueSkeleton />}>
-        <QueueSection status={status} offset={offset} />
-      </Suspense>
+      {status === "pending" && (
+        <Suspense key={`kpi-${offset}`} fallback={<KpiSkeleton />}>
+          <PendingKpi offset={offset} />
+        </Suspense>
+      )}
+
+      {/* The card chrome + status tabs live in the SHELL, so switching status
+          never removes the control the reviewer just clicked — only the body
+          below swaps to a skeleton. */}
+      <div className="rounded-2xl border bg-card p-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <SocialsQueueTabs current={status} />
+          <Suspense
+            key={`count-${status}-${offset}`}
+            fallback={<Skeleton className="h-4 w-28 rounded" />}
+          >
+            <ShowingCount status={status} offset={offset} />
+          </Suspense>
+        </div>
+
+        <Suspense key={`${status}-${offset}`} fallback={<QueueSkeleton />}>
+          <QueueSection status={status} offset={offset} />
+        </Suspense>
+      </div>
     </div>
   );
 }
 
-// ─── Data section (streamed via Suspense) ───────────────────────────
+// ─── Streamed leaves (all share the memoized `loadSocials` fetch) ─────
+
+async function PendingKpi({ offset }: { offset: number }) {
+  const { total, loadError } = await loadSocials("pending", offset);
+  if (loadError) return null;
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:max-w-xs">
+      <KpiTile
+        label="Pending in queue"
+        value={String(total)}
+        sub="awaiting review"
+        icon={Inbox}
+        accent="pink"
+      />
+    </div>
+  );
+}
+
+async function ShowingCount({
+  status,
+  offset,
+}: {
+  status: CreatorSocialStatus;
+  offset: number;
+}) {
+  const { items, total } = await loadSocials(status, offset);
+  return (
+    <span className="text-xs text-muted-foreground">
+      Showing {items.length} of {total}
+    </span>
+  );
+}
 
 async function QueueSection({
   status,
@@ -101,165 +201,122 @@ async function QueueSection({
   status: CreatorSocialStatus;
   offset: number;
 }) {
-  let items: Awaited<ReturnType<typeof creatorsApi.listSocials>>["items"] =
-    [];
-  let total = 0;
-  let loadError: { title: string; detail: string } | null = null;
-
-  try {
-    const result = await creatorsApi.listSocials({
-      status,
-      limit: LIMIT,
-      offset,
-    });
-    items = result.items;
-    total = result.total;
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    const isMissingTable =
-      /relation .* does not exist|creator_socials/i.test(detail);
-    loadError = {
-      title: isMissingTable
-        ? "Creator Socials feature not yet enabled"
-        : "Could not load social submissions",
-      detail: isMissingTable
-        ? "The creator_socials migration has not been applied on this environment yet. Run the migration to enable this page."
-        : detail,
-    };
-    console.error("[creator-hub/socials-review] listSocials failed:", err);
-  }
+  const { items, total, loadError } = await loadSocials(status, offset);
 
   return (
     <FadeIn>
-      {status === "pending" && !loadError && (
-        <div className="mb-4 grid grid-cols-1 gap-3 sm:max-w-xs">
-          <KpiTile
-            label="Pending in queue"
-            value={String(total)}
-            sub="awaiting review"
-            icon={Inbox}
-            accent="pink"
-          />
-        </div>
-      )}
-
-      <div className="rounded-2xl border bg-card p-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <SocialsQueueTabs current={status} />
-          <span className="text-xs text-muted-foreground">
-            Showing {items.length} of {total}
-          </span>
-        </div>
-
-        {loadError ? (
-          <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-4">
-            <div className="text-sm font-semibold text-amber-700 dark:text-amber-300">
-              {loadError.title}
-            </div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {loadError.detail}
-            </div>
+      {loadError ? (
+        <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-4">
+          <div className="text-sm font-semibold text-amber-700 dark:text-amber-300">
+            {loadError.title}
           </div>
-        ) : items.length === 0 ? (
-          <div className="mt-6 flex flex-col items-center gap-2 rounded-xl border border-dashed py-10 text-muted-foreground">
-            <Inbox className="size-6" />
-            <span className="text-sm">No submissions in this status.</span>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {loadError.detail}
           </div>
-        ) : (
-          <ul className="mt-4 divide-y">
-            {items.map((row) => {
-              const submittedAt = new Date(row.submitted_at);
-              const reviewedAt = row.reviewed_at
-                ? new Date(row.reviewed_at)
-                : null;
-              return (
-                <li
-                  key={row.id}
-                  className="flex flex-col gap-3 py-4 md:flex-row md:items-center md:justify-between"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="size-9 shrink-0 overflow-hidden rounded-full bg-muted">
-                      {row.creator_image ? (
-                        <Image
-                          src={row.creator_image}
-                          alt={row.creator_username ?? row.user_id}
-                          width={36}
-                          height={36}
-                          className="size-full object-cover"
-                          unoptimized
-                        />
+        </div>
+      ) : items.length === 0 ? (
+        <div className="mt-6 flex flex-col items-center gap-2 rounded-xl border border-dashed py-10 text-muted-foreground">
+          <Inbox className="size-6" />
+          <span className="text-sm">No submissions in this status.</span>
+        </div>
+      ) : (
+        <ul className="mt-4 divide-y">
+          {items.map((row) => {
+            const submittedAt = new Date(row.submitted_at);
+            const reviewedAt = row.reviewed_at
+              ? new Date(row.reviewed_at)
+              : null;
+            return (
+              <li
+                key={row.id}
+                className="flex flex-col gap-3 py-4 md:flex-row md:items-center md:justify-between"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="size-9 shrink-0 overflow-hidden rounded-full bg-muted">
+                    {row.creator_image ? (
+                      <Image
+                        src={row.creator_image}
+                        alt={row.creator_username ?? row.user_id}
+                        width={36}
+                        height={36}
+                        className="size-full object-cover"
+                        unoptimized
+                      />
+                    ) : null}
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/creator-hub/creators/${row.user_id}`}
+                        className="text-sm font-semibold hover:underline"
+                      >
+                        {row.creator_username ?? row.user_id}
+                      </Link>
+                      <Badge variant="outline" className="text-[10px]">
+                        {PLATFORM_LABEL[row.platform] ?? row.platform}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] ${STATUS_TONES[row.status]}`}
+                      >
+                        {row.status}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      <span className="font-medium">{row.username}</span>
+                      {row.url ? (
+                        <a
+                          href={row.url}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="truncate hover:underline"
+                        >
+                          {row.url}
+                        </a>
                       ) : null}
                     </div>
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2">
-                        <Link
-                          href={`/creator-hub/creators/${row.user_id}`}
-                          className="text-sm font-semibold hover:underline"
-                        >
-                          {row.creator_username ?? row.user_id}
-                        </Link>
-                        <Badge variant="outline" className="text-[10px]">
-                          {PLATFORM_LABEL[row.platform] ?? row.platform}
-                        </Badge>
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] ${STATUS_TONES[row.status]}`}
-                        >
-                          {row.status}
-                        </Badge>
-                      </div>
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                        <span className="font-medium">{row.username}</span>
-                        {row.url ? (
-                          <a
-                            href={row.url}
-                            target="_blank"
-                            rel="noreferrer noopener"
-                            className="truncate hover:underline"
-                          >
-                            {row.url}
-                          </a>
-                        ) : null}
-                      </div>
-                      <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-                        <span>Submitted {submittedAt.toLocaleString()}</span>
-                        {reviewedAt ? (
-                          <span>· Reviewed {reviewedAt.toLocaleString()}</span>
-                        ) : null}
-                        {row.rejection_reason ? (
-                          <span className="text-red-500">
-                            · Reason: {row.rejection_reason}
-                          </span>
-                        ) : null}
-                      </div>
+                    <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                      <span>Submitted {submittedAt.toLocaleString()}</span>
+                      {reviewedAt ? (
+                        <span>· Reviewed {reviewedAt.toLocaleString()}</span>
+                      ) : null}
+                      {row.rejection_reason ? (
+                        <span className="text-red-500">
+                          · Reason: {row.rejection_reason}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
+                </div>
 
-                  {row.status === "pending" ? (
-                    <SocialReviewActions socialId={row.id} />
-                  ) : (
-                    <span className="text-xs italic text-muted-foreground">
-                      Already reviewed
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
+                {row.status === "pending" ? (
+                  <SocialReviewActions socialId={row.id} />
+                ) : (
+                  <span className="text-xs italic text-muted-foreground">
+                    Already reviewed
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
 
-        {!loadError && total > 0 && (
-          <PaginationFooter
-            status={status}
-            offset={offset}
-            limit={LIMIT}
-            total={total}
-            shown={items.length}
-          />
-        )}
-      </div>
+      {!loadError && total > 0 && (
+      <PaginationFooter
+        status={status}
+        offset={offset}
+        limit={LIMIT}
+        total={total}
+        shown={items.length}
+      />
+      )}
     </FadeIn>
   );
+}
+
+function KpiSkeleton() {
+  return <Skeleton className="h-[88px] max-w-xs rounded-xl" />;
 }
 
 function PaginationFooter({
@@ -328,40 +385,31 @@ function PaginationFooter({
 
 // ─── In-boundary skeleton (tab / page switch) ───────────────────────
 
+/**
+ * In-card body skeleton — the card chrome + tabs are rendered by the shell, so
+ * this only stands in for the submission rows while a status/page switch loads.
+ */
 function QueueSkeleton() {
   return (
-    <div className="space-y-4">
-      <Skeleton className="h-[88px] max-w-xs rounded-xl" />
-      <div className="rounded-2xl border bg-card p-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="inline-flex gap-1 rounded-lg border p-1">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className="h-7 w-20 rounded-md" />
-            ))}
+    <ul className="mt-4 divide-y">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <li
+          key={i}
+          className="flex flex-col gap-3 py-4 md:flex-row md:items-center md:justify-between"
+        >
+          <div className="flex items-start gap-3">
+            <Skeleton className="size-9 shrink-0 rounded-full" />
+            <div className="space-y-1.5">
+              <Skeleton className="h-4 w-32 rounded" />
+              <Skeleton className="h-3 w-48 rounded" />
+            </div>
           </div>
-          <Skeleton className="h-3 w-28 rounded" />
-        </div>
-        <ul className="mt-4 divide-y">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <li
-              key={i}
-              className="flex flex-col gap-3 py-4 md:flex-row md:items-center md:justify-between"
-            >
-              <div className="flex items-start gap-3">
-                <Skeleton className="size-9 shrink-0 rounded-full" />
-                <div className="space-y-1.5">
-                  <Skeleton className="h-4 w-32 rounded" />
-                  <Skeleton className="h-3 w-48 rounded" />
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <Skeleton className="h-8 w-20 rounded-md" />
-                <Skeleton className="h-8 w-20 rounded-md" />
-              </div>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
+          <div className="flex gap-2">
+            <Skeleton className="h-8 w-20 rounded-md" />
+            <Skeleton className="h-8 w-20 rounded-md" />
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }
