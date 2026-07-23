@@ -119,19 +119,28 @@ export function botWebhookConfigStatus(): {
  * well-formed event of an unknown type exercises every part of the path that
  * can realistically be misconfigured — reachability, the shared secret, the
  * signing scheme — and stops short of a DM.
+ *
+ * ONE attempt, short timeout. A real delivery retries for ~36s because getting
+ * the DM out eventually is what matters; a diagnostic that makes someone stare
+ * at a spinner for half a minute before saying "unreachable" is just a worse
+ * way of saying it. An operator pressing this wants the answer now, and can
+ * press it again.
  */
 export async function testBotWebhook(): Promise<WebhookResult> {
-  return sendClaimDecision({
-    // Unique per attempt so a retest is never swallowed as a duplicate.
-    id: `evt_conntest_${Date.now()}`,
-    // Deliberately not a real event type.
-    type: "webhook.connection_test" as ClaimDecisionEvent["type"],
-    data: {
-      claimId: "connection-test",
-      // Shape-valid so it clears payload validation and reaches the type check.
-      discordUserId: "100000000000000000",
+  return sendClaimDecision(
+    {
+      // Unique per attempt so a retest is never swallowed as a duplicate.
+      id: `evt_conntest_${Date.now()}`,
+      // Deliberately not a real event type.
+      type: "webhook.connection_test" as ClaimDecisionEvent["type"],
+      data: {
+        claimId: "connection-test",
+        // Shape-valid so it clears payload validation and reaches the type check.
+        discordUserId: "100000000000000000",
+      },
     },
-  });
+    { attempts: 1, timeoutMs: 6_000 },
+  );
 }
 
 /**
@@ -157,6 +166,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  */
 export async function sendClaimDecision(
   event: ClaimDecisionEvent,
+  opts?: {
+    /** Total attempts. 1 = no retries. Defaults to the full retry budget. */
+    attempts?: number;
+    /** Per-attempt timeout in ms. */
+    timeoutMs?: number;
+  },
 ): Promise<WebhookResult> {
   const { url, secret } = resolveWebhookConfig();
   if (!url || !secret) {
@@ -172,7 +187,12 @@ export async function sendClaimDecision(
     retriable: false,
   };
 
-  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+  const maxAttempts = Math.max(
+    1,
+    Math.min(opts?.attempts ?? RETRY_DELAYS_MS.length + 1, RETRY_DELAYS_MS.length + 1),
+  );
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (attempt > 0) await sleep(RETRY_DELAYS_MS[attempt - 1]!);
 
     // A FRESH timestamp per attempt: the bot rejects anything more than 300s
@@ -190,7 +210,7 @@ export async function sendClaimDecision(
           "X-Packy-Signature": signWebhook(secret, timestamp, raw),
         },
         body: raw,
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(opts?.timeoutMs ?? 10_000),
       });
 
       if (res.ok) {
