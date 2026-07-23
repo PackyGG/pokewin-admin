@@ -403,14 +403,16 @@ export function AdminHeader({
               `data-popup-open` flips the chevron while the menu is open. */}
           <DropdownMenuTrigger
             className={cn(
-              // A clean, tinted pill — content-sized (no min-width) and
-              // rounded-full so its shape matches the perfectly circular
-              // avatar + role badge nested inside it (a rounded-lg box
-              // around a circular avatar was the "rounding is off"
-              // mismatch). min-h-8 pixel-matches the rain chip beside it.
-              // Symmetric p-1 keeps the phone avatar-only target tidy; sm+
-              // opens the right side (pr-3) so the chevron has room.
-              "group flex min-h-8 items-center gap-2 rounded-full border border-border/60 bg-muted/40 p-1 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring sm:pr-3",
+              // A clean, tinted container — content-sized (no min-width).
+              // `rounded-lg`, not the pill it used to be (owner, 2026-07-23:
+              // less rounding): a full pill around a two-line identity stack
+              // bows out much further than the content needs, and reads as a
+              // stray capsule in a header of squared-off controls. The avatar
+              // inside stays circular; the box no longer tries to echo it.
+              // min-h-8 pixel-matches the rain chip beside it. Symmetric p-1
+              // keeps the phone avatar-only target tidy; sm+ opens the right
+              // side (pr-3) so the chevron has room.
+              "group flex min-h-8 items-center gap-2 rounded-lg border border-border/60 bg-muted/40 p-1 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring sm:pr-3",
             )}
             aria-label="Open profile menu"
             title={label}
