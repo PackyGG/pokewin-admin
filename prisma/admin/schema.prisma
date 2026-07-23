@@ -2334,8 +2334,13 @@ model chat_raffle_prizes {
 /// This is what makes a past round auditable. The live query would re-score
 /// differently the moment a moderator soft-deletes an old message, so the
 /// numbers the draw actually ran on are persisted rather than recomputed.
+///
 /// `ticket_start` is the entry's first ticket number in the cumulative range
-/// (entries ordered by position) so a third party can replay the draw.
+/// (entries ordered by position) as the pool stood for the FIRST pick. When
+/// repeat winners are disallowed each winner is then removed, so later picks
+/// run against a smaller pool — a replay still reproduces them exactly (the
+/// removal order is the recorded winner order), but by re-deriving the ranges
+/// rather than reading `ticket_start` directly. See src/lib/chat-raffle/draw.ts.
 model chat_raffle_entries {
   id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   round_id          String             @db.Uuid

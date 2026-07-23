@@ -214,9 +214,12 @@ async function RoundDetail({ id }: { id: string }) {
               </span>
               {prize.winnerUserId &&
                 (prize.paidAt ? (
+                  // Neutral, not emerald — see the note on the list page: a
+                  // prize is a house cost, so a green chip next to a rose
+                  // amount would read backwards.
                   <Badge
                     variant="outline"
-                    className="h-5 shrink-0 border-emerald-500/30 bg-emerald-500/15 px-1.5 text-[10px] text-emerald-600 uppercase dark:text-emerald-400"
+                    className="h-5 shrink-0 px-1.5 text-[10px] text-muted-foreground uppercase"
                   >
                     Paid
                   </Badge>

@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { ROLE_COLORS } from "@/lib/constants";
 import { formatCurrency, formatDateTime, formatNumber, formatRelative } from "@/lib/utils/format";
 import {
+  CHAT_RAFFLE_MAX_ENTRIES,
   CHAT_RAFFLE_PHASE_COLOR,
   CHAT_RAFFLE_PHASE_LABEL,
   DEFAULT_CHAT_RAFFLE_SCORING,
@@ -505,9 +506,13 @@ function WinnersPanel({ round }: { round: ChatRaffleRoundView }) {
 
             {prize.winnerUserId &&
               (prize.paidAt ? (
+                // Neutral, NOT emerald: house-POV colour means emerald = the
+                // house gained. A prize leaving for a player is a cost, and
+                // the amount beside this badge is already rose. A green
+                // "Paid" chip would contradict it.
                 <Badge
                   variant="outline"
-                  className="h-5 shrink-0 border-emerald-500/30 bg-emerald-500/15 px-1.5 text-[10px] text-emerald-600 uppercase dark:text-emerald-400"
+                  className="h-5 shrink-0 px-1.5 text-[10px] text-muted-foreground uppercase"
                 >
                   Paid
                 </Badge>
@@ -645,9 +650,11 @@ function TruncatedNotice() {
     >
       <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0 text-amber-500" />
       <p className="text-xs text-amber-700 dark:text-amber-300">
-        More users qualified than this round can snapshot safely, so the list
-        below is clipped and the draw is blocked. Raise the minimum points to
-        enter, then reload.
+        More than {formatNumber(CHAT_RAFFLE_MAX_ENTRIES)} users qualified, so
+        the list below is clipped and the draw is blocked — drawing from a
+        clipped pool would silently give the users past the cut zero chance.
+        Raise the minimum points to enter (or shorten the window), then
+        reload.
       </p>
     </div>
   );

@@ -46,6 +46,20 @@ import { adjustBalance } from "@/app/(admin)/users/[id]/actions";
 
 const MS_PER_DAY = 86_400_000;
 
+/**
+ * Revalidate BOTH raffle surfaces after a mutation.
+ *
+ * `revalidatePath("/chat-raffle")` alone does not cover `/chat-raffle/[id]`,
+ * so paying a prize from a round's detail page used to leave that page
+ * showing a stale "Pay" button after a successful payout. The second call
+ * passes the route PATTERN + `"page"` so every round-detail instance is
+ * invalidated, not just one id.
+ */
+function revalidateChatRaffle(): void {
+  revalidatePath("/chat-raffle");
+  revalidatePath("/chat-raffle/[id]", "page");
+}
+
 type ActionResult<T = undefined> =
   | ({ success: true } & (T extends undefined ? object : { data: T }))
   | { success: false; error: string };
@@ -152,7 +166,7 @@ export async function createChatRaffleRound(input: {
     },
   });
 
-  revalidatePath("/chat-raffle");
+  revalidateChatRaffle();
   return { success: true, data: { roundId: round.id } };
 }
 
@@ -218,7 +232,7 @@ export async function updateChatRaffleRound(input: {
     metadata: { roundId: round.id, name: data.name },
   });
 
-  revalidatePath("/chat-raffle");
+  revalidateChatRaffle();
   return { success: true };
 }
 
@@ -246,7 +260,7 @@ export async function cancelChatRaffleRound(input: {
     metadata: { roundId: round.id, name: round.name },
   });
 
-  revalidatePath("/chat-raffle");
+  revalidateChatRaffle();
   return { success: true };
 }
 
@@ -313,7 +327,7 @@ export async function addChatRaffleAdjustment(input: {
     },
   });
 
-  revalidatePath("/chat-raffle");
+  revalidateChatRaffle();
   return { success: true };
 }
 
@@ -368,7 +382,7 @@ export async function drawChatRaffleRound(input: {
     return {
       success: false,
       error:
-        "Too many entrants to snapshot safely. Tighten the scoring config (raise the entry floor) and try again.",
+        "Too many entrants to snapshot safely — drawing now would give everyone past the cut a silent zero chance. Raise the minimum points to enter, then draw.",
     };
   }
   if (entrants === 0 || totalTickets === 0) {
@@ -410,14 +424,35 @@ export async function drawChatRaffleRound(input: {
 
   const prizesByPosition = new Map(round.prizes.map((p) => [p.position, p]));
 
-  await adminDb.$transaction([
-    adminDb.chat_raffle_entries.deleteMany({ where: { round_id: round.id } }),
-    adminDb.chat_raffle_entries.createMany({ data: entryRows }),
-    ...winners.flatMap((w) => {
-      const prize = prizesByPosition.get(w.position);
-      if (!prize) return [];
-      return [
-        adminDb.chat_raffle_prizes.update({
+  // CLAIM the round inside the transaction, before writing anything else.
+  // Two operators hitting Draw at the same moment would otherwise both pass
+  // the phase check above, both generate their own seed, and both write a
+  // DIFFERENT set of winners — last writer wins, with two "drawn" audit
+  // events to explain it afterwards. The conditional status flip lets exactly
+  // one through; the loser rolls back having written nothing.
+  const CONCURRENT_DRAW = "chat-raffle:concurrent-draw";
+  try {
+    await adminDb.$transaction(async (tx) => {
+      const claim = await tx.chat_raffle_rounds.updateMany({
+        where: { id: round.id, status: "open" },
+        data: {
+          status: "drawn",
+          draw_seed: seed,
+          drawn_at: new Date(),
+          drawn_by: session.userId,
+          entrants_at_draw: entrants,
+          tickets_at_draw: totalTickets,
+        },
+      });
+      if (claim.count !== 1) throw new Error(CONCURRENT_DRAW);
+
+      await tx.chat_raffle_entries.deleteMany({ where: { round_id: round.id } });
+      await tx.chat_raffle_entries.createMany({ data: entryRows });
+
+      for (const w of winners) {
+        const prize = prizesByPosition.get(w.position);
+        if (!prize) continue;
+        await tx.chat_raffle_prizes.update({
           where: { id: prize.id },
           data: {
             winner_user_id: w.userId,
@@ -425,21 +460,19 @@ export async function drawChatRaffleRound(input: {
             winner_tickets: w.tickets,
             winning_ticket: w.winningTicket,
           },
-        }),
-      ];
-    }),
-    adminDb.chat_raffle_rounds.update({
-      where: { id: round.id },
-      data: {
-        status: "drawn",
-        draw_seed: seed,
-        drawn_at: new Date(),
-        drawn_by: session.userId,
-        entrants_at_draw: entrants,
-        tickets_at_draw: totalTickets,
-      },
-    }),
-  ]);
+        });
+      }
+    });
+  } catch (err) {
+    if (err instanceof Error && err.message === CONCURRENT_DRAW) {
+      return {
+        success: false,
+        error: "This round was just drawn by someone else. Reload to see the winners.",
+      };
+    }
+    console.error("[drawChatRaffleRound] Transaction failed:", err);
+    return { success: false, error: "Couldn't draw the round — please try again." };
+  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -457,7 +490,7 @@ export async function drawChatRaffleRound(input: {
     },
   });
 
-  revalidatePath("/chat-raffle");
+  revalidateChatRaffle();
   return { success: true, data: { winners: winners.length } };
 }
 
@@ -560,6 +593,6 @@ export async function payChatRafflePrize(input: {
     },
   });
 
-  revalidatePath("/chat-raffle");
+  revalidateChatRaffle();
   return { success: true, data: { ledgerTxId: result.ledgerTxId } };
 }

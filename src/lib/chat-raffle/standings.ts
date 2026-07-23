@@ -109,6 +109,31 @@ export async function getChatRaffleStandings(params: {
   const db = await getDb();
   const bucketSeconds = scoring.bucketMinutes * 60;
 
+  /**
+   * Push the entry floor DOWN INTO the SQL.
+   *
+   * This matters for correctness, not just speed: the `LIMIT` below is what
+   * decides `truncated`, and `truncated` BLOCKS the draw. If the floor were
+   * only applied in JS afterwards, a round with a high floor and a busy chat
+   * would fetch `limit` rows of unqualified chatters, report truncation, and
+   * refuse to draw — while the real entrant count sat far under the cap.
+   *
+   * A positive manual adjustment can rescue a user who scored under the
+   * floor, so the SQL threshold is lowered by the largest positive adjustment
+   * in the round. That keeps every possible qualifier in the result set; the
+   * exact per-user check still happens in JS below. Negative adjustments and
+   * the per-user cap only ever push a total DOWN, so they can't produce a
+   * qualifier that this bound excluded.
+   */
+  let maxPositiveAdjustment = 0;
+  for (const points of adjustments.values()) {
+    if (points > maxPositiveAdjustment) maxPositiveAdjustment = points;
+  }
+  const sqlPointsFloor = Math.max(
+    1,
+    scoring.minPointsToEnter - maxPositiveAdjustment,
+  );
+
   // Eligibility fragments. Each is a hardcoded predicate — no user input is
   // interpolated; the blacklist ids go through the canonical escaper.
   const roleFilter = scoring.excludeStaff
@@ -192,7 +217,7 @@ export async function getChatRaffleStandings(params: {
            s.message_count, s.base_points
     FROM scored s
     JOIN "user" u ON u.id = s.user_id
-    WHERE TRUE
+    WHERE s.base_points >= ${sqlPointsFloor}::int
       ${roleFilter}
       ${blacklistFilter}
       ${muteFilter}
