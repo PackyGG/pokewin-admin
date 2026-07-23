@@ -18,12 +18,7 @@ import { DoubleDownChartsSection } from "../insights/double-down/charts-section"
 
 const LOG_PER_PAGE = 25;
 
-/**
- * Locked to the last 30 days (owner rule, 2026-07-01) — the period selector
- * was removed and every section reads the fixed window. The query module
- * stays period-parametrized; this surface always passes "30d".
- */
-const FIXED_PERIOD: DoubleDownPeriod = "30d";
+
 
 /**
  * Double Down as an /analytics tab.
@@ -41,15 +36,22 @@ const FIXED_PERIOD: DoubleDownPeriod = "30d";
  * Params come from the analytics page's own searchParams: `?q=` for the log
  * search, `?page=` for its pagination. Both are namespaced by the tab being
  * active, so they can't collide with another tab's params.
+ *
+ * PERIOD: this was pinned to 30d (owner rule, 2026-07-01) back when it was a
+ * standalone page with no filter of its own. Now that it is an /analytics tab
+ * it reads the page-level timespan like every other tab (owner, 2026-07-23) —
+ * the query module was always period-parametrized, so this only stops the
+ * surface throwing that parameter away.
  */
 export function DoubleDownTab({
   search,
   page,
+  period,
 }: {
   search: string;
   page: number;
+  period: DoubleDownPeriod;
 }) {
-  const period = FIXED_PERIOD;
 
   return (
     <div className="space-y-6">

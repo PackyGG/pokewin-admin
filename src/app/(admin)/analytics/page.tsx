@@ -5,18 +5,19 @@ import { AutoRefresh } from "../dashboard/auto-refresh";
 import { PeriodFilter } from "./period-filter";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { AnalyticsTabNav, type AnalyticsTab } from "./tab-nav";
-import { parsePeriod } from "./types";
+import {
+  parsePeriod,
+  toDoubleDownPeriod,
+  toInsightsPeriod,
+} from "./types";
 import { OverviewTab } from "./tab-overview";
 import { PurePnlTab } from "./tab-pure-pnl";
 import { DoubleDownTab } from "./tab-double-down";
 import { CrmTab } from "../insights/real-numbers/crm-tab";
 import { CostBreakdownTab } from "./tab-cost-breakdown";
 import { RewardsInsightsTab } from "./tab-rewards";
-import { parseInsightsPeriod } from "@/lib/queries/insights-analytics/period";
-import { parseInsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_period";
 import { RevenueTab } from "./tab-revenue";
 import { TopPerformersTab } from "./tab-top";
-import { HeatmapTab } from "./tab-heatmap";
 import { PacksBattlesTab } from "./tab-packs";
 import { MapTab } from "./tab-map";
 import { parseMetric } from "./map/utils";
@@ -37,7 +38,6 @@ function parseTab(value: string | undefined): AnalyticsTab {
     case "double-down":
     case "revenue":
     case "top":
-    case "heatmap":
     case "packs":
     case "map":
       return value;
@@ -64,17 +64,29 @@ function fallbackForTab(tab: AnalyticsTab): ReactNode {
 }
 
 /**
- * Tabs whose content is actually keyed on the page-level `?period=`. Every
- * other tab either fixes its own window or ships its own filter, so the
- * global one is hidden rather than left inert.
+ * Tabs the page-level `?period=` drives.
+ *
+ * Owner, 2026-07-23: the timespan control applies to EVERY tab that has a
+ * timespan. The tabs absorbed from the old /insights tree used to ship their
+ * own period filters (`?cbPeriod=`, `?rwPeriod=`) and Double Down was pinned
+ * to 30d — three controls doing one job, so switching tabs silently changed
+ * the window you were looking at. They all read the page filter now,
+ * translated by `toInsightsPeriod` / `toDoubleDownPeriod`.
+ *
+ * The absentees are genuine, not oversights: CRM and Pure P&L take no period
+ * argument at all — Pure P&L returns a fixed set of rolling windows rather
+ * than one selectable range. A filter there would be a dead knob, which is
+ * exactly what this change removes everywhere else.
  */
 const PERIOD_DRIVEN_TABS = new Set<AnalyticsTab>([
   "overview",
   "revenue",
   "top",
-  "heatmap",
   "packs",
   "map",
+  "cost-breakdown",
+  "rewards",
+  "double-down",
 ]);
 
 export default async function AnalyticsPage({
@@ -93,12 +105,11 @@ export default async function AnalyticsPage({
   const ddSearch = (params.q ?? "").trim();
   const ddPageRaw = Number.parseInt(params.page ?? "1", 10);
   const ddPage = Number.isFinite(ddPageRaw) && ddPageRaw > 0 ? ddPageRaw : 1;
-  // Absorbed-tab params, each namespaced so no two tab bars write the same
-  // key: `cbPeriod` = Cost Breakdown window, `rw` / `rwPeriod` = Rewards
-  // sub-view + window.
-  const cbPeriod = parseInsightsPeriod(params.cbPeriod);
+  // Absorbed-tab sub-view param. The per-tab period params (`cbPeriod`,
+  // `rwPeriod`) are gone — those tabs read the page-level `?period=` now, so
+  // a stale bookmark carrying one simply falls back to the global window.
   const rwSub = params.rw;
-  const rwPeriod = parseInsightsRewardsPeriod(params.rwPeriod);
+  const insightsPeriod = toInsightsPeriod(period);
   const packsSort = params.packsSort;
   // Map tab uses its own URL param for the heat metric (users /
   // deposits / wagers / multiplier). Parsed here so the param flows
@@ -150,24 +161,29 @@ export default async function AnalyticsPage({
           chart for the rest) so the swap into real content doesn't jump the
           layout. */}
       <Suspense
-        key={`${tab}-${period}-${topTab ?? ""}-${packsSort ?? ""}-${mapMetric}-${ddSearch}-${ddPage}-${cbPeriod}-${rwSub ?? ""}-${rwPeriod}`}
+        key={`${tab}-${period}-${topTab ?? ""}-${packsSort ?? ""}-${mapMetric}-${ddSearch}-${ddPage}-${rwSub ?? ""}`}
         fallback={fallbackForTab(tab)}
       >
         {tab === "overview" && <OverviewTab period={period} />}
         {tab === "pure-pnl" && <PurePnlTab />}
         {tab === "double-down" && (
-          <DoubleDownTab search={ddSearch} page={ddPage} />
+          <DoubleDownTab
+            search={ddSearch}
+            page={ddPage}
+            period={toDoubleDownPeriod(period)}
+          />
         )}
         {tab === "crm" && <CrmTab />}
-        {tab === "cost-breakdown" && <CostBreakdownTab period={cbPeriod} />}
+        {tab === "cost-breakdown" && (
+          <CostBreakdownTab period={insightsPeriod} />
+        )}
         {tab === "rewards" && (
-          <RewardsInsightsTab period={rwPeriod} sub={rwSub} />
+          <RewardsInsightsTab period={insightsPeriod} sub={rwSub} />
         )}
         {tab === "revenue" && <RevenueTab period={period} />}
         {tab === "top" && (
           <TopPerformersTab period={period} subTab={topTab} />
         )}
-        {tab === "heatmap" && <HeatmapTab period={period} />}
         {tab === "packs" && (
           <PacksBattlesTab period={period} sortKey={packsSort} />
         )}

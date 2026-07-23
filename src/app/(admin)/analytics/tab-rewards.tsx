@@ -4,7 +4,6 @@ import {
   parseInsightsRewardsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { InsightsRewardsPeriodFilter } from "../insights/rewards/_components/period-filter";
 import { InsightsRewardsTabSwitch } from "../insights/rewards/_components/tab-switch";
 import {
   InsightsRewardsTabSkeleton,
@@ -89,9 +88,13 @@ function parseTab(value: string | undefined): Tab {
  * Was `/insights/rewards` (owner, 2026-07-23). Body untouched; the PageHero
  * is gone (analytics renders one) and the period filter + export moved inline.
  *
- * Params are re-namespaced so the outer analytics tab bar and this one don't
- * fight: `?rw=` picks the sub-view (was `?tab=`), `?rwPeriod=` the window (was
- * `?period=`, which /analytics owns with a different vocabulary).
+ * `?rw=` picks the sub-view (was `?tab=`), re-namespaced so the outer tab bar
+ * and this one don't fight over the same key.
+ *
+ * PERIOD: reads the page-level `?period=`, translated by `toInsightsPeriod`
+ * (owner, 2026-07-23 — one timespan control for the whole page). It used to
+ * own `?rwPeriod=` and render its own filter; the vocabulary difference is
+ * now handled by one mapper in `analytics/types.ts`.
  */
 export async function RewardsInsightsTab({
   period,
@@ -109,10 +112,7 @@ export async function RewardsInsightsTab({
           Cross-reward analysis, ROI, retention impact, cohort lift, marketing
           cost vs revenue.
         </p>
-        <div className="flex flex-wrap items-center gap-2">
-          <InsightsRewardsPeriodFilter />
-          <ExportButton page="rewards" params={{ period }} />
-        </div>
+        <ExportButton page="rewards" params={{ period }} />
       </div>
 
       <InsightsRewardsTabSwitch />

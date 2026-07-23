@@ -10,7 +10,6 @@ import {
   TrendingDown,
   PieChart,
   Trophy,
-  Clock,
   Package,
   Coins,
   Globe,
@@ -27,7 +26,6 @@ export type AnalyticsTab =
   | "rewards"
   | "revenue"
   | "top"
-  | "heatmap"
   | "packs"
   | "map";
 
@@ -57,7 +55,6 @@ const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
   { value: "rewards", label: "Rewards", icon: Gift },
   { value: "revenue", label: "Revenue", icon: PieChart },
   { value: "top", label: "Top Performers", icon: Trophy },
-  { value: "heatmap", label: "Activity Heatmap", icon: Clock },
   { value: "packs", label: "Pack & Battle", icon: Package },
   // Migrated from the standalone /map page — geographic breakdown of
   // users + per-country money flows. Lives here so it shares the

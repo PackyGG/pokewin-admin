@@ -49,7 +49,6 @@ import {
   type RealizedPnlSnapshot,
 } from "@/lib/queries/_realized-pnl";
 import { compareCostBreakdown } from "@/lib/clickhouse/compare/insights-cost-breakdown";
-import { CostBreakdownPeriodFilter } from "../insights/cost-breakdown/period-filter";
 import { CostTrendChart } from "../insights/cost-breakdown/trend-chart";
 import { WaterfallRow, WaterfallBand } from "../insights/cost-breakdown/waterfall-row";
 import {
@@ -131,9 +130,12 @@ import { SEMANTIC_TONES, type SemanticTone } from "../insights/cost-breakdown/to
  * contributor sweep + lifetime realized-P&L snapshot, the heaviest read in
  * the app) streams behind a Suspense keyed on `period`.
  *
- * Reads `?cbPeriod=` rather than `?period=`: /analytics already owns
- * `?period=` for its own filter, and the two use different period vocabularies
- * — sharing the param would feed this tab a value it can't parse.
+ * PERIOD: reads the page-level `?period=`, translated by `toInsightsPeriod`
+ * (owner, 2026-07-23 — one timespan control for the whole page). It used to
+ * own `?cbPeriod=` and render its own filter, because the two layers name
+ * their shortest window differently (`today` vs `24h`). That difference is
+ * now handled by one mapper in `analytics/types.ts` instead of a second
+ * control the user had to notice.
  */
 export async function CostBreakdownTab({
   period,
@@ -146,10 +148,7 @@ export async function CostBreakdownTab({
         <p className="text-sm text-muted-foreground">
           Where the wager goes — wager → net result, every leak named
         </p>
-        <div className="flex flex-wrap items-center gap-2">
-          <CostBreakdownPeriodFilter />
-          <ExportButton page="cost-breakdown" params={{ period }} />
-        </div>
+        <ExportButton page="cost-breakdown" params={{ period }} />
       </div>
 
       <Suspense key={period} fallback={<CostBreakdownBodySkeleton />}>

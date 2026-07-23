@@ -113,10 +113,7 @@ export const ANALYTICS_OVERVIEW_PACKS_SURFACE_KEYS = [
  * `analytics_funnel` / `analytics_cohorts` were removed with the Funnel and
  * Cohorts tabs (owner, 2026-07-23) — no reader is left to gate.
  */
-export const ANALYTICS_HEATMAP_MAP_SURFACE_KEYS = [
-  "analytics_heatmap",
-  "analytics_map",
-] as const;
+export const ANALYTICS_HEATMAP_MAP_SURFACE_KEYS = ["analytics_map"] as const;
 
 /**
  * Phase 2B surface flag keys for the /dashboard remaining daily-leg CH twins
@@ -290,7 +287,9 @@ const CUTOVER_DEFAULT_CLICKHOUSE: ReadonlySet<string> = new Set([
   "analytics_overview",
   // analytics_funnel / _cohorts / _retention / _ltv dropped with their tabs
   // (owner, 2026-07-23) — the readers and CH twins no longer exist.
-  "analytics_heatmap",
+  // analytics_heatmap went the same way with the Activity Heatmap tab
+  // (owner, 2026-07-23): tab, PG query, CH twin and comparison harness all
+  // deleted, so there is nothing left to route.
   "analytics_map",
   "analytics_top",
   "analytics_revenue_withdrawals",
