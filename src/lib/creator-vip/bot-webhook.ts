@@ -56,12 +56,82 @@ export type WebhookResult =
   | { ok: true; status: number; duplicate: boolean }
   | { ok: false; error: string; retriable: boolean };
 
+/**
+ * Resolve the webhook URL and secret, accepting the bot's own alias names.
+ *
+ * The bot reads `WEBHOOK_SECRET` OR `PACKY_WEBHOOK_SECRET`, so an operator
+ * setting the shared secret will reasonably use either name on BOTH sides.
+ * Insisting on one spelling here turns that into a silent `401 mismatch` on
+ * every delivery — a failure mode that looks like "the bot is broken" rather
+ * than "the variable is named differently". Being liberal costs nothing; the
+ * secret still has to match byte-for-byte to produce a valid signature.
+ *
+ * `DISCORD_BOT_*` remains the documented, preferred spelling because these are
+ * the DASHBOARD's variables and the prefix says who they are for.
+ */
+function resolveWebhookConfig(): { url?: string; secret?: string } {
+  return {
+    url:
+      process.env.DISCORD_BOT_WEBHOOK_URL ??
+      process.env.PACKY_WEBHOOK_URL ??
+      undefined,
+    secret:
+      process.env.DISCORD_BOT_WEBHOOK_SECRET ??
+      process.env.PACKY_WEBHOOK_SECRET ??
+      process.env.WEBHOOK_SECRET ??
+      undefined,
+  };
+}
+
 /** Not configured is a valid state — the feature is simply off. */
 export function isBotWebhookConfigured(): boolean {
-  return Boolean(
-    process.env.DISCORD_BOT_WEBHOOK_URL &&
-      process.env.DISCORD_BOT_WEBHOOK_SECRET,
-  );
+  const { url, secret } = resolveWebhookConfig();
+  return Boolean(url && secret);
+}
+
+/**
+ * What is missing, for the operator-facing status line. Never returns the
+ * secret or any part of it — only whether each half is present.
+ */
+export function botWebhookConfigStatus(): {
+  configured: boolean;
+  hasUrl: boolean;
+  hasSecret: boolean;
+  secretTooShort: boolean;
+} {
+  const { url, secret } = resolveWebhookConfig();
+  return {
+    configured: Boolean(url && secret),
+    hasUrl: Boolean(url),
+    hasSecret: Boolean(secret),
+    // The bot refuses to start under 32 chars; catching it here explains a
+    // dead webhook without anyone reading Railway logs.
+    secretTooShort: Boolean(secret && secret.length < 32),
+  };
+}
+
+/**
+ * Send a harmless event that proves URL + secret + signature all work,
+ * WITHOUT messaging anyone.
+ *
+ * The bot verifies the signature and parses the payload BEFORE it looks at
+ * `type`, and answers an unrecognised type with `200 unsupported_type`. So a
+ * well-formed event of an unknown type exercises every part of the path that
+ * can realistically be misconfigured — reachability, the shared secret, the
+ * signing scheme — and stops short of a DM.
+ */
+export async function testBotWebhook(): Promise<WebhookResult> {
+  return sendClaimDecision({
+    // Unique per attempt so a retest is never swallowed as a duplicate.
+    id: `evt_conntest_${Date.now()}`,
+    // Deliberately not a real event type.
+    type: "webhook.connection_test" as ClaimDecisionEvent["type"],
+    data: {
+      claimId: "connection-test",
+      // Shape-valid so it clears payload validation and reaches the type check.
+      discordUserId: "100000000000000000",
+    },
+  });
 }
 
 /**
@@ -88,8 +158,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function sendClaimDecision(
   event: ClaimDecisionEvent,
 ): Promise<WebhookResult> {
-  const url = process.env.DISCORD_BOT_WEBHOOK_URL;
-  const secret = process.env.DISCORD_BOT_WEBHOOK_SECRET;
+  const { url, secret } = resolveWebhookConfig();
   if (!url || !secret) {
     return { ok: false, error: "webhook_not_configured", retriable: false };
   }

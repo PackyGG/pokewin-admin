@@ -14,8 +14,10 @@ import { createClaimRequest } from "@/lib/creator-vip/queries";
 import { sanitizeProgramName } from "@/lib/creator-vip/sanitize";
 import {
   claimEventId,
+  botWebhookConfigStatus,
   isBotWebhookConfigured,
   sendClaimDecision,
+  testBotWebhook,
   type ClaimDecisionEvent,
 } from "@/lib/creator-vip/bot-webhook";
 import {
@@ -922,6 +924,66 @@ export async function resendClaimDecisionNotice(input: {
         success: false,
         error: after_?.bot_notify_error ?? "Delivery failed — try again shortly.",
       };
+}
+
+
+/**
+ * Check the Discord-bot webhook without messaging anyone.
+ *
+ * Sends a well-formed event of an unrecognised type. The bot verifies the
+ * signature and parses the payload BEFORE it looks at `type`, so this
+ * exercises reachability, the shared secret and the signing scheme, then stops
+ * at `200 unsupported_type` instead of a DM.
+ *
+ * The returned message names the specific failure, because the three ways this
+ * goes wrong look identical from the outside: a wrong secret (401), a bot that
+ * is up but not yet connected to Discord (503), and a URL that resolves to
+ * nothing (network error).
+ */
+export async function testBotWebhookConnection(): Promise<
+  ActionResult<{ message: string }>
+> {
+  await requirePageAccess("/creator-rewards");
+  await requireAdmin();
+
+  const status = botWebhookConfigStatus();
+  if (!status.configured) {
+    const missing = [
+      !status.hasUrl && "DISCORD_BOT_WEBHOOK_URL",
+      !status.hasSecret && "DISCORD_BOT_WEBHOOK_SECRET",
+    ].filter(Boolean);
+    return {
+      success: false,
+      error: `Not configured — missing ${missing.join(" and ")} on this deployment. Remember a redeploy is needed after adding them.`,
+    };
+  }
+  if (status.secretTooShort) {
+    return {
+      success: false,
+      error:
+        "The secret is under 32 characters — the bot refuses to start with one that short. Regenerate with `openssl rand -hex 32`.",
+    };
+  }
+
+  const result = await testBotWebhook();
+  if (result.ok) {
+    return {
+      success: true,
+      data: { message: "Bot reachable, signature accepted." },
+    };
+  }
+
+  // Translate the three failures that look the same from here.
+  const e = result.error;
+  const hint = e.includes("401")
+    ? "The bot rejected the signature — the secret here and the bot's WEBHOOK_SECRET don't match."
+    : e.includes("503")
+      ? "The bot is up but not connected to Discord yet. Try again shortly."
+      : e.includes("404") || e.includes("405")
+        ? "Reached the host but not the webhook route — check the URL ends in /webhooks/packy."
+        : "Couldn't reach the bot. Check the URL and that the Railway service has a public domain.";
+
+  return { success: false, error: `${hint} (${e})` };
 }
 
 export async function searchCreatorsWithCodes(

@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type ReactNode,
+} from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 import {
   BadgeCheck,
@@ -14,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -44,6 +53,7 @@ import {
   raiseCreatorRewardClaimForUser,
   reinstateCreatorRewardClaim,
   resendClaimDecisionNotice,
+  testBotWebhookConnection,
   rejectCreatorRewardClaim,
   searchCreatorsWithCodes,
   setCreatorRewardProgramActive,
@@ -1011,7 +1021,7 @@ function RequestsPanel({ claims }: { claims: CreatorRewardClaimRow[] }) {
   return (
     <div className="space-y-5">
       <div className="space-y-3">
-        <SectionHeading icon={Inbox} title="Awaiting review" />
+        <SectionHeading icon={Inbox} title="Awaiting review" action={<WebhookTestButton />} />
         {pending.length === 0 ? (
           <EmptyState
             icon={BadgeCheck}
@@ -1041,94 +1051,181 @@ function RequestsPanel({ claims }: { claims: CreatorRewardClaimRow[] }) {
   );
 }
 
+/** Two letters for the avatar fallback — same helper the user tables use. */
+function initialsFor(username: string | null, userId: string): string {
+  return (username ?? userId).slice(0, 2).toUpperCase();
+}
+
+/**
+ * One tone per meaning, defined once.
+ *
+ * These were eight hand-written Badge blocks with their colour classes copied
+ * into each, which is how a palette drifts. Nothing new is introduced here.
+ */
+const FLAG_TONE = {
+  amber: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  purple: "bg-purple-500/15 text-purple-600 dark:text-purple-400",
+  rose: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
+  sky: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+  emerald: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+  zinc: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
+} as const;
+
+function Flag({
+  tone,
+  title,
+  children,
+}: {
+  tone: keyof typeof FLAG_TONE;
+  title?: string;
+  children: ReactNode;
+}) {
+  return (
+    <Badge
+      variant="outline"
+      className={cn("text-[10px]", FLAG_TONE[tone])}
+      title={title}
+    >
+      {children}
+    </Badge>
+  );
+}
+
+/**
+ * One claim in the review queue.
+ *
+ * Laid out as a fixed four-column grid — who / what it costs / how much / act —
+ * rather than a wrapping flex row. Under flex-wrap every column started
+ * wherever the previous one happened to end, so no two rows lined up and the
+ * amount (the number the decision turns on) sat in a different place on each
+ * one. Fixed track widths mean the eye can run straight down a column.
+ *
+ * The identity block carries the profile because approving moves money: an
+ * account that is banned, locked, flagged as an alt, or three days old is the
+ * reason to look twice, and that has to be visible where the button is rather
+ * than one page away.
+ */
 function ClaimRow({ claim }: { claim: CreatorRewardClaimRow }) {
   const [approveOpen, setApproveOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [reopenOpen, setReopenOpen] = useState(false);
 
-  const statusBadge =
-    claim.status === "approved" ? (
-      <Badge
-        variant="outline"
-        className="bg-emerald-500/15 text-[10px] text-emerald-600 dark:text-emerald-400"
-      >
-        Approved
-      </Badge>
-    ) : claim.status === "rejected" ? (
-      <Badge
-        variant="outline"
-        className="bg-zinc-500/15 text-[10px] text-zinc-600 dark:text-zinc-400"
-      >
-        Rejected
-      </Badge>
-    ) : (
-      <Badge
-        variant="outline"
-        className="bg-amber-500/15 text-[10px] text-amber-600 dark:text-amber-400"
-      >
-        Pending
-      </Badge>
-    );
+  const displayName = claim.username ?? claim.userId;
+
+  // Absence of a flag is not evidence of a clean account — the MAIN-DB profile
+  // lookup degrades to `false` — so these read as "flagged", never as "cleared".
+  const meta = [
+    claim.discordUserId ? `Discord ${claim.discordUserId}` : null,
+    claim.userCreatedAt ? `joined ${formatRelative(claim.userCreatedAt)}` : null,
+    claim.userCountryCode?.toUpperCase() ?? null,
+  ].filter(Boolean);
 
   return (
     <Card>
-      <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-3 p-4">
-        <div className="min-w-[170px] flex-1">
-          <div className="flex items-center gap-2">
-            <span className="font-medium">
-              {claim.username ?? claim.userId}
-            </span>
-            {claim.wasVip && (
-              <Badge
-                variant="outline"
-                className="bg-purple-500/15 text-[10px] text-purple-600 dark:text-purple-400"
+      <CardContent className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_15rem_7rem] lg:items-center lg:gap-6 xl:grid-cols-[minmax(0,1fr)_15rem_7rem_13rem]">
+        {/* ── who ── */}
+        <div className="flex min-w-0 items-start gap-3">
+          <Avatar className="size-10 shrink-0">
+            {claim.userImage && <AvatarImage src={claim.userImage} alt="" />}
+            <AvatarFallback className="text-xs">
+              {initialsFor(claim.username, claim.userId)}
+            </AvatarFallback>
+          </Avatar>
+
+          <div className="min-w-0 space-y-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Link
+                href={`/users/${claim.userId}`}
+                className="truncate font-medium outline-none hover:underline focus-visible:rounded-md focus-visible:ring-2 focus-visible:ring-ring"
+                title={displayName}
               >
-                VIP
-              </Badge>
-            )}
-            {claim.switchedAway === true && (
-              <Badge
-                variant="outline"
-                className="bg-amber-500/15 text-[10px] text-amber-600 dark:text-amber-400"
-              >
-                Switched code
-              </Badge>
-            )}
-            {claim.botNotifyError && (
-              <Badge
-                variant="outline"
-                className="bg-amber-500/15 text-[10px] text-amber-600 dark:text-amber-400"
-              >
-                DM failed
-              </Badge>
-            )}
-            {claim.reinstatedAt && (
-              <Badge
-                variant="outline"
-                className="bg-sky-500/15 text-[10px] text-sky-600 dark:text-sky-400"
-              >
-                Reopened
-              </Badge>
-            )}
-            {statusBadge}
-          </div>
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            {claim.programName} · {claim.creatorUsername ?? "creator"} ·{" "}
-            {formatRelative(claim.requestedAt)}
-          </div>
-          {/* A reopened claim is pending again, so the buttons replace the note
-              column — surface the original rejection here instead, or the
-              second reviewer repeats the first one's work blind. */}
-          {claim.status === "pending" &&
-            claim.reinstatedAt &&
-            claim.reviewNote && (
-              <div className="mt-1 text-xs text-sky-600 dark:text-sky-400">
-                Previously rejected: &ldquo;{claim.reviewNote}&rdquo;
+                {displayName}
+              </Link>
+
+              {claim.status === "approved" ? (
+                <Flag tone="emerald">Approved</Flag>
+              ) : claim.status === "rejected" ? (
+                <Flag tone="zinc">Rejected</Flag>
+              ) : (
+                <Flag tone="amber">Pending</Flag>
+              )}
+
+              {claim.wasVip && <Flag tone="purple">VIP</Flag>}
+
+              {/* Account risk. Rare, so the row stays quiet in the normal case
+                  and gets loud exactly when a reviewer should slow down. */}
+              {claim.userIsBanned && (
+                <Flag tone="rose" title="This account is banned">
+                  Banned
+                </Flag>
+              )}
+              {claim.userIsLocked && (
+                <Flag tone="amber" title="This account is locked">
+                  Locked
+                </Flag>
+              )}
+              {claim.userSuspectedAlt && (
+                <Flag
+                  tone="amber"
+                  title="Device fingerprinting flagged this account as a suspected alt"
+                >
+                  Alt
+                </Flag>
+              )}
+
+              {claim.switchedAway === true && (
+                <Flag
+                  tone="amber"
+                  title="The player has moved to a different creator's code since filing"
+                >
+                  Switched code
+                </Flag>
+              )}
+              {claim.reinstatedAt && <Flag tone="sky">Reopened</Flag>}
+              {claim.botNotifyError && (
+                <Flag tone="amber" title={claim.botNotifyError}>
+                  DM failed
+                </Flag>
+              )}
+            </div>
+
+            <div
+              className="truncate text-xs text-muted-foreground"
+              title={formatDateTime(claim.requestedAt)}
+            >
+              {claim.programName} · {claim.creatorUsername ?? "creator"} ·{" "}
+              {formatRelative(claim.requestedAt)}
+            </div>
+
+            {meta.length > 0 && (
+              <div className="truncate text-[11px] text-muted-foreground/80">
+                {meta.join(" · ")}
               </div>
             )}
+
+            {/* A reopened claim is pending again, so the buttons replace the
+                note column — surface the original rejection here instead, or
+                the second reviewer repeats the first one's work blind. */}
+            {claim.status === "pending" &&
+              claim.reinstatedAt &&
+              claim.reviewNote && (
+                <div className="text-xs text-sky-600 dark:text-sky-400">
+                  Previously rejected: &ldquo;{claim.reviewNote}&rdquo;
+                </div>
+              )}
+
+            {/* Moved out of the actions column: a variable-width quote sitting
+                beside the buttons pushed them off the grid on every row. */}
+            {claim.status !== "pending" && claim.reviewNote && (
+              <div className="text-xs text-muted-foreground">
+                &ldquo;{claim.reviewNote}&rdquo;
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="text-xs text-muted-foreground">
+        {/* ── what it costs ── */}
+        <div className="space-y-0.5 text-xs text-muted-foreground">
           <div>
             Wagered{" "}
             <span className="tabular-nums text-emerald-600 dark:text-emerald-400">
@@ -1155,52 +1252,51 @@ function ClaimRow({ claim }: { claim: CreatorRewardClaimRow }) {
           </div>
         </div>
 
-        <div className="text-right">
+        {/* ── how much ── */}
+        <div className="lg:text-right">
           <div className="text-lg font-semibold tabular-nums text-rose-600 dark:text-rose-400">
             {formatCurrency(claim.amountUsd)}
           </div>
           {claim.reviewerName && (
-            <div className="text-[11px] text-muted-foreground">
+            <div className="truncate text-[11px] text-muted-foreground">
               by {claim.reviewerName}
             </div>
           )}
         </div>
 
-        {claim.status === "pending" ? (
-          <div className="flex gap-2">
-            <Button size="sm" onClick={() => setApproveOpen(true)}>
-              <Check className="size-3.5" />
-              Approve
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setRejectOpen(true)}
-            >
-              <X className="size-3.5" />
-              Reject
-            </Button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-3">
-            {claim.reviewNote && (
-              <div className="max-w-[220px] text-xs text-muted-foreground">
-                &ldquo;{claim.reviewNote}&rdquo;
-              </div>
-            )}
-            {claim.botNotifyError && <ResendNoticeButton claim={claim} />}
-            {claim.status === "rejected" && (
+        {/* ── act ── */}
+        <div className="flex flex-wrap gap-2 lg:justify-end">
+          {claim.status === "pending" ? (
+            <>
+              <Button size="sm" onClick={() => setApproveOpen(true)}>
+                <Check className="size-3.5" />
+                Approve
+              </Button>
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => setReopenOpen(true)}
+                onClick={() => setRejectOpen(true)}
               >
-                <RotateCcw className="size-3.5" />
-                Reopen
+                <X className="size-3.5" />
+                Reject
               </Button>
-            )}
-          </div>
-        )}
+            </>
+          ) : (
+            <>
+              {claim.botNotifyError && <ResendNoticeButton claim={claim} />}
+              {claim.status === "rejected" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setReopenOpen(true)}
+                >
+                  <RotateCcw className="size-3.5" />
+                  Reopen
+                </Button>
+              )}
+            </>
+          )}
+        </div>
       </CardContent>
 
       <ApproveDialog
@@ -1219,6 +1315,34 @@ function ClaimRow({ claim }: { claim: CreatorRewardClaimRow }) {
         onOpenChange={setReopenOpen}
       />
     </Card>
+  );
+}
+
+
+/**
+ * Verifies the approve/decline DM path end to end without messaging a player.
+ * Lives next to the review queue because that is where the consequence of a
+ * broken webhook shows up.
+ */
+function WebhookTestButton() {
+  const [isPending, startTransition] = useTransition();
+
+  function test() {
+    startTransition(async () => {
+      const res = await testBotWebhookConnection();
+      if (!res.success) {
+        toast.error(res.error, { duration: 10_000 });
+        return;
+      }
+      toast.success(res.data.message);
+    });
+  }
+
+  return (
+    <Button size="sm" variant="outline" onClick={test} disabled={isPending}>
+      <Send className="size-3.5" />
+      {isPending ? "Testing…" : "Test bot connection"}
+    </Button>
   );
 }
 

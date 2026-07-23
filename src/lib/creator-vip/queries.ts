@@ -148,6 +148,19 @@ export type CreatorRewardClaimRow = {
   creatorUsername: string | null;
   userId: string;
   username: string | null;
+  /**
+   * MAIN-DB profile of the claimant, for the review row.
+   *
+   * Approving moves money, so the reviewer sees who is asking and whether the
+   * account is already flagged without leaving the queue. All of it degrades to
+   * null/false if the MAIN lookup fails — the row still renders, just plainer.
+   */
+  userImage: string | null;
+  userCreatedAt: string | null;
+  userIsBanned: boolean;
+  userIsLocked: boolean;
+  userSuspectedAlt: boolean;
+  userCountryCode: string | null;
   discordUserId: string | null;
   /** Which leg of the program this claim is for. */
   leg: CreatorRewardType;
@@ -260,9 +273,17 @@ export async function getClaims(params: {
     programId: c.program_id,
     programName: c.program.name,
     creatorUserId: c.program.creator_user_id,
-    creatorUsername: names.get(c.program.creator_user_id) ?? null,
+    creatorUsername: users.get(c.program.creator_user_id)?.name ?? null,
     userId: c.user_id,
-    username: names.get(c.user_id) ?? null,
+    username: users.get(c.user_id)?.name ?? null,
+    userImage: users.get(c.user_id)?.image ?? null,
+    userCreatedAt: users.get(c.user_id)?.createdAt ?? null,
+    // Default false, not null: a failed profile lookup renders as no badge,
+    // and a missing badge must never be read as "checked and clean".
+    userIsBanned: users.get(c.user_id)?.isBanned ?? false,
+    userIsLocked: users.get(c.user_id)?.isLocked ?? false,
+    userSuspectedAlt: users.get(c.user_id)?.suspectedAlt ?? false,
+    userCountryCode: users.get(c.user_id)?.countryCode ?? null,
     discordUserId: c.discord_user_id,
     leg: isCreatorRewardType(c.leg) ? c.leg : "wager",
     wagerBasisUsd: toNumber(c.wager_basis_usd),
