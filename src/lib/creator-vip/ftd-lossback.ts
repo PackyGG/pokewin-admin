@@ -104,16 +104,31 @@ async function signedUpUnderCode(
 /**
  * The player's first two completed deposits, oldest first.
  *
- * The most expensive read on this path: `ledger_transactions` is 1.27M rows
- * / 675 MB, and while the user_id index is used, Postgres still has to fetch
- * every ledger row for that user and top-N sort them (measured 7.96 ms, 724
- * pages read, against prod 2026-07-23). A partial index on
- * (user_id, created_at) WHERE type='deposit' AND status='completed' turns it
- * into a 2-row index scan — see prisma/recommended-indexes.sql. MAIN is
- * read-only here, so that index is the owner's to apply.
+ * ── WHY `type = 'deposit'::ledger_transaction_type` AND NOT `type::text` ──
+ * This codebase compares enum columns as `::text` by convention, to survive
+ * prod enums that lag the generated client (a bare comparison against an
+ * unknown label throws 22P02 at parse time). That hardening is right for
+ * `affiliate_code_usages.usage_type`, where `signup` genuinely was missing on
+ * prod for a while.
  *
- * Until then the cost is contained by hoisting: `loadUserFacts` runs this
- * ONCE per player per request, not once per program.
+ * It is WRONG here, and expensively so: casting the indexed column makes it
+ * non-sargable, so Postgres cannot match ANY index on `type` and falls back to
+ * fetching every ledger row for that user and top-N sorting them. Measured on
+ * prod 2026-07-23, same row, same user:
+ *
+ *   type::text = 'deposit'   6.092 ms   2564 buffers   no index   + sort
+ *   type = 'deposit'::enum   0.087 ms      8 buffers   index scan, no sort
+ *
+ * `deposit` is a core member of `ledger_transaction_type` and has always
+ * existed, so there is no drift to defend against — only 70x to lose. The
+ * explicit `::ledger_transaction_type` cast keeps the comparison typed rather
+ * than relying on literal inference.
+ *
+ * Served by `idx_ledger_user_deposit_created` (user_id, created_at) WHERE
+ * type='deposit' AND status='completed' — applied to prod 2026-07-23.
+ *
+ * Also hoisted: `loadUserFacts` runs this ONCE per player per request, not
+ * once per program.
  */
 export async function firstDeposits(
   userId: string,
@@ -124,7 +139,7 @@ export async function firstDeposits(
     SELECT amount::text, created_at
       FROM ledger_transactions
      WHERE user_id = ${userId}
-       AND type::text = 'deposit'
+       AND type = 'deposit'::ledger_transaction_type
        AND status = 'completed'
      ORDER BY created_at ASC
      LIMIT 2

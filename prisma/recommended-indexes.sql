@@ -1257,9 +1257,24 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chat_messages_created_at_user_id
 -- Partial on purpose: deposits are a small slice of ledger_transactions, so the
 -- index stays tiny and the predicate matches the query exactly.
 --
--- NOT APPLIED — MAIN is read-only for the admin dashboard. Owner to apply.
--- Until then the cost is contained by `loadUserFacts`, which runs this lookup
--- once per player per request rather than once per program.
+-- APPLIED 2026-07-23 by the owner; re-verified read-only (pg_index.indisvalid
+-- = true, 704 kB).
+--
+-- IMPORTANT FOLLOW-UP FOUND ON VERIFICATION: the index was initially unused
+-- (idx_scan = 0) because the query compared `type::text = 'deposit'`. Casting
+-- an indexed column makes it non-sargable, so Postgres could not match this
+-- index — nor any of the three pre-existing (user_id, created_at) indexes —
+-- and fell back to fetching every ledger row for the user plus a top-N sort.
+-- The cast was removed in src/lib/creator-vip/ftd-lossback.ts. Measured on the
+-- same row and user:
+--
+--   type::text = 'deposit'   6.092 ms   2564 buffers   no index   + sort
+--   type = 'deposit'::enum   0.087 ms      8 buffers   this index, no sort
+--
+-- Lesson worth keeping: the `::text` enum-comparison convention used elsewhere
+-- in this codebase (to survive prod enums lagging the client) silently
+-- disables index usage. Apply it only where the enum member genuinely may not
+-- exist, never on a hot indexed predicate.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ledger_user_deposit_created
   ON ledger_transactions (user_id, created_at)
   WHERE type = 'deposit' AND status = 'completed';
