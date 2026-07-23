@@ -9,7 +9,6 @@ import {
   Play,
   RotateCcw,
   Ticket,
-  TriangleAlert,
   UserPlus,
   UserX,
   X,
@@ -469,17 +468,6 @@ export function RewardCampaignForm() {
             </p>
           )}
         </div>
-
-        {recipientCount > 0 && !amountError && (
-          <div className="flex gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
-            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-            <p className="text-xs text-amber-700 dark:text-amber-300">
-              Each code is single-use and rejected for any account other than
-              the one it was minted for. Re-running the same campaign name
-              reuses codes instead of issuing new ones.
-            </p>
-          </div>
-        )}
 
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={handleStart} disabled={!readyToSend} className="gap-1.5">

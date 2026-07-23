@@ -125,10 +125,18 @@ export async function sendRewardCampaignChunkAction(
 
   // Only mint for accounts that exist. Primary-key `IN` lookup — index-served.
   // Unknown ids are reported, not fatal, mirroring the bulk endpoint.
-  const users = await db.user.findMany({
-    where: { id: { in: userIds } },
-    select: { id: true, continent_code: true },
-  });
+  let users: { id: string; continent_code: string | null }[];
+  try {
+    users = await db.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, continent_code: true },
+    });
+  } catch (err) {
+    return {
+      success: false,
+      error: `Couldn't read the recipient list: ${err instanceof Error ? err.message : "database error"}`,
+    };
+  }
   const known = new Map(users.map((u) => [u.id, u.continent_code]));
   const unknownUsers = userIds.filter((id) => !known.has(id));
   if (users.length === 0) {
@@ -147,7 +155,21 @@ export async function sendRewardCampaignChunkAction(
   // Throws (rather than defaulting to "") if the env's secret is missing, so a
   // misconfiguration surfaces here instead of as thousands of codes that hash
   // to something the backend can never resolve.
-  const pepper = await resolveCodePepper();
+  //
+  // Caught, NOT allowed to propagate: Next redacts an uncaught server-action
+  // throw to an opaque `digest` in production, so letting this escape turns a
+  // precise "GIFT_CARD_PEPPER_DEV is not set" into a blank screen and a hash
+  // in the console. A misconfiguration has to be readable by the operator who
+  // can fix it.
+  let pepper: string;
+  try {
+    pepper = await resolveCodePepper();
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Code pepper is not configured",
+    };
+  }
 
   const planned = users.map((u) => {
     const code = deriveRewardCode(campaign, u.id, pepper);
@@ -162,12 +184,20 @@ export async function sendRewardCampaignChunkAction(
   // Which codes already exist from an earlier attempt. `code_hash` is indexed
   // (promo_codes_code_hash_idx), so this stays an index scan as the table
   // grows with campaign rows.
-  const existing = await db.promo_codes.findMany({
-    where: { code_hash: { in: planned.map((p) => p.codeHash) } },
-    select: { code_hash: true },
-  });
-  const existingHashes = new Set(existing.map((e) => e.code_hash));
-  const toMint = planned.filter((p) => !existingHashes.has(p.codeHash));
+  let toMint: typeof planned;
+  try {
+    const existing = await db.promo_codes.findMany({
+      where: { code_hash: { in: planned.map((p) => p.codeHash) } },
+      select: { code_hash: true },
+    });
+    const existingHashes = new Set(existing.map((e) => e.code_hash));
+    toMint = planned.filter((p) => !existingHashes.has(p.codeHash));
+  } catch (err) {
+    return {
+      success: false,
+      error: `Couldn't check for existing codes: ${err instanceof Error ? err.message : "database error"}`,
+    };
+  }
 
   const expiresAt =
     input.expiresInDays && input.expiresInDays > 0
@@ -175,7 +205,8 @@ export async function sendRewardCampaignChunkAction(
       : null;
 
   if (toMint.length > 0) {
-    await db.promo_codes.createMany({
+    try {
+      await db.promo_codes.createMany({
       data: toMint.map((p) => ({
         code_hash: p.codeHash,
         value: valueUsd,
@@ -193,8 +224,16 @@ export async function sendRewardCampaignChunkAction(
           bound_user_id: p.userId,
           campaign,
         },
-      })),
-    });
+        })),
+      });
+    } catch (err) {
+      // Nothing was delivered yet, so no recipient has been promised a code
+      // that doesn't exist. Retrying re-derives the same codes.
+      return {
+        success: false,
+        error: `Couldn't mint the codes: ${err instanceof Error ? err.message : "database error"}`,
+      };
+    }
   }
 
   // Deliver. Same dedupe convention as every other send here, so a replay of
