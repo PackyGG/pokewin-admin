@@ -14,7 +14,7 @@
  */
 
 /** Human step grid for a typed percentage (mirror of `pinStepPct`). */
-export function oddsGridStepPct(pct: number): number {
+function oddsGridStepPct(pct: number): number {
   if (pct >= 20) return 0.5;
   if (pct >= 5) return 0.25;
   if (pct >= 1) return 0.05;
@@ -23,7 +23,7 @@ export function oddsGridStepPct(pct: number): number {
 }
 
 /** The nearest on-grid value for `pct` (its own band's step). */
-export function nearestGridPct(pct: number): number {
+function nearestGridPct(pct: number): number {
   if (!Number.isFinite(pct) || pct <= 0) return 0;
   const step = oddsGridStepPct(pct);
   return Number((Math.round(pct / step) * step).toFixed(6));

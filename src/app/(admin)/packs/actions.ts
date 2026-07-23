@@ -64,7 +64,6 @@ import { TARGET_HOUSE_EDGE } from "@/app/(admin)/insights/edge-calc/math";
 import { z } from "zod";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { uploadImage } from "@/lib/imagekit";
 import { getCards, getRarities, getSets } from "@/lib/queries/cards";
 import { reloadPacks } from "@/app/(admin)/rewards/actions";
 import {
@@ -191,20 +190,6 @@ export async function togglePackActive(packId: string, active: boolean) {
 
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
-}
-
-export async function uploadPackImage(formData: FormData): Promise<string> {
-  const session = await requirePageAccess("/packs");
-  await requireCapability(session, "__can_upload_pack_image", "upload pack images");
-
-  const file = formData.get("file");
-  if (!(file instanceof File)) throw new Error("No file provided");
-  if (!file.type.startsWith("image/")) throw new Error("File must be an image");
-  if (file.size > 20 * 1024 * 1024) throw new Error("File must be under 20MB");
-
-  const buffer = Buffer.from(await file.arrayBuffer());
-  const url = await uploadImage(buffer, file.name, "/packs");
-  return url;
 }
 
 export type PackCardInput = {
@@ -595,30 +580,6 @@ export type PackFullDetail = {
 };
 
 /**
- * Load the pack detail for the big centered modal / detail view — the in-app
- * replacement for navigating to /packs/[id]. Returns the CORE detail (identity +
- * economics + complete card pool from `getPackDetail`) with `stats: null` so the
- * open NEVER runs the heavy chart stats (`getPackStats` — two
- * `result_metadata->>'pack_id'` scans over provably_fair_results) up front.
- * The client streams the stats separately behind their own skeleton once the
- * detail is ready (the `statsAutoLoadedFor` effect in pack-detail-view.tsx →
- * `loadPackStats`), so opening the pack shows detail + card pool immediately
- * instead of blocking on the double PF-scan. This mirrors how the /packs/[id]
- * page defers stats behind <PackStatsLazy>.
- *
- * Read-only + page-access gated (same `/packs` gate as the deep-link page).
- * Returns null when the pack is missing or its detail read failed, so the
- * caller can show a 404 / error state.
- */
-export async function fetchPackFullDetail(
-  packId: string,
-): Promise<PackFullDetail | null> {
-  const detail = await fetchPackDetailCore(packId);
-  if (!detail) return null;
-  return { detail, stats: null };
-}
-
-/**
  * Assign a pack to a /packs pool tab (Pokemon / One Piece / Meme / Rewards)
  * WITHOUT touching any of its cards. A pack's pool is normally derived from
  * the sets of its cards; this override is stored in the ADMIN DB (the prod
@@ -676,113 +637,6 @@ export async function getPackSetForEdit(
   await requirePageAccess("/packs");
   if (!isUuid(packId)) return null;
   return getPackSetAssignment(packId);
-}
-
-/**
- * Focused quick-edit from the list drawer: set a pack's price and/or its
- * active state without opening the full editor. Preserves every gate the
- * full flow enforces:
- *   - Changing PRICE requires `__can_update_pack` and, for a pack_creator
- *     touching a LIVE pack, the same `__can_edit_live_packs` carve-out the
- *     full `updatePack` enforces (price is a house-edge lever).
- *   - Changing ACTIVE requires `__can_toggle_pack_active`.
- * Each applied change writes its own audit event, mirroring the dedicated
- * actions. No card-pool mutation happens here — that stays in the full editor.
- */
-export async function quickUpdatePack(
-  packId: string,
-  data: { price?: number; active?: boolean },
-): Promise<void> {
-  const db = await getDb();
-  const session = await requirePageAccess("/packs");
-
-  const priceChanging = typeof data.price === "number";
-  const activeChanging = typeof data.active === "boolean";
-  if (!priceChanging && !activeChanging) return;
-
-  if (priceChanging && (!Number.isFinite(data.price) || data.price! <= 0)) {
-    throw new Error("Price must be greater than 0");
-  }
-
-  // Load the current pack once — needed for the live-pack gate, the audit
-  // before/after, and the no-op short-circuit.
-  const current = await db.packs.findUnique({
-    where: { id: packId },
-    select: { active: true, price: true, name: true },
-  });
-  if (!current) throw new Error("Pack not found");
-
-  // ── Capability gates ───────────────────────────────────────────────
-  if (priceChanging) {
-    await requireCapability(session, "__can_update_pack", "update packs");
-    // pack_creator live-pack carve-out: editing the price of an ACTIVE pack
-    // is a house-edge change, blocked for pack_creators without the explicit
-    // __can_edit_live_packs capability — identical to updatePack's gate.
-    if (sessionHasRole(session, "pack_creator") && current.active) {
-      const perms = await adminDb.admin_users.findUnique({
-        where: { id: session.userId },
-        select: { allowed_pages: true },
-      });
-      const canEditLive = perms
-        ? hasCapability(perms.allowed_pages, "__can_edit_live_packs")
-        : false;
-      if (!canEditLive) {
-        throw new Error(
-          "Live packs can only be edited by full admins or pack creators with the 'Edit Live Packs' capability. Ask an admin to grant the capability, or deactivate the pack first.",
-        );
-      }
-    }
-  }
-  if (activeChanging) {
-    await requireCapability(
-      session,
-      "__can_toggle_pack_active",
-      "toggle pack active state",
-    );
-  }
-
-  // ── Apply (only the fields that actually changed) ──────────────────
-  const update: { price?: number; active?: boolean; updated_at?: Date } = {};
-  const priceChanged =
-    priceChanging && Number(current.price) !== data.price;
-  const activeChanged = activeChanging && current.active !== data.active;
-  if (priceChanged) update.price = data.price;
-  if (activeChanged) update.active = data.active;
-  if (Object.keys(update).length === 0) return; // nothing actually changed
-  update.updated_at = new Date();
-
-  await db.packs.update({ where: { id: packId }, data: update });
-
-  // ── Audit each applied change (mirrors the dedicated actions) ──────
-  if (activeChanged) {
-    await createAdminAuditEvent({
-      adminUserId: session.userId,
-      eventType: data.active ? "pack_activated" : "pack_deactivated",
-      metadata: { pack_id: packId, via: "quick_edit" },
-    });
-  }
-  if (priceChanged) {
-    await createAdminAuditEvent({
-      adminUserId: session.userId,
-      eventType: "pack_updated",
-      metadata: {
-        pack_id: packId,
-        name: current.name,
-        via: "quick_edit",
-        price_before: Number(current.price),
-        price_after: data.price,
-      },
-    });
-  }
-
-  reloadPacks();
-
-  // Builder edits can re-shape the pool / change the price → the V2 retune
-  // plan depends on both, so invalidate it. Per-pack: ONLY this pack's plan
-  // is busted (never the other 182).
-  revalidateTag(packRetunePlanTag(packId));
-  revalidatePath("/packs");
-  revalidatePath(`/packs/${packId}`);
 }
 
 // ─── Global re-price to a target house edge (default 10.99%) ──────────

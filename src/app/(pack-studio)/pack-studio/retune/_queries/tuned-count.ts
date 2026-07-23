@@ -78,12 +78,3 @@ export async function getTunedPackIds(): Promise<string[]> {
     { revalidate: 60, tags: ["pack-studio-tuned-count"] },
   )();
 }
-
-/**
- * The count of distinct packs tuned via the retune workspace — derived from the
- * SAME cached `getTunedPackIds` primitive (no second DB round-trip, no separate
- * cache entry that could drift from the set the rail splits on).
- */
-export async function getTunedPackCount(): Promise<number> {
-  return (await getTunedPackIds()).length;
-}

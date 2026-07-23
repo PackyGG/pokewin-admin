@@ -70,8 +70,13 @@ export type CardsFilterInput = {
  * visible, or the current bulk selection). Admin-only at the data layer — the
  * Pack-Studio gate runs first, then `getDeletableCardIds` enforces
  * `requireAdmin()`. Read-only.
+ *
+ * NOT exported: in a `"use server"` module every export is a callable RPC
+ * endpoint, and this helper has no client caller — it only backs
+ * `loadCardIdsForUnusedFilter` below. Keeping it module-private removes the
+ * endpoint without changing behaviour.
  */
-export async function getCardSafety(
+async function getCardSafety(
   ids: string[],
 ): Promise<CardSafetyResult> {
   await requirePackStudioAccess();

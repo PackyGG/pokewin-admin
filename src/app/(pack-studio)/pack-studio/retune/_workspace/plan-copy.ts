@@ -281,8 +281,6 @@ export const PIN_CHIP = "pinned";
 /** Tooltip on the pin chip — the typed value BINDS the plan. */
 export const PIN_TOOLTIP =
   "Pinned — the typed chance binds the plan: the server holds this card at exactly this value (through the clean-odds snap too) or refuses honestly.";
-/** aria/tooltip for the hover pencil on the Planned % cell. */
-export const PIN_EDIT_HINT = "Click to pin this card's chance";
 /** Placeholder inside the pin editor input. */
 export const PIN_INPUT_PLACEHOLDER = "e.g. 0.0005";
 /** Clear-all control near the plan header (shown only when pins exist). */

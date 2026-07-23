@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,8 +19,6 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  Gamepad2,
-  Layers,
   LayoutGrid,
   Rows3,
   Search,
@@ -101,80 +98,6 @@ type PackCard = {
 // hidden tab paid for its scans on every page load, violating the
 // Active-Tab-Only rule in CLAUDE.md.
 //
-// This nav switches the active tab via the `?packTab=` URL param
-// (mirroring the /insights/games tab nav) so the server page can parse
-// the active tab and render ONLY that tab's content. The Games data is
-// then fetched inside a server <Suspense> boundary that only mounts when
-// packTab === "games" — i.e. on click, never on the initial Cards view.
-// Same fade-mask + horizontal-scroll affordance as the insights/analytics
-// tab strips so the visual language stays consistent.
-
-export type PackContentTab = "cards" | "games";
-
-export function parsePackContentTab(value: string | undefined): PackContentTab {
-  return value === "games" ? "games" : "cards";
-}
-
-const PACK_TABS: {
-  value: PackContentTab;
-  label: string;
-  icon: typeof Layers;
-}[] = [
-  { value: "cards", label: "Cards", icon: Layers },
-  { value: "games", label: "Games", icon: Gamepad2 },
-];
-
-export function PackContentTabsNav({ cardCount }: { cardCount: number }) {
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const current = parsePackContentTab(searchParams.get("packTab") ?? undefined);
-
-  function hrefFor(tab: PackContentTab): string {
-    const p = new URLSearchParams(searchParams.toString());
-    if (tab === "cards") p.delete("packTab");
-    else p.set("packTab", tab);
-    const qs = p.toString();
-    return qs ? `${pathname}?${qs}` : pathname;
-  }
-
-  return (
-    <div
-      className={cn(
-        "flex gap-1 overflow-x-auto overscroll-x-contain rounded-lg border bg-muted/50 p-1",
-        "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-        "[mask-image:linear-gradient(to_right,transparent,black_1.5rem,black_calc(100%-1.5rem),transparent)]",
-        "lg:[mask-image:none]",
-      )}
-    >
-      {PACK_TABS.map(({ value, label, icon: Icon }) => (
-        <Link
-          key={value}
-          href={hrefFor(value)}
-          replace
-          prefetch={false}
-          aria-current={current === value ? "page" : undefined}
-          className={cn(
-            "flex shrink-0 scroll-mx-4 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-            current === value
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          <Icon className="size-3.5" />
-          {label}
-          {value === "cards" && (
-            <span className="text-xs text-muted-foreground">({cardCount})</span>
-          )}
-        </Link>
-      ))}
-      {/* Trailing spacer so the last tab can scroll clear of the right-edge
-          fade-mask on mobile instead of sitting half-faded under it. shrink-0
-          keeps it from collapsing; hidden on lg where the mask is removed. */}
-      <span aria-hidden className="shrink-0 pr-4 lg:hidden" />
-    </div>
-  );
-}
-
 // ─── Pack cards view ───────────────────────────────────────────────
 //
 // The pack's card pool is the operator's primary read on this page:

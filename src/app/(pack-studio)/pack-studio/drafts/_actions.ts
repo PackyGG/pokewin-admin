@@ -2,7 +2,6 @@
 
 import { revalidatePath, revalidateTag } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
-import { z } from "zod";
 
 import { adminDb } from "@/lib/admin-db";
 import { Prisma } from "@/generated/admin-prisma/client";
@@ -82,24 +81,6 @@ import { getPacksPoolComposition } from "@/lib/queries/packs";
  * payload can't put malformed JSON into the JSONB column. Mirrors the
  * `Number.isInteger + > 0` weight rule `applyPackEdit` enforces.
  */
-const editPoolCardSchema = z.object({
-  cardId: z.string().uuid(),
-  weight: z.number().int().positive(),
-  color: z.string().nullable().optional(),
-  animation: z.boolean().optional(),
-  order: z.number().int().nonnegative(),
-});
-
-const editPoolArraySchema = z
-  .array(editPoolCardSchema)
-  .min(1, "Pool must contain at least one card");
-
-const updateDraftInputSchema = z.object({
-  pool: editPoolArraySchema,
-  price: z.number().positive().optional(),
-  notes: z.string().max(2000).optional(),
-});
-
 // ─── Internal helpers ───────────────────────────────────────────────────
 
 /**
@@ -233,11 +214,6 @@ export type BulkSeedResult = {
   errors: { packId: string; error: string }[];
 };
 
-export type UpdateDraftResult = {
-  draftId: string;
-  risk: PackRisk;
-};
-
 export type ApplyAutoRetuneToDraftResult = {
   draftId: string;
   risk: PackRisk;
@@ -294,8 +270,12 @@ type DraftWriteRefusal = { refusedMessage: string };
  * the `pack_retune_drafts_one_pending_per_pack` partial unique index), returns
  * { draftId: existing.id, created: false } instead of throwing — the UI opens
  * the existing draft rather than seeding a duplicate.
+ *
+ * NOT exported: in a `"use server"` module every export is a callable RPC
+ * endpoint, and no client calls this one — `bulkSeedAllActiveDrafts` below is
+ * its only caller. Module-private removes the endpoint, behaviour unchanged.
  */
-export async function seedDraftForPack(
+async function seedDraftForPack(
   packId: string,
 ): Promise<SeedDraftResult> {
   const session = await requireDraftOperator();
@@ -422,88 +402,6 @@ export async function bulkSeedAllActiveDrafts(
   revalidateTag("pack-retune-drafts");
 
   return { seeded, skipped, errors };
-}
-
-// ─── updateDraftPool ────────────────────────────────────────────────────
-
-/**
- * Update a pending draft's proposed pool / price / notes. Validates the pool
- * with the same per-card rules `applyPackEdit` enforces (uuid cardId, positive
- * int weight, no duplicates, ≥ 1 card, non-negative order). Recomputes
- * `computed_risk` against the captured `source_snapshot` card values so the
- * cached risk can never drift from the proposed pool/price.
- *
- * ADMIN-DB only — no MAIN read or write.
- */
-export async function updateDraftPool(
-  packId: string,
-  input: {
-    pool: EditPoolInputCard[];
-    price?: number;
-    notes?: string;
-  },
-): Promise<UpdateDraftResult> {
-  const session = await requireDraftOperator();
-  if (!isUuid(packId)) throw new Error("Invalid pack id");
-
-  const parsed = updateDraftInputSchema.safeParse(input);
-  if (!parsed.success) {
-    throw new Error(parsed.error.issues[0]?.message ?? "Invalid draft input");
-  }
-  const { pool, price, notes } = parsed.data;
-
-  // Reject duplicate cardIds in the same pool.
-  const seenIds = new Set<string>();
-  for (const c of pool) {
-    if (seenIds.has(c.cardId)) {
-      throw new Error("Refused: the edited pool has a duplicate card.");
-    }
-    seenIds.add(c.cardId);
-  }
-
-  const existing = await adminDb.pack_retune_drafts.findFirst({
-    where: { pack_id: packId, status: "draft" },
-    select: {
-      id: true,
-      proposed_price: true,
-      source_snapshot: true,
-    },
-  });
-  if (!existing) throw new Error("No pending draft for this pack.");
-
-  const valueByCard = valueByCardFromSnapshot(existing.source_snapshot);
-  const nextPrice = price ?? Number(existing.proposed_price.toString());
-  if (!(nextPrice > 0)) {
-    throw new Error("Refused: price must be greater than 0.");
-  }
-  const computedRisk = riskForPool(
-    pool as EditPoolInputCard[],
-    valueByCard,
-    nextPrice,
-  );
-
-  await adminDb.pack_retune_drafts.update({
-    where: { id: existing.id },
-    data: {
-      proposed_pool: pool as unknown as Prisma.InputJsonValue,
-      proposed_price: nextPrice,
-      computed_risk: computedRisk as unknown as Prisma.InputJsonValue,
-      last_edited_by: session.userId,
-      ...(notes !== undefined ? { notes } : {}),
-    },
-  });
-
-  await tryAudit(session.userId, "pack_draft_edited", {
-    pack_id: packId,
-    draft_id: existing.id,
-    via: "drafts",
-    pool_size: pool.length,
-    new_price: nextPrice,
-  });
-  revalidatePath("/pack-studio/drafts");
-  revalidateTag("pack-retune-drafts");
-
-  return { draftId: existing.id, risk: computedRisk };
 }
 
 // ─── applyAutoRetuneToDraft ─────────────────────────────────────────────

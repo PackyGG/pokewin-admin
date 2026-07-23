@@ -187,7 +187,7 @@ export type PendingPreflightView =
  * the staged key — they never stale a plan and never trigger a re-plan (they
  * ride the push payload only).
  */
-export function stagedKey(pool: StagedPool): string {
+function stagedKey(pool: StagedPool): string {
   return JSON.stringify({
     ids: pool.cards.map((c) => c.cardId).sort(),
     price: pool.price.toFixed(2),
@@ -459,44 +459,6 @@ export function stagedWriteInput(staged: StagedPool): StagedPoolInput {
       ? { tagOverride: staged.tagOverride }
       : {}),
   };
-}
-
-// ─── Pending edits total-% (pure) ───────────────────────────────────────────
-
-/**
- * The live total-% the pool's odds would land at with the pending buffer
- * applied — the readout the owner watches before committing the batch.
- *
- * Base = the current plan's planned odds (already reflects any COMMITTED pins),
- * mapped by cardId; a pending edit OVERRIDES its card's contribution with the
- * typed value. Cards that carry a pending edit but aren't in the plan (added
- * cards mid-debounce) still count their typed value. A pack with no planned
- * odds falls back to the pending sum alone.
- *
- * This is a display estimate (the server re-solves on Apply and re-normalizes
- * to exactly 100%); it exists so a mid-edit over/under-100% is visible early.
- */
-export function pendingOddsTotal(
-  planned: { cardId: string; pct: number }[] | null,
-  pending: { cardId: string; pct: number }[],
-): number {
-  const pendingByCard = new Map(pending.map((p) => [p.cardId, p.pct]));
-  if (planned === null || planned.length === 0) {
-    let sum = 0;
-    for (const p of pending) sum += p.pct;
-    return sum;
-  }
-  let total = 0;
-  const seen = new Set<string>();
-  for (const row of planned) {
-    seen.add(row.cardId);
-    total += pendingByCard.get(row.cardId) ?? row.pct;
-  }
-  // A pending edit on a card not represented in the plan still counts.
-  for (const p of pending) {
-    if (!seen.has(p.cardId)) total += p.pct;
-  }
-  return total;
 }
 
 /**
