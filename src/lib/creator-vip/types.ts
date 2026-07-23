@@ -41,6 +41,17 @@ export type CreatorRewardProgram = {
   name: string;
   creatorUserId: string;
   creatorUsername: string | null;
+  /**
+   * MAIN-DB profile of the creator, for the program card.
+   *
+   * A program is an agreement with a person, and the card is where an
+   * operator decides whether to pause or pay one — so it shows who it belongs
+   * to, not just a username string. All optional: a failed MAIN lookup leaves
+   * the card rendering with initials and no country, never blank.
+   */
+  creatorImage: string | null;
+  creatorCountryCode: string | null;
+  creatorIsBanned: boolean;
   /** UPPERCASE codes this program accrues on. */
   codes: string[];
   /** WAGER LEG — both set, or both null when the leg is off. */

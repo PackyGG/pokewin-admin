@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/empty-state";
 import { SectionHeading } from "@/components/modern-panels";
+import { StepUpField } from "@/components/step-up-field";
 import { formatCurrency, formatDateTime, formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import type { CreatorRewardProgramWithStats } from "@/lib/creator-vip/types";
@@ -259,20 +260,58 @@ function ProgramRow({ program }: { program: CreatorRewardProgramWithStats }) {
   return (
     <Card>
       <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-3 p-4">
-        <div className="min-w-[180px] flex-1">
-          <div className="flex items-center gap-2">
-            <span className="font-medium">{program.name}</span>
-            {!program.isActive && (
-              <Badge
-                variant="outline"
-                className="bg-zinc-500/15 text-[10px] text-zinc-600 dark:text-zinc-400"
-              >
-                Paused
-              </Badge>
+        {/* Identity block — avatar + who the program belongs to, on the same
+            baseline as the program name. A program is an agreement with a
+            person, and this card is where someone decides to pause or pay
+            one, so the creator reads as a person rather than a username in
+            small grey text. Fixed avatar size + `items-center` keeps every
+            card's first line aligned no matter how long a name runs. */}
+        <div className="flex min-w-[240px] flex-1 items-center gap-3">
+          <Avatar className="size-10 shrink-0">
+            {program.creatorImage && (
+              <AvatarImage src={program.creatorImage} alt="" />
             )}
-          </div>
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            {program.creatorUsername ?? program.creatorUserId}
+            <AvatarFallback className="text-xs">
+              {(program.creatorUsername ?? program.creatorUserId)
+                .slice(0, 2)
+                .toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="truncate font-medium">{program.name}</span>
+              {!program.isActive && (
+                <Badge
+                  variant="outline"
+                  className="bg-zinc-500/15 text-[10px] text-zinc-600 dark:text-zinc-400"
+                >
+                  Paused
+                </Badge>
+              )}
+              {program.creatorIsBanned && (
+                <Badge
+                  variant="outline"
+                  className="border-rose-500/30 bg-rose-500/15 text-[10px] text-rose-600 dark:text-rose-400"
+                  title="This creator's account is banned — the program is still accruing."
+                >
+                  Creator banned
+                </Badge>
+              )}
+            </div>
+            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+              <Link
+                href={`/users/${program.creatorUserId}`}
+                className="truncate hover:text-foreground hover:underline"
+                title={`Open ${program.creatorUsername ?? program.creatorUserId}`}
+              >
+                {program.creatorUsername ?? program.creatorUserId}
+              </Link>
+              {program.creatorCountryCode && (
+                <span className="shrink-0 text-muted-foreground/70">
+                  · {program.creatorCountryCode}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -1466,7 +1505,6 @@ function ApproveDialog({
   onOpenChange: (v: boolean) => void;
 }) {
   const [totp, setTotp] = useState("");
-  const [note, setNote] = useState("");
   const [isPending, startTransition] = useTransition();
 
   function submit() {
@@ -1474,7 +1512,6 @@ function ApproveDialog({
       const res = await approveCreatorRewardClaim({
         claimId: claim.id,
         totpCode: totp.trim(),
-        note: note.trim() || undefined,
       });
       if (!res.success) {
         toast.error(res.error);
@@ -1482,7 +1519,6 @@ function ApproveDialog({
       }
       toast.success(`Paid ${formatCurrency(claim.amountUsd)}`);
       setTotp("");
-      setNote("");
       onOpenChange(false);
     });
   }
@@ -1511,28 +1547,11 @@ function ApproveDialog({
           </div>
         )}
 
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label className="text-xs">Note (optional)</Label>
-            <Textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              rows={2}
-              disabled={isPending}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">2FA code</Label>
-            <Input
-              value={totp}
-              onChange={(e) => setTotp(e.target.value)}
-              placeholder="123456"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              disabled={isPending}
-            />
-          </div>
-        </div>
+        {/* Passkey OR authenticator code — `require2FA` accepts either, so the
+            same field serves both. The note input was removed (owner,
+            2026-07-23): approvals are already traceable through the claim, the
+            audit event and the ledger row's creator metadata. */}
+        <StepUpField value={totp} onChange={setTotp} disabled={isPending} />
 
         <DialogFooter>
           <Button
@@ -1542,7 +1561,9 @@ function ApproveDialog({
           >
             Cancel
           </Button>
-          <Button onClick={submit} disabled={isPending || totp.trim().length < 6}>
+          {/* Non-empty is the right client-side test: a passkey proof token is
+              far longer than 6 chars, and the server validates the real shape. */}
+          <Button onClick={submit} disabled={isPending || totp.trim().length === 0}>
             {isPending ? "Paying…" : "Approve and pay"}
           </Button>
         </DialogFooter>

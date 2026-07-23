@@ -117,6 +117,11 @@ export async function getProgramsWithStats(): Promise<
       name: p.name,
       creatorUserId: p.creator_user_id,
       creatorUsername: users.get(p.creator_user_id)?.name ?? null,
+      creatorImage: users.get(p.creator_user_id)?.image ?? null,
+      creatorCountryCode: users.get(p.creator_user_id)?.countryCode ?? null,
+      // Default false, not null: a failed lookup renders as no badge, and a
+      // missing badge must never read as "checked and clean".
+      creatorIsBanned: users.get(p.creator_user_id)?.isBanned ?? false,
       codes: p.codes,
       thresholdUsd: p.threshold_usd == null ? null : toNumber(p.threshold_usd),
       rewardUsd: p.reward_usd == null ? null : toNumber(p.reward_usd),
