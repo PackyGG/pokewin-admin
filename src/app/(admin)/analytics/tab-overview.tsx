@@ -20,8 +20,13 @@ import {
   DailyMoneyTable,
   GameMixSection,
   HeadlineSection,
+  periodDeposits,
   TrafficStrip,
+  WithdrawalRailsSection,
 } from "./overview-sections";
+import { getWithdrawnCoinsBreakdown } from "@/lib/queries/analytics-withdrawals";
+import { getWithdrawnCoinsBreakdownFromClickHouse } from "@/lib/clickhouse/queries/analytics/withdrawals";
+import { compareWithdrawals } from "@/lib/clickhouse/compare/analytics-revenue-withdrawals";
 import type { AnalyticsPeriod } from "./types";
 
 /**
@@ -36,12 +41,13 @@ import type { AnalyticsPeriod } from "./types";
  * The order below IS the argument, and each section earns its place:
  *   1. House profit + the ladder that produces it — the one number.
  *   2. Deposits / withdrawals / players — context, deliberately small.
- *   3. Cost stack ranked by $, each as % of DEPOSITS — the affordability
+ *   3. Which rails that withdrawn cash left through, per coin.
+ *   4. Cost stack ranked by $, each as % of DEPOSITS — the affordability
  *      question, which raw dollar costs can't answer.
- *   4. Wager mix + MEASURED hold per mode — is a mode running hot.
- *   5. Depositor concentration — whale risk in one line.
- *   6. Day-by-day money table — the spreadsheet nobody should have to build.
- *   7. The existing trend charts, unchanged.
+ *   5. Wager mix + MEASURED hold per mode — is a mode running hot.
+ *   6. Depositor concentration — whale risk in one line.
+ *   7. Day-by-day money table — the spreadsheet nobody should have to build.
+ *   8. The existing trend charts, unchanged.
  *
  * Everything composes queries that already exist and are already proven
  * (getAnalyticsData, getPackBattlePurePnl, getTopDepositors) — no new heavy
@@ -84,6 +90,12 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
       <HeadlineSection data={data} />
       <TrafficStrip data={data} />
 
+      {/* Withdrawal rails scan `card_withdrawal_requests`, not the ledger —
+          its own leg so the headline above paints without waiting on it. */}
+      <Suspense fallback={<Skeleton className="h-48 w-full rounded-xl" />}>
+        <WithdrawalRailsLeg period={period} />
+      </Suspense>
+
       <CostStackSection data={data} />
 
       {/* Measured hold needs the pure-margin windows — its own leg so the
@@ -94,10 +106,10 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
 
       {/* Concentration needs the depositor leaderboard — same treatment. */}
       <Suspense fallback={<Skeleton className="h-40 w-full rounded-xl" />}>
-        <ConcentrationLeg
-          period={period}
-          deposits={data.realizedProfitBreakdown.totalDeposits}
-        />
+        {/* PERIOD deposits, not the lifetime balance-sheet total — the
+            leaderboard above it is windowed, so a lifetime denominator would
+            print a share that is wrong by the ratio of the two. */}
+        <ConcentrationLeg period={period} deposits={periodDeposits(data)} />
       </Suspense>
 
       <DailyMoneyTable data={data} />
@@ -107,6 +119,36 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
       </FadeIn>
     </div>
   );
+}
+
+/**
+ * Withdrawn cash per rail. Routed through `resolveAdminRead` so the
+ * `analytics_revenue_withdrawals` surface keeps its ClickHouse twin +
+ * per-surface rollback; degrades to a null (the section renders its own
+ * "unavailable" line) rather than blanking the tab.
+ */
+async function WithdrawalRailsLeg({ period }: { period: AnalyticsPeriod }) {
+  const { data } = await safeQuery(
+    () =>
+      resolveAdminRead<Awaited<ReturnType<typeof getWithdrawnCoinsBreakdown>>>(
+        "analytics_revenue_withdrawals",
+        {
+          pg: () => getWithdrawnCoinsBreakdown(period),
+          ch: async () =>
+            getWithdrawnCoinsBreakdownFromClickHouse(
+              period,
+              await getExcludedUserIds(),
+            ),
+        },
+      ),
+    null,
+    "analytics.overview.withdrawalRails",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  // Comparison-mode ClickHouse twin (fire-and-forget). No-op unless the
+  // surface is in `comparison` mode; never awaited, swallows its own errors.
+  if (data) void compareWithdrawals(data);
+  return <WithdrawalRailsSection data={data} />;
 }
 
 /**

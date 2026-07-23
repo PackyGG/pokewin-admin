@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import type { AnalyticsData } from "@/lib/queries/analytics";
 import type { PackBattlePnlWindows } from "@/lib/queries/pnl";
 import type { UserLeaderRow } from "@/lib/queries/analytics-top";
+import type { WithdrawnCoinsData } from "@/lib/queries/analytics-withdrawals";
 
 /**
  * Presentational sections for the /analytics Overview.
@@ -35,6 +36,20 @@ function houseTone(value: number): string {
 
 function pct(part: number, whole: number): number {
   return whole > 0 ? (part / whole) * 100 : 0;
+}
+
+/**
+ * Deposits for the SELECTED period.
+ *
+ * `realizedProfitBreakdown.totalDeposits` is the LIFETIME balance-sheet
+ * figure — it does not move when the period chip changes (owner hit exactly
+ * this: 30d → 90d left the deposit number identical). The daily series IS
+ * period-scoped, so summing it gives the window's real deposits and keeps
+ * every derived percentage consistent with the cost legs, which are summed
+ * from the same rows.
+ */
+export function periodDeposits(data: AnalyticsData): number {
+  return data.daily.reduce((sum, d) => sum + d.totalDeposit, 0);
 }
 
 function signed(value: number): string {
@@ -86,11 +101,19 @@ export function HeadlineSection({ data }: { data: AnalyticsData }) {
         <p className="mt-1 text-xs text-muted-foreground">
           Cash in minus cash out, minus everything we still owe players.
         </p>
+        {/* Said out loud because the page has a period chip and this number
+            ignores it: the realized-P&L snapshot is a BALANCE SHEET — every
+            deposit and liability ever, not a window. GGR/NGR below DO follow
+            the period. Leaving that implicit is what made 30d and 90d look
+            identical. */}
+        <p className="mt-1 text-[11px] font-medium uppercase tracking-wider text-amber-600 dark:text-amber-500">
+          Lifetime · not affected by the period filter
+        </p>
 
         <div className="mt-4 grid grid-cols-2 gap-3 border-t pt-3">
           <div>
             <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
-              GGR
+              GGR · this period
             </p>
             <p className="text-lg font-semibold tabular-nums text-emerald-500">
               {formatCurrency(data.ggr)}
@@ -101,7 +124,7 @@ export function HeadlineSection({ data }: { data: AnalyticsData }) {
           </div>
           <div>
             <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
-              NGR
+              NGR · this period
             </p>
             <p className="text-lg font-semibold tabular-nums text-emerald-500">
               {formatCurrency(data.ngr)}
@@ -153,9 +176,146 @@ export function HeadlineSection({ data }: { data: AnalyticsData }) {
           </div>
         </div>
         <p className="mt-2 text-[11px] text-muted-foreground">
-          Net cash moved {signed(netCash)} · outstanding liability{" "}
+          Lifetime · net cash moved {signed(netCash)} · outstanding liability{" "}
           {formatCurrency(liabilities)}
         </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── 1b. Cash out, by rail ────────────────────────────────────────────
+
+/**
+ * Which rails the withdrawn cash actually left through.
+ *
+ * The headline strip above says HOW MUCH left; this says through what — per
+ * crypto asset, plus physical card shipments as their own line (a real
+ * outflow of the same shape, just without a coin to attribute it to).
+ *
+ * Moved here from the deleted Revenue tab (owner, 2026-07-23) — it was the
+ * only panel on that tab not already answered, better, by Cost Breakdown.
+ *
+ * House POV: every dollar here is real cash leaving, so USD renders rose.
+ * Native crypto amounts stay muted — a quantity, not a P&L impact.
+ */
+export function WithdrawalRailsSection({
+  data,
+}: {
+  data: WithdrawnCoinsData | null;
+}) {
+  if (!data) {
+    return (
+      <div className="space-y-3">
+        <SectionHeading icon={Coins} title="Cash out, by rail" />
+        <div className="rounded-xl border bg-card p-4">
+          <p className="text-sm text-muted-foreground">
+            The withdrawal breakdown is unavailable right now — the rest of the
+            page is unaffected. Refresh to retry.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const { assets, totalCryptoUsd, physicalUsd, physicalCount } = data;
+  const total = totalCryptoUsd + physicalUsd;
+  const max = Math.max(...assets.map((a) => a.totalUsd), physicalUsd, 0);
+  const cryptoCount = assets.reduce((sum, a) => sum + a.count, 0);
+
+  return (
+    <div className="space-y-3">
+      <SectionHeading icon={Coins} title="Cash out, by rail" />
+      <div className="rounded-xl border bg-card p-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <p className="text-sm">
+            <span className="text-lg font-bold tabular-nums text-rose-500">
+              {formatCurrency(total)}
+            </span>{" "}
+            <span className="text-muted-foreground">
+              withdrawn this period
+            </span>
+          </p>
+          <p className="text-sm tabular-nums text-muted-foreground">
+            {formatNumber(cryptoCount + physicalCount)} withdrawals ·{" "}
+            {assets.length} {assets.length === 1 ? "asset" : "assets"}
+          </p>
+        </div>
+
+        {assets.length === 0 && physicalCount === 0 ? (
+          <p className="mt-3 text-sm text-muted-foreground">
+            No crypto cash-outs or card shipments in this period.
+          </p>
+        ) : (
+          <div className="mt-3 space-y-2">
+            {assets.map((a) => (
+              <WithdrawalRailRow
+                key={a.asset}
+                label={a.asset}
+                meta={`${formatNumber(a.count)} · ${a.totalCryptoAmount.toLocaleString(
+                  "en-US",
+                  { maximumFractionDigits: 8 },
+                )}`}
+                amount={a.totalUsd}
+                total={total}
+                max={max}
+              />
+            ))}
+            {physicalCount > 0 && (
+              <WithdrawalRailRow
+                label="Physical cards"
+                meta={`${formatNumber(physicalCount)} shipped`}
+                amount={physicalUsd}
+                total={total}
+                max={max}
+              />
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** One rail: label + count/native meta, USD, share of the period, ranked bar. */
+function WithdrawalRailRow({
+  label,
+  meta,
+  amount,
+  total,
+  max,
+}: {
+  label: string;
+  meta: string;
+  amount: number;
+  total: number;
+  max: number;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-baseline justify-between gap-3 text-sm">
+        <span className="min-w-0 truncate">
+          <span className="font-mono text-xs font-medium">{label}</span>
+          <span className="ml-2 font-mono text-[11px] tabular-nums text-muted-foreground">
+            {meta}
+          </span>
+        </span>
+        <span className="shrink-0 tabular-nums">
+          <span className="font-medium text-rose-500">
+            {formatCurrency(amount)}
+          </span>
+          <span className="ml-2 text-xs text-muted-foreground">
+            {pct(amount, total).toFixed(1)}%
+          </span>
+        </span>
+      </div>
+      {/* Bar is relative to the BIGGEST rail so the ranking reads at a
+          glance; the % text stays absolute against the period total. */}
+      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-rose-500/70"
+          style={{ width: `${max > 0 ? (amount / max) * 100 : 0}%` }}
+        />
       </div>
     </div>
   );
@@ -180,7 +340,7 @@ const COST_LEGS = [
  * of $400k of deposits (10%) or $80k (50%).
  */
 export function CostStackSection({ data }: { data: AnalyticsData }) {
-  const deposits = data.realizedProfitBreakdown.totalDeposits;
+  const deposits = periodDeposits(data);
   const legs = COST_LEGS.map((leg) => ({
     label: leg.label,
     amount: data.daily.reduce((sum, d) => sum + (d[leg.key] ?? 0), 0),
@@ -584,18 +744,24 @@ export function DailyMoneyTable({ data }: { data: AnalyticsData }) {
 
 /** Signups / active players / cash movement, small — context, not headline. */
 export function TrafficStrip({ data }: { data: AnalyticsData }) {
-  const b = data.realizedProfitBreakdown;
+  // Every tile here is PERIOD-scoped, which is the whole point of a strip
+  // under a period chip. Deposits come from the daily series, not the
+  // lifetime balance-sheet snapshot. Withdrawals have no per-period figure in
+  // this payload, so rather than print a lifetime number in a period strip
+  // (the bug this replaces) the slot shows total wager instead — the other
+  // side of the same window.
+  const wager = data.packWager + data.battleWager + data.upgraderWager;
   const tiles = [
     {
       label: "Deposits",
-      value: formatCurrency(b.totalDeposits),
+      value: formatCurrency(periodDeposits(data)),
       tone: "text-emerald-500",
       icon: ArrowDownRight,
     },
     {
-      label: "Withdrawals",
-      value: formatCurrency(b.totalWithdrawals),
-      tone: "text-rose-500",
+      label: "Wagered",
+      value: formatCurrency(wager),
+      tone: "",
       icon: ArrowUpRight,
     },
     {
