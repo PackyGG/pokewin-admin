@@ -31,7 +31,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SkeletonText } from "@/components/ux";
 import { SectionHeadingSkeleton } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { formatCurrency } from "@/lib/utils/format";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
@@ -55,7 +55,6 @@ import {
   MetricInfoPopover,
   InfoRow,
   InfoTotal,
-  ValueChip,
 } from "../insights/cost-breakdown/_components";
 // SEMANTIC_TONES is imported from the DIRECTIVE-FREE `./tones` module (not
 // `./_components`, which is "use client"). This page is a Server Component
@@ -68,74 +67,48 @@ import {
 import { SEMANTIC_TONES, type SemanticTone } from "../insights/cost-breakdown/tones";
 
 /**
- * /insights/cost-breakdown — THE money-leakage page, rebuilt
- * comprehension-first.
+ * Cost Breakdown — the /analytics tab that answers "we wagered $X, why is
+ * P&L only $Y?".
  *
- * It answers, at a glance, the operator's recurring question — "$2.5M
- * wagered but only $17k P&L, where does the money go?" — in a strict
- * reading order:
+ * Reading order, numbers-first (owner, 2026-07-23 — the previous version
+ * buried the figures under a prose story lead that restated every tile in
+ * paragraph form, repeated the period label on all six headings, and closed
+ * two panels with explanatory footnotes):
  *
- *   0. The LIFETIME REALIZED P&L reference — the canonical balance-sheet
- *      snapshot (`getRealizedPnlSnapshot`), the SAME figure the /insights
- *      hub, /insights/real-numbers and /dashboard show. This is the real
- *      "what's our actual bottom line" answer and stays constant across
- *      the period chip. Everything below it is the PER-PERIOD breakdown.
- *   1. A plain-language STORY LEAD (the period's headline flow + biggest
- *      leak + the realized-vs-held distinction, chunked into scannable
- *      lines).
- *   2. A SUMMARY grouped into semantic sections — Incoming value → Paid
- *      back & costs → Held / unrealized → Period outcome — where the
- *      period's net result and the biggest driver stand out most.
- *   3. The WATERFALL (wager → GGR → −costs → NGR → −held → net result)
- *      as grouped bands with emphasised checkpoints, not a flat list.
- *   4. Detail rows (ranked leaks, margin health, contributors, trend)
- *      only AFTER the high-level story.
+ *   0. Lifetime realized P&L — the canonical balance-sheet snapshot,
+ *      constant across the period chip.
+ *   1. Summary — four groups: incoming → paid back → held → outcome.
+ *   2. The waterfall (wager → GGR → −costs → NGR → −held → net result).
+ *   3. Detail: ranked leaks, margin health, contributors, trend.
  *
- * The gaming/cost financial logic is UNCHANGED: every windowed figure
- * still comes from `getCostBreakdown` (an assembly of the canonical
- * `@/lib/metrics` layer: getWindowMetrics + sumLedgerTypes +
- * calculateWindowedPnl), so the page reconciles by construction with
- * /ggr, /dashboard and every migrated surface. GGR is the verified
- * inventory-delta model; NGR nets house-funded rewards; the contributors
- * net comes from the authoritative `balances` counters.
+ * Every explanation now lives in the "i" popover attached to its own
+ * metric — one place per fact, opened on demand instead of printed as body
+ * copy next to the number it describes.
  *
- * IMPORTANT distinction (honest labeling): `getCostBreakdown(...).pnl`
- * (`calculateWindowedPnl`) is a per-period gaming→cash FLOW. It is the
- * right "net result" for a bounded window (7d / 30d), but on the
- * unbounded LIFETIME scan it diverges from the balance-sheet snapshot
- * above (it omits the unclaimed-rakeback liability and treats in-flight
- * withdrawals differently), so it is labeled "Net result (this period)" —
- * NOT "the bottom line". The lifetime balance-sheet snapshot is the
- * authoritative bottom line. This remake is presentation/IA + labeling
- * only; no money math changed.
+ * The financial logic is UNCHANGED: every windowed figure comes from
+ * `getCostBreakdown` (an assembly of the canonical `@/lib/metrics` layer:
+ * getWindowMetrics + sumLedgerTypes + calculateWindowedPnl), so this
+ * reconciles by construction with /ggr, /dashboard and every migrated
+ * surface. GGR is the verified inventory-delta model; NGR nets house-funded
+ * rewards; the contributor net comes from the authoritative `balances`
+ * counters.
  *
- * House-POV throughout (CLAUDE.md), but with a colour HIERARCHY:
- *   • base wager → blue;
- *   • money the house keeps (GGR/NGR/P&L positive) → emerald;
- *   • realized money-back (gaming payouts, rewards, shipped cards) → rose;
- *   • HELD / unrealized liability (inventory still held, unclaimed
- *     vouchers) → amber — deliberately NOT the same red as a realized
- *     loss, because it can still come back; and
- *   • the honest leftover → muted.
- */
-/**
- * Cost Breakdown as an /analytics tab.
+ * Honest labeling: `getCostBreakdown(...).pnl` is a per-period gaming→cash
+ * FLOW — the right "net result" for a bounded window, but on the unbounded
+ * lifetime scan it diverges from the balance-sheet snapshot at the top (it
+ * omits unclaimed rakeback and treats in-flight withdrawals differently).
+ * Hence "Net result (this period)", never "the bottom line".
  *
- * Was `/insights/cost-breakdown` (owner, 2026-07-23). Body untouched; the
- * PageHero is gone because /analytics renders one, and the period filter +
- * export moved inline above the waterfall.
+ * House-POV colour hierarchy (CLAUDE.md): base wager → blue; money the
+ * house keeps → emerald; realized money-back → rose; HELD / unrealized
+ * liability → amber (deliberately not the red of a realized loss, since it
+ * can still come back); the honest leftover → muted.
  *
- * Shell-first is preserved: the controls paint instantly from the URL — no DB
- * — and the heavy assembly (the canonical metric layer + bridge terms +
- * contributor sweep + lifetime realized-P&L snapshot, the heaviest read in
- * the app) streams behind a Suspense keyed on `period`.
- *
- * PERIOD: reads the page-level `?period=`, translated by `toInsightsPeriod`
- * (owner, 2026-07-23 — one timespan control for the whole page). It used to
- * own `?cbPeriod=` and render its own filter, because the two layers name
- * their shortest window differently (`today` vs `24h`). That difference is
- * now handled by one mapper in `analytics/types.ts` instead of a second
- * control the user had to notice.
+ * Shell-first: the export control paints instantly from the URL — no DB —
+ * and the heavy assembly (metric layer + bridge terms + contributor sweep +
+ * lifetime snapshot, the heaviest read in the app) streams behind a
+ * Suspense keyed on `period`. The period comes from the page-level
+ * `?period=` via `toInsightsPeriod`; this tab owns no filter of its own.
  */
 export async function CostBreakdownTab({
   period,
@@ -144,10 +117,7 @@ export async function CostBreakdownTab({
 }) {
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">
-          Where the wager goes — wager → net result, every leak named
-        </p>
+      <div className="flex justify-end">
         <ExportButton page="cost-breakdown" params={{ period }} />
       </div>
 
@@ -161,9 +131,9 @@ export async function CostBreakdownTab({
 /**
  * The streamed body: the two heavy reads (period cost-breakdown assembly +
  * the lifetime realized-P&L snapshot) + the fire-and-forget CQRS comparison,
- * then the full per-period story tree. Isolated behind the page's Suspense
- * boundary so the hero + controls never wait on it. Served numbers are
- * unchanged from the previous page-body implementation.
+ * then the full per-period breakdown tree. Isolated behind the tab's
+ * Suspense boundary so the hero + controls never wait on it. Served numbers
+ * are unchanged from the previous implementation.
  */
 async function CostBreakdownBody({
   period,
@@ -181,15 +151,14 @@ async function CostBreakdownBody({
     ),
     // Lifetime realized P&L — the canonical balance-sheet snapshot
     // (deposits − withdrawals − on-site balance − inventory − unclaimed
-    // vouchers/rakeback), the SAME source /insights/real-numbers, the
-    // /insights hub P&L tile and the dashboard read, so the four can never
-    // drift. React-cached + 5-min cached → cheap. It is NOT the windowed
-    // `getCostBreakdown(...).pnl`, which is a per-period gaming→cash FLOW
-    // that, on the unbounded lifetime scan, diverges from this snapshot
-    // (it omits the unclaimed-rakeback liability and treats in-flight
-    // withdrawals differently). Shown as the constant authoritative
-    // bottom-line reference on every period. Its own leg so a snapshot
-    // read failure degrades just that reference, not the whole page.
+    // vouchers/rakeback), the SAME source the dashboard reads, so the two
+    // can never drift. React-cached + 5-min cached → cheap. It is NOT the
+    // windowed `getCostBreakdown(...).pnl`, which is a per-period
+    // gaming→cash FLOW that, on the unbounded lifetime scan, diverges from
+    // this snapshot (it omits the unclaimed-rakeback liability and treats
+    // in-flight withdrawals differently). Shown as the constant
+    // authoritative bottom-line reference on every period. Its own leg so a
+    // snapshot read failure degrades just that reference, not the whole tab.
     safeQuery(
       () => getRealizedPnlSnapshot(),
       null,
@@ -219,37 +188,26 @@ async function CostBreakdownBody({
       <div className="space-y-6">
         <LifetimePnlReference snapshot={lifetimeSnapshot} />
 
-        <StoryLead data={data} periodLabel={periodLabel} />
-
+        {/* The period label appears ONCE, on the first heading. It used to
+            be suffixed to all six, which only restated the page-level period
+            chip sitting a few pixels above. */}
         <section className="space-y-3">
-          <SectionHeading
-            icon={Layers}
-            title={`The story in four moves · ${periodLabel}`}
-          />
-          <SummaryFlow data={data} periodLabel={periodLabel} />
+          <SectionHeading icon={Layers} title={`Summary · ${periodLabel}`} />
+          <SummaryFlow data={data} />
         </section>
 
         <section className="space-y-3">
-          <SectionHeading
-            icon={Scale}
-            title={`The waterfall — wager → net result · ${periodLabel}`}
-          />
+          <SectionHeading icon={Scale} title="Waterfall" />
           <WaterfallPanel data={data} />
         </section>
 
         <section className="space-y-3">
-          <SectionHeading
-            icon={ListOrdered}
-            title={`Cost categories ranked — biggest leak first · ${periodLabel}`}
-          />
+          <SectionHeading icon={ListOrdered} title="Cost categories" />
           <RankedCosts data={data} />
         </section>
 
         <section className="space-y-3">
-          <SectionHeading
-            icon={Activity}
-            title={`Margin health · ${periodLabel}`}
-          />
+          <SectionHeading icon={Activity} title="Margin health" />
           <MarginHealth data={data} />
         </section>
 
@@ -257,7 +215,7 @@ async function CostBreakdownBody({
           <section className="space-y-3">
             <SectionHeading
               icon={Users}
-              title="Who drove the margin · lifetime wager loss"
+              title="Top contributors · lifetime wager loss"
             />
             <Contributors data={data} />
           </section>
@@ -265,10 +223,7 @@ async function CostBreakdownBody({
 
         {data.trend.length > 0 && (
           <section className="space-y-3">
-            <SectionHeading
-              icon={TrendingUp}
-              title={`Trend — is leakage growing? · ${periodLabel}`}
-            />
+            <SectionHeading icon={TrendingUp} title="Trend" />
             <CostTrendChart data={data.trend} />
           </section>
         )}
@@ -278,31 +233,25 @@ async function CostBreakdownBody({
 }
 
 /**
- * The waterfall-skeleton silhouette rendered inside the page's Suspense
- * fallback while the body streams (and by `loading.tsx` for the route-level
- * pending state). Layout-matching so nothing jumps when the data lands:
- * the story-lead block, the four-move summary grid, and the waterfall panel.
+ * The silhouette rendered inside the tab's Suspense fallback while the body
+ * streams. Layout-matching so nothing jumps when the data lands: the
+ * lifetime P&L strip, the four-group summary grid, then the waterfall panel.
  */
 function CostBreakdownBodySkeleton() {
   return (
-    <>
-      {/* Story lead */}
-      <div className="overflow-hidden rounded-2xl border bg-card">
-        <div className="flex items-center gap-3 border-b bg-muted/30 px-4 py-3 sm:px-5">
-          <Skeleton className="size-8 shrink-0 rounded-lg" />
-          <div className="space-y-1.5">
-            <Skeleton className="h-4 w-56" />
-            <Skeleton className="h-3 w-40" />
-          </div>
-        </div>
-        <div className="p-4 sm:p-5">
-          <SkeletonText lines={4} />
+    <div className="space-y-6">
+      {/* Lifetime P&L strip */}
+      <div className="flex items-center gap-3 rounded-xl border bg-card p-4">
+        <Skeleton className="size-9 shrink-0 rounded-lg" />
+        <div className="space-y-1.5">
+          <Skeleton className="h-3 w-40" />
+          <Skeleton className="h-7 w-36" />
         </div>
       </div>
 
-      {/* Four-move summary grid */}
+      {/* Summary grid */}
       <div className="space-y-3">
-        <SectionHeadingSkeleton titleWidth={220} />
+        <SectionHeadingSkeleton titleWidth={160} />
         <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
           {Array.from({ length: 4 }).map((_, g) => (
             <div key={g} className="space-y-2">
@@ -318,30 +267,34 @@ function CostBreakdownBodySkeleton() {
 
       {/* Waterfall */}
       <div className="space-y-3">
-        <SectionHeadingSkeleton titleWidth={260} />
+        <SectionHeadingSkeleton titleWidth={120} />
         <div className="rounded-xl border bg-card p-3 sm:p-4">
           <SkeletonText lines={12} />
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
 // ─── Lifetime realized P&L reference ────────────────────────────────
 
 /**
- * The authoritative bottom-line answer, shown ABOVE the per-period story:
- * the canonical lifetime balance-sheet snapshot from
- * `getRealizedPnlSnapshot` — deposits − withdrawals − on-site balance −
- * inventory − unclaimed vouchers − unclaimed rakeback. This is the SAME
- * figure the /insights hub P&L tile, /insights/real-numbers and the
- * dashboard render, so the four can never drift. It is intentionally
- * separate from (and a constant reference for) the windowed cost-breakdown
- * P&L below, which on the unbounded lifetime scan diverges from this
- * snapshot — see the "Net result (this period)" tile.
+ * The authoritative bottom line, shown ABOVE the per-period breakdown: the
+ * canonical lifetime balance-sheet snapshot from `getRealizedPnlSnapshot`
+ * — deposits − withdrawals − on-site balance − inventory − unclaimed
+ * vouchers − unclaimed rakeback. The SAME figure the dashboard renders, so
+ * the two can never drift. It is intentionally separate from (and a
+ * constant reference for) the windowed P&L below, which on the unbounded
+ * lifetime scan diverges from this snapshot — see the "Net result (this
+ * period)" tile.
+ *
+ * One compact strip: chip + label + "lifetime" pill + the number. The
+ * derivation lives in the "i" popover instead of caption copy — this used
+ * to carry two extra paragraphs, one of them linking to
+ * /insights/real-numbers, a route that no longer exists.
  *
  * House-POV: P&L ≥ 0 → emerald (keep), < 0 → rose (cost). Renders nothing
- * if the snapshot leg failed (the page's per-period story still stands).
+ * if the snapshot leg failed (the per-period breakdown still stands).
  */
 function LifetimePnlReference({
   snapshot,
@@ -353,216 +306,94 @@ function LifetimePnlReference({
   const tone = SEMANTIC_TONES[pos ? "keep" : "cost"];
   const PnlIcon = pos ? TrendingUp : TrendingDown;
   return (
-    <div className="rounded-2xl border bg-card p-4 shadow-sm sm:p-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-start gap-3">
-          <span
+    <div className="rounded-xl border bg-card p-4">
+      <div className="flex items-center gap-3">
+        <span
+          className={cn(
+            "flex size-9 shrink-0 items-center justify-center rounded-lg",
+            tone.chip,
+          )}
+        >
+          <PnlIcon className="size-5" />
+        </span>
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
+              Lifetime realized P&amp;L
+            </span>
+            <span className="shrink-0 rounded-full border border-border/70 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+              lifetime
+            </span>
+            <MetricInfoPopover
+              tone={pos ? "keep" : "cost"}
+              label="What lifetime realized P&L means"
+              title="Lifetime realized P&L · balance sheet"
+              blurb="The canonical house bottom line: deposits − withdrawals − on-site balance − inventory − unclaimed vouchers − unclaimed rakeback. The SAME snapshot the Dashboard shows, so the two can never drift. Constant across the period chip — it is lifetime, not windowed."
+            >
+              <ul className="space-y-0.5">
+                <InfoRow
+                  iconNode={<ArrowDownToLine className="size-3" />}
+                  label="Deposits"
+                  amount={snapshot.totalDeposited}
+                  sign="+"
+                  tone="base"
+                />
+                <InfoRow
+                  iconNode={<ArrowUpFromLine className="size-3" />}
+                  label="Withdrawals"
+                  sub="balance + shipped-card cash-out"
+                  amount={snapshot.totalWithdrawn}
+                  sign="−"
+                  tone="cost"
+                />
+                <InfoRow
+                  iconNode={<Wallet className="size-3" />}
+                  label="On-site balance held"
+                  amount={snapshot.userBalance}
+                  sign="−"
+                  tone="held"
+                />
+                <InfoRow
+                  iconNode={<Package className="size-3" />}
+                  label="Inventory held"
+                  amount={snapshot.inventory}
+                  sign="−"
+                  tone="held"
+                />
+                <InfoRow
+                  iconNode={<Ticket className="size-3" />}
+                  label="Unclaimed vouchers"
+                  amount={snapshot.vouchers}
+                  sign="−"
+                  tone="held"
+                />
+                <InfoRow
+                  iconNode={<HandCoins className="size-3" />}
+                  label="Unclaimed rakeback"
+                  amount={snapshot.unclaimedRakeback}
+                  sign="−"
+                  tone="held"
+                />
+              </ul>
+              <InfoTotal
+                label="Realized P&L"
+                amount={snapshot.pnl}
+                sign={pos ? "+" : "−"}
+                tone={pos ? "keep" : "cost"}
+                note="The real bottom line — deposits minus withdrawals minus everything users still hold."
+              />
+            </MetricInfoPopover>
+          </div>
+          <p
             className={cn(
-              "flex size-9 shrink-0 items-center justify-center rounded-lg",
-              tone.chip,
+              "mt-0.5 text-2xl font-bold leading-tight tracking-tight tabular-nums sm:text-3xl",
+              tone.text,
             )}
           >
-            <PnlIcon className="size-5" />
-          </span>
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
-                Lifetime realized P&amp;L (balance sheet)
-              </span>
-              <MetricInfoPopover
-                tone={pos ? "keep" : "cost"}
-                label="What lifetime realized P&L means"
-                title="Lifetime realized P&L · balance sheet"
-                blurb="The canonical house bottom line: deposits − withdrawals − on-site balance − inventory − unclaimed vouchers − unclaimed rakeback. The SAME snapshot the Insights hub, Real Numbers and the Dashboard show, so they can never drift. Constant across the period chip — it is lifetime, not windowed."
-              >
-                <ul className="space-y-0.5">
-                  <InfoRow
-                    iconNode={<ArrowDownToLine className="size-3" />}
-                    label="Deposits"
-                    amount={snapshot.totalDeposited}
-                    sign="+"
-                    tone="base"
-                  />
-                  <InfoRow
-                    iconNode={<ArrowUpFromLine className="size-3" />}
-                    label="Withdrawals"
-                    sub="balance + shipped-card cash-out"
-                    amount={snapshot.totalWithdrawn}
-                    sign="−"
-                    tone="cost"
-                  />
-                  <InfoRow
-                    iconNode={<Wallet className="size-3" />}
-                    label="On-site balance held"
-                    amount={snapshot.userBalance}
-                    sign="−"
-                    tone="held"
-                  />
-                  <InfoRow
-                    iconNode={<Package className="size-3" />}
-                    label="Inventory held"
-                    amount={snapshot.inventory}
-                    sign="−"
-                    tone="held"
-                  />
-                  <InfoRow
-                    iconNode={<Ticket className="size-3" />}
-                    label="Unclaimed vouchers"
-                    amount={snapshot.vouchers}
-                    sign="−"
-                    tone="held"
-                  />
-                  <InfoRow
-                    iconNode={<HandCoins className="size-3" />}
-                    label="Unclaimed rakeback"
-                    amount={snapshot.unclaimedRakeback}
-                    sign="−"
-                    tone="held"
-                  />
-                </ul>
-                <InfoTotal
-                  label="Realized P&L"
-                  amount={snapshot.pnl}
-                  sign={pos ? "+" : "−"}
-                  tone={pos ? "keep" : "cost"}
-                  note="The real bottom line — deposits minus withdrawals minus everything users still hold. See Real Numbers for the full balance sheet."
-                />
-              </MetricInfoPopover>
-            </div>
-            <p
-              className={cn(
-                "mt-0.5 text-2xl font-bold leading-tight tracking-tight tabular-nums sm:text-3xl",
-                tone.text,
-              )}
-            >
-              {pos ? "+" : "−"}
-              {formatCurrency(Math.abs(snapshot.pnl))}
-            </p>
-            <p className="mt-1 max-w-prose text-[11px] leading-snug text-muted-foreground">
-              deposits − withdrawals − holdings − unclaimed rakeback; the real
-              bottom line — see{" "}
-              <Link
-                href="/insights/real-numbers"
-                className="font-medium text-foreground underline decoration-dotted underline-offset-2 hover:decoration-solid"
-              >
-                Real Numbers
-              </Link>
-              .
-            </p>
-          </div>
-        </div>
-        <p className="shrink-0 rounded-lg border border-border/70 bg-background/40 px-2.5 py-1.5 text-[10px] leading-snug text-muted-foreground sm:max-w-[14rem] sm:text-right">
-          Constant lifetime figure — independent of the period chip. The
-          breakdown below is the per-period flow.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-// ─── Story lead ─────────────────────────────────────────────────────
-
-/**
- * The headline answer in plain English, chunked into short scannable
- * lines instead of one dense wall: the gross margin captured, what went
- * back to users, what's held/unrealized, the period's net result, then
- * the single biggest leak + the held-liability caveat (why GGR can look
- * healthy while the period result stays thin).
- */
-function StoryLead({
-  data,
-  periodLabel,
-}: {
-  data: CostBreakdown;
-  periodLabel: string;
-}) {
-  const held = data.inventoryDelta + data.voucherDelta;
-  const backToUsers =
-    data.gamingPayouts + data.rewardPayouts + data.cardWithdrawals;
-  const leak = data.biggestLeak;
-  const pnlPos = data.pnl >= 0;
-  const ggrPos = data.ggr >= 0;
-  return (
-    <div className="overflow-hidden rounded-2xl border bg-card">
-      <div className="flex items-start gap-3 border-b bg-muted/30 px-4 py-3 sm:px-5">
-        <div className="shrink-0 rounded-lg border border-rose-500/30 bg-rose-500/10 p-2">
-          <TrendingDown className="size-4 text-rose-500" />
-        </div>
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold sm:text-base">
-            Where the {formatCurrency(data.totalWager)} wagered ended up
-          </h2>
-          <p className="text-xs text-muted-foreground">
-            {periodLabel} · house perspective — every dollar a user keeps is
-            a dollar we owe.
+            {pos ? "+" : "−"}
+            {formatCurrency(Math.abs(snapshot.pnl))}
           </p>
         </div>
-      </div>
-
-      <div className="grid gap-x-6 gap-y-2.5 p-4 text-sm leading-relaxed sm:p-5 lg:grid-cols-2">
-        <p className="lg:col-span-2">
-          Customers staked{" "}
-          <ValueChip tone="base">{formatCurrency(data.totalWager)}</ValueChip>{" "}
-          across packs and battles. The house edge turned that into{" "}
-          <ValueChip tone={ggrPos ? "keep" : "cost"}>
-            {ggrPos ? "+" : "−"}
-            {formatCurrency(Math.abs(data.ggr))}
-          </ValueChip>{" "}
-          of gross gaming margin (GGR).
-        </p>
-        <p>
-          <span className="font-medium text-foreground">Paid straight back:</span>{" "}
-          <ValueChip tone="cost">{formatCurrency(backToUsers)}</ValueChip> left
-          as gameplay winnings, bonuses, prizes and shipped cards — money the
-          house no longer holds.
-        </p>
-        <p>
-          <span className="font-medium text-foreground">Still held:</span>{" "}
-          <ValueChip tone="held">{formatCurrency(held)}</ValueChip> sits in
-          cards and vouchers users own but haven&apos;t cashed — an unrealized
-          liability, not yet a loss.
-        </p>
-        <p className="lg:col-span-2">
-          Netting this window&apos;s gaming margin against what flowed out, the{" "}
-          <span className="font-medium text-foreground">
-            net result for {periodLabel.toLowerCase()}
-          </span>{" "}
-          is{" "}
-          <ValueChip tone={pnlPos ? "keep" : "cost"} className="text-[15px]">
-            {pnlPos ? "+" : "−"}
-            {formatCurrency(Math.abs(data.pnl))}
-          </ValueChip>
-          {data.margin.pnlPctOfWager !== null && (
-            <span className="text-muted-foreground">
-              {" "}
-              — {data.margin.pnlPctOfWager.toFixed(1)}% of every dollar wagered.
-            </span>
-          )}{" "}
-          <span className="text-muted-foreground">
-            This is the per-period gaming→cash flow — for the house&apos;s
-            actual bottom line see the lifetime balance-sheet figure above.
-          </span>
-        </p>
-
-        {leak && (
-          <div className="mt-1 rounded-xl border border-border/70 bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground lg:col-span-2">
-            <span className="font-medium text-foreground">Biggest leak:</span>{" "}
-            <span className="font-medium text-foreground">{leak.label}</span> at{" "}
-            <span className="font-semibold text-rose-600 dark:text-rose-400">
-              {formatCurrency(leak.amount)}
-            </span>
-            {data.ggr > 0 && (
-              <> ({((leak.amount / data.ggr) * 100).toFixed(1)}% of GGR)</>
-            )}
-            . And watch the{" "}
-            <span className="font-semibold text-amber-600 dark:text-amber-400">
-              {formatCurrency(held)}
-            </span>{" "}
-            held in inventory + vouchers: it&apos;s the cost most easily
-            missed, and it&apos;s why GGR can look healthy while the period
-            result stays thin.
-          </div>
-        )}
       </div>
     </div>
   );
@@ -665,21 +496,16 @@ function SummaryGroup({
 }
 
 /**
- * The summary grouped into the four-move reading order:
+ * The summary in reading order:
  *   1 Incoming value (wager) → 2 Paid back & costs (gaming + rewards) →
  *   3 Held / unrealized (inventory + vouchers + shipped) → 4 Period
  *   outcome (NGR checkpoint + the loud per-period net result).
- * Each headline metric carries the "i" breakdown popover the owner likes.
- * The lifetime balance-sheet bottom line is rendered separately, ABOVE
- * this windowed story (see `LifetimePnlReference`).
+ * Each headline metric carries the "i" breakdown popover — that popover is
+ * where the explanation lives, so the tiles themselves stay numbers.
+ * The lifetime balance-sheet bottom line renders separately, ABOVE this
+ * windowed block (see `LifetimePnlReference`).
  */
-function SummaryFlow({
-  data,
-  periodLabel,
-}: {
-  data: CostBreakdown;
-  periodLabel: string;
-}) {
+function SummaryFlow({ data }: { data: CostBreakdown }) {
   const m = data.margin;
   const ggrPos = data.ggr >= 0;
   const ngrPos = data.ngr >= 0;
@@ -694,7 +520,7 @@ function SummaryFlow({
           <SummaryTile
             label="Organic wager"
             value={formatCurrency(data.organicCustomerStake)}
-            sub={`${periodLabel} · no creator code`}
+            sub="no creator code"
             icon={Coins}
             tone="base"
             info={
@@ -945,7 +771,7 @@ function SummaryFlow({
                   amount={data.pnl}
                   sign={pnlPos ? "+" : "−"}
                   tone={pnlPos ? "keep" : "cost"}
-                  note="NGR minus held & shipped liabilities, plus net residual ledger flows, equals this period's net result. The lifetime bottom line is the balance-sheet snapshot at the top of the page."
+                  note="NGR minus held & shipped liabilities, plus net residual ledger flows, equals this period's net result. The lifetime bottom line is the balance-sheet snapshot at the top."
                 />
               </MetricInfoPopover>
             }
@@ -1048,14 +874,16 @@ function lineVisual(line: CostLine): {
 /**
  * Bands the ordered waterfall lines into labelled chapters so the running
  * total reads as distinct moves. Returns, for each line, the band header
- * (if this line opens a new band) to render above it.
+ * (if this line opens a new band) to render above it. Label only — the
+ * hints ("what customers staked", "the user's own wins", …) were dropped
+ * as restatement of the label they sat next to.
  */
 function bandFor(line: CostLine): { label: string; hint?: string } | null {
   switch (line.kind) {
     case "base":
-      return { label: "Incoming", hint: "what customers staked" };
+      return { label: "Incoming" };
     case "gaming-payout":
-      return { label: "Less gameplay winnings", hint: "the user's own wins" };
+      return { label: "Less gameplay winnings" };
     case "reward":
       return null; // rewards open their own band via the NGR-side header
     case "liability":
@@ -1109,15 +937,9 @@ function WaterfallPanel({ data }: { data: CostBreakdown }) {
           // Band header above this row, if it opens a chapter.
           let band = bandFor(line);
           if (line.key === firstRewardKey)
-            band = {
-              label: "Less reward & marketing",
-              hint: "house-funded giveaways",
-            };
+            band = { label: "Less reward & marketing" };
           else if (line.key === firstHeldKey)
-            band = {
-              label: "Less held & balance-sheet flows",
-              hint: "held liabilities, transfers, residual",
-            };
+            band = { label: "Less held & balance-sheet flows" };
 
           return (
             <div key={line.key}>
@@ -1156,8 +978,9 @@ function WaterfallPanel({ data }: { data: CostBreakdown }) {
  * Every leakage category sorted biggest-first, each with amount +
  * %-of-GGR + %-of-wager and a proportional bar. The "which leak is
  * biggest" view, decoupled from the waterfall's running-total order.
- * Held / unrealized liabilities are tinted amber here too, so an
- * unrealized hold is never mistaken for realized money-back.
+ * Held / unrealized liabilities carry the amber "held" pill, so an
+ * unrealized hold is never mistaken for realized money-back — the pill
+ * says it; the legend paragraph that used to repeat it is gone.
  */
 function RankedCosts({ data }: { data: CostBreakdown }) {
   const visible = data.rankedCosts.filter((l) => l.amount > 0);
@@ -1227,14 +1050,6 @@ function RankedCosts({ data }: { data: CostBreakdown }) {
             </div>
           );
         })}
-        <p className="border-t border-border/60 pt-2.5 text-[10px] leading-snug text-muted-foreground">
-          <span className="font-medium text-amber-600 dark:text-amber-400">
-            Amber &ldquo;held&rdquo;
-          </span>{" "}
-          lines are unrealized liabilities (inventory + vouchers users still
-          own) — they erode realized P&L but can still flip back to the house.
-          Everything else has already left the house.
-        </p>
       </CardContent>
     </Card>
   );
@@ -1344,8 +1159,9 @@ function MarginHealth({ data }: { data: CostBreakdown }) {
  * SAME figures shown on `/users/[id]` — so each row reconciles with that
  * user's detail-page Wager Loss tile. Always lifetime (the counters are
  * cumulative; the main DB has no windowed `won`), so this list does not
- * track the page's period chip. House-POV: net > 0 (user net-lost) =
- * emerald; net < 0 (user up) = rose.
+ * track the page's period chip — which the section heading states, in
+ * place of the footnote that used to sit under the table. House-POV:
+ * net > 0 (user net-lost) = emerald; net < 0 (user up) = rose.
  *
  * On phones the wager/payout columns are dropped (they overflow a 360px
  * row); the net stays since it's the headline. They return at sm+.
@@ -1399,14 +1215,6 @@ function Contributors({ data }: { data: CostBreakdown }) {
             </li>
           ))}
         </ul>
-        <p className="px-3 py-2 text-[10px] leading-snug text-muted-foreground sm:px-4">
-          Lifetime Wager = Total Wagered, Payouts = Total Won (the
-          authoritative per-user counters shown on each user&apos;s detail
-          page). Net is house-POV: positive (emerald) = the user net-lost
-          (house up); negative (rose) = the user is up. Top{" "}
-          {formatNumber(data.contributors.length)} by absolute lifetime wager
-          loss — always lifetime, independent of the period above.
-        </p>
       </CardContent>
     </Card>
   );
