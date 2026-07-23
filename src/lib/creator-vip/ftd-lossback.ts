@@ -161,34 +161,30 @@ export async function firstDeposits(
  * If the canonical definition in pnl.ts ever changes, this must follow.
  */
 export async function holdingsUsd(userId: string): Promise<number> {
-  const db = getProdDb();
-
-  const [balance, inventory, vouchers] = await Promise.all([
-    db.balances
-      .findUnique({
-        where: { user_id: userId },
-        select: { available_balance: true, locked_balance: true },
-      })
-      .then((b) =>
-        b ? toNumber(b.available_balance) + toNumber(b.locked_balance) : 0,
-      ),
-    db.$queryRaw<{ total: string }[]>`
-      SELECT COALESCE(SUM(value_at_obtained::numeric), 0)::text AS total
-        FROM user_inventory
-       WHERE user_id = ${userId}
-         AND sold_at IS NULL
-         AND exchanged_at IS NULL
-         AND withdrawal_locked_at IS NULL
-    `.then((rows) => toNumber(rows[0]?.total ?? 0)),
-    db.$queryRaw<{ total: string }[]>`
-      SELECT COALESCE(SUM(value::numeric), 0)::text AS total
-        FROM vouchers
-       WHERE user_id = ${userId}
-         AND claimed_at IS NULL
-    `.then((rows) => toNumber(rows[0]?.total ?? 0)),
-  ]);
-
-  return balance + inventory + vouchers;
+  // ONE round-trip, not three. Each leg is a sub-select rather than a separate
+  // query: they are independent, all index-served, and on this path network
+  // latency dwarfs execution time — three 20 ms trips cost 60 ms to compute a
+  // number that takes under a millisecond.
+  const rows = await getProdDb().$queryRaw<{ total: string }[]>`
+    SELECT (
+      COALESCE((
+        SELECT available_balance::numeric + locked_balance::numeric
+          FROM balances WHERE user_id = ${userId}
+      ), 0)
+      + COALESCE((
+        SELECT SUM(value_at_obtained::numeric) FROM user_inventory
+         WHERE user_id = ${userId}
+           AND sold_at IS NULL
+           AND exchanged_at IS NULL
+           AND withdrawal_locked_at IS NULL
+      ), 0)
+      + COALESCE((
+        SELECT SUM(value::numeric) FROM vouchers
+         WHERE user_id = ${userId} AND claimed_at IS NULL
+      ), 0)
+    )::text AS total
+  `;
+  return toNumber(rows[0]?.total ?? 0);
 }
 
 /**

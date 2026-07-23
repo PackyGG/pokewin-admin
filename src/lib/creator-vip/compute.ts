@@ -155,45 +155,6 @@ async function userStanding(userId: string): Promise<{
 }
 
 /**
- * When did this user's CURRENT run on the program's codes begin?
- *
- * Progress RESETS when a player leaves for another creator's code. The reset
- * point is the last moment we have evidence they were attached elsewhere —
- * i.e. the newest `affiliate_code_usages` row (of ANY kind: signup, deposit or
- * wager) whose code is not one of this program's. Wager booked before that
- * moment belongs to a previous run and no longer counts.
- *
- * Bounded to `accrualStart` on both ends: a switch that happened before the
- * program existed is irrelevant, and the run can never start earlier than the
- * program itself.
- *
- * KNOWN LIMIT: a player who switches codes and then generates NO activity at
- * all under the new one leaves no trace in `affiliate_code_usages`, so there
- * is nothing to detect and their run continues. Attribution is only ever
- * recorded when something actually happens, so this is a floor on what the
- * data can support, not a gap in the rule.
- */
-async function runStartedAt(
-  userId: string,
-  codes: readonly string[],
-  accrualStart: Date,
-): Promise<Date> {
-  const db = getProdDb();
-  const upper = codes.map((c) => c.toUpperCase());
-
-  const rows = await db.$queryRaw<{ boundary: Date | null }[]>`
-    SELECT MAX(created_at) AS boundary
-      FROM affiliate_code_usages
-     WHERE referred_user_id = ${userId}
-       AND UPPER(code) <> ALL(${upper}::text[])
-       AND created_at >= ${accrualStart}
-  `;
-  const boundary = rows[0]?.boundary ?? null;
-  return boundary && boundary > accrualStart ? boundary : accrualStart;
-}
-
-
-/**
  * The intervals during which this program was LIVE.
  *
  * Wager only counts while the program is running, so every wager read is
@@ -222,10 +183,10 @@ async function programWindows(
 }
 
 /**
- * Clamp the live windows to start no earlier than `from` (the code-switch
- * boundary), and drop any that end before it. Returns the parallel
- * start/end arrays the wager query binds — an open window becomes `infinity`
- * so the SQL needs no NULL handling.
+ * Clamp the live windows to start no earlier than `from`, and drop any that
+ * ended before it. Returns the parallel start/end arrays the wager query
+ * binds — an open window becomes a far-future date so the SQL needs no NULL
+ * handling.
  */
 function windowBounds(
   windows: { started_at: Date; ended_at: Date | null }[],
@@ -244,47 +205,97 @@ function windowBounds(
 }
 
 /**
- * Σ wager this user booked under `codes`, counting ONLY time the program was
- * live and only at or after `since` (the code-switch boundary).
+ * Run start + qualifying wager + lifetime wager, in ONE round-trip.
  *
- * The windows are bound as parallel arrays and matched with an EXISTS over
- * `unnest`, so a program with any number of pause/resume cycles stays a single
- * query — no OR-chain built by string concatenation, and no per-window
- * round-trip.
+ * These three were three separate queries, and they are strictly sequential by
+ * nature — the wager sums depend on the run boundary. On this path network
+ * latency dominates (roughly 20 ms per trip against a sub-millisecond query),
+ * so they are folded into a single statement with the boundary as a CTE.
  *
- * Codes are matched case-insensitively: `affiliate_codes` casing is MIXED for
- * rows the 0068 migration backfilled, and `affiliate_code_usages` mirrors
- * whatever casing the caller resolved — so an exact match would silently miss
- * a legacy creator's entire history.
+ * ── WHAT EACH PIECE MEANS ─────────────────────────────────────────────────
+ * `run_start` — progress RESETS when a player leaves for another creator's
+ *   code. The reset point is the newest `affiliate_code_usages` row (of ANY
+ *   kind) whose code is not one of this program's. Clamped to the accrual
+ *   start on both ends: a switch predating the program is irrelevant, and a
+ *   run can never begin before the program did.
+ *
+ * `current` — spendable wager: inside a live window AND at/after the run
+ *   start.
+ *
+ * `lifetime` — the same live-window bound WITHOUT the run clamp, so
+ *   `forfeited = lifetime − current` isolates what code switches cost and
+ *   never counts paused time as a loss.
+ *
+ * Both sums are bounded by the program's live windows, bound as parallel
+ * arrays and matched with an EXISTS over `unnest` — any number of
+ * pause/resume cycles stays one query, with no string-built OR chain.
+ *
+ * KNOWN LIMIT: a player who switches codes and then generates NO activity
+ * under the new one leaves no trace, so nothing is detectable and their run
+ * continues. Attribution only exists where something happened.
+ *
+ * Codes match case-insensitively — `affiliate_codes` casing is MIXED for rows
+ * the 0068 migration backfilled, and acu mirrors whatever the caller resolved.
  */
-async function wagerUsdInWindows(
+async function wagerPosition(
   userId: string,
   codes: readonly string[],
-  since: Date,
+  accrualStart: Date,
   windows: { started_at: Date; ended_at: Date | null }[],
-): Promise<number> {
-  if (codes.length === 0) return 0;
-  const { starts, ends } = windowBounds(windows, since);
-  // Every live stretch ended before the boundary — nothing can qualify.
-  if (starts.length === 0) return 0;
+): Promise<{ runStart: Date; currentUsd: number; lifetimeUsd: number }> {
+  const fallback = {
+    runStart: accrualStart,
+    currentUsd: 0,
+    lifetimeUsd: 0,
+  };
+  if (codes.length === 0) return fallback;
 
-  const db = getProdDb();
+  const { starts, ends } = windowBounds(windows, accrualStart);
+  // Every live stretch ended before the program's accrual start — impossible
+  // in practice, but it would make the window predicate match nothing.
+  if (starts.length === 0) return fallback;
+
   const upper = codes.map((c) => c.toUpperCase());
 
-  const rows = await db.$queryRaw<{ total: string }[]>`
-    SELECT COALESCE(SUM(acu.wager_amount_usd::numeric), 0)::text AS total
-      FROM affiliate_code_usages acu
-     WHERE acu.referred_user_id = ${userId}
-       AND acu.usage_type::text = 'wager'
-       AND UPPER(acu.code) = ANY(${upper}::text[])
-       AND acu.created_at >= ${since}
-       AND EXISTS (
-         SELECT 1
-           FROM unnest(${starts}::timestamp[], ${ends}::timestamp[]) AS w(s, e)
-          WHERE acu.created_at >= w.s AND acu.created_at < w.e
-       )
+  const rows = await getProdDb().$queryRaw<
+    { run_start: Date; current: string; lifetime: string }[]
+  >`
+    WITH boundary AS (
+      SELECT COALESCE(MAX(created_at), ${accrualStart}) AS run_start
+        FROM affiliate_code_usages
+       WHERE referred_user_id = ${userId}
+         AND UPPER(code) <> ALL(${upper}::text[])
+         AND created_at >= ${accrualStart}
+    ),
+    live AS (
+      SELECT acu.created_at, acu.wager_amount_usd
+        FROM affiliate_code_usages acu
+       WHERE acu.referred_user_id = ${userId}
+         AND acu.usage_type::text = 'wager'
+         AND UPPER(acu.code) = ANY(${upper}::text[])
+         AND acu.created_at >= ${accrualStart}
+         AND EXISTS (
+           SELECT 1
+             FROM unnest(${starts}::timestamp[], ${ends}::timestamp[]) AS w(s, e)
+            WHERE acu.created_at >= w.s AND acu.created_at < w.e
+         )
+    )
+    SELECT
+      (SELECT run_start FROM boundary) AS run_start,
+      COALESCE(SUM(live.wager_amount_usd::numeric) FILTER (
+        WHERE live.created_at >= (SELECT run_start FROM boundary)
+      ), 0)::text AS current,
+      COALESCE(SUM(live.wager_amount_usd::numeric), 0)::text AS lifetime
+    FROM live
   `;
-  return toNumber(rows[0]?.total ?? 0);
+
+  const row = rows[0];
+  if (!row) return fallback;
+  return {
+    runStart: row.run_start ?? accrualStart,
+    currentUsd: toNumber(row.current ?? 0),
+    lifetimeUsd: toNumber(row.lifetime ?? 0),
+  };
 }
 
 /**
@@ -296,38 +307,58 @@ async function priorHoldings(
   userId: string,
   runStart: Date,
 ): Promise<{ consumedUsd: number; approvedRewardUsd: number }> {
-  const [held, approved] = await Promise.all([
-    adminDb.creator_reward_claims.aggregate({
+  // ONE grouped read instead of two aggregates. Consumed basis and approved
+  // reward differ only in which rows they count, so they are derived in JS
+  // from a single pass rather than costing a second round-trip.
+  const rows = await adminDb.creator_reward_claims.groupBy({
+    by: ["status"],
+    where: {
+      program_id: programId,
+      user_id: userId,
+      // WAGER leg only. A lossback claim consumes no wager basis (it writes
+      // 0), so today this changes nothing — but leaving the legs mixed here
+      // would silently break the moment that stopped being true.
+      leg: "wager",
+    },
+    _sum: { consumed_wager_usd: true, amount_usd: true },
+    // Consumption is scoped to the CURRENT run for the same reason the wager
+    // is: basis burned on a previous run must not eat into the new one, or the
+    // reset would be one-sided and a returning player could never claim again.
+    // The per-user reward CAP is deliberately NOT run-scoped — it is a
+    // lifetime ceiling, so it is summed from every approved row below.
+  });
+
+  let consumedUsd = 0;
+  let approvedRewardUsd = 0;
+  for (const r of rows) {
+    if (r.status === "approved") {
+      approvedRewardUsd += toNumber(r._sum.amount_usd ?? 0);
+    }
+    if (r.status === "approved" || r.status === "pending") {
+      consumedUsd += toNumber(r._sum.consumed_wager_usd ?? 0);
+    }
+  }
+
+  // Run-scoping the consumed basis needs a row-level date filter, which a
+  // groupBy can't express alongside the lifetime cap sum. Claims per
+  // (program, user) are few, so this correction is a cheap targeted read and
+  // only runs when there is something to correct.
+  if (consumedUsd > 0) {
+    const stale = await adminDb.creator_reward_claims.aggregate({
       where: {
         program_id: programId,
         user_id: userId,
-        // WAGER leg only. A lossback claim consumes no wager basis (it writes
-        // 0), so today this changes nothing — but leaving the legs mixed here
-        // would silently break the moment a lossback ever recorded a basis.
         leg: "wager",
         status: { in: [...BASIS_HOLDING_STATUSES] },
-        // Consumption is scoped to the CURRENT run for the same reason the
-        // wager is: when a player leaves and comes back they start clean, so
-        // basis they burned on a previous run must not eat into the new one.
-        // Without this the reset would be one-sided — wager cleared, debt
-        // kept — and a returning player could never claim again.
-        requested_at: { gte: runStart },
+        requested_at: { lt: runStart },
       },
       _sum: { consumed_wager_usd: true },
-    }),
-    // The per-user reward CAP is deliberately NOT run-scoped — it is a
-    // lifetime ceiling on what one player can extract from the program, so
-    // switching away and back must not reset it.
-    adminDb.creator_reward_claims.aggregate({
-      where: { program_id: programId, user_id: userId, status: "approved" },
-      _sum: { amount_usd: true },
-    }),
-  ]);
+    });
+    consumedUsd -= toNumber(stale._sum.consumed_wager_usd ?? 0);
+    if (consumedUsd < 0) consumedUsd = 0;
+  }
 
-  return {
-    consumedUsd: toNumber(held._sum.consumed_wager_usd ?? 0),
-    approvedRewardUsd: toNumber(approved._sum.amount_usd ?? 0),
-  };
+  return { consumedUsd, approvedRewardUsd };
 }
 
 /**
@@ -414,28 +445,20 @@ export async function computeEntitlement(
     };
   }
 
-  // The current run's start gates everything below it, so it is resolved
-  // first; the lifetime figure alongside it is audit-only (never spendable) —
-  // it is what makes a reset visible instead of silent.
-  const runStart = await runStartedAt(
+  const windows = await programWindows(program);
+
+  // Run start and both wager totals arrive together — see `wagerPosition`.
+  const position = await wagerPosition(
     userId,
     program.codes,
     program.accrual_start_at,
+    windows,
   );
+  const runStart = position.runStart;
+  const wagerUsd = position.currentUsd;
+  const lifetimeWagerUsd = position.lifetimeUsd;
 
-  const windows = await programWindows(program);
-
-  const [wagerUsd, lifetimeWagerUsd, prior, vip] = await Promise.all([
-    wagerUsdInWindows(userId, program.codes, runStart, windows),
-    // Audit total: same live-window bound, only without the code-switch
-    // clamp — so `forfeited` reflects switches alone and never counts
-    // paused time as something the player lost.
-    wagerUsdInWindows(
-      userId,
-      program.codes,
-      program.accrual_start_at,
-      windows,
-    ),
+  const [prior, vip] = await Promise.all([
     priorHoldings(program.id, userId, runStart),
     facts?.isVip ?? isVipNow(userId),
   ]);
