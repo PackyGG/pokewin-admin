@@ -21,21 +21,18 @@ import type {
   StreamSessionStatus,
 } from "@/lib/backend-api";
 
-import { setSessionVodUrl } from "../creators/[id]/_components/sessions-actions";
+import { setSessionVodUrl } from "./sessions-actions";
 
 /**
- * Creator-Hub stream-session table PARTS — the pieces shared by the two
- * session surfaces:
+ * Sessions-tab table PARTS — the session record's presentation pieces, split
+ * out of `sessions-table.tsx` so that file holds only the table/card chrome:
+ * the inline Kick-VOD editor, the detail modal, the status styles, the
+ * datum/detail primitives and the money/date/duration helpers.
  *
- *   • `creators/[id]` → Sessions tab  (`sessions-table.tsx`)
- *   • `/creator-hub/sessions`         (`all-sessions-table.tsx`)
- *
- * Both render the same session record with the same House-POV colors, the same
- * inline Kick-VOD editor and the same detail modal; they differ only in their
- * row/card chrome (All Sessions adds a Creator column, a "Watch stream" link
- * and a force-end control). Those differences stay in each surface's own file;
- * everything identical lives here, so a fix to the VOD editor or the modal
- * can't land on one surface and silently miss the other.
+ * (These were shared with a second `/creator-hub/sessions` "All Sessions"
+ * surface; that route was removed 2026-07-23, so the Sessions tab is now the
+ * only consumer. Kept as its own module — it is a clean presentation/chrome
+ * split, and `sessions-table.tsx` is ~800 lines with it folded back in.)
  *
  * House-POV finance colors (whole-site rule):
  *   • Loaded / refunded / converted-out (value the house granted or paid out) → rose.
@@ -49,8 +46,8 @@ import { setSessionVodUrl } from "../creators/[id]/_components/sessions-actions"
 
 /**
  * The session shape these parts need: the backend record plus the two
- * admin-DB meta columns. Both surfaces' row types are structural supersets of
- * this, so they pass without a cast.
+ * admin-DB meta columns. The tab's row type is a structural superset, so it
+ * passes without a cast.
  */
 export type SessionRowBase = CreatorSessionResponse & {
   kickVodUrl: string | null;
@@ -239,9 +236,7 @@ export function InlineVodEditor({
  * carries, grouped (timeline / fill economics / community spend / conversion /
  * meta), plus the VOD editor again. House-POV colors throughout.
  *
- * `subtitle` fills the dialog description: the per-creator surface passes the
- * bare session id, All Sessions passes the creator identity (avatar + link)
- * followed by the id. Everything below the header is identical.
+ * `subtitle` fills the dialog description (defaults to the bare session id).
  */
 export function SessionDetailModal({
   session,

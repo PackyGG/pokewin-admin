@@ -6,9 +6,6 @@ import { calculateUsersPnlBatch } from "./pnl";
 
 export type UserTagValue = "vip" | "wager_abuser";
 
-/** Tags surfaced together on Creator Hub → Wager Abusers. */
-export const ABUSER_HUB_TAGS: UserTagValue[] = ["wager_abuser"];
-
 export type UserTagRow = {
   tag: UserTagValue;
   // Nullable: deleting the admin who set the tag NULLs this attribution

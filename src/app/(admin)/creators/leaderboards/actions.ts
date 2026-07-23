@@ -202,8 +202,6 @@ function logAuditFailure(action: string, err: unknown): void {
 function revalidate(id: string): void {
     revalidatePath(PAGE_KEY);
     revalidatePath(`${PAGE_KEY}/${id}`);
-    revalidatePath("/creator-hub/leaderboards");
-    revalidatePath(`/creator-hub/leaderboards/${id}`);
     // The hub creator-detail "Affiliate Leaderboards" card reads through an
     // unstable_cache entry (120s TTL) which revalidatePath does NOT bust —
     // flush its tag so approvals/cancellations/etc. show immediately.

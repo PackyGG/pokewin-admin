@@ -2,9 +2,9 @@ import Link from "next/link";
 import {
   ChevronRight,
   Users,
-  Trophy,
+  Gift,
+  TrendingUp,
   Calculator,
-  History,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -12,8 +12,8 @@ import { cn } from "@/lib/utils";
 /**
  * Creator Hub dashboard — quick-tools button row (mockup top strip).
  *
- * Four tool shortcuts: My Creators · Leaderboards · ROI Calculator ·
- * Changelogs. All link to live routes. Pure presentational, server-safe.
+ * Four tool shortcuts: My Creators · Tips & Sponsors · Profitability ·
+ * ROI Calculator. All link to live routes. Pure presentational, server-safe.
  */
 
 type Tool = {
@@ -36,12 +36,20 @@ const TOOLS: Tool[] = [
     iconColor: "text-blue-500",
   },
   {
-    label: "Leaderboards",
-    sub: "races & prizes",
-    href: "/creator-hub/leaderboards",
-    icon: Trophy,
-    tint: "bg-amber-500/15",
-    iconColor: "text-amber-500",
+    label: "Tips & Sponsors",
+    sub: "house-funded giveaways",
+    href: "/creator-hub/tips-sponsors",
+    icon: Gift,
+    tint: "bg-rose-500/15",
+    iconColor: "text-rose-500",
+  },
+  {
+    label: "Profitability",
+    sub: "deal economics",
+    href: "/creator-hub/profitability",
+    icon: TrendingUp,
+    tint: "bg-pink-500/15",
+    iconColor: "text-pink-500",
   },
   {
     label: "ROI Calculator",
@@ -50,14 +58,6 @@ const TOOLS: Tool[] = [
     icon: Calculator,
     tint: "bg-emerald-500/15",
     iconColor: "text-emerald-500",
-  },
-  {
-    label: "Changelogs",
-    sub: "audit feed",
-    href: "/creator-hub/changelog",
-    icon: History,
-    tint: "bg-pink-500/15",
-    iconColor: "text-pink-500",
   },
 ];
 

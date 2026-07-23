@@ -115,15 +115,8 @@ export const CREATOR_HUB_ROUTES: AuditRoute[] = [
     priority: true,
     needsSampleCreator: true,
   },
-  {
-    key: "hub-creator-forecast",
-    path: "/creator-hub/creators/:sampleCreatorId?tab=forecast",
-    needsSampleCreator: true,
-  },
-  { key: "hub-leaderboards", path: "/creator-hub/leaderboards" },
   { key: "hub-socials-review", path: "/creator-hub/socials-review" },
   { key: "hub-profitable-algo", path: "/creator-hub/profitable-algo" },
   { key: "hub-tips-sponsors", path: "/creator-hub/tips-sponsors" },
-  { key: "hub-changelog", path: "/creator-hub/changelog" },
   { key: "hub-alerts-redirect", path: "/creator-hub/alerts" },
 ];

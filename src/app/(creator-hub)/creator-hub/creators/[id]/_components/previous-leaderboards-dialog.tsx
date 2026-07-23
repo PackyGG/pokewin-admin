@@ -94,7 +94,7 @@ export function PreviousLeaderboardsDialog({
             {rows.map((r) => (
               <Link
                 key={r.id}
-                href={`/creator-hub/leaderboards/${r.id}`}
+                href={`/creators/leaderboards/${r.id}`}
                 className="flex flex-col gap-2 rounded-md border p-3 transition-colors hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
               >
                 <div className="min-w-0 sm:flex-1">

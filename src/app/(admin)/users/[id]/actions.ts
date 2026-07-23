@@ -3834,10 +3834,8 @@ export async function setUserTag(
   // a broad current-route path revalidate would only re-render + re-suspend
   // the page and lose the admin's scroll (see use-toggle-action.ts). Busting
   // the per-user cache tag keeps every server-driven tag view + the cached
-  // getUserDetail in sync without that churn. The wager-abusers list is a
-  // DIFFERENT route, so its path revalidate is safe + still needed.
+  // getUserDetail in sync without that churn.
   revalidateTag(`users-detail-${parsed.data.userId}`);
-  revalidatePath("/creator-hub/wager-abusers");
   return { success: true };
 }
 
@@ -3889,6 +3887,5 @@ export async function removeUserTag(
   // TAG-ONLY for the user-detail surface (see setUserTag) — the client flips
   // its committed set optimistically, so no current-route path revalidate.
   revalidateTag(`users-detail-${parsed.data.userId}`);
-  revalidatePath("/creator-hub/wager-abusers");
   return { success: true };
 }

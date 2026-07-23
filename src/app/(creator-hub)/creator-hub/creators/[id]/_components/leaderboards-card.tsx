@@ -60,8 +60,10 @@ const TIME_COLORS: Record<LeaderboardTimeStatus, string> = {
 };
 
 export async function LeaderboardsCard({ userId }: { userId: string }) {
-  // Link targets to the EXISTING flows (this wave reuses them as-is).
-  const manageHref = `/creator-hub/leaderboards`;
+  // The Hub's own Leaderboards route was removed (2026-07-23); the admin
+  // leaderboards surface is the canonical one, so manage/detail links point
+  // there.
+  const manageHref = `/creators/leaderboards`;
 
   // List preview + realized house cost + previous (ended) boards, fetched
   // together. All best-effort: a list failure degrades to a note; a cost
@@ -224,7 +226,7 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                 return (
                 <Link
                   key={r.id}
-                  href={`/creator-hub/leaderboards/${r.id}`}
+                  href={`/creators/leaderboards/${r.id}`}
                   className="flex flex-col gap-2 rounded-md border p-3 transition-colors hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
                 >
                   <div className="min-w-0 sm:flex-1">

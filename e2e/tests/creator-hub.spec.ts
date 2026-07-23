@@ -22,10 +22,8 @@ loadEnvFiles();
 const HUB_ROUTES = [
   "/creator-hub",
   "/creator-hub/creators",
-  "/creator-hub/leaderboards",
   "/creator-hub/socials-review",
   "/creator-hub/profitable-algo",
-  "/creator-hub/changelog",
   // Legacy bookmark — should redirect to dashboard after gate.
   "/creator-hub/alerts",
 ] as const;
@@ -77,7 +75,7 @@ test.describe("Creator Hub routes (minted session)", () => {
     await context.close();
   });
 
-  test("creator detail + forecast tab render when a creator exists", async ({
+  test("creator detail + risk tab render when a creator exists", async ({
     browser,
   }) => {
     const creatorId = await readSampleCreatorId();
@@ -106,55 +104,11 @@ test.describe("Creator Hub routes (minted session)", () => {
       timeout: 15_000,
     });
 
-    const forecastUrl = `${overviewUrl}?tab=forecast`;
-    const forecastResponse = await page.goto(forecastUrl, {
+    const riskUrl = `${overviewUrl}?tab=risk`;
+    const riskResponse = await page.goto(riskUrl, {
       waitUntil: "domcontentloaded",
     });
-    expect(forecastResponse?.status()).toBeLessThan(500);
-    await expect(
-      page.getByText(/Deal profitability forecast/i).first(),
-    ).toBeVisible({ timeout: 30_000 });
-
-    await context.close();
-  });
-
-  test("leaderboard detail renders when a board exists", async ({ browser }) => {
-    const { cookieValue } = await mintCreatorHubSession();
-    const context = await browser.newContext();
-    await context.addCookies([
-      {
-        name: SESSION_COOKIE_NAME,
-        value: cookieValue,
-        domain: "localhost",
-        path: "/",
-        httpOnly: true,
-        sameSite: "Lax",
-      },
-    ]);
-    const page = await context.newPage();
-
-    const listResponse = await page.goto("/creator-hub/leaderboards", {
-      waitUntil: "domcontentloaded",
-    });
-    expect(listResponse?.status()).toBeLessThan(500);
-    await expect(page.getByText(/Creator Hub/i).first()).toBeVisible({
-      timeout: 15_000,
-    });
-
-    const detailLink = page.locator('a[href^="/creator-hub/leaderboards/"]').first();
-    const linkCount = await detailLink.count();
-    test.skip(linkCount === 0, "No leaderboards in backend — skip detail route");
-
-    const href = await detailLink.getAttribute("href");
-    expect(href).toMatch(/^\/creator-hub\/leaderboards\/.+/);
-
-    const detailResponse = await page.goto(href!, {
-      waitUntil: "domcontentloaded",
-    });
-    expect(detailResponse?.status()).toBeLessThan(500);
-    await expect(page.getByText(/Standings/i).first()).toBeVisible({
-      timeout: 15_000,
-    });
+    expect(riskResponse?.status()).toBeLessThan(500);
 
     await context.close();
   });

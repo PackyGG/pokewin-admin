@@ -25,7 +25,7 @@ import {
   stopRowClick,
   stopRowKey,
   usd,
-} from "../../../_components/session-parts";
+} from "./session-parts";
 
 /**
  * Creator Hub — `creators/[id]` **Sessions** tab table (client).
@@ -49,9 +49,8 @@ import {
  * never also opens the modal.
  *
  * The VOD editor, the detail modal, the status styles and the money/duration
- * helpers live in `_components/session-parts.tsx`, shared with the All Sessions
- * table so a fix lands on both surfaces at once. Only this surface's own row +
- * mobile-card chrome stays here.
+ * helpers live alongside in `session-parts.tsx`; only the table + mobile-card
+ * chrome stays here.
  */
 
 export function SessionsTable({ rows }: { rows: CreatorSessionRow[] }) {

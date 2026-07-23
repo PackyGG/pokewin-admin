@@ -7,12 +7,8 @@ import {
   Gift,
   LayoutDashboard,
   Users,
-  Trophy,
   ShieldCheck,
-  ShieldAlert,
   Calculator,
-  History,
-  Tv,
   TrendingUp,
   type LucideIcon,
 } from "lucide-react";
@@ -41,10 +37,13 @@ import { LinkPending } from "@/components/ux";
  * identity: the Packy wordmark (same assets as the main sidebar), a
  * "Back to Admin" exit at the top, and its own nav list.
  *
- * Live nav: Dashboard, Creators, All Sessions, Leaderboards, Tips & Sponsors,
- * Socials Review, Wager / Fraud Abusers, Profitability, ROI Calculator,
- * Changelog. The theme toggle sits in the footer. Alerts live on the right
- * rail dock.
+ * Live nav: Dashboard, Creators, Tips & Sponsors, Socials Review,
+ * Profitability, ROI Calculator. The theme toggle sits in the footer. Alerts
+ * live on the right rail dock.
+ *
+ * Removed 2026-07-23 (owner): All Sessions, Leaderboards, Wager / Fraud
+ * Abusers and Changelog. Leaderboards + Changelog still exist in the main
+ * admin app (`/creators/leaderboards`, `/creators/changelog`).
  *
  * Client-safe: no DB / server-only imports. Icons are direct
  * `lucide-react` component refs (not the string-keyed ICONS map the main
@@ -60,8 +59,6 @@ type HubNavItem = {
 const HUB_NAV: HubNavItem[] = [
   { label: "Dashboard", href: "/creator-hub", icon: LayoutDashboard },
   { label: "Creators", href: "/creator-hub/creators", icon: Users },
-  { label: "All Sessions", href: "/creator-hub/sessions", icon: Tv },
-  { label: "Leaderboards", href: "/creator-hub/leaderboards", icon: Trophy },
   {
     label: "Tips & Sponsors",
     href: "/creator-hub/tips-sponsors",
@@ -73,11 +70,6 @@ const HUB_NAV: HubNavItem[] = [
     icon: ShieldCheck,
   },
   {
-    label: "Wager / Fraud Abusers",
-    href: "/creator-hub/wager-abusers",
-    icon: ShieldAlert,
-  },
-  {
     label: "Profitability",
     href: "/creator-hub/profitability",
     icon: TrendingUp,
@@ -87,7 +79,6 @@ const HUB_NAV: HubNavItem[] = [
     href: "/creator-hub/profitable-algo",
     icon: Calculator,
   },
-  { label: "Changelog", href: "/creator-hub/changelog", icon: History },
 ];
 
 function HubNavMenu({

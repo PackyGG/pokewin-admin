@@ -8,8 +8,6 @@ import {
   ShieldAlert,
   TrendingUp,
   Users,
-  UsersRound,
-  CalendarClock,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -53,8 +51,6 @@ const NAV_TABS = [
   "creator",
   "sessions",
   "risk",
-  "forecast",
-  "cohorts",
   "alts",
 ] as const;
 
@@ -72,8 +68,6 @@ const TABS: CreatorTab[] = [
   { key: "creator", label: "Creator", icon: IdCard },
   { key: "sessions", label: "Sessions", icon: BarChart3 },
   { key: "risk", label: "Risk", icon: ShieldAlert },
-  { key: "forecast", label: "Forecast", icon: CalendarClock },
-  { key: "cohorts", label: "Cohorts & LTV", icon: UsersRound },
   { key: "alts", label: "Alt Accounts", icon: Users },
 ];
 
