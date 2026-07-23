@@ -438,17 +438,13 @@ type BlockedCard = {
 /**
  * Result of running every read-only reference check over a candidate set of
  * card ids. `blockedById` carries the *first-matched* reason per card (checks
- * are ordered most-actionable first: packs → inventory → upgrader → fairness),
- * `blockedReasonsById` carries every reason that matched (so callers can show
- * the full picture if they want).
+ * are ordered most-actionable first: packs → inventory → upgrader → fairness).
  */
 type CardReferenceCheck = {
   /** ids that have NO reference of any kind → safe to delete. */
   deletableIds: string[];
   /** first-matched reason per blocked id. */
   blockedById: Map<string, BlockedReason>;
-  /** all matched reasons per blocked id. */
-  blockedReasonsById: Map<string, BlockedReason[]>;
   /** pack reference count per candidate id (0 when none). */
   packCountById: Map<string, number>;
   /** inventory holding count per candidate id (0 when none). */
@@ -459,8 +455,7 @@ type CardReferenceCheck = {
  * Run ALL five read-only reference checks over `ids` and return the safe set
  * plus per-card reasons. This is the single source of truth for "is this card
  * safe to delete" — both the bulk `deleteCards` and the single `deleteCard`
- * (and the UI preview via `getDeletableCardIds`) go through it so the rules
- * can never drift between callers.
+ * go through it so the rules can never drift between callers.
  *
  * Every query here is a READ (SELECT/COUNT) on the MAIN production DB — nothing
  * is mutated. Checks are issued concurrently and each is scoped to the
@@ -487,7 +482,6 @@ async function checkCardReferences(
     return {
       deletableIds: [],
       blockedById: new Map(),
-      blockedReasonsById: new Map(),
       packCountById: new Map(),
       inventoryCountById: new Map(),
     };
@@ -572,7 +566,6 @@ async function checkCardReferences(
 
   const deletableIds: string[] = [];
   const blockedById = new Map<string, BlockedReason>();
-  const blockedReasonsById = new Map<string, BlockedReason[]>();
 
   for (const id of uniqueIds) {
     const reasons: BlockedReason[] = [];
@@ -586,14 +579,12 @@ async function checkCardReferences(
       deletableIds.push(id);
     } else {
       blockedById.set(id, reasons[0]);
-      blockedReasonsById.set(id, reasons);
     }
   }
 
   return {
     deletableIds,
     blockedById,
-    blockedReasonsById,
     packCountById,
     inventoryCountById,
   };
@@ -607,92 +598,6 @@ const BLOCKED_REASON_LABEL: Record<BlockedReason, string> = {
   in_upgrader_target: "an upgrader target card",
   in_provably_fair: "referenced by provably-fair records",
 };
-
-/**
- * Read-only preview helper for a mass-delete: runs every reference check over
- * `ids` and returns the safe set plus per-id reasons. ADMIN-ONLY — same gate as
- * the destructive `deleteCards`, since it reads which cards are referenced
- * across the platform. Nothing is mutated.
- */
-export async function getDeletableCardIds(ids: string[]): Promise<{
-  deletable: string[];
-  blocked: { id: string; reason: BlockedReason }[];
-}> {
-  await requireAdmin();
-
-  const parsed = deleteCardsSchema.safeParse({ ids });
-  if (!parsed.success) {
-    throw new Error(parsed.error.issues[0]?.message ?? "Invalid input");
-  }
-
-  const db = await getDb();
-  const check = await checkCardReferences(db, parsed.data.ids);
-
-  return {
-    deletable: check.deletableIds,
-    blocked: Array.from(check.blockedById.entries()).map(([id, reason]) => ({
-      id,
-      reason,
-    })),
-  };
-}
-
-/**
- * Per-card usage flag set — the full-flag-set twin of `getDeletableCardIds`.
- *
- * Where `getDeletableCardIds` surfaces only the FIRST-matched blocking reason
- * (enough to explain a skip), this returns one boolean PER reference class so a
- * UI can show EVERY place a card is used at once (a pack, the upgrader, user
- * inventory, provably-fair history) plus a single "safe to delete" sign.
- *
- * It reuses the SAME `checkCardReferences` single batched pass — no extra
- * queries, the `@>` GIN provably-fair form intact — so `safeToDelete` here is
- * the exact same notion (`check.deletableIds`, i.e. zero reasons) that
- * `getDeletableCardIds` / `deleteCards` use. Single source of truth, no drift.
- *
- * ADMIN-ONLY — same gate as `getDeletableCardIds`, since it reads which cards
- * are referenced across the platform. Read-only: nothing is mutated, no audit
- * event (it's a preview read, mirroring `getDeletableCardIds`).
- */
-export async function getCardUsageFlags(ids: string[]): Promise<
-  {
-    id: string;
-    inPacks: boolean;
-    inInventory: boolean;
-    inUpgrader: boolean;
-    inProvablyFair: boolean;
-    safeToDelete: boolean;
-  }[]
-> {
-  await requireAdmin();
-
-  const parsed = deleteCardsSchema.safeParse({ ids });
-  if (!parsed.success) {
-    throw new Error(parsed.error.issues[0]?.message ?? "Invalid input");
-  }
-
-  const db = await getDb();
-  const check = await checkCardReferences(db, parsed.data.ids);
-
-  const deletable = new Set(check.deletableIds);
-  // De-dup so each id appears once (mirrors checkCardReferences' own de-dup).
-  const uniqueIds = Array.from(new Set(parsed.data.ids));
-
-  return uniqueIds.map((id) => {
-    const reasons = check.blockedReasonsById.get(id) ?? [];
-    return {
-      id,
-      inPacks: reasons.includes("in_packs"),
-      inInventory: reasons.includes("in_inventory"),
-      // Output OR target merged — both mean "used by the upgrader".
-      inUpgrader:
-        reasons.includes("in_upgrader_output") ||
-        reasons.includes("in_upgrader_target"),
-      inProvablyFair: reasons.includes("in_provably_fair"),
-      safeToDelete: deletable.has(id),
-    };
-  });
-}
 
 /**
  * Bulk-delete cards selected on /cards. ADMIN-ONLY — `requireAdmin()` is the

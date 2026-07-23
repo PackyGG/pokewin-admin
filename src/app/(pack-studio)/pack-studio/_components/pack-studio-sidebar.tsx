@@ -8,7 +8,6 @@ import {
   LayoutDashboard,
   Stethoscope,
   Wand2,
-  Layers,
   Sparkles,
   History,
   type LucideIcon,
@@ -54,7 +53,6 @@ const STUDIO_NAV: StudioNavItem[] = [
   { label: "Pack Doctor", href: "/pack-studio/doctor", icon: Stethoscope },
   { label: "Retune", href: "/pack-studio/retune", icon: Sparkles },
   { label: "Pack Builder", href: "/pack-studio/builder", icon: Wand2 },
-  { label: "Card Editor", href: "/pack-studio/cards", icon: Layers },
 ];
 
 /**
