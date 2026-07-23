@@ -52,6 +52,32 @@ import {
  * at parse time instead of simply matching nothing.
  */
 
+
+/**
+ * Render a Date as a NAIVE UTC timestamp string: `YYYY-MM-DD HH:MM:SS.mmm`.
+ *
+ * ── WHY THIS EXISTS ───────────────────────────────────────────────────────
+ * `affiliate_code_usages.created_at` and `ledger_transactions.created_at` are
+ * `timestamp WITHOUT time zone`, holding UTC wall-clock values. Binding a JS
+ * `Date` against such a column is ambiguous: the driver serialises it with the
+ * CLIENT's offset, and Postgres then drops that offset — so the boundary moves
+ * by however far the client is from UTC.
+ *
+ * Observed on a CEST (+02) machine 2026-07-23: a program starting
+ * 23:53:14Z was compared as 01:53:14, silently excluding two hours of
+ * genuinely-qualifying wager. Production runs UTC so the shift is zero there,
+ * which is exactly what makes it dangerous — it is invisible until someone
+ * runs the admin, or a script, from another timezone and gets different money.
+ *
+ * Formatting the parameter as naive UTC makes the comparison naive-vs-naive
+ * and identical everywhere. It also keeps the predicate SARGABLE: the cast is
+ * on the PARAMETER, never the column — casting the column is what disabled the
+ * deposit index earlier today.
+ */
+function utcNaive(d: Date): string {
+  return d.toISOString().replace("T", " ").replace("Z", "");
+}
+
 /** Money in whole cents — all unit math is integer to avoid float drift. */
 const toCents = (usd: number): number => Math.round(usd * 100);
 const fromCents = (cents: number): number => cents / 100;
@@ -191,15 +217,16 @@ async function programWindows(
 function windowBounds(
   windows: { started_at: Date; ended_at: Date | null }[],
   from: Date,
-): { starts: Date[]; ends: Date[] } {
+): { starts: string[]; ends: string[] } {
   const FAR_FUTURE = new Date("9999-12-31T00:00:00.000Z");
-  const starts: Date[] = [];
-  const ends: Date[] = [];
+  const starts: string[] = [];
+  const ends: string[] = [];
   for (const w of windows) {
     const end = w.ended_at ?? FAR_FUTURE;
     if (end <= from) continue;
-    starts.push(w.started_at > from ? w.started_at : from);
-    ends.push(end);
+    // Naive-UTC strings, not Dates — see `utcNaive`.
+    starts.push(utcNaive(w.started_at > from ? w.started_at : from));
+    ends.push(utcNaive(end));
   }
   return { starts, ends };
 }
@@ -256,16 +283,17 @@ async function wagerPosition(
   if (starts.length === 0) return fallback;
 
   const upper = codes.map((c) => c.toUpperCase());
+  const since = utcNaive(accrualStart);
 
   const rows = await getProdDb().$queryRaw<
     { run_start: Date; current: string; lifetime: string }[]
   >`
     WITH boundary AS (
-      SELECT COALESCE(MAX(created_at), ${accrualStart}) AS run_start
+      SELECT COALESCE(MAX(created_at), ${since}::timestamp) AS run_start
         FROM affiliate_code_usages
        WHERE referred_user_id = ${userId}
          AND UPPER(code) <> ALL(${upper}::text[])
-         AND created_at >= ${accrualStart}
+         AND created_at >= ${since}::timestamp
     ),
     live AS (
       SELECT acu.created_at, acu.wager_amount_usd
@@ -273,7 +301,7 @@ async function wagerPosition(
        WHERE acu.referred_user_id = ${userId}
          AND acu.usage_type::text = 'wager'
          AND UPPER(acu.code) = ANY(${upper}::text[])
-         AND acu.created_at >= ${accrualStart}
+         AND acu.created_at >= ${since}::timestamp
          AND EXISTS (
            SELECT 1
              FROM unnest(${starts}::timestamp[], ${ends}::timestamp[]) AS w(s, e)
