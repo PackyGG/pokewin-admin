@@ -443,7 +443,10 @@ export async function previewBulkBanCount(filters: {
  *   3. `expectedCount` must match what the server independently resolves;
  *      a moving target aborts rather than banning a different population
  *   4. BULK_BAN_MAX ceiling on blast radius
- *   5. already-banned and staff accounts are excluded by the resolver
+ *   5. the resolver excludes already-banned accounts, every role except
+ *      plain `user` (admin / support / creator), and ex-creators — anyone
+ *      with a creator artifact in either DB, whatever their role is now
+ *      (owner rule 2026-07-24: "never ever ban ex creators")
  */
 export async function bulkBanFilteredUsers(input: {
   filters: {

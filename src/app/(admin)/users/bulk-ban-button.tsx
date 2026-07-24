@@ -214,9 +214,10 @@ export function BulkBanButton() {
           Bulk ban
         </DialogTitle>
         <DialogDescription>
-          Pick criteria, preview how many accounts match, then ban them. Admins,
-          support and already-banned accounts are always skipped. Nothing is
-          deleted — this is reversible.
+          Pick criteria, preview how many accounts match, then ban them. Only
+          plain player accounts are ever targeted — admins, support, creators,
+          past creators and already-banned accounts are always skipped. Nothing
+          is deleted — this is reversible.
         </DialogDescription>
 
         <div className="space-y-3">

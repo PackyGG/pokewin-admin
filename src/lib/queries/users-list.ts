@@ -13,7 +13,8 @@ import { isUserId, isUuid } from "@/lib/utils/ids";
 import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-visible-override";
 import { blacklistNotInClause, escapeBlacklistIds } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { STAFF_ROLES } from "./_exclude-staff";
+import { getCreatorProtectedUserIds } from "./creator-protected-ids";
+import { isMissingRolesColumnError } from "@/lib/user-site-roles";
 import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
 
 // Allowlist from the generated Prisma user_role enum — validate the
@@ -1859,6 +1860,13 @@ export async function getUsersListStats(): Promise<UsersListStats> {
 export const BULK_BAN_MAX = 25_000;
 
 /**
+ * The ONLY `user_role` a bulk ban may target. An allowlist on purpose:
+ * admin, support and creator are all excluded, and any future enum member
+ * is excluded until someone deliberately opts it in here.
+ */
+const BULK_BANNABLE_ROLE: (typeof user_role)["user"] = user_role.user;
+
+/**
  * Every user id matching a set of list filters — the SAME
  * `buildUserListWhereClause` the table itself uses, so "ban everything I'm
  * looking at" can never target a different population than the screen shows.
@@ -1868,7 +1876,17 @@ export const BULK_BAN_MAX = 25_000;
  * Excludes, unconditionally and regardless of filters:
  *   • already-banned users (re-banning would overwrite the original reason
  *     and `banned_at`, destroying why they were banned the first time)
- *   • STAFF_ROLES (admin / support) — internal accounts are never bulk-banned
+ *   • every role except plain `user` — an allowlist, not a staff blocklist.
+ *     Admin, support AND creator accounts are all off-limits; a new
+ *     `user_role` enum member is excluded by default rather than silently
+ *     becoming bannable. Checked on the `roles` array too, so a multi-role
+ *     account can't slip through on its primary role alone.
+ *   • EX-creators — anyone carrying a creator artifact in either DB, even
+ *     with their role since reset to `user`. See
+ *     {@link getCreatorProtectedUserIds}. Owner rule 2026-07-24: "never
+ *     ever ban ex creators". They never deposit and often share a signup
+ *     IP, which is exactly what the farming filters select for, so without
+ *     this they were the sweep's most likely collateral.
  *
  * Search is deliberately NOT accepted: a free-text term routes through the
  * ranked/exact-match paths rather than this clause, so honouring it here
@@ -1886,7 +1904,12 @@ export async function getUserIdsMatchingFilters(params: {
   affiliateOwnerId?: string;
 }): Promise<string[]> {
   const db = await getDb();
-  const excludedUserIds = await getExcludedUserIds();
+  const [excludedUserIds, creatorProtectedIds] = await Promise.all([
+    getExcludedUserIds(),
+    // Throws on failure — see the helper: an unresolvable protection set
+    // must abort the ban, never degrade into banning unprotected.
+    getCreatorProtectedUserIds(),
+  ]);
 
   const whereClause = buildUserListWhereClause({
     searchTerm: undefined,
@@ -1908,17 +1931,40 @@ export async function getUserIdsMatchingFilters(params: {
     excludedUserIds,
   });
 
-  const staffList = STAFF_ROLES.map((r) => `'${r}'`).join(",");
-  const rows = await db.$queryRawUnsafe<{ id: string }[]>(
-    `
+  const creatorProtectedClause =
+    creatorProtectedIds.length > 0
+      ? `AND u.id NOT IN (${escapeBlacklistIds(creatorProtectedIds)})`
+      : "";
+
+  // `roles` is the additive multi-role column the owner applies to MAIN on
+  // their own timeline (see writeUserWithRoles). It exists on live prod
+  // today; the retry below keeps the ban working — with the primary-role
+  // gate still enforced — if this ever runs against a DB without it,
+  // rather than failing the whole action on a missing column.
+  const rolesGate = `AND NOT (u.roles && ARRAY['admin','support','creator']::user_role[])`;
+  const sql = (multiRoleGate: string) => `
     SELECT u.id
     FROM "user" u
     ${whereClause.sql}
       AND u.is_banned = false
-      AND u.role::text NOT IN (${staffList})
+      AND u.role::text = '${BULK_BANNABLE_ROLE}'
+      ${multiRoleGate}
+      ${creatorProtectedClause}
     LIMIT ${BULK_BAN_MAX + 1}
-    `,
-    ...whereClause.params,
-  );
+  `;
+
+  let rows: { id: string }[];
+  try {
+    rows = await db.$queryRawUnsafe<{ id: string }[]>(
+      sql(rolesGate),
+      ...whereClause.params,
+    );
+  } catch (err) {
+    if (!isMissingRolesColumnError(err)) throw err;
+    rows = await db.$queryRawUnsafe<{ id: string }[]>(
+      sql(""),
+      ...whereClause.params,
+    );
+  }
   return rows.map((r) => r.id);
 }
