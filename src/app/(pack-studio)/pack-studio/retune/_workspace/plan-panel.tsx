@@ -1514,7 +1514,12 @@ export function PlanPanel({
             }
             sub={
               targets
-                ? `${edgeTargetSub(targets.targetEdge)}${showEstimate ? " · estimate" : ""}`
+                ? `${edgeTargetSub(
+                    targets.targetEdge,
+                    staged?.edgeTargetOverride !== undefined
+                      ? "override"
+                      : "curve",
+                  )}${showEstimate ? " · estimate" : ""}`
                 : undefined
             }
           >

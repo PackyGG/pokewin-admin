@@ -648,8 +648,26 @@ export const F17_DISCARD = "Discard";
 
 // ─── KPI copy (§5b) ─────────────────────────────────────────────────────────
 
-export function edgeTargetSub(targetEdge: number): string {
-  return `target ${(targetEdge * 100).toFixed(2)}% (this pack's own curve)`;
+/**
+ * Caption under the House-edge tile.
+ *
+ * `targetEdge` is the EFFECTIVE target the plan solved against, which is not
+ * always the pack's curve: an owner edge-target override (and the one-click
+ * `price-edge-exact` / clean-rescue flows that set one) replaces it. Labelling
+ * an overridden number "this pack's own curve" told the owner the pack's curve
+ * wanted LESS edge than it really does — on a live pack whose curve asks
+ * 11.10% it read "target 10.85% (this pack's own curve)" while an override
+ * chip said 10.85% right beside it. Two different claims about the same
+ * number, and the wrong one looked authoritative.
+ */
+export function edgeTargetSub(
+  targetEdge: number,
+  source: "curve" | "override" = "curve",
+): string {
+  const pct = `${(targetEdge * 100).toFixed(2)}%`;
+  return source === "override"
+    ? `target ${pct} (your override — not this pack's curve)`
+    : `target ${pct} (this pack's own curve)`;
 }
 
 export const WIN_RATE_ON_TAG = "on tag";
