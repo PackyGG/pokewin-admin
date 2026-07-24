@@ -19,6 +19,7 @@ import {
 } from "./_lib/search-params";
 import { getUsersPageGates } from "./_lib/admin-gates";
 import { BulkBanButton } from "./bulk-ban-button";
+import { BulkUnbanButton } from "./bulk-unban-button";
 import { ensureSupportBaseline } from "@/lib/support-baseline";
 import { UsersDataTable } from "./data-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
@@ -216,6 +217,7 @@ export default async function UsersPage({
               searchPlaceholder="Search username, email, user ID, Discord ID — or c:CODE for a code's owner (e.g. c:packygg)"
             >
               {gates.canBulkBan && <BulkBanButton />}
+              {gates.canBulkBan && <BulkUnbanButton />}
               <SortByPnlLosersButton />
               <SortByPnlWinnersButton />
               <SortByUserNetWorthButton />

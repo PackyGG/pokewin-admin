@@ -25,9 +25,10 @@ export type UsersPageGates = {
   /** Let an active search surface excluded (blacklisted) users. */
   includeExcludedInSearch: boolean;
   /**
-   * Show the bulk-ban control. ADMIN/OWNER ONLY — stricter than the
-   * single-user ban, which is a support capability. Render-cosmetic:
-   * `bulkBanFilteredUsers` re-checks this server-side.
+   * Show the bulk-ban AND bulk-unban controls. ADMIN/OWNER ONLY — stricter
+   * than the single-user ban, which is a support capability. Render-cosmetic:
+   * `bulkBanFilteredUsers` / `bulkUnbanFilteredUsers` re-check this
+   * server-side.
    */
   canBulkBan: boolean;
 };

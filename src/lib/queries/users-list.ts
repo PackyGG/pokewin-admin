@@ -1,4 +1,5 @@
 import { unstable_cache } from "next/cache";
+import { cache } from "react";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
@@ -14,7 +15,6 @@ import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-vi
 import { blacklistNotInClause, escapeBlacklistIds } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getCreatorProtectedUserIds } from "./creator-protected-ids";
-import { isMissingRolesColumnError } from "@/lib/user-site-roles";
 import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
 
 // Allowlist from the generated Prisma user_role enum — validate the
@@ -1867,6 +1867,50 @@ export const BULK_BAN_MAX = 25_000;
 const BULK_BANNABLE_ROLE: (typeof user_role)["user"] = user_role.user;
 
 /**
+ * Roles that must never be caught by a bulk ban, and that mark an account
+ * as wrongly-banned for the bulk UNBAN resolver. Same list, read from both
+ * ends — one definition so the two can't drift apart.
+ */
+const PROTECTED_ROLES = ["admin", "support", "creator"] as const;
+
+/** `true` when the user carries any protected role in the `roles` array. */
+const PROTECTED_ROLES_ARRAY_SQL = `u.roles && ARRAY[${PROTECTED_ROLES.map(
+  (r) => `'${r}'`,
+).join(",")}]::user_role[]`;
+
+/** `true` when the user's PRIMARY role is a protected one. */
+const PROTECTED_PRIMARY_ROLE_SQL = `u.role IN (${PROTECTED_ROLES.map(
+  (r) => `'${r}'::user_role`,
+).join(",")})`;
+
+/**
+ * Whether MAIN carries the additive multi-role `users.roles` column.
+ *
+ * The owner applies `ALTER TABLE users ADD COLUMN … roles` on their own
+ * timeline (see `writeUserWithRoles`), so referencing it unconditionally
+ * would hard-fail both bulk resolvers on a DB that predates it. Verified
+ * present on live prod (read-only, 2026-07-24); this probe only exists so
+ * the ban/unban paths degrade to the primary-role gate instead of throwing
+ * if that ever stops being true.
+ *
+ * A catalog lookup, not a user-table read — no index rule applies. Deduped
+ * per request; both resolvers ask, and the preview asks again before the
+ * action does.
+ */
+const hasUserRolesColumn = cache(async (): Promise<boolean> => {
+  const db = await getDb();
+  const rows = await db.$queryRaw<{ present: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = current_schema()
+         AND table_name = 'user'
+         AND column_name = 'roles'
+    ) AS present
+  `;
+  return rows[0]?.present === true;
+});
+
+/**
  * Every user id matching a set of list filters — the SAME
  * `buildUserListWhereClause` the table itself uses, so "ban everything I'm
  * looking at" can never target a different population than the screen shows.
@@ -1904,11 +1948,12 @@ export async function getUserIdsMatchingFilters(params: {
   affiliateOwnerId?: string;
 }): Promise<string[]> {
   const db = await getDb();
-  const [excludedUserIds, creatorProtectedIds] = await Promise.all([
+  const [excludedUserIds, creatorProtectedIds, rolesColumn] = await Promise.all([
     getExcludedUserIds(),
     // Throws on failure — see the helper: an unresolvable protection set
     // must abort the ban, never degrade into banning unprotected.
     getCreatorProtectedUserIds(),
+    hasUserRolesColumn(),
   ]);
 
   const whereClause = buildUserListWhereClause({
@@ -1936,13 +1981,13 @@ export async function getUserIdsMatchingFilters(params: {
       ? `AND u.id NOT IN (${escapeBlacklistIds(creatorProtectedIds)})`
       : "";
 
-  // `roles` is the additive multi-role column the owner applies to MAIN on
-  // their own timeline (see writeUserWithRoles). It exists on live prod
-  // today; the retry below keeps the ban working — with the primary-role
-  // gate still enforced — if this ever runs against a DB without it,
-  // rather than failing the whole action on a missing column.
-  const rolesGate = `AND NOT (u.roles && ARRAY['admin','support','creator']::user_role[])`;
-  const sql = (multiRoleGate: string) => `
+  // A multi-role account can't slip through on its primary role alone.
+  const multiRoleGate = rolesColumn
+    ? `AND NOT (${PROTECTED_ROLES_ARRAY_SQL})`
+    : "";
+
+  const rows = await db.$queryRawUnsafe<{ id: string }[]>(
+    `
     SELECT u.id
     FROM "user" u
     ${whereClause.sql}
@@ -1951,20 +1996,238 @@ export async function getUserIdsMatchingFilters(params: {
       ${multiRoleGate}
       ${creatorProtectedClause}
     LIMIT ${BULK_BAN_MAX + 1}
-  `;
+    `,
+    ...whereClause.params,
+  );
+  return rows.map((r) => r.id);
+}
 
-  let rows: { id: string }[];
-  try {
-    rows = await db.$queryRawUnsafe<{ id: string }[]>(
-      sql(rolesGate),
-      ...whereClause.params,
-    );
-  } catch (err) {
-    if (!isMissingRolesColumnError(err)) throw err;
-    rows = await db.$queryRawUnsafe<{ id: string }[]>(
-      sql(""),
-      ...whereClause.params,
+/**
+ * Which banned accounts the bulk UNBAN resolver targets.
+ *
+ * `protected` is the "recheck everything" sweep: any banned account that
+ * the CURRENT ban rules would refuse to touch — staff, creators, and
+ * ex-creators. If a ban predates those rules, this is what surfaces it.
+ */
+export const BULK_UNBAN_ACCOUNT_TYPES = [
+  "protected",
+  "creator",
+  "staff",
+  "player",
+] as const;
+
+export type BulkUnbanAccountType = (typeof BULK_UNBAN_ACCOUNT_TYPES)[number];
+
+const BULK_UNBAN_ACCOUNT_TYPE_SET = new Set<string>(BULK_UNBAN_ACCOUNT_TYPES);
+
+/** How far back `bannedWithinDays` may look. Beyond this, use "any time". */
+const BULK_UNBAN_MAX_DAYS = 3_650;
+
+export type BulkUnbanFilters = {
+  /** See {@link BULK_UNBAN_ACCOUNT_TYPES}. */
+  accountType?: string;
+  /** Case-insensitive substring of `banned_reason` — the cohort marker. */
+  reasonContains?: string;
+  /** Only bans newer than this many days. */
+  bannedWithinDays?: number;
+  deposited?: string;
+  provider?: string;
+  sharedIp?: string;
+  freeOnly?: string;
+};
+
+/**
+ * Every BANNED user id matching a set of unban criteria — the counterpart
+ * to {@link getUserIdsMatchingFilters}, built on the same shared
+ * `buildUserListWhereClause` (pinned to `status: "banned"`) so a preview
+ * and the unban itself can never resolve different populations.
+ *
+ * Exists because the bulk ban shipped before the creator carve-out did: a
+ * sweep run in that window could have caught creators and ex-creators, and
+ * those accounts now need finding and releasing. `accountType: "protected"`
+ * is exactly that audit — every banned account today's rules would refuse
+ * to ban.
+ *
+ * "Ex-creator" is resolved from {@link getCreatorProtectedUserIds}, the same
+ * artifact set the ban gate refuses to touch, so the two agree on who counts.
+ *
+ * Unlike the ban resolver there is NO role allowlist — a wrongly-banned
+ * staff or creator account is the whole point. The blacklist exclusion is
+ * kept, mirroring the ban path: an `excluded_users` account can't have been
+ * bulk-banned in the first place.
+ */
+export async function getBannedUserIdsMatchingFilters(
+  filters: BulkUnbanFilters,
+): Promise<string[]> {
+  const db = await getDb();
+  const [excludedUserIds, creatorProtectedIds, rolesColumn] = await Promise.all([
+    getExcludedUserIds(),
+    // Throws on failure, like the ban path — an unresolvable creator set
+    // must abort rather than silently mis-classify who was wrongly banned.
+    getCreatorProtectedUserIds(),
+    hasUserRolesColumn(),
+  ]);
+
+  const whereClause = buildUserListWhereClause({
+    searchTerm: undefined,
+    isExactId: false,
+    isEmailLike: false,
+    isDiscordId: false,
+    searchMode: "prefix",
+    codeSearch: false,
+    role: undefined,
+    // Pinned — this resolver only ever looks at banned accounts.
+    status: "banned",
+    deposited: filters.deposited,
+    provider: filters.provider,
+    sharedIp: filters.sharedIp,
+    sharedDevice: undefined,
+    freeOnly: filters.freeOnly,
+    affiliateCode: undefined,
+    affiliateOwnerId: undefined,
+    excludedUserIds,
+  });
+
+  // Same array the builder handed back — extra predicates append their own
+  // placeholders after the ones it already numbered.
+  const params = [...whereClause.params];
+  const extra: string[] = [];
+
+  const isCreator = [
+    `u.role = 'creator'::user_role`,
+    ...(creatorProtectedIds.length > 0
+      ? [`u.id IN (${escapeBlacklistIds(creatorProtectedIds)})`]
+      : []),
+    ...(rolesColumn ? [`'creator' = ANY(u.roles)`] : []),
+  ].join(" OR ");
+  const isStaff = [
+    `u.role IN ('admin'::user_role, 'support'::user_role)`,
+    ...(rolesColumn
+      ? [`u.roles && ARRAY['admin','support']::user_role[]`]
+      : []),
+  ].join(" OR ");
+  const isProtected = rolesColumn
+    ? `${PROTECTED_PRIMARY_ROLE_SQL} OR ${PROTECTED_ROLES_ARRAY_SQL}${
+        creatorProtectedIds.length > 0
+          ? ` OR u.id IN (${escapeBlacklistIds(creatorProtectedIds)})`
+          : ""
+      }`
+    : `${PROTECTED_PRIMARY_ROLE_SQL}${
+        creatorProtectedIds.length > 0
+          ? ` OR u.id IN (${escapeBlacklistIds(creatorProtectedIds)})`
+          : ""
+      }`;
+
+  if (
+    filters.accountType &&
+    BULK_UNBAN_ACCOUNT_TYPE_SET.has(filters.accountType)
+  ) {
+    switch (filters.accountType as BulkUnbanAccountType) {
+      case "creator":
+        extra.push(`(${isCreator})`);
+        break;
+      case "staff":
+        extra.push(`(${isStaff})`);
+        break;
+      case "protected":
+        extra.push(`(${isProtected})`);
+        break;
+      case "player":
+        extra.push(`NOT (${isProtected})`);
+        break;
+    }
+  }
+
+  const reason = filters.reasonContains?.trim();
+  if (reason) {
+    // Escaped like every other LIKE in this file, so a pasted `%` in a
+    // cohort marker matches literally instead of widening the set.
+    params.push(`%${reason.toLowerCase().replace(/[\\%_]/g, "\\$&")}%`);
+    extra.push(
+      `u.banned_reason IS NOT NULL AND LOWER(u.banned_reason) LIKE $${params.length} ESCAPE '\\'`,
     );
   }
+
+  const days = filters.bannedWithinDays;
+  if (typeof days === "number" && Number.isFinite(days) && days > 0) {
+    const clamped = Math.min(Math.floor(days), BULK_UNBAN_MAX_DAYS);
+    // Integer after the clamp — inlined like the other validated numerics
+    // in this file. `banned_at` is NULL on legacy bans, and NULL never
+    // matches, so a time window deliberately drops them.
+    extra.push(`u.banned_at >= NOW() - INTERVAL '${clamped} days'`);
+  }
+
+  // `whereClause.sql` is always non-empty here (status: "banned" pushes a
+  // predicate), so AND-prefixing the extras is safe.
+  const rows = await db.$queryRawUnsafe<{ id: string }[]>(
+    `
+    SELECT u.id
+    FROM "user" u
+    ${whereClause.sql}
+      ${extra.map((e) => `AND (${e})`).join("\n      ")}
+    LIMIT ${BULK_BAN_MAX + 1}
+    `,
+    ...params,
+  );
   return rows.map((r) => r.id);
+}
+
+/** One row of the bulk-unban preview list. */
+export type BulkUnbanPreviewUser = {
+  id: string;
+  username: string | null;
+  email: string | null;
+  role: string;
+  bannedReason: string | null;
+  bannedAt: string | null;
+  /** Creator, ex-creator or staff — i.e. today's rules would refuse the ban. */
+  isProtected: boolean;
+};
+
+/**
+ * Identity + ban details for a handful of the matched ids, so the dialog can
+ * show WHO it is about to release rather than just a number. Primary-key
+ * lookup on a caller-capped slice — the resolver above already decided the
+ * population.
+ */
+export async function getBulkUnbanPreviewUsers(
+  ids: string[],
+  limit: number,
+): Promise<BulkUnbanPreviewUser[]> {
+  if (ids.length === 0 || limit <= 0) return [];
+  const db = await getDb();
+  const slice = ids.slice(0, limit);
+  const [users, creatorProtectedIds] = await Promise.all([
+    db.user.findMany({
+      where: { id: { in: slice } },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        banned_reason: true,
+        banned_at: true,
+      },
+    }),
+    getCreatorProtectedUserIds(),
+  ]);
+  const protectedSet = new Set(creatorProtectedIds);
+  const byId = new Map(users.map((u) => [u.id, u]));
+  // Preserve the resolver's order rather than Postgres' arbitrary one.
+  return slice.flatMap((id) => {
+    const u = byId.get(id);
+    if (!u) return [];
+    return [
+      {
+        id: u.id,
+        username: u.username,
+        email: u.email,
+        role: u.role,
+        bannedReason: u.banned_reason,
+        bannedAt: u.banned_at?.toISOString() ?? null,
+        isProtected:
+          u.role !== user_role.user || protectedSet.has(u.id),
+      },
+    ];
+  });
 }

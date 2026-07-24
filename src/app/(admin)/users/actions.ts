@@ -11,7 +11,11 @@ import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
 import { getDistinctUserCountries } from "@/lib/queries/users-export";
 import {
   getUserIdsMatchingFilters,
+  getBannedUserIdsMatchingFilters,
+  getBulkUnbanPreviewUsers,
   BULK_BAN_MAX,
+  type BulkUnbanFilters,
+  type BulkUnbanPreviewUser,
 } from "@/lib/queries/users-list";
 import { requireUsersExportAdmin } from "@/lib/users-export/motha-gate";
 import {
@@ -564,4 +568,206 @@ export async function bulkBanFilteredUsers(input: {
   revalidateTag("users-list");
   revalidateTag("users-list-stats");
   return ok({ bannedCount });
+}
+
+/** How many matched accounts the unban preview lists by name. */
+const UNBAN_PREVIEW_SAMPLE = 25;
+
+/**
+ * How many per-user ban details the audit event keeps verbatim. An unban
+ * NULLs `banned_reason` / `banned_at` / `banned_by`, so the audit row is
+ * the only surviving record of why each account was banned — but a 25k-row
+ * sweep would make the metadata absurd. Beyond this the event keeps the
+ * full id list plus a complete reason histogram and flags itself truncated,
+ * rather than pretending it captured everything.
+ */
+const UNBAN_AUDIT_DETAIL_MAX = 2_000;
+
+/**
+ * Who a set of unban criteria would release, WITHOUT releasing anyone.
+ *
+ * Returns a count plus a named sample, because this dialog exists to
+ * RE-CHECK bans — a bare number can't tell the operator whether the filter
+ * found the cohort they meant. Resolves through the exact same
+ * `getBannedUserIdsMatchingFilters` the unban itself uses.
+ */
+export async function previewBulkUnban(
+  filters: BulkUnbanFilters,
+): Promise<
+  ServerActionResult<{
+    count: number;
+    capped: boolean;
+    sample: BulkUnbanPreviewUser[];
+  }>
+> {
+  const session = await requirePageAccess("/users");
+  if (!isBulkBanAuthorized(session)) {
+    return fail("Bulk unban is restricted to admins and owners.", "FORBIDDEN");
+  }
+  if (!Object.values(filters).some((v) => v !== undefined && v !== "")) {
+    return fail("Select at least one criterion.", "VALIDATION");
+  }
+  try {
+    const ids = await getBannedUserIdsMatchingFilters(filters);
+    return ok({
+      count: Math.min(ids.length, BULK_BAN_MAX),
+      capped: ids.length > BULK_BAN_MAX,
+      sample: await getBulkUnbanPreviewUsers(ids, UNBAN_PREVIEW_SAMPLE),
+    });
+  } catch (err) {
+    logError("users.bulkUnbanPreview", "preview failed", err);
+    return fail("Couldn't count the matching accounts — please try again.");
+  }
+}
+
+/**
+ * Bulk-unban every BANNED user matching a set of criteria — the counterpart
+ * to {@link bulkBanFilteredUsers}, and the way out of a bad sweep.
+ *
+ * It exists because the bulk ban shipped before the creator carve-out did.
+ * A sweep run in that window could have taken out creators and ex-creators,
+ * and picking them back out one at a time isn't realistic. `accountType:
+ * "protected"` finds exactly that population: every banned account today's
+ * ban rules would refuse to touch.
+ *
+ * Same rails as the ban, for the same reason — this restores site access to
+ * accounts someone deliberately removed it from, so it is not a "safe
+ * because it's reversible" action:
+ *   1. admin/owner only, re-checked server-side
+ *   2. at least one criterion — no unfiltered mass release
+ *   3. `expectedCount` must match what the server independently resolves
+ *   4. BULK_BAN_MAX ceiling on blast radius
+ *
+ * The prior ban state is snapshotted into the audit event BEFORE the write,
+ * because unbanning NULLs `banned_reason` / `banned_at` / `banned_by` — the
+ * audit row is what makes a mistaken unban re-doable.
+ */
+export async function bulkUnbanFilteredUsers(input: {
+  filters: BulkUnbanFilters;
+  note?: string;
+  expectedCount: number;
+}): Promise<ServerActionResult<{ unbannedCount: number }>> {
+  const session = await requirePageAccess("/users");
+
+  if (!isBulkBanAuthorized(session)) {
+    return fail("Bulk unban is restricted to admins and owners.", "FORBIDDEN");
+  }
+
+  const hasFilter = Object.values(input.filters).some(
+    (v) => v !== undefined && v !== "",
+  );
+  if (!hasFilter) {
+    return fail(
+      "Select at least one filter — refusing to unban an unfiltered list.",
+      "VALIDATION",
+    );
+  }
+
+  let userIds: string[];
+  try {
+    userIds = await getBannedUserIdsMatchingFilters(input.filters);
+  } catch (err) {
+    logError("users.bulkUnban", "failed to resolve matching users", err);
+    return fail("Couldn't resolve the matching users — please try again.");
+  }
+
+  if (userIds.length > BULK_BAN_MAX) {
+    return fail(
+      `That filter matches more than ${BULK_BAN_MAX.toLocaleString()} accounts. Narrow it down.`,
+      "VALIDATION",
+    );
+  }
+  if (userIds.length === 0) {
+    return fail("No banned accounts match that filter.", "VALIDATION");
+  }
+  if (userIds.length !== input.expectedCount) {
+    return fail(
+      `The matching set changed (${input.expectedCount.toLocaleString()} → ${userIds.length.toLocaleString()}). Re-check the filter and try again.`,
+      "CONFLICT",
+    );
+  }
+
+  const db = await getDb();
+
+  // Snapshot BEFORE the write — the unban destroys these three columns and
+  // this is the only place they survive.
+  let priorState: Array<{
+    id: string;
+    username: string | null;
+    banned_reason: string | null;
+    banned_at: Date | null;
+  }>;
+  try {
+    priorState = await db.user.findMany({
+      where: { id: { in: userIds } },
+      select: {
+        id: true,
+        username: true,
+        banned_reason: true,
+        banned_at: true,
+      },
+    });
+  } catch (err) {
+    logError("users.bulkUnban", "failed to snapshot prior ban state", err);
+    return fail("Couldn't read the current ban state — please try again.");
+  }
+
+  const reasonHistogram: Record<string, number> = {};
+  for (const u of priorState) {
+    const key = u.banned_reason ?? "(no reason recorded)";
+    reasonHistogram[key] = (reasonHistogram[key] ?? 0) + 1;
+  }
+
+  const note = input.note?.trim() || null;
+  const CHUNK = 1_000;
+  let unbannedCount = 0;
+  try {
+    for (let i = 0; i < userIds.length; i += CHUNK) {
+      const chunk = userIds.slice(i, i + CHUNK);
+      const updated = await db.user.updateMany({
+        where: { id: { in: chunk }, is_banned: true },
+        data: {
+          is_banned: false,
+          banned_reason: null,
+          banned_at: null,
+          banned_by: null,
+        },
+      });
+      unbannedCount += updated.count;
+    }
+  } catch (err) {
+    logError("users.bulkUnban", "bulk unban failed", err);
+    // Chunked, so partial progress is real — report it instead of
+    // implying nothing happened.
+    return fail(
+      `Unban failed after ${unbannedCount.toLocaleString()} accounts. Re-run to finish the rest.`,
+    );
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "accounts_bulk_unbanned",
+    metadata: {
+      note,
+      filters: input.filters,
+      requested: userIds.length,
+      unbanned: unbannedCount,
+      user_ids: userIds,
+      // Complete regardless of size — the per-user detail below is not.
+      prior_ban_reasons: reasonHistogram,
+      prior_ban_detail_truncated: priorState.length > UNBAN_AUDIT_DETAIL_MAX,
+      prior_ban_detail: priorState
+        .slice(0, UNBAN_AUDIT_DETAIL_MAX)
+        .map((u) => ({
+          id: u.id,
+          username: u.username,
+          reason: u.banned_reason,
+          banned_at: u.banned_at?.toISOString() ?? null,
+        })),
+    },
+  });
+
+  revalidateTag("users-list");
+  revalidateTag("users-list-stats");
+  return ok({ unbannedCount });
 }
