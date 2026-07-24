@@ -35,6 +35,7 @@ import {
   canDrawRound,
   canEditRound,
   describeScoring,
+  positionColor,
 } from "@/lib/chat-raffle/config";
 import {
   getActiveChatRaffleRound,
@@ -77,12 +78,6 @@ export const metadata = { title: "Chat Raffle" };
  *  round — keep the connection-hang guard. */
 const STANDINGS_TIMEOUT_MS = 20_000;
 const ROUNDS_TIMEOUT_MS = 10_000;
-
-const POSITION_COLORS: Record<number, string> = {
-  1: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
-  2: "bg-zinc-400/15 text-zinc-500 dark:text-zinc-400 border-zinc-400/30",
-  3: "bg-amber-700/15 text-amber-700 dark:text-amber-500 border-amber-700/30",
-};
 
 export default async function ChatRafflePage() {
   await requirePageAccess("/chat-raffle");
@@ -366,9 +361,6 @@ function StandingsTable({
       ) : (
         <div className="mt-4 overflow-hidden rounded-md border">
           {standings.map((entry) => {
-            const positionColor =
-              POSITION_COLORS[entry.position] ??
-              "bg-muted text-muted-foreground border-border";
             return (
               <div
                 key={entry.userId}
@@ -377,7 +369,7 @@ function StandingsTable({
                 <div
                   className={cn(
                     "flex size-8 shrink-0 items-center justify-center rounded-full border text-xs font-bold",
-                    positionColor,
+                    positionColor(entry.position),
                   )}
                 >
                   {entry.position <= 3 ? (
@@ -470,8 +462,7 @@ function WinnersPanel({ round }: { round: ChatRaffleRoundView }) {
             <div
               className={cn(
                 "flex size-8 shrink-0 items-center justify-center rounded-full border text-xs font-bold",
-                POSITION_COLORS[prize.position] ??
-                  "bg-muted text-muted-foreground border-border",
+                positionColor(prize.position),
               )}
             >
               #{prize.position}

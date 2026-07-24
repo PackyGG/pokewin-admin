@@ -128,8 +128,8 @@ export async function createChatRaffleRound(input: {
 
   const startsAt = new Date(data.startsAt);
   const endsAt = new Date(data.endsAt);
-  const window = validateWindow(startsAt, endsAt);
-  if (!window.ok) return { success: false, error: window.error };
+  const windowCheck = validateWindow(startsAt, endsAt);
+  if (!windowCheck.ok) return { success: false, error: windowCheck.error };
   const places = validatePrizePositions(data.prizes);
   if (!places.ok) return { success: false, error: places.error };
 
@@ -193,8 +193,8 @@ export async function updateChatRaffleRound(input: {
 
   const startsAt = new Date(data.startsAt);
   const endsAt = new Date(data.endsAt);
-  const window = validateWindow(startsAt, endsAt);
-  if (!window.ok) return { success: false, error: window.error };
+  const windowCheck = validateWindow(startsAt, endsAt);
+  if (!windowCheck.ok) return { success: false, error: windowCheck.error };
   const places = validatePrizePositions(data.prizes);
   if (!places.ok) return { success: false, error: places.error };
 

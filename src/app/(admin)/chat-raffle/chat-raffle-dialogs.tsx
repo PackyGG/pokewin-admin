@@ -2,12 +2,32 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { Check, Dices, Plus, Settings2, Trash2, Wallet, X } from "lucide-react";
+import {
+  CalendarClock,
+  Check,
+  Dices,
+  Gift,
+  Plus,
+  ShieldCheck,
+  Sliders,
+  Sparkles,
+  Ticket,
+  Trash2,
+  Trophy,
+  Users,
+  Wallet,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group";
 import {
   Dialog,
   DialogContent,
@@ -18,11 +38,15 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ux";
-import { formatCurrency } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import {
   CHAT_RAFFLE_FIXED_RULES,
   CHAT_RAFFLE_MAX_PRIZES,
+  CHAT_RAFFLE_MAX_WINDOW_DAYS,
   DEFAULT_CHAT_RAFFLE_SCORING,
+  describeScoring,
+  positionColor,
   type ChatRaffleScoring,
 } from "@/lib/chat-raffle/config";
 import {
@@ -38,6 +62,11 @@ import {
  * Client dialogs for the Chat Raffle. Every one of them follows the house
  * server-action contract: the action never throws across the RSC boundary, it
  * returns `{ success, error? }`, and the caller branches on it and toasts.
+ *
+ * Layout convention shared by all four: an icon-chip header (same chip as
+ * SectionHeading), body content grouped into bordered sections with their own
+ * small heading, and the dialog's own sticky footer for the actions. Flat
+ * surfaces only — no gradient/glow fills, per the app-wide flat standard.
  */
 
 type PrizeDraft = { amountUsd: string; label: string };
@@ -56,24 +85,128 @@ function fromLocalInputValue(value: string): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+/**
+ * Human window length for the live chip next to the date inputs. Worth
+ * showing because the window is capped at CHAT_RAFFLE_MAX_WINDOW_DAYS and
+ * two `datetime-local` values don't make their own span obvious.
+ */
+function describeWindow(
+  startLocal: string,
+  endLocal: string,
+): { text: string; tooLong: boolean } | null {
+  const start = new Date(startLocal);
+  const end = new Date(endLocal);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  const ms = end.getTime() - start.getTime();
+  if (ms <= 0) return { text: "Ends before it starts", tooLong: true };
+
+  const hours = ms / 3_600_000;
+  const days = ms / 86_400_000;
+  const text =
+    hours < 48
+      ? `${Math.round(hours)}h`
+      : `${days % 1 === 0 ? days : days.toFixed(1)} days`;
+  return { text, tooLong: days > CHAT_RAFFLE_MAX_WINDOW_DAYS };
+}
+
+// ─── Shared dialog chrome ───────────────────────────────────────────
+
+/** Icon-chip dialog header — mirrors the SectionHeading chip on the pages. */
+function DialogHeading({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: React.ElementType;
+  title: React.ReactNode;
+  description?: React.ReactNode;
+}) {
+  return (
+    <DialogHeader>
+      <div className="flex items-start gap-2.5">
+        <div className="mt-0.5 shrink-0 rounded-lg bg-primary/10 p-1.5">
+          <Icon className="size-4 text-primary" aria-hidden />
+        </div>
+        <div className="min-w-0 space-y-1">
+          <DialogTitle className="pr-6">{title}</DialogTitle>
+          {description && <DialogDescription>{description}</DialogDescription>}
+        </div>
+      </div>
+    </DialogHeader>
+  );
+}
+
+/** Bordered body section with a small icon heading. */
+function FormSection({
+  icon: Icon,
+  title,
+  action,
+  children,
+}: {
+  icon: React.ElementType;
+  title: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-3 rounded-xl border p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <Icon className="size-3.5 text-muted-foreground" aria-hidden />
+          <h3 className="text-xs font-semibold tracking-wide uppercase text-muted-foreground">
+            {title}
+          </h3>
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/** Compact read-only figure, used in the confirm dialogs. */
+function StatChip({
+  icon: Icon,
+  label,
+  value,
+  valueClassName,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="flex flex-col gap-1 rounded-lg border px-3 py-2">
+      <span className="flex items-center gap-1 text-[10px] tracking-wide uppercase text-muted-foreground">
+        <Icon className="size-3" aria-hidden />
+        {label}
+      </span>
+      <span className={cn("tabular-nums text-sm font-semibold", valueClassName)}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
 function NumberField({
   id,
   label,
   hint,
   value,
   onChange,
+  onBlur,
   min,
   max,
-  placeholder,
 }: {
   id: string;
   label: string;
   hint?: string;
   value: string;
   onChange: (v: string) => void;
+  onBlur?: () => void;
   min?: number;
   max?: number;
-  placeholder?: string;
 }) {
   return (
     <div className="space-y-1.5">
@@ -86,12 +219,12 @@ function NumberField({
         inputMode="numeric"
         min={min}
         max={max}
-        placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-9"
+        onBlur={onBlur}
+        className="h-9 tabular-nums"
       />
-      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
+      {hint && <p className="text-[11px] leading-snug text-muted-foreground">{hint}</p>}
     </div>
   );
 }
@@ -170,6 +303,14 @@ export function RoundFormDialog({
       : [{ amountUsd: "", label: "" }],
   );
 
+  /**
+   * Transient text for the number inputs. Without this, clearing a field
+   * coerces straight to 0 and the box redisplays "0", so you cannot type over
+   * a value without first deleting the zero. The raw string wins while the
+   * field is focused; blur drops it and the canonical number renders again.
+   */
+  const [rawNumbers, setRawNumbers] = useState<Record<string, string>>({});
+
   function setScoringField<K extends keyof ChatRaffleScoring>(
     key: K,
     value: ChatRaffleScoring[K],
@@ -177,14 +318,22 @@ export function RoundFormDialog({
     setScoring((prev) => ({ ...prev, [key]: value }));
   }
 
-  /** Number inputs round-trip as strings so a half-typed value isn't clamped. */
-  function numField<K extends keyof ChatRaffleScoring>(key: K) {
+  function numField(key: keyof ChatRaffleScoring) {
     return {
-      value: String(scoring[key] ?? ""),
+      value: rawNumbers[key] ?? String(scoring[key]),
       onChange: (v: string) => {
+        setRawNumbers((prev) => ({ ...prev, [key]: v }));
         const n = Number(v);
-        setScoringField(key, (v === "" ? 0 : n) as ChatRaffleScoring[K]);
+        if (v !== "" && Number.isFinite(n)) {
+          setScoringField(key, n as ChatRaffleScoring[typeof key]);
+        }
       },
+      onBlur: () =>
+        setRawNumbers((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        }),
     };
   }
 
@@ -234,6 +383,8 @@ export function RoundFormDialog({
     const n = Number(p.amountUsd);
     return Number.isFinite(n) ? sum + n : sum;
   }, 0);
+  // NOT named `window` — that would shadow the DOM global in a client component.
+  const windowSpan = describeWindow(startsAt, endsAt);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -243,24 +394,37 @@ export function RoundFormDialog({
         {mode === "create" ? (
           <Plus className="mr-2 size-4" />
         ) : (
-          <Settings2 className="mr-2 size-4" />
+          <Sliders className="mr-2 size-4" />
         )}
         {triggerLabel ?? (mode === "create" ? "New round" : "Edit round")}
       </DialogTrigger>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>
-            {mode === "create" ? "New raffle round" : "Edit raffle round"}
-          </DialogTitle>
-          <DialogDescription>
-            Chat activity in the window below becomes points, points become
-            tickets, and one ticket is drawn per prize place.
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeading
+          icon={mode === "create" ? Sparkles : Sliders}
+          title={mode === "create" ? "New raffle round" : "Edit raffle round"}
+          description="Chat in the window becomes points, points become tickets, and one ticket is drawn per prize place."
+        />
 
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <div className="space-y-2">
-            <Label htmlFor="round-name">Name</Label>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {/* ─── Round ──────────────────────────────────────────── */}
+          <FormSection
+            icon={CalendarClock}
+            title="Round"
+            action={
+              windowSpan && (
+                <span
+                  className={cn(
+                    "rounded-full border px-2 py-0.5 text-[10px] font-medium tabular-nums",
+                    windowSpan.tooLong
+                      ? "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {windowSpan.text}
+                </span>
+              )
+            }
+          >
             <Input
               id="round-name"
               value={name}
@@ -268,69 +432,88 @@ export function RoundFormDialog({
               placeholder="Weekly chat raffle #1"
               maxLength={120}
               required
+              aria-label="Round name"
+              className="font-medium"
             />
-          </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="round-start">Starts</Label>
-              <Input
-                id="round-start"
-                type="datetime-local"
-                value={startsAt}
-                onChange={(e) => setStartsAt(e.target.value)}
-                required
-              />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="round-start" className="text-xs">
+                  Starts
+                </Label>
+                <Input
+                  id="round-start"
+                  type="datetime-local"
+                  value={startsAt}
+                  onChange={(e) => setStartsAt(e.target.value)}
+                  required
+                  className="h-9"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="round-end" className="text-xs">
+                  Ends
+                </Label>
+                <Input
+                  id="round-end"
+                  type="datetime-local"
+                  value={endsAt}
+                  onChange={(e) => setEndsAt(e.target.value)}
+                  required
+                  className="h-9"
+                />
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="round-end">Ends</Label>
-              <Input
-                id="round-end"
-                type="datetime-local"
-                value={endsAt}
-                onChange={(e) => setEndsAt(e.target.value)}
-                required
-              />
-            </div>
-          </div>
-          <p className="-mt-2 text-[11px] text-muted-foreground">
-            Times are in your local timezone. Only messages inside the window
-            earn tickets.
-          </p>
+            <p className="text-[11px] text-muted-foreground">
+              Your local timezone. Only messages inside the window earn tickets.
+            </p>
+          </FormSection>
 
-          {/* ─── Prize ladder ─────────────────────────────────────── */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>Prizes</Label>
-              <span className="text-xs text-muted-foreground">
-                Pool {formatCurrency(prizePool)}
+          {/* ─── Prizes ─────────────────────────────────────────── */}
+          <FormSection
+            icon={Gift}
+            title="Prizes"
+            action={
+              <span className="tabular-nums text-sm font-semibold text-rose-600 dark:text-rose-400">
+                {formatCurrency(prizePool)}
               </span>
-            </div>
+            }
+          >
             <div className="space-y-2">
               {prizes.map((p, i) => (
                 <div key={i} className="flex items-center gap-2">
-                  <span className="w-8 shrink-0 text-center text-xs font-semibold text-muted-foreground">
-                    #{i + 1}
+                  <span
+                    className={cn(
+                      "flex size-8 shrink-0 items-center justify-center rounded-full border text-[11px] font-bold tabular-nums",
+                      positionColor(i + 1),
+                    )}
+                  >
+                    {i + 1 <= 3 ? <Trophy className="size-3.5" /> : i + 1}
                   </span>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    inputMode="decimal"
-                    placeholder="Amount (USD)"
-                    value={p.amountUsd}
-                    onChange={(e) =>
-                      setPrizes((prev) =>
-                        prev.map((row, idx) =>
-                          idx === i ? { ...row, amountUsd: e.target.value } : row,
-                        ),
-                      )
-                    }
-                    className="h-9"
-                    required
-                  />
+                  <InputGroup className="h-9 flex-1">
+                    <InputGroupAddon align="inline-start">$</InputGroupAddon>
+                    <InputGroupInput
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      aria-label={`Prize amount for place ${i + 1}`}
+                      value={p.amountUsd}
+                      onChange={(e) =>
+                        setPrizes((prev) =>
+                          prev.map((row, idx) =>
+                            idx === i ? { ...row, amountUsd: e.target.value } : row,
+                          ),
+                        )
+                      }
+                      className="tabular-nums"
+                      required
+                    />
+                  </InputGroup>
                   <Input
                     placeholder="Label (optional)"
+                    aria-label={`Label for place ${i + 1}`}
                     value={p.label}
                     maxLength={120}
                     onChange={(e) =>
@@ -340,20 +523,20 @@ export function RoundFormDialog({
                         ),
                       )
                     }
-                    className="h-9"
+                    className="h-9 flex-1"
                   />
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="size-9 shrink-0"
-                    aria-label={`Remove prize ${i + 1}`}
+                    className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
+                    aria-label={`Remove place ${i + 1}`}
                     disabled={prizes.length === 1}
                     onClick={() =>
                       setPrizes((prev) => prev.filter((_, idx) => idx !== i))
                     }
                   >
-                    <X className="size-4" />
+                    <X className="size-3.5" />
                   </Button>
                 </div>
               ))}
@@ -363,6 +546,7 @@ export function RoundFormDialog({
                 type="button"
                 variant="outline"
                 size="sm"
+                className="w-full border-dashed"
                 onClick={() =>
                   setPrizes((prev) => [...prev, { amountUsd: "", label: "" }])
                 }
@@ -371,15 +555,10 @@ export function RoundFormDialog({
                 Add place
               </Button>
             )}
-          </div>
+          </FormSection>
 
-          {/* ─── Scoring ──────────────────────────────────────────── */}
-          <div className="space-y-3 rounded-xl border p-3">
-            <div className="flex items-center gap-2">
-              <Settings2 className="size-4 text-primary" />
-              <span className="text-sm font-semibold">Points &amp; weights</span>
-            </div>
-
+          {/* ─── Points ─────────────────────────────────────────── */}
+          <FormSection icon={Ticket} title="Points & weights">
             <div className="grid gap-3 sm:grid-cols-2">
               <NumberField
                 id="pts-per-msg"
@@ -420,20 +599,31 @@ export function RoundFormDialog({
               onChange={(v) => setScoringField("dedupeIdentical", v)}
             />
 
-            {/* The rules an operator can't switch off. Stated here so the
-                form is honest about what it does NOT control. */}
-            <ul className="space-y-1 rounded-lg bg-muted/40 px-3 py-2.5">
+            {/* Live restatement of the knobs above — the same one-liner the
+                page shows, so the form and the round can't describe the same
+                config two different ways. */}
+            <p className="rounded-lg bg-muted/40 px-3 py-2 text-[11px] tabular-nums text-muted-foreground">
+              {describeScoring(scoring)}
+            </p>
+          </FormSection>
+
+          {/* ─── Fixed rules ────────────────────────────────────── */}
+          <FormSection icon={ShieldCheck} title="Always applied">
+            <ul className="grid gap-1.5 sm:grid-cols-2">
               {CHAT_RAFFLE_FIXED_RULES.map((rule) => (
                 <li
                   key={rule}
-                  className="flex items-start gap-1.5 text-[11px] text-muted-foreground"
+                  className="flex items-start gap-1.5 text-[11px] leading-snug text-muted-foreground"
                 >
-                  <Check className="mt-px size-3 shrink-0" aria-hidden />
+                  <Check
+                    className="mt-px size-3 shrink-0 text-emerald-600 dark:text-emerald-400"
+                    aria-hidden
+                  />
                   {rule}
                 </li>
               ))}
             </ul>
-          </div>
+          </FormSection>
 
           <DialogFooter>
             <Button
@@ -497,22 +687,23 @@ export function DrawRoundButton({
         Draw winners
       </DialogTrigger>
       <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Draw {roundName}?</DialogTitle>
-          <DialogDescription>
-            This freezes the standings and picks {prizeCount}{" "}
-            {prizeCount === 1 ? "winner" : "winners"} from{" "}
-            {totalTickets.toLocaleString()} tickets across{" "}
-            {entrants.toLocaleString()}{" "}
-            {entrants === 1 ? "entrant" : "entrants"}. The snapshot and the
-            random seed are stored, so the draw stays reproducible — but it
-            can&apos;t be undone or re-rolled.
-          </DialogDescription>
-        </DialogHeader>
+        <DialogHeading
+          icon={Dices}
+          title={`Draw ${roundName}?`}
+          description="This freezes the standings and picks the winners. The snapshot and the random seed are stored, so the draw stays reproducible — but it can't be undone or re-rolled."
+        />
+
+        <div className="grid grid-cols-3 gap-2">
+          <StatChip icon={Users} label="Entrants" value={formatNumber(entrants)} />
+          <StatChip icon={Ticket} label="Tickets" value={formatNumber(totalTickets)} />
+          <StatChip icon={Trophy} label="Places" value={formatNumber(prizeCount)} />
+        </div>
+
         <p className="text-xs text-muted-foreground">
-          Nobody is paid yet. Each winner still has to be paid out
+          Nobody is paid yet — each winner still has to be paid out
           individually.
         </p>
+
         <DialogFooter>
           <Button
             variant="outline"
@@ -560,13 +751,11 @@ export function CancelRoundButton({
         Cancel
       </DialogTrigger>
       <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Cancel {roundName}?</DialogTitle>
-          <DialogDescription>
-            The round stops counting and can never be drawn. Its config and
-            manual adjustments are kept for the record.
-          </DialogDescription>
-        </DialogHeader>
+        <DialogHeading
+          icon={Trash2}
+          title={`Cancel ${roundName}?`}
+          description="The round stops counting and can never be drawn. Its config and manual adjustments are kept for the record."
+        />
         <DialogFooter>
           <Button
             variant="outline"
@@ -602,9 +791,14 @@ export function AdjustPointsDialog({
   const [points, setPoints] = useState("");
   const [reason, setReason] = useState("");
 
+  const delta = Number(points);
+  const preview =
+    points !== "" && Number.isInteger(delta)
+      ? Math.max(0, currentPoints + delta)
+      : null;
+
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const delta = Number(points);
     if (!Number.isInteger(delta) || delta === 0) {
       toast.error("Enter a whole, non-zero number of points.");
       return;
@@ -634,25 +828,53 @@ export function AdjustPointsDialog({
           <Button
             variant="ghost"
             size="icon"
-            className="size-7"
+            className="size-7 text-muted-foreground hover:text-foreground"
             aria-label={`Adjust points for ${username ?? userId}`}
           />
         }
       >
-        <Settings2 className="size-3.5" />
+        <Sliders className="size-3.5" />
       </DialogTrigger>
       <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Adjust points — {username ?? userId}</DialogTitle>
-          <DialogDescription>
-            Currently on {currentPoints.toLocaleString()}{" "}
-            {currentPoints === 1 ? "point" : "points"}. Adjustments stack on top
-            of the scored total and are kept as a record.
-          </DialogDescription>
-        </DialogHeader>
+        <DialogHeading
+          icon={Sliders}
+          title={`Adjust points — ${username ?? userId.slice(0, 8)}`}
+          description="Adjustments stack on top of the scored total and are kept as a record."
+        />
+
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="adjust-points">Points (+ or −)</Label>
+          {/* Live before → after, so a typo'd sign is visible before it lands. */}
+          <div className="flex items-center justify-center gap-3 rounded-xl border px-3 py-3">
+            <div className="flex flex-col items-center gap-0.5">
+              <span className="text-[10px] tracking-wide uppercase text-muted-foreground">
+                Now
+              </span>
+              <span className="tabular-nums text-base font-semibold">
+                {formatNumber(currentPoints)}
+              </span>
+            </div>
+            <span aria-hidden className="text-muted-foreground">
+              →
+            </span>
+            <div className="flex flex-col items-center gap-0.5">
+              <span className="text-[10px] tracking-wide uppercase text-muted-foreground">
+                After
+              </span>
+              <span
+                className={cn(
+                  "tabular-nums text-base font-semibold",
+                  preview === null && "text-muted-foreground",
+                )}
+              >
+                {preview === null ? "—" : formatNumber(preview)}
+              </span>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="adjust-points" className="text-xs">
+              Points (+ or −)
+            </Label>
             <Input
               id="adjust-points"
               type="number"
@@ -661,11 +883,14 @@ export function AdjustPointsDialog({
               value={points}
               onChange={(e) => setPoints(e.target.value)}
               placeholder="-50"
+              className="h-9 tabular-nums"
               required
             />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="adjust-reason">Reason</Label>
+          <div className="space-y-1.5">
+            <Label htmlFor="adjust-reason" className="text-xs">
+              Reason
+            </Label>
             <Input
               id="adjust-reason"
               value={reason}
@@ -673,9 +898,11 @@ export function AdjustPointsDialog({
               placeholder="Copy-pasting the same line all evening"
               minLength={3}
               maxLength={500}
+              className="h-9"
               required
             />
           </div>
+
           <DialogFooter>
             <Button
               type="button"
@@ -726,7 +953,9 @@ export function PayPrizeDialog({
       toast.error(result.error);
       return;
     }
-    toast.success(`Paid ${formatCurrency(amountUsd)} to ${winnerUsername ?? "the winner"}`);
+    toast.success(
+      `Paid ${formatCurrency(amountUsd)} to ${winnerUsername ?? "the winner"}`,
+    );
     setTotpCode("");
     setOpen(false);
   }
@@ -738,20 +967,42 @@ export function PayPrizeDialog({
         Pay
       </DialogTrigger>
       <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Pay place #{position}</DialogTitle>
-          <DialogDescription>
-            Credits {formatCurrency(amountUsd)} to{" "}
-            <span className="font-medium text-foreground">
-              {winnerUsername ?? "the drawn winner"}
-            </span>{" "}
-            for {roundName}. This writes a real balance adjustment and a ledger
-            entry, tagged as a chat-raffle prize.
-          </DialogDescription>
-        </DialogHeader>
+        <DialogHeading
+          icon={Wallet}
+          title={`Pay place #${position}`}
+          description={`Writes a real balance adjustment and a ledger entry for ${roundName}, tagged as a chat-raffle prize.`}
+        />
+
+        {/* The amount, unmissable. Rose = money leaving the house (house POV). */}
+        <div className="flex items-center justify-between gap-3 rounded-xl border px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span
+              className={cn(
+                "flex size-8 shrink-0 items-center justify-center rounded-full border text-[11px] font-bold",
+                positionColor(position),
+              )}
+            >
+              <Trophy className="size-3.5" />
+            </span>
+            <div className="flex min-w-0 flex-col">
+              <span className="truncate text-sm font-semibold">
+                {winnerUsername ?? "The drawn winner"}
+              </span>
+              <span className="text-[11px] text-muted-foreground">
+                Place #{position}
+              </span>
+            </div>
+          </div>
+          <span className="shrink-0 tabular-nums text-lg font-semibold text-rose-600 dark:text-rose-400">
+            {formatCurrency(amountUsd)}
+          </span>
+        </div>
+
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="pay-totp">2FA code</Label>
+          <div className="space-y-1.5">
+            <Label htmlFor="pay-totp" className="text-xs">
+              2FA code
+            </Label>
             <Input
               id="pay-totp"
               value={totpCode}
@@ -759,6 +1010,7 @@ export function PayPrizeDialog({
               inputMode="numeric"
               autoComplete="one-time-code"
               placeholder="123456"
+              className="h-9 tabular-nums tracking-[0.3em]"
               required
             />
           </div>

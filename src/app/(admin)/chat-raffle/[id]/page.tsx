@@ -24,6 +24,7 @@ import {
   CHAT_RAFFLE_PHASE_COLOR,
   CHAT_RAFFLE_PHASE_LABEL,
   describeScoring,
+  positionColor,
 } from "@/lib/chat-raffle/config";
 import {
   getChatRaffleRound,
@@ -35,12 +36,6 @@ import { PayPrizeDialog } from "../chat-raffle-dialogs";
 export const metadata = { title: "Chat Raffle round" };
 
 const DETAIL_TIMEOUT_MS = 10_000;
-
-const POSITION_COLORS: Record<number, string> = {
-  1: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
-  2: "bg-zinc-400/15 text-zinc-500 dark:text-zinc-400 border-zinc-400/30",
-  3: "bg-amber-700/15 text-amber-700 dark:text-amber-500 border-amber-700/30",
-};
 
 /**
  * A single round, as it was decided.
@@ -178,8 +173,7 @@ async function RoundDetail({ id }: { id: string }) {
               <div
                 className={cn(
                   "flex size-8 shrink-0 items-center justify-center rounded-full border text-xs font-bold",
-                  POSITION_COLORS[prize.position] ??
-                    "bg-muted text-muted-foreground border-border",
+                  positionColor(prize.position),
                 )}
               >
                 #{prize.position}

@@ -92,6 +92,26 @@ export const CHAT_RAFFLE_PHASE_COLOR: Record<ChatRafflePhase, string> = {
   cancelled: "bg-muted text-muted-foreground border-border",
 };
 
+/**
+ * Medal colours for a prize place / standings rank. Gold, silver, bronze,
+ * then neutral. Shared by the list page, the round detail page and the round
+ * form so the same place is never two different colours.
+ */
+export const CHAT_RAFFLE_POSITION_COLORS: Record<number, string> = {
+  1: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
+  2: "bg-zinc-400/15 text-zinc-500 dark:text-zinc-400 border-zinc-400/30",
+  3: "bg-amber-700/15 text-amber-700 dark:text-amber-500 border-amber-700/30",
+};
+
+/** Fourth place and beyond. */
+export const CHAT_RAFFLE_POSITION_FALLBACK =
+  "bg-muted text-muted-foreground border-border";
+
+/** Medal class for a 1-based place. */
+export function positionColor(position: number): string {
+  return CHAT_RAFFLE_POSITION_COLORS[position] ?? CHAT_RAFFLE_POSITION_FALLBACK;
+}
+
 /** The scoring knobs of a round. */
 export type ChatRaffleScoring = {
   pointsPerMessage: number;
