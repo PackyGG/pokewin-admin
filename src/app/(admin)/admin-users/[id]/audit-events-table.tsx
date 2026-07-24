@@ -36,7 +36,9 @@ export type AdminAuditEventItem = {
   createdAt: string;
 };
 
-const EVENT_TYPE_COLORS: Record<string, string> = {
+// Exported so the per-USER audit tab (/users/[id]?tab=audit) renders the same
+// event vocabulary as this per-ADMIN table — one map, two surfaces.
+export const EVENT_TYPE_COLORS: Record<string, string> = {
   admin_login: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
   admin_user_created: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
   admin_user_activated: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
@@ -81,7 +83,7 @@ const EVENT_TYPE_COLORS: Record<string, string> = {
   admin_builtin_role_updated: "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
 };
 
-const EVENT_TYPE_LABELS: Record<string, string> = {
+export const EVENT_TYPE_LABELS: Record<string, string> = {
   admin_login: "Login",
   admin_user_created: "User Created",
   admin_user_activated: "Activated",

@@ -46,6 +46,7 @@ import {
   BadgeCheck,
   Fingerprint,
   Network,
+  ScrollText,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -80,6 +81,8 @@ import {
   AccountTab,
   KycTab,
 } from "./user-view-modern-tabs";
+import { AuditTab } from "./user-tabs-audit";
+import type { UserAdminAuditFeed } from "@/lib/queries/users-admin-audit";
 import { FadeIn } from "@/components/fade-in";
 import { DURATION } from "@/components/ux";
 import {
@@ -141,6 +144,10 @@ const TABS: TabDef[] = [
   // dedicated surface. The read is Active-Timeframe-Only (page.tsx kicks it
   // only when ?tab=kyc is active).
   { key: "kyc", label: "KYC", icon: BadgeCheck },
+  // Audit — the admin action trail against THIS account (who banned/locked
+  // /adjusted them, why, and when). Same Active-Timeframe-Only contract:
+  // page.tsx kicks the admin-DB read only when ?tab=audit is active.
+  { key: "audit", label: "Audit", icon: ScrollText },
 ];
 
 // ---------------------------------------------------------------------------
@@ -180,6 +187,7 @@ export function UserViewModern({
   wagerRequirementPromise,
   featureLocksPromise,
   kycPromise,
+  auditPromise,
   wagerProgressPromise,
   balanceWeightingPromise,
   viewerIsAdjustmentOwner,
@@ -238,6 +246,10 @@ export function UserViewModern({
   // Account tab — backend-owned Sumsub KYC status + admin control. Same
   // catch→null convention as the fraud-locks read above.
   kycPromise: Promise<UserKycStatus | null> | null;
+  // Audit tab — admin-DB action trail targeting this user (who banned/locked
+  // them and why). Full SafeQueryResult so the band can show a visible error
+  // instead of a silent empty log.
+  auditPromise: Promise<SafeQueryResult<UserAdminAuditFeed>> | null;
   // Account tab — read-only wager-requirement PROGRESS derived from the
   // backend-written `balances` columns (dev-only). null = prod / no-balance /
   // read failed → the card's muted "not available" state.
@@ -661,6 +673,10 @@ export function UserViewModern({
 
         {activeTab === "kyc" && (
           <KycTab data={data} kycPromise={kycPromise} canManage={isAdmin} />
+        )}
+
+        {activeTab === "audit" && (
+          <AuditTab data={data} auditPromise={auditPromise} />
         )}
       </FadeIn>
     </div>

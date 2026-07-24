@@ -322,6 +322,10 @@ export function UserDetailFixtureClient() {
       wagerRequirementPromise={Promise.resolve(null)}
       featureLocksPromise={Promise.resolve(null)}
       kycPromise={Promise.resolve(null)}
+      auditPromise={Promise.resolve({
+        data: { events: [], total: 0, truncated: false },
+        error: null,
+      })}
       wagerProgressPromise={Promise.resolve(null)}
       balanceWeightingPromise={Promise.resolve(null)}
       viewerIsAdjustmentOwner

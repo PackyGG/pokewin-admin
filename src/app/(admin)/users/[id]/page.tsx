@@ -35,6 +35,10 @@ import {
 import { getUserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import { getUserFeatureLocks } from "@/lib/backend-api/feature-locks";
 import { getUserKyc } from "@/lib/backend-api/kyc";
+import {
+  getUserAdminAuditFeed,
+  EMPTY_USER_ADMIN_AUDIT,
+} from "@/lib/queries/users-admin-audit";
 import { getUserWagerProgress } from "@/lib/queries/users-wager-progress";
 import { getUserBalanceWeighting } from "@/lib/queries/users-balance-weighting";
 import { getUserRewardPackOpens } from "@/lib/queries/users-reward-pack-opens";
@@ -537,6 +541,20 @@ async function UserDetailBody({
   // ?tab=kyc is active (Active-Timeframe-Only).
   const kycPromise =
     initialTab === "kyc" ? getUserKyc(id).catch(() => null) : null;
+  // Audit tab: admin-DB action trail targeting this user (ban/lock/adjust/
+  // role change/...), the answer to "who did this and why". Admin-DB read,
+  // indexed on target_user_id, Active-Timeframe-Only (kicked only when
+  // ?tab=audit is active) and timeout-wrapped → visible band error rather
+  // than a silent empty log.
+  const auditPromise =
+    initialTab === "audit"
+      ? safeQuery(
+          () => getUserAdminAuditFeed(id),
+          EMPTY_USER_ADMIN_AUDIT,
+          "users.detail.adminAudit",
+          USER_DETAIL_QUERY_TIMEOUT_MS,
+        )
+      : null;
   // Account tab: how each part of the user's balance is weighted toward each
   // destination (withdrawal / races / rakeback / shards) — the funding-source
   // wager-weight matrix projected onto their balance composition. Account-tab
@@ -730,6 +748,7 @@ async function UserDetailBody({
       wagerRequirementPromise={wagerRequirementPromise}
       featureLocksPromise={featureLocksPromise}
       kycPromise={kycPromise}
+      auditPromise={auditPromise}
       wagerProgressPromise={wagerProgressPromise}
       balanceWeightingPromise={balanceWeightingPromise}
       viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}

@@ -881,7 +881,8 @@ export type TabKey =
   | "gaming"
   | "inventory"
   | "account"
-  | "kyc";
+  | "kyc"
+  | "audit";
 
 export const TAB_KEYS = new Set<TabKey>([
   "overview",
@@ -890,6 +891,7 @@ export const TAB_KEYS = new Set<TabKey>([
   "inventory",
   "account",
   "kyc",
+  "audit",
 ]);
 
 export function coerceTab(raw: string | undefined): TabKey {
