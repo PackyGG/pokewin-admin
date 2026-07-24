@@ -135,6 +135,7 @@ export function StandingsTable({
   periodStart,
   claimWindow,
   isActivePeriod = false,
+  canSeeMarking = false,
 }: {
   data: Standing[];
   raceType: string;
@@ -146,6 +147,14 @@ export function StandingsTable({
    * an empty table here means "in progress", not "no data".
    */
   isActivePeriod?: boolean;
+  /**
+   * Whether the viewer may SEE the "marked by admin" excluded-user badge
+   * (owners + the trusted-viewer allowlist — `canSeeAdminMarking`). Defaults
+   * FALSE (fail-closed): a caller that forgets to pass it hides the marking
+   * rather than leaking it. The row still renders at its real leaderboard
+   * place either way — only the flag is withheld.
+   */
+  canSeeMarking?: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
 
@@ -338,7 +347,7 @@ export function StandingsTable({
                       >
                         {s.username ?? s.userId.slice(0, 8)}
                       </Link>
-                      {s.excluded && <ExcludedBadge />}
+                      {s.excluded && canSeeMarking && <ExcludedBadge />}
                     </span>
                     {reviewable && (s.claimedAt || s.hold || claimWindow) && (
                       <div className="mt-0.5">
@@ -393,7 +402,7 @@ export function StandingsTable({
                     >
                       {e.username ?? e.userId.slice(0, 8)}
                     </Link>
-                    {e.excluded && <ExcludedBadge />}
+                    {e.excluded && canSeeMarking && <ExcludedBadge />}
                   </span>
                 </TableCell>
                 <TableCell>{formatCurrency(e.wageredUsd)}</TableCell>

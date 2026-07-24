@@ -67,6 +67,39 @@ export function isMainOwner(session: Pick<SessionPayload, "username">): boolean 
   return normalize(session.username) === MAIN_OWNER_USERNAME;
 }
 
+/**
+ * Non-owner usernames additionally trusted to SEE admin-only markings — the
+ * "marked by admin" / excluded-user flags on leaderboard standings, and any
+ * other surface that reveals who an admin has flagged. Owners always see them;
+ * this list adds specific trusted operators on top (owner directive: demee).
+ *
+ * Hard-coded + lowercased like {@link MAIN_OWNER_USERNAME} so a DB blip can
+ * never silently widen who can see the flags. Kept SEPARATE from the
+ * pack-studio operator allowlist on purpose: this is a different capability
+ * (seeing fraud markings, not running retunes), so the two must not drift into
+ * each other — removing someone from one must not silently change the other.
+ */
+const ADMIN_MARKING_VIEWER_USERNAMES: readonly string[] = ["demee"];
+
+/**
+ * True iff this session may SEE admin-only markings (the "marked by admin"
+ * excluded-user badge on leaderboards + the marked-prize fraud-exposure pill).
+ * Owners + the trusted-viewer allowlist above; every other admin/support sees a
+ * clean leaderboard with no marking at all.
+ *
+ * The Excluded Users management page is already owner-only (`requireOwner`);
+ * this closes the same information leaking through the leaderboard badges,
+ * which every admin could previously read.
+ */
+export function canSeeAdminMarking(
+  session: Pick<SessionPayload, "username" | "isOwner">,
+): boolean {
+  return (
+    isOwner(session) ||
+    ADMIN_MARKING_VIEWER_USERNAMES.includes(normalize(session.username))
+  );
+}
+
 /** Lowercased predicate variants for callers that already hold the username. */
 export function isMainOwnerUsername(username: string | null | undefined): boolean {
   return normalize(username) === MAIN_OWNER_USERNAME;

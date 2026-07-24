@@ -2,7 +2,8 @@ import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { AlertTriangle, Trophy } from "lucide-react";
 
-import { requirePageAccess } from "@/lib/dal";
+import { requirePageAccess, verifySession } from "@/lib/dal";
+import { canSeeAdminMarking } from "@/lib/owners";
 import { isUuid } from "@/lib/utils/ids";
 import { getDb } from "@/lib/db";
 import {
@@ -206,6 +207,10 @@ async function LeaderboardDetailBody({
 }) {
     const tz = await getAdminDisplayTimeZone();
     const fmt = (iso: string) => formatDateTime(iso, tz);
+    // Owners + trusted viewers only see the "marked by admin" excluded-user
+    // badge; every other admin gets a clean board (matches the owner-only
+    // Excluded Users page).
+    const canSeeMarking = canSeeAdminMarking(await verifySession());
     const db = await getDb();
     const participatingCreatorIds = [lb.creator_user_id, ...(lb.co_creator_user_ids ?? [])];
     const [creators, standings, claimHolds, claims, leaderboardExpiryDays] = await Promise.all([
@@ -528,6 +533,7 @@ async function LeaderboardDetailBody({
                 holdByUserId={holdByUserId}
                 timeStatus={lb.time_status}
                 source={standings.source}
+                canSeeMarking={canSeeMarking}
             />
 
             <FadeIn>

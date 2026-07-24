@@ -13,6 +13,8 @@ import {
   type RaceLeaderboardPeriod,
 } from "@/lib/queries/races";
 import { safeQuery } from "@/lib/errors/safe-query";
+import { verifySession } from "@/lib/dal";
+import { canSeeAdminMarking } from "@/lib/owners";
 import { formatCurrency } from "@/lib/utils/format";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import {
@@ -218,6 +220,13 @@ async function StandingsSubTab({
   const { page, perPage } = parsePagination(params);
   const search = params.search;
 
+  // Who may SEE the "marked by admin" excluded-user badge + the marked-prize
+  // fraud-exposure pill: owners + the trusted-viewer allowlist only. Every
+  // other admin/support gets a clean leaderboard with no marking, matching the
+  // owner-only Excluded Users page. Resolved once here (async server child) so
+  // both the pill and the standings table read the same decision.
+  const canSeeMarking = canSeeAdminMarking(await verifySession());
+
   // The selectable leaderboards come straight from the DB (the periods that
   // actually have snapshot rows for this race type) — no calendar guessing.
   // safeQuery so a failing periods read degrades to an empty selector instead
@@ -347,9 +356,9 @@ async function StandingsSubTab({
             <DataTableToolbar searchPlaceholder="Search by username, email, or ID..." />
           </Suspense>
         </div>
-        {(markedExposure || totalClaimed) && (
+        {((markedExposure && canSeeMarking) || totalClaimed) && (
           <div className="flex flex-wrap items-center gap-2">
-            {markedExposure && (
+            {markedExposure && canSeeMarking && (
               <MarkedPrizeExposure
                 total={markedExposure.total}
                 count={markedExposure.count}
@@ -370,11 +379,21 @@ async function StandingsSubTab({
       )}
       <FadeIn>
         <StandingsTable
-          data={result.data}
+          // Strip the excluded flag from the CLIENT payload for viewers who
+          // may not see it — `StandingsTable` is a client component, so an
+          // unstripped `excluded: true` would sit in its serialized props even
+          // with the badge hidden. Non-authorized viewers get `excluded: false`
+          // on every row, so the marking is truly absent, not just unrendered.
+          data={
+            canSeeMarking
+              ? result.data
+              : result.data.map((r) => ({ ...r, excluded: false }))
+          }
           raceType={raceType}
           periodStart={effectivePeriod}
           claimWindow={claimWindow}
           isActivePeriod={isActivePeriod}
+          canSeeMarking={canSeeMarking}
         />
       </FadeIn>
       <DataTablePagination

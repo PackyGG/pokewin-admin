@@ -27,11 +27,19 @@ export function LeaderboardStandingsPanel({
     timeStatus,
     source = "live",
     userHref = (userId) => `/users/${userId}`,
+    canSeeMarking = false,
 }: {
     leaderboardId: string;
     rankings: LeaderboardRanking[];
     holdByUserId: Map<string, HoldSummary>;
     timeStatus: TimeStatus;
+    /**
+     * Whether the viewer may SEE the "marked by admin" excluded-user badge
+     * (owners + the trusted-viewer allowlist — `canSeeAdminMarking`). Defaults
+     * FALSE (fail-closed): a caller that forgets to pass it hides the marking.
+     * The row still renders at its real place — only the flag is withheld.
+     */
+    canSeeMarking?: boolean;
     /**
      * "settled" — weighted standings read from the final snapshot (matches
      * what was paid). "live" — unweighted live estimate from raw wager
@@ -165,7 +173,7 @@ export function LeaderboardStandingsPanel({
                                                         r.email ??
                                                         r.userId.slice(0, 8)}
                                                 </Link>
-                                                {r.excluded && (
+                                                {r.excluded && canSeeMarking && (
                                                     <span
                                                         title="Marked by an admin (on the excluded-users list) — shown here to mirror the real leaderboard, but excluded from analytics aggregates."
                                                         className="rounded-full border border-zinc-500/30 bg-zinc-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-600 dark:text-zinc-400"
