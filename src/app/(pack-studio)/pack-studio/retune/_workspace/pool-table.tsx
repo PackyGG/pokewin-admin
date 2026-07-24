@@ -2,10 +2,12 @@
 
 import * as React from "react";
 import {
+  ArrowDownUp,
   Check,
   Info,
   Loader2,
   Pencil,
+  PinOff,
   Plus,
   TriangleAlert,
   X,
@@ -33,9 +35,11 @@ import {
 } from "./plan-copy";
 import type { PendingPreflightView, RemedyChip } from "./plan-state";
 import {
+  findLadderInversions,
   isWholeTicketPct,
   TICKETS_PER_PACK,
   ticketsFromPct,
+  type LadderRow,
 } from "./odds-grid";
 import { CardDiffTable, type CardDiffRow } from "./card-diff-table";
 
@@ -404,6 +408,94 @@ function PendingEditsBar({
   );
 }
 
+/**
+ * Ladder-order banner: warns when the DISPLAYED plan puts a pricier card at a
+ * higher chance than a cheaper one — the "the %s aren't sorted right" break the
+ * owner reads at a glance (50/50 Menace: a $1,199.99 winner at 25% above the
+ * cheaper $1,095.98 near-miss pinned at 15%).
+ *
+ * The engine's LAW M exempts pinned cards on purpose (a pin is sovereign owner
+ * intent), so it can't refuse this shape — it is the owner's own pin fighting
+ * the tag. This surfaces the break the solver can't (its "never ship a silent
+ * zigzag" promise, extended to the one case it can't enforce) and, when a pin
+ * is the cause, offers the one-click release that lets the ladder re-sort.
+ *
+ * PURE DISPLAY — reads the numbers already on screen; no solver, EV, or write
+ * is touched. Renders nothing when the ladder is already clean.
+ */
+function LadderOrderBanner({
+  rows,
+  onPinClear,
+}: {
+  rows: CardDiffRow[];
+  onPinClear?: (cardId: string) => void;
+}) {
+  const inversions = React.useMemo(() => {
+    const ladder: LadderRow[] = rows
+      .filter((r) => !r.removed && r.capRemovedUsd === null)
+      .map((r) => ({
+        cardId: r.cardId,
+        name: r.name,
+        value: r.value,
+        // The chance the row DISPLAYS: a pending typed value wins, else the
+        // display-reconciled plan pct.
+        pct: r.pendingPct ?? r.displayPct ?? 0,
+        pinned: r.pinnedPct !== null,
+      }));
+    return findLadderInversions(ladder);
+  }, [rows]);
+
+  if (inversions.length === 0) return null;
+
+  // One row per distinct pricier-more-common pair; de-dup the unpin targets so
+  // a single pin blamed by several pairs offers ONE release button.
+  const unpinTargets = new Map<string, LadderRow>();
+  for (const inv of inversions) {
+    if (inv.unpinTarget) unpinTargets.set(inv.unpinTarget.cardId, inv.unpinTarget);
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-400">
+      <div className="flex items-start gap-2">
+        <ArrowDownUp className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+        <div className="space-y-1">
+          <p className="font-semibold">
+            The chances aren&apos;t sorted: a pricier card is more common than a
+            cheaper one.
+          </p>
+          <ul className="space-y-0.5">
+            {inversions.slice(0, 3).map((inv, i) => (
+              <li key={`${inv.rich.cardId}-${inv.poor.cardId}-${i}`}>
+                <span className="font-medium">{inv.rich.name}</span> (
+                {formatCurrency(inv.rich.value)}) at {fmtOddsPct(inv.rich.pct)}% is
+                above the cheaper{" "}
+                <span className="font-medium">{inv.poor.name}</span> (
+                {formatCurrency(inv.poor.value)}) at {fmtOddsPct(inv.poor.pct)}%
+                {inv.poor.pinned || inv.rich.pinned ? " — forced by a pin" : ""}.
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+      {onPinClear && unpinTargets.size > 0 && (
+        <div className="flex flex-wrap gap-1.5 pl-5">
+          {[...unpinTargets.values()].map((t) => (
+            <button
+              key={t.cardId}
+              type="button"
+              onClick={() => onPinClear(t.cardId)}
+              className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-medium transition-colors hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+            >
+              <PinOff className="size-3" aria-hidden />
+              Unpin {t.name} &amp; re-plan
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function PoolTable({
   rows,
   contextPrice,
@@ -509,6 +601,10 @@ export function PoolTable({
 
   return (
     <div className="space-y-3">
+      <LadderOrderBanner
+        rows={rows}
+        onPinClear={disabled ? undefined : onPinClear}
+      />
       <CardDiffTable
         rows={rows}
         contextPrice={contextPrice}

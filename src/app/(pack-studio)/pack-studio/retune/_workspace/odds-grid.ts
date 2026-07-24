@@ -66,3 +66,89 @@ export function oneInOpensLabel(tickets: number): string {
   const n = (TICKETS_PER_PACK / tickets).toFixed(1);
   return `1 in ${n.endsWith(".0") ? n.slice(0, -2) : n} opens`;
 }
+
+/** One row for the ladder-order check: identity + value + displayed chance. */
+export type LadderRow = {
+  cardId: string;
+  name: string;
+  value: number;
+  /** The chance the row DISPLAYS (percent). */
+  pct: number;
+  /** Owner-pinned — the lever the one-click remedy can release. */
+  pinned: boolean;
+};
+
+/**
+ * One "a pricier card is more common than a cheaper card" inversion — the
+ * shape the owner reads as "the %s aren't sorted right".
+ */
+export type LadderInversion = {
+  /** The pricier card that ended up MORE common. */
+  rich: LadderRow;
+  /** The cheaper card it out-commons. */
+  poor: LadderRow;
+  /**
+   * The pinned card whose pin FORCES this inversion, if one exists — releasing
+   * it lets the ladder re-sort. This is the cheaper card when IT is pinned too
+   * low (the 50/50 Menace case: Mewtwo pinned under a pricier free winner), or
+   * the pricier card when IT is pinned too high. Null ⇒ the inversion is not
+   * pin-caused (a deliberate win-band shape) and there is no one-click fix.
+   */
+  unpinTarget: LadderRow | null;
+};
+
+/**
+ * Find every place the DISPLAYED ladder puts a pricier card at a higher chance
+ * than a strictly-cheaper card — the monotone-order break the owner sees as
+ * unsorted percentages.
+ *
+ * This is a PURE DISPLAY check over the numbers already on screen. It does NOT
+ * touch the solver, EV, or the write — the engine's own LAW M deliberately
+ * exempts pinned cards (they are sovereign), so an owner pin can legitimately
+ * create this order break. The point here is to make that break VISIBLE before
+ * a push (the engine's "never ship a silent zigzag" promise, extended to the
+ * one case it can't enforce), and to name the pin that can release it.
+ *
+ * Walks value-ascending and, per card, compares its share to the smallest
+ * share seen among strictly-cheaper cards; a card richer than that minimum is
+ * an inversion. `tol` (default 0.05pp) ignores rounding-scale wobble so two
+ * cards a hair apart never trip it.
+ */
+export function findLadderInversions(
+  rows: readonly LadderRow[],
+  tol = 0.05,
+): LadderInversion[] {
+  const live = rows
+    .filter((r) => Number.isFinite(r.value) && r.value > 0 && Number.isFinite(r.pct) && r.pct > 0)
+    .slice()
+    .sort((a, b) => a.value - b.value);
+
+  const out: LadderInversion[] = [];
+  let minCheaper: LadderRow | null = null;
+  let g = 0;
+  while (g < live.length) {
+    // Group equal-value cards — no constraint applies WITHIN a value tie.
+    let h = g;
+    while (h < live.length && live[h]!.value - live[g]!.value <= 1e-9) h += 1;
+    if (minCheaper !== null) {
+      for (let i = g; i < h; i++) {
+        const rich = live[i]!;
+        if (rich.pct > minCheaper.pct + tol) {
+          // Prefer releasing the CHEAPER pinned card (raising it re-sorts the
+          // pair); else the pricier one if IT is the pin; else no one-click.
+          const unpinTarget = minCheaper.pinned
+            ? minCheaper
+            : rich.pinned
+              ? rich
+              : null;
+          out.push({ rich, poor: minCheaper, unpinTarget });
+        }
+      }
+    }
+    for (let i = g; i < h; i++) {
+      if (minCheaper === null || live[i]!.pct < minCheaper.pct) minCheaper = live[i]!;
+    }
+    g = h;
+  }
+  return out;
+}
