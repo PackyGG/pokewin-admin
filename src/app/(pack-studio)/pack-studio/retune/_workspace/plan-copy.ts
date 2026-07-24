@@ -453,6 +453,42 @@ export function nicePinnedBanner(offCount: number, cardCount: number): string {
  *     direction-aware: "floated up to" when the plan RAISED the win rate,
  *     "eased down to" when it lowered it (Pattern 9a: never "relaxed" upward).
  */
+/**
+ * How far a tagged plan's win-rate may drift before the copy escalates to
+ * "off the tag — see the banner", as a FRACTION OF THE TAG rather than a flat
+ * percentage-point figure (owner, 2026-07-24: "for tags like 50% it's ok if
+ * it's a bit above or below").
+ *
+ * An absolute threshold is the wrong shape here: 4pp of drift is a rounding
+ * detail on a 50% tag and a 4x miss on a 1% tag. Scaling by the tag keeps big
+ * tags quiet while leaving lottery tags as strict as they have always been —
+ * at 10% of the tag, a 50% pack tolerates 5pp, a 1% pack only 0.1pp.
+ *
+ * COPY ONLY. The write-time assert (`TAGGED_WRITE_WINRATE_TOLERANCE`) and the
+ * solver tolerance are untouched — this changes when we shout, never what the
+ * engine accepts.
+ */
+const TAG_DRIFT_NOTEWORTHY_FRACTION = 0.1;
+
+/**
+ * True when a relaxation line carries nothing the operator can act on, so the
+ * render sites can drop it instead of printing the same reassurance on every
+ * plan (owner: "you don't need this every fucking time").
+ *
+ * Today that is exactly one case: a TAGGED pack whose pool supports no
+ * near-miss band at all. A tagged lottery is binary BY DESIGN — the engine's
+ * own floor for them is zero (`TAGGED_NEAR_MISS_MIN`) — so "wanted N%, got 0%,
+ * fine to push" is restating the genre, not reporting a problem. A partial
+ * shortfall (wanted 10%, got 4%) still prints: that one says something real
+ * about how the pack will feel.
+ */
+export function isNoisyRelaxation(
+  r: ShapeWeightsRelaxation,
+  ctx: { tag: number | null },
+): boolean {
+  return r.lever === "nearMiss" && ctx.tag !== null && r.applied <= 1e-9;
+}
+
 export function relaxationLine(
   r: ShapeWeightsRelaxation,
   ctx: { tag: number | null },
@@ -469,7 +505,13 @@ export function relaxationLine(
       // downward move).
       const verb = r.applied > r.requested ? "floated up to" : "eased down to";
       if (ctx.tag !== null) {
-        return `Win chance ${verb} ${pctBody(r.applied)}% (from ${pctBody(r.requested)}%) so the numbers close — off the ${pctBody(ctx.tag)}% tag. See the tag banner for the fix.`;
+        // Drift judged RELATIVE to the tag — see the constant above.
+        const material =
+          Math.abs(r.applied - r.requested) >
+          ctx.tag * TAG_DRIFT_NOTEWORTHY_FRACTION;
+        return material
+          ? `Win chance ${verb} ${pctBody(r.applied)}% (from ${pctBody(r.requested)}%) so the numbers close — off the ${pctBody(ctx.tag)}% tag. See the tag banner for the fix.`
+          : `Win chance ${verb} ${pctBody(r.applied)}% (from ${pctBody(r.requested)}%) so the numbers close — normal drift for a ${pctBody(ctx.tag)}% tag.`;
       }
       return `Win chance ${verb} ${pctBody(r.applied)}% (from ${pctBody(r.requested)}%) so the numbers close. Allowed — this pack has no tag.`;
     }

@@ -120,6 +120,7 @@ import {
   priceMoveSub,
   pricePinnedSub,
   pushSubLine,
+  isNoisyRelaxation,
   relaxationLine,
   tagBadgeLabel,
   tagSaturatedBanner,
@@ -1159,11 +1160,18 @@ export function PlanPanel({
         </Banner>
       );
     }
-    if (plan.feasible && plan.relaxations.length > 0) {
+    // Drop relaxations that only restate the genre (see `isNoisyRelaxation`).
+    // Filtering the LIST is not enough — if every entry is noise the amber
+    // banner itself must not render, or the operator gets a warning frame
+    // wrapped around nothing on plans that are entirely fine.
+    const shownRelaxations = plan.relaxations.filter(
+      (r) => !isNoisyRelaxation(r, { tag }),
+    );
+    if (plan.feasible && shownRelaxations.length > 0) {
       return (
         <Banner tone="amber" icon={TriangleAlert}>
           <ul className="list-disc space-y-0.5 pl-4">
-            {plan.relaxations.map((r, i) => (
+            {shownRelaxations.map((r, i) => (
               <li key={`${r.lever}-${i}`}>{relaxationLine(r, { tag })}</li>
             ))}
           </ul>

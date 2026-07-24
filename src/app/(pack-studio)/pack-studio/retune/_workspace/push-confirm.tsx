@@ -26,6 +26,7 @@ import {
   F10_PLAN_CHANGED,
   confirmPendingDefensiveBanner,
   confirmStep1Title,
+  isNoisyRelaxation,
   relaxationLine,
 } from "./plan-copy";
 
@@ -177,15 +178,24 @@ export function PushConfirm({
               />
             </div>
 
-            {plan.relaxations.length > 0 && (
-              <ul className="list-disc space-y-0.5 rounded-lg border border-amber-500/30 bg-amber-500/10 py-2 pl-7 pr-3 text-xs text-amber-600 dark:text-amber-400">
-                {plan.relaxations.map((r, i) => (
-                  <li key={`${r.lever}-${i}`}>
-                    {relaxationLine(r, { tag: plan.intendedHitRate })}
-                  </li>
-                ))}
-              </ul>
-            )}
+            {/* Same noise filter as the plan panel — the confirm step is the
+                worst place to print a warning the operator can do nothing
+                about, since it reads as a reason to hesitate. */}
+            {(() => {
+              const shown = plan.relaxations.filter(
+                (r) => !isNoisyRelaxation(r, { tag: plan.intendedHitRate }),
+              );
+              if (shown.length === 0) return null;
+              return (
+                <ul className="list-disc space-y-0.5 rounded-lg border border-amber-500/30 bg-amber-500/10 py-2 pl-7 pr-3 text-xs text-amber-600 dark:text-amber-400">
+                  {shown.map((r, i) => (
+                    <li key={`${r.lever}-${i}`}>
+                      {relaxationLine(r, { tag: plan.intendedHitRate })}
+                    </li>
+                  ))}
+                </ul>
+              );
+            })()}
 
             {/* The SAME renderer the pool table uses (D1 steal). */}
             <CardDiffTable
