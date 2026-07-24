@@ -31,9 +31,9 @@
  *       TAGGED all-pinned set with off-tag win mass stays truly dead — the
  *       tried p* is stamped `exactPriceRefused` and the copy names it.
  *   3.  tagged1pct remedy threshold: the $250 jackpot pin on the 1% lottery
- *       verifies tag-HARD only at ≤ 0.057% under LAW M — the remedy lands
+ *       verifies tag-HARD only at ≤ 0.059% under LAW M — the remedy lands
  *       exactly there (grid-snapped), the re-applied solve holds the tag at
- *       1.0000%, and 0.058% refuses (the boundary is real).
+ *       1.0000%, and 0.060% refuses (the boundary is real).
  *   4.  `monotoneFitWindow` — the guidance's fit window IS the engine's
  *       (compose seam: thin adapter over `monotoneEvWindow` through the
  *       shared `buildLawEnv`): exact band math, HARD never-inflate caps
@@ -725,7 +725,7 @@ const T1 = {
   intendedHitRate: 0.01,
 };
 
-check("tagged1pct: the $250 jackpot pin at 0.5% refuses → remedy lowers it to the 0.057% threshold, tag held HARD", () => {
+check("tagged1pct: the $250 jackpot pin at 0.5% refuses → remedy lowers it to the 0.059% threshold, tag held HARD", () => {
   const rem = computePinRemedies({
     ...T1,
     pinnedShares: [{ index: 0, share: 0.005 }],
@@ -735,8 +735,8 @@ check("tagged1pct: the $250 jackpot pin at 0.5% refuses → remedy lowers it to 
   const r = rem[0]!;
   assert(r.kind === "lower-pin" && r.cardIndex === 0, `kind ${r.kind} c${r.cardIndex}`);
   assert(
-    Math.abs((r.toPct ?? 0) - 0.057) < 1e-9,
-    `toPct must land the empirically-known LAW-M threshold 0.057% (got ${r.toPct})`,
+    Math.abs((r.toPct ?? 0) - 0.059) < 1e-9,
+    `toPct must land the empirically-known LAW-M threshold 0.059% (got ${r.toPct})`,
   );
   // Re-apply through the SAME engine the server runs (band 0, tagged core +
   // LAW M rescue): tag lands exactly 1%.
@@ -757,15 +757,33 @@ check("tagged1pct: the $250 jackpot pin at 0.5% refuses → remedy lowers it to 
     });
     return s.bestResult;
   };
-  const applied = assertSuccess(verifyT1(0.00057), "re-apply the tagged remedy");
+  const applied = assertSuccess(verifyT1(0.00059), "re-apply the tagged remedy");
   assert(
     Math.abs(applied.risk.winRate - 0.01) <= TAGGED_WINRATE_TOLERANCE + 1e-12,
     `tag must hold at 1% (got ${(applied.risk.winRate * 100).toFixed(4)}%)`,
   );
   assert(applied.edge >= T1.targetEdge - 1e-9, "edge ≥ target under the remedy");
-  // One grid step up (0.058%) refuses — the threshold is real. (The pre-law
-  // threshold 0.068% refuses too: its plan broke the monotone ladder.)
-  assert("error" in verifyT1(0.00058), "0.058% must still refuse (the threshold is real)");
+  assert(
+    Math.abs(applied.weights[0]! / applied.weights.reduce((a, b) => a + (b > 0 ? b : 0), 0) - 0.00059) <= 1e-9,
+    `the lowered pin must be HELD exactly at 0.059%`,
+  );
+  {
+    // …and the remedied plan is LAW M clean (a "fix" whose plan zigzags is
+    // not a remedy — the same bar every other remedy in this file clears).
+    let total = 0;
+    for (const w of applied.weights) if (w > 0) total += w;
+    assert(
+      findMonotoneViolations({
+        values: T1.cards.map((c) => c.value),
+        shares: applied.weights.map((w) => w / total),
+        pinnedIdx: new Set([0]),
+      }).length === 0,
+      "the remedied plan obeys LAW M",
+    );
+  }
+  // One grid step up (0.060%) refuses — the threshold is real. (The older
+  // pre-densification threshold 0.068% refuses too.)
+  assert("error" in verifyT1(0.0006), "0.060% must still refuse (the threshold is real)");
   assert("error" in verifyT1(0.00068), "the pre-law 0.068% threshold stays dead");
 });
 

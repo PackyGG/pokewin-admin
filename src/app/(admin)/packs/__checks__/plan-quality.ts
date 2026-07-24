@@ -228,14 +228,23 @@ function solve(p: Pool, band: number, disperse = true): SolveOut {
 /**
  * For the P11 equal-value dust fixture [winner, dustA, dustB], identify which of
  * the two equal dust cards is the BUFFER (the residual absorber). The buffer
- * carries the exact residual (49.985% = weight 499850); the non-buffer snapped
+ * carries the exact residual (49.9875% = weight 499875); the non-buffer snapped
  * to the clean 50% rung (weight 500000). Returns 1 or 2, or -1 if the layout
  * doesn't match the fixture (a guard against a silent snap change).
+ *
+ * Residual re-derived after the clean-ladder densification (31368e2a added the
+ * 6/7/8/9/12.5/60/70 mantissas): the winner's precise 0.01249844% used to be
+ * pushed UP a full rung to 0.015% (buffer residual 100 − 50 − 0.015 = 49.985%);
+ * the denser grid now offers 12.5e-3 = 0.0125%, so the winner snaps essentially
+ * onto its own value and the buffer residual is 100 − 50 − 0.0125 = 49.9875%.
+ * The LAW this helper serves — WHICH card absorbs the residual — is unchanged;
+ * only the residual's magnitude moved, and it moved because the snap got MORE
+ * faithful, not less.
  */
 function bufferIndex(snap: { weights: number[] }): number {
   const w1 = snap.weights[1];
   const w2 = snap.weights[2];
-  const isResidual = (w: number | undefined): boolean => w === 499850;
+  const isResidual = (w: number | undefined): boolean => w === 499875;
   if (isResidual(w1) && w2 === 500000) return 1;
   if (isResidual(w2) && w1 === 500000) return 2;
   return -1;

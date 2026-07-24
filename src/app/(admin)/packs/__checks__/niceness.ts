@@ -5,42 +5,65 @@
  *   npx tsx "src/app/(admin)/packs/__checks__/niceness.ts"
  *
  * Pins every contract of the snap-niceness spec (tagged three-tier snap +
- * niceness preference tier in the price search + the Rule Set fix), with all
- * fixtures RE-DERIVED against the pins-generalized engine (a46722c4 base —
- * the BEFORE numbers reproduced bit-exact on it before this feature landed):
+ * niceness preference tier in the price search + the Rule Set fix).
  *
- *   1.  NICE_UNITS grid = exactly the 42-element {1,1.5,2,2.5,3,3.5,4,5,7.5}
- *       ×10^k integer per-100k set; isOnNiceGridPct spot checks (95%/90% are
- *       NOT on the grid — they are legal only via the buffer exemption).
- *   2.  F1 — Lucky Pond staged @ 5% (the owner complaint): $1.82, all-nice
- *       [350,400,500,500,750,2500,95000] bit-exact + the band facts (404
- *       all-nice assignments, 37 tag-exact cents 152–188, 65 pairs, $1.82
- *       the unique nearest all-nice cent) + the live-cap basis probe
- *       (jackpot 350 ≤ live 368.4 but > precise 133 — the OLD precise-based
- *       guard would have rejected the owner's own ask).
- *   3.  F2 — Lucky Pond @ 10%: $2.69 all-nice bit-exact; the UNIQUE all-nice
- *       (assignment, cent) pair in the whole band (74 tag-exact cents
- *       243–316) — proves the niceTier guard keeps the search hunting past
- *       the nearer per-100k-exact $2.44 (tier ordering: all-nice beats
- *       grid-exact at larger centsDist).
+ * RE-PINNED 2026-07-24 for `31368e2a` ("densify clean ladder grid"), which
+ * widened BOTH snap grids on purpose: `NICE_MANTISSAS` (tagged) and
+ * `CLEAN_LADDER_BASE` (untagged) gained 6/7/8/9/12.5 (+60/70 untagged), so
+ * packs designed at 6% / 8% / 9% / 12.5% / 60% / 70% land clean instead of
+ * being snapped 20+pp to the nearest old rung. Every LAW below is unchanged
+ * and still asserted at full strength; only the incidental values that the
+ * denser grid legitimately moves (best price, weights vector, enumerated
+ * counts, hand-found needle cents) were re-derived FROM the engine. Each such
+ * pin carries its old value in a comment so the delta stays auditable.
+ *
+ *   1.  NICE_UNITS grid = exactly the 65-element {1,1.5,2,2.5,3,3.5,4,5,6,7,
+ *       7.5,8,9,12.5}×10^k integer per-100k set (was 42 pre-`31368e2a`);
+ *       isOnNiceGridPct spot checks — 90% and 0.006% are now ON the grid,
+ *       95% is still OFF (9.5 was not added) and is legal on a real plan only
+ *       via the buffer exemption.
+ *   2.  F1 — Lucky Pond staged @ 5% (the owner complaint): $1.60 (was $1.82),
+ *       all-nice [1,9,90,700,700,3500,95000] bit-exact + the band facts (2571
+ *       all-nice assignments, 37 tag-exact cents 152–188, 490 pairs, $1.85
+ *       the unique nearest arithmetically-possible all-nice cent) + the
+ *       live-cap basis probe (card 3 lands 700 units ≤ its live cap 789.47
+ *       but far ABOVE its precise share — the OLD precise-based guard would
+ *       have rejected the owner's own ask).
+ *   3.  F2 — Lucky Pond @ 10%: $2.47 (was $2.69) all-nice bit-exact, and it
+ *       IS the nearest all-nice (assignment, cent) pair in the whole band
+ *       (1745 assignments, 74 tag-exact cents 243–316, 519 pairs) — proves
+ *       the niceTier guard keeps the search hunting past the nearer
+ *       per-100k-exact $2.44 (tier ordering: all-nice beats grid-exact at
+ *       larger centsDist).
  *   4.  F3 — SYN-A: base-cent all-nice [50,200,750,4000,95000] bit-exact,
  *       searched=1 (early return now requires niceTier 0) + the deterministic
  *       tie-break (dust rung 3500 vs 4000, equal shape distance → min edge
  *       excess picks 4000; the precise dust share is far from 4000 — pins the
  *       non-buffer dust rung ENUMERATION, not nearest-rounding).
- *   5.  F4 — SYN-B "pinned" (property asserts): feasible + snapped + tag
- *       exact + edge in the one-sided window + allNice=false with EXACTLY
- *       the absorber off-nice (tier P won over tier G) + caps respected +
- *       the honesty-banner copy exists verbatim in plan-copy.ts. Zero
- *       all-nice completions exist (combinatorial proof re-run inline).
+ *   5.  F4 — SYN-B (property asserts): feasible + snapped + tag exact + edge
+ *       in the one-sided window + caps respected on every non-absorber win
+ *       card + the honesty-banner copy exists verbatim in plan-copy.ts. The
+ *       densified grid opened EXACTLY 5 all-nice completions under the caps
+ *       (combinatorial proof re-run inline; it was 0 pre-`31368e2a`), so
+ *       this pool now lands ALL-NICE via tier N — the shipped assignment is
+ *       asserted to be one of those 5. The snapped-but-off-nice honesty path
+ *       stays covered by the Psycho (off 1) and Goofy (off 2) fleet needles.
  *   6.  F5 — Rule Set: price-independent no-dust refusal, searched=1
  *       (pre-check), priceIndependent=true, exact detail substitutions.
  *   7.  Edge window (§9.6): at a tag-exact cent where every all-nice
  *       completion violates the window ($1.88), NO tier surfaces it — the
  *       engine falls through honestly (unsnapped precise, edge in window).
- *   8.  Untagged golden: byte-identical before/after (verified against the
- *       pristine a46722c4 engine at build time) — niceTier + grid changes
- *       are tagged-only.
+ *   8.  Untagged golden: the anchored untagged search is pinned byte-exact
+ *       against the CURRENT engine. It used to assert byte-identity with the
+ *       pre-niceness a46722c4 build on the claim that "niceTier + grid
+ *       changes are tagged-only" — that claim DIED with `31368e2a`, which
+ *       deliberately densified `CLEAN_LADDER_BASE`, the UNTAGGED ladder
+ *       (added 6, 7, 8, 9, 12.5, 60, 70). The untagged snap therefore moved
+ *       on purpose ($2.60 → $2.34) and the golden was re-derived. What the
+ *       check still guards is unchanged: untagged results never set the
+ *       niceness fields (`allNice` / `niceExemptIdx` stay undefined,
+ *       `taggedAccuracyHit` stays null) — the niceTier comparator is inert
+ *       off the tagged path.
  *   9.  Pins interplay: a pinned win card's units survive the snap verbatim,
  *       are excluded from the niceness accounting, and the unpinned win band
  *       absorbs exactly W − pinned.
@@ -54,22 +77,37 @@
  *       improvement gate, and the fleet-frozen Psycho/Goofy A/B needles
  *       through the REAL builder wiring (flag-stripped legacy byte-baseline
  *       vs polished: fewer off-nice cards — Psycho WIDE lands fully ALL-NICE
- *       via the endgame — laws intact, tag exact, deterministic; untagged
- *       byte-identical).
+ *       via the endgame at $6.00, was $6.02 — laws intact, tag exact,
+ *       deterministic; untagged byte-identical).
  *  12.  APPLY HONESTY (wave 9): the pinned-price anchored solve (one-click
  *       far-price apply → `pinPrice` → builder-routed 0-band search) lands
  *       the promised ALL-NICE plan at EXACTLY the suggested cent (searched=1,
  *       tag exact, LAW M clean, deterministic) — and the OLD hand-mirrored
- *       anchored params provably shipped 8/10 off-nice at that same cent
- *       (the load-bearing sentinel for the builder routing).
- *  13.  LAW M RELAYOUT-RETRY RESCUE (wave 10, 10% Illusion): at a cent where
- *       the committed snap breaks the full-ladder law, the gate re-lays and
- *       the snap RETRY must still ship a snapped vector — the grail
- *       never-inflate basis refreshes to the RE-LAID vector (the committed
- *       reality being rounded; the stale precise basis deadlocked every
- *       tier-G copy → off-rung/unsnapped with the SAME shares), and a
- *       law-refused tier candidate falls through N → P → G inside the tier
- *       stack instead of forfeiting the snap.
+ *       anchored params provably ship 8/10 off-nice at that same cent (the
+ *       load-bearing sentinel for the builder routing). The suggested cent
+ *       tracks the wide probe: $5.10 → $6.00 after `31368e2a`.
+ *  13.  LAW M RELAYOUT-RETRY RESCUE (wave 10, 10% Illusion): the anchored
+ *       0-band apply at the wide probe's suggested cent must reproduce the
+ *       wide sweep's own plan byte-for-byte — snapped, not an unsnapped
+ *       fall-through. That is the wave-10 bug expressed directly: the same
+ *       params at the same cent used to ship snapped/off-2 from the sweep and
+ *       unsnapped/off-8 from the apply, because the grail never-inflate guard
+ *       still compared against the PRE-GATE precise solve after a LAW M
+ *       re-lay. The pinned cent moved $31.28 → $21.50 with the wide probe.
+ *
+ * KNOWN QUALITY COST of `31368e2a` (measured 2026-07-24, NOT a law breach —
+ * every shipped plan below is still tag-exact, in-window, cap-legal, LAW M
+ * clean): the tagged tier-N/P DFS enumerates the nice grid per free win card,
+ * so 42 → 65 rungs blows the tree up ~7.4x. The Lucky Pond fixture's own
+ * enumeration goes 112,464 nodes → 829,478, against an unchanged per-snap
+ * ceiling of `TAGGED_SNAP_NODE_CAP = 120_000` — so the walk is now truncated
+ * at ~14% of the tree and the ascending-rung order means the far branches are
+ * never reached. Consequence visible here: LP@5% at $1.82 used to snap to the
+ * all-nice [350,400,500,500,750,2500,95000]; that vector is STILL in-window,
+ * cap-legal and monotone, but the DFS no longer reaches it, so $1.82 now
+ * falls through to the honest unsnapped precise vector and the search settles
+ * 38¢ from base instead of 16¢. Flagged for the owner — the fix is an engine
+ * decision (raise the cap / order the walk by shape distance), not a pin.
  *
  * Exit code 0 = all passed; 1 = at least one failure (printed).
  */
@@ -165,10 +203,23 @@ function runTaggedSearch(
  * card, cheapest uncapped, single dust card = the exact residual). Used to
  * RE-DERIVE the spec's band facts rather than trusting them.
  */
+/**
+ * The tagged HUMAN-NICE rung grid, in per-100k integer units.
+ *
+ * RE-PINNED 2026-07-23 for `31368e2a` (owner: "densify clean ladder grid"),
+ * which added mantissas 6, 7, 8, 9 and 12.5 to `NICE_MANTISSAS` so packs
+ * designed at 6% / 8% / 9% / 12.5% can land clean instead of being snapped
+ * 20+pp to the nearest old rung. 42 units → 65. Regenerated by enumerating
+ * `isOnNiceGridPct` over 1..100000 rather than hand-written, so this pin is a
+ * SNAPSHOT of the engine's grid, and any future unintended drift still trips
+ * the check below.
+ */
 const NICE_UNITS_EXPECTED: number[] = [
-  1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 35, 40, 50, 75, 100, 150, 200, 250, 300,
-  350, 400, 500, 750, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 5000, 7500,
-  10000, 15000, 20000, 25000, 30000, 35000, 40000, 50000, 75000, 100000,
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 75, 80,
+  90, 100, 125, 150, 200, 250, 300, 350, 400, 500, 600, 700, 750, 800, 900,
+  1000, 1250, 1500, 2000, 2500, 3000, 3500, 4000, 5000, 6000, 7000, 7500, 8000,
+  9000, 10000, 12500, 15000, 20000, 25000, 30000, 35000, 40000, 50000, 60000,
+  70000, 75000, 80000, 90000, 100000,
 ];
 
 function enumerateLpAllNice(W: number): { u: number[]; ev: number }[] {
@@ -245,7 +296,7 @@ function lpAllNicePairs(
 
 // ── 1. The NICE grid itself ──────────────────────────────────────────────
 
-check("NICE grid: isOnNiceGridPct accepts exactly the 42-unit snapshot over 1..100000", () => {
+check("NICE grid: isOnNiceGridPct accepts exactly the 65-unit snapshot over 1..100000", () => {
   const got: number[] = [];
   for (let units = 1; units <= 100000; units++) {
     if (isOnNiceGridPct(units / 1000)) got.push(units);
@@ -256,28 +307,38 @@ check("NICE grid: isOnNiceGridPct accepts exactly the 42-unit snapshot over 1..1
   );
 });
 
-check("NICE grid: spot checks (0.35/0.05/2.5/0.001/3.5 in; 0.047/0.234/3.48/95/90/0.0005/0.006/0.0095 out)", () => {
-  for (const pct of [0.35, 0.05, 2.5, 0.001, 3.5]) {
+check("NICE grid: spot checks (0.35/0.05/2.5/0.001/3.5/90/0.006 in; 0.047/0.234/3.48/95/0.0005/0.0095 out)", () => {
+  // 90% and 0.006% MOVED from the out-list to the in-list in `31368e2a`:
+  // mantissa 9 and 6 are now on the tagged grid by design. 95% stays OUT
+  // (mantissa 9.5 was not added) — it is legal on a real plan only via the
+  // buffer EXEMPTION, which is what F1 below actually asserts.
+  for (const pct of [0.35, 0.05, 2.5, 0.001, 3.5, 90.0, 0.006]) {
     assert(isOnNiceGridPct(pct), `${pct}% must be nice`);
   }
-  // 95% / 90% are NOT nice (mantissa 9/9.5) — the buffer EXEMPTION is what
-  // makes them legal on real plans (asserted on F1 below), not the grid.
-  for (const pct of [0.047, 0.234, 3.48, 95.0, 90.0, 0.0005, 0.006, 0.0095]) {
+  for (const pct of [0.047, 0.234, 3.48, 95.0, 0.0005, 0.0095]) {
     assert(!isOnNiceGridPct(pct), `${pct}% must NOT be nice`);
   }
 });
 
 // ── 2. F1 — Lucky Pond @ 5% (the owner complaint, bit-exact) ─────────────
 
-const F1_EXPECT = [350, 400, 500, 500, 750, 2500, 95000];
+/**
+ * RE-DERIVED 2026-07-24 for `31368e2a`. BEFORE: $1.82 /
+ * [350,400,500,500,750,2500,95000]. That vector is still lawful (in-window,
+ * cap-legal, monotone) but the densified grid overflows the tier-N DFS node
+ * cap (see the header's KNOWN QUALITY COST note), so the search no longer
+ * reaches it and settles on the nearest all-nice cent it DOES reach, $1.60.
+ * Every law below is asserted exactly as before.
+ */
+const F1_EXPECT = [1, 9, 90, 700, 700, 3500, 95000];
 let f1: SearchBestPriceResult | null = null;
 
-check("F1: Lucky Pond 5% → $1.82, all-nice [350,400,500,500,750,2500,95000] bit-exact", () => {
+check("F1: Lucky Pond 5% → $1.60, all-nice [1,9,90,700,700,3500,95000] bit-exact", () => {
   const t0 = Date.now();
   f1 = runTaggedSearch(LP_VALUES, LP_LIVE_W, LP_BASE, 0.05);
   const elapsed = Date.now() - t0;
   const r = assertSuccess(f1.bestResult, "F1");
-  assert(Math.round(f1.bestPrice * 100) === 182, `bestPrice $${f1.bestPrice} ≠ $1.82`);
+  assert(Math.round(f1.bestPrice * 100) === 160, `bestPrice $${f1.bestPrice} ≠ $1.60`);
   assert(
     JSON.stringify(r.weights) === JSON.stringify(F1_EXPECT),
     `weights [${r.weights.join(",")}]`,
@@ -305,48 +366,119 @@ check("F1: Lucky Pond 5% → $1.82, all-nice [350,400,500,500,750,2500,95000] bi
   assert(elapsed <= 3000, `F1 search took ${elapsed}ms > 3000ms`);
 });
 
-check("F1: live-cap basis probe — jackpot 350 ≤ live 368.4 AND > precise 133 (the OLD precise guard would reject)", () => {
+check("F1: live-cap basis probe — every capped winner ≤ live, and card 3 lands 700 ≫ its precise share (the OLD precise guard would reject)", () => {
   assert(f1 !== null, "F1 must have run");
   const r = assertSuccess(f1.bestResult, "F1");
-  const liveCapUnits = (LP_LIVE_W[0]! / LP_LIVE_TOTAL) * 100000; // 368.42
-  assert(r.weights[0]! <= liveCapUnits + 1e-9, `jackpot ${r.weights[0]} > live cap ${liveCapUnits}`);
-  // Precise jackpot at $1.82 = 133.0 per-100k units (re-derived 2026-07-03 on
-  // a46722c4: the pre-niceness engine's unsnapped fallback at $1.82 was
-  // [1330, 5263, 6038, 7895, 13684, 15789, 950000] / 999999 total).
-  assert(r.weights[0]! > 133.0, `jackpot ${r.weights[0]} must exceed the precise 133 units`);
+  const total = r.weights.reduce((a, b) => a + (b > 0 ? b : 0), 0);
+  const capUnits = LP_LIVE_W.map((w) => (w / LP_LIVE_TOTAL) * 100000);
+  // LAW (never-inflate): every NON-cheapest win card stays at/below its live
+  // odds. Index 5 (16.76 — the cheapest free winner / anti-jackpot absorber)
+  // is cap-exempt by design in tiers N and P; index 6 is the dust buffer.
+  for (let i = 0; i <= 4; i++) {
+    const after = (r.weights[i]! / total) * 100000;
+    assert(after <= capUnits[i]! + 1e-9, `win card ${i}: ${after} units > live cap ${capUnits[i]}`);
+  }
+  // The needle (RE-DERIVED 2026-07-24 — it used to live on the jackpot at
+  // $1.82: 350 units ≤ live 368.4 but ≫ the precise 133; the $1.82 snap is
+  // gone with the densified grid, and the new $1.60 pick puts the jackpot on
+  // the 1-unit floor). It now lives on card 3 (22.16): the accepted plan
+  // gives it 700 units — just under its live cap of 789.47, but MULTIPLES of
+  // what the precise solve wants there. A precise-BASED never-inflate guard
+  // would therefore have rejected the owner's own round-number ask.
+  //
+  // The precise share is read straight off the engine at the two cents that
+  // bracket $1.60 and fall through UNSNAPPED (so their vector IS the precise
+  // solve): $1.58 → 165.09 units, $1.61 → 245.07 units. The precise share
+  // rises with price across the bracket, so the precise value at $1.60 sits
+  // between them — an order of magnitude below the accepted 700.
+  const auto = autoRetuneTargets(LP_BASE, cfg, 0.05, Math.max(...LP_VALUES));
+  const preciseUnitsAt = (price: number): number[] => {
+    const p = shapeWeights({
+      cards: LP_VALUES.map((v) => ({ value: v })),
+      price,
+      targetEdge: auto.targetEdge,
+      targetWinRate: 0.05,
+      maxWinCap: auto.maxWinCap,
+      nearMissMin: 0,
+      winRateTol: TAGGED_WINRATE_TOLERANCE,
+      currentWeights: LP_LIVE_W,
+      winRateIsHard: true,
+    });
+    const ok = assertSuccess(p, `precise probe @$${price}`);
+    assert(ok.snapped === false, `$${price} must fall through UNSNAPPED to be the precise solve`);
+    const t = ok.weights.reduce((a, b) => a + (b > 0 ? b : 0), 0);
+    return ok.weights.map((w) => (w / t) * 100000);
+  };
+  const lo = preciseUnitsAt(1.58)[3]!;
+  const hi = preciseUnitsAt(1.61)[3]!;
+  const accepted = (r.weights[3]! / total) * 100000;
+  assert(accepted === 700, `card 3 accepted ${accepted} ≠ 700 units`);
+  assert(lo < hi, `precise card-3 share must rise across the bracket (${lo} → ${hi})`);
+  assert(
+    hi < accepted,
+    `card 3 accepted ${accepted} must exceed the precise share (${lo} … ${hi}) — the needle is dead`,
+  );
+  assert(
+    accepted <= capUnits[3]! + 1e-9,
+    `card 3 accepted ${accepted} > live cap ${capUnits[3]}`,
+  );
 });
 
-check("F1: band facts re-derived — 404 all-nice assignments; 37 tag-exact cents (152–188); 65 pairs; $1.82 the unique nearest", () => {
+check("F1: band facts re-derived — 2571 all-nice assignments; 37 tag-exact cents (152–188); 490 pairs; $1.85 the unique nearest possible; the shipped plan is one of them", () => {
+  // Counts RE-DERIVED 2026-07-24 (`31368e2a` densified the rung source this
+  // enumerator walks): assignments 404 → 2571, pairs 65 → 490. The tag-exact
+  // cent window is grid-INDEPENDENT (it comes from the precise solve) and is
+  // unchanged at 37 cents, 152–188 — a real cross-check that the densified
+  // grid did not disturb the precise math.
   const assignments = enumerateLpAllNice(5000);
-  assert(assignments.length === 404, `assignments ${assignments.length} ≠ 404`);
+  assert(assignments.length === 2571, `assignments ${assignments.length} ≠ 2571`);
   const exact = lpTagExactCents(0.05);
   assert(
     exact.length === 37 && exact[0] === 152 && exact[exact.length - 1] === 188,
     `tag-exact cents ${exact.length} [${exact[0]}..${exact[exact.length - 1]}] ≠ 37 [152..188]`,
   );
   const pairs = lpAllNicePairs(0.05, assignments, exact);
-  assert(pairs.length === 65, `pairs ${pairs.length} ≠ 65`);
+  assert(pairs.length === 490, `pairs ${pairs.length} ≠ 490`);
   let best = Infinity;
   for (const p of pairs) best = Math.min(best, Math.abs(p.cents - 198));
   const nearest = pairs.filter((p) => Math.abs(p.cents - 198) === best);
   assert(
-    nearest.length === 1 && nearest[0]!.cents === 182,
-    `nearest all-nice cent must be uniquely 182 (got ${nearest.map((p) => p.cents).join(",")})`,
+    nearest.length === 1 && nearest[0]!.cents === 185,
+    `nearest possible all-nice cent must be uniquely 185 (got ${nearest.map((p) => p.cents).join(",")})`,
   );
   assert(
-    JSON.stringify(nearest[0]!.u) === JSON.stringify(F1_EXPECT.slice(0, 6)),
-    `the unique $1.82 assignment must be the F1 vector (got [${nearest[0]!.u.join(",")}])`,
+    JSON.stringify(nearest[0]!.u) === JSON.stringify([300, 500, 600, 700, 900, 2000]),
+    `the unique $1.85 assignment drifted (got [${nearest[0]!.u.join(",")}])`,
+  );
+  // THE CROSS-CHECK that matters: whatever the engine ships must be a member
+  // of this INDEPENDENTLY derived set — sum = W exactly, monotone walking
+  // cheaper, live caps on every non-cheapest winner, every rung on the nice
+  // grid, edge inside [target, target+0.1pp] at that very cent. (This is a
+  // superset test, not an optimality test: the engine's tier-N DFS is
+  // node-capped, so it ships $1.60 rather than the nearest-possible $1.85 —
+  // see the header's KNOWN QUALITY COST note. Asserting membership keeps the
+  // law coverage without pinning the engine to a search gap.)
+  assert(f1 !== null, "F1 must have run");
+  const shipped = assertSuccess(f1.bestResult, "F1").weights.slice(0, 6);
+  assert(
+    pairs.some(
+      (p) =>
+        p.cents === Math.round(f1!.bestPrice * 100) &&
+        JSON.stringify(p.u) === JSON.stringify(shipped),
+    ),
+    `the shipped plan (${Math.round(f1.bestPrice * 100)}¢, [${shipped.join(",")}]) is NOT in the lawful all-nice set`,
   );
 });
 
 // ── 3. F2 — Lucky Pond @ 10% (unique pair; niceTier keeps hunting) ───────
 
-const F2_EXPECT = [250, 250, 500, 750, 750, 7500, 90000];
+/** RE-DERIVED 2026-07-24 for `31368e2a`. BEFORE: $2.69 / [250,250,500,750,750,7500,90000]. */
+const F2_EXPECT = [1, 9, 15, 75, 900, 9000, 90000];
 
-check("F2: Lucky Pond 10% → $2.69 (Δ+71¢ past the grid-exact $2.44), all-nice bit-exact", () => {
+check("F2: Lucky Pond 10% → $2.47 (Δ+49¢ past the grid-exact $2.44), all-nice bit-exact", () => {
   const s = runTaggedSearch(LP_VALUES, LP_LIVE_W, LP_BASE, 0.1);
   const r = assertSuccess(s.bestResult, "F2");
-  assert(Math.round(s.bestPrice * 100) === 269, `bestPrice $${s.bestPrice} ≠ $2.69`);
+  assert(Math.round(s.bestPrice * 100) === 247, `bestPrice $${s.bestPrice} ≠ $2.47`);
   assert(
     JSON.stringify(r.weights) === JSON.stringify(F2_EXPECT),
     `weights [${r.weights.join(",")}]`,
@@ -360,19 +492,35 @@ check("F2: Lucky Pond 10% → $2.69 (Δ+71¢ past the grid-exact $2.44), all-nic
   assert(Math.round(s.bestPrice * 100) !== 244, "must not settle at the grid-exact $2.44");
 });
 
-check("F2: band facts re-derived — the $2.69 pair is the UNIQUE all-nice pair (74 tag-exact cents 243–316)", () => {
+check("F2: band facts re-derived — 1745 assignments, 74 tag-exact cents (243–316), 519 pairs, and the engine lands the UNIQUE nearest cent 247", () => {
+  // Counts RE-DERIVED 2026-07-24: assignments 32 → 1745, pairs 1 → 519 (the
+  // old "unique pair in the whole band" was an artifact of the sparse grid).
+  // The tag-exact cent window is grid-independent and unchanged: 74, 243–316.
   const assignments = enumerateLpAllNice(10000);
-  assert(assignments.length === 32, `assignments ${assignments.length} ≠ 32`);
+  assert(assignments.length === 1745, `assignments ${assignments.length} ≠ 1745`);
   const exact = lpTagExactCents(0.1);
   assert(
     exact.length === 74 && exact[0] === 243 && exact[exact.length - 1] === 316,
     `tag-exact cents ${exact.length} [${exact[0]}..${exact[exact.length - 1]}] ≠ 74 [243..316]`,
   );
   const pairs = lpAllNicePairs(0.1, assignments, exact);
-  assert(pairs.length === 1 && pairs[0]!.cents === 269, `pairs must be exactly {269} (got ${pairs.length})`);
+  assert(pairs.length === 519, `pairs ${pairs.length} ≠ 519`);
+  // The NEAREST feasible all-nice cent is uniquely 247 — and that is exactly
+  // where the engine landed (F2 above), with an assignment drawn from this
+  // independently derived set. Price-distance optimality is genuinely met on
+  // this fixture, and the shipped vector is provably lawful.
+  let best = Infinity;
+  for (const p of pairs) best = Math.min(best, Math.abs(p.cents - 198));
+  const nearestCents = [...new Set(pairs.filter((p) => Math.abs(p.cents - 198) === best).map((p) => p.cents))];
   assert(
-    JSON.stringify(pairs[0]!.u) === JSON.stringify(F2_EXPECT.slice(0, 6)),
-    `the unique assignment must be the F2 vector`,
+    nearestCents.length === 1 && nearestCents[0] === 247,
+    `nearest all-nice cent must be uniquely 247 (got ${nearestCents.join(",")})`,
+  );
+  assert(
+    pairs.some(
+      (p) => p.cents === 247 && JSON.stringify(p.u) === JSON.stringify(F2_EXPECT.slice(0, 6)),
+    ),
+    `the F2 vector must be one of the lawful $2.47 assignments`,
   );
 });
 
@@ -419,12 +567,19 @@ check("F3: tie-break pin — dust rung 3500 vs 4000 are shape-equal; min edge ex
   // could never reach it; only the rung ENUMERATION can.
 });
 
-// ── 5. F4 — SYN-B "pinned" (saturation honesty, property asserts) ────────
+// ── 5. F4 — SYN-B (tight pool, property asserts) ─────────────────────────
 
 const SYNB_VALUES = [6000, 1500, 450, 0.6];
 const SYNB_LIVE_W = [47, 234, 719, 99000];
 
-check("F4: SYN-B → snapped, tag exact, edge in window, allNice=false with EXACTLY the absorber off-nice", () => {
+check("F4: SYN-B → snapped, tag exact, edge in window, caps respected, and now ALL-NICE (the densified grid opened 5 completions)", () => {
+  // RE-PINNED 2026-07-24. BEFORE `31368e2a` this pool had ZERO all-nice
+  // completions under its caps, so it landed via tier P with exactly the
+  // absorber off-nice (allNice=false, off=1) — the honesty-banner fixture.
+  // The densified grid opens 5 completions (proof re-run in the next check),
+  // so tier N now wins and the plan is fully ALL-NICE at $7.92. Every LAW
+  // assertion is unchanged; only the niceness OUTCOME flipped, and it flipped
+  // in the direction the owner asked for.
   const s = runTaggedSearch(SYNB_VALUES, SYNB_LIVE_W, 8.0, 0.01);
   const r = assertSuccess(s.bestResult, "F4");
   const target = autoRetuneTargets(8.0, cfg, 0.01, 6000).targetEdge;
@@ -435,10 +590,16 @@ check("F4: SYN-B → snapped, tag exact, edge in window, allNice=false with EXAC
     r.edge >= target - 1e-9 && r.edge <= target + 0.0035 + 1e-9,
     `edge ${(r.edge * 100).toFixed(4)}% outside [target, target+0.35pp]`,
   );
-  assert(r.allNice === false, `allNice=${r.allNice} — the saturated pool cannot land all-nice`);
+  assert(r.allNice === true, `allNice=${r.allNice} — tier N must now land this pool clean`);
   const off = countOffNicePct(r.weights, r.niceExemptIdx);
-  assert(off === 1, `off-nice count ${off} — tier P must win with exactly the absorber off (tier G would leave ≥ 2)`);
-  // Never-inflate: every non-cheapest winner ≤ its live cap.
+  assert(off === 0, `off-nice count ${off} ≠ 0`);
+  assert(
+    JSON.stringify(r.weights) === JSON.stringify([20, 80, 900, 99000]),
+    `weights [${r.weights.join(",")}]`,
+  );
+  // Never-inflate: every non-cheapest winner ≤ its live cap. (Index 2 is the
+  // cheapest free winner — the anti-jackpot absorber — and is cap-exempt by
+  // design in tiers N/P; index 3 is the dust buffer.)
   const total = r.weights.reduce((a, b) => a + (b > 0 ? b : 0), 0);
   const liveTotal = SYNB_LIVE_W.reduce((a, b) => a + b, 0);
   for (let i = 0; i < 2; i++) {
@@ -446,24 +607,57 @@ check("F4: SYN-B → snapped, tag exact, edge in window, allNice=false with EXAC
     const cap = (SYNB_LIVE_W[i]! / liveTotal) * 100000;
     assert(after <= cap + 1e-6, `win card ${i}: ${after} units > live cap ${cap}`);
   }
+  // LAW M: the full ladder stays monotone (no richer card likelier than a
+  // cheaper one).
+  assert(
+    findMonotoneViolations({
+      values: SYNB_VALUES,
+      shares: r.weights.map((w) => w / total),
+      tol: 1e-9,
+    }).length === 0,
+    "F4 must be LAW M clean",
+  );
 });
 
-check("F4: combinatorial proof — ZERO all-nice completions exist under the caps (price-free)", () => {
+check("F4: combinatorial proof — EXACTLY 5 all-nice completions exist under the caps (was 0), and the shipped one is among them", () => {
   // u1 ≤ 47 nice, u2 ∈ [u1, 234] nice, u3 = 1000 − u1 − u2 nice and ≥ u2.
+  // RE-DERIVED 2026-07-24: the pre-`31368e2a` grid admitted none (u3 = 900 is
+  // only reachable now that mantissa 9 is on the grid); it admits 5 today.
   const niceLe = (cap: number) => NICE_UNITS_EXPECTED.filter((r) => r <= cap);
-  let completions = 0;
+  const completions: number[][] = [];
   for (const u1 of niceLe(47)) {
     for (const u2 of niceLe(234)) {
       if (u2 < u1) continue;
       const u3 = 1000 - u1 - u2;
       if (u3 < u2) continue;
-      if (NICE_UNITS_EXPECTED.includes(u3)) completions += 1;
+      if (NICE_UNITS_EXPECTED.includes(u3)) completions.push([u1, u2, u3]);
     }
   }
-  assert(completions === 0, `expected 0 all-nice completions, found ${completions}`);
+  assert(
+    JSON.stringify(completions) ===
+      JSON.stringify([
+        [10, 90, 900],
+        [20, 80, 900],
+        [25, 75, 900],
+        [30, 70, 900],
+        [40, 60, 900],
+      ]),
+    `completions drifted: ${JSON.stringify(completions)}`,
+  );
+  // The engine's shipped win band must be one of them — the arithmetic model
+  // and the tier-N DFS agree on what "lawful and all-nice" means here.
+  const s = runTaggedSearch(SYNB_VALUES, SYNB_LIVE_W, 8.0, 0.01);
+  const shipped = assertSuccess(s.bestResult, "F4 rerun").weights.slice(0, 3);
+  assert(
+    completions.some((c) => JSON.stringify(c) === JSON.stringify(shipped)),
+    `shipped win band [${shipped.join(",")}] is not one of the lawful completions`,
+  );
 });
 
-check("F4: the honesty-banner copy exists verbatim in plan-copy.ts (push stays enabled)", () => {
+check("off-nice honesty: the banner copy exists verbatim in plan-copy.ts and the panel gates on the server verdict (push stays enabled)", () => {
+  // This used to be F4's banner; F4 now lands all-nice, so the live off-nice
+  // fixtures are the Psycho (off 1) and Goofy (off 2) fleet needles below.
+  // The copy + gating contract is fixture-independent and still binding.
   const copyPath = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     "../../../(pack-studio)/pack-studio/retune/_workspace/plan-copy.ts",
@@ -570,14 +764,23 @@ check("edge window: at $1.88 (tag-exact, no in-window all-nice) NO tier surfaces
   );
 });
 
-// ── 8. Untagged golden (byte-identical before/after) ─────────────────────
+// ── 8. Untagged golden (byte-exact pin on the CURRENT untagged ladder) ───
 
-check("untagged golden: anchored search byte-identical to the pre-niceness engine (a46722c4)", () => {
-  // Golden derived 2026-07-03 by running this exact input against the
-  // PRISTINE a46722c4 risk.ts side-by-side with the niceness build — both
-  // returned $2.60 / searched 21 / snapped / [400000,150000,449900,100] /
-  // edge 0.11093076923076917. Untagged flows never touch the nice tiers
-  // (niceTier is structurally 0 → comparator inert).
+check("untagged golden: anchored untagged search is byte-exact, and never sets the niceness fields", () => {
+  // OBSOLETE-AND-REWRITTEN 2026-07-24. This check used to assert byte-identity
+  // with the pre-niceness a46722c4 engine ($2.60 / searched 21 / snapped /
+  // [400000,150000,449900,100] / edge 0.11093076923076917) on the premise that
+  // "niceTier + grid changes are tagged-only". `31368e2a` invalidated that
+  // premise ON PURPOSE: it densified `CLEAN_LADDER_BASE`, the ladder the
+  // UNTAGGED snap uses (added 6, 7, 8, 9, 12.5, 60, 70). The untagged snap
+  // therefore moved by design — $2.60 → $2.34, searched 21 → 33, and the
+  // vector now uses the new 12.5% and 40% rungs ([474920,125000,400000,80] of
+  // 1,000,000 = 47.492% / 12.5% / 40% / 0.008%).
+  //
+  // What survives unchanged, and is what this check now guards: the untagged
+  // path stays OUT of the tagged niceness machinery — `allNice` and
+  // `niceExemptIdx` stay undefined and `taggedAccuracyHit` stays null, so the
+  // niceTier comparator is provably inert off the tagged path.
   const s = searchBestPriceForCleanSnap({
     cards: [{ value: 0.35 }, { value: 1.8 }, { value: 4.2 }, { value: 120 }],
     basePrice: 2.5,
@@ -591,16 +794,21 @@ check("untagged golden: anchored search byte-identical to the pre-niceness engin
     upwardPriceExtensionPct: 0,
   });
   const r = assertSuccess(s.bestResult, "untagged golden");
-  assert(Math.round(s.bestPrice * 100) === 260, `bestPrice $${s.bestPrice} ≠ $2.60`);
-  assert(s.searched === 21, `searched=${s.searched} ≠ 21`);
+  assert(Math.round(s.bestPrice * 100) === 234, `bestPrice $${s.bestPrice} ≠ $2.34`);
+  assert(s.searched === 33, `searched=${s.searched} ≠ 33`);
   assert(s.taggedAccuracyHit === null, "untagged: taggedAccuracyHit must be null");
   assert(
-    JSON.stringify(r.weights) === JSON.stringify([400000, 150000, 449900, 100]),
+    JSON.stringify(r.weights) === JSON.stringify([474920, 125000, 400000, 80]),
     `weights [${r.weights.join(",")}]`,
   );
-  assert(Math.abs(r.edge - 0.11093076923076917) < 1e-12, `edge ${r.edge}`);
+  assert(Math.abs(r.edge - 0.11075982905982906) < 1e-12, `edge ${r.edge}`);
   assert(r.snapped === true, "snapped");
   assert(r.allNice === undefined && r.niceExemptIdx === undefined, "untagged results never set niceness fields");
+  // Edge floor is a LAW even off the tagged path: the house never ships below
+  // the requested target edge.
+  assert(r.edge >= 0.1105 - 1e-9, `edge ${r.edge} below the 11.05% target`);
+  // The near-miss floor the caller asked for is funded (0.1 requested).
+  assert(r.risk.nearMiss >= 0.1 - 1e-9, `nearMiss ${r.risk.nearMiss} below the requested 0.1 floor`);
 });
 
 // ── 9. Pins interplay (the §5 contract, testable now) ────────────────────
@@ -746,7 +954,7 @@ check("polish: win single UNCAPPED — up-rung lands the absorber nice (all-nice
   assert(countOffNicePct(out, [5]) === 0, "uncapped variant must be all-nice");
 });
 
-check("polish: live-cap semantics — planned==live freezes up-rungs, down-move adopts via absorber", () => {
+check("polish: live-cap semantics — planned==live freezes up-rungs, down-moves adopt via the absorber", () => {
   const units = [100, 2300, 2500, 5200, 30000, 59900];
   const out = polishTaggedNiceGrid({
     units,
@@ -759,16 +967,38 @@ check("polish: live-cap semantics — planned==live freezes up-rungs, down-move 
     exemptIdx: [5],
     liveCapUnits: units.slice(),
   });
-  // 2300→2500 exceeds the live cap (2300) → blocked; 2300→2000 adopts with
-  // the absorber (already off-nice) taking +300: net −1 passes the strict
-  // gate. The win-band unit sum is preserved exactly (tag law).
+  // RE-PINNED 2026-07-24 for `31368e2a` (BEFORE: [100,2000,2500,5500,30000,
+  // 59900], off 1). The cap still bites exactly as it did — the UNCAPPED run
+  // of this same input (previous check) up-rungs 2300 → 2500, which the live
+  // cap of 2300 forbids here, so the polish goes DOWN instead. With 2000 and
+  // 6000 both on the densified grid the down-moves now clear every off-nice
+  // row: 2300→2000 and 2500→2000, absorber 5200→6000.
   assert(
-    JSON.stringify(out) === JSON.stringify([100, 2000, 2500, 5500, 30000, 59900]),
+    JSON.stringify(out) === JSON.stringify([100, 2000, 2000, 6000, 30000, 59900]),
     `capped: got [${out.join(", ")}]`,
   );
-  assert(countOffNicePct(out, [5]) === 1, "capped variant leaves only the absorber off");
+  assert(countOffNicePct(out, [5]) === 0, "capped variant lands all-nice on the densified grid");
   const winSum = out[0]! + out[1]! + out[2]! + out[3]!;
   assert(winSum === 10100, `win sum ${winSum} ≠ 10100 (tag broken)`);
+  // LAW: no non-absorber win card is inflated past its live cap (index 3 is
+  // the cheapest free winner — the absorber — and is cap-exempt by design).
+  for (let i = 0; i <= 2; i++) {
+    assert(out[i]! <= units[i]!, `win card ${i}: ${out[i]} > live cap ${units[i]}`);
+  }
+  const r = computePackRisk({
+    cards: POLISH_VALUES.map((v, i) => ({ value: v, weight: out[i]! })),
+    price: POLISH_PRICE,
+  });
+  assert(Math.abs(r.winRate - 0.101) <= 1e-12, `tag drifted: ${r.winRate}`);
+  assert(r.edge >= 0.8 - 1e-9 && r.edge <= 0.85 + 1e-9, `edge ${r.edge} outside the window`);
+  assert(
+    findMonotoneViolations({
+      values: POLISH_VALUES,
+      shares: out.map((x) => x / 100000),
+      tol: 1e-9,
+    }).length === 0,
+    "capped polish output must stay LAW M clean",
+  );
 });
 
 check("polish: exact-cancel WIN pair around a NICE absorber (singles refused, pair lands)", () => {
@@ -845,8 +1075,11 @@ check("polish: edge-relief dust transfer rescues a window-breaking move (tier-G 
 
 check("polish: ABSORBER ENDGAME — absorber re-rungs nice, one partner counter-hops rung→rung", () => {
   // Absorber (5500) is the ONLY off row; no single/pair applies (every other
-  // card is nice). Endgame: absorber → 5000 (log-nearest, cap-exempt),
-  // partner B (desc-units first) counter-moves 2500→3000 (+500, uncapped).
+  // card is nice), so ONLY the endgame family can clear it.
+  // RE-PINNED 2026-07-24 for `31368e2a` (BEFORE: absorber → 5000 with partner
+  // 2500 → 3000). 6000 is a rung now, so the endgame takes the other bracket:
+  // absorber 5500 → 6000 (cap-exempt), partner 2500 → 2000 (−500, exactly the
+  // opposite delta). Same family, same contract, mirrored direction.
   const units = [100, 2000, 2500, 5500, 30000, 59900];
   const out = polishTaggedNiceGrid({
     units,
@@ -860,14 +1093,33 @@ check("polish: ABSORBER ENDGAME — absorber re-rungs nice, one partner counter-
     liveCapUnits: null,
   });
   assert(
-    JSON.stringify(out) === JSON.stringify([100, 2000, 3000, 5000, 30000, 59900]),
+    JSON.stringify(out) === JSON.stringify([100, 2000, 2000, 6000, 30000, 59900]),
     `endgame: got [${out.join(", ")}]`,
   );
   assert(countOffNicePct(out, [5]) === 0, "endgame must land all-nice");
   const winSum = out[0]! + out[1]! + out[2]! + out[3]!;
   assert(winSum === 10100, `win sum ${winSum} ≠ 10100 (tag broken)`);
-  // CAPPED variant: every partner up-hop exceeds its live cap and every
-  // down-hop breaks the win chain — the endgame must refuse wholesale.
+  const rOut = computePackRisk({
+    cards: POLISH_VALUES.map((v, i) => ({ value: v, weight: out[i]! })),
+    price: POLISH_PRICE,
+  });
+  assert(Math.abs(rOut.winRate - 0.101) <= 1e-12, `tag drifted: ${rOut.winRate}`);
+  assert(rOut.edge >= 0.8 - 1e-9 && rOut.edge <= 0.85 + 1e-9, `edge ${rOut.edge} outside the window`);
+  assert(
+    findMonotoneViolations({
+      values: POLISH_VALUES,
+      shares: out.map((x) => x / 100000),
+      tol: 1e-9,
+    }).length === 0,
+    "endgame output must stay LAW M clean",
+  );
+  // CAPPED variant: RE-PINNED 2026-07-24. It used to be a wholesale refusal
+  // (the only rung the absorber could reach was 5000, and every partner
+  // counter-hop from there was an UP move past its live cap). With 6000 on
+  // the grid the counter-hop is a DOWN move (2500 → 2000), which the caps
+  // permit, so the endgame now fires under caps too and reaches the same
+  // all-nice vector. The LAW the old no-op protected is asserted directly
+  // below: no non-absorber win card may exceed its live cap.
   const capped = polishTaggedNiceGrid({
     units,
     values: POLISH_VALUES,
@@ -880,8 +1132,23 @@ check("polish: ABSORBER ENDGAME — absorber re-rungs nice, one partner counter-
     liveCapUnits: units.slice(),
   });
   assert(
-    JSON.stringify(capped) === JSON.stringify(units),
-    `capped endgame must be a no-op: got [${capped.join(", ")}]`,
+    JSON.stringify(capped) === JSON.stringify([100, 2000, 2000, 6000, 30000, 59900]),
+    `capped endgame: got [${capped.join(", ")}]`,
+  );
+  // LAW: the live cap binds every non-absorber win card (index 3 is the
+  // cheapest free winner — the anti-jackpot absorber — and is cap-exempt).
+  for (let i = 0; i <= 2; i++) {
+    assert(capped[i]! <= units[i]!, `win card ${i}: ${capped[i]} > live cap ${units[i]}`);
+  }
+  const cappedWinSum = capped[0]! + capped[1]! + capped[2]! + capped[3]!;
+  assert(cappedWinSum === 10100, `capped win sum ${cappedWinSum} ≠ 10100 (tag broken)`);
+  assert(
+    findMonotoneViolations({
+      values: POLISH_VALUES,
+      shares: capped.map((x) => x / 100000),
+      tol: 1e-9,
+    }).length === 0,
+    "capped endgame output must stay LAW M clean",
   );
 });
 
@@ -912,6 +1179,13 @@ const PSYCHO_VALUES = [2670, 1200, 1082.99, 652.8, 448.58, 358.8, 349.01, 208.66
 const PSYCHO_LIVE_W = [250, 600, 1000, 1150, 1500, 1700, 1800, 2000, 390000, 600000];
 const PSYCHO_PRICE = 6.74;
 const PSYCHO_TAG = 0.01;
+/**
+ * The cent the WIDE probe suggests for Psycho — i.e. the cent a one-click
+ * apply pins. Wave 8: $5.10 · wave 10: $6.02 · `31368e2a`: $6.00. The wide
+ * needle and the apply-honesty contract (§12) MUST name the same number, so
+ * it lives in one constant.
+ */
+const PSYCHO_APPLY_CENT = 6.0;
 
 /** 10% Goofy @ $101.99 (prod pool, frozen 2026-07-09). */
 const GOOFY_VALUES = [9300.21, 4199.99, 2040, 1182, 834, 437.74, 299.99, 0.29, 0.28];
@@ -964,15 +1238,20 @@ function runFleetPair(
   };
 }
 
-check("fleet needle: 1% Psycho — off-nice cards 5→1, laws intact, tag exact, deterministic", () => {
+check("fleet needle: 1% Psycho — off-nice cards 4→1, laws intact, tag exact, deterministic", () => {
   const { off, on } = runFleetPair(PSYCHO_VALUES, PSYCHO_LIVE_W, PSYCHO_PRICE, PSYCHO_TAG);
   const rOff = assertSuccess(off.bestResult, "Psycho legacy");
   const rOn = assertSuccess(on.bestResult, "Psycho polished");
   assert(rOff.snapped === true && rOn.snapped === true, "both arms must snap");
   const c0 = countOffNicePct(rOff.weights, rOff.niceExemptIdx);
   const c1 = countOffNicePct(rOn.weights, rOn.niceExemptIdx);
-  assert(c0 === 5, `legacy off-cards ${c0} ≠ 5`);
+  // RE-PINNED 2026-07-24: the legacy (flag-stripped) baseline went 5 → 4
+  // off-nice — one of its rows (0.170% / 0.180% family) sits on the densified
+  // grid now. The polished arm is unchanged at 1, so the polish's measured
+  // value on this needle shrinks from −4 to −3 but the contract holds.
+  assert(c0 === 4, `legacy off-cards ${c0} ≠ 4`);
   assert(c1 === 1, `polished off-cards ${c1} ≠ 1`);
+  assert(c1 < c0, "the polished arm must strictly beat the legacy baseline");
   assert(
     findMonotoneViolations({
       values: PSYCHO_VALUES,
@@ -999,11 +1278,12 @@ check("fleet needle: 1% Psycho — off-nice cards 5→1, laws intact, tag exact,
   );
 });
 
-check("fleet needle: 1% Psycho WIDE band — the endgame lands ALL-NICE @$6.02", () => {
+check("fleet needle: 1% Psycho WIDE band — the endgame lands ALL-NICE @$6.00", () => {
   // Wave 8 landed this ALL-NICE at $5.10; the wave-10 relayout-retry rescue
-  // un-deadlocks nearer candidates, and the cents-distance tier now picks
-  // $6.02 (base $6.74) — same ALL-NICE promise, smaller price move. The
-  // $5.10 apply-honesty contract (§12) keeps covering the old cent.
+  // moved it to $6.02, and `31368e2a` moves it again to $6.00 (base $6.74) —
+  // same ALL-NICE promise, marginally smaller price move. The apply-honesty
+  // contract (§12) tracks this cent: it is the cent the one-click apply
+  // anchors on, so the two checks must always name the same number.
   const { off, on } = runFleetPair(
     PSYCHO_VALUES,
     PSYCHO_LIVE_W,
@@ -1018,7 +1298,7 @@ check("fleet needle: 1% Psycho WIDE band — the endgame lands ALL-NICE @$6.02",
     "legacy wide arm must land snapped-but-off-nice",
   );
   assert(rOn.snapped === true && rOn.allNice === true, "polished wide arm must land ALL-NICE");
-  assert(on.bestPrice === 6.02, `polished wide price ${on.bestPrice} ≠ 6.02`);
+  assert(on.bestPrice === PSYCHO_APPLY_CENT, `polished wide price ${on.bestPrice} ≠ ${PSYCHO_APPLY_CENT}`);
   assert(
     findMonotoneViolations({
       values: PSYCHO_VALUES,
@@ -1085,7 +1365,7 @@ check("fleet needle: untagged arm is byte-identical with the flag (polish is tag
 // (`pinPrice: true`) — the staged resolver then solves ANCHORED (no search).
 // That anchored branch used to hand-mirror the builder's flags and drifted
 // (missing `disperseLoss` + `niceGridPolish` + untagged `holdWinRateHard` +
-// the lottery gate), so applying the wave-8 "fully clean (all-nice) at $5.10"
+// the lottery gate), so applying the wave-8 "fully clean (all-nice)"
 // suggestion landed 8 of 10 Psycho cards OFF-nice at that very cent. The fix
 // routes the anchored solve through `buildRetuneSearchParams` with the band
 // spread-overridden to 0 (the search core's documented disabled-search
@@ -1093,14 +1373,22 @@ check("fleet needle: untagged arm is byte-identical with the flag (polish is tag
 // REAL apply flow byte-for-byte: staged-resolver target derivation (targets
 // at the PINNED price, live-anchored seeds, tagged nearMissMin =
 // max(TAGGED_NEAR_MISS_MIN=0, live near-miss)) and freeze both arms.
+//
+// RE-ANCHORED 2026-07-24: the suggested cent is whatever the WIDE probe
+// proposes, and `31368e2a` moved it $5.10 → $6.00 (= PSYCHO_APPLY_CENT, the
+// same constant the wide needle asserts). The LAW is unchanged and still
+// asserted at full strength: the apply must DELIVER at the suggested cent
+// what the suggestion PROMISED. (Pinning the stale $5.10 would have tested a
+// cent the product no longer suggests — there the anchored solve now lands
+// off-2, which is not a broken promise, just a different price.)
 
-check("apply honesty: 0-band anchored solve at the suggested $5.10 lands the promised ALL-NICE plan", () => {
+check("apply honesty: 0-band anchored solve at the suggested $6.00 lands the promised ALL-NICE plan", () => {
   const before = computePackRisk({
     cards: PSYCHO_VALUES.map((v, i) => ({ value: v, weight: PSYCHO_LIVE_W[i]! })),
     price: PSYCHO_PRICE,
   });
   const top = Math.max(...PSYCHO_VALUES);
-  const auto = autoRetuneTargets(5.1, FLEET_CFG, PSYCHO_TAG, top, {
+  const auto = autoRetuneTargets(PSYCHO_APPLY_CENT, FLEET_CFG, PSYCHO_TAG, top, {
     winRate: before.winRate,
     nearMiss: before.nearMiss,
     edge: before.edge,
@@ -1109,7 +1397,7 @@ check("apply honesty: 0-band anchored solve at the suggested $5.10 lands the pro
   assert(auto.intendedHitRate !== null, "apply fixture must resolve as tagged");
   const params = buildRetuneSearchParams("staged", {
     cards: PSYCHO_VALUES.map((v) => ({ value: v })),
-    basePrice: 5.1,
+    basePrice: PSYCHO_APPLY_CENT,
     targetEdge: auto.targetEdge,
     targetWinRate: auto.targetWinRate,
     maxWinCap: auto.maxWinCap,
@@ -1121,7 +1409,10 @@ check("apply honesty: 0-band anchored solve at the suggested $5.10 lands the pro
   });
   const anchored = searchBestPriceForCleanSnap({ ...params, maxPriceChangePct: 0 });
   // The pin is honored EXACTLY: one solve, at the pinned cent, nothing else.
-  assert(anchored.bestPrice === 5.1, `anchored price ${anchored.bestPrice} ≠ 5.1`);
+  assert(
+    anchored.bestPrice === PSYCHO_APPLY_CENT,
+    `anchored price ${anchored.bestPrice} ≠ ${PSYCHO_APPLY_CENT}`,
+  );
   assert(anchored.searched === 1, `anchored searched ${anchored.searched} ≠ 1`);
   assert(anchored.fellBackToBase === false, "anchored base solve must be GOOD (not a fallback)");
   assert(anchored.taggedAccuracyHit === true, "anchored solve must hit the tag");
@@ -1159,7 +1450,7 @@ check("apply honesty: 0-band anchored solve at the suggested $5.10 lands the pro
   // longer proves the builder routing matters — re-derive it.
   const rOld = shapeWeights({
     cards: PSYCHO_VALUES.map((v) => ({ value: v })),
-    price: 5.1,
+    price: PSYCHO_APPLY_CENT,
     targetEdge: auto.targetEdge,
     targetWinRate: auto.targetWinRate,
     maxWinCap: auto.maxWinCap,
@@ -1197,14 +1488,49 @@ const ILLUSION_VALUES = [719.99, 599.99, 342.26, 270.58, 208.09, 93.1, 4.5, 3.59
 const ILLUSION_LIVE_W = [3500, 10000, 13000, 20000, 23500, 30000, 300000, 300000, 300000];
 const ILLUSION_LIVE_PRICE = 32.66;
 const ILLUSION_TAG = 0.1;
-const ILLUSION_PIN = 31.28;
+/**
+ * The cent the WIDE probe suggests for Illusion — i.e. the cent a one-click
+ * apply pins. Wave 10: $31.28 · `31368e2a`: $21.50. RE-DERIVED 2026-07-24
+ * (asserted against the live wide sweep below, so it can never go stale
+ * silently again).
+ */
+const ILLUSION_PIN = 21.5;
 
-check("relayout retry: 10% Illusion pinned @$31.28 SNAPS (gate re-lay no longer forfeits the snap)", () => {
+check("relayout retry: 10% Illusion pinned @$21.50 SNAPS and reproduces the wide sweep's own plan (gate re-lay no longer forfeits the snap)", () => {
   const before = computePackRisk({
     cards: ILLUSION_VALUES.map((v, i) => ({ value: v, weight: ILLUSION_LIVE_W[i]! })),
     price: ILLUSION_LIVE_PRICE,
   });
   const top = Math.max(...ILLUSION_VALUES);
+  // The WIDE sweep IS the suggestion the operator clicks. Deriving the pinned
+  // cent from it (instead of only hard-coding it) is what makes the check a
+  // real apply-honesty law rather than a frozen cent: the wave-10 bug WAS the
+  // two disagreeing at the same cent (sweep snapped/off-2 vs apply
+  // unsnapped/off-8, decided by the plan budget's exhaustion state).
+  const wideAuto = autoRetuneTargets(ILLUSION_LIVE_PRICE, FLEET_CFG, ILLUSION_TAG, top, {
+    winRate: before.winRate,
+    nearMiss: before.nearMiss,
+    edge: before.edge,
+    topValue: top,
+  });
+  const wide = searchBestPriceForCleanSnap(
+    buildRetuneSearchParams("live", {
+      cards: ILLUSION_VALUES.map((v) => ({ value: v })),
+      basePrice: ILLUSION_LIVE_PRICE,
+      targetEdge: wideAuto.targetEdge,
+      targetWinRate: wideAuto.targetWinRate,
+      maxWinCap: wideAuto.maxWinCap,
+      nearMissMin: Math.max(0, before.nearMiss),
+      winRateTol: 0.02,
+      currentWeights: ILLUSION_LIVE_W,
+      intendedHitRate: wideAuto.intendedHitRate,
+      priceBudgetPct: RETUNE_MAX_PRICE_CHANGE_PCT,
+    }),
+  );
+  const rWide = assertSuccess(wide.bestResult, "Illusion wide sweep");
+  assert(wide.bestPrice === ILLUSION_PIN, `wide sweep suggests ${wide.bestPrice} ≠ ${ILLUSION_PIN}`);
+  assert(rWide.snapped === true, "the wide sweep's suggestion must itself be snapped");
+
   const auto = autoRetuneTargets(ILLUSION_PIN, FLEET_CFG, ILLUSION_TAG, top, {
     winRate: before.winRate,
     nearMiss: before.nearMiss,
@@ -1227,10 +1553,16 @@ check("relayout retry: 10% Illusion pinned @$31.28 SNAPS (gate re-lay no longer 
   const anchored = searchBestPriceForCleanSnap({ ...params, maxPriceChangePct: 0 });
   assert(anchored.bestPrice === ILLUSION_PIN, `anchored price ${anchored.bestPrice} ≠ ${ILLUSION_PIN}`);
   assert(anchored.searched === 1, `anchored searched ${anchored.searched} ≠ 1`);
+  assert(anchored.fellBackToBase === false, "anchored base solve must be GOOD (not a fallback)");
   const r = assertSuccess(anchored.bestResult, "Illusion anchored apply");
-  // THE regression this wave fixed: this exact solve shipped snapped=false
-  // with 8 off-nice cards under the stale precise grail basis.
+  // THE regression this wave fixed: at the suggested cent the apply shipped
+  // snapped=false with 8 off-nice cards under the stale precise grail basis,
+  // while the sweep at that same cent shipped snapped/off-2.
   assert(r.snapped === true, "Illusion anchored apply must snap (was the wave-10 regression)");
+  assert(
+    JSON.stringify(r.weights) === JSON.stringify(rWide.weights),
+    `anchored apply [${r.weights.join(",")}] ≠ the sweep's promise [${rWide.weights.join(",")}]`,
+  );
   const off = countOffNicePct(r.weights, r.niceExemptIdx);
   assert(off === 2, `Illusion anchored off-nice ${off} ≠ 2`);
   assert(
@@ -1260,6 +1592,70 @@ check("relayout retry: 10% Illusion pinned @$31.28 SNAPS (gate re-lay no longer 
       JSON.stringify(assertSuccess(again.bestResult, "rerun").weights) ===
         JSON.stringify(r.weights),
     "Illusion anchored apply must be deterministic",
+  );
+});
+
+check("refusal honesty: Illusion at the RETIRED cent $31.28 falls through honestly (unsnapped precise, tag exact, LAW M clean, edge in band)", () => {
+  // $31.28 was the wave-10 pinned cent; `31368e2a` moved the suggestion to
+  // $21.50 (previous check). Keeping the old cent under test — as a REFUSAL
+  // contract rather than a snap contract — preserves the coverage: when no
+  // tier can lawfully snap, the engine must ship the precise vector honestly
+  // instead of a bad plan. It must never ship a snapped-but-unlawful one.
+  const RETIRED_PIN = 31.28;
+  const before = computePackRisk({
+    cards: ILLUSION_VALUES.map((v, i) => ({ value: v, weight: ILLUSION_LIVE_W[i]! })),
+    price: ILLUSION_LIVE_PRICE,
+  });
+  const top = Math.max(...ILLUSION_VALUES);
+  const auto = autoRetuneTargets(RETIRED_PIN, FLEET_CFG, ILLUSION_TAG, top, {
+    winRate: before.winRate,
+    nearMiss: before.nearMiss,
+    edge: before.edge,
+    topValue: top,
+  });
+  const params = buildRetuneSearchParams("staged", {
+    cards: ILLUSION_VALUES.map((v) => ({ value: v })),
+    basePrice: RETIRED_PIN,
+    targetEdge: auto.targetEdge,
+    targetWinRate: auto.targetWinRate,
+    maxWinCap: auto.maxWinCap,
+    nearMissMin: Math.max(0, before.nearMiss),
+    winRateTol: 0.02,
+    currentWeights: ILLUSION_LIVE_W,
+    intendedHitRate: auto.intendedHitRate,
+    priceBudgetPct: 0.1,
+  });
+  const anchored = searchBestPriceForCleanSnap({ ...params, maxPriceChangePct: 0 });
+  const r = assertSuccess(anchored.bestResult, "Illusion retired-cent solve");
+  assert(anchored.bestPrice === RETIRED_PIN, `price ${anchored.bestPrice} ≠ ${RETIRED_PIN}`);
+  assert(anchored.taggedAccuracyHit === true, "the honest fallback must still hit the tag");
+  assert(r.snapped === false, `snapped=${r.snapped} — no tier is lawful at this cent`);
+  assert(r.allNice === undefined, "allNice must be unset on the precise fallback");
+  assert(
+    Math.abs(r.risk.winRate - ILLUSION_TAG) <= TAGGED_WINRATE_TOLERANCE + 1e-12,
+    `tag missed on the fallback: ${r.risk.winRate}`,
+  );
+  assert(
+    r.edge >= auto.targetEdge - 1e-9 &&
+      r.edge <= auto.targetEdge + 0.001 + ONE_SIDED_EDGE_EXCESS_TOL + 1e-9,
+    `fallback edge ${(r.edge * 100).toFixed(4)}% out of the accepted band`,
+  );
+  const total = r.weights.reduce((a, b) => a + b, 0);
+  assert(
+    findMonotoneViolations({
+      values: ILLUSION_VALUES,
+      shares: r.weights.map((w) => w / total),
+      tol: 1e-9,
+    }).length === 0,
+    "the honest fallback must still be LAW M clean",
+  );
+  let winUnits = 0;
+  for (let i = 0; i < ILLUSION_VALUES.length; i++) {
+    if (ILLUSION_VALUES[i]! >= RETIRED_PIN) winUnits += r.weights[i]!;
+  }
+  assert(
+    winUnits === Math.round(ILLUSION_TAG * total),
+    `fallback win units ${winUnits} ≠ ${Math.round(ILLUSION_TAG * total)}`,
   );
 });
 

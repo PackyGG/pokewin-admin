@@ -39,14 +39,16 @@
  *       explicit no-fix-under-constraints).
  *   11. Perf: full guidance ≪ 10 ms/pack.
  *   12. UNTAGGED HOLD-WITH-FALLBACK spike + near-miss fix (attempt #2, the
- *       owner-found "Captive" case): the DEFAULT ±10% budget stays a
- *       byte-identical `ev-unreachable-for-split` refusal (regression guard —
- *       a genuinely EV-forced pool must never regress or get silently
- *       "fixed"). The ±60% wide-probe now finds a genuinely CLEAN hard-held
- *       plan ($319.02, win-rate ON design 20%, ZERO floor pins, cheapest
- *       carries most, guidance clears) — a strict improvement over both the
- *       pre-attempt-#1 degenerate float AND attempt #1's broken hard-only
- *       claim. A synthetic genuinely-EV-forced fixture still exercises the
+ *       owner-found "Captive" case): the DEFAULT ±10% budget plans LAWFULLY
+ *       in-band via the LAW M rescue ($453.15, design rate held EXACTLY, the
+ *       structurally-empty near-miss band relaxed 10% → 0% and REPORTED). The
+ *       ±60% wide-probe finds a genuinely CLEAN hard-held plan — since the
+ *       clean ladder densified (31368e2a) that plan is the fully SNAPPED
+ *       $302.30 ladder (0.06 / 0.4 / 4 / 7.5 / 10 / 12.5 / 12.5 / 53.04 %),
+ *       ZERO floor pins, cheapest carries most, grails never inflated,
+ *       guidance clears — a strict improvement over both the pre-attempt-#1
+ *       degenerate float AND attempt #1's broken hard-only claim. A synthetic
+ *       genuinely-EV-forced fixture still exercises the
  *       add-card/remove-dead-card/accept-as-is guidance machinery honestly. A
  *       healthy untagged plan returns NO guidance.
  *
@@ -73,6 +75,7 @@ import {
   RETUNE_MAX_PRICE_CHANGE_PCT,
   RETUNE_PRICE_BUDGET_DEFAULT_PCT,
   TAGGED_WINRATE_TOLERANCE,
+  WINRATE_HOLD_BAND,
   findMonotoneViolations,
   searchBestPriceForCleanSnap,
   shapeWeights,
@@ -747,18 +750,45 @@ check("perf: full guidance well under 10 ms/pack", () => {
 // does better than both the pre-attempt-#1 baseline (soft float to ~29.3%,
 // two loss cards crushed to the 0.0001% floor, degenerate guidance) AND
 // attempt #1's broken claim (hard-only, no fallback): the hard hold ALONE
-// finds a genuinely CLEAN in-budget price ($319.02, ≈ −34%) with the win-rate
-// held ON the design 20%, ZERO floor-pinned cards, the cheapest loss card
-// carrying the most, and the degenerate-guidance detector clearing to null —
-// `usedSoftFallback` reports `false` (the hard hold succeeded on its own, no
-// fallback needed here). This is a strict improvement, not a regression: the
-// wide-probe suggestion the owner sees is now a clean plan instead of a
-// degenerate one.
+// finds a genuinely CLEAN in-budget price with ZERO floor-pinned cards, the
+// cheapest loss card carrying the most, and the degenerate-guidance detector
+// clearing to null — `usedSoftFallback` reports `false` (the hard hold
+// succeeded on its own, no fallback needed here).
+//
+// RE-PINNED 2026-07-24 for the DENSIFIED clean ladder (31368e2a added the
+// 6 / 7 / 8 / 9 / 12.5 / 60 / 70 rungs). The wide probe used to land $319.02
+// (≈ −34%) with an UNSNAPPED ladder whose win-rate sat at 19.98%. The extra
+// rungs put a fully SNAPPED candidate inside the band, and snap-cleanness is
+// the untagged search's PRIMARY scoring tier, so it now lands $302.30 (≈ −38%)
+// with every card on a rung — 0.06 / 0.4 / 4 / 7.5 / 10 / 12.5 / 12.5 and the
+// 53.04% dust buffer — three of them (0.06 = 6·10⁻², both 12.5s) on rungs the
+// densification added. $319.02 is still reachable and still lawful; it is just
+// dirtier odds, which is exactly what the densification was meant to retire.
+//
+// The clean ladder is BOUGHT with win-rate exactness, inside the engine's
+// declared gate: the HARD hold pins the PRECISE solve on the design 20% (that
+// is what `usedSoftFallback === false` witnesses) and every snap candidate is
+// gated on |snap − precise| ≤ `winRateTol` plus the soft ceiling design + 5pp,
+// so the shipped rate spends 1.96pp of the 2pp budget and lands 21.96%. Every
+// law still holds at the new landing: edge ≥ target and inside the snap
+// window, LAW M clean end to end, integer weights, near-miss emptiness
+// reported honestly, and the never-inflate TAIL guard strict (grails 0.50 →
+// 0.06, 4.00 → 0.40, 5.00 → 4.00). The snap's guard is deliberately tail-only,
+// so the two MID-band winners round UP onto their rungs ($1080 7.00 → 7.50,
+// $635.14 8.50 → 10.00) — documented engine behaviour (`snapGrailNotInflated`
+// protects the grail band; "clean odds yield to never inflate the tail"), not
+// an anchored-card breach.
 const CAPTIVE = {
   price: 485.5,
   values: [9100, 3247.24, 2040, 1080, 635.14, 80.28, 33.95, 18.23],
   weights: [5000, 40000, 50000, 70000, 85000, 150000, 200000, 400000],
 };
+/**
+ * The untagged win-rate tolerance BOTH Captive searches declare — and the one
+ * the engine gates every snap candidate against (|snap − precise| ≤ tol). Held
+ * in one const so the search params and the assertion below can never drift.
+ */
+const CAPTIVE_WINRATE_TOL = 0.02;
 const CAPTIVE_IDS = CAPTIVE.values.map((v) => `captive-${v}`);
 const captiveTargets = autoRetuneTargets(
   CAPTIVE.price,
@@ -777,7 +807,7 @@ const captiveDefaultSearch = searchBestPriceForCleanSnap(
     targetWinRate: captiveTargets.targetWinRate,
     maxWinCap: captiveTargets.maxWinCap,
     nearMissMin: captiveTargets.nearMissMin,
-    winRateTol: 0.02,
+    winRateTol: CAPTIVE_WINRATE_TOL,
     currentWeights: CAPTIVE.weights,
     intendedHitRate: null,
     priceBudgetPct: RETUNE_PRICE_BUDGET_DEFAULT_PCT,
@@ -793,7 +823,7 @@ const captiveSearch = searchBestPriceForCleanSnap(
     targetWinRate: captiveTargets.targetWinRate,
     maxWinCap: captiveTargets.maxWinCap,
     nearMissMin: captiveTargets.nearMissMin,
-    winRateTol: 0.02,
+    winRateTol: CAPTIVE_WINRATE_TOL,
     currentWeights: CAPTIVE.weights,
     intendedHitRate: null,
     priceBudgetPct: RETUNE_MAX_PRICE_CHANGE_PCT,
@@ -867,7 +897,7 @@ check("Captive REGRESSION GUARD: the default ±10% budget plans LAWFULLY in-band
   );
 });
 
-check("Captive wide-probe (±60%): hard hold succeeds CLEANLY on its own — win-rate ON design 20%, ZERO floor pins, cheapest carries most, guidance clears", () => {
+check("Captive wide-probe (±60%): hard hold succeeds CLEANLY on its own — a SNAPPED clean ladder, win-rate inside the declared snap tolerance of design 20%, ZERO floor pins, cheapest carries most, grails never inflated, guidance clears", () => {
   const r = captiveSearch.bestResult;
   assert(isSuccess(r), `Captive's ±60% wide-probe must plan: ${!isSuccess(r) ? r.error : ""}`);
   assert(
@@ -878,8 +908,56 @@ check("Captive wide-probe (±60%): hard hold succeeds CLEANLY on its own — win
     captiveSearch.bestPrice < CAPTIVE.price,
     `price moves DOWN (got $${captiveSearch.bestPrice})`,
   );
-  approx(r.risk.winRate, 0.2, 0.005, "win-rate held ON the design 20% (no float at all)");
+  // The densified ladder put a fully SNAPPED candidate in the band and
+  // snap-cleanness is the untagged search's PRIMARY tier, so the landing is a
+  // clean ladder, not the older off-rung $319.02 vector.
+  assert(r.snapped === true, "the wide probe lands a genuinely SNAPPED clean ladder");
+  // WIN-RATE CONTRACT (untagged, hard hold): the PRECISE solve is pinned on the
+  // design rate — that is what `usedSoftFallback === false` witnesses — and the
+  // clean-ladder snap may then move the SHIPPED rate by at most the declared
+  // `winRateTol` (the engine gates EVERY snap candidate on
+  // |snap − precise| ≤ winRateTol) and never past the soft ceiling design+5pp.
+  // The densified ladder spends 1.96pp of that 2pp budget to buy the clean
+  // ladder (21.96%); it may never spend more, and it may never float.
+  assert(
+    Math.abs(r.risk.winRate - captiveTargets.targetWinRate) <=
+      CAPTIVE_WINRATE_TOL + 1e-9,
+    `shipped win-rate stays inside the declared snap tolerance of the design ${(captiveTargets.targetWinRate * 100).toFixed(0)}% (got ${(r.risk.winRate * 100).toFixed(3)}%)`,
+  );
+  assert(
+    r.risk.winRate <= captiveTargets.targetWinRate + WINRATE_HOLD_BAND + 1e-9,
+    `never past the soft hold ceiling design+${(WINRATE_HOLD_BAND * 100).toFixed(0)}pp (got ${(r.risk.winRate * 100).toFixed(3)}%)`,
+  );
   assert(r.risk.edge >= captiveTargets.targetEdge - 1e-6, "edge ≥ target");
+  assert(
+    r.risk.edge <= captiveTargets.targetEdge + 0.001 + 1e-6,
+    `edge inside the snap acceptance window (got ${(r.risk.edge * 100).toFixed(4)}%)`,
+  );
+  assert(
+    r.weights.every((w) => Number.isInteger(w) && w > 0),
+    "every shipped weight is a positive integer",
+  );
+  // LAW M end to end on the shipped vector.
+  assert(
+    findMonotoneViolations({ values: CAPTIVE.values, shares: captiveShares })
+      .length === 0,
+    "the wide-probe plan obeys LAW M end to end",
+  );
+  // NEVER-INFLATE THE TAIL: the snap may round a grail DOWN to a rung, never
+  // UP — every grail (value ≥ 5·price) stays at/below its LIVE odds (0.50 →
+  // 0.06, 4.00 → 0.40, 5.00 → 4.00), allowing the engine's own 0.002pp
+  // integer-quantization hair. The guard is deliberately tail-only, so the two
+  // MID-band winners do round up onto their rungs ($1080 7.00 → 7.50,
+  // $635.14 8.50 → 10.00) — the documented price of clean odds.
+  const captiveLiveTotal = CAPTIVE.weights.reduce((a, b) => a + b, 0);
+  CAPTIVE.values.forEach((v, i) => {
+    if (v < 5 * captiveSearch.bestPrice) return;
+    const live = CAPTIVE.weights[i]! / captiveLiveTotal;
+    assert(
+      captiveShares[i]! <= live + 2e-5,
+      `grail $${v} never inflated above its live odds (${(captiveShares[i]! * 100).toFixed(4)}% vs live ${(live * 100).toFixed(4)}%)`,
+    );
+  });
   // ZERO floor-pinned loss cards — the old degeneracy (two crushed to 0.0001%)
   // is fully gone.
   const pinned = CAPTIVE.values.filter(
