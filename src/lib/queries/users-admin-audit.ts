@@ -30,6 +30,12 @@ export type UserAdminAuditEvent = {
   ip: string | null;
   metadata: unknown;
   createdAt: string;
+  /**
+   * Set only on BULK rows (one audit row covering many accounts): how many
+   * accounts that single action hit. The individual ids are stripped before
+   * they ever reach the client — a bulk ban can carry 25k of them.
+   */
+  bulkCount: number | null;
 };
 
 export type UserAdminAuditFeed = {
@@ -54,10 +60,35 @@ export const EMPTY_USER_ADMIN_AUDIT: UserAdminAuditFeed = {
   truncated: false,
 };
 
+/**
+ * BULK actions write ONE audit row for the whole batch: `target_user_id` is
+ * null and the affected ids live in `metadata.user_ids` (see bulkBanUsers in
+ * users/actions.ts — a 5k-account ban is a single row). Without this second
+ * lookup a bulk-banned user shows the later UNBAN with no ban in sight, which
+ * is exactly the "banned by whom, and why?" gap this tab exists to close.
+ *
+ * Cheap: `event_type` is indexed, the containment check then runs over a
+ * handful of rows (verified by EXPLAIN: bitmap index scan, sub-ms).
+ */
+const BULK_BAN_EVENT = "accounts_bulk_banned";
+
+/** Raw shape of the bulk lookup below. */
+type BulkAuditRow = {
+  id: string;
+  event_type: string;
+  ip: string | null;
+  metadata: unknown;
+  created_at: Date;
+  admin_id: string | null;
+  admin_username: string | null;
+  admin_role: string | null;
+  bulk_count: number | null;
+};
+
 export async function getUserAdminAuditFeed(
   userId: string,
 ): Promise<UserAdminAuditFeed> {
-  const [rows, total] = await Promise.all([
+  const [rows, total, bulkRows] = await Promise.all([
     adminDb.admin_audit_events.findMany({
       where: { target_user_id: userId },
       orderBy: { created_at: "desc" },
@@ -72,10 +103,30 @@ export async function getUserAdminAuditFeed(
       },
     }),
     adminDb.admin_audit_events.count({ where: { target_user_id: userId } }),
+    // `metadata - 'user_ids'` strips the id array server-side so the batch's
+    // other 5,000 account ids never travel to the browser; the count is kept
+    // separately so the row can say how wide the action was.
+    adminDb.$queryRaw<BulkAuditRow[]>`
+      SELECT e.id,
+             e.event_type,
+             e.ip,
+             e.created_at,
+             (e.metadata - 'user_ids') AS metadata,
+             jsonb_array_length(COALESCE(e.metadata -> 'user_ids', '[]'::jsonb)) AS bulk_count,
+             u.id AS admin_id,
+             u.username AS admin_username,
+             u.role::text AS admin_role
+      FROM admin_audit_events e
+      LEFT JOIN admin_users u ON u.id = e.admin_user_id
+      WHERE e.event_type = ${BULK_BAN_EVENT}
+        AND e.metadata -> 'user_ids' @> to_jsonb(${userId}::text)
+      ORDER BY e.created_at DESC
+      LIMIT ${USER_ADMIN_AUDIT_MAX}
+    `,
   ]);
 
-  return {
-    events: rows.map((r) => ({
+  const events: UserAdminAuditEvent[] = [
+    ...rows.map((r) => ({
       id: r.id,
       eventType: r.event_type,
       adminUserId: r.admin_user?.id ?? null,
@@ -84,8 +135,26 @@ export async function getUserAdminAuditFeed(
       ip: r.ip,
       metadata: r.metadata,
       createdAt: r.created_at.toISOString(),
+      bulkCount: null,
     })),
-    total,
-    truncated: total > rows.length,
+    ...bulkRows.map((r) => ({
+      id: r.id,
+      eventType: r.event_type,
+      adminUserId: r.admin_id,
+      adminUsername: r.admin_username,
+      adminRole: r.admin_role,
+      ip: r.ip,
+      metadata: r.metadata,
+      createdAt: r.created_at.toISOString(),
+      bulkCount: r.bulk_count ?? null,
+    })),
+  ].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  const grandTotal = total + bulkRows.length;
+
+  return {
+    events: events.slice(0, USER_ADMIN_AUDIT_MAX),
+    total: grandTotal,
+    truncated: grandTotal > Math.min(events.length, USER_ADMIN_AUDIT_MAX),
   };
 }

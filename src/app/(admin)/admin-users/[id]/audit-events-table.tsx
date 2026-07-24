@@ -49,6 +49,8 @@ export const EVENT_TYPE_COLORS: Record<string, string> = {
   admin_sessions_force_expired: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
   balance_adjustment: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
   account_banned: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
+  // One row per BATCH — the affected ids live in metadata.user_ids.
+  accounts_bulk_banned: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
   account_unbanned: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
   account_locked: "bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/30",
   account_unlocked: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
@@ -94,6 +96,7 @@ export const EVENT_TYPE_LABELS: Record<string, string> = {
   admin_sessions_force_expired: "Sessions Expired",
   balance_adjustment: "Balance Adjust",
   account_banned: "Banned",
+  accounts_bulk_banned: "Bulk Banned",
   account_unbanned: "Unbanned",
   account_locked: "Locked",
   account_unlocked: "Unlocked",

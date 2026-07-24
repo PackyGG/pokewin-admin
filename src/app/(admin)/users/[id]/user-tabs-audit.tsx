@@ -19,14 +19,7 @@
 
 import { useMemo, useState, use, Suspense } from "react";
 import Link from "next/link";
-import {
-  Ban,
-  Lock,
-  ScrollText,
-  ShieldAlert,
-  ChevronLeft,
-  ChevronRight,
-} from "lucide-react";
+import { Ban, Lock, ScrollText, ChevronLeft, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -74,7 +67,6 @@ export function AuditTab({
 }) {
   return (
     <div className="space-y-6">
-      <SectionHeading icon={ShieldAlert} title="Admin Audit" />
       {auditPromise ? (
         <Suspense fallback={<SkeletonTable rows={6} columns={5} leadingAvatar={false} />}>
           <AuditStreamed user={data.user} auditPromise={auditPromise} />
@@ -114,11 +106,11 @@ function AuditStreamed({
 }
 
 /**
- * Newest audit row of a given type — the row that produced the CURRENT
+ * Newest audit row among the given types — the row that produced the CURRENT
  * enforcement state (the log is already ordered created_at DESC).
  */
-function latestOf(events: UserAdminAuditEvent[], eventType: string) {
-  return events.find((e) => e.eventType === eventType) ?? null;
+function latestOf(events: UserAdminAuditEvent[], ...eventTypes: string[]) {
+  return events.find((e) => eventTypes.includes(e.eventType)) ?? null;
 }
 
 function metaReason(event: UserAdminAuditEvent | null): string | null {
@@ -144,7 +136,11 @@ function EnforcementSummary({
   const formatDateTime = useFormatDateTime();
   if (!user.isBanned && !user.isLocked) return null;
 
-  const banEvent = user.isBanned ? latestOf(events, "account_banned") : null;
+  // A ban can come from the single-user action OR from a bulk ban (one audit
+  // row covering the whole batch) — both answer "who and why", so both count.
+  const banEvent = user.isBanned
+    ? latestOf(events, "account_banned", "accounts_bulk_banned")
+    : null;
   const lockEvent = user.isLocked ? latestOf(events, "account_locked") : null;
 
   const cards: Array<{
@@ -156,6 +152,8 @@ function EnforcementSummary({
     actor: string | null;
     actorId: string | null;
     unattributed: boolean;
+    /** Extra context, e.g. "part of a bulk ban of 5,011 accounts". */
+    note: string | null;
   }> = [];
 
   if (user.isBanned) {
@@ -168,6 +166,9 @@ function EnforcementSummary({
       actor: banEvent?.adminUsername ?? null,
       actorId: banEvent?.adminUserId ?? null,
       unattributed: !banEvent,
+      note: banEvent?.bulkCount
+        ? `Part of a bulk ban of ${banEvent.bulkCount.toLocaleString()} accounts`
+        : null,
     });
   }
   if (user.isLocked) {
@@ -180,6 +181,7 @@ function EnforcementSummary({
       actor: lockEvent?.adminUsername ?? null,
       actorId: lockEvent?.adminUserId ?? null,
       unattributed: !lockEvent,
+      note: null,
     });
   }
 
@@ -230,6 +232,7 @@ function EnforcementSummary({
                   <span className="text-muted-foreground italic">none given</span>
                 )}
               </p>
+              {c.note && <p className="text-muted-foreground">{c.note}</p>}
             </div>
           </CardContent>
         </Card>
@@ -338,7 +341,7 @@ function AuditLog({ feed }: { feed: UserAdminAuditFeed }) {
                   <AdminCell event={e} />
                 </div>
                 <div className="mt-2">
-                  <EventDetails event={toDetailShape(e)} />
+                  <DetailsCell event={e} />
                 </div>
               </div>
             ))}
@@ -392,7 +395,7 @@ function AuditLog({ feed }: { feed: UserAdminAuditFeed }) {
                   <AdminCell event={e} />
                 </TableCell>
                 <TableCell className="text-sm">
-                  <EventDetails event={toDetailShape(e)} />
+                  <DetailsCell event={e} />
                 </TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">
                   {e.ip ?? "—"}
@@ -449,18 +452,32 @@ function AdminCell({ event }: { event: UserAdminAuditEvent }) {
 }
 
 /**
- * Adapt to the shared `EventDetails` row shape. Target user/username are
- * null here by construction — on THIS page the target is the page subject,
- * so the shared renderer's target chips are simply not applicable.
+ * Shared event-detail chips (reason, amount, links …) plus, for a BULK row,
+ * how many accounts that one action covered — otherwise "Bulk Banned" reads
+ * as if it were about this account alone.
+ *
+ * Target user/username are null by construction: on THIS page the target is
+ * the page subject, so the shared renderer's target chips don't apply.
  */
-function toDetailShape(e: UserAdminAuditEvent) {
-  return {
-    id: e.id,
-    eventType: e.eventType,
-    targetUserId: null,
-    targetUsername: null,
-    ip: e.ip,
-    metadata: e.metadata,
-    createdAt: e.createdAt,
-  };
+function DetailsCell({ event }: { event: UserAdminAuditEvent }) {
+  return (
+    <div className="space-y-1">
+      <EventDetails
+        event={{
+          id: event.id,
+          eventType: event.eventType,
+          targetUserId: null,
+          targetUsername: null,
+          ip: event.ip,
+          metadata: event.metadata,
+          createdAt: event.createdAt,
+        }}
+      />
+      {event.bulkCount ? (
+        <p className="text-xs text-muted-foreground">
+          Batch action across {event.bulkCount.toLocaleString()} accounts
+        </p>
+      ) : null}
+    </div>
+  );
 }
