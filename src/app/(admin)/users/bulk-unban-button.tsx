@@ -124,7 +124,6 @@ function roleBadgeClass(role: string): string {
 export function BulkUnbanButton() {
   const [open, setOpen] = useState(false);
   const [criteria, setCriteria] = useState<Criteria>({});
-  const [reasonContains, setReasonContains] = useState("");
   const [count, setCount] = useState<number | null>(null);
   const [capped, setCapped] = useState(false);
   const [sample, setSample] = useState<PreviewUser[]>([]);
@@ -135,13 +134,10 @@ export function BulkUnbanButton() {
   const router = useRouter();
 
   const busy = counting || unbanning;
-  const activeCount =
-    Object.values(criteria).filter(Boolean).length +
-    (reasonContains.trim() ? 1 : 0);
+  const activeCount = Object.values(criteria).filter(Boolean).length;
 
   const reset = () => {
     setCriteria({});
-    setReasonContains("");
     setCount(null);
     setCapped(false);
     setSample([]);
@@ -169,7 +165,6 @@ export function BulkUnbanButton() {
   /** Shape the dialog state into the server action's filter payload. */
   const filters = () => ({
     accountType: criteria.accountType,
-    reasonContains: reasonContains.trim() || undefined,
     bannedWithinDays: criteria.bannedWithinDays
       ? Number(criteria.bannedWithinDays)
       : undefined,
@@ -274,24 +269,6 @@ export function BulkUnbanButton() {
               )}
             </div>
           ))}
-
-          <div className="space-y-1">
-            <Label htmlFor="unban-reason-contains">Ban reason contains</Label>
-            <Input
-              id="unban-reason-contains"
-              value={reasonContains}
-              onChange={(e) => {
-                setReasonContains(e.target.value);
-                invalidate();
-              }}
-              placeholder="multi account botting"
-              autoComplete="off"
-            />
-            <p className="text-xs text-muted-foreground">
-              Matches any part of the reason stored on the account — the
-              precise way to undo one specific sweep.
-            </p>
-          </div>
         </div>
 
         <div className="flex items-center gap-3 rounded-md border border-border bg-muted/40 p-3">
