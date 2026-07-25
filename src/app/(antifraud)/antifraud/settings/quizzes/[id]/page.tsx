@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { BadgeCheck, ListChecks, Users } from "lucide-react";
 
@@ -9,6 +10,7 @@ import {
   PageHeroIdentity,
   SectionHeading,
 } from "@/components/modern-panels";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatRelative } from "@/lib/utils/format";
 import { getQuizForEdit } from "@/lib/antifraud/quiz";
 import { loadAdminIdentities } from "@/lib/antifraud/identities";
@@ -38,6 +40,26 @@ export default async function QuizEditorPage({
   await requireAntifraudManagerPage();
   const { id } = await params;
 
+  return (
+    <div className="space-y-6">
+      <PageHero>
+        <PageHeroIdentity
+          icon={BadgeCheck}
+          accent="purple"
+          title="Quiz"
+          subtitle="Quiz"
+          backHref="/antifraud/settings/quizzes"
+        />
+      </PageHero>
+
+      <Suspense key={id} fallback={<EditorSkeleton />}>
+        <QuizEditor quizId={id} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function QuizEditor({ quizId: id }: { quizId: string }) {
   const loaded = await getQuizForEdit(id);
   if (!loaded) notFound();
   const { quiz, questions } = loaded;
@@ -74,36 +96,15 @@ export default async function QuizEditorPage({
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={BadgeCheck}
-          accent="purple"
-          title={quiz.title}
-          subtitle="Quiz"
-          backHref="/antifraud/settings/quizzes"
-          action={
-            <QuizFormDialog
-              mode="edit"
-              initial={{
-                quizId: quiz.id,
-                title: quiz.title,
-                description: quiz.description ?? "",
-                passPercent: quiz.passPercent,
-                maxAttempts: quiz.maxAttempts,
-                timeLimitMinutes: quiz.timeLimitSeconds
-                  ? Math.round(quiz.timeLimitSeconds / 60)
-                  : 0,
-                shuffleQuestions: quiz.shuffleQuestions,
-                audienceRoles: quiz.audienceRoles,
-              }}
-            />
-          }
-        />
-      </PageHero>
-
-      {/* ── Status + actions ────────────────────────────────────────── */}
+      {/* ── Title + status + actions ─────────────────────────────────
+          The edit dialog lives here rather than in the page hero: the hero
+          streams nothing (it paints before this data exists), and settings
+          belong next to publish/archive anyway. */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 bg-card p-4">
         <div className="min-w-0 space-y-1">
+          <h1 className="truncate text-base font-semibold tracking-tight">
+            {quiz.title}
+          </h1>
           <div className="flex flex-wrap items-center gap-2">
             <QuizStatusBadge status={quiz.status} />
             <span className="text-xs text-muted-foreground">
@@ -116,11 +117,28 @@ export default async function QuizEditorPage({
             <p className="text-xs text-muted-foreground">{quiz.description}</p>
           )}
         </div>
-        <QuizStatusActions
-          quizId={quiz.id}
-          status={quiz.status}
-          hasAttempts={takers > 0}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <QuizFormDialog
+            mode="edit"
+            initial={{
+              quizId: quiz.id,
+              title: quiz.title,
+              description: quiz.description ?? "",
+              passPercent: quiz.passPercent,
+              maxAttempts: quiz.maxAttempts,
+              timeLimitMinutes: quiz.timeLimitSeconds
+                ? Math.round(quiz.timeLimitSeconds / 60)
+                : 0,
+              shuffleQuestions: quiz.shuffleQuestions,
+              audienceRoles: quiz.audienceRoles,
+            }}
+          />
+          <QuizStatusActions
+            quizId={quiz.id}
+            status={quiz.status}
+            hasAttempts={takers > 0}
+          />
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -209,6 +227,28 @@ export default async function QuizEditorPage({
           </ul>
         </div>
       )}
+    </div>
+  );
+}
+
+function EditorSkeleton() {
+  return (
+    <div className="space-y-6">
+      <Skeleton className="h-24 w-full rounded-xl" />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-24 w-full rounded-2xl" />
+        ))}
+      </div>
+      <div className="space-y-4">
+        <div className="flex items-center gap-2.5">
+          <Skeleton className="size-7 rounded-lg" />
+          <Skeleton className="h-4 w-28" />
+        </div>
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Skeleton key={i} className="h-40 w-full rounded-xl" />
+        ))}
+      </div>
     </div>
   );
 }

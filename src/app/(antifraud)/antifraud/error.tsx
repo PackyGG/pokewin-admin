@@ -1,0 +1,82 @@
+"use client";
+
+import { useEffect } from "react";
+import Link from "next/link";
+import { AlertTriangle, RotateCw } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+
+/**
+ * Group-level error boundary for the whole `/antifraud` sub-app.
+ *
+ * Renders INSIDE the Antifraud shell (the layout above survives), so an
+ * uncaught throw from any surface — the access gate, an ADMIN-DB read, the
+ * notification fan-out — no longer white-screens into the root boundary. The
+ * analyst keeps the sidebar + header and gets a retry that re-renders just this
+ * segment. Mirrors `src/app/(pack-studio)/pack-studio/error.tsx`.
+ *
+ * SAFETY: nothing in this workspace writes the MAIN (prod game) DB at all — a
+ * case records a verdict, never an account change — so a render/read failure
+ * caught here cannot have mutated a player. `reset()` just re-runs the failed
+ * server render.
+ *
+ * SECURITY: `error.message` is intentionally NOT rendered — never echo a raw
+ * upstream error into the DOM. The digest is the safe correlation handle.
+ */
+export default function AntifraudError({
+  error,
+  reset,
+}: {
+  error: Error & { digest?: string };
+  reset: () => void;
+}) {
+  useEffect(() => {
+    console.error("[antifraud] error boundary caught:", error);
+  }, [error]);
+
+  return (
+    <div className="space-y-5 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
+      <div className="rounded-xl border bg-card p-5 sm:p-6">
+        <div className="flex items-start gap-3">
+          <div className="flex size-11 items-center justify-center rounded-xl bg-rose-500/10 ring-1 ring-rose-500/30">
+            <AlertTriangle className="size-5 text-rose-500" />
+          </div>
+          <div className="flex-1">
+            <h1 className="text-xl font-semibold leading-tight tracking-tight">
+              Couldn&apos;t load this Antifraud surface
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              A workspace query failed before this page could render. The error
+              was logged — try again, or head back to the overview.
+              {error.digest && (
+                <span className="ml-1 font-mono text-xs">
+                  (digest {error.digest})
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+        <p className="text-xs text-muted-foreground">
+          Nothing was changed. This workspace only ever writes the admin
+          database (cases, notes, quiz results, points) and never touches a
+          player&apos;s account — every account action lives on the main
+          dashboard behind its own audited flow. Server logs (matched by the
+          digest above) carry the full stack.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" variant="default" size="sm" onClick={reset}>
+          <RotateCw className="size-4" />
+          Try again
+        </Button>
+        <Button type="button" variant="outline" size="sm" render={<Link href="/antifraud" />}>
+          Back to overview
+        </Button>
+      </div>
+    </div>
+  );
+}

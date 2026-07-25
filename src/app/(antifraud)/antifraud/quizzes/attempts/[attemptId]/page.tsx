@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { CheckCircle2, Trophy, XCircle } from "lucide-react";
@@ -6,6 +7,7 @@ import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { canManageAntifraud } from "@/lib/antifraud/access";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { KpiTile } from "@/components/modern-panels";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { formatDateTime } from "@/lib/utils/format";
 import { getAttemptResult } from "@/lib/antifraud/quiz";
@@ -21,6 +23,9 @@ export const metadata = { title: "Quiz result" };
  *
  * Access: your own attempt, or any attempt if you are an owner/admin (so a
  * manager can review how the team did).
+ *
+ * Shell-first: the back affordance paints immediately and the result streams
+ * in behind its own Suspense boundary.
  */
 export default async function QuizResultPage({
   params,
@@ -30,11 +35,43 @@ export default async function QuizResultPage({
   const session = await requireAntifraudPageAccess();
   const { attemptId } = await params;
 
+  return (
+    <div className="space-y-6">
+      <PageHero>
+        <PageHeroIdentity
+          icon={Trophy}
+          accent="emerald"
+          title="Quiz result"
+          subtitle="Result"
+          backHref="/antifraud/quizzes"
+        />
+      </PageHero>
+
+      <Suspense key={attemptId} fallback={<ResultSkeleton />}>
+        <ResultBody
+          attemptId={attemptId}
+          viewerId={session.userId}
+          canManage={canManageAntifraud(session)}
+        />
+      </Suspense>
+    </div>
+  );
+}
+
+async function ResultBody({
+  attemptId,
+  viewerId,
+  canManage,
+}: {
+  attemptId: string;
+  viewerId: string;
+  canManage: boolean;
+}) {
   const result = await getAttemptResult(attemptId);
   if (!result) notFound();
 
-  const isOwnAttempt = result.attempt.adminUserId === session.userId;
-  if (!isOwnAttempt && !canManageAntifraud(session)) {
+  const isOwnAttempt = result.attempt.adminUserId === viewerId;
+  if (!isOwnAttempt && !canManage) {
     redirect("/antifraud/quizzes");
   }
   // An attempt that hasn't been submitted has no result to show — send them
@@ -52,16 +89,6 @@ export default async function QuizResultPage({
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={Trophy}
-          accent={passed ? "emerald" : "amber"}
-          title={quiz.title}
-          subtitle="Result"
-          backHref="/antifraud/quizzes"
-        />
-      </PageHero>
-
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <KpiTile
           label="Correct"
@@ -179,6 +206,23 @@ export default async function QuizResultPage({
         >
           Your profile
         </Link>
+      </div>
+    </div>
+  );
+}
+
+function ResultSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-24 w-full rounded-2xl" />
+        ))}
+      </div>
+      <div className="space-y-3">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-40 w-full rounded-xl" />
+        ))}
       </div>
     </div>
   );
