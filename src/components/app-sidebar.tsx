@@ -5,6 +5,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Activity,
+  // Antifraud portal card mark. Direct component ref — the sub-app portal
+  // cards in the footer don't go through the string-keyed ICONS map below.
+  ShieldAlert,
   LayoutDashboard,
   BarChart3,
   Users,
@@ -268,6 +271,7 @@ export function AppSidebar({
   dbEnv,
   canEnterCreatorHub = false,
   canEnterPackStudio = false,
+  canEnterAntifraud = false,
   isOwner = false,
 }: {
   role: string;
@@ -293,6 +297,13 @@ export function AppSidebar({
   // prop never reveals the portal. With the toggle off only an owner gets
   // `true`.
   canEnterPackStudio?: boolean;
+  // Whether to show the "Switch to Antifraud" portal button — the THIRD
+  // sub-app card, directly below Pack Studio. Computed SERVER-SIDE by the
+  // layout (it depends on ADMIN-DB toggles + the per-username allow/deny lists
+  // the client can't read) via `canAccessAntifraud`, and matched 1:1 to the
+  // /antifraud route guard. Defaults to false (fail-closed) so a missing prop
+  // never reveals the portal.
+  canEnterAntifraud?: boolean;
   // OWNER / ultra-admin flag, computed SERVER-SIDE by the layout from the
   // DB-fresh session. An owner bypasses the `usernameAllowlist` cosmetic gate
   // (so the owner-only nav items — Salaries, Excluded Users, the Insights group
@@ -694,6 +705,42 @@ export function AppSidebar({
                 </span>
               </span>
               <ArrowRight className="size-4 shrink-0 text-violet-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/studio:translate-x-0.5" />
+            </Link>
+          </div>
+        )}
+        {/* Antifraud portal — the THIRD sub-app card, directly below Pack
+            Studio in the footer, with its own cyan accent (pink = Creator Hub,
+            violet = Pack Studio, cyan = Antifraud, so the three read as
+            siblings rather than variants of each other). Visibility is decided
+            SERVER-SIDE (canEnterAntifraud prop): an owner, an admin, an
+            allowlisted username, or a per-role ADMIN-DB toggle — identical to
+            the /antifraud route guard. The route itself is independently gated
+            regardless. In icon-collapsed mode it shrinks to a centered cyan
+            mark with a hover tooltip. */}
+        {canEnterAntifraud && (
+          <div className="px-2 group-data-[collapsible=icon]:px-0">
+            <Link
+              href="/antifraud"
+              onClick={handleNavTap}
+              title="Switch to Antifraud"
+              className={cn(
+                "group/fraud relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-cyan-500/30 bg-gradient-to-r from-cyan-500/15 via-cyan-500/10 to-transparent px-3 py-2.5 outline-none",
+                "transition-colors hover:border-cyan-500/50 hover:from-cyan-500/25 hover:via-cyan-500/15 focus-visible:ring-2 focus-visible:ring-cyan-500/40",
+                "group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0",
+              )}
+            >
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-cyan-500/20 text-cyan-600 ring-1 ring-inset ring-cyan-500/30 dark:text-cyan-400 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:rounded-lg">
+                <ShieldAlert className="size-4" />
+              </span>
+              <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+                <span className="block truncate text-xs font-semibold text-cyan-600 dark:text-cyan-300">
+                  Switch to Antifraud
+                </span>
+                <span className="block truncate text-[11px] text-muted-foreground">
+                  Risk &amp; staff workspace
+                </span>
+              </span>
+              <ArrowRight className="size-4 shrink-0 text-cyan-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/fraud:translate-x-0.5" />
             </Link>
           </div>
         )}

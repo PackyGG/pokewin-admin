@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { decrypt } from "@/lib/session";
+import {
+  antifraudRewritePath,
+  isAntifraudHost,
+  ANTIFRAUD_BASE_PATH,
+} from "@/lib/antifraud/host";
 
 const PUBLIC_ROUTES = ["/login"];
 const PENDING_2FA_ROUTES = ["/verify-2fa", "/setup-2fa"];
@@ -15,6 +20,32 @@ const DEFAULT_ROUTE_BY_ROLE: Record<string, string> = {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // ── Antifraud host routing ───────────────────────────────────────────────
+  // The Antifraud workspace is ALSO served from its own hostname
+  // (fraud.packydash.com). Requests arriving there are REWRITTEN into the
+  // /antifraud route segment, so one build + one session serves both entry
+  // points and `fraud.packydash.com/reviews` renders the same tree as
+  // `packydash.com/antifraud/reviews`.
+  //
+  // This is INERT until the DNS record points at this deployment: a request
+  // whose Host doesn't match falls through with `onAntifraudHost === false` and
+  // every line below behaves exactly as it did before. Auth still runs first —
+  // the rewrite is applied only on the paths that would otherwise have been
+  // served (`NextResponse.next()`), never in place of a login redirect.
+  const onAntifraudHost = isAntifraudHost(request.headers.get("host"));
+  const antifraudTarget = onAntifraudHost
+    ? antifraudRewritePath(pathname)
+    : null;
+
+  /** Serve this request, rewriting into /antifraud when on the fraud host. */
+  const serve = () => {
+    if (!antifraudTarget) return NextResponse.next();
+    const url = request.nextUrl.clone();
+    url.pathname = antifraudTarget;
+    return NextResponse.rewrite(url);
+  };
+
   const isPublicRoute = PUBLIC_ROUTES.includes(pathname);
   const isPending2FARoute = PENDING_2FA_ROUTES.includes(pathname);
   const token = request.cookies.get("admin_session")?.value;
@@ -60,10 +91,15 @@ export async function middleware(request: NextRequest) {
 
     const isSetup2FARoute = pathname === "/setup-2fa";
     if ((isPublicRoute || isPending2FARoute) && !isSetup2FARoute) {
-      const defaultRoute = DEFAULT_ROUTE_BY_ROLE[session.role] ?? "/dashboard";
+      // On the antifraud host the role landing routes (/dashboard, /users, …)
+      // don't exist — everything there lives under /antifraud. Send them to the
+      // host root instead, which the rewrite above resolves to the workspace.
+      const defaultRoute = onAntifraudHost
+        ? ANTIFRAUD_BASE_PATH
+        : DEFAULT_ROUTE_BY_ROLE[session.role] ?? "/dashboard";
       return NextResponse.redirect(new URL(defaultRoute, request.url));
     }
-    return NextResponse.next();
+    return serve();
   }
 
   // Users with pending 2FA session — force them to complete the 2FA flow.
@@ -81,7 +117,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  return NextResponse.next();
+  // Public route (/login). `serve()` is a plain next() here — /login is on the
+  // antifraud host's passthrough list, so it renders as itself.
+  return serve();
 }
 
 export const config = {

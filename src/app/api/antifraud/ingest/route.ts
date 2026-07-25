@@ -1,0 +1,336 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+import { adminDb } from "@/lib/admin-db";
+import {
+  parseAntifraudEvent,
+  SEVERITY_RANK,
+  NOTIFY_SEVERITY_FLOOR,
+  type AntifraudSignalEvent,
+} from "@/lib/antifraud/ws";
+import {
+  isMissingRelationError,
+  notifyStaff,
+  staffBroadcastRecipients,
+} from "@/lib/antifraud/notifications";
+
+/**
+ * Durable inbound webhook from the separate antifraud backend service.
+ *
+ * The WebSocket stream (`/api/antifraud/stream`) gives analysts LIVE awareness
+ * while they have the workspace open. This route is the system of RECORD: every
+ * signal the backend produces is POSTed here, persisted, and — when it is
+ * serious enough — turned into a case on the review queue and pushed to the
+ * on-call staff's Discord/Telegram. That means a fraud event at 04:00 with
+ * nobody watching is still there in the morning.
+ *
+ * SECURITY MODEL
+ *   • HMAC-SHA256 over `${timestamp}.${rawBody}`, keyed by
+ *     `ANTIFRAUD_INGEST_SECRET`. Identical construction to the Discord rewards
+ *     bot webhook (src/lib/creator-vip/bot-webhook.ts) so there is ONE signing
+ *     scheme in this codebase to get right.
+ *   • The RAW body bytes are signed and verified — the request text is read
+ *     once and only re-parsed after the signature checks out. Re-serialising to
+ *     verify would change key order and reject every delivery.
+ *   • Constant-time comparison; a length mismatch fails before the compare.
+ *   • ±5 minute timestamp window, so a captured delivery can't be replayed
+ *     indefinitely.
+ *   • Unset secret = the endpoint is CLOSED (503), not open. A missing
+ *     credential must never mean "accept anything".
+ *
+ * Writes ADMIN DB only. Nothing here touches the MAIN (prod game) DB — the
+ * reviewed player is carried as a loose id string.
+ */
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+/** Replay window for the signed timestamp. */
+const MAX_SKEW_MS = 5 * 60 * 1000;
+
+/** Cap on one delivery so a malformed batch can't fan out unbounded work. */
+const MAX_EVENTS_PER_DELIVERY = 50;
+
+/** Body size ceiling — read before parsing. */
+const MAX_BODY_BYTES = 256 * 1024;
+
+function sign(secret: string, timestamp: string, rawBody: string): string {
+  return (
+    "sha256=" +
+    createHmac("sha256", secret).update(`${timestamp}.${rawBody}`).digest("hex")
+  );
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, "utf8");
+  const bufB = Buffer.from(b, "utf8");
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
+}
+
+function json(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+export async function POST(request: Request): Promise<Response> {
+  const secret = process.env.ANTIFRAUD_INGEST_SECRET;
+  if (!secret) {
+    // Fail CLOSED. An unconfigured secret means the integration is off.
+    return json({ error: "ingest_not_configured" }, 503);
+  }
+
+  const timestamp = request.headers.get("x-antifraud-timestamp");
+  const signature = request.headers.get("x-antifraud-signature");
+  if (!timestamp || !signature) {
+    return json({ error: "missing_signature" }, 401);
+  }
+
+  const ts = Number(timestamp);
+  if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > MAX_SKEW_MS) {
+    return json({ error: "stale_timestamp" }, 401);
+  }
+
+  const rawBody = await request.text();
+  if (rawBody.length > MAX_BODY_BYTES) {
+    return json({ error: "payload_too_large" }, 413);
+  }
+
+  if (!safeEqual(sign(secret, timestamp, rawBody), signature)) {
+    return json({ error: "signature_mismatch" }, 401);
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return json({ error: "invalid_json" }, 400);
+  }
+
+  // Accept either a single event or `{ events: [...] }`.
+  const rawEvents: unknown[] = Array.isArray(
+    (payload as { events?: unknown })?.events,
+  )
+    ? ((payload as { events: unknown[] }).events ?? [])
+    : [payload];
+
+  if (rawEvents.length > MAX_EVENTS_PER_DELIVERY) {
+    return json({ error: "too_many_events" }, 400);
+  }
+
+  const signals = rawEvents
+    .map(parseAntifraudEvent)
+    .filter(
+      (event): event is AntifraudSignalEvent =>
+        event !== null && event.type === "signal",
+    );
+
+  if (signals.length === 0) {
+    // Well-formed but nothing actionable — a 200 stops the backend retrying.
+    return json({ ok: true, accepted: 0, skipped: rawEvents.length }, 200);
+  }
+
+  let accepted = 0;
+  let duplicates = 0;
+  let reviewsOpened = 0;
+  const notify: AntifraudSignalEvent[] = [];
+
+  for (const signal of signals) {
+    try {
+      const outcome = await ingestOne(signal);
+      if (outcome === "duplicate") duplicates += 1;
+      else {
+        accepted += 1;
+        if (outcome === "review_opened") reviewsOpened += 1;
+        if (
+          SEVERITY_RANK[signal.severity] >= SEVERITY_RANK[NOTIFY_SEVERITY_FLOOR]
+        ) {
+          notify.push(signal);
+        }
+      }
+    } catch (err) {
+      if (isMissingRelationError(err)) {
+        return json({ error: "not_provisioned" }, 503);
+      }
+      console.error("[antifraud-ingest] failed to store signal:", err);
+      // 500 so the backend retries this delivery — the external_id unique
+      // index makes the retry safe.
+      return json({ error: "storage_failed" }, 500);
+    }
+  }
+
+  // Ping the team about the serious ones. Notification failures never fail the
+  // delivery: the signal is already persisted, which is what matters.
+  if (notify.length > 0) {
+    try {
+      const recipients = await staffBroadcastRecipients();
+      if (recipients.length > 0) {
+        for (const signal of notify) {
+          await notifyStaff({
+            recipients,
+            kind: "fraud_alert",
+            title: `${signal.severity.toUpperCase()} — ${signal.kind}`,
+            body: signal.summary,
+            href: "/antifraud/reviews",
+            metadata: {
+              kind: signal.kind,
+              severity: signal.severity,
+              riskScore: signal.riskScore,
+              userId: signal.userId,
+            },
+          });
+        }
+      }
+    } catch (err) {
+      console.error("[antifraud-ingest] notify failed:", err);
+    }
+  }
+
+  return json({ ok: true, accepted, duplicates, reviewsOpened }, 200);
+}
+
+type IngestOutcome = "stored" | "review_opened" | "duplicate";
+
+/**
+ * Persist one signal, then decide whether it deserves a case.
+ *
+ * A signal at or above the notify floor (`high`) opens a review — or, when the
+ * account already has a live case, appends to it. The partial unique index on
+ * `antifraud_reviews (target_user_id) WHERE status IN ('open','in_review')`
+ * is what makes "one live case per account" true even under concurrent
+ * deliveries.
+ */
+async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
+  // Idempotency: the backend's own event id. A retried delivery hits the
+  // partial unique index and is reported as a duplicate rather than
+  // double-opening a case.
+  if (signal.id) {
+    const existing = await adminDb.antifraud_signals.findFirst({
+      where: { external_id: signal.id },
+      select: { id: true },
+    });
+    if (existing) return "duplicate";
+  }
+
+  const shouldOpenCase =
+    Boolean(signal.userId) &&
+    SEVERITY_RANK[signal.severity] >= SEVERITY_RANK[NOTIFY_SEVERITY_FLOOR];
+
+  let reviewId: string | null = null;
+  let opened = false;
+
+  if (shouldOpenCase && signal.userId) {
+    const live = await adminDb.antifraud_reviews.findFirst({
+      where: {
+        target_user_id: signal.userId,
+        status: { in: ["open", "in_review"] },
+      },
+      select: { id: true, severity: true, risk_score: true, signals: true },
+    });
+
+    if (live) {
+      reviewId = live.id;
+      // Merge onto the live case: escalate severity/score if this signal is
+      // worse, and record the rule key.
+      const worseSeverity =
+        SEVERITY_RANK[signal.severity] >
+        SEVERITY_RANK[
+          (live.severity as AntifraudSignalEvent["severity"]) ?? "medium"
+        ];
+      await adminDb.antifraud_reviews.update({
+        where: { id: live.id },
+        data: {
+          severity: worseSeverity ? signal.severity : undefined,
+          risk_score:
+            signal.riskScore != null &&
+            (live.risk_score == null || signal.riskScore > live.risk_score)
+              ? signal.riskScore
+              : undefined,
+          signals: live.signals.includes(signal.kind)
+            ? undefined
+            : { set: [...live.signals, signal.kind] },
+        },
+      });
+      await adminDb.antifraud_review_notes.create({
+        data: {
+          review_id: live.id,
+          kind: "signal",
+          body: `[${signal.severity}] ${signal.kind} — ${signal.summary}`,
+        },
+      });
+    } else {
+      try {
+        const created = await adminDb.antifraud_reviews.create({
+          data: {
+            target_user_id: signal.userId,
+            target_username: signal.username ?? null,
+            status: "open",
+            severity: signal.severity,
+            source: "signal",
+            risk_score: signal.riskScore ?? null,
+            reason: signal.summary,
+            signals: [signal.kind],
+            metadata: (signal.payload ?? undefined) as never,
+          },
+          select: { id: true },
+        });
+        reviewId = created.id;
+        opened = true;
+      } catch (err) {
+        // Lost a race against a concurrent delivery for the same account —
+        // the partial unique index did its job. Attach to the winner.
+        if ((err as { code?: string })?.code === "P2002") {
+          const winner = await adminDb.antifraud_reviews.findFirst({
+            where: {
+              target_user_id: signal.userId,
+              status: { in: ["open", "in_review"] },
+            },
+            select: { id: true },
+          });
+          reviewId = winner?.id ?? null;
+        } else {
+          throw err;
+        }
+      }
+    }
+  }
+
+  try {
+    await adminDb.antifraud_signals.create({
+      data: {
+        external_id: signal.id || null,
+        kind: signal.kind,
+        severity: signal.severity,
+        risk_score: signal.riskScore ?? null,
+        target_user_id: signal.userId ?? null,
+        target_username: signal.username ?? null,
+        summary: signal.summary,
+        payload: (signal.payload ?? undefined) as never,
+        review_id: reviewId,
+      },
+    });
+  } catch (err) {
+    // The external-id unique index rejected a concurrent duplicate.
+    if ((err as { code?: string })?.code === "P2002") return "duplicate";
+    throw err;
+  }
+
+  return opened ? "review_opened" : "stored";
+}
+
+/**
+ * Health probe for the backend team — confirms the route is deployed and
+ * whether the shared secret is configured, WITHOUT revealing it.
+ */
+export async function GET(): Promise<Response> {
+  return json(
+    {
+      ok: true,
+      configured: Boolean(process.env.ANTIFRAUD_INGEST_SECRET),
+      signature: "sha256=HMAC(secret, `${timestamp}.${rawBody}`)",
+      headers: ["x-antifraud-timestamp", "x-antifraud-signature"],
+    },
+    200,
+  );
+}

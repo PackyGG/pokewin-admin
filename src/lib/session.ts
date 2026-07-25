@@ -91,6 +91,22 @@ async function decryptGeneric<T>(token: string): Promise<T | null> {
   }
 }
 
+/**
+ * Optional cookie domain, for running the dashboard across MORE THAN ONE
+ * hostname (the Antifraud workspace is additionally served from
+ * `fraud.packydash.com`). Setting `SESSION_COOKIE_DOMAIN=.packydash.com` makes
+ * one login valid on the apex AND every sub-domain, so switching into the
+ * antifraud app doesn't ask for credentials again.
+ *
+ * UNSET IS THE DEFAULT AND CHANGES NOTHING: without it the cookie stays
+ * host-only, exactly as before. Only widen this to a domain you own entirely —
+ * a parent domain shares the cookie with every sibling host under it.
+ */
+function sessionCookieDomain(): string | undefined {
+  const domain = process.env.SESSION_COOKIE_DOMAIN?.trim();
+  return domain ? domain : undefined;
+}
+
 export async function createSession(payload: Omit<SessionPayload, "expiresAt">) {
   // 12h session — keeps admins from re-logging in mid-shift. JWT
   // expiration above must match this number ("12h"). No rolling
@@ -105,6 +121,7 @@ export async function createSession(payload: Omit<SessionPayload, "expiresAt">) 
     sameSite: "lax",
     expires: expiresAt,
     path: "/",
+    domain: sessionCookieDomain(),
   });
 }
 
@@ -118,6 +135,21 @@ export async function getSession(): Promise<SessionPayload | null> {
 export async function deleteSession() {
   const cookieStore = await cookies();
   cookieStore.delete(COOKIE_NAME);
+  // A cookie written with an explicit domain is a DIFFERENT cookie from the
+  // host-only one, and `delete(name)` only clears the host-only variant — so a
+  // logout on a multi-host deployment would leave the shared cookie alive.
+  // Expire the domain variant explicitly too. No-op when unset.
+  const domain = sessionCookieDomain();
+  if (domain) {
+    cookieStore.set(COOKIE_NAME, "", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      expires: new Date(0),
+      path: "/",
+      domain,
+    });
+  }
 }
 
 // --- Pending 2FA session (5-min expiry) ---

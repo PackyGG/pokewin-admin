@@ -2373,3 +2373,306 @@ model chat_raffle_adjustments {
   @@index([round_id], map: "chat_raffle_adjustments_round_idx")
   @@index([round_id, user_id], map: "chat_raffle_adjustments_round_user_idx")
 }
+
+// ─── Antifraud webapp + staff system ───────────────────────────────
+// The third sub-app ("Antifraud", served under fraud.packydash.com once the
+// DNS record exists) and the staff account layer it runs on: profiles with
+// levels + points, an authored quiz system, an in-app notification inbox with
+// Discord/Telegram fan-out, the account-review queue, and the signal inbox the
+// separate WebSocket backend service will write into.
+//
+// The ENTIRE system lives in the ADMIN DB. The MAIN (prod game) DB is strictly
+// read-only for it: a reviewed player is carried as a LOOSE `target_user_id`
+// TEXT column (same pattern as admin_audit_events.target_user_id) — there is no
+// cross-DB FK and no prod schema change.
+//
+// Provisioned via `prisma db execute` of
+// prisma/admin/sql/2026-07-25_antifraud_staff.up.sql — NOT a Prisma migration
+// (the admin DB has a drifted migration history; never `migrate deploy` /
+// `db push` on it). These model blocks are the typed MIRROR.
+//
+// NOTE: the tables carry real FKs to admin_users(id) in the DB, but they are
+// deliberately NOT modelled as Prisma relations here — that would require
+// adding six disambiguated back-relation fields to the `admin_users` hotspot
+// model. Identity (username / avatar) is resolved with an explicit id join in
+// `src/lib/antifraud/identities.ts` instead.
+
+/// One row per admin_user that has entered the Antifraud workspace, created
+/// lazily on first visit (`ensureStaffProfile`) — no backfill needed.
+///
+/// The AVATAR is deliberately absent: `admin_users.profile_image` +
+/// `/api/admin/avatar/[id]` already own it dashboard-wide, so the staff profile
+/// page writes THOSE columns rather than forking a second identity.
+///
+/// `points_total` / `level` / the two counters are DENORMALIZED roll-ups of
+/// `staff_point_events` (the immutable source of truth). They are only ever
+/// written in the same transaction as the event row, so they cannot drift.
+model staff_profiles {
+  admin_user_id     String    @id @db.Uuid
+  display_name      String?
+  title             String?
+  bio               String?
+  /// One of the shared AccentColor tokens (modern-panels TILE_COLORS).
+  accent            String    @default("blue")
+  points_total      Int       @default(0)
+  level             Int       @default(1)
+  quizzes_completed Int       @default(0)
+  reviews_resolved  Int       @default(0)
+  last_seen_at      DateTime? @db.Timestamptz(6)
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([points_total(sort: Desc)], map: "staff_profiles_points_idx")
+}
+
+/// IMMUTABLE points ledger — every point a staff member holds is explained by
+/// exactly one row. Nothing updates or deletes; a mistake is corrected with a
+/// compensating negative event so the history stays auditable.
+///
+/// `source_kind`: 'quiz' | 'review' | 'manual' | 'bonus'. A partial UNIQUE
+/// index on (source_kind, source_id) makes automatic awards idempotent — one
+/// quiz attempt can only ever pay out once, however many times submit retries.
+model staff_point_events {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  admin_user_id String   @db.Uuid
+  /// Signed. Negative = correction / penalty.
+  points        Int
+  source_kind   String
+  source_id     String?  @db.Uuid
+  reason        String
+  /// NULL = the system (automatic quiz scoring).
+  created_by    String?  @db.Uuid
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([admin_user_id, created_at(sort: Desc)], map: "staff_point_events_user_created_idx")
+  @@index([created_at(sort: Desc)], map: "staff_point_events_created_idx")
+}
+
+/// The in-app inbox behind the header bell. A broadcast fans out to one row per
+/// recipient so read state is per person. `kind` is one of the
+/// STAFF_NOTIFICATION_KINDS in src/lib/antifraud/notifications.ts.
+model staff_notifications {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  admin_user_id String    @db.Uuid
+  kind          String
+  title         String
+  body          String?
+  href          String?
+  metadata      Json?
+  read_at       DateTime? @db.Timestamptz(6)
+  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([admin_user_id, created_at(sort: Desc)], map: "staff_notifications_user_created_idx")
+}
+
+/// Where a staff member wants to be PINGED outside the dashboard. Discord is
+/// the default channel, Telegram is opt-in.
+///
+/// A channel is inert until `verified_at` is set: the member enters their id,
+/// we ping it with a 6-digit code, and they type the code back — which proves
+/// the id is really theirs and not a typo'd colleague.
+model staff_notification_channels {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  admin_user_id        String    @db.Uuid
+  /// 'discord' | 'telegram'
+  channel              String
+  /// Discord snowflake or Telegram numeric chat id, verbatim.
+  target               String
+  enabled              Boolean   @default(true)
+  verified_at          DateTime? @db.Timestamptz(6)
+  verification_code    String?
+  verification_sent_at DateTime? @db.Timestamptz(6)
+  verify_attempts      Int       @default(0)
+  last_error           String?
+  last_sent_at         DateTime? @db.Timestamptz(6)
+  created_at           DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([admin_user_id, channel], map: "staff_notification_channels_user_channel_uniq")
+}
+
+/// Per-staff, per-event-kind delivery matrix. A MISSING row means "use the
+/// default for that kind", so a newly added event kind is opt-OUT rather than
+/// silently off for everyone.
+model staff_notification_prefs {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  admin_user_id String   @db.Uuid
+  kind          String
+  in_app        Boolean  @default(true)
+  discord       Boolean  @default(true)
+  telegram      Boolean  @default(false)
+  updated_at    DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([admin_user_id, kind], map: "staff_notification_prefs_user_kind_uniq")
+}
+
+/// A quiz authored by an owner/admin. `status`: 'draft' | 'published' |
+/// 'archived' — only published quizzes are visible to staff, and publishing is
+/// what fires the "quiz is up" notification.
+///
+/// `audience_roles` empty = every staff member; otherwise the quiz only shows
+/// to staff holding one of those admin roles.
+model staff_quizzes {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title              String
+  description        String?
+  status             String    @default("draft")
+  points_per_correct Int       @default(1)
+  /// Percent of max score needed to "pass" — informational; points are paid
+  /// per correct answer either way.
+  pass_percent       Int       @default(70)
+  /// 0 = unlimited retakes. Default 1 (one shot) is what makes points mean
+  /// something.
+  max_attempts       Int       @default(1)
+  time_limit_seconds Int?
+  shuffle_questions  Boolean   @default(false)
+  audience_roles     String[]  @default([])
+  created_by         String?   @db.Uuid
+  published_at       DateTime? @db.Timestamptz(6)
+  created_at         DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([status, created_at(sort: Desc)], map: "staff_quizzes_status_created_idx")
+}
+
+/// `kind`: 'yes_no' (two auto-authored options), 'single' (exactly one correct,
+/// radio) or 'multi' (any number correct, checkbox — scored all-or-nothing so a
+/// shotgun answer earns nothing).
+model staff_quiz_questions {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quiz_id     String   @db.Uuid
+  position    Int      @default(0)
+  prompt      String
+  kind        String   @default("single")
+  explanation String?
+  points      Int      @default(1)
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([quiz_id, position], map: "staff_quiz_questions_quiz_position_idx")
+}
+
+/// The answer buttons. `is_correct` NEVER leaves the server for an in-progress
+/// attempt — the take-quiz page selects only (id, label, position).
+model staff_quiz_options {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  question_id String   @db.Uuid
+  position    Int      @default(0)
+  label       String
+  is_correct  Boolean  @default(false)
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([question_id, position], map: "staff_quiz_options_question_position_idx")
+}
+
+/// One row per (staff, quiz, try). `status`: 'in_progress' | 'submitted'. The
+/// score + points are FROZEN at submit time, so re-authoring the quiz later can
+/// never retroactively rewrite someone's result. A partial UNIQUE index keeps
+/// at most one open attempt per (staff, quiz) — reloading resumes it.
+model staff_quiz_attempts {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quiz_id        String    @db.Uuid
+  admin_user_id  String    @db.Uuid
+  status         String    @default("in_progress")
+  score          Int       @default(0)
+  max_score      Int       @default(0)
+  correct_count  Int       @default(0)
+  question_count Int       @default(0)
+  points_awarded Int       @default(0)
+  started_at     DateTime  @default(now()) @db.Timestamptz(6)
+  submitted_at   DateTime? @db.Timestamptz(6)
+
+  @@index([admin_user_id, started_at(sort: Desc)], map: "staff_quiz_attempts_user_started_idx")
+  @@index([quiz_id, submitted_at(sort: Desc)], map: "staff_quiz_attempts_quiz_idx")
+}
+
+/// The frozen per-question outcome of a submitted attempt.
+model staff_quiz_answers {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  attempt_id          String   @db.Uuid
+  question_id         String   @db.Uuid
+  selected_option_ids String[] @db.Uuid
+  is_correct          Boolean  @default(false)
+  points_awarded      Int      @default(0)
+  answered_at         DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([attempt_id, question_id], map: "staff_quiz_answers_attempt_question_uniq")
+}
+
+/// The account-review queue — one row per account under review.
+///
+/// `target_user_id` is the MAIN-DB `user.id` as a LOOSE column (no cross-DB FK
+/// is possible); `target_username` is a denormalized snapshot taken when the
+/// case opens, so the queue renders without a MAIN read per row and still shows
+/// something if the account is later deleted.
+///
+/// `status`: 'open' | 'in_review' | 'cleared' | 'flagged' | 'escalated'.
+/// `severity`: 'low' | 'medium' | 'high' | 'critical'.
+/// `source`: 'manual' | 'signal' | 'import'.
+///
+/// This table records the fraud team's VERDICT and nothing else — acting on a
+/// flagged account (ban, balance adjustment) still goes through the existing,
+/// audited admin surfaces. Nothing here writes to the MAIN DB.
+model antifraud_reviews {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  target_user_id  String
+  target_username String?
+  status          String    @default("open")
+  severity        String    @default("medium")
+  source          String    @default("manual")
+  /// 0–100 as delivered by the fraud backend; NULL for a manual case.
+  risk_score      Int?
+  reason          String
+  /// Machine-readable rule keys the backend matched.
+  signals         String[]  @default([])
+  assigned_to     String?   @db.Uuid
+  opened_by       String?   @db.Uuid
+  resolution      String?
+  resolved_by     String?   @db.Uuid
+  resolved_at     DateTime? @db.Timestamptz(6)
+  metadata        Json?
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([status, created_at(sort: Desc)], map: "antifraud_reviews_status_created_idx")
+  @@index([created_at(sort: Desc)], map: "antifraud_reviews_created_idx")
+  @@index([assigned_to, created_at(sort: Desc)], map: "antifraud_reviews_assigned_idx")
+  @@index([target_user_id], map: "antifraud_reviews_target_idx")
+}
+
+/// Append-only trail on a review: analyst notes AND system entries.
+/// `kind`: 'note' | 'status' | 'assign' | 'signal'.
+model antifraud_review_notes {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  review_id     String   @db.Uuid
+  admin_user_id String?  @db.Uuid
+  kind          String   @default("note")
+  body          String
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([review_id, created_at(sort: Desc)], map: "antifraud_review_notes_review_created_idx")
+}
+
+/// The inbox the separate WebSocket backend service writes into (through the
+/// signed /api/antifraud/ingest route). Every frame is persisted here FIRST,
+/// then optionally promoted into a review — so the live feed survives a browser
+/// refresh and the dashboard is never the only copy of a fraud event.
+///
+/// `external_id` is the backend's own event id; its partial UNIQUE index makes
+/// ingest idempotent, so a retried delivery cannot double-open a case.
+model antifraud_signals {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  external_id     String?
+  kind            String
+  severity        String   @default("medium")
+  risk_score      Int?
+  target_user_id  String?
+  target_username String?
+  summary         String
+  payload         Json?
+  review_id       String?  @db.Uuid
+  received_at     DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([received_at(sort: Desc)], map: "antifraud_signals_received_idx")
+  @@index([target_user_id], map: "antifraud_signals_target_idx")
+}

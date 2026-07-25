@@ -31,6 +31,14 @@ import {
   type PackStudioAccessSettings,
   type PackStudioUserAccess,
 } from "@/lib/pack-studio-access";
+import {
+  canAccessAntifraud,
+  deniedAntifraudSettings,
+  getAntifraudAccessSettings,
+  getAntifraudUserAccess,
+  type AntifraudAccessSettings,
+  type AntifraudUserAccess,
+} from "@/lib/antifraud/access";
 import { adminDb } from "@/lib/admin-db";
 import { getAdminPreferences } from "@/lib/admin-preferences";
 import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
@@ -219,6 +227,41 @@ async function loadPackStudioUserAccess(): Promise<PackStudioUserAccess> {
 }
 
 /**
+ * Resilient read of the per-role Antifraud access toggles, used to decide
+ * whether the "Switch to Antifraud" portal button (the third sub-app card) is
+ * shown in the sidebar. Same contract as the two above: computed SERVER-SIDE,
+ * gated identically to the /antifraud route guard, and any DB fault degrades to
+ * every toggle OFF (fail-closed) — only the owner/admin bypass inside
+ * `canAccessAntifraud` survives a blip.
+ */
+async function loadAntifraudAccessSettings(): Promise<AntifraudAccessSettings> {
+  try {
+    return await getAntifraudAccessSettings();
+  } catch (err) {
+    if (isNextControlFlowError(err)) throw err;
+    console.error(
+      "[admin-layout] loadAntifraudAccessSettings failed, hiding toggle-based portal:",
+      err,
+    );
+    return deniedAntifraudSettings();
+  }
+}
+
+/** Per-username Antifraud override read — role default on failure. */
+async function loadAntifraudUserAccess(): Promise<AntifraudUserAccess> {
+  try {
+    return await getAntifraudUserAccess();
+  } catch (err) {
+    if (isNextControlFlowError(err)) throw err;
+    console.error(
+      "[admin-layout] loadAntifraudUserAccess failed, falling back to role default:",
+      err,
+    );
+    return { allowlist: [], denylist: [] };
+  }
+}
+
+/**
  * Resilient wrapper around `verifySession()`. The session check itself is
  * cookie-only (cheap, can't throw for connectivity reasons), but the
  * DB-side `is_active` / role re-read inside it can throw if adminDb has a
@@ -276,6 +319,8 @@ export default async function AdminLayout({
     hubAccessSettings,
     studioAccessSettings,
     studioUserAccess,
+    antifraudAccessSettings,
+    antifraudUserAccess,
     railOpenOrder,
   ] = await Promise.all([
     loadUserPermissions(session.userId),
@@ -290,6 +335,8 @@ export default async function AdminLayout({
     loadCreatorHubAccessSettings(),
     loadPackStudioAccessSettings(),
     loadPackStudioUserAccess(),
+    loadAntifraudAccessSettings(),
+    loadAntifraudUserAccess(),
     // Open dock keys from the `admin_rail` cookie. Passed to the
     // RightRailProvider so SSR + the first client paint reflect the admin's
     // SAVED rail layout — no post-mount open/close flip. Returns null when
@@ -315,6 +362,16 @@ export default async function AdminLayout({
     session,
     studioAccessSettings,
     studioUserAccess,
+  );
+
+  // Whether to show the "Switch to Antifraud" portal (third sub-app card).
+  // Same server-side computation + 1:1 match to the /antifraud route guard.
+  // Default: owners + admins; other roles need their toggle flipped or an
+  // explicit username allowlist entry.
+  const canEnterAntifraud = canAccessAntifraud(
+    session,
+    antifraudAccessSettings,
+    antifraudUserAccess,
   );
 
   // OWNER / ultra-admin flag for the sidebar. Computed server-side from the
@@ -350,6 +407,7 @@ export default async function AdminLayout({
           dbEnv={dbEnv}
           canEnterCreatorHub={canEnterCreatorHub}
           canEnterPackStudio={canEnterPackStudio}
+          canEnterAntifraud={canEnterAntifraud}
           isOwner={isOwner}
         />
         {/* SidebarInset is the shadcn shell partner to <Sidebar> — it's the
