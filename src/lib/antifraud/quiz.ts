@@ -2,7 +2,7 @@ import "server-only";
 
 import { adminDb } from "@/lib/admin-db";
 import { isMissingRelationError } from "./notifications";
-import { isQuestionKind, type QuestionKind } from "./constants";
+import { isQuestionKind, stableShuffle, type QuestionKind } from "./constants";
 
 /**
  * The staff quiz system.
@@ -367,26 +367,6 @@ export async function getQuizForTake(
     }
     return null;
   }
-}
-
-/**
- * Deterministic shuffle keyed by a seed string — same seed, same order, on
- * every render. (FNV-1a over `seed + id` as the sort key: no RNG state, no
- * per-request drift, so a reload mid-attempt shows the same question order.)
- */
-function stableShuffle<T extends { id: string }>(items: T[], seed: string): T[] {
-  const keyed = items.map((item) => ({ item, key: fnv1a(seed + item.id) }));
-  keyed.sort((a, b) => (a.key === b.key ? 0 : a.key < b.key ? -1 : 1));
-  return keyed.map((k) => k.item);
-}
-
-function fnv1a(input: string): number {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash >>> 0;
 }
 
 // ─── Scoring ──────────────────────────────────────────────────────────────

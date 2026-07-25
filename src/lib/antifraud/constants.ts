@@ -112,3 +112,38 @@ export type QuizStatus = (typeof QUIZ_STATUSES)[number];
 export function isQuizStatus(value: string): value is QuizStatus {
   return (QUIZ_STATUSES as readonly string[]).includes(value);
 }
+
+// ─── Deterministic shuffle ────────────────────────────────────────────
+
+/**
+ * Stable shuffle keyed by a seed string — same seed, same order, every time.
+ *
+ * Used for a quiz's optional question shuffle. It has to be DETERMINISTIC (not
+ * `Math.random`) for two reasons: a reload mid-attempt must not reorder the
+ * questions under the taker, and the order must be reproducible on the server
+ * when resuming. The seed is the attempt id, so each attempt gets its own
+ * order and that order never moves.
+ *
+ * Lives here (isomorphic) rather than in the server-only quiz module because
+ * the runner applies it client-side too — the attempt id only exists once the
+ * taker presses Start.
+ *
+ * FNV-1a over `seed + id` as the sort key: no RNG state, no per-request drift.
+ */
+export function stableShuffle<T extends { id: string }>(
+  items: readonly T[],
+  seed: string,
+): T[] {
+  const keyed = items.map((item) => ({ item, key: fnv1a(seed + item.id) }));
+  keyed.sort((a, b) => (a.key === b.key ? 0 : a.key < b.key ? -1 : 1));
+  return keyed.map((k) => k.item);
+}
+
+function fnv1a(input: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash >>> 0;
+}

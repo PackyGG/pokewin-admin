@@ -118,6 +118,7 @@ async function QuizStage({
       attemptsLeft={attemptsLeft}
       timeLimitSeconds={quiz.timeLimitSeconds}
       resumeAttemptId={openAttempt?.id ?? null}
+      shuffleQuestions={quiz.shuffleQuestions}
     />
   );
 }

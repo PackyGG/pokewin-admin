@@ -7,7 +7,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { QuestionKind } from "@/lib/antifraud/constants";
+import { stableShuffle, type QuestionKind } from "@/lib/antifraud/constants";
 import { startQuizAttempt, submitQuizAttempt } from "../actions";
 
 /**
@@ -35,11 +35,12 @@ export function QuizRunner({
   quizId,
   title,
   description,
-  questions,
+  questions: incomingQuestions,
   pointsAvailable,
   attemptsLeft,
   timeLimitSeconds,
   resumeAttemptId,
+  shuffleQuestions = false,
 }: {
   quizId: string;
   title: string;
@@ -51,6 +52,14 @@ export function QuizRunner({
   timeLimitSeconds: number | null;
   /** An in-progress attempt to resume, if the staff member already started. */
   resumeAttemptId: string | null;
+  /**
+   * The quiz's `shuffle_questions` setting. The shuffle is applied HERE rather
+   * than only on the server because the seed is the attempt id, and on a FIRST
+   * attempt that id doesn't exist until the taker presses Start — the server
+   * render can only seed it when resuming. Doing both means the order is
+   * deterministic per attempt whichever way the page was reached.
+   */
+  shuffleQuestions?: boolean;
 }) {
   const router = useRouter();
   const [attemptId, setAttemptId] = React.useState<string | null>(
@@ -63,6 +72,18 @@ export function QuizRunner({
   );
   const [secondsLeft, setSecondsLeft] = React.useState<number | null>(
     resumeAttemptId ? timeLimitSeconds : null,
+  );
+
+  // Question order for THIS attempt. Deterministic (seeded by the attempt id),
+  // so a reload can't reorder the list under the taker mid-attempt. Falls back
+  // to the authored order until an attempt exists — which is only the intro
+  // screen, where no question is rendered anyway.
+  const questions = React.useMemo(
+    () =>
+      shuffleQuestions && attemptId
+        ? stableShuffle(incomingQuestions, attemptId)
+        : incomingQuestions,
+    [shuffleQuestions, attemptId, incomingQuestions],
   );
 
   const answeredCount = questions.filter(
