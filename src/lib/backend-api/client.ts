@@ -36,13 +36,14 @@ export type RequestOptions = {
 // above p99 backend latency in practice.
 const DEFAULT_TIMEOUT_MS = 8000;
 
-// Retry policy for transient upstream pushback (429 rate-limit / 503
-// unavailable). Applies to GET ONLY — GETs are idempotent, so replaying
-// them is safe; POST/PUT/PATCH/DELETE are never retried (a replay could
-// double-apply a mutation). Under concurrent live-route load the
-// per-creator backend sessions fan-out gets 429'd; without retries every
-// rate-limited leg degraded immediately.
-const MAX_GET_RETRIES = 2; // retries AFTER the initial attempt (max 3 tries)
+// Retry policy for transient read failures. Applies to GET ONLY — GETs are
+// idempotent, so replaying them is safe; mutations are never retried. Rate
+// limiting/unavailability gets two retries. A generic gateway/server failure
+// or network disconnect gets one, preventing a brief backend DB-pool spike
+// from blanking an otherwise cacheable admin page without creating a retry
+// storm.
+const MAX_GET_PUSHBACK_RETRIES = 2;
+const MAX_GET_FAILURE_RETRIES = 1;
 const RETRY_BASE_DELAY_MS = 250; // exponential base: ~250ms, ~500ms (+ jitter)
 const MAX_RETRY_DELAY_MS = 4000; // never sleep longer than this between tries
 
@@ -176,10 +177,6 @@ export const backendApiRequest = async <T = unknown>(
     ` cfHeaders=${Object.keys(config.cfHeaders).length > 0}` +
     ` bypassSecret=${bypassSecret ? "set" : "missing"}`;
 
-  // Bounded retry for transient 429/503 on idempotent GETs only.
-  // Mutations (POST/PUT/PATCH/DELETE) get exactly one attempt.
-  const maxRetries = method === "GET" ? MAX_GET_RETRIES : 0;
-
   for (let attempt = 0; ; attempt++) {
     // Combine the (default) 8s timeout with an optional caller-supplied
     // signal. AbortSignal.any() fires as soon as the FIRST of the inputs
@@ -216,6 +213,19 @@ export const backendApiRequest = async <T = unknown>(
       });
     } catch (err) {
       const networkErr = new BackendNetworkError(url, err);
+      if (
+        method === "GET" &&
+        attempt < MAX_GET_FAILURE_RETRIES &&
+        !options.signal?.aborted
+      ) {
+        const delayMs =
+          RETRY_BASE_DELAY_MS + Math.random() * RETRY_BASE_DELAY_MS;
+        console.log(
+          `[backend-api] transient network failure — retrying ${ctx} attempt=${attempt + 1}/${MAX_GET_FAILURE_RETRIES + 1} delayMs=${Math.round(delayMs)} code=${networkErr.causeCode ?? "unknown"}`,
+        );
+        await sleep(delayMs, options.signal);
+        continue;
+      }
       console.log(
         `[backend-api] network failure env=${config.env} method=${method} url=${url} code=${networkErr.causeCode ?? "unknown"} cause=${networkErr.causeMessage ?? "(none)"} cfHeaders=${Object.keys(config.cfHeaders).length > 0}`,
       );
@@ -226,7 +236,15 @@ export const backendApiRequest = async <T = unknown>(
       return ((await safeJson(res)) ?? {}) as T;
     }
 
-    if ((res.status === 429 || res.status === 503) && attempt < maxRetries) {
+    const maxRetries =
+      method !== "GET"
+        ? 0
+        : res.status === 429 || res.status === 503
+          ? MAX_GET_PUSHBACK_RETRIES
+          : res.status === 500 || res.status === 502 || res.status === 504
+            ? MAX_GET_FAILURE_RETRIES
+            : 0;
+    if (maxRetries > 0 && attempt < maxRetries) {
       const retryAfterMs = parseRetryAfterMs(res);
       // Honor Retry-After when present — but if the server asks us to
       // wait longer than the cap, give up now instead of pinning the

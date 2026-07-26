@@ -1,8 +1,7 @@
 import "server-only";
 
-import { unstable_cache } from "next/cache";
-
-import { creatorsApi, type CreatorListItem } from "@/lib/backend-api";
+import { type CreatorListItem } from "@/lib/backend-api";
+import { getCachedCreatorRoster } from "@/lib/cache/creator-backend-cache";
 
 // Reuse the EXISTING (admin)-group creator data layer. The (creator-hub)
 // group is a sibling of (admin) on disk, so these relative paths cross the
@@ -43,9 +42,6 @@ import type { RosterActiveTab, RosterSortMode } from "../_lib/roster-params";
  * filter over the already-rendered rows (RosterSearchProvider), so a
  * keystroke never re-runs this orchestration.
  */
-
-const PAGE_SIZE = 100;
-const FETCH_CAP = 500;
 
 /** One enriched roster row — all serializable primitives (server→client safe). */
 export type RosterCreator = {
@@ -91,37 +87,6 @@ export type RosterResult = {
   /** True when the backend roster walk itself failed (page shows the error card). */
   rosterUnavailable: boolean;
 };
-
-async function computeAllCreators(): Promise<CreatorListItem[]> {
-  const firstPage = await creatorsApi.list({ offset: 0, limit: PAGE_SIZE });
-  const all = [...firstPage.data];
-  const pagesNeeded = Math.min(
-    Math.ceil(FETCH_CAP / PAGE_SIZE),
-    Math.ceil(firstPage.total / PAGE_SIZE),
-  );
-  const rest: Promise<typeof firstPage>[] = [];
-  for (let p = 1; p < pagesNeeded; p++) {
-    rest.push(creatorsApi.list({ offset: p * PAGE_SIZE, limit: PAGE_SIZE }));
-  }
-  for (const page of await Promise.all(rest)) all.push(...page.data);
-  return all;
-}
-
-/**
- * The full backend roster walk cached cross-request (180s revalidate) so
- * the Hub roster doesn't re-fan the backend creator-pool pagination on
- * every render / tab flip / period switch. This mirrors the cached walk
- * the legacy /creators page already uses (`creators-roster-walk-v1` in
- * list-creators-by-tab.ts) — the Hub roster was the one surface still
- * paying this fan-out uncached on every paint. Backend-only
- * (creatorsApi.list), so it resolves to the prod env inside the cache
- * scope (sibling fill-creator-count convention) and needs no env key.
- */
-const walkAllCreators = unstable_cache(
-  computeAllCreators,
-  ["creator-hub-roster-walk-v1"],
-  { revalidate: 180, tags: ["creator-hub-roster-walk"] },
-);
 
 /**
  * Apply the owner's sort set. Every comparator is total + stable-ish (ties
@@ -218,7 +183,7 @@ export async function listRosterCreators(
   //    "backend unavailable" card. Everything else degrades to empty.
   let roster: CreatorListItem[];
   try {
-    roster = await walkAllCreators();
+    roster = await getCachedCreatorRoster();
   } catch (err) {
     console.error("[creator-hub roster] backend roster walk failed:", err);
     return { creators: [], rosterUnavailable: true };

@@ -1,8 +1,7 @@
 import "server-only";
 
-import { unstable_cache } from "next/cache";
-
-import { creatorsApi, type CreatorListItem } from "@/lib/backend-api";
+import { type CreatorListItem } from "@/lib/backend-api";
+import { getCachedCreatorRoster } from "@/lib/cache/creator-backend-cache";
 import type { CreatorsSearchParams } from "../_lib/search-params";
 import type { CreatorsListPage } from "./list-creators";
 import { getMultiplierCreatorIds } from "./multiplier-creator-count";
@@ -19,44 +18,9 @@ import { getMultiplierCreatorIds } from "./multiplier-creator-count";
  *   • fill       — creators with `total_deals_count > 0` (a fill deal).
  *   • multiplier — creators in the multiplier-creator id set.
  *
- * A full walk on every load is acceptable: getCreatorsGlobalStats
- * already walks the pool for the KPI strip on the same render, and the
- * multiplier id set is itself 5-min cached.
+ * The full walk is shared with Creator Hub consumers through the dedicated
+ * roster cache. The multiplier id set is itself 5-min cached.
  */
-const PAGE_SIZE = 100;
-const FETCH_CAP = 500;
-
-async function computeAllCreators(): Promise<CreatorListItem[]> {
-  const firstPage = await creatorsApi.list({ offset: 0, limit: PAGE_SIZE });
-  const all = [...firstPage.data];
-  const pagesNeeded = Math.min(
-    Math.ceil(FETCH_CAP / PAGE_SIZE),
-    Math.ceil(firstPage.total / PAGE_SIZE),
-  );
-  const rest: Promise<typeof firstPage>[] = [];
-  for (let p = 1; p < pagesNeeded; p++) {
-    rest.push(creatorsApi.list({ offset: p * PAGE_SIZE, limit: PAGE_SIZE }));
-  }
-  for (const page of await Promise.all(rest)) all.push(...page.data);
-  return all;
-}
-
-/**
- * The full backend roster walk cached cross-request (3-min revalidate) so
- * the tab list doesn't re-walk the creator pool on every render / tab
- * flip. ONLY the backend walk is cached — the tab filter, search, the
- * GGR-map sort, and pagination in `getCreatorsListForTab` all depend on
- * per-request input (params + the per-request `ggrByUser` Map) and stay
- * uncached in memory. Backend-only (creatorsApi.list), so it resolves to
- * the prod env inside the cache scope (sibling fill-creator-count
- * convention) and needs no env key.
- */
-const walkAllCreators = unstable_cache(
-  computeAllCreators,
-  ["creators-roster-walk-v1"],
-  { revalidate: 180, tags: ["creators-roster-walk"] },
-);
-
 export async function getCreatorsListForTab(
   params: CreatorsSearchParams,
   tab: CreatorsSearchParams["tab"],
@@ -70,7 +34,7 @@ export async function getCreatorsListForTab(
   // (no attributed activity in the window) sort as 0.
   ggrByUser?: Map<string, number>,
 ): Promise<CreatorsListPage> {
-  const all = await walkAllCreators();
+  const all = await getCachedCreatorRoster();
 
   // Tab filter — keep only creators of the selected deal program.
   let pool: CreatorListItem[];

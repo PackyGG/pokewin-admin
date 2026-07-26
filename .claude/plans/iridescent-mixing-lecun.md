@@ -1,5 +1,13 @@
 # Creator Hub Revamp Plan — `iridescent-mixing-lecun`
 
+## 2026-07-26 production incident follow-up
+
+- Creator roster consumers share one environment-keyed Upstash cache.
+- The roster stays fresh for two minutes and retains the last good value for six hours.
+- Backend GET reads retry one transient server/network failure; mutations do not retry.
+- Root connection pressure is also addressed in the backend pool configuration.
+- Verified with TypeScript, ESLint, guardrails, and the production build. Browser checks remain prohibited by `CLAUDE.md`.
+
 > **Status (2026-06-06):** Waves 0 → B+C **DONE**. Audit wave **DONE** (safe fixes shipped). Live verify **DONE** (minted-session Playwright). Owner can free agents for other work; only blocked/deferred items remain below.
 
 ---

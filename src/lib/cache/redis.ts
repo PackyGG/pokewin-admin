@@ -173,6 +173,88 @@ export async function cacheGetOrSet<T>(
   return fresh;
 }
 
+type StaleCacheEntry<T> = {
+  value: T;
+  refreshedAtMs: number;
+};
+
+const staleRefreshes = new Map<string, Promise<unknown>>();
+
+/**
+ * Read-through cache with a last-known-good fallback.
+ *
+ * Values remain fresh for `freshSeconds` and are retained for
+ * `staleSeconds`. Once soft-expired, one caller refreshes the value. If the
+ * upstream read fails, the retained value is returned instead of turning a
+ * brief backend/database incident into an empty page.
+ */
+export async function cacheGetOrSetStale<T>(
+  key: string,
+  freshSeconds: number,
+  staleSeconds: number,
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (staleSeconds <= freshSeconds) {
+    throw new Error("staleSeconds must be greater than freshSeconds");
+  }
+
+  const r = getRedis();
+  if (!r) return fn();
+
+  let retained: StaleCacheEntry<T> | null = null;
+  try {
+    const cached = await r.get<StaleCacheEntry<T>>(key);
+    if (
+      cached &&
+      typeof cached === "object" &&
+      typeof cached.refreshedAtMs === "number" &&
+      "value" in cached
+    ) {
+      retained = cached;
+      if (Date.now() - cached.refreshedAtMs < freshSeconds * 1000) {
+        return cached.value;
+      }
+    }
+  } catch {
+    return fn();
+  }
+
+  const existing = staleRefreshes.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+
+  const refresh = (async () => {
+    try {
+      const value = await fn();
+      const entry: StaleCacheEntry<T> = {
+        value,
+        refreshedAtMs: Date.now(),
+      };
+      try {
+        await r.set(key, entry, { ex: staleSeconds });
+      } catch {
+        // The fresh upstream result is still valid.
+      }
+      return value;
+    } catch (error) {
+      if (retained) {
+        console.warn(
+          `[cache] serving retained value after refresh failure key=${key}`,
+          error,
+        );
+        return retained.value;
+      }
+      throw error;
+    }
+  })();
+
+  staleRefreshes.set(key, refresh);
+  try {
+    return await refresh;
+  } finally {
+    staleRefreshes.delete(key);
+  }
+}
+
 export type RateLimitResult = {
   /** Whether the call is permitted under the limit. */
   allowed: boolean;

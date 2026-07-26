@@ -7,7 +7,11 @@ import {
 } from "@/lib/backend-api";
 import { readDbEnv } from "@/lib/db-env";
 
-import { buildCacheKey, cacheGetOrSet } from "./redis";
+import {
+  buildCacheKey,
+  cacheGetOrSet,
+  cacheGetOrSetStale,
+} from "./redis";
 
 /**
  * Shared, Upstash-backed cache for the RATE-LIMITED creator-backend reads.
@@ -27,13 +31,11 @@ import { buildCacheKey, cacheGetOrSet } from "./redis";
  * TOKEN) or on ANY Redis error. With no env, these helpers do EXACTLY the live
  * paging the call sites do today — same data, same order, same pagination.
  *
- * BACKEND-ERROR TRANSPARENCY: the backend paging calls inside the wrapped
- * functions can throw `BackendApiError` / `BackendNetworkError` (e.g. a 429).
- * Those are intentionally NOT caught here — `cacheGetOrSet` only swallows
- * Redis errors and lets the compute function's own errors propagate. The call
- * sites already catch backend errors to set their `backendUnavailable` /
- * `partialCreators` degrade flags, so their behavior is unchanged whether or
- * not this cache is active.
+ * BACKEND-ERROR RESILIENCE: the roster retains a last-known-good value for six
+ * hours. A transient backend failure after the two-minute fresh window serves
+ * that retained roster. With no retained value, the backend error still
+ * propagates to the call site's existing unavailable/partial state. Session
+ * reads retain the original transparent get-or-set behavior.
  *
  * ENV KEYING: the backend is env-aware (the `admin_db_env` cookie can route an
  * admin's requests at dev vs prod — see `backend-api/config.ts`). We key cache
@@ -57,6 +59,7 @@ const MAX_SESSION_PAGES = 100; // matches all-sessions-data / tips-sponsors-data
 // Short TTL — same 120s revalidate window the consumers' `unstable_cache`
 // wrappers already use, so cache freshness is unchanged.
 const ROSTER_TTL_SECONDS = 120;
+const ROSTER_STALE_TTL_SECONDS = 6 * 60 * 60;
 const SESSIONS_TTL_SECONDS = 120;
 
 /**
@@ -104,17 +107,20 @@ async function pageCreatorSessions(
 
 /**
  * Cached creator roster — the FULL paged list (up to the cap), shared across
- * every fan-out. Keyed on the resolved backend env. Dormant → just the live
- * paging from {@link pageCreatorRoster}.
+ * every fan-out. Keyed on the resolved backend env. A last-known-good result is
+ * retained for six hours so a brief backend/database incident does not blank
+ * every creator surface. Dormant → just the live paging from
+ * {@link pageCreatorRoster}.
  *
  * The result is identical to calling the call-sites' local `listAllCreators()`
  * directly.
  */
 export async function getCachedCreatorRoster(): Promise<CreatorListItem[]> {
   const env = await readDbEnv();
-  return cacheGetOrSet(
-    buildCacheKey("creator-roster", [env]),
+  return cacheGetOrSetStale(
+    buildCacheKey("creator-roster-v2", [env]),
     ROSTER_TTL_SECONDS,
+    ROSTER_STALE_TTL_SECONDS,
     pageCreatorRoster,
   );
 }
