@@ -43,6 +43,7 @@
     "**/*.test.tsx",
     "_probe-*.ts",
     "_verify-*.ts",
-    "audit-artifacts"
+    "audit-artifacts",
+    "services/antifraud-monitor"
   ]
 }
