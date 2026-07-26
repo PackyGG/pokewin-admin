@@ -550,6 +550,7 @@ export function MonitorConsole() {
       );
 
       if (frameType === "monitor.started" && sessionId) {
+        completedSessions.current.delete(sessionId);
         const started = timeOf(at) || Date.now();
         const durationSeconds = number(data.durationSeconds, 180);
         const initialScore = frameScore ?? 0;
@@ -603,7 +604,7 @@ export function MonitorConsole() {
         // batch in one statement and publishes one frame per row.
         completedSessions.current.set(
           sessionId,
-          timeOf(text(data.completedAt) || text(data.at)) || Date.now(),
+          timeOf(at) || Date.now(),
         );
         if (completedSessions.current.size > 1_000) {
           const oldest = completedSessions.current.keys().next().value;
