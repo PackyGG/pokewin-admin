@@ -1,7 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CircleDot, Dices, Percent, Sigma, Target } from "lucide-react";
+import {
+  CircleDot,
+  Dices,
+  Percent,
+  Sigma,
+  Target,
+  TrendingUp,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -82,6 +89,13 @@ function formatHouseEdge(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
 }
 
+function formatMultipliers(matches: KenoPayoutObservation[]): string {
+  if (matches.length === 0) return "Not observed";
+  return matches
+    .map((match) => `${match.multiplier.toFixed(2)}×`)
+    .join(" · ");
+}
+
 export function KenoOddsExplorer({
   observations,
 }: {
@@ -126,6 +140,18 @@ export function KenoOddsExplorer({
     (row) => row.matches.length === 1,
   );
   const houseEdgeCeiling = 1 - expectedReturnFloor;
+  const highestConfirmedWin = rows.reduce<{
+    hits: number;
+    multiplier: number;
+  } | null>((highest, row) => {
+    const rowHigh = row.matches.reduce(
+      (value, match) => Math.max(value, match.multiplier),
+      Number.NEGATIVE_INFINITY,
+    );
+    if (!Number.isFinite(rowHigh)) return highest;
+    if (highest && highest.multiplier >= rowHigh) return highest;
+    return { hits: row.hits, multiplier: rowHigh };
+  }, null);
 
   return (
     <div className="space-y-6">
@@ -222,7 +248,22 @@ export function KenoOddsExplorer({
         </div>
       </section>
 
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+        <KpiTile
+          label="Highest confirmed win"
+          value={
+            highestConfirmedWin
+              ? `${highestConfirmedWin.multiplier.toFixed(2)}×`
+              : "Not observed"
+          }
+          sub={
+            highestConfirmedWin
+              ? `${highestConfirmedWin.hits} ${highestConfirmedWin.hits === 1 ? "hit" : "hits"} · production evidence`
+              : `${risk} risk · ${picks} picks`
+          }
+          icon={TrendingUp}
+          accent="emerald"
+        />
         <KpiTile
           label="Any match"
           value={formatProbability(anyMatch)}
@@ -263,11 +304,11 @@ export function KenoOddsExplorer({
             <TableHeader>
               <TableRow>
                 <TableHead>Exact hits</TableHead>
+                <TableHead className="hidden text-right sm:table-cell">
+                  Win multiplier
+                </TableHead>
                 <TableHead className="text-right">Probability</TableHead>
                 <TableHead className="text-right">Equivalent odds</TableHead>
-                <TableHead className="text-right">
-                  Observed live multiplier
-                </TableHead>
                 <TableHead className="text-right">Observed games</TableHead>
               </TableRow>
             </TableHeader>
@@ -277,23 +318,55 @@ export function KenoOddsExplorer({
                   (sum, match) => sum + match.observedGames,
                   0,
                 );
+                const multiplierLabel = formatMultipliers(row.matches);
+                const highestRowMultiplier =
+                  row.matches.length > 0
+                    ? Math.max(
+                        ...row.matches.map((match) => match.multiplier),
+                      )
+                    : null;
+                const multiplierClass =
+                  highestRowMultiplier === null
+                    ? "border-dashed text-muted-foreground"
+                    : highestRowMultiplier > 1
+                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                      : highestRowMultiplier > 0
+                        ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                        : "text-muted-foreground";
                 return (
                   <TableRow key={row.hits}>
                     <TableCell className="font-medium">
-                      {row.hits} {row.hits === 1 ? "hit" : "hits"}
+                      <div className="flex items-center justify-between gap-3">
+                        <span>
+                          {row.hits} {row.hits === 1 ? "hit" : "hits"}
+                        </span>
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "shrink-0 font-mono tabular-nums sm:hidden",
+                            multiplierClass,
+                          )}
+                        >
+                          {multiplierLabel}
+                        </Badge>
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden text-right sm:table-cell">
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "font-mono text-sm font-semibold tabular-nums",
+                          multiplierClass,
+                        )}
+                      >
+                        {multiplierLabel}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-right font-mono tabular-nums">
                       {formatProbability(row.probability)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">
                       {formatOneIn(row.probability)}
-                    </TableCell>
-                    <TableCell className="text-right font-mono tabular-nums">
-                      {row.matches.length > 0
-                        ? row.matches
-                            .map((match) => `${match.multiplier.toFixed(2)}×`)
-                            .join(" · ")
-                        : "—"}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {observedGames > 0 ? formatNumber(observedGames) : "—"}
