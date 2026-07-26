@@ -36,7 +36,6 @@ export type NavGroupKey =
   | "Content"
   | "Creator Portal"
   | "Test Tools"
-  | "Staff"
   | "System";
 
 export type NavGroupMeta = {
@@ -93,10 +92,6 @@ export type NavEntry = {
   isNew?: boolean;
   /** Visible to every authenticated dashboard user, independent of page grants. */
   alwaysVisible?: boolean;
-  /** Role required unless the viewer is an admin or owner. */
-  roleAllowlist?: string[];
-  /** Do not let the generic admin/owner bypass satisfy `roleAllowlist`. */
-  strictRoleAllowlist?: boolean;
   /** Surfaces in the sidebar. */
   inSidebar: boolean;
   /** Pinned to the sidebar footer, directly above the theme toggle. */
@@ -117,7 +112,6 @@ export const NAV_GROUP_META: NavGroupMeta[] = [
   { label: "Content" },
   { label: "Creator Portal", creatorOnly: true },
   { label: "Test Tools", devEnvOnly: true },
-  { label: "Staff" },
   // The "Rewards" group was collapsed into the Rewards hub (moved into
   // Overview below Users). The "Employees" group was deleted (Salaries moved
   // into System, Shifts removed).
@@ -460,35 +454,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: false,
   },
   {
-    id: "nav.staff",
-    group: "Staff",
-    label: "Staff Hub",
-    href: "/staff",
-    pageKey: "/staff",
-    icon: "Users",
-    description: "Published quizzes for support agents",
-    keywords: ["staff", "support", "quiz"],
-    alwaysVisible: true,
-    roleAllowlist: ["support"],
-    strictRoleAllowlist: true,
-    inSidebar: true,
-    inPalette: false,
-  },
-  {
-    id: "nav.staff-manage",
-    group: "Staff",
-    label: "Staff Manage",
-    href: "/staff/manage",
-    pageKey: "/staff",
-    icon: "Settings",
-    description: "Manage staff points and quizzes",
-    keywords: ["staff", "manage", "points", "quiz"],
-    alwaysVisible: true,
-    roleAllowlist: ["admin"],
-    inSidebar: true,
-    inPalette: false,
-  },
-  {
     id: "nav.security",
     group: "System",
     label: "Security",
@@ -513,21 +478,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     icon: "ShieldCheck",
     description: "Admin accounts, roles & permissions",
     keywords: ["admin", "users", "roles", "permissions", "access", "staff"],
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // Global inbox + custom staff composer. The bell is shared by every shell;
-    // this main-dashboard page is its canonical history and management surface.
-    id: "nav.staff-notifications",
-    group: "System",
-    label: "Staff Notifications",
-    href: "/system/staff-notifications",
-    pageKey: "/system/staff-notifications",
-    icon: "Bell",
-    description: "Global staff inbox and custom team notifications",
-    keywords: ["staff", "notification", "inbox", "broadcast", "discord", "telegram"],
-    isNew: true,
     inSidebar: true,
     inPalette: true,
   },
@@ -640,7 +590,6 @@ const PALETTE_ORDER: string[] = [
   "nav.cards",
   "nav.my-profile",
   "nav.admin-users",
-  "nav.staff-notifications",
   "nav.security",
   "nav.geo-blocking",
 ];

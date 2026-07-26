@@ -5,9 +5,9 @@ import { adminDrizzle } from "@/lib/admin-db";
 import { admin_users } from "@/lib/db-schema/admin/schema";
 
 /**
- * Identity resolution for the antifraud/staff tables.
+ * Identity resolution for antifraud records.
  *
- * The `staff_*` and `antifraud_*` tables carry bare `admin_user_id` UUIDs
+ * The `antifraud_*` tables carry bare `admin_user_id` UUIDs
  * (real FKs in the DB, but deliberately not modeled as application relations — see
  * the schema note: modelling six relations would mean six disambiguated
  * back-relation fields on the `admin_users` hotspot model). So every surface
@@ -33,8 +33,8 @@ const EMPTY: ReadonlyMap<string, AdminIdentity> = new Map();
 /**
  * Batch-resolve admin identities by id. Unknown/deleted ids are simply absent
  * from the map — every call site renders a fallback for a missing entry rather
- * than failing, because an admin row can be deleted while their point events
- * and resolved reviews (correctly) live on.
+ * than failing, because an admin row can be deleted while their resolved
+ * reviews correctly live on.
  *
  * Resilient: any read failure degrades to an empty map so a transient admin-DB
  * fault costs the page its names, not its render.

@@ -13,7 +13,6 @@ import {
   getAntifraudUserAccess,
 } from "@/lib/antifraud/access";
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
-import { channelConfigStatus } from "@/lib/staff/channels";
 import { cn } from "@/lib/utils";
 import {
   AccessListEditor,
@@ -94,20 +93,7 @@ async function AccessSection() {
 }
 
 function IntegrationSection() {
-  const channels = channelConfigStatus();
   const integrations = [
-    {
-      name: "Discord pings",
-      env: "ANTIFRAUD_DISCORD_WEBHOOK_URL",
-      ready: channels.discord,
-      note: "A Discord channel webhook. Staff alerts arrive as a mention of their own user id.",
-    },
-    {
-      name: "Telegram pings",
-      env: "ANTIFRAUD_TELEGRAM_BOT_TOKEN",
-      ready: channels.telegram,
-      note: "A BotFather token. Staff message the bot once so it may DM them.",
-    },
     {
       name: "Fraud backend stream",
       env: "ANTIFRAUD_WS_URL",

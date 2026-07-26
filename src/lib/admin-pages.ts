@@ -8,7 +8,6 @@ export const ADMIN_PAGES: AdminPage[] = [
   // Navigation
   { group: "Navigation", label: "Dashboard", key: "/dashboard" },
   { group: "Navigation", label: "Analytics", key: "/analytics" },
-  { group: "Staff", label: "Staff Hub", key: "/staff" },
   // Raw P&L was deleted (owner, 2026-07-23: "kinda useless"). Its tab, the
   // legacy /analytics/pure-pnl redirect and this page key all went. The
   // underlying getPackBattlePurePnl query STAYS — the Overview tab's
@@ -196,11 +195,6 @@ export const ADMIN_PAGES: AdminPage[] = [
   // System
   { group: "System", label: "Security", key: "/security" },
   { group: "System", label: "Admins & Access", key: "/admin-users" },
-  {
-    group: "System",
-    label: "Staff Notifications",
-    key: "/system/staff-notifications",
-  },
   // The former "/settings/roles" page key was removed: Roles & Permissions is
   // now an ADMIN-ONLY tab of /admin-users, gated by requireAdmin (not a
   // grantable page key), so the key is vestigial. No role baseline references

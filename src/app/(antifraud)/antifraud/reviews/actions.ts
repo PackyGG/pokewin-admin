@@ -2,13 +2,16 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
-import { admin_users, antifraud_review_notes, antifraud_reviews, staff_profiles } from "@/lib/db-schema/admin/schema";
+import {
+  admin_users,
+  antifraud_review_notes,
+  antifraud_reviews,
+} from "@/lib/db-schema/admin/schema";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { notifyStaff } from "@/lib/staff/notifications";
 import {
   REVIEW_SEVERITIES,
   REVIEW_STATUSES,
@@ -127,39 +130,18 @@ export async function updateReviewStatus(input: unknown): Promise<void> {
 
   const [current] = await adminDrizzle.select({
     status: antifraud_reviews.status, target_user_id: antifraud_reviews.target_user_id,
-    opened_by: antifraud_reviews.opened_by, assigned_to: antifraud_reviews.assigned_to,
-    resolved_by: antifraud_reviews.resolved_by,
+    assigned_to: antifraud_reviews.assigned_to,
   }).from(antifraud_reviews).where(eq(antifraud_reviews.id, reviewId)).limit(1);
   if (!current) throw new Error("That case no longer exists");
   if (current.status === status && !resolution) return;
 
   const isTerminal = status === "cleared" || status === "flagged";
-  const wasTerminal =
-    current.status === "cleared" || current.status === "flagged";
-
   await adminDrizzle.update(antifraud_reviews).set({
       status,
       resolution: resolution ? resolution : isTerminal ? null : undefined,
       resolved_by: isTerminal ? session.userId : null,
       resolved_at: isTerminal ? new Date().toISOString() : null,
     }).where(eq(antifraud_reviews.id, reviewId));
-
-  // Counter bookkeeping — only on the transition INTO a terminal state, and
-  // only ever for the person who actually closed it.
-  if (isTerminal && !wasTerminal) {
-    await adminDrizzle.update(staff_profiles)
-      .set({ reviews_resolved: sql`${staff_profiles.reviews_resolved} + 1` })
-      .where(eq(staff_profiles.admin_user_id, session.userId))
-      .catch(() => {
-        // No profile row yet (or tables not provisioned) — the counter is a
-        // convenience, never a reason to fail closing a case.
-      });
-  } else if (!isTerminal && wasTerminal && current.resolved_by) {
-    await adminDrizzle.update(staff_profiles)
-      .set({ reviews_resolved: sql`GREATEST(${staff_profiles.reviews_resolved} - 1, 0)` })
-      .where(eq(staff_profiles.admin_user_id, current.resolved_by))
-      .catch(() => {});
-  }
 
   await adminDrizzle.insert(antifraud_review_notes).values({
       review_id: reviewId,
@@ -182,18 +164,6 @@ export async function updateReviewStatus(input: unknown): Promise<void> {
     },
   });
 
-  // Tell the case's opener how it ended (unless they closed it themselves).
-  if (isTerminal && current.opened_by && current.opened_by !== session.userId) {
-    await notifyStaff({
-      recipients: [current.opened_by],
-      kind: "review_resolved",
-      title: `Case ${REVIEW_STATUS_LABELS[status].toLowerCase()}`,
-      body: resolution || `A case you opened was marked ${status}.`,
-      href: `/antifraud/reviews/${reviewId}`,
-      metadata: { reviewId, status },
-    });
-  }
-
   revalidatePath("/antifraud/reviews");
   revalidatePath(`/antifraud/reviews/${reviewId}`);
   revalidatePath("/antifraud");
@@ -215,7 +185,6 @@ export async function assignReview(input: unknown): Promise<void> {
 
   const [current] = await adminDrizzle.select({
     assigned_to: antifraud_reviews.assigned_to, status: antifraud_reviews.status,
-    target_user_id: antifraud_reviews.target_user_id, reason: antifraud_reviews.reason,
   }).from(antifraud_reviews).where(eq(antifraud_reviews.id, reviewId)).limit(1);
   if (!current) throw new Error("That case no longer exists");
   if (current.assigned_to === assignee) return;
@@ -243,17 +212,6 @@ export async function assignReview(input: unknown): Promise<void> {
           : "Assigned this case to another analyst."
         : "Unassigned this case.",
   });
-
-  if (assignee && assignee !== session.userId) {
-    await notifyStaff({
-      recipients: [assignee],
-      kind: "review_assigned",
-      title: "A case was assigned to you",
-      body: current.reason,
-      href: `/antifraud/reviews/${reviewId}`,
-      metadata: { reviewId },
-    });
-  }
 
   revalidatePath("/antifraud/reviews");
   revalidatePath(`/antifraud/reviews/${reviewId}`);
@@ -318,7 +276,7 @@ export async function updateReviewSeverity(input: unknown): Promise<void> {
   revalidatePath("/antifraud/reviews");
 }
 
-/** Assignable analysts — everyone with a staff profile who is still active. */
+/** Assignable analysts — active admin or support accounts. */
 export async function listAssignableAnalysts(): Promise<
   { id: string; label: string }[]
 > {
@@ -327,10 +285,16 @@ export async function listAssignableAnalysts(): Promise<
     const users = await adminDrizzle.select({
       id: admin_users.id, username: admin_users.username,
       display_username: admin_users.display_username,
-    }).from(staff_profiles).innerJoin(
-      admin_users, eq(admin_users.id, staff_profiles.admin_user_id),
-    ).where(eq(admin_users.is_active, true)).orderBy(admin_users.username);
-    return users.map((u) => ({
+      role: admin_users.role, roles: admin_users.roles,
+    }).from(admin_users).where(eq(admin_users.is_active, true))
+      .orderBy(admin_users.username).limit(200);
+    return users.filter(
+      (user) =>
+        user.role === "admin" ||
+        user.role === "support" ||
+        user.roles.includes("admin") ||
+        user.roles.includes("support"),
+    ).map((u) => ({
       id: u.id,
       label: u.display_username ?? u.username,
     }));

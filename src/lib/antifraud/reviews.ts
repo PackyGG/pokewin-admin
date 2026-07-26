@@ -4,8 +4,11 @@ import "server-only";
 import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { antifraud_review_notes, antifraud_reviews, antifraud_signals } from "@/lib/db-schema/admin/schema";
-import { isMissingRelationError } from "../staff/notifications";
-import { loadAdminIdentities, type AdminIdentity } from "../staff/identities";
+import { isPostgresError } from "@/lib/postgres-errors";
+import {
+  loadAdminIdentities,
+  type AdminIdentity,
+} from "./admin-identities";
 import {
   OPEN_REVIEW_STATUSES,
   type ReviewSeverity,
@@ -76,6 +79,10 @@ export type ReviewNote = {
   author: AdminIdentity | null;
   createdAt: Date;
 };
+
+function isMissingRelationError(error: unknown): boolean {
+  return isPostgresError(error, "42P01");
+}
 
 function toRow(row: {
   id: string;

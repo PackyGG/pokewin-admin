@@ -14,11 +14,7 @@ import {
   NOTIFY_SEVERITY_FLOOR,
   type AntifraudSignalEvent,
 } from "@/lib/antifraud/ws";
-import {
-  isMissingRelationError,
-  notifyStaff,
-  staffBroadcastRecipients,
-} from "@/lib/staff/notifications";
+import { isPostgresError } from "@/lib/postgres-errors";
 
 /**
  * Durable inbound webhook from the separate antifraud backend service.
@@ -141,7 +137,6 @@ export async function POST(request: Request): Promise<Response> {
   let accepted = 0;
   let duplicates = 0;
   let reviewsOpened = 0;
-  const notify: AntifraudSignalEvent[] = [];
 
   for (const signal of signals) {
     try {
@@ -150,47 +145,15 @@ export async function POST(request: Request): Promise<Response> {
       else {
         accepted += 1;
         if (outcome === "review_opened") reviewsOpened += 1;
-        if (
-          SEVERITY_RANK[signal.severity] >= SEVERITY_RANK[NOTIFY_SEVERITY_FLOOR]
-        ) {
-          notify.push(signal);
-        }
       }
     } catch (err) {
-      if (isMissingRelationError(err)) {
+      if (isPostgresError(err, "42P01")) {
         return json({ error: "not_provisioned" }, 503);
       }
       console.error("[antifraud-ingest] failed to store signal:", err);
       // 500 so the backend retries this delivery — the external_id unique
       // index makes the retry safe.
       return json({ error: "storage_failed" }, 500);
-    }
-  }
-
-  // Ping the team about the serious ones. Notification failures never fail the
-  // delivery: the signal is already persisted, which is what matters.
-  if (notify.length > 0) {
-    try {
-      const recipients = await staffBroadcastRecipients();
-      if (recipients.length > 0) {
-        for (const signal of notify) {
-          await notifyStaff({
-            recipients,
-            kind: "fraud_alert",
-            title: `${signal.severity.toUpperCase()} — ${signal.kind}`,
-            body: signal.summary,
-            href: "/antifraud/reviews",
-            metadata: {
-              kind: signal.kind,
-              severity: signal.severity,
-              riskScore: signal.riskScore,
-              userId: signal.userId,
-            },
-          });
-        }
-      }
-    } catch (err) {
-      console.error("[antifraud-ingest] notify failed:", err);
     }
   }
 

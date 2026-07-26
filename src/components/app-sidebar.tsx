@@ -182,10 +182,6 @@ type NavItem = {
   isNew?: boolean;
   // Visible to every authenticated dashboard user, regardless of page grants.
   alwaysVisible?: boolean;
-  // Role required unless the viewer is an admin or owner.
-  roleAllowlist?: string[];
-  // When true, admin/owner does not bypass roleAllowlist.
-  strictRoleAllowlist?: boolean;
 };
 
 type NavGroup = {
@@ -213,8 +209,6 @@ const NAV_FOOTER_ITEMS: NavItem[] = getSidebarFooterItems().map((e) => ({
   strictUsernameAllowlist: e.strictUsernameAllowlist,
   isNew: e.isNew,
   alwaysVisible: e.alwaysVisible,
-  roleAllowlist: e.roleAllowlist,
-  strictRoleAllowlist: e.strictRoleAllowlist,
 }));
 
 const NAV_GROUPS: NavGroup[] = getSidebarGroups().map((group) => ({
@@ -229,8 +223,6 @@ const NAV_GROUPS: NavGroup[] = getSidebarGroups().map((group) => ({
     strictUsernameAllowlist: e.strictUsernameAllowlist,
     isNew: e.isNew,
     alwaysVisible: e.alwaysVisible,
-    roleAllowlist: e.roleAllowlist,
-    strictRoleAllowlist: e.strictRoleAllowlist,
   })),
 }));
 
@@ -364,20 +356,11 @@ export function AppSidebar({
         if (item.strictUsernameAllowlist) {
           return Boolean(inAllowlist);
         }
-        if (
-          item.roleAllowlist &&
-          (item.strictRoleAllowlist || (!isAdmin && !isOwner)) &&
-          !item.roleAllowlist.some((requiredRole) =>
-            effectiveRoles.includes(requiredRole),
-          )
-        ) {
-          return false;
-        }
         if (item.alwaysVisible) return true;
         // Owners + admins see every page.
         return isAdmin || isOwner || pageAccessGranted(effectiveAllowedPages, item.href);
       }),
-    [isAdmin, isOwner, effectiveAllowedPages, username, effectiveRoles],
+    [isAdmin, isOwner, effectiveAllowedPages, username],
   );
 
   const groupsWithVisibility = useMemo(() =>
@@ -407,21 +390,12 @@ export function AppSidebar({
           if (item.strictUsernameAllowlist) {
             return Boolean(inAllowlist);
           }
-          if (
-            item.roleAllowlist &&
-            (item.strictRoleAllowlist || (!isAdmin && !isOwner)) &&
-            !item.roleAllowlist.some((requiredRole) =>
-              effectiveRoles.includes(requiredRole),
-            )
-          ) {
-            return false;
-          }
           if (item.alwaysVisible) return true;
           // Owners + admins see every page.
           return isAdmin || isOwner || pageAccessGranted(effectiveAllowedPages, item.href);
         }),
       })),
-  [isAdmin, isOwner, effectiveAllowedPages, username, dbEnv, effectiveRoles]);
+  [isAdmin, isOwner, effectiveAllowedPages, username, dbEnv]);
 
   const activeGroupLabel = useMemo(() =>
     groupsWithVisibility.find((group) =>

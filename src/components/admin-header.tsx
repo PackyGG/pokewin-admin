@@ -44,7 +44,6 @@ import {
   type ProfileDialogSection,
 } from "@/app/(admin)/profile/profile-dialog";
 import { useTimezoneContext } from "@/components/timezone-provider";
-import { NotificationBell } from "@/components/notification-bell";
 import { PasskeySetupPrompt } from "@/components/passkey-setup-prompt";
 import { cn } from "@/lib/utils";
 import { normalizeStringArray } from "@/lib/client-runtime-safety";
@@ -392,13 +391,6 @@ export function AdminHeader({
             streamed in behind its own <Suspense>. Sits to the LEFT of the
             profile menu; renders nothing between rains (null slot). */}
         {rainSlot}
-        {/* Staff notification bell — its own icon button directly beside the
-            profile card, in every shell (main admin, Creator Hub, Pack Studio,
-            Antifraud) because they all render this header. Self-contained: it
-            fetches its own count through a session-verified server action, so
-            no layout has to thread props for it. An admin who has never entered
-            the staff workspace simply has no notifications. */}
-        <NotificationBell />
         {/* Avatar + name now opens a dropdown with quick-access theme +
             timezone pickers alongside the profile link and logout. The
             whole cluster is the trigger so the click target stays as
