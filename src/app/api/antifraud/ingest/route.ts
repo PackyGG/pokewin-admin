@@ -23,8 +23,8 @@ import {
 /**
  * Durable inbound webhook from the separate antifraud backend service.
  *
- * The WebSocket stream (`/api/antifraud/stream`) gives analysts LIVE awareness
- * while they have the workspace open. This route is the system of RECORD: every
+ * The monitor stream (`/api/antifraud/monitor/stream`) gives analysts LIVE
+ * awareness while they have the workspace open. This route is the system of RECORD: every
  * signal the backend produces is POSTed here, persisted, and — when it is
  * serious enough — turned into a case on the review queue and pushed to the
  * on-call staff's Discord/Telegram. That means a fraud event at 04:00 with

@@ -7,13 +7,59 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+/**
+ * SSE proxy for the antifraud monitor's websocket feed.
+ *
+ * Wire format matches `sseResponse` in `@/lib/sse` so the browser side can use
+ * the shared `useSseStream` hook:
+ *   - `event: row`        → one monitor frame (`{ id, type, at, data }`)
+ *   - `id: <redis-id>`    → replay cursor retained by EventSource
+ *
+ * Resilience contract (the reason this route is not a thin pipe):
+ *   1. A transient upstream blip must NOT end the SSE response. The websocket
+ *      is reconnected INSIDE the route with jittered exponential backoff, and
+ *      the client is told about it through `transport` frames.
+ *   2. A refusal must NEVER be a non-2xx response. Per the HTML spec an
+ *      EventSource that receives a non-2xx (or a non-`text/event-stream`)
+ *      response fails the connection PERMANENTLY, which turned a 30-second
+ *      redeploy into a dead console. Capacity refusals therefore return 200
+ *      with a terminal `transport` frame instead. Auth failures (401/403) keep
+ *      their status on purpose — a logged-out session must not be retried.
+ *   3. The heartbeat is a real `transport` frame, not an SSE comment, so the
+ *      client can detect a silently stalled connection (comments are invisible
+ *      to EventSource) as well as keeping proxies from closing the socket.
+ */
+
 const HEARTBEAT_MS = 15_000;
 const MAX_FRAME_BYTES = 128_000;
 const MAX_STREAM_STARTS_PER_MINUTE = 10;
 const MAX_CONCURRENT_PER_USER = 3;
+/** Rotate well under `maxDuration` so the client reopens gracefully. */
+const ROTATE_AFTER_MS = 240_000;
+const UPSTREAM_RETRY_MIN_MS = 1_000;
+const UPSTREAM_RETRY_MAX_MS = 30_000;
+/** Reconnect delay advertised to the browser's own EventSource retry. */
+const CLIENT_RETRY_MS = 15_000;
+
 const openStreams = new Map<string, number>();
 
+const SSE_HEADERS: Record<string, string> = {
+  "Cache-Control": "no-cache, no-transform",
+  Connection: "keep-alive",
+  "Content-Type": "text/event-stream; charset=utf-8",
+  "X-Accel-Buffering": "no",
+  "X-Content-Type-Options": "nosniff",
+};
+
 type TransportState = "connecting" | "open" | "closed" | "unconfigured" | "error";
+type LiveEnvelope = {
+  id: string;
+  type: string;
+  at: string;
+  data: Record<string, unknown>;
+};
+
+const REPLAY_ID = /^\d+-\d+$/;
 
 function monitorConfig(): { baseUrl?: string; token?: string } {
   return {
@@ -22,12 +68,37 @@ function monitorConfig(): { baseUrl?: string; token?: string } {
   };
 }
 
-function transport(state: TransportState, message?: string) {
+function transport(
+  state: TransportState,
+  message?: string,
+  terminal = false,
+): { type: "transport"; at: string; data: Record<string, unknown> } {
   return {
     type: "transport",
     at: new Date().toISOString(),
-    data: { state, ...(message ? { message } : {}) },
+    data: {
+      state,
+      ...(message ? { message } : {}),
+      ...(terminal ? { terminal: true } : {}),
+    },
   };
+}
+
+function sseFrame(event: string, value: unknown, id?: string): string {
+  const cursor = id && REPLAY_ID.test(id) ? `id: ${id}\n` : "";
+  return `${cursor}event: ${event}\ndata: ${JSON.stringify(value)}\n\n`;
+}
+
+/**
+ * A 200 `text/event-stream` response that carries a single terminal transport
+ * frame and then ends. Used for every capacity refusal so the browser's
+ * EventSource is not permanently poisoned by a non-2xx status.
+ */
+function terminalStream(state: TransportState, message: string): Response {
+  const body =
+    `retry: ${CLIENT_RETRY_MS}\n\n` +
+    sseFrame("row", transport(state, message, true));
+  return new Response(new TextEncoder().encode(body), { headers: SSE_HEADERS });
 }
 
 async function createTicket(
@@ -54,6 +125,68 @@ async function createTicket(
     throw new Error("Ticket response was invalid");
   }
   return payload.data.ticket;
+}
+
+function parseEnvelope(value: unknown): LiveEnvelope | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  if (
+    typeof row.id !== "string" ||
+    !REPLAY_ID.test(row.id) ||
+    typeof row.type !== "string" ||
+    typeof row.at !== "string" ||
+    !row.data ||
+    typeof row.data !== "object" ||
+    Array.isArray(row.data)
+  ) {
+    return null;
+  }
+  return row as LiveEnvelope;
+}
+
+/**
+ * Catch up from the service's bounded Redis replay stream. Paging matters when
+ * one Railway outage spans more than the route's 200-event page size.
+ */
+async function replayEvents(
+  baseUrl: string,
+  token: string,
+  after: string | null,
+): Promise<LiveEnvelope[]> {
+  const events: LiveEnvelope[] = [];
+  let cursor = after;
+
+  for (let page = 0; page < 10; page += 1) {
+    const url = new URL(`${baseUrl}/v1/live/replay`);
+    url.searchParams.set("limit", "200");
+    if (cursor) url.searchParams.set("after", cursor);
+    const response = await fetch(url, {
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok) throw new Error("Replay request failed");
+    const payload = (await response.json()) as {
+      data?: unknown;
+      cursor?: unknown;
+    };
+    if (!Array.isArray(payload.data)) throw new Error("Replay response invalid");
+    for (const value of payload.data) {
+      const event = parseEnvelope(value);
+      if (event) events.push(event);
+    }
+    const next =
+      typeof payload.cursor === "string" && REPLAY_ID.test(payload.cursor)
+        ? payload.cursor
+        : null;
+    if (payload.data.length < 200 || !next || next === cursor) break;
+    cursor = next;
+  }
+
+  return events;
 }
 
 function websocketUrl(baseUrl: string): string {
@@ -90,17 +223,18 @@ export async function GET(request: Request): Promise<Response> {
     60,
   );
   if (!limit.allowed) {
-    return new Response("Too many stream requests", {
-      status: 429,
-      headers: limit.resetSeconds
-        ? { "Retry-After": String(limit.resetSeconds) }
-        : undefined,
-    });
+    return terminalStream(
+      "closed",
+      "Too many stream restarts. Reload the page to reconnect.",
+    );
   }
 
   const currentOpen = openStreams.get(actorId) ?? 0;
   if (currentOpen >= MAX_CONCURRENT_PER_USER) {
-    return new Response("Too many concurrent streams", { status: 429 });
+    return terminalStream(
+      "closed",
+      "Too many live monitor tabs are open for this account.",
+    );
   }
   openStreams.set(actorId, currentOpen + 1);
   let released = false;
@@ -114,28 +248,68 @@ export async function GET(request: Request): Promise<Response> {
 
   const { baseUrl, token } = monitorConfig();
   const encoder = new TextEncoder();
+  const requestOrigin = new URL(request.url).origin;
+  const resumeHeader = request.headers.get("last-event-id");
+  const resumeAfter =
+    resumeHeader && REPLAY_ID.test(resumeHeader) ? resumeHeader : null;
+
+  // Hoisted so `cancel()` can tear the timers down too. On Vercel Fluid
+  // Compute the request abort signal does NOT reliably fire when an SSE
+  // client disconnects, but the stream's `cancel()` does — without this the
+  // heartbeat/backoff timers kept running for ghost connections.
+  let teardown: (() => void) | null = null;
+
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       let socket: WebSocket | null = null;
       let heartbeat: ReturnType<typeof setInterval> | null = null;
+      let rotation: ReturnType<typeof setTimeout> | null = null;
+      let retryTimer: ReturnType<typeof setTimeout> | null = null;
+      let attempt = 0;
+      let state: TransportState = "connecting";
       let closed = false;
+      let lastDeliveredId = resumeAfter;
+      const deliveredIds = new Set<string>();
 
-      const send = (value: unknown) => {
+      const write = (chunk: string) => {
         if (closed) return;
         try {
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(value)}\n\n`),
-          );
+          controller.enqueue(encoder.encode(chunk));
         } catch {
           close();
         }
+      };
+
+      const send = (value: unknown) => write(sseFrame("row", value));
+
+      const forward = (value: unknown) => {
+        const event = parseEnvelope(value);
+        if (!event || deliveredIds.has(event.id)) return;
+        deliveredIds.add(event.id);
+        if (deliveredIds.size > 2_000) {
+          const oldest = deliveredIds.values().next().value;
+          if (typeof oldest === "string") deliveredIds.delete(oldest);
+        }
+        lastDeliveredId = event.id;
+        write(sseFrame("row", event, event.id));
+      };
+
+      const setState = (
+        next: TransportState,
+        message?: string,
+      ) => {
+        state = next;
+        send(transport(next, message));
       };
 
       const close = () => {
         if (closed) return;
         closed = true;
         if (heartbeat) clearInterval(heartbeat);
+        if (rotation) clearTimeout(rotation);
+        if (retryTimer) clearTimeout(retryTimer);
         if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
+        socket = null;
         release();
         try {
           controller.close();
@@ -144,76 +318,125 @@ export async function GET(request: Request): Promise<Response> {
         }
       };
 
-      heartbeat = setInterval(() => {
-        if (!closed) {
-          try {
-            controller.enqueue(encoder.encode(": heartbeat\n\n"));
-          } catch {
-            close();
-          }
-        }
-      }, HEARTBEAT_MS);
+      const scheduleReconnect = (message: string) => {
+        if (closed || retryTimer) return;
+        attempt += 1;
+        const backoff = Math.min(
+          UPSTREAM_RETRY_MAX_MS,
+          UPSTREAM_RETRY_MIN_MS * 2 ** (attempt - 1),
+        );
+        // Jitter so several instances don't stampede the service together.
+        const delay = Math.round(backoff * (0.5 + Math.random() * 0.5));
+        setState("connecting", message);
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          connectUpstream();
+        }, delay);
+      };
 
+      const connectUpstream = () => {
+        if (closed || !baseUrl || !token) return;
+        void createTicket(baseUrl, token, actorId)
+          .then((ticket) => {
+            if (closed) return;
+            let replaying = true;
+            const pending: unknown[] = [];
+            const next = new WebSocket(
+              websocketUrl(baseUrl),
+              [`antifraud-ticket.${ticket}`],
+              {
+                handshakeTimeout: 8_000,
+                maxPayload: MAX_FRAME_BYTES,
+                origin: requestOrigin,
+                perMessageDeflate: false,
+              },
+            );
+            socket = next;
+            next.on("open", () => {
+              if (closed || socket !== next) return;
+              void replayEvents(baseUrl, token, lastDeliveredId)
+                .then((replayed) => {
+                  if (closed || socket !== next) return;
+                  for (const event of replayed) forward(event);
+                  replaying = false;
+                  for (const event of pending) forward(event);
+                  pending.length = 0;
+                  attempt = 0;
+                  setState("open");
+                })
+                .catch(() => {
+                  console.error("[antifraud-monitor] replay failed");
+                  if (closed || socket !== next) return;
+                  next.close();
+                });
+            });
+            next.on("message", (frame) => {
+              if (closed || socket !== next) return;
+              try {
+                const payload = frame.toString();
+                if (Buffer.byteLength(payload) > MAX_FRAME_BYTES) return;
+                const value = JSON.parse(payload) as unknown;
+                const envelope = parseEnvelope(value);
+                if (!envelope) return;
+                if (replaying) {
+                  pending.push(envelope);
+                  if (pending.length > 500) next.close();
+                } else {
+                  forward(envelope);
+                }
+              } catch {
+                // Ignore malformed upstream frames.
+              }
+            });
+            next.on("error", () => {
+              console.error("[antifraud-monitor] websocket failed");
+              // `ws` always emits `close` after `error`; reconnect from there.
+            });
+            next.on("close", () => {
+              if (closed || socket !== next) return;
+              socket = null;
+              scheduleReconnect("Live stream interrupted, reconnecting");
+            });
+          })
+          .catch(() => {
+            console.error("[antifraud-monitor] ticket failed");
+            if (closed) return;
+            scheduleReconnect("Monitor service unavailable, reconnecting");
+          });
+      };
+
+      teardown = close;
       request.signal.addEventListener("abort", close, { once: true });
 
+      // Advertise the browser-side reconnect delay before anything else.
+      write(`retry: ${CLIENT_RETRY_MS}\n\n`);
+
       if (!baseUrl || !token) {
-        send(transport("unconfigured", "Monitor service is not configured"));
+        send(transport("unconfigured", "Monitor service is not configured", true));
+        close();
         return;
       }
 
-      send(transport("connecting"));
-      void createTicket(baseUrl, token, actorId)
-        .then((ticket) => {
-          if (closed) return;
-          socket = new WebSocket(
-            websocketUrl(baseUrl),
-            [`antifraud-ticket.${ticket}`],
-            {
-            handshakeTimeout: 8_000,
-            maxPayload: MAX_FRAME_BYTES,
-            origin: new URL(request.url).origin,
-            perMessageDeflate: false,
-            },
-          );
-          socket.on("open", () => send(transport("open")));
-          socket.on("message", (frame) => {
-            try {
-              const payload = frame.toString();
-              if (Buffer.byteLength(payload) > MAX_FRAME_BYTES) return;
-              const value = JSON.parse(payload) as unknown;
-              if (value && typeof value === "object") send(value);
-            } catch {
-              // Ignore malformed upstream frames.
-            }
-          });
-          socket.on("close", () => {
-            send(transport("closed", "Live stream closed"));
-            close();
-          });
-          socket.on("error", (error) => {
-            console.error("[antifraud-monitor] websocket failed:", error.message);
-            send(transport("error", "Live stream unavailable"));
-            close();
-          });
-        })
-        .catch((error) => {
-          console.error("[antifraud-monitor] ticket failed:", error);
-          send(transport("error", "Monitor service unavailable"));
-          close();
-        });
+      // The heartbeat re-states the live transport state: it keeps proxies from
+      // closing an idle connection AND lets the client notice a stalled stream.
+      heartbeat = setInterval(() => {
+        send(transport(state));
+      }, HEARTBEAT_MS);
+
+      rotation = setTimeout(() => {
+        // A normal SSE close lets the browser reconnect the same EventSource,
+        // preserving Last-Event-ID so the next route instance can replay.
+        close();
+      }, ROTATE_AFTER_MS);
+
+      setState("connecting");
+      connectUpstream();
     },
     cancel() {
-      release();
+      if (teardown) teardown();
+      else release();
     },
   });
 
-  return new Response(stream, {
-    headers: {
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "X-Accel-Buffering": "no",
-      "X-Content-Type-Options": "nosniff",
-    },
-  });
+  return new Response(stream, { headers: SSE_HEADERS });
 }

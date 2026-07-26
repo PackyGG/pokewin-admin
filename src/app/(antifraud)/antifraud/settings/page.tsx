@@ -125,12 +125,6 @@ function IntegrationSection() {
     note: string;
   }> = [
     {
-      name: "Fraud backend stream",
-      envs: ["ANTIFRAUD_WS_URL"],
-      status: process.env.ANTIFRAUD_WS_URL ? "ready" : "missing",
-      note: "The WebSocket this app proxies to the browser as a live signal feed.",
-    },
-    {
       name: "Signed ingest webhook",
       envs: ["ANTIFRAUD_INGEST_SECRET"],
       status: process.env.ANTIFRAUD_INGEST_SECRET ? "ready" : "missing",

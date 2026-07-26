@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatNumber, formatRelative } from "@/lib/utils/format";
 import { getReviewStats, listRecentSignals, listReviews } from "@/lib/antifraud/reviews";
 import { LiveFeed } from "./_components/live-feed";
+import { OverviewLiveSync } from "./_components/overview-live-sync";
 import { ReviewSeverityBadge, ReviewStatusBadge } from "./_components/badges";
 
 export const metadata = { title: "Antifraud" };
@@ -43,6 +44,7 @@ const QUERY_TIMEOUT_MS = 10_000;
 
 export default async function AntifraudOverviewPage() {
   const session = await requireAntifraudPageAccess();
+  const snapshotAt = new Date().toISOString();
 
   return (
     <div className="space-y-6">
@@ -55,11 +57,13 @@ export default async function AntifraudOverviewPage() {
         />
       </PageHero>
 
+      <OverviewLiveSync snapshotAt={snapshotAt} />
+
       <Suspense fallback={<KpiSkeleton />}>
         <QueueKpis adminUserId={session.userId} />
       </Suspense>
 
-      {/* Client island — subscribes to /api/antifraud/stream. Rendered outside
+      {/* Client island — subscribes to /api/antifraud/monitor/stream. Rendered outside
           Suspense on purpose: it has no server data to wait for and it is the
           one part of the page that should appear instantly. */}
       <LiveFeed />
