@@ -168,6 +168,112 @@ app.get("/v1/monitors/live", async () => {
   return { data: result.rows };
 });
 
+app.get("/v1/signups", async (request) => {
+  const query = z.object({
+    page: z.coerce.number().int().min(1).max(10_000).default(1),
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+  }).parse(request.query);
+  const offset = (query.page - 1) * query.limit;
+  const [rows, summary] = await Promise.all([
+    db.antifraud.query(
+      `
+        SELECT
+          s.user_id, s.username, s.email, s.avatar_url, s.signup_ip::text,
+          s.country, s.country_code, s.state, s.city, s.affiliate_code,
+          s.referred_by, s.source_created_at,
+          COALESCE(sa.score, 0)::int AS score,
+          COALESCE(sa.severity, 'low') AS severity,
+          COALESCE(sa.signals, '[]'::jsonb) AS signals,
+          sa.assessed_at,
+          fingerprint.status AS fingerprint_status,
+          fingerprint.score AS fingerprint_score,
+          COALESCE(fingerprint.signals, '[]'::jsonb) AS fingerprint_signals,
+          proxycheck.status AS proxycheck_status,
+          proxycheck.score AS proxycheck_score,
+          COALESCE(proxycheck.signals, '[]'::jsonb) AS proxycheck_signals,
+          latest_case.id AS case_id,
+          latest_case.status AS case_status,
+          latest_case.severity AS case_severity,
+          latest_monitor.status AS monitor_status,
+          latest_monitor.ends_at AS monitor_ends_at
+        FROM subjects s
+        LEFT JOIN signup_assessments sa ON sa.user_id = s.user_id
+        LEFT JOIN LATERAL (
+          SELECT status, score::float8 AS score, signals
+          FROM provider_checks
+          WHERE user_id = s.user_id AND provider = 'fingerprint'
+          ORDER BY checked_at DESC
+          LIMIT 1
+        ) fingerprint ON true
+        LEFT JOIN LATERAL (
+          SELECT status, score::float8 AS score, signals
+          FROM provider_checks
+          WHERE user_id = s.user_id AND provider = 'proxycheck'
+          ORDER BY checked_at DESC
+          LIMIT 1
+        ) proxycheck ON true
+        LEFT JOIN LATERAL (
+          SELECT id, status, severity
+          FROM cases
+          WHERE user_id = s.user_id
+          ORDER BY updated_at DESC
+          LIMIT 1
+        ) latest_case ON true
+        LEFT JOIN LATERAL (
+          SELECT status, ends_at
+          FROM monitor_sessions
+          WHERE user_id = s.user_id
+          ORDER BY started_at DESC
+          LIMIT 1
+        ) latest_monitor ON true
+        ORDER BY s.source_created_at DESC, s.user_id DESC
+        LIMIT $1 OFFSET $2
+      `,
+      [query.limit, offset],
+    ),
+    db.antifraud.query<{
+      total: number;
+      assessed: number;
+      attention: number;
+      monitoring: number;
+    }>(
+      `
+        SELECT
+          COUNT(*)::int AS total,
+          COUNT(sa.user_id)::int AS assessed,
+          COUNT(*) FILTER (WHERE sa.score >= $1)::int AS attention,
+          COUNT(*) FILTER (
+            WHERE EXISTS (
+              SELECT 1 FROM monitor_sessions ms
+              WHERE ms.user_id = s.user_id AND ms.status = 'active'
+            )
+          )::int AS monitoring
+        FROM subjects s
+        LEFT JOIN signup_assessments sa ON sa.user_id = s.user_id
+      `,
+      [config.MONITOR_START_SCORE],
+    ),
+  ]);
+  return {
+    data: rows.rows,
+    pagination: {
+      page: query.page,
+      limit: query.limit,
+      total: summary.rows[0]?.total ?? 0,
+      pages: Math.max(
+        1,
+        Math.ceil((summary.rows[0]?.total ?? 0) / query.limit),
+      ),
+    },
+    summary: summary.rows[0] ?? {
+      total: 0,
+      assessed: 0,
+      attention: 0,
+      monitoring: 0,
+    },
+  };
+});
+
 app.get("/v1/cases", async (request) => {
   const query = z.object({
     status: z.enum([

@@ -10,7 +10,7 @@ export async function fetchNewSignups(
   const result = await source.query<Signup>(
     `
       SELECT
-        u.id, u.username, u.email, u.signup_ip, u.country, u.country_code,
+        u.id, u.username, u.email, u.image, u.signup_ip, u.country, u.country_code,
         u.continent_code, u.state, u.city, u.affiliate_code, u.referred_by,
         u.is_suspected_alt, u.created_at,
         fp.request_id AS fingerprint_request_id,

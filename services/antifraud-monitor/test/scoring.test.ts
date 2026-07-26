@@ -16,6 +16,7 @@ const signup: Signup = {
   id: "user-1",
   username: "normal-player",
   email: "player@example.com",
+  image: null,
   signup_ip: "203.0.113.1",
   country: "Germany",
   country_code: "DE",

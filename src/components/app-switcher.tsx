@@ -80,7 +80,7 @@ const APPS: readonly AppEntry[] = [
     key: "antifraud",
     href: "/antifraud",
     label: "Fraud",
-    title: "Antifraud — risk & staff workspace",
+    title: "Antifraud — fraud operations",
     icon: ShieldAlert,
     accent: "text-cyan-600 dark:text-cyan-400",
   },

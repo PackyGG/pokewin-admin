@@ -9,6 +9,7 @@ import {
   RadioTower,
   Settings,
   ShieldAlert,
+  UserRoundSearch,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -50,6 +51,7 @@ type NavItem = {
 
 const WORKSPACE_NAV: NavItem[] = [
   { label: "Overview", href: "/antifraud", icon: LayoutDashboard },
+  { label: "Signups", href: "/antifraud/signups", icon: UserRoundSearch },
   { label: "Live Monitor", href: "/antifraud/monitor", icon: RadioTower },
   { label: "Account Review", href: "/antifraud/reviews", icon: ShieldAlert },
 ];
@@ -188,7 +190,7 @@ export function AntifraudSidebar({
 
       <SidebarContent>
         <SidebarGroup className="px-2 py-1">
-          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
+          <SidebarGroupLabel>Fraud Operations</SidebarGroupLabel>
           <SidebarGroupContent>
             <NavMenu
               items={WORKSPACE_NAV}

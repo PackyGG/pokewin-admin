@@ -141,13 +141,14 @@ export class MonitorEngine {
     await this.db.antifraud.query(
       `
         INSERT INTO subjects (
-          user_id, username, email, signup_ip, country, country_code,
+          user_id, username, email, avatar_url, signup_ip, country, country_code,
           continent_code, state, city, affiliate_code, referred_by,
           source_created_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
         ON CONFLICT (user_id) DO UPDATE SET
           username = EXCLUDED.username,
           email = EXCLUDED.email,
+          avatar_url = EXCLUDED.avatar_url,
           signup_ip = EXCLUDED.signup_ip,
           country = EXCLUDED.country,
           country_code = EXCLUDED.country_code,
@@ -162,6 +163,7 @@ export class MonitorEngine {
         signup.id,
         signup.username,
         signup.email,
+        signup.image,
         signup.signup_ip,
         signup.country,
         signup.country_code,
@@ -192,6 +194,20 @@ export class MonitorEngine {
     const score = Math.max(
       0,
       signals.reduce((total, signal) => total + signal.points, 0),
+    );
+
+    await this.db.antifraud.query(
+      `
+        INSERT INTO signup_assessments (
+          user_id, score, severity, signals, assessed_at
+        ) VALUES ($1,$2,$3,$4,now())
+        ON CONFLICT (user_id) DO UPDATE SET
+          score = EXCLUDED.score,
+          severity = EXCLUDED.severity,
+          signals = EXCLUDED.signals,
+          assessed_at = now()
+      `,
+      [signup.id, score, severity(score), JSON.stringify(signals)],
     );
 
     await this.live.publish("signup.assessed", {

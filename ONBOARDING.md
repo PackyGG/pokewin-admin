@@ -30,6 +30,7 @@ Two fully separate Postgres databases, treated **very differently**:
 - Drizzle resolver in `src/lib/db.ts` (prod/dev toggle via `admin_db_env` cookie + `DEV_DATABASE_URL`), schema snapshot `src/lib/db-schema/main/schema.ts`, env `DATABASE_URL`. 30s statement timeout.
 - Holds the **live game**: users, balances, ledger, packs, cards, battles, inventory, rewards, affiliate, deposits/withdrawals, promo/gift/vouchers, rain/raffles/races. Real users, real money.
 - **Antifraud deposit classification:** use `fiat_deposit_intents.completed_ledger_id = ledger_transactions.id` as the authoritative fiat/card link. Do not infer every `crypto_asset IS NULL` row is fiat. Crypto deposits carry their chain/asset fields on `ledger_transactions`; fiat is reversible and needs a separate payment-risk lifecycle.
+- **Antifraud signup history:** `services/antifraud-monitor` copies the minimum signup identity into its own `subjects` table and stores one current aggregate in `signup_assessments`; provider payloads remain private. Dashboard signup lists read the dedicated Antifraud Postgres through the authenticated monitor API, never by scanning MAIN.
 - **READ-ONLY. No writes, migrations, DDL/DML, ever.** AND: **do not even build/propose features that would require a MAIN-DB schema change** — the owner won't apply them. Such tasks are blocked → model it in the ADMIN DB instead, or tell the owner it can't be built without changing MAIN.
 - No cross-DB joins — query each DB separately, merge in code.
 

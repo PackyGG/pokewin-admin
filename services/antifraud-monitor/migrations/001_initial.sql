@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS subjects (
   user_id text PRIMARY KEY,
   username text,
   email text,
+  avatar_url text,
   signup_ip inet,
   country text,
   country_code text,
@@ -26,6 +27,9 @@ CREATE TABLE IF NOT EXISTS subjects (
   first_seen_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS subjects_signup_time_idx
+  ON subjects(source_created_at DESC, user_id DESC);
 
 CREATE TABLE IF NOT EXISTS provider_checks (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -47,6 +51,18 @@ CREATE INDEX IF NOT EXISTS provider_checks_cache_idx
   ON provider_checks(provider, lookup_key, expires_at DESC)
   WHERE status = 'success';
 
+CREATE TABLE IF NOT EXISTS signup_assessments (
+  user_id text PRIMARY KEY REFERENCES subjects(user_id) ON DELETE CASCADE,
+  score integer NOT NULL DEFAULT 0,
+  severity text NOT NULL DEFAULT 'low'
+    CHECK (severity IN ('low', 'medium', 'high', 'critical')),
+  signals jsonb NOT NULL DEFAULT '[]'::jsonb,
+  assessed_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS signup_assessments_risk_idx
+  ON signup_assessments(score DESC, assessed_at DESC);
+
 CREATE TABLE IF NOT EXISTS cases (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL REFERENCES subjects(user_id) ON DELETE CASCADE,
@@ -67,6 +83,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS cases_one_live_per_user
 
 CREATE INDEX IF NOT EXISTS cases_status_score_idx
   ON cases(status, score DESC, opened_at DESC);
+CREATE INDEX IF NOT EXISTS cases_user_updated_idx
+  ON cases(user_id, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS monitor_sessions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -87,6 +105,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS monitor_sessions_one_active_per_user
   ON monitor_sessions(user_id) WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS monitor_sessions_active_idx
   ON monitor_sessions(ends_at) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS monitor_sessions_user_started_idx
+  ON monitor_sessions(user_id, started_at DESC)
+  INCLUDE (status, ends_at);
 
 CREATE TABLE IF NOT EXISTS risk_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

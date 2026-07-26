@@ -2,6 +2,7 @@ export type Signup = {
   id: string;
   username: string | null;
   email: string | null;
+  image: string | null;
   signup_ip: string | null;
   country: string | null;
   country_code: string | null;

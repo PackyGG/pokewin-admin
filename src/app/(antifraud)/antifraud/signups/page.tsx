@@ -1,0 +1,364 @@
+import { Suspense } from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Fingerprint,
+  MapPin,
+  Network,
+  RadioTower,
+  ScanSearch,
+  ShieldCheck,
+  UserRoundSearch,
+} from "lucide-react";
+
+import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
+import {
+  listAntifraudSignups,
+  type AntifraudSignup,
+} from "@/lib/antifraud/signups";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { HostLink } from "@/components/host-link";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+import { ReviewSeverityBadge } from "../_components/badges";
+
+export const metadata = { title: "Signups · Antifraud" };
+
+export default async function AntifraudSignupsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
+  await requireAntifraudPageAccess();
+  const rawPage = Number((await searchParams).page ?? "1");
+  const page =
+    Number.isInteger(rawPage) && rawPage > 0 ? Math.min(rawPage, 10_000) : 1;
+
+  return (
+    <div className="w-full space-y-5">
+      <header className="flex items-start gap-3 border-b border-border/60 pb-4">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-500">
+          <UserRoundSearch className="size-4" />
+        </span>
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold tracking-tight">Signups</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Every new account with its signup risk assessment and provider checks.
+          </p>
+        </div>
+      </header>
+
+      <Suspense key={page} fallback={<SignupsSkeleton />}>
+        <SignupsData page={page} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function SignupsData({ page }: { page: number }) {
+  const result = await listAntifraudSignups(page);
+  if (!result.configured) {
+    return <EmptyState text="The monitor service is not configured." />;
+  }
+  if (result.error || !result.data) {
+    return <EmptyState text="Signup assessments could not be loaded." />;
+  }
+
+  const { data, pagination, summary } = result.data;
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-border/70 bg-card lg:grid-cols-4">
+        <Summary label="All signups" value={summary.total} />
+        <Summary label="Risk checked" value={summary.assessed} />
+        <Summary label="Needs attention" value={summary.attention} tone="risk" />
+        <Summary label="Monitoring now" value={summary.monitoring} tone="live" />
+      </div>
+
+      {data.length === 0 ? (
+        <EmptyState text="No signups have been assessed yet." />
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-border/70 bg-card">
+          {data.map((signup) => (
+            <SignupRow key={signup.user_id} signup={signup} />
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span>
+          Page {pagination.page} of {pagination.pages} · {pagination.total} signups
+        </span>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={pagination.page <= 1}
+            render={
+              pagination.page > 1 ? (
+                <HostLink href={`/antifraud/signups?page=${pagination.page - 1}`} />
+              ) : undefined
+            }
+          >
+            <ChevronLeft className="size-3.5" />
+            Previous
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={pagination.page >= pagination.pages}
+            render={
+              pagination.page < pagination.pages ? (
+                <HostLink href={`/antifraud/signups?page=${pagination.page + 1}`} />
+              ) : undefined
+            }
+          >
+            Next
+            <ChevronRight className="size-3.5" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SignupRow({ signup }: { signup: AntifraudSignup }) {
+  const initials = (signup.username ?? signup.email ?? "?")
+    .slice(0, 2)
+    .toUpperCase();
+  const location = [signup.city, signup.state, signup.country_code]
+    .filter(Boolean)
+    .join(", ");
+  const signals = signup.signals.filter((signal) => signal.points !== 0);
+
+  return (
+    <article className="border-b border-border/60 p-3 last:border-b-0 sm:p-4">
+      <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(220px,1.15fr)_minmax(280px,1.35fr)_minmax(250px,1.1fr)_auto] lg:items-center">
+        <div className="flex min-w-0 items-center gap-3">
+          <Avatar className="size-10 shrink-0">
+            {signup.avatar_url && (
+              <AvatarImage src={signup.avatar_url} alt={signup.username ?? "User"} />
+            )}
+            <AvatarFallback className="bg-cyan-500/10 text-xs font-semibold text-cyan-600 dark:text-cyan-400">
+              {initials}
+            </AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold">
+              {signup.username ?? "Unnamed account"}
+            </p>
+            <p className="truncate text-xs text-muted-foreground">
+              {signup.email ?? signup.user_id}
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {formatDate(signup.source_created_at)}
+            </p>
+          </div>
+        </div>
+
+        <div className="grid min-w-0 gap-1.5 text-xs sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+          <Info icon={MapPin} value={location || "Location unavailable"} />
+          <Info icon={Network} value={signup.signup_ip ?? "IP unavailable"} mono />
+          <Info
+            icon={ScanSearch}
+            value={
+              signup.affiliate_code
+                ? `Affiliate ${signup.affiliate_code}`
+                : "No affiliate code"
+            }
+          />
+          <Info
+            icon={ShieldCheck}
+            value={signup.referred_by ? "Referred signup" : "Direct signup"}
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <ProviderCheck
+            icon={Fingerprint}
+            label="Fingerprint"
+            status={signup.fingerprint_status}
+            score={signup.fingerprint_score}
+            signalCount={signup.fingerprint_signals.length}
+          />
+          <ProviderCheck
+            icon={Network}
+            label="IP check"
+            status={signup.proxycheck_status}
+            score={signup.proxycheck_score}
+            signalCount={signup.proxycheck_signals.length}
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-3 lg:min-w-32 lg:flex-col lg:items-end">
+          <div className="flex items-center gap-2">
+            <ReviewSeverityBadge severity={signup.severity} />
+            <span className="text-sm font-semibold tabular-nums">
+              {signup.score} pts
+            </span>
+          </div>
+          {signup.case_id ? (
+            <Button
+              variant="outline"
+              size="sm"
+              render={<HostLink href={`/antifraud/reviews/${signup.case_id}`} />}
+            >
+              {signup.monitor_status === "active" && (
+                <RadioTower className="size-3.5 text-cyan-500" />
+              )}
+              Open case
+            </Button>
+          ) : (
+            <Badge variant="outline" className="text-[10px] text-muted-foreground">
+              Cleared
+            </Badge>
+          )}
+        </div>
+      </div>
+
+      {signals.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border/50 pt-3 lg:ml-[52px]">
+          {signals.slice(0, 4).map((signal) => (
+            <Badge
+              key={signal.key}
+              variant="outline"
+              className={cn(
+                "h-5 px-1.5 text-[10px]",
+                signal.points > 0
+                  ? "border-rose-500/25 bg-rose-500/8 text-rose-600 dark:text-rose-400"
+                  : "border-emerald-500/25 bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
+              )}
+            >
+              {signal.title} · {signal.points > 0 ? "+" : ""}
+              {signal.points}
+            </Badge>
+          ))}
+          {signals.length > 4 && (
+            <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+              +{signals.length - 4} more
+            </Badge>
+          )}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function ProviderCheck({
+  icon: Icon,
+  label,
+  status,
+  score,
+  signalCount,
+}: {
+  icon: typeof Fingerprint;
+  label: string;
+  status: string | null;
+  score: number | null;
+  signalCount: number;
+}) {
+  const checked = status === "success";
+  const result = checked
+    ? signalCount > 0
+      ? `${signalCount} signal${signalCount === 1 ? "" : "s"}`
+      : "Clean"
+    : status === "skipped" && signalCount > 0
+      ? `${signalCount} signal${signalCount === 1 ? "" : "s"}`
+      : status
+        ? status[0]?.toUpperCase() + status.slice(1)
+        : "Pending";
+  return (
+    <div className="min-w-0 rounded-md border border-border/60 bg-muted/20 px-2.5 py-2">
+      <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <Icon className="size-3.5 shrink-0" />
+        <span className="truncate">{label}</span>
+      </div>
+      <p className="mt-1 truncate text-xs font-medium">
+        {result}
+        {score != null ? ` · ${Math.round(score)}` : ""}
+      </p>
+    </div>
+  );
+}
+
+function Info({
+  icon: Icon,
+  value,
+  mono = false,
+}: {
+  icon: typeof MapPin;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+      <Icon className="size-3.5 shrink-0" />
+      <span className={cn("truncate", mono && "font-mono text-[11px]")}>{value}</span>
+    </div>
+  );
+}
+
+function Summary({
+  label,
+  value,
+  tone = "default",
+}: {
+  label: string;
+  value: number;
+  tone?: "default" | "risk" | "live";
+}) {
+  return (
+    <div className="border-b border-r border-border/60 px-3 py-2.5 last:border-r-0 lg:border-b-0">
+      <p className="text-[11px] text-muted-foreground">{label}</p>
+      <p
+        className={cn(
+          "mt-0.5 text-lg font-semibold tabular-nums",
+          tone === "risk" && "text-rose-600 dark:text-rose-400",
+          tone === "live" && "text-cyan-600 dark:text-cyan-400",
+        )}
+      >
+        {value.toLocaleString()}
+      </p>
+    </div>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
+      {text}
+    </div>
+  );
+}
+
+function SignupsSkeleton() {
+  return (
+    <div className="space-y-4">
+      <Skeleton className="h-[67px] w-full rounded-lg" />
+      <div className="overflow-hidden rounded-lg border border-border/70">
+        {Array.from({ length: 6 }).map((_, index) => (
+          <div
+            key={index}
+            className="flex items-center gap-3 border-b border-border/60 p-4 last:border-b-0"
+          >
+            <Skeleton className="size-10 shrink-0 rounded-full" />
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-4 w-44" />
+              <Skeleton className="h-3 w-72 max-w-full" />
+            </div>
+            <Skeleton className="h-6 w-20" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Europe/Berlin",
+  }).format(new Date(value));
+}
