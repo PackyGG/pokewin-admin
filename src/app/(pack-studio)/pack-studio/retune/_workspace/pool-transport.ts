@@ -1,4 +1,5 @@
 import type { EditPool } from "../../doctor/retune-actions";
+import { hrefForCurrentHost } from "@/lib/use-app-host";
 
 /**
  * Client transport for the READ-ONLY pool: GETs the concurrent
@@ -12,7 +13,9 @@ import type { EditPool } from "../../doctor/retune-actions";
  */
 export async function fetchPoolOverWire(packId: string): Promise<EditPool> {
   const res = await fetch(
-    `/pack-studio/retune/pool?packId=${encodeURIComponent(packId)}`,
+    hrefForCurrentHost(
+      `/pack-studio/retune/pool?packId=${encodeURIComponent(packId)}`,
+    ),
   );
   let payload: unknown = null;
   try {

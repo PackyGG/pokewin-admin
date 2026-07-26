@@ -1,8 +1,8 @@
 import * as React from "react";
-import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { pressable } from "@/components/ux/motion";
+import { HostLink } from "@/components/host-link";
 
 /**
  * Shared modern UI primitives. Extracted so every admin page can apply
@@ -183,13 +183,13 @@ export function PageHeroIdentity({
   const backNode =
     back ??
     (backHref ? (
-      <Link
+      <HostLink
         href={backHref}
         aria-label="Back to previous list"
         className="inline-flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
       >
         <ArrowLeft className="size-4" aria-hidden />
-      </Link>
+      </HostLink>
     ) : null);
 
   // No back + no action → render nothing. The de-boxed hero has no title to

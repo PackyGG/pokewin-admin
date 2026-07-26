@@ -77,3 +77,13 @@ export function useHostHrefs(paths: readonly string[]): string[] {
   const config = useAppHost();
   return paths.map((path) => (config ? hrefFrom(config, path) : path));
 }
+
+/**
+ * Event-handler/transport variant for destinations only known after an async
+ * action. Unlike the hooks above this resolves at call time in the browser.
+ */
+export function hrefForCurrentHost(path: string): string {
+  if (typeof window === "undefined") return path;
+  const config = resolveAppHost(window.location.host);
+  return config ? hrefFrom(config, path) : path;
+}

@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import Link from "next/link";
+import { HostLink } from "@/components/host-link";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -173,12 +173,12 @@ async function QueuePreview() {
         icon={ShieldAlert}
         title="Needs attention"
         action={
-          <Link
+          <HostLink
             href="/antifraud/reviews"
             className="text-xs font-medium text-muted-foreground hover:text-foreground"
           >
             Open queue →
-          </Link>
+          </HostLink>
         }
       />
       {reviews.length === 0 ? (
@@ -191,7 +191,7 @@ async function QueuePreview() {
         <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
           {reviews.map((review) => (
             <li key={review.id}>
-              <Link
+              <HostLink
                 href={`/antifraud/reviews/${review.id}`}
                 className="flex items-start gap-3 px-3 py-2.5 outline-none transition-colors hover:bg-accent/50 focus-visible:bg-accent/50 sm:px-4"
               >
@@ -210,7 +210,7 @@ async function QueuePreview() {
                 <span className="shrink-0 text-[11px] text-muted-foreground">
                   {formatRelative(review.createdAt)}
                 </span>
-              </Link>
+              </HostLink>
             </li>
           ))}
         </ul>
@@ -317,12 +317,12 @@ async function PersonalSection({
         title="Your workspace"
         action={
           canManage ? (
-            <Link
+            <HostLink
               href="/antifraud/settings/quizzes"
               className="text-xs font-medium text-muted-foreground hover:text-foreground"
             >
               Manage quizzes →
-            </Link>
+            </HostLink>
           ) : undefined
         }
       />

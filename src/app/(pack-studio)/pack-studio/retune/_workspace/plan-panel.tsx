@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
+import { HostLink } from "@/components/host-link";
 import {
   ArrowRight,
   ClipboardCopy,
@@ -1355,7 +1355,7 @@ export function PlanPanel({
               variant="ghost"
               size="sm"
               nativeButton={false}
-              render={<Link href="/pack-studio/doctor" />}
+              render={<HostLink href="/pack-studio/doctor" />}
             >
               <Stethoscope className="size-3.5" />
               Open in Doctor

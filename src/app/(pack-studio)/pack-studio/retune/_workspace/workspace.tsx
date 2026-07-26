@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
+import { HostLink } from "@/components/host-link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ExternalLink, Layers, MousePointerClick, RotateCw } from "lucide-react";
@@ -2098,7 +2098,7 @@ export function RetuneWorkspace({
                 variant="outline"
                 size="sm"
                 nativeButton={false}
-                render={<Link href="/pack-studio/doctor" />}
+                render={<HostLink href="/pack-studio/doctor" />}
               >
                 Open Pack Doctor
               </Button>
@@ -2187,7 +2187,7 @@ export function RetuneWorkspace({
                     variant="outline"
                     size="sm"
                     nativeButton={false}
-                    render={<Link href={`/packs/${selectedRow.packId}`} />}
+                    render={<HostLink href={`/packs/${selectedRow.packId}`} />}
                   >
                     <ExternalLink className="size-3.5" />
                     Open pack
@@ -2262,12 +2262,12 @@ export function RetuneWorkspace({
                             {DEGENERATE_BADGE}
                           </span>
                         )}
-                        <Link
+                        <HostLink
                           href="/pack-studio/drafts"
                           className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
                         >
                           Hand-typed odds → Drafts
-                        </Link>
+                        </HostLink>
                       </div>
                     }
                   />

@@ -91,6 +91,14 @@ export const SEGMENT_BASE_PATHS = [
   "/creator-hub",
 ] as const;
 
+/**
+ * Retired public prefixes. These still resolve so old bookmarks self-heal, but
+ * the canonical URL always uses the owning subdomain without the prefix.
+ */
+const HOST_PATH_ALIASES = [
+  { prefix: "/marketing", host: `marketing.${ROOT_DOMAIN}` },
+] as const;
+
 export const APP_HOSTS: readonly AppHostConfig[] = [
   {
     host: ROOT_DOMAIN,
@@ -226,6 +234,46 @@ export function hostForBasePath(basePath: string): AppHostConfig | null {
   return APP_HOSTS.find((h) => h.basePath === basePath) ?? null;
 }
 
+type OwnedPublicPath = {
+  owner: AppHostConfig;
+  publicPath: string;
+};
+
+function pathAfterPrefix(pathname: string, prefix: string): string | null {
+  if (pathname === prefix) return "/";
+  if (!pathname.startsWith(prefix + "/")) return null;
+  return pathname.slice(prefix.length);
+}
+
+/**
+ * Resolve an internal or retired prefixed path to the host and clean path users
+ * should see. Middleware redirects and link generation share this function so
+ * links cannot reintroduce a prefix that routing removes.
+ */
+function ownedPublicPath(pathname: string): OwnedPublicPath | null {
+  for (const basePath of SEGMENT_BASE_PATHS) {
+    const publicPath = pathAfterPrefix(pathname, basePath);
+    if (publicPath === null) continue;
+    const owner = hostForBasePath(basePath);
+    if (!owner) return null;
+    return { owner, publicPath };
+  }
+
+  for (const alias of HOST_PATH_ALIASES) {
+    const publicPath = pathAfterPrefix(pathname, alias.prefix);
+    if (publicPath === null) continue;
+    const owner = APP_HOSTS.find((entry) => entry.host === alias.host);
+    if (!owner) return null;
+    return {
+      owner,
+      publicPath:
+        publicPath === "/" && !owner.basePath ? owner.landing : publicPath,
+    };
+  }
+
+  return null;
+}
+
 function isPassthrough(pathname: string): boolean {
   if (PASSTHROUGH_EXACT.has(pathname)) return true;
   if (PASSTHROUGH_PREFIXES.some((p) => pathname.startsWith(p))) return true;
@@ -249,9 +297,8 @@ export function rewritePathForHost(
 ): string | null {
   if (!config.basePath) return null;
   if (isPassthrough(pathname)) return null;
-  // Already inside this host's own segment — serve it directly. Both URL forms
-  // therefore work (`/reviews` and `/antifraud/reviews`), which is what makes
-  // an un-upgraded link harmless.
+  // Already inside this host's internal segment. The redirect layer
+  // canonicalizes this to the clean public path before it reaches here.
   if (
     pathname === config.basePath ||
     pathname.startsWith(config.basePath + "/")
@@ -274,9 +321,10 @@ export function rewritePathForHost(
  * The absolute URL a request should be redirected to, or null to handle it
  * locally. Two jobs, both about keeping ONE canonical home per app:
  *
- *  1. A path owned by another host goes to that host. `/antifraud` opened
- *     anywhere lands on fraud.packydash.com — so stale links, bookmarks and the
- *     old single-domain URLs all self-heal instead of 404ing.
+ *  1. A prefixed path goes to its owner with the prefix stripped. This applies
+ *     even when it is already on the right host, so old links and bookmarks
+ *     cannot leave `/antifraud`, `/pack-studio`, or `/marketing` in
+ *     the visible URL.
  *
  *  2. On a SEGMENT host, a path that isn't one of this sub-app's own routes is
  *     a main-app path and goes to the apex. This is what makes an un-upgraded
@@ -288,14 +336,11 @@ export function redirectTargetForHost(
 ): string | null {
   if (isPassthrough(pathname)) return null;
 
-  // (1) Owned by another host?
-  for (const base of SEGMENT_BASE_PATHS) {
-    if (pathname !== base && !pathname.startsWith(base + "/")) continue;
-    const owner = hostForBasePath(base);
-    // A segment with no host of its own (creator-hub today) stays in place.
-    if (!owner) return null;
-    if (owner.host === config.host) return null;
-    return `https://${owner.host}${pathname}`;
+  // (1) Prefixed path with a dedicated host? Always redirect to its clean
+  // public path, including when the request is already on that host.
+  const owned = ownedPublicPath(pathname);
+  if (owned) {
+    return `https://${owned.owner.host}${owned.publicPath}`;
   }
 
   // (2) A main-app path on a segment host.
@@ -360,15 +405,17 @@ export function hrefFrom(
   current: AppHostConfig | null,
   path: string,
 ): string {
+  if (
+    /^(?:https?:\/\/|mailto:|tel:|#|\?)/i.test(path)
+  ) {
+    return path;
+  }
   if (!current) return path;
 
-  // Which host owns this path?
-  const owningBase = SEGMENT_BASE_PATHS.find(
-    (base) => path === base || path.startsWith(base + "/"),
-  );
-  const owner = owningBase ? hostForBasePath(owningBase) : null;
+  // Which host owns this internal path, and what is its clean public path?
+  const owned = ownedPublicPath(path);
 
-  if (!owner) {
+  if (!owned) {
     // A main-app path. Reachable in place on a landing host; on a segment host
     // it has to be absolute, because a bare path would be rewritten into the
     // segment.
@@ -377,14 +424,11 @@ export function hrefFrom(
     return `https://${apex.host}${path}`;
   }
 
-  if (owner.host === current.host) {
-    // Same host — strip the redundant base so the URL stays clean
-    // (`fraud.packydash.com/reviews`, not `/antifraud/reviews`).
-    const stripped = path.slice(owner.basePath!.length);
-    return stripped === "" ? "/" : stripped;
+  if (owned.owner.host === current.host) {
+    return owned.publicPath;
   }
 
-  return `https://${owner.host}${path}`;
+  return `https://${owned.owner.host}${owned.publicPath}`;
 }
 
 /** The href set every sidebar needs, resolved once server-side. */

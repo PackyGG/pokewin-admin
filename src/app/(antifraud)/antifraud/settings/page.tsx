@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import Link from "next/link";
+import { HostLink } from "@/components/host-link";
 import { Check, Globe, Plug, Settings, Users, X } from "lucide-react";
 
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
@@ -189,12 +189,11 @@ function IntegrationSection() {
           <span className="text-sm font-semibold">Hostnames</span>
         </div>
         <p className="text-[11px] text-muted-foreground">
-          One deployment answers on all of these. A host with a segment serves
-          that sub-app at its root —{" "}
-          <code className="font-mono">fraud.{ROOT_DOMAIN}/reviews</code> renders
-          the same page as{" "}
-          <code className="font-mono">/antifraud/reviews</code> here. Add extra
-          hosts (preview domains, local) with{" "}
+          One deployment answers on all of these. Every section is served from
+          its own host without a route prefix, for example{" "}
+          <code className="font-mono">fraud.{ROOT_DOMAIN}/reviews</code>. Old
+          prefixed links redirect to the clean URL. Add extra hosts (preview
+          domains, local) with{" "}
           <code className="font-mono">NEXT_PUBLIC_APP_HOST_MAP</code>.
         </p>
         <ul className="space-y-1.5">
@@ -211,7 +210,7 @@ function IntegrationSection() {
               <code className="font-mono font-medium">{entry.host}</code>
               <span className="text-muted-foreground">→ {entry.label}</span>
               <span className="ml-auto text-muted-foreground">
-                lands {entry.landing}
+                lands {entry.basePath ? "/" : entry.landing}
               </span>
               <span className="rounded-sm border border-border/60 px-1.5 py-0.5 uppercase tracking-wide text-muted-foreground">
                 {entry.allowRoles ? entry.allowRoles.join(" · ") : "all roles"}
@@ -235,12 +234,12 @@ function IntegrationSection() {
         <p className="mt-1 text-[11px] text-muted-foreground">
           Quiz authoring lives on its own page.
         </p>
-        <Link
+        <HostLink
           href="/antifraud/settings/quizzes"
           className="mt-2 inline-block text-xs font-medium text-cyan-600 hover:underline dark:text-cyan-400"
         >
           Open the Quiz Manager →
-        </Link>
+        </HostLink>
       </div>
     </div>
   );

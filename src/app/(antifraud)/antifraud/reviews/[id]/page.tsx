@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
-import Link from "next/link";
+import { HostLink } from "@/components/host-link";
 import {
   Activity,
   ExternalLink,
@@ -149,13 +149,13 @@ async function CaseDetail({
 
           {/* The bridge to the surfaces that can actually act on the
               account. Opens the main dashboard's user page. */}
-          <Link
+          <HostLink
             href={`/users/${review.targetUserId}`}
             className="inline-flex items-center gap-1.5 text-xs font-medium text-cyan-600 hover:underline dark:text-cyan-400"
           >
             <ExternalLink className="size-3.5" />
             Open this player on the main dashboard
-          </Link>
+          </HostLink>
         </div>
 
         {/* ── Related signals ───────────────────────────────────── */}

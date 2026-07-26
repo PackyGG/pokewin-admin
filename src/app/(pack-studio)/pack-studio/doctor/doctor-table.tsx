@@ -25,6 +25,7 @@ import { EmptyState } from "@/components/empty-state";
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { hrefForCurrentHost } from "@/lib/use-app-host";
 import type { PackRiskRow } from "../_queries/doctor";
 import { BulkRetuneButton } from "./bulk-retune-button";
 
@@ -353,7 +354,9 @@ export function DoctorTable({
   // brain, and `?pack=<id>` selects + plans the pack on arrival.
   const onRetune = React.useCallback(
     (packId: string) => {
-      router.push(`/pack-studio/retune?pack=${packId}`);
+      router.push(
+        hrefForCurrentHost(`/pack-studio/retune?pack=${packId}`),
+      );
     },
     [router],
   );

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { SlidersHorizontal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { hrefForCurrentHost } from "@/lib/use-app-host";
 
 /**
  * Bulk "Re-tune selected" handoff (owner-only). The doctor grid no longer
@@ -39,16 +40,20 @@ export function BulkRetuneButton({
     const ids = selected.map((s) => s.packId);
     if (ids.length === 0) return;
     if (ids.length <= MAX_URL_IDS) {
-      router.push(`/pack-studio/retune?bulk=${ids.join(",")}`);
+      router.push(
+        hrefForCurrentHost(`/pack-studio/retune?bulk=${ids.join(",")}`),
+      );
       return;
     }
     try {
       window.sessionStorage.setItem(BULK_HANDOFF_KEY, JSON.stringify(ids));
-      router.push("/pack-studio/retune?bulk=session");
+      router.push(hrefForCurrentHost("/pack-studio/retune?bulk=session"));
     } catch {
       // sessionStorage unavailable (quota/private mode) — fall back to the
       // URL form; a long URL beats silently dropping the selection.
-      router.push(`/pack-studio/retune?bulk=${ids.join(",")}`);
+      router.push(
+        hrefForCurrentHost(`/pack-studio/retune?bulk=${ids.join(",")}`),
+      );
     }
   }
 

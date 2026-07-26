@@ -1,5 +1,5 @@
 import type * as React from "react";
-import Link from "next/link";
+import { HostLink } from "@/components/host-link";
 import {
   Activity,
   AlertTriangle,
@@ -91,7 +91,7 @@ function AlertGroup({
   const iconTint = accent === "rose" ? "text-rose-500" : "text-amber-500";
 
   return (
-    <Link
+    <HostLink
       href={`/pack-studio/doctor?${query}`}
       className={`group block rounded-xl border p-4 transition-colors ${tint}`}
     >
@@ -128,7 +128,7 @@ function AlertGroup({
           </li>
         )}
       </ul>
-    </Link>
+    </HostLink>
   );
 }
 

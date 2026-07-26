@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
+import { HostLink } from "@/components/host-link";
 import { Bell, CheckCheck, Inbox } from "lucide-react";
 import { toast } from "sonner";
 
@@ -152,12 +152,12 @@ export function NotificationBell() {
         }
         title="Notifications"
         className={cn(
-          // Pixel-matched to the profile card beside it: same min-h-8, same
+          // Pixel-matched to the profile card beside it: same 40px box, same
           // border/tint treatment, so the header reads as one control cluster.
-          "group relative flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/40 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring",
+          "group relative flex size-10 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/40 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring",
         )}
       >
-        <Bell className="size-4 text-muted-foreground transition-colors group-hover:text-foreground" />
+        <Bell className="size-5 text-muted-foreground transition-colors group-hover:text-foreground" />
         {unread > 0 && (
           <span
             className={cn(
@@ -203,7 +203,7 @@ export function NotificationBell() {
               <Inbox className="size-5 text-muted-foreground" />
               <span className="text-sm font-medium">You&apos;re all caught up</span>
               <span className="text-xs text-muted-foreground">
-                Quiz drops, case assignments and fraud alerts land here.
+                Team messages, assignments, and system alerts land here.
               </span>
             </div>
           )}
@@ -247,7 +247,7 @@ export function NotificationBell() {
             );
 
             return item.href ? (
-              <Link
+              <HostLink
                 key={item.id}
                 href={item.href}
                 className={className}
@@ -257,7 +257,7 @@ export function NotificationBell() {
                 }}
               >
                 {inner}
-              </Link>
+              </HostLink>
             ) : (
               <button
                 key={item.id}
@@ -272,13 +272,13 @@ export function NotificationBell() {
         </div>
 
         <div className="border-t border-border/60 px-3 py-2">
-          <Link
-            href="/antifraud/notifications"
+          <HostLink
+            href="/system/staff-notifications"
             onClick={() => setOpen(false)}
             className="block rounded-md px-1 py-0.5 text-center text-[11px] font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
             View all notifications
-          </Link>
+          </HostLink>
         </div>
       </DropdownMenuContent>
     </DropdownMenu>

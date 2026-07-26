@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { stableShuffle, type QuestionKind } from "@/lib/antifraud/constants";
+import { hrefForCurrentHost } from "@/lib/use-app-host";
 import { startQuizAttempt, submitQuizAttempt } from "../actions";
 
 /**
@@ -108,7 +109,11 @@ export function QuizRunner({
             ? "Time's up — answers submitted"
             : `${result.correctCount}/${result.questionCount} correct`,
         );
-        router.push(`/antifraud/quizzes/attempts/${result.attemptId}`);
+        router.push(
+          hrefForCurrentHost(
+            `/antifraud/quizzes/attempts/${result.attemptId}`,
+          ),
+        );
       } catch (err) {
         toast.error(
           err instanceof Error ? err.message : "Could not submit your answers",

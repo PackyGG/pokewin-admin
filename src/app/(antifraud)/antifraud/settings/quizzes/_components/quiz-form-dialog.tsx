@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ALL_ADMIN_ROLES } from "@/lib/admin-roles";
+import { hrefForCurrentHost } from "@/lib/use-app-host";
 import { createQuiz, updateQuiz } from "../actions";
 
 /**
@@ -107,7 +108,9 @@ export function QuizFormDialog({
         const { id } = await createQuiz(payload);
         toast.success("Draft created — add questions next");
         setOpen(false);
-        router.push(`/antifraud/settings/quizzes/${id}`);
+        router.push(
+          hrefForCurrentHost(`/antifraud/settings/quizzes/${id}`),
+        );
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not save the quiz");

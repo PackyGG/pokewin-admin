@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { hrefForCurrentHost } from "@/lib/use-app-host";
 import {
   Select,
   SelectContent,
@@ -65,7 +66,7 @@ export function OpenCaseDialog() {
       toast.success("Case opened");
       setOpen(false);
       reset();
-      router.push(`/antifraud/reviews/${id}`);
+      router.push(hrefForCurrentHost(`/antifraud/reviews/${id}`));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not open the case");
     } finally {

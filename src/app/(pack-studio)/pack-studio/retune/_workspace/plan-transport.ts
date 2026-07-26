@@ -2,6 +2,7 @@ import type {
   PackTunePlan,
   PackTuneStagedInput,
 } from "../../doctor/retune-actions";
+import { hrefForCurrentHost } from "@/lib/use-app-host";
 
 /**
  * Client transport for the READ-ONLY plan: POSTs to the concurrent
@@ -19,7 +20,7 @@ export async function planPackTuneOverWire(
   staged: PackTuneStagedInput | null,
   opts: { fresh?: boolean; lite?: boolean } | null,
 ): Promise<PackTunePlan | null> {
-  const res = await fetch("/pack-studio/retune/plan", {
+  const res = await fetch(hrefForCurrentHost("/pack-studio/retune/plan"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ packId, staged, opts }),

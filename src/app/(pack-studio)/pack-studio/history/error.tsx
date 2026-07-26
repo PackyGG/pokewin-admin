@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import Link from "next/link";
+import { HostLink } from "@/components/host-link";
 import { AlertTriangle, ArrowLeft, RotateCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -75,7 +75,7 @@ export default function PackHistoryError({
           variant="outline"
           size="sm"
           nativeButton={false}
-          render={<Link href="/pack-studio" />}
+          render={<HostLink href="/pack-studio" />}
         >
           <ArrowLeft className="size-4" />
           Back to Studio

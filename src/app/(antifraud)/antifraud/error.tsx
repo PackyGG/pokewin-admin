@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import Link from "next/link";
+import { HostLink } from "@/components/host-link";
 import { AlertTriangle, RotateCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -73,7 +73,7 @@ export default function AntifraudError({
           <RotateCw className="size-4" />
           Try again
         </Button>
-        <Button type="button" variant="outline" size="sm" render={<Link href="/antifraud" />}>
+        <Button type="button" variant="outline" size="sm" render={<HostLink href="/antifraud" />}>
           Back to overview
         </Button>
       </div>

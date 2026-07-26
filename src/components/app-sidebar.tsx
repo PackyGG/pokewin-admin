@@ -2,9 +2,11 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
+import { HostLink } from "@/components/host-link";
 import { usePathname } from "next/navigation";
 import {
   Activity,
+  Bell,
   // Antifraud portal card mark. Direct component ref — the sub-app portal
   // cards in the footer don't go through the string-keyed ICONS map below.
   ShieldAlert,
@@ -95,6 +97,7 @@ import { LinkPending } from "@/components/ux";
 
 const ICONS: Record<string, LucideIcon> = {
   Activity,
+  Bell,
   LayoutDashboard,
   BarChart3,
   Users,
@@ -652,7 +655,7 @@ export function AppSidebar({
             with a hover tooltip. */}
         {canEnterCreatorHub && (
           <div className="px-2 group-data-[collapsible=icon]:px-0">
-            <Link
+            <HostLink
               href="/creator-hub"
               onClick={handleNavTap}
               title="Switch to Creator Hub"
@@ -674,7 +677,7 @@ export function AppSidebar({
                 </span>
               </span>
               <ArrowRight className="size-4 shrink-0 text-pink-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/portal:translate-x-0.5" />
-            </Link>
+            </HostLink>
           </div>
         )}
         {/* Pack Studio portal — sits directly below the Creator Hub portal in
@@ -686,7 +689,7 @@ export function AppSidebar({
             violet mark with a hover tooltip. */}
         {canEnterPackStudio && (
           <div className="px-2 group-data-[collapsible=icon]:px-0">
-            <Link
+            <HostLink
               href="/pack-studio"
               onClick={handleNavTap}
               title="Switch to Pack Studio"
@@ -708,7 +711,7 @@ export function AppSidebar({
                 </span>
               </span>
               <ArrowRight className="size-4 shrink-0 text-violet-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/studio:translate-x-0.5" />
-            </Link>
+            </HostLink>
           </div>
         )}
         {/* Antifraud portal — the THIRD sub-app card, directly below Pack
@@ -722,7 +725,7 @@ export function AppSidebar({
             mark with a hover tooltip. */}
         {canEnterAntifraud && (
           <div className="px-2 group-data-[collapsible=icon]:px-0">
-            <Link
+            <HostLink
               href="/antifraud"
               onClick={handleNavTap}
               title="Switch to Antifraud"
@@ -744,7 +747,7 @@ export function AppSidebar({
                 </span>
               </span>
               <ArrowRight className="size-4 shrink-0 text-cyan-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/fraud:translate-x-0.5" />
-            </Link>
+            </HostLink>
           </div>
         )}
         <div className="flex items-center justify-between px-2 group-data-[collapsible=icon]:justify-center">

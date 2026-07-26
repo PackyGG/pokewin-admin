@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { notFound, redirect } from "next/navigation";
-import Link from "next/link";
+import { HostLink } from "@/components/host-link";
 import { CheckCircle2, Trophy, XCircle } from "lucide-react";
 
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
@@ -194,18 +194,18 @@ async function ResultBody({
       </ol>
 
       <div className="flex flex-wrap gap-3">
-        <Link
+        <HostLink
           href="/antifraud/quizzes"
           className="rounded-md border border-border/60 bg-muted/40 px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted"
         >
           Back to quizzes
-        </Link>
-        <Link
+        </HostLink>
+        <HostLink
           href="/antifraud/profile"
           className="rounded-md border border-border/60 bg-muted/40 px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted"
         >
           Your profile
-        </Link>
+        </HostLink>
       </div>
     </div>
   );

@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import Link from "next/link";
+import { HostLink } from "@/components/host-link";
 import { CheckCircle2, GraduationCap, Trophy } from "lucide-react";
 
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
@@ -45,12 +45,12 @@ export default async function QuizzesPage() {
           subtitle="One point per correct answer"
           action={
             canManage ? (
-              <Link
+              <HostLink
                 href="/antifraud/settings/quizzes"
                 className="rounded-md border border-border/60 bg-muted/40 px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted"
               >
                 Manage quizzes
-              </Link>
+              </HostLink>
             ) : undefined
           }
         />
@@ -201,12 +201,12 @@ function QuizCard({
   }
 
   return (
-    <Link
+    <HostLink
       href={`/antifraud/quizzes/${quiz.id}`}
       className="rounded-xl border border-border/60 bg-card p-4 outline-none transition-colors hover:border-purple-500/40 hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring"
     >
       {body}
-    </Link>
+    </HostLink>
   );
 }
 

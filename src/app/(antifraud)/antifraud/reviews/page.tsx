@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import Link from "next/link";
+import { HostLink } from "@/components/host-link";
 import { CheckCircle2, ShieldAlert } from "lucide-react";
 
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
@@ -127,7 +127,7 @@ function FilterChip({
   children: React.ReactNode;
 }) {
   return (
-    <Link
+    <HostLink
       href={href}
       className={cn(
         "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
@@ -137,7 +137,7 @@ function FilterChip({
       )}
     >
       {children}
-    </Link>
+    </HostLink>
   );
 }
 
@@ -217,7 +217,7 @@ function FilterBar({
       </div>
 
       {/* GET form — no client JS, and the URL stays shareable. */}
-      <form action="/antifraud/reviews" className="flex flex-wrap gap-2">
+      <form className="flex flex-wrap gap-2">
         {status && <input type="hidden" name="status" value={status} />}
         {severity && <input type="hidden" name="severity" value={severity} />}
         {mine && <input type="hidden" name="mine" value="1" />}
@@ -276,7 +276,7 @@ async function QueueList({ filters }: { filters: ReviewFilters }) {
         <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
           {reviews.map((review) => (
             <li key={review.id}>
-              <Link
+              <HostLink
                 href={`/antifraud/reviews/${review.id}`}
                 className="flex flex-col gap-2 px-3 py-3 outline-none transition-colors hover:bg-accent/50 focus-visible:bg-accent/50 sm:flex-row sm:items-center sm:gap-4 sm:px-4"
               >
@@ -323,7 +323,7 @@ async function QueueList({ filters }: { filters: ReviewFilters }) {
                     {formatRelative(review.createdAt)}
                   </span>
                 </span>
-              </Link>
+              </HostLink>
             </li>
           ))}
         </ul>
