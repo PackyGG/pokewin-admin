@@ -5,7 +5,14 @@ import {
   type CreatorListItem,
   type CreatorSessionResponse,
 } from "@/lib/backend-api";
+import { getDrizzleDb } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
+import {
+  creator_deals,
+  creator_stream_sessions,
+  user,
+} from "@/lib/db-schema/main/schema";
+import { and, desc, eq, gt, inArray, lte, sql } from "drizzle-orm";
 
 import {
   buildCacheKey,
@@ -70,15 +77,122 @@ const SESSIONS_TTL_SECONDS = 120;
  * roster is exactly the live roster.
  */
 async function pageCreatorRoster(): Promise<CreatorListItem[]> {
-  const out: CreatorListItem[] = [];
-  let offset = 0;
-  while (out.length < CREATOR_LIST_CAP) {
-    const slice = await creatorsApi.list({ limit: 100, offset });
-    out.push(...slice.data);
-    offset += slice.data.length;
-    if (slice.data.length === 0 || offset >= slice.total) break;
+  try {
+    const out: CreatorListItem[] = [];
+    let offset = 0;
+    while (out.length < CREATOR_LIST_CAP) {
+      const slice = await creatorsApi.list({ limit: 100, offset });
+      out.push(...slice.data);
+      offset += slice.data.length;
+      if (slice.data.length === 0 || offset >= slice.total) break;
+    }
+    return out;
+  } catch (error) {
+    console.warn(
+      "[creator-roster] backend unavailable; reading canonical PostgreSQL roster",
+      error,
+    );
+    return pageCreatorRosterFromPostgres();
   }
-  return out;
+}
+
+/**
+ * Read-only fallback matching the backend's `listCreators` repository query.
+ * The admin already has request-scoped MAIN PostgreSQL access, so a broken
+ * backend deployment must not blank a read-only roster.
+ */
+async function pageCreatorRosterFromPostgres(): Promise<CreatorListItem[]> {
+  const db = await getDrizzleDb();
+  const creators = await db
+    .select({
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      image: user.image,
+      role: user.role,
+      created_at: user.created_at,
+    })
+    .from(user)
+    .where(eq(user.role, "creator"))
+    .orderBy(desc(user.created_at))
+    .limit(CREATOR_LIST_CAP);
+
+  if (creators.length === 0) return [];
+
+  const ids = creators.map((creator) => creator.id);
+  const now = new Date().toISOString();
+  const [currentDeals, activeSessions, dealCounts] = await Promise.all([
+    db
+      .select({
+        id: creator_deals.id,
+        user_id: creator_deals.user_id,
+        status: creator_deals.status,
+        week_start_utc: creator_deals.week_start_utc,
+        week_end_utc: creator_deals.week_end_utc,
+        fills_allowed: creator_deals.fills_allowed,
+        fills_used: creator_deals.fills_used,
+        per_fill_amount_usd: creator_deals.per_fill_amount_usd,
+      })
+      .from(creator_deals)
+      .where(
+        and(
+          inArray(creator_deals.user_id, ids),
+          inArray(creator_deals.status, ["scheduled", "active"]),
+          lte(creator_deals.week_start_utc, now),
+          gt(creator_deals.week_end_utc, now),
+        ),
+      ),
+    db
+      .select({
+        id: creator_stream_sessions.id,
+        user_id: creator_stream_sessions.user_id,
+      })
+      .from(creator_stream_sessions)
+      .where(
+        and(
+          inArray(creator_stream_sessions.user_id, ids),
+          eq(creator_stream_sessions.status, "active"),
+        ),
+      ),
+    db
+      .select({
+        user_id: creator_deals.user_id,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(creator_deals)
+      .where(inArray(creator_deals.user_id, ids))
+      .groupBy(creator_deals.user_id),
+  ]);
+
+  const dealByUser = new Map(
+    currentDeals.map((deal) => [deal.user_id, deal]),
+  );
+  const sessionByUser = new Map(
+    activeSessions.map((session) => [session.user_id, session.id]),
+  );
+  const countByUser = new Map(
+    dealCounts.map((count) => [count.user_id, count.count]),
+  );
+
+  return creators.map((creator) => {
+    const deal = dealByUser.get(creator.id);
+    return {
+      ...creator,
+      current_deal: deal
+        ? {
+            id: deal.id,
+            status: deal.status,
+            week_start_utc: deal.week_start_utc,
+            week_end_utc: deal.week_end_utc,
+            fills_allowed: deal.fills_allowed,
+            fills_used: deal.fills_used,
+            per_fill_amount_usd: deal.per_fill_amount_usd,
+          }
+        : null,
+      active_session_id: sessionByUser.get(creator.id) ?? null,
+      total_deals_count: countByUser.get(creator.id) ?? 0,
+    };
+  });
 }
 
 /**

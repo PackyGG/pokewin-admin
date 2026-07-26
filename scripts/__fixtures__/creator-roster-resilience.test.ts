@@ -19,6 +19,10 @@ test("creator list surfaces share the retained roster cache", () => {
   }
   assert.match(cache, /cacheGetOrSetStale\(/);
   assert.match(cache, /ROSTER_STALE_TTL_SECONDS = 6 \* 60 \* 60/);
+  assert.match(cache, /pageCreatorRosterFromPostgres\(\)/);
+  assert.match(cache, /eq\(user\.role, "creator"\)/);
+  assert.match(cache, /creator_stream_sessions\.status, "active"/);
+  assert.match(cache, /count\(\*\)::int/);
 });
 
 test("idempotent backend reads retry bounded transient failures", () => {
