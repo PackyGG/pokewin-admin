@@ -7,6 +7,7 @@ import { adminRolesColumnExists } from "@/lib/admin-user-roles";
 import { SectionHeading, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { type AdminUserRow } from "../admin-users-table";
+import { compareAdminUsersByRole } from "../admin-user-sort";
 import { AdminsList } from "../admins-list";
 import { AdminsViewToggle } from "../admins-view-toggle";
 
@@ -142,7 +143,7 @@ export async function AdminsTab({
       capabilityCount: capabilityKeys.length,
       balanceLimitCount: limitsByAdmin.get(u.id) ?? 0,
     };
-  });
+  }).sort(compareAdminUsersByRole);
 
   const activeCount = users.filter((u) => u.is_active).length;
   const totpCount = users.filter((u) => u.totp_enabled).length;
