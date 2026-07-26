@@ -11,7 +11,6 @@ import { verifySession, getUserPermissions, sessionIsOwner } from "@/lib/dal";
 import { getSession, type SessionPayload } from "@/lib/session";
 import {
   getEffectiveRoles,
-  isDedicatedPackBuilder,
 } from "@/lib/admin-roles";
 import {
   canAccessCreatorHub,
@@ -243,16 +242,6 @@ export default async function AdminLayout({
   children: React.ReactNode;
 }) {
   const session = await safeVerifySession();
-  const effectiveRoles = getEffectiveRoles(session.role, session.roles);
-
-  // A single-role Pack Builder belongs to the dedicated Packs webapp.
-  // Multi-role staff keep the union of their assigned jobs.
-  if (
-    isDedicatedPackBuilder(effectiveRoles) &&
-    !sessionIsOwner(session)
-  ) {
-    redirect("/pack-studio");
-  }
   // Permissions, header profile, preferences, and the current DB env
   // are independent lookups keyed on the same userId/cookie jar.
   // Serializing them cost ~4 round-trips on every admin page load —

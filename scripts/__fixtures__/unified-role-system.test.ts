@@ -43,6 +43,7 @@ import {
   ALL_ADMIN_ROLES,
   getEffectiveRoles,
   isDedicatedPackBuilder,
+  isPackBuilderContentPath,
 } from "@/lib/admin-roles";
 import {
   isValidLandingRoute,
@@ -104,6 +105,29 @@ test("only a single-role Pack Builder is isolated to the Packs webapp", () => {
   assert.equal(isDedicatedPackBuilder(["pack_creator"]), true);
   assert.equal(isDedicatedPackBuilder(["support", "pack_creator"]), false);
   assert.equal(isDedicatedPackBuilder(["admin", "pack_creator"]), false);
+});
+
+test("Pack Builder normal-dashboard scope is exactly Packs, Cards, and Sets", () => {
+  for (const path of [
+    "/packs",
+    "/packs/pack-id",
+    "/cards",
+    "/cards/card-id",
+    "/sets",
+  ]) {
+    assert.equal(isPackBuilderContentPath(path), true, path);
+  }
+  for (const path of [
+    "/dashboard",
+    "/upgrader",
+    "/rewards/shards",
+    "/staff",
+    "/system/staff-notifications",
+    "/antifraud",
+    "/creator-hub",
+  ]) {
+    assert.equal(isPackBuilderContentPath(path), false, path);
+  }
 });
 
 // ── 1b. NULL/empty landing_route → null (fall through to default routing) ────

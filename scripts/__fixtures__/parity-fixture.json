@@ -213,18 +213,13 @@
         "__can_delete_card",
         "__can_upload_card_image",
         "__can_create_set",
-        "/upgrader",
         "__can_delete_pack",
         "__can_toggle_pack_active",
         "__can_update_set",
         "__can_delete_set",
         "__can_seed_initial_sets",
         "__can_force_absorb_cards",
-        "__can_upload_set_image",
-        "__can_add_upgrader_output",
-        "__can_toggle_upgrader_output",
-        "__can_remove_upgrader_output",
-        "/rewards/shards"
+        "__can_upload_set_image"
       ],
       "override": {
         "grants": [],
@@ -272,18 +267,13 @@
         "__can_delete_card",
         "__can_upload_card_image",
         "__can_create_set",
-        "/upgrader",
         "__can_delete_pack",
         "__can_toggle_pack_active",
         "__can_update_set",
         "__can_delete_set",
         "__can_seed_initial_sets",
         "__can_force_absorb_cards",
-        "__can_upload_set_image",
-        "__can_add_upgrader_output",
-        "__can_toggle_upgrader_output",
-        "__can_remove_upgrader_output",
-        "/rewards/shards"
+        "__can_upload_set_image"
       ],
       "override": {
         "grants": [],
