@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
+import type { FastifyBaseLogger } from "fastify";
+import type { Redis } from "ioredis";
 import type pg from "pg";
+import type { WebSocket } from "ws";
 
 import { serviceRequestAuthorized } from "../src/auth.js";
 import type { Config } from "../src/config.js";
 import { sameDecisionIdentity } from "../src/decision-idempotency.js";
 import { pollerStalledFor, type PollerHealthSnapshot } from "../src/poller-health.js";
-import { parseEnvelope, STREAM_ID_PATTERN } from "../src/live.js";
+import { LiveBus, parseEnvelope, STREAM_ID_PATTERN } from "../src/live.js";
 import { processOrderedBatch } from "../src/ordered-ingestion.js";
 import { createPromiseCache } from "../src/promise-cache.js";
 import { caseDecisionSchema } from "../src/request-schemas.js";
@@ -26,6 +30,87 @@ import {
 import type { ActiveSession, Signup } from "../src/types.js";
 
 type CapturedQuery = { sql: string; values: unknown[] | undefined };
+
+class FakeRedis extends EventEmitter {
+  status = "ready";
+  evalCalls: unknown[][] = [];
+  setResults: Array<"OK" | null> = ["OK"];
+  setCalls = 0;
+  quitCalls = 0;
+
+  async subscribe(): Promise<number> {
+    return 1;
+  }
+
+  async eval(...args: unknown[]): Promise<string> {
+    this.evalCalls.push(args);
+    return "1720000000000-1";
+  }
+
+  async set(): Promise<"OK" | null> {
+    this.setCalls += 1;
+    return this.setResults.shift() ?? null;
+  }
+
+  async call(): Promise<null> {
+    return null;
+  }
+
+  async quit(): Promise<"OK"> {
+    this.quitCalls += 1;
+    return "OK";
+  }
+}
+
+class FakeWebSocket extends EventEmitter {
+  readonly OPEN = 1;
+  readonly CLOSING = 2;
+  readyState = this.OPEN;
+  bufferedAmount = 0;
+  terminated = 0;
+  sent: string[] = [];
+
+  send(payload: string, callback?: (error?: Error) => void): void {
+    this.sent.push(payload);
+    callback?.();
+  }
+
+  ping(): void {}
+
+  close(): void {
+    this.finish();
+  }
+
+  terminate(): void {
+    this.terminated += 1;
+    this.finish();
+  }
+
+  private finish(): void {
+    if (this.readyState !== this.OPEN) return;
+    this.readyState = 3;
+    this.emit("close");
+  }
+}
+
+const quietLogger = {
+  error() {},
+  warn() {},
+} as unknown as FastifyBaseLogger;
+
+function liveBusFixture(): {
+  bus: LiveBus;
+  publisher: FakeRedis;
+  subscriber: FakeRedis;
+} {
+  const publisher = new FakeRedis();
+  const subscriber = new FakeRedis();
+  const bus = new LiveBus("redis://fixture", quietLogger, {
+    publisher: publisher as unknown as Redis,
+    subscriber: subscriber as unknown as Redis,
+  });
+  return { bus, publisher, subscriber };
+}
 
 function capturePool(
   rows: unknown[] = [],
@@ -293,6 +378,65 @@ test("live replay envelopes require valid ids and object payloads", () => {
     ),
     null,
   );
+});
+
+test("live publish persists and broadcasts through one atomic Redis command", async () => {
+  const { bus, publisher } = liveBusFixture();
+
+  await bus.publish("monitor.event", { caseId: "case-1" });
+
+  assert.equal(publisher.evalCalls.length, 1);
+  const [script, keyCount, stream, channel, maxLength, payload] =
+    publisher.evalCalls[0] ?? [];
+  assert.equal(typeof script, "string");
+  assert.match(String(script), /XADD/);
+  assert.match(String(script), /PUBLISH/);
+  assert.deepEqual(
+    [keyCount, stream, channel, maxLength],
+    [2, "antifraud:live:stream", "antifraud:live", "2000"],
+  );
+  const message = JSON.parse(String(payload)) as Record<string, unknown>;
+  assert.equal(message.type, "monitor.event");
+  assert.equal(typeof message.at, "string");
+  assert.deepEqual(message.data, { caseId: "case-1" });
+
+  await bus.close();
+});
+
+test("websocket tickets retry a failed NX reservation", async () => {
+  const { bus, publisher } = liveBusFixture();
+  publisher.setResults = [null, "OK"];
+
+  const ticket = await bus.createTicket({ actorId: "staff-1" });
+
+  assert.match(ticket, /^[A-Za-z0-9_-]{40,100}$/);
+  assert.equal(publisher.setCalls, 2);
+  await bus.close();
+});
+
+test("websocket client errors terminate and release the actor slot", async () => {
+  const { bus } = liveBusFixture();
+  const clients = Array.from({ length: 4 }, () => new FakeWebSocket());
+
+  for (const client of clients.slice(0, 3)) {
+    assert.equal(
+      bus.addClient(client as unknown as WebSocket, "staff-1"),
+      true,
+    );
+  }
+  assert.equal(
+    bus.addClient(clients[3] as unknown as WebSocket, "staff-1"),
+    false,
+  );
+
+  clients[0]?.emit("error", new Error("peer reset"));
+  assert.equal(clients[0]?.terminated, 1);
+  assert.equal(
+    bus.addClient(clients[3] as unknown as WebSocket, "staff-1"),
+    true,
+  );
+
+  await bus.close();
 });
 
 test("signup and activity cursors preserve exact application-precision UTC tuples", async () => {

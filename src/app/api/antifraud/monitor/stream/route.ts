@@ -366,7 +366,13 @@ export async function GET(request: Request): Promise<Response> {
                 ? replayEvents(baseUrl, token, lastDeliveredId)
                 : Promise.resolve([]))
                 .then((replayed) => {
-                  if (closed || socket !== next) return;
+                  if (
+                    closed ||
+                    socket !== next ||
+                    next.readyState !== WebSocket.OPEN
+                  ) {
+                    return;
+                  }
                   for (const event of replayed) forward(event);
                   replaying = false;
                   for (const event of pending) forward(event);

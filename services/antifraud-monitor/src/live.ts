@@ -12,6 +12,24 @@ const STREAM_MAX_LEN = 2_000;
 const REPLAY_MAX_ENTRIES = 200;
 const MAX_BUFFERED_BYTES = 512 * 1024;
 const HEARTBEAT_MS = 30_000;
+const TICKET_TTL_SECONDS = 30;
+const TICKET_CREATE_ATTEMPTS = 3;
+
+const PUBLISH_SCRIPT = `
+local id = redis.call(
+  "XADD",
+  KEYS[1],
+  "MAXLEN",
+  "~",
+  ARGV[1],
+  "*",
+  "payload",
+  ARGV[2]
+)
+local envelope = '{"id":"' .. id .. '",' .. string.sub(ARGV[2], 2)
+redis.call("PUBLISH", KEYS[2], envelope)
+return id
+`;
 
 /** Every frame on the wire carries the replay id of its stream entry. */
 export type LiveEnvelope = LiveMessage & { id: string };
@@ -55,15 +73,20 @@ export class LiveBus {
   constructor(
     redisUrl: string,
     private readonly log: FastifyBaseLogger,
+    connections?: { publisher: Redis; subscriber: Redis },
   ) {
-    this.publisher = new Redis(redisUrl, {
-      maxRetriesPerRequest: 2,
-      enableReadyCheck: true,
-    });
-    this.subscriber = new Redis(redisUrl, {
-      maxRetriesPerRequest: 2,
-      enableReadyCheck: true,
-    });
+    this.publisher =
+      connections?.publisher ??
+      new Redis(redisUrl, {
+        maxRetriesPerRequest: 2,
+        enableReadyCheck: true,
+      });
+    this.subscriber =
+      connections?.subscriber ??
+      new Redis(redisUrl, {
+        maxRetriesPerRequest: 2,
+        enableReadyCheck: true,
+      });
 
     this.publisher.on("error", (error: Error) => {
       this.log.error({ err: error }, "Antifraud live publisher redis error");
@@ -74,6 +97,9 @@ export class LiveBus {
     });
     this.subscriber.on("error", (error: Error) => {
       this.log.error({ err: error }, "Antifraud live subscriber redis error");
+    });
+    this.subscriber.on("close", () => {
+      this.subscribed = false;
     });
     this.subscriber.on("end", () => {
       this.subscribed = false;
@@ -91,7 +117,13 @@ export class LiveBus {
         if (client.bufferedAmount > MAX_BUFFERED_BYTES) {
           client.terminate();
         } else if (client.readyState === client.OPEN) {
-          client.send(payload);
+          try {
+            client.send(payload, (error?: Error) => {
+              if (error) client.terminate();
+            });
+          } catch {
+            client.terminate();
+          }
         }
       }
     });
@@ -108,7 +140,11 @@ export class LiveBus {
   }
 
   isSubscribed(): boolean {
-    return this.subscribed;
+    return (
+      this.subscribed &&
+      this.publisher.status === "ready" &&
+      this.subscriber.status === "ready"
+    );
   }
 
   private async ensureSubscribed(): Promise<void> {
@@ -130,28 +166,17 @@ export class LiveBus {
       at: new Date().toISOString(),
       data,
     };
-    let id = "";
-    try {
-      id =
-        (await this.publisher.xadd(
-          STREAM,
-          "MAXLEN",
-          "~",
-          STREAM_MAX_LEN,
-          "*",
-          "payload",
-          JSON.stringify(message),
-        )) ?? "";
-    } catch (error) {
-      this.log.error(
-        { err: error },
-        "Failed to append an antifraud live event to the replay stream",
-      );
-    }
-    await this.publisher.publish(
+    const id = await this.publisher.eval(
+      PUBLISH_SCRIPT,
+      2,
+      STREAM,
       CHANNEL,
-      JSON.stringify({ id, ...message } satisfies LiveEnvelope),
+      String(STREAM_MAX_LEN),
+      JSON.stringify(message),
     );
+    if (typeof id !== "string" || !STREAM_ID_PATTERN.test(id)) {
+      throw new Error("Redis returned an invalid antifraud live stream id");
+    }
   }
 
   /**
@@ -186,16 +211,38 @@ export class LiveBus {
     this.clientsByActor.set(actorId, actorConnections + 1);
     let released = false;
     let alive = true;
-    const heartbeat = setInterval(() => {
-      if (!alive) {
+    const terminate = () => {
+      try {
         client.terminate();
+      } catch {
+        // The peer may already have completed teardown.
+      }
+    };
+    const heartbeat = setInterval(() => {
+      if (client.readyState !== client.OPEN) {
+        terminate();
+        return;
+      }
+      if (!alive) {
+        terminate();
         return;
       }
       alive = false;
-      client.ping();
+      try {
+        client.ping();
+      } catch {
+        terminate();
+      }
     }, HEARTBEAT_MS);
     client.on("pong", () => {
       alive = true;
+    });
+    client.on("error", (error: Error) => {
+      this.log.warn(
+        { err: error, actorId },
+        "Antifraud live websocket client error",
+      );
+      terminate();
     });
     client.on("close", () => {
       if (released) return;
@@ -206,25 +253,33 @@ export class LiveBus {
       if (remaining <= 0) this.clientsByActor.delete(actorId);
       else this.clientsByActor.set(actorId, remaining);
     });
-    client.send(JSON.stringify({
-      id: "",
-      type: "connected",
-      at: new Date().toISOString(),
-      data: {},
-    } satisfies LiveEnvelope));
+    client.send(
+      JSON.stringify({
+        id: "",
+        type: "connected",
+        at: new Date().toISOString(),
+        data: {},
+      } satisfies LiveEnvelope),
+      (error?: Error) => {
+        if (error) terminate();
+      },
+    );
     return true;
   }
 
   async createTicket(actor: Record<string, unknown>): Promise<string> {
-    const ticket = randomBytes(32).toString("base64url");
-    await this.publisher.set(
-      `antifraud:ws-ticket:${ticket}`,
-      JSON.stringify(actor),
-      "EX",
-      30,
-      "NX",
-    );
-    return ticket;
+    for (let attempt = 0; attempt < TICKET_CREATE_ATTEMPTS; attempt += 1) {
+      const ticket = randomBytes(32).toString("base64url");
+      const result = await this.publisher.set(
+        `antifraud:ws-ticket:${ticket}`,
+        JSON.stringify(actor),
+        "EX",
+        TICKET_TTL_SECONDS,
+        "NX",
+      );
+      if (result === "OK") return ticket;
+    }
+    throw new Error("Failed to reserve a unique antifraud websocket ticket");
   }
 
   async consumeTicket(ticket: string): Promise<{ actorId: string } | null> {

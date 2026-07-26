@@ -136,7 +136,8 @@ function emitGiveUp(conn: Connection) {
   }
 }
 
-function closeSource(conn: Connection) {
+function closeSource(conn: Connection): boolean {
+  const wasOpened = conn.opened;
   if (conn.source) {
     try {
       conn.source.close();
@@ -146,6 +147,7 @@ function closeSource(conn: Connection) {
     conn.source = null;
   }
   conn.opened = false;
+  return wasOpened;
 }
 
 function connect(conn: Connection) {
@@ -225,9 +227,7 @@ function connect(conn: Connection) {
     // on the terminal case; otherwise let the browser's own retry run.
     if (source.readyState !== EventSource.CLOSED) return;
 
-    closeSource(conn);
-
-    const wasHealthy = conn.opened;
+    const wasHealthy = closeSource(conn);
     if (wasHealthy) {
       // First failure after a healthy run — treat as a soft retry on
       // the gentle schedule. The connection had at least one good
