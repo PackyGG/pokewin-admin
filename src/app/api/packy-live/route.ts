@@ -5,7 +5,12 @@ import {
   verifySession,
 } from "@/lib/dal";
 import { pageAccessGranted } from "@/lib/admin-pages";
+import {
+  subscribeAdminLiveActivity,
+  type AdminLiveTopic as AdminActivityTopic,
+} from "@/lib/admin-live-activity";
 import { resolveBackendApiConfig } from "@/lib/backend-api/config";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { revalidateTag } from "next/cache";
 import https from "node:https";
 import crypto from "node:crypto";
@@ -22,9 +27,10 @@ import type { Duplex, Writable } from "node:stream";
 import * as ws from "ws";
 
 /**
- * Server-side proxy for the packy.gg live event stream. Opens the
- * upstream WebSocket with a fresh RFC 6455 handshake, then forwards
- * only the event families the authenticated staff member may view.
+ * One authenticated SSE endpoint for dashboard live data. Chat is proxied
+ * from the existing packy.gg WebSocket; admin activity is detected locally
+ * through shared, read-only MAIN DB snapshots. Nothing outside this repo
+ * needs an admin-specific WebSocket protocol.
  */
 
 // `Receiver` is a Writable stream but the @types/ws package doesn't
@@ -71,13 +77,6 @@ const PACKY_WS_BASE_HEADERS: Record<string, string> = {
   "Sec-WebSocket-Version": "13",
   "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits",
 };
-
-type AdminActivityTopic =
-  | "deposits"
-  | "card_payments"
-  | "withdrawals"
-  | "balance"
-  | "gaming";
 
 function isLoopbackOrigin(origin: string): boolean {
   try {
@@ -165,8 +164,7 @@ export async function GET(request: Request): Promise<Response> {
   const trustedOrigins = new Set([PRODUCTION_DASHBOARD_ORIGIN]);
   const trustedRequestOrigin =
     trustedOrigins.has(requestOrigin) ||
-    (process.env.NODE_ENV !== "production" &&
-      isLoopbackOrigin(requestOrigin));
+    (process.env.NODE_ENV !== "production" && isLoopbackOrigin(requestOrigin));
   if (
     !trustedRequestOrigin ||
     (origin != null &&
@@ -186,6 +184,7 @@ export async function GET(request: Request): Promise<Response> {
   let userId: string;
   let allowedTopics: Set<AdminActivityTopic>;
   let canReceiveChat: boolean;
+  let dbEnv: DbEnv | null = null;
   try {
     const session = await verifySession();
     userId = session.userId;
@@ -193,13 +192,10 @@ export async function GET(request: Request): Promise<Response> {
     const permissions = fullAccess
       ? []
       : await getUserPermissions(session.userId);
-    const canViewUsers =
-      fullAccess || pageAccessGranted(permissions, "/users");
+    const canViewUsers = fullAccess || pageAccessGranted(permissions, "/users");
     const canViewTransactions =
-      fullAccess ||
-      pageAccessGranted(permissions, "/transactions/deposits");
-    canReceiveChat =
-      fullAccess || pageAccessGranted(permissions, "/chat");
+      fullAccess || pageAccessGranted(permissions, "/transactions/deposits");
+    canReceiveChat = fullAccess || pageAccessGranted(permissions, "/chat");
     allowedTopics = new Set<AdminActivityTopic>();
     if (canViewUsers) {
       allowedTopics.add("balance");
@@ -213,40 +209,51 @@ export async function GET(request: Request): Promise<Response> {
     if (allowedTopics.size === 0 && !canReceiveChat) {
       return new Response("Forbidden", { status: 403 });
     }
+    if (allowedTopics.size > 0) {
+      dbEnv = await readDbEnv();
+    }
   } catch {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  let upstreamHeaders: Record<string, string>;
-  let upstreamHost: string;
-  let upstreamPort: number;
-  let upstreamPath: string;
-  let expectedAccept: string;
-  try {
-    const backend = await resolveBackendApiConfig();
-    const backendUrl = new URL(backend.baseUrl);
-    if (backendUrl.protocol !== "https:") {
-      throw new Error("Live backend must use HTTPS");
+  let upstream: {
+    headers: Record<string, string>;
+    host: string;
+    port: number;
+    path: string;
+    expectedAccept: string;
+  } | null = null;
+  if (canReceiveChat) {
+    try {
+      const backend = await resolveBackendApiConfig();
+      const backendUrl = new URL(backend.baseUrl);
+      if (backendUrl.protocol !== "https:") {
+        throw new Error("Live backend must use HTTPS");
+      }
+      const websocketKey = crypto.randomBytes(16).toString("base64");
+      upstream = {
+        host: backendUrl.hostname,
+        port: Number(backendUrl.port || "443"),
+        path: `${backendUrl.pathname.replace(/\/+$/, "")}/ws`,
+        expectedAccept: crypto
+          .createHash("sha1")
+          .update(websocketKey + WS_GUID)
+          .digest("base64"),
+        headers: {
+          ...PACKY_WS_BASE_HEADERS,
+          ...backend.cfHeaders,
+          Host: backendUrl.host,
+          Origin: requestOrigin,
+          "Sec-WebSocket-Key": websocketKey,
+          "x-api-key": backend.adminKey,
+        },
+      };
+    } catch (error) {
+      // Activity events are produced locally from read-only MAIN DB queries,
+      // so missing chat configuration must not take deposits/withdrawals/users
+      // offline with it.
+      console.error("[packy-live] chat backend unavailable", error);
     }
-    upstreamHost = backendUrl.hostname;
-    upstreamPort = Number(backendUrl.port || "443");
-    upstreamPath = `${backendUrl.pathname.replace(/\/+$/, "")}/ws`;
-    const websocketKey = crypto.randomBytes(16).toString("base64");
-    expectedAccept = crypto
-      .createHash("sha1")
-      .update(websocketKey + WS_GUID)
-      .digest("base64");
-    upstreamHeaders = {
-      ...PACKY_WS_BASE_HEADERS,
-      ...backend.cfHeaders,
-      Host: backendUrl.host,
-      Origin: requestOrigin,
-      "Sec-WebSocket-Key": websocketKey,
-      "x-api-key": backend.adminKey,
-    };
-  } catch (error) {
-    console.error("[packy-live] backend config unavailable", error);
-    return new Response("Live backend unavailable", { status: 503 });
   }
 
   const currentOpen = openStreams.get(userId) ?? 0;
@@ -271,18 +278,11 @@ export async function GET(request: Request): Promise<Response> {
       let req: ReturnType<typeof https.request> | null = null;
       let socket: Duplex | null = null;
       let receiver: ReceiverWithEvents | null = null;
+      let unsubscribeActivity: (() => void) | null = null;
       let heartbeat: ReturnType<typeof setInterval> | null = null;
       let rotation: ReturnType<typeof setTimeout> | null = null;
 
-      const cleanup = () => {
-        if (closed) return;
-        closed = true;
-        // Decrement the per-user open-stream counter on close/abort/error
-        // so a 4th tab can connect once one of the first 3 hangs up. The
-        // helper is idempotent — calling it twice is safe.
-        decrementOnce();
-        if (heartbeat) clearInterval(heartbeat);
-        if (rotation) clearTimeout(rotation);
+      const cleanupUpstream = () => {
         if (receiver) {
           try {
             receiver.removeAllListeners();
@@ -303,12 +303,27 @@ export async function GET(request: Request): Promise<Response> {
         }
         if (req) {
           try {
+            req.removeAllListeners();
             req.destroy();
           } catch {
             // ignore
           }
           req = null;
         }
+      };
+
+      const cleanup = () => {
+        if (closed) return;
+        closed = true;
+        // Decrement the per-user open-stream counter on close/abort/error
+        // so a 4th tab can connect once one of the first 3 hangs up. The
+        // helper is idempotent — calling it twice is safe.
+        decrementOnce();
+        if (heartbeat) clearInterval(heartbeat);
+        if (rotation) clearTimeout(rotation);
+        unsubscribeActivity?.();
+        unsubscribeActivity = null;
+        cleanupUpstream();
         try {
           controller.close();
         } catch {
@@ -329,304 +344,337 @@ export async function GET(request: Request): Promise<Response> {
         write(`event: ${event}\ndata: ${data}\n\n`);
       };
 
+      if (dbEnv && allowedTopics.size > 0) {
+        unsubscribeActivity = subscribeAdminLiveActivity(
+          dbEnv,
+          allowedTopics,
+          (event) => {
+            const payload = filterAndInvalidateAdminActivity(
+              JSON.stringify(event),
+              allowedTopics,
+              canReceiveChat,
+            );
+            if (payload) writeEvent("packy", payload);
+          },
+        );
+      }
+
       if (request.signal.aborted) {
         cleanup();
         return;
       }
       request.signal.addEventListener("abort", cleanup, { once: true });
 
-      try {
-        req = https.request({
-          host: upstreamHost,
-          port: upstreamPort,
-          path: upstreamPath,
-          method: "GET",
-          headers: upstreamHeaders,
-          timeout: 15_000,
-        });
-      } catch (err) {
+      if (!upstream) {
         writeEvent(
-          "error",
+          "open",
           JSON.stringify({
-            message: "upstream-init-failed",
-            detail: err instanceof Error ? err.message : String(err),
+            activity: dbEnv ? "connected" : "disabled",
+            chat: canReceiveChat ? "unavailable" : "disabled",
           }),
         );
-        cleanup();
-        return;
-      }
-
-      req.on("error", (err) => {
-        writeEvent(
-          "error",
-          JSON.stringify({
-            message: err.message ?? String(err),
-            phase: "request",
-          }),
-        );
-        cleanup();
-      });
-
-      req.on("response", (res) => {
-        writeEvent(
-          "error",
-          JSON.stringify({
-            message: "upstream-did-not-upgrade",
-            status: res.statusCode ?? 0,
-          }),
-        );
-        cleanup();
-      });
-
-      req.on("upgrade", (res, rawSocket, head) => {
-        if (closed) {
-          rawSocket.destroy();
-          return;
-        }
-
-        const accept = res.headers["sec-websocket-accept"];
-        if (accept !== expectedAccept) {
+      } else {
+        try {
+          req = https.request({
+            host: upstream.host,
+            port: upstream.port,
+            path: upstream.path,
+            method: "GET",
+            headers: upstream.headers,
+            timeout: 15_000,
+          });
+        } catch (err) {
           writeEvent(
             "error",
             JSON.stringify({
-              message: "accept-mismatch",
-              expected: expectedAccept,
-              got: String(accept ?? "(none)"),
+              message: "upstream-init-failed",
+              detail: err instanceof Error ? err.message : String(err),
             }),
           );
-          rawSocket.destroy();
-          cleanup();
-          return;
+          req = null;
         }
+      }
 
-        socket = rawSocket;
+      if (req && upstream) {
+        const activeReq = req;
+        const activeUpstream = upstream;
 
-        const extHeader = res.headers["sec-websocket-extensions"];
-        const extensions: Record<string, unknown> = {};
-        if (extHeader && String(extHeader).includes("permessage-deflate")) {
-          // PerMessageDeflate constructor args: (options, isServer,
-          // maxPayload). @types/ws doesn't expose this class, so we
-          // grab it off the namespace import and cast to the real
-          // constructor shape. `extensionName` is a static on the
-          // class ("permessage-deflate") used as the extensions-map
-          // key Receiver expects.
-          const PmdCtor = (
-            ws as unknown as {
-              PerMessageDeflate: {
-                new (
-                  options: Record<string, unknown>,
-                  isServer: boolean,
-                  maxPayload: number,
-                ): {
-                  accept(
-                    offers: Record<string, unknown>[],
-                  ): Record<string, unknown>;
-                };
-                extensionName: string;
-              };
-            }
-          ).PerMessageDeflate;
-          if (typeof PmdCtor !== "function") {
+        activeReq.on("error", (err) => {
+          writeEvent(
+            "error",
+            JSON.stringify({
+              message: err.message ?? String(err),
+              phase: "request",
+            }),
+          );
+          cleanupUpstream();
+        });
+
+        activeReq.on("response", (res) => {
+          writeEvent(
+            "error",
+            JSON.stringify({
+              message: "upstream-did-not-upgrade",
+              status: res.statusCode ?? 0,
+            }),
+          );
+          res.resume();
+          cleanupUpstream();
+        });
+
+        activeReq.on("timeout", () => {
+          writeEvent(
+            "error",
+            JSON.stringify({ message: "upstream-timeout", phase: "request" }),
+          );
+          cleanupUpstream();
+        });
+
+        activeReq.on("upgrade", (res, rawSocket, head) => {
+          if (closed) {
+            rawSocket.destroy();
+            return;
+          }
+
+          const accept = res.headers["sec-websocket-accept"];
+          if (accept !== activeUpstream.expectedAccept) {
             writeEvent(
               "error",
               JSON.stringify({
-                message:
-                  "PerMessageDeflate not available — ws import misresolved",
+                message: "accept-mismatch",
+                expected: activeUpstream.expectedAccept,
+                got: String(accept ?? "(none)"),
               }),
             );
             rawSocket.destroy();
-            cleanup();
+            cleanupUpstream();
             return;
           }
-          const pmd = new PmdCtor({}, false, 100 * 1024 * 1024);
-          try {
-            pmd.accept([{}]);
-            extensions[PmdCtor.extensionName] = pmd;
-          } catch {
-            // fall back uncompressed
-          }
-        }
 
-        // @types/ws doesn't export Receiver either — same namespace
-        // cast pattern.
-        const ReceiverCtor = (
-          ws as unknown as {
-            Receiver: new (opts?: {
-              binaryType?: "nodebuffer" | "arraybuffer" | "fragments";
-              extensions?: Record<string, unknown>;
-              isServer?: boolean;
-              maxPayload?: number;
-              skipUTF8Validation?: boolean;
-            }) => ReceiverWithEvents;
-          }
-        ).Receiver;
-        if (typeof ReceiverCtor !== "function") {
-          writeEvent(
-            "error",
-            JSON.stringify({
-              message: "Receiver not available — ws import misresolved",
-            }),
-          );
-          rawSocket.destroy();
-          cleanup();
-          return;
-        }
-        receiver = new ReceiverCtor({
-          binaryType: "nodebuffer",
-          extensions,
-          isServer: false,
-          maxPayload: 100 * 1024 * 1024,
-          skipUTF8Validation: false,
-        });
+          socket = rawSocket;
 
-        receiver.on("message", (data) => {
-          let payload: string;
-          if (typeof data === "string") {
-            payload = data;
-          } else if (Buffer.isBuffer(data)) {
-            payload = data.toString("utf8");
-          } else if (Array.isArray(data)) {
-            payload = Buffer.concat(data as Buffer[]).toString("utf8");
-          } else if (data instanceof ArrayBuffer) {
-            payload = Buffer.from(new Uint8Array(data)).toString("utf8");
-          } else {
-            return;
-          }
-          const filteredPayload = filterAndInvalidateAdminActivity(
-            payload,
-            allowedTopics,
-            canReceiveChat,
-          );
-          if (filteredPayload == null) return;
-          payload = filteredPayload;
-          if (payload.includes("\n")) {
-            payload = payload.replace(/\n/g, "\\n");
-          }
-          writeEvent("packy", payload);
-        });
-
-        receiver.on("conclude", (code, reason) => {
-          writeEvent(
-            "close",
-            JSON.stringify({
-              code,
-              reason: reason?.toString("utf8") ?? "",
-            }),
-          );
-          cleanup();
-        });
-
-        receiver.on("error", (err) => {
-          writeEvent(
-            "error",
-            JSON.stringify({
-              message: err.message ?? String(err),
-              phase: "receiver",
-            }),
-          );
-          cleanup();
-        });
-
-        if (head && head.length > 0) {
-          receiver.write(head);
-        }
-        rawSocket.on("data", (chunk) => {
-          if (closed || !receiver) return;
-          receiver.write(chunk);
-        });
-        rawSocket.on("close", () => {
-          if (!closed) {
-            writeEvent(
-              "close",
-              JSON.stringify({ code: 1006, reason: "socket-closed" }),
-            );
-            cleanup();
-          }
-        });
-        rawSocket.on("error", (err) => {
-          writeEvent(
-            "error",
-            JSON.stringify({
-              message: err.message ?? String(err),
-              phase: "socket",
-            }),
-          );
-          cleanup();
-        });
-
-        // ── Opt into the feeds we care about ────────────────────────
-        // The gateway broadcasts `active.users.count` without any action
-        // from us, but the chat feed is pull-based: the client has to
-        // send `chat.pull.feed.subscribe` after the handshake to start
-        // receiving `chat.pull.history` frames. Confirmed end-to-end via
-        // the probe scripts in scripts/test-packy-ws-*.mjs.
-        //
-        // We deliberately do NOT subscribe to `live.pull.feed.subscribe`
-        // anymore: no admin UI renders the pull feed (the only consumer,
-        // usePackyWsLivePulls, was removed), so pulling those frames just
-        // burned upstream bandwidth + proxy work for data nobody reads.
-        //
-        // Send via ws.Sender so the frames are properly masked (WS
-        // spec requires client→server text frames to be masked).
-        const SenderCtor = (
-          ws as unknown as {
-            Sender: new (
-              socket: Duplex,
-              extensions: Record<string, unknown>,
-            ) => {
-              send(
-                data: string | Buffer,
-                options: {
-                  binary: boolean;
-                  mask: boolean;
-                  fin: boolean;
-                  compress: boolean;
-                },
-              ): void;
-            };
-          }
-        ).Sender;
-        if (typeof SenderCtor === "function") {
-          const sender = new SenderCtor(rawSocket, extensions);
-          const subscribes = [
-            ...(canReceiveChat
-              ? [{ type: "chat.pull.feed.subscribe" }]
-              : []),
-            ...(allowedTopics.size > 0
-              ? [{ type: "admin.activity.feed.subscribe" }]
-              : []),
-          ];
-          for (const msg of subscribes) {
-            try {
-              sender.send(JSON.stringify(msg), {
-                binary: false,
-                mask: true,
-                fin: true,
-                compress: false,
-              });
-            } catch (err) {
+          const extHeader = res.headers["sec-websocket-extensions"];
+          const extensions: Record<string, unknown> = {};
+          if (extHeader && String(extHeader).includes("permessage-deflate")) {
+            // PerMessageDeflate constructor args: (options, isServer,
+            // maxPayload). @types/ws doesn't expose this class, so we
+            // grab it off the namespace import and cast to the real
+            // constructor shape. `extensionName` is a static on the
+            // class ("permessage-deflate") used as the extensions-map
+            // key Receiver expects.
+            const PmdCtor = (
+              ws as unknown as {
+                PerMessageDeflate: {
+                  new (
+                    options: Record<string, unknown>,
+                    isServer: boolean,
+                    maxPayload: number,
+                  ): {
+                    accept(
+                      offers: Record<string, unknown>[],
+                    ): Record<string, unknown>;
+                  };
+                  extensionName: string;
+                };
+              }
+            ).PerMessageDeflate;
+            if (typeof PmdCtor !== "function") {
               writeEvent(
                 "error",
                 JSON.stringify({
-                  phase: "subscribe",
-                  msg: err instanceof Error ? err.message : String(err),
+                  message:
+                    "PerMessageDeflate not available — ws import misresolved",
                 }),
               );
+              rawSocket.destroy();
+              cleanupUpstream();
+              return;
+            }
+            const pmd = new PmdCtor({}, false, 100 * 1024 * 1024);
+            try {
+              pmd.accept([{}]);
+              extensions[PmdCtor.extensionName] = pmd;
+            } catch {
+              // fall back uncompressed
             }
           }
-        } else {
-          writeEvent(
-            "error",
-            JSON.stringify({
-              message: "Sender not available — ws import misresolved",
-            }),
-          );
-        }
 
-        writeEvent("open", "{}");
-      });
+          // @types/ws doesn't export Receiver either — same namespace
+          // cast pattern.
+          const ReceiverCtor = (
+            ws as unknown as {
+              Receiver: new (opts?: {
+                binaryType?: "nodebuffer" | "arraybuffer" | "fragments";
+                extensions?: Record<string, unknown>;
+                isServer?: boolean;
+                maxPayload?: number;
+                skipUTF8Validation?: boolean;
+              }) => ReceiverWithEvents;
+            }
+          ).Receiver;
+          if (typeof ReceiverCtor !== "function") {
+            writeEvent(
+              "error",
+              JSON.stringify({
+                message: "Receiver not available — ws import misresolved",
+              }),
+            );
+            rawSocket.destroy();
+            cleanupUpstream();
+            return;
+          }
+          receiver = new ReceiverCtor({
+            binaryType: "nodebuffer",
+            extensions,
+            isServer: false,
+            maxPayload: 100 * 1024 * 1024,
+            skipUTF8Validation: false,
+          });
 
-      req.end();
+          receiver.on("message", (data) => {
+            let payload: string;
+            if (typeof data === "string") {
+              payload = data;
+            } else if (Buffer.isBuffer(data)) {
+              payload = data.toString("utf8");
+            } else if (Array.isArray(data)) {
+              payload = Buffer.concat(data as Buffer[]).toString("utf8");
+            } else if (data instanceof ArrayBuffer) {
+              payload = Buffer.from(new Uint8Array(data)).toString("utf8");
+            } else {
+              return;
+            }
+            const filteredPayload = filterAndInvalidateAdminActivity(
+              payload,
+              allowedTopics,
+              canReceiveChat,
+            );
+            if (filteredPayload == null) return;
+            payload = filteredPayload;
+            if (payload.includes("\n")) {
+              payload = payload.replace(/\n/g, "\\n");
+            }
+            writeEvent("packy", payload);
+          });
+
+          receiver.on("conclude", (code, reason) => {
+            writeEvent(
+              "close",
+              JSON.stringify({
+                code,
+                reason: reason?.toString("utf8") ?? "",
+              }),
+            );
+            cleanupUpstream();
+          });
+
+          receiver.on("error", (err) => {
+            writeEvent(
+              "error",
+              JSON.stringify({
+                message: err.message ?? String(err),
+                phase: "receiver",
+              }),
+            );
+            cleanupUpstream();
+          });
+
+          if (head && head.length > 0) {
+            receiver.write(head);
+          }
+          rawSocket.on("data", (chunk) => {
+            if (closed || !receiver) return;
+            receiver.write(chunk);
+          });
+          rawSocket.on("close", () => {
+            if (!closed) {
+              writeEvent(
+                "close",
+                JSON.stringify({ code: 1006, reason: "socket-closed" }),
+              );
+              cleanupUpstream();
+            }
+          });
+          rawSocket.on("error", (err) => {
+            writeEvent(
+              "error",
+              JSON.stringify({
+                message: err.message ?? String(err),
+                phase: "socket",
+              }),
+            );
+            cleanupUpstream();
+          });
+
+          // ── Opt into the feeds we care about ────────────────────────
+          // The gateway broadcasts `active.users.count` without any action
+          // from us, but the chat feed is pull-based: the client has to
+          // send `chat.pull.feed.subscribe` after the handshake to start
+          // receiving `chat.pull.history` frames. Confirmed end-to-end via
+          // the probe scripts in scripts/test-packy-ws-*.mjs.
+          //
+          // We deliberately do NOT subscribe to `live.pull.feed.subscribe`
+          // anymore: no admin UI renders the pull feed (the only consumer,
+          // usePackyWsLivePulls, was removed), so pulling those frames just
+          // burned upstream bandwidth + proxy work for data nobody reads.
+          //
+          // Send via ws.Sender so the frames are properly masked (WS
+          // spec requires client→server text frames to be masked).
+          const SenderCtor = (
+            ws as unknown as {
+              Sender: new (
+                socket: Duplex,
+                extensions: Record<string, unknown>,
+              ) => {
+                send(
+                  data: string | Buffer,
+                  options: {
+                    binary: boolean;
+                    mask: boolean;
+                    fin: boolean;
+                    compress: boolean;
+                  },
+                ): void;
+              };
+            }
+          ).Sender;
+          if (typeof SenderCtor === "function") {
+            const sender = new SenderCtor(rawSocket, extensions);
+            const subscribes = [
+              ...(canReceiveChat ? [{ type: "chat.pull.feed.subscribe" }] : []),
+            ];
+            for (const msg of subscribes) {
+              try {
+                sender.send(JSON.stringify(msg), {
+                  binary: false,
+                  mask: true,
+                  fin: true,
+                  compress: false,
+                });
+              } catch (err) {
+                writeEvent(
+                  "error",
+                  JSON.stringify({
+                    phase: "subscribe",
+                    msg: err instanceof Error ? err.message : String(err),
+                  }),
+                );
+              }
+            }
+          } else {
+            writeEvent(
+              "error",
+              JSON.stringify({
+                message: "Sender not available — ws import misresolved",
+              }),
+            );
+          }
+
+          writeEvent("open", "{}");
+        });
+
+        activeReq.end();
+      }
 
       heartbeat = setInterval(() => {
         if (closed) return;

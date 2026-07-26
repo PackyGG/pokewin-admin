@@ -3,9 +3,9 @@
 /**
  * Client for the packy.gg live event stream via a server-side proxy.
  *
- * Uses an EventSource to /api/packy-live. The Node.js route on our
- * server opens the real WebSocket with a fresh authenticated handshake
- * and forwards only permission-filtered frames as SSE `packy` events.
+ * Uses an EventSource to /api/packy-live. The Node.js route proxies the
+ * existing chat WebSocket and produces permission-filtered admin activity
+ * from read-only MAIN DB snapshots, then fans both out as SSE `packy` events.
  *
  * Public API is the `subscribePackyWs(eventType, handler)` imperative
  * subscription (one shared EventSource fans out to every subscriber).
