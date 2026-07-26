@@ -24,7 +24,7 @@ export default async function SupportPovPage() {
           icon={Eye}
           accent="purple"
           title="Support POV"
-          subtitle="Choose a support user to preview their staff profile"
+          subtitle="Choose a support agent to preview their Staff Hub"
           backHref="/staff"
         />
       </PageHero>
@@ -47,7 +47,7 @@ async function SupportPovList() {
   if (members.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-12 text-center text-sm text-muted-foreground">
-        No support profiles exist yet.
+        No support agents have opened Staff Hub yet.
       </div>
     );
   }

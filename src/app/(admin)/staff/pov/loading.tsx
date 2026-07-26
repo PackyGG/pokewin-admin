@@ -11,7 +11,7 @@ export default function SupportPovLoading() {
           icon={Eye}
           accent="purple"
           title="Support POV"
-          subtitle="Choose a support user to preview their staff profile"
+          subtitle="Choose a support agent to preview their Staff Hub"
           backHref="/staff"
         />
       </PageHero>
