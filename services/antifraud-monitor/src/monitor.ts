@@ -195,7 +195,9 @@ export class MonitorEngine {
     return {
       processed,
       backlogPossible,
-      cursorLagMs: Math.max(0, Date.now() - latestAt.getTime()),
+      cursorLagMs: backlogPossible
+        ? Math.max(0, Date.now() - latestAt.getTime())
+        : 0,
     };
   }
 
