@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-26 PostgreSQL timestamp hotfix:** production deployment `dpl_C5sJKsffgjF2LZDT93iepqnQ4YPB` exposed raw Drizzle timestamp strings where migrated code expected `Date` objects. Vercel confirmed `/admin-users` digest `2875875881` (`last_login.toISOString`) plus the isolated header-rain failure (`starts_at.toISOString`). Both exact failures and every audited raw-row Date-method path now normalize `Date | string` before use. TypeScript, full ESLint, and the Next 15.5.22 production build pass.
+
 - **2026-07-26 antifraud deposit split:** signup monitoring no longer ingests rain joins/wins. Completed ledger deposits are now classified as `fiat_deposit` only when linked through `fiat_deposit_intents.completed_ledger_id`, or `crypto_deposit` only with crypto settlement evidence; anything else fails closed as `deposit_unclassified`. Fiat/unclassified adds 20 risk points for an already-suspicious monitored signup, while irreversible crypto reduces risk by 20. The replica-only index list now covers the fiat ledger join, and migration `002_split_deposit_risk.sql` upgrades existing behavior-flow blockers.
 
 - **2026-07-26 staff access correction:** staff self-profiles and quizzes are restricted to users whose effective roles include `support`; profile creation no longer runs for every dashboard account. Admins/owners retain Staff Hub management tools but only receive a self-profile if they also hold `support`. Other roles cannot enter or see Staff Hub. The members board and manual point awards fail closed to support-role recipients.
