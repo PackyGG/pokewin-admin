@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-27 Keno full-decimal odds:** `/keno` now expands very small draw probabilities into ordinary percentage notation, so `1.18e-7%` renders as `0.000000118%`.
+
 - **2026-07-27 admin-dashboard production scope:** Global Codex and repo-local rules give every agent standing permission to work on and immediately ship every deployable unit stored in `PackyGG/pokewin-admin`, including its sub-apps, subdomains, API/serverless/edge functions, and repo-contained services such as the Antifraud backend. A verified `origin/main` push may trigger production automatically; repo-contained components may also be deployed to their existing production targets when they are not covered by that push. Separate repositories remain out of scope, and production DB migrations/data changes, secret rotation, or moving components to new infrastructure still require explicit permission.
 
 - **2026-07-27 Dashboard Keno KPI:** the live dashboard KPI strip is four equal boxes at wide viewports: Wager, Deposits / Withdrawals, Crypto Fee, and Keno. The Keno card uses the same independently selectable Today / 24h window payload and shows settled customer wager, player payouts, house profit (`wager - payouts`), realized edge (`profit / wager`), games, and players. Staff, creators, and the admin blacklist are excluded. The production read is cached for 60 seconds, fails independently from the other KPI boxes, and uses `idx_keno_games_user_id_created_at` + `user_pkey` (read-only `EXPLAIN ANALYZE`: 0.428 ms).

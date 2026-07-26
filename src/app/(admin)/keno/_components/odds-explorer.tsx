@@ -60,11 +60,17 @@ const RISKS: Array<{
   },
 ];
 
+const TINY_PERCENT_FORMAT = new Intl.NumberFormat("en-US", {
+  maximumSignificantDigits: 3,
+  notation: "standard",
+  useGrouping: false,
+});
+
 function formatProbability(value: number): string {
   if (value <= 0) return "0%";
   if (value >= 0.01) return `${(value * 100).toFixed(2)}%`;
   if (value >= 0.0001) return `${(value * 100).toFixed(4)}%`;
-  return `${(value * 100).toPrecision(3)}%`;
+  return `${TINY_PERCENT_FORMAT.format(value * 100)}%`;
 }
 
 function formatOneIn(value: number): string {
