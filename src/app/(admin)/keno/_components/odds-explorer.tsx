@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CircleDot, Dices, Sigma, Target } from "lucide-react";
+import { CircleDot, Dices, Percent, Sigma, Target } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -78,6 +78,10 @@ function formatOneIn(value: number): string {
   return `1 in ${formatNumber(Math.round(oneIn))}`;
 }
 
+function formatHouseEdge(value: number): string {
+  return `${(value * 100).toFixed(2)}%`;
+}
+
 export function KenoOddsExplorer({
   observations,
 }: {
@@ -107,6 +111,21 @@ export function KenoOddsExplorer({
   const observedOutcomeCount = rows.filter(
     (row) => row.matches.length > 0,
   ).length;
+  const expectedReturnFloor = rows.reduce((sum, row) => {
+    if (row.matches.length === 0) return sum;
+    const confirmedMultiplier = Math.max(
+      ...row.matches.map((match) => match.multiplier),
+    );
+    return sum + row.probability * confirmedMultiplier;
+  }, 0);
+  const coveredProbability = rows.reduce(
+    (sum, row) => sum + (row.matches.length > 0 ? row.probability : 0),
+    0,
+  );
+  const hasCompletePayoutCurve = rows.every(
+    (row) => row.matches.length === 1,
+  );
+  const houseEdgeCeiling = 1 - expectedReturnFloor;
 
   return (
     <div className="space-y-6">
@@ -122,7 +141,7 @@ export function KenoOddsExplorer({
         />
 
         <div className="rounded-xl border bg-card p-4 sm:p-5">
-          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.65fr)_minmax(180px,0.7fr)]">
             <div className="space-y-2">
               <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
                 Risk profile
@@ -179,6 +198,24 @@ export function KenoOddsExplorer({
               </div>
               <p className="text-xs text-muted-foreground">
                 Select a pick count to recalculate every exact-hit outcome.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                House edge
+              </p>
+              <div className="flex min-h-10 items-center gap-3 rounded-lg border bg-background px-3 py-2">
+                <Percent className="size-4 shrink-0 text-cyan-500" />
+                <span className="font-mono text-lg font-semibold tabular-nums">
+                  {hasCompletePayoutCurve ? null : "≤ "}
+                  {formatHouseEdge(houseEdgeCeiling)}
+                </span>
+              </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {hasCompletePayoutCurve
+                  ? "Exact expected edge from this complete payout curve."
+                  : `Mathematical ceiling from confirmed payouts covering ${formatProbability(coveredProbability)} of outcomes.`}
               </p>
             </div>
           </div>
@@ -268,11 +305,13 @@ export function KenoOddsExplorer({
           </Table>
         </div>
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-700 dark:text-amber-300">
-          Draw probabilities are exact. Payout curves are backend constants,
-          not database configuration, so the multiplier column reports values
-          confirmed by settled production games. A dash means that exact
-          risk/pick/hit combination has not appeared in production yet; it does
-          not mean the configured payout is zero.
+          Draw probabilities are exact. House edge is calculated as 1 − the
+          sum of each exact-hit probability × its payout multiplier. When the
+          selected payout curve is incomplete, the ≤ value is an upper bound
+          from confirmed multipliers only; unseen outcomes are not assumed to
+          pay 0×. Payout curves are backend constants, not database
+          configuration, so the multiplier column reports values confirmed by
+          settled production games.
         </div>
       </section>
     </div>
