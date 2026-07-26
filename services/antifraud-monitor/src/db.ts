@@ -28,7 +28,8 @@ export function createDatabases(config: Config): Databases {
     max: 8,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 8_000,
-    options: "-c default_transaction_read_only=on -c statement_timeout=10000",
+    options:
+      "-c default_transaction_read_only=on -c statement_timeout=10000 -c TimeZone=UTC",
     application_name: "packy-antifraud-source-reader",
   });
 
@@ -41,7 +42,7 @@ export function createDatabases(config: Config): Databases {
     max: 12,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 8_000,
-    options: "-c statement_timeout=15000",
+    options: "-c statement_timeout=15000 -c TimeZone=UTC",
     application_name: "packy-antifraud",
   });
 

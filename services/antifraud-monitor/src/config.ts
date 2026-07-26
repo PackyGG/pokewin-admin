@@ -31,6 +31,16 @@ const schema = z.object({
   POLL_ACTIVITY_BATCH_SIZE: z.coerce.number().int().min(100).max(10_000).default(2_000),
   POLL_ACTIVITY_OVERLAP_MS: z.coerce.number().int().min(0).max(30_000).default(2_000),
   POLL_STALE_AFTER_MS: z.coerce.number().int().min(5_000).max(300_000).default(15_000),
+  // Liveness budget for the container healthcheck: how long the elected leader
+  // may go without a successful tick before /health reports 503 and Railway
+  // restarts the process. Deliberately far above POLL_STALE_AFTER_MS so a
+  // transient degrade does not cycle the container.
+  POLLER_LIVENESS_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(30_000)
+    .max(900_000)
+    .default(120_000),
   MONITOR_DURATION_SECONDS: z.coerce.number().int().min(30).max(3_600).default(180),
   MONITOR_START_SCORE: z.coerce.number().int().min(0).max(500).default(25),
 });

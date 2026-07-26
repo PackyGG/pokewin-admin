@@ -37,9 +37,29 @@ export function storedSignals(value: unknown): Signal[] {
   );
 }
 
+type SequenceRule = {
+  id: string;
+  key: string;
+  name: string;
+  sequence: string[];
+  exclude_before: string[];
+  window_seconds: number;
+  score_delta: number;
+  action_type: string;
+};
+
+/** Grace period for a poller tick during process shutdown. */
+const TICK_WATCHDOG_INTERVALS = 10;
+/** `rule_definitions` is re-read at most this often instead of per event. */
+const RULES_CACHE_TTL_MS = 30_000;
+/** Signups per batch processed in parallel (each does 2 provider lookups). */
+const SIGNUP_CONCURRENCY = 4;
+
 export class MonitorEngine {
   private running = false;
+  private tickFailureRecorded = false;
   private timer: NodeJS.Timeout | null = null;
+  private rulesCache: { at: number; rules: SequenceRule[] } | null = null;
   private readonly enrichment: EnrichmentService;
   private readonly discord: DiscordAlerts;
   private readonly health = new PollerHealth();
@@ -66,11 +86,88 @@ export class MonitorEngine {
 
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
-    while (this.running) await new Promise((resolve) => setTimeout(resolve, 25));
+    const deadline = Date.now() + this.watchdogBudgetMs();
+    while (this.running && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    if (this.running) {
+      this.log.warn(
+        "Antifraud monitor stopped while a tick was still in flight",
+      );
+    }
   }
 
   healthSnapshot(): PollerHealthSnapshot {
     return this.health.snapshot(this.config.POLL_STALE_AFTER_MS);
+  }
+
+  private watchdogBudgetMs(): number {
+    return this.config.POLL_INTERVAL_MS * TICK_WATCHDOG_INTERVALS;
+  }
+
+  /** Redacts configured secrets so raw provider errors never reach the logs. */
+  private scrub(value: string): string {
+    return [
+      this.config.FINGERPRINT_SECRET_API_KEY,
+      this.config.PROXYCHECK_API_KEY,
+      this.config.API_TOKEN,
+      this.config.API_ADMIN_TOKEN,
+      this.config.SOURCE_DATABASE_URL,
+      this.config.ANTIFRAUD_DATABASE_URL,
+      this.config.REDIS_URL,
+      this.config.ANTIFRAUD_DISCORD_WEBHOOK_URL,
+    ].filter(
+      (secret): secret is string =>
+        typeof secret === "string" && secret.length > 0,
+    ).reduce(
+      (message, secret) =>
+        message.replaceAll(secret, "[redacted]"),
+      value,
+    );
+  }
+
+  private safeError(error: unknown): {
+    name: string;
+    message: string;
+    code?: string;
+    stack?: string;
+  } {
+    const details = error as {
+      name?: unknown;
+      message?: unknown;
+      code?: unknown;
+      stack?: unknown;
+    };
+    return {
+      name: typeof details.name === "string" ? details.name : "Error",
+      message: this.scrub(
+        typeof details.message === "string" ? details.message : "unknown error",
+      ),
+      ...(typeof details.code === "string" ? { code: details.code } : {}),
+      ...(typeof details.stack === "string"
+        ? { stack: this.scrub(details.stack) }
+        : {}),
+    };
+  }
+
+  /**
+   * The antifraud DB row is the system of record; the live broadcast is
+   * best-effort. `LiveBus.publish` rejects while Redis is unavailable, so a
+   * publish failure must never abort ingestion, rule evaluation or session
+   * completion.
+   */
+  private async broadcast(
+    type: string,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await this.live.publish(type, data);
+    } catch (error) {
+      this.log.warn(
+        { err: this.safeError(error), liveEvent: type },
+        "Antifraud live broadcast failed",
+      );
+    }
   }
 
   private async ensureCursor(): Promise<void> {
@@ -83,12 +180,23 @@ export class MonitorEngine {
     );
   }
 
+  /**
+   * Each phase runs in its own try/catch: a Redis outage, a poison signup or
+   * a failing activity scan must never skip `completeExpiredSessions`, which
+   * is what releases the partial unique indexes (`monitor_sessions_one_active_
+   * per_user`, `cases_one_live_per_user`) for the next session of that user.
+   */
   private async tick(): Promise<void> {
     if (this.running) {
+      // Never clear this flag while the original promise is still running.
+      // Doing so starts a second tick over the same cursor and defeats both
+      // the in-process exclusion and graceful shutdown. `/health` restarts a
+      // genuinely wedged leader after POLLER_LIVENESS_TIMEOUT_MS.
       this.health.tickSkipped();
       return;
     }
     this.running = true;
+    this.tickFailureRecorded = false;
     this.health.tickStarted();
     let lockClient: pg.PoolClient | null = null;
     let leader = false;
@@ -104,46 +212,67 @@ export class MonitorEngine {
         return;
       }
 
-      const signupMetrics = await this.scanSignups();
-      const activitiesProcessed = await this.scanActiveSessions();
-      await this.completeExpiredSessions();
-      this.health.tickSucceeded({
-        signupsProcessed: signupMetrics.processed,
-        activitiesProcessed,
-        signupBacklogPossible: signupMetrics.backlogPossible,
-        signupCursorLagMs: signupMetrics.cursorLagMs,
+      const signupMetrics = await this.runPhase("signups", () =>
+        this.scanSignups(),
+      );
+      const activitiesProcessed = await this.runPhase("activity", () =>
+        this.scanActiveSessions(),
+      );
+      const completed = await this.runPhase("completion", async () => {
+        await this.completeExpiredSessions();
+        return true;
       });
+
+      if (signupMetrics && activitiesProcessed !== null && completed) {
+        this.health.tickSucceeded({
+          signupsProcessed: signupMetrics.processed,
+          activitiesProcessed,
+          signupBacklogPossible: signupMetrics.backlogPossible,
+          signupCursorLagMs: signupMetrics.cursorLagMs,
+        });
+      }
     } catch (error) {
-      const details = error as {
-        name?: unknown;
-        message?: unknown;
-        code?: unknown;
-      };
-      const rawMessage =
-        typeof details.message === "string" ? details.message : "unknown error";
-      const safeMessage = [
-        this.config.FINGERPRINT_SECRET_API_KEY,
-        this.config.PROXYCHECK_API_KEY,
-        this.config.API_TOKEN,
-        this.config.API_ADMIN_TOKEN,
-      ].reduce(
-        (message, secret) => message.replaceAll(secret, "[redacted]"),
-        rawMessage,
-      );
-      this.health.tickFailed(safeMessage);
-      this.log.error(
-        { err: error },
-        `Antifraud monitor tick failed: ${String(details.name ?? "Error")} ${String(details.code ?? "unknown")} ${safeMessage}`,
-      );
+      this.recordTickFailure("lease", error);
     } finally {
       if (leader && lockClient) {
         await lockClient
           .query("SELECT pg_advisory_unlock($1)", [841_772_992])
-          .catch((error) => this.log.error({ err: error }, "Failed to release poller leader lock"));
+          .catch((error) =>
+            this.log.error(
+              { err: this.safeError(error) },
+              "Failed to release poller leader lock",
+            ),
+          );
       }
       lockClient?.release();
       this.running = false;
     }
+  }
+
+  private async runPhase<T>(
+    phase: string,
+    run: () => Promise<T>,
+  ): Promise<T | null> {
+    try {
+      return await run();
+    } catch (error) {
+      this.recordTickFailure(phase, error);
+      return null;
+    }
+  }
+
+  private recordTickFailure(phase: string, error: unknown): void {
+    const safe = this.safeError(error);
+    // Every phase is logged, but the health counter takes at most one failure
+    // per tick so three independent phase errors cannot inflate the streak.
+    if (!this.tickFailureRecorded) {
+      this.tickFailureRecorded = true;
+      this.health.tickFailed(`${phase}: ${safe.message}`);
+    }
+    this.log.error(
+      { err: safe, phase },
+      `Antifraud monitor ${phase} phase failed: ${safe.name} ${safe.code ?? "unknown"} ${safe.message}`,
+    );
   }
 
   private async scanSignups(): Promise<{
@@ -172,21 +301,59 @@ export class MonitorEngine {
         { occurredAt: latestAt, sourceId: latestId },
         this.config.POLL_SIGNUP_BATCH_SIZE,
       );
+      if (signups.length === 0) break;
 
-      for (const signup of signups) {
-        await this.processSignup(signup);
+      // Bounded concurrency: a slow provider lookup on one signup must not
+      // serialise the whole batch, but the fan-out stays small enough to keep
+      // the source pool (max 8) and the provider rate limits intact.
+      for (let index = 0; index < signups.length; index += SIGNUP_CONCURRENCY) {
+        const chunk = signups.slice(index, index + SIGNUP_CONCURRENCY);
+        const results = await Promise.allSettled(
+          chunk.map(async (signup) => {
+            await this.processSignup(signup);
+          }),
+        );
+        const failedIndex = results.findIndex(
+          (result) => result.status === "rejected",
+        );
+        if (failedIndex >= 0) {
+          const failed = results[failedIndex];
+          const signup = chunk[failedIndex];
+          this.log.error(
+            {
+              err: this.safeError(
+                failed?.status === "rejected" ? failed.reason : undefined,
+              ),
+              userId: signup?.id,
+            },
+            "Antifraud monitor could not process signup; batch will retry",
+          );
+          // Do not advance over a failed assessment. All preceding writes are
+          // idempotent, so replaying the batch is safe and avoids silently
+          // losing a signup because of a transient database/provider failure.
+          throw failed?.status === "rejected"
+            ? failed.reason
+            : new Error("signup_batch_failed");
+        }
+      }
+
+      // The cursor is written once per batch. Every write in `processSignup`
+      // is idempotent (upserts plus the deterministic signup `source_ref`),
+      // so a crash mid-batch replays the batch without double counting.
+      const last = signups[signups.length - 1];
+      if (last) {
         await this.db.antifraud.query(
           `
             UPDATE source_cursors
             SET occurred_at = $1, source_id = $2, updated_at = now()
             WHERE stream = 'signups'
           `,
-          [signup.created_at, signup.id],
+          [last.created_at, last.id],
         );
-        latestAt = signup.created_at;
-        latestId = signup.id;
-        processed += 1;
+        latestAt = last.created_at;
+        latestId = last.id;
       }
+      processed += signups.length;
 
       backlogPossible = signups.length === this.config.POLL_SIGNUP_BATCH_SIZE;
       if (!backlogPossible) break;
@@ -274,7 +441,7 @@ export class MonitorEngine {
       [signup.id, score, severity(score), JSON.stringify(signals)],
     );
 
-    await this.live.publish("signup.assessed", {
+    await this.broadcast("signup.assessed", {
       userId: signup.id,
       username: signup.username,
       score,
@@ -283,7 +450,17 @@ export class MonitorEngine {
     });
 
     if (score < this.config.MONITOR_START_SCORE) return;
-    await this.openMonitor(signup, signals, score);
+    const opened = await this.openMonitor(signup, signals, score);
+    await this.broadcast("monitor.started", {
+      caseId: opened.caseId,
+      sessionId: opened.sessionId,
+      userId: signup.id,
+      username: signup.username,
+      score,
+      severity: severity(score),
+      durationSeconds: this.config.MONITOR_DURATION_SECONDS,
+      signals,
+    });
   }
 
   private async cachedProxycheck(signup: Signup): Promise<EnrichmentResult> {
@@ -356,7 +533,7 @@ export class MonitorEngine {
     signup: Signup,
     signals: Signal[],
     score: number,
-  ): Promise<void> {
+  ): Promise<{ caseId: string; sessionId: string }> {
     const client = await this.db.antifraud.connect();
     try {
       await client.query("BEGIN");
@@ -408,7 +585,9 @@ export class MonitorEngine {
             INSERT INTO risk_events (
               case_id, session_id, user_id, event_type, source, source_ref,
               score_delta, score_after, title, detail, payload, occurred_at
-            ) VALUES ($1,$2,$3,$4,'signup',NULL,$5,$6,$7,$8,$9,$10)
+            ) VALUES ($1,$2,$3,$4,'signup',$11,$5,$6,$7,$8,$9,$10)
+            ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL
+            DO NOTHING
           `,
           [
             caseId,
@@ -421,20 +600,15 @@ export class MonitorEngine {
             signal.detail,
             signal.payload ?? {},
             signup.created_at,
+            // Deterministic ref so the partial dedupe index covers signup
+            // events too: a replayed batch or a second replica cannot double
+            // count them.
+            `${signup.id}:${signal.key}`,
           ],
         );
       }
       await client.query("COMMIT");
-
-      await this.live.publish("monitor.started", {
-        caseId,
-        sessionId,
-        userId: signup.id,
-        username: signup.username,
-        score,
-        durationSeconds: this.config.MONITOR_DURATION_SECONDS,
-        signals,
-      });
+      return { caseId, sessionId };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -469,12 +643,33 @@ export class MonitorEngine {
     );
     const byUser = new Map(sessions.map((session) => [session.user_id, session]));
 
+    const blockedUsers = new Set<string>();
+    let processed = 0;
     for (const activity of activities) {
+      if (blockedUsers.has(activity.user_id)) continue;
       const session = byUser.get(activity.user_id);
       if (!session) continue;
-      await this.recordActivity(session, activity);
+      try {
+        await this.recordActivity(session, activity);
+        processed += 1;
+      } catch (error) {
+        // One unprocessable row must not abort ingestion for the other
+        // monitored sessions in this tick. Stop this user's ordered stream at
+        // the first failure so a later row cannot advance its cursor over the
+        // failed event. The cursor is released when the session expires.
+        blockedUsers.add(activity.user_id);
+        this.log.error(
+          {
+            err: this.safeError(error),
+            userId: activity.user_id,
+            sessionId: session.id,
+            sourceRef: activity.source_ref,
+          },
+          "Antifraud monitor skipped an unprocessable activity row",
+        );
+      }
     }
-    return activities.length;
+    return processed;
   }
 
   private pointsFor(activity: SourceActivity): number {
@@ -486,6 +681,7 @@ export class MonitorEngine {
     activity: SourceActivity,
   ): Promise<void> {
     const delta = this.pointsFor(activity);
+    let scoreAfter: number | null = null;
     const client = await this.db.antifraud.connect();
     try {
       await client.query("BEGIN");
@@ -547,25 +743,30 @@ export class MonitorEngine {
       await this.advanceActivityCursor(client, session.id, activity);
       await client.query("COMMIT");
       session.current_score = row.score_after;
-
-      await this.live.publish("monitor.event", {
-        caseId: session.case_id,
-        sessionId: session.id,
-        userId: session.user_id,
-        eventType: activity.event_type,
-        title: activity.title,
-        detail: activity.detail,
-        scoreDelta: delta,
-        score: row.score_after,
-        occurredAt: activity.occurred_at,
-      });
-      await this.evaluateRules(session);
+      scoreAfter = row.score_after;
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
     } finally {
       client.release();
     }
+
+    // Broadcast and rule evaluation run AFTER the transaction is committed and
+    // the client is back in the pool — a Redis outage must not roll back or
+    // block committed ingestion, and must not prevent rules from firing.
+    if (scoreAfter === null) return;
+    await this.broadcast("monitor.event", {
+      caseId: session.case_id,
+      sessionId: session.id,
+      userId: session.user_id,
+      eventType: activity.event_type,
+      title: activity.title,
+      detail: activity.detail,
+      scoreDelta: delta,
+      score: scoreAfter,
+      occurredAt: activity.occurred_at,
+    });
+    await this.evaluateRules(session);
   }
 
   private async advanceActivityCursor(
@@ -593,17 +794,17 @@ export class MonitorEngine {
     );
   }
 
-  private async evaluateRules(session: ActiveSession): Promise<void> {
-    const rules = await this.db.antifraud.query<{
-      id: string;
-      key: string;
-      name: string;
-      sequence: string[];
-      exclude_before: string[];
-      window_seconds: number;
-      score_delta: number;
-      action_type: string;
-    }>(
+  /**
+   * `rule_definitions` changes rarely but `evaluateRules` runs per accepted
+   * event, so the definition list is cached for a short TTL instead of being
+   * re-read on every single risk event.
+   */
+  private async sequenceRules(): Promise<SequenceRule[]> {
+    const now = Date.now();
+    const cached = this.rulesCache;
+    if (cached && now - cached.at < RULES_CACHE_TTL_MS) return cached.rules;
+
+    const result = await this.db.antifraud.query<SequenceRule>(
       `
         SELECT id, key, name, sequence, exclude_before, window_seconds, score_delta, action_type
         FROM rule_definitions
@@ -611,6 +812,12 @@ export class MonitorEngine {
         ORDER BY priority, key
       `,
     );
+    this.rulesCache = { at: now, rules: result.rows };
+    return result.rows;
+  }
+
+  private async evaluateRules(session: ActiveSession): Promise<void> {
+    const rules = await this.sequenceRules();
 
     const events = await this.db.antifraud.query<{
       event_type: string;
@@ -625,7 +832,7 @@ export class MonitorEngine {
       [session.id],
     );
 
-    for (const rule of rules.rows) {
+    for (const rule of rules) {
       if (!sequenceMatches(
         events.rows,
         rule.sequence,
@@ -666,7 +873,7 @@ export class MonitorEngine {
         ),
       ]);
       session.current_score = nextScore;
-      await this.live.publish("rule.matched", {
+      await this.broadcast("rule.matched", {
         caseId: session.case_id,
         sessionId: session.id,
         userId: session.user_id,
@@ -712,7 +919,7 @@ export class MonitorEngine {
         `,
         [session.case_id, session.current_score, severity(session.current_score)],
       );
-      await this.live.publish("monitor.completed", {
+      await this.broadcast("monitor.completed", {
         caseId: session.case_id,
         sessionId: session.id,
         userId: session.user_id,

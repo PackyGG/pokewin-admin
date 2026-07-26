@@ -1,5 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
-
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
@@ -8,15 +6,20 @@ import websocket from "@fastify/websocket";
 import Fastify from "fastify";
 import { z } from "zod";
 
+import { serviceRequestAuthorized } from "./auth.js";
 import { loadConfig } from "./config.js";
 import {
   assertDatabaseConnections,
   closeDatabases,
   createDatabases,
 } from "./db.js";
-import { LiveBus } from "./live.js";
+import { LiveBus, STREAM_ID_PATTERN } from "./live.js";
 import { migrate } from "./migrate.js";
 import { MonitorEngine } from "./monitor.js";
+import { pollerStalledFor } from "./poller-health.js";
+import { createPromiseCache } from "./promise-cache.js";
+import { caseDecisionSchema, ruleUpdateSchema } from "./request-schemas.js";
+import { sanitizedRuntimeConfig } from "./runtime-config.js";
 import {
   ACTIVITY_SCORE_DEFINITIONS,
   PROVIDER_SCORE_DEFINITIONS,
@@ -25,7 +28,32 @@ import {
 } from "./score-catalog.js";
 import { topRainWinners } from "./source.js";
 
+// Naive timestamps read from either database must be interpreted as UTC even
+// when the container image ships a local zone. The pools pin the session
+// TimeZone too; this pins the Node process.
+process.env.TZ ??= "UTC";
+
 const config = loadConfig();
+const SECRET_VALUES = [
+  config.FINGERPRINT_SECRET_API_KEY,
+  config.PROXYCHECK_API_KEY,
+  config.API_TOKEN,
+  config.API_ADMIN_TOKEN,
+  config.SOURCE_DATABASE_URL,
+  config.ANTIFRAUD_DATABASE_URL,
+  config.REDIS_URL,
+  config.ANTIFRAUD_DISCORD_WEBHOOK_URL,
+].filter(
+  (value): value is string =>
+    typeof value === "string" && value.length >= 8,
+);
+
+function scrubSecrets(value: string): string {
+  return SECRET_VALUES.reduce(
+    (text, secret) => text.replaceAll(secret, "[redacted]"),
+    value,
+  );
+}
 const allowedOrigins = new Set(
   config.ALLOWED_ORIGINS.split(",")
     .map((value) => value.trim())
@@ -35,14 +63,25 @@ const allowedOrigins = new Set(
 const app = Fastify({
   logger: {
     level: config.NODE_ENV === "production" ? "info" : "debug",
+    // `redact` takes object PATHS, not values. Secret VALUES that leak into an
+    // error message or stack are scrubbed by the serializer below instead.
     redact: [
       "req.headers.authorization",
       "req.headers.sec-websocket-protocol",
       "req.query.ticket",
-      "FINGERPRINT_SECRET_API_KEY",
-      "PROXYCHECK_API_KEY",
-      "API_TOKEN",
     ],
+    serializers: {
+      err(error: Error & { code?: unknown }) {
+        return {
+          type: error.name ?? "Error",
+          message: scrubSecrets(error.message ?? String(error)),
+          stack: scrubSecrets(error.stack ?? ""),
+          ...(typeof error.code === "string"
+            ? { code: scrubSecrets(error.code) }
+            : {}),
+        };
+      },
+    },
   },
   trustProxy: 1,
   requestTimeout: 15_000,
@@ -52,16 +91,32 @@ const app = Fastify({
   },
 });
 const db = createDatabases(config);
-const live = new LiveBus(config.REDIS_URL);
+const live = new LiveBus(config.REDIS_URL, app.log);
 const engine = new MonitorEngine(config, db, live, app.log);
 
-function safeTokenEqual(actual: string, expected: string): boolean {
-  const actualBuffer = Buffer.from(actual);
-  const expectedBuffer = Buffer.from(expected);
-  return (
-    actualBuffer.length === expectedBuffer.length &&
-    timingSafeEqual(actualBuffer, expectedBuffer)
-  );
+/** Lookback that bounds the resolved tail of the case list. */
+const CASES_RECENT_DAYS = 30;
+/** Fallback audit actor when a caller does not identify the human operator. */
+const SERVICE_ACTOR_ID = "service:admin-api";
+const TOP_RAIN_CACHE_MS = 30_000;
+type TopRainRow = Awaited<ReturnType<typeof topRainWinners>>[number];
+const cachedTopRain = createPromiseCache<number, TopRainRow[]>(
+  (limit) => topRainWinners(db.source, limit),
+  TOP_RAIN_CACHE_MS,
+);
+
+async function publishCommittedMutation(
+  type: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await live.publish(type, data);
+  } catch (error) {
+    app.log.warn(
+      { err: error, liveEvent: type },
+      "Committed antifraud mutation could not be broadcast",
+    );
+  }
 }
 
 await app.register(cors, {
@@ -114,6 +169,16 @@ app.addHook("onRequest", async (request, reply) => {
     (origin && !allowedOrigins.has(origin)) ||
     request.headers["sec-fetch-site"] === "cross-site"
   ) {
+    // Logged so an ALLOWED_ORIGINS misconfiguration is distinguishable from a
+    // network or auth failure instead of surfacing as a generic client error.
+    request.log.warn(
+      {
+        origin: origin ?? null,
+        allowedOrigins: [...allowedOrigins],
+        secFetchSite: request.headers["sec-fetch-site"] ?? null,
+      },
+      "Rejected antifraud request: origin not in ALLOWED_ORIGINS",
+    );
     return reply.code(403).send({ error: "origin_not_allowed" });
   }
 
@@ -128,22 +193,24 @@ app.addHook("onRequest", async (request, reply) => {
   const token = authorization.startsWith("Bearer ")
     ? authorization.slice(7)
     : "";
-  const needsAdminToken =
-    (request.method === "PUT" && request.url.startsWith("/v1/rules/")) ||
-    (request.method === "POST" && request.url.includes("/decision"));
-  const authorized = needsAdminToken
-    ? safeTokenEqual(token, config.API_ADMIN_TOKEN)
-    : safeTokenEqual(token, config.API_TOKEN) ||
-      safeTokenEqual(token, config.API_ADMIN_TOKEN);
-  if (!authorized) {
+  if (!serviceRequestAuthorized(request.method, pathname ?? "", token, config)) {
     return reply.code(401).send({ error: "unauthorized" });
   }
 });
 
-app.get("/health", async () => {
+app.get("/health", async (_request, reply) => {
   const poller = engine.healthSnapshot();
-  return {
-    status: poller.status === "degraded" ? "degraded" : "ok",
+  const stalledForMs = pollerStalledFor(
+    poller,
+    config.POLLER_LIVENESS_TIMEOUT_MS,
+  );
+  const body = {
+    status: stalledForMs !== null
+      ? "stalled"
+      : poller.status === "degraded"
+        ? "degraded"
+        : "ok",
+    stalledForMs,
     poller: {
       status: poller.status,
       leader: poller.leader,
@@ -151,15 +218,24 @@ app.get("/health", async () => {
       consecutiveFailures: poller.consecutiveFailures,
     },
   };
+  // A wedged engine must fail the platform healthcheck so the process is
+  // restarted instead of serving a permanently silent monitor.
+  if (stalledForMs !== null) return reply.code(503).send(body);
+  return body;
 });
 app.get("/ready", async (_request, reply) => {
   try {
     await assertDatabaseConnections(db);
     const poller = engine.healthSnapshot();
-    if (poller.status === "starting" || poller.status === "degraded") {
-      return reply.code(503).send({ status: "not_ready", poller });
+    const liveStatus = { subscribed: live.isSubscribed() };
+    if (
+      poller.status === "starting" ||
+      poller.status === "degraded" ||
+      !liveStatus.subscribed
+    ) {
+      return reply.code(503).send({ status: "not_ready", poller, live: liveStatus });
     }
-    return { status: "ready", poller };
+    return { status: "ready", poller, live: liveStatus };
   } catch {
     return reply.code(503).send({ status: "not_ready" });
   }
@@ -167,6 +243,15 @@ app.get("/ready", async (_request, reply) => {
 
 app.get("/v1/operations/poller", async () => ({
   data: engine.healthSnapshot(),
+}));
+
+/**
+ * Authoritative deployed configuration for admin status surfaces. This is
+ * intentionally presence-only except for recipient ids compiled into this
+ * service; URLs, tokens, provider keys and webhook secrets never leave Railway.
+ */
+app.get("/v1/operations/config", async () => ({
+  data: sanitizedRuntimeConfig(config, allowedOrigins.size),
 }));
 
 app.get("/v1/monitors/live", async () => {
@@ -304,22 +389,29 @@ app.get("/v1/cases", async (request) => {
     ]).optional(),
     limit: z.coerce.number().int().min(1).max(200).default(50),
   }).parse(request.query);
+  // `cases` grows one row per monitored signup and is never pruned, so the list
+  // is always bounded: live cases plus anything touched in the recent window.
+  // The ordering matches the cases_severity_rank_updated_idx expression index.
+  const conditions = [
+    `(c.status <> 'resolved' OR c.updated_at >= now() - interval '${CASES_RECENT_DAYS} days')`,
+  ];
   const values: unknown[] = [];
-  const where = query.status
-    ? (values.push(query.status), `WHERE c.status = $${values.length}`)
-    : "";
+  if (query.status) {
+    values.push(query.status);
+    conditions.push(`c.status = $${values.length}`);
+  }
   values.push(query.limit);
   const result = await db.antifraud.query(
     `
       SELECT c.*, s.username, s.email, s.signup_ip::text, s.country_code, s.city
       FROM cases c
       JOIN subjects s ON s.user_id = c.user_id
-      ${where}
+      WHERE ${conditions.join(" AND ")}
       ORDER BY
-        CASE c.severity
+        (CASE c.severity
           WHEN 'critical' THEN 4 WHEN 'high' THEN 3
           WHEN 'medium' THEN 2 ELSE 1
-        END DESC,
+        END) DESC,
         c.updated_at DESC
       LIMIT $${values.length}
     `,
@@ -409,20 +501,7 @@ app.put("/v1/rules/:id", {
   },
 }, async (request, reply) => {
   const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-  const body = z.object({
-    idempotencyKey: z.string().uuid(),
-    name: z.string().min(1).max(100).optional(),
-    description: z.string().max(500).optional(),
-    enabled: z.boolean().optional(),
-    sequence: z.array(z.string().min(1).max(100)).min(1).max(20).optional(),
-    excludeBefore: z.array(z.string().min(1).max(100)).max(20).optional(),
-    windowSeconds: z.number().int().min(1).max(86_400).optional(),
-    scoreDelta: z.number().int().min(-500).max(500).optional(),
-    actionType: z.enum(["manual_review", "escalate"]).optional(),
-  }).strict().refine(
-    (value) => Object.keys(value).some((key) => key !== "idempotencyKey"),
-    { message: "At least one rule field must be supplied" },
-  ).parse(request.body);
+  const body = ruleUpdateSchema.parse(request.body);
 
   const client = await db.antifraud.connect();
   let updated: Record<string, unknown>;
@@ -478,11 +557,13 @@ app.put("/v1/rules/:id", {
     updated = result.rows[0] as Record<string, unknown>;
     await client.query(
       `INSERT INTO service_audit_events(
-         idempotency_key, actor_id, action, target_type, target_id,
+         idempotency_key, actor_id, actor_username, action, target_type, target_id,
          before_state, after_state
-       ) VALUES ($1,'service:admin-api','rule.update','rule',$2,$3::jsonb,$4::jsonb)`,
+       ) VALUES ($1,$2,$3,'rule.update','rule',$4,$5::jsonb,$6::jsonb)`,
       [
         body.idempotencyKey,
+        body.actorId ?? SERVICE_ACTOR_ID,
+        body.actorUsername ?? null,
         id,
         JSON.stringify(before.rows[0]),
         JSON.stringify(updated),
@@ -495,7 +576,7 @@ app.put("/v1/rules/:id", {
   } finally {
     client.release();
   }
-  await live.publish("rule.updated", { rule: updated });
+  await publishCommittedMutation("rule.updated", { rule: updated });
   return { data: updated };
 });
 
@@ -508,11 +589,7 @@ app.post("/v1/cases/:id/decision", {
   },
 }, async (request, reply) => {
   const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-  const body = z.object({
-    decision: z.enum(["in_review", "escalated", "resolved_safe", "resolved_fraud"]),
-    idempotencyKey: z.string().uuid(),
-    reason: z.string().trim().min(1).max(1000),
-  }).strict().parse(request.body);
+  const body = caseDecisionSchema.parse(request.body);
   const status = body.decision.startsWith("resolved_")
     ? "resolved"
     : body.decision === "escalated"
@@ -554,11 +631,19 @@ app.post("/v1/cases/:id/decision", {
     await client.query(
       `
         INSERT INTO staff_actions(
-          case_id,user_id,action_type,status,actor_id,reason,
+          case_id,user_id,action_type,status,actor_id,actor_username,reason,
           idempotency_key,completed_at
-        ) VALUES ($1,$2,$3,'completed','service:admin-api',$4,$5,now())
+        ) VALUES ($1,$2,$3,'completed',$4,$5,$6,$7,now())
       `,
-      [id, userId, body.decision, body.reason, body.idempotencyKey],
+      [
+        id,
+        userId,
+        body.decision,
+        body.actorId ?? SERVICE_ACTOR_ID,
+        body.actorUsername ?? null,
+        body.reason,
+        body.idempotencyKey,
+      ],
     );
     await client.query("COMMIT");
   } catch (error) {
@@ -567,7 +652,7 @@ app.post("/v1/cases/:id/decision", {
   } finally {
     client.release();
   }
-  await live.publish("case.decided", {
+  await publishCommittedMutation("case.decided", {
     caseId: id,
     userId,
     decision: body.decision,
@@ -579,7 +664,7 @@ app.get("/v1/top-rain", async (request) => {
   const { limit } = z.object({
     limit: z.coerce.number().int().min(1).max(100).default(10),
   }).parse(request.query);
-  return { data: await topRainWinners(db.source, limit) };
+  return { data: await cachedTopRain(limit) };
 });
 
 app.post("/v1/ws/tickets", {
@@ -604,10 +689,31 @@ app.post("/v1/ws/tickets", {
   };
 });
 
+/**
+ * Bounded catch-up for a client that missed frames (the admin SSE proxy is torn
+ * down at least every 5 minutes by its serverless duration cap). `after` is the
+ * last live-frame id the client saw; omit it for the most recent events.
+ */
+app.get("/v1/live/replay", async (request) => {
+  const query = z.object({
+    after: z.string().regex(STREAM_ID_PATTERN).optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(200),
+  }).parse(request.query);
+  const events = await live.replay(query.after ?? null, query.limit);
+  return {
+    data: events,
+    cursor: events[events.length - 1]?.id ?? query.after ?? null,
+  };
+});
+
 app.get("/v1/live", { websocket: true }, async (socket, request) => {
   const origin = request.headers.origin;
   if (!origin || !allowedOrigins.has(origin)) {
-    socket.close(1008, "Origin not allowed");
+    request.log.warn(
+      { origin: origin ?? null, allowedOrigins: [...allowedOrigins] },
+      "Rejected antifraud live websocket: origin not in ALLOWED_ORIGINS",
+    );
+    socket.close(1008, "origin_not_allowed");
     return;
   }
   const protocolHeader = request.headers["sec-websocket-protocol"];
@@ -620,11 +726,11 @@ app.get("/v1/live", { websocket: true }, async (socket, request) => {
   const parsed = z.string().regex(/^[A-Za-z0-9_-]{40,100}$/).safeParse(rawTicket);
   const ticket = parsed.success ? await live.consumeTicket(parsed.data) : null;
   if (!ticket) {
-    socket.close(1008, "Invalid or expired ticket");
+    socket.close(1008, "invalid_ticket");
     return;
   }
   if (!live.addClient(socket, ticket.actorId)) {
-    socket.close(1013, "Too many live connections");
+    socket.close(1013, "too_many_connections");
   }
 });
 
@@ -668,5 +774,8 @@ app.addHook("onClose", async () => {
 
 await migrate(db.antifraud);
 await assertDatabaseConnections(db);
+// Fail the boot when the live channel cannot be subscribed: a green service
+// publishing into a channel with zero subscribers is silently broken.
+await live.start();
 await engine.start();
 await app.listen({ port: config.PORT, host: "0.0.0.0" });

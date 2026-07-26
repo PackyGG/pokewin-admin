@@ -8,12 +8,21 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_user_signup_ip_time_idx
   ON "user" (signup_ip, created_at)
   WHERE signup_ip IS NOT NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_user_signup_ipv6_64_time_idx
+CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_user_signup_ipv6_64_time_v2_idx
   ON "user" (
-    (network(set_masklen(signup_ip::inet, 64))),
+    (network(set_masklen((
+      CASE WHEN signup_ip ~
+        '^(([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}|([0-9A-Fa-f]{1,4}:){1,7}:|([0-9A-Fa-f]{1,4}:){1,6}:[0-9A-Fa-f]{1,4}|([0-9A-Fa-f]{1,4}:){1,5}(:[0-9A-Fa-f]{1,4}){1,2}|([0-9A-Fa-f]{1,4}:){1,4}(:[0-9A-Fa-f]{1,4}){1,3}|([0-9A-Fa-f]{1,4}:){1,3}(:[0-9A-Fa-f]{1,4}){1,4}|([0-9A-Fa-f]{1,4}:){1,2}(:[0-9A-Fa-f]{1,4}){1,5}|[0-9A-Fa-f]{1,4}:(:[0-9A-Fa-f]{1,4}){1,6}|:((:[0-9A-Fa-f]{1,4}){1,7}|:))$'
+      THEN signup_ip END
+    )::inet, 64))),
     created_at
   )
-  WHERE signup_ip IS NOT NULL AND family(signup_ip::inet) = 6;
+  WHERE signup_ip IS NOT NULL;
+
+-- The original expression cast every text value directly to inet. Drop it
+-- only after the guarded replacement exists, otherwise a malformed future IP
+-- can break mirror ingestion while PostgreSQL maintains the old index.
+DROP INDEX CONCURRENTLY IF EXISTS antifraud_user_signup_ipv6_64_time_idx;
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_fingerprints_signup_latest_idx
   ON fingerprints (user_id, event_type, created_at DESC)
@@ -50,6 +59,11 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_rain_entries_user_time_idx
 CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_rain_win_leaderboard_idx
   ON ledger_transactions (user_id)
   INCLUDE (amount, created_at)
+  WHERE type = 'rain_win' AND status = 'completed';
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_rain_win_time_user_idx
+  ON ledger_transactions (created_at DESC, user_id)
+  INCLUDE (amount)
   WHERE type = 'rain_win' AND status = 'completed';
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_fiat_completed_ledger_idx

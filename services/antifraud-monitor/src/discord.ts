@@ -2,13 +2,13 @@ import type { FastifyBaseLogger } from "fastify";
 
 import type { Config } from "./config.js";
 
-const SUPPORT_USER_IDS = [
+export const SUPPORT_USER_IDS = [
   "1302882250391818311",
   "976564661820481606",
   "620373461256110112",
 ] as const;
 
-const URGENT_USER_IDS = [
+export const URGENT_USER_IDS = [
   "934854938641715240",
   "660132586630414338",
   "276098533629755392",
@@ -29,6 +29,24 @@ export type DiscordAlert = {
   trigger?: string;
   occurredAt?: Date;
 };
+
+export function discordRuntimeStatus(config: Pick<
+  Config,
+  | "ANTIFRAUD_DISCORD_WEBHOOK_URL"
+  | "ANTIFRAUD_DASHBOARD_URL"
+>): {
+  webhookConfigured: boolean;
+  dashboardUrlConfigured: boolean;
+  supportRecipientIds: readonly string[];
+  urgentRecipientIds: readonly string[];
+} {
+  return {
+    webhookConfigured: Boolean(config.ANTIFRAUD_DISCORD_WEBHOOK_URL),
+    dashboardUrlConfigured: Boolean(config.ANTIFRAUD_DASHBOARD_URL),
+    supportRecipientIds: SUPPORT_USER_IDS,
+    urgentRecipientIds: URGENT_USER_IDS,
+  };
+}
 
 type DiscordPayload = {
   username: string;

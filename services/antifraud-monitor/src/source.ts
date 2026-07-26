@@ -1,6 +1,54 @@
+import { isIPv6 } from "node:net";
+
 import type pg from "pg";
 
 import type { ActiveSession, Signup } from "./types.js";
+
+/**
+ * MAIN stores `user.created_at`, `ledger_transactions.created_at` and
+ * `user_rewards.granted_at/opened_at` as `timestamp WITHOUT time zone`.
+ * Comparing those naive values against a `timestamptz` cursor makes Postgres
+ * promote them using the SERVER session TimeZone, while node-pg parses the
+ * returned naive values using the NODE process TZ — two independent
+ * conversions that silently shift the cursor when either side is not UTC.
+ *
+ * Every naive column is therefore read as `<col> AT TIME ZONE 'UTC'` (naive
+ * UTC wall clock -> real instant) and every cursor bound is pushed back with
+ * `$n::timestamptz AT TIME ZONE 'UTC'` (instant -> naive UTC wall clock).
+ * The round trip is then exact regardless of process TZ or server TimeZone.
+ */
+const UTC = "AT TIME ZONE 'UTC'";
+
+/**
+ * Strict IPv6 matcher. `user.signup_ip` is plain `text` on MAIN and is never
+ * validated, so it can hold an X-Forwarded-For chain, a `host:port` pair or
+ * the literal string `unknown`. Casting such a value to `inet` raises
+ * `invalid input syntax for type inet`, which aborts the whole tick. Guarding
+ * the cast with this pattern inside a `CASE` (Postgres guarantees CASE
+ * evaluation order for per-row expressions) makes a malformed value yield
+ * NULL instead of an error.
+ */
+const IPV6_SQL_PATTERN =
+  "^(([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}"
+  + "|([0-9A-Fa-f]{1,4}:){1,7}:"
+  + "|([0-9A-Fa-f]{1,4}:){1,6}:[0-9A-Fa-f]{1,4}"
+  + "|([0-9A-Fa-f]{1,4}:){1,5}(:[0-9A-Fa-f]{1,4}){1,2}"
+  + "|([0-9A-Fa-f]{1,4}:){1,4}(:[0-9A-Fa-f]{1,4}){1,3}"
+  + "|([0-9A-Fa-f]{1,4}:){1,3}(:[0-9A-Fa-f]{1,4}){1,4}"
+  + "|([0-9A-Fa-f]{1,4}:){1,2}(:[0-9A-Fa-f]{1,4}){1,5}"
+  + "|[0-9A-Fa-f]{1,4}:(:[0-9A-Fa-f]{1,4}){1,6}"
+  + "|:((:[0-9A-Fa-f]{1,4}){1,7}|:))$";
+
+/** SQL expression yielding a valid `inet` or NULL for the given text column. */
+function safeInet(column: string): string {
+  return `(CASE WHEN ${column} ~ '${IPV6_SQL_PATTERN}' THEN ${column} END)::inet`;
+}
+
+/**
+ * Lifetime aggregates on MAIN are capped instead of scanning full history —
+ * same 365-day bound the admin dashboard uses for its lifetime windows.
+ */
+export const RAIN_WINNER_LOOKBACK_DAYS = 365;
 
 export async function fetchNewSignups(
   source: pg.Pool,
@@ -12,7 +60,8 @@ export async function fetchNewSignups(
       SELECT
         u.id, u.username, u.email, u.image, u.signup_ip, u.country, u.country_code,
         u.continent_code, u.state, u.city, u.affiliate_code, u.referred_by,
-        u.is_suspected_alt, u.created_at,
+        u.is_suspected_alt,
+        u.created_at ${UTC} AS created_at,
         fp.request_id AS fingerprint_request_id,
         fp.visitor_id,
         fp.confidence AS fingerprint_confidence,
@@ -33,8 +82,8 @@ export async function fetchNewSignups(
         ORDER BY created_at DESC
         LIMIT 1
       ) ae ON true
-      WHERE (u.created_at, u.id) > ($1::timestamptz, $2::text)
-        AND u.created_at <= now() - interval '5 seconds'
+      WHERE (u.created_at, u.id) > ($1::timestamptz ${UTC}, $2::text)
+        AND u.created_at <= (now() ${UTC}) - interval '5 seconds'
       ORDER BY u.created_at, u.id
       LIMIT $3
     `,
@@ -61,32 +110,34 @@ export async function signupContext(
           `
             SELECT
               COUNT(*) FILTER (
-                WHERE created_at BETWEEN $2::timestamptz - interval '10 minutes'
-                                    AND $2::timestamptz + interval '10 minutes'
+                WHERE created_at BETWEEN ($2::timestamptz ${UTC}) - interval '10 minutes'
+                                    AND ($2::timestamptz ${UTC}) + interval '10 minutes'
               )::text AS same_ip_10m,
               COUNT(*) FILTER (
-                WHERE created_at BETWEEN $2::timestamptz - interval '30 minutes'
-                                    AND $2::timestamptz + interval '30 minutes'
+                WHERE created_at BETWEEN ($2::timestamptz ${UTC}) - interval '30 minutes'
+                                    AND ($2::timestamptz ${UTC}) + interval '30 minutes'
               )::text AS same_ip_30m
             FROM "user"
             WHERE signup_ip = $1
-            AND created_at BETWEEN $2::timestamptz - interval '30 minutes'
-                                AND $2::timestamptz + interval '30 minutes'
+            AND created_at BETWEEN ($2::timestamptz ${UTC}) - interval '30 minutes'
+                                AND ($2::timestamptz ${UTC}) + interval '30 minutes'
           `,
           [signup.signup_ip, signup.created_at],
         )
       : Promise.resolve({ rows: [] }),
-    signup.signup_ip?.includes(":")
+    // Only a value Node itself validates as IPv6 may be cast to inet as a
+    // query parameter; row values are guarded by `safeInet` instead.
+    signup.signup_ip && isIPv6(signup.signup_ip)
       ? source.query<{ same_ipv6_30m: string }>(
           `
             SELECT COUNT(*)::text AS same_ipv6_30m
             FROM "user"
             WHERE signup_ip IS NOT NULL
-              AND family(signup_ip::inet) = 6
-              AND network(set_masklen(signup_ip::inet, 64))
+              AND family(${safeInet("signup_ip")}) = 6
+              AND network(set_masklen(${safeInet("signup_ip")}, 64))
                     = network(set_masklen($1::inet, 64))
-              AND created_at BETWEEN $2::timestamptz - interval '30 minutes'
-                                  AND $2::timestamptz + interval '30 minutes'
+              AND created_at BETWEEN ($2::timestamptz ${UTC}) - interval '30 minutes'
+                                  AND ($2::timestamptz ${UTC}) + interval '30 minutes'
           `,
           [signup.signup_ip, signup.created_at],
         )
@@ -118,6 +169,16 @@ export type SourceActivity = {
   payload: Record<string, unknown>;
 };
 
+/**
+ * `risk_events` dedupes on `(source, source_ref)` only — the event type is not
+ * part of the key. A `user_rewards` row therefore has to expose a DIFFERENT
+ * source_ref for its granted and its opened state, otherwise the granted row
+ * swallows the opened row and the reward-rush / reward-before-deposit rules
+ * can never match.
+ */
+const USER_REWARD_SOURCE_REF =
+  "ur.id::text || CASE WHEN ur.opened_at IS NULL THEN ':granted' ELSE ':opened' END";
+
 export async function fetchActivity(
   source: pg.Pool,
   sessions: ActiveSession[],
@@ -137,7 +198,11 @@ export async function fetchActivity(
   const result = await source.query<SourceActivity>(
     `
       WITH activity_cursors AS (
-        SELECT *
+        SELECT
+          user_id,
+          occurred_at ${UTC} AS occurred_at,
+          source,
+          source_ref
         FROM jsonb_to_recordset($1::jsonb) AS cursor(
           user_id text,
           occurred_at timestamptz,
@@ -166,7 +231,7 @@ export async function fetchActivity(
         lt.id::text AS source_ref,
         initcap(replace(lt.type::text, '_', ' ')) AS title,
         lt.description AS detail,
-        lt.created_at AS occurred_at,
+        lt.created_at ${UTC} AS occurred_at,
         jsonb_build_object(
           'type', lt.type::text,
           'amount', lt.amount::text,
@@ -194,10 +259,10 @@ export async function fetchActivity(
         ur.user_id,
         CASE WHEN ur.opened_at IS NULL THEN 'reward_granted' ELSE 'reward_opened' END,
         'user_rewards',
-        ur.id::text,
+        ${USER_REWARD_SOURCE_REF},
         CASE WHEN ur.opened_at IS NULL THEN 'Reward granted' ELSE 'Reward opened' END,
         r.name,
-        COALESCE(ur.opened_at, ur.granted_at),
+        COALESCE(ur.opened_at, ur.granted_at) ${UTC},
         jsonb_build_object(
           'reward_id', ur.reward_id::text,
           'reward_slug', r.slug,
@@ -208,7 +273,7 @@ export async function fetchActivity(
       FROM user_rewards ur
       JOIN activity_cursors cursor ON cursor.user_id = ur.user_id
       JOIN rewards r ON r.id = ur.reward_id
-      WHERE (COALESCE(ur.opened_at, ur.granted_at), 'user_rewards'::text, ur.id::text)
+      WHERE (COALESCE(ur.opened_at, ur.granted_at), 'user_rewards'::text, ${USER_REWARD_SOURCE_REF})
               > (cursor.occurred_at, cursor.source, cursor.source_ref)
 
       ORDER BY occurred_at, source, source_ref
@@ -222,6 +287,7 @@ export async function fetchActivity(
 export async function topRainWinners(
   source: pg.Pool,
   limit: number,
+  lookbackDays: number = RAIN_WINNER_LOOKBACK_DAYS,
 ): Promise<Array<Record<string, unknown>>> {
   const result = await source.query(
     `
@@ -230,16 +296,17 @@ export async function topRainWinners(
         COALESCE(u.display_username, u.username, u.id) AS username,
         COUNT(*)::int AS wins,
         COALESCE(SUM(lt.amount), 0)::text AS total_won_usd,
-        MAX(lt.created_at) AS last_win_at
+        MAX(lt.created_at) ${UTC} AS last_win_at
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.type::text = 'rain_win'
         AND lt.status::text = 'completed'
+        AND lt.created_at >= (now() ${UTC}) - ($2::int * interval '1 day')
       GROUP BY u.id, COALESCE(u.display_username, u.username, u.id)
       ORDER BY SUM(lt.amount) DESC, COUNT(*) DESC
       LIMIT $1
     `,
-    [limit],
+    [limit, lookbackDays],
   );
   return result.rows;
 }

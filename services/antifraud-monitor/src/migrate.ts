@@ -5,12 +5,31 @@ import { fileURLToPath } from "node:url";
 import type pg from "pg";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const migrationsDir = join(here, "..", "..", "migrations");
+// `dist/src/migrate.js` and `src/migrate.ts` sit at different depths, so the
+// compiled and the tsx/dev layouts resolve the same directory differently.
+const migrationDirCandidates = [
+  join(here, "..", "..", "migrations"),
+  join(here, "..", "migrations"),
+];
+
+async function resolveMigrations(): Promise<{ dir: string; files: string[] }> {
+  for (const dir of migrationDirCandidates) {
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch {
+      continue;
+    }
+    const files = entries.filter((name) => /^\d+.*\.sql$/.test(name)).sort();
+    if (files.length > 0) return { dir, files };
+  }
+  throw new Error(
+    `Unable to locate the antifraud migrations directory (looked in ${migrationDirCandidates.join(", ")})`,
+  );
+}
 
 export async function migrate(pool: pg.Pool): Promise<void> {
-  const files = (await readdir(migrationsDir))
-    .filter((name) => /^\d+.*\.sql$/.test(name))
-    .sort();
+  const { dir: migrationsDir, files } = await resolveMigrations();
 
   const client = await pool.connect();
   try {

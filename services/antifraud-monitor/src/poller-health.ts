@@ -15,6 +15,20 @@ export type PollerHealthSnapshot = {
   lastError: string | null;
 };
 
+export function pollerStalledFor(
+  poller: PollerHealthSnapshot,
+  timeoutMs: number,
+  now = Date.now(),
+): number | null {
+  if (!poller.leader) return null;
+  const last = poller.lastSuccessfulTickAt ?? poller.lastTickCompletedAt;
+  if (!last) return null;
+  const parsed = Date.parse(last);
+  if (Number.isNaN(parsed)) return null;
+  const age = Math.max(0, now - parsed);
+  return age > timeoutMs ? age : null;
+}
+
 export class PollerHealth {
   private running = false;
   private leader = false;

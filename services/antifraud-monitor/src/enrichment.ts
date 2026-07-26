@@ -9,6 +9,42 @@ import type { Signal, Signup } from "./types.js";
 
 type JsonObject = Record<string, unknown>;
 
+/**
+ * Wall-clock bound for the Fingerprint Server API. The SDK exposes no
+ * AbortSignal, so a blackholed load balancer would otherwise hang
+ * `processSignup` forever while the engine's tick stays marked running.
+ */
+const FINGERPRINT_TIMEOUT_MS = 5_000;
+
+class TimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TimeoutError";
+  }
+}
+
+async function withTimeout<T>(
+  work: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new TimeoutError(`${label}_timeout`)),
+          timeoutMs,
+        );
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function object(value: unknown): JsonObject {
   return value !== null && typeof value === "object"
     ? (value as JsonObject)
@@ -52,6 +88,20 @@ export class EnrichmentService {
     });
   }
 
+  /** Redacts configured secrets out of provider error text. */
+  private scrub(value: string): string {
+    return [
+      this.config.FINGERPRINT_SECRET_API_KEY,
+      this.config.PROXYCHECK_API_KEY,
+      this.config.API_TOKEN,
+      this.config.API_ADMIN_TOKEN,
+    ].reduce(
+      (message, secret) =>
+        secret ? message.replaceAll(secret, "[redacted]") : message,
+      value,
+    );
+  }
+
   async fingerprintCheck(signup: Signup): Promise<EnrichmentResult> {
     if (!signup.fingerprint_request_id) {
       return {
@@ -69,8 +119,10 @@ export class EnrichmentService {
     }
 
     try {
-      const event = await this.fingerprint.getEvent(
-        signup.fingerprint_request_id,
+      const event = await withTimeout(
+        this.fingerprint.getEvent(signup.fingerprint_request_id),
+        FINGERPRINT_TIMEOUT_MS,
+        "fingerprint",
       );
       const raw = JSON.parse(JSON.stringify(event)) as JsonObject;
       const products = object(raw.products);
@@ -287,8 +339,12 @@ export class EnrichmentService {
         provider: "proxycheck",
         status: "failed",
         lookupKey: signup.signup_ip,
+        // The request URL carries the proxycheck API key, and fetch errors can
+        // echo it back — never persist or surface an unscrubbed message.
         errorCode:
-          error instanceof Error ? error.message.slice(0, 100) : "unknown_error",
+          error instanceof Error
+            ? this.scrub(error.message).slice(0, 100)
+            : "unknown_error",
         signals: [],
       };
     }
