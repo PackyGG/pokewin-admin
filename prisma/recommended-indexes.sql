@@ -1355,3 +1355,15 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vouchers_open_user_created_cover
   ON vouchers (user_id, created_at DESC)
   INCLUDE (value, origin, description)
   WHERE claimed_at IS NULL;
+
+-- #39 backend-monitor pages recent signups by newest account with id as the
+-- stable tie-breaker. This shape serves both the initial page and its keyset
+-- cursor without a sequential scan plus sort.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_created_at
+  ON public."user" (created_at DESC, id DESC);
+
+-- #40 backend-monitor resolves the newest fingerprint evidence for each
+-- signup. Keep this recommendation with the MAIN owner-applied index catalog;
+-- the read-only monitor service intentionally carries no executable DDL.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_fingerprints_user_id_created_at
+  ON public.fingerprints (user_id, created_at DESC);

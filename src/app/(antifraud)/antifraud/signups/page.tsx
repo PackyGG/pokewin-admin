@@ -16,6 +16,7 @@ import {
   listAntifraudSignups,
   type AntifraudSignup,
 } from "@/lib/antifraud/signups";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,18 +38,16 @@ export default async function AntifraudSignupsPage({
     Number.isInteger(rawPage) && rawPage > 0 ? Math.min(rawPage, 10_000) : 1;
 
   return (
-    <div className="w-full space-y-5">
-      <header className="flex items-start gap-3 border-b border-border/60 pb-4">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-500">
-          <UserRoundSearch className="size-4" />
-        </span>
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight">Signups</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            Every new account with its signup risk assessment and provider checks.
-          </p>
-        </div>
-      </header>
+    <div className="space-y-6">
+      <PageHero>
+        <PageHeroIdentity
+          icon={UserRoundSearch}
+          accent="cyan"
+          title="Signups"
+          subtitle="Every new account with its signup risk assessment and provider checks"
+          backHref="/antifraud"
+        />
+      </PageHero>
 
       <Suspense key={page} fallback={<SignupsSkeleton />}>
         <SignupsData page={page} />
