@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatNumber, formatRelative } from "@/lib/utils/format";
 import { getReviewStats, listRecentSignals, listReviews } from "@/lib/antifraud/reviews";
 import { LiveFeed } from "./_components/live-feed";
+import { LiveActivity } from "./_components/live-activity";
 import { OverviewLiveSync } from "./_components/overview-live-sync";
 import { ReviewSeverityBadge, ReviewStatusBadge } from "./_components/badges";
 
@@ -68,13 +69,14 @@ export default async function AntifraudOverviewPage() {
           one part of the page that should appear instantly. */}
       <LiveFeed />
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-3">
         <Suspense fallback={<ListSkeleton title="Needs attention" />}>
           <QueuePreview />
         </Suspense>
         <Suspense fallback={<ListSkeleton title="Recent signals" />}>
           <SignalHistory />
         </Suspense>
+        <LiveActivity />
       </div>
 
     </div>

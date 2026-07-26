@@ -6,6 +6,7 @@ import {
 } from "@/lib/dal";
 import { pageAccessGranted } from "@/lib/admin-pages";
 import { resolveBackendApiConfig } from "@/lib/backend-api/config";
+import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 import https from "node:https";
 import crypto from "node:crypto";
 import type { Duplex, Writable } from "node:stream";
@@ -21,7 +22,8 @@ import type { Duplex, Writable } from "node:stream";
 import * as ws from "ws";
 
 /**
- * Authenticated SSE proxy for the existing packy.gg chat WebSocket.
+ * Authenticated SSE proxy for the existing packy.gg WebSocket. Chat and
+ * identifier-only gaming activity are filtered independently per staff access.
  */
 
 // `Receiver` is a Writable stream but the @types/ws package doesn't
@@ -82,13 +84,33 @@ function isLoopbackOrigin(origin: string): boolean {
   }
 }
 
-function filterChatPayload(raw: string): string | null {
+function filterPayload(
+  raw: string,
+  canReceiveChat: boolean,
+  canReceiveGaming: boolean,
+): string | null {
   try {
-    const event = JSON.parse(raw) as { type?: unknown };
-    return event.type === "chat.pull.history" ||
-      event.type === "active.users.count"
-      ? raw
-      : null;
+    const event = JSON.parse(raw) as {
+      type?: unknown;
+      payload?: { topics?: unknown };
+    };
+    if (
+      canReceiveChat &&
+      (event.type === "chat.pull.history" ||
+        event.type === "active.users.count")
+    ) {
+      return raw;
+    }
+    if (
+      !canReceiveGaming ||
+      event.type !== "admin.activity" ||
+      !Array.isArray(event.payload?.topics) ||
+      !event.payload.topics.includes("gaming")
+    ) {
+      return null;
+    }
+    event.payload.topics = ["gaming"];
+    return JSON.stringify(event);
   } catch {
     return null;
   }
@@ -128,8 +150,11 @@ export async function GET(request: Request): Promise<Response> {
     return new Response("Forbidden", { status: 403 });
   }
 
-  // Authenticate against current DB-backed roles and require chat access.
+  // Authenticate against current DB-backed roles. The two upstream feeds are
+  // authorized independently so Antifraud access never grants chat access.
   let userId: string;
+  let canReceiveChat = false;
+  let canReceiveGaming = false;
   try {
     const session = await verifySession();
     userId = session.userId;
@@ -137,7 +162,19 @@ export async function GET(request: Request): Promise<Response> {
     const permissions = fullAccess
       ? []
       : await getUserPermissions(session.userId);
-    if (!fullAccess && !pageAccessGranted(permissions, "/chat")) {
+    canReceiveChat =
+      fullAccess || pageAccessGranted(permissions, "/chat");
+    canReceiveGaming =
+      fullAccess || pageAccessGranted(permissions, "/users");
+    if (!canReceiveGaming) {
+      try {
+        await requireAntifraudAccess();
+        canReceiveGaming = true;
+      } catch {
+        // Antifraud access is independent from normal admin page permissions.
+      }
+    }
+    if (!canReceiveChat && !canReceiveGaming) {
       return new Response("Forbidden", { status: 403 });
     }
   } catch {
@@ -176,8 +213,8 @@ export async function GET(request: Request): Promise<Response> {
       },
     };
   } catch (error) {
-    console.error("[packy-live] chat backend unavailable", error);
-    return new Response("Live chat unavailable", { status: 503 });
+    console.error("[packy-live] backend unavailable", error);
+    return new Response("Live backend unavailable", { status: 503 });
   }
 
   const currentOpen = openStreams.get(userId) ?? 0;
@@ -440,7 +477,11 @@ export async function GET(request: Request): Promise<Response> {
             } else {
               return;
             }
-            const filteredPayload = filterChatPayload(payload);
+            const filteredPayload = filterPayload(
+              payload,
+              canReceiveChat,
+              canReceiveGaming,
+            );
             if (filteredPayload == null) return;
             payload = filteredPayload;
             if (payload.includes("\n")) {
@@ -532,7 +573,14 @@ export async function GET(request: Request): Promise<Response> {
           ).Sender;
           if (typeof SenderCtor === "function") {
             const sender = new SenderCtor(rawSocket, extensions);
-            const subscribes = [{ type: "chat.pull.feed.subscribe" }];
+            const subscribes = [
+              ...(canReceiveChat
+                ? [{ type: "chat.pull.feed.subscribe" }]
+                : []),
+              ...(canReceiveGaming
+                ? [{ type: "admin.activity.feed.subscribe" }]
+                : []),
+            ];
             for (const msg of subscribes) {
               try {
                 sender.send(JSON.stringify(msg), {

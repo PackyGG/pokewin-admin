@@ -3,7 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 /**
  * Matches /antifraud: hero, live snapshot status, six-tile KPI strip, live
- * strip and two side-by-side lists.
+ * strip and the three overview boxes.
  */
 export default function AntifraudOverviewLoading() {
   return (
@@ -16,9 +16,10 @@ export default function AntifraudOverviewLoading() {
         ))}
       </div>
       <Skeleton className="h-32 w-full rounded-xl" />
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Skeleton className="h-64 w-full rounded-xl" />
-        <Skeleton className="h-64 w-full rounded-xl" />
+      <div className="grid gap-6 lg:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Skeleton key={i} className="h-64 w-full rounded-xl" />
+        ))}
       </div>
     </div>
   );
