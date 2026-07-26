@@ -61,7 +61,26 @@ export class MonitorEngine {
       await this.scanActiveSessions();
       await this.completeExpiredSessions();
     } catch (error) {
-      this.log.error({ err: error }, "Antifraud monitor tick failed");
+      const details = error as {
+        name?: unknown;
+        message?: unknown;
+        code?: unknown;
+      };
+      const rawMessage =
+        typeof details.message === "string" ? details.message : "unknown error";
+      const safeMessage = [
+        this.config.FINGERPRINT_SECRET_API_KEY,
+        this.config.PROXYCHECK_API_KEY,
+        this.config.API_TOKEN,
+        this.config.API_ADMIN_TOKEN,
+      ].reduce(
+        (message, secret) => message.replaceAll(secret, "[redacted]"),
+        rawMessage,
+      );
+      this.log.error(
+        { err: error },
+        `Antifraud monitor tick failed: ${String(details.name ?? "Error")} ${String(details.code ?? "unknown")} ${safeMessage}`,
+      );
     } finally {
       this.running = false;
     }
