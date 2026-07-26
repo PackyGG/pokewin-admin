@@ -33,7 +33,21 @@ either token to a browser. Mutation requests require a unique
 `idempotencyKey`; writes and their immutable audit rows commit transactionally.
 Rule edits and case decisions accept optional `actorId` and `actorUsername`
 fields so the initiating staff identity is persisted instead of attributing a
-human action to the service fallback.
+human action to the service fallback. Reusing a key succeeds only when the
+case/rule, action or patch, actor and reason exactly match the original
+request; a changed request returns `409 idempotency_conflict`.
+
+Signup assessment, case/session creation, initial risk events and cursor
+advancement commit atomically. Provider successes are cached before that
+transaction so a process restart does not normally repeat paid enrichment.
+An unprocessable signup is retained in `signup_ingestion_failures` and its
+cursor is advanced transactionally, preventing one poison account from
+blocking or repeatedly enriching every later signup.
+
+Activity reads use a separate bounded batch per active session. The overlap
+window preserves the full `(occurred_at, source, source_ref)` cursor, fresh
+events are selected before overlap replays, and each session batch persists
+its events, score and cursor in one transaction.
 
 `GET /v1/operations/config` is protected by either service token and is the
 source of truth for deployed monitor configuration. Its response is:

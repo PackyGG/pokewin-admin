@@ -6,16 +6,21 @@ import type pg from "pg";
 
 import { serviceRequestAuthorized } from "../src/auth.js";
 import type { Config } from "../src/config.js";
+import { sameDecisionIdentity } from "../src/decision-idempotency.js";
 import { pollerStalledFor, type PollerHealthSnapshot } from "../src/poller-health.js";
 import { parseEnvelope, STREAM_ID_PATTERN } from "../src/live.js";
+import { processOrderedBatch } from "../src/ordered-ingestion.js";
 import { createPromiseCache } from "../src/promise-cache.js";
 import { caseDecisionSchema } from "../src/request-schemas.js";
+import { sameRuleUpdateIdentity } from "../src/rule-idempotency.js";
 import { sanitizedRuntimeConfig } from "../src/runtime-config.js";
 import {
   fetchActivity,
   fetchNewSignups,
   RAIN_WINNER_LOOKBACK_DAYS,
+  rewardSourceRef,
   signupContext,
+  storedIpv6,
   topRainWinners,
 } from "../src/source.js";
 import type { ActiveSession, Signup } from "../src/types.js";
@@ -71,6 +76,7 @@ const signup: Signup = {
 
 const runtimeConfig: Config = {
   NODE_ENV: "test",
+  TZ: "UTC",
   PORT: 4100,
   SOURCE_DATABASE_URL: "postgresql://source-user:source-secret@source/db",
   SOURCE_DATABASE_SSL: "disable",
@@ -119,6 +125,11 @@ test("every config consumer is declared by the runtime schema", async () => {
     if (!file.endsWith(".ts") || file === "config.ts") continue;
     const source = await readFile(new URL(file, srcUrl), "utf8");
     for (const match of source.matchAll(/\bconfig\.([A-Z][A-Z0-9_]+)\b/g)) {
+      if (match[1]) consumed.add(match[1]);
+    }
+    for (const match of source.matchAll(
+      /\bprocess\.env\.([A-Z][A-Z0-9_]+)\b/g,
+    )) {
       if (match[1]) consumed.add(match[1]);
     }
   }
@@ -214,6 +225,47 @@ test("promise cache coalesces cold loads, expires, and evicts rejection", async 
   assert.equal(calls, 4);
 });
 
+test("poison signup is dead-lettered and later siblings do not reemit", async () => {
+  const items = ["a", "poison", "c"];
+  const prepared: string[] = [];
+  const emitted: string[] = [];
+  const deadLetters: string[] = [];
+  let cursor = "";
+
+  const first = await processOrderedBatch(
+    items,
+    async (item) => {
+      prepared.push(item);
+      return item.toUpperCase();
+    },
+    async (item, value) => {
+      if (item === "poison") throw new Error("invalid row");
+      emitted.push(value);
+      cursor = item;
+    },
+    async (item) => {
+      deadLetters.push(item);
+      cursor = item;
+    },
+  );
+  assert.deepEqual(first, { committed: 2, deadLettered: 1 });
+  assert.deepEqual(prepared, items);
+  assert.deepEqual(deadLetters, ["poison"]);
+  assert.deepEqual(emitted, ["A", "C"]);
+  assert.equal(cursor, "c");
+
+  const replay = await processOrderedBatch(
+    items.slice(items.indexOf(cursor) + 1),
+    async (item) => item,
+    async (item) => {
+      emitted.push(item);
+    },
+    async () => undefined,
+  );
+  assert.deepEqual(replay, { committed: 0, deadLettered: 0 });
+  assert.deepEqual(emitted, ["A", "C"]);
+});
+
 test("live replay envelopes require valid ids and object payloads", () => {
   assert.equal(STREAM_ID_PATTERN.test("1720000000000-7"), true);
   assert.equal(STREAM_ID_PATTERN.test("latest"), false);
@@ -264,20 +316,47 @@ test("signup and activity cursors preserve equal timestamps with UTC tuples", as
   const activity = capturePool();
   await fetchActivity(activity.pool, [session], 40, 2_000);
   const sql = activity.queries[0]?.sql ?? "";
-  assert.match(sql, /occurred_at AT TIME ZONE 'UTC' AS occurred_at/);
+  assert.match(sql, /created_at AT TIME ZONE 'UTC' AS occurred_at/);
   assert.match(
     sql,
-    /> \(cursor\.occurred_at, cursor\.source, cursor\.source_ref\)/,
+    />\s+\(\$2::timestamptz, \$3::text, \$4::text\)/,
   );
   assert.match(sql, /':granted'/);
   assert.match(sql, /':opened'/);
-  const cursors = JSON.parse(String(activity.queries[0]?.values?.[0])) as Array<{
-    occurred_at: string;
-  }>;
-  assert.equal(cursors[0]?.occurred_at, "2025-12-31T23:59:59.000Z");
+  assert.deepEqual(activity.queries[0]?.values, [
+    session.user_id,
+    session.activity_cursor_at,
+    session.activity_cursor_source,
+    session.activity_cursor_ref,
+    2_000,
+    40,
+  ]);
 });
 
-test("malformed signup IP never enters an inet parameter query", async () => {
+test("activity fetch gives every live session its own bounded batch", async () => {
+  const source = capturePool();
+  await fetchActivity(
+    source.pool,
+    [
+      session,
+      { ...session, id: "session-2", user_id: "user-2" },
+    ],
+    40,
+    2_000,
+  );
+  assert.equal(source.queries.length, 2);
+  assert.deepEqual(
+    source.queries.map((query) => query.values?.[5]),
+    [20, 20],
+  );
+});
+
+test("malformed stored IPv6 never enters an inet parameter query", async () => {
+  assert.equal(storedIpv6("2001:db8::1"), "2001:db8::1");
+  assert.equal(storedIpv6("unknown"), null);
+  assert.equal(storedIpv6("2001:db8::1, 198.51.100.1"), null);
+  assert.equal(storedIpv6("[2001:db8::1]:443"), null);
+
   const source = capturePool([{
     same_ip_10m: "1",
     same_ip_30m: "1",
@@ -298,6 +377,25 @@ test("top rain is time bounded and receives bound limit/lookback values", async 
   assert.match(
     source.queries[0]?.sql ?? "",
     /created_at >= \(now\(\) AT TIME ZONE 'UTC'\) - \(\$2::int \* interval '1 day'\)/,
+  );
+  assert.match(source.queries[0]?.sql ?? "", /lt\.type = 'rain_win'/);
+  assert.match(source.queries[0]?.sql ?? "", /lt\.status = 'completed'/);
+  assert.doesNotMatch(
+    source.queries[0]?.sql ?? "",
+    /(?:type|status)::text =/,
+  );
+});
+
+test("reward granted and opened states have distinct durable references", () => {
+  const rewardId = "reward-row-1";
+  assert.equal(rewardSourceRef(rewardId, null), "reward-row-1:granted");
+  assert.equal(
+    rewardSourceRef(rewardId, new Date("2026-01-01T00:00:00.000Z")),
+    "reward-row-1:opened",
+  );
+  assert.notEqual(
+    rewardSourceRef(rewardId, null),
+    rewardSourceRef(rewardId, new Date()),
   );
 });
 
@@ -335,6 +433,72 @@ test("decision schema accepts and preserves server-derived staff identity", () =
   assert.equal(parsed.actorUsername, "Support Agent");
 });
 
+test("decision idempotency accepts exact replay and rejects identity changes", () => {
+  const stored = {
+    case_id: "case-1",
+    action_type: "resolved_fraud",
+    actor_id: "staff-1",
+    actor_username: "Support Agent",
+    reason: "Confirmed linked abuse.",
+  };
+  const requested = {
+    caseId: "case-1",
+    decision: "resolved_fraud",
+    actorId: "staff-1",
+    actorUsername: "Support Agent",
+    reason: "Confirmed linked abuse.",
+  };
+  assert.equal(sameDecisionIdentity(stored, requested), true);
+  assert.equal(
+    sameDecisionIdentity(stored, { ...requested, caseId: "case-2" }),
+    false,
+  );
+  assert.equal(
+    sameDecisionIdentity(stored, { ...requested, decision: "resolved_safe" }),
+    false,
+  );
+  assert.equal(
+    sameDecisionIdentity(stored, { ...requested, actorId: "staff-2" }),
+    false,
+  );
+  assert.equal(
+    sameDecisionIdentity(stored, { ...requested, reason: "Different reason" }),
+    false,
+  );
+});
+
+test("rule idempotency is bound to the exact target, actor, and patch", () => {
+  const requested = {
+    targetId: "rule-1",
+    actorId: "staff-1",
+    actorUsername: "Support Agent",
+    changes: { enabled: false, scoreDelta: 40 },
+  };
+  const stored = {
+    action: "rule.update",
+    target_id: "rule-1",
+    actor_id: "staff-1",
+    actor_username: "Support Agent",
+    request_state: requested,
+  };
+  assert.equal(sameRuleUpdateIdentity(stored, requested), true);
+  assert.equal(
+    sameRuleUpdateIdentity(stored, { ...requested, targetId: "rule-2" }),
+    false,
+  );
+  assert.equal(
+    sameRuleUpdateIdentity(stored, {
+      ...requested,
+      changes: { enabled: true, scoreDelta: 40 },
+    }),
+    false,
+  );
+  assert.equal(
+    sameRuleUpdateIdentity({ ...stored, request_state: null }, requested),
+    false,
+  );
+});
+
 test("leader liveness stalls only after its bounded timeout", () => {
   const base: PollerHealthSnapshot = {
     status: "healthy",
@@ -359,6 +523,19 @@ test("leader liveness stalls only after its bounded timeout", () => {
   );
   assert.equal(
     pollerStalledFor(base, 120_000, Date.parse("2026-01-01T00:02:02.000Z")),
+    121_000,
+  );
+  assert.equal(
+    pollerStalledFor(
+      {
+        ...base,
+        lastSuccessfulTickAt: null,
+        lastTickCompletedAt: null,
+        lastTickStartedAt: "2026-01-01T00:00:00.000Z",
+      },
+      120_000,
+      Date.parse("2026-01-01T00:02:01.000Z"),
+    ),
     121_000,
   );
   assert.equal(pollerStalledFor({ ...base, leader: false }, 1, Infinity), null);

@@ -13,12 +13,20 @@ import {
   closeDatabases,
   createDatabases,
 } from "./db.js";
+import {
+  sameDecisionIdentity,
+  type StoredDecisionIdentity,
+} from "./decision-idempotency.js";
 import { LiveBus, STREAM_ID_PATTERN } from "./live.js";
 import { migrate } from "./migrate.js";
 import { MonitorEngine } from "./monitor.js";
 import { pollerStalledFor } from "./poller-health.js";
 import { createPromiseCache } from "./promise-cache.js";
 import { caseDecisionSchema, ruleUpdateSchema } from "./request-schemas.js";
+import {
+  sameRuleUpdateIdentity,
+  type StoredRuleUpdateIdentity,
+} from "./rule-idempotency.js";
 import { sanitizedRuntimeConfig } from "./runtime-config.js";
 import {
   ACTIVITY_SCORE_DEFINITIONS,
@@ -502,16 +510,37 @@ app.put("/v1/rules/:id", {
 }, async (request, reply) => {
   const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
   const body = ruleUpdateSchema.parse(request.body);
+  const actorId = body.actorId ?? SERVICE_ACTOR_ID;
+  const actorUsername = body.actorUsername ?? null;
+  const {
+    idempotencyKey: _idempotencyKey,
+    actorId: _actorId,
+    actorUsername: _actorUsername,
+    ...changes
+  } = body;
+  const requestIdentity = {
+    targetId: id,
+    actorId,
+    actorUsername,
+    changes,
+  };
 
   const client = await db.antifraud.connect();
   let updated: Record<string, unknown>;
   try {
     await client.query("BEGIN");
-    const duplicate = await client.query(
-      "SELECT 1 FROM service_audit_events WHERE idempotency_key=$1",
+    const duplicate = await client.query<StoredRuleUpdateIdentity>(
+      `SELECT action, target_id, actor_id, actor_username, request_state
+         FROM service_audit_events
+        WHERE idempotency_key=$1`,
       [body.idempotencyKey],
     );
-    if (duplicate.rows[0]) {
+    const existing = duplicate.rows[0];
+    if (existing) {
+      if (!sameRuleUpdateIdentity(existing, requestIdentity)) {
+        await client.query("COMMIT");
+        return reply.code(409).send({ error: "idempotency_conflict" });
+      }
       const current = await client.query(
         "SELECT * FROM rule_definitions WHERE id=$1",
         [id],
@@ -557,14 +586,17 @@ app.put("/v1/rules/:id", {
     updated = result.rows[0] as Record<string, unknown>;
     await client.query(
       `INSERT INTO service_audit_events(
-         idempotency_key, actor_id, actor_username, action, target_type, target_id,
-         before_state, after_state
-       ) VALUES ($1,$2,$3,'rule.update','rule',$4,$5::jsonb,$6::jsonb)`,
+         idempotency_key, actor_id, actor_username, action, target_type,
+         target_id, request_state, before_state, after_state
+       ) VALUES (
+         $1,$2,$3,'rule.update','rule',$4,$5::jsonb,$6::jsonb,$7::jsonb
+       )`,
       [
         body.idempotencyKey,
-        body.actorId ?? SERVICE_ACTOR_ID,
-        body.actorUsername ?? null,
+        actorId,
+        actorUsername,
         id,
+        JSON.stringify(requestIdentity),
         JSON.stringify(before.rows[0]),
         JSON.stringify(updated),
       ],
@@ -599,13 +631,27 @@ app.post("/v1/cases/:id/decision", {
   let userId: string;
   try {
     await client.query("BEGIN");
-    const duplicate = await client.query<{ user_id: string }>(
-      "SELECT user_id FROM staff_actions WHERE idempotency_key=$1",
+    const actorId = body.actorId ?? SERVICE_ACTOR_ID;
+    const actorUsername = body.actorUsername ?? null;
+    const duplicate = await client.query<StoredDecisionIdentity>(
+      `SELECT case_id, action_type, actor_id, actor_username, reason
+         FROM staff_actions
+        WHERE idempotency_key=$1`,
       [body.idempotencyKey],
     );
-    if (duplicate.rows[0]) {
+    const existing = duplicate.rows[0];
+    if (existing) {
+      const exactReplay = sameDecisionIdentity(existing, {
+        caseId: id,
+        decision: body.decision,
+        actorId,
+        actorUsername,
+        reason: body.reason,
+      });
       await client.query("COMMIT");
-      return { success: true, idempotent: true };
+      return exactReplay
+        ? { success: true, idempotent: true }
+        : reply.code(409).send({ error: "idempotency_conflict" });
     }
     const current = await client.query<{ user_id: string; status: string }>(
       "SELECT user_id, status FROM cases WHERE id=$1 FOR UPDATE",
@@ -639,8 +685,8 @@ app.post("/v1/cases/:id/decision", {
         id,
         userId,
         body.decision,
-        body.actorId ?? SERVICE_ACTOR_ID,
-        body.actorUsername ?? null,
+        actorId,
+        actorUsername,
         body.reason,
         body.idempotencyKey,
       ],

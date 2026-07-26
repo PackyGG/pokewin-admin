@@ -5,6 +5,7 @@ import type { Databases } from "./db.js";
 import { DiscordAlerts } from "./discord.js";
 import { EnrichmentService, type EnrichmentResult } from "./enrichment.js";
 import type { LiveBus } from "./live.js";
+import { processOrderedBatch } from "./ordered-ingestion.js";
 import { PollerHealth, type PollerHealthSnapshot } from "./poller-health.js";
 import { baseSignupSignals, severity } from "./scoring.js";
 import { activityScoreFor } from "./score-catalog.js";
@@ -46,6 +47,12 @@ type SequenceRule = {
   window_seconds: number;
   score_delta: number;
   action_type: string;
+};
+
+type PreparedSignup = {
+  context: Awaited<ReturnType<typeof signupContext>>;
+  fingerprint: EnrichmentResult;
+  proxycheck: EnrichmentResult;
 };
 
 /** Grace period for a poller tick during process shutdown. */
@@ -211,6 +218,9 @@ export class MonitorEngine {
         this.health.standby();
         return;
       }
+      // Mark takeover immediately. If the newly elected replica hangs before
+      // its first success, `/health` must treat it as the leader and restart it.
+      this.health.leaderAcquired();
 
       const signupMetrics = await this.runPhase("signups", () =>
         this.scanSignups(),
@@ -308,52 +318,23 @@ export class MonitorEngine {
       // the source pool (max 8) and the provider rate limits intact.
       for (let index = 0; index < signups.length; index += SIGNUP_CONCURRENCY) {
         const chunk = signups.slice(index, index + SIGNUP_CONCURRENCY);
-        const results = await Promise.allSettled(
-          chunk.map(async (signup) => {
-            await this.processSignup(signup);
-          }),
+        const result = await processOrderedBatch(
+          chunk,
+          (signup) => this.prepareSignup(signup),
+          (signup, prepared) => this.persistSignup(signup, prepared),
+          (signup, error) => this.deadLetterSignup(signup, error),
         );
-        const failedIndex = results.findIndex(
-          (result) => result.status === "rejected",
-        );
-        if (failedIndex >= 0) {
-          const failed = results[failedIndex];
-          const signup = chunk[failedIndex];
-          this.log.error(
-            {
-              err: this.safeError(
-                failed?.status === "rejected" ? failed.reason : undefined,
-              ),
-              userId: signup?.id,
-            },
-            "Antifraud monitor could not process signup; batch will retry",
-          );
-          // Do not advance over a failed assessment. All preceding writes are
-          // idempotent, so replaying the batch is safe and avoids silently
-          // losing a signup because of a transient database/provider failure.
-          throw failed?.status === "rejected"
-            ? failed.reason
-            : new Error("signup_batch_failed");
-        }
+        processed += result.committed + result.deadLettered;
       }
 
-      // The cursor is written once per batch. Every write in `processSignup`
-      // is idempotent (upserts plus the deterministic signup `source_ref`),
-      // so a crash mid-batch replays the batch without double counting.
+      // Every committed/dead-lettered row moved the cursor in the SAME
+      // transaction as its durable outcome, so this ordered batch tail is safe
+      // as the next source boundary.
       const last = signups[signups.length - 1];
       if (last) {
-        await this.db.antifraud.query(
-          `
-            UPDATE source_cursors
-            SET occurred_at = $1, source_id = $2, updated_at = now()
-            WHERE stream = 'signups'
-          `,
-          [last.created_at, last.id],
-        );
         latestAt = last.created_at;
         latestId = last.id;
       }
-      processed += signups.length;
 
       backlogPossible = signups.length === this.config.POLL_SIGNUP_BATCH_SIZE;
       if (!backlogPossible) break;
@@ -368,7 +349,7 @@ export class MonitorEngine {
     };
   }
 
-  private async processSignup(signup: Signup): Promise<void> {
+  private async upsertSubject(signup: Signup): Promise<void> {
     await this.db.antifraud.query(
       `
         INSERT INTO subjects (
@@ -406,17 +387,30 @@ export class MonitorEngine {
         signup.created_at,
       ],
     );
+  }
 
+  private async prepareSignup(signup: Signup): Promise<PreparedSignup> {
+    // Provider checks reference subjects, so establish the mirror row first.
+    // The assessment/case/session/events/cursor transaction follows only after
+    // enrichment is durably cached.
+    await this.upsertSubject(signup);
     const context = await signupContext(this.db.source, signup);
     const [fingerprint, proxycheck] = await Promise.all([
-      this.enrichment.fingerprintCheck(signup),
+      this.cachedFingerprint(signup),
       this.cachedProxycheck(signup),
     ]);
     await Promise.all([
       this.saveProviderCheck(signup.id, fingerprint),
       this.saveProviderCheck(signup.id, proxycheck),
     ]);
+    return { context, fingerprint, proxycheck };
+  }
 
+  private async persistSignup(
+    signup: Signup,
+    prepared: PreparedSignup,
+  ): Promise<void> {
+    const { context, fingerprint, proxycheck } = prepared;
     const signals = [
       ...baseSignupSignals(signup, context),
       ...fingerprint.signals,
@@ -427,20 +421,37 @@ export class MonitorEngine {
       signals.reduce((total, signal) => total + signal.points, 0),
     );
 
-    await this.db.antifraud.query(
-      `
-        INSERT INTO signup_assessments (
-          user_id, score, severity, signals, assessed_at
-        ) VALUES ($1,$2,$3,$4,now())
-        ON CONFLICT (user_id) DO UPDATE SET
-          score = EXCLUDED.score,
-          severity = EXCLUDED.severity,
-          signals = EXCLUDED.signals,
-          assessed_at = now()
-      `,
-      [signup.id, score, severity(score), JSON.stringify(signals)],
-    );
+    const client = await this.db.antifraud.connect();
+    let opened: { caseId: string; sessionId: string } | null = null;
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `
+          INSERT INTO signup_assessments (
+            user_id, score, severity, signals, assessed_at
+          ) VALUES ($1,$2,$3,$4,now())
+          ON CONFLICT (user_id) DO UPDATE SET
+            score = EXCLUDED.score,
+            severity = EXCLUDED.severity,
+            signals = EXCLUDED.signals,
+            assessed_at = now()
+        `,
+        [signup.id, score, severity(score), JSON.stringify(signals)],
+      );
+      if (score >= this.config.MONITOR_START_SCORE) {
+        opened = await this.openMonitor(client, signup, signals, score);
+      }
+      await this.advanceSignupCursor(client, signup);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
 
+    // Broadcast only after the cursor and all authoritative rows commit. A
+    // crash cannot cause the same signup to be re-read and re-broadcast.
     await this.broadcast("signup.assessed", {
       userId: signup.id,
       username: signup.username,
@@ -449,8 +460,7 @@ export class MonitorEngine {
       signals,
     });
 
-    if (score < this.config.MONITOR_START_SCORE) return;
-    const opened = await this.openMonitor(signup, signals, score);
+    if (!opened) return;
     await this.broadcast("monitor.started", {
       caseId: opened.caseId,
       sessionId: opened.sessionId,
@@ -461,6 +471,94 @@ export class MonitorEngine {
       durationSeconds: this.config.MONITOR_DURATION_SECONDS,
       signals,
     });
+  }
+
+  private async cachedFingerprint(signup: Signup): Promise<EnrichmentResult> {
+    if (!signup.fingerprint_request_id) {
+      return this.enrichment.fingerprintCheck(signup);
+    }
+    const cached = await this.db.antifraud.query<{
+      score: string | null;
+      signals: unknown;
+      response: Record<string, unknown> | null;
+    }>(
+      `
+        SELECT score, signals, response
+        FROM provider_checks
+        WHERE user_id = $1
+          AND provider = 'fingerprint'
+          AND lookup_key = $2
+          AND status = 'success'
+        LIMIT 1
+      `,
+      [signup.id, signup.fingerprint_request_id],
+    );
+    if (!cached.rows[0]) return this.enrichment.fingerprintCheck(signup);
+    return {
+      provider: "fingerprint",
+      status: "success",
+      lookupKey: signup.fingerprint_request_id,
+      requestId: signup.fingerprint_request_id,
+      score: Number(cached.rows[0].score ?? 0),
+      response: cached.rows[0].response ?? {},
+      signals: storedSignals(cached.rows[0].signals),
+    };
+  }
+
+  private async advanceSignupCursor(
+    client: pg.PoolClient,
+    signup: Signup,
+  ): Promise<void> {
+    await client.query(
+      `
+        UPDATE source_cursors
+        SET occurred_at = $1, source_id = $2, updated_at = now()
+        WHERE stream = 'signups'
+          AND (occurred_at, source_id) < ($1, $2)
+      `,
+      [signup.created_at, signup.id],
+    );
+  }
+
+  private async deadLetterSignup(
+    signup: Signup,
+    error: unknown,
+  ): Promise<void> {
+    const safe = this.safeError(error);
+    const client = await this.db.antifraud.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `
+          INSERT INTO signup_ingestion_failures(
+            user_id, source_created_at, payload, error_text
+          ) VALUES ($1,$2,$3,$4)
+          ON CONFLICT (user_id) DO UPDATE SET
+            source_created_at = EXCLUDED.source_created_at,
+            payload = EXCLUDED.payload,
+            error_text = EXCLUDED.error_text,
+            failure_count = signup_ingestion_failures.failure_count + 1,
+            last_failed_at = now()
+        `,
+        [
+          signup.id,
+          signup.created_at,
+          JSON.stringify(signup),
+          safe.message.slice(0, 1_000),
+        ],
+      );
+      await this.advanceSignupCursor(client, signup);
+      await client.query("COMMIT");
+    } catch (deadLetterError) {
+      await client.query("ROLLBACK");
+      throw deadLetterError;
+    } finally {
+      client.release();
+    }
+    this.log.error(
+      { err: safe, userId: signup.id },
+      "Antifraud signup moved to the ingestion dead letter",
+    );
   }
 
   private async cachedProxycheck(signup: Signup): Promise<EnrichmentResult> {
@@ -530,14 +628,12 @@ export class MonitorEngine {
   }
 
   private async openMonitor(
+    client: pg.PoolClient,
     signup: Signup,
     signals: Signal[],
     score: number,
   ): Promise<{ caseId: string; sessionId: string }> {
-    const client = await this.db.antifraud.connect();
-    try {
-      await client.query("BEGIN");
-      const caseResult = await client.query<{ id: string }>(
+    const caseResult = await client.query<{ id: string }>(
         `
           INSERT INTO cases(user_id, status, severity, score, peak_score, summary)
           VALUES ($1, 'monitoring', $2, $3, $3, $4)
@@ -555,11 +651,11 @@ export class MonitorEngine {
           score,
           signals.map((signal) => signal.title).slice(0, 3).join(", "),
         ],
-      );
-      const caseId = caseResult.rows[0]?.id;
-      if (!caseId) throw new Error("Failed to open case");
+    );
+    const caseId = caseResult.rows[0]?.id;
+    if (!caseId) throw new Error("Failed to open case");
 
-      const sessionResult = await client.query<{ id: string }>(
+    const sessionResult = await client.query<{ id: string }>(
         `
           INSERT INTO monitor_sessions (
             case_id, user_id, ends_at, initial_score, current_score, peak_score
@@ -573,14 +669,14 @@ export class MonitorEngine {
           RETURNING id
         `,
         [caseId, signup.id, this.config.MONITOR_DURATION_SECONDS, score],
-      );
-      const sessionId = sessionResult.rows[0]?.id;
-      if (!sessionId) throw new Error("Failed to open monitor session");
+    );
+    const sessionId = sessionResult.rows[0]?.id;
+    if (!sessionId) throw new Error("Failed to open monitor session");
 
-      let runningScore = 0;
-      for (const signal of signals) {
-        runningScore += signal.points;
-        await client.query(
+    let runningScore = 0;
+    for (const signal of signals) {
+      runningScore += signal.points;
+      await client.query(
           `
             INSERT INTO risk_events (
               case_id, session_id, user_id, event_type, source, source_ref,
@@ -605,16 +701,9 @@ export class MonitorEngine {
             // count them.
             `${signup.id}:${signal.key}`,
           ],
-        );
-      }
-      await client.query("COMMIT");
-      return { caseId, sessionId };
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
+      );
     }
+    return { caseId, sessionId };
   }
 
   private async activeSessions(): Promise<ActiveSession[]> {
@@ -641,31 +730,34 @@ export class MonitorEngine {
       this.config.POLL_ACTIVITY_BATCH_SIZE,
       this.config.POLL_ACTIVITY_OVERLAP_MS,
     );
-    const byUser = new Map(sessions.map((session) => [session.user_id, session]));
-
-    const blockedUsers = new Set<string>();
-    let processed = 0;
+    const byUser = new Map<string, SourceActivity[]>();
     for (const activity of activities) {
-      if (blockedUsers.has(activity.user_id)) continue;
-      const session = byUser.get(activity.user_id);
-      if (!session) continue;
+      const batch = byUser.get(activity.user_id) ?? [];
+      batch.push(activity);
+      byUser.set(activity.user_id, batch);
+    }
+    let processed = 0;
+    for (const session of sessions) {
+      const batch = byUser.get(session.user_id);
+      if (!batch || batch.length === 0) continue;
+      batch.sort(
+        (left, right) =>
+          left.occurred_at.getTime() - right.occurred_at.getTime() ||
+          left.source.localeCompare(right.source) ||
+          left.source_ref.localeCompare(right.source_ref),
+      );
       try {
-        await this.recordActivity(session, activity);
-        processed += 1;
+        processed += await this.recordActivityBatch(session, batch);
       } catch (error) {
-        // One unprocessable row must not abort ingestion for the other
-        // monitored sessions in this tick. Stop this user's ordered stream at
-        // the first failure so a later row cannot advance its cursor over the
-        // failed event. The cursor is released when the session expires.
-        blockedUsers.add(activity.user_id);
+        // A poison row rolls back only this user's batch and cannot be skipped
+        // by a later cursor update. Other sessions continue independently.
         this.log.error(
           {
             err: this.safeError(error),
-            userId: activity.user_id,
+            userId: session.user_id,
             sessionId: session.id,
-            sourceRef: activity.source_ref,
           },
-          "Antifraud monitor skipped an unprocessable activity row",
+          "Antifraud monitor rolled back an activity batch",
         );
       }
     }
@@ -676,74 +768,80 @@ export class MonitorEngine {
     return activityScoreFor(activity.event_type);
   }
 
-  private async recordActivity(
+  private async recordActivityBatch(
     session: ActiveSession,
-    activity: SourceActivity,
-  ): Promise<void> {
-    const delta = this.pointsFor(activity);
-    let scoreAfter: number | null = null;
+    activities: SourceActivity[],
+  ): Promise<number> {
+    const broadcasts: Array<{
+      activity: SourceActivity;
+      delta: number;
+      scoreAfter: number;
+    }> = [];
+    let runningScore = session.current_score;
     const client = await this.db.antifraud.connect();
     try {
       await client.query("BEGIN");
-      const inserted = await client.query<{ id: string; score_after: number }>(
-        `
-          INSERT INTO risk_events (
-            case_id, session_id, user_id, event_type, source, source_ref,
-            score_delta, score_after, title, detail, payload, occurred_at
-          ) VALUES (
-            $1,$2,$3,$4,$5,$6,$7::int,
-            GREATEST(0, $8::int + $7::int),$9,$10,$11,$12
-          )
-          ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL DO NOTHING
-          RETURNING id, score_after
-        `,
-        [
-          session.case_id,
-          session.id,
-          session.user_id,
-          activity.event_type,
-          activity.source,
-          activity.source_ref,
-          delta,
-          session.current_score,
-          activity.title,
-          activity.detail,
-          activity.payload,
-          activity.occurred_at,
-        ],
-      );
-      const row = inserted.rows[0];
-      if (!row) {
+      for (const activity of activities) {
+        const delta = this.pointsFor(activity);
+        const inserted = await client.query<{ id: string; score_after: number }>(
+          `
+            INSERT INTO risk_events (
+              case_id, session_id, user_id, event_type, source, source_ref,
+              score_delta, score_after, title, detail, payload, occurred_at
+            ) VALUES (
+              $1,$2,$3,$4,$5,$6,$7::int,
+              GREATEST(0, $8::int + $7::int),$9,$10,$11,$12
+            )
+            ON CONFLICT (source, source_ref)
+              WHERE source_ref IS NOT NULL DO NOTHING
+            RETURNING id, score_after
+          `,
+          [
+            session.case_id,
+            session.id,
+            session.user_id,
+            activity.event_type,
+            activity.source,
+            activity.source_ref,
+            delta,
+            runningScore,
+            activity.title,
+            activity.detail,
+            activity.payload,
+            activity.occurred_at,
+          ],
+        );
         await this.advanceActivityCursor(client, session.id, activity);
-        await client.query("COMMIT");
-        return;
+        const row = inserted.rows[0];
+        if (!row) continue;
+        runningScore = row.score_after;
+        broadcasts.push({ activity, delta, scoreAfter: row.score_after });
       }
 
-      await client.query(
-        `
-          UPDATE monitor_sessions
-          SET current_score = $2,
-              peak_score = GREATEST(peak_score, $2),
-              event_count = event_count + 1
-          WHERE id = $1
-        `,
-        [session.id, row.score_after],
-      );
-      await client.query(
-        `
-          UPDATE cases
-          SET score = $2,
-              peak_score = GREATEST(peak_score, $2),
-              severity = $3,
-              updated_at = now()
-          WHERE id = $1
-        `,
-        [session.case_id, row.score_after, severity(row.score_after)],
-      );
-      await this.advanceActivityCursor(client, session.id, activity);
+      if (broadcasts.length > 0) {
+        await client.query(
+          `
+            UPDATE monitor_sessions
+            SET current_score = $2,
+                peak_score = GREATEST(peak_score, $2),
+                event_count = event_count + $3
+            WHERE id = $1
+          `,
+          [session.id, runningScore, broadcasts.length],
+        );
+        await client.query(
+          `
+            UPDATE cases
+            SET score = $2,
+                peak_score = GREATEST(peak_score, $2),
+                severity = $3,
+                updated_at = now()
+            WHERE id = $1
+          `,
+          [session.case_id, runningScore, severity(runningScore)],
+        );
+      }
       await client.query("COMMIT");
-      session.current_score = row.score_after;
-      scoreAfter = row.score_after;
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -754,19 +852,22 @@ export class MonitorEngine {
     // Broadcast and rule evaluation run AFTER the transaction is committed and
     // the client is back in the pool — a Redis outage must not roll back or
     // block committed ingestion, and must not prevent rules from firing.
-    if (scoreAfter === null) return;
-    await this.broadcast("monitor.event", {
-      caseId: session.case_id,
-      sessionId: session.id,
-      userId: session.user_id,
-      eventType: activity.event_type,
-      title: activity.title,
-      detail: activity.detail,
-      scoreDelta: delta,
-      score: scoreAfter,
-      occurredAt: activity.occurred_at,
-    });
-    await this.evaluateRules(session);
+    session.current_score = runningScore;
+    for (const event of broadcasts) {
+      await this.broadcast("monitor.event", {
+        caseId: session.case_id,
+        sessionId: session.id,
+        userId: session.user_id,
+        eventType: event.activity.event_type,
+        title: event.activity.title,
+        detail: event.activity.detail,
+        scoreDelta: event.delta,
+        score: event.scoreAfter,
+        occurredAt: event.activity.occurred_at,
+      });
+    }
+    if (broadcasts.length > 0) await this.evaluateRules(session);
+    return activities.length;
   }
 
   private async advanceActivityCursor(
@@ -896,29 +997,48 @@ export class MonitorEngine {
   }
 
   private async completeExpiredSessions(): Promise<void> {
-    const expired = await this.db.antifraud.query<{
+    type ExpiredSession = {
       id: string;
       case_id: string;
       user_id: string;
       current_score: number;
-    }>(
-      `
-        UPDATE monitor_sessions
-        SET status='completed', ended_at=now()
-        WHERE status='active' AND ends_at <= now()
-        RETURNING id, case_id, user_id, current_score
-      `,
-    );
-
-    for (const session of expired.rows) {
-      await this.db.antifraud.query(
+    };
+    const client = await this.db.antifraud.connect();
+    let sessions: ExpiredSession[] = [];
+    try {
+      await client.query("BEGIN");
+      const expired = await client.query<ExpiredSession>(
         `
-          UPDATE cases
-          SET status='open', score=$2, severity=$3, updated_at=now()
-          WHERE id=$1 AND status='monitoring'
+          UPDATE monitor_sessions
+          SET status='completed', ended_at=now()
+          WHERE status='active' AND ends_at <= now()
+          RETURNING id, case_id, user_id, current_score
         `,
-        [session.case_id, session.current_score, severity(session.current_score)],
       );
+      sessions = expired.rows;
+      for (const session of sessions) {
+        await client.query(
+          `
+            UPDATE cases
+            SET status='open', score=$2, severity=$3, updated_at=now()
+            WHERE id=$1 AND status='monitoring'
+          `,
+          [
+            session.case_id,
+            session.current_score,
+            severity(session.current_score),
+          ],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    for (const session of sessions) {
       await this.broadcast("monitor.completed", {
         caseId: session.case_id,
         sessionId: session.id,

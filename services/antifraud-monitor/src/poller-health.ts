@@ -21,7 +21,10 @@ export function pollerStalledFor(
   now = Date.now(),
 ): number | null {
   if (!poller.leader) return null;
-  const last = poller.lastSuccessfulTickAt ?? poller.lastTickCompletedAt;
+  const last =
+    poller.lastSuccessfulTickAt ??
+    poller.lastTickCompletedAt ??
+    poller.lastTickStartedAt;
   if (!last) return null;
   const parsed = Date.parse(last);
   if (Number.isNaN(parsed)) return null;
@@ -51,6 +54,10 @@ export class PollerHealth {
 
   tickSkipped(): void {
     this.skippedTicks += 1;
+  }
+
+  leaderAcquired(): void {
+    this.leader = true;
   }
 
   standby(now = new Date()): void {

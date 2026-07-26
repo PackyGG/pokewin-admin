@@ -44,6 +44,10 @@ function safeInet(column: string): string {
   return `(CASE WHEN ${column} ~ '${IPV6_SQL_PATTERN}' THEN ${column} END)::inet`;
 }
 
+export function storedIpv6(value: string | null): string | null {
+  return value && isIPv6(value) ? value : null;
+}
+
 /**
  * Lifetime aggregates on MAIN are capped instead of scanning full history —
  * same 365-day bound the admin dashboard uses for its lifetime windows.
@@ -127,7 +131,7 @@ export async function signupContext(
       : Promise.resolve({ rows: [] }),
     // Only a value Node itself validates as IPv6 may be cast to inet as a
     // query parameter; row values are guarded by `safeInet` instead.
-    signup.signup_ip && isIPv6(signup.signup_ip)
+    storedIpv6(signup.signup_ip)
       ? source.query<{ same_ipv6_30m: string }>(
           `
             SELECT COUNT(*)::text AS same_ipv6_30m
@@ -179,6 +183,13 @@ export type SourceActivity = {
 const USER_REWARD_SOURCE_REF =
   "ur.id::text || CASE WHEN ur.opened_at IS NULL THEN ':granted' ELSE ':opened' END";
 
+export function rewardSourceRef(
+  rewardId: string,
+  openedAt: Date | null,
+): string {
+  return `${rewardId}:${openedAt ? "opened" : "granted"}`;
+}
+
 export async function fetchActivity(
   source: pg.Pool,
   sessions: ActiveSession[],
@@ -186,30 +197,30 @@ export async function fetchActivity(
   overlapMs = 2_000,
 ): Promise<SourceActivity[]> {
   if (sessions.length === 0) return [];
-  const cursors = sessions.map((session) => ({
-    user_id: session.user_id,
-    occurred_at: new Date(
-      session.activity_cursor_at.getTime() - overlapMs,
-    ).toISOString(),
-    source: "",
-    source_ref: "",
-  }));
+  const perSessionLimit = Math.max(1, Math.floor(limit / sessions.length));
+  const batches: SourceActivity[][] = [];
+  for (let index = 0; index < sessions.length; index += 8) {
+    const chunk = sessions.slice(index, index + 8);
+    batches.push(
+      ...await Promise.all(
+        chunk.map((session) =>
+          fetchSessionActivity(source, session, perSessionLimit, overlapMs),
+        ),
+      ),
+    );
+  }
+  return batches.flat();
+}
 
+export async function fetchSessionActivity(
+  source: pg.Pool,
+  session: ActiveSession,
+  limit: number,
+  overlapMs: number,
+): Promise<SourceActivity[]> {
   const result = await source.query<SourceActivity>(
     `
-      WITH activity_cursors AS (
-        SELECT
-          user_id,
-          occurred_at ${UTC} AS occurred_at,
-          source,
-          source_ref
-        FROM jsonb_to_recordset($1::jsonb) AS cursor(
-          user_id text,
-          occurred_at timestamptz,
-          source text,
-          source_ref text
-        )
-      )
+      WITH candidate_activity AS (
       SELECT
         lt.user_id,
         CASE
@@ -247,10 +258,10 @@ export async function fetchActivity(
           'fiat_credited_amount_cents', fdi.credited_amount_cents
         ) AS payload
       FROM ledger_transactions lt
-      JOIN activity_cursors cursor ON cursor.user_id = lt.user_id
       LEFT JOIN fiat_deposit_intents fdi ON fdi.completed_ledger_id = lt.id
-      WHERE (lt.created_at, 'ledger'::text, lt.id::text)
-              > (cursor.occurred_at, cursor.source, cursor.source_ref)
+      WHERE lt.user_id = $1
+        AND lt.created_at >=
+          ($2::timestamptz ${UTC}) - ($5::int * interval '1 millisecond')
         AND lt.type::text <> 'rain_win'
 
       UNION ALL
@@ -271,15 +282,29 @@ export async function fetchActivity(
           'level_required', r.level_required
         )
       FROM user_rewards ur
-      JOIN activity_cursors cursor ON cursor.user_id = ur.user_id
       JOIN rewards r ON r.id = ur.reward_id
-      WHERE (COALESCE(ur.opened_at, ur.granted_at), 'user_rewards'::text, ${USER_REWARD_SOURCE_REF})
-              > (cursor.occurred_at, cursor.source, cursor.source_ref)
-
-      ORDER BY occurred_at, source, source_ref
-      LIMIT $2
+      WHERE ur.user_id = $1
+        AND COALESCE(ur.opened_at, ur.granted_at) >=
+          ($2::timestamptz ${UTC}) - ($5::int * interval '1 millisecond')
+      )
+      SELECT *
+      FROM candidate_activity
+      ORDER BY
+        ((occurred_at, source, source_ref) >
+          ($2::timestamptz, $3::text, $4::text)) DESC,
+        occurred_at,
+        source,
+        source_ref
+      LIMIT $6
     `,
-    [JSON.stringify(cursors), limit],
+    [
+      session.user_id,
+      session.activity_cursor_at,
+      session.activity_cursor_source,
+      session.activity_cursor_ref,
+      overlapMs,
+      limit,
+    ],
   );
   return result.rows;
 }
@@ -299,8 +324,8 @@ export async function topRainWinners(
         MAX(lt.created_at) ${UTC} AS last_win_at
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
-      WHERE lt.type::text = 'rain_win'
-        AND lt.status::text = 'completed'
+      WHERE lt.type = 'rain_win'
+        AND lt.status = 'completed'
         AND lt.created_at >= (now() ${UTC}) - ($2::int * interval '1 day')
       GROUP BY u.id, COALESCE(u.display_username, u.username, u.id)
       ORDER BY SUM(lt.amount) DESC, COUNT(*) DESC

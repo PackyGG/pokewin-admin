@@ -52,3 +52,18 @@ test("poller health reports failures and standby replicas", () => {
   standby.standby(new Date("2026-01-01T00:00:00.010Z"));
   assert.equal(standby.snapshot(10_000).status, "standby");
 });
+
+test("standby takeover marks leadership before work can hang", () => {
+  const health = new PollerHealth();
+  health.tickStarted(new Date("2026-01-01T00:00:00.000Z"));
+  health.standby(new Date("2026-01-01T00:00:00.010Z"));
+
+  health.tickStarted(new Date("2026-01-01T00:00:01.000Z"));
+  health.leaderAcquired();
+  const snapshot = health.snapshot(
+    10_000,
+    new Date("2026-01-01T00:00:20.000Z"),
+  );
+  assert.equal(snapshot.leader, true);
+  assert.equal(snapshot.running, true);
+});
