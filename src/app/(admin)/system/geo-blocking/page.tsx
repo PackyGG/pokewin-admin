@@ -10,7 +10,6 @@ import { FadeIn } from "@/components/fade-in";
 import {
   KpiStripSkeleton,
   SectionHeadingSkeleton,
-  TabBarSkeleton,
   TableSkeleton,
 } from "@/components/loading-skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -56,9 +55,14 @@ export default async function GeoBlockingPage() {
         fallback={
           <div className="space-y-4">
             <SectionHeadingSkeleton titleWidth={120} />
-            <KpiStripSkeleton count={3} />
-            <Skeleton className="h-9 w-full sm:max-w-sm" />
-            <TabBarSkeleton count={2} />
+            <KpiStripSkeleton count={6} />
+            <Skeleton className="h-14 w-full rounded-xl" />
+            <Skeleton className="h-40 w-full rounded-xl" />
+            <div className="flex flex-wrap items-center gap-2">
+              <Skeleton className="h-9 w-full sm:max-w-xs" />
+              <Skeleton className="h-9 w-[170px]" />
+              <Skeleton className="h-9 w-[230px]" />
+            </div>
             <TableSkeleton rows={10} columns={3} />
           </div>
         }

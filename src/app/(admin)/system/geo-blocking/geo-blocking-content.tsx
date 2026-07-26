@@ -7,9 +7,14 @@ import countries from "i18n-iso-countries";
 import enLocale from "i18n-iso-countries/langs/en.json";
 import { Ban, CreditCard, Globe, Layers, MapPin, Search, ShieldCheck } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { KpiTile, SectionHeading } from "@/components/modern-panels";
-import { CollapsibleSection } from "./collapsible-section";
 import {
   reloadCountryRestrictionsCache,
   seedMissingCountryRestrictions,
@@ -59,20 +64,22 @@ countries.registerLocale(enLocale);
  *     "250 countries are geo-blocked" when only 1 actually is.
  *   - `classifyRow` below sorts every country into exactly ONE of four
  *     buckets (blocked / item-withdrawal-only / other-restricted / open),
- *     each with its own KPI tile + tab, so the handful of REAL restrictions
- *     are never buried in the bulk baseline.
- *   - The bulk "item withdrawal disabled" bucket is the one most likely to
- *     be huge (hundreds of countries all sharing the same non-curated
- *     default), so its tab renders as ONE collapsed summary card (bundled +
- *     collapsible per owner request) instead of dumping the full table —
- *     expand it only when you actually need to review/search that list.
+ *     each with its own KPI tile, so the handful of REAL restrictions are
+ *     never buried in the bulk baseline.
+ *   - 2026-07-27 (owner: "the filters like geo block, other restrictions or
+ *     item withdrawal disabled should be like filter in a dropdown not a own
+ *     tab"): the tab bar is gone. ONE table is now driven by two dropdowns
+ *     next to the search box — Scope (Countries / US States / Fiat Policy)
+ *     and Restriction (All / Geo-blocked / Other restrictions / Item
+ *     withdrawal disabled / Fully open), each showing its live count. Same
+ *     buckets and same rows as the tabs had, just selected instead of tabbed.
  *   - Raw ISO codes ("US", "DE") are resolved to readable country names
  *     (`i18n-iso-countries`) with a flag emoji derived from the alpha-2 code.
  *
  * Same server actions as before (`toggleCountryRestriction` /
  * `updateCountryRestrictionArray`); this file only reworks the client-side
  * presentation — see `./restrictions-table.tsx` for the shared per-row
- * expandable-detail table these tabs all reuse.
+ * expandable-detail table.
  *
  * Scroll-fix / per-row pending: unchanged from the prior version — every
  * toggle / multi-select updates a LOCAL optimistic copy of the rows in place
@@ -163,6 +170,29 @@ function classifyRow(row: RestrictionRowData): RowBucket {
   return "open";
 }
 
+type Scope = "countries" | "usStates" | "policy";
+type RestrictionFilter = RowBucket | "all";
+
+const SCOPE_LABELS: Record<Scope, string> = {
+  countries: "Countries",
+  usStates: "US States",
+  policy: "Fiat Policy",
+};
+
+const RESTRICTION_LABELS: Record<RestrictionFilter, string> = {
+  all: "All restrictions",
+  blocked: "Geo-blocked",
+  other: "Other restrictions",
+  itemWithdrawalOnly: "Item withdrawal disabled",
+  open: "Fully open",
+};
+
+const SCOPE_CODE_LABEL: Record<Scope, string> = {
+  countries: "Country",
+  usStates: "State",
+  policy: "Jurisdiction",
+};
+
 export function GeoBlockingContent({
   countryRestrictions,
   siteLockedMethods,
@@ -175,10 +205,8 @@ export function GeoBlockingContent({
   // Local optimistic copy of the rows — see the "Scroll-fix" note above.
   const [rows, setRows] = useState(countryRestrictions);
   const [search, setSearch] = useState("");
-  const [tab, setTab] = useState<
-    "blocked" | "other" | "itemWithdrawal" | "all" | "usStates" | "policy"
-  >("all");
-  const [itemWithdrawalOpen, setItemWithdrawalOpen] = useState(false);
+  const [scope, setScope] = useState<Scope>("countries");
+  const [restriction, setRestriction] = useState<RestrictionFilter>("all");
   // In-flight country codes — see the "Per-row pending" note above.
   const [pendingCodes, setPendingCodes] = useState<Set<string>>(new Set());
   const [seeding, setSeeding] = useState(false);
@@ -439,31 +467,62 @@ export function GeoBlockingContent({
     return { blocked, itemWithdrawalOnly, other, open };
   }, [countryRows]);
 
-  const searched = useMemo(
-    () => filterByTerm(countryRows, search),
-    [countryRows, search],
-  );
-  const searchedStates = useMemo(
-    () => filterByTerm(stateRows, search),
-    [stateRows, search],
-  );
-  const searchedPolicy = useMemo(
-    () => filterByTerm(policyRows, search),
-    [policyRows, search],
+  // The scope dropdown picks WHICH row-set is on the table; the restriction
+  // dropdown narrows it to one `classifyRow` bucket. Both counts are live.
+  const scopeRows =
+    scope === "usStates" ? stateRows : scope === "policy" ? policyRows : countryRows;
+
+  const scopeCounts = useMemo(
+    () => ({
+      countries: countryRows.length,
+      usStates: stateRows.length,
+      policy: policyRows.length,
+    }),
+    [countryRows.length, stateRows.length, policyRows.length],
   );
 
-  const blockedRows = useMemo(
-    () => filterByTerm(buckets.blocked, search),
-    [buckets.blocked, search],
-  );
-  const otherRows = useMemo(
-    () => filterByTerm(buckets.other, search),
-    [buckets.other, search],
-  );
-  const itemWithdrawalRows = useMemo(
-    () => filterByTerm(buckets.itemWithdrawalOnly, search),
-    [buckets.itemWithdrawalOnly, search],
-  );
+  const restrictionCounts = useMemo(() => {
+    const counts: Record<RestrictionFilter, number> = {
+      all: scopeRows.length,
+      blocked: 0,
+      other: 0,
+      itemWithdrawalOnly: 0,
+      open: 0,
+    };
+    for (const row of scopeRows) counts[classifyRow(row)] += 1;
+    return counts;
+  }, [scopeRows]);
+
+  const visibleRows = useMemo(() => {
+    const byRestriction =
+      restriction === "all"
+        ? scopeRows
+        : scopeRows.filter((row) => classifyRow(row) === restriction);
+    return filterByTerm(byRestriction, search);
+  }, [scopeRows, restriction, search]);
+
+  const scopeNoun =
+    scope === "usStates" ? "US states" : scope === "policy" ? "policy jurisdictions" : "countries";
+  const emptyState = search
+    ? {
+        title: `No ${scopeNoun} match your search`,
+        description:
+          restriction === "all"
+            ? undefined
+            : 'Set the restriction filter to "All restrictions" to search everything.',
+      }
+    : restriction === "all"
+      ? {
+          title: `No ${scopeNoun} found`,
+          description:
+            scope === "policy"
+              ? "Use the global card-deposit or policy geo-block switch to seed and enforce all required rows."
+              : undefined,
+        }
+      : {
+          title: `No ${scopeNoun} in "${RESTRICTION_LABELS[restriction]}"`,
+          description: `Switch the restriction filter to "All restrictions" to see and edit every ${SCOPE_CODE_LABEL[scope].toLowerCase()}.`,
+        };
 
   return (
     <div className="space-y-4">
@@ -583,14 +642,45 @@ export function GeoBlockingContent({
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="relative w-full sm:max-w-sm">
-          <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-          <Input
-            placeholder="Search country or US state name / code..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-8"
-          />
+        <div className="flex flex-1 flex-wrap items-center gap-2">
+          <div className="relative w-full sm:max-w-xs">
+            <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+            <Input
+              placeholder="Search country or US state name / code..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-8"
+            />
+          </div>
+          {/* Scope + restriction are dropdown filters over ONE table (owner,
+              2026-07-27) — these used to be six separate tabs. */}
+          <Select value={scope} onValueChange={(v) => setScope(v as Scope)}>
+            <SelectTrigger className="h-9 w-[170px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(SCOPE_LABELS) as Scope[]).map((key) => (
+                <SelectItem key={key} value={key}>
+                  {SCOPE_LABELS[key]} ({scopeCounts[key]})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={restriction}
+            onValueChange={(v) => setRestriction(v as RestrictionFilter)}
+          >
+            <SelectTrigger className="h-9 w-[230px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(RESTRICTION_LABELS) as RestrictionFilter[]).map((key) => (
+                <SelectItem key={key} value={key}>
+                  {RESTRICTION_LABELS[key]} ({restrictionCounts[key]})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="flex items-center gap-2">
           {/* Force the game backend to reload its country-restriction Redis
@@ -621,148 +711,14 @@ export function GeoBlockingContent({
         </div>
       </div>
 
-      <Tabs
-        value={tab}
-        onValueChange={(v) =>
-          setTab(
-            v as
-              | "blocked"
-              | "other"
-              | "itemWithdrawal"
-              | "all"
-              | "usStates"
-              | "policy",
-          )
-        }
-      >
-        <TabsList className="flex-wrap h-auto">
-          <TabsTrigger value="all">All Countries ({searched.length})</TabsTrigger>
-          <TabsTrigger value="blocked">Geo-Blocked ({blockedRows.length})</TabsTrigger>
-          <TabsTrigger value="other">Other Restrictions ({otherRows.length})</TabsTrigger>
-          <TabsTrigger value="itemWithdrawal">
-            Item Withdrawal Disabled ({itemWithdrawalRows.length})
-          </TabsTrigger>
-          <TabsTrigger value="usStates">US States ({searchedStates.length})</TabsTrigger>
-          <TabsTrigger value="policy">
-            Fiat Policy ({searchedPolicy.length} /{" "}
-            {MANDATORY_FIAT_JURISDICTION_CODES.length})
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="blocked">
-          <RestrictionsTable
-            rows={blockedRows}
-            codeLabel="Country"
-            pendingCodes={pendingCodes}
-            onToggle={handleToggle}
-            onArrayChange={handleArrayChange}
-            emptyState={
-              search
-                ? {
-                    title: "No geo-blocked countries match your search",
-                    description: "Try the All Countries tab to search everything.",
-                  }
-                : {
-                    title: "No countries are geo-blocked",
-                    description: "Switch to All Countries to block one.",
-                  }
-            }
-          />
-        </TabsContent>
-
-        <TabsContent value="other">
-          <RestrictionsTable
-            rows={otherRows}
-            codeLabel="Country"
-            pendingCodes={pendingCodes}
-            onToggle={handleToggle}
-            onArrayChange={handleArrayChange}
-            emptyState={
-              search
-                ? {
-                    title: "No countries match your search",
-                    description: "Try the All Countries tab to search everything.",
-                  }
-                : {
-                    title: "No other partial restrictions",
-                    description:
-                      "No country has a digital-withdrawal / gift-card / promo-code / locked-currency restriction beyond the item-withdrawal baseline.",
-                  }
-            }
-          />
-        </TabsContent>
-
-        <TabsContent value="itemWithdrawal">
-          {/* Bundled + collapsed by default (owner request) — hundreds of
-              countries can share this exact restriction, so it stays folded
-              into one summary line until an admin actually needs to search
-              or edit that list. */}
-          <CollapsibleSection
-            icon={CreditCard}
-            title={`${itemWithdrawalRows.length} countries — item/physical withdrawal disabled`}
-            subtitle="Bulk baseline restriction, not a curated geo-block. Expand to search or edit."
-            open={itemWithdrawalOpen}
-            onOpenChange={setItemWithdrawalOpen}
-          >
-            <RestrictionsTable
-              rows={itemWithdrawalRows}
-              codeLabel="Country"
-              pendingCodes={pendingCodes}
-              onToggle={handleToggle}
-              onArrayChange={handleArrayChange}
-              emptyState={{
-                title: "No countries match your search",
-                description: "Try the All Countries tab to search everything.",
-              }}
-            />
-          </CollapsibleSection>
-        </TabsContent>
-
-        <TabsContent value="all">
-          <RestrictionsTable
-            rows={searched}
-            codeLabel="Country"
-            pendingCodes={pendingCodes}
-            onToggle={handleToggle}
-            onArrayChange={handleArrayChange}
-            emptyState={{ title: "No countries match your search" }}
-          />
-        </TabsContent>
-
-        <TabsContent value="usStates">
-          <RestrictionsTable
-            rows={searchedStates}
-            codeLabel="State"
-            pendingCodes={pendingCodes}
-            onToggle={handleToggle}
-            onArrayChange={handleArrayChange}
-            emptyState={{
-              title: search
-                ? "No US states match your search"
-                : "No US states found",
-              description:
-                "All 50 states + DC live here. Blocking a state stops access for users geolocated there — layered on top of any country-level US rule (the backend already enforces this).",
-            }}
-          />
-        </TabsContent>
-
-        <TabsContent value="policy">
-          <RestrictionsTable
-            rows={searchedPolicy}
-            codeLabel="Jurisdiction"
-            pendingCodes={pendingCodes}
-            onToggle={handleToggle}
-            onArrayChange={handleArrayChange}
-            emptyState={{
-              title: search
-                ? "No policy jurisdictions match your search"
-                : "Policy jurisdictions have not been seeded",
-              description:
-                "Use the global card-deposit or policy geo-block switch to seed and enforce all required rows.",
-            }}
-          />
-        </TabsContent>
-      </Tabs>
+      <RestrictionsTable
+        rows={visibleRows}
+        codeLabel={SCOPE_CODE_LABEL[scope]}
+        pendingCodes={pendingCodes}
+        onToggle={handleToggle}
+        onArrayChange={handleArrayChange}
+        emptyState={emptyState}
+      />
     </div>
   );
 }
