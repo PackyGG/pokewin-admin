@@ -493,7 +493,8 @@ export class MonitorEngine {
             case_id, session_id, user_id, event_type, source, source_ref,
             score_delta, score_after, title, detail, payload, occurred_at
           ) VALUES (
-            $1,$2,$3,$4,$5,$6,$7,GREATEST(0,$8 + $7),$9,$10,$11,$12
+            $1,$2,$3,$4,$5,$6,$7::int,
+            GREATEST(0, $8::int + $7::int),$9,$10,$11,$12
           )
           ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL DO NOTHING
           RETURNING id, score_after
