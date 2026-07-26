@@ -18,8 +18,8 @@
 		"test:e2e:ui": "playwright test --ui",
 		"test:e2e:headed": "playwright test --headed",
 		"test:e2e:seed": "npx tsx e2e/helpers/seed-e2e-admin.ts",
-		"test:guardrails": "tsx --test \"scripts/__fixtures__/*.test.ts\"",
-		"test:parity": "tsx --test \"scripts/__fixtures__/*.test.ts\" && node --env-file=.env scripts/limits-parity-harness.mjs",
+		"test:guardrails": "node scripts/run-guardrails.mjs",
+		"test:parity": "node scripts/run-guardrails.mjs && node --env-file=.env scripts/limits-parity-harness.mjs",
 		"parity:harness": "node --env-file=.env scripts/permission-parity-harness.mjs",
 		"limits:harness": "node --env-file=.env scripts/limits-parity-harness.mjs"
 	},
