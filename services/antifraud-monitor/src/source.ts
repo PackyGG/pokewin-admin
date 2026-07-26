@@ -18,6 +18,14 @@ import type { ActiveSession, Signup } from "./types.js";
  * The round trip is then exact regardless of process TZ or server TimeZone.
  */
 const UTC = "AT TIME ZONE 'UTC'";
+/**
+ * node-postgres materialises timestamps as JavaScript Dates, which retain only
+ * milliseconds. MAIN can store six fractional digits, so using the raw source
+ * timestamp in the read tuple and the truncated Date in the persisted cursor
+ * can leave one row permanently after the cursor. Keep both sides and ordering
+ * on the precision the application can round-trip exactly.
+ */
+const CURSOR_MILLISECONDS = "date_trunc('milliseconds', u.created_at)";
 
 /**
  * Strict IPv6 matcher. `user.signup_ip` is plain `text` on MAIN and is never
@@ -65,7 +73,7 @@ export async function fetchNewSignups(
         u.id, u.username, u.email, u.image, u.signup_ip, u.country, u.country_code,
         u.continent_code, u.state, u.city, u.affiliate_code, u.referred_by,
         u.is_suspected_alt,
-        u.created_at ${UTC} AS created_at,
+        ${CURSOR_MILLISECONDS} ${UTC} AS created_at,
         fp.request_id AS fingerprint_request_id,
         fp.visitor_id,
         fp.confidence AS fingerprint_confidence,
@@ -86,9 +94,10 @@ export async function fetchNewSignups(
         ORDER BY created_at DESC
         LIMIT 1
       ) ae ON true
-      WHERE (u.created_at, u.id) > ($1::timestamptz ${UTC}, $2::text)
+      WHERE (${CURSOR_MILLISECONDS}, u.id) >
+        (date_trunc('milliseconds', $1::timestamptz ${UTC}), $2::text)
         AND u.created_at <= (now() ${UTC}) - interval '5 seconds'
-      ORDER BY u.created_at, u.id
+      ORDER BY ${CURSOR_MILLISECONDS}, u.id
       LIMIT $3
     `,
     [cursor.occurredAt, cursor.sourceId, limit],

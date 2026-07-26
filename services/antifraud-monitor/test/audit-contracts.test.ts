@@ -295,7 +295,7 @@ test("live replay envelopes require valid ids and object payloads", () => {
   );
 });
 
-test("signup and activity cursors preserve equal timestamps with UTC tuples", async () => {
+test("signup and activity cursors preserve exact application-precision UTC tuples", async () => {
   const signups = capturePool();
   const cursorAt = new Date("2026-01-01T00:00:00.000Z");
   await fetchNewSignups(
@@ -305,7 +305,11 @@ test("signup and activity cursors preserve equal timestamps with UTC tuples", as
   );
   assert.match(
     signups.queries[0]?.sql ?? "",
-    /\(u\.created_at, u\.id\) > \(\$1::timestamptz AT TIME ZONE 'UTC', \$2::text\)/,
+    /date_trunc\('milliseconds', u\.created_at\).*u\.id\) >\s+\(date_trunc\('milliseconds', \$1::timestamptz AT TIME ZONE 'UTC'\), \$2::text\)/s,
+  );
+  assert.match(
+    signups.queries[0]?.sql ?? "",
+    /ORDER BY date_trunc\('milliseconds', u\.created_at\), u\.id/,
   );
   assert.deepEqual(signups.queries[0]?.values, [
     cursorAt,
