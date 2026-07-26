@@ -1,4 +1,4 @@
-import { sql, type SQL } from "drizzle-orm";
+import { param, sql, type SQL } from "drizzle-orm";
 
 /** Compile trusted PostgreSQL text with `$n` values into bound Drizzle SQL. */
 export function positionalSql(
@@ -110,7 +110,10 @@ export function positionalSql(
     if (index >= values.length) {
       throw new Error(`Missing SQL bind value for ${placeholder}`);
     }
-    chunks.push(sql`${values[index]}`);
+    // A positional placeholder must remain one driver parameter. Interpolating
+    // an array directly makes Drizzle expand it into `($1, $2, ...)`, which
+    // PostgreSQL cannot cast to `text[]`/`uuid[]`.
+    chunks.push(sql`${param(values[index])}`);
     used.add(index);
     cursor += placeholder.length;
     rawStart = cursor;

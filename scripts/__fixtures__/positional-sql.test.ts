@@ -23,6 +23,20 @@ test("positional SQL binds repeated and multi-digit placeholders", () => {
   assert.deepEqual(compiled.params, [...values, "value-10"]);
 });
 
+test("positional SQL keeps arrays as one PostgreSQL parameter", () => {
+  const values = ["open", "in_review", "escalated"];
+  const compiled = compile(
+    "SELECT 1 WHERE status = ANY($1::text[])",
+    [values],
+  );
+
+  assert.equal(
+    compiled.sql,
+    "SELECT 1 WHERE status = ANY($1::text[])",
+  );
+  assert.deepEqual(compiled.params, [values]);
+});
+
 test("positional SQL ignores dollar text in quoted regions and comments", () => {
   const compiled = compile(
     `SELECT '$10–50', "$2", $$ body $3 $$, $tag$ body $4 $tag$, $1
