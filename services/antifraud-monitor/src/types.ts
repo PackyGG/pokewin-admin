@@ -1,0 +1,43 @@
+export type Signup = {
+  id: string;
+  username: string | null;
+  email: string | null;
+  signup_ip: string | null;
+  country: string | null;
+  country_code: string | null;
+  continent_code: string | null;
+  state: string | null;
+  city: string | null;
+  affiliate_code: string | null;
+  referred_by: string | null;
+  is_suspected_alt: boolean;
+  created_at: Date;
+  fingerprint_request_id: string | null;
+  visitor_id: string | null;
+  fingerprint_confidence: number | null;
+  fingerprint_ip: string | null;
+  user_agent: string | null;
+};
+
+export type Signal = {
+  key: string;
+  title: string;
+  detail: string;
+  points: number;
+  payload?: Record<string, unknown>;
+};
+
+export type LiveMessage = {
+  type: string;
+  at: string;
+  data: Record<string, unknown>;
+};
+
+export type ActiveSession = {
+  id: string;
+  case_id: string;
+  user_id: string;
+  current_score: number;
+  started_at: Date;
+  ends_at: Date;
+};

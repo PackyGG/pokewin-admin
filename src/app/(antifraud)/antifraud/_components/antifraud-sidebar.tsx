@@ -7,6 +7,7 @@ import {
   BadgeCheck,
   GraduationCap,
   LayoutDashboard,
+  RadioTower,
   Settings,
   ShieldAlert,
   Users,
@@ -51,6 +52,7 @@ type NavItem = {
 
 const WORKSPACE_NAV: NavItem[] = [
   { label: "Overview", href: "/antifraud", icon: LayoutDashboard },
+  { label: "Live Monitor", href: "/antifraud/monitor", icon: RadioTower },
   { label: "Account Review", href: "/antifraud/reviews", icon: ShieldAlert },
 ];
 
