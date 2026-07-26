@@ -28,6 +28,10 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_fingerprints_signup_latest_idx
   ON fingerprints (user_id, event_type, created_at DESC)
   INCLUDE (request_id, visitor_id, confidence, ip);
 
+CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_fingerprints_network_device_idx
+  ON fingerprints (visitor_id, user_id)
+  WHERE confidence >= 0.9;
+
 CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_audit_register_latest_idx
   ON audit_events (user_id, event_type, created_at DESC)
   INCLUDE (user_agent);
@@ -47,6 +51,24 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_ledger_user_time_idx
     fireblocks_tx_id,
     blockchain_tx_hash
   );
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_creator_usage_window_idx
+  ON affiliate_code_usages (affiliate_user_id, created_at DESC, referred_user_id)
+  INCLUDE (
+    deposit_amount_usd,
+    wager_amount_usd,
+    referrer_cut_usd,
+    user_bonus_usd
+  );
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_creator_deposit_signal_idx
+  ON ledger_transactions (user_id, created_at DESC)
+  INCLUDE (source_address)
+  WHERE type = 'deposit' AND status = 'completed';
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_creator_withdrawal_window_idx
+  ON card_withdrawal_requests (user_id, created_at DESC)
+  INCLUDE (status, total_value_usd);
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_user_rewards_activity_idx
   ON user_rewards (user_id, (COALESCE(opened_at, granted_at)))

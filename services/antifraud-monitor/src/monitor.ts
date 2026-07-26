@@ -84,6 +84,7 @@ export class MonitorEngine {
     private readonly live: LiveBus,
     private readonly scoreWeights: ScoreWeightStore,
     private readonly log: FastifyBaseLogger,
+    private readonly onSignupAssessed?: (userId: string) => Promise<void>,
   ) {
     this.enrichment = new EnrichmentService(config);
     this.discord = new DiscordAlerts(config, log);
@@ -470,6 +471,16 @@ export class MonitorEngine {
       severity: severity(score),
       signals,
     });
+    if (this.onSignupAssessed) {
+      try {
+        await this.onSignupAssessed(signup.id);
+      } catch (error) {
+        this.log.warn(
+          { err: this.safeError(error), userId: signup.id },
+          "Signup committed but its account-network scan could not be queued",
+        );
+      }
+    }
 
     if (!opened) return;
     await this.broadcast("monitor.started", {

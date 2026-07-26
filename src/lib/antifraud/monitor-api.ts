@@ -249,6 +249,9 @@ const caseRecordSchema = z.object({
   opened_at: z.string(),
   updated_at: z.string(),
   resolved_at: z.string().nullable(),
+  subject_type: z.enum(["account", "network"]).default("account"),
+  network_key: z.string().nullable().optional(),
+  network_snapshot_id: z.string().uuid().nullable().optional(),
   username: z.string().nullable(),
   email: z.string().nullable(),
   signup_ip: z.string().nullable(),
@@ -307,12 +310,20 @@ const staffActionSchema = z.object({
   completed_at: z.string().nullable(),
 });
 
+const networkCaseMemberSchema = z.object({
+  user_id: z.string(),
+  is_root: z.boolean(),
+  username: z.string().nullable(),
+  avatar_url: z.string().nullable(),
+});
+
 const caseDetailSchema = z.object({
   case: caseRecordSchema,
   events: z.array(riskEventSchema),
   providerChecks: z.array(providerCheckSchema),
   sessions: z.array(monitorSessionSchema),
   actions: z.array(staffActionSchema),
+  members: z.array(networkCaseMemberSchema).default([]),
 });
 
 export type AntifraudMonitorCase = z.infer<typeof caseRecordSchema>;
@@ -320,6 +331,7 @@ export type AntifraudMonitorRiskEvent = z.infer<typeof riskEventSchema>;
 export type AntifraudMonitorProviderCheck = z.infer<typeof providerCheckSchema>;
 export type AntifraudMonitorSession = z.infer<typeof monitorSessionSchema>;
 export type AntifraudMonitorStaffAction = z.infer<typeof staffActionSchema>;
+export type AntifraudMonitorNetworkMember = z.infer<typeof networkCaseMemberSchema>;
 export type AntifraudMonitorCaseDetail = z.infer<typeof caseDetailSchema>;
 
 /**

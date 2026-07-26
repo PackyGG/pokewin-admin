@@ -97,7 +97,7 @@ async function CaseDetail({ caseId }: { caseId: string }) {
     return <EmptyState text="This case could not be loaded right now." />;
   }
 
-  const { case: subject, events, providerChecks, sessions, actions } =
+  const { case: subject, events, providerChecks, sessions, actions, members } =
     result.data;
   const decisionsEnabled = antifraudDecisionsConfigured();
   const activeSession = sessions.find((session) => session.status === "active");
@@ -175,6 +175,22 @@ async function CaseDetail({ caseId }: { caseId: string }) {
 
             <p className="text-sm leading-relaxed">{subject.summary}</p>
 
+            {subject.subject_type === "network" && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline">
+                  <Network className="mr-1 size-3" />
+                  {members.length} connected accounts
+                </Badge>
+                <HostLink
+                  href={`/antifraud/networks?user=${encodeURIComponent(subject.user_id)}`}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-cyan-600 hover:underline dark:text-cyan-400"
+                >
+                  Open network map
+                  <ExternalLink className="size-3.5" />
+                </HostLink>
+              </div>
+            )}
+
             <dl className="grid gap-x-4 gap-y-2 border-t border-border/60 pt-3 text-xs sm:grid-cols-2">
               <Field label="Player id" value={subject.user_id} mono />
               <Field label="Email" value={subject.email ?? "—"} />
@@ -221,6 +237,39 @@ async function CaseDetail({ caseId }: { caseId: string }) {
               Open this player on the main dashboard
             </HostLink>
           </div>
+
+          {subject.subject_type === "network" && members.length > 0 && (
+            <div className="space-y-3">
+              <SectionHeading
+                icon={UserRoundSearch}
+                title="Connected accounts"
+              />
+              <div className="grid gap-2 sm:grid-cols-2">
+                {members.slice(0, 100).map((member) => (
+                  <HostLink
+                    key={member.user_id}
+                    href={`/users/${member.user_id}`}
+                    className="flex min-w-0 items-center justify-between rounded-lg border border-border/60 bg-card px-3 py-2 text-xs hover:border-cyan-500/40"
+                  >
+                    <span className="truncate font-medium">
+                      {member.username ?? member.user_id}
+                    </span>
+                    {member.is_root && (
+                      <Badge variant="outline" className="ml-2 text-[10px]">
+                        Root
+                      </Badge>
+                    )}
+                  </HostLink>
+                ))}
+              </div>
+              {members.length > 100 && (
+                <p className="text-xs text-muted-foreground">
+                  Showing 100 of {members.length} case members. The network map
+                  contains the complete paginated component.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* ── Enrichment ──────────────────────────────────────── */}
           <div className="space-y-3">

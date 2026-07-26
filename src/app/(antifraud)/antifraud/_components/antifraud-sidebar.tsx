@@ -6,7 +6,9 @@ import {
   Braces,
   Fingerprint,
   Gauge,
+  GitFork,
   LayoutDashboard,
+  Megaphone,
   RadioTower,
   Settings,
   ShieldAlert,
@@ -53,6 +55,8 @@ type NavItem = {
 const WORKSPACE_NAV: NavItem[] = [
   { label: "Overview", href: "/antifraud", icon: LayoutDashboard },
   { label: "Signups", href: "/antifraud/signups", icon: UserRoundSearch },
+  { label: "Account Networks", href: "/antifraud/networks", icon: GitFork },
+  { label: "Creator Fraud", href: "/antifraud/creator-fraud", icon: Megaphone },
   { label: "Live Monitor", href: "/antifraud/monitor", icon: RadioTower },
   { label: "Account Review", href: "/antifraud/reviews", icon: ShieldAlert },
   { label: "KYC", href: "/antifraud/kyc", icon: Fingerprint },

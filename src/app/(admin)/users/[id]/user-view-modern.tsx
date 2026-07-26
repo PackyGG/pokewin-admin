@@ -551,6 +551,16 @@ export function UserViewModern({
 
         {/* ── RIGHT — action cluster ────────────────────────────────── */}
         <div className="flex flex-wrap items-center gap-1.5 lg:shrink-0 lg:justify-end">
+          <Link
+            href={`/antifraud/networks?user=${encodeURIComponent(user.id)}`}
+            className={cn(
+              buttonVariants({ variant: "outline", size: "sm" }),
+              "border-cyan-500/40 text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500/10",
+            )}
+          >
+            <Network className="size-3.5" />
+            Network & alts
+          </Link>
           {/* Quick-link to the creator detail page — only for on-site
               creators (the /creators/<id> route shares the main-site user id
               space). One accented nav button is acceptable. */}

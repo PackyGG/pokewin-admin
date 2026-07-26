@@ -97,6 +97,13 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "User Management",
   },
   {
+    key: "__can_reveal_antifraud_pii",
+    label: "Reveal Antifraud IPs",
+    description:
+      "Reveal an exact IP from a masked account-network node. Antifraud pages remain masked without this capability.",
+    group: "User Management",
+  },
+  {
     // Admin-CRM tagging on user profiles. Allow-list:
     // 'vip' | 'wager_abuser'. Stored
     // admin-side only — never written to the main game DB / never

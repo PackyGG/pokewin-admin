@@ -248,7 +248,19 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
           )}
         </div>
 
-        <div className="flex items-center justify-end">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            render={
+              <HostLink
+                href={`/antifraud/networks?user=${encodeURIComponent(signup.user_id)}`}
+              />
+            }
+          >
+            <Network className="size-3.5" />
+            Network
+          </Button>
           {signup.case_id ? (
             <Button
               variant="outline"

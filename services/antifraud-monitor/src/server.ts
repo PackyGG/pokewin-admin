@@ -24,6 +24,8 @@ import {
 import { LiveBus, STREAM_ID_PATTERN } from "./live.js";
 import { migrate } from "./migrate.js";
 import { MonitorEngine } from "./monitor.js";
+import { registerNetworkRoutes } from "./network-routes.js";
+import { NetworkRiskService } from "./network-risk.js";
 import { pollerStalledFor } from "./poller-health.js";
 import { createPromiseCache } from "./promise-cache.js";
 import {
@@ -118,7 +120,15 @@ const app = Fastify({
 const db = createDatabases(config);
 const live = new LiveBus(config.REDIS_URL, app.log);
 const scoreWeights = new ScoreWeightStore(db.antifraud);
-const engine = new MonitorEngine(config, db, live, scoreWeights, app.log);
+const networkRisk = new NetworkRiskService(db, app.log);
+const engine = new MonitorEngine(
+  config,
+  db,
+  live,
+  scoreWeights,
+  app.log,
+  (userId) => networkRisk.enqueueAccount(userId).then(() => undefined),
+);
 
 /** Lookback that bounds the resolved tail of the case list. */
 const CASES_RECENT_DAYS = 30;
@@ -465,13 +475,14 @@ app.get("/v1/cases", async (request) => {
 
 app.get("/v1/cases/:id", async (request, reply) => {
   const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-  const [caseResult, events, checks, sessions, actions] = await Promise.all([
+  const [caseResult, events, checks, sessions, actions, members] = await Promise.all([
     db.antifraud.query(
       `
         SELECT
           c.id, c.user_id, c.status, c.severity, c.score, c.peak_score,
           c.summary, c.assigned_to, c.resolution, c.opened_at, c.updated_at,
-          c.resolved_at, s.username, s.email, s.signup_ip::text,
+          c.resolved_at, c.subject_type, c.network_key, c.network_snapshot_id,
+          s.username, s.email, s.signup_ip::text,
           s.country_code, s.state, s.city, s.source_created_at
         FROM cases c JOIN subjects s ON s.user_id = c.user_id
         WHERE c.id = $1
@@ -515,6 +526,15 @@ app.get("/v1/cases/:id", async (request, reply) => {
         LIMIT 200`,
       [id],
     ),
+    db.antifraud.query(
+      `SELECT ncm.user_id, ncm.is_root, s.username, s.avatar_url
+         FROM network_case_members ncm
+         LEFT JOIN subjects s ON s.user_id=ncm.user_id
+        WHERE ncm.case_id=$1
+        ORDER BY ncm.is_root DESC, COALESCE(s.username, ncm.user_id)
+        LIMIT 5000`,
+      [id],
+    ),
   ]);
   if (!caseResult.rows[0]) return reply.code(404).send({ error: "not_found" });
   return {
@@ -524,6 +544,7 @@ app.get("/v1/cases/:id", async (request, reply) => {
       providerChecks: checks.rows,
       sessions: sessions.rows,
       actions: actions.rows,
+      members: members.rows,
     },
   };
 });
@@ -875,6 +896,8 @@ app.put("/v1/scoring/:key", {
   }
 });
 
+await registerNetworkRoutes(app, db, networkRisk, config);
+
 app.setErrorHandler((error, request, reply) => {
   if (error instanceof z.ZodError) {
     return reply.code(400).send({
@@ -898,6 +921,7 @@ app.setErrorHandler((error, request, reply) => {
 
 app.addHook("onClose", async () => {
   await engine.stop();
+  await networkRisk.stop();
   await live.close();
   await closeDatabases(db);
 });
@@ -912,4 +936,5 @@ if (!isDisposableEmailListLoaded()) {
 // publishing into a channel with zero subscribers is silently broken.
 await live.start();
 await engine.start();
+await networkRisk.start();
 await app.listen({ port: config.PORT, host: "0.0.0.0" });

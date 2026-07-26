@@ -20,7 +20,13 @@ export function serviceRequestAuthorized(
   const needsAdminToken =
     (method === "PUT" && pathname.startsWith("/v1/rules/")) ||
     (method === "PUT" && pathname.startsWith("/v1/scoring/")) ||
-    (method === "POST" && pathname.includes("/decision"));
+    (method === "PUT" && pathname.startsWith("/v1/analysis-rules/")) ||
+    (method === "POST" && pathname.includes("/decision")) ||
+    (method === "POST" && pathname.includes("/rescan")) ||
+    (method === "POST" && pathname === "/v1/network-cases") ||
+    (method === "GET" &&
+      pathname.startsWith("/v1/networks/") &&
+      pathname.endsWith("/reveal"));
   return needsAdminToken
     ? safeTokenEqual(token, config.API_ADMIN_TOKEN)
     : safeTokenEqual(token, config.API_TOKEN) ||

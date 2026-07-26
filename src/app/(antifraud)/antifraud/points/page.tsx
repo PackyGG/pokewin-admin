@@ -14,11 +14,16 @@ import {
   type AntifraudScoreDefinition,
   type AntifraudScoringConfig,
 } from "@/lib/antifraud/monitor-api";
+import {
+  listAnalysisRules,
+  type AntifraudAnalysisRule,
+} from "@/lib/antifraud/network-api";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { ScoreWeightEditor } from "./score-weight-editor";
+import { AnalysisRuleEditor } from "./analysis-rule-editor";
 
 export const metadata = { title: "Risk Scoring · Antifraud" };
 
@@ -48,7 +53,10 @@ export default async function AntifraudPointsPage() {
 }
 
 async function ScoringDashboard() {
-  const result = await getAntifraudScoringConfig();
+  const [result, analysis] = await Promise.all([
+    getAntifraudScoringConfig(),
+    listAnalysisRules(),
+  ]);
   if (!result.configured) {
     return <Unavailable text="The monitor service is not configured." />;
   }
@@ -109,12 +117,47 @@ async function ScoringDashboard() {
         definitions={config.activitySignals}
       />
       <BehaviorRules config={config} />
+      {analysis.configured && !analysis.error && (
+        <>
+          <AnalysisRules
+            title="Account network checks"
+            description="Full connected-component scoring"
+            rules={analysis.data.filter((rule) => rule.category === "network")}
+          />
+          <AnalysisRules
+            title="Creator fraud checks"
+            description="Affiliate, network, and behavior scoring"
+            rules={analysis.data.filter((rule) => rule.category === "creator")}
+          />
+        </>
+      )}
 
       <p className="text-[11px] text-muted-foreground">
         Point edits apply to new signup assessments and new live activity.
         Existing case history keeps the values recorded when it occurred.
       </p>
     </div>
+  );
+}
+
+function AnalysisRules({
+  title,
+  description,
+  rules,
+}: {
+  title: string;
+  description: string;
+  rules: AntifraudAnalysisRule[];
+}) {
+  return (
+    <section>
+      <SectionTitle icon={Radar} title={title} description={description} />
+      <div className="mt-2 divide-y divide-border/60 overflow-hidden rounded-lg border border-border/70 bg-card">
+        {rules.map((rule) => (
+          <AnalysisRuleEditor key={rule.key} rule={rule} />
+        ))}
+      </div>
+    </section>
   );
 }
 

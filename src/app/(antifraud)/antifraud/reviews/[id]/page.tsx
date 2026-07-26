@@ -5,6 +5,7 @@ import {
   Activity,
   ExternalLink,
   FileText,
+  Network,
   ShieldAlert,
   User,
 } from "lucide-react";
@@ -161,6 +162,13 @@ async function CaseDetail({
           >
             <ExternalLink className="size-3.5" />
             Open this player on the main dashboard
+          </HostLink>
+          <HostLink
+            href={`/antifraud/networks?user=${encodeURIComponent(review.targetUserId)}`}
+            className="ml-4 inline-flex items-center gap-1.5 text-xs font-medium text-cyan-600 hover:underline dark:text-cyan-400"
+          >
+            <Network className="size-3.5" />
+            Open account network
           </HostLink>
         </div>
 
