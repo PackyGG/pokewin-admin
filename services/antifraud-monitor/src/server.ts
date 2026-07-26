@@ -45,11 +45,11 @@ function safeTokenEqual(actual: string, expected: string): boolean {
   );
 }
 
-app.register(cors, {
+await app.register(cors, {
   origin: config.ALLOWED_ORIGINS.split(",").map((value) => value.trim()).filter(Boolean),
   credentials: true,
 });
-app.register(swagger, {
+await app.register(swagger, {
   openapi: {
     info: {
       title: "Packy Antifraud Monitor API",
@@ -57,7 +57,7 @@ app.register(swagger, {
     },
   },
 });
-app.register(websocket);
+await app.register(websocket);
 
 app.addHook("onRequest", async (request, reply) => {
   if (
