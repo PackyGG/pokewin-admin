@@ -33,8 +33,8 @@ export const metadata = { title: "Account Review" };
  *
  * The case queue. Filters are plain links driven by search params (no client
  * state, no extra JS). Status, assignment and chronological ordering use the
- * queue indexes. Text search is prefix-only because the current ADMIN schema
- * has no trigram index; the data helper documents that limitation explicitly.
+ * queue indexes. Text search is prefix-only and its list + COUNT predicates
+ * are covered by the ADMIN pg_trgm indexes.
  *
  * Shell-first: the hero + filter bar paint immediately, the list streams behind
  * its own Suspense boundary keyed on the active filter so switching filters

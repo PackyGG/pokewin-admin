@@ -60,6 +60,11 @@ export function CaseControls({
   const [pending, setPending] = React.useState<string | null>(null);
   const [resolution, setResolution] = React.useState("");
   const [note, setNote] = React.useState("");
+  const statusAttempt = React.useRef<{
+    status: ReviewStatus;
+    resolution: string;
+    key: string;
+  } | null>(null);
 
   async function run(key: string, fn: () => Promise<void>, success: string) {
     setPending(key);
@@ -87,15 +92,30 @@ export function CaseControls({
    * answer, which becomes a toast with a link to the case that holds the slot.
    */
   async function changeStatus(next: ReviewStatus) {
+    const submittedResolution = isTerminalTarget(next)
+      ? trimmedResolution
+      : "";
+    if (
+      statusAttempt.current?.status !== next ||
+      statusAttempt.current.resolution !== submittedResolution
+    ) {
+      statusAttempt.current = {
+        status: next,
+        resolution: submittedResolution,
+        key: crypto.randomUUID(),
+      };
+    }
     setPending(`status-${next}`);
     try {
       const result = await updateReviewStatus({
         reviewId,
         status: next,
         expectedStatus: status,
-        resolution: isTerminalTarget(next) ? trimmedResolution : "",
+        resolution: submittedResolution,
+        idempotencyKey: statusAttempt.current.key,
       });
       if (!result.ok) {
+        statusAttempt.current = null;
         toast.error(
           result.message,
           result.conflictReviewId
@@ -116,6 +136,7 @@ export function CaseControls({
       }
       // Clear the box on success. Left as-is, a rationale typed for one
       // action silently became the rationale stored for the next one.
+      statusAttempt.current = null;
       setResolution("");
       toast.success(`Marked ${REVIEW_STATUS_LABELS[next].toLowerCase()}`);
       router.refresh();

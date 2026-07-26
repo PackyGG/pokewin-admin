@@ -149,17 +149,12 @@ export type ReviewFilters = {
  * `(target_user_id)` and `(created_at DESC, id DESC)`):
  *
  *   • status / assigned-to / bare list — served by one of those indexes.
- *   • SEARCH IS NOT INDEX-BACKED. There is no trigram or full-text index on
- *     this table, so any ILIKE here is evaluated as a filter on top of the
- *     `created_at` ordering. That is exactly why the pattern is anchored
- *     (`term%`, NOT `%term%`): a leading wildcard forces substantially more
- *     string work while the ordered rows are filtered. Prefix ILIKE is still
- *     NOT index-backed without a pattern/trigram index; the exact
- *     `target_user_id` equality below is the only search arm that can use
- *     `antifraud_reviews_target_idx`.
- *     Consequence to keep in mind: searching a fragment from the MIDDLE of a
- *     username or reason does not match. Substring search needs a pg_trgm GIN
- *     index first; do not re-introduce `%term%` without one.
+ *   • search — each prefix ILIKE arm is covered by the pg_trgm GIN indexes
+ *     installed by `20260726_antifraud_review_search_indexes.sql`; exact
+ *     player ids can additionally use `antifraud_reviews_target_idx`. The same
+ *     predicates feed the COUNT, so it does not fall back to an unindexed
+ *     chronological walk. Search intentionally remains prefix-only: a middle
+ *     fragment is less useful to analysts and creates much larger bitmap sets.
  */
 function buildReviewConditions(filters: ReviewFilters): SQL[] {
   const conditions: SQL[] = [];
@@ -179,7 +174,7 @@ function buildReviewConditions(filters: ReviewFilters): SQL[] {
   if (term) {
     const prefix = `${term}%`;
     conditions.push(or(
-      // Exact player-id lookup — the one search shape with an index.
+      // Exact ids use the btree; every prefix arm below uses its trigram GIN.
       eq(antifraud_reviews.target_user_id, term),
       ilike(antifraud_reviews.target_username, prefix),
       ilike(antifraud_reviews.target_user_id, prefix),

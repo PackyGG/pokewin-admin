@@ -6,13 +6,13 @@ import { and, eq, inArray, ne, sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import {
+  admin_audit_events,
   admin_users,
   antifraud_review_notes,
   antifraud_reviews,
   staff_profiles,
 } from "@/lib/db-schema/admin/schema";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
-import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { isPostgresError } from "@/lib/postgres-errors";
 import { notifyStaff } from "@/lib/staff/notifications";
 import {
@@ -87,54 +87,97 @@ const openReviewSchema = z.object({
     .max(500, "Keep the reason under 500 characters"),
 });
 
-/** Manually open a case on an account. */
-export async function openReview(input: unknown): Promise<{ id: string }> {
-  const session = await requireAntifraudAccess();
-  const parsed = openReviewSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
-  const { targetUserId, targetUsername, severity, reason } = parsed.data;
+export type OpenReviewResult =
+  | { ok: true; id: string }
+  | {
+      ok: false;
+      reason: "duplicate_live_case";
+      message: string;
+      conflictReviewId: string | null;
+    };
 
-  // One live case per account (enforced by the partial unique index too) —
-  // surface the existing one instead of failing with a uniqueness error.
+async function findLiveReview(
+  targetUserId: string,
+): Promise<{ id: string } | null> {
   const [live] = await adminDrizzle.select({ id: antifraud_reviews.id })
     .from(antifraud_reviews).where(and(
       eq(antifraud_reviews.target_user_id, targetUserId),
       inArray(antifraud_reviews.status, [...LIVE_CASE_STATUSES]),
     )).limit(1);
-  if (live) {
-    throw new Error(
-      "That account already has an open case — open it from the queue instead.",
-    );
+  return live ?? null;
+}
+
+/** Manually open a case on an account. */
+export async function openReview(input: unknown): Promise<OpenReviewResult> {
+  const session = await requireAntifraudAccess();
+  const parsed = openReviewSchema.safeParse(input);
+  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  const { targetUserId, targetUsername, severity, reason } = parsed.data;
+
+  type OpenOutcome =
+    | { kind: "created"; id: string }
+    | { kind: "conflict"; id: string | null };
+
+  let outcome: OpenOutcome;
+  try {
+    outcome = await adminDrizzle.transaction(async (tx): Promise<OpenOutcome> => {
+      // Friendly fast path. The partial unique index remains the authoritative
+      // race guard when two analysts both observe "no row".
+      const [live] = await tx.select({ id: antifraud_reviews.id })
+        .from(antifraud_reviews).where(and(
+          eq(antifraud_reviews.target_user_id, targetUserId),
+          inArray(antifraud_reviews.status, [...LIVE_CASE_STATUSES]),
+        )).limit(1);
+      if (live) return { kind: "conflict", id: live.id };
+
+      const [created] = await tx.insert(antifraud_reviews).values({
+        target_user_id: targetUserId,
+        target_username: targetUsername ? targetUsername : null,
+        status: "open",
+        severity,
+        source: "manual",
+        reason,
+        opened_by: session.userId,
+      }).returning({ id: antifraud_reviews.id });
+      if (!created) throw new Error("Review insert returned no row");
+
+      await tx.insert(antifraud_review_notes).values({
+        review_id: created.id,
+        admin_user_id: session.userId,
+        kind: "status",
+        body: `Case opened (${severity}).`,
+      });
+
+      await tx.insert(admin_audit_events).values({
+        admin_user_id: session.userId,
+        event_type: "antifraud_review_opened",
+        target_user_id: targetUserId,
+        metadata: { reviewId: created.id, severity, reason },
+      });
+
+      return { kind: "created", id: created.id };
+    });
+  } catch (err) {
+    if (!isPostgresError(err, UNIQUE_VIOLATION)) throw err;
+    outcome = {
+      kind: "conflict",
+      id: (await findLiveReview(targetUserId))?.id ?? null,
+    };
   }
 
-  const [created] = await adminDrizzle.insert(antifraud_reviews).values({
-      target_user_id: targetUserId,
-      target_username: targetUsername ? targetUsername : null,
-      status: "open",
-      severity,
-      source: "manual",
-      reason,
-      opened_by: session.userId,
-    }).returning({ id: antifraud_reviews.id });
-  if (!created) throw new Error("Review insert returned no row");
-
-  await adminDrizzle.insert(antifraud_review_notes).values({
-      review_id: created.id,
-      admin_user_id: session.userId,
-      kind: "status",
-      body: `Case opened (${severity}).`,
-  });
-
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "antifraud_review_opened",
-    targetUserId,
-    metadata: { reviewId: created.id, severity, reason },
-  });
+  if (outcome.kind === "conflict") {
+    return {
+      ok: false,
+      reason: "duplicate_live_case",
+      message:
+        "That account already has a live case. Open the existing case instead.",
+      conflictReviewId: outcome.id,
+    };
+  }
 
   revalidatePath("/antifraud/reviews");
   revalidatePath("/antifraud");
-  return { id: created.id };
+  return { ok: true, id: outcome.id };
 }
 
 /** Verdict statuses: they stamp a resolver and REQUIRE a written conclusion. */
@@ -161,6 +204,7 @@ const updateStatusSchema = z
      * "the stale tab is told to reload".
      */
     expectedStatus: z.enum(REVIEW_STATUSES).optional(),
+    idempotencyKey: z.string().uuid("Invalid idempotency key"),
   })
   // Server-side is the real gate. The buttons are also disabled client-side
   // without a conclusion, but a terminal transition that NULLs `resolution`
@@ -184,6 +228,37 @@ export type UpdateReviewStatusResult =
       conflictReviewId: string | null;
     };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function assertStatusReplayMatches(
+  existing: {
+    adminUserId: string | null;
+    metadata: unknown;
+  } | undefined,
+  expected: {
+    adminUserId: string;
+    reviewId: string;
+    status: string;
+    resolution: string | null;
+  },
+): void {
+  const stored = existing?.metadata;
+  if (
+    !existing ||
+    existing.adminUserId !== expected.adminUserId ||
+    !isRecord(stored) ||
+    stored.reviewId !== expected.reviewId ||
+    stored.to !== expected.status ||
+    (stored.resolution ?? null) !== expected.resolution
+  ) {
+    throw new Error(
+      "That status retry key was already used for a different command.",
+    );
+  }
+}
+
 /**
  * Move a case along. Setting a terminal status (cleared / flagged) stamps the
  * resolver + timestamp and stores the written conclusion; any NON-terminal
@@ -203,22 +278,39 @@ export async function updateReviewStatus(
   const session = await requireAntifraudAccess();
   const parsed = updateStatusSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
-  const { reviewId, status, expectedStatus } = parsed.data;
+  const { reviewId, status, expectedStatus, idempotencyKey } = parsed.data;
   const resolution = parsed.data.resolution?.trim() || null;
   const isTerminal = isTerminalStatus(status);
 
   type Applied = {
-    from: string;
-    targetUserId: string;
     openedBy: string | null;
   };
   type Outcome =
     | { kind: "noop" }
+    | { kind: "replayed" }
     | { kind: "applied"; applied: Applied }
     | { kind: "conflict"; conflictReviewId: string | null };
 
   const runTransaction = async (): Promise<Outcome> =>
     adminDrizzle.transaction(async (tx): Promise<Outcome> => {
+      const replayPredicate = and(
+        eq(admin_audit_events.event_type, "antifraud_review_status_changed"),
+        sql`${admin_audit_events.metadata} ->> 'idempotencyKey' = ${idempotencyKey}`,
+      );
+      const [existingReplay] = await tx.select({
+        adminUserId: admin_audit_events.admin_user_id,
+        metadata: admin_audit_events.metadata,
+      }).from(admin_audit_events).where(replayPredicate).limit(1);
+      if (existingReplay) {
+        assertStatusReplayMatches(existingReplay, {
+          adminUserId: session.userId,
+          reviewId,
+          status,
+          resolution,
+        });
+        return { kind: "replayed" };
+      }
+
       const [current] = await tx.select({
         status: antifraud_reviews.status,
         target_user_id: antifraud_reviews.target_user_id,
@@ -246,6 +338,33 @@ export async function updateReviewStatus(
             ne(antifraud_reviews.id, reviewId),
           )).limit(1);
         if (live) return { kind: "conflict", conflictReviewId: live.id };
+      }
+
+      const auditMetadata = {
+        reviewId,
+        from: current.status,
+        to: status,
+        resolution,
+        idempotencyKey,
+      };
+      const insertedAudit = await tx.insert(admin_audit_events).values({
+        admin_user_id: session.userId,
+        event_type: "antifraud_review_status_changed",
+        target_user_id: current.target_user_id,
+        metadata: auditMetadata,
+      }).onConflictDoNothing().returning({ id: admin_audit_events.id });
+      if (insertedAudit.length === 0) {
+        const [racedReplay] = await tx.select({
+          adminUserId: admin_audit_events.admin_user_id,
+          metadata: admin_audit_events.metadata,
+        }).from(admin_audit_events).where(replayPredicate).limit(1);
+        assertStatusReplayMatches(racedReplay, {
+          adminUserId: session.userId,
+          reviewId,
+          status,
+          resolution,
+        });
+        return { kind: "replayed" };
       }
 
       const updated = await tx.update(antifraud_reviews).set({
@@ -302,8 +421,6 @@ export async function updateReviewStatus(
       return {
         kind: "applied",
         applied: {
-          from: current.status,
-          targetUserId: current.target_user_id,
           openedBy: current.opened_by,
         },
       };
@@ -345,30 +462,32 @@ export async function updateReviewStatus(
     };
   }
   if (outcome.kind === "noop") return { ok: true };
+  if (outcome.kind === "replayed") {
+    // A previous response may have failed during cache invalidation after the
+    // transaction committed. Re-run only the safe post-commit step.
+    revalidatePath("/antifraud/reviews");
+    revalidatePath(`/antifraud/reviews/${reviewId}`);
+    revalidatePath("/antifraud");
+    return { ok: true };
+  }
 
-  const { from, targetUserId, openedBy } = outcome.applied;
-
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "antifraud_review_status_changed",
-    targetUserId,
-    metadata: {
-      reviewId,
-      from,
-      to: status,
-      resolution: resolution ?? undefined,
-    },
-  });
+  const { openedBy } = outcome.applied;
 
   if (isTerminal && openedBy && openedBy !== session.userId) {
-    await notifyStaff({
-      recipients: [openedBy],
-      kind: "review_resolved",
-      title: `Case ${REVIEW_STATUS_LABELS[status].toLowerCase()}`,
-      body: resolution || `A case you opened was marked ${status}.`,
-      href: `/antifraud/reviews/${reviewId}`,
-      metadata: { reviewId, status },
-    });
+    try {
+      await notifyStaff({
+        recipients: [openedBy],
+        kind: "review_resolved",
+        title: `Case ${REVIEW_STATUS_LABELS[status].toLowerCase()}`,
+        body: resolution || `A case you opened was marked ${status}.`,
+        href: `/antifraud/reviews/${reviewId}`,
+        metadata: { reviewId, status },
+      });
+    } catch (err) {
+      // The standing verdict, note, counter and audit are already atomic. A
+      // notification transport failure must not make the client retry them.
+      console.error("[antifraud] review resolved notification failed:", err);
+    }
   }
 
   revalidatePath("/antifraud/reviews");

@@ -2,9 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { and, eq, sql } from "drizzle-orm";
 
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
-import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_audit_events } from "@/lib/db-schema/admin/schema";
 import {
   MONITOR_CASE_DECISIONS,
   MONITOR_CASE_DECISION_LABELS,
@@ -46,6 +48,60 @@ const decisionSchema = z.object({
   idempotencyKey: z.string().uuid("Invalid idempotency key"),
 });
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Mirror the monitor verdict exactly once.
+ *
+ * This runs on both a first upstream success and an idempotent replay. If the
+ * monitor committed but ADMIN audit delivery failed, retrying the same key
+ * repairs the missing mirror. If it already landed, the unique index makes the
+ * insert a no-op after which we verify the key is bound to the same command.
+ */
+async function mirrorDecisionAudit(input: {
+  adminUserId: string;
+  caseId: string;
+  decision: string;
+  reason: string;
+  idempotencyKey: string;
+}): Promise<void> {
+  const metadata = {
+    caseId: input.caseId,
+    decision: input.decision,
+    reason: input.reason,
+    idempotencyKey: input.idempotencyKey,
+  };
+  const inserted = await adminDrizzle.insert(admin_audit_events).values({
+    admin_user_id: input.adminUserId,
+    event_type: "antifraud_monitor_case_decision",
+    metadata,
+  }).onConflictDoNothing().returning({ id: admin_audit_events.id });
+  if (inserted.length > 0) return;
+
+  const [existing] = await adminDrizzle.select({
+    adminUserId: admin_audit_events.admin_user_id,
+    metadata: admin_audit_events.metadata,
+  }).from(admin_audit_events).where(and(
+    eq(admin_audit_events.event_type, "antifraud_monitor_case_decision"),
+    sql`${admin_audit_events.metadata} ->> 'idempotencyKey' = ${input.idempotencyKey}`,
+  )).limit(1);
+  const stored = existing?.metadata;
+  if (
+    !existing ||
+    existing.adminUserId !== input.adminUserId ||
+    !isRecord(stored) ||
+    stored.caseId !== input.caseId ||
+    stored.decision !== input.decision ||
+    stored.reason !== input.reason
+  ) {
+    throw new Error(
+      "That decision retry key was already used for a different command.",
+    );
+  }
+}
+
 export async function decideMonitorCase(
   input: unknown,
 ): Promise<{ idempotent: boolean; label: string }> {
@@ -63,24 +119,16 @@ export async function decideMonitorCase(
     actorUsername: session.username ?? undefined,
   });
 
-  // Audit only the write that actually changed something. A replayed key is a
-  // no-op upstream and would otherwise log a phantom second decision.
-  if (!result.idempotent) {
-    try {
-      await createAdminAuditEvent({
-        adminUserId: session.userId,
-        eventType: "antifraud_monitor_case_decision",
-        metadata: { caseId, decision, reason },
-      });
-    } catch (err) {
-      // The verdict is already recorded upstream — a failed audit mirror must
-      // not present itself to the analyst as a failed decision.
-      console.error(
-        "[antifraud-monitor] decision audit mirror failed:",
-        err,
-      );
-    }
-  }
+  // Always retry the ADMIN mirror, including when the service says this is an
+  // exact replay. The audit insert has the same key and is independently
+  // idempotent, which repairs partial service-success/audit-failure outcomes.
+  await mirrorDecisionAudit({
+    adminUserId: session.userId,
+    caseId,
+    decision,
+    reason,
+    idempotencyKey,
+  });
 
   revalidatePath(`/antifraud/monitor/cases/${caseId}`);
   revalidatePath("/antifraud/monitor");

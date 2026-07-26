@@ -86,16 +86,35 @@ export function OpenCaseDialog({
     event.preventDefault();
     setLoading(true);
     try {
-      const { id } = await openReview({
+      const result = await openReview({
         targetUserId: targetUserId.trim(),
         targetUsername: targetUsername.trim(),
         severity,
         reason: reason.trim(),
       });
+      if (!result.ok) {
+        toast.error(
+          result.message,
+          result.conflictReviewId
+            ? {
+                action: {
+                  label: "Open live case",
+                  onClick: () =>
+                    router.push(
+                      hrefForCurrentHost(
+                        `/antifraud/reviews/${result.conflictReviewId}`,
+                      ),
+                    ),
+                },
+              }
+            : undefined,
+        );
+        return;
+      }
       toast.success("Case opened");
       setOpen(false);
       reset();
-      router.push(hrefForCurrentHost(`/antifraud/reviews/${id}`));
+      router.push(hrefForCurrentHost(`/antifraud/reviews/${result.id}`));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not open the case");
     } finally {
