@@ -45,6 +45,8 @@ type Subscriber<T> = {
 
 type Connection = {
   url: string;
+  resumeParam: string | null;
+  lastEventId: string | null;
   maxFailures: number;
   subscribers: Set<Subscriber<unknown>>;
   source: EventSource | null;
@@ -65,11 +67,17 @@ type Connection = {
 
 const connections = new Map<string, Connection>();
 
-function getConnection(url: string, maxFailures: number): Connection {
+function getConnection(
+  url: string,
+  maxFailures: number,
+  resumeParam: string | null,
+): Connection {
   let conn = connections.get(url);
   if (!conn) {
     conn = {
       url,
+      resumeParam,
+      lastEventId: null,
       maxFailures,
       subscribers: new Set(),
       source: null,
@@ -82,6 +90,8 @@ function getConnection(url: string, maxFailures: number): Connection {
       lastInit: null,
     };
     connections.set(url, conn);
+  } else if (!conn.resumeParam && resumeParam) {
+    conn.resumeParam = resumeParam;
   }
   return conn;
 }
@@ -153,7 +163,11 @@ function connect(conn: Connection) {
 
   let source: EventSource;
   try {
-    source = new EventSource(conn.url);
+    const sourceUrl = new URL(conn.url, window.location.href);
+    if (conn.resumeParam && conn.lastEventId) {
+      sourceUrl.searchParams.set(conn.resumeParam, conn.lastEventId);
+    }
+    source = new EventSource(sourceUrl.toString());
   } catch {
     // Construction failed (very old browser). Treat as give-up so
     // callers fall back to polling.
@@ -185,7 +199,9 @@ function connect(conn: Connection) {
   source.addEventListener("row", (ev) => {
     if (conn.source !== source) return;
     try {
-      const parsed = JSON.parse((ev as MessageEvent<string>).data);
+      const message = ev as MessageEvent<string>;
+      if (message.lastEventId) conn.lastEventId = message.lastEventId;
+      const parsed = JSON.parse(message.data);
       emitRow(conn, parsed);
     } catch {
       // Ignore malformed row.
@@ -297,9 +313,10 @@ function teardownConnection(conn: Connection) {
 function subscribe<T>(
   url: string,
   maxFailures: number,
+  resumeParam: string | null,
   sub: Subscriber<T>,
 ): () => void {
-  const conn = getConnection(url, maxFailures);
+  const conn = getConnection(url, maxFailures, resumeParam);
   // Keep the tightest give-up threshold any active subscriber asked for.
   conn.maxFailures = Math.min(conn.maxFailures, maxFailures);
 
@@ -344,10 +361,16 @@ export function useSseStream<T>(
     onReconnect?: () => void;
     onGiveUp?: () => void;
   },
-  options?: { enabled?: boolean; maxFailures?: number },
+  options?: {
+    enabled?: boolean;
+    maxFailures?: number;
+    /** Query key used to resume when visibility creates a fresh EventSource. */
+    resumeParam?: string;
+  },
 ): void {
   const enabled = options?.enabled ?? true;
   const maxFailures = options?.maxFailures ?? 8;
+  const resumeParam = options?.resumeParam ?? null;
 
   // Pin handlers in a ref so the shared subscriber object always calls
   // the latest callbacks without re-subscribing on every parent render.
@@ -371,6 +394,6 @@ export function useSseStream<T>(
       onGiveUp: () => handlersRef.current.onGiveUp?.(),
     };
 
-    return subscribe<T>(url, maxFailures, sub);
-  }, [url, enabled, maxFailures]);
+    return subscribe<T>(url, maxFailures, resumeParam, sub);
+  }, [url, enabled, maxFailures, resumeParam]);
 }

@@ -250,8 +250,13 @@ export async function GET(request: Request): Promise<Response> {
   const encoder = new TextEncoder();
   const requestOrigin = new URL(request.url).origin;
   const resumeHeader = request.headers.get("last-event-id");
+  const resumeQuery = new URL(request.url).searchParams.get("after");
   const resumeAfter =
-    resumeHeader && REPLAY_ID.test(resumeHeader) ? resumeHeader : null;
+    resumeHeader && REPLAY_ID.test(resumeHeader)
+      ? resumeHeader
+      : resumeQuery && REPLAY_ID.test(resumeQuery)
+        ? resumeQuery
+        : null;
 
   // Hoisted so `cancel()` can tear the timers down too. On Vercel Fluid
   // Compute the request abort signal does NOT reliably fire when an SSE

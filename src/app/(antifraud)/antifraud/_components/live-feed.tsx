@@ -107,7 +107,7 @@ export function LiveFeed() {
         setMessage((current) => current ?? "Offline — reload to reconnect.");
       },
     },
-    { enabled: streamEnabled },
+    { enabled: streamEnabled, resumeParam: "after" },
   );
 
   const label =

@@ -128,7 +128,7 @@ export function OverviewLiveSync({ snapshotAt }: { snapshotAt: string }) {
         current === "unconfigured" ? current : "offline",
       );
     },
-  }, { enabled: streamEnabled });
+  }, { enabled: streamEnabled, resumeParam: "after" });
 
   React.useEffect(
     () => () => {

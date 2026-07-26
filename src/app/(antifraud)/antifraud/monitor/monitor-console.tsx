@@ -708,7 +708,7 @@ export function MonitorConsole() {
         );
       },
     },
-    { enabled: streamEnabled },
+    { enabled: streamEnabled, resumeParam: "after" },
   );
 
   const highestScore = sessions.reduce(
