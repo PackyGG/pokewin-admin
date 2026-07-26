@@ -70,7 +70,7 @@ await app.register(cors, {
       callback(null, true);
       return;
     }
-    callback(new Error("Origin not allowed"), false);
+    callback(null, false);
   },
   credentials: false,
   methods: ["GET", "POST", "PUT"],
@@ -109,6 +109,14 @@ app.addHook("onSend", async (request, reply, payload) => {
 });
 
 app.addHook("onRequest", async (request, reply) => {
+  const origin = request.headers.origin;
+  if (
+    (origin && !allowedOrigins.has(origin)) ||
+    request.headers["sec-fetch-site"] === "cross-site"
+  ) {
+    return reply.code(403).send({ error: "origin_not_allowed" });
+  }
+
   const pathname = request.url.split("?", 1)[0];
   if (
     pathname === "/health" ||

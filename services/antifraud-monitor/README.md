@@ -29,3 +29,8 @@ source or mirror requires TLS. TLS verification is strict; provide the matching
 different credential used only for rule edits and case decisions. Never expose
 either token to a browser. Mutation requests require a unique
 `idempotencyKey`; writes and their immutable audit rows commit transactionally.
+
+`ALLOWED_ORIGINS` is an exact browser-origin allowlist. Production currently
+contains only `https://fraud.packydash.com`. Browser requests from any other
+origin or with `Sec-Fetch-Site: cross-site` receive `403`; server-to-server
+dashboard calls still require a bearer token and may omit browser-only headers.
