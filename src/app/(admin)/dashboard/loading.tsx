@@ -20,9 +20,8 @@ import { ChartRowSkeleton, TodayTileSkeleton } from "./dashboard-skeletons";
  *     another, both "like deposits / withdrawals"), so all three reuse the
  *     same `TodayTileSkeleton` the in-page Suspense fallbacks use — the
  *     route skeleton and the streamed fallbacks agree exactly.
- *   • KPI strip (3 tiles: Wager [Total + Organic merged] · Deposits /
- *     Withdrawals [merged] · Crypto Fee). GGR moved into the P&L Today tile
- *     above (owner request, 2026-07-02), so the strip dropped from 4 to 3.
+ *   • KPI strip (4 tiles: Wager [Total + Organic merged] · Deposits /
+ *     Withdrawals [merged] · Crypto Fee · Keno).
  *   • Trends section: two 3-up chart rows (Wagers · Deposits · Signups &
  *     FTDs / Wager Attribution · Daily Cash P&L · Active Depositors).
  *
@@ -48,10 +47,12 @@ export default function DashboardLoading() {
         <TodayTileSkeleton />
       </div>
 
-      {/* KPI strip — 3-up period boxes (Wager [Total + Organic merged] ·
-          Deposits/Withdrawals [merged] · Crypto Fee). GGR moved into the
-          P&L Today tile above. */}
-      <SkeletonKpiStrip count={3} />
+      {/* KPI strip — 4-up period boxes (Wager [Total + Organic merged] ·
+          Deposits/Withdrawals [merged] · Crypto Fee · Keno). */}
+      <SkeletonKpiStrip
+        count={4}
+        className="sm:grid-cols-2 md:grid-cols-2 xl:grid-cols-4"
+      />
 
       {/* Trends — two 3-up rows:
             Row 1: Wagers · Deposits · Signups & FTDs (merged).

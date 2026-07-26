@@ -10,6 +10,11 @@ import {
 } from "@/lib/queries/dashboard";
 import { getDashboardCashflowFromPostgres } from "@/lib/queries/dashboard-cashflow-pg";
 import { getDepositFundedGgrForWindow } from "@/lib/queries/dashboard-deposit-funded-ggr";
+import { getDashboardKenoMetrics } from "@/lib/queries/dashboard-keno";
+import {
+  REWARD_QUERY_TIMEOUT_MS,
+  safeQuery,
+} from "@/lib/errors/safe-query";
 
 /**
  * Serializable snapshot of every dashboard KPI box for ONE window
@@ -69,6 +74,16 @@ export type KpiWindowPayload = {
   /** Total withdrawal dollars + completed/shipped request count. */
   withdrawals: number;
   withdrawalCount: number;
+  /** Settled Keno result for the same active window and customer scope. */
+  keno: {
+    available: boolean;
+    games: number;
+    players: number;
+    wager: number;
+    payout: number;
+    profit: number;
+    edgePct: number;
+  };
 
   // ---- GGR breakdown legs (for the GGR box's Info popover) ----
   /** Industry-GGR breakdown legs — secondary reference inside the popover. */
@@ -103,6 +118,20 @@ async function computeKpiWindowPayload(
     getDepositFundedGgrForWindow(window).catch(() => null),
   ]);
 
+  const [cashflow, kenoResult] = await Promise.all([
+    getDashboardCashflowFromPostgres(window),
+    // Keno is an independent, small aggregate. Keep a stale/missing
+    // `keno_games` relation from blanking the other dashboard KPI boxes while
+    // still reporting the failure through the standard safe-query path.
+    safeQuery(
+      () => getDashboardKenoMetrics(window),
+      null,
+      "dashboard.keno",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+  ]);
+  const keno = kenoResult.data;
+
   // The shared aggregate above produces the GGR and wager boxes. Cash-flow
   // figures use their dedicated PostgreSQL read so they stay aligned with the
   // canonical P&L-today definition.
@@ -119,8 +148,6 @@ async function computeKpiWindowPayload(
   // box and P&L Today reconcile by construction — without touching the frozen
   // `calculateWindowedPnl` math or the creator-excluded wager / period-P&L
   // boxes.
-  const cashflow = await getDashboardCashflowFromPostgres(window);
-
   // Owner reverted the GGR definition (2026-06-30 follow-up): the HEADLINE
   // GGR tile reads the industry definition again (`wager − payouts`, what
   // we won from the games today — packs, battles, upgrader). Cash P&L
@@ -141,6 +168,17 @@ async function computeKpiWindowPayload(
     depositCount: cashflow.depositCount,
     withdrawals: cashflow.withdrawals,
     withdrawalCount: cashflow.withdrawalCount,
+    keno: keno
+      ? { available: true, ...keno }
+      : {
+          available: false,
+          games: 0,
+          players: 0,
+          wager: 0,
+          payout: 0,
+          profit: 0,
+          edgePct: 0,
+        },
     ggrBreakdown,
   };
 }

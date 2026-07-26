@@ -90,13 +90,14 @@ export default async function DashboardPage() {
         </Suspense>
       </div>
 
-      {/* KPI boxes — period-bound only now (Wager [Total + Organic merged
-          into one box], Deposits/Withdrawals [merged], plus the anchored Crypto
-          Fee counter) with a per-box today/24h toggle. GGR MOVED into the
-          "P&L Today" tile above (owner request, 2026-07-02: that tile had
-          empty space once its siblings grew back their full data sets) —
-          this strip is down to THREE boxes, widened to fill the space the
-          removed GGR box left behind. DEFAULTS to "today" (loaded eagerly
+      {/* KPI boxes — Wager [Total + Organic merged], Deposits/Withdrawals
+          [merged], the anchored Crypto Fee counter, and Keno performance.
+          The period-bound boxes carry their own today/24h toggle. GGR MOVED
+          into the "P&L Today" tile above (owner request, 2026-07-02: that
+          tile had empty space once its siblings grew back their full data
+          sets) —
+          Keno now fills the fourth box with wager, payouts, realized edge,
+          and profit. DEFAULTS to "today" (loaded eagerly
           here); the rolling 24h window is fetched lazily on the first
           toggle inside the client section (active-timeframe-only).
 
@@ -109,8 +110,15 @@ export default async function DashboardPage() {
           NOT keyed on any global selector — these boxes own their own today/24h
           window via the toggle next to each title. Streams behind its own Suspense
           so the today-window aggregate never blocks the 3 cost cards above;
-          the skeleton mirrors the single 3-up period strip. */}
-      <Suspense fallback={<SkeletonKpiStrip count={3} />}>
+          the skeleton mirrors the single 4-up period strip. */}
+      <Suspense
+        fallback={
+          <SkeletonKpiStrip
+            count={4}
+            className="sm:grid-cols-2 md:grid-cols-2 xl:grid-cols-4"
+          />
+        }
+      >
         <DashboardKpiBoxes />
       </Suspense>
 
@@ -172,7 +180,8 @@ const DASHBOARD_CHART_PERIOD = "30d" as const;
 /**
  * Eager-renders the dashboard's period-bound KPI boxes for the DEFAULT "today"
  * window (since 00:00 UTC) and hands the client section the today payload +
- * the anchored Crypto Fee counter. The client section adds the per-box
+ * the anchored Crypto Fee counter. The payload also contains settled Keno
+ * performance for the active window. The client section adds the per-box
  * today/24h toggle and fetches the rolling-24h payload lazily on the first
  * toggle (active-timeframe-only — the 24h aggregate never runs here).
  *

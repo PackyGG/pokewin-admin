@@ -3,6 +3,7 @@
 import { useCallback, useState, useTransition } from "react";
 import {
   Coins,
+  Dices,
   Loader2,
   type LucideIcon,
 } from "lucide-react";
@@ -165,11 +166,22 @@ function DualHero({
   label,
   value,
   hint,
+  format = "currency",
+  tone = "neutral",
 }: {
   label: string;
   value: number;
   hint?: string;
+  format?: AnimatedNumberFormat;
+  tone?: "neutral" | "emerald" | "rose";
 }) {
+  const valueColor =
+    tone === "emerald"
+      ? "text-emerald-600 dark:text-emerald-400"
+      : tone === "rose"
+        ? "text-rose-600 dark:text-rose-400"
+        : "text-foreground";
+
   return (
     <div className="min-w-0">
       {/* Label bumped 10px → 11px so the eye can grip "Total" vs
@@ -178,8 +190,13 @@ function DualHero({
       <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground truncate">
         {label}
       </p>
-      <div className="truncate text-lg font-bold tabular-nums text-foreground sm:text-xl">
-        <AnimatedNumber value={value} format="currency" />
+      <div
+        className={cn(
+          "truncate text-lg font-bold tabular-nums sm:text-xl",
+          valueColor,
+        )}
+      >
+        <AnimatedNumber value={value} format={format} />
       </div>
       {hint && (
         <p className="text-[11px] leading-tight text-muted-foreground truncate">
@@ -255,10 +272,10 @@ function StaticWindowLabel({ label }: { label: string }) {
  * Client KPI section for /dashboard.
  *
  * Renders the period-bound KPI boxes (Wager [Total + Organic in one merged
- * box], Deposits/Withdrawals [merged into one single tile]) with a per-box
- * today/24h toggle, plus the anchored Crypto Fee counter. GGR MOVED into the
- * "P&L Today" tile above (owner request, 2026-07-02) — this strip no longer
- * renders a GGR box. This is now a live-ops board only — the
+ * box], Deposits/Withdrawals [merged into one single tile], and Keno) with a
+ * per-box today/24h toggle, plus the anchored Crypto Fee counter. GGR MOVED
+ * into the "P&L Today" tile above (owner request, 2026-07-02) — this strip no
+ * longer renders a general GGR box. This is now a live-ops board only — the
  * window-independent snapshot boxes (FTDs, Depositors, Avg RTP, Avg P&L 7d,
  * Total P&L lifetime) MOVED to the owner-only lifetime section on
  * `/analytics` (Overview tab), where Total P&L + Avg P&L are folded into a
@@ -343,20 +360,15 @@ export function DashboardKpiSection({
 
   return (
     <div className="space-y-6">
-      {/* Period-bound boxes — each with a today/24h toggle. THREE boxes now:
+      {/* Period-bound boxes — each with a today/24h toggle. FOUR boxes now:
           Wager (Total + Organic merged), Deposits/Withdrawals (merged into
-          one single tile), and the Crypto Fee counter (anchored monotonic
-          estimate — NOT period-bound, carries a static "since" label
-          instead of a toggle). GGR MOVED into the "P&L Today" tile above
-          (owner request, 2026-07-02: the P&L Today tile had empty space
-          once its siblings grew their full data sets back — GGR now sits
-          at the bottom of that tile via the same `GgrBreakdownPopover`, P&L
-          stays at the top). With only three boxes left, this strip drops
-          the `xl:grid-cols-4` step entirely so each box gets MORE width at
-          wide viewports instead of making room for a fourth column.
-          Mobile-first: one column at <sm so the hero value + toggle never
-          crush; 2-up at sm; 3 across at lg. */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
+          one single tile), the Crypto Fee counter (anchored monotonic
+          estimate — NOT period-bound), and Keno settlement performance.
+          GGR MOVED into the "P&L Today" tile above (owner request,
+          2026-07-02); Keno profit is a deliberately scoped product metric,
+          not a replacement general-GGR card. Mobile-first: one column below
+          sm, two columns through lg, then four equal boxes at xl. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
         {/* Wager — MERGED box. Shows total customer wager (creator-on-stream
             sessions excluded) AND organic wager (no creator-code users) as two
             headline figures, with the Packs/Battles/Upgrader split (of the
@@ -468,7 +480,7 @@ export function DashboardKpiSection({
             a dollar we make = green). Always positive. Not period-bound, so it
             carries a static "est · since …" label instead of a today/24h
             toggle. When unavailable (admin counter row missing) the muted
-            slot renders so the row still holds five cells. */}
+            slot renders so the row still holds four cells. */}
         {cryptoFee.available ? (
           <KpiPanel
             title="Crypto Fee"
@@ -520,13 +532,83 @@ export function DashboardKpiSection({
             </p>
           </KpiPanel>
         )}
+
+        {/* Keno — settled customer-game performance for the selected window.
+            Profit is wager minus player payouts; realized edge is
+            profit / wager. Both can be negative during a short window and
+            use House-POV coloring. The Today/24h toggle rides the same lazy
+            shared payload as the Wager and Cash-flow cards. */}
+        {(() => {
+          const p = payloadFor("keno");
+          const mode = modeFor("keno");
+          const keno = p.keno;
+          const resultTone = keno.profit >= 0 ? "emerald" : "rose";
+
+          return (
+            <KpiPanel
+              title="Keno"
+              tint="cyan"
+              icon={Dices}
+              headerRight={
+                <WindowToggle
+                  active={mode}
+                  loading={loading}
+                  onPick={(w) => pick("keno", w)}
+                />
+              }
+              footer={
+                keno.available ? (
+                  <div className="space-y-1.5">
+                    <div className="grid grid-cols-2 gap-1.5 sm:-mx-0.5">
+                      <PanelChip label="Wager" value={keno.wager} />
+                      <PanelChip
+                        label="Payouts"
+                        value={keno.payout}
+                        tone="rose"
+                      />
+                    </div>
+                    <p className="text-[11px] leading-snug text-muted-foreground">
+                      {formatNumber(keno.games)} settled games ·{" "}
+                      {formatNumber(keno.players)} players
+                    </p>
+                  </div>
+                ) : undefined
+              }
+            >
+              {keno.available ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <DualHero
+                    label="Profit"
+                    value={keno.profit}
+                    tone={resultTone}
+                  />
+                  <DualHero
+                    label="Realized edge"
+                    value={keno.edgePct}
+                    format="percent"
+                    tone={resultTone}
+                  />
+                </div>
+              ) : (
+                <>
+                  <div className="text-stat-value truncate text-muted-foreground/70">
+                    —
+                  </div>
+                  <p className="text-tiny text-muted-foreground">
+                    Keno settlement data not available.
+                  </p>
+                </>
+              )}
+            </KpiPanel>
+          );
+        })()}
       </div>
 
       {/* The window-independent SNAPSHOT boxes (FTDs, Depositors, Avg RTP, Avg
           P&L 7d, Total P&L lifetime) were MOVED to the owner-only lifetime
           section on `/analytics` (Overview tab) — the dashboard is now a
-          live-ops board (period-bound GGR / Wager / Deposits-Withdrawals +
-          the Crypto Fee counter above), while the lifetime / cadence
+          live-ops board (period-bound GGR / Wager / Deposits-Withdrawals /
+          Keno + the Crypto Fee counter above), while the lifetime / cadence
           aggregates live on that Overview-tab section. The Total P&L + Avg
           P&L boxes were folded into a single "Total P&L" box there (lifetime
           headline + avg-daily-7d sub-line). See
