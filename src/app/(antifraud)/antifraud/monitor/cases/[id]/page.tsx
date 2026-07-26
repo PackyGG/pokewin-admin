@@ -58,7 +58,7 @@ export const metadata = { title: "Monitor case · Antifraud" };
  * Nothing here touches the prod game DB. A verdict is a record; acting on the
  * account still happens on the main dashboard, where it is separately audited.
  *
- * Shell-first: the back affordance paints immediately and the case streams in
+ * Shell-first: the page heading paints immediately and the case streams in
  * behind its own Suspense boundary, keyed on the case id.
  */
 export default async function MonitorCaseDetailPage({
@@ -77,7 +77,6 @@ export default async function MonitorCaseDetailPage({
           accent="cyan"
           title="Monitor case"
           subtitle="Case"
-          backHref="/antifraud/monitor"
         />
       </PageHero>
 
@@ -415,8 +414,8 @@ function SessionRow({ session }: { session: AntifraudMonitorSession }) {
       >
         {session.status}
       </Badge>
-      <span className="text-muted-foreground" title={formatDateTime(session.started_at)}>
-        started {formatRelative(session.started_at)}
+      <span className="text-muted-foreground">
+        started {formatDateTime(session.started_at)}
       </span>
       <span className="text-muted-foreground">
         {active ? "ends" : "ended"}{" "}
