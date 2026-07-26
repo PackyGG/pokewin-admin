@@ -66,7 +66,6 @@ export async function awardPointsManually(input: unknown): Promise<void> {
     },
   });
 
-  revalidatePath("/staff/members");
   revalidatePath("/staff/points");
   revalidatePath("/staff/profile");
 }

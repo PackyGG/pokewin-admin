@@ -95,6 +95,8 @@ export type NavEntry = {
   alwaysVisible?: boolean;
   /** Role required unless the viewer is an admin or owner. */
   roleAllowlist?: string[];
+  /** Do not let the generic admin/owner bypass satisfy `roleAllowlist`. */
+  strictRoleAllowlist?: boolean;
   /** Surfaces in the sidebar. */
   inSidebar: boolean;
   /** Pinned to the sidebar footer, directly above the theme toggle. */
@@ -464,22 +466,23 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     href: "/staff",
     pageKey: "/staff",
     icon: "Users",
-    description: "Profiles, quizzes, points and the staff leaderboard",
-    keywords: ["staff", "profile", "quiz", "points", "leaderboard"],
+    description: "Published quizzes for support agents",
+    keywords: ["staff", "support", "quiz"],
     alwaysVisible: true,
     roleAllowlist: ["support"],
+    strictRoleAllowlist: true,
     inSidebar: true,
     inPalette: false,
   },
   {
-    id: "nav.staff-pov",
+    id: "nav.staff-manage",
     group: "Staff",
-    label: "Support POV",
-    href: "/staff/pov",
+    label: "Staff Manage",
+    href: "/staff/manage",
     pageKey: "/staff",
-    icon: "Eye",
-    description: "Preview the Staff Hub as a support agent",
-    keywords: ["staff", "support", "pov", "preview", "hub"],
+    icon: "Settings",
+    description: "Manage staff points and quizzes",
+    keywords: ["staff", "manage", "points", "quiz"],
     alwaysVisible: true,
     roleAllowlist: ["admin"],
     inSidebar: true,

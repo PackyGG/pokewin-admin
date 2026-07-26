@@ -212,7 +212,7 @@ export async function setQuizStatus(input: unknown): Promise<void> {
 
   revalidatePath("/staff/quiz-manager");
   revalidatePath(`/staff/quiz-manager/${quizId}`);
-  revalidatePath("/staff/quizzes");
+  revalidatePath("/staff");
 }
 
 /**

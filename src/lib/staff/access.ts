@@ -18,10 +18,6 @@ export function canUseStaffProfile(session: SessionPayload): boolean {
   return sessionHasRole(session, "support");
 }
 
-export function canAccessStaff(session: SessionPayload): boolean {
-  return canManageStaff(session) || canUseStaffProfile(session);
-}
-
 async function redirectToDefault(session: SessionPayload): Promise<never> {
   const allowedPages = await getUserPermissions(session.userId);
   redirect(getDefaultRouteForRoles(sessionRoles(session), allowedPages));
@@ -29,8 +25,9 @@ async function redirectToDefault(session: SessionPayload): Promise<never> {
 
 export async function requireStaffPage(): Promise<SessionPayload> {
   const session = await verifySession();
-  if (!canAccessStaff(session)) return redirectToDefault(session);
-  return session;
+  if (canUseStaffProfile(session)) return session;
+  if (canManageStaff(session)) redirect("/staff/manage");
+  return redirectToDefault(session);
 }
 
 export async function requireStaffAccess(): Promise<SessionPayload> {
@@ -43,7 +40,10 @@ export async function requireStaffAccess(): Promise<SessionPayload> {
 
 export async function requireStaffProfilePage(): Promise<SessionPayload> {
   const session = await verifySession();
-  if (!canUseStaffProfile(session)) redirect("/staff");
+  if (!canUseStaffProfile(session)) {
+    if (canManageStaff(session)) redirect("/staff/manage");
+    return redirectToDefault(session);
+  }
   return session;
 }
 
@@ -63,15 +63,16 @@ export async function requireStaffManager(
 
 export async function requireStaffLearnerPage(): Promise<SessionPayload> {
   const session = await verifySession();
-  if (!canUseStaffProfile(session) || canManageStaff(session)) redirect("/staff");
-  return session;
+  if (canUseStaffProfile(session)) return session;
+  if (canManageStaff(session)) redirect("/staff/manage");
+  return redirectToDefault(session);
 }
 
 export async function requireStaffLearner(
   unauthorizedMessage = "Quizzes are only available to staff learners.",
 ): Promise<SessionPayload> {
   const session = await verifySession();
-  if (!canUseStaffProfile(session) || canManageStaff(session)) {
+  if (!canUseStaffProfile(session)) {
     throw new Error(unauthorizedMessage);
   }
   return session;

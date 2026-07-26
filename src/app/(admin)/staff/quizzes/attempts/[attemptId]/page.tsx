@@ -35,9 +35,7 @@ export default async function QuizResultPage({
   const session = await requireStaffLearnerPage();
   const { attemptId } = await params;
   const canManage = canManageStaff(session);
-  const backHref = canManage
-    ? "/staff/quiz-manager"
-    : "/staff/quizzes";
+  const backHref = canManage ? "/staff/quiz-manager" : "/staff";
 
   return (
     <div className="space-y-6">
@@ -76,7 +74,7 @@ async function ResultBody({
 
   const isOwnAttempt = result.attempt.adminUserId === viewerId;
   if (!isOwnAttempt && !canManage) {
-    redirect("/staff/quizzes");
+    redirect("/staff");
   }
   // An attempt that hasn't been submitted has no result to show — send them
   // back to finish it rather than leaking a half-graded view.
@@ -202,7 +200,7 @@ async function ResultBody({
           href={
             canManage
               ? "/staff/quiz-manager"
-              : "/staff/quizzes"
+              : "/staff"
           }
           className="rounded-md border border-border/60 bg-muted/40 px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted"
         >

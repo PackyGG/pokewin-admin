@@ -65,7 +65,6 @@ import {
   Anchor,
   Dices,
   Crown,
-  Eye,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -160,7 +159,6 @@ const ICONS: Record<string, LucideIcon> = {
   Anchor,
   Dices,
   Crown,
-  Eye,
 };
 
 type NavItem = {
@@ -186,6 +184,8 @@ type NavItem = {
   alwaysVisible?: boolean;
   // Role required unless the viewer is an admin or owner.
   roleAllowlist?: string[];
+  // When true, admin/owner does not bypass roleAllowlist.
+  strictRoleAllowlist?: boolean;
 };
 
 type NavGroup = {
@@ -214,6 +214,7 @@ const NAV_FOOTER_ITEMS: NavItem[] = getSidebarFooterItems().map((e) => ({
   isNew: e.isNew,
   alwaysVisible: e.alwaysVisible,
   roleAllowlist: e.roleAllowlist,
+  strictRoleAllowlist: e.strictRoleAllowlist,
 }));
 
 const NAV_GROUPS: NavGroup[] = getSidebarGroups().map((group) => ({
@@ -229,6 +230,7 @@ const NAV_GROUPS: NavGroup[] = getSidebarGroups().map((group) => ({
     isNew: e.isNew,
     alwaysVisible: e.alwaysVisible,
     roleAllowlist: e.roleAllowlist,
+    strictRoleAllowlist: e.strictRoleAllowlist,
   })),
 }));
 
@@ -364,8 +366,7 @@ export function AppSidebar({
         }
         if (
           item.roleAllowlist &&
-          !isAdmin &&
-          !isOwner &&
+          (item.strictRoleAllowlist || (!isAdmin && !isOwner)) &&
           !item.roleAllowlist.some((requiredRole) =>
             effectiveRoles.includes(requiredRole),
           )
@@ -408,8 +409,7 @@ export function AppSidebar({
           }
           if (
             item.roleAllowlist &&
-            !isAdmin &&
-            !isOwner &&
+            (item.strictRoleAllowlist || (!isAdmin && !isOwner)) &&
             !item.roleAllowlist.some((requiredRole) =>
               effectiveRoles.includes(requiredRole),
             )

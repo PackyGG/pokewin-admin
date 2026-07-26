@@ -308,9 +308,9 @@ export async function submitQuizAttempt(
     metadata: { quizId: quiz.id, attemptId, score: scored.score, passed },
   });
 
-  revalidatePath("/staff/quizzes");
+  revalidatePath("/staff");
   revalidatePath("/staff/profile");
-  revalidatePath("/staff/members");
+  revalidatePath("/staff/points");
 
   return {
     attemptId,

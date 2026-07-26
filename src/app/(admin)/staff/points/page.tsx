@@ -25,7 +25,7 @@ import {
 } from "@/lib/staff/profile";
 import { STAFF_LEVELS } from "@/lib/staff/levels";
 import { StaffLevelBadge } from "../_components/badges";
-import { AwardPointsDialog } from "../members/_components/award-points-dialog";
+import { AwardPointsDialog } from "./_components/award-points-dialog";
 
 export const metadata = { title: "Staff Points" };
 
@@ -42,7 +42,7 @@ export default async function StaffPointsPage() {
           accent="amber"
           title="Staff Points"
           subtitle="Current balances, level thresholds and the immutable points ledger"
-          backHref="/staff"
+          backHref="/staff/manage"
         />
       </PageHero>
 

@@ -88,7 +88,7 @@ export async function updateStaffProfile(input: unknown): Promise<void> {
   });
 
   revalidatePath("/staff/profile");
-  revalidatePath("/staff/members");
+  revalidatePath("/staff/points");
 }
 
 // ─── Notification preferences ─────────────────────────────────────────

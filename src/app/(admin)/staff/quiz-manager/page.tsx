@@ -42,7 +42,7 @@ export default async function QuizManagerPage() {
           title="Quiz Manager"
           subtitle="Write quizzes, publish them, watch the team take them"
           action={<QuizFormDialog />}
-          backHref="/staff"
+          backHref="/staff/manage"
         />
       </PageHero>
 

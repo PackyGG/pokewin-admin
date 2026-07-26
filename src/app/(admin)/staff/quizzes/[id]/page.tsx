@@ -43,7 +43,7 @@ export default async function TakeQuizPage({
           accent="purple"
           title="Quiz"
           subtitle="Quiz"
-          backHref="/staff/quizzes"
+          backHref="/staff"
         />
       </PageHero>
 
@@ -83,7 +83,7 @@ async function QuizStage({
   const { quiz, questions } = loaded;
 
   if (!quizVisibleToRoles(quiz.audienceRoles, roles)) {
-    redirect("/staff/quizzes");
+    redirect("/staff");
   }
 
   // Attempts already spent — only meaningful when there is no open attempt to
@@ -100,7 +100,7 @@ async function QuizStage({
     quiz.maxAttempts > 0 ? Math.max(0, quiz.maxAttempts - submittedCount) : null;
 
   if (!openAttempt && attemptsLeft !== null && attemptsLeft <= 0) {
-    redirect("/staff/quizzes");
+    redirect("/staff");
   }
 
   const pointsAvailable = questions.reduce((sum, q) => sum + q.points, 0);
