@@ -2,7 +2,8 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { CREATOR_COST_CACHE_TTL_SECONDS } from "./_cost-cache";
@@ -67,18 +68,18 @@ async function computeCreatorFillConversionCost(
   creatorUserId: string,
 ): Promise<CreatorFillConversionCost> {
   return withTiming("creators.netPnl.fillConversionCost", async () => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
 
     type Row = { payout: string | null; voucher_count: string | null };
 
     // `origin` compared via ::text (NOT the bare enum): the generated
-    // Prisma `voucher_origin` enum is AHEAD of live prod, which does not
+    // `voucher_origin` is AHEAD of live prod, which does not
     // yet carry the 'creator_fill_conversion' label — a bare enum
     // comparison against an unknown label throws 22P02 at parse time
     // (the ffa61b5c failure class) and permanently flagged the cost
     // panels "Partial". ::text compares false instead, so the Σ is an
     // honest $0 until prod gains the label.
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryRows<Row[]>(db,
       `SELECT
           COALESCE(SUM(v.value::numeric), 0)::text AS payout,
           COUNT(*)::text AS voucher_count
@@ -97,7 +98,7 @@ async function computeCreatorFillConversionCost(
 
 // Cached per creator id — the conversion-voucher Σ is a lifetime aggregate
 // that barely moves, so a few-minutes TTL stops repeat loads / "Refresh to
-// retry" presses from re-scanning. `getDb()` inside the cache → prod (see
+// retry" presses from re-scanning. Resolving the database inside the cache → prod (see
 // `_cost-cache.ts`). The creator id is the cache key (passed as the fn arg
 // so unstable_cache folds it into the key).
 const cachedCreatorFillConversionCost = unstable_cache(

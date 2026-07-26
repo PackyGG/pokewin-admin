@@ -18,7 +18,7 @@ import { SECURITY_CACHE_TAG } from "./security-cache-tag";
  * Cross-request cache for the /security page's section reads.
  *
  * The page fans out one MAIN-DB `site_config`/`vault_lock_times` scan plus
- * nine independent backend-API GETs. On prod ClickHouse is dormant, so every
+ * nine independent backend-API GETs. On production every
  * one of those GETs is served by Postgres through the game backend with the
  * client's default 8s timeout + transient-retry budget — and NONE of them was
  * cached, so EVERY page load re-paid the full fan-out latency (bounded by the
@@ -29,7 +29,7 @@ import { SECURITY_CACHE_TAG } from "./security-cache-tag";
  * Correctness:
  *   • PROD-ONLY cache — same pattern as `users-detail-cache.ts`. The
  *     underlying reads resolve the per-admin `admin_db_env` cookie
- *     (`getDb()` / `resolveBackendApiConfig()`); `unstable_cache` runs its
+ *     (`getDrizzleDb()` / `resolveBackendApiConfig()`); `unstable_cache` runs its
  *     callback OUTSIDE the request's dynamic scope, where that cookie read
  *     falls back to "prod". So we cache ONLY when the request is on prod and
  *     bypass to the live read for a dev-toggled admin, who then always sees

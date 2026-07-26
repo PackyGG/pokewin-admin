@@ -1,7 +1,10 @@
 "use server";
 
 import { revalidatePath, revalidateTag } from "next/cache";
-import { getDb } from "@/lib/db";
+import { and, eq } from "drizzle-orm";
+
+import { getDrizzleDb } from "@/lib/db";
+import { card_withdrawal_requests } from "@/lib/db-schema/main/schema";
 import { WITHDRAWALS_LIST_TAG } from "@/lib/queries/withdrawals";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -30,7 +33,7 @@ export async function processWithdrawal(
   withdrawalId: string,
   totpCode: string,
 ): Promise<ServerActionResult<{ withdrawalId: string }>> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/withdrawals");
   try {
     await requireCapability(
@@ -55,9 +58,11 @@ export async function processWithdrawal(
     );
   }
 
-  const withdrawal = await db.card_withdrawal_requests.findUnique({
-    where: { id: withdrawalId },
-  });
+  const [withdrawal] = await db
+    .select()
+    .from(card_withdrawal_requests)
+    .where(eq(card_withdrawal_requests.id, withdrawalId))
+    .limit(1);
   if (!withdrawal) {
     return fail("Withdrawal not found", "NOT_FOUND");
   }
@@ -74,17 +79,30 @@ export async function processWithdrawal(
     );
   }
 
-  await db.card_withdrawal_requests.update({
-    where: { id: withdrawalId },
-    data: {
+  const claimed = await db
+    .update(card_withdrawal_requests)
+    .set({
       status: "processing",
-      processing_at: new Date(),
+      processing_at: new Date().toISOString(),
       metadata: {
         ...((withdrawal.metadata as Record<string, unknown>) ?? {}),
         processed_by_admin: session.username,
       },
-    },
-  });
+      updated_at: new Date().toISOString(),
+    })
+    .where(
+      and(
+        eq(card_withdrawal_requests.id, withdrawalId),
+        eq(card_withdrawal_requests.status, "pending"),
+      ),
+    )
+    .returning({ id: card_withdrawal_requests.id });
+  if (!claimed[0]) {
+    return fail(
+      "This withdrawal is no longer pending — refresh and check its current status.",
+      "INVALID_STATE",
+    );
+  }
 
   // For crypto withdrawals, call backend to initiate the Fireblocks transfer
   if (withdrawal.method === "crypto") {
@@ -100,13 +118,19 @@ export async function processWithdrawal(
       // The error itself is logged server-side; the user gets a sanitized
       // message instead of the raw backend payload (which can include URLs,
       // tx ids, internal error codes).
-      await db.card_withdrawal_requests.update({
-        where: { id: withdrawalId },
-        data: {
+      await db
+        .update(card_withdrawal_requests)
+        .set({
           status: "pending",
           processing_at: null,
-        },
-      });
+          updated_at: new Date().toISOString(),
+        })
+        .where(
+          and(
+            eq(card_withdrawal_requests.id, withdrawalId),
+            eq(card_withdrawal_requests.status, "processing"),
+          ),
+        );
       logError(
         "withdrawals.process",
         `Fireblocks transfer init failed for ${withdrawalId}`,
@@ -119,16 +143,17 @@ export async function processWithdrawal(
     }
 
     // Store the Fireblocks transfer ID
-    await db.card_withdrawal_requests.update({
-      where: { id: withdrawalId },
-      data: {
+    await db
+      .update(card_withdrawal_requests)
+      .set({
         fireblocks_tx_id: result.data?.fireblocks_tx_id ?? null,
         metadata: {
           ...((withdrawal.metadata as Record<string, unknown>) ?? {}),
           processed_by_admin: session.username,
         },
-      },
-    });
+        updated_at: new Date().toISOString(),
+      })
+      .where(eq(card_withdrawal_requests.id, withdrawalId));
   }
 
   await createAdminAuditEvent({
@@ -153,13 +178,15 @@ export async function shipWithdrawal(
   trackingNumber: string,
   carrier: string
 ) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/withdrawals");
   await requireCapability(session, "__can_ship_withdrawals", "mark withdrawals as shipped");
 
-  const withdrawal = await db.card_withdrawal_requests.findUnique({
-    where: { id: withdrawalId },
-  });
+  const [withdrawal] = await db
+    .select()
+    .from(card_withdrawal_requests)
+    .where(eq(card_withdrawal_requests.id, withdrawalId))
+    .limit(1);
   if (!withdrawal || withdrawal.status !== "processing") {
     throw new Error("Withdrawal not found or not in processing status");
   }
@@ -170,19 +197,30 @@ export async function shipWithdrawal(
     throw new Error("Only physical withdrawals can be shipped");
   }
 
-  await db.card_withdrawal_requests.update({
-    where: { id: withdrawalId },
-    data: {
+  const shipped = await db
+    .update(card_withdrawal_requests)
+    .set({
       status: "shipped",
-      shipped_at: new Date(),
+      shipped_at: new Date().toISOString(),
       tracking_number: trackingNumber || null,
       carrier: carrier || null,
       metadata: {
         ...((withdrawal.metadata as Record<string, unknown>) ?? {}),
         shipped_by_admin: session.username,
       },
-    },
-  });
+      updated_at: new Date().toISOString(),
+    })
+    .where(
+      and(
+        eq(card_withdrawal_requests.id, withdrawalId),
+        eq(card_withdrawal_requests.status, "processing"),
+        eq(card_withdrawal_requests.method, "physical"),
+      ),
+    )
+    .returning({ id: card_withdrawal_requests.id });
+  if (!shipped[0]) {
+    throw new Error("Withdrawal state changed — refresh and retry");
+  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -201,13 +239,15 @@ export async function shipWithdrawal(
 }
 
 export async function completeWithdrawal(withdrawalId: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/withdrawals");
   await requireCapability(session, "__can_complete_withdrawals", "mark withdrawals as complete");
 
-  const withdrawal = await db.card_withdrawal_requests.findUnique({
-    where: { id: withdrawalId },
-  });
+  const [withdrawal] = await db
+    .select()
+    .from(card_withdrawal_requests)
+    .where(eq(card_withdrawal_requests.id, withdrawalId))
+    .limit(1);
   if (!withdrawal || !["processing", "shipped"].includes(withdrawal.status)) {
     throw new Error("Withdrawal cannot be completed from current status");
   }
@@ -247,7 +287,7 @@ export async function cancelWithdrawal(
   reason: string,
   totpCode: string,
 ): Promise<ServerActionResult<{ withdrawalId: string }>> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/withdrawals");
   try {
     await requireCapability(
@@ -272,9 +312,11 @@ export async function cancelWithdrawal(
     );
   }
 
-  const withdrawal = await db.card_withdrawal_requests.findUnique({
-    where: { id: withdrawalId },
-  });
+  const [withdrawal] = await db
+    .select()
+    .from(card_withdrawal_requests)
+    .where(eq(card_withdrawal_requests.id, withdrawalId))
+    .limit(1);
   if (!withdrawal) {
     return fail("Withdrawal not found", "NOT_FOUND");
   }
@@ -329,16 +371,18 @@ export async function failWithdrawal(
   reason: string,
   totpCode: string,
 ) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/withdrawals");
   await requireCapability(session, "__can_fail_withdrawals", "mark withdrawals as failed");
   // Marking shipped-as-failed refunds the user (backend reverts the
   // physical send + restores balance/inventory). Money-moving, gated.
   await require2FA(session.userId, totpCode);
 
-  const withdrawal = await db.card_withdrawal_requests.findUnique({
-    where: { id: withdrawalId },
-  });
+  const [withdrawal] = await db
+    .select()
+    .from(card_withdrawal_requests)
+    .where(eq(card_withdrawal_requests.id, withdrawalId))
+    .limit(1);
   if (!withdrawal || withdrawal.status !== "shipped") {
     throw new Error("Only shipped withdrawals can be marked as failed");
   }

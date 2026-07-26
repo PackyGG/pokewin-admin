@@ -1,8 +1,14 @@
 import "server-only";
 
 import { cache } from "react";
+import { and, eq } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/drizzle";
+import {
+  admin_audit_events,
+  creator_onboarding_checklist,
+  creator_socials,
+} from "@/lib/db-schema/admin/schema";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { logWarn } from "@/lib/errors/logger";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
@@ -10,6 +16,10 @@ import { BackendApiError, creatorsApi } from "@/lib/backend-api";
 import { isLinkedSocialUsername } from "../../../../../(admin)/creators/_queries/socials-by-user";
 import { getCreatorSocialUrls } from "@/lib/creator-social-urls";
 import { getCreatorHeader } from "@/lib/queries/creators-detail";
+import {
+  isPostgresError,
+  postgresErrorMessages,
+} from "@/lib/postgres-errors";
 
 import {
   EMPTY_MANUAL_STATE,
@@ -53,7 +63,7 @@ import {
  *
  * Schema self-heal: `creator_onboarding_checklist` is an ADMIN-DB table that
  * may not be present on every environment yet. Every read/write path here
- * tolerates a missing relation (Postgres 42P01 / Prisma P2021) by degrading to
+ * tolerates a missing relation (Postgres 42P01) by degrading to
  * the empty manual state instead of throwing — matching the resilient pattern
  * in `@/lib/admin-settings`.
  */
@@ -68,8 +78,8 @@ type ChecklistRow = {
   streaming_assets_provided: boolean;
   lb_prepaid_coin: string | null;
   lb_prepaid_tx_url: string | null;
-  completed_at: Date | null;
-  created_at: Date;
+  completed_at: string | null;
+  created_at: string;
 };
 
 const ROSTER_WALK_PAGE_SIZE = 100;
@@ -107,12 +117,12 @@ export async function enrollCreatorInOnboardingChecklist(
   targetUserId: string,
 ): Promise<void> {
   try {
-    await adminDb.creator_onboarding_checklist.upsert({
-      where: { target_user_id: targetUserId },
-      create: { target_user_id: targetUserId },
-      update: {},
-      select: { id: true },
-    });
+    await adminDrizzle
+      .insert(creator_onboarding_checklist)
+      .values({ target_user_id: targetUserId })
+      .onConflictDoNothing({
+        target: creator_onboarding_checklist.target_user_id,
+      });
   } catch (err) {
     if (isChecklistTableMissing(err)) {
       logWarn(
@@ -127,14 +137,12 @@ export async function enrollCreatorInOnboardingChecklist(
 
 /** True if an error is a "relation does not exist" (table not migrated yet). */
 export function isChecklistTableMissing(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const msg = err.message;
+  if (isPostgresError(err, "42P01")) return true;
+  const msg = postgresErrorMessages(err);
   return (
     msg.includes("creator_onboarding_checklist") &&
     (msg.includes("does not exist") ||
       msg.includes("UndefinedTable") ||
-      msg.includes("P2021") ||
-      msg.includes("42P01") ||
       msg.includes("ColumnNotFound"))
   );
 }
@@ -160,19 +168,25 @@ async function readChecklistRow(
   targetUserId: string,
 ): Promise<ChecklistRow | null> {
   try {
-    return await adminDb.creator_onboarding_checklist.findUnique({
-      where: { target_user_id: targetUserId },
-      select: {
-        lb_funds_collected: true,
-        twitter_giveaway_done: true,
-        twitter_giveaway_url: true,
-        streaming_assets_provided: true,
-        lb_prepaid_coin: true,
-        lb_prepaid_tx_url: true,
-        completed_at: true,
-        created_at: true,
-      },
-    });
+    return (
+      await adminDrizzle
+        .select({
+        lb_funds_collected: creator_onboarding_checklist.lb_funds_collected,
+        twitter_giveaway_done:
+          creator_onboarding_checklist.twitter_giveaway_done,
+        twitter_giveaway_url:
+          creator_onboarding_checklist.twitter_giveaway_url,
+        streaming_assets_provided:
+          creator_onboarding_checklist.streaming_assets_provided,
+        lb_prepaid_coin: creator_onboarding_checklist.lb_prepaid_coin,
+        lb_prepaid_tx_url: creator_onboarding_checklist.lb_prepaid_tx_url,
+        completed_at: creator_onboarding_checklist.completed_at,
+        created_at: creator_onboarding_checklist.created_at,
+        })
+        .from(creator_onboarding_checklist)
+        .where(eq(creator_onboarding_checklist.target_user_id, targetUserId))
+        .limit(1)
+    )[0] ?? null;
   } catch (err) {
     if (isChecklistTableMissing(err)) {
       logWarn(
@@ -210,7 +224,7 @@ function rowToManual(row: ChecklistRow | null): ChecklistManualState {
 async function syncCompletedSnapshot(
   targetUserId: string,
   complete: boolean,
-  currentCompletedAt: Date | null,
+  currentCompletedAt: string | null,
   rowExists: boolean,
 ): Promise<void> {
   const shouldBeSet = complete;
@@ -221,20 +235,21 @@ async function syncCompletedSnapshot(
     if (shouldBeSet) {
       // Upsert: the creator may have no manual row yet but still satisfy all
       // AUTO items + the manual defaults — stamp completion.
-      await adminDb.creator_onboarding_checklist.upsert({
-        where: { target_user_id: targetUserId },
-        create: { target_user_id: targetUserId, completed_at: new Date() },
-        update: { completed_at: new Date() },
-        select: { id: true },
-      });
+      const completedAt = new Date().toISOString();
+      await adminDrizzle
+        .insert(creator_onboarding_checklist)
+        .values({ target_user_id: targetUserId, completed_at: completedAt })
+        .onConflictDoUpdate({
+          target: creator_onboarding_checklist.target_user_id,
+          set: { completed_at: completedAt },
+        });
     } else if (rowExists) {
       // Regressed: clear the snapshot so the panel reappears. Only touch an
       // existing row (no point creating one just to store null).
-      await adminDb.creator_onboarding_checklist.update({
-        where: { target_user_id: targetUserId },
-        data: { completed_at: null },
-        select: { id: true },
-      });
+      await adminDrizzle
+        .update(creator_onboarding_checklist)
+        .set({ completed_at: null })
+        .where(eq(creator_onboarding_checklist.target_user_id, targetUserId));
     }
   } catch (err) {
     if (isChecklistTableMissing(err)) return;
@@ -251,13 +266,13 @@ async function syncCompletedSnapshot(
  * Discord ID, Reward page}" — each handle/URL is counted once when set.
  */
 async function countSocials(targetUserId: string): Promise<number> {
-  const rows = await adminDb.creator_socials.findMany({
-    where: { target_user_id: targetUserId },
-    select: {
-      platform: true,
-      username: true,
-    },
-  });
+  const rows = await adminDrizzle
+    .select({
+      platform: creator_socials.platform,
+      username: creator_socials.username,
+    })
+    .from(creator_socials)
+    .where(eq(creator_socials.target_user_id, targetUserId));
 
   let count = 0;
   for (const platform of ["twitter", "kick", "discord"] as const) {
@@ -292,10 +307,18 @@ async function creatorEverHadFillDeal(userId: string): Promise<boolean> {
     if (!(err instanceof BackendApiError && err.isNotFound)) throw err;
   }
 
-  const legacyDeal = await adminDb.admin_audit_events.findFirst({
-    where: { target_user_id: userId, event_type: "creator_deal_created" },
-    select: { id: true },
-  });
+  const legacyDeal = (
+    await adminDrizzle
+      .select({ id: admin_audit_events.id })
+      .from(admin_audit_events)
+      .where(
+        and(
+          eq(admin_audit_events.target_user_id, userId),
+          eq(admin_audit_events.event_type, "creator_deal_created"),
+        ),
+      )
+      .limit(1)
+  )[0];
   return legacyDeal != null;
 }
 
@@ -474,9 +497,11 @@ export async function getCreatorChecklist(
     doneCount,
     totalCount,
     complete,
-    completedAt:
-      (complete ? new Date() : row?.completed_at ?? null)?.toISOString() ??
-      null,
+    completedAt: complete
+      ? new Date().toISOString()
+      : row?.completed_at
+        ? new Date(row.completed_at).toISOString()
+        : null,
     manual,
     partial,
   };

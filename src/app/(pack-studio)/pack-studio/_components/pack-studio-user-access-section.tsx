@@ -1,7 +1,8 @@
 import { ShieldCheck } from "lucide-react";
+import { sql } from "drizzle-orm";
 
 import { SectionHeading } from "@/components/modern-panels";
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
 import { getEffectiveRoles } from "@/lib/admin-roles";
 import { getPackStudioUserAccess } from "@/lib/pack-studio-access";
 import {
@@ -88,26 +89,21 @@ type InterestingAdmin = {
  *
  * On any error we degrade to an empty list so the section still renders (the
  * owner can still manage anyone via the username text the deny/allow lists
- * carry). P2022 / table missing edge cases are swallowed.
+ * carry). Missing-column/table edge cases are swallowed.
  */
 async function safeListInterestingAdmins(): Promise<InterestingAdmin[]> {
   try {
-    const rows = await adminDb.admin_users.findMany({
-      where: {
-        OR: [
-          { is_owner: true },
-          { username: { equals: "demee", mode: "insensitive" } },
-        ],
-        is_active: true,
-      },
-      select: {
-        username: true,
-        display_username: true,
-        role: true,
-        roles: true,
-        is_owner: true,
-      },
-    });
+    const rows = (
+      await adminDrizzle.execute<{
+        username: string; display_username: string | null; role: string;
+        roles: string[] | null; is_owner: boolean;
+      }>(sql`
+        SELECT username, display_username, role, roles, is_owner
+        FROM admin_users
+        WHERE is_active = true
+          AND (is_owner = true OR LOWER(username) = 'demee')
+      `)
+    ).rows;
     return rows.map((row): InterestingAdmin => ({
       username: row.username,
       displayName: row.display_username?.trim() || row.username,

@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
  * excluded-users, stats).
  *
  * The system pages surface platform-wide stats and config. A failed
- * query or a stale Prisma column would otherwise bubble to the umbrella
+ * query or a stale schema column would otherwise bubble to the umbrella
  * `(admin)/error.tsx`; this boundary scopes it to /system. The reset
  * path re-runs the server render without a full reload.
  *
@@ -55,7 +55,7 @@ export default function SystemError({
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <p className="text-xs text-muted-foreground">
           The system pages aggregate platform-wide stats and config — a
-          single slow upstream or a stale Prisma column is the most common
+          single slow upstream or a stale schema column is the most common
           cause. Server logs have the full stack — search for the digest
           above.
         </p>

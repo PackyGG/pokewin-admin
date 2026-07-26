@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-// Mirror the dock widths from live-money-chat.tsx — keep in sync.
+// Keep this width in sync with the Creator Hub Alerts dock.
 // The collapsed edge tab is the ONLY width the page layout reserves. An
 // open panel (320px) floats OVER the content as an overlay (fixed, z-30);
 // it never widens the reserved gutter, so opening/closing a dock does not

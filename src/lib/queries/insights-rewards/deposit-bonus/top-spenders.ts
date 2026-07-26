@@ -1,6 +1,6 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   cacheTtlForInsightsPeriod,
@@ -55,13 +55,13 @@ async function computeTopSpenders(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusTopSpender[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const dateFilter = windowDateFilter(period);
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Per-user windowed bonus rollup → top 25 → join lifetime + wager /
   // payout / deposit rollups all bounded to the window.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       user_id: string;
       username: string | null;
@@ -73,7 +73,7 @@ async function computeTopSpenders(
       wager_total: string;
       payout_total: string;
     }[]
-  >(`
+  >(db, sql`
     WITH window_bonus AS (
       SELECT
         lt.user_id,
@@ -113,7 +113,7 @@ async function computeTopSpenders(
       SELECT lt.user_id, COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS wager_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type::text IN ${WAGER_TYPES_SQL}
+        AND lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
         AND lt.user_id IN (SELECT user_id FROM window_bonus)
         ${dateFilter}
       GROUP BY lt.user_id
@@ -122,7 +122,7 @@ async function computeTopSpenders(
       SELECT lt.user_id, COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS payout_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type::text IN ${PAYOUT_TYPES_SQL}
+        AND lt.type::text IN ${sql.raw(PAYOUT_TYPES_SQL)}
         AND lt.user_id IN (SELECT user_id FROM window_bonus)
         ${dateFilter}
       GROUP BY lt.user_id

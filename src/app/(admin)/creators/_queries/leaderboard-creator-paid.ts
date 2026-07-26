@@ -1,6 +1,8 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
+import { inArray } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import { admin_leaderboard_creator_paid } from "@/lib/db-schema/admin/schema";
 
 /**
  * Admin-side "creator paid his part" flag per creator (affiliate)
@@ -21,9 +23,12 @@ export async function getLeaderboardCreatorPaidMap(
   leaderboardIds: string[],
 ): Promise<Map<string, boolean>> {
   if (leaderboardIds.length === 0) return new Map();
-  const rows = await adminDb.admin_leaderboard_creator_paid.findMany({
-    where: { leaderboard_id: { in: leaderboardIds } },
-    select: { leaderboard_id: true, paid: true },
-  });
+  const rows = await adminDrizzle
+    .select({
+      leaderboard_id: admin_leaderboard_creator_paid.leaderboard_id,
+      paid: admin_leaderboard_creator_paid.paid,
+    })
+    .from(admin_leaderboard_creator_paid)
+    .where(inArray(admin_leaderboard_creator_paid.leaderboard_id, leaderboardIds));
   return new Map(rows.map((r) => [r.leaderboard_id, r.paid]));
 }

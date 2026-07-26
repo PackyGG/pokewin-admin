@@ -22,7 +22,8 @@ const SCRATCH_USER_PREFIX = "_e2e_";
 // 2026-06-10). Running `npx playwright test` as documented would then issue
 // the sweep's DELETEs against prod. Every MAIN-DB *write* helper below
 // therefore refuses to run unless the target host is local, or the operator
-// explicitly opts in for a scratch/CI database via E2E_ALLOW_MAIN_DB_WRITES=1.
+// uses a local scratch database. A flag must never turn an arbitrary remote
+// DATABASE_URL into a writable target.
 // Read helpers (getUserBalance / getUserRole) are untouched.
 // ---------------------------------------------------------------------------
 
@@ -45,19 +46,17 @@ function isLocalMainDb(): boolean {
   }
 }
 
-/** True when MAIN-DB writes are safe: local host or explicit CI opt-in. */
+/** True only when MAIN-DB writes target a local scratch database. */
 export function mainDbWritesAllowed(): boolean {
-  return process.env.E2E_ALLOW_MAIN_DB_WRITES === "1" || isLocalMainDb();
+  return isLocalMainDb();
 }
 
 function assertMainDbWritesAllowed(what: string): void {
   if (mainDbWritesAllowed()) return;
   throw new Error(
     `[e2e] REFUSING ${what}: DATABASE_URL points at a non-local host and ` +
-      `E2E_ALLOW_MAIN_DB_WRITES is not set. The main game DB may be LIVE ` +
-      `PRODUCTION (strictly read-only). Point DATABASE_URL at a local/` +
-      `scratch DB, or export E2E_ALLOW_MAIN_DB_WRITES=1 only when the ` +
-      `target is a disposable test database.`,
+      `host. The main game DB may be LIVE PRODUCTION and is strictly ` +
+      `read-only. Point DATABASE_URL at a local scratch database.`,
   );
 }
 
@@ -169,7 +168,7 @@ export async function sweepStaleScratchUsers(): Promise<number> {
     // (possibly prod) DB without it issuing DELETEs there.
     console.warn(
       "[e2e] skipping stale-scratch-user sweep: DATABASE_URL is non-local " +
-        "and E2E_ALLOW_MAIN_DB_WRITES is not set (prod-guard).",
+        "(prod-guard).",
     );
     return 0;
   }

@@ -17,10 +17,8 @@ import "server-only";
  * the canonical house P&L is computed (user detail, users-list, dashboard
  * P&L Today / movers / daily chart, rolling per-user ladder, period delta).
  * The balance + voucher + deposit + withdrawal terms are UNAFFECTED — only
- * the inventory liability is dropped. Applied with an identical predicate on
- * Postgres and every ClickHouse twin so CQRS parity holds automatically
- * (the `role` column exists in both engines; see the ClickHouse helper
- * `nonCreatorOwnerCh` in `clickhouse/queries/_shared.ts`).
+ * the inventory liability is dropped. Applied consistently across PostgreSQL
+ * creator P&L queries.
  *
  * Postgres SQL predicate — keeps a row ONLY if its owner is not a creator.
  * `userIdCol` is the inventory / ledger row's user-id column, e.g.

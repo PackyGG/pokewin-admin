@@ -1,7 +1,7 @@
 /**
  * Double Down — CLIENT-SAFE shared pieces (period constants/helpers + the
  * result/status/row TYPES). This module has NO server-only imports (no
- * getDb / db-env / @prisma/client), so client components — the period chip
+ * server database modules, so client components — the period chip
  * strip, the badges, the log table — can import the period runtime values and
  * the row types WITHOUT dragging the server query graph into the browser
  * bundle (the exact build error that forced this split; same pattern as

@@ -16,7 +16,9 @@
 
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
-import { adminDb } from "@/lib/admin-db";
+import { eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_roles } from "@/lib/db-schema/admin/schema";
 import { requireAdmin } from "@/lib/dal";
 import { require2FA } from "@/lib/require-2fa";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -75,36 +77,33 @@ export async function setRoleLimits(
   }
 
   // Validate the role exists (no FK self-check otherwise — a phantom id would
-  // throw an opaque Prisma error on update).
-  const role = await adminDb.admin_roles.findUnique({
-    where: { id: parsed.data.roleId },
-    select: { id: true, name: true, system_key: true },
-  });
+  // throw an opaque database error on update).
+  const [role] = await adminDrizzle.select({
+    id: admin_roles.id, name: admin_roles.name, system_key: admin_roles.system_key,
+  }).from(admin_roles).where(eq(admin_roles.id, parsed.data.roleId)).limit(1);
   if (!role) return { success: false, error: "Role not found" };
 
   // Map the validated partial onto the six columns. A slot present in the
   // input (number or explicit null) is written; an omitted slot is skipped.
-  const data: Record<string, number | null> = {};
+  const data: Partial<typeof admin_roles.$inferInsert> = {};
   const ba = parsed.data.limits.balanceAdjustment;
   if (ba) {
-    if (ba.daily !== undefined) data.balance_limit_daily = ba.daily;
-    if (ba.weekly !== undefined) data.balance_limit_weekly = ba.weekly;
-    if (ba.monthly !== undefined) data.balance_limit_monthly = ba.monthly;
+    if (ba.daily !== undefined) data.balance_limit_daily = ba.daily === null ? null : String(ba.daily);
+    if (ba.weekly !== undefined) data.balance_limit_weekly = ba.weekly === null ? null : String(ba.weekly);
+    if (ba.monthly !== undefined) data.balance_limit_monthly = ba.monthly === null ? null : String(ba.monthly);
   }
   const iss = parsed.data.limits.issuance;
   if (iss) {
-    if (iss.daily !== undefined) data.issuance_limit_daily = iss.daily;
-    if (iss.weekly !== undefined) data.issuance_limit_weekly = iss.weekly;
-    if (iss.monthly !== undefined) data.issuance_limit_monthly = iss.monthly;
+    if (iss.daily !== undefined) data.issuance_limit_daily = iss.daily === null ? null : String(iss.daily);
+    if (iss.weekly !== undefined) data.issuance_limit_weekly = iss.weekly === null ? null : String(iss.weekly);
+    if (iss.monthly !== undefined) data.issuance_limit_monthly = iss.monthly === null ? null : String(iss.monthly);
   }
   if (Object.keys(data).length === 0) {
     return { success: false, error: "No limit fields provided" };
   }
 
-  await adminDb.admin_roles.update({
-    where: { id: parsed.data.roleId },
-    data,
-  });
+  await adminDrizzle.update(admin_roles).set(data)
+    .where(eq(admin_roles.id, parsed.data.roleId));
 
   await createAdminAuditEvent({
     adminUserId: session.userId,

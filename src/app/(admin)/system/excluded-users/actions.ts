@@ -2,12 +2,18 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/drizzle";
+import {
+  admin_excluded_user_balance_v2,
+  excluded_users,
+} from "@/lib/db-schema/admin/schema";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { requireExcludedUsersAccess } from "@/lib/excluded-users/gate";
 import { refreshExcludedUserIdsCache } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
+import { isPostgresError } from "@/lib/postgres-errors";
 
 // packy.gg user_ids are 32-char alphanumeric strings (better-auth
 // nanoid-style). Validate strictly so a typo or paste of "https://…/users/<id>"
@@ -72,21 +78,17 @@ export async function addExcludedUser(input: {
   }
   const { userId, reason } = parsed.data;
 
-  const existing = await adminDb.excluded_users.findUnique({
-    where: { user_id: userId },
-    select: { user_id: true },
-  });
-  if (existing) {
-    return { ok: true, inserted: 0 };
-  }
-
-  await adminDb.excluded_users.create({
-    data: {
+  const insertedRows = await adminDrizzle
+    .insert(excluded_users)
+    .values({
       user_id: userId,
       reason,
       excluded_by: session.userId,
-    },
-  });
+      updated_at: new Date().toISOString(),
+    })
+    .onConflictDoNothing({ target: excluded_users.user_id })
+    .returning({ id: excluded_users.user_id });
+  if (insertedRows.length === 0) return { ok: true, inserted: 0 };
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -103,7 +105,7 @@ export async function addExcludedUser(input: {
 /**
  * Remove a user_id from the blacklist. Motha-only gate. Uses
  * `deleteMany` so a stale double-click after another tab already
- * removed the row is a no-op rather than a P2025 throw. A missing /
+ * removed the row is a no-op. A missing /
  * empty id returns `{ ok: false, error }` (HTTP 200) instead of
  * throwing (which would 500 the POST).
  */
@@ -115,11 +117,12 @@ export async function removeExcludedUser(
     return { ok: false, error: "Missing user ID" };
   }
 
-  const result = await adminDb.excluded_users.deleteMany({
-    where: { user_id: userId },
-  });
+  const result = await adminDrizzle
+    .delete(excluded_users)
+    .where(eq(excluded_users.user_id, userId))
+    .returning({ id: excluded_users.user_id });
 
-  if (result.count > 0) {
+  if (result.length > 0) {
     await createAdminAuditEvent({
       adminUserId: session.userId,
       eventType: "excluded_user_removed",
@@ -127,11 +130,11 @@ export async function removeExcludedUser(
     });
   }
 
-  if (result.count > 0) {
+  if (result.length > 0) {
     await refreshExcludedUserIdsCache();
   }
   revalidatePath("/system/excluded-users");
-  return { ok: true, deleted: result.count };
+  return { ok: true, deleted: result.length };
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -143,19 +146,13 @@ export async function removeExcludedUser(
 // editable per user. The table is provisioned by the
 // 20260605000000_add_excluded_user_balance_v2 migration — until that
 // migration is applied the action returns a clean error rather than
-// blowing up with a Prisma P2021 ("table does not exist").
+// blowing up with a missing-relation error.
 
 // Postgres "undefined_table" SQLSTATE — same helper logic as fetch.ts.
 // Inlined here to avoid pulling a UI/server-only utility across the
 // "use server" boundary.
 function isTableMissingError(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false;
-  const e = err as { code?: unknown; meta?: { code?: unknown } };
-  return (
-    e.code === "P2021" ||
-    e.code === "P2010" ||
-    e.meta?.code === "42P01"
-  );
+  return isPostgresError(err, "42P01");
 }
 
 const setBalanceV2Schema = z.object({
@@ -231,10 +228,13 @@ export async function setExcludedUserBalanceV2(input: {
   // excluded-user, not a general per-user annotation. This also catches
   // a stale UI where someone removed the user in another tab before
   // the save click landed.
-  const exists = await adminDb.excluded_users.findUnique({
-    where: { user_id: userId },
-    select: { user_id: true },
-  });
+  const exists = (
+    await adminDrizzle
+      .select({ user_id: excluded_users.user_id })
+      .from(excluded_users)
+      .where(eq(excluded_users.user_id, userId))
+      .limit(1)
+  )[0];
   if (!exists) {
     return { ok: false, error: "User is not on the blacklist" };
   }
@@ -244,10 +244,15 @@ export async function setExcludedUserBalanceV2(input: {
     // table-missing the same as no row.
     let prevValue: number | null = null;
     try {
-      const prev = await adminDb.admin_excluded_user_balance_v2.findUnique({
-        where: { target_user_id: userId },
-        select: { balance_v2: true },
-      });
+      const prev = (
+        await adminDrizzle
+          .select({
+            balance_v2: admin_excluded_user_balance_v2.balance_v2,
+          })
+          .from(admin_excluded_user_balance_v2)
+          .where(eq(admin_excluded_user_balance_v2.target_user_id, userId))
+          .limit(1)
+      )[0];
       prevValue = prev ? toNumber(prev.balance_v2) : null;
     } catch (e) {
       if (!isTableMissingError(e)) throw e;
@@ -255,21 +260,23 @@ export async function setExcludedUserBalanceV2(input: {
       // so we report it once with a clean message.
     }
 
-    await adminDb.admin_excluded_user_balance_v2.upsert({
-      where: { target_user_id: userId },
-      create: {
+    await adminDrizzle
+      .insert(admin_excluded_user_balance_v2)
+      .values({
         target_user_id: userId,
-        balance_v2: balanceV2,
+        balance_v2: String(balanceV2),
         set_by_admin_id: session.userId,
         notes,
-      },
-      update: {
-        balance_v2: balanceV2,
-        set_by_admin_id: session.userId,
-        set_at: new Date(),
-        notes,
-      },
-    });
+      })
+      .onConflictDoUpdate({
+        target: admin_excluded_user_balance_v2.target_user_id,
+        set: {
+          balance_v2: String(balanceV2),
+          set_by_admin_id: session.userId,
+          set_at: new Date().toISOString(),
+          notes,
+        },
+      });
 
     await createAdminAuditEvent({
       adminUserId: session.userId,
@@ -290,7 +297,7 @@ export async function setExcludedUserBalanceV2(input: {
       return {
         ok: false,
         error:
-          "Balance 2.0 table is missing — apply the migration at prisma/admin/migrations/20260605000000_add_excluded_user_balance_v2/migration.sql, then try again.",
+          "Balance 2.0 table is missing — apply the reviewed Admin DB migration, then try again.",
       };
     }
     throw err;

@@ -23,13 +23,13 @@ export const ALL_ADMIN_ROLES: readonly AdminRole[] = [
  * The subset of built-in roles that exist as values in the ADMIN-DB
  * `admin_role` Postgres enum and can therefore be PERSISTED on an
  * `admin_users` row. Must stay in sync with the `admin_role` Postgres enum
- * in `prisma/admin/schema.prisma` (apply additive SQL via `prisma db execute`
+ * in the checked-in Admin Drizzle schema (apply additive reviewed Admin SQL
  * when extending).
  *
  * Any code path that builds a value to store in `admin_users.role` /
  * `admin_users.roles` (e.g. the create / set-roles admin actions) must
  * filter candidate roles through {@link isPersistableAdminRole} so a
- * code-only role never reaches Prisma. Pure in-memory role checks
+ * code-only role never reaches the database. Pure in-memory role checks
  * (sidebar gating, `requireRole`, landing routes) use the full
  * `ALL_ADMIN_ROLES` / `isAdminRole` set and are unaffected.
  */
@@ -48,7 +48,7 @@ const PERSISTABLE_ADMIN_ROLE_SET: ReadonlySet<string> = new Set(
 
 /**
  * Type guard for a built-in role that can be stored in the ADMIN-DB
- * `admin_role` enum. Narrows to the exact Prisma-enum string set so the
+ * `admin_role` enum. Narrows to the exact database-enum string set so the
  * result is assignable to a `admin_role`-typed field. Drops unknown strings.
  */
 export function isPersistableAdminRole(

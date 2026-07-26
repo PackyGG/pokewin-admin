@@ -3,10 +3,27 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { z } from "zod";
+import {
+  and,
+  eq,
+  getTableColumns,
+  ilike,
+  isNotNull,
+  isNull,
+  or,
+  sql,
+} from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
-import { getProdDb } from "@/lib/db";
+import { adminDrizzle } from "@/lib/drizzle";
+import {
+  creator_reward_claims,
+  creator_reward_program_windows,
+  creator_reward_programs,
+} from "@/lib/db-schema/admin/schema";
+import { affiliate_codes, user } from "@/lib/db-schema/main/schema";
+import { getDrizzleDb, getProdDrizzleDb } from "@/lib/db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { isPostgresError } from "@/lib/postgres-errors";
 import { requireAdmin, requirePageAccess } from "@/lib/dal";
 import { adjustBalance } from "@/app/(admin)/users/[id]/actions";
 import { computeProgramOffers } from "@/lib/creator-vip/compute";
@@ -24,6 +41,54 @@ import {
   CREATOR_REWARD_TYPES,
   type CreatorRewardType,
 } from "@/lib/creator-vip/types";
+
+function normalizeProgram(
+  row: typeof creator_reward_programs.$inferSelect,
+) {
+  return {
+    ...row,
+    codes: row.codes ?? [],
+    accrual_start_at: new Date(row.accrual_start_at),
+  };
+}
+
+async function getClaimWithProgram(id: string) {
+  const row = (
+    await adminDrizzle
+      .select({
+        claim: getTableColumns(creator_reward_claims),
+        program: getTableColumns(creator_reward_programs),
+      })
+      .from(creator_reward_claims)
+      .innerJoin(
+        creator_reward_programs,
+        eq(creator_reward_programs.id, creator_reward_claims.program_id),
+      )
+      .where(eq(creator_reward_claims.id, id))
+      .limit(1)
+  )[0];
+  return row
+    ? { ...row.claim, program: normalizeProgram(row.program) }
+    : null;
+}
+
+async function findCreatorRewardLedgerId(
+  claimId: string,
+): Promise<string | null> {
+  const db = await getDrizzleDb();
+  const row = (
+    await db.execute<{ id: string }>(sql`
+      SELECT id
+      FROM ledger_transactions
+      WHERE type::text = 'admin_balance_adjustment'
+        AND status::text = 'completed'
+        AND metadata->>'vip_claim_id' = ${claimId}
+      ORDER BY created_at DESC
+      LIMIT 1
+    `)
+  ).rows[0];
+  return row?.id ?? null;
+}
 
 /**
  * Creator VIP wager-reward programs + the manual claim-review queue.
@@ -192,10 +257,12 @@ export async function createCreatorRewardProgram(input: {
   // The creator must be real. Accept a current creator only — a program is a
   // forward-looking commitment, so unlike a leaderboard back-fill there is no
   // reason to allow attaching one to a retired account.
-  const creator = await getProdDb().user.findUnique({
-    where: { id: d.creatorUserId },
-    select: { id: true, role: true },
-  });
+  const mainDb = getProdDrizzleDb();
+  const [creator] = await mainDb
+    .select({ id: user.id, role: user.role })
+    .from(user)
+    .where(eq(user.id, d.creatorUserId))
+    .limit(1);
   if (!creator) return { success: false, error: "Creator not found" };
   if (creator.role !== "creator") {
     return { success: false, error: "That user is not a creator" };
@@ -207,10 +274,10 @@ export async function createCreatorRewardProgram(input: {
 
   // Every code must actually belong to this creator, or the program would
   // silently accrue on someone else's traffic.
-  const owned = await getProdDb().affiliate_codes.findMany({
-    where: { user_id: d.creatorUserId },
-    select: { code: true },
-  });
+  const owned = await mainDb
+    .select({ code: affiliate_codes.code })
+    .from(affiliate_codes)
+    .where(eq(affiliate_codes.user_id, d.creatorUserId));
   const ownedUpper = new Set(owned.map((c) => c.code.toUpperCase()));
   const foreign = codes.filter((c) => !ownedUpper.has(c));
   if (foreign.length > 0) {
@@ -224,25 +291,36 @@ export async function createCreatorRewardProgram(input: {
   // guard against a new program instantly owing against years of history.
   const accrualStartAt = new Date();
 
-  const created = await adminDb.creator_reward_programs.create({
-    data: {
+  const created = await adminDrizzle.transaction(async (tx) => {
+    const [program] = await tx
+      .insert(creator_reward_programs)
+      .values({
       // Opens the first live window. Wager only counts inside these, so a
       // program with none would accrue nothing — it is created atomically
       // with the program rather than as a follow-up write.
-      windows: { create: { started_at: accrualStartAt } },
       name,
       creator_user_id: d.creatorUserId,
       codes,
-      threshold_usd: d.thresholdUsd,
-      reward_usd: d.rewardUsd,
-      vip_reward_usd: d.vipRewardUsd,
-      lossback_pct: d.lossbackPct,
-      min_deposit_usd: d.minDepositUsd,
-      max_reward_per_user_usd: d.maxRewardPerUserUsd,
-      accrual_start_at: accrualStartAt,
+      threshold_usd: d.thresholdUsd != null ? String(d.thresholdUsd) : null,
+      reward_usd: d.rewardUsd != null ? String(d.rewardUsd) : null,
+      vip_reward_usd:
+        d.vipRewardUsd != null ? String(d.vipRewardUsd) : null,
+      lossback_pct: d.lossbackPct != null ? String(d.lossbackPct) : null,
+      min_deposit_usd:
+        d.minDepositUsd != null ? String(d.minDepositUsd) : null,
+      max_reward_per_user_usd:
+        d.maxRewardPerUserUsd != null
+          ? String(d.maxRewardPerUserUsd)
+          : null,
+      accrual_start_at: accrualStartAt.toISOString(),
       created_by: session.userId,
-    },
-    select: { id: true },
+      })
+      .returning({ id: creator_reward_programs.id });
+    await tx.insert(creator_reward_program_windows).values({
+      program_id: program.id,
+      started_at: accrualStartAt.toISOString(),
+    });
+    return program;
   });
 
   await createAdminAuditEvent({
@@ -279,10 +357,18 @@ export async function setCreatorRewardProgramActive(input: {
     .safeParse(input);
   if (!parsed.success) return { success: false, error: "Invalid input" };
 
-  const existing = await adminDb.creator_reward_programs.findUnique({
-    where: { id: parsed.data.programId },
-    select: { id: true, name: true, is_active: true, creator_user_id: true },
-  });
+  const existing = (
+    await adminDrizzle
+      .select({
+        id: creator_reward_programs.id,
+        name: creator_reward_programs.name,
+        is_active: creator_reward_programs.is_active,
+        creator_user_id: creator_reward_programs.creator_user_id,
+      })
+      .from(creator_reward_programs)
+      .where(eq(creator_reward_programs.id, parsed.data.programId))
+      .limit(1)
+  )[0];
   if (!existing) return { success: false, error: "Program not found" };
 
   // Pausing CLOSES the open window; resuming OPENS a new one. Wager placed in
@@ -290,28 +376,42 @@ export async function setCreatorRewardProgramActive(input: {
   // survives it — which is why this models intervals instead of moving the
   // program's start date forward.
   const now = new Date();
-  await adminDb.$transaction(async (tx) => {
-    await tx.creator_reward_programs.update({
-      where: { id: existing.id },
-      data: { is_active: parsed.data.isActive },
-    });
+  await adminDrizzle.transaction(async (tx) => {
+    await tx
+      .update(creator_reward_programs)
+      .set({ is_active: parsed.data.isActive })
+      .where(eq(creator_reward_programs.id, existing.id));
 
     if (parsed.data.isActive) {
       // Guard against double-open: only start a window if none is running.
-      const open = await tx.creator_reward_program_windows.findFirst({
-        where: { program_id: existing.id, ended_at: null },
-        select: { id: true },
-      });
+      const open = (
+        await tx
+          .select({ id: creator_reward_program_windows.id })
+          .from(creator_reward_program_windows)
+          .where(
+            and(
+              eq(creator_reward_program_windows.program_id, existing.id),
+              isNull(creator_reward_program_windows.ended_at),
+            ),
+          )
+          .limit(1)
+      )[0];
       if (!open) {
-        await tx.creator_reward_program_windows.create({
-          data: { program_id: existing.id, started_at: now },
+        await tx.insert(creator_reward_program_windows).values({
+          program_id: existing.id,
+          started_at: now.toISOString(),
         });
       }
     } else {
-      await tx.creator_reward_program_windows.updateMany({
-        where: { program_id: existing.id, ended_at: null },
-        data: { ended_at: now },
-      });
+      await tx
+        .update(creator_reward_program_windows)
+        .set({ ended_at: now.toISOString() })
+        .where(
+          and(
+            eq(creator_reward_program_windows.program_id, existing.id),
+            isNull(creator_reward_program_windows.ended_at),
+          ),
+        );
     }
   });
 
@@ -391,13 +491,17 @@ async function notifyBotOfDecision(params: {
 
     const result = await sendClaimDecision(event);
 
-    await adminDb.creator_reward_claims
-      .update({
-        where: { id: params.claimId },
-        data: result.ok
-          ? { bot_notified_at: new Date(), bot_notify_error: null }
+    await adminDrizzle
+      .update(creator_reward_claims)
+      .set(
+        result.ok
+          ? {
+              bot_notified_at: new Date().toISOString(),
+              bot_notify_error: null,
+            }
           : { bot_notify_error: result.error.slice(0, 500) },
-      })
+      )
+      .where(eq(creator_reward_claims.id, params.claimId))
       .catch(() => {});
   } catch (err) {
     console.error("[creator-rewards] bot notification failed:", err);
@@ -440,12 +544,40 @@ export async function approveCreatorRewardClaim(input: {
     };
   }
 
-  const claim = await adminDb.creator_reward_claims.findUnique({
-    where: { id: parsed.data.claimId },
-    include: { program: true },
-  });
+  const claim = await getClaimWithProgram(parsed.data.claimId);
   if (!claim) return { success: false, error: "Claim not found" };
-  if (claim.status !== "pending") {
+  let ledgerTxId: string | null = null;
+  if (claim.status === "pending" && claim.reviewed_at) {
+    // Recover a process that died after MAIN committed but before ADMIN could
+    // record the ledger id. The immutable claim id makes the retry idempotent.
+    ledgerTxId = await findCreatorRewardLedgerId(claim.id);
+    if (!ledgerTxId) {
+      const reservedAt = new Date(claim.reviewed_at).getTime();
+      if (
+        !Number.isFinite(reservedAt) ||
+        Date.now() - reservedAt < 5 * 60 * 1000
+      ) {
+        return { success: false, error: "Claim approval is already in progress" };
+      }
+      // No ledger appeared within five minutes (well beyond the 30s database
+      // statement timeout): the worker died before payment. Release only the
+      // exact stale reservation we observed, then acquire it normally below.
+      const released = await adminDrizzle
+        .update(creator_reward_claims)
+        .set({ reviewed_by: null, reviewed_at: null })
+        .where(
+          and(
+            eq(creator_reward_claims.id, claim.id),
+            eq(creator_reward_claims.status, "pending"),
+            eq(creator_reward_claims.reviewed_at, claim.reviewed_at),
+          ),
+        )
+        .returning({ id: creator_reward_claims.id });
+      if (released.length !== 1) {
+        return { success: false, error: "Claim approval is already in progress" };
+      }
+    }
+  } else if (claim.status !== "pending") {
     return { success: false, error: `Claim is already ${claim.status}` };
   }
 
@@ -454,48 +586,108 @@ export async function approveCreatorRewardClaim(input: {
     return { success: false, error: "Claim has no payable amount" };
   }
 
-  // Pay FIRST, then mark approved. If the credit fails the claim stays
-  // pending and can be retried; the reverse order could mark a claim paid
-  // that never was. The partial unique index only constrains `pending` rows,
-  // so a stuck-pending claim is always recoverable.
-  const credit = await adjustBalance({
-    userId: claim.user_id,
-    amount: amountUsd,
-    category: "creator_vip_reward",
-    reason: `Creator VIP reward — ${claim.program.name} (${claim.units} × $${Number(claim.program.reward_usd).toFixed(2)})`,
-    totpCode: parsed.data.totpCode,
-    details: {
-      creatorId: claim.program.creator_user_id,
-      vipClaimId: claim.id,
-      vipProgramId: claim.program_id,
-      // Trace fields — stamped onto the prod ledger row so this payout is
-      // attributable to the creator AND the codes that earned it without a
-      // cross-DB hunt. The program owns the codes, so they are recorded as the
-      // set the accrual ran under (the user's own code can change later; the
-      // program's cannot without an explicit edit).
-      creatorCodes: claim.program.codes,
-      creatorProgramName: claim.program.name,
-      creatorRewardLeg: claim.leg,
-    },
-  });
+  if (!ledgerTxId) {
+    // Reserve in ADMIN before touching MAIN. Concurrent approvers can both
+    // read "pending", but only one can win this compare-and-set.
+    const reserved = await adminDrizzle
+      .update(creator_reward_claims)
+      .set({
+        reviewed_by: session.userId,
+        reviewed_at: new Date().toISOString(),
+      })
+      .where(
+        and(
+          eq(creator_reward_claims.id, claim.id),
+          eq(creator_reward_claims.status, "pending"),
+          isNull(creator_reward_claims.reviewed_at),
+        ),
+      )
+      .returning({ id: creator_reward_claims.id });
+    if (reserved.length !== 1) {
+      return { success: false, error: "Claim approval is already in progress" };
+    }
 
-  if (!credit.success) {
-    return { success: false, error: credit.error };
+    let credit: Awaited<ReturnType<typeof adjustBalance>> | null = null;
+    try {
+      credit = await adjustBalance({
+        userId: claim.user_id,
+        amount: amountUsd,
+        category: "creator_vip_reward",
+        reason: `Creator VIP reward — ${claim.program.name} (${claim.units} × $${Number(claim.program.reward_usd).toFixed(2)})`,
+        totpCode: parsed.data.totpCode,
+        details: {
+          creatorId: claim.program.creator_user_id,
+          vipClaimId: claim.id,
+          vipProgramId: claim.program_id,
+          creatorCodes: claim.program.codes,
+          creatorProgramName: claim.program.name,
+          creatorRewardLeg: claim.leg,
+        },
+      });
+    } catch (error) {
+      // adjustBalance can throw after its MAIN transaction committed (for
+      // example if the separate ADMIN audit write fails). Check the immutable
+      // ledger before releasing the reservation, or a retry could double-pay.
+      ledgerTxId = await findCreatorRewardLedgerId(claim.id);
+      if (!ledgerTxId) {
+        await adminDrizzle
+          .update(creator_reward_claims)
+          .set({ reviewed_by: null, reviewed_at: null })
+          .where(
+            and(
+              eq(creator_reward_claims.id, claim.id),
+              eq(creator_reward_claims.status, "pending"),
+              eq(creator_reward_claims.reviewed_by, session.userId),
+            ),
+          );
+        throw error;
+      }
+    }
+
+    if (!ledgerTxId && credit && !credit.success) {
+      await adminDrizzle
+        .update(creator_reward_claims)
+        .set({ status: "pending", reviewed_by: null, reviewed_at: null })
+        .where(
+          and(
+            eq(creator_reward_claims.id, claim.id),
+            eq(creator_reward_claims.status, "pending"),
+            eq(creator_reward_claims.reviewed_by, session.userId),
+          ),
+      );
+      return { success: false, error: credit.error };
+    }
+    if (!ledgerTxId && credit?.success) {
+      ledgerTxId = credit.ledgerTxId;
+    }
   }
 
-  await adminDb.creator_reward_claims.update({
-    where: { id: claim.id },
-    data: {
+  const finalized = await adminDrizzle
+    .update(creator_reward_claims)
+    .set({
       status: "approved",
       reviewed_by: session.userId,
-      reviewed_at: new Date(),
+      reviewed_at: new Date().toISOString(),
       // No approval note: the field was removed from the dialog (owner,
       // 2026-07-23). Rejection/reopen still require one — those take money
       // away or undo a decision, so the reason matters there.
       review_note: null,
-      ledger_tx_id: credit.ledgerTxId,
-    },
-  });
+      ledger_tx_id: ledgerTxId,
+    })
+    .where(
+      and(
+        eq(creator_reward_claims.id, claim.id),
+        eq(creator_reward_claims.status, "pending"),
+        isNotNull(creator_reward_claims.reviewed_at),
+      ),
+    )
+    .returning({ id: creator_reward_claims.id });
+  if (finalized.length !== 1) {
+    return {
+      success: false,
+      error: "Claim was paid but could not be finalized; retry safely",
+    };
+  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -513,7 +705,7 @@ export async function approveCreatorRewardClaim(input: {
       units: claim.units,
       amount_usd: amountUsd,
       consumed_wager_usd: Number(claim.consumed_wager_usd),
-      ledger_tx_id: credit.ledgerTxId,
+      ledger_tx_id: ledgerTxId,
     },
   });
 
@@ -560,24 +752,34 @@ export async function rejectCreatorRewardClaim(input: {
     };
   }
 
-  const claim = await adminDb.creator_reward_claims.findUnique({
-    where: { id: parsed.data.claimId },
-    include: { program: true },
-  });
+  const claim = await getClaimWithProgram(parsed.data.claimId);
   if (!claim) return { success: false, error: "Claim not found" };
   if (claim.status !== "pending") {
     return { success: false, error: `Claim is already ${claim.status}` };
   }
 
-  await adminDb.creator_reward_claims.update({
-    where: { id: claim.id },
-    data: {
+  const rejected = await adminDrizzle
+    .update(creator_reward_claims)
+    .set({
       status: "rejected",
       reviewed_by: session.userId,
-      reviewed_at: new Date(),
+      reviewed_at: new Date().toISOString(),
       review_note: parsed.data.note,
-    },
-  });
+    })
+    .where(
+      and(
+        eq(creator_reward_claims.id, claim.id),
+        eq(creator_reward_claims.status, "pending"),
+        isNull(creator_reward_claims.reviewed_at),
+      ),
+    )
+    .returning({ id: creator_reward_claims.id });
+  if (rejected.length !== 1) {
+    return {
+      success: false,
+      error: "Claim approval is already in progress",
+    };
+  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -622,7 +824,7 @@ export async function rejectCreatorRewardClaim(input: {
  *
  * Reinstating re-reserves the wager basis (a pending claim holds it again),
  * which is exactly why it can collide: if the player has since filed a fresh
- * claim, the partial unique index refuses a second pending row. That P2002 is
+ * claim, the partial unique index refuses a second pending row. SQLSTATE 23505 is
  * translated rather than surfaced as a crash — the reviewer is told to deal
  * with the newer claim instead.
  *
@@ -651,10 +853,7 @@ export async function reinstateCreatorRewardClaim(input: {
     };
   }
 
-  const claim = await adminDb.creator_reward_claims.findUnique({
-    where: { id: parsed.data.claimId },
-    include: { program: true },
-  });
+  const claim = await getClaimWithProgram(parsed.data.claimId);
   if (!claim) return { success: false, error: "Claim not found" };
   if (claim.status !== "rejected") {
     return {
@@ -667,24 +866,20 @@ export async function reinstateCreatorRewardClaim(input: {
   }
 
   try {
-    await adminDb.creator_reward_claims.update({
-      where: { id: claim.id },
-      data: {
+    await adminDrizzle
+      .update(creator_reward_claims)
+      .set({
         status: "pending",
-        reinstated_at: new Date(),
+        reinstated_at: new Date().toISOString(),
         reinstated_by: session.userId,
         // Cleared so the row reads as genuinely awaiting review again; who
         // rejected it, and why, is preserved in review_note + the audit trail.
         reviewed_by: null,
         reviewed_at: null,
-      },
-    });
+      })
+      .where(eq(creator_reward_claims.id, claim.id));
   } catch (err) {
-    if (
-      typeof err === "object" &&
-      err !== null &&
-      (err as { code?: string }).code === "P2002"
-    ) {
+    if (isPostgresError(err, "23505")) {
       return {
         success: false,
         error:
@@ -808,25 +1003,31 @@ export async function previewCreatorRewardEntitlement(input: {
     .safeParse(input);
   if (!parsed.success) return { success: false, error: "Invalid input" };
 
-  const program = await adminDb.creator_reward_programs.findUnique({
-    where: { id: parsed.data.programId },
-  });
-  if (!program) return { success: false, error: "Program not found" };
+  const programRow = (
+    await adminDrizzle
+      .select()
+      .from(creator_reward_programs)
+      .where(eq(creator_reward_programs.id, parsed.data.programId))
+      .limit(1)
+  )[0];
+  if (!programRow) return { success: false, error: "Program not found" };
+  const program = normalizeProgram(programRow);
 
   const q = parsed.data.query;
-  const user = await getProdDb().user.findFirst({
-    where: {
-      OR: [
-        { id: q },
-        { username: { equals: q, mode: "insensitive" } },
-        { email: { equals: q, mode: "insensitive" } },
-      ],
-    },
-    select: { id: true, username: true, email: true },
-  });
-  if (!user) return { success: false, error: "No user matches that" };
+  const [matchedUser] = await getProdDrizzleDb()
+    .select({ id: user.id, username: user.username, email: user.email })
+    .from(user)
+    .where(
+      or(
+        eq(user.id, q),
+        ilike(user.username, q),
+        ilike(user.email, q),
+      ),
+    )
+    .limit(1);
+  if (!matchedUser) return { success: false, error: "No user matches that" };
 
-  const offers = await computeProgramOffers(program, user.id);
+  const offers = await computeProgramOffers(program, matchedUser.id);
   // The preview shows the leg with something payable; failing that, the
   // first configured one, so the operator still sees WHY nothing is due.
   const e = offers.find((o) => o.units > 0) ?? offers[0];
@@ -837,8 +1038,8 @@ export async function previewCreatorRewardEntitlement(input: {
   return {
     success: true,
     data: {
-      userId: user.id,
-      username: user.username ?? user.email ?? null,
+      userId: matchedUser.id,
+      username: matchedUser.username ?? matchedUser.email ?? null,
       leg: e.type,
       ftdLostUsd: e.ftd?.lostUsd ?? null,
       ftdDepositUsd: e.ftd?.firstDepositUsd ?? null,
@@ -917,10 +1118,7 @@ export async function resendClaimDecisionNotice(input: {
     };
   }
 
-  const claim = await adminDb.creator_reward_claims.findUnique({
-    where: { id: parsed.data.claimId },
-    include: { program: true },
-  });
+  const claim = await getClaimWithProgram(parsed.data.claimId);
   if (!claim) return { success: false, error: "Claim not found" };
   if (claim.status === "pending") {
     return { success: false, error: "That claim hasn't been decided yet." };
@@ -941,10 +1139,16 @@ export async function resendClaimDecisionNotice(input: {
     reason: claim.review_note,
   });
 
-  const after_ = await adminDb.creator_reward_claims.findUnique({
-    where: { id: claim.id },
-    select: { bot_notified_at: true, bot_notify_error: true },
-  });
+  const after_ = (
+    await adminDrizzle
+      .select({
+        bot_notified_at: creator_reward_claims.bot_notified_at,
+        bot_notify_error: creator_reward_claims.bot_notify_error,
+      })
+      .from(creator_reward_claims)
+      .where(eq(creator_reward_claims.id, claim.id))
+      .limit(1)
+  )[0];
 
   revalidateCreatorRewards();
   return after_?.bot_notified_at
@@ -1022,7 +1226,7 @@ export async function searchCreatorsWithCodes(
   await requireAdmin();
 
   const q = query.trim();
-  const db = getProdDb();
+  const db = getProdDrizzleDb();
 
   type Row = {
     id: string;
@@ -1032,54 +1236,33 @@ export async function searchCreatorsWithCodes(
     codes: string[];
   };
 
-  // Shared tail: hydrate + order + cap. `codes` is a correlated aggregate so
-  // a user with no codes still comes back (empty array, not a dropped row).
-  const SELECT_TAIL = `
+  const lower = q.toLowerCase().replace(/[\\%_]/g, "\\$&");
+  const upper = q.toUpperCase().replace(/[\\%_]/g, "\\$&");
+  const result = await db.execute<Row>(sql`
     SELECT u.id, u.username, u.email, u.role::text AS role,
            COALESCE(
              (SELECT array_agg(UPPER(ac.code) ORDER BY ac.code)
                 FROM affiliate_codes ac WHERE ac.user_id = u.id),
              '{}'
            ) AS codes
-      FROM matched m
-      JOIN "user" u ON u.id = m.id
+      FROM "user" u
      WHERE u.role = 'creator'::user_role
+       AND (
+         ${q} = ''
+         OR LOWER(u.username) LIKE ${`${lower}%`} ESCAPE '\'
+         OR LOWER(u.display_username) LIKE ${`${lower}%`} ESCAPE '\'
+         OR LOWER(u.email) LIKE ${`${lower}%`} ESCAPE '\'
+         OR u.id = ${q}
+         OR EXISTS (
+           SELECT 1 FROM affiliate_codes ac
+           WHERE ac.user_id = u.id
+             AND UPPER(ac.code) LIKE ${`${upper}%`} ESCAPE '\'
+         )
+       )
      ORDER BY u.username ASC NULLS LAST
-     LIMIT 20`;
-
-  let rows: Row[];
-  if (!q) {
-    rows = await db.$queryRawUnsafe<Row[]>(`
-      WITH matched AS (
-        SELECT id FROM "user" WHERE role = 'creator'::user_role
-      )
-      ${SELECT_TAIL}
-    `);
-  } else {
-    // LIKE metacharacters in the typed term are escaped so a pasted `%` / `_`
-    // matches literally; both patterns are bound as params, never interpolated.
-    const lower = q.toLowerCase().replace(/[\\%_]/g, "\\$&");
-    const upper = q.toUpperCase().replace(/[\\%_]/g, "\\$&");
-    rows = await db.$queryRawUnsafe<Row[]>(
-      `
-      WITH matched AS (
-        SELECT id FROM "user" WHERE LOWER(username) LIKE $1 ESCAPE '\\'
-        UNION
-        SELECT id FROM "user" WHERE LOWER(display_username) LIKE $1 ESCAPE '\\'
-        UNION
-        SELECT id FROM "user" WHERE LOWER(email) LIKE $1 ESCAPE '\\'
-        UNION
-        SELECT id FROM "user" WHERE id = $2
-        UNION
-        SELECT user_id AS id FROM affiliate_codes WHERE UPPER(code) LIKE $3 ESCAPE '\\'
-      )
-      ${SELECT_TAIL}
-    `,
-      `${lower}%`,
-      q,
-      `${upper}%`,
-    );
-  }
+     LIMIT 20
+  `);
+  const rows = result.rows;
 
   return rows.map((r) => ({
     userId: r.id,

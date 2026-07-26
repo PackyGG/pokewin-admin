@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle, sql } from "@/lib/drizzle";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -14,13 +14,10 @@ export async function createNote(targetUserId: string, content: string) {
     throw new Error("Note content cannot be empty");
   }
 
-  await adminDb.admin_notes.create({
-    data: {
-      admin_user_id: session.userId,
-      target_user_id: targetUserId,
-      content: content.trim(),
-    },
-  });
+  await adminDrizzle.execute(sql`
+    INSERT INTO admin_notes (admin_user_id, target_user_id, content)
+    VALUES (${session.userId}::uuid, ${targetUserId}, ${content.trim()})
+  `);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -36,13 +33,14 @@ export async function deleteNote(noteId: string) {
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_delete_user_note", "delete notes");
 
-  const note = await adminDb.admin_notes.findUnique({
-    where: { id: noteId },
-  });
-
+  const note = (
+    await adminDrizzle.execute<{ target_user_id: string }>(sql`
+      DELETE FROM admin_notes
+      WHERE id = ${noteId}::uuid
+      RETURNING target_user_id
+    `)
+  ).rows[0];
   if (!note) throw new Error("Note not found");
-
-  await adminDb.admin_notes.delete({ where: { id: noteId } });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,

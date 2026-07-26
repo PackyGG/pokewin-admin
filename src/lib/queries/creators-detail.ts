@@ -1,5 +1,5 @@
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { readDbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -41,22 +41,23 @@ const CREATOR_DETAIL_LIFETIME_INTERVAL = `INTERVAL '${CREATOR_DETAIL_LIFETIME_LO
  * stats, country breakdowns, etc. — none of which the sub-pages use.
  */
 export async function getCreatorHeader(userId: string) {
-  const db = await getDb();
-  const [primaryCodeRow, user] = await Promise.all([
-    db.$queryRawUnsafe<{ code: string }[]>(
+  const [primaryCodeRow, users] = await Promise.all([
+    queryMainRows<{ code: string }[]>(
       `SELECT code FROM affiliate_codes WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1`,
       userId,
     ),
-    db.user.findUnique({
-      where: { id: userId },
-      select: {
-        username: true,
-        email: true,
-        image: true,
-        role: true,
-      },
-    }),
+    queryMainRows<{
+      username: string | null;
+      email: string | null;
+      image: string | null;
+      role: string;
+    }[]>(
+      `SELECT username, email, image, role::text AS role
+       FROM "user" WHERE id = $1 LIMIT 1`,
+      userId,
+    ),
   ]);
+  const user = users[0];
 
   if (!user) return null;
 
@@ -83,7 +84,6 @@ export async function getCreatorHeader(userId: string) {
  * this query from ~21 round-trips down to 12.
  */
 export async function getCreatorDetail(userId: string) {
-  const db = await getDb();
   const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
   // Fetch the affiliate account and the user record in parallel. A user can
@@ -91,46 +91,44 @@ export async function getCreatorDetail(userId: string) {
   // row, no affiliate_codes). The detail page should still render for these
   // users with an "no affiliate code yet" banner instead of a hard 404 — only
   // truly unknown user IDs should 404.
-  const [account, userBasic] = await Promise.all([
-    db.affiliate_accounts.findUnique({
-      where: { user_id: userId },
-      select: {
-        // Only the columns the page renders. The *_usd fields back the
-        // FinancialsCard + the KPI strip. last_payout_at, created_at,
-        // total_wager_volume_usd, total_earned_usd, total_referred are
-        // intentionally dropped — none of them flow to the rendered UI
-        // (the wager/earned/referred KPI tiles read from the staff-
-        // excluded realAffiliateAgg below instead).
-        available_usd: true,
-        total_paid_out_usd: true,
-        total_bonus_distributed_usd: true,
-        user: {
-          select: {
-            username: true,
-            email: true,
-            image: true,
-            role: true,
-          },
-        },
-      },
-    }),
-    db.user.findUnique({
-      where: { id: userId },
-      // Only the columns the page renders. id is unused (we already have
-      // userId from the route param), created_at not displayed.
-      select: {
-        username: true,
-        email: true,
-        image: true,
-        role: true,
-      },
-    }),
-  ]);
+  const [base] = await queryMainRows<{
+    username: string | null;
+    email: string | null;
+    image: string | null;
+    role: string;
+    has_affiliate_account: boolean;
+    available_usd: string | null;
+    total_paid_out_usd: string | null;
+    total_bonus_distributed_usd: string | null;
+  }[]>(
+    `SELECT u.username, u.email, u.image, u.role::text AS role,
+            (aa.user_id IS NOT NULL) AS has_affiliate_account,
+            aa.available_usd::text AS available_usd,
+            aa.total_paid_out_usd::text AS total_paid_out_usd,
+            aa.total_bonus_distributed_usd::text AS total_bonus_distributed_usd
+     FROM "user" u
+     LEFT JOIN affiliate_accounts aa ON aa.user_id = u.id
+     WHERE u.id = $1
+     LIMIT 1`,
+    userId,
+  );
 
-  if (!account && !userBasic) return null;
+  if (!base) return null;
 
-  const hasAffiliateAccount = !!account;
-  const userInfo = account?.user ?? userBasic ?? null;
+  const hasAffiliateAccount = base.has_affiliate_account;
+  const account = hasAffiliateAccount
+    ? {
+        available_usd: base.available_usd,
+        total_paid_out_usd: base.total_paid_out_usd,
+        total_bonus_distributed_usd: base.total_bonus_distributed_usd,
+      }
+    : null;
+  const userInfo = {
+    username: base.username,
+    email: base.email,
+    image: base.image,
+    role: base.role,
+  };
 
   const now = new Date();
   const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -182,7 +180,7 @@ export async function getCreatorDetail(userId: string) {
     // Only `code` is needed — primaryCode = first row, clickCodes = the
     // upper-cased set of all codes. created_at participates only in the
     // ORDER BY (no need to SELECT it).
-    db.$queryRawUnsafe<{ code: string }[]>(
+    queryMainRows<{ code: string }[]>(
       `SELECT code FROM affiliate_codes WHERE user_id = $1 ORDER BY created_at ASC`,
       userId,
     ),
@@ -190,7 +188,7 @@ export async function getCreatorDetail(userId: string) {
     // (total + 24h + 7d + 30d). Same index scan, fewer plans + a single
     // network round-trip. Preserves the exact return semantics of the
     // four count() calls.
-    db.$queryRaw<
+    queryMainRows<
       {
         total: string;
         last_24h: string;
@@ -198,19 +196,27 @@ export async function getCreatorDetail(userId: string) {
         last_14d: string;
         last_30d: string;
       }[]
-    >`
+    >(
+      `
       SELECT
         COUNT(*)::text                                                                AS total,
-        COUNT(*) FILTER (WHERE created_at >= ${oneDayAgo})::text                      AS last_24h,
-        COUNT(*) FILTER (WHERE created_at >= ${sevenDaysAgo})::text                   AS last_7d,
-        COUNT(*) FILTER (WHERE created_at >= ${fourteenDaysAgo})::text                AS last_14d,
-        COUNT(*) FILTER (WHERE created_at >= ${thirtyDaysAgo})::text                  AS last_30d
+        COUNT(*) FILTER (WHERE created_at >= $2)::text                                AS last_24h,
+        COUNT(*) FILTER (WHERE created_at >= $3)::text                                AS last_7d,
+        COUNT(*) FILTER (WHERE created_at >= $4)::text                                AS last_14d,
+        COUNT(*) FILTER (WHERE created_at >= $5)::text                                AS last_30d
       FROM "user"
-      WHERE referred_by = ${userId}
+      WHERE referred_by = $1
         -- Lifetime cap: bound the otherwise-unbounded total signup scan to
         -- a 365-day lookback (CREATOR_DETAIL_LIFETIME_LOOKBACK_DAYS).
-        AND created_at >= ${lifetimeCutoff}
+        AND created_at >= $6
     `,
+      userId,
+      oneDayAgo,
+      sevenDaysAgo,
+      fourteenDaysAgo,
+      thirtyDaysAgo,
+      lifetimeCutoff,
+    ),
     // Real wager + commission aggregate, excluding staff (admin +
     // support) so the KPI tiles + financials card don't double-count
     // internal accounts. The stored affiliate_accounts.total_*
@@ -230,7 +236,7 @@ export async function getCreatorDetail(userId: string) {
     //     activity in the last 7 days. Drives the "Active affi"
     //     tile so the admin can see who's still engaged inside the
     //     attribution window.
-    db.$queryRawUnsafe<
+    queryMainRows<
       {
         wager_volume: string;
         commission: string;
@@ -270,7 +276,7 @@ export async function getCreatorDetail(userId: string) {
          -- which lets the UI render them as a verifiable breakdown
          -- under the Wager Volume number.
          -- game_type/usage_type compared via ::text (NOT the bare enum):
-         -- the generated Prisma enum is AHEAD of live prod (e.g. prod
+         -- the generated application enum is ahead of live prod (e.g. prod
          -- game_type = {pack, battle} with NO 'upgrader' label), and a bare
          -- comparison against a label the DB doesn't know throws 22P02 at
          -- PARSE time — killing this whole statement (the ffa61b5c failure
@@ -303,7 +309,7 @@ export async function getCreatorDetail(userId: string) {
     // bucketed into the periods the FunnelTable renders. Independent of
     // the (now removed) referrals listing, so it lives here in the first
     // wave alongside everything else userId-only.
-    db.$queryRawUnsafe<{ period: string; count: string }[]>(
+    queryMainRows<{ period: string; count: string }[]>(
       `
       SELECT period, COUNT(*)::text AS count FROM (
         SELECT DISTINCT acu.referred_user_id, p.period
@@ -375,7 +381,7 @@ export async function getCreatorDetail(userId: string) {
     // round-trips (total + 24h + 7d + 30d). One index scan with FILTER
     // clauses, no extra plans.
     hasClickCodes
-      ? db.$queryRaw<
+      ? queryMainRows<
           {
             total: string;
             last_24h: string;
@@ -383,24 +389,37 @@ export async function getCreatorDetail(userId: string) {
             last_14d: string;
             last_30d: string;
           }[]
-        >`
+        >(
+          `
           SELECT
             COUNT(*)::text                                                              AS total,
-            COUNT(*) FILTER (WHERE created_at >= ${now_clicks_24h})::text               AS last_24h,
-            COUNT(*) FILTER (WHERE created_at >= ${now_clicks_7d})::text                AS last_7d,
-            COUNT(*) FILTER (WHERE created_at >= ${now_clicks_14d})::text               AS last_14d,
-            COUNT(*) FILTER (WHERE created_at >= ${now_clicks_30d})::text               AS last_30d
+            COUNT(*) FILTER (WHERE created_at >= $2)::text                              AS last_24h,
+            COUNT(*) FILTER (WHERE created_at >= $3)::text                              AS last_7d,
+            COUNT(*) FILTER (WHERE created_at >= $4)::text                              AS last_14d,
+            COUNT(*) FILTER (WHERE created_at >= $5)::text                              AS last_30d
           FROM affiliate_clicks
-          WHERE code = ANY(${clickCodes}::text[])
+          WHERE code = ANY($1::text[])
             -- Lifetime cap: bound the otherwise-unbounded total click scan to
             -- a 365-day lookback (CREATOR_DETAIL_LIFETIME_LOOKBACK_DAYS).
-            AND created_at >= ${lifetimeCutoff}
-        `
+            AND created_at >= $6
+        `,
+          clickCodes,
+          now_clicks_24h,
+          now_clicks_7d,
+          now_clicks_14d,
+          now_clicks_30d,
+          lifetimeCutoff,
+        )
       : Promise.resolve(
           [] as { total: string; last_24h: string; last_7d: string; last_14d: string; last_30d: string }[],
         ),
     primaryCode
-      ? db.affiliate_code_queue.count({ where: { code: primaryCode } })
+      ? queryMainRows<{ count: string }[]>(
+          `SELECT COUNT(*)::text AS count
+           FROM affiliate_code_queue
+           WHERE code = $1`,
+          primaryCode,
+        ).then((rows) => Number(rows[0]?.count ?? 0))
       : Promise.resolve(0),
     // Country-level breakdown. Clicks are stored with the FULL country
     // name (affiliate_clicks.country, populated by the geolocation service
@@ -408,7 +427,7 @@ export async function getCreatorDetail(userId: string) {
     // the same service at signup. Joining on the full name is therefore
     // safe — they flow from the same source. FULL OUTER JOIN so countries
     // with only clicks OR only signups both show up.
-    db.$queryRawUnsafe<{ country: string; clicks: number; signups: number }[]>(
+    queryMainRows<{ country: string; clicks: number; signups: number }[]>(
       `
       WITH click_countries AS (
         SELECT country, COUNT(*)::int AS clicks
@@ -546,8 +565,8 @@ export async function getCreatorDetail(userId: string) {
 // precedent as `users-detail-cache.ts` and the sibling creator caches
 // (`_pnl-cache.ts`, `_cost-cache.ts`).
 //
-// ENV NOTE (prod-pinned, matches the repo pattern): `getCreatorDetail` calls
-// `getDb()` internally, which resolves the per-admin `admin_db_env` cookie.
+// ENV NOTE (prod-pinned, matches the repo pattern): `getCreatorDetail`
+// resolves its Drizzle client from the per-admin `admin_db_env` cookie.
 // `unstable_cache` runs its callback OUTSIDE the request's dynamic scope, so
 // a `cookies()` read inside it throws and `readDbEnv` falls back to "prod".
 // We therefore cache ONLY when the request is on prod (the default, and the

@@ -1,6 +1,8 @@
-import { adminDb } from "@/lib/admin-db";
-import { verifyTOTP } from "@/lib/totp";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { verifyTOTPWithStep } from "@/lib/totp";
 import { verifyStepUpToken } from "@/lib/session";
+import { isPostgresError } from "@/lib/postgres-errors";
 
 /**
  * Second-factor gate for a privileged admin action. The `credential` is the
@@ -25,17 +27,61 @@ export async function require2FA(
   const value = credential.trim();
 
   // Passkey path: a valid step-up proof for THIS admin satisfies the gate.
-  // verifyStepUpToken never throws and returns false for a plain TOTP code,
-  // so we can try it first and fall through cleanly.
-  if (await verifyStepUpToken(value, adminUserId)) {
+  // verifyStepUpToken never throws and returns null for a plain TOTP code, so we
+  // can try it first and fall through cleanly.
+  const stepUp = await verifyStepUpToken(value, adminUserId);
+  if (stepUp) {
+    // SECURITY (SECURITY_AUDIT.md L-5): single-use. Consume the proof's nonce so
+    // one passkey assertion clears exactly ONE action gate — closing the
+    // withdrawal/reward double-submit races for passkey users (the TOTP path is
+    // already single-use). The PK on jti makes this atomic: two concurrent
+    // requests with one token contend on the row and only one INSERT wins.
+    if (stepUp.jti) {
+      try {
+        await adminDrizzle.execute(sql`
+          INSERT INTO admin_stepup_used (jti, admin_user_id)
+          VALUES (${stepUp.jti}, ${adminUserId}::uuid)
+        `);
+        // Best-effort prune of rows past the token TTL — keeps the table bounded
+        // without a cron. Never awaited into the gate; failure is irrelevant.
+        void adminDrizzle
+          .execute(sql`
+            DELETE FROM admin_stepup_used
+            WHERE used_at < ${new Date(Date.now() - 60 * 60 * 1000)}
+          `)
+          .catch(() => {});
+      } catch (err) {
+        if (isPostgresError(err, "23505")) {
+          throw new Error(
+            "That verification was already used — approve again with a fresh passkey or code.",
+          );
+        }
+        // Table/column missing before the migration is applied, or a
+        // transient fault → FAIL OPEN: the token is cryptographically valid, so
+        // passkey 2FA is never bricked; single-use simply doesn't apply until
+        // the table exists.
+        const missing = isPostgresError(err, "42P01", "42703");
+        if (!missing) {
+          console.error(
+            "[require2FA] step-up nonce consume failed (allowing):",
+            err,
+          );
+        }
+      }
+    }
     return;
   }
 
   // TOTP path.
-  const adminUser = await adminDb.admin_users.findUnique({
-    where: { id: adminUserId },
-    select: { totp_secret: true, totp_enabled: true },
-  });
+  const adminUser = (await adminDrizzle.execute<{
+    totp_secret: string | null;
+    totp_enabled: boolean;
+  }>(sql`
+    SELECT totp_secret, totp_enabled
+    FROM admin_users
+    WHERE id = ${adminUserId}::uuid
+    LIMIT 1
+  `)).rows[0];
 
   if (!adminUser) {
     throw new Error("Admin user not found");
@@ -45,8 +91,40 @@ export async function require2FA(
     throw new Error("2FA is not enabled for this admin account");
   }
 
-  const isValid = verifyTOTP(adminUser.totp_secret, value);
-  if (!isValid) {
+  const step = verifyTOTPWithStep(adminUser.totp_secret, value);
+  if (step === null) {
     throw new Error("Invalid 2FA code");
+  }
+
+  // SECURITY (SECURITY_AUDIT.md MEDIUM-5): single-use. Atomically claim this
+  // code's step so one code can't authorize a second concurrent/duplicate
+  // action. The conditional updateMany matches only when this step hasn't been
+  // recorded (NULL, or a different value); under READ COMMITTED Postgres
+  // re-checks the predicate on a concurrent update, so two racing requests with
+  // ONE code contend on the same row and only one wins — which also closes the
+  // double-submit money races. A genuine replay (same code → same step) is
+  // rejected. Passkey step-up (handled above) is unaffected.
+  try {
+    const claimed = await adminDrizzle.execute(sql`
+      UPDATE admin_users
+      SET totp_last_step = ${BigInt(step)}
+      WHERE id = ${adminUserId}::uuid
+        AND (totp_last_step IS NULL OR totp_last_step <> ${BigInt(step)})
+      RETURNING id
+    `);
+    if (claimed.rows.length !== 1) {
+      throw new Error("That 2FA code was already used — enter a fresh code.");
+    }
+  } catch (err) {
+    // Our own "already used" rejection propagates. Anything else — most
+    // importantly a missing `totp_last_step` column before the ADD
+    // COLUMN is applied, or a transient DB blip — FAILS OPEN so 2FA is never
+    // bricked: the code was already validated above. Single-use simply doesn't
+    // apply until the column exists.
+    if (err instanceof Error && err.message.includes("already used")) throw err;
+    const missingColumn = isPostgresError(err, "42703");
+    if (!missingColumn) {
+      console.error("[require2FA] TOTP single-use claim failed (allowing):", err);
+    }
   }
 }

@@ -1,9 +1,9 @@
 import "server-only";
 
-import { getDb } from "@/lib/db";
+import { sql } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 
 /** One fill-program conversion payout minted in the window. */
 export type ConvertedFillSessionRow = {
@@ -42,8 +42,7 @@ export type ConvertedFillSessionRow = {
 export async function getConvertedFillSessionsInWindow(
   since: Date,
 ): Promise<ConvertedFillSessionRow[]> {
-  const db = await getDb();
-  const sinceIso = since.toISOString();
+  const db = await getDrizzleDb();
   const excludedIds = await getExcludedUserIds();
 
   type Row = {
@@ -56,8 +55,15 @@ export async function getConvertedFillSessionsInWindow(
     session_id: string | null;
   };
 
-  const rows = await db.$queryRawUnsafe<Row[]>(
-    `SELECT
+  const blacklistFilter =
+    excludedIds.length === 0
+      ? sql``
+      : sql`AND v.user_id NOT IN (${sql.join(
+          [...excludedIds].map((id) => sql`${id}`),
+          sql`, `,
+        )})`;
+  const result = await db.execute<Row>(sql`
+     SELECT
        v.id AS voucher_id,
        v.user_id,
        u.username,
@@ -68,10 +74,11 @@ export async function getConvertedFillSessionsInWindow(
      FROM vouchers v
      LEFT JOIN "user" u ON u.id = v.user_id
      WHERE v.origin::text = 'creator_fill_conversion'
-       AND v.created_at >= '${sinceIso}'::timestamptz
-       ${blacklistNotInClause("v.user_id", excludedIds)}
-     ORDER BY v.created_at DESC`,
-  );
+       AND v.created_at >= ${since}
+       ${blacklistFilter}
+     ORDER BY v.created_at DESC
+  `);
+  const rows = result.rows;
 
   return rows.map((r) => ({
     voucherId: r.voucher_id,

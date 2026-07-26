@@ -2,7 +2,9 @@
 
 import bcrypt from "bcryptjs";
 import { z } from "zod";
-import { adminDb } from "@/lib/admin-db";
+import { eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_users } from "@/lib/db-schema/admin/schema";
 import { verifySession } from "@/lib/dal";
 import { require2FA } from "@/lib/require-2fa";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -68,10 +70,9 @@ export async function changeOwnPassword(input: {
   }
   const { currentPassword, newPassword, twoFactorCode } = parsed.data;
 
-  const admin = await adminDb.admin_users.findUnique({
-    where: { id: session.userId },
-    select: { password_hash: true, totp_enabled: true, totp_secret: true },
-  });
+  const [admin] = await adminDrizzle.select({
+    password_hash: admin_users.password_hash,
+  }).from(admin_users).where(eq(admin_users.id, session.userId)).limit(1);
   if (!admin) {
     // verifySession already proved the row exists; treat as auth failure.
     throw new Error("Account not found");
@@ -91,11 +92,8 @@ export async function changeOwnPassword(input: {
 
   const newHash = await bcrypt.hash(newPassword, BCRYPT_COST);
 
-  await adminDb.admin_users.update({
-    where: { id: session.userId },
-    data: { password_hash: newHash },
-    select: { id: true },
-  });
+  await adminDrizzle.update(admin_users).set({ password_hash: newHash })
+    .where(eq(admin_users.id, session.userId));
 
   // Audit trail — never include any password material or the 2FA code.
   await createAdminAuditEvent({

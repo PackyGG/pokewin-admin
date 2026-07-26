@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 
 import { verifySession } from "@/lib/dal";
-import { adminDb } from "@/lib/admin-db";
+import { eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import { admin_users } from "@/lib/db-schema/admin/schema";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import {
   canAccessCreatorHub,
@@ -35,10 +37,16 @@ async function requireCreatorHubReviewAccess(): Promise<{
 }> {
   const session = await verifySession();
 
-  const user = await adminDb.admin_users.findUnique({
-    where: { id: session.userId },
-    select: { username: true, is_active: true },
-  });
+  const user = (
+    await adminDrizzle
+      .select({
+        username: admin_users.username,
+        is_active: admin_users.is_active,
+      })
+      .from(admin_users)
+      .where(eq(admin_users.id, session.userId))
+      .limit(1)
+  )[0];
   if (!user?.is_active) {
     throw new Error("Not authorized to review creator socials.");
   }

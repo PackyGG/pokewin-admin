@@ -2,8 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { count, desc, eq, inArray } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
+import { staff_quiz_attempts, staff_quiz_options, staff_quiz_questions, staff_quizzes } from "@/lib/db-schema/admin/schema";
 import { requireStaffManager } from "@/lib/staff/access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import {
@@ -66,8 +68,7 @@ export async function createQuiz(input: unknown): Promise<{ id: string }> {
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const data = parsed.data;
 
-  const created = await adminDb.staff_quizzes.create({
-    data: {
+  const [created] = await adminDrizzle.insert(staff_quizzes).values({
       title: data.title,
       description: data.description ? data.description : null,
       status: "draft",
@@ -80,9 +81,8 @@ export async function createQuiz(input: unknown): Promise<{ id: string }> {
       shuffle_questions: data.shuffleQuestions ?? false,
       audience_roles: data.audienceRoles,
       created_by: session.userId,
-    },
-    select: { id: true },
-  });
+    }).returning({ id: staff_quizzes.id });
+  if (!created) throw new Error("Quiz insert returned no row");
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -103,9 +103,7 @@ export async function updateQuiz(input: unknown): Promise<void> {
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const { quizId, ...data } = parsed.data;
 
-  await adminDb.staff_quizzes.update({
-    where: { id: quizId },
-    data: {
+  await adminDrizzle.update(staff_quizzes).set({
       title: data.title,
       description: data.description ? data.description : null,
       pass_percent: data.passPercent,
@@ -116,8 +114,7 @@ export async function updateQuiz(input: unknown): Promise<void> {
           : null,
       shuffle_questions: data.shuffleQuestions ?? false,
       audience_roles: data.audienceRoles,
-    },
-  });
+    }).where(eq(staff_quizzes.id, quizId));
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -147,37 +144,32 @@ export async function setQuizStatus(input: unknown): Promise<void> {
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const { quizId, status } = parsed.data;
 
-  const quiz = await adminDb.staff_quizzes.findUnique({
-    where: { id: quizId },
-    select: {
-      id: true,
-      title: true,
-      description: true,
-      status: true,
-      published_at: true,
-      audience_roles: true,
-    },
-  });
+  const [quiz] = await adminDrizzle.select({
+    id: staff_quizzes.id, title: staff_quizzes.title,
+    description: staff_quizzes.description, status: staff_quizzes.status,
+    published_at: staff_quizzes.published_at,
+    audience_roles: staff_quizzes.audience_roles,
+  }).from(staff_quizzes).where(eq(staff_quizzes.id, quizId)).limit(1);
   if (!quiz) throw new Error("That quiz no longer exists");
 
   if (status === "published") {
-    const questionCount = await adminDb.staff_quiz_questions.count({
-      where: { quiz_id: quizId },
-    });
+    const [questionRow] = await adminDrizzle.select({ value: count() })
+      .from(staff_quiz_questions).where(eq(staff_quiz_questions.quiz_id, quizId));
+    const questionCount = questionRow?.value ?? 0;
     if (questionCount === 0) {
       throw new Error("Add at least one question before publishing");
     }
     // A question with no correct option can never be answered right — that is
     // an authoring mistake, and finding it after 30 people took the quiz is
     // far worse than blocking the publish here.
-    const questions = await adminDb.staff_quiz_questions.findMany({
-      where: { quiz_id: quizId },
-      select: { id: true, prompt: true },
-    });
-    const options = await adminDb.staff_quiz_options.findMany({
-      where: { question_id: { in: questions.map((q) => q.id) } },
-      select: { question_id: true, is_correct: true },
-    });
+    const questions = await adminDrizzle.select({
+      id: staff_quiz_questions.id, prompt: staff_quiz_questions.prompt,
+    }).from(staff_quiz_questions).where(eq(staff_quiz_questions.quiz_id, quizId));
+    const options = await adminDrizzle.select({
+      question_id: staff_quiz_options.question_id,
+      is_correct: staff_quiz_options.is_correct,
+    }).from(staff_quiz_options)
+      .where(inArray(staff_quiz_options.question_id, questions.map((q) => q.id)));
     const correctByQuestion = new Set(
       options.filter((o) => o.is_correct).map((o) => o.question_id),
     );
@@ -191,13 +183,10 @@ export async function setQuizStatus(input: unknown): Promise<void> {
 
   const firstPublish = status === "published" && quiz.published_at === null;
 
-  await adminDb.staff_quizzes.update({
-    where: { id: quizId },
-    data: {
+  await adminDrizzle.update(staff_quizzes).set({
       status,
-      published_at: firstPublish ? new Date() : undefined,
-    },
-  });
+      published_at: firstPublish ? new Date().toISOString() : undefined,
+    }).where(eq(staff_quizzes.id, quizId));
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -237,16 +226,16 @@ export async function deleteQuiz(input: unknown): Promise<void> {
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const { quizId } = parsed.data;
 
-  const attempts = await adminDb.staff_quiz_attempts.count({
-    where: { quiz_id: quizId },
-  });
+  const [attemptRow] = await adminDrizzle.select({ value: count() })
+    .from(staff_quiz_attempts).where(eq(staff_quiz_attempts.quiz_id, quizId));
+  const attempts = attemptRow?.value ?? 0;
   if (attempts > 0) {
     throw new Error(
       "People have already taken this quiz — archive it instead of deleting it.",
     );
   }
 
-  await adminDb.staff_quizzes.delete({ where: { id: quizId } });
+  await adminDrizzle.delete(staff_quizzes).where(eq(staff_quizzes.id, quizId));
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -311,32 +300,26 @@ export async function addQuizQuestion(input: unknown): Promise<void> {
   const data = parsed.data;
   validateShape(data.kind, data.options);
 
-  const last = await adminDb.staff_quiz_questions.findFirst({
-    where: { quiz_id: data.quizId },
-    orderBy: { position: "desc" },
-    select: { position: true },
-  });
+  const [last] = await adminDrizzle.select({ position: staff_quiz_questions.position })
+    .from(staff_quiz_questions).where(eq(staff_quiz_questions.quiz_id, data.quizId))
+    .orderBy(desc(staff_quiz_questions.position)).limit(1);
 
-  await adminDb.$transaction(async (tx) => {
-    const question = await tx.staff_quiz_questions.create({
-      data: {
+  await adminDrizzle.transaction(async (tx) => {
+    const [question] = await tx.insert(staff_quiz_questions).values({
         quiz_id: data.quizId,
         position: (last?.position ?? -1) + 1,
         prompt: data.prompt,
         kind: data.kind,
         explanation: data.explanation ? data.explanation : null,
         points: data.points,
-      },
-      select: { id: true },
-    });
-    await tx.staff_quiz_options.createMany({
-      data: data.options.map((option, index) => ({
+      }).returning({ id: staff_quiz_questions.id });
+    if (!question) throw new Error("Question insert returned no row");
+    await tx.insert(staff_quiz_options).values(data.options.map((option, index) => ({
         question_id: question.id,
         position: index,
         label: option.label,
         is_correct: option.isCorrect,
-      })),
-    });
+      })));
   });
 
   revalidatePath(`/staff/quiz-manager/${data.quizId}`);
@@ -359,27 +342,21 @@ export async function updateQuizQuestion(input: unknown): Promise<void> {
   const data = parsed.data;
   validateShape(data.kind, data.options);
 
-  await adminDb.$transaction(async (tx) => {
-    await tx.staff_quiz_questions.update({
-      where: { id: data.questionId },
-      data: {
+  await adminDrizzle.transaction(async (tx) => {
+    await tx.update(staff_quiz_questions).set({
         prompt: data.prompt,
         kind: data.kind,
         explanation: data.explanation ? data.explanation : null,
         points: data.points,
-      },
-    });
-    await tx.staff_quiz_options.deleteMany({
-      where: { question_id: data.questionId },
-    });
-    await tx.staff_quiz_options.createMany({
-      data: data.options.map((option, index) => ({
+      }).where(eq(staff_quiz_questions.id, data.questionId));
+    await tx.delete(staff_quiz_options)
+      .where(eq(staff_quiz_options.question_id, data.questionId));
+    await tx.insert(staff_quiz_options).values(data.options.map((option, index) => ({
         question_id: data.questionId,
         position: index,
         label: option.label,
         is_correct: option.isCorrect,
-      })),
-    });
+      })));
   });
 
   revalidatePath(`/staff/quiz-manager/${data.quizId}`);
@@ -392,9 +369,8 @@ export async function deleteQuizQuestion(input: unknown): Promise<void> {
     .safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
 
-  await adminDb.staff_quiz_questions.delete({
-    where: { id: parsed.data.questionId },
-  });
+  await adminDrizzle.delete(staff_quiz_questions)
+    .where(eq(staff_quiz_questions.id, parsed.data.questionId));
 
   revalidatePath(`/staff/quiz-manager/${parsed.data.quizId}`);
 }
@@ -412,11 +388,10 @@ export async function moveQuizQuestion(input: unknown): Promise<void> {
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const { quizId, questionId, direction } = parsed.data;
 
-  const questions = await adminDb.staff_quiz_questions.findMany({
-    where: { quiz_id: quizId },
-    orderBy: { position: "asc" },
-    select: { id: true, position: true },
-  });
+  const questions = await adminDrizzle.select({
+    id: staff_quiz_questions.id, position: staff_quiz_questions.position,
+  }).from(staff_quiz_questions).where(eq(staff_quiz_questions.quiz_id, quizId))
+    .orderBy(staff_quiz_questions.position);
   const index = questions.findIndex((q) => q.id === questionId);
   if (index === -1) return;
   const swapWith = direction === "up" ? index - 1 : index + 1;
@@ -430,14 +405,11 @@ export async function moveQuizQuestion(input: unknown): Promise<void> {
     reordered[index],
   ];
 
-  await adminDb.$transaction(
-    reordered.map((question, position) =>
-      adminDb.staff_quiz_questions.update({
-        where: { id: question.id },
-        data: { position },
-      }),
-    ),
-  );
+  await adminDrizzle.transaction(async (tx) => {
+    await Promise.all(reordered.map((question, position) =>
+      tx.update(staff_quiz_questions).set({ position })
+        .where(eq(staff_quiz_questions.id, question.id))));
+  });
 
   revalidatePath(`/staff/quiz-manager/${quizId}`);
 }

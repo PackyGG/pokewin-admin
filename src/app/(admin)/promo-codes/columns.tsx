@@ -171,7 +171,7 @@ function RequirementsCell({ row }: { row: PromoCodeListItem }) {
 //   • the popup stays open after a successful delete (visible bug)
 //   • a confused admin can double-click Delete on the same row,
 //     firing a second deletePromoCode for an already-deleted row,
-//     which used to throw P2025 and trigger the page-level error
+//     which used to throw and trigger the page-level error
 //     boundary. The server action is now idempotent (deleteMany)
 //     too, but the UX still needs the explicit close.
 function RowDeleteButton({ promoCodeId }: { promoCodeId: string }) {

@@ -1,14 +1,14 @@
 import "server-only";
 
-import { getDb } from "@/lib/db";
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
+import { adminDrizzle } from "@/lib/admin-db";
 import { isUuid } from "@/lib/utils/ids";
 import { getPackCardValues } from "@/lib/queries/pack-card-values";
 import {
   computePackRisk,
   type PackRisk,
 } from "@/app/(admin)/insights/edge-calc/risk";
-import type { Prisma } from "@/generated/admin-prisma/client";
 
 /**
  * Pack change-history + revert backend.
@@ -59,36 +59,39 @@ async function readCurrentPackState(packId: string): Promise<{
   /** `packs.tags` (pack_tag[] → DB strings) at capture time — for tag revert. */
   tags: string[];
 } | null> {
-  const db = await getDb();
-  const pack = await db.packs.findUnique({
-    where: { id: packId },
-    select: {
-      price: true,
-      tags: true,
-      pack_cards: {
-        select: {
-          card_id: true,
-          weight: true,
-          color: true,
-          animation: true,
-          order: true,
-        },
-        orderBy: { order: "asc" },
-      },
-    },
-  });
+  const db = await getDrizzleDb();
+  const result = await db.execute<{
+    price: string;
+    tags: string[];
+    cards: SnapshotCard[];
+  }>(sql`
+    SELECT
+      p.price::text AS price,
+      p.tags::text[] AS tags,
+      COALESCE(
+        jsonb_agg(
+          jsonb_build_object(
+            'card_id', pc.card_id,
+            'weight', pc.weight,
+            'color', pc.color,
+            'animation', pc.animation,
+            'order', pc.order
+          ) ORDER BY pc.order
+        ) FILTER (WHERE pc.card_id IS NOT NULL),
+        '[]'::jsonb
+      ) AS cards
+    FROM packs p
+    LEFT JOIN pack_cards pc ON pc.pack_id = p.id
+    WHERE p.id = ${packId}::uuid
+    GROUP BY p.id
+  `);
+  const pack = result.rows[0];
   if (!pack) return null;
 
   return {
     price: Number(pack.price.toString()),
     tags: Array.isArray(pack.tags) ? pack.tags.map((t) => String(t)) : [],
-    cards: pack.pack_cards.map((pc) => ({
-      card_id: pc.card_id,
-      weight: pc.weight,
-      color: pc.color,
-      animation: pc.animation,
-      order: pc.order,
-    })),
+    cards: pack.cards,
   };
 }
 
@@ -123,6 +126,37 @@ export type CapturePackSnapshotInput = {
   note?: string;
 };
 
+async function insertSnapshotRow(input: {
+  data: {
+    pack_id: string;
+    captured_by: string;
+    action: string;
+    price: number;
+    cards: unknown;
+    tags: unknown;
+    risk?: unknown;
+    note: string | null;
+  };
+  select?: unknown;
+}): Promise<{ id: string }> {
+  const data = input.data;
+  const result = await adminDrizzle.execute<{ id: string }>(sql`
+    INSERT INTO pack_state_snapshots (
+      pack_id, captured_by, action, price, cards, tags, risk, note
+    ) VALUES (
+      ${data.pack_id}, ${data.captured_by}, ${data.action}, ${data.price},
+      ${JSON.stringify(data.cards)}::jsonb,
+      ${JSON.stringify(data.tags)}::jsonb,
+      ${data.risk == null ? null : JSON.stringify(data.risk)}::jsonb,
+      ${data.note}
+    )
+    RETURNING id
+  `);
+  const row = result.rows[0];
+  if (!row) throw new Error("Snapshot insert returned no row");
+  return row;
+}
+
 /**
  * Capture ONE snapshot of the pack's CURRENT state (price + every card weight)
  * into the ADMIN DB. Reads MAIN read-only, writes ADMIN only.
@@ -153,17 +187,17 @@ export async function capturePackSnapshot(
 
     const risk = await computeCurrentRisk(input.packId, state.price);
 
-    const row = await adminDb.pack_state_snapshots.create({
+    const row = await insertSnapshotRow({
       data: {
         pack_id: input.packId,
         captured_by: input.capturedBy,
         action: input.action,
         price: state.price,
-        cards: state.cards as unknown as Prisma.InputJsonValue,
+        cards: state.cards,
         // The pack's tags at capture time — a revert restores them so the tag
         // control's write is undoable like every other pack mutation.
-        tags: state.tags as unknown as Prisma.InputJsonValue,
-        risk: (risk ?? undefined) as Prisma.InputJsonValue | undefined,
+        tags: state.tags,
+        risk: risk ?? undefined,
         note: input.note ?? null,
       },
       select: { id: true },
@@ -203,10 +237,10 @@ function mapSnapshotRow(r: {
   captured_at: Date;
   captured_by: string;
   action: string;
-  price: Prisma.Decimal;
-  cards: Prisma.JsonValue;
-  tags: Prisma.JsonValue | null;
-  risk: Prisma.JsonValue | null;
+  price: { toString(): string };
+  cards: unknown;
+  tags: unknown;
+  risk: unknown;
   note: string | null;
 }): PackSnapshot {
   return {
@@ -248,13 +282,18 @@ export async function getPackHistory(
     throw new Error("Invalid pack id");
   }
 
-  const rows = await adminDb.pack_state_snapshots.findMany({
-    where: packId ? { pack_id: packId } : undefined,
-    orderBy: { captured_at: "desc" },
-    take,
-  });
+  const result = await adminDrizzle.execute<Parameters<typeof mapSnapshotRow>[0]>(
+    sql`
+      SELECT id, pack_id, captured_at, captured_by, action, price,
+             cards, tags, risk, note
+      FROM pack_state_snapshots
+      ${packId ? sql`WHERE pack_id = ${packId}` : sql``}
+      ORDER BY captured_at DESC
+      LIMIT ${take}
+    `,
+  );
 
-  return rows.map(mapSnapshotRow);
+  return result.rows.map(mapSnapshotRow);
 }
 
 /**
@@ -265,9 +304,16 @@ export async function getPackSnapshot(
   snapshotId: string,
 ): Promise<PackSnapshot | null> {
   if (!isUuid(snapshotId)) return null;
-  const row = await adminDb.pack_state_snapshots.findUnique({
-    where: { id: snapshotId },
-  });
+  const result = await adminDrizzle.execute<Parameters<typeof mapSnapshotRow>[0]>(
+    sql`
+      SELECT id, pack_id, captured_at, captured_by, action, price,
+             cards, tags, risk, note
+      FROM pack_state_snapshots
+      WHERE id = ${snapshotId}::uuid
+      LIMIT 1
+    `,
+  );
+  const row = result.rows[0];
   return row ? mapSnapshotRow(row) : null;
 }
 
@@ -300,12 +346,18 @@ export async function getHistoryCardMeta(
 ): Promise<Map<string, HistoryCardMeta>> {
   const out = new Map<string, HistoryCardMeta>();
   if (cardIds.length === 0) return out;
-  const db = await getDb();
-  const rows = await db.cards.findMany({
-    where: { id: { in: cardIds } },
-    select: { id: true, name: true, image_url: true, price: true },
-  });
-  for (const r of rows) {
+  const db = await getDrizzleDb();
+  const result = await db.execute<{
+    id: string;
+    name: string | null;
+    image_url: string | null;
+    price: string;
+  }>(sql`
+    SELECT id, name, image_url, price::text AS price
+    FROM cards
+    WHERE id = ANY(${cardIds}::uuid[])
+  `);
+  for (const r of result.rows) {
     out.set(r.id, {
       name: r.name,
       imageUrl: r.image_url,

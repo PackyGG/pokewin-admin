@@ -21,39 +21,38 @@
 Two fully separate Postgres databases, treated **very differently**:
 
 ### 🟢 ADMIN DB — full access
-- Client `adminDb` (`src/lib/admin-db.ts`), schema `prisma/admin/schema.prisma`, env `ADMIN_DATABASE_URL`.
-- Writes, migrations, DDL/DML, `db push` — **all allowed**; the agent applies them itself.
+- Client `adminDrizzle` (`src/lib/admin-db.ts`), schema snapshot `src/lib/db-schema/admin/schema.ts`, env `ADMIN_DATABASE_URL`.
+- Writes, reviewed SQL migrations, and DDL/DML are **all allowed**; the agent applies them itself.
 - Holds ONLY admin-panel data: `admin_users`, `admin_sessions`, `admin_audit_events`, `admin_notes`, `admin_gift_card_actions`, `admin_voucher_actions`, `admin_balance_limits`, `creator_deals`, `creator_webhooks`, `expenses`, `recurring_expenses`, salary tables, `admin_excluded_user_balance_v2` (Balance 2.0), etc.
-- **⚠️ Admin DB is `db push`-managed, NOT migrate-baselined.** `prisma migrate dev/deploy` will demand a **destructive reset** — NEVER run it. Apply schema changes via `prisma db push` (it refuses on data loss — good) or `prisma db execute --file <migration.sql> --config prisma/admin/prisma.config.ts` for additive SQL. Always audit-log admin mutations (`createAdminAuditEvent`).
+- **Admin schema workflow:** author reviewed, idempotent SQL under `drizzle/admin/migrations`, apply it transactionally with `npm run admin:sql -- <file>`, then refresh types with `npm run db:pull:admin`. Runtime DDL/self-heal is forbidden. The pull scripts normalize drizzle-kit's empty-array and unsupported `bytea`/`oid` introspection output. Do not use schema-push tooling. Always audit-log admin mutations (`createAdminAuditEvent`).
 
 ### 🔴 MAIN / PROD GAME DB — strict read-only
-- Client `getDb()`/`db` (`src/lib/db.ts`, prod/dev toggle via `admin_db_env` cookie + `DEV_DATABASE_URL`), schema `prisma/schema.prisma`, env `DATABASE_URL`. 30s statement timeout.
+- Drizzle resolver in `src/lib/db.ts` (prod/dev toggle via `admin_db_env` cookie + `DEV_DATABASE_URL`), schema snapshot `src/lib/db-schema/main/schema.ts`, env `DATABASE_URL`. 30s statement timeout.
 - Holds the **live game**: users, balances, ledger, packs, cards, battles, inventory, rewards, affiliate, deposits/withdrawals, promo/gift/vouchers, rain/raffles/races. Real users, real money.
 - **READ-ONLY. No writes, migrations, DDL/DML, ever.** AND: **do not even build/propose features that would require a MAIN-DB schema change** — the owner won't apply them. Such tasks are blocked → model it in the ADMIN DB instead, or tell the owner it can't be built without changing MAIN.
 - No cross-DB joins — query each DB separately, merge in code.
 
 **Known MAIN-DB tables that surprised us:** `gift_cards` and `vouchers` live in MAIN (not admin) — so bulk-delete on those = a MAIN write = forbidden.
 
-**Open admin-DB schema drift (unresolved):** `creator_deals.monthly_cashout_limit` + `weekly_cashout_limit` (1 non-null value each) and the `creator_deal_estimates` table (17 rows) exist in prod admin DB but were dropped from `prisma/admin/schema.prisma`. `db push` correctly refuses. Decision pending: restore in schema, or archive+drop.
+Drizzle schemas are catalog snapshots. After any approved ADMIN migration,
+re-introspect and review the generated diff before committing it.
 
 ---
 
-## 1.5 🗄️ BACKEND READ POLICY — Index-or-ClickHouse (HARD RULE, 2026-06-17)
+## 1.5 🗄️ BACKEND READ POLICY — PostgreSQL via Drizzle (HARD RULE, 2026-07-26)
 
 > **Canonical short reference:** `docs/BACKEND_QUERY_SYSTEM.md`. Mirrored as a top-priority rule in `CLAUDE.md` / `AGENTS.md`.
 
-The backend was fully reworked. **Every read is served by exactly one of two paths — there is no third way:**
+The webapp uses PostgreSQL as its only database engine. Drizzle ORM is the default access layer, with parameterized Drizzle `sql` for complex or performance-critical queries.
 
-> **A read either hits a confirmed Postgres index OR runs through ClickHouse. No unindexed read, no full-table/seq-scan on MAIN — ever, not even "just once".**
+> **A read hits a confirmed PostgreSQL index or has an `EXPLAIN ANALYZE`-documented reason for the planner's scan. No accidental unbounded scan on MAIN.**
 
-- **Indexed Postgres** → live / per-user / money-exact reads (`dashboard_stats`, user detail, lists, operational boards). Must be `EXPLAIN ANALYZE`-proven to hit an index (read-only probe). MAIN is read-only, so agents **do not apply indexes** — add the `CREATE INDEX CONCURRENTLY` to `prisma/recommended-indexes.sql` and flag the owner; a read that can only seq-scan is **BLOCKED** until then.
-- **ClickHouse** → heavy aggregate / analytics / fan-out (`/insights/*`, `/analytics/*`, creators/rewards analytics, dashboard legs). Wired through `resolveAdminRead(surfaceKey, { pg, ch, compare })` (`src/lib/clickhouse/resolve-read.ts`), gated by `getAdminReadMode` (`src/lib/feature-flags/admin-read-source.ts`). CH twins must be cent/count-exact vs Postgres before joining `CUTOVER_DEFAULT_CLICKHOUSE`; per-surface instant rollback via Edge Config.
-- **New queries MUST follow this construct; the old plain Prisma/PG query layer is legacy.** Do not add new unindexed PG queries. When you touch/extend a read or build a new page, bring it onto a confirmed index or a ClickHouse twin. A query that serves neither is wrong and must not ship.
-- **Streaming is mandatory (equal weight):** every page with a non-trivial read renders the `PageHero` shell instantly and loads data in an `async` child behind its own `<Suspense fallback={…Skeleton}>` + a matching `loading.tsx`. NEVER top-level-`await` the heavy read in the page body (the `/crm` bug). Streaming is on top of Path 1/Path 2, not a substitute.
-- **Per-read/page checklist (all required):** (1) index-proven PG **or** `resolveAdminRead` + parity-proven CH twin; (2) shell + `<Suspense>` + `loading.tsx`, active-window/tab only; (3) `safeQuery`/timeout + `unstable_cache`; (4) Decimal-safe money + House-POV colors; (5) tsc/lint/build green + render check; (6) a CH twin stays dormant until cent/count-exact parity (`TZ=UTC`, twice) **and** a logged-in render check before it joins `CUTOVER_DEFAULT_CLICKHOUSE`. Reference: **`/crm`**.
+- **PostgreSQL** serves live, per-user, money-exact, analytics, and fan-out reads. Queries must be bounded, cached where appropriate, and `EXPLAIN ANALYZE`-checked with read-only access.
+- **Parameterized SQL only:** use Drizzle query builders by default and Drizzle `sql` with bound values when raw SQL is clearer or faster. Do not concatenate filters or user values into SQL.
+- **MAIN is read-only:** agents never apply indexes there. Add justified `CREATE INDEX CONCURRENTLY` statements to `prisma/recommended-indexes.sql` and flag the owner.
+- **Streaming is mandatory:** every page with a non-trivial read renders the `PageHero` shell instantly and loads data in an async child behind its own `<Suspense fallback={…Skeleton}>` plus a matching `loading.tsx`.
+- **Per-read/page checklist:** index proof or documented planner choice; shell-first streaming; active-window/tab only; `safeQuery`/timeout plus `unstable_cache`; Decimal-safe money; House-POV colors; tsc/lint/build green.
 - This does **not** loosen the MAIN read-only rule (§1).
-
-**Note (2026-06-16):** ClickHouse creds are not yet on Vercel prod, so the dormant-client guard forces every CH surface to `"off"` → analytics currently serve from Postgres. Optimization work therefore targets the indexed-`pg()` path until the owner adds `CLICKHOUSE_*` env vars.
 
 ---
 
@@ -72,7 +71,7 @@ The backend was fully reworked. **Every read is served by exactly one of two pat
 
 ## 3. 🏗️ ARCHITECTURE
 
-- **Stack:** Next.js 15.5.12 (App Router, Turbopack), React 19.1, TS strict, Tailwind 4 + shadcn/ui (base-nova), Prisma 7.5 (dual client), Auth = JWT (`jose`) + TOTP 2FA (`otpauth`), Zod 4, `sonner` toasts, TanStack Table 8, Recharts, `@dnd-kit`, `cmdk`, `next-themes` (dark default), Playwright (e2e, already installed).
+- **Stack:** Next.js 15.5.12 (App Router, Turbopack), React 19.1, TS strict, Tailwind 4 + shadcn/ui (base-nova), PostgreSQL via Drizzle ORM (two isolated databases), Auth = JWT (`jose`) + TOTP 2FA (`otpauth`), Zod 4, `sonner` toasts, TanStack Table 8, Recharts, `@dnd-kit`, `cmdk`, `next-themes` (dark default), Playwright (e2e, already installed).
 - **Server-Components-first:** pages are `async` Server Components; client interactivity in `"use client"` islands; mutations via Server Actions + `revalidatePath`. No SWR/React Query.
 - **Routing:** ~84 routes under `src/app/(admin)/` (+ `(auth)`), grouped: Overview (dashboard, analytics, users, transactions), Insights (`/insights` hub + cost-breakdown, analytics, games, rewards/*, forecast, system-edge-plan, ggr, balance-adjustments), Creators (list, [userId], leaderboards, socials, changelog, ads, codes, settings), Content (packs, cards, sets, upgrader), Transactions, Rewards, Admin/Security (admin-users, audit, settings/roles, balance-limits, security), System (stats, commands, excluded-users), Promo/misc (promo-codes, rain, vouchers, gift-cards, bots, chat, salaries, employees, shifts).
 - **Shell:** `src/app/(admin)/layout.tsx` — `SidebarProvider` + `AppSidebar` (collapses to a Sheet drawer on mobile) + `SidebarInset` (main content `flex-1 overflow-auto min-w-0 p-3 sm:p-4 md:p-6` + safe-area insets) + sticky `AdminHeader` (responsive breadcrumbs) + `TopProgressBar` + right-rail docks (LiveMoneyChat / RecentActivity / Chat; pages reserve `pr-6 sm:pr-10 xl:pr-12 2xl:pr-16`). **Nav is single-source in `src/lib/nav-config.ts`**; icon strings MUST be registered in the `ICONS` map in `app-sidebar.tsx` (unregistered → React #130 shell crash; a `?? ScrollText` fallback now prevents the crash).
@@ -133,9 +132,9 @@ The backend was fully reworked. **Every read is served by exactly one of two pat
 - **Headless auth (the real verification path):** mint an `admin_session` JWT signed with `SESSION_SECRET` (matching `src/lib/session.ts`), reading one active admin from the ADMIN DB read-only, inject via Playwright `context.addCookies()` → renders any page past 2FA. Playwright + Chromium are already installed; an `e2e/` harness exists.
 - **Responsive audit must RENDER, not read classes:** two prior class-reading audits missed a glaring `/users/[id]` break. The detector measures real `scrollWidth`/bounding-box/sibling-overlap at the viewport matrix (320→1536).
 - **Verify agents can false-negative** (stale tree): always have the verify agent `git fetch + checkout the exact commit` first, and cross-check "not found" verdicts against `git show <sha>`.
-- **Worktrees:** use `npm install` (NOT `npm ci` — committed lockfile mismatch `@emnapi/wasi-threads`); copy `.env` from main checkout; do NOT junction `node_modules` (concurrent `prisma generate` corrupts main); cleanup is junction-safe (check `LinkType` before recurse). `git commit --only <paths>` (never `git add -A`) and leave `src/generated/*`, `package-lock.json`, `recent-pushes.json`, `audit-artifacts/` uncommitted.
+- **Worktrees:** use `npm install` (NOT `npm ci` — committed lockfile mismatch `@emnapi/wasi-threads`); copy `.env` from main checkout; do NOT junction `node_modules`; cleanup is junction-safe (check `LinkType` before recurse). `git commit --only <paths>` (never `git add -A`) and leave `package-lock.json`, `recent-pushes.json`, `audit-artifacts/` uncommitted.
 - **Stale `.next`:** `.next/types/validator.ts` references deleted page routes → tsc fails; clear `.next` before re-running the gate.
-- **Admin migrate gotcha:** see §1 — prod admin DB is `db push`-managed; `migrate dev/deploy` demands a destructive reset. Apply via `db push` / `db execute`. (`prisma db execute` needs `--config prisma/admin/prisma.config.ts`, not `--schema`.)
+- **Admin schema gotcha:** use only reviewed SQL via `npm run admin:sql -- <file>`, then `npm run db:pull:admin`. Schema-push tools can drop catalog drift and are not part of the workflow.
 - **PowerShell UTF-8 BOM** breaks Postgres SQL files — write SQL via Bash/`printf`, not PS `Set-Content -Encoding utf8` (BOM → `syntax error at or near "﻿SELECT"`).
 
 ---
@@ -155,13 +154,13 @@ The backend was fully reworked. **Every read is served by exactly one of two pat
 | Smoothness/ux primitives | `src/components/ux/*` (`motion.ts`, skeletons, `AnimatedNumber`) |
 | Nav (single source) | `src/lib/nav-config.ts` + `app-sidebar.tsx` ICONS |
 | Admin shell | `src/app/(admin)/layout.tsx` |
-| Schemas | `prisma/schema.prisma` (MAIN) · `prisma/admin/schema.prisma` (ADMIN) |
+| Schemas | `src/lib/db-schema/main/schema.ts` (MAIN) · `src/lib/db-schema/admin/schema.ts` (ADMIN) |
 | Query modules | `src/lib/queries/**` |
 | Period system | `src/lib/queries/dashboard-period.ts` |
 | Edge planner | `src/app/(admin)/insights/system-edge-plan/*` |
 | e2e / responsive harness | `e2e/*` (Playwright) |
 
-**Scripts:** `npm run dev` · `npm run build` (prisma generate ×2 + next build) · `npm run lint` · `npm run admin:seed`. (Avoid `npm run admin:migrate` — it's `migrate dev`; see §1.)
+**Scripts:** `npm run dev` · `npm run build` · `npm run lint` · `npm run admin:seed` · `npm run db:pull:main` · `npm run db:pull:admin` · `npm run admin:sql -- <file>`.
 **Env:** `DATABASE_URL` (MAIN) · `ADMIN_DATABASE_URL` (ADMIN) · `SESSION_SECRET` · `DEV_DATABASE_URL` · `ADMIN_SEED_PASSWORD`.
 
 ---

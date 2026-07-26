@@ -1,7 +1,7 @@
+import { daysAgoFilter, blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import { resolveRainHouseCost } from "@/lib/metrics";
 import {
@@ -99,21 +99,21 @@ async function computeStackingAnalysis(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RewardsStackingAnalysis> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // Lifetime (`all`) CAPPED to INSIGHTS_LIFETIME_LOOKBACK_DAYS (365d) via
   // daysForInsightsPeriodCapped so the reward/wager/payout sweeps over the
   // full ledger_transactions history never run unbounded (CLAUDE.md
   // "Performance & Daten-Laden"). Finite windows are unchanged; the filter
   // is now always present (capped never returns null).
   const days = daysForInsightsPeriodCapped(period);
-  const dateFilter = `AND lt.created_at >= NOW() - INTERVAL '${days} days'`;
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const dateFilter = daysAgoFilter("lt.created_at", days);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Per-user rollup — collapse claim categories + sum the per-side
   // money in the same CTE. Categories use a single GROUP BY on user_id
   // with FILTER over the CASE-mapped category buckets, so each user
   // gets one row.
-  const userRows = await db.$queryRawUnsafe<
+  const userRows = await queryRows<
     {
       user_id: string;
       username: string | null;
@@ -124,7 +124,7 @@ async function computeStackingAnalysis(
       wager_total: string;
       payout_total: string;
     }[]
-  >(`
+  >(db, sql`
     WITH per_user_categories AS (
       SELECT
         lt.user_id,
@@ -146,7 +146,7 @@ async function computeStackingAnalysis(
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
-        AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
+        AND lt.type::text IN ${sql.raw(ALL_REWARD_TYPES_SQL)}
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
         ${dateFilter}
       GROUP BY lt.user_id
@@ -158,7 +158,7 @@ async function computeStackingAnalysis(
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
-        AND lt.type::text IN ${WAGER_TYPES_SQL}
+        AND lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
         ${dateFilter}
       GROUP BY lt.user_id
@@ -170,7 +170,7 @@ async function computeStackingAnalysis(
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
-        AND lt.type::text IN ${PAYOUT_TYPES_SQL}
+        AND lt.type::text IN ${sql.raw(PAYOUT_TYPES_SQL)}
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
         ${dateFilter}
       GROUP BY lt.user_id

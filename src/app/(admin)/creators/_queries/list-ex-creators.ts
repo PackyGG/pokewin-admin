@@ -1,7 +1,17 @@
 import "server-only";
 
-import { getDb } from "@/lib/db";
-import { adminDb } from "@/lib/admin-db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
+import { and, desc, inArray, isNotNull } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import {
+  admin_audit_events,
+  creator_balance_fills,
+  creator_deals,
+  creator_socials,
+  creator_webhooks,
+} from "@/lib/db-schema/admin/schema";
+import { user as mainUsers } from "@/lib/db-schema/main/schema";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import type { CreatorListItem } from "@/lib/backend-api";
 import type { CreatorsSearchParams } from "../_lib/search-params";
@@ -173,18 +183,16 @@ function fallbackCreatedAt(artifacts: HistoricalCreatorArtifacts): Date {
  * against the Main-DB user table (which carries the current role).
  */
 async function getEverCreatorCandidateIds(): Promise<Set<string>> {
-  const db = await getDb();
-
   // Main DB artifacts: distinct user_ids from each creator-only table.
   // These run on the same DB so we issue them in parallel.
   const [codeOwners, withdrawalLimitOwners, payoutOwners] = await Promise.all([
-    db.$queryRawUnsafe<{ user_id: string }[]>(
+    queryMainRows<{ user_id: string }[]>(
       `SELECT DISTINCT user_id FROM affiliate_codes WHERE user_id IS NOT NULL`,
     ),
-    db.$queryRawUnsafe<{ user_id: string }[]>(
+    queryMainRows<{ user_id: string }[]>(
       `SELECT DISTINCT user_id FROM creator_withdrawal_limits WHERE user_id IS NOT NULL`,
     ),
-    db.$queryRawUnsafe<{ affiliate_user_id: string }[]>(
+    queryMainRows<{ affiliate_user_id: string }[]>(
       `SELECT DISTINCT affiliate_user_id FROM affiliate_payouts WHERE affiliate_user_id IS NOT NULL`,
     ),
   ]);
@@ -198,41 +206,41 @@ async function getEverCreatorCandidateIds(): Promise<Set<string>> {
     fillTargets,
     audits,
   ] = await Promise.all([
-    adminDb.creator_deals.findMany({
-      select: { target_user_id: true },
-      distinct: ["target_user_id"],
-    }),
-    adminDb.creator_webhooks.findMany({
-      select: { target_user_id: true },
-      distinct: ["target_user_id"],
-    }),
-    adminDb.creator_socials.findMany({
-      select: { target_user_id: true },
-      distinct: ["target_user_id"],
-    }),
-    adminDb.creator_balance_fills.findMany({
-      select: { target_user_id: true },
-      distinct: ["target_user_id"],
-    }),
+    adminDrizzle
+      .selectDistinct({ target_user_id: creator_deals.target_user_id })
+      .from(creator_deals),
+    adminDrizzle
+      .selectDistinct({ target_user_id: creator_webhooks.target_user_id })
+      .from(creator_webhooks),
+    adminDrizzle
+      .selectDistinct({ target_user_id: creator_socials.target_user_id })
+      .from(creator_socials),
+    adminDrizzle
+      .selectDistinct({ target_user_id: creator_balance_fills.target_user_id })
+      .from(creator_balance_fills),
     // Audit rows we care about — the four creator-signal event types +
     // `role_changed` (which we then split client-side on metadata so we
     // catch BOTH promotion-to-creator and demotion-from-creator rows).
-    adminDb.admin_audit_events.findMany({
-      where: {
-        event_type: {
-          in: [
+    adminDrizzle
+      .select({
+        event_type: admin_audit_events.event_type,
+        target_user_id: admin_audit_events.target_user_id,
+        metadata: admin_audit_events.metadata,
+      })
+      .from(admin_audit_events)
+      .where(
+        and(
+          inArray(admin_audit_events.event_type, [
             "user_made_creator",
             "creator_deal_created",
             "creator_deal_deleted",
             "creator_social_approved",
             "creator_force_reset_to_user",
             "role_changed",
-          ],
-        },
-        target_user_id: { not: null },
-      },
-      select: { event_type: true, target_user_id: true, metadata: true },
-    }),
+          ]),
+          isNotNull(admin_audit_events.target_user_id),
+        ),
+      ),
   ]);
 
   const candidateIds = new Set<string>();
@@ -336,24 +344,39 @@ async function getHistoricalArtifactsByUser(
   if (userIds.length === 0) return result;
 
   const [adminDeals, audits] = await Promise.all([
-    adminDb.creator_deals.findMany({
-      where: { target_user_id: { in: userIds } },
-      select: {
-        id: true,
-        target_user_id: true,
-        status: true,
-        amount: true,
-        start_date: true,
-        end_date: true,
-        created_at: true,
-      },
-      orderBy: { created_at: "desc" },
-    }) as Promise<AdminCreatorDealRow[]>,
-    adminDb.admin_audit_events.findMany({
-      where: {
-        target_user_id: { in: userIds },
-        event_type: {
-          in: [
+    adminDrizzle
+      .select({
+        id: creator_deals.id,
+        target_user_id: creator_deals.target_user_id,
+        status: creator_deals.status,
+        amount: creator_deals.amount,
+        start_date: creator_deals.start_date,
+        end_date: creator_deals.end_date,
+        created_at: creator_deals.created_at,
+      })
+      .from(creator_deals)
+      .where(inArray(creator_deals.target_user_id, userIds))
+      .orderBy(desc(creator_deals.created_at))
+      .then((rows): AdminCreatorDealRow[] =>
+        rows.map((row) => ({
+          ...row,
+          start_date: new Date(row.start_date),
+          end_date: row.end_date ? new Date(row.end_date) : null,
+          created_at: new Date(row.created_at),
+        })),
+      ),
+    adminDrizzle
+      .select({
+        event_type: admin_audit_events.event_type,
+        target_user_id: admin_audit_events.target_user_id,
+        metadata: admin_audit_events.metadata,
+        created_at: admin_audit_events.created_at,
+      })
+      .from(admin_audit_events)
+      .where(
+        and(
+          inArray(admin_audit_events.target_user_id, userIds),
+          inArray(admin_audit_events.event_type, [
             "user_made_creator",
             "creator_deal_created",
             "creator_deal_deleted",
@@ -361,17 +384,16 @@ async function getHistoricalArtifactsByUser(
             "creator_social_approved",
             "creator_force_reset_to_user",
             "role_changed",
-          ],
-        },
-      },
-      select: {
-        event_type: true,
-        target_user_id: true,
-        metadata: true,
-        created_at: true,
-      },
-      orderBy: { created_at: "desc" },
-    }) as Promise<CreatorAuditEvent[]>,
+          ]),
+        ),
+      )
+      .orderBy(desc(admin_audit_events.created_at))
+      .then((rows): CreatorAuditEvent[] =>
+        rows.map((row) => ({
+          ...row,
+          created_at: new Date(row.created_at),
+        })),
+      ),
   ]);
 
   const dealIdsByUser = new Map<string, Set<string>>();
@@ -481,23 +503,29 @@ async function getExCreatorUsers(
   ]);
   if (candidateIds.size === 0) return [];
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const excluded = new Set(excludedIds);
   const ids = [...candidateIds].filter((id) => !excluded.has(id));
   if (ids.length === 0) return [];
 
   const [users, artifactsByUser] = await Promise.all([
-    db.user.findMany({
-      where: { id: { in: ids } },
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        image: true,
-        role: true,
-        created_at: true,
-      },
-    }),
+    db
+      .select({
+        id: mainUsers.id,
+        username: mainUsers.username,
+        email: mainUsers.email,
+        image: mainUsers.image,
+        role: mainUsers.role,
+        created_at: mainUsers.created_at,
+      })
+      .from(mainUsers)
+      .where(inArray(mainUsers.id, ids))
+      .then((rows) =>
+        rows.map((row) => ({
+          ...row,
+          created_at: new Date(row.created_at),
+        })),
+      ),
     getHistoricalArtifactsByUser(ids),
   ]);
   const usersById = new Map(users.map((u) => [u.id, u]));

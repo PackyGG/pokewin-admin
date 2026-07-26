@@ -2,9 +2,9 @@
 
 import { revalidatePath, revalidateTag } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
+import { sql } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
-import { Prisma } from "@/generated/admin-prisma/client";
+import { adminDrizzle } from "@/lib/admin-db";
 
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { isUuid } from "@/lib/utils/ids";
@@ -175,7 +175,7 @@ function buildSourceSnapshot(source: Awaited<ReturnType<typeof getPackEditPool>>
 
 /** Pull a `valueByCard` lookup out of a source_snapshot JSON blob. */
 function valueByCardFromSnapshot(
-  snapshot: Prisma.JsonValue,
+  snapshot: unknown,
 ): Map<string, number> {
   const out = new Map<string, number>();
   if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot))
@@ -227,7 +227,7 @@ function valueByCardFromSnapshot(
  * fingerprinting a partial pool.
  */
 function poolFingerprintFromSnapshot(
-  snapshot: Prisma.JsonValue,
+  snapshot: unknown,
 ): string | null {
   if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
     return null;
@@ -356,19 +356,21 @@ async function seedDraftForPack(
   const sourceSnapshot = buildSourceSnapshot(source);
 
   try {
-    const row = await adminDb.pack_retune_drafts.create({
-      data: {
-        pack_id: packId,
-        status: "draft",
-        proposed_price: source.price,
-        proposed_pool: proposedPool as unknown as Prisma.InputJsonValue,
-        computed_risk: computedRisk as unknown as Prisma.InputJsonValue,
-        source_snapshot: sourceSnapshot as unknown as Prisma.InputJsonValue,
-        created_by: session.userId,
-        last_edited_by: session.userId,
-      },
-      select: { id: true },
-    });
+    const inserted = await adminDrizzle.execute<{ id: string }>(sql`
+      INSERT INTO pack_retune_drafts
+        (pack_id, status, proposed_price, proposed_pool, computed_risk,
+         source_snapshot, created_by, last_edited_by)
+      VALUES (
+        ${packId}::uuid, 'draft', ${source.price},
+        ${JSON.stringify(proposedPool)}::jsonb,
+        ${JSON.stringify(computedRisk)}::jsonb,
+        ${JSON.stringify(sourceSnapshot)}::jsonb,
+        ${session.userId}::uuid, ${session.userId}::uuid
+      )
+      RETURNING id
+    `);
+    const row = inserted.rows[0];
+    if (!row) throw new Error("Draft could not be created.");
 
     await tryAudit(session.userId, "pack_draft_seeded", {
       pack_id: packId,
@@ -381,13 +383,17 @@ async function seedDraftForPack(
   } catch (err) {
     // Partial-unique collision → a pending draft already exists. Return its id.
     if (
-      err instanceof Prisma.PrismaClientKnownRequestError &&
-      err.code === "P2002"
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      (err as { code?: string }).code === "23505"
     ) {
-      const existing = await adminDb.pack_retune_drafts.findFirst({
-        where: { pack_id: packId, status: "draft" },
-        select: { id: true },
-      });
+      const existingResult = await adminDrizzle.execute<{ id: string }>(sql`
+        SELECT id FROM pack_retune_drafts
+        WHERE pack_id = ${packId}::uuid AND status = 'draft'
+        LIMIT 1
+      `);
+      const existing = existingResult.rows[0];
       if (existing) {
         return { draftId: existing.id, created: false };
       }
@@ -432,10 +438,12 @@ export async function bulkSeedAllActiveDrafts(
   if (ids.length === 0) {
     return { seeded: 0, skipped: 0, errors: [] };
   }
-  const existing = await adminDb.pack_retune_drafts.findMany({
-    where: { pack_id: { in: ids }, status: "draft" },
-    select: { pack_id: true },
-  });
+  const existing = (
+    await adminDrizzle.execute<{ pack_id: string }>(sql`
+      SELECT pack_id FROM pack_retune_drafts
+      WHERE pack_id = ANY(${ids}::uuid[]) AND status = 'draft'
+    `)
+  ).rows;
   const alreadyPending = new Set(existing.map((r) => r.pack_id));
 
   let seeded = 0;
@@ -488,15 +496,17 @@ export async function applyAutoRetuneToDraft(
   const session = await requireDraftOperator();
   if (!isUuid(packId)) throw new Error("Invalid pack id");
 
-  const existing = await adminDb.pack_retune_drafts.findFirst({
-    where: { pack_id: packId, status: "draft" },
-    select: {
-      id: true,
-      proposed_price: true,
-      proposed_pool: true,
-      source_snapshot: true,
-    },
-  });
+  const existingResult = await adminDrizzle.execute<{
+    id: string; proposed_price: string; proposed_pool: unknown;
+    source_snapshot: unknown;
+  }>(sql`
+    SELECT id, proposed_price::text AS proposed_price,
+           proposed_pool, source_snapshot
+    FROM pack_retune_drafts
+    WHERE pack_id = ${packId}::uuid AND status = 'draft'
+    LIMIT 1
+  `);
+  const existing = existingResult.rows[0];
   if (!existing) throw new Error("No pending draft for this pack.");
 
   // READ-ONLY MAIN dry-run via the existing planner (owner/operator-gated).
@@ -526,14 +536,14 @@ export async function applyAutoRetuneToDraft(
   const price = Number(existing.proposed_price.toString());
   const computedRisk = riskForPool(nextPool, valueByCard, price);
 
-  await adminDb.pack_retune_drafts.update({
-    where: { id: existing.id },
-    data: {
-      proposed_pool: nextPool as unknown as Prisma.InputJsonValue,
-      computed_risk: computedRisk as unknown as Prisma.InputJsonValue,
-      last_edited_by: session.userId,
-    },
-  });
+  await adminDrizzle.execute(sql`
+    UPDATE pack_retune_drafts
+    SET proposed_pool = ${JSON.stringify(nextPool)}::jsonb,
+        computed_risk = ${JSON.stringify(computedRisk)}::jsonb,
+        last_edited_by = ${session.userId}::uuid,
+        last_edited_at = NOW()
+    WHERE id = ${existing.id}::uuid
+  `);
 
   await tryAudit(session.userId, "pack_draft_auto_retuned", {
     pack_id: packId,
@@ -569,15 +579,17 @@ export async function applyAutoRepriceToDraft(
   const session = await requireDraftOperator();
   if (!isUuid(packId)) throw new Error("Invalid pack id");
 
-  const existing = await adminDb.pack_retune_drafts.findFirst({
-    where: { pack_id: packId, status: "draft" },
-    select: {
-      id: true,
-      proposed_price: true,
-      proposed_pool: true,
-      source_snapshot: true,
-    },
-  });
+  const existingResult = await adminDrizzle.execute<{
+    id: string; proposed_price: string; proposed_pool: unknown;
+    source_snapshot: unknown;
+  }>(sql`
+    SELECT id, proposed_price::text AS proposed_price,
+           proposed_pool, source_snapshot
+    FROM pack_retune_drafts
+    WHERE pack_id = ${packId}::uuid AND status = 'draft'
+    LIMIT 1
+  `);
+  const existing = existingResult.rows[0];
   if (!existing) throw new Error("No pending draft for this pack.");
 
   // Fresh aggregate composition (read-only MAIN) — same path the live reprice
@@ -639,14 +651,14 @@ export async function applyAutoRepriceToDraft(
     : [];
   const computedRisk = riskForPool(pool, valueByCard, plan.newPrice);
 
-  await adminDb.pack_retune_drafts.update({
-    where: { id: existing.id },
-    data: {
-      proposed_price: plan.newPrice,
-      computed_risk: computedRisk as unknown as Prisma.InputJsonValue,
-      last_edited_by: session.userId,
-    },
-  });
+  await adminDrizzle.execute(sql`
+    UPDATE pack_retune_drafts
+    SET proposed_price = ${plan.newPrice},
+        computed_risk = ${JSON.stringify(computedRisk)}::jsonb,
+        last_edited_by = ${session.userId}::uuid,
+        last_edited_at = NOW()
+    WHERE id = ${existing.id}::uuid
+  `);
 
   await tryAudit(session.userId, "pack_draft_auto_repriced", {
     pack_id: packId,
@@ -690,10 +702,14 @@ export async function discardDraft(
   const session = await requireDraftOperator();
   if (!isUuid(packId)) throw new Error("Invalid pack id");
 
-  const existing = await adminDb.pack_retune_drafts.findFirst({
-    where: { pack_id: packId, status: "draft" },
-    select: { id: true, notes: true },
-  });
+  const existingResult = await adminDrizzle.execute<{
+    id: string; notes: string | null;
+  }>(sql`
+    SELECT id, notes FROM pack_retune_drafts
+    WHERE pack_id = ${packId}::uuid AND status = 'draft'
+    LIMIT 1
+  `);
+  const existing = existingResult.rows[0];
   if (!existing) throw new Error("No pending draft for this pack.");
 
   const nextNotes =
@@ -701,16 +717,15 @@ export async function discardDraft(
       ? `${existing.notes ? `${existing.notes}\n` : ""}[discarded] ${reason.trim()}`
       : existing.notes;
 
-  await adminDb.pack_retune_drafts.update({
-    where: { id: existing.id },
-    data: {
-      status: "discarded",
-      discarded_at: new Date(),
-      discarded_by: session.userId,
-      last_edited_by: session.userId,
-      ...(nextNotes !== existing.notes ? { notes: nextNotes } : {}),
-    },
-  });
+  await adminDrizzle.execute(sql`
+    UPDATE pack_retune_drafts
+    SET status = 'discarded', discarded_at = NOW(),
+        discarded_by = ${session.userId}::uuid,
+        last_edited_by = ${session.userId}::uuid,
+        last_edited_at = NOW(),
+        notes = ${nextNotes}
+    WHERE id = ${existing.id}::uuid
+  `);
 
   await tryAudit(session.userId, "pack_draft_discarded", {
     pack_id: packId,
@@ -775,15 +790,17 @@ async function pushDraftToProdInner(
   const session = await requireDraftOperator();
   if (!isUuid(packId)) throw new Error("Invalid pack id");
 
-  const draft = await adminDb.pack_retune_drafts.findFirst({
-    where: { pack_id: packId, status: "draft" },
-    select: {
-      id: true,
-      proposed_price: true,
-      proposed_pool: true,
-      source_snapshot: true,
-    },
-  });
+  const draftResult = await adminDrizzle.execute<{
+    id: string; proposed_price: string; proposed_pool: unknown;
+    source_snapshot: unknown;
+  }>(sql`
+    SELECT id, proposed_price::text AS proposed_price,
+           proposed_pool, source_snapshot
+    FROM pack_retune_drafts
+    WHERE pack_id = ${packId}::uuid AND status = 'draft'
+    LIMIT 1
+  `);
+  const draft = draftResult.rows[0];
   if (!draft) throw new Error("No pending draft for this pack.");
 
   const pool = Array.isArray(draft.proposed_pool)
@@ -836,15 +853,14 @@ async function pushDraftToProdInner(
   // Flip the draft to 'pushed' (kept as audit). Best-effort wrt admin-DB: the
   // MAIN write already committed, so a failure here is logged but NOT thrown.
   try {
-    await adminDb.pack_retune_drafts.update({
-      where: { id: draft.id },
-      data: {
-        status: "pushed",
-        pushed_at: new Date(),
-        pushed_by: session.userId,
-        last_edited_by: session.userId,
-      },
-    });
+    await adminDrizzle.execute(sql`
+      UPDATE pack_retune_drafts
+      SET status = 'pushed', pushed_at = NOW(),
+          pushed_by = ${session.userId}::uuid,
+          last_edited_by = ${session.userId}::uuid,
+          last_edited_at = NOW()
+      WHERE id = ${draft.id}::uuid
+    `);
   } catch (err) {
     console.error("pushDraftToProd: draft status flip failed", err);
   }
@@ -917,11 +933,13 @@ export async function pushAllDrafts(): Promise<
 async function pushAllDraftsInner(): Promise<PushAllDraftsResult> {
   const session = await requireDraftOperator();
 
-  const drafts = await adminDb.pack_retune_drafts.findMany({
-    where: { status: "draft" },
-    orderBy: { last_edited_at: "desc" },
-    select: { id: true, pack_id: true },
-  });
+  const drafts = (
+    await adminDrizzle.execute<{ id: string; pack_id: string }>(sql`
+      SELECT id, pack_id FROM pack_retune_drafts
+      WHERE status = 'draft'
+      ORDER BY last_edited_at DESC
+    `)
+  ).rows;
 
   const pushed: PushDraftResult[] = [];
   const failed: { packId: string; draftId: string | null; error: string }[] = [];

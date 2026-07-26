@@ -1,12 +1,16 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { adminDb } from "@/lib/admin-db";
-import { dbForEnv } from "@/lib/db";
+import { eq, sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { crypto_fee_profit_counter } from "@/lib/db-schema/admin/schema";
+import { drizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
+import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { formatDate } from "@/lib/utils/format";
 import { withTiming } from "@/lib/observability/query-timings";
+import { isPostgresError } from "@/lib/postgres-errors";
 
 /**
  * Crypto fee profit — ANCHORED, DURABLE, MONOTONIC counter.
@@ -51,7 +55,7 @@ import { withTiming } from "@/lib/observability/query-timings";
  * ─── Drift / degrade ─────────────────────────────────────────────────────
  *
  *   • Admin row missing (table/row not provisioned) → `available: false`
- *     (the muted card renders). Caught via P2021/P2025/42P01.
+ *     (the muted card renders). Caught via SQLSTATE 42P01.
  *   • Game-DB crypto columns absent (host swap to a partial schema) → fall
  *     back to the STORED admin value (still shows the number) rather than
  *     throwing; the monotonic guarantee holds because we never lower it.
@@ -86,9 +90,7 @@ const COUNTER_ID = "singleton";
 
 /** Postgres error codes meaning the table/row isn't provisioned (degrade). */
 function isMissingObjectError(err: unknown): boolean {
-  const code = (err as { code?: string })?.code;
-  // P2021 = table does not exist; P2025 = record not found; 42P01 = undefined_table.
-  return code === "P2021" || code === "P2025" || code === "42P01";
+  return isPostgresError(err, "42P01");
 }
 
 /**
@@ -107,12 +109,12 @@ const cachedSinceAnchorVolume = unstable_cache(
     withdrawalVolumeUsd: number;
   }> => {
     return withTiming("dashboard.cryptoFeeCounter.volume", async () => {
-      const db = dbForEnv(env);
+      const db = drizzleForEnv(env);
 
       // Drift-guard: prove the crypto columns this query needs exist.
-      const guard = await db.$queryRaw<
+      const guard = await queryRows<
         { has_crypto_asset: boolean; has_amount: boolean }[]
-      >`
+      >(db, `
         SELECT
           EXISTS (
             SELECT 1 FROM information_schema.columns
@@ -124,7 +126,7 @@ const cachedSinceAnchorVolume = unstable_cache(
             WHERE table_schema = 'public' AND table_name = 'ledger_transactions'
               AND column_name = 'amount'
           ) AS has_amount
-      `;
+      `);
       const g = guard[0];
       if (!g || !g.has_crypto_asset || !g.has_amount) {
         return {
@@ -136,9 +138,9 @@ const cachedSinceAnchorVolume = unstable_cache(
 
       // Completed crypto volume SINCE the anchor. Same source set as the
       // all-time tile, bounded by created_at >= count_start_at.
-      const volRows = await db.$queryRaw<
+      const volRows = await queryRows<
         { deposit_usd: string | null; withdrawal_usd: string | null }[]
-      >`
+      >(db, `
         SELECT
           SUM(amount) FILTER (
             WHERE type::text = 'deposit'
@@ -150,8 +152,8 @@ const cachedSinceAnchorVolume = unstable_cache(
         WHERE crypto_asset IS NOT NULL
           AND status::text = 'completed'
           AND type::text IN ('deposit', 'card_withdrawal', 'balance_withdrawal')
-          AND created_at >= ${countStartIso}::timestamptz
-      `;
+          AND created_at >= $1::timestamptz
+      `, countStartIso);
       return {
         available: true,
         depositVolumeUsd: toNumber(volRows[0]?.deposit_usd),
@@ -173,9 +175,8 @@ export async function getCryptoFeeProfitCounter(): Promise<CryptoFeeCounter> {
   // 1. Read the admin counter row. Missing table/row → unavailable.
   let row;
   try {
-    row = await adminDb.crypto_fee_profit_counter.findUnique({
-      where: { id: COUNTER_ID },
-    });
+    [row] = await adminDrizzle.select().from(crypto_fee_profit_counter)
+      .where(eq(crypto_fee_profit_counter.id, COUNTER_ID)).limit(1);
   } catch (err) {
     if (isMissingObjectError(err)) return UNAVAILABLE;
     throw err;
@@ -229,7 +230,7 @@ export async function getCryptoFeeProfitCounter(): Promise<CryptoFeeCounter> {
   //    a stored value (belt-and-braces with the useLive gate above).
   if (useLive && liveTotal > storedTotal) {
     try {
-      await adminDb.$executeRaw`
+      await adminDrizzle.execute(sql`
         UPDATE "crypto_fee_profit_counter"
         SET
           "total_fee_usd"      = GREATEST("total_fee_usd", ${newTotal}),
@@ -237,7 +238,7 @@ export async function getCryptoFeeProfitCounter(): Promise<CryptoFeeCounter> {
           "withdrawal_fee_usd" = GREATEST("withdrawal_fee_usd", ${newWithdrawal}),
           "updated_at"         = now()
         WHERE "id" = ${COUNTER_ID}
-      `;
+      `);
     } catch (err) {
       // A failed high-water write must never take the tile down — the
       // returned value is still correct for this render; the next render

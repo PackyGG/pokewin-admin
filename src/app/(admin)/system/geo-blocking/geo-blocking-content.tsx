@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import countries from "i18n-iso-countries";
 import enLocale from "i18n-iso-countries/langs/en.json";
-import { Ban, CreditCard, Globe, Layers, Search, ShieldCheck } from "lucide-react";
+import { Ban, CreditCard, Globe, Layers, MapPin, Search, ShieldCheck } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { KpiTile, SectionHeading } from "@/components/modern-panels";
@@ -12,10 +12,12 @@ import { CollapsibleSection } from "./collapsible-section";
 import {
   reloadCountryRestrictionsCache,
   seedMissingCountryRestrictions,
+  setGlobalFiatDeposits,
   toggleCountryRestriction,
   updateCountryRestrictionArray,
 } from "./actions";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import {
   RestrictionsTable,
   isRowRestricted,
@@ -24,6 +26,7 @@ import {
   type RestrictionRowData,
 } from "./restrictions-table";
 import type { CountryRestrictionRow } from "@/lib/queries/geo-blocking";
+import { isUsStateCode, usStateName } from "./us-states";
 
 countries.registerLocale(enLocale);
 
@@ -100,10 +103,15 @@ function filterByTerm(list: RestrictionRowData[], search: string): RestrictionRo
 }
 
 function toRestrictionRow(c: CountryRestrictionRow): RestrictionRowData {
+  const isState = isUsStateCode(c.countryCode);
   return {
     code: c.countryCode,
-    name: countries.getName(c.countryCode, "en") ?? c.countryCode,
-    glyph: flagEmoji(c.countryCode),
+    // US state rows (US-CA, …) aren't valid alpha-2, so resolve their name from
+    // the state map instead of i18n-iso-countries (which returns undefined).
+    name: isState
+      ? usStateName(c.countryCode)
+      : countries.getName(c.countryCode, "en") ?? c.countryCode,
+    glyph: isState ? "🇺🇸" : flagEmoji(c.countryCode),
     physicalWithdrawal: c.physicalWithdrawal,
     digitalWithdrawal: c.digitalWithdrawal,
     giftCardDeposit: c.giftCardDeposit,
@@ -148,12 +156,15 @@ export function GeoBlockingContent({
   // Local optimistic copy of the rows — see the "Scroll-fix" note above.
   const [rows, setRows] = useState(countryRestrictions);
   const [search, setSearch] = useState("");
-  const [tab, setTab] = useState<"blocked" | "other" | "itemWithdrawal" | "all">("blocked");
+  const [tab, setTab] = useState<
+    "blocked" | "other" | "itemWithdrawal" | "all" | "usStates"
+  >("all");
   const [itemWithdrawalOpen, setItemWithdrawalOpen] = useState(false);
   // In-flight country codes — see the "Per-row pending" note above.
   const [pendingCodes, setPendingCodes] = useState<Set<string>>(new Set());
   const [seeding, setSeeding] = useState(false);
   const [reloadingCache, setReloadingCache] = useState(false);
+  const [globalFiatPending, setGlobalFiatPending] = useState(false);
 
   async function handleReloadCache() {
     setReloadingCache(true);
@@ -189,6 +200,32 @@ export function GeoBlockingContent({
     } finally {
       setSeeding(false);
     }
+  }
+
+  // Global fiat-deposit switch — allow / disable fiat for EVERY country + US
+  // state in one write. Optimistically updates all local rows so the per-row
+  // Fiat toggles reflect it immediately; the server action bulk-writes + busts
+  // the backend cache. Rolls back on failure.
+  function handleGlobalFiat(allowed: boolean) {
+    const value: string[] = allowed ? [] : ["fiat"];
+    const previous = rows;
+    setRows((rs) => rs.map((r) => ({ ...r, lockedDepositsFiat: value })));
+    setGlobalFiatPending(true);
+    startTransition(async () => {
+      try {
+        const res = await setGlobalFiatDeposits(allowed);
+        toast.success(
+          `Fiat deposits ${allowed ? "allowed" : "disabled"} for all ${res.affected} entries`,
+        );
+      } catch (e) {
+        setRows(previous);
+        toast.error(
+          e instanceof Error ? e.message : "Failed to update fiat deposits",
+        );
+      } finally {
+        setGlobalFiatPending(false);
+      }
+    });
   }
 
   function beginPending(countryCode: string) {
@@ -260,14 +297,45 @@ export function GeoBlockingContent({
   }
 
   const restrictionRows = useMemo(() => rows.map(toRestrictionRow), [rows]);
-  const totalCount = restrictionRows.length;
+  // Split US state rows (US-CA, …) out of the country list so they get their
+  // OWN tab and don't pollute the country buckets/count. Both edit through the
+  // exact same actions — a `US-CA` row toggles like any other country_code.
+  const countryRows = useMemo(
+    () => restrictionRows.filter((r) => !isUsStateCode(r.code)),
+    [restrictionRows],
+  );
+  const stateRows = useMemo(
+    () => restrictionRows.filter((r) => isUsStateCode(r.code)),
+    [restrictionRows],
+  );
+  const totalCount = countryRows.length;
+  const statesRestricted = useMemo(
+    () => stateRows.filter((r) => isRowRestricted(r)).length,
+    [stateRows],
+  );
+
+  // Global fiat-deposit state across ALL rows (countries + states). `[]` on a
+  // row = fiat allowed; a non-empty lockedDepositsFiat = fiat disabled.
+  const fiatDisabledCount = useMemo(
+    () => restrictionRows.filter((r) => r.lockedDepositsFiat.length > 0).length,
+    [restrictionRows],
+  );
+  const allFiatAllowed = fiatDisabledCount === 0;
+  const globalFiatCaption =
+    restrictionRows.length === 0
+      ? ""
+      : fiatDisabledCount === 0
+        ? "Allowed in all countries & US states"
+        : fiatDisabledCount === restrictionRows.length
+          ? "Disabled everywhere"
+          : `${fiatDisabledCount} of ${restrictionRows.length} have fiat disabled`;
 
   const buckets = useMemo(() => {
     const blocked: RestrictionRowData[] = [];
     const itemWithdrawalOnly: RestrictionRowData[] = [];
     const other: RestrictionRowData[] = [];
     const open: RestrictionRowData[] = [];
-    for (const row of restrictionRows) {
+    for (const row of countryRows) {
       switch (classifyRow(row)) {
         case "blocked":
           blocked.push(row);
@@ -283,11 +351,15 @@ export function GeoBlockingContent({
       }
     }
     return { blocked, itemWithdrawalOnly, other, open };
-  }, [restrictionRows]);
+  }, [countryRows]);
 
   const searched = useMemo(
-    () => filterByTerm(restrictionRows, search),
-    [restrictionRows, search],
+    () => filterByTerm(countryRows, search),
+    [countryRows, search],
+  );
+  const searchedStates = useMemo(
+    () => filterByTerm(stateRows, search),
+    [stateRows, search],
   );
 
   const blockedRows = useMemo(
@@ -307,7 +379,7 @@ export function GeoBlockingContent({
     <div className="space-y-4">
       <SectionHeading icon={Globe} title="Geo Blocking" />
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <KpiTile label="Countries" value={String(totalCount)} icon={Globe} accent="blue" />
         <KpiTile
           label="Geo-Blocked"
@@ -333,13 +405,48 @@ export function GeoBlockingContent({
           icon={ShieldCheck}
           accent="emerald"
         />
+        <KpiTile
+          label="US States Restricted"
+          value={`${statesRestricted} / ${stateRows.length}`}
+          icon={MapPin}
+          accent="purple"
+        />
+      </div>
+
+      {/* Global fiat-deposit switch — flips locked_deposits_fiat for EVERY
+          country + US state at once (bulk write). Optimistic; the per-row Fiat
+          toggles in the tables reflect it immediately. */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3">
+        <div className="flex items-center gap-2.5">
+          <CreditCard className="size-4 text-muted-foreground" />
+          <div>
+            <div className="text-sm font-medium">Fiat deposits — global</div>
+            <div className="text-xs text-muted-foreground">{globalFiatCaption}</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span
+            className={`text-xs font-medium ${
+              allFiatAllowed
+                ? "text-muted-foreground"
+                : "text-rose-600 dark:text-rose-400"
+            }`}
+          >
+            {allFiatAllowed ? "Allowed everywhere" : "Disabled / mixed"}
+          </span>
+          <Switch
+            checked={allFiatAllowed}
+            disabled={globalFiatPending}
+            onCheckedChange={() => handleGlobalFiat(!allFiatAllowed)}
+          />
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="relative w-full sm:max-w-sm">
           <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
           <Input
-            placeholder="Search by country name or code..."
+            placeholder="Search country or US state name / code..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-8"
@@ -376,15 +483,18 @@ export function GeoBlockingContent({
 
       <Tabs
         value={tab}
-        onValueChange={(v) => setTab(v as "blocked" | "other" | "itemWithdrawal" | "all")}
+        onValueChange={(v) =>
+          setTab(v as "blocked" | "other" | "itemWithdrawal" | "all" | "usStates")
+        }
       >
         <TabsList className="flex-wrap h-auto">
+          <TabsTrigger value="all">All Countries ({searched.length})</TabsTrigger>
           <TabsTrigger value="blocked">Geo-Blocked ({blockedRows.length})</TabsTrigger>
           <TabsTrigger value="other">Other Restrictions ({otherRows.length})</TabsTrigger>
           <TabsTrigger value="itemWithdrawal">
             Item Withdrawal Disabled ({itemWithdrawalRows.length})
           </TabsTrigger>
-          <TabsTrigger value="all">All Countries ({searched.length})</TabsTrigger>
+          <TabsTrigger value="usStates">US States ({searchedStates.length})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="blocked">
@@ -464,6 +574,23 @@ export function GeoBlockingContent({
             onToggle={handleToggle}
             onArrayChange={handleArrayChange}
             emptyState={{ title: "No countries match your search" }}
+          />
+        </TabsContent>
+
+        <TabsContent value="usStates">
+          <RestrictionsTable
+            rows={searchedStates}
+            codeLabel="State"
+            pendingCodes={pendingCodes}
+            onToggle={handleToggle}
+            onArrayChange={handleArrayChange}
+            emptyState={{
+              title: search
+                ? "No US states match your search"
+                : "No US states found",
+              description:
+                "All 50 states + DC live here. Blocking a state stops access for users geolocated there — layered on top of any country-level US rule (the backend already enforces this).",
+            }}
           />
         </TabsContent>
       </Tabs>

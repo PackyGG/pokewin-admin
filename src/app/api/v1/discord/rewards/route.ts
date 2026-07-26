@@ -1,6 +1,14 @@
 import { z } from "zod";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 
-import { getProdDb } from "@/lib/db";
+import { getProdDrizzleDb } from "@/lib/db";
+import {
+  account,
+  rakeback_claims,
+  rakeback_config,
+  rewards,
+  user_rewards,
+} from "@/lib/db-schema/main/schema";
 import { toNumber } from "@/lib/utils/decimal";
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
 import { computeAllEntitlements } from "@/lib/creator-vip/compute";
@@ -45,7 +53,7 @@ import { computeAllEntitlements } from "@/lib/creator-vip/compute";
  *   an unlinked player "you have nothing", which is exactly the failure the bot
  *   must be able to distinguish.
  * • POST so the Discord ID stays out of access / proxy / error logs.
- * • Read-only, and `getProdDb()` (never `getDb()`): a machine caller must
+ * • Read-only, and `getProdDrizzleDb()`: a machine caller must
  *   always read prod, never the admin's dev/prod cookie toggle.
  * • Both reads are per-user index hits — `user_rewards.user_id` FK and the
  *   `rakeback_claims_user_id_rakeback_type_period_start_unique` index. No scans.
@@ -126,16 +134,17 @@ export const POST = withApiKey(
     }
 
     const { discordUserId } = parsed.data;
-    const db = getProdDb();
+    const db = getProdDrizzleDb();
 
     // Same single index probe as /discord/linked. providerId is asserted so a
     // same-valued account on another provider can't resolve to a Packy user.
-    const account = await db.account.findUnique({
-      where: { accountId: discordUserId },
-      select: { providerId: true, userId: true },
-    });
+    const [linkedAccount] = await db
+      .select({ providerId: account.providerId, userId: account.userId })
+      .from(account)
+      .where(eq(account.accountId, discordUserId))
+      .limit(1);
 
-    if (!account || account.providerId !== "discord") {
+    if (!linkedAccount || linkedAccount.providerId !== "discord") {
       return apiError(
         404,
         "not_linked",
@@ -143,33 +152,49 @@ export const POST = withApiKey(
       );
     }
 
-    const userId = account.userId;
+    const userId = linkedAccount.userId;
 
     const [unopenedRewards, rakebackByCadence, rakebackConfig] =
       await Promise.all([
-        db.user_rewards.findMany({
-          where: {
-            user_id: userId,
-            opened_at: null,
-            rewards: { type: "one_time" },
-          },
-          select: {
-            id: true,
-            rewards: { select: { name: true, cash_amount: true } },
-          },
-          orderBy: { granted_at: "asc" },
-          take: MAX_REWARD_ROWS,
-        }),
-        db.rakeback_claims.groupBy({
-          by: ["rakeback_type"],
-          where: { user_id: userId, claimed_at: null },
-          _sum: { rakeback_amount_usd: true },
-        }),
+        db
+          .select({
+            id: user_rewards.id,
+            reward_name: rewards.name,
+            cash_amount: rewards.cash_amount,
+          })
+          .from(user_rewards)
+          .innerJoin(rewards, eq(rewards.id, user_rewards.reward_id))
+          .where(
+            and(
+              eq(user_rewards.user_id, userId),
+              isNull(user_rewards.opened_at),
+              eq(rewards.type, "one_time"),
+            ),
+          )
+          .orderBy(asc(user_rewards.granted_at))
+          .limit(MAX_REWARD_ROWS),
+        db
+          .select({
+            rakeback_type: rakeback_claims.rakeback_type,
+            rakeback_amount_usd:
+              sql<string>`COALESCE(SUM(${rakeback_claims.rakeback_amount_usd}), 0)`,
+          })
+          .from(rakeback_claims)
+          .where(
+            and(
+              eq(rakeback_claims.user_id, userId),
+              isNull(rakeback_claims.claimed_at),
+            ),
+          )
+          .groupBy(rakeback_claims.rakeback_type),
         // Operator-facing cadence labels ("Daily Rakeback"). Falls back to a
         // derived title if a cadence has no config row.
-        db.rakeback_config.findMany({
-          select: { type: true, display_name: true },
-        }),
+        db
+          .select({
+            type: rakeback_config.type,
+            display_name: rakeback_config.display_name,
+          })
+          .from(rakeback_config),
       ]);
 
     const labelByCadence = new Map(
@@ -181,11 +206,11 @@ export const POST = withApiKey(
     for (const row of unopenedRewards) {
       // cash_amount is nullable: many rewards grant PACKS, not cash. Emit the
       // amount only when there genuinely is one rather than implying $0.
-      const cash = row.rewards.cash_amount;
+      const cash = row.cash_amount;
       const amount = cash == null ? null : round2(toNumber(cash));
       claimable.push({
         id: `ur_${row.id}`,
-        name: row.rewards.name,
+        name: row.reward_name,
         ...(amount != null && amount > 0
           ? { amount, currency: "USD" }
           : {}),
@@ -193,7 +218,7 @@ export const POST = withApiKey(
     }
 
     for (const row of rakebackByCadence) {
-      const total = round2(toNumber(row._sum.rakeback_amount_usd ?? 0));
+      const total = round2(toNumber(row.rakeback_amount_usd));
       if (total <= 0) continue;
       claimable.push({
         id: `rb_${row.rakeback_type}`,

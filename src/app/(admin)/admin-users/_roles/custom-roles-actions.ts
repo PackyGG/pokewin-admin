@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
 import { require2FA } from "@/lib/require-2fa";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -12,10 +13,12 @@ import {
 } from "@/app/(admin)/settings/roles/permissions-utils";
 import {
   loadUserPermissionState,
+  loadUserPermissionStates,
   rematerializeForRoleChange,
   getBaselineMap,
 } from "@/lib/permissions/write-paths";
 import { normalizeLandingRouteInput } from "@/lib/role-landing";
+import { isPostgresError } from "@/lib/postgres-errors";
 
 // ---------------------------------------------------------------------------
 // Custom roles = named, reusable permission presets.
@@ -63,8 +66,7 @@ function isReservedCustomRoleName(name: string): boolean {
 }
 
 function isUniqueViolation(err: unknown): boolean {
-  const code = (err as { code?: string })?.code;
-  if (code === "P2002") return true;
+  if (isPostgresError(err, "23505")) return true;
   const msg = err instanceof Error ? err.message.toLowerCase() : "";
   return msg.includes("unique") || msg.includes("duplicate");
 }
@@ -75,18 +77,17 @@ function isUniqueViolation(err: unknown): boolean {
 
 export async function listRoles(): Promise<RoleRow[]> {
   await requireAdmin();
-  const roles = await adminDb.admin_roles.findMany({
-    orderBy: { name: "asc" },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      capabilities: true,
-      created_at: true,
-      updated_at: true,
-      _count: { select: { admin_users: true } },
-    },
-  });
+  const roles = (await adminDrizzle.execute<{
+    id: string; name: string; description: string | null; capabilities: string[];
+    created_at: Date; updated_at: Date; user_count: string;
+  }>(sql`
+    SELECT r.id::text, r.name, r.description, r.capabilities,
+           r.created_at, r.updated_at, COUNT(u.id)::text AS user_count
+    FROM admin_roles r
+    LEFT JOIN admin_users u ON u.role_id = r.id
+    GROUP BY r.id
+    ORDER BY r.name ASC
+  `)).rows;
   return roles.map((r) => ({
     id: r.id,
     name: r.name,
@@ -94,7 +95,7 @@ export async function listRoles(): Promise<RoleRow[]> {
     capabilities: r.capabilities,
     created_at: r.created_at.toISOString(),
     updated_at: r.updated_at.toISOString(),
-    user_count: r._count.admin_users,
+    user_count: Number(r.user_count),
   }));
 }
 
@@ -111,28 +112,27 @@ export async function listAssignablePresets(): Promise<
   { id: string; name: string }[]
 > {
   await requireAdmin();
-  const rows = await adminDb.admin_roles.findMany({
-    where: { is_system: false },
-    orderBy: { name: "asc" },
-    select: { id: true, name: true },
-  });
+  const rows = (await adminDrizzle.execute<{ id: string; name: string }>(sql`
+    SELECT id::text, name FROM admin_roles
+    WHERE NOT is_system
+    ORDER BY name ASC
+  `)).rows;
   return rows.map((r) => ({ id: r.id, name: r.name }));
 }
 
 export async function getRole(id: string): Promise<RoleRow | null> {
   await requireAdmin();
-  const r = await adminDb.admin_roles.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      capabilities: true,
-      created_at: true,
-      updated_at: true,
-      _count: { select: { admin_users: true } },
-    },
-  });
+  const r = (await adminDrizzle.execute<{
+    id: string; name: string; description: string | null; capabilities: string[];
+    created_at: Date; updated_at: Date; user_count: string;
+  }>(sql`
+    SELECT r.id::text, r.name, r.description, r.capabilities,
+           r.created_at, r.updated_at, COUNT(u.id)::text AS user_count
+    FROM admin_roles r
+    LEFT JOIN admin_users u ON u.role_id = r.id
+    WHERE r.id = ${id}::uuid
+    GROUP BY r.id
+  `)).rows[0];
   if (!r) return null;
   return {
     id: r.id,
@@ -141,7 +141,7 @@ export async function getRole(id: string): Promise<RoleRow | null> {
     capabilities: r.capabilities,
     created_at: r.created_at.toISOString(),
     updated_at: r.updated_at.toISOString(),
-    user_count: r._count.admin_users,
+    user_count: Number(r.user_count),
   };
 }
 
@@ -207,15 +207,11 @@ export async function createRole(
   }
 
   try {
-    const role = await adminDb.admin_roles.create({
-      data: {
-        name,
-        description: description ?? null,
-        is_system: false,
-        capabilities,
-      },
-      select: { id: true },
-    });
+    const role = (await adminDrizzle.execute<{ id: string }>(sql`
+      INSERT INTO admin_roles (name, description, is_system, capabilities)
+      VALUES (${name}, ${description ?? null}, false, ${capabilities})
+      RETURNING id::text
+    `)).rows[0]!;
 
     await createAdminAuditEvent({
       adminUserId: session.userId,
@@ -265,10 +261,12 @@ export async function updateRole(
     landingRouteToWrite = normalized;
   }
 
-  const existing = await adminDb.admin_roles.findUnique({
-    where: { id },
-    select: { id: true, name: true, capabilities: true, is_system: true },
-  });
+  const existing = (await adminDrizzle.execute<{
+    id: string; name: string; capabilities: string[]; is_system: boolean;
+  }>(sql`
+    SELECT id::text, name, capabilities, is_system
+    FROM admin_roles WHERE id = ${id}::uuid LIMIT 1
+  `)).rows[0];
   if (!existing) return { ok: false, error: "Role not found" };
 
   // HARD GUARD: this action edits CUSTOM roles only. A built-in (system) row's
@@ -301,10 +299,9 @@ export async function updateRole(
   // derived from the gap between their current allowed_pages and their OLD
   // baseline (built-in roles ∪ the role's OLD capabilities). Re-materializing
   // against the NEW custom-role capabilities keeps every manual adjustment.
-  const assigned = await adminDb.admin_users.findMany({
-    where: { role_id: id },
-    select: { id: true },
-  });
+  const assigned = (await adminDrizzle.execute<{ id: string }>(sql`
+    SELECT id::text FROM admin_users WHERE role_id = ${id}::uuid
+  `)).rows;
 
   // Precompute each assigned user's re-materialized allowed_pages (reads run
   // outside the write transaction; the writes are batched atomically below).
@@ -312,42 +309,76 @@ export async function updateRole(
   // through every re-materialization (byte-equal to code at migration →
   // identical output).
   const baselines = await getBaselineMap();
-  const refreshed: { id: string; allowedPages: string[] }[] = [];
-  for (const u of assigned) {
-    const state = await loadUserPermissionState(u.id);
-    if (!state) continue;
+  const refreshed: {
+    id: string;
+    allowedPages: string[];
+    expectedAllowedPages: readonly string[];
+    expectedGrants: readonly string[];
+    expectedRevokes: readonly string[];
+  }[] = [];
+  const assignedStates = await loadUserPermissionStates(
+    assigned.map((user) => user.id),
+  );
+  for (const state of assignedStates) {
     const { allowedPages } = rematerializeForRoleChange(
       state,
       state.roles,
       capabilities, // the NEW custom-role capability set
       baselines,
     );
-    refreshed.push({ id: u.id, allowedPages });
+    refreshed.push({
+      id: state.id,
+      allowedPages,
+      expectedAllowedPages: state.allowedPages,
+      expectedGrants: state.override.grants,
+      expectedRevokes: state.override.revokes,
+    });
   }
 
   try {
-    await adminDb.$transaction([
-      adminDb.admin_roles.update({
-        where: { id },
-        data: {
-          name,
-          description: description ?? null,
-          capabilities,
-          // RoleV2 P4: write the validated landing route when supplied
-          // (string = set, null = cleared); omitted when undefined.
-          ...(landingRouteToWrite !== undefined
-            ? { landing_route: landingRouteToWrite }
-            : {}),
-        },
-      }),
-      ...refreshed.map((u) =>
-        adminDb.admin_users.update({
-          where: { id: u.id },
-          data: { allowed_pages: u.allowedPages },
-          select: { id: true },
-        }),
-      ),
-    ]);
+    await adminDrizzle.transaction(async (tx) => {
+      await tx.execute(sql`
+        UPDATE admin_roles
+        SET name = ${name}, description = ${description ?? null},
+            capabilities = ${capabilities},
+            landing_route = CASE WHEN ${landingRouteToWrite !== undefined}
+              THEN ${landingRouteToWrite ?? null} ELSE landing_route END,
+            updated_at = NOW()
+        WHERE id = ${id}::uuid
+      `);
+      if (refreshed.length > 0) {
+        const updatedUsers = await tx.execute(sql`
+          UPDATE admin_users au
+          SET allowed_pages = patch.allowed_pages, updated_at = NOW()
+          FROM jsonb_to_recordset(
+            ${JSON.stringify(
+              refreshed.map((user) => ({
+                id: user.id,
+                allowed_pages: user.allowedPages,
+                expected_allowed_pages: user.expectedAllowedPages,
+                expected_grants: user.expectedGrants,
+                expected_revokes: user.expectedRevokes,
+              })),
+            )}::jsonb
+          ) AS patch(
+            id uuid,
+            allowed_pages text[],
+            expected_allowed_pages text[],
+            expected_grants text[],
+            expected_revokes text[]
+          )
+          WHERE au.id = patch.id
+            AND COALESCE(au.allowed_pages, ARRAY[]::text[]) = patch.expected_allowed_pages
+            AND COALESCE(au.permission_grants, ARRAY[]::text[]) = patch.expected_grants
+            AND COALESCE(au.permission_revokes, ARRAY[]::text[]) = patch.expected_revokes
+        `);
+        if (updatedUsers.rowCount !== refreshed.length) {
+          throw new Error(
+            "A user's permissions changed concurrently; reload and retry",
+          );
+        }
+      }
+    });
   } catch (err) {
     if (isUniqueViolation(err)) {
       return { ok: false, error: "A role with that name already exists" };
@@ -383,10 +414,12 @@ export async function deleteRole(
   // NO 2FA; adding one only BLOCKS the dangerous path, never widens access.
   await require2FA(session.userId, code);
 
-  const existing = await adminDb.admin_roles.findUnique({
-    where: { id },
-    select: { id: true, name: true, is_system: true },
-  });
+  const existing = (await adminDrizzle.execute<{
+    id: string; name: string; is_system: boolean;
+  }>(sql`
+    SELECT id::text, name, is_system
+    FROM admin_roles WHERE id = ${id}::uuid LIMIT 1
+  `)).rows[0];
   if (!existing) return { ok: false, error: "Role not found" };
 
   // HARD GUARD: the six built-in (system) roles are the protected, undeletable
@@ -400,7 +433,7 @@ export async function deleteRole(
   // FK is onDelete: SetNull — assigned users keep their current
   // allowed_pages (their effective permissions are unchanged), they just
   // lose the role link and become purely per-user managed.
-  await adminDb.admin_roles.delete({ where: { id }, select: { id: true } });
+  await adminDrizzle.execute(sql`DELETE FROM admin_roles WHERE id = ${id}::uuid`);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -451,10 +484,10 @@ export async function assignRoleToAdminUser(
   // New preset (the role being assigned, if any). Empty when clearing.
   let newPreset: string[] = [];
   if (roleId) {
-    const newRole = await adminDb.admin_roles.findUnique({
-      where: { id: roleId },
-      select: { capabilities: true },
-    });
+    const newRole = (await adminDrizzle.execute<{ capabilities: string[] }>(sql`
+      SELECT capabilities FROM admin_roles
+      WHERE id = ${roleId}::uuid LIMIT 1
+    `)).rows[0];
     if (!newRole) return { ok: false, error: "Role not found" };
     newPreset = newRole.capabilities;
   }
@@ -470,11 +503,13 @@ export async function assignRoleToAdminUser(
     baselines,
   );
 
-  await adminDb.admin_users.update({
-    where: { id: adminUserId },
-    data: { role_id: roleId, allowed_pages: newAllowed },
-    select: { id: true },
-  });
+  await adminDrizzle.execute(sql`
+    UPDATE admin_users
+    SET role_id = ${roleId}::uuid,
+        allowed_pages = ${newAllowed},
+        updated_at = NOW()
+    WHERE id = ${adminUserId}::uuid
+  `);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -520,19 +555,22 @@ export async function duplicateRole(
   }
 
   // Read the source's caps + limits (works for a system or custom row).
-  const source = await adminDb.admin_roles.findUnique({
-    where: { id: sourceId },
-    select: {
-      capabilities: true,
-      description: true,
-      balance_limit_daily: true,
-      balance_limit_weekly: true,
-      balance_limit_monthly: true,
-      issuance_limit_daily: true,
-      issuance_limit_weekly: true,
-      issuance_limit_monthly: true,
-    },
-  });
+  const source = (await adminDrizzle.execute<{
+    capabilities: string[];
+    description: string | null;
+    balance_limit_daily: string | null;
+    balance_limit_weekly: string | null;
+    balance_limit_monthly: string | null;
+    issuance_limit_daily: string | null;
+    issuance_limit_weekly: string | null;
+    issuance_limit_monthly: string | null;
+  }>(sql`
+    SELECT capabilities, description,
+           balance_limit_daily::text, balance_limit_weekly::text,
+           balance_limit_monthly::text, issuance_limit_daily::text,
+           issuance_limit_weekly::text, issuance_limit_monthly::text
+    FROM admin_roles WHERE id = ${sourceId}::uuid LIMIT 1
+  `)).rows[0];
   if (!source) return { ok: false, error: "Source role not found" };
 
   // Sanitize the copied capabilities the same way createRole does (value-token
@@ -540,22 +578,22 @@ export async function duplicateRole(
   const capabilities = sanitizePermissionKeys([...source.capabilities]);
 
   try {
-    const role = await adminDb.admin_roles.create({
-      data: {
-        name,
-        description: source.description ?? null,
-        is_system: false,
-        capabilities,
-        // Copy the limit columns verbatim (NULLs stay NULL).
-        balance_limit_daily: source.balance_limit_daily,
-        balance_limit_weekly: source.balance_limit_weekly,
-        balance_limit_monthly: source.balance_limit_monthly,
-        issuance_limit_daily: source.issuance_limit_daily,
-        issuance_limit_weekly: source.issuance_limit_weekly,
-        issuance_limit_monthly: source.issuance_limit_monthly,
-      },
-      select: { id: true },
-    });
+    const role = (await adminDrizzle.execute<{ id: string }>(sql`
+      INSERT INTO admin_roles (
+        name, description, is_system, capabilities,
+        balance_limit_daily, balance_limit_weekly, balance_limit_monthly,
+        issuance_limit_daily, issuance_limit_weekly, issuance_limit_monthly
+      ) VALUES (
+        ${name}, ${source.description}, false, ${capabilities},
+        ${source.balance_limit_daily}::numeric,
+        ${source.balance_limit_weekly}::numeric,
+        ${source.balance_limit_monthly}::numeric,
+        ${source.issuance_limit_daily}::numeric,
+        ${source.issuance_limit_weekly}::numeric,
+        ${source.issuance_limit_monthly}::numeric
+      )
+      RETURNING id::text
+    `)).rows[0]!;
 
     await createAdminAuditEvent({
       adminUserId: session.userId,

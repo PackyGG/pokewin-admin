@@ -1,8 +1,8 @@
 "use server";
 
 import { revalidatePath, revalidateTag } from "next/cache";
-import { getDb } from "@/lib/db";
-import { adminDb } from "@/lib/admin-db";
+import { getDrizzleDb } from "@/lib/db";
+import { adminDrizzle, sql } from "@/lib/drizzle";
 import { requirePageAccess, requireAdmin } from "@/lib/dal";
 import { require2FA } from "@/lib/require-2fa";
 import { requireCapability } from "@/lib/require-capability";
@@ -26,7 +26,6 @@ import {
   buildUserSnapshot,
   snapshotToJsonValue,
 } from "@/lib/deleted-users/snapshot";
-import type { Prisma as AdminPrisma } from "@/generated/admin-prisma/client";
 import { ok, fail, type ServerActionResult } from "@/lib/errors/server-action-result";
 import { logError } from "@/lib/errors/logger";
 import { userDetailTag } from "@/lib/queries/users-detail-cache";
@@ -59,7 +58,7 @@ export async function banUser(
   userId: string,
   reason: string,
 ): Promise<ServerActionResult<{ userId: string }>> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/users");
   try {
     await requireCapability(session, "__can_ban_users", "ban users");
@@ -81,21 +80,23 @@ export async function banUser(
   const issuerMainUserId = await resolveAdminMainUserId(session.userId);
 
   try {
-    await db.$transaction([
-      db.user.update({
-        where: { id: userId },
-        data: {
-          is_banned: true,
-          banned_reason: reason,
-          banned_at: new Date(),
-          banned_by: issuerMainUserId,
-        },
-      }),
-      db.session.deleteMany({ where: { userId } }),
-    ]);
+    await db.transaction(async (tx) => {
+      const updated = await tx.execute(sql`
+        UPDATE "user"
+        SET is_banned = TRUE,
+            banned_reason = ${reason.trim()},
+            banned_at = NOW(),
+            banned_by = ${issuerMainUserId},
+            updated_at = NOW()
+        WHERE id = ${userId}
+        RETURNING id
+      `);
+      if (updated.rows.length === 0) throw new Error("No record was found");
+      await tx.execute(sql`DELETE FROM session WHERE "userId" = ${userId}`);
+    });
   } catch (err) {
     logError("users.ban", `ban transaction failed for ${userId}`, err);
-    // Prisma P2025 = record not found (user already deleted).
+    // The RETURNING guard reports a user that was already deleted.
     if (err instanceof Error && /No record was found/i.test(err.message)) {
       return fail("User not found.", "NOT_FOUND");
     }
@@ -123,21 +124,18 @@ export async function banUser(
 }
 
 export async function unbanUser(userId: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_ban_users", "unban users");
 
-  await db.$transaction([
-    db.user.update({
-      where: { id: userId },
-      data: {
-        is_banned: false,
-        banned_reason: null,
-        banned_at: null,
-        banned_by: null,
-      },
-    }),
-  ]);
+  const updated = await db.execute(sql`
+    UPDATE "user"
+    SET is_banned = FALSE, banned_reason = NULL, banned_at = NULL,
+        banned_by = NULL, updated_at = NOW()
+    WHERE id = ${userId}
+    RETURNING id
+  `);
+  if (updated.rows.length === 0) throw new Error("User not found");
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -159,7 +157,7 @@ export async function lockUser(
   userId: string,
   reason: string,
 ): Promise<ServerActionResult<{ userId: string }>> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/users");
   try {
     await requireCapability(session, "__can_lock_users", "lock user accounts");
@@ -180,17 +178,17 @@ export async function lockUser(
   const issuerMainUserId = await resolveAdminMainUserId(session.userId);
 
   try {
-    await db.$transaction([
-      db.user.update({
-        where: { id: userId },
-        data: {
-          is_locked: true,
-          locked_reason: reason,
-          locked_at: new Date(),
-          locked_by: issuerMainUserId,
-        },
-      }),
-    ]);
+    const updated = await db.execute(sql`
+      UPDATE "user"
+      SET is_locked = TRUE,
+          locked_reason = ${reason.trim()},
+          locked_at = NOW(),
+          locked_by = ${issuerMainUserId},
+          updated_at = NOW()
+      WHERE id = ${userId}
+      RETURNING id
+    `);
+    if (updated.rows.length === 0) throw new Error("No record was found");
   } catch (err) {
     logError("users.lock", `lock transaction failed for ${userId}`, err);
     if (err instanceof Error && /No record was found/i.test(err.message)) {
@@ -214,22 +212,18 @@ export async function lockUser(
 }
 
 export async function unlockUser(userId: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_lock_users", "unlock user accounts");
 
-  await db.$transaction([
-    db.user.update({
-      where: { id: userId },
-      data: {
-        is_locked: false,
-        locked_reason: null,
-        locked_at: null,
-        locked_by: null,
-        locked_until: null,
-      },
-    }),
-  ]);
+  const updated = await db.execute(sql`
+    UPDATE "user"
+    SET is_locked = FALSE, locked_reason = NULL, locked_at = NULL,
+        locked_by = NULL, locked_until = NULL, updated_at = NOW()
+    WHERE id = ${userId}
+    RETURNING id
+  `);
+  if (updated.rows.length === 0) throw new Error("User not found");
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -280,7 +274,7 @@ export async function exportAllUsersCsv(): Promise<{
 }
 
 export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_bulk_delete_users", "bulk-delete users");
   await require2FA(session.userId, totpCode);
@@ -288,10 +282,17 @@ export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
   if (userIds.length === 0) throw new Error("No users selected");
   if (userIds.length > 100) throw new Error("Max 100 users at once");
 
-  const users = await db.user.findMany({
-    where: { id: { in: userIds } },
-    select: { id: true, username: true, email: true },
-  });
+  const users = (
+    await db.execute<{
+      id: string;
+      username: string | null;
+      email: string | null;
+    }>(sql`
+      SELECT id, username, email
+      FROM "user"
+      WHERE id = ANY(${userIds}::text[])
+    `)
+  ).rows;
 
   const labels = new Map(
     users.map((u) => [u.id, u.username ?? u.email ?? u.id]),
@@ -302,9 +303,14 @@ export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
   // Build snapshots in parallel — each user's reads are independent.
   // If any snapshot build throws we abort the whole bulk delete; no
   // main-DB writes have happened yet so this is safe.
-  const snapshots = await Promise.all(
-    userIds.map((id) => buildUserSnapshot(db, id)),
-  );
+  const snapshots: Awaited<ReturnType<typeof buildUserSnapshot>>[] = [];
+  for (let offset = 0; offset < userIds.length; offset += 5) {
+    snapshots.push(
+      ...(await Promise.all(
+        userIds.slice(offset, offset + 5).map((id) => buildUserSnapshot(db, id)),
+      )),
+    );
+  }
 
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SNAPSHOT_RETENTION_MS);
@@ -313,35 +319,30 @@ export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
   // over individual upserts (not createMany) because JSONB + upsert
   // semantics + restored_at-clear-on-overwrite need per-row handling.
   // If the admin DB blows up here, the main DB hasn't been touched yet.
-  await Promise.all(
-    userIds.map((id, idx) => {
-      const snapshotJson = snapshotToJsonValue(
-        snapshots[idx],
-      ) as AdminPrisma.InputJsonValue;
-      return adminDb.admin_deleted_users.upsert({
-        where: { id },
-        create: {
-          id,
-          username: usernames.get(id) ?? null,
-          email: emails.get(id) ?? null,
-          deleted_at: now,
-          deleted_by: session.userId,
-          expires_at: expiresAt,
-          snapshot: snapshotJson,
-        },
-        update: {
-          username: usernames.get(id) ?? null,
-          email: emails.get(id) ?? null,
-          deleted_at: now,
-          deleted_by: session.userId,
-          expires_at: expiresAt,
-          snapshot: snapshotJson,
-          restored_at: null,
-          restored_by: null,
-        },
-      });
-    }),
-  );
+  const snapshotRows = userIds.map((id, idx) => ({
+    id,
+    username: usernames.get(id) ?? null,
+    email: emails.get(id) ?? null,
+    snapshot: snapshotToJsonValue(snapshots[idx]),
+  }));
+  await adminDrizzle.execute(sql`
+    INSERT INTO admin_deleted_users (
+      id, username, email, deleted_at, deleted_by, expires_at, snapshot
+    )
+    SELECT r.id, r.username, r.email, ${now}, ${session.userId},
+           ${expiresAt}, r.snapshot
+    FROM jsonb_to_recordset(${JSON.stringify(snapshotRows)}::jsonb)
+      AS r(id varchar(36), username varchar(255), email varchar(255), snapshot jsonb)
+    ON CONFLICT (id) DO UPDATE SET
+      username = EXCLUDED.username,
+      email = EXCLUDED.email,
+      deleted_at = EXCLUDED.deleted_at,
+      deleted_by = EXCLUDED.deleted_by,
+      expires_at = EXCLUDED.expires_at,
+      snapshot = EXCLUDED.snapshot,
+      restored_at = NULL,
+      restored_by = NULL
+  `);
 
   // Audit AFTER the snapshots land so the audit row references the
   // backups that actually exist.
@@ -362,10 +363,10 @@ export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
   // Destructive delete. On failure we roll back the snapshots we just
   // inserted — best-effort so /users/deleted doesn't fill with ghosts.
   try {
-    await db.user.deleteMany({ where: { id: { in: userIds } } });
+    await db.execute(sql`DELETE FROM "user" WHERE id = ANY(${userIds}::text[])`);
   } catch (err) {
-    await adminDb.admin_deleted_users
-      .deleteMany({ where: { id: { in: userIds } } })
+    await adminDrizzle
+      .execute(sql`DELETE FROM admin_deleted_users WHERE id = ANY(${userIds}::text[])`)
       .catch(() => {
         console.error(
           `[bulkDeleteUsers] failed to roll back ${userIds.length} snapshots after main-DB deleteMany failure`,
@@ -516,7 +517,7 @@ export async function bulkBanFilteredUsers(input: {
     );
   }
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const issuerMainUserId = await resolveAdminMainUserId(session.userId);
   const bannedAt = new Date();
 
@@ -526,20 +527,18 @@ export async function bulkBanFilteredUsers(input: {
   try {
     for (let i = 0; i < userIds.length; i += CHUNK) {
       const chunk = userIds.slice(i, i + CHUNK);
-      const [updated] = await db.$transaction([
-        db.user.updateMany({
-          where: { id: { in: chunk }, is_banned: false },
-          data: {
-            is_banned: true,
-            banned_reason: reason,
-            banned_at: bannedAt,
-            banned_by: issuerMainUserId,
-          },
-        }),
-        // Kick them out immediately, same as the single-user ban.
-        db.session.deleteMany({ where: { userId: { in: chunk } } }),
-      ]);
-      bannedCount += updated.count;
+      bannedCount += await db.transaction(async (tx) => {
+        const updated = await tx.execute<{ id: string }>(sql`
+          UPDATE "user"
+          SET is_banned = TRUE, banned_reason = ${reason},
+              banned_at = ${bannedAt}, banned_by = ${issuerMainUserId},
+              updated_at = NOW()
+          WHERE id = ANY(${chunk}::text[]) AND is_banned = FALSE
+          RETURNING id
+        `);
+        await tx.execute(sql`DELETE FROM session WHERE "userId" = ANY(${chunk}::text[])`);
+        return updated.rows.length;
+      });
     }
   } catch (err) {
     logError("users.bulkBan", "bulk ban transaction failed", err);
@@ -687,7 +686,7 @@ export async function bulkUnbanFilteredUsers(input: {
     );
   }
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
   // Snapshot BEFORE the write — the unban destroys these three columns and
   // this is the only place they survive.
@@ -698,15 +697,18 @@ export async function bulkUnbanFilteredUsers(input: {
     banned_at: Date | null;
   }>;
   try {
-    priorState = await db.user.findMany({
-      where: { id: { in: userIds } },
-      select: {
-        id: true,
-        username: true,
-        banned_reason: true,
-        banned_at: true,
-      },
-    });
+    priorState = (
+      await db.execute<{
+        id: string;
+        username: string | null;
+        banned_reason: string | null;
+        banned_at: Date | null;
+      }>(sql`
+        SELECT id, username, banned_reason, banned_at
+        FROM "user"
+        WHERE id = ANY(${userIds}::text[])
+      `)
+    ).rows;
   } catch (err) {
     logError("users.bulkUnban", "failed to snapshot prior ban state", err);
     return fail("Couldn't read the current ban state — please try again.");
@@ -724,16 +726,14 @@ export async function bulkUnbanFilteredUsers(input: {
   try {
     for (let i = 0; i < userIds.length; i += CHUNK) {
       const chunk = userIds.slice(i, i + CHUNK);
-      const updated = await db.user.updateMany({
-        where: { id: { in: chunk }, is_banned: true },
-        data: {
-          is_banned: false,
-          banned_reason: null,
-          banned_at: null,
-          banned_by: null,
-        },
-      });
-      unbannedCount += updated.count;
+      const updated = await db.execute<{ id: string }>(sql`
+        UPDATE "user"
+        SET is_banned = FALSE, banned_reason = NULL, banned_at = NULL,
+            banned_by = NULL, updated_at = NOW()
+        WHERE id = ANY(${chunk}::text[]) AND is_banned = TRUE
+        RETURNING id
+      `);
+      unbannedCount += updated.rows.length;
     }
   } catch (err) {
     logError("users.bulkUnban", "bulk unban failed", err);

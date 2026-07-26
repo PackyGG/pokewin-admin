@@ -1,7 +1,7 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import { resolveRainHouseCost } from "@/lib/metrics";
 
@@ -85,15 +85,15 @@ const CATEGORY_LABELS: Record<CategoryForecastKey, string> = {
 async function computeForecasting(
   blacklistIds: string[],
 ): Promise<RewardsForecasting> {
-  const db = await getDb();
-  const blacklistSubquery = blacklistNotInClause("id", blacklistIds);
+  const db = await getDrizzleDb();
+  const blacklistSubquery = blacklistNotInSql("id", blacklistIds);
 
   // Pull per-day per-category totals across the trailing HISTORY_DAYS
   // window. Then JS handles the zero-fill + 7d trailing avg + 30d
   // projection.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     { date: Date; category: string; total: string }[]
-  >(`
+  >(db, sql`
     SELECT
       DATE(lt.created_at) AS date,
       CASE
@@ -112,8 +112,8 @@ async function computeForecasting(
       COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
-      AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
-      AND lt.created_at >= NOW() - INTERVAL '${HISTORY_DAYS} days'
+      AND lt.type::text IN ${sql.raw(ALL_REWARD_TYPES_SQL)}
+      AND lt.created_at >= NOW() - (${HISTORY_DAYS} * INTERVAL '1 day')
       AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
     GROUP BY 1, 2
     ORDER BY 1 ASC

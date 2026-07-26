@@ -57,14 +57,6 @@ test.describe("dashboard", () => {
     ).toBeVisible();
   });
 
-  test("Recent Activity section renders", async ({ adminPage }) => {
-    await adminPage.goto("/dashboard");
-    const section = adminPage.getByRole("heading", {
-      name: /recent activity/i,
-    });
-    await expect(section).toBeVisible();
-  });
-
   test("GGR period swap updates selected chip", async ({ adminPage }) => {
     await adminPage.goto("/dashboard");
 

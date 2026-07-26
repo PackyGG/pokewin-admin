@@ -6,7 +6,7 @@
  * Why a URL field but an integer column:
  * The `cards` table has a single `tcgplayer_id Int? @unique` column and no
  * free text/url column. Rather than add a schema migration (the live main
- * DB auto-deploys, so we can't ship a Prisma column ahead of the column
+ * DB auto-deploys, so we can't ship a schema field ahead of the column
  * existing in prod), we keep storing the numeric TCGplayer **product id**
  * in that existing column. The URL is purely the operator-facing INPUT
  * format (paste the product link) and OUTPUT format (rendered back as a

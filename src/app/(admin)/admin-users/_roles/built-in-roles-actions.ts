@@ -2,12 +2,12 @@
 
 import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
 import { require2FA } from "@/lib/require-2fa";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import {
-  getEffectiveRoles,
   isAdminRole,
   type AdminRole,
 } from "@/lib/admin-roles";
@@ -16,12 +16,13 @@ import {
   sanitizePermissionKeys,
 } from "@/app/(admin)/settings/roles/permissions-utils";
 import {
-  loadUserPermissionState,
+  loadUserPermissionStates,
   effectiveOverrideFor,
   materializeForOverride,
   getBaselineMap,
 } from "@/lib/permissions/write-paths";
 import { normalizeLandingRouteInput } from "@/lib/role-landing";
+import { isPostgresError } from "@/lib/postgres-errors";
 
 // ---------------------------------------------------------------------------
 // RoleV2 P2 — EDIT a BUILT-IN (system) role's capabilities.
@@ -148,10 +149,15 @@ export async function updateBuiltInRole(
   }
 
   // --- Locate the system row for this built-in. -----------------------------
-  const systemRow = await adminDb.admin_roles.findUnique({
-    where: { system_key: systemKey },
-    select: { id: true, is_system: true },
-  });
+  const systemRow = (await adminDrizzle.execute<{
+    id: string;
+    is_system: boolean;
+  }>(sql`
+    SELECT id::text, is_system
+    FROM admin_roles
+    WHERE system_key = ${systemKey}
+    LIMIT 1
+  `)).rows[0];
   if (!systemRow || !systemRow.is_system) {
     throw new Error("Built-in role not found");
   }
@@ -167,15 +173,15 @@ export async function updateBuiltInRole(
   //     rows (only role columns) and filter in code — there is no SQL operator
   //     for "membership in the normalized effective-role set". Admins are
   //     skipped (they bypass the gate; their `allowed_pages` stays empty `[]`).
-  const candidates = await adminDb.admin_users.findMany({
-    select: { id: true, role: true, roles: true },
-  });
-  const affectedIds: string[] = [];
-  for (const u of candidates) {
-    const eff = getEffectiveRoles(u.role, u.roles);
-    if (eff.includes("admin")) continue; // total-bypass — never re-materialize
-    if (eff.includes(systemKey)) affectedIds.push(u.id);
-  }
+  const affectedIds = (await adminDrizzle.execute<{ id: string }>(sql`
+    SELECT id::text
+    FROM admin_users
+    WHERE NOT (role = 'admin' OR 'admin'::admin_role = ANY(roles))
+      AND (
+        role = ${systemKey}::admin_role
+        OR ${systemKey}::admin_role = ANY(roles)
+      )
+  `)).rows.map((row) => row.id);
 
   // --- Build the NEW baseline map WITHOUT waiting for the cache to expire:
   //     start from the OLD map and overlay this role's sanitized capabilities.
@@ -191,55 +197,84 @@ export async function updateBuiltInRole(
   //     (or the override derived from their current `allowed_pages` vs the OLD
   //     baseline). Reads run OUTSIDE the write transaction; writes are batched
   //     atomically below. -----------------------------------------------------
-  const refreshed: { id: string; allowedPages: string[] }[] = [];
-  for (const id of affectedIds) {
-    const state = await loadUserPermissionState(id);
-    if (!state) continue;
+  const refreshed: {
+    id: string;
+    allowedPages: string[];
+    expectedAllowedPages: readonly string[];
+    expectedGrants: readonly string[];
+    expectedRevokes: readonly string[];
+  }[] = [];
+  const affectedStates = await loadUserPermissionStates(affectedIds);
+  for (const state of affectedStates) {
     // Extra guard: never touch an admin (membership filter already excludes
     // them, but `loadUserPermissionState` re-reads the canonical role set).
     if (state.roles.includes("admin")) continue;
     const override = effectiveOverrideFor(state, oldBaselines);
     const allowedPages = materializeForOverride(state, override, newBaselines);
-    refreshed.push({ id, allowedPages });
+    refreshed.push({
+      id: state.id,
+      allowedPages,
+      expectedAllowedPages: state.allowedPages,
+      expectedGrants: state.override.grants,
+      expectedRevokes: state.override.revokes,
+    });
   }
 
   // --- Persist atomically: the system row's new capabilities (+ description if
   //     supplied) AND every affected user's re-materialized `allowed_pages`, so
   //     the editable source and the materialized cache never diverge. ---------
   try {
-    await adminDb.$transaction([
-      adminDb.admin_roles.update({
-        where: { system_key: systemKey },
-        data: {
-          capabilities,
-          ...(description !== undefined ? { description: description ?? null } : {}),
-          // RoleV2 P3: write the DISPLAY name when supplied (identity stays
-          // `system_key`). RoleV2 P4: write the validated landing route when
-          // supplied (string = set, null = cleared). Both omitted when undefined.
-          ...(name !== undefined ? { name } : {}),
-          ...(landingRouteToWrite !== undefined
-            ? { landing_route: landingRouteToWrite }
-            : {}),
-        },
-        select: { id: true },
-      }),
-      ...refreshed.map((u) =>
-        adminDb.admin_users.update({
-          where: { id: u.id },
-          data: { allowed_pages: u.allowedPages },
-          select: { id: true },
-        }),
-      ),
-    ]);
+    await adminDrizzle.transaction(async (tx) => {
+      await tx.execute(sql`
+        UPDATE admin_roles
+        SET capabilities = ${capabilities},
+            description = CASE WHEN ${description !== undefined} THEN ${description ?? null} ELSE description END,
+            name = CASE WHEN ${name !== undefined} THEN ${name ?? ""} ELSE name END,
+            landing_route = CASE WHEN ${landingRouteToWrite !== undefined} THEN ${landingRouteToWrite ?? null} ELSE landing_route END,
+            updated_at = NOW()
+        WHERE system_key = ${systemKey}
+      `);
+      if (refreshed.length > 0) {
+        const updatedUsers = await tx.execute(sql`
+          UPDATE admin_users au
+          SET allowed_pages = patch.allowed_pages, updated_at = NOW()
+          FROM jsonb_to_recordset(
+            ${JSON.stringify(
+              refreshed.map((user) => ({
+                id: user.id,
+                allowed_pages: user.allowedPages,
+                expected_allowed_pages: user.expectedAllowedPages,
+                expected_grants: user.expectedGrants,
+                expected_revokes: user.expectedRevokes,
+              })),
+            )}::jsonb
+          ) AS patch(
+            id uuid,
+            allowed_pages text[],
+            expected_allowed_pages text[],
+            expected_grants text[],
+            expected_revokes text[]
+          )
+          WHERE au.id = patch.id
+            AND COALESCE(au.allowed_pages, ARRAY[]::text[]) = patch.expected_allowed_pages
+            AND COALESCE(au.permission_grants, ARRAY[]::text[]) = patch.expected_grants
+            AND COALESCE(au.permission_revokes, ARRAY[]::text[]) = patch.expected_revokes
+        `);
+        if (updatedUsers.rowCount !== refreshed.length) {
+          throw new Error(
+            "A user's permissions changed concurrently; reload and retry",
+          );
+        }
+      }
+    });
   } catch (err) {
     // The only user-correctable failure here is a DISPLAY-name collision
     // (`admin_roles.name` is UNIQUE) when renaming a system row to a name
     // another role already uses. Surface a clear message; rethrow anything else.
-    const code = (err as { code?: string })?.code;
     const msg = err instanceof Error ? err.message.toLowerCase() : "";
     if (
       name !== undefined &&
-      (code === "P2002" || msg.includes("unique") || msg.includes("duplicate"))
+      (isPostgresError(err, "23505") || msg.includes("unique") || msg.includes("duplicate"))
     ) {
       throw new Error("A role with that name already exists");
     }

@@ -1,7 +1,17 @@
 import "server-only";
 
-import { getDb } from "@/lib/db";
-import { adminDb } from "@/lib/admin-db";
+import { getDrizzleDb } from "@/lib/db";
+import { and, asc, eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import {
+  admin_audit_events,
+  admin_users,
+  creator_socials,
+} from "@/lib/db-schema/admin/schema";
+import {
+  affiliate_codes,
+  user as mainUsers,
+} from "@/lib/db-schema/main/schema";
 import type { CreatorSocialPlatform } from "@/lib/backend-api";
 import { getCreatorSocialUrls } from "@/lib/creator-social-urls";
 import {
@@ -100,33 +110,36 @@ export type CreatorMetadata = {
 export async function getCreatorMetadata(
   userId: string,
 ): Promise<CreatorMetadata | null> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
   // ── MAIN (read-only): user record + owned affiliate codes, in parallel.
-  const [user, codeRows] = await Promise.all([
-    db.user.findUnique({
-      where: { id: userId },
-      select: {
-        username: true,
-        display_username: true,
-        email: true,
-        image: true,
-        role: true,
-        created_at: true,
-        country: true,
-        state: true,
-        city: true,
-        referred_by: true,
-        affiliate_code_active: true,
-      },
-    }),
+  const [userRows, codeRows] = await Promise.all([
+    db
+      .select({
+        username: mainUsers.username,
+        display_username: mainUsers.display_username,
+        email: mainUsers.email,
+        image: mainUsers.image,
+        role: mainUsers.role,
+        created_at: mainUsers.created_at,
+        country: mainUsers.country,
+        state: mainUsers.state,
+        city: mainUsers.city,
+        referred_by: mainUsers.referred_by,
+        affiliate_code_active: mainUsers.affiliate_code_active,
+      })
+      .from(mainUsers)
+      .where(eq(mainUsers.id, userId))
+      .limit(1),
     // The creator's OWN codes live in affiliate_codes (NOT user.affiliate_code,
     // which is the referral cookie they carry from whoever referred THEM).
-    db.$queryRawUnsafe<{ code: string }[]>(
-      `SELECT code FROM affiliate_codes WHERE user_id = $1 ORDER BY created_at ASC`,
-      userId,
-    ),
+    db
+      .select({ code: affiliate_codes.code })
+      .from(affiliate_codes)
+      .where(eq(affiliate_codes.user_id, userId))
+      .orderBy(asc(affiliate_codes.created_at)),
   ]);
+  const user = userRows[0];
 
   if (!user) return null;
 
@@ -134,11 +147,15 @@ export async function getCreatorMetadata(
   // referral id just yields null rather than failing the whole tab).
   let referredByName: string | null = null;
   if (user.referred_by) {
-    const referrer = await db.user
-      .findUnique({
-        where: { id: user.referred_by },
-        select: { username: true, display_username: true },
+    const referrer = await db
+      .select({
+        username: mainUsers.username,
+        display_username: mainUsers.display_username,
       })
+      .from(mainUsers)
+      .where(eq(mainUsers.id, user.referred_by))
+      .limit(1)
+      .then((rows) => rows[0] ?? null)
       .catch(() => null);
     referredByName =
       referrer?.display_username ?? referrer?.username ?? null;
@@ -156,18 +173,19 @@ export async function getCreatorMetadata(
   const gaps: string[] = [];
   const [adminSocials, mergedSocials, socialUrls, madeCreatorEvent] =
     await Promise.all([
-    adminDb.creator_socials.findMany({
-      where: { target_user_id: userId },
-      orderBy: { platform: "asc" },
-      select: {
-        id: true,
-        platform: true,
-        username: true,
-        follower_count: true,
-        subscriber_count: true,
-        last_fetched_at: true,
-      },
-    }).catch((err: unknown) => {
+    adminDrizzle
+      .select({
+        id: creator_socials.id,
+        platform: creator_socials.platform,
+        username: creator_socials.username,
+        follower_count: creator_socials.follower_count,
+        subscriber_count: creator_socials.subscriber_count,
+        last_fetched_at: creator_socials.last_fetched_at,
+      })
+      .from(creator_socials)
+      .where(eq(creator_socials.target_user_id, userId))
+      .orderBy(asc(creator_socials.platform))
+      .catch((err: unknown) => {
       console.error(
         "[creator-hub.creators.metadata] admin-DB socials read failed:",
         err,
@@ -197,17 +215,26 @@ export async function getCreatorMetadata(
     // onboarding. Joined to the acting admin so we can name the manager.
     // `admin_user` is a nullable relation (the actor may have been deleted),
     // so we guard for null below.
-    adminDb.admin_audit_events.findFirst({
-      where: { event_type: "user_made_creator", target_user_id: userId },
-      orderBy: { created_at: "asc" },
-      select: {
-        created_at: true,
-        metadata: true,
-        admin_user: {
-          select: { username: true, display_username: true, role: true },
-        },
-      },
-    }).catch((err: unknown) => {
+    adminDrizzle
+      .select({
+        created_at: admin_audit_events.created_at,
+        metadata: admin_audit_events.metadata,
+        adminUsername: admin_users.username,
+        adminDisplayUsername: admin_users.display_username,
+        adminRole: admin_users.role,
+      })
+      .from(admin_audit_events)
+      .leftJoin(admin_users, eq(admin_users.id, admin_audit_events.admin_user_id))
+      .where(
+        and(
+          eq(admin_audit_events.event_type, "user_made_creator"),
+          eq(admin_audit_events.target_user_id, userId),
+        ),
+      )
+      .orderBy(asc(admin_audit_events.created_at))
+      .limit(1)
+      .then((rows) => rows[0] ?? null)
+      .catch((err: unknown) => {
       console.error(
         "[creator-hub.creators.metadata] onboarding audit read failed:",
         err,
@@ -252,11 +279,13 @@ export async function getCreatorMetadata(
       meta && typeof meta.via === "string" ? (meta.via as string) : null;
     onboardedBy = {
       managerName:
-        madeCreatorEvent.admin_user?.display_username ??
-        madeCreatorEvent.admin_user?.username ??
+        madeCreatorEvent.adminDisplayUsername ??
+        madeCreatorEvent.adminUsername ??
         null,
-      managerRole: madeCreatorEvent.admin_user?.role ?? null,
-      at: madeCreatorEvent.created_at?.toISOString() ?? null,
+      managerRole: madeCreatorEvent.adminRole,
+      at: madeCreatorEvent.created_at
+        ? new Date(madeCreatorEvent.created_at).toISOString()
+        : null,
       via,
     };
   }
@@ -268,7 +297,9 @@ export async function getCreatorMetadata(
     email: user.email,
     image: user.image,
     role: user.role,
-    createdAt: user.created_at?.toISOString() ?? null,
+    createdAt: user.created_at
+      ? new Date(user.created_at).toISOString()
+      : null,
     country: user.country,
     state: user.state,
     city: user.city,
@@ -282,7 +313,9 @@ export async function getCreatorMetadata(
       username: s.username,
       followerCount: s.follower_count,
       subscriberCount: s.subscriber_count,
-      lastFetchedAt: s.last_fetched_at?.toISOString() ?? null,
+      lastFetchedAt: s.last_fetched_at
+        ? new Date(s.last_fetched_at).toISOString()
+        : null,
     })),
     discordChannelUrl: socialUrls.discordChannelUrl,
     rewardPageUrl: socialUrls.rewardPageUrl,

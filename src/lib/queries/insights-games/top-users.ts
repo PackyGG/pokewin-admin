@@ -1,6 +1,6 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getCreatorSessionWindowsCte } from "../creator-session-windows";
@@ -93,7 +93,6 @@ export async function getGamesTopUsers(
   filters: GamesTopUsersFilters = { game: "all", minWager: 0, country: null },
 ): Promise<GamesTopUsersData> {
   return withTiming("insights-games.topUsers", async () => {
-    const db = await getDb();
     const scope = await realCustomersScopeSql();
     const sessionWindowsCte = await getCreatorSessionWindowsCte();
 
@@ -206,7 +205,7 @@ export async function getGamesTopUsers(
     // sort cost while keeping enough candidates for any of the 25-row
     // leaderboards.
     const [rows, countryRows] = await Promise.all([
-      db.$queryRawUnsafe<Row[]>(
+      queryMainRows<Row[]>(
         `WITH ${sessionWindowsCte},
               non_borrow_pack_sessions AS (
            SELECT game_session_id FROM ledger_transactions
@@ -322,7 +321,7 @@ export async function getGamesTopUsers(
       // window so the dropdown only shows countries with activity.
       // Pack/battle ledger players UNION upgrader_games players (upgrader
       // is not on the ledger, so it must be unioned in explicitly).
-      db.$queryRawUnsafe<CountryRow[]>(
+      queryMainRows<CountryRow[]>(
         `SELECT DISTINCT u.country_code AS country_code
          FROM "user" u
          WHERE u.country_code IS NOT NULL

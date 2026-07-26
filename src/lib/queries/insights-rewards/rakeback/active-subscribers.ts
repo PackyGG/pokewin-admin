@@ -1,14 +1,12 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getRakebackActiveSubscribersFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/rakeback/active-subscribers";
 
 /**
  * Active rakeback "subscribers" view — distinct claimants per week +
@@ -48,15 +46,14 @@ async function computeActiveSubscribers(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RakebackActiveSubscribers> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
-  const dateFilter =
-    days !== null ? `AND rc.claimed_at >= NOW() - INTERVAL '${days} days'` : "";
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
+  const dateFilter = daysAgoFilter("rc.claimed_at", days);
 
   // Headline + weekly active distinct claimants.
   const [headlineRows, weeklyRows] = await Promise.all([
-    db.$queryRawUnsafe<{ distinct_users: string }[]>(`
+    queryRows<{ distinct_users: string }[]>(db, sql`
       SELECT COUNT(DISTINCT rc.user_id)::text AS distinct_users
       FROM rakeback_claims rc
       JOIN "user" u ON u.id = rc.user_id
@@ -64,7 +61,7 @@ async function computeActiveSubscribers(
         AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
         ${dateFilter}
     `),
-    db.$queryRawUnsafe<{ week_start: Date; active_users: string }[]>(`
+    queryRows<{ week_start: Date; active_users: string }[]>(db, sql`
       SELECT
         DATE_TRUNC('week', rc.claimed_at)::date AS week_start,
         COUNT(DISTINCT rc.user_id)::text AS active_users
@@ -89,18 +86,15 @@ async function computeActiveSubscribers(
   // history of rakeback_claims for users whose first claim falls in
   // window; the period filter applies to the first-claim date not to
   // every individual claim, so we see retention beyond the window edge.
-  const cohortFirstFilter =
-    days !== null
-      ? `AND first_claim_at >= NOW() - INTERVAL '${days} days'`
-      : "";
-  const cohortRows = await db.$queryRawUnsafe<
+  const cohortFirstFilter = daysAgoFilter("first_claim_at", days);
+  const cohortRows = await queryRows<
     {
       cohort_week: Date;
       week_offset: number;
       active_count: string;
       cohort_size: string;
     }[]
-  >(`
+  >(db, sql`
     WITH first_claim AS (
       SELECT rc.user_id, MIN(rc.claimed_at) AS first_claim_at
       FROM rakeback_claims rc
@@ -185,32 +179,16 @@ async function computeActiveSubscribers(
   };
 }
 
-// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
-// through the cache on failure); off/comparison serve Postgres unchanged.
-async function resolveActiveSubscribers(
-  period: InsightsRewardsPeriod,
-  blacklistIds: string[],
-): Promise<RakebackActiveSubscribers> {
-  return resolveAdminRead<RakebackActiveSubscribers>(
-    "insights_rakeback_active",
-    {
-      pg: () => computeActiveSubscribers(period, blacklistIds),
-      ch: () =>
-        getRakebackActiveSubscribersFromClickHouse(period, blacklistIds),
-    },
-  );
-}
-
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveActiveSubscribers(period, blacklistIds),
+    computeActiveSubscribers(period, blacklistIds),
   ["insights-rewards-rakeback-active-v1"],
   { revalidate: 60, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveActiveSubscribers(period, blacklistIds),
+    computeActiveSubscribers(period, blacklistIds),
   ["insights-rewards-rakeback-active-lifetime-v1"],
   { revalidate: 300, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );

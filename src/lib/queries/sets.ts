@@ -1,8 +1,8 @@
 import { unstable_cache } from "next/cache";
-import { getDevDb, getProdDb } from "@/lib/db";
+import { sql, type SQL } from "drizzle-orm";
+import { drizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import type { PaginatedResult } from "@/lib/types";
-import { Prisma } from "@/generated/prisma/client";
 
 /**
  * Cache tag for the Sets catalog reads (list + stats + series). The
@@ -36,7 +36,7 @@ type GetSetsListParams = {
 };
 
 // `env` is threaded in (resolved in the request scope by the public entry
-// point) so the cache callback never calls `getDb()` — which reads the
+// point) so the cache callback never resolves the request-scoped client, which reads the
 // request cookie via `cookies()`, illegal inside `unstable_cache` — and so
 // a dev-DB-toggled admin's cache entries never collide with prod. Mirrors
 // `computeWithdrawals` in withdrawals.ts.
@@ -52,39 +52,65 @@ async function computeSetsList(
     sortBy = "created_at",
     sortOrder = "desc",
   } = params;
-  const db = env === "dev" ? getDevDb() : getProdDb();
-
-  const where: Prisma.setsWhereInput = {};
-
-  if (search) {
-    where.name = { contains: search, mode: "insensitive" };
-  }
-
-  if (series) {
-    where.series = series;
-  }
-
-  const orderBy: Prisma.setsOrderByWithRelationInput = {};
+  const db = drizzleForEnv(env);
+  const predicates: SQL[] = [];
+  if (search) predicates.push(sql`s.name ILIKE ${`%${search}%`}`);
+  if (series) predicates.push(sql`s.series = ${series}`);
+  const whereSql =
+    predicates.length > 0
+      ? sql`WHERE ${sql.join(predicates, sql` AND `)}`
+      : sql``;
   const validSortFields = ["created_at", "name", "release_date"];
   const field = validSortFields.includes(sortBy) ? sortBy : "created_at";
   const order = sortOrder === "asc" ? "asc" : "desc";
-  (orderBy as Record<string, string>)[field] = order;
+  const orderBy =
+    field === "name"
+      ? order === "asc"
+        ? sql`s.name ASC`
+        : sql`s.name DESC`
+      : field === "release_date"
+        ? order === "asc"
+          ? sql`s.release_date ASC`
+          : sql`s.release_date DESC`
+        : order === "asc"
+          ? sql`s.created_at ASC`
+          : sql`s.created_at DESC`;
+  const safePage = Math.max(1, Math.trunc(page) || 1);
+  const safePerPage = Math.min(200, Math.max(1, Math.trunc(perPage) || 20));
+  const offset = (safePage - 1) * safePerPage;
 
-  const [sets, total] = await Promise.all([
-    db.sets.findMany({
-      where,
-      orderBy,
-      skip: (page - 1) * perPage,
-      take: perPage,
-      include: {
-        _count: { select: { cards: true } },
-      },
-    }),
-    db.sets.count({ where }),
+  const [setsResult, totalResult] = await Promise.all([
+    db.execute<{
+      id: string;
+      name: string;
+      series: string;
+      image_url: string;
+      language: string;
+      tcgplayer_id: number;
+      release_date: Date | null;
+      created_at: Date;
+      card_count: string;
+    }>(sql`
+      SELECT
+        s.id, s.name, s.series, s.image_url, s.language, s.tcgplayer_id,
+        s.release_date, s.created_at, COUNT(c.id)::text AS card_count
+      FROM sets s
+      LEFT JOIN cards c ON c.set_id = s.id
+      ${whereSql}
+      GROUP BY s.id
+      ORDER BY ${orderBy}
+      LIMIT ${safePerPage} OFFSET ${offset}
+    `),
+    db.execute<{ total: string }>(sql`
+      SELECT COUNT(*)::text AS total
+      FROM sets s
+      ${whereSql}
+    `),
   ]);
+  const total = Number(totalResult.rows[0]?.total ?? 0);
 
   return {
-    data: sets.map((s) => ({
+    data: setsResult.rows.map((s) => ({
       id: s.id,
       name: s.name,
       series: s.series,
@@ -92,13 +118,13 @@ async function computeSetsList(
       language: s.language,
       tcgplayerId: s.tcgplayer_id,
       releaseDate: s.release_date?.toISOString() ?? null,
-      cardCount: s._count.cards,
+      cardCount: Number(s.card_count),
       createdAt: s.created_at.toISOString(),
     })),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }
 
@@ -128,12 +154,11 @@ export async function getSetsList(
 }
 
 async function computeSeriesList(env: DbEnv): Promise<string[]> {
-  const db = env === "dev" ? getDevDb() : getProdDb();
-  const result = await db.sets.groupBy({
-    by: ["series"],
-    orderBy: { series: "asc" },
-  });
-  return result.map((r) => r.series);
+  const db = drizzleForEnv(env);
+  const result = await db.execute<{ series: string }>(sql`
+    SELECT DISTINCT series FROM sets ORDER BY series ASC
+  `);
+  return result.rows.map((r) => r.series);
 }
 
 const cachedSeriesList = unstable_cache(computeSeriesList, ["sets-series-v1"], {
@@ -154,17 +179,23 @@ export type SetsStats = {
 };
 
 async function computeSetsStats(env: DbEnv): Promise<SetsStats> {
-  const db = env === "dev" ? getDevDb() : getProdDb();
-  const [total, seriesGroups, totalCards] = await Promise.all([
-    db.sets.count(),
-    db.sets.groupBy({ by: ["series"] }),
-    db.cards.count(),
-  ]);
+  const db = drizzleForEnv(env);
+  const result = await db.execute<{
+    total: string;
+    total_series: string;
+    total_cards: string;
+  }>(sql`
+    SELECT
+      (SELECT COUNT(*) FROM sets)::text AS total,
+      (SELECT COUNT(DISTINCT series) FROM sets)::text AS total_series,
+      (SELECT COUNT(*) FROM cards)::text AS total_cards
+  `);
+  const row = result.rows[0];
 
   return {
-    total,
-    totalSeries: seriesGroups.length,
-    totalCards,
+    total: Number(row?.total ?? 0),
+    totalSeries: Number(row?.total_series ?? 0),
+    totalCards: Number(row?.total_cards ?? 0),
   };
 }
 

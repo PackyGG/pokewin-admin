@@ -1,4 +1,5 @@
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 
 /**
  * Whether a user was ever promoted to the creator role, derived from the
@@ -19,22 +20,21 @@ export async function getUserCreatorHistory(userId: string): Promise<{
   creatorSince: string | null;
 }> {
   try {
-    const events = await adminDb.admin_audit_events.findMany({
-      where: { target_user_id: userId, event_type: "role_changed" },
-      orderBy: { created_at: "asc" },
-      select: { metadata: true, created_at: true },
-    });
-    for (const e of events) {
-      const meta =
-        e.metadata && typeof e.metadata === "object" && !Array.isArray(e.metadata)
-          ? (e.metadata as Record<string, unknown>)
-          : {};
-      if (meta.new_role === "creator") {
-        return {
-          everCreatorByAudit: true,
-          creatorSince: e.created_at.toISOString(),
-        };
-      }
+    const result = await adminDrizzle.execute<{ created_at: Date }>(sql`
+      SELECT created_at
+      FROM admin_audit_events
+      WHERE target_user_id = ${userId}
+        AND event_type = 'role_changed'
+        AND metadata->>'new_role' = 'creator'
+      ORDER BY created_at ASC
+      LIMIT 1
+    `);
+    const event = result.rows[0];
+    if (event) {
+      return {
+        everCreatorByAudit: true,
+        creatorSince: event.created_at.toISOString(),
+      };
     }
     return { everCreatorByAudit: false, creatorSince: null };
   } catch {

@@ -1,6 +1,6 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getCreatorSessionWindowsCte } from "../creator-session-windows";
@@ -103,7 +103,6 @@ export async function getUpgraderProfitability(
   period: GamesPeriod,
 ): Promise<UpgraderProfitabilityData> {
   return withTiming("insights-games.upgrader", async () => {
-    const db = await getDb();
     const scope = await realCustomersScopeSql();
     const sessionWindowsCte = await getCreatorSessionWindowsCte();
 
@@ -144,7 +143,7 @@ export async function getUpgraderProfitability(
     // users-transactions.ts). From there PF result is one-to-one
     // via game_session_id. LEFT JOINs so games without a PF row
     // still count — they land in the "Unknown" bucket downstream.
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryMainRows<Row[]>(
       `WITH ${sessionWindowsCte},
             ug_in_scope AS (
          SELECT ug.id,

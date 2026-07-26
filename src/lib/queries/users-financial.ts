@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getUserWindowedPnlMulti } from "./users-windowed-pnl";
 
@@ -55,7 +55,6 @@ export type PnlBreakdown = {
 };
 
 export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown> {
-  const db = await getDb();
   const nowMs = Date.now();
   // Rolling cutoffs for the four-rung ladder shown in the Rolling P&L
   // section. All are `now − N` (true rolling windows, NOT calendar
@@ -65,7 +64,8 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
   const since7d = new Date(nowMs - 7 * 24 * 60 * 60 * 1000);
   const since14d = new Date(nowMs - 14 * 24 * 60 * 60 * 1000);
   const [rows, inventoryValue, windowed, wagerWindows] = await Promise.all([
-    db.$queryRaw<{ type: string; net: string }[]>`
+    queryMainRows<{ type: string; net: string }[]>(
+      `
       SELECT type,
              COALESCE(SUM(
                CASE WHEN type::text IN ('exchange_excess_to_voucher','battle_excess_to_voucher','voucher_redeemed','voucher_exchange')
@@ -74,7 +74,7 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
                END
              ), 0)::text AS net
       FROM ledger_transactions
-      WHERE user_id = ${userId} AND status = 'completed'
+      WHERE user_id = $1 AND status = 'completed'
         AND type::text IN (
           'pack_opening','battle_bet','battle_sponsorship','battle_refund',
           'upgrader_bet','upgrader_payout',
@@ -86,20 +86,19 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
           'exchange_excess_to_voucher','battle_excess_to_voucher',
           'affiliate_leaderboard_creation','affiliate_leaderboard_refund',
           'affiliate_leaderboard_prize')
-      GROUP BY type
-    `,
-    db.user_inventory.aggregate({
-      // CREATOR-INVENTORY carve-out: a creator's open inventory is
-      // house-funded sponsored stream play, dropped from the unrealized
-      // liability term (matches calculateUserPnl). See _creator-pnl-exclusion.ts.
-      where: {
-        user_id: userId,
-        sold_at: null,
-        exchanged_at: null,
-        user: { role: { not: "creator" } },
-      },
-      _sum: { value_at_obtained: true },
-    }),
+      GROUP BY type`,
+      userId,
+    ),
+    queryMainRows<{ value: string }[]>(
+      `SELECT COALESCE(SUM(ui.value_at_obtained::numeric), 0)::text AS value
+       FROM user_inventory ui
+       JOIN "user" u ON u.id = ui.user_id
+       WHERE ui.user_id = $1
+         AND ui.sold_at IS NULL
+         AND ui.exchanged_at IS NULL
+         AND u.role::text <> 'creator'`,
+      userId,
+    ),
     // Rolling windowed house P&L for this user across all four windows
     // (past 24h / 3d / 7d / 14d) in a single composite call — 4
     // round-trips total (one per source table) instead of 4 × 4 = 16
@@ -119,18 +118,25 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
     // host funding), and upgrader bets — taken as ABS(amount) since stakes
     // are debits (negative) on the ledger. Single round-trip, four windows
     // via CASE-WHEN; bounded to the deepest (14d) cutoff.
-    db.$queryRaw<{ w24: string; w3d: string; w7d: string; w14d: string }[]>`
+    queryMainRows<{ w24: string; w3d: string; w7d: string; w14d: string }[]>(
+      `
       SELECT
-        COALESCE(SUM(CASE WHEN created_at >= ${since24h} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w24,
-        COALESCE(SUM(CASE WHEN created_at >= ${since3d}  THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w3d,
-        COALESCE(SUM(CASE WHEN created_at >= ${since7d}  THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w7d,
-        COALESCE(SUM(CASE WHEN created_at >= ${since14d} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w14d
+        COALESCE(SUM(CASE WHEN created_at >= $2 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w24,
+        COALESCE(SUM(CASE WHEN created_at >= $3 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w3d,
+        COALESCE(SUM(CASE WHEN created_at >= $4 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w7d,
+        COALESCE(SUM(CASE WHEN created_at >= $5 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w14d
       FROM ledger_transactions
-      WHERE user_id = ${userId}
+      WHERE user_id = $1
         AND status = 'completed'
-        AND created_at >= ${since14d}
+        AND created_at >= $5
         AND type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
     `,
+      userId,
+      since24h,
+      since3d,
+      since7d,
+      since14d,
+    ),
   ]);
   const wagerRow = wagerWindows[0];
 
@@ -151,9 +157,7 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
     packRevenue + battleRevenue + upgraderRevenue + cardSalesPayouts;
 
   // Unrealized: cards the user still holds = future liability
-  const unrealizedLiability = inventoryValue._sum.value_at_obtained
-    ? toNumber(inventoryValue._sum.value_at_obtained)
-    : 0;
+  const unrealizedLiability = toNumber(inventoryValue[0]?.value);
   const gamblingPnlTrue = gamblingPnlRealized - unrealizedLiability;
 
   // Costs to platform (user gains money → positive net)
@@ -207,7 +211,6 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
 }
 
 export async function getUserBalanceHistory(userId: string) {
-  const db = await getDb();
   // Pull the last `balance_after` per calendar day in a single aggregated
   // query instead of streaming every completed transaction back to Node.
   // Uses DISTINCT ON (day) + ORDER BY created_at DESC so PG returns one
@@ -216,15 +219,18 @@ export async function getUserBalanceHistory(userId: string) {
   // For a high-activity user this previously fetched thousands of rows
   // only to collapse them client-side — this keeps the payload to at most
   // one row per day the user was active.
-  const rows = await db.$queryRaw<{ date: Date; balance: string }[]>`
+  const rows = await queryMainRows<{ date: Date; balance: string }[]>(
+    `
     SELECT DISTINCT ON (DATE(created_at))
       DATE(created_at) AS date,
       balance_after::text AS balance
     FROM ledger_transactions
-    WHERE user_id = ${userId}
+    WHERE user_id = $1
       AND status = 'completed'
     ORDER BY DATE(created_at) ASC, created_at DESC
-  `;
+  `,
+    userId,
+  );
 
   return rows.map((r) => ({
     date: new Date(r.date).toISOString().slice(0, 10),

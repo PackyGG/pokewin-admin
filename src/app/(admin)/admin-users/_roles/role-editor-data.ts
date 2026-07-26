@@ -1,10 +1,9 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
-import { readAdminUsersWithRoles } from "@/lib/admin-user-roles";
 import {
-  getEffectiveRoles,
   isAdminRole,
   type AdminRole,
 } from "@/lib/admin-roles";
@@ -76,19 +75,24 @@ export async function getRoleEditorData(
 ): Promise<RoleEditorData | null> {
   await requireAdmin();
 
-  const row = await adminDb.admin_roles.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      is_system: true,
-      system_key: true,
-      capabilities: true,
-      landing_route: true,
-      _count: { select: { admin_users: true } },
-    },
-  });
+  const row = (await adminDrizzle.execute<{
+    id: string;
+    name: string;
+    description: string | null;
+    is_system: boolean;
+    system_key: string | null;
+    capabilities: string[];
+    landing_route: string | null;
+    holder_count: string;
+  }>(sql`
+    SELECT r.id::text, r.name, r.description, r.is_system, r.system_key,
+           r.capabilities, r.landing_route,
+           COUNT(u.id)::text AS holder_count
+    FROM admin_roles r
+    LEFT JOIN admin_users u ON u.role_id = r.id
+    WHERE r.id = ${id}::uuid
+    GROUP BY r.id
+  `)).rows[0];
   if (!row) return null;
 
   const systemKey: AdminRole | null =
@@ -118,7 +122,7 @@ export async function getRoleEditorData(
     capabilities: row.capabilities,
     landingRoute: row.landing_route ?? null,
     limits,
-    holderCount: row._count.admin_users,
+    holderCount: Number(row.holder_count),
     affectedUserCount,
   };
 }
@@ -142,19 +146,24 @@ async function countAffectedUsers(
     if (systemKey === "admin") return 0;
     // No SQL operator for "membership in the normalized effective-role set" —
     // read role columns and filter in code (same as the action).
-    const candidates = await adminDb.admin_users.findMany({
-      select: { role: true, roles: true },
-    });
-    let count = 0;
-    for (const u of candidates) {
-      const eff = getEffectiveRoles(u.role, u.roles);
-      if (eff.includes("admin")) continue;
-      if (eff.includes(systemKey)) count++;
-    }
-    return count;
+    const result = await adminDrizzle.execute<{ count: string }>(sql`
+      SELECT COUNT(*)::text AS count
+      FROM admin_users
+      WHERE NOT (role = 'admin' OR 'admin'::admin_role = ANY(roles))
+        AND (
+          role = ${systemKey}::admin_role
+          OR ${systemKey}::admin_role = ANY(roles)
+        )
+    `);
+    return Number(result.rows[0]?.count ?? 0);
   }
   // Custom role: assigned users (role_id link).
-  return adminDb.admin_users.count({ where: { role_id: id } });
+  const result = await adminDrizzle.execute<{ count: string }>(sql`
+    SELECT COUNT(*)::text AS count
+    FROM admin_users
+    WHERE role_id = ${id}::uuid
+  `);
+  return Number(result.rows[0]?.count ?? 0);
 }
 
 /** One admin who holds this role, for the "Assigned admins" panel. */
@@ -175,10 +184,15 @@ export type RoleHolder = {
 export async function getRoleHolders(id: string): Promise<RoleHolder[]> {
   await requireAdmin();
 
-  const role = await adminDb.admin_roles.findUnique({
-    where: { id },
-    select: { is_system: true, system_key: true },
-  });
+  const role = (await adminDrizzle.execute<{
+    is_system: boolean;
+    system_key: string | null;
+  }>(sql`
+    SELECT is_system, system_key
+    FROM admin_roles
+    WHERE id = ${id}::uuid
+    LIMIT 1
+  `)).rows[0];
   if (!role) return [];
 
   const systemKey: AdminRole | null =
@@ -188,34 +202,34 @@ export async function getRoleHolders(id: string): Promise<RoleHolder[]> {
     // Effective-role membership can't be expressed in SQL — read role columns
     // + username and filter in code (same predicate as the action). Degrades to
     // the legacy `[role]` set if the `roles` column isn't migrated.
-    const candidates = (await readAdminUsersWithRoles(
-      () =>
-        adminDb.admin_users.findMany({
-          select: { id: true, username: true, is_active: true, role: true, roles: true },
-          orderBy: { username: "asc" },
-        }),
-      () =>
-        adminDb.admin_users.findMany({
-          select: { id: true, username: true, is_active: true, role: true },
-          orderBy: { username: "asc" },
-        }),
-    )) as Array<{
+    const candidates = (await adminDrizzle.execute<{
       id: string;
       username: string;
       is_active: boolean;
-      role: string;
-      roles?: string[];
-    }>;
-    return candidates
-      .filter((u) => getEffectiveRoles(u.role, u.roles ?? []).includes(systemKey))
-      .map((u) => ({ id: u.id, username: u.username, isActive: u.is_active }));
+    }>(sql`
+      SELECT id::text, username, is_active
+      FROM admin_users
+      WHERE role = ${systemKey}::admin_role
+         OR ${systemKey}::admin_role = ANY(roles)
+      ORDER BY username ASC
+    `)).rows;
+    return candidates.map((u) => ({
+      id: u.id,
+      username: u.username,
+      isActive: u.is_active,
+    }));
   }
 
   // Custom role: the role_id link.
-  const rows = await adminDb.admin_users.findMany({
-    where: { role_id: id },
-    select: { id: true, username: true, is_active: true },
-    orderBy: { username: "asc" },
-  });
+  const rows = (await adminDrizzle.execute<{
+    id: string;
+    username: string;
+    is_active: boolean;
+  }>(sql`
+    SELECT id::text, username, is_active
+    FROM admin_users
+    WHERE role_id = ${id}::uuid
+    ORDER BY username ASC
+  `)).rows;
   return rows.map((u) => ({ id: u.id, username: u.username, isActive: u.is_active }));
 }

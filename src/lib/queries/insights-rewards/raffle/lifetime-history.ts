@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import {
   parseRafflePrizes,
   buildRafflePrizeValuator,
@@ -71,15 +72,15 @@ type RawRaffleRow = {
 };
 
 async function computeRaffleLifetimeHistory(): Promise<RaffleLifetimeHistory> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
-  const raw = await db.$queryRawUnsafe<RawRaffleRow[]>(
-    `SELECT id, name, prizes, total_entries, participant_count, ends_at, completed_at, status::text AS status
+  const raw = await queryRows<RawRaffleRow[]>(db, sql`
+     SELECT id, name, prizes, total_entries, participant_count, ends_at, completed_at, status::text AS status
      FROM raffles
      WHERE status::text IN ('active', 'completed')
      ORDER BY COALESCE(completed_at, ends_at, created_at) DESC
-     LIMIT ${RAFFLE_HISTORY_ROW_CAP + 1}`,
-  );
+     LIMIT ${RAFFLE_HISTORY_ROW_CAP + 1}
+  `);
 
   const truncated = raw.length > RAFFLE_HISTORY_ROW_CAP;
   const bounded = truncated ? raw.slice(0, RAFFLE_HISTORY_ROW_CAP) : raw;

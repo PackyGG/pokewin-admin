@@ -1,20 +1,20 @@
 import { unstable_cache } from "next/cache";
-import { getDb, getDevDb, getProdDb } from "@/lib/db";
+import { drizzleForEnv } from "@/lib/db";
+import { queryMainRows, queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
-import { Prisma } from "@/generated/prisma/client";
 import {
   card_withdrawal_status,
   card_withdrawal_method,
-} from "@/generated/prisma/enums";
+} from "@/lib/db-schema/main/schema";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getWithdrawalUnlockedUserIds } from "@/lib/withdrawal-lock/lock";
 
-// Allowlists from the generated Prisma enums — validate user-supplied
+// Allowlists from the generated Drizzle enums — validate user-supplied
 // filter values before they hit the query rather than blind-casting.
-const CWR_STATUSES = new Set<string>(Object.values(card_withdrawal_status));
-const CWR_METHODS = new Set<string>(Object.values(card_withdrawal_method));
+const CWR_STATUSES = new Set<string>(card_withdrawal_status.enumValues);
+const CWR_METHODS = new Set<string>(card_withdrawal_method.enumValues);
 
 /**
  * Cache tag for the Withdrawals tab list. The admin actions in
@@ -73,7 +73,7 @@ type GetWithdrawalsParams = {
  * variant (default, status, method, value-range, username-join search)
  * returns in 12–91ms. The real cause is CONNECTION-POOL contention: prod
  * `max_connections` is 100 and was observed at 111 open connections
- * ("sorry, too many clients already"). The Main-DB Prisma pool is
+ * ("sorry, too many clients already"). The Main-DB runtime pool is
  * `max: 5` per env with a 10s connection-acquire timeout; when the pool
  * is saturated an uncached read queues until it times out → `safeQuery`'s
  * 15s budget fires → the band paints. The Deposits tab never showed this
@@ -94,7 +94,7 @@ type GetWithdrawalsParams = {
  * band rather than crashing the route).
  *
  * `env` is threaded in (resolved in the request scope by the public
- * entry point) so the cache callback never calls `getDb()` — which reads
+ * entry point) so the cache callback never resolves request state — which reads
  * the request cookie via `cookies()`, illegal inside `unstable_cache` —
  * and so a dev-DB-toggled admin's cache entries never collide with prod.
  * Mirrors `computeDepositTransactions`.
@@ -107,9 +107,9 @@ async function computeWithdrawals(
   const { page = 1, perPage = 20, status, statuses, method, search, minValue, maxValue } = params;
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
   const safePage = Math.max(1, Math.floor(page));
-  const db = env === "dev" ? getDevDb() : getProdDb();
-
-  const where: Prisma.card_withdrawal_requestsWhereInput = {};
+  const db = drizzleForEnv(env);
+  const binds: unknown[] = [];
+  const filters: string[] = [];
 
   // Withdrawal-LOCKED users: drop their withdrawals from BOTH the list and
   // the count so a locked user never surfaces on the Withdrawals tab (or
@@ -121,27 +121,32 @@ async function computeWithdrawals(
   // and passed in as `blacklistKey` so it participates in the cache key
   // (mirrors computeDepositTransactions). Empty key → no predicate added.
   const blacklistIds = blacklistKey ? blacklistKey.split(",") : [];
-  if (blacklistIds.length > 0) {
-    where.user_id = { notIn: blacklistIds };
-  }
+  binds.push(blacklistIds);
+  filters.push(`NOT (cwr.user_id = ANY($1::text[]))`);
 
   if (statuses && statuses.length > 0) {
-    const validStatuses = statuses.filter(
-      (s): s is card_withdrawal_status => CWR_STATUSES.has(s),
-    );
-    if (validStatuses.length > 0) where.status = { in: validStatuses };
+    const validStatuses = statuses.filter((s) => CWR_STATUSES.has(s));
+    if (validStatuses.length > 0) {
+      binds.push(validStatuses);
+      filters.push(`cwr.status::text = ANY($${binds.length}::text[])`);
+    }
   } else if (status && status !== "all" && CWR_STATUSES.has(status)) {
-    where.status = status as card_withdrawal_status;
+    binds.push(status);
+    filters.push(`cwr.status::text = $${binds.length}`);
   }
 
   if (method && CWR_METHODS.has(method)) {
-    where.method = method as card_withdrawal_method;
+    binds.push(method);
+    filters.push(`cwr.method::text = $${binds.length}`);
   }
 
-  if (minValue !== undefined || maxValue !== undefined) {
-    where.total_value_usd = {};
-    if (minValue !== undefined) where.total_value_usd.gte = minValue;
-    if (maxValue !== undefined) where.total_value_usd.lte = maxValue;
+  if (minValue !== undefined && Number.isFinite(minValue)) {
+    binds.push(minValue);
+    filters.push(`cwr.total_value_usd::numeric >= $${binds.length}`);
+  }
+  if (maxValue !== undefined && Number.isFinite(maxValue)) {
+    binds.push(maxValue);
+    filters.push(`cwr.total_value_usd::numeric <= $${binds.length}`);
   }
 
   if (search) {
@@ -156,42 +161,89 @@ async function computeWithdrawals(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
         search,
       );
-    where.OR = [
-      ...(isUuid ? [{ id: search }] : []),
-      { user_card_withdrawal_requests_user_idTouser: { username: { contains: search, mode: "insensitive" } } },
-      { user_card_withdrawal_requests_user_idTouser: { email: { contains: search, mode: "insensitive" } } },
-    ];
+    binds.push(`%${search.toLowerCase()}%`);
+    const fuzzy = `$${binds.length}`;
+    if (isUuid) {
+      binds.push(search);
+      filters.push(
+        `(LOWER(requester.username) LIKE ${fuzzy}
+          OR LOWER(requester.email) LIKE ${fuzzy}
+          OR cwr.id = $${binds.length}::uuid)`,
+      );
+    } else {
+      filters.push(
+        `(LOWER(requester.username) LIKE ${fuzzy}
+          OR LOWER(requester.email) LIKE ${fuzzy})`,
+      );
+    }
   }
-
-  const [withdrawals, total] = await Promise.all([
-    db.card_withdrawal_requests.findMany({
-      where,
-      orderBy: { requested_at: "desc" },
-      skip: (safePage - 1) * safePerPage,
-      take: safePerPage,
-      include: {
-        user_card_withdrawal_requests_user_idTouser: {
-          select: { username: true, email: true, image: true },
-        },
-        user_card_withdrawal_requests_processed_byTouser: {
-          select: { username: true },
-        },
-        user_card_withdrawal_requests_shipped_byTouser: {
-          select: { username: true },
-        },
-      },
-    }),
-    db.card_withdrawal_requests.count({ where }),
+  const whereSql = filters.join(" AND ");
+  const limitIndex = binds.length + 1;
+  const offsetIndex = binds.length + 2;
+  type WithdrawalRow = {
+    id: string;
+    user_id: string;
+    requester_username: string | null;
+    requester_email: string | null;
+    requester_image: string | null;
+    processed_username: string | null;
+    shipped_username: string | null;
+    method: string;
+    status: string;
+    total_value_usd: string;
+    inventory_item_ids: string[];
+    voucher_ids: string[];
+    requested_at: Date;
+    metadata: unknown;
+    tracking_number: string | null;
+    carrier: string | null;
+    failure_reason: string | null;
+    shipping_address_snapshot: unknown;
+    crypto_asset: string | null;
+  };
+  const [withdrawals, countRows] = await Promise.all([
+    queryRows<WithdrawalRow[]>(
+      db,
+      `SELECT cwr.id, cwr.user_id,
+              requester.username AS requester_username,
+              requester.email AS requester_email,
+              requester.image AS requester_image,
+              processor.username AS processed_username,
+              shipper.username AS shipped_username,
+              cwr.method::text AS method, cwr.status::text AS status,
+              cwr.total_value_usd::text, cwr.inventory_item_ids,
+              cwr.voucher_ids, cwr.requested_at, cwr.metadata,
+              cwr.tracking_number, cwr.carrier, cwr.failure_reason,
+              cwr.shipping_address_snapshot, cwr.crypto_asset
+         FROM card_withdrawal_requests cwr
+         JOIN "user" requester ON requester.id = cwr.user_id
+         LEFT JOIN "user" processor ON processor.id = cwr.processed_by
+         LEFT JOIN "user" shipper ON shipper.id = cwr.shipped_by
+        WHERE ${whereSql}
+        ORDER BY cwr.requested_at DESC
+        LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
+      ...binds,
+      safePerPage,
+      (safePage - 1) * safePerPage,
+    ),
+    queryRows<{ total: string }[]>(
+      db,
+      `SELECT COUNT(*)::text AS total
+         FROM card_withdrawal_requests cwr
+         JOIN "user" requester ON requester.id = cwr.user_id
+        WHERE ${whereSql}`,
+      ...binds,
+    ),
   ]);
+  const total = Number(countRows[0]?.total ?? 0);
 
   return {
     data: withdrawals.map((w) => ({
       id: w.id,
       userId: w.user_id,
       username:
-        w.user_card_withdrawal_requests_user_idTouser.username ??
-        w.user_card_withdrawal_requests_user_idTouser.email,
-      image: w.user_card_withdrawal_requests_user_idTouser.image,
+        w.requester_username ?? w.requester_email,
+      image: w.requester_image,
       method: w.method,
       status: w.status,
       totalValueUsd: toNumber(w.total_value_usd),
@@ -202,11 +254,11 @@ async function computeWithdrawals(
       requestedAt: w.requested_at.toISOString(),
       processedBy:
         (w.metadata as Record<string, unknown>)?.processed_by_admin as string ??
-        w.user_card_withdrawal_requests_processed_byTouser?.username ??
+        w.processed_username ??
         null,
       shippedBy:
         (w.metadata as Record<string, unknown>)?.shipped_by_admin as string ??
-        w.user_card_withdrawal_requests_shipped_byTouser?.username ??
+        w.shipped_username ??
         null,
       trackingNumber: w.tracking_number,
       carrier: w.carrier,
@@ -271,29 +323,58 @@ export async function getWithdrawals(
  * the real work.
  */
 async function computeWithdrawalDetail(id: string) {
-  const db = await getDb();
-  const withdrawal = await db.card_withdrawal_requests.findUnique({
-    where: { id },
-    include: {
-      user_card_withdrawal_requests_user_idTouser: {
-        select: {
-          id: true,
-          username: true,
-          email: true,
-        },
-      },
-      user_card_withdrawal_requests_processed_byTouser: {
-        select: { username: true },
-      },
-      user_card_withdrawal_requests_shipped_byTouser: {
-        select: { username: true },
-      },
-    },
-  });
+  const rows = await queryMainRows<
+    {
+      id: string;
+      user_id: string;
+      username: string | null;
+      email: string | null;
+      processed_username: string | null;
+      shipped_username: string | null;
+      method: string;
+      status: string;
+      total_value_usd: string;
+      shipping_fee_usd: string;
+      shipping_address_snapshot: unknown;
+      tracking_number: string | null;
+      carrier: string | null;
+      crypto_asset: string | null;
+      crypto_amount: string | null;
+      destination_address: string | null;
+      tx_hash: string | null;
+      failure_reason: string | null;
+      requested_at: Date;
+      processing_at: Date | null;
+      shipped_at: Date | null;
+      completed_at: Date | null;
+      failed_at: Date | null;
+      cancelled_at: Date | null;
+      metadata: unknown;
+      inventory_item_ids: string[];
+      voucher_ids: string[];
+    }[]
+  >(
+    `SELECT cwr.id, cwr.user_id, requester.username, requester.email,
+            processor.username AS processed_username,
+            shipper.username AS shipped_username,
+            cwr.method::text AS method, cwr.status::text AS status,
+            cwr.total_value_usd::text, cwr.shipping_fee_usd::text,
+            cwr.shipping_address_snapshot, cwr.tracking_number, cwr.carrier,
+            cwr.crypto_asset, cwr.crypto_amount::text,
+            cwr.destination_address, cwr.tx_hash, cwr.failure_reason,
+            cwr.requested_at, cwr.processing_at, cwr.shipped_at,
+            cwr.completed_at, cwr.failed_at, cwr.cancelled_at,
+            cwr.metadata, cwr.inventory_item_ids, cwr.voucher_ids
+       FROM card_withdrawal_requests cwr
+       JOIN "user" requester ON requester.id = cwr.user_id
+       LEFT JOIN "user" processor ON processor.id = cwr.processed_by
+       LEFT JOIN "user" shipper ON shipper.id = cwr.shipped_by
+      WHERE cwr.id = $1::uuid LIMIT 1`,
+    id,
+  );
+  const withdrawal = rows[0];
 
   if (!withdrawal) return null;
-
-  const user = withdrawal.user_card_withdrawal_requests_user_idTouser;
 
   // Fetch inventory items and vouchers in parallel — they're independent.
   // Inventory items only carry card_id references; we need to fetch the
@@ -301,18 +382,24 @@ async function computeWithdrawalDetail(id: string) {
   // `rarity` are needed downstream so the select stays tight.
   const [inventoryItems, voucherRows] = await Promise.all([
     withdrawal.inventory_item_ids.length > 0
-      ? db.user_inventory.findMany({
-          where: { id: { in: withdrawal.inventory_item_ids } },
-          select: { id: true, card_id: true, value_at_obtained: true },
-        })
+      ? queryMainRows<
+          { id: string; card_id: string; value_at_obtained: string }[]
+        >(
+          `SELECT id, card_id, value_at_obtained::text
+             FROM user_inventory WHERE id = ANY($1::uuid[])`,
+          withdrawal.inventory_item_ids,
+        )
       : Promise.resolve(
           [] as Array<{ id: string; card_id: string; value_at_obtained: unknown }>,
         ),
     withdrawal.voucher_ids.length > 0
-      ? db.vouchers.findMany({
-          where: { id: { in: withdrawal.voucher_ids } },
-          select: { id: true, value: true, origin: true, description: true },
-        })
+      ? queryMainRows<
+          { id: string; value: string; origin: string; description: string | null }[]
+        >(
+          `SELECT id, value::text, origin::text, description
+             FROM vouchers WHERE id = ANY($1::uuid[])`,
+          withdrawal.voucher_ids,
+        )
       : Promise.resolve(
           [] as Array<{
             id: string;
@@ -327,10 +414,13 @@ async function computeWithdrawalDetail(id: string) {
   if (inventoryItems.length > 0) {
     const cardIds = [...new Set(inventoryItems.map((i) => i.card_id))];
     const cards = cardIds.length > 0
-      ? await db.cards.findMany({
-          where: { id: { in: cardIds } },
-          select: { id: true, name: true, image_url: true, rarity: true },
-        })
+      ? await queryMainRows<
+          { id: string; name: string; image_url: string | null; rarity: string | null }[]
+        >(
+          `SELECT id, name, image_url, rarity::text
+             FROM cards WHERE id = ANY($1::uuid[])`,
+          cardIds,
+        )
       : [];
     const cardMap = new Map(cards.map((c) => [c.id, c]));
 
@@ -356,7 +446,7 @@ async function computeWithdrawalDetail(id: string) {
   return {
     id: withdrawal.id,
     userId: withdrawal.user_id,
-    username: user.username ?? user.email,
+    username: withdrawal.username ?? withdrawal.email,
     method: withdrawal.method,
     status: withdrawal.status,
     totalValueUsd: toNumber(withdrawal.total_value_usd),
@@ -375,8 +465,8 @@ async function computeWithdrawalDetail(id: string) {
     completedAt: withdrawal.completed_at?.toISOString() ?? null,
     failedAt: withdrawal.failed_at?.toISOString() ?? null,
     cancelledAt: withdrawal.cancelled_at?.toISOString() ?? null,
-    processedBy: (withdrawal.metadata as Record<string, unknown>)?.processed_by_admin as string ?? withdrawal.user_card_withdrawal_requests_processed_byTouser?.username ?? null,
-    shippedBy: (withdrawal.metadata as Record<string, unknown>)?.shipped_by_admin as string ?? withdrawal.user_card_withdrawal_requests_shipped_byTouser?.username ?? null,
+    processedBy: (withdrawal.metadata as Record<string, unknown>)?.processed_by_admin as string ?? withdrawal.processed_username ?? null,
+    shippedBy: (withdrawal.metadata as Record<string, unknown>)?.shipped_by_admin as string ?? withdrawal.shipped_username ?? null,
     items,
     vouchers,
   };
@@ -399,7 +489,7 @@ async function computeWithdrawalDetail(id: string) {
  * are not mutated from anywhere but those actions. Same prod-only,
  * env-resolved-outside pattern as `cachedWithdrawals` above.
  *
- * `computeWithdrawalDetail` calls `getDb()` internally; inside the cache
+ * `computeWithdrawalDetail` resolves its request-scoped client internally; inside the cache
  * callback the `admin_db_env` cookie read falls back to "prod", so the cached
  * callback always queries the PROD client. We therefore cache ONLY on prod
  * (see {@link getWithdrawalDetail}); a dev-toggled admin reads live.

@@ -1,7 +1,7 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { periodToDays, type InsightsPeriod } from "./period";
@@ -98,7 +98,6 @@ const cachedFunnelReads = unstable_cache(
     breakdownBy: FunnelBreakdownKey,
     blacklistIdNotIn: string,
   ): Promise<{ cohortRows: FunnelCohortRow[]; totalClicks: number }> => {
-    const db = await getDb();
     const days = cappedDaysForPeriod(period);
     const dateFilter = `AND created_at >= NOW() - INTERVAL '${days} days'`;
     const usersDateFilter = `AND u.created_at >= NOW() - INTERVAL '${days} days'`;
@@ -127,7 +126,7 @@ const cachedFunnelReads = unstable_cache(
     // — country isn't recorded per-click in the way the user table is,
     // and source by definition only applies post-signup) and the cohort
     // walk per bucket.
-    const cohortRows = await db.$queryRawUnsafe<FunnelCohortRow[]>(`
+    const cohortRows = await queryMainRows<FunnelCohortRow[]>(`
       WITH cohort AS (
         SELECT u.id, (${groupExpr}) AS bucket
         FROM "user" u
@@ -166,7 +165,7 @@ const cachedFunnelReads = unstable_cache(
     // source/country we can directly join to the per-user funnel here).
     const clicksRows =
       breakdownBy === "none"
-        ? await db.$queryRawUnsafe<{ count: string }[]>(`
+        ? await queryMainRows<{ count: string }[]>(`
             SELECT COUNT(*)::text AS count
             FROM affiliate_clicks
             WHERE 1=1 ${dateFilter}

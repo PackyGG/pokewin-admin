@@ -6,7 +6,9 @@ import {
   affiliateLeaderboardsApi,
   type LeaderboardAdminRow,
 } from "@/lib/backend-api/affiliate-leaderboards";
-import { getDb } from "@/lib/db";
+import { inArray } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
+import { user } from "@/lib/db-schema/main/schema";
 // Reuse the EXISTING admin-side sponsored-% lookup (the house's prize-pool
 // share). The (creator-hub) group is a sibling of (admin) on disk, so this
 // relative path crosses the route-group boundary to the canonical query
@@ -412,11 +414,11 @@ export async function getLiveLeaderboards(
   let creatorMap = new Map<string, string | null>();
   if (creatorIds.length > 0) {
     try {
-      const db = await getDb();
-      const creators = await db.user.findMany({
-        where: { id: { in: creatorIds } },
-        select: { id: true, username: true },
-      });
+      const db = await getDrizzleDb();
+      const creators = await db
+        .select({ id: user.id, username: user.username })
+        .from(user)
+        .where(inArray(user.id, creatorIds));
       creatorMap = new Map(creators.map((c) => [c.id, c.username ?? null]));
     } catch (e) {
       console.error(

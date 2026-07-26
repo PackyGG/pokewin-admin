@@ -1,6 +1,11 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
+import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import {
+  staff_quiz_answers, staff_quiz_attempts, staff_quiz_options,
+  staff_quiz_questions, staff_quizzes,
+} from "@/lib/db-schema/admin/schema";
 import { isMissingRelationError } from "./notifications";
 import { isQuestionKind, stableShuffle, type QuestionKind } from "./constants";
 
@@ -26,7 +31,7 @@ import { isQuestionKind, stableShuffle, type QuestionKind } from "./constants";
 
 // The question-shape vocabulary lives in the isomorphic `./constants` module so
 // the authoring Client Components can import it WITHOUT dragging this
-// server-only file — and therefore Prisma — into the browser bundle.
+// server-only file — and therefore database code — into the browser bundle.
 // Re-exported here so every existing server-side import keeps working.
 export {
   QUESTION_KINDS,
@@ -114,9 +119,9 @@ type QuizRow = {
   shuffle_questions: boolean;
   audience_roles: string[];
   created_by: string | null;
-  published_at: Date | null;
-  created_at: Date;
-  updated_at: Date;
+  published_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
 };
 
 function toSummary(row: QuizRow, questionCount: number): QuizSummary {
@@ -133,9 +138,9 @@ function toSummary(row: QuizRow, questionCount: number): QuizSummary {
     audienceRoles: [...row.audience_roles],
     questionCount,
     createdBy: row.created_by,
-    publishedAt: row.published_at,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    publishedAt: row.published_at ? new Date(row.published_at) : null,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
   };
 }
 
@@ -144,17 +149,15 @@ function toSummary(row: QuizRow, questionCount: number): QuizSummary {
 /** Every quiz, newest first — the settings list. */
 export async function listAllQuizzes(): Promise<QuizSummary[]> {
   try {
-    const rows = await adminDb.staff_quizzes.findMany({
-      orderBy: { created_at: "desc" },
-      take: 200,
-    });
+    const rows = await adminDrizzle.select().from(staff_quizzes)
+      .orderBy(desc(staff_quizzes.created_at)).limit(200);
     if (rows.length === 0) return [];
-    const counts = await adminDb.staff_quiz_questions.groupBy({
-      by: ["quiz_id"],
-      where: { quiz_id: { in: rows.map((r) => r.id) } },
-      _count: { _all: true },
-    });
-    const countByQuiz = new Map(counts.map((c) => [c.quiz_id, c._count._all]));
+    const counts = await adminDrizzle.select({
+      quiz_id: staff_quiz_questions.quiz_id, value: count(),
+    }).from(staff_quiz_questions)
+      .where(inArray(staff_quiz_questions.quiz_id, rows.map((r) => r.id)))
+      .groupBy(staff_quiz_questions.quiz_id);
+    const countByQuiz = new Map(counts.map((c) => [c.quiz_id, c.value]));
     return rows.map((row) => toSummary(row, countByQuiz.get(row.id) ?? 0));
   } catch (err) {
     if (!isMissingRelationError(err)) {
@@ -169,22 +172,19 @@ export async function getQuizForEdit(
   quizId: string,
 ): Promise<QuizForEdit | null> {
   try {
-    const quiz = await adminDb.staff_quizzes.findUnique({
-      where: { id: quizId },
-    });
+    const [quiz] = await adminDrizzle.select().from(staff_quizzes)
+      .where(eq(staff_quizzes.id, quizId)).limit(1);
     if (!quiz) return null;
 
-    const questions = await adminDb.staff_quiz_questions.findMany({
-      where: { quiz_id: quizId },
-      orderBy: { position: "asc" },
-    });
+    const questions = await adminDrizzle.select().from(staff_quiz_questions)
+      .where(eq(staff_quiz_questions.quiz_id, quizId))
+      .orderBy(staff_quiz_questions.position);
     const options =
       questions.length === 0
         ? []
-        : await adminDb.staff_quiz_options.findMany({
-            where: { question_id: { in: questions.map((q) => q.id) } },
-            orderBy: { position: "asc" },
-          });
+        : await adminDrizzle.select().from(staff_quiz_options)
+            .where(inArray(staff_quiz_options.question_id, questions.map((q) => q.id)))
+            .orderBy(staff_quiz_options.position);
 
     const byQuestion = new Map<string, EditOption[]>();
     for (const opt of options) {
@@ -238,11 +238,9 @@ export async function listStaffQuizzes(
   roles: readonly string[],
 ): Promise<StaffQuizCard[]> {
   try {
-    const rows = await adminDb.staff_quizzes.findMany({
-      where: { status: "published" },
-      orderBy: { published_at: "desc" },
-      take: 100,
-    });
+    const rows = await adminDrizzle.select().from(staff_quizzes)
+      .where(eq(staff_quizzes.status, "published"))
+      .orderBy(desc(staff_quizzes.published_at)).limit(100);
     const visible = rows.filter((row) =>
       quizVisibleToRoles(row.audience_roles, roles),
     );
@@ -250,14 +248,13 @@ export async function listStaffQuizzes(
 
     const quizIds = visible.map((r) => r.id);
     const [questions, attempts] = await Promise.all([
-      adminDb.staff_quiz_questions.findMany({
-        where: { quiz_id: { in: quizIds } },
-        select: { quiz_id: true, points: true },
-      }),
-      adminDb.staff_quiz_attempts.findMany({
-        where: { quiz_id: { in: quizIds }, admin_user_id: adminUserId },
-        orderBy: { started_at: "desc" },
-      }),
+      adminDrizzle.select({
+        quiz_id: staff_quiz_questions.quiz_id, points: staff_quiz_questions.points,
+      }).from(staff_quiz_questions).where(inArray(staff_quiz_questions.quiz_id, quizIds)),
+      adminDrizzle.select().from(staff_quiz_attempts).where(and(
+        inArray(staff_quiz_attempts.quiz_id, quizIds),
+        eq(staff_quiz_attempts.admin_user_id, adminUserId),
+      )).orderBy(desc(staff_quiz_attempts.started_at)),
     ]);
 
     const statsByQuiz = new Map<string, { count: number; points: number }>();
@@ -294,7 +291,7 @@ export async function listStaffQuizzes(
         openAttemptId: open?.id ?? null,
         bestScore: best?.score ?? null,
         bestMaxScore: best?.max_score ?? null,
-        lastSubmittedAt: submitted[0]?.submitted_at ?? null,
+        lastSubmittedAt: submitted[0]?.submitted_at ? new Date(submitted[0].submitted_at) : null,
         pointsEarned: submitted.reduce((sum, a) => sum + a.points_awarded, 0),
         canTake:
           stats.count > 0 &&
@@ -320,24 +317,24 @@ export async function getQuizForTake(
   seed?: string,
 ): Promise<QuizForTake | null> {
   try {
-    const quiz = await adminDb.staff_quizzes.findUnique({
-      where: { id: quizId },
-    });
+    const [quiz] = await adminDrizzle.select().from(staff_quizzes)
+      .where(eq(staff_quizzes.id, quizId)).limit(1);
     if (!quiz || quiz.status !== "published") return null;
 
-    const questions = await adminDb.staff_quiz_questions.findMany({
-      where: { quiz_id: quizId },
-      orderBy: { position: "asc" },
-      select: { id: true, prompt: true, kind: true, points: true },
-    });
+    const questions = await adminDrizzle.select({
+      id: staff_quiz_questions.id, prompt: staff_quiz_questions.prompt,
+      kind: staff_quiz_questions.kind, points: staff_quiz_questions.points,
+    }).from(staff_quiz_questions).where(eq(staff_quiz_questions.quiz_id, quizId))
+      .orderBy(staff_quiz_questions.position);
     if (questions.length === 0) return null;
 
-    const options = await adminDb.staff_quiz_options.findMany({
-      where: { question_id: { in: questions.map((q) => q.id) } },
-      orderBy: { position: "asc" },
+    const options = await adminDrizzle.select({
       // NOTE: `is_correct` is deliberately NOT selected.
-      select: { id: true, label: true, question_id: true },
-    });
+      id: staff_quiz_options.id, label: staff_quiz_options.label,
+      question_id: staff_quiz_options.question_id,
+    }).from(staff_quiz_options)
+      .where(inArray(staff_quiz_options.question_id, questions.map((q) => q.id)))
+      .orderBy(staff_quiz_options.position);
 
     const byQuestion = new Map<string, TakeOption[]>();
     for (const opt of options) {
@@ -481,33 +478,28 @@ export async function getAttemptResult(
   attemptId: string,
 ): Promise<AttemptResult | null> {
   try {
-    const attempt = await adminDb.staff_quiz_attempts.findUnique({
-      where: { id: attemptId },
-    });
+    const [attempt] = await adminDrizzle.select().from(staff_quiz_attempts)
+      .where(eq(staff_quiz_attempts.id, attemptId)).limit(1);
     if (!attempt) return null;
 
-    const quiz = await adminDb.staff_quizzes.findUnique({
-      where: { id: attempt.quiz_id },
-    });
+    const [quiz] = await adminDrizzle.select().from(staff_quizzes)
+      .where(eq(staff_quizzes.id, attempt.quiz_id)).limit(1);
     if (!quiz) return null;
 
     const [questions, answers] = await Promise.all([
-      adminDb.staff_quiz_questions.findMany({
-        where: { quiz_id: attempt.quiz_id },
-        orderBy: { position: "asc" },
-      }),
-      adminDb.staff_quiz_answers.findMany({
-        where: { attempt_id: attemptId },
-      }),
+      adminDrizzle.select().from(staff_quiz_questions)
+        .where(eq(staff_quiz_questions.quiz_id, attempt.quiz_id))
+        .orderBy(staff_quiz_questions.position),
+      adminDrizzle.select().from(staff_quiz_answers)
+        .where(eq(staff_quiz_answers.attempt_id, attemptId)),
     ]);
 
     const options =
       questions.length === 0
         ? []
-        : await adminDb.staff_quiz_options.findMany({
-            where: { question_id: { in: questions.map((q) => q.id) } },
-            orderBy: { position: "asc" },
-          });
+        : await adminDrizzle.select().from(staff_quiz_options)
+            .where(inArray(staff_quiz_options.question_id, questions.map((q) => q.id)))
+            .orderBy(staff_quiz_options.position);
 
     const answerByQuestion = new Map(answers.map((a) => [a.question_id, a]));
 
@@ -522,8 +514,8 @@ export async function getAttemptResult(
         correctCount: attempt.correct_count,
         questionCount: attempt.question_count,
         pointsAwarded: attempt.points_awarded,
-        startedAt: attempt.started_at,
-        submittedAt: attempt.submitted_at,
+        startedAt: new Date(attempt.started_at),
+        submittedAt: attempt.submitted_at ? new Date(attempt.submitted_at) : null,
       },
       quiz: toSummary(quiz, questions.length),
       breakdown: questions.map((q) => {

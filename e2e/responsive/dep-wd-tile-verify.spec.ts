@@ -65,7 +65,7 @@ for (const uid of USER_IDS) {
         timeout: 60_000,
       });
       expect(page.url(), "should not redirect to login").not.toContain("/login");
-      // The page keeps a long-poll (/api/live/activity) open so networkidle
+      // The app may keep live requests open, so networkidle
       // never fires. Wait directly for the hero KPI grid to render the new
       // consolidated tile header instead.
       await page

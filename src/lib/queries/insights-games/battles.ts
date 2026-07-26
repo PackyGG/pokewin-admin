@@ -1,6 +1,6 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getCreatorSessionWindowsCte } from "../creator-session-windows";
@@ -77,7 +77,6 @@ export async function getBattlesProfitability(
   period: GamesPeriod,
 ): Promise<BattlesProfitabilityData> {
   return withTiming("insights-games.battles", async () => {
-    const db = await getDb();
     const scope = await realCustomersScopeSql();
     const sessionWindowsCte = await getCreatorSessionWindowsCte();
 
@@ -121,7 +120,7 @@ export async function getBattlesProfitability(
     // period" (matches the user's intuition: "what hits did we
     // suffer this week").
     const [modeRows, topRows] = await Promise.all([
-      db.$queryRawUnsafe<ModeRow[]>(
+      queryMainRows<ModeRow[]>(
         `WITH ${sessionWindowsCte},
               non_borrow_battles AS (
            SELECT b.id, b.mode, b.bet_amount, b.teams, b.players_per_team
@@ -184,7 +183,7 @@ export async function getBattlesProfitability(
          LEFT JOIN per_mode_payout pay ON pay.mode = p.mode
          ORDER BY w.wager DESC NULLS LAST`,
       ),
-      db.$queryRawUnsafe<TopRow[]>(
+      queryMainRows<TopRow[]>(
         `WITH ${sessionWindowsCte},
               non_borrow_battles AS (
            SELECT b.id, b.mode, b.bet_amount, b.teams, b.players_per_team, b.created_at

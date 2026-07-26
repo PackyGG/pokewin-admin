@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
-import { dbForEnv } from "@/lib/db";
+import { sql } from "drizzle-orm";
+import { drizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 
 export type CountryRestrictionRow = {
@@ -26,17 +27,34 @@ export type CountryRestrictionRow = {
 export const GEO_BLOCKING_CACHE_TAG = "geo-blocking-restrictions";
 
 // `env` is threaded in (resolved in the request scope by the public entry
-// point below) so the cache callback never calls `getDb()` — which reads the
+// point below) so the cache callback never resolves the request-scoped client,
+// which reads the
 // request cookie via `cookies()`, illegal inside `unstable_cache` — and so a
 // dev-DB-toggled admin's cache entries never collide with prod. Mirrors
 // `computeSetsList` in `queries/sets.ts`.
 async function computeCountryRestrictions(
   env: DbEnv,
 ): Promise<CountryRestrictionRow[]> {
-  const db = dbForEnv(env);
-  const rows = await db.country_restrictions.findMany({
-    orderBy: { country_code: "asc" },
-  });
+  const db = drizzleForEnv(env);
+  const result = await db.execute<{
+    country_code: string;
+    physical_withdrawal: boolean;
+    digital_withdrawal: boolean;
+    gift_card_deposit: boolean;
+    promo_code_deposit: boolean;
+    blocked: boolean;
+    locked_deposits_crypto: string[];
+    locked_deposits_fiat: string[];
+    locked_withdrawals_crypto: string[];
+  }>(sql`
+    SELECT country_code, physical_withdrawal, digital_withdrawal,
+           gift_card_deposit, promo_code_deposit, blocked,
+           locked_deposits_crypto, locked_deposits_fiat,
+           locked_withdrawals_crypto
+    FROM country_restrictions
+    ORDER BY country_code ASC
+  `);
+  const rows = result.rows;
 
   return rows.map((c) => ({
     countryCode: c.country_code,

@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { sql } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
-import { getProdDb } from "@/lib/db";
+import { adminDrizzle } from "@/lib/admin-db";
+import { getProdDrizzleDb } from "@/lib/db";
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
 
 /**
@@ -26,7 +27,7 @@ import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
  * that timestamp IS the "have they done it already?" answer; `verify_count`
  * and `last_verified_at` track repeats.
  *
- * DATA BOUNDARY: reads prod read-only (`getProdDb()`, never `getDb()` — a
+ * DATA BOUNDARY: reads prod read-only through the pinned Drizzle client — a
  * machine caller must always see prod, not an admin's dev/prod cookie
  * toggle), writes the ADMIN DB only. Nothing here mutates the game DB.
  *
@@ -83,10 +84,17 @@ export const POST = withApiKey(
     // Single index probe on the unique accountId. providerId is asserted so a
     // same-valued account on another provider can never be mistaken for a
     // Discord link.
-    const account = await getProdDb().account.findUnique({
-      where: { accountId: discordUserId },
-      select: { providerId: true, userId: true },
-    });
+    const account = (
+      await getProdDrizzleDb().execute<{
+        providerId: string;
+        userId: string;
+      }>(sql`
+        SELECT "providerId", "userId"
+        FROM account
+        WHERE "accountId" = ${discordUserId}
+        LIMIT 1
+      `)
+    ).rows[0];
 
     if (!account || account.providerId !== "discord") {
       // Deliberately writes nothing — an unlinked probe leaves no trace.
@@ -97,43 +105,42 @@ export const POST = withApiKey(
       );
     }
 
-    // Read-before-write so we can tell the bot whether this was their FIRST
-    // verify. The upsert below is what actually guarantees correctness under
-    // concurrency (unique on discord_user_id); this read only decides the
-    // message, so a race at worst mislabels a simultaneous double-verify as
-    // "first" twice — it can never create a duplicate row or lose a count.
-    const existing = await adminDb.discord_verifications.findUnique({
-      where: { discord_user_id: discordUserId },
-      select: { first_verified_at: true, verify_count: true },
-    });
-
-    const now = new Date();
-    const record = await adminDb.discord_verifications.upsert({
-      where: { discord_user_id: discordUserId },
-      create: {
-        discord_user_id: discordUserId,
-        user_id: account.userId,
-        first_verified_at: now,
-        last_verified_at: now,
-        verify_count: 1,
-      },
-      update: {
-        // user_id is refreshed in case the Discord account was relinked to a
-        // different Packy account since the last verify.
-        user_id: account.userId,
-        last_verified_at: now,
-        verify_count: { increment: 1 },
-        // first_verified_at is deliberately NOT touched.
-      },
-      select: { first_verified_at: true, verify_count: true },
-    });
+    // One atomic upsert records the verification and reports whether this was
+    // the first one, avoiding both the extra read and its concurrency race.
+    const result = await adminDrizzle.execute<{
+      first_verified_at: Date | string;
+      verify_count: number;
+      inserted: boolean;
+    }>(sql`
+      INSERT INTO discord_verifications (
+        discord_user_id,
+        user_id,
+        first_verified_at,
+        last_verified_at,
+        verify_count
+      )
+      VALUES (${discordUserId}, ${account.userId}, NOW(), NOW(), 1)
+      ON CONFLICT (discord_user_id) DO UPDATE
+      SET
+        user_id = EXCLUDED.user_id,
+        last_verified_at = NOW(),
+        verify_count = discord_verifications.verify_count + 1
+      RETURNING
+        first_verified_at,
+        verify_count,
+        (xmax = 0) AS inserted
+    `);
+    const record = result.rows[0];
+    if (!record) {
+      throw new Error("Discord verification upsert returned no row");
+    }
 
     return {
       discordUserId,
       linked: true,
       /** False on the very first successful verify, true on every repeat. */
-      alreadyVerified: existing !== null,
-      firstVerifiedAt: record.first_verified_at.toISOString(),
+      alreadyVerified: !record.inserted,
+      firstVerifiedAt: new Date(record.first_verified_at).toISOString(),
       verifyCount: record.verify_count,
     };
   },

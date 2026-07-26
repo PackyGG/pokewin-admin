@@ -75,7 +75,7 @@ function approx(a: number, b: number, eps = 1e-9): boolean {
 // This list is duplicated from the schema ON PURPOSE: it is the
 // independent oracle the partition is checked against. If schema and
 // partition both changed but this oracle did not, the gap/overlap checks
-// below catch it. Keep in sync with prisma/schema.prisma:1221-1264.
+// below catch it. Keep in sync with the MAIN Drizzle ledger type enum.
 const ALL_ENUM_TYPES: LedgerTransactionType[] = [
   "deposit",
   "pack_opening",

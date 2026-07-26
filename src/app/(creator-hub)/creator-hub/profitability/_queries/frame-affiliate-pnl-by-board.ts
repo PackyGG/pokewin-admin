@@ -2,7 +2,8 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { getDevDb, getProdDb } from "@/lib/db";
+import { drizzleForEnv } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
@@ -47,11 +48,6 @@ export type BoardWindow = {
 };
 
 const LIFETIME_LOOKBACK_DAYS = 365;
-const COLD_SCAN_STATEMENT_TIMEOUT_MS = 55_000;
-const PNL_TX_OPTIONS = {
-  timeout: COLD_SCAN_STATEMENT_TIMEOUT_MS + 5_000,
-  maxWait: 10_000,
-} as const;
 
 export type BoardAffiliatePnl = {
   /**
@@ -71,7 +67,7 @@ const cachedBoardPnl = (
 ) =>
   unstable_cache(
     async (): Promise<[string, BoardAffiliatePnl][]> => {
-      const db = env === "dev" ? getDevDb() : getProdDb();
+      const db = drizzleForEnv(env);
 
       // (boardId, creatorUserId, start, end) tuples — boardId is unique per
       // row; creatorUserId may repeat (same creator, multiple past boards).
@@ -186,19 +182,14 @@ const cachedBoardPnl = (
           LEFT JOIN wd w ON w.board_id = f.board_id
           LEFT JOIN claims cl ON cl.board_id = f.board_id`;
 
-      const rows = await db.$transaction(async (tx) => {
-        await tx.$executeRawUnsafe(
-          `SET LOCAL statement_timeout = ${COLD_SCAN_STATEMENT_TIMEOUT_MS}`,
-        );
-        return tx.$queryRawUnsafe<
+      const rows = await queryRows<
           {
             board_id: string;
             deposits: string;
             card_withdrawals: string;
             affiliate_claims: string;
           }[]
-        >(sql, ...params);
-      }, PNL_TX_OPTIONS);
+        >(db, sql, ...params);
 
       return rows.map((r) => {
         const deposits = toNumber(r.deposits);

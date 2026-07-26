@@ -42,7 +42,7 @@ async function SetsListContent({
   sortOrder?: string;
   isAdmin: boolean;
 }) {
-  // `getSetsList` runs through `loadPrimary` (safeQuery + timeout) so a Prisma
+  // `getSetsList` runs through `loadPrimary` (safeQuery + timeout) so a schema
   // column drift or a pathological scan degrades to an inline error tile
   // instead of crashing the whole `(admin)` route group via error.tsx — the
   // same resilience /cards already has on its list call-site.
@@ -56,7 +56,7 @@ async function SetsListContent({
     return (
       <TileErrorFallback
         label="Sets list"
-        hint="The sets query failed — most likely a Prisma schema field that hasn't reached the live DB yet. Server logs hold the digest."
+        hint="The sets query failed — most likely a schema field that hasn't reached the live DB yet. Server logs hold the digest."
         size="panel"
       />
     );

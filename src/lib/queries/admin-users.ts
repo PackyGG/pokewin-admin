@@ -1,5 +1,20 @@
-import { adminDb } from "@/lib/admin-db";
-import { getDb } from "@/lib/db";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  inArray,
+  sql,
+  type SQL,
+} from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import {
+  admin_audit_events,
+  admin_roles,
+  admin_sessions,
+  admin_users,
+} from "@/lib/db-schema/admin/schema";
+import { getDrizzleDb } from "@/lib/db";
 import { getEffectiveRoles } from "@/lib/admin-roles";
 import { readAdminUserWithRoles } from "@/lib/admin-user-roles";
 import { ROLE_BASELINES, baselineTokensFor } from "@/lib/role-baselines";
@@ -17,54 +32,70 @@ import { logError } from "@/lib/errors/logger";
 const AUDIT_MAIN_DB_TIMEOUT_MS = 8_000;
 
 export async function getAdminUserDetail(id: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // Resilient to the unapplied `roles` migration: degrades to `roles: []`
   // (→ effective `[role]` below) so the detail page renders pre-migration.
   // The per-user override columns (permission_grants / permission_revokes)
   // are selected in BOTH variants — they exist in prod (applied + verified);
-  // the write side (loadUserPermissionState) carries the extra P2022 degrade.
+  // the write side (loadUserPermissionState) carries the extra 42703 degrade.
   const user = await readAdminUserWithRoles(
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id },
-        select: {
-          id: true,
-          email: true,
-          username: true,
-          role: true,
-          roles: true,
-          role_id: true,
-          custom_role: { select: { id: true, name: true, capabilities: true } },
-          totp_enabled: true,
-          is_active: true,
-          is_owner: true,
-          allowed_pages: true,
-          permission_grants: true,
-          permission_revokes: true,
-          created_at: true,
-          updated_at: true,
-        },
-      }),
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id },
-        select: {
-          id: true,
-          email: true,
-          username: true,
-          role: true,
-          role_id: true,
-          custom_role: { select: { id: true, name: true, capabilities: true } },
-          totp_enabled: true,
-          is_active: true,
-          is_owner: true,
-          allowed_pages: true,
-          permission_grants: true,
-          permission_revokes: true,
-          created_at: true,
-          updated_at: true,
-        },
-      }),
+    async () =>
+      (
+        await adminDrizzle
+          .select({
+            id: admin_users.id,
+            email: admin_users.email,
+            username: admin_users.username,
+            role: admin_users.role,
+            roles: admin_users.roles,
+            role_id: admin_users.role_id,
+            custom_role: {
+              id: admin_roles.id,
+              name: admin_roles.name,
+              capabilities: admin_roles.capabilities,
+            },
+            totp_enabled: admin_users.totp_enabled,
+            is_active: admin_users.is_active,
+            is_owner: admin_users.is_owner,
+            allowed_pages: admin_users.allowed_pages,
+            permission_grants: admin_users.permission_grants,
+            permission_revokes: admin_users.permission_revokes,
+            created_at: admin_users.created_at,
+            updated_at: admin_users.updated_at,
+          })
+          .from(admin_users)
+          .leftJoin(admin_roles, eq(admin_roles.id, admin_users.role_id))
+          .where(eq(admin_users.id, id))
+          .limit(1)
+      )[0] ?? null,
+    async () =>
+      (
+        await adminDrizzle
+          .select({
+            id: admin_users.id,
+            email: admin_users.email,
+            username: admin_users.username,
+            role: admin_users.role,
+            role_id: admin_users.role_id,
+            custom_role: {
+              id: admin_roles.id,
+              name: admin_roles.name,
+              capabilities: admin_roles.capabilities,
+            },
+            totp_enabled: admin_users.totp_enabled,
+            is_active: admin_users.is_active,
+            is_owner: admin_users.is_owner,
+            allowed_pages: admin_users.allowed_pages,
+            permission_grants: admin_users.permission_grants,
+            permission_revokes: admin_users.permission_revokes,
+            created_at: admin_users.created_at,
+            updated_at: admin_users.updated_at,
+          })
+          .from(admin_users)
+          .leftJoin(admin_roles, eq(admin_roles.id, admin_users.role_id))
+          .where(eq(admin_users.id, id))
+          .limit(1)
+      )[0] ?? null,
   );
 
   if (!user) return null;
@@ -72,10 +103,15 @@ export async function getAdminUserDetail(id: string) {
   // For creators, resolve linked main site user by email match
   let linkedUser: { id: string; username: string | null } | null = null;
   if (user.role === "creator") {
-    const mainUser = await db.user.findFirst({
-      where: { email: user.email, role: "creator" },
-      select: { id: true, username: true },
-    });
+    const mainUser = (
+      await db.execute<{ id: string; username: string | null }>(sql`
+        SELECT id, username
+        FROM "user"
+        WHERE email = ${user.email}
+          AND role::text = 'creator'
+        LIMIT 1
+      `)
+    ).rows[0];
     if (mainUser) linkedUser = mainUser;
   }
 
@@ -174,7 +210,7 @@ export async function getAdminUserDetail(id: string) {
       (u.is_owner ?? false) ||
       (u.username ?? "").trim().toLowerCase() === "motha",
     isMainOwner: (u.username ?? "").trim().toLowerCase() === "motha",
-    allowedPages: u.allowed_pages,
+    allowedPages: u.allowed_pages ?? [],
     // ── Phase C per-user override layer ──
     // The explicit grant/revoke columns (the EDITABLE source). Empty for a
     // never-edited user; allowedPages stays the derived runtime cache.
@@ -190,8 +226,8 @@ export async function getAdminUserDetail(id: string) {
     isGateBypass,
     // Tokens the runtime self-heals re-grant on page load even if revoked.
     stickyTokens,
-    createdAt: u.created_at.toISOString(),
-    updatedAt: u.updated_at.toISOString(),
+    createdAt: new Date(u.created_at).toISOString(),
+    updatedAt: new Date(u.updated_at).toISOString(),
     linkedUser,
   };
 }
@@ -215,13 +251,18 @@ export async function getAdminUserSessions(
   perPage: number = 20
 ): Promise<PaginatedResult<AdminSessionItem>> {
   const [sessions, total] = await Promise.all([
-    adminDb.admin_sessions.findMany({
-      where: { admin_user_id: adminUserId },
-      orderBy: { logged_in_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-    }),
-    adminDb.admin_sessions.count({ where: { admin_user_id: adminUserId } }),
+    adminDrizzle
+      .select()
+      .from(admin_sessions)
+      .where(eq(admin_sessions.admin_user_id, adminUserId))
+      .orderBy(desc(admin_sessions.logged_in_at))
+      .limit(Math.min(Math.max(perPage, 1), 100))
+      .offset(Math.max(0, page - 1) * Math.min(Math.max(perPage, 1), 100)),
+    adminDrizzle
+      .select({ value: count() })
+      .from(admin_sessions)
+      .where(eq(admin_sessions.admin_user_id, adminUserId))
+      .then((rows) => rows[0]?.value ?? 0),
   ]);
 
   const now = new Date();
@@ -232,10 +273,12 @@ export async function getAdminUserSessions(
       ip: s.ip,
       userAgent: s.user_agent,
       authMethod: s.auth_method,
-      loggedInAt: s.logged_in_at.toISOString(),
-      expiresAt: s.expires_at.toISOString(),
-      loggedOutAt: s.logged_out_at?.toISOString() ?? null,
-      isActive: !s.logged_out_at && s.expires_at > now,
+      loggedInAt: new Date(s.logged_in_at).toISOString(),
+      expiresAt: new Date(s.expires_at).toISOString(),
+      loggedOutAt: s.logged_out_at
+        ? new Date(s.logged_out_at).toISOString()
+        : null,
+      isActive: !s.logged_out_at && new Date(s.expires_at) > now,
     })),
     total,
     page,
@@ -250,33 +293,37 @@ export async function getAdminUserAuditStats(adminUserId: string) {
   // back one row per event (thousands) and collapsed them in JS. Pushed
   // down into the DB via DATE() so we get exactly one row per day.
   //
-  // totalActions is derived from the eventsByType groupBy in JS — Prisma
+  // totalActions is derived from the eventsByType aggregation in JS —
   // returns the per-type counts already, so a separate full-table count
   // is redundant.
   const [eventsByType, lastEvent, dailyCounts] = await Promise.all([
-    adminDb.admin_audit_events.groupBy({
-      by: ["event_type"],
-      where: { admin_user_id: adminUserId },
-      _count: true,
-      orderBy: { _count: { event_type: "desc" } },
-    }),
-    adminDb.admin_audit_events.findFirst({
-      where: { admin_user_id: adminUserId },
-      orderBy: { created_at: "desc" },
-      select: { created_at: true },
-    }),
-    adminDb.$queryRaw<{ date: Date; count: bigint }[]>`
-      SELECT DATE(created_at AT TIME ZONE 'UTC') AS date,
-             COUNT(*)::bigint AS count
-      FROM admin_audit_events
-      WHERE admin_user_id = ${adminUserId}::uuid
-        AND created_at >= NOW() - INTERVAL '30 days'
-      GROUP BY DATE(created_at AT TIME ZONE 'UTC')
-    `,
+    adminDrizzle
+      .select({ event_type: admin_audit_events.event_type, value: count() })
+      .from(admin_audit_events)
+      .where(eq(admin_audit_events.admin_user_id, adminUserId))
+      .groupBy(admin_audit_events.event_type)
+      .orderBy(desc(count())),
+    adminDrizzle
+      .select({ created_at: admin_audit_events.created_at })
+      .from(admin_audit_events)
+      .where(eq(admin_audit_events.admin_user_id, adminUserId))
+      .orderBy(desc(admin_audit_events.created_at))
+      .limit(1)
+      .then((rows) => rows[0] ?? null),
+    adminDrizzle
+      .execute<{ date: Date; count: bigint }>(sql`
+        SELECT DATE(created_at AT TIME ZONE 'UTC') AS date,
+               COUNT(*)::bigint AS count
+        FROM admin_audit_events
+        WHERE admin_user_id = ${adminUserId}::uuid
+          AND created_at >= NOW() - INTERVAL '30 days'
+        GROUP BY DATE(created_at AT TIME ZONE 'UTC')
+      `)
+      .then((result) => result.rows),
   ]);
 
   const totalActions = eventsByType.reduce(
-    (sum, e) => sum + (typeof e._count === "number" ? e._count : 0),
+    (sum, e) => sum + e.value,
     0,
   );
 
@@ -296,10 +343,12 @@ export async function getAdminUserAuditStats(adminUserId: string) {
 
   return {
     totalActions,
-    lastActive: lastEvent?.created_at.toISOString() ?? null,
+    lastActive: lastEvent
+      ? new Date(lastEvent.created_at).toISOString()
+      : null,
     eventsByType: eventsByType.map((e) => ({
       eventType: e.event_type,
-      count: e._count,
+      count: e.value,
     })),
     dailyActivity,
   };
@@ -323,17 +372,19 @@ export async function getAdminUserAuditEvents(
   perPage: number = 20,
   filters?: { eventType?: string; search?: string }
 ): Promise<PaginatedResult<AdminAuditEventItem>> {
-  const db = await getDb();
-  const where: Record<string, unknown> = { admin_user_id: adminUserId };
+  const db = await getDrizzleDb();
+  const conditions: SQL[] = [
+    eq(admin_audit_events.admin_user_id, adminUserId),
+  ];
   if (filters?.eventType && filters.eventType !== "all") {
-    where.event_type = filters.eventType;
+    conditions.push(eq(admin_audit_events.event_type, filters.eventType));
   }
   if (filters?.search) {
     const searchTerm = filters.search;
     // Try exact user ID match first, then search by username
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(searchTerm);
     if (isUuid) {
-      where.target_user_id = searchTerm;
+      conditions.push(eq(admin_audit_events.target_user_id, searchTerm));
     } else {
       // Username → main-DB id resolution: the only main-DB hit in the filter
       // path. Bounded timeout + catch so a slow/unavailable main DB degrades
@@ -343,11 +394,14 @@ export async function getAdminUserAuditEvents(
       try {
         const matchingUsers = await withTimeout(
           () =>
-            db.user.findMany({
-              where: { username: { contains: searchTerm, mode: "insensitive" } },
-              select: { id: true },
-              take: 50,
-            }),
+            db
+              .execute<{ id: string }>(sql`
+                SELECT id
+                FROM "user"
+                WHERE username ILIKE ${`%${searchTerm.replace(/[\\%_]/g, "\\$&")}%`} ESCAPE '\'
+                LIMIT 50
+              `)
+              .then((result) => result.rows),
           AUDIT_MAIN_DB_TIMEOUT_MS,
         );
         ids = matchingUsers.map((u) => u.id);
@@ -359,18 +413,30 @@ export async function getAdminUserAuditEvents(
         }
         // Degrade: leave ids empty → "__no_match__" below.
       }
-      where.target_user_id = ids.length > 0 ? { in: ids } : "__no_match__";
+      conditions.push(
+        ids.length > 0
+          ? inArray(admin_audit_events.target_user_id, ids)
+          : eq(admin_audit_events.target_user_id, "__no_match__"),
+      );
     }
   }
 
+  const safePerPage = Math.min(Math.max(perPage, 1), 100);
+  const safePage = Math.max(page, 1);
+  const whereClause = and(...conditions);
   const [events, total] = await Promise.all([
-    adminDb.admin_audit_events.findMany({
-      where,
-      orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-    }),
-    adminDb.admin_audit_events.count({ where }),
+    adminDrizzle
+      .select()
+      .from(admin_audit_events)
+      .where(whereClause)
+      .orderBy(desc(admin_audit_events.created_at))
+      .limit(safePerPage)
+      .offset((safePage - 1) * safePerPage),
+    adminDrizzle
+      .select({ value: count() })
+      .from(admin_audit_events)
+      .where(whereClause)
+      .then((rows) => rows[0]?.value ?? 0),
   ]);
 
   // Resolve target usernames from main DB
@@ -387,10 +453,13 @@ export async function getAdminUserAuditEvents(
     try {
       const users = await withTimeout(
         () =>
-          db.user.findMany({
-            where: { id: { in: targetUserIds } },
-            select: { id: true, username: true, email: true },
-          }),
+          db
+            .execute<{ id: string; username: string | null; email: string | null }>(sql`
+              SELECT id, username, email
+              FROM "user"
+              WHERE id = ANY(${targetUserIds}::text[])
+            `)
+            .then((result) => result.rows),
         AUDIT_MAIN_DB_TIMEOUT_MS,
       );
       for (const u of users) {
@@ -416,11 +485,11 @@ export async function getAdminUserAuditEvents(
         : null,
       ip: e.ip,
       metadata: e.metadata,
-      createdAt: e.created_at.toISOString(),
+      createdAt: new Date(e.created_at).toISOString(),
     })),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }

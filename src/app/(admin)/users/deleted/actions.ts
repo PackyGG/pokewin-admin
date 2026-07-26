@@ -1,42 +1,20 @@
 "use server";
 
 import { revalidatePath, revalidateTag } from "next/cache";
-import { getDb } from "@/lib/db";
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
+import { adminDrizzle } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
 import { require2FA } from "@/lib/require-2fa";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import type { DeletedUserSnapshot } from "@/lib/deleted-users/snapshot";
-import type { Prisma } from "@/generated/prisma/client";
 
-// ---------------------------------------------------------------------------
-// Helpers: re-hydrate JSON-serialized snapshot rows into the shape Prisma
-// expects on the way back in. Decimal columns are persisted in the snapshot
-// as canonical decimal strings (see snapshot.ts); we hand those back to
-// Prisma which accepts string | number | Decimal for @db.Decimal columns.
-// Date columns are persisted as ISO strings; Prisma accepts those for
-// @db.Timestamp / @db.Date columns.
-// ---------------------------------------------------------------------------
-
-/**
- * Best-effort shallow clone of a snapshot row that strips Prisma's
- * internal getters / setters and leaves us with a plain JSON object the
- * generated client will accept. The snapshot is already pure JSON
- * (loaded from JSONB) so this is mostly defensive.
- */
 function cleanRow(row: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(row)) {
-    if (v === undefined) continue;
-    out[k] = v;
-  }
-  return out;
+  return Object.fromEntries(
+    Object.entries(row).filter(([, value]) => value !== undefined),
+  );
 }
-
-// ---------------------------------------------------------------------------
-// restoreDeletedUser
-// ---------------------------------------------------------------------------
 
 export async function restoreDeletedUser(
   snapshotId: string,
@@ -50,12 +28,19 @@ export async function restoreDeletedUser(
   );
   await require2FA(session.userId, totpCode);
 
-  const snapshotRow = await adminDb.admin_deleted_users.findUnique({
-    where: { id: snapshotId },
-  });
-  if (!snapshotRow) {
-    throw new Error("Snapshot not found");
-  }
+  const snapshotResult = await adminDrizzle.execute<{
+    id: string;
+    username: string | null;
+    expires_at: Date;
+    restored_at: Date | null;
+    snapshot: DeletedUserSnapshot;
+  }>(sql`
+    SELECT id, username, expires_at, restored_at, snapshot
+    FROM admin_deleted_users
+    WHERE id = ${snapshotId}
+  `);
+  const snapshotRow = snapshotResult.rows[0];
+  if (!snapshotRow) throw new Error("Snapshot not found");
   if (snapshotRow.restored_at) {
     throw new Error("Snapshot has already been restored");
   }
@@ -63,108 +48,91 @@ export async function restoreDeletedUser(
     throw new Error("Snapshot has expired and cannot be restored");
   }
 
-  const snapshot = snapshotRow.snapshot as unknown as DeletedUserSnapshot;
-  if (!snapshot || !snapshot.user) {
+  const snapshot = snapshotRow.snapshot;
+  if (!snapshot?.user) {
     throw new Error("Snapshot is malformed — cannot restore");
   }
 
-  const db = await getDb();
-
-  // Refuse to restore if the user id is now in use again (race: someone
-  // re-signed up while the snapshot was sitting in the bin). We don't
-  // want to clobber a fresh account by re-inserting an old one with
-  // the same id.
-  const existing = await db.user.findUnique({
-    where: { id: snapshotId },
-    select: { id: true },
-  });
-  if (existing) {
+  const db = await getDrizzleDb();
+  const existing = await db.execute<{ id: string }>(sql`
+    SELECT id FROM "user" WHERE id = ${snapshotId} LIMIT 1
+  `);
+  if (existing.rows[0]) {
     throw new Error(
       "A user with this id already exists in main DB — restore aborted",
     );
   }
 
   const userData = cleanRow(snapshot.user);
-  const balancesData = snapshot.balances
-    ? cleanRow(snapshot.balances)
-    : null;
+  const balancesData = snapshot.balances ? cleanRow(snapshot.balances) : null;
   const inventoryData = snapshot.user_inventory.map(cleanRow);
   const vouchersData = snapshot.vouchers.map(cleanRow);
-  const rakebackData = snapshot.rakeback_claims.map(cleanRow);
+  const rakebackData = snapshot.rakeback_claims.map((row) => ({
+    ...cleanRow(row),
+    ledger_tx_id: null,
+  }));
+  if (balancesData) balancesData.last_transaction_id = null;
 
-  // Restore in a single transaction so a sub-insert failure (e.g.
-  // duplicate inventory row, FK to a missing card) rolls everything
-  // back. The user row is inserted first so balances/inventory FKs
-  // resolve to the live row. We use the *Unchecked* create-input
-  // variants throughout — they take plain scalar columns (no nested
-  // relation writes), which matches the snapshot shape exactly.
   try {
-    await db.$transaction(async (tx) => {
-      await tx.user.create({
-        data: userData as unknown as Prisma.UserUncheckedCreateInput,
-      });
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`
+        INSERT INTO "user"
+        SELECT (jsonb_populate_record(
+          NULL::"user", ${JSON.stringify(userData)}::jsonb
+        )).*
+      `);
       if (balancesData) {
-        // `last_transaction_id` may point at a ledger row we're NOT
-        // restoring (game_sessions / ledger_transactions are
-        // skipped — see end-of-block notes). Strip it so the FK
-        // doesn't break; the user can claim a new ledger event next
-        // time they transact and the field repopulates.
-        const balancesForInsert = { ...balancesData };
-        balancesForInsert.last_transaction_id = null;
-        await tx.balances.create({
-          data: balancesForInsert as unknown as Prisma.balancesUncheckedCreateInput,
-        });
+        await tx.execute(sql`
+          INSERT INTO balances
+          SELECT (jsonb_populate_record(
+            NULL::balances, ${JSON.stringify(balancesData)}::jsonb
+          )).*
+        `);
       }
       if (inventoryData.length > 0) {
-        await tx.user_inventory.createMany({
-          data: inventoryData as unknown as Prisma.user_inventoryCreateManyInput[],
-          skipDuplicates: true,
-        });
+        await tx.execute(sql`
+          INSERT INTO user_inventory
+          SELECT restored.*
+          FROM jsonb_populate_recordset(
+            NULL::user_inventory, ${JSON.stringify(inventoryData)}::jsonb
+          ) AS restored
+          ON CONFLICT DO NOTHING
+        `);
       }
       if (vouchersData.length > 0) {
-        await tx.vouchers.createMany({
-          data: vouchersData as unknown as Prisma.vouchersCreateManyInput[],
-          skipDuplicates: true,
-        });
+        await tx.execute(sql`
+          INSERT INTO vouchers
+          SELECT restored.*
+          FROM jsonb_populate_recordset(
+            NULL::vouchers, ${JSON.stringify(vouchersData)}::jsonb
+          ) AS restored
+          ON CONFLICT DO NOTHING
+        `);
       }
       if (rakebackData.length > 0) {
-        // Same FK concern as balances — ledger_tx_id may reference a
-        // ledger row we deliberately skipped. Null it out; the historic
-        // payout still appears in the user's rakeback history.
-        const sanitized = rakebackData.map((row) => {
-          const copy = { ...row };
-          copy.ledger_tx_id = null;
-          return copy;
-        });
-        await tx.rakeback_claims.createMany({
-          data: sanitized as unknown as Prisma.rakeback_claimsCreateManyInput[],
-          skipDuplicates: true,
-        });
+        await tx.execute(sql`
+          INSERT INTO rakeback_claims
+          SELECT restored.*
+          FROM jsonb_populate_recordset(
+            NULL::rakeback_claims, ${JSON.stringify(rakebackData)}::jsonb
+          ) AS restored
+          ON CONFLICT DO NOTHING
+        `);
       }
-      // game_sessions and ledger_transactions are intentionally NOT
-      // restored — their FKs (deposit_addresses, gift_cards, race
-      // claims, battle participants) cascaded with the user delete and
-      // can't be brought back without restoring those too. The snapshot
-      // still preserves them as JSON for human review on /users/deleted.
     });
-  } catch (err) {
+  } catch (error) {
     throw new Error(
-      err instanceof Error
-        ? `Restore failed: ${err.message}`
+      error instanceof Error
+        ? `Restore failed: ${error.message}`
         : "Restore failed: unknown error",
     );
   }
 
-  // Mark the snapshot as restored so it can't be re-applied. We keep
-  // the row visible on /users/deleted until natural expiry so an admin
-  // can see the restore status.
-  await adminDb.admin_deleted_users.update({
-    where: { id: snapshotId },
-    data: {
-      restored_at: new Date(),
-      restored_by: session.userId,
-    },
-  });
+  await adminDrizzle.execute(sql`
+    UPDATE admin_deleted_users
+    SET restored_at = NOW(), restored_by = ${session.userId}
+    WHERE id = ${snapshotId} AND restored_at IS NULL
+  `);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -182,17 +150,9 @@ export async function restoreDeletedUser(
   revalidatePath("/users");
   revalidatePath("/users/deleted");
   revalidatePath(`/users/${snapshotId}`);
-  // revalidatePath does NOT drop unstable_cache entries — flush the
-  // /users list + KPI caches so the restored user reappears immediately.
   revalidateTag("users-list");
   revalidateTag("users-list-stats");
 }
-
-// ---------------------------------------------------------------------------
-// purgeDeletedUserSnapshot — admin-triggered immediate purge (before the
-// 7-day expiry). Same capability as delete since it's the same destructive
-// intent: "this user's recoverable data goes away now".
-// ---------------------------------------------------------------------------
 
 export async function purgeDeletedUserSnapshot(
   snapshotId: string,
@@ -206,25 +166,23 @@ export async function purgeDeletedUserSnapshot(
   );
   await require2FA(session.userId, totpCode);
 
-  const existing = await adminDb.admin_deleted_users.findUnique({
-    where: { id: snapshotId },
-    select: { id: true, username: true },
-  });
-  if (!existing) {
-    throw new Error("Snapshot not found");
-  }
+  const existingResult = await adminDrizzle.execute<{
+    id: string;
+    username: string | null;
+  }>(sql`
+    SELECT id, username FROM admin_deleted_users WHERE id = ${snapshotId}
+  `);
+  const existing = existingResult.rows[0];
+  if (!existing) throw new Error("Snapshot not found");
 
-  await adminDb.admin_deleted_users.delete({ where: { id: snapshotId } });
-
+  await adminDrizzle.execute(sql`
+    DELETE FROM admin_deleted_users WHERE id = ${snapshotId}
+  `);
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "user_snapshot_purged",
     targetUserId: snapshotId,
-    metadata: {
-      snapshot_id: snapshotId,
-      username: existing.username,
-    },
+    metadata: { snapshot_id: snapshotId, username: existing.username },
   });
-
   revalidatePath("/users/deleted");
 }

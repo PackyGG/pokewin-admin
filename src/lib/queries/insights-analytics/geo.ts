@@ -1,7 +1,7 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
@@ -81,7 +81,6 @@ const cachedGeoReads = unstable_cache(
     groupBy: GeoGroupBy,
     blacklistIdNotIn: string,
   ): Promise<GeoReads> => {
-    const db = await getDb();
     // Lifetime ("lifetime") resolves to the 365d cap (bounded), not null —
     // the period-scoped ledger / withdrawal scans never run unbounded. The
     // signups count is also bounded to the same window (it is a per-period
@@ -122,7 +121,7 @@ const cachedGeoReads = unstable_cache(
   // in period. Joining them in code via a Map is cheaper than a single
   // monster query.
   const [usersRows, ledgerRows, withdrawalRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryMainRows<
       {
         bucket: string;
         country_code: string | null;
@@ -140,7 +139,7 @@ const cachedGeoReads = unstable_cache(
         ${stateFilter}
       GROUP BY ${groupExpr}
     `),
-    db.$queryRawUnsafe<
+    queryMainRows<
       {
         bucket: string;
         deposits: string;
@@ -161,7 +160,7 @@ const cachedGeoReads = unstable_cache(
         ${periodFilter}
       GROUP BY ${groupKeyExpr}
     `),
-    db.$queryRawUnsafe<
+    queryMainRows<
       {
         bucket: string;
         amount: string;

@@ -3,8 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { getDb } from "@/lib/db";
-import { adminDb } from "@/lib/admin-db";
+import { asc, eq } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
+import { affiliate_codes, user } from "@/lib/db-schema/main/schema";
+import { adminDrizzle } from "@/lib/drizzle";
+import { creator_socials } from "@/lib/db-schema/admin/schema";
 import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import {
   persistDiscordChannelUrl,
@@ -37,27 +40,35 @@ export async function getCandidateSetupProfile(
   userId: string,
 ): Promise<CandidateSetupProfile | null> {
   await requireCreatorHubAccess("Not authorized to add creators in Creator Hub.");
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
-  const [user, codes] = await Promise.all([
-    db.user.findUnique({
-      where: { id: userId },
-      select: { id: true, username: true, email: true, image: true, role: true },
-    }),
-    db.affiliate_codes.findMany({
-      where: { user_id: userId },
-      select: { id: true, code: true },
-      orderBy: { created_at: "asc" },
-    }),
+  const [candidateRows, codes] = await Promise.all([
+    db
+      .select({
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        image: user.image,
+        role: user.role,
+      })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1),
+    db
+      .select({ id: affiliate_codes.id, code: affiliate_codes.code })
+      .from(affiliate_codes)
+      .where(eq(affiliate_codes.user_id, userId))
+      .orderBy(asc(affiliate_codes.created_at)),
   ]);
+  const candidate = candidateRows[0];
 
-  if (!user || user.role === "creator") return null;
+  if (!candidate || candidate.role === "creator") return null;
 
   return {
-    userId: user.id,
-    username: user.username,
-    email: user.email,
-    image: user.image,
+    userId: candidate.id,
+    username: candidate.username,
+    email: candidate.email,
+    image: candidate.image,
     codes,
   };
 }
@@ -75,27 +86,27 @@ async function saveOptionalSocial(
     platformUserId: null as string | null,
   }));
 
-  await adminDb.creator_socials.upsert({
-    where: {
-      target_user_id_platform: { target_user_id: userId, platform },
-    },
-    create: {
+  const now = new Date().toISOString();
+  await adminDrizzle
+    .insert(creator_socials)
+    .values({
       target_user_id: userId,
       platform,
       username: trimmed,
       platform_user_id: stats.platformUserId ?? null,
       follower_count: stats.followerCount ?? null,
-      last_fetched_at: new Date(),
-    },
-    update: {
-      username: trimmed,
-      platform_user_id: stats.platformUserId ?? null,
-      follower_count: stats.followerCount ?? null,
-      last_fetched_at: new Date(),
-      updated_at: new Date(),
-    },
-    select: { id: true },
-  });
+      last_fetched_at: now,
+    })
+    .onConflictDoUpdate({
+      target: [creator_socials.target_user_id, creator_socials.platform],
+      set: {
+        username: trimmed,
+        platform_user_id: stats.platformUserId ?? null,
+        follower_count: stats.followerCount ?? null,
+        last_fetched_at: now,
+        updated_at: now,
+      },
+    });
 }
 
 /**
@@ -116,30 +127,27 @@ export async function completeCreatorOnboarding(
     }),
   );
 
-  await adminDb.creator_socials.upsert({
-    where: {
-      target_user_id_platform: {
-        target_user_id: parsed.userId,
-        platform: "discord",
-      },
-    },
-    create: {
+  const now = new Date().toISOString();
+  await adminDrizzle
+    .insert(creator_socials)
+    .values({
       target_user_id: parsed.userId,
       platform: "discord",
       username: discordId,
       platform_user_id: discordStats.platformUserId ?? null,
       follower_count: discordStats.followerCount ?? null,
-      last_fetched_at: new Date(),
-    },
-    update: {
-      username: discordId,
-      platform_user_id: discordStats.platformUserId ?? null,
-      follower_count: discordStats.followerCount ?? null,
-      last_fetched_at: new Date(),
-      updated_at: new Date(),
-    },
-    select: { id: true },
-  });
+      last_fetched_at: now,
+    })
+    .onConflictDoUpdate({
+      target: [creator_socials.target_user_id, creator_socials.platform],
+      set: {
+        username: discordId,
+        platform_user_id: discordStats.platformUserId ?? null,
+        follower_count: discordStats.followerCount ?? null,
+        last_fetched_at: now,
+        updated_at: now,
+      },
+    });
 
   await persistDiscordChannelUrl(
     parsed.userId,

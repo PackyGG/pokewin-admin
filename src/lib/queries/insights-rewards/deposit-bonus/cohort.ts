@@ -1,5 +1,6 @@
+import { queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   cacheTtlForInsightsPeriod,
@@ -28,8 +29,8 @@ import {
  * + a continuous mean / median ratio.
  *
  * Bonus↔deposit pairing rule: `bonus.balance_before == deposit.balance_after`
- * within 30 seconds of the deposit. Same rule used by every other
- * surface that joins the two (dashboard-live.ts + deposit-bonus-analytics.ts).
+ * within 30 seconds of the deposit. Same rule used by the other
+ * deposit-bonus analytics surfaces.
  *
  * The two lenses are split into two independently-cached helpers:
  *   - {@link getDepositBonusCohortComparison} — the heavy with/without
@@ -115,7 +116,7 @@ async function computeCohortComparison(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusCohortComparison> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const dateFilter = windowDateFilterCapped(period, "d");
   const bonusDateFilter = windowDateFilterCapped(period, "b");
   const wagerDateFilter = windowDateFilterCappedTail(period, "w", 30);
@@ -148,7 +149,7 @@ async function computeCohortComparison(
   // MATERIALIZED prevents Postgres from inlining the CTEs back into a
   // correlated form. Lifetime (`all`) is capped to 365d on every leg via
   // `windowDateFilterCapped(Tail)`.
-  const splitRows = await db.$queryRawUnsafe<
+  const splitRows = await queryRows<
     {
       side: "with" | "without";
       cnt: string;
@@ -160,7 +161,7 @@ async function computeCohortComparison(
       ret7: string;
       ret30: string;
     }[]
-  >(`
+  >(db, sql`
     WITH window_deposits AS MATERIALIZED (
       SELECT d.id, d.user_id, d.amount::numeric AS deposit_amt, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
@@ -292,7 +293,7 @@ async function computeRatioDistribution(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusRatioDistribution> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const dateFilter = windowDateFilterCapped(period, "d");
   const bonusDateFilter = windowDateFilterCapped(period, "b");
   const userScope = staffAndBlacklistSubquery(blacklistIds);
@@ -311,14 +312,14 @@ async function computeRatioDistribution(
   // keeps only deposits that matched a bonus and `DISTINCT ON (wd.id) …
   // ORDER BY wb.created_at ASC` keeps the first match per deposit (old
   // `JOIN LATERAL … LIMIT 1` semantics). `<> 0` deposit guard preserved.
-  const ratioRows = await db.$queryRawUnsafe<
+  const ratioRows = await queryRows<
     {
       bucket: number;
       cnt: string;
       volume: string;
       mean_ratio: string | null;
     }[]
-  >(`
+  >(db, sql`
     WITH window_deposits AS MATERIALIZED (
       SELECT d.id, d.user_id, d.amount::numeric AS deposit_amt, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
@@ -387,9 +388,9 @@ async function computeRatioDistribution(
   }
   // Better-quality global median via a second small query — sample
   // size ~= paired rows. Cheap enough on the windowed set.
-  const globalMedianRows = await db.$queryRawUnsafe<
+  const globalMedianRows = await queryRows<
     { median_ratio: string | null }[]
-  >(`
+  >(db, sql`
     WITH window_deposits AS MATERIALIZED (
       SELECT d.id, d.user_id, d.amount::numeric AS deposit_amt, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d

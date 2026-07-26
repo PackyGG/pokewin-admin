@@ -1,5 +1,5 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   getResolvedBlacklist,
@@ -29,7 +29,6 @@ import {
  *   - deposit = rows status='completed', type='deposit'
  * Real users only (staff + blacklist excluded), House POV: bonus = rose cost,
  * savings = emerald (money the house keeps). Every scan is bounded (≤ 90d) and
- * served by the created_at index (Index-or-ClickHouse: indexed Postgres path).
  */
 
 /** The bonus is a fixed 5% of each deposit (enforced by the backend). */
@@ -117,7 +116,6 @@ type ScalarRow = {
 async function computeTracker(
   blacklistIds: string[],
 ): Promise<DepositBonusTracker> {
-  const db = await getDb();
   const userScope = staffAndBlacklistSubquery(blacklistIds);
 
   // ── Scalars: bonus + deposit rollups split by regime via the `cut` CTE.
@@ -126,7 +124,7 @@ async function computeTracker(
   // history — deposit_bonus only began ~74d ago). The cutover comes from the
   // site_config row so T lives in the same naive-UTC frame as created_at.
   const [scalarRows, dailyRows] = await Promise.all([
-    db.$queryRawUnsafe<ScalarRow[]>(`
+    queryMainRows<ScalarRow[]>(`
       WITH cut AS (
         SELECT COALESCE(MIN(created_at), TIMESTAMP '${CUTOVER_FALLBACK}') AS t
         FROM site_config
@@ -182,7 +180,7 @@ async function computeTracker(
         (SELECT COALESCE(SUM(ABS(d.amount::numeric)), 0)::text FROM dep d
           WHERE d.created_at >= NOW() - INTERVAL '30 days') AS last30d_deposits
     `),
-    db.$queryRawUnsafe<
+    queryMainRows<
       { date: Date; bonus: string; deposits: string }[]
     >(`
       WITH days AS (
@@ -319,7 +317,6 @@ export type DepositBonusRecipient = {
 async function computeTopRecipients(
   blacklistIds: string[],
 ): Promise<DepositBonusRecipient[]> {
-  const db = await getDb();
   const userScope = staffAndBlacklistSubquery(blacklistIds);
   type Row = {
     user_id: string;
@@ -330,7 +327,7 @@ async function computeTopRecipients(
   };
   // Since-cutover deposit-bonus leaderboard. Grouped on the
   // (user_id, type, status, created_at) index, joined to "user" by PK.
-  const rows = await db.$queryRawUnsafe<Row[]>(`
+  const rows = await queryMainRows<Row[]>(`
     WITH cut AS (
       SELECT COALESCE(MIN(created_at), TIMESTAMP '${CUTOVER_FALLBACK}') AS t
       FROM site_config WHERE key = 'deposit_bonus_cap_per_period_usd'

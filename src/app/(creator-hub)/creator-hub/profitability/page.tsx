@@ -129,7 +129,7 @@ export default async function CreatorHubProfitabilityPage({
 async function ActiveProfitabilitySection() {
   // Same hard error isolation as `PastDealsSection` below (digest 3304963582):
   // `getCreatorProfitability` degrades its own legs, but an unexpected throw
-  // here — a Prisma connection drop, a transient rejection — would escape to
+  // here — a database connection drop, a transient rejection — would escape to
   // (creator-hub)/error.tsx and take the hero + tab strip with it. This is the
   // DEFAULT tab, so it is the likeliest path to hit; degrade to the roster
   // error card and keep the shell painted.
@@ -235,7 +235,7 @@ async function ActiveProfitabilitySection() {
 async function PastDealsSection({ page }: { page: number }) {
   // Hard error isolation: even though `getPastDeals` internally degrades on
   // slow / failing legs (safeQuery + per-leg try/catch), an unexpected throw
-  // here (a Prisma connection drop, an Edge-Config read inside `resolveAdminRead`
+  // here (a database connection drop, an Edge-Config read inside `resolveAdminRead`
   // erroring, a Suspense child rejecting on a transient state) must NOT escape
   // the section — otherwise the page hero + tab strip vanish behind the route
   // error boundary. The bug class behind digest `3304963582` is exactly this

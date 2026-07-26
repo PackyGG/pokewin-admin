@@ -1,4 +1,5 @@
-import type { PrismaClient } from "@/generated/prisma/client";
+import type { MainDrizzleDb } from "@/lib/db";
+import { queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 
 /**
@@ -61,7 +62,7 @@ export type RafflePrizeValuator = {
  * whole batch — never per-raffle) and return a pure valuator.
  */
 export async function buildRafflePrizeValuator(
-  db: PrismaClient,
+  db: MainDrizzleDb,
   allLines: readonly RafflePrizeLine[],
 ): Promise<RafflePrizeValuator> {
   const packIds = new Set<string>();
@@ -73,16 +74,26 @@ export async function buildRafflePrizeValuator(
 
   const [packRows, cardRows] = await Promise.all([
     packIds.size > 0
-      ? db.packs.findMany({
-          where: { id: { in: [...packIds] } },
-          select: { id: true, price: true },
-        })
+      ? queryRows<Array<{ id: string; price: string }>>(
+          db,
+          sql`SELECT id, price::text AS price
+              FROM packs
+              WHERE id IN (${sql.join(
+                [...packIds].map((id) => sql`${id}::uuid`),
+                sql`, `,
+              )})`,
+        )
       : Promise.resolve([] as Array<{ id: string; price: unknown }>),
     cardIds.size > 0
-      ? db.cards.findMany({
-          where: { id: { in: [...cardIds] } },
-          select: { id: true, price: true },
-        })
+      ? queryRows<Array<{ id: string; price: string }>>(
+          db,
+          sql`SELECT id, price::text AS price
+              FROM cards
+              WHERE id IN (${sql.join(
+                [...cardIds].map((id) => sql`${id}::uuid`),
+                sql`, `,
+              )})`,
+        )
       : Promise.resolve([] as Array<{ id: string; price: unknown }>),
   ]);
 

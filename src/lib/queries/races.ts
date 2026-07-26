@@ -1,10 +1,9 @@
 import { unstable_cache } from "next/cache";
-import { getDb, dbForEnv } from "@/lib/db";
+import { drizzleForEnv } from "@/lib/db";
+import { queryMainRows, queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
-import { Prisma } from "@/generated/prisma/client";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
-import type { race_type } from "@/generated/prisma/enums";
 import { getRewardExpiry } from "@/lib/backend-api/reward-expiry";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
@@ -79,10 +78,12 @@ export type RaceLeaderboardEntry = {
 };
 
 export async function getRacePrizeTiers() {
-  const db = await getDb();
-  const tiers = await db.race_prize_tiers.findMany({
-    orderBy: [{ race_type: "asc" }, { position: "asc" }],
-  });
+  const tiers = await queryMainRows<
+    { id: string; race_type: string; position: number; prize_amount_usd: string }[]
+  >(
+    `SELECT id, race_type::text AS race_type, position, prize_amount_usd::text
+       FROM race_prize_tiers ORDER BY race_type, position`,
+  );
 
   return tiers.map((r) => ({
     id: r.id,
@@ -97,32 +98,47 @@ export async function getRaceClaims(params: {
   perPage?: number;
   raceType?: string;
 }): Promise<PaginatedResult<RaceClaimItem>> {
-  const db = await getDb();
   const { page = 1, perPage = 20, raceType } = params;
-
-  const where: Record<string, unknown> = {};
-  if (raceType && raceType !== "all") {
-    where.race_type = raceType;
-  }
-
-  const [claims, total] = await Promise.all([
-    db.race_claims.findMany({
-      where,
-      orderBy: { claimed_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-      include: {
-        user: { select: { username: true } },
-      },
-    }),
-    db.race_claims.count({ where }),
+  const safePage = Math.max(1, Math.floor(page));
+  const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
+  const filter = raceType && raceType !== "all" ? "WHERE rc.race_type::text = $1" : "";
+  const values = raceType && raceType !== "all" ? [raceType] : [];
+  const [claims, countRows] = await Promise.all([
+    queryMainRows<
+      {
+        id: string;
+        user_id: string;
+        username: string | null;
+        race_type: string;
+        race_period_start: Date;
+        position: number;
+        prize_amount_usd: string;
+        claimed_at: Date;
+      }[]
+    >(
+      `SELECT rc.id, rc.user_id, u.username, rc.race_type::text AS race_type,
+              rc.race_period_start, rc.position, rc.prize_amount_usd::text,
+              rc.claimed_at
+         FROM race_claims rc LEFT JOIN "user" u ON u.id = rc.user_id
+         ${filter}
+         ORDER BY rc.claimed_at DESC
+         LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+      ...values,
+      safePerPage,
+      (safePage - 1) * safePerPage,
+    ),
+    queryMainRows<{ total: string }[]>(
+      `SELECT COUNT(*)::text AS total FROM race_claims rc ${filter}`,
+      ...values,
+    ),
   ]);
+  const total = Number(countRows[0]?.total ?? 0);
 
   return {
     data: claims.map((c) => ({
       id: c.id,
       userId: c.user_id,
-      username: c.user?.username ?? null,
+      username: c.username,
       raceType: c.race_type,
       racePeriodStart: c.race_period_start.toISOString(),
       position: c.position,
@@ -130,9 +146,9 @@ export async function getRaceClaims(params: {
       claimedAt: c.claimed_at.toISOString(),
     })),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }
 
@@ -165,20 +181,21 @@ export async function getRaceLeaderboardPeriods(params: {
   raceType: string;
   limit?: number;
 }): Promise<RaceLeaderboardPeriod[]> {
-  const db = await getDb();
   const { raceType, limit = 120 } = params;
 
   // All-time has no single period — nothing to select.
   if (!raceType || raceType === "all") return [];
 
   const [groups, activeRows] = await Promise.all([
-    db.race_leaderboard_snapshots.groupBy({
-      by: ["period_start"],
-      where: { race_type: raceType as race_type },
-      _count: { _all: true },
-      orderBy: { period_start: "desc" },
-      take: limit,
-    }),
+    queryMainRows<{ period_start: Date; count: string }[]>(
+      `SELECT period_start, COUNT(*)::text AS count
+         FROM race_leaderboard_snapshots
+        WHERE race_type::text = $1
+        GROUP BY period_start
+        ORDER BY period_start DESC LIMIT $2`,
+      raceType,
+      Math.max(1, Math.min(500, limit)),
+    ),
     // Tiny lookup — one active row per race type (seq scan is optimal, same
     // read-only pattern as getRacePeriodsOverview). Used to surface a running
     // race that has no snapshot rows yet. `starts_at` is `timestamp without
@@ -186,13 +203,16 @@ export async function getRaceLeaderboardPeriods(params: {
     // (to_char) instead of round-tripping through a JS Date, whose parsing of
     // that column type is driver-dependent. This key equals `starts_at::date`,
     // the same value getLiveRaceLeaderboard matches on.
-    db.$queryRaw<{ start_date: string }[]>`
+    queryMainRows<{ start_date: string }[]>(
+      `
       SELECT to_char(starts_at, 'YYYY-MM-DD') AS start_date
       FROM race_periods
-      WHERE race_type::text = ${raceType} AND status = 'active'
+      WHERE race_type::text = $1 AND status = 'active'
       ORDER BY starts_at DESC
       LIMIT 1
-    `,
+      `,
+      raceType,
+    ),
   ]);
 
   // Snapshots key their period_start to the calendar day the period started
@@ -204,7 +224,7 @@ export async function getRaceLeaderboardPeriods(params: {
     const periodStart = g.period_start.toISOString().slice(0, 10);
     return {
       periodStart,
-      participants: g._count._all,
+      participants: Number(g.count),
       isActive: activeStart === periodStart,
     };
   });
@@ -231,28 +251,29 @@ export async function getRaceLeaderboard(params: {
   page?: number;
   perPage?: number;
 }): Promise<PaginatedResult<RaceLeaderboardEntry>> {
-  const db = await getDb();
   const { raceType = "daily", periodStart, search, page = 1, perPage = 20 } = params;
+  const safePage = Math.max(1, Math.floor(page));
+  const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
 
   if (raceType === "all") {
     return getAllTimeLeaderboard({ search, page, perPage });
   }
 
-  const where: Record<string, unknown> = {
-    race_type: raceType,
-  };
+  const values: unknown[] = [raceType];
+  const filters = ["rls.race_type::text = $1"];
   if (periodStart) {
-    where.period_start = new Date(periodStart);
+    values.push(new Date(periodStart));
+    filters.push(`rls.period_start = $${values.length}`);
   }
   if (search) {
-    where.user = {
-      OR: [
-        { username: { contains: search, mode: "insensitive" } },
-        { email: { contains: search, mode: "insensitive" } },
-        { id: search },
-      ],
-    };
+    values.push(`%${search.toLowerCase()}%`, search);
+    filters.push(
+      `(LOWER(u.username) LIKE $${values.length - 1}
+        OR LOWER(u.email) LIKE $${values.length - 1}
+        OR u.id = $${values.length})`,
+    );
   }
+  const whereSql = filters.join(" AND ");
 
   // `position` on race_leaderboard_snapshots is only finalized once a period
   // ends — a backend job assigns 1..N (by wagered_usd desc) at that point.
@@ -263,11 +284,14 @@ export async function getRaceLeaderboard(params: {
   // prize-tier range). Sorting by the raw column then shows every row as
   // "#0" in an arbitrary order. Detect that case and rank live by
   // wagered_usd instead of trusting the unset column.
-  const maxPosition = await db.race_leaderboard_snapshots.aggregate({
-    where,
-    _max: { position: true },
-  });
-  const unfinalized = (maxPosition._max.position ?? 0) === 0;
+  const maxPositionRows = await queryMainRows<{ max_position: number | null }[]>(
+    `SELECT MAX(rls.position) AS max_position
+       FROM race_leaderboard_snapshots rls
+       LEFT JOIN "user" u ON u.id = rls.user_id
+      WHERE ${whereSql}`,
+    ...values,
+  );
+  const unfinalized = (maxPositionRows[0]?.max_position ?? 0) === 0;
 
   // Excluded-users blacklist — used only to FLAG rows, never to drop them.
   // Mirrors the affiliate leaderboards: a blacklisted user who's actually #1
@@ -276,24 +300,41 @@ export async function getRaceLeaderboard(params: {
     await getExcludedUserIds().catch(() => [] as string[]),
   );
 
-  const [entries, total, tiers] = await Promise.all([
-    db.race_leaderboard_snapshots.findMany({
-      where,
-      orderBy: unfinalized
-        ? [{ wagered_usd: "desc" }, { user_id: "asc" }]
-        : [{ position: "asc" }],
-      skip: (page - 1) * perPage,
-      take: perPage,
-      include: {
-        user: { select: { username: true } },
-      },
-    }),
-    db.race_leaderboard_snapshots.count({ where }),
-    db.race_prize_tiers.findMany({
-      where: { race_type: raceType as race_type },
-      select: { position: true, prize_amount_usd: true },
-    }),
+  const [entries, countRows, tiers] = await Promise.all([
+    queryMainRows<
+      {
+        id: string;
+        user_id: string;
+        username: string | null;
+        position: number;
+        wagered_usd: string;
+      }[]
+    >(
+      `SELECT rls.id, rls.user_id, u.username, rls.position,
+              rls.wagered_usd::text
+         FROM race_leaderboard_snapshots rls
+         LEFT JOIN "user" u ON u.id = rls.user_id
+        WHERE ${whereSql}
+        ORDER BY ${unfinalized ? "rls.wagered_usd DESC, rls.user_id ASC" : "rls.position ASC"}
+        LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+      ...values,
+      safePerPage,
+      (safePage - 1) * safePerPage,
+    ),
+    queryMainRows<{ total: string }[]>(
+      `SELECT COUNT(*)::text AS total
+         FROM race_leaderboard_snapshots rls
+         LEFT JOIN "user" u ON u.id = rls.user_id
+        WHERE ${whereSql}`,
+      ...values,
+    ),
+    queryMainRows<{ position: number; prize_amount_usd: string }[]>(
+      `SELECT position, prize_amount_usd::text
+         FROM race_prize_tiers WHERE race_type::text = $1`,
+      raceType,
+    ),
   ]);
+  const total = Number(countRows[0]?.total ?? 0);
 
   // No snapshot rows for this period. If it's the currently-RUNNING race,
   // compute standings LIVE from game_sessions — a monthly race is only
@@ -326,22 +367,31 @@ export async function getRaceLeaderboard(params: {
   const claimedAtByUser = new Map<string, string>();
   if (periodDate && userIds.length > 0) {
     const [holds, claims] = await Promise.all([
-      db.race_claim_holds.findMany({
-        where: {
-          race_type: raceType as race_type,
-          race_period_start: periodDate,
-          released_at: null,
-          user_id: { in: userIds },
-        },
-      }),
-      db.race_claims.findMany({
-        where: {
-          race_type: raceType as race_type,
-          race_period_start: periodDate,
-          user_id: { in: userIds },
-        },
-        select: { user_id: true, claimed_at: true },
-      }),
+      queryMainRows<
+        {
+          id: string;
+          user_id: string;
+          reason: string;
+          created_by: string;
+          created_at: Date;
+        }[]
+      >(
+        `SELECT id, user_id, reason, created_by, created_at
+           FROM race_claim_holds
+          WHERE race_type::text = $1 AND race_period_start = $2
+            AND released_at IS NULL AND user_id = ANY($3::text[])`,
+        raceType,
+        periodDate,
+        userIds,
+      ),
+      queryMainRows<{ user_id: string; claimed_at: Date }[]>(
+        `SELECT user_id, claimed_at FROM race_claims
+          WHERE race_type::text = $1 AND race_period_start = $2
+            AND user_id = ANY($3::text[])`,
+        raceType,
+        periodDate,
+        userIds,
+      ),
     ]);
     for (const h of holds) {
       holdByUser.set(h.user_id, {
@@ -358,11 +408,11 @@ export async function getRaceLeaderboard(params: {
 
   return {
     data: entries.map((e, i) => {
-      const rank = unfinalized ? (page - 1) * perPage + i + 1 : e.position;
+      const rank = unfinalized ? (safePage - 1) * safePerPage + i + 1 : e.position;
       return {
         id: e.id,
         userId: e.user_id,
-        username: e.user?.username ?? null,
+        username: e.username,
         position: rank,
         wageredUsd: toNumber(e.wagered_usd),
         prizeAmountUsd: tierByPosition.get(rank) ?? null,
@@ -372,9 +422,9 @@ export async function getRaceLeaderboard(params: {
       };
     }),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }
 
@@ -423,8 +473,8 @@ export async function getLiveRaceLeaderboard(params: {
     excludedUserIds,
   } = params;
   if (!raceType || raceType === "all") return null;
-
-  const db = await getDb();
+  const safePage = Math.max(1, Math.floor(page));
+  const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
 
   // Only the currently-RUNNING race gets a live view. Match the active
   // race_period by its (UTC-naive) start DATE == periodStart, and read the
@@ -435,24 +485,28 @@ export async function getLiveRaceLeaderboard(params: {
   // pg driver parses that column type as LOCAL, which would shift the window
   // hours off). No active match → not live; return null so the caller falls
   // back to its empty result (never fabricates standings for an ended period).
-  const win = await db.$queryRaw<
+  const win = await queryMainRows<
     { starts_naive: string; ends_naive: string }[]
-  >`
+  >(
+    `
     SELECT
       to_char(starts_at, 'YYYY-MM-DD HH24:MI:SS') AS starts_naive,
       to_char(ends_at,   'YYYY-MM-DD HH24:MI:SS') AS ends_naive
     FROM race_periods
-    WHERE race_type::text = ${raceType}
+    WHERE race_type::text = $1
       AND status = 'active'
-      AND starts_at::date = ${periodStart}::date
+      AND starts_at::date = $2::date
     ORDER BY created_at DESC
     LIMIT 1
-  `;
+    `,
+    raceType,
+    periodStart,
+  );
   const activeWindow = win[0];
   if (!activeWindow) return null;
 
   // Resolve env in the request scope (cookie), then compute inside the cache
-  // keyed on that env so the prod/dev toggle is respected (dbForEnv pattern).
+  // keyed on that env so the prod/dev toggle is respected.
   const env = await readDbEnv();
   const { rows, total, tiers } = await cachedLiveRaceStandings(
     env,
@@ -460,8 +514,8 @@ export async function getLiveRaceLeaderboard(params: {
     activeWindow.starts_naive,
     activeWindow.ends_naive,
     search?.trim() ? search.trim() : null,
-    page,
-    perPage,
+    safePage,
+    safePerPage,
   );
 
   const tierByPosition = new Map(tiers.map((t) => [t.position, t.prize] as const));
@@ -481,9 +535,9 @@ export async function getLiveRaceLeaderboard(params: {
       excluded: excluded.has(r.user_id),
     })),
     total,
-    page,
-    perPage,
-    totalPages: Math.max(1, Math.ceil(total / perPage)),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.max(1, Math.ceil(total / safePerPage)),
   };
 }
 
@@ -528,20 +582,22 @@ const cachedLiveRaceStandings = unstable_cache(
     total: number;
     tiers: { position: number; prize: number }[];
   }> => {
-    const db = dbForEnv(env);
-    const offset = (page - 1) * perPage;
+    const db = drizzleForEnv(env);
+    const safePage = Math.max(1, Math.floor(page));
+    const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
+    const offset = (safePage - 1) * safePerPage;
     const like = search ? `%${search}%` : null;
     const idEq = search ?? "";
 
     const [rows, countRes, tiers] = await Promise.all([
-      db.$queryRaw<LiveStandingRow[]>`
+      queryRows<LiveStandingRow[]>(db, `
         WITH agg AS (
           SELECT g.user_id, SUM(COALESCE(g.weighted_bet_amount, g.bet_amount)) AS wagered
           FROM game_sessions g
           WHERE g.race_eligible = true
             AND g.user_id IS NOT NULL
-            AND g.created_at >= ${startsNaive}::timestamp
-            AND g.created_at <  ${endsNaive}::timestamp
+            AND g.created_at >= $1::timestamp
+            AND g.created_at <  $2::timestamp
           GROUP BY g.user_id
           HAVING SUM(COALESCE(g.weighted_bet_amount, g.bet_amount)) > 0
         ),
@@ -555,35 +611,34 @@ const cachedLiveRaceStandings = unstable_cache(
         SELECT r.user_id, u.username, r.wagered::text AS wagered, r.position
         FROM ranked r
         JOIN "user" u ON u.id = r.user_id
-        WHERE (${like}::text IS NULL
-               OR u.username ILIKE ${like}
-               OR u.email ILIKE ${like}
-               OR r.user_id = ${idEq})
+        WHERE ($3::text IS NULL
+               OR u.username ILIKE $3
+               OR u.email ILIKE $3
+               OR r.user_id = $4)
         ORDER BY r.position
-        LIMIT ${perPage} OFFSET ${offset}
-      `,
-      db.$queryRaw<{ count: bigint }[]>`
+        LIMIT $5 OFFSET $6
+      `, startsNaive, endsNaive, like, idEq, safePerPage, offset),
+      queryRows<{ count: bigint }[]>(db, `
         SELECT COUNT(*)::bigint AS count FROM (
           SELECT g.user_id
           FROM game_sessions g
-          ${like ? Prisma.sql`JOIN "user" u ON u.id = g.user_id` : Prisma.empty}
+          LEFT JOIN "user" u ON u.id = g.user_id
           WHERE g.race_eligible = true
             AND g.user_id IS NOT NULL
-            AND g.created_at >= ${startsNaive}::timestamp
-            AND g.created_at <  ${endsNaive}::timestamp
-            ${
-              like
-                ? Prisma.sql`AND (u.username ILIKE ${like} OR u.email ILIKE ${like} OR g.user_id = ${idEq})`
-                : Prisma.empty
-            }
+            AND g.created_at >= $1::timestamp
+            AND g.created_at <  $2::timestamp
+            AND ($3::text IS NULL
+              OR u.username ILIKE $3 OR u.email ILIKE $3 OR g.user_id = $4)
           GROUP BY g.user_id
           HAVING SUM(COALESCE(g.weighted_bet_amount, g.bet_amount)) > 0
         ) t
-      `,
-      db.race_prize_tiers.findMany({
-        where: { race_type: raceType as race_type },
-        select: { position: true, prize_amount_usd: true },
-      }),
+      `, startsNaive, endsNaive, like, idEq),
+      queryRows<{ position: number; prize_amount_usd: string }[]>(
+        db,
+        `SELECT position, prize_amount_usd::text
+           FROM race_prize_tiers WHERE race_type::text = $1`,
+        raceType,
+      ),
     ]);
 
     return {
@@ -671,19 +726,21 @@ export async function getRaceTotalClaimed(params: {
     return { total: 0, count: 0 };
   }
 
-  const db = await getDb();
-  const result = await db.race_claims.aggregate({
-    where: {
-      race_type: raceType as race_type,
-      race_period_start: new Date(periodStart),
-    },
-    _sum: { prize_amount_usd: true },
-    _count: { _all: true },
-  });
+  const [result] = await queryMainRows<
+    { total: string | null; count: string }[]
+  >(
+    `SELECT SUM(prize_amount_usd::numeric)::text AS total,
+            COUNT(*)::text AS count
+       FROM race_claims
+      WHERE race_type::text = $1
+        AND race_period_start = $2`,
+    raceType,
+    new Date(periodStart),
+  );
 
   return {
-    total: toNumber(result._sum.prize_amount_usd ?? 0),
-    count: result._count._all,
+    total: toNumber(result?.total ?? 0),
+    count: Number(result?.count ?? 0),
   };
 }
 
@@ -697,22 +754,46 @@ export async function getRaceTotalClaimed(params: {
 export async function getRacePeriodsOverview(params?: {
   recentLimit?: number;
 }): Promise<{ active: RacePeriod[]; recent: RacePeriod[] }> {
-  const db = await getDb();
-  const recentLimit = params?.recentLimit ?? 20;
+  const recentLimit = Math.max(
+    1,
+    Math.min(200, Math.floor(params?.recentLimit ?? 20)),
+  );
+  type RacePeriodRow = {
+    id: string;
+    race_type: string;
+    starts_at: Date;
+    ends_at: Date;
+    auto_renew: boolean;
+    status: string;
+    claims_frozen: boolean;
+    claims_unfrozen_at: Date | null;
+    claims_unfrozen_by: string | null;
+    created_at: Date;
+    updated_at: Date;
+  };
 
   const [active, recent] = await Promise.all([
-    db.race_periods.findMany({
-      where: { status: "active" },
-      orderBy: [{ race_type: "asc" }],
-    }),
-    db.race_periods.findMany({
-      where: { status: "ended" },
-      orderBy: { ends_at: "desc" },
-      take: recentLimit,
-    }),
+    queryMainRows<RacePeriodRow[]>(
+      `SELECT id, race_type::text AS race_type, starts_at, ends_at, auto_renew,
+              status::text AS status, claims_frozen, claims_unfrozen_at,
+              claims_unfrozen_by, created_at, updated_at
+         FROM race_periods
+        WHERE status = 'active'
+        ORDER BY race_type`,
+    ),
+    queryMainRows<RacePeriodRow[]>(
+      `SELECT id, race_type::text AS race_type, starts_at, ends_at, auto_renew,
+              status::text AS status, claims_frozen, claims_unfrozen_at,
+              claims_unfrozen_by, created_at, updated_at
+         FROM race_periods
+        WHERE status = 'ended'
+        ORDER BY ends_at DESC
+        LIMIT $1`,
+      recentLimit,
+    ),
   ]);
 
-  const map = (p: (typeof active)[number]): RacePeriod => ({
+  const map = (p: RacePeriodRow): RacePeriod => ({
     id: p.id,
     raceType: p.race_type,
     startsAt: p.starts_at.toISOString(),
@@ -741,36 +822,40 @@ export async function getRaceStandingsClaimWindow(params: {
   periodStart: string;
 }): Promise<RaceClaimWindow> {
   const { raceType, periodStart } = params;
-  const db = await getDb();
   const periodStartDate = new Date(`${periodStart}T00:00:00.000Z`);
   const nextDay = new Date(periodStartDate.getTime() + 86_400_000);
 
-  const [snapshot, racePeriod, expiryResult] = await Promise.all([
-    db.race_leaderboard_snapshots.findFirst({
-      where: {
-        race_type: raceType as race_type,
-        period_start: periodStartDate,
-      },
-      select: { period_end: true },
-      orderBy: { period_end: "desc" },
-    }),
-    db.race_periods.findFirst({
-      where: {
-        race_type: raceType as race_type,
-        starts_at: { gte: periodStartDate, lt: nextDay },
-      },
-      orderBy: { created_at: "desc" },
-      select: {
-        ends_at: true,
-        status: true,
-        claims_frozen: true,
-      },
-    }),
+  const [snapshotRows, racePeriodRows, expiryResult] = await Promise.all([
+    queryMainRows<{ period_end: Date }[]>(
+      `SELECT period_end
+         FROM race_leaderboard_snapshots
+        WHERE race_type::text = $1 AND period_start = $2
+        ORDER BY period_end DESC
+        LIMIT 1`,
+      raceType,
+      periodStartDate,
+    ),
+    queryMainRows<
+      { ends_at: Date; status: string; claims_frozen: boolean }[]
+    >(
+      `SELECT ends_at, status::text AS status, claims_frozen
+         FROM race_periods
+        WHERE race_type::text = $1
+          AND starts_at >= $2
+          AND starts_at < $3
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      raceType,
+      periodStartDate,
+      nextDay,
+    ),
     getRewardExpiry().then(
       (e) => e.race_days as number,
       () => null as number | null,
     ),
   ]);
+  const snapshot = snapshotRows[0] ?? null;
+  const racePeriod = racePeriodRows[0] ?? null;
 
   const periodEnd =
     snapshot?.period_end ??
@@ -790,16 +875,17 @@ async function getAllTimeLeaderboard(params: {
   page?: number;
   perPage?: number;
 }): Promise<PaginatedResult<RaceLeaderboardEntry>> {
-  const db = await getDb();
   const { search, page = 1, perPage = 20 } = params;
-  const offset = (page - 1) * perPage;
-
+  const safePage = Math.max(1, Math.floor(page));
+  const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
+  const offset = (safePage - 1) * safePerPage;
   const searchFilter = search ? `%${search}%` : null;
 
   const [rows, countResult] = await Promise.all([
-    db.$queryRaw<
+    queryMainRows<
       { user_id: string; username: string | null; total_wagered: number }[]
-    >`
+    >(
+      `
       -- All-time wagered MUST come from balances.total_wagered (the user's
       -- true lifetime figure, same source the user-detail page shows), NOT
       -- from SUM(race_leaderboard_snapshots.wagered_usd). Snapshots are one
@@ -814,16 +900,25 @@ async function getAllTimeLeaderboard(params: {
       FROM (SELECT DISTINCT user_id FROM race_leaderboard_snapshots) s
       LEFT JOIN "user" u ON u.id = s.user_id
       LEFT JOIN balances b ON b.user_id = s.user_id
-      WHERE (${searchFilter}::text IS NULL OR u.username ILIKE ${searchFilter} OR u.email ILIKE ${searchFilter} OR s.user_id = ${search ?? ""})
+      WHERE ($1::text IS NULL OR u.username ILIKE $1 OR u.email ILIKE $1 OR s.user_id = $2)
       ORDER BY total_wagered DESC
-      LIMIT ${perPage} OFFSET ${offset}
+      LIMIT $3 OFFSET $4
     `,
-    db.$queryRaw<{ count: bigint }[]>`
+      searchFilter,
+      search ?? "",
+      safePerPage,
+      offset,
+    ),
+    queryMainRows<{ count: string }[]>(
+      `
       SELECT COUNT(DISTINCT s.user_id) AS count
       FROM race_leaderboard_snapshots s
       LEFT JOIN "user" u ON u.id = s.user_id
-      WHERE (${searchFilter}::text IS NULL OR u.username ILIKE ${searchFilter} OR u.email ILIKE ${searchFilter} OR s.user_id = ${search ?? ""})
+      WHERE ($1::text IS NULL OR u.username ILIKE $1 OR u.email ILIKE $1 OR s.user_id = $2)
     `,
+      searchFilter,
+      search ?? "",
+    ),
   ]);
 
   const total = Number(countResult[0]?.count ?? 0);
@@ -847,8 +942,8 @@ async function getAllTimeLeaderboard(params: {
       excluded: excludedSet.has(r.user_id),
     })),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }

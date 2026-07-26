@@ -1,9 +1,7 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getRaceInsightsROIFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/race/roi";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -78,22 +76,20 @@ async function computeRoi(
   rawLookbackDays: number,
   blacklistIds: string[],
 ): Promise<RaceRoiResult> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
   const lookbackDays = resolveLookback(period, rawLookbackDays);
-  const costDateClause =
-    days !== null
-      ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'`
-      : "";
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const costDateClause = daysAgoFilter("lt.created_at", days);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
   const forwardWindowClause =
     days !== null
-      ? `AND lt.created_at >= claim_at AND lt.created_at < claim_at + INTERVAL '${lookbackDays} days'`
-      : `AND lt.created_at >= claim_at`;
+      ? sql`AND lt.created_at >= claim_at
+            AND lt.created_at < claim_at + (${lookbackDays} * INTERVAL '1 day')`
+      : sql`AND lt.created_at >= claim_at`;
 
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     { cost: string; claimants: string; wager: string; payout: string }[]
-  >(`
+  >(db, sql`
     WITH cost_claimants AS (
       SELECT
         lt.user_id,
@@ -113,7 +109,7 @@ async function computeRoi(
       JOIN ledger_transactions lt
         ON lt.user_id = cc.user_id
        AND lt.status = 'completed'
-       AND lt.type::text IN ${WAGER_TYPES_SQL}
+       AND lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
       WHERE 1=1 ${forwardWindowClause}
       GROUP BY cc.user_id
     ),
@@ -123,7 +119,7 @@ async function computeRoi(
       JOIN ledger_transactions lt
         ON lt.user_id = cc.user_id
        AND lt.status = 'completed'
-       AND lt.type::text IN ${PAYOUT_TYPES_SQL}
+       AND lt.type::text IN ${sql.raw(PAYOUT_TYPES_SQL)}
       WHERE 1=1 ${forwardWindowClause}
       GROUP BY cc.user_id
     )
@@ -163,11 +159,7 @@ const cachedShort = unstable_cache(
     lookbackDays: number,
     blacklistIds: string[],
   ) =>
-    resolveAdminRead<RaceRoiResult>("insights_race_roi", {
-      pg: () => computeRoi(period, lookbackDays, blacklistIds),
-      ch: () =>
-        getRaceInsightsROIFromClickHouse(period, lookbackDays, blacklistIds),
-    }),
+    computeRoi(period, lookbackDays, blacklistIds),
   ["insights-rewards-race-roi-v1"],
   { revalidate: 60, tags: ["insights-rewards-race"] },
 );
@@ -178,11 +170,7 @@ const cachedLong = unstable_cache(
     lookbackDays: number,
     blacklistIds: string[],
   ) =>
-    resolveAdminRead<RaceRoiResult>("insights_race_roi", {
-      pg: () => computeRoi(period, lookbackDays, blacklistIds),
-      ch: () =>
-        getRaceInsightsROIFromClickHouse(period, lookbackDays, blacklistIds),
-    }),
+    computeRoi(period, lookbackDays, blacklistIds),
   ["insights-rewards-race-roi-lifetime-v1"],
   { revalidate: 300, tags: ["insights-rewards-race"] },
 );

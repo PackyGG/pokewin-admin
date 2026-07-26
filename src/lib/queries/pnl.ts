@@ -1,16 +1,13 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getDailyPnlFromClickHouse } from "@/lib/clickhouse/queries/dashboard/daily-pnl";
-import { compareDashboardDailyPnl } from "@/lib/clickhouse/compare/dashboard-daily-pnl";
 import { blacklistNotInClause } from "./_blacklist";
 import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
-  officialStreamAdjustmentPrismaWhere,
-  removeLockedBalanceAdjustmentPrismaWhere,
+  officialStreamAdjustmentSqlPredicate,
+  removeLockedBalanceAdjustmentSqlPredicate,
   statsExcludedAdjustmentSqlPredicate,
 } from "@/lib/balance-adjustment-categories";
 
@@ -190,109 +187,74 @@ export function computeHousePnl(c: PnlComponents): number {
  */
 export async function calculateUserPnl(userId: string): Promise<UserPnl> {
   return withTiming("pnl.user", async () => {
-    const db = await getDb();
-    const [
-      balances,
-      cardWithdrawals,
-      inventoryAgg,
-      vouchersAgg,
-      officialStreamAgg,
-      removeLockedAgg,
-    ] = await Promise.all([
-        db.balances.findUnique({
-          where: { user_id: userId },
-          select: {
-            available_balance: true,
-            locked_balance: true,
-            total_deposited: true,
-            total_withdrawn: true,
-          },
-        }),
-        db.card_withdrawal_requests.aggregate({
-          where: {
-            user_id: userId,
-            // In-flight (pending/processing) + done (shipped/completed)
-            // all count as a house liability — see
-            // WITHDRAWAL_LIABILITY_STATUSES. Pending/processing value is
-            // locked inventory excluded below, so counting it here is the
-            // only place it appears (no double-count) and keeps the P&L
-            // continuous when a withdrawal completes.
-            status: { in: [...WITHDRAWAL_LIABILITY_STATUSES] },
-          },
-          _sum: { total_value_usd: true },
-        }),
-        db.user_inventory.aggregate({
-          where: {
-            user_id: userId,
-            sold_at: null,
-            exchanged_at: null,
-            // Cards locked for an in-flight withdrawal have effectively
-            // left the user's holdings — their value is carried by the
-            // `withdrawals` term above instead (pending/processing count
-            // there). Excluding them here avoids double-counting and keeps
-            // the User Detail / Users List PnL aligned with the dashboard's
-            // totalInventoryValue aggregate (which filters the same way).
-            withdrawal_locked_at: null,
-            // CREATOR-INVENTORY carve-out: a creator's open inventory is
-            // house-funded sponsored stream play, not a real holding, so it
-            // is dropped from the P&L liability term (the converted streamer
-            // voucher stays counted via unclaimedVouchers). See
-            // _creator-pnl-exclusion.ts. MUST mirror calculateUsersPnlBatch.
-            user: { role: { not: "creator" } },
-          },
-          _sum: { value_at_obtained: true },
-        }),
-        db.vouchers.aggregate({
-          where: { user_id: userId, claimed_at: null },
-          _sum: { value: true },
-        }),
-        // FAKE-BALANCE carve-out: SIGNED NET of this user's completed
-        // official_stream adjustments. They credit REAL available_balance
-        // but are owner-designated fake balance, so subtract them from the
-        // onSiteBalance term below. NET (`_sum.amount`, not ABS) so a later
-        // clawback debit reverses a prior credit. MUST match
-        // calculateUsersPnlBatch so users-list == user-detail.
-        db.ledger_transactions.aggregate({
-          where: {
-            user_id: userId,
-            status: "completed",
-            ...officialStreamAdjustmentPrismaWhere(),
-          },
-          _sum: { amount: true },
-        }),
-        // REMOVE-LOCKED carve-out: SIGNED NET of completed remove_locked_balance
-        // adjustments. Locked_balance drops in the raw balance row, so subtract
-        // the signed ledger amount to keep onSiteBalance / P&L unchanged.
-        db.ledger_transactions.aggregate({
-          where: {
-            user_id: userId,
-            status: "completed",
-            ...removeLockedBalanceAdjustmentPrismaWhere(),
-          },
-          _sum: { amount: true },
-        }),
-      ]);
+    const official = officialStreamAdjustmentSqlPredicate({
+      typeColumn: "lt.type",
+      metadataColumn: "lt.metadata",
+    });
+    const removeLocked = removeLockedBalanceAdjustmentSqlPredicate({
+      typeColumn: "lt.type",
+      metadataColumn: "lt.metadata",
+    });
+    type Row = {
+      available_balance: string;
+      locked_balance: string;
+      total_deposited: string;
+      total_withdrawn: string;
+      card_withdrawals: string;
+      inventory_value: string;
+      voucher_value: string;
+      official_stream: string;
+      remove_locked: string;
+    };
+    const [row] = await queryMainRows<Row[]>(
+      `SELECT
+         COALESCE(b.available_balance, 0)::text AS available_balance,
+         COALESCE(b.locked_balance, 0)::text AS locked_balance,
+         COALESCE(b.total_deposited, 0)::text AS total_deposited,
+         COALESCE(b.total_withdrawn, 0)::text AS total_withdrawn,
+         COALESCE((SELECT SUM(cwr.total_value_usd::numeric)
+                   FROM card_withdrawal_requests cwr
+                   WHERE cwr.user_id = $1
+                     AND cwr.status::text = ANY($2::text[])), 0)::text AS card_withdrawals,
+         COALESCE((SELECT SUM(ui.value_at_obtained::numeric)
+                   FROM user_inventory ui
+                   JOIN "user" u ON u.id = ui.user_id
+                   WHERE ui.user_id = $1
+                     AND ui.sold_at IS NULL AND ui.exchanged_at IS NULL
+                     AND ui.withdrawal_locked_at IS NULL
+                     AND u.role::text <> 'creator'), 0)::text AS inventory_value,
+         COALESCE((SELECT SUM(v.value::numeric)
+                   FROM vouchers v WHERE v.user_id = $1 AND v.claimed_at IS NULL), 0)::text AS voucher_value,
+         COALESCE((SELECT SUM(lt.amount::numeric)
+                   FROM ledger_transactions lt
+                   WHERE lt.user_id = $1 AND lt.status::text = 'completed'
+                     AND ${official}), 0)::text AS official_stream,
+         COALESCE((SELECT SUM(lt.amount::numeric)
+                   FROM ledger_transactions lt
+                   WHERE lt.user_id = $1 AND lt.status::text = 'completed'
+                     AND ${removeLocked}), 0)::text AS remove_locked
+       FROM (SELECT $1::text AS user_id) requested
+       LEFT JOIN balances b ON b.user_id = requested.user_id`,
+      userId,
+      [...WITHDRAWAL_LIABILITY_STATUSES],
+    );
 
     const components: PnlComponents = {
-      deposits: toNumber(balances?.total_deposited),
+      deposits: toNumber(row?.total_deposited),
       withdrawals:
-        toNumber(balances?.total_withdrawn) +
-        toNumber(cardWithdrawals._sum.total_value_usd),
+        toNumber(row?.total_withdrawn) + toNumber(row?.card_withdrawals),
       onSiteBalance:
-        toNumber(balances?.available_balance) +
-        toNumber(balances?.locked_balance) -
-        // Net out fake-balance official_stream credit.
-        toNumber(officialStreamAgg._sum.amount) -
-        // Net out remove_locked_balance debits (signed; amounts are negative).
-        toNumber(removeLockedAgg._sum.amount),
-      inventoryValue: toNumber(inventoryAgg._sum.value_at_obtained),
-      unclaimedVouchers: toNumber(vouchersAgg._sum.value),
+        toNumber(row?.available_balance) +
+        toNumber(row?.locked_balance) -
+        toNumber(row?.official_stream) -
+        toNumber(row?.remove_locked),
+      inventoryValue: toNumber(row?.inventory_value),
+      unclaimedVouchers: toNumber(row?.voucher_value),
     };
 
     return { ...components, pnl: computeHousePnl(components) };
   });
 }
-
 export type WindowedPnl = {
   deposits: number;
   withdrawals: number;
@@ -348,7 +310,6 @@ export async function calculateWindowedPnl(opts: {
 }): Promise<WindowedPnl> {
   const { since, userId, excludeUserIds = [], populationScopeSql } = opts;
   return withTiming("pnl.windowed", async () => {
-    const db = await getDb();
 
     // Per-table user scope. Single-user binds the id as positional $2;
     // global filters to non-staff users minus the blacklist (ids come
@@ -378,7 +339,7 @@ export async function calculateWindowedPnl(opts: {
     type VchRow = { issued: string; claimed: string };
 
     const [ledger, card, inv, vch] = await Promise.all([
-      db.$queryRawUnsafe<LedgerRow[]>(
+      queryMainRows<LedgerRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits,
            COALESCE(SUM(CASE WHEN lt.type::text = 'admin_balance_adjustment'
@@ -390,7 +351,7 @@ export async function calculateWindowedPnl(opts: {
          WHERE lt.status = 'completed' AND lt.created_at >= $1 AND ${userScopeLt}`,
         ...params,
       ),
-      db.$queryRawUnsafe<CardRow[]>(
+      queryMainRows<CardRow[]>(
         `SELECT COALESCE(SUM(cwr.total_value_usd::numeric), 0)::text AS card_wd
          FROM card_withdrawal_requests cwr
          WHERE cwr.status IN ('completed', 'shipped')
@@ -398,7 +359,7 @@ export async function calculateWindowedPnl(opts: {
            AND ${scope("cwr.user_id")}`,
         ...params,
       ),
-      db.$queryRawUnsafe<InvRow[]>(
+      queryMainRows<InvRow[]>(
         // CREATOR-INVENTORY carve-out: drop creator-owned inventory from BOTH
         // the obtained and disposed legs symmetrically (incl. admin removals)
         // so the windowed delta matches the lifetime liability carve-out. See
@@ -415,7 +376,7 @@ export async function calculateWindowedPnl(opts: {
            AND ${nonCreatorOwnerSql("ui.user_id")}`,
         ...params,
       ),
-      db.$queryRawUnsafe<VchRow[]>(
+      queryMainRows<VchRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN v.created_at >= $1 THEN v.value::numeric ELSE 0 END), 0)::text AS issued,
            (
@@ -480,7 +441,6 @@ export async function calculateUsersBoundedWindowedPnlBatch(
   if (userIds.length === 0) return result;
 
   return withTiming("pnl.usersBoundedWindowedBatch", async () => {
-    const db = await getDb();
     const statsExcluded = statsExcludedAdjustmentSqlPredicate({
       typeColumn: "lt.type",
       metadataColumn: "lt.metadata",
@@ -497,7 +457,7 @@ export async function calculateUsersBoundedWindowedPnlBatch(
 
     const [ledger, card, inv, adminInv, vchIssued, vchClaimed, adminVch] =
       await Promise.all([
-      db.$queryRawUnsafe<LedgerRow[]>(
+      queryMainRows<LedgerRow[]>(
         `SELECT lt.user_id,
            COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits,
            COALESCE(SUM(CASE WHEN lt.type::text = 'admin_balance_adjustment'
@@ -515,7 +475,7 @@ export async function calculateUsersBoundedWindowedPnlBatch(
         start,
         end,
       ),
-      db.$queryRawUnsafe<AmountRow[]>(
+      queryMainRows<AmountRow[]>(
         `SELECT cwr.user_id,
            COALESCE(SUM(cwr.total_value_usd::numeric), 0)::text AS amount
          FROM card_withdrawal_requests cwr
@@ -528,7 +488,7 @@ export async function calculateUsersBoundedWindowedPnlBatch(
         start,
         end,
       ),
-      db.$queryRawUnsafe<InvRow[]>(
+      queryMainRows<InvRow[]>(
         `SELECT ui.user_id,
            COALESCE(SUM(CASE WHEN ui.obtained_at >= $2 AND ui.obtained_at < $3
                              THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained,
@@ -547,7 +507,7 @@ export async function calculateUsersBoundedWindowedPnlBatch(
         start,
         end,
       ),
-      db.$queryRawUnsafe<AmountRow[]>(
+      queryMainRows<AmountRow[]>(
         `SELECT lt.user_id,
            COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS amount
          FROM ledger_transactions lt
@@ -566,7 +526,7 @@ export async function calculateUsersBoundedWindowedPnlBatch(
         start,
         end,
       ),
-      db.$queryRawUnsafe<AmountRow[]>(
+      queryMainRows<AmountRow[]>(
         `SELECT v.user_id,
            COALESCE(SUM(v.value::numeric), 0)::text AS amount
          FROM vouchers v
@@ -578,7 +538,7 @@ export async function calculateUsersBoundedWindowedPnlBatch(
         start,
         end,
       ),
-      db.$queryRawUnsafe<AmountRow[]>(
+      queryMainRows<AmountRow[]>(
         `SELECT v.user_id,
            COALESCE(SUM(v.value::numeric), 0)::text AS amount
          FROM vouchers v
@@ -590,7 +550,7 @@ export async function calculateUsersBoundedWindowedPnlBatch(
         start,
         end,
       ),
-      db.$queryRawUnsafe<AmountRow[]>(
+      queryMainRows<AmountRow[]>(
         `SELECT lt.user_id,
            COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS amount
          FROM ledger_transactions lt
@@ -662,126 +622,97 @@ export async function calculateUsersPnlBatch(
   if (userIds.length === 0) return result;
 
   return withTiming("pnl.usersBatch", async () => {
-    const db = await getDb();
-    const [
-      balanceRows,
-      cardWithdrawalRows,
-      inventoryRows,
-      voucherRows,
-      officialStreamRows,
-      removeLockedRows,
-    ] = await Promise.all([
-        db.balances.findMany({
-          where: { user_id: { in: userIds } },
-          select: {
-            user_id: true,
-            available_balance: true,
-            locked_balance: true,
-            total_deposited: true,
-            total_withdrawn: true,
-          },
-        }),
-        db.card_withdrawal_requests.groupBy({
-          by: ["user_id"],
-          where: {
-            user_id: { in: userIds },
-            // Same in-flight + done liability set as calculateUserPnl so
-            // the users-LIST P&L matches the user-DETAIL P&L.
-            status: { in: [...WITHDRAWAL_LIABILITY_STATUSES] },
-          },
-          _sum: { total_value_usd: true },
-        }),
-        db.user_inventory.groupBy({
-          by: ["user_id"],
-          where: {
-            user_id: { in: userIds },
-            sold_at: null,
-            exchanged_at: null,
-            // M10: apply the SAME withdrawal-lock exclusion calculateUserPnl
-            // uses, so locked-for-withdrawal cards drop out of LIST
-            // inventory exactly as they do on DETAIL. Their value is
-            // carried by the withdrawals term above (pending/processing are
-            // counted there), so it appears exactly once — list PnL now
-            // equals detail PnL.
-            withdrawal_locked_at: null,
-            // CREATOR-INVENTORY carve-out — MUST mirror calculateUserPnl so
-            // users-LIST P&L equals user-DETAIL P&L. See
-            // _creator-pnl-exclusion.ts.
-            user: { role: { not: "creator" } },
-          },
-          _sum: { value_at_obtained: true },
-        }),
-        db.vouchers.groupBy({
-          by: ["user_id"],
-          where: { user_id: { in: userIds }, claimed_at: null },
-          _sum: { value: true },
-        }),
-        // FAKE-BALANCE carve-out: per-user SIGNED NET of completed
-        // official_stream adjustments (groupBy user_id). MUST mirror the
-        // single-user calculateUserPnl exactly so the users-LIST P&L equals
-        // the user-DETAIL P&L. NET (`_sum.amount`) so a clawback reverses it.
-        db.ledger_transactions.groupBy({
-          by: ["user_id"],
-          where: {
-            user_id: { in: userIds },
-            status: "completed",
-            ...officialStreamAdjustmentPrismaWhere(),
-          },
-          _sum: { amount: true },
-        }),
-        db.ledger_transactions.groupBy({
-          by: ["user_id"],
-          where: {
-            user_id: { in: userIds },
-            status: "completed",
-            ...removeLockedBalanceAdjustmentPrismaWhere(),
-          },
-          _sum: { amount: true },
-        }),
-      ]);
-
-    const balanceMap = new Map(balanceRows.map((b) => [b.user_id, b]));
-    const cardWithdrawalMap = new Map(
-      cardWithdrawalRows.map((cw) => [
-        cw.user_id,
-        toNumber(cw._sum.total_value_usd),
-      ]),
-    );
-    const inventoryMap = new Map(
-      inventoryRows.map((iv) => [iv.user_id, toNumber(iv._sum.value_at_obtained)]),
-    );
-    const voucherMap = new Map(
-      voucherRows.map((v) => [v.user_id, toNumber(v._sum.value)]),
-    );
-    const officialStreamMap = new Map(
-      officialStreamRows.map((o) => [o.user_id, toNumber(o._sum.amount)]),
-    );
-    const removeLockedMap = new Map(
-      removeLockedRows.map((o) => [o.user_id, toNumber(o._sum.amount)]),
+    const official = officialStreamAdjustmentSqlPredicate({
+      typeColumn: "lt.type",
+      metadataColumn: "lt.metadata",
+    });
+    const removeLocked = removeLockedBalanceAdjustmentSqlPredicate({
+      typeColumn: "lt.type",
+      metadataColumn: "lt.metadata",
+    });
+    type Row = {
+      user_id: string;
+      available_balance: string;
+      locked_balance: string;
+      total_deposited: string;
+      total_withdrawn: string;
+      card_withdrawals: string;
+      inventory_value: string;
+      voucher_value: string;
+      official_stream: string;
+      remove_locked: string;
+    };
+    const rows = await queryMainRows<Row[]>(
+      `WITH requested AS (SELECT unnest($1::text[]) AS user_id),
+       card AS (
+         SELECT user_id, SUM(total_value_usd::numeric) AS amount
+         FROM card_withdrawal_requests
+         WHERE user_id = ANY($1::text[]) AND status::text = ANY($2::text[])
+         GROUP BY user_id
+       ),
+       inventory AS (
+         SELECT ui.user_id, SUM(ui.value_at_obtained::numeric) AS amount
+         FROM user_inventory ui JOIN "user" u ON u.id = ui.user_id
+         WHERE ui.user_id = ANY($1::text[]) AND ui.sold_at IS NULL
+           AND ui.exchanged_at IS NULL AND ui.withdrawal_locked_at IS NULL
+           AND u.role::text <> 'creator'
+         GROUP BY ui.user_id
+       ),
+       voucher AS (
+         SELECT user_id, SUM(value::numeric) AS amount FROM vouchers
+         WHERE user_id = ANY($1::text[]) AND claimed_at IS NULL GROUP BY user_id
+       ),
+       adjustments AS (
+         SELECT lt.user_id,
+           SUM(lt.amount::numeric) FILTER (WHERE ${official}) AS official_stream,
+           SUM(lt.amount::numeric) FILTER (WHERE ${removeLocked}) AS remove_locked
+         FROM ledger_transactions lt
+         WHERE lt.user_id = ANY($1::text[]) AND lt.status::text = 'completed'
+           AND (${official} OR ${removeLocked})
+         GROUP BY lt.user_id
+       )
+       SELECT requested.user_id,
+         COALESCE(b.available_balance, 0)::text AS available_balance,
+         COALESCE(b.locked_balance, 0)::text AS locked_balance,
+         COALESCE(b.total_deposited, 0)::text AS total_deposited,
+         COALESCE(b.total_withdrawn, 0)::text AS total_withdrawn,
+         COALESCE(card.amount, 0)::text AS card_withdrawals,
+         COALESCE(inventory.amount, 0)::text AS inventory_value,
+         COALESCE(voucher.amount, 0)::text AS voucher_value,
+         COALESCE(adjustments.official_stream, 0)::text AS official_stream,
+         COALESCE(adjustments.remove_locked, 0)::text AS remove_locked
+       FROM requested
+       LEFT JOIN balances b USING (user_id)
+       LEFT JOIN card USING (user_id)
+       LEFT JOIN inventory USING (user_id)
+       LEFT JOIN voucher USING (user_id)
+       LEFT JOIN adjustments USING (user_id)`,
+      userIds,
+      [...WITHDRAWAL_LIABILITY_STATUSES],
     );
 
-    for (const userId of userIds) {
-      const b = balanceMap.get(userId);
+    for (const row of rows) {
       const components: PnlComponents = {
-        deposits: toNumber(b?.total_deposited),
+        deposits: toNumber(row.total_deposited),
         withdrawals:
-          toNumber(b?.total_withdrawn) + (cardWithdrawalMap.get(userId) ?? 0),
+          toNumber(row.total_withdrawn) + toNumber(row.card_withdrawals),
         onSiteBalance:
-          toNumber(b?.available_balance) +
-          toNumber(b?.locked_balance) -
-          // Net out fake-balance official_stream credit (matches detail).
-          (officialStreamMap.get(userId) ?? 0) -
-          (removeLockedMap.get(userId) ?? 0),
-        inventoryValue: inventoryMap.get(userId) ?? 0,
-        unclaimedVouchers: voucherMap.get(userId) ?? 0,
+          toNumber(row.available_balance) +
+          toNumber(row.locked_balance) -
+          toNumber(row.official_stream) -
+          toNumber(row.remove_locked),
+        inventoryValue: toNumber(row.inventory_value),
+        unclaimedVouchers: toNumber(row.voucher_value),
       };
-      result.set(userId, { ...components, pnl: computeHousePnl(components) });
+      result.set(row.user_id, {
+        ...components,
+        pnl: computeHousePnl(components),
+      });
     }
 
     return result;
   });
 }
-
 export type DailyPnlPoint = {
   /** YYYY-MM-DD */
   date: string;
@@ -823,7 +754,6 @@ export type DailyPnlPoint = {
  */
 async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
   return withTiming("pnl.daily", async () => {
-    const db = await getDb();
     const blacklist = blacklistNotInClause("u.id", excluded);
     const usersScope = `(SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
     const statsExcluded = statsExcludedAdjustmentSqlPredicate({
@@ -843,7 +773,7 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
     type VchRow = { d: Date; issued: number; claimed: number };
 
     const [ledger, card, inv, vch] = await Promise.all([
-      db.$queryRawUnsafe<LedgerRow[]>(
+      queryMainRows<LedgerRow[]>(
         `SELECT DATE(lt.created_at) AS d,
            COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS deposits,
            COALESCE(SUM(CASE WHEN lt.type::text = 'admin_balance_adjustment'
@@ -856,7 +786,7 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
            AND lt.user_id IN ${usersScope}
          GROUP BY DATE(lt.created_at)`,
       ),
-      db.$queryRawUnsafe<CardRow[]>(
+      queryMainRows<CardRow[]>(
         // CLOSED-DAY FINALITY — the withdrawal term is the ONLY one that can
         // retroactively flip a CLOSED day green→loss, so it is bucketed by
         // the realized money-out timestamp (NOT requested_at/created_at) and
@@ -912,7 +842,7 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
            AND cwr.user_id IN ${usersScope}
          GROUP BY DATE(COALESCE(cwr.shipped_at, cwr.completed_at))`,
       ),
-      db.$queryRawUnsafe<InvRow[]>(
+      queryMainRows<InvRow[]>(
         `SELECT d,
            COALESCE(SUM(obtained), 0)::float8 AS obtained,
            COALESCE(SUM(disposed), 0)::float8 AS disposed
@@ -943,7 +873,7 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
          ) x
          GROUP BY d`,
       ),
-      db.$queryRawUnsafe<VchRow[]>(
+      queryMainRows<VchRow[]>(
         `SELECT d,
            COALESCE(SUM(issued), 0)::float8 AS issued,
            COALESCE(SUM(claimed), 0)::float8 AS claimed
@@ -1060,18 +990,11 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
 const cachedDailyPnl = unstable_cache(
   async (dayKey: string, excluded: string[]): Promise<DailyPnlPoint[]> => {
     void dayKey; // part of the cache key only
-    // CQRS serve-path: in `clickhouse` mode the CH twin is the SOLE read
     // (a throw degrades via the cache/safeQuery boundary, never re-runs the
     // heavy Postgres lifetime scan); `comparison` serves Postgres and logs
     // drift fire-and-forget; `off` serves Postgres. Cent/count-exact parity
     // confirmed (aligned-window harness: every field, every day Δ=0.00).
-    return resolveAdminRead<DailyPnlPoint[]>("dashboard_daily_pnl", {
-      pg: () => computeDailyPnl(excluded),
-      ch: () => getDailyPnlFromClickHouse(excluded),
-      compare: (pg) => {
-        void compareDashboardDailyPnl(pg);
-      },
-    });
+    return computeDailyPnl(excluded);
   },
   ["dashboard-daily-pnl-v1"],
   { revalidate: 300, tags: ["dashboard-activity"] },
@@ -1176,7 +1099,6 @@ async function computePnlBreakdownWindows(
   excluded: string[],
 ): Promise<PnlBreakdownWindows> {
   return withTiming("pnl.breakdownWindows", async () => {
-    const db = await getDb();
     const now = Date.now();
     const h24 = new Date(now - 24 * 60 * 60 * 1000);
     const d3 = new Date(now - 3 * 24 * 60 * 60 * 1000);
@@ -1209,7 +1131,7 @@ async function computePnlBreakdownWindows(
     //         admin_balance_adjustment); only non-zero on the
     //         admin_balance_adjustment row in the grouped result.
     const [ledger, cardWd, inv, vch, adminInvRem, adminVchRem] = await Promise.all([
-      db.$queryRawUnsafe<LedgerRow[]>(
+      queryMainRows<LedgerRow[]>(
         `SELECT type,
            COALESCE(SUM(CASE WHEN created_at >= $1 THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS cr_h24,
            COALESCE(SUM(CASE WHEN created_at >= $2 THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS cr_d3,
@@ -1225,7 +1147,7 @@ async function computePnlBreakdownWindows(
          GROUP BY type`,
         h24, d3, d7,
       ),
-      db.$queryRawUnsafe<CardWdRow[]>(
+      queryMainRows<CardWdRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN COALESCE(shipped_at, completed_at) >= $1 THEN total_value_usd::numeric ELSE 0 END), 0)::text AS cwd_h24,
            COALESCE(SUM(CASE WHEN COALESCE(shipped_at, completed_at) >= $2 THEN total_value_usd::numeric ELSE 0 END), 0)::text AS cwd_d3,
@@ -1236,7 +1158,7 @@ async function computePnlBreakdownWindows(
            AND ${scope}`,
         h24, d3, d7,
       ),
-      db.$queryRawUnsafe<InvRow[]>(
+      queryMainRows<InvRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN obtained_at >= $1 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS obt_h24,
            COALESCE(SUM(CASE WHEN obtained_at >= $2 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS obt_d3,
@@ -1249,7 +1171,7 @@ async function computePnlBreakdownWindows(
            AND ${scope}`,
         h24, d3, d7,
       ),
-      db.$queryRawUnsafe<VchRow[]>(
+      queryMainRows<VchRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN created_at >= $1 THEN value::numeric ELSE 0 END), 0)::text AS iss_h24,
            COALESCE(SUM(CASE WHEN created_at >= $2 THEN value::numeric ELSE 0 END), 0)::text AS iss_d3,
@@ -1262,7 +1184,7 @@ async function computePnlBreakdownWindows(
            AND ${scope}`,
         h24, d3, d7,
       ),
-      db.$queryRawUnsafe<InvRow[]>(
+      queryMainRows<InvRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN lt.created_at >= $1 THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS dis_h24,
            COALESCE(SUM(CASE WHEN lt.created_at >= $2 THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS dis_d3,
@@ -1279,7 +1201,7 @@ async function computePnlBreakdownWindows(
            )`,
         h24, d3, d7,
       ),
-      db.$queryRawUnsafe<VchRow[]>(
+      queryMainRows<VchRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN lt.created_at >= $1 THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS clm_h24,
            COALESCE(SUM(CASE WHEN lt.created_at >= $2 THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS clm_d3,
@@ -1478,7 +1400,6 @@ async function computePackBattlePurePnl(
   excluded: string[],
 ): Promise<PackBattlePnlWindows> {
   return withTiming("pnl.packBattlePure", async () => {
-    const db = await getDb();
     const now = Date.now();
     const h24 = new Date(now - 24 * 60 * 60 * 1000);
     const d3 = new Date(now - 3 * 24 * 60 * 60 * 1000);
@@ -1558,7 +1479,7 @@ async function computePackBattlePurePnl(
     // ignoring the borrow leg entirely. All grouped by the four
     // windows (24h / 3d / 7d / all) via CASE.
     const [ledger, inv] = await Promise.all([
-      db.$queryRawUnsafe<LedgerRow[]>(
+      queryMainRows<LedgerRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN type::text = 'pack_opening' AND created_at >= $1 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_h24,
            COALESCE(SUM(CASE WHEN type::text = 'pack_opening' AND created_at >= $2 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_d3,
@@ -1617,7 +1538,7 @@ async function computePackBattlePurePnl(
            )`,
         h24, d3, d7,
       ),
-      db.$queryRawUnsafe<InvRow[]>(
+      queryMainRows<InvRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN source_type = 'pack' AND obtained_at >= $1 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS pack_payout_h24,
            COALESCE(SUM(CASE WHEN source_type = 'pack' AND obtained_at >= $2 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS pack_payout_d3,

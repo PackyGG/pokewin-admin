@@ -23,18 +23,6 @@ import {
   type TopPack24hRow,
 } from "@/lib/queries/analytics-packs";
 import { getPackAndBattleStats } from "@/lib/queries/analytics";
-import {
-  comparePackProfitability,
-  compareTopOpenedPacks24h,
-  comparePackAndBattleStats,
-} from "@/lib/clickhouse/compare/analytics-packs";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import {
-  getPackProfitabilityFromClickHouse,
-  getTopOpenedPacks24hFromClickHouse,
-  getPackAndBattleStatsFromClickHouse,
-} from "@/lib/clickhouse/queries/analytics/packs";
-import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { BattleModesSection, PackPopularitySection } from "./sections";
 import type { AnalyticsPeriod } from "./types";
 
@@ -100,49 +88,19 @@ export async function PacksBattlesTab({
   const [profitabilityResult, overviewResult, topPacks24hResult] =
     await Promise.all([
       safeQuery(
-        () =>
-          resolveAdminRead<Awaited<ReturnType<typeof getPackProfitability>>>(
-            "analytics_packs_profitability",
-            {
-              pg: () => getPackProfitability(period),
-              ch: async () =>
-                getPackProfitabilityFromClickHouse(
-                  period,
-                  await getExcludedUserIds(),
-                ),
-            },
-          ),
+        () => getPackProfitability(period),
         null,
         "analytics.packs.profitability",
         REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
-        () =>
-          resolveAdminRead<Awaited<ReturnType<typeof getPackAndBattleStats>>>(
-            "analytics_packs_stats",
-            {
-              pg: () => getPackAndBattleStats(heroPeriod),
-              ch: async () =>
-                getPackAndBattleStatsFromClickHouse(
-                  heroPeriod,
-                  await getExcludedUserIds(),
-                ),
-            },
-          ),
+        () => getPackAndBattleStats(heroPeriod),
         null,
         "analytics.packs.overview",
         REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
-        () =>
-          resolveAdminRead<Awaited<ReturnType<typeof getTopOpenedPacks24h>>>(
-            "analytics_packs_top24h",
-            {
-              pg: () => getTopOpenedPacks24h(10),
-              ch: async () =>
-                getTopOpenedPacks24hFromClickHouse(10, await getExcludedUserIds()),
-            },
-          ),
+        () => getTopOpenedPacks24h(10),
         null,
         "analytics.packs.top24h",
         REWARD_QUERY_TIMEOUT_MS,
@@ -152,13 +110,8 @@ export async function PacksBattlesTab({
   const overview = overviewResult.data;
   const topPacks24h = topPacks24hResult.data;
 
-  // Comparison-mode ClickHouse twins (fire-and-forget). Each no-ops unless its
   // own surface flag is in `comparison` mode; never awaited, swallows its own
   // errors, and never affects the rendered Postgres payload.
-  if (data) void comparePackProfitability(period, data);
-  if (overview) void comparePackAndBattleStats(heroPeriod, overview);
-  if (topPacks24h) void compareTopOpenedPacks24h(10, topPacks24h);
-
   const sortFn = (a: {
     revenue: number;
     grossMargin: number;

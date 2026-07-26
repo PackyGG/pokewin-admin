@@ -2,8 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { and, eq, isNull } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/drizzle";
+import {
+  chat_raffle_adjustments,
+  chat_raffle_entries,
+  chat_raffle_prizes,
+  chat_raffle_rounds,
+} from "@/lib/db-schema/admin/schema";
 import {
   getUserPermissions,
   requirePageAccess,
@@ -133,22 +140,27 @@ export async function createChatRaffleRound(input: {
   const places = validatePrizePositions(data.prizes);
   if (!places.ok) return { success: false, error: places.error };
 
-  const round = await adminDb.chat_raffle_rounds.create({
-    data: {
-      name: data.name,
-      status: "open",
-      starts_at: startsAt,
-      ends_at: endsAt,
-      created_by: session.userId,
-      ...scoringToColumns(data.scoring),
-      prizes: {
-        create: data.prizes.map((p) => ({
-          position: p.position,
-          amount_usd: p.amountUsd,
-          label: p.label || null,
-        })),
-      },
-    },
+  const round = await adminDrizzle.transaction(async (tx) => {
+    const [created] = await tx
+      .insert(chat_raffle_rounds)
+      .values({
+        name: data.name,
+        status: "open",
+        starts_at: startsAt.toISOString(),
+        ends_at: endsAt.toISOString(),
+        created_by: session.userId,
+        ...scoringToColumns(data.scoring),
+      })
+      .returning({ id: chat_raffle_rounds.id });
+    await tx.insert(chat_raffle_prizes).values(
+      data.prizes.map((p) => ({
+        round_id: created.id,
+        position: p.position,
+        amount_usd: String(p.amountUsd),
+        label: p.label || null,
+      })),
+    );
+    return created;
   });
 
   await createAdminAuditEvent({
@@ -183,11 +195,26 @@ export async function updateChatRaffleRound(input: {
   }
   const data = parsed.data;
 
-  const round = await adminDb.chat_raffle_rounds.findUnique({
-    where: { id: input.roundId },
-  });
+  const round = (
+    await adminDrizzle
+      .select()
+      .from(chat_raffle_rounds)
+      .where(eq(chat_raffle_rounds.id, input.roundId))
+      .limit(1)
+  )[0];
   if (!round) return { success: false, error: "Round not found" };
-  if (!canEditRound(deriveRoundPhase(round, new Date()))) {
+  if (
+    !canEditRound(
+      deriveRoundPhase(
+        {
+          ...round,
+          starts_at: new Date(round.starts_at),
+          ends_at: new Date(round.ends_at),
+        },
+        new Date(),
+      ),
+    )
+  ) {
     return { success: false, error: "A drawn or cancelled round can't be edited" };
   }
 
@@ -201,25 +228,28 @@ export async function updateChatRaffleRound(input: {
   // Prizes are replaced wholesale. Safe because an editable round has no
   // winners yet (the phase guard above), so nothing with a payout link is
   // being thrown away.
-  await adminDb.$transaction([
-    adminDb.chat_raffle_prizes.deleteMany({ where: { round_id: round.id } }),
-    adminDb.chat_raffle_rounds.update({
-      where: { id: round.id },
-      data: {
+  await adminDrizzle.transaction(async (tx) => {
+    await tx
+      .delete(chat_raffle_prizes)
+      .where(eq(chat_raffle_prizes.round_id, round.id));
+    await tx
+      .update(chat_raffle_rounds)
+      .set({
         name: data.name,
-        starts_at: startsAt,
-        ends_at: endsAt,
+        starts_at: startsAt.toISOString(),
+        ends_at: endsAt.toISOString(),
         ...scoringToColumns(data.scoring),
-        prizes: {
-          create: data.prizes.map((p) => ({
-            position: p.position,
-            amount_usd: p.amountUsd,
-            label: p.label || null,
-          })),
-        },
-      },
-    }),
-  ]);
+      })
+      .where(eq(chat_raffle_rounds.id, round.id));
+    await tx.insert(chat_raffle_prizes).values(
+      data.prizes.map((p) => ({
+        round_id: round.id,
+        position: p.position,
+        amount_usd: String(p.amountUsd),
+        label: p.label || null,
+      })),
+    );
+  });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -236,18 +266,22 @@ export async function cancelChatRaffleRound(input: {
 }): Promise<ActionResult> {
   const session = await requirePageAccess("/chat-raffle");
 
-  const round = await adminDb.chat_raffle_rounds.findUnique({
-    where: { id: input.roundId },
-  });
+  const round = (
+    await adminDrizzle
+      .select()
+      .from(chat_raffle_rounds)
+      .where(eq(chat_raffle_rounds.id, input.roundId))
+      .limit(1)
+  )[0];
   if (!round) return { success: false, error: "Round not found" };
   if (round.status !== "open") {
     return { success: false, error: "Only an open round can be cancelled" };
   }
 
-  await adminDb.chat_raffle_rounds.update({
-    where: { id: round.id },
-    data: { status: "cancelled" },
-  });
+  await adminDrizzle
+    .update(chat_raffle_rounds)
+    .set({ status: "cancelled" })
+    .where(eq(chat_raffle_rounds.id, round.id));
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -290,25 +324,38 @@ export async function addChatRaffleAdjustment(input: {
   }
   const data = parsed.data;
 
-  const round = await adminDb.chat_raffle_rounds.findUnique({
-    where: { id: data.roundId },
-  });
+  const round = (
+    await adminDrizzle
+      .select()
+      .from(chat_raffle_rounds)
+      .where(eq(chat_raffle_rounds.id, data.roundId))
+      .limit(1)
+  )[0];
   if (!round) return { success: false, error: "Round not found" };
-  if (!canEditRound(deriveRoundPhase(round, new Date()))) {
+  if (
+    !canEditRound(
+      deriveRoundPhase(
+        {
+          ...round,
+          starts_at: new Date(round.starts_at),
+          ends_at: new Date(round.ends_at),
+        },
+        new Date(),
+      ),
+    )
+  ) {
     return {
       success: false,
       error: "A drawn or cancelled round's points can't be changed",
     };
   }
 
-  await adminDb.chat_raffle_adjustments.create({
-    data: {
+  await adminDrizzle.insert(chat_raffle_adjustments).values({
       round_id: data.roundId,
       user_id: data.userId,
       points: data.points,
       reason: data.reason,
       created_by: session.userId,
-    },
   });
 
   await createAdminAuditEvent({
@@ -339,13 +386,27 @@ export async function drawChatRaffleRound(input: {
 }): Promise<ActionResult<{ winners: number }>> {
   const session = await requirePageAccess("/chat-raffle");
 
-  const round = await adminDb.chat_raffle_rounds.findUnique({
-    where: { id: input.roundId },
-    include: { prizes: true },
-  });
+  const round = (
+    await adminDrizzle
+      .select()
+      .from(chat_raffle_rounds)
+      .where(eq(chat_raffle_rounds.id, input.roundId))
+      .limit(1)
+  )[0];
   if (!round) return { success: false, error: "Round not found" };
+  const prizes = await adminDrizzle
+    .select()
+    .from(chat_raffle_prizes)
+    .where(eq(chat_raffle_prizes.round_id, round.id));
 
-  const phase = deriveRoundPhase(round, new Date());
+  const phase = deriveRoundPhase(
+    {
+      ...round,
+      starts_at: new Date(round.starts_at),
+      ends_at: new Date(round.ends_at),
+    },
+    new Date(),
+  );
   if (!canDrawRound(phase)) {
     return {
       success: false,
@@ -357,7 +418,7 @@ export async function drawChatRaffleRound(input: {
             : "The round window hasn't closed yet",
     };
   }
-  if (round.prizes.length === 0) {
+  if (prizes.length === 0) {
     return { success: false, error: "Add at least one prize before drawing" };
   }
 
@@ -365,8 +426,8 @@ export async function drawChatRaffleRound(input: {
   const adjustments = await getRoundAdjustmentTotals(round.id);
   const { standings, totalTickets, entrants, truncated } =
     await getChatRaffleStandings({
-      startsAt: round.starts_at,
-      endsAt: round.ends_at,
+      startsAt: new Date(round.starts_at),
+      endsAt: new Date(round.ends_at),
       scoring,
       adjustments,
     });
@@ -400,7 +461,7 @@ export async function drawChatRaffleRound(input: {
       base_points: s.basePoints,
       adjustment_points: s.adjustmentPoints,
       tickets: s.tickets,
-      ticket_start: BigInt(ticketStart),
+      ticket_start: ticketStart,
       position: s.position,
     };
   });
@@ -413,10 +474,10 @@ export async function drawChatRaffleRound(input: {
       username: s.username,
       tickets: s.tickets,
     })),
-    prizeCount: round.prizes.length,
+    prizeCount: prizes.length,
   });
 
-  const prizesByPosition = new Map(round.prizes.map((p) => [p.position, p]));
+  const prizesByPosition = new Map(prizes.map((p) => [p.position, p]));
 
   // CLAIM the round inside the transaction, before writing anything else.
   // Two operators hitting Draw at the same moment would otherwise both pass
@@ -426,35 +487,43 @@ export async function drawChatRaffleRound(input: {
   // one through; the loser rolls back having written nothing.
   const CONCURRENT_DRAW = "chat-raffle:concurrent-draw";
   try {
-    await adminDb.$transaction(async (tx) => {
-      const claim = await tx.chat_raffle_rounds.updateMany({
-        where: { id: round.id, status: "open" },
-        data: {
+    await adminDrizzle.transaction(async (tx) => {
+      const claim = await tx
+        .update(chat_raffle_rounds)
+        .set({
           status: "drawn",
           draw_seed: seed,
-          drawn_at: new Date(),
+          drawn_at: new Date().toISOString(),
           drawn_by: session.userId,
           entrants_at_draw: entrants,
           tickets_at_draw: totalTickets,
-        },
-      });
-      if (claim.count !== 1) throw new Error(CONCURRENT_DRAW);
+        })
+        .where(
+          and(
+            eq(chat_raffle_rounds.id, round.id),
+            eq(chat_raffle_rounds.status, "open"),
+          ),
+        )
+        .returning({ id: chat_raffle_rounds.id });
+      if (claim.length !== 1) throw new Error(CONCURRENT_DRAW);
 
-      await tx.chat_raffle_entries.deleteMany({ where: { round_id: round.id } });
-      await tx.chat_raffle_entries.createMany({ data: entryRows });
+      await tx
+        .delete(chat_raffle_entries)
+        .where(eq(chat_raffle_entries.round_id, round.id));
+      await tx.insert(chat_raffle_entries).values(entryRows);
 
       for (const w of winners) {
         const prize = prizesByPosition.get(w.position);
         if (!prize) continue;
-        await tx.chat_raffle_prizes.update({
-          where: { id: prize.id },
-          data: {
+        await tx
+          .update(chat_raffle_prizes)
+          .set({
             winner_user_id: w.userId,
             winner_username: w.username,
             winner_tickets: w.tickets,
-            winning_ticket: w.winningTicket,
-          },
-        });
+            winning_ticket: Number(w.winningTicket),
+          })
+          .where(eq(chat_raffle_prizes.id, prize.id));
       }
     });
   } catch (err) {
@@ -518,10 +587,25 @@ export async function payChatRafflePrize(input: {
     }
   }
 
-  const prize = await adminDb.chat_raffle_prizes.findUnique({
-    where: { id: input.prizeId },
-    include: { round: true },
-  });
+  const prize = (
+    await adminDrizzle
+      .select({
+        id: chat_raffle_prizes.id,
+        round_id: chat_raffle_prizes.round_id,
+        position: chat_raffle_prizes.position,
+        amount_usd: chat_raffle_prizes.amount_usd,
+        winner_user_id: chat_raffle_prizes.winner_user_id,
+        paid_at: chat_raffle_prizes.paid_at,
+        roundName: chat_raffle_rounds.name,
+      })
+      .from(chat_raffle_prizes)
+      .innerJoin(
+        chat_raffle_rounds,
+        eq(chat_raffle_rounds.id, chat_raffle_prizes.round_id),
+      )
+      .where(eq(chat_raffle_prizes.id, input.prizeId))
+      .limit(1)
+  )[0];
   if (!prize) return { success: false, error: "Prize not found" };
   if (!prize.winner_user_id) {
     return { success: false, error: "This place hasn't been drawn yet" };
@@ -542,11 +626,17 @@ export async function payChatRafflePrize(input: {
   // retryable. If the process dies between the claim and the credit the prize
   // is left marked paid with no ledger link — visible, and recoverable by
   // hand, which is strictly better than double-paying real money.
-  const claim = await adminDb.chat_raffle_prizes.updateMany({
-    where: { id: prize.id, paid_at: null },
-    data: { paid_at: new Date(), paid_by: session.userId },
-  });
-  if (claim.count !== 1) {
+  const claim = await adminDrizzle
+    .update(chat_raffle_prizes)
+    .set({ paid_at: new Date().toISOString(), paid_by: session.userId })
+    .where(
+      and(
+        eq(chat_raffle_prizes.id, prize.id),
+        isNull(chat_raffle_prizes.paid_at),
+      ),
+    )
+    .returning({ id: chat_raffle_prizes.id });
+  if (claim.length !== 1) {
     return { success: false, error: "This prize is already being paid" };
   }
 
@@ -554,7 +644,7 @@ export async function payChatRafflePrize(input: {
     userId: prize.winner_user_id,
     amount,
     category: "chat_raffle",
-    reason: `Chat raffle: ${prize.round.name} — place #${prize.position}`,
+    reason: `Chat raffle: ${prize.roundName} — place #${prize.position}`,
     totpCode: input.totpCode,
     details: {
       chatRaffleRoundId: prize.round_id,
@@ -563,17 +653,22 @@ export async function payChatRafflePrize(input: {
   });
 
   if (!result.success) {
-    await adminDb.chat_raffle_prizes.updateMany({
-      where: { id: prize.id, ledger_tx_id: null },
-      data: { paid_at: null, paid_by: null },
-    });
+    await adminDrizzle
+      .update(chat_raffle_prizes)
+      .set({ paid_at: null, paid_by: null })
+      .where(
+        and(
+          eq(chat_raffle_prizes.id, prize.id),
+          isNull(chat_raffle_prizes.ledger_tx_id),
+        ),
+      );
     return { success: false, error: result.error };
   }
 
-  await adminDb.chat_raffle_prizes.update({
-    where: { id: prize.id },
-    data: { ledger_tx_id: result.ledgerTxId },
-  });
+  await adminDrizzle
+    .update(chat_raffle_prizes)
+    .set({ ledger_tx_id: result.ledgerTxId })
+    .where(eq(chat_raffle_prizes.id, prize.id));
 
   await createAdminAuditEvent({
     adminUserId: session.userId,

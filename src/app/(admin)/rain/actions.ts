@@ -1,7 +1,10 @@
 "use server";
 
 import { revalidatePath, revalidateTag } from "next/cache";
-import { getDb } from "@/lib/db";
+import { eq, inArray, sql } from "drizzle-orm";
+
+import { getDrizzleDb } from "@/lib/db";
+import { rains, site_config } from "@/lib/db-schema/main/schema";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -10,24 +13,40 @@ import { refreshSiteConfig } from "@/lib/refresh-site-config";
 import { RAIN_CONFIG_KEYS } from "./config-keys";
 
 export async function adjustRainBase(rainId: string, newBaseAmount: number) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/rain");
   await requireCapability(session, "__can_adjust_rain_base", "adjust rain base");
 
-  if (newBaseAmount < 0) throw new Error("Base amount cannot be negative");
+  // SECURITY (SECURITY_AUDIT.md LOW): NaN/Infinity slip past a bare `< 0` check
+  // (NaN<0 and Infinity<0 are both false) and would corrupt the MAIN rain pool.
+  if (!Number.isFinite(newBaseAmount) || newBaseAmount < 0) {
+    throw new Error("Base amount must be a valid non-negative number");
+  }
 
-  const rain = await db.rains.findUnique({ where: { id: rainId } });
-  if (!rain) throw new Error("Rain not found");
-  if (rain.status !== "active") throw new Error("Can only adjust active rains");
+  const result = await db.transaction(async (tx) => {
+    const [rain] = await tx
+      .select({
+        status: rains.status,
+        base_amount_usd: rains.base_amount_usd,
+        tip_amount_usd: rains.tip_amount_usd,
+      })
+      .from(rains)
+      .where(eq(rains.id, rainId))
+      .limit(1)
+      .for("update");
+    if (!rain) throw new Error("Rain not found");
+    if (rain.status !== "active") throw new Error("Can only adjust active rains");
 
-  const totalPool = newBaseAmount + toNumber(rain.tip_amount_usd);
-
-  await db.rains.update({
-    where: { id: rainId },
-    data: {
-      base_amount_usd: newBaseAmount,
-      total_pool_usd: totalPool,
-    },
+    const totalPool = newBaseAmount + toNumber(rain.tip_amount_usd);
+    await tx
+      .update(rains)
+      .set({
+        base_amount_usd: String(newBaseAmount),
+        total_pool_usd: String(totalPool),
+        updated_at: new Date().toISOString(),
+      })
+      .where(eq(rains.id, rainId));
+    return { rain, totalPool };
   });
 
   await createAdminAuditEvent({
@@ -35,9 +54,9 @@ export async function adjustRainBase(rainId: string, newBaseAmount: number) {
     eventType: "rain_base_adjusted",
     metadata: {
       rain_id: rainId,
-      old_base: toNumber(rain.base_amount_usd),
+      old_base: toNumber(result.rain.base_amount_usd),
       new_base: newBaseAmount,
-      new_total: totalPool,
+      new_total: result.totalPool,
     },
   });
 
@@ -66,7 +85,7 @@ export async function updateRainConfig(input: {
   durationMinutes?: number;
   frequencyMs?: number;
 }) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/rain");
   await requireCapability(session, "__can_update_rain_config", "update rain config");
 
@@ -84,17 +103,13 @@ export async function updateRainConfig(input: {
     ) {
       throw new Error("Default base amount must be a non-negative number");
     }
-    const existing = await db.site_config.findUnique({
-      where: { key: RAIN_CONFIG_KEYS.defaultBaseAmount },
-      select: { value: true },
-    });
     toUpsert.push({
       key: RAIN_CONFIG_KEYS.defaultBaseAmount,
       // Store as a plain-decimal string — the backend is expected to
       // parse this with its own Decimal/number type.
       value: String(input.defaultBaseAmountUsd),
       description: "Default base_amount_usd applied to newly created rain instances",
-      oldValue: existing?.value ?? null,
+      oldValue: null,
     });
   }
 
@@ -105,15 +120,11 @@ export async function updateRainConfig(input: {
     ) {
       throw new Error("Live base amount must be a non-negative number");
     }
-    const existing = await db.site_config.findUnique({
-      where: { key: RAIN_CONFIG_KEYS.liveBaseAmount },
-      select: { value: true },
-    });
     toUpsert.push({
       key: RAIN_CONFIG_KEYS.liveBaseAmount,
       value: String(input.liveBaseAmountUsd),
       description: "Base rain amount",
-      oldValue: existing?.value ?? null,
+      oldValue: null,
     });
   }
 
@@ -124,15 +135,11 @@ export async function updateRainConfig(input: {
     ) {
       throw new Error("Duration minutes must be a positive integer");
     }
-    const existing = await db.site_config.findUnique({
-      where: { key: RAIN_CONFIG_KEYS.durationMinutes },
-      select: { value: true },
-    });
     toUpsert.push({
       key: RAIN_CONFIG_KEYS.durationMinutes,
       value: String(input.durationMinutes),
       description: "Duration in minutes between rain starts_at and ends_at",
-      oldValue: existing?.value ?? null,
+      oldValue: null,
     });
   }
 
@@ -146,15 +153,11 @@ export async function updateRainConfig(input: {
         "Frequency must be an integer between 60000 ms (1 min) and 86400000 ms (24h)",
       );
     }
-    const existing = await db.site_config.findUnique({
-      where: { key: RAIN_CONFIG_KEYS.frequencyMs },
-      select: { value: true },
-    });
     toUpsert.push({
       key: RAIN_CONFIG_KEYS.frequencyMs,
       value: String(input.frequencyMs),
       description: "How frequent rains are. Default is each hour 3600000ms",
-      oldValue: existing?.value ?? null,
+      oldValue: null,
     });
   }
 
@@ -162,21 +165,38 @@ export async function updateRainConfig(input: {
     throw new Error("No config fields provided");
   }
 
+  const existing = await db
+    .select({ key: site_config.key, value: site_config.value })
+    .from(site_config)
+    .where(
+      inArray(
+        site_config.key,
+        toUpsert.map((entry) => entry.key),
+      ),
+    );
+  const existingByKey = new Map(existing.map((row) => [row.key, row.value]));
+  for (const entry of toUpsert) {
+    entry.oldValue = existingByKey.get(entry.key) ?? null;
+  }
+
   // Run the upserts in a transaction so a partial write never leaves
   // the config half-updated. Site_config is a tiny table, this is cheap.
-  await db.$transaction(
-    toUpsert.map((entry) =>
-      db.site_config.upsert({
-        where: { key: entry.key },
-        create: {
-          key: entry.key,
-          value: entry.value,
-          description: entry.description,
-        },
-        update: { value: entry.value },
-      }),
-    ),
-  );
+  await db
+    .insert(site_config)
+    .values(
+      toUpsert.map((entry) => ({
+        key: entry.key,
+        value: entry.value,
+        description: entry.description,
+      })),
+    )
+    .onConflictDoUpdate({
+      target: site_config.key,
+      set: {
+        value: sql`excluded.value`,
+        updated_at: new Date().toISOString(),
+      },
+    });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,

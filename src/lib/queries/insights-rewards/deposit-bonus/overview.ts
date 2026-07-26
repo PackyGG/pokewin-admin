@@ -1,5 +1,6 @@
+import { queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -78,7 +79,7 @@ async function computeOverview(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusOverview> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
@@ -86,7 +87,7 @@ async function computeOverview(
   // Headline rollup + distinct depositors + daily series in parallel — same
   // status / scope / window filter shape so totals reconcile by construction.
   const [rollupRows, depositorRows, dailyRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryRows<
       {
         total: string;
         cnt: string;
@@ -94,7 +95,7 @@ async function computeOverview(
         median: string | null;
         max_amount: string | null;
       }[]
-    >(`
+    >(db, sql`
       SELECT
         COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total,
         COUNT(*)::text AS cnt,
@@ -110,7 +111,7 @@ async function computeOverview(
     // Distinct users who made a COMPLETED deposit in the same window + scope —
     // the denominator for the empirical claim probability. Same filter shape as
     // the bonus rollup (just type='deposit' instead of 'deposit_bonus').
-    db.$queryRawUnsafe<{ depositors: string }[]>(`
+    queryRows<{ depositors: string }[]>(db, sql`
       SELECT COUNT(DISTINCT lt.user_id)::text AS depositors
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
@@ -118,9 +119,9 @@ async function computeOverview(
         AND lt.user_id IN ${userScope}
         ${dateFilter}
     `),
-    db.$queryRawUnsafe<
+    queryRows<
       { date: Date; volume: string; cnt: string; claimants: string }[]
-    >(`
+    >(db, sql`
       SELECT
         DATE(lt.created_at) AS date,
         COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS volume,
@@ -163,9 +164,9 @@ async function computeOverview(
   // the delta is apples-to-apples.
   let priorWindow: DepositBonusOverview["priorWindow"] = null;
   if (days !== null) {
-    const priorRows = await db.$queryRawUnsafe<
+    const priorRows = await queryRows<
       { total: string; cnt: string; claimants: string }[]
-    >(`
+    >(db, sql`
       SELECT
         COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total,
         COUNT(*)::text AS cnt,
@@ -174,8 +175,8 @@ async function computeOverview(
       WHERE lt.status = 'completed'
         AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN ${userScope}
-        AND lt.created_at >= NOW() - INTERVAL '${days * 2} days'
-        AND lt.created_at < NOW() - INTERVAL '${days} days'
+        AND lt.created_at >= NOW() - (${days * 2} * INTERVAL '1 day')
+        AND lt.created_at < NOW() - (${days} * INTERVAL '1 day')
     `);
     const prev = priorRows[0];
     const prevCost = toNumber(prev?.total);

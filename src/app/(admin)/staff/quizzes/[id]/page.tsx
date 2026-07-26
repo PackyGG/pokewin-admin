@@ -1,10 +1,12 @@
 import { Suspense } from "react";
 import { notFound, redirect } from "next/navigation";
 import { GraduationCap } from "lucide-react";
+import { and, count, eq } from "drizzle-orm";
 
 import { requireStaffLearnerPage } from "@/lib/staff/access";
 import { sessionRoles } from "@/lib/dal";
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
+import { staff_quiz_attempts } from "@/lib/db-schema/admin/schema";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getQuizForTake, quizVisibleToRoles } from "@/lib/staff/quiz";
@@ -67,15 +69,12 @@ async function QuizStage({
 }) {
   // Resume an open attempt if there is one — it also seeds the (optional)
   // deterministic question shuffle so a reload doesn't reorder mid-attempt.
-  const openAttempt = await adminDb.staff_quiz_attempts
-    .findFirst({
-      where: {
-        quiz_id: quizId,
-        admin_user_id: adminUserId,
-        status: "in_progress",
-      },
-      select: { id: true },
-    })
+  const openAttempt = await adminDrizzle.select({ id: staff_quiz_attempts.id })
+    .from(staff_quiz_attempts).where(and(
+      eq(staff_quiz_attempts.quiz_id, quizId),
+      eq(staff_quiz_attempts.admin_user_id, adminUserId),
+      eq(staff_quiz_attempts.status, "in_progress"),
+    )).limit(1).then((rows) => rows[0] ?? null)
     .catch(() => null);
 
   const loaded = await getQuizForTake(quizId, openAttempt?.id);
@@ -89,14 +88,12 @@ async function QuizStage({
 
   // Attempts already spent — only meaningful when there is no open attempt to
   // resume (resuming never costs an extra try).
-  const submittedCount = await adminDb.staff_quiz_attempts
-    .count({
-      where: {
-        quiz_id: quizId,
-        admin_user_id: adminUserId,
-        status: "submitted",
-      },
-    })
+  const submittedCount = await adminDrizzle.select({ value: count() })
+    .from(staff_quiz_attempts).where(and(
+      eq(staff_quiz_attempts.quiz_id, quizId),
+      eq(staff_quiz_attempts.admin_user_id, adminUserId),
+      eq(staff_quiz_attempts.status, "submitted"),
+    )).then((rows) => rows[0]?.value ?? 0)
     .catch(() => 0);
 
   const attemptsLeft =

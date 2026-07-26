@@ -3,7 +3,7 @@
  *
  * Side-effect-free and DB-free: imports ONLY the dep-free math module
  * (`insights/edge-calc/math`, for the house edge knob). This is split out of
- * `risk-config.ts` — which is DB-coupled (`getAdminSetting` → `adminDb`) — so the
+ * `risk-config.ts` — which is DB-coupled (`getAdminSetting`) — so the
  * no-DB risk-check harness (`packs/__checks__/risk.ts`) can import and pin these
  * exact functions, and the doctor / plan-all reads can derive a pack's targets
  * without re-reading `admin_settings` per pack. The caller resolves the config
@@ -233,7 +233,7 @@ export function resolveTargetWinRate(
 }
 
 /**
- * The DB `pack_tag` percent tags mapped to their designed hit-rate. Prisma
+ * The DB `pack_tag` percent tags mapped to their designed hit-rate. Application
  * returns the TS enum names (`pct1`), raw SQL returns the mapped DB strings
  * (`"%1"`) — both notations are accepted so every read path can share this.
  */
@@ -244,7 +244,7 @@ const TAG_HIT_RATES: Readonly<Record<string, number>> = {
   "%5": 0.05,
   pct10: 0.1,
   "%10": 0.1,
-  // The 50/50 coin-flip tier — BOTH notations, like the pct tiers: the Prisma
+  // The 50/50 coin-flip tier — both notations, like the pct tiers: the application
   // enum NAME (`fifty50`, read on the staged arm) AND the DB-string label
   // (`50/50`, read via raw SQL on the live arm) resolve to 0.5. Previously only
   // the DB string matched (via parseArbitraryTag's ratio arm) while the enum
@@ -321,7 +321,7 @@ export function hitRateFromTags(
  * The selectable product tags the Retune workspace tag control offers, each
  * paired with its designed hit-rate. These are the `pack_tag` enum members the
  * owner categorizes packs with — the DB-string notations (`"%1"` etc., what
- * Prisma persists / raw SQL returns) plus the enum names Prisma's typed client
+ * PostgreSQL persists/returns) plus the application enum names
  * uses. The tag control writes the ENUM NAME to `packs.tags` (a `pack_tag[]`).
  *
  * `onepiece` is deliberately omitted — it is a themed collection tag, not a

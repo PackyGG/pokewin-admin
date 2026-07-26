@@ -6,9 +6,11 @@ import {
   Trophy,
   UserCircle,
 } from "lucide-react";
+import { eq } from "drizzle-orm";
 
 import { requireStaffPage } from "@/lib/staff/access";
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_users, staff_notification_channels, staff_notification_prefs } from "@/lib/db-schema/admin/schema";
 import { safeQuery } from "@/lib/errors/safe-query";
 import {
   KpiTile,
@@ -104,11 +106,11 @@ async function IdentitySection({
       "antifraud.profile-events",
       QUERY_TIMEOUT_MS,
     ),
-    adminDb.admin_users
-      .findUnique({
-        where: { id: adminUserId },
-        select: { profile_image_mime: true, display_username: true },
-      })
+    adminDrizzle.select({
+      profile_image_mime: admin_users.profile_image_mime,
+      display_username: admin_users.display_username,
+    }).from(admin_users).where(eq(admin_users.id, adminUserId)).limit(1)
+      .then((rows) => rows[0] ?? null)
       .catch(() => null),
   ]);
 
@@ -253,16 +255,16 @@ async function NotificationsSection({ adminUserId }: { adminUserId: string }) {
   const configured = channelConfigStatus();
 
   const [channelRows, prefRows] = await Promise.all([
-    adminDb.staff_notification_channels
-      .findMany({ where: { admin_user_id: adminUserId } })
+    adminDrizzle.select().from(staff_notification_channels)
+      .where(eq(staff_notification_channels.admin_user_id, adminUserId))
       .catch((err) => {
         if (!isMissingRelationError(err)) {
           console.error("[antifraud] profile channels read failed:", err);
         }
         return [];
       }),
-    adminDb.staff_notification_prefs
-      .findMany({ where: { admin_user_id: adminUserId } })
+    adminDrizzle.select().from(staff_notification_prefs)
+      .where(eq(staff_notification_prefs.admin_user_id, adminUserId))
       .catch((err) => {
         if (!isMissingRelationError(err)) {
           console.error("[antifraud] profile prefs read failed:", err);
@@ -282,7 +284,9 @@ async function NotificationsSection({ adminUserId }: { adminUserId: string }) {
         enabled: row?.enabled ?? true,
         verified: Boolean(row?.verified_at),
         lastError: row?.last_error ?? null,
-        lastSentAt: row?.last_sent_at?.toISOString() ?? null,
+        // Drizzle returns timestamptz as an ISO string already (the old client handed
+        // back a Date), so this is a pass-through rather than a conversion.
+        lastSentAt: row?.last_sent_at ?? null,
         configured: configured[channel],
       };
     },

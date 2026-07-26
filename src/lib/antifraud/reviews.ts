@@ -1,6 +1,8 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
+import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { antifraud_review_notes, antifraud_reviews, antifraud_signals } from "@/lib/db-schema/admin/schema";
 import { isMissingRelationError } from "../staff/notifications";
 import { loadAdminIdentities, type AdminIdentity } from "../staff/identities";
 import {
@@ -23,7 +25,7 @@ import {
 // The status/severity vocabulary itself lives in the isomorphic
 // `./constants` module so Client Components (the queue dialogs, the case
 // controls) can import it WITHOUT dragging this server-only file — and
-// therefore Prisma — into the browser bundle. Re-exported here so every
+// therefore server-only database code — into the browser bundle. Re-exported here so every
 // existing server-side import keeps working unchanged.
 export {
   REVIEW_STATUSES,
@@ -88,9 +90,9 @@ function toRow(row: {
   opened_by: string | null;
   resolution: string | null;
   resolved_by: string | null;
-  resolved_at: Date | null;
-  created_at: Date;
-  updated_at: Date;
+  resolved_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
 }): ReviewRow {
   return {
     id: row.id,
@@ -106,9 +108,9 @@ function toRow(row: {
     openedBy: row.opened_by,
     resolution: row.resolution,
     resolvedBy: row.resolved_by,
-    resolvedAt: row.resolved_at,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    resolvedAt: row.resolved_at ? new Date(row.resolved_at) : null,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
   };
 }
 
@@ -136,34 +138,33 @@ export async function listReviews(
 ): Promise<ReviewListItem[]> {
   const limit = Math.min(Math.max(filters.limit ?? 100, 1), 300);
   try {
-    const where: Record<string, unknown> = {};
+    const conditions: SQL[] = [];
 
     if (filters.status === "all") {
       // no status predicate
     } else if (filters.status && filters.status !== "unresolved") {
-      where.status = filters.status;
+      conditions.push(eq(antifraud_reviews.status, filters.status));
     } else {
-      where.status = { in: [...OPEN_REVIEW_STATUSES] };
+      conditions.push(inArray(antifraud_reviews.status, [...OPEN_REVIEW_STATUSES]));
     }
 
-    if (filters.severity) where.severity = filters.severity;
-    if (filters.assignedTo) where.assigned_to = filters.assignedTo;
+    if (filters.severity) conditions.push(eq(antifraud_reviews.severity, filters.severity));
+    if (filters.assignedTo) conditions.push(eq(antifraud_reviews.assigned_to, filters.assignedTo));
     if (filters.search) {
       const term = filters.search.trim();
       if (term) {
-        where.OR = [
-          { target_username: { contains: term, mode: "insensitive" } },
-          { target_user_id: { contains: term } },
-          { reason: { contains: term, mode: "insensitive" } },
-        ];
+        const pattern = `%${term}%`;
+        conditions.push(or(
+          ilike(antifraud_reviews.target_username, pattern),
+          ilike(antifraud_reviews.target_user_id, pattern),
+          ilike(antifraud_reviews.reason, pattern),
+        )!);
       }
     }
 
-    const rows = await adminDb.antifraud_reviews.findMany({
-      where,
-      orderBy: { created_at: "desc" },
-      take: limit,
-    });
+    const rows = await adminDrizzle.select().from(antifraud_reviews)
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(desc(antifraud_reviews.created_at)).limit(limit);
 
     const identities = await loadAdminIdentities(
       rows.flatMap((r) => [r.assigned_to, r.opened_by]),
@@ -203,22 +204,17 @@ export async function getReviewDetail(
   reviewId: string,
 ): Promise<ReviewDetail | null> {
   try {
-    const review = await adminDb.antifraud_reviews.findUnique({
-      where: { id: reviewId },
-    });
+    const [review] = await adminDrizzle.select().from(antifraud_reviews)
+      .where(eq(antifraud_reviews.id, reviewId)).limit(1);
     if (!review) return null;
 
     const [notes, signals] = await Promise.all([
-      adminDb.antifraud_review_notes.findMany({
-        where: { review_id: reviewId },
-        orderBy: { created_at: "desc" },
-        take: 100,
-      }),
-      adminDb.antifraud_signals.findMany({
-        where: { target_user_id: review.target_user_id },
-        orderBy: { received_at: "desc" },
-        take: 25,
-      }),
+      adminDrizzle.select().from(antifraud_review_notes)
+        .where(eq(antifraud_review_notes.review_id, reviewId))
+        .orderBy(desc(antifraud_review_notes.created_at)).limit(100),
+      adminDrizzle.select().from(antifraud_signals)
+        .where(eq(antifraud_signals.target_user_id, review.target_user_id))
+        .orderBy(desc(antifraud_signals.received_at)).limit(25),
     ]);
 
     const identities = await loadAdminIdentities([
@@ -245,7 +241,7 @@ export async function getReviewDetail(
         author: note.admin_user_id
           ? identities.get(note.admin_user_id) ?? null
           : null,
-        createdAt: note.created_at,
+        createdAt: new Date(note.created_at),
       })),
       relatedSignals: signals.map((s) => ({
         id: s.id,
@@ -253,7 +249,7 @@ export async function getReviewDetail(
         severity: s.severity,
         summary: s.summary,
         riskScore: s.risk_score,
-        receivedAt: s.received_at,
+        receivedAt: new Date(s.received_at),
       })),
     };
   } catch (err) {
@@ -291,41 +287,28 @@ export async function getReviewStats(
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
-    const [byStatus, resolvedToday, criticalOpen, mineOpen] = await Promise.all([
-      adminDb.antifraud_reviews.groupBy({
-        by: ["status"],
-        _count: { _all: true },
-      }),
-      adminDb.antifraud_reviews.count({
-        where: { resolved_at: { gte: startOfToday } },
-      }),
-      adminDb.antifraud_reviews.count({
-        where: {
-          severity: "critical",
-          status: { in: [...OPEN_REVIEW_STATUSES] },
-        },
-      }),
-      adminUserId
-        ? adminDb.antifraud_reviews.count({
-            where: {
-              assigned_to: adminUserId,
-              status: { in: [...OPEN_REVIEW_STATUSES] },
-            },
-          })
-        : Promise.resolve(0),
-    ]);
-
-    const count = (status: string) =>
-      byStatus.find((row) => row.status === status)?._count._all ?? 0;
+    const result = await adminDrizzle.execute<{
+      open: string; in_review: string; escalated: string; flagged: string;
+      resolved_today: string; critical_open: string; mine_open: string;
+    }>(sql`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'open') AS open,
+        COUNT(*) FILTER (WHERE status = 'in_review') AS in_review,
+        COUNT(*) FILTER (WHERE status = 'escalated') AS escalated,
+        COUNT(*) FILTER (WHERE status = 'flagged') AS flagged,
+        COUNT(*) FILTER (WHERE resolved_at >= ${startOfToday}) AS resolved_today,
+        COUNT(*) FILTER (WHERE severity = 'critical' AND status = ANY(${[...OPEN_REVIEW_STATUSES]}::text[])) AS critical_open,
+        COUNT(*) FILTER (WHERE assigned_to = ${adminUserId ?? null}::uuid AND status = ANY(${[...OPEN_REVIEW_STATUSES]}::text[])) AS mine_open
+      FROM antifraud_reviews
+    `);
+    const row = result.rows[0];
+    const value = (key: keyof NonNullable<typeof row>) => Number(row?.[key] ?? 0);
 
     return {
-      open: count("open"),
-      inReview: count("in_review"),
-      escalated: count("escalated"),
-      resolvedToday,
-      flaggedTotal: count("flagged"),
-      criticalOpen,
-      mineOpen,
+      open: value("open"), inReview: value("in_review"),
+      escalated: value("escalated"), resolvedToday: value("resolved_today"),
+      flaggedTotal: value("flagged"), criticalOpen: value("critical_open"),
+      mineOpen: value("mine_open"),
     };
   } catch (err) {
     if (!isMissingRelationError(err)) {
@@ -351,10 +334,9 @@ export type SignalRow = {
 /** The dashboard's recent-signal feed (the persisted twin of the live stream). */
 export async function listRecentSignals(limit = 25): Promise<SignalRow[]> {
   try {
-    const rows = await adminDb.antifraud_signals.findMany({
-      orderBy: { received_at: "desc" },
-      take: Math.min(Math.max(limit, 1), 100),
-    });
+    const rows = await adminDrizzle.select().from(antifraud_signals)
+      .orderBy(desc(antifraud_signals.received_at))
+      .limit(Math.min(Math.max(limit, 1), 100));
     return rows.map((row) => ({
       id: row.id,
       externalId: row.external_id,
@@ -365,7 +347,7 @@ export async function listRecentSignals(limit = 25): Promise<SignalRow[]> {
       targetUsername: row.target_username,
       summary: row.summary,
       reviewId: row.review_id,
-      receivedAt: row.received_at,
+      receivedAt: new Date(row.received_at),
     }));
   } catch (err) {
     if (!isMissingRelationError(err)) {

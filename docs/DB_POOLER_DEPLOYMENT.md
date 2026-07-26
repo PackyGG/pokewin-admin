@@ -1,23 +1,17 @@
 # Database connection pooler — deployment checklist
 
-The admin dashboard runs a small per-instance Prisma pool (`max: 3` for the main
-game DB, `max: 5` for the admin DB) via the `@prisma/adapter-pg` driver adapter.
+The admin dashboard runs small per-instance PostgreSQL pools (`max: 3` for the
+main game DB, `max: 5` for the admin DB) through Drizzle and `node-postgres`.
 Under concurrent admin load across multiple serverless instances this can
 approach the shared Postgres connection ceiling. A managed connection pooler
 multiplexes many client connections onto a small server-side pool and is the
 real fix.
 
-## Why a pooled connection string (not Prisma Accelerate)
+## Why a pooled connection string
 
-Both clients (`src/lib/db.ts`, `src/lib/admin-db.ts`) construct Prisma with the
-`@prisma/adapter-pg` driver adapter, which takes a **raw Postgres connection
-string**. A pooled endpoint (PgBouncer / Neon pooler / Supabase pooler /
-Supavisor / RDS Proxy) is therefore a **drop-in** — no code rewrite.
-
-Prisma **Accelerate** uses a `prisma://` engine connection + the
-`withAccelerate()` extension, which is **mutually exclusive** with passing a
-driver adapter. Adopting Accelerate would require ripping the driver adapter out
-of both clients, so it is intentionally not supported here.
+Both runtime clients (`src/lib/db.ts`, `src/lib/admin-db.ts`) use raw PostgreSQL
+connection strings. A pooled endpoint (PgBouncer / Neon pooler / Supabase
+pooler / Supavisor / RDS Proxy) is therefore a drop-in.
 
 ## What the code already does
 
@@ -29,9 +23,8 @@ main  runtime: DATABASE_URL_POOLED        ?? DATABASE_URL
 admin runtime: ADMIN_DATABASE_URL_POOLED  ?? ADMIN_DATABASE_URL
 ```
 
-No Prisma schema change is needed: the runtime connection comes from the adapter
-(env-driven), not from a schema `url`/`directUrl`. The MAIN game DB stays
-read-only and is **not** migrated.
+The runtime connection is environment-driven. The MAIN game DB stays read-only
+and is not migrated.
 
 ## Owner-side steps (vendor)
 
@@ -47,8 +40,8 @@ read-only and is **not** migrated.
    - `DATABASE_URL_POOLED` = pooled main-DB URL.
    - `ADMIN_DATABASE_URL_POOLED` = pooled admin-DB URL.
    - **Leave** `DATABASE_URL` / `ADMIN_DATABASE_URL` pointing at the **direct**
-     endpoints (direct stays the in-code fallback; the Prisma CLI for the admin
-     DB also uses the direct `ADMIN_DATABASE_URL`).
+     endpoints (direct stays the in-code fallback; schema tooling also uses the
+     direct `ADMIN_DATABASE_URL`).
 5. **Redeploy.** The runtime now routes through the pooler.
 
 ## Verify after deploy
@@ -57,7 +50,7 @@ read-only and is **not** migrated.
   `postgres: "ok <Nms>"`.
 - Watch the Postgres "active connections" metric — it should flatten near the
   pooler's server-side pool size instead of scaling with instance count.
-- No `P2024` (pool timeout) / `too many connections` errors under load.
+- No pool timeout or `too many connections` errors under load.
 
 ## Rollback
 

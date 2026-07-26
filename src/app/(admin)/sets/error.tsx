@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
  *
  * Sets is content data in the main DB — read-only on this page, so a
  * render failure is never destructive. A throw is almost always a stale
- * Prisma field or a transient timeout. This boundary scopes the failure
+ * schema field or a transient timeout. This boundary scopes the failure
  * to /sets instead of bubbling to the umbrella. The reset path re-runs
  * the server render without a full reload.
  *
@@ -55,7 +55,7 @@ export default function SetsError({
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <p className="text-xs text-muted-foreground">
           Set definitions live in the main DB and are read-only on this page
-          — nothing destructive happens on a render failure. A stale Prisma
+          — nothing destructive happens on a render failure. A stale schema
           field or a transient timeout is the most common cause. Server logs
           have the full stack — search for the digest above.
         </p>

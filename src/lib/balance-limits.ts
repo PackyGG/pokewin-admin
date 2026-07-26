@@ -1,11 +1,12 @@
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { getRoleBalanceLimitDefaults } from "@/lib/role-limits";
 import {
   resolveEffectiveCap,
   type RoleBalanceLimitDefaults,
 } from "@/lib/role-limits-merge";
-import type { limit_period_type } from "@/generated/admin-prisma/client";
+export type limit_period_type = "daily" | "weekly" | "monthly";
 
 function getPeriodStart(periodType: limit_period_type): Date {
   const now = new Date();
@@ -42,28 +43,22 @@ async function sumPeriodUsage(
 ): Promise<number> {
   const periodStart = getPeriodStart(period);
 
-  const events = await adminDb.admin_audit_events.findMany({
-    where: {
-      admin_user_id: adminUserId,
-      event_type: { in: ["balance_adjustment", "manual_withdrawal_recorded"] },
-      created_at: { gte: periodStart },
-    },
-    select: { metadata: true },
-  });
-
-  let currentUsage = 0;
-  for (const event of events) {
-    const meta = event.metadata as Record<string, unknown> | null;
-    if (!meta) continue;
-    // Accept either field — `amount` for balance_adjustment events,
-    // `amountUsd` for manual_withdrawal_recorded events.
-    if (typeof meta.amount === "number") {
-      currentUsage += Math.abs(meta.amount);
-    } else if (typeof meta.amountUsd === "number") {
-      currentUsage += Math.abs(meta.amountUsd);
-    }
-  }
-  return currentUsage;
+  const result = await adminDrizzle.execute<{ current_usage: string }>(sql`
+    SELECT COALESCE(SUM(ABS(
+      CASE
+        WHEN jsonb_typeof(metadata->'amount') = 'number'
+          THEN (metadata->>'amount')::numeric
+        WHEN jsonb_typeof(metadata->'amountUsd') = 'number'
+          THEN (metadata->>'amountUsd')::numeric
+        ELSE 0
+      END
+    )), 0)::text AS current_usage
+    FROM admin_audit_events
+    WHERE admin_user_id = ${adminUserId}::uuid
+      AND event_type IN ('balance_adjustment', 'manual_withdrawal_recorded')
+      AND created_at >= ${periodStart}
+  `);
+  return Number(result.rows[0]?.current_usage ?? 0);
 }
 
 const ALL_PERIODS: readonly limit_period_type[] = ["daily", "weekly", "monthly"];
@@ -85,9 +80,14 @@ export async function checkBalanceAdjustmentLimit(
   amount: number
 ): Promise<void> {
   // Per-user caps (the authoritative WINNER when present), keyed by period.
-  const userLimits = await adminDb.admin_balance_limits.findMany({
-    where: { admin_user_id: adminUserId },
-  });
+  const userLimits = (await adminDrizzle.execute<{
+    period_type: limit_period_type;
+    max_amount: string;
+  }>(sql`
+    SELECT period_type::text AS period_type, max_amount::text AS max_amount
+    FROM admin_balance_limits
+    WHERE admin_user_id = ${adminUserId}
+  `)).rows;
   const userMaxByPeriod = new Map<limit_period_type, number>();
   for (const l of userLimits) {
     userMaxByPeriod.set(l.period_type, Number(l.max_amount));
@@ -131,31 +131,46 @@ export async function checkBalanceAdjustmentLimit(
 }
 
 export async function getLimitsForAdmin(adminUserId: string) {
-  return adminDb.admin_balance_limits.findMany({
-    where: { admin_user_id: adminUserId },
-  });
+  return (await adminDrizzle.execute<{
+    id: string;
+    admin_user_id: string;
+    period_type: limit_period_type;
+    max_amount: string;
+    created_at: Date;
+    updated_at: Date;
+    created_by: string | null;
+    updated_by: string | null;
+  }>(sql`
+    SELECT id::text, admin_user_id, period_type::text AS period_type,
+           max_amount::text AS max_amount, created_at, updated_at,
+           created_by, updated_by
+    FROM admin_balance_limits
+    WHERE admin_user_id = ${adminUserId}
+  `)).rows;
 }
 
 export async function getAllLimits() {
-  const limits = await adminDb.admin_balance_limits.findMany({
-    orderBy: { created_at: "desc" },
-  });
-
-  const adminIds = [...new Set(limits.map((l) => l.admin_user_id))];
-  const admins = adminIds.length > 0
-    ? await adminDb.admin_users.findMany({
-        where: { id: { in: adminIds } },
-        select: { id: true, username: true, email: true },
-      })
-    : [];
-
-  const adminMap = new Map(admins.map((a) => [a.id, a]));
-
-  return limits.map((l) => ({
-    ...l,
-    adminUsername: adminMap.get(l.admin_user_id)?.username ?? "Unknown",
-    adminEmail: adminMap.get(l.admin_user_id)?.email ?? "Unknown",
-  }));
+  return (await adminDrizzle.execute<{
+    id: string;
+    admin_user_id: string;
+    period_type: limit_period_type;
+    max_amount: string;
+    created_at: Date;
+    updated_at: Date;
+    created_by: string | null;
+    updated_by: string | null;
+    adminUsername: string;
+    adminEmail: string;
+  }>(sql`
+    SELECT l.id::text, l.admin_user_id,
+           l.period_type::text AS period_type, l.max_amount::text AS max_amount,
+           l.created_at, l.updated_at, l.created_by, l.updated_by,
+           COALESCE(u.username, 'Unknown') AS "adminUsername",
+           COALESCE(u.email, 'Unknown') AS "adminEmail"
+    FROM admin_balance_limits l
+    LEFT JOIN admin_users u ON u.id::text = l.admin_user_id
+    ORDER BY l.created_at DESC
+  `)).rows;
 }
 
 export async function setLimit(params: {
@@ -166,26 +181,20 @@ export async function setLimit(params: {
 }) {
   const { adminUserId, periodType, maxAmount, setBy } = params;
 
-  const result = await adminDb.admin_balance_limits.upsert({
-    where: {
-      admin_user_id_period_type: {
-        admin_user_id: adminUserId,
-        period_type: periodType,
-      },
-    },
-    update: {
-      max_amount: maxAmount,
-      updated_by: setBy,
-      updated_at: new Date(),
-    },
-    create: {
-      admin_user_id: adminUserId,
-      period_type: periodType,
-      max_amount: maxAmount,
-      created_by: setBy,
-      updated_by: setBy,
-    },
-  });
+  const result = await adminDrizzle.execute(sql`
+    INSERT INTO admin_balance_limits (
+      admin_user_id, period_type, max_amount, created_by, updated_by
+    )
+    VALUES (
+      ${adminUserId}, ${periodType}::limit_period_type, ${maxAmount},
+      ${setBy}, ${setBy}
+    )
+    ON CONFLICT (admin_user_id, period_type) DO UPDATE SET
+      max_amount = EXCLUDED.max_amount,
+      updated_by = EXCLUDED.updated_by,
+      updated_at = NOW()
+    RETURNING *
+  `);
 
   await createAdminAuditEvent({
     adminUserId: setBy,
@@ -194,7 +203,7 @@ export async function setLimit(params: {
     metadata: { periodType, maxAmount },
   });
 
-  return result;
+  return result.rows[0];
 }
 
 export async function deleteLimit(
@@ -202,14 +211,15 @@ export async function deleteLimit(
   periodType: limit_period_type,
   deletedBy: string
 ) {
-  await adminDb.admin_balance_limits.delete({
-    where: {
-      admin_user_id_period_type: {
-        admin_user_id: adminUserId,
-        period_type: periodType,
-      },
-    },
-  });
+  const deleted = await adminDrizzle.execute(sql`
+    DELETE FROM admin_balance_limits
+    WHERE admin_user_id = ${adminUserId}
+      AND period_type = ${periodType}::limit_period_type
+    RETURNING id
+  `);
+  if (deleted.rows.length === 0) {
+    throw new Error("Balance limit not found");
+  }
 
   await createAdminAuditEvent({
     adminUserId: deletedBy,

@@ -1,6 +1,6 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   cacheTtlForInsightsPeriod,
@@ -49,14 +49,14 @@ async function computeGeoSource(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusGeoSource> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const dateFilter = windowDateFilter(period);
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   const [countryRows, sourceRows, totalRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryRows<
       { code: string; user_count: string; total: string }[]
-    >(`
+    >(db, sql`
       SELECT
         COALESCE(u.country_code, '??') AS code,
         COUNT(DISTINCT lt.user_id)::text AS user_count,
@@ -71,9 +71,9 @@ async function computeGeoSource(
       ORDER BY SUM(ABS(lt.amount::numeric)) DESC
       LIMIT ${COUNTRY_LIMIT}
     `),
-    db.$queryRawUnsafe<
+    queryRows<
       { provider: string; user_count: string; total: string }[]
-    >(`
+    >(db, sql`
       WITH claim_users AS (
         SELECT lt.user_id, lt.amount
         FROM ledger_transactions lt
@@ -101,7 +101,7 @@ async function computeGeoSource(
       ORDER BY SUM(ABS(cu.amount::numeric)) DESC
       LIMIT ${SOURCE_LIMIT}
     `),
-    db.$queryRawUnsafe<{ total: string }[]>(`
+    queryRows<{ total: string }[]>(db, sql`
       SELECT COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id

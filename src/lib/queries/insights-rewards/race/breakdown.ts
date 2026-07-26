@@ -1,9 +1,7 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getRaceInsightsBreakdownFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/race/breakdown";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -52,20 +50,17 @@ async function computeBreakdown(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RaceBreakdownRow[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const dateFilter =
-    days !== null
-      ? `AND rc.claimed_at >= NOW() - INTERVAL '${days} days'`
-      : "";
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const dateFilter = daysAgoFilter("rc.claimed_at", days);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Per-race aggregate + the top (lowest-position) winner attached via a
   // window-function pick. We aggregate prize_pool/winner_count/min position
   // in the inner CTE, then JOIN back to the row that hit MIN(position) so
   // the top winner's user_id + username + actual prize amount come along
   // without a second round trip.
-  const races = await db.$queryRawUnsafe<
+  const races = await queryRows<
     {
       race_type: string;
       period_start: Date;
@@ -77,7 +72,7 @@ async function computeBreakdown(
       top_user_id: string;
       top_username: string | null;
     }[]
-  >(`
+  >(db, sql`
     WITH per_race AS (
       SELECT
         rc.race_type::text AS race_type,
@@ -127,9 +122,9 @@ async function computeBreakdown(
   // race_prize_tiers per race_type. Cheap one-row aggregate per type
   // (table has ≤ ~60 rows total). Build a lookup map and zip onto the
   // breakdown rows so each race instance knows its tier ceiling.
-  const tierBudgets = await db.$queryRawUnsafe<
+  const tierBudgets = await queryRows<
     { race_type: string; total: string }[]
-  >(`
+  >(db, sql`
     SELECT race_type::text AS race_type, COALESCE(SUM(prize_amount_usd::numeric), 0)::text AS total
     FROM race_prize_tiers
     GROUP BY race_type
@@ -170,20 +165,14 @@ async function computeBreakdown(
 
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveAdminRead<RaceBreakdownRow[]>("insights_race_breakdown", {
-      pg: () => computeBreakdown(period, blacklistIds),
-      ch: () => getRaceInsightsBreakdownFromClickHouse(period, blacklistIds),
-    }),
+    computeBreakdown(period, blacklistIds),
   ["insights-rewards-race-breakdown-v1"],
   { revalidate: 60, tags: ["insights-rewards-race"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveAdminRead<RaceBreakdownRow[]>("insights_race_breakdown", {
-      pg: () => computeBreakdown(period, blacklistIds),
-      ch: () => getRaceInsightsBreakdownFromClickHouse(period, blacklistIds),
-    }),
+    computeBreakdown(period, blacklistIds),
   ["insights-rewards-race-breakdown-lifetime-v1"],
   { revalidate: 300, tags: ["insights-rewards-race"] },
 );

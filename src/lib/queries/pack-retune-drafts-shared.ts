@@ -1,6 +1,6 @@
 // Client-safe types + pure helpers for the Pack Studio Drafts surface.
 //
-// This module CANNOT import from `@/lib/admin-db` / Prisma / `server-only` —
+// This module cannot import from `@/lib/admin-db` or `server-only` —
 // `drafts-list.tsx` is a client component and pulls these helpers into the
 // browser bundle. The server-only loaders (and any code touching the admin
 // DB) live in `pack-retune-drafts.ts` and re-export from here for parity.

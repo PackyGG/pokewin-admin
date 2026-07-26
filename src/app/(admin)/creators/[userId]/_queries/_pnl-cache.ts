@@ -43,7 +43,7 @@ import type { CreatorPnlData } from "@/lib/queries/creators-types";
  *
  * ─── ENV NOTE (prod-pinned, matches the repo pattern) ────────────────
  *
- * `getCreatorPnl` calls `getDb()` internally, which resolves the per-admin
+ * `getCreatorPnl` resolves the database internally from the per-admin
  * `admin_db_env` cookie. `unstable_cache` runs its callback OUTSIDE the
  * request's dynamic scope, so a `cookies()` read inside it throws and
  * `readDbEnv` falls back to "prod". We therefore cache ONLY when the request

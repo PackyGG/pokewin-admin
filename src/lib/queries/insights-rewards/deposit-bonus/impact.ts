@@ -1,5 +1,5 @@
-import { getDb } from "@/lib/db";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { type InsightsRewardsPeriod } from "../_period";
 import { makeCachedPair } from "../_cache";
@@ -114,7 +114,7 @@ async function computeDepositFrequency(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusDepositFrequency> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // Per-user-per-day grouping is heavy on the lifetime window — cap the
   // deposit scan to the pairing lookback (365d) so `all` never scans the
   // entire deposit history.
@@ -125,12 +125,12 @@ async function computeDepositFrequency(
   // deposit counts distribute across the frequency buckets, plus the
   // median / mean of the per-day count, plus distinct user + user-day
   // totals. One pass over a per-user-per-day CTE.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       bucket: number;
       user_days: string;
     }[]
-  >(`
+  >(db, sql`
     WITH per_user_day AS (
       SELECT
         lt.user_id,
@@ -156,7 +156,7 @@ async function computeDepositFrequency(
     ORDER BY 1
   `);
 
-  const statsRows = await db.$queryRawUnsafe<
+  const statsRows = await queryRows<
     {
       total_user_days: string;
       total_users: string;
@@ -164,7 +164,7 @@ async function computeDepositFrequency(
       median_per_day: string | null;
       multi_user_days: string;
     }[]
-  >(`
+  >(db, sql`
     WITH per_user_day AS (
       SELECT
         lt.user_id,
@@ -276,14 +276,14 @@ async function computeDepositSizeDistribution(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusDepositSizeDistribution> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
 
   // Single CASE-bucketed aggregate over completed deposits.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     { bucket: number; cnt: string; volume: string }[]
-  >(`
+  >(db, sql`
     WITH deposits AS (
       SELECT ABS(lt.amount::numeric) AS amt
       FROM ledger_transactions lt
@@ -309,9 +309,9 @@ async function computeDepositSizeDistribution(
     ORDER BY 1
   `);
 
-  const medianRows = await db.$queryRawUnsafe<
+  const medianRows = await queryRows<
     { median_usd: string | null }[]
-  >(`
+  >(db, sql`
     SELECT
       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ABS(lt.amount::numeric))::text AS median_usd
     FROM ledger_transactions lt
@@ -407,14 +407,14 @@ async function computeCapHitters(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusCapHitters> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Step 1: empirical cap = MAX(ABS(amount)) over deposit_bonus rows.
   // Same definition as cap-analysis.ts so the two surfaces agree.
-  const capRows = await db.$queryRawUnsafe<{ max_amount: string | null }[]>(`
+  const capRows = await queryRows<{ max_amount: string | null }[]>(db, sql`
     SELECT MAX(ABS(lt.amount::numeric))::text AS max_amount
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
@@ -439,13 +439,13 @@ async function computeCapHitters(
     };
   }
 
-  const capLiteral = capValue.toFixed(2);
+  const capLiteral = Number(capValue.toFixed(2));
 
   // Step 2: denominators — distinct depositors + their total wager in
   // window. Cheap aggregate scans.
-  const denomRows = await db.$queryRawUnsafe<
+  const denomRows = await queryRows<
     { depositors: string; depositor_wager: string }[]
-  >(`
+  >(db, sql`
     WITH depositors AS (
       SELECT DISTINCT lt.user_id
       FROM ledger_transactions lt
@@ -460,7 +460,7 @@ async function computeCapHitters(
         SELECT COALESCE(SUM(ABS(w.amount::numeric)), 0)::text
         FROM ledger_transactions w
         WHERE w.status = 'completed'
-          AND w.type::text IN ${WAGER_TYPES_SQL}
+          AND w.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
           AND w.user_id IN (SELECT user_id FROM depositors)
           ${windowDateFilter(period, "w")}
       ) AS depositor_wager
@@ -472,7 +472,7 @@ async function computeCapHitters(
   // the distinct cap-hit users (ABS(amount) == cap), then join window
   // bonus / deposit / wager / payout rollups — same CTE shape as
   // top-spenders.ts. Bounded to the top 100 by GGR contribution.
-  const hitterRows = await db.$queryRawUnsafe<
+  const hitterRows = await queryRows<
     {
       user_id: string;
       username: string | null;
@@ -482,7 +482,7 @@ async function computeCapHitters(
       wager_total: string;
       payout_total: string;
     }[]
-  >(`
+  >(db, sql`
     WITH cap_hitters AS (
       SELECT
         lt.user_id,
@@ -518,7 +518,7 @@ async function computeCapHitters(
       SELECT lt.user_id, COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS wager_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type::text IN ${WAGER_TYPES_SQL}
+        AND lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
         AND lt.user_id IN (SELECT user_id FROM cap_hitters)
         ${dateFilter}
       GROUP BY lt.user_id
@@ -527,7 +527,7 @@ async function computeCapHitters(
       SELECT lt.user_id, COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS payout_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type::text IN ${PAYOUT_TYPES_SQL}
+        AND lt.type::text IN ${sql.raw(PAYOUT_TYPES_SQL)}
         AND lt.user_id IN (SELECT user_id FROM cap_hitters)
         ${dateFilter}
       GROUP BY lt.user_id
@@ -553,9 +553,9 @@ async function computeCapHitters(
   // Combined wager + GGR across ALL cap-hitters (not just the top 100 the
   // table shows) — separate cheap aggregate so the headline share is
   // accurate even when the list is truncated.
-  const combinedRows = await db.$queryRawUnsafe<
+  const combinedRows = await queryRows<
     { distinct_hitters: string; combined_wager: string; combined_payout: string }[]
-  >(`
+  >(db, sql`
     WITH cap_hitters AS (
       SELECT DISTINCT lt.user_id
       FROM ledger_transactions lt
@@ -571,7 +571,7 @@ async function computeCapHitters(
         SELECT COALESCE(SUM(ABS(w.amount::numeric)), 0)::text
         FROM ledger_transactions w
         WHERE w.status = 'completed'
-          AND w.type::text IN ${WAGER_TYPES_SQL}
+          AND w.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
           AND w.user_id IN (SELECT user_id FROM cap_hitters)
           ${windowDateFilter(period, "w")}
       ) AS combined_wager,
@@ -579,7 +579,7 @@ async function computeCapHitters(
         SELECT COALESCE(SUM(ABS(p.amount::numeric)), 0)::text
         FROM ledger_transactions p
         WHERE p.status = 'completed'
-          AND p.type::text IN ${PAYOUT_TYPES_SQL}
+          AND p.type::text IN ${sql.raw(PAYOUT_TYPES_SQL)}
           AND p.user_id IN (SELECT user_id FROM cap_hitters)
           ${windowDateFilter(period, "p")}
       ) AS combined_payout
@@ -659,7 +659,7 @@ async function computeTimeBetween(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusTimeBetween> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // LAG window over the full per-user deposit history is heavy on
   // lifetime — cap the deposit scan to 365d.
   const dateFilter = windowDateFilterCapped(period);
@@ -668,9 +668,9 @@ async function computeTimeBetween(
   // LAG over deposits ordered by created_at per user → gap in minutes
   // between consecutive deposits. The first deposit per user has a NULL
   // lag (no prior) and is excluded by the WHERE on `prev_at`.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     { bucket: number; cnt: string }[]
-  >(`
+  >(db, sql`
     WITH ordered AS (
       SELECT
         lt.user_id,
@@ -704,7 +704,7 @@ async function computeTimeBetween(
     ORDER BY 1
   `);
 
-  const statsRows = await db.$queryRawUnsafe<
+  const statsRows = await queryRows<
     {
       total_gaps: string;
       median_min: string | null;
@@ -712,7 +712,7 @@ async function computeTimeBetween(
       p75_min: string | null;
       intra_day: string;
     }[]
-  >(`
+  >(db, sql`
     WITH ordered AS (
       SELECT
         lt.user_id,
@@ -798,18 +798,18 @@ async function computeBonusWagerSegments(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusToWagerSegments> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
 
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       segment: number;
       users: string;
       total_bonus: string;
       total_wager: string;
     }[]
-  >(`
+  >(db, sql`
     WITH per_user AS (
       SELECT
         d.user_id,
@@ -834,7 +834,7 @@ async function computeBonusWagerSegments(
       SELECT lt.user_id, SUM(ABS(lt.amount::numeric)) AS wager_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type::text IN ${WAGER_TYPES_SQL}
+        AND lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
         AND lt.user_id IN (SELECT user_id FROM per_user)
         ${dateFilter}
       GROUP BY lt.user_id
@@ -911,7 +911,7 @@ async function computePostCapBehavior(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusPostCapBehavior> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // The bonus side (cap detection + first-cap pairing) uses the plain
   // window bound; the deposit side of the post-cap scan is capped to 365d
   // on lifetime so it doesn't walk the full deposit history.
@@ -919,7 +919,7 @@ async function computePostCapBehavior(
   const depositDateFilter = windowDateFilterCapped(period, "d");
   const userScope = staffAndBlacklistSubquery(blacklistIds);
 
-  const capRows = await db.$queryRawUnsafe<{ max_amount: string | null }[]>(`
+  const capRows = await queryRows<{ max_amount: string | null }[]>(db, sql`
     SELECT MAX(ABS(lt.amount::numeric))::text AS max_amount
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
@@ -941,12 +941,12 @@ async function computePostCapBehavior(
     };
   }
 
-  const capLiteral = capValue.toFixed(2);
+  const capLiteral = Number(capValue.toFixed(2));
 
   // First cap-hit time per user, then count later deposits + whether each
   // later deposit got a paired bonus (canonical balance_before==balance_after
   // 30s rule). The deposit scan is capped to 365d on lifetime.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       cap_hitters: string;
       kept: string;
@@ -954,7 +954,7 @@ async function computePostCapBehavior(
       post_total: string;
       post_no_bonus: string;
     }[]
-  >(`
+  >(db, sql`
     WITH first_cap AS (
       SELECT lt.user_id, MIN(lt.created_at) AS first_cap_at
       FROM ledger_transactions lt
@@ -1045,12 +1045,12 @@ async function computeCapHitterCohorts(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusCapHitterCohorts> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
   const windowStart = windowStartExpr(period);
 
-  const capRows = await db.$queryRawUnsafe<{ max_amount: string | null }[]>(`
+  const capRows = await queryRows<{ max_amount: string | null }[]>(db, sql`
     SELECT MAX(ABS(lt.amount::numeric))::text AS max_amount
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
@@ -1071,14 +1071,14 @@ async function computeCapHitterCohorts(
     return { capValue: 0, newCohort: { ...empty }, returningCohort: { ...empty } };
   }
 
-  const capLiteral = capValue.toFixed(2);
+  const capLiteral = Number(capValue.toFixed(2));
 
   // Cap-hitters classified by signup time relative to the window start,
   // with their window deposit + wager volume. `new` = user.created_at
   // within the window; `returning` = signed up before. On lifetime the
   // window start is -infinity, so every hitter is "returning" — surfaced
   // honestly (lifetime has no "new within window" notion).
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       cohort: "new" | "returning";
       users: string;
@@ -1086,7 +1086,7 @@ async function computeCapHitterCohorts(
       deposit_total: string;
       wager_total: string;
     }[]
-  >(`
+  >(db, sql`
     WITH cap_hitters AS (
       SELECT lt.user_id, COUNT(*)::int AS cap_hits
       FROM ledger_transactions lt
@@ -1121,7 +1121,7 @@ async function computeCapHitterCohorts(
       SELECT lt.user_id, SUM(ABS(lt.amount::numeric)) AS wager_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type::text IN ${WAGER_TYPES_SQL}
+        AND lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
         AND lt.user_id IN (SELECT user_id FROM classified)
         ${dateFilter}
       GROUP BY lt.user_id

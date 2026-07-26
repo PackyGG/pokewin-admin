@@ -3,8 +3,16 @@
 import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { adminDb } from "@/lib/admin-db";
-import { getDb } from "@/lib/db";
+import { asc, eq, gt } from "drizzle-orm";
+import { adminDrizzle, getDrizzleDb } from "@/lib/drizzle";
+import { admin_users } from "@/lib/db-schema/admin/schema";
+import {
+  chat_messages,
+  pinned_chat_messages,
+  user,
+  user_mutes,
+  user_statistics,
+} from "@/lib/db-schema/main/schema";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -46,17 +54,21 @@ const muteUserSchema = z.object({
 async function resolveAdminMainUserId(
   adminUserId: string,
 ): Promise<string | null> {
-  const adminUser = await adminDb.admin_users.findUnique({
-    where: { id: adminUserId },
-    select: { email: true },
-  });
+  const adminUser = (
+    await adminDrizzle
+      .select({ email: admin_users.email })
+      .from(admin_users)
+      .where(eq(admin_users.id, adminUserId))
+      .limit(1)
+  )[0];
   if (!adminUser?.email) return null;
 
-  const db = await getDb();
-  const mainUser = await db.user.findUnique({
-    where: { email: adminUser.email },
-    select: { id: true },
-  });
+  const db = await getDrizzleDb();
+  const [mainUser] = await db
+    .select({ id: user.id })
+    .from(user)
+    .where(eq(user.email, adminUser.email))
+    .limit(1);
   return mainUser?.id ?? null;
 }
 
@@ -78,25 +90,27 @@ export async function fetchMutesPanel(params: {
 }
 
 export async function deleteMessage(messageId: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/chat");
   await requireCapability(session, "__can_delete_messages", "delete chat messages");
 
-  const message = await db.chat_messages.findUnique({
-    where: { id: messageId },
-    select: { user_id: true },
-  });
+  const [message] = await db
+    .select({ user_id: chat_messages.user_id })
+    .from(chat_messages)
+    .where(eq(chat_messages.id, messageId))
+    .limit(1);
   if (!message) {
     throw new Error("Message not found");
   }
 
-  await db.chat_messages.update({
-    where: { id: messageId },
-    data: {
+  await db
+    .update(chat_messages)
+    .set({
       is_deleted: true,
-      deleted_at: new Date(),
-    },
-  });
+      deleted_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .where(eq(chat_messages.id, messageId));
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -109,14 +123,15 @@ export async function deleteMessage(messageId: string) {
 }
 
 export async function pinMessage(messageId: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/chat");
   await requireCapability(session, "__can_pin_messages", "pin messages");
 
-  const message = await db.chat_messages.findUnique({
-    where: { id: messageId },
-    select: { user_id: true },
-  });
+  const [message] = await db
+    .select({ user_id: chat_messages.user_id })
+    .from(chat_messages)
+    .where(eq(chat_messages.id, messageId))
+    .limit(1);
   if (!message) {
     throw new Error("Message not found");
   }
@@ -129,13 +144,10 @@ export async function pinMessage(messageId: string) {
   const issuerMainUserId =
     (await resolveAdminMainUserId(session.userId)) ?? message.user_id;
 
-  await db.pinned_chat_messages.create({
-    data: {
+  await db.insert(pinned_chat_messages).values({
       id: randomUUID(),
       message_id: messageId,
       pinned_by: issuerMainUserId,
-    },
-    select: { id: true },
   });
 
   await createAdminAuditEvent({
@@ -149,26 +161,31 @@ export async function pinMessage(messageId: string) {
 }
 
 export async function unpinMessage(messageId: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/chat");
   await requireCapability(session, "__can_pin_messages", "unpin messages");
 
-  const pinned = await db.pinned_chat_messages.findUnique({
-    where: { message_id: messageId },
-    select: { chat_messages: { select: { user_id: true } } },
-  });
+  const [pinned] = await db
+    .select({ user_id: chat_messages.user_id })
+    .from(pinned_chat_messages)
+    .innerJoin(
+      chat_messages,
+      eq(chat_messages.id, pinned_chat_messages.message_id),
+    )
+    .where(eq(pinned_chat_messages.message_id, messageId))
+    .limit(1);
   if (!pinned) {
     throw new Error("Pinned message not found");
   }
 
-  await db.pinned_chat_messages.delete({
-    where: { message_id: messageId },
-  });
+  await db
+    .delete(pinned_chat_messages)
+    .where(eq(pinned_chat_messages.message_id, messageId));
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "chat_message_unpinned",
-    targetUserId: pinned.chat_messages?.user_id,
+    targetUserId: pinned.user_id,
     metadata: { message_id: messageId },
   });
 
@@ -176,7 +193,7 @@ export async function unpinMessage(messageId: string) {
 }
 
 export async function muteUser(data: z.infer<typeof muteUserSchema>) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/chat");
   await requireCapability(session, "__can_mute_users", "mute users");
 
@@ -197,15 +214,12 @@ export async function muteUser(data: z.infer<typeof muteUserSchema>) {
   const issuerMainUserId =
     (await resolveAdminMainUserId(session.userId)) ?? v.userId;
 
-  await db.user_mutes.create({
-    data: {
+  await db.insert(user_mutes).values({
       id: randomUUID(),
       user_id: v.userId,
       muted_by: issuerMainUserId,
       reason: v.reason || null,
-      expires_at: v.expiresAt ? new Date(v.expiresAt) : null,
-    },
-    select: { id: true },
+      expires_at: v.expiresAt ? new Date(v.expiresAt).toISOString() : null,
   });
 
   await createAdminAuditEvent({
@@ -234,48 +248,56 @@ export async function pollMessages(sinceIso: string): Promise<{
   isPinned: boolean;
   createdAt: string;
 }[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   await requirePageAccess("/chat");
   const since = new Date(sinceIso);
-  const rows = await db.chat_messages.findMany({
-    where: { created_at: { gt: since } },
-    orderBy: { created_at: "asc" },
-    take: 100,
-    include: {
-      user_chat_messages_user_idTouser: {
-        select: {
-          username: true,
-          image: true,
-          role: true,
-          user_statistics: { select: { level: true } },
-        },
-      },
-      pinned_chat_messages: { select: { id: true } },
-    },
-  });
+  const rows = await db
+    .select({
+      id: chat_messages.id,
+      user_id: chat_messages.user_id,
+      content: chat_messages.content,
+      is_deleted: chat_messages.is_deleted,
+      created_at: chat_messages.created_at,
+      username: user.username,
+      image: user.image,
+      role: user.role,
+      level: user_statistics.level,
+      pinned_id: pinned_chat_messages.id,
+    })
+    .from(chat_messages)
+    .leftJoin(user, eq(user.id, chat_messages.user_id))
+    .leftJoin(user_statistics, eq(user_statistics.user_id, user.id))
+    .leftJoin(
+      pinned_chat_messages,
+      eq(pinned_chat_messages.message_id, chat_messages.id),
+    )
+    .where(gt(chat_messages.created_at, since.toISOString()))
+    .orderBy(asc(chat_messages.created_at))
+    .limit(100);
   return rows.map((m) => ({
     id: m.id,
     userId: m.user_id,
-    username: m.user_chat_messages_user_idTouser?.username ?? null,
-    image: m.user_chat_messages_user_idTouser?.image ?? null,
-    level: m.user_chat_messages_user_idTouser?.user_statistics?.level ?? 0,
-    role: m.user_chat_messages_user_idTouser?.role ?? "user",
+    username: m.username ?? null,
+    image: m.image ?? null,
+    level: m.level ?? 0,
+    role: m.role ?? "user",
     content: m.content,
     isDeleted: m.is_deleted,
-    isPinned: !!m.pinned_chat_messages,
-    createdAt: m.created_at.toISOString(),
+    isPinned: !!m.pinned_id,
+    createdAt: new Date(m.created_at).toISOString(),
   }));
 }
 
 export async function unmuteUser(muteId: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/chat");
   await requireCapability(session, "__can_mute_users", "unmute users");
 
-  const mute = await db.user_mutes.findUnique({
-    where: { id: muteId },
-    select: { user_id: true },
-  });
+  const [mute] = await db
+    .select({ user_id: user_mutes.user_id })
+    .from(user_mutes)
+    .where(eq(user_mutes.id, muteId))
+    .limit(1);
   if (!mute) throw new Error("Mute not found");
 
   // `user_mutes.unmuted_by` is a NULLABLE FK to Main-DB `User.id`.
@@ -284,14 +306,14 @@ export async function unmuteUser(muteId: string) {
   // source of truth for the admin identity.
   const issuerMainUserId = await resolveAdminMainUserId(session.userId);
 
-  await db.user_mutes.update({
-    where: { id: muteId },
-    data: {
-      unmuted_at: new Date(),
+  await db
+    .update(user_mutes)
+    .set({
+      unmuted_at: new Date().toISOString(),
       unmuted_by: issuerMainUserId,
-    },
-    select: { id: true },
-  });
+      updated_at: new Date().toISOString(),
+    })
+    .where(eq(user_mutes.id, muteId));
 
   await createAdminAuditEvent({
     adminUserId: session.userId,

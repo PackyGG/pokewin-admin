@@ -2,8 +2,11 @@ import "server-only";
 
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
-import { getDevDb, getProdDb } from "@/lib/db";
+import { drizzleForEnv } from "@/lib/db";
+import { user } from "@/lib/db-schema/main/schema";
+import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -20,8 +23,6 @@ import {
 } from "@/lib/metrics/gaming-sql";
 import { getMetricsScope } from "@/lib/metrics/scope";
 import { ggr as ggrFormula, gamingPayoutTotal } from "@/lib/metrics/formulas";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getAllCreatorsNetGgrScansFromClickHouse } from "@/lib/clickhouse/queries/creators/net-ggr";
 
 /**
  * all-creators-net-pnl.ts — the BATCH (all-creators) variant of the
@@ -137,7 +138,6 @@ export type AllCreatorsNetGgr = {
 /**
  * Map a `DashboardPeriod` to a since-`Date` relative to `now`, or `null` for
  * the lifetime ("all") window. Used to anchor BOTH engines (the anchored PG
- * `sinceClause` AND the ClickHouse twin's `since` param) to one instant per
  * cache entry, so the comparison/cutover is deterministic — same pattern as
  * the creator-hub cohort twin (`hubPeriodToSinceDate`).
  */
@@ -213,13 +213,11 @@ const cachedNetGgrScans = (
   exclInventory: string,
   upgBlacklist: string,
   hasUpgrader: boolean,
-  excluded: string[],
 ) =>
   unstable_cache(
     async (): Promise<NetGgrScans> => {
-      const db = env === "dev" ? getDevDb() : getProdDb();
+      const db = drizzleForEnv(env);
       // Anchor BOTH engines to a single instant so the Postgres leg and the
-      // ClickHouse twin are deterministically comparable (mirrors the
       // creator-hub cohort twin). The anchor is fixed per unstable_cache entry
       // (revalidate 300s).
       const now = new Date();
@@ -245,19 +243,15 @@ const cachedNetGgrScans = (
             LIMIT 1
          ) cov ON TRUE`;
 
-      // Index-or-ClickHouse: serve the 3 heavy attribution scans from the
-      // ClickHouse twin when cut over (gated per surface key); the in-code
       // merge below runs unchanged on either source. The CH twin is parity-
       // proven cent-exact (TZ=UTC, twice) against the anchored Postgres legs.
-      return resolveAdminRead<NetGgrScans>("creators_net_ggr", {
-        ch: () => getAllCreatorsNetGgrScansFromClickHouse(excluded, sinceDate),
-        pg: async () => {
+      return (async (): Promise<NetGgrScans> => {
       const [ledgerRows, invRows, upgRows] = await Promise.all([
         // Ledger wager + ledger gaming payout, attributed per covering
         // creator via the lateral. UNALIASED `ledger_transactions` so
         // WAGER_LEG_FILTER drops in verbatim; outer GROUPs by the lateral's
         // creator_id, keeping only attributed rows.
-        db.$queryRawUnsafe<LedgerRow[]>(
+        queryRows<LedgerRow[]>(db,
           `SELECT cov.creator_id,
                   COALESCE(SUM(CASE WHEN ledger_transactions.type IN ${WAGER_TYPES_SQL} THEN ABS(ledger_transactions.amount::numeric) ELSE 0 END), 0)::text AS wager,
                   COALESCE(SUM(CASE WHEN ledger_transactions.type IN ${GAMING_PAYOUT_TYPES_SQL} THEN ABS(ledger_transactions.amount::numeric) ELSE 0 END), 0)::text AS ledger_payout
@@ -273,7 +267,7 @@ const cachedNetGgrScans = (
         // Inventory pack/battle payout, attributed per covering creator
         // keyed on obtained_at (symmetric with the wager side). UNALIASED
         // `user_inventory` so PAYOUT_LEG_FILTER drops in verbatim.
-        db.$queryRawUnsafe<InvRow[]>(
+        queryRows<InvRow[]>(db,
           `SELECT cov.creator_id,
                   COALESCE(SUM(user_inventory.value_at_obtained::numeric), 0)::text AS inv_payout
              FROM user_inventory
@@ -289,7 +283,7 @@ const cachedNetGgrScans = (
         // creator-drop real-customer scope (matching the shared
         // upgraderMetrics reader). Skipped (empty) on a pre-upgrader DB.
         hasUpgrader
-          ? db.$queryRawUnsafe<UpgRow[]>(
+          ? queryRows<UpgRow[]>(db,
               `SELECT cov.creator_id,
                       COALESCE(SUM(upgrader_games.bet_amount::numeric), 0)::text AS upg_wager,
                       COALESCE(SUM(upgrader_games.won_amount::numeric), 0)::text AS upg_payout
@@ -307,8 +301,7 @@ const cachedNetGgrScans = (
       ]);
 
           return { ledgerRows, invRows, upgRows };
-        },
-      });
+      })();
     },
     ["creators-net-ggr-scans-v1", period, env, exclLedger, exclInventory, upgBlacklist, String(hasUpgrader)],
     { revalidate: 300, tags: ["creators-net-ggr"] },
@@ -346,7 +339,7 @@ export const getAllCreatorsNetGgr = cache(async function getAllCreatorsNetGgr(
     // them to the cached scan so prod/dev and each scope land in their own
     // cross-request slot.
     const env = await readDbEnv();
-    const probeDb = env === "dev" ? getDevDb() : getProdDb();
+    const probeDb = drizzleForEnv(env);
     const scope = await getMetricsScope();
     const excluded = await getExcludedUserIds();
 
@@ -363,9 +356,10 @@ export const getAllCreatorsNetGgr = cache(async function getAllCreatorsNetGgr(
     const exclInventory = scope.exclStaffSessionFrag({ tsCol: "obtained_at" });
 
     // Probe upgrader_games once — pre-upgrader snapshot returns NULL.
-    const upgProbe = await probeDb.$queryRaw<{ exists: string | null }[]>`
-      SELECT to_regclass('public.upgrader_games')::text AS exists`;
-    const hasUpgrader = upgProbe[0]?.exists != null;
+    const upgProbe = await probeDb.execute<{ exists: string | null }>(sql`
+      SELECT to_regclass('public.upgrader_games')::text AS exists
+    `);
+    const hasUpgrader = upgProbe.rows[0]?.exists != null;
     const upgBlacklist = blacklistNotInClause("u_ug.id", excluded);
 
     const { ledgerRows, invRows, upgRows } = await cachedNetGgrScans(
@@ -375,7 +369,6 @@ export const getAllCreatorsNetGgr = cache(async function getAllCreatorsNetGgr(
       exclInventory,
       upgBlacklist,
       hasUpgrader,
-      excluded,
     )();
 
     // Merge the three creator-keyed sets.
@@ -436,10 +429,10 @@ export const getAllCreatorsNetGgr = cache(async function getAllCreatorsNetGgr(
     // skipped below. Only ids with attributed activity are looked up, so
     // the query stays small regardless of the total creator count.
     const ids = [...byId.keys()];
-    const users = await probeDb.user.findMany({
-      where: { id: { in: ids }, role: "creator" },
-      select: { id: true, username: true, image: true },
-    });
+    const users = await probeDb
+      .select({ id: user.id, username: user.username, image: user.image })
+      .from(user)
+      .where(and(inArray(user.id, ids), eq(user.role, "creator")));
     const userById = new Map(users.map((u) => [u.id, u]));
 
     // Roster-wide GGR legs — accumulated from the SAME per-creator

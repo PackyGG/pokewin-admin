@@ -1,8 +1,28 @@
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
-import { Prisma } from "@/generated/prisma/client";
+
+type PromoCodeDbRow = {
+  id: string;
+  code_hash: string;
+  value: string;
+  region: string;
+  minimum_level: number;
+  minimum_wager_amount: string;
+  wager_period_days: number;
+  minimum_account_age_days: number;
+  maximum_account_age_hours: number;
+  minimum_deposit_amount: string;
+  minimum_recent_deposit_amount: string;
+  recent_deposit_period_minutes: number;
+  required_affiliate_code: string | null;
+  requires_discord: boolean;
+  max_uses: number;
+  expires_at: Date | null;
+  created_at: Date;
+  metadata: unknown;
+};
 
 export type PromoCodeListItem = {
   id: string;
@@ -50,50 +70,45 @@ export async function getPromoCodes(params: {
   region?: string;
   status?: string;
 }): Promise<PaginatedResult<PromoCodeListItem>> {
-  const db = await getDb();
   const { page = 1, perPage = 20, region, status } = params;
-
-  const where: Prisma.promo_codesWhereInput = {};
-
+  const safePage = Math.max(1, Math.floor(page));
+  const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
+  const binds: unknown[] = [];
+  const filters: string[] = [];
   if (region && region !== "all") {
-    where.region = region as Prisma.Enumgift_card_regionFieldUpdateOperationsInput["set"];
+    binds.push(region);
+    filters.push(`pc.region::text = $${binds.length}`);
   }
-
   if (status === "active") {
-    where.OR = [
-      { expires_at: null },
-      { expires_at: { gt: new Date() } },
-    ];
+    filters.push(`(pc.expires_at IS NULL OR pc.expires_at > NOW())`);
   } else if (status === "expired") {
-    where.expires_at = { lte: new Date() };
+    filters.push(`pc.expires_at <= NOW()`);
   }
-
-  const [codes, total] = await Promise.all([
-    db.promo_codes.findMany({
-      where,
-      orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-    }),
-    db.promo_codes.count({ where }),
+  const whereSql = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+  const limitIndex = binds.length + 1;
+  const offsetIndex = binds.length + 2;
+  const [codes, countRows] = await Promise.all([
+    queryMainRows<(PromoCodeDbRow & { redemption_count: string })[]>(
+      `SELECT pc.*, COALESCE(redemptions.cnt, 0)::text AS redemption_count
+         FROM promo_codes pc
+         LEFT JOIN (
+           SELECT promo_code_id, COUNT(*) AS cnt
+             FROM promo_code_redemptions
+            GROUP BY promo_code_id
+         ) redemptions ON redemptions.promo_code_id = pc.id
+         ${whereSql}
+         ORDER BY pc.created_at DESC
+         LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
+      ...binds,
+      safePerPage,
+      (safePage - 1) * safePerPage,
+    ),
+    queryMainRows<{ total: string }[]>(
+      `SELECT COUNT(*)::text AS total FROM promo_codes pc ${whereSql}`,
+      ...binds,
+    ),
   ]);
-
-  // Replace the per-row `_count` subquery (which Prisma compiles to a
-  // correlated subselect on every promo_code row) with one scoped groupBy
-  // on the visible page. One round-trip, one aggregate scan over the
-  // page's promo_code ids.
-  const visibleCodeIds = codes.map((c) => c.id);
-  const redemptionCounts =
-    visibleCodeIds.length > 0
-      ? await db.promo_code_redemptions.groupBy({
-          by: ["promo_code_id"],
-          where: { promo_code_id: { in: visibleCodeIds } },
-          _count: { _all: true },
-        })
-      : [];
-  const countByCodeId = new Map(
-    redemptionCounts.map((r) => [r.promo_code_id, r._count._all]),
-  );
+  const total = Number(countRows[0]?.total ?? 0);
 
   return {
     data: codes.map((c) => {
@@ -115,15 +130,15 @@ export async function getPromoCodes(params: {
         requiredAffiliateCode: c.required_affiliate_code,
         requiresDiscord: c.requires_discord,
         maxUses: c.max_uses,
-        redemptionCount: countByCodeId.get(c.id) ?? 0,
+        redemptionCount: Number(c.redemption_count),
         expiresAt: c.expires_at?.toISOString() ?? null,
         createdAt: c.created_at.toISOString(),
       };
     }),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }
 
@@ -144,12 +159,19 @@ const DETAIL_REDEMPTIONS_LIMIT = 100;
  * DETAIL_REDEMPTIONS_LIMIT row cap.
  */
 export async function getPromoCodeDetail(id: string) {
-  const db = await getDb();
-  const [code, redemptionCount] = await Promise.all([
-    db.promo_codes.findUnique({ where: { id } }),
-    db.promo_code_redemptions.count({ where: { promo_code_id: id } }),
+  const [codeRows, countRows] = await Promise.all([
+    queryMainRows<PromoCodeDbRow[]>(
+      `SELECT * FROM promo_codes WHERE id = $1::uuid LIMIT 1`,
+      id,
+    ),
+    queryMainRows<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count
+         FROM promo_code_redemptions WHERE promo_code_id = $1::uuid`,
+      id,
+    ),
   ]);
-
+  const code = codeRows[0];
+  const redemptionCount = Number(countRows[0]?.count ?? 0);
   if (!code) return null;
 
   const meta = code.metadata as Record<string, unknown> | null;
@@ -205,25 +227,40 @@ export type PromoCodeRedemptionRows = {
 export async function getPromoCodeRedemptionRows(
   id: string,
 ): Promise<PromoCodeRedemptionRows> {
-  const db = await getDb();
-  const [rows, totalCount] = await Promise.all([
-    db.promo_code_redemptions.findMany({
-      where: { promo_code_id: id },
-      include: {
-        user: { select: { username: true, email: true } },
-      },
-      orderBy: { redeemed_at: "desc" },
-      take: DETAIL_REDEMPTIONS_LIMIT,
-    }),
-    db.promo_code_redemptions.count({ where: { promo_code_id: id } }),
+  const [rows, countRows] = await Promise.all([
+    queryMainRows<
+      {
+        id: string;
+        user_id: string;
+        username: string | null;
+        email: string | null;
+        ip_address: string;
+        redeemed_at: Date;
+      }[]
+    >(
+      `SELECT pcr.id, pcr.user_id, u.username, u.email,
+              pcr.ip_address, pcr.redeemed_at
+         FROM promo_code_redemptions pcr
+         LEFT JOIN "user" u ON u.id = pcr.user_id
+        WHERE pcr.promo_code_id = $1::uuid
+        ORDER BY pcr.redeemed_at DESC LIMIT $2`,
+      id,
+      DETAIL_REDEMPTIONS_LIMIT,
+    ),
+    queryMainRows<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count
+         FROM promo_code_redemptions WHERE promo_code_id = $1::uuid`,
+      id,
+    ),
   ]);
+  const totalCount = Number(countRows[0]?.count ?? 0);
 
   return {
     rows: rows.map((r) => ({
       id: r.id,
       userId: r.user_id,
-      username: r.user?.username ?? null,
-      email: r.user?.email ?? null,
+      username: r.username,
+      email: r.email,
       ipAddress: r.ip_address,
       redeemedAt: r.redeemed_at.toISOString(),
     })),
@@ -284,43 +321,44 @@ export type PromoCodeClaimsDetail = {
 
 const cachedPromoCodeClaims = unstable_cache(
   async (id: string): Promise<PromoCodeClaimsDetail | null> => {
-    const db = await getDb();
-    const code = await db.promo_codes.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        code_hash: true,
-        value: true,
-        region: true,
-        max_uses: true,
-        requires_discord: true,
-        expires_at: true,
-        created_at: true,
-        metadata: true,
-      },
-    });
+    const codeRows = await queryMainRows<PromoCodeDbRow[]>(
+      `SELECT * FROM promo_codes WHERE id = $1::uuid LIMIT 1`,
+      id,
+    );
+    const code = codeRows[0];
     if (!code) return null;
 
     // Real count (unbounded) + the bounded row slice in parallel — one
     // count aggregate, one ordered LIMIT scan, both on the same indexed
     // promo_code_id.
-    const [totalClaims, rows] = await Promise.all([
-      db.promo_code_redemptions.count({
-        where: { promo_code_id: id },
-      }),
-      db.promo_code_redemptions.findMany({
-        where: { promo_code_id: id },
-        select: {
-          id: true,
-          user_id: true,
-          ip_address: true,
-          redeemed_at: true,
-          user: { select: { username: true, email: true, image: true } },
-        },
-        orderBy: { redeemed_at: "desc" },
-        take: CLAIMS_LIMIT,
-      }),
+    const [countRows, rows] = await Promise.all([
+      queryMainRows<{ count: string }[]>(
+        `SELECT COUNT(*)::text AS count
+           FROM promo_code_redemptions WHERE promo_code_id = $1::uuid`,
+        id,
+      ),
+      queryMainRows<
+        {
+          id: string;
+          user_id: string;
+          ip_address: string;
+          redeemed_at: Date;
+          username: string | null;
+          email: string | null;
+          image: string | null;
+        }[]
+      >(
+        `SELECT pcr.id, pcr.user_id, pcr.ip_address, pcr.redeemed_at,
+                u.username, u.email, u.image
+           FROM promo_code_redemptions pcr
+           LEFT JOIN "user" u ON u.id = pcr.user_id
+          WHERE pcr.promo_code_id = $1::uuid
+          ORDER BY pcr.redeemed_at DESC LIMIT $2`,
+        id,
+        CLAIMS_LIMIT,
+      ),
     ]);
+    const totalClaims = Number(countRows[0]?.count ?? 0);
 
     const meta = code.metadata as Record<string, unknown> | null;
     const value = toNumber(code.value);
@@ -341,9 +379,9 @@ const cachedPromoCodeClaims = unstable_cache(
       claims: rows.map((r) => ({
         id: r.id,
         userId: r.user_id,
-        username: r.user?.username ?? null,
-        email: r.user?.email ?? null,
-        image: r.user?.image ?? null,
+        username: r.username,
+        email: r.email,
+        image: r.image,
         ipAddress: r.ip_address,
         redeemedAt: r.redeemed_at.toISOString(),
       })),
@@ -384,7 +422,6 @@ export type PromoCodesListStats = {
 
 const cachedPromoCodesListStats = unstable_cache(
   async (): Promise<PromoCodesListStats> => {
-    const db = await getDb();
     // Total redemptions live on a SEPARATE table — `promo_codes` has
     // no `redemption_count` column (`getPromoCodes` computes per-row
     // counts via `db.promo_code_redemptions.groupBy`). The earlier
@@ -392,21 +429,23 @@ const cachedPromoCodesListStats = unstable_cache(
     // crashed every Marketing page that reads off this stats query.
     // Use a sub-select against `promo_code_redemptions` instead — same
     // single-round-trip cost, but actually executes.
-    const rows = await db.$queryRaw<
+    const rows = await queryMainRows<
       {
         total: string;
         active: string;
         expired: string;
         redemptions: string;
       }[]
-    >`
+    >(
+      `
       SELECT
         COUNT(*)::text                                                                              AS total,
         COUNT(*) FILTER (WHERE expires_at IS NULL OR expires_at > NOW())::text                       AS active,
         COUNT(*) FILTER (WHERE expires_at IS NOT NULL AND expires_at <= NOW())::text                 AS expired,
         COALESCE((SELECT COUNT(*) FROM promo_code_redemptions), 0)::text                              AS redemptions
       FROM promo_codes
-    `;
+      `,
+    );
     const r = rows[0];
     return {
       totalCodes: Number(r?.total ?? 0),
@@ -464,10 +503,10 @@ const MAX_DELETABLE_IDS = 20_000;
 
 const cachedDeletablePromoCodeIds = unstable_cache(
   async (): Promise<DeletablePromoCodeIds> => {
-    const db = await getDb();
-    const rows = await db.$queryRaw<
+    const rows = await queryMainRows<
       { id: string; used_up: boolean; expired: boolean }[]
-    >`
+    >(
+      `
       SELECT
         pc.id::text                                                    AS id,
         (pc.max_uses > 0 AND COALESCE(r.cnt, 0) >= pc.max_uses)        AS used_up,
@@ -481,8 +520,10 @@ const cachedDeletablePromoCodeIds = unstable_cache(
       WHERE (pc.max_uses > 0 AND COALESCE(r.cnt, 0) >= pc.max_uses)
          OR (pc.expires_at IS NOT NULL AND pc.expires_at < NOW())
       ORDER BY pc.created_at DESC
-      LIMIT ${MAX_DELETABLE_IDS}
-    `;
+      LIMIT $1
+      `,
+      MAX_DELETABLE_IDS,
+    );
 
     const exhaustedIds: string[] = [];
     const expiredIds: string[] = [];

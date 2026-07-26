@@ -1,6 +1,8 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { adminDb } from "@/lib/admin-db";
+import { and, countDistinct, gte, inArray, isNotNull, not, sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import { admin_audit_events } from "@/lib/db-schema/admin/schema";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -87,7 +89,6 @@ async function computeOverview(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<BalanceAdjustmentOverview> {
-  const db = await getDb();
   const days = daysForInsightsPeriod(period);
   const dateFilter = windowDateFilter(period);
   const bl = blacklistFilter(blacklistIds);
@@ -95,7 +96,7 @@ async function computeOverview(
   const notOfficialStream = notOfficialStreamFilter();
 
   const [rollupRows, dailyRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryMainRows<
       {
         credit_vol: string;
         credit_cnt: string;
@@ -123,7 +124,7 @@ async function computeOverview(
         ${bl}
         ${dateFilter}
     `),
-    db.$queryRawUnsafe<
+    queryMainRows<
       { date: Date; credit_vol: string; debit_vol: string; cnt: string }[]
     >(`
       SELECT
@@ -166,35 +167,33 @@ async function computeOverview(
   // record of WHO adjusted; ledger rows carry no admin id). Both the
   // general adjustment and the manual-withdrawal flow audit-log, so this
   // covers every adjustment class.
-  const auditWhere = {
-    event_type: { in: ["balance_adjustment", "manual_withdrawal_recorded"] },
-    ...(days !== null
-      ? { created_at: { gte: new Date(Date.now() - days * 86_400_000) } }
-      : {}),
-    admin_user_id: { not: null },
+  const auditConditions = [
+    inArray(admin_audit_events.event_type, ["balance_adjustment", "manual_withdrawal_recorded"]),
+    isNotNull(admin_audit_events.admin_user_id),
     // Stats-excluded categories — the writer stamps `metadata.category` on
     // the admin-DB audit event (actions.ts), so hidden categories never
     // inflate the distinct-admin count.
-    NOT: {
-      OR: STATS_EXCLUDED_ADJUSTMENT_CATEGORY_KEYS.map((category) => ({
-        metadata: {
-          path: ["category"],
-          equals: category,
-        },
-      })),
-    },
-  };
-  const adminGroups = await adminDb.admin_audit_events.findMany({
-    where: auditWhere,
-    select: { admin_user_id: true },
-    distinct: ["admin_user_id"],
-  });
-  const uniqueAdmins = adminGroups.length;
+    not(inArray(
+      sql<string>`COALESCE(${admin_audit_events.metadata}->>'category', '')`,
+      [...STATS_EXCLUDED_ADJUSTMENT_CATEGORY_KEYS],
+    )),
+  ];
+  if (days !== null) {
+    auditConditions.push(gte(
+      admin_audit_events.created_at,
+      new Date(Date.now() - days * 86_400_000).toISOString(),
+    ));
+  }
+  const adminGroups = await adminDrizzle
+    .select({ value: countDistinct(admin_audit_events.admin_user_id) })
+    .from(admin_audit_events)
+    .where(and(...auditConditions));
+  const uniqueAdmins = adminGroups[0]?.value ?? 0;
 
   // Prior window — finite periods only. Same status / type / scope.
   let priorWindow: BalanceAdjustmentOverview["priorWindow"] = null;
   if (days !== null) {
-    const priorRows = await db.$queryRawUnsafe<
+    const priorRows = await queryMainRows<
       { gross: string; net: string; cnt: string; users: string }[]
     >(`
       SELECT

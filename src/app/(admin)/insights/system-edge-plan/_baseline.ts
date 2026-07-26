@@ -1,8 +1,8 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import {
@@ -177,7 +177,6 @@ type PackBattleLegs = {
 };
 
 async function getPackBattleLegs(window: MetricWindow): Promise<PackBattleLegs> {
-  const db = await getDb();
   const scope = await getMetricsScope();
   const since = window.since;
 
@@ -191,7 +190,7 @@ async function getPackBattleLegs(window: MetricWindow): Promise<PackBattleLegs> 
   type LedgerPayoutRow = { battle_refund: string };
 
   const [wagerRows, invRows, ledgerPayoutRows] = await Promise.all([
-    db.$queryRawUnsafe<WagerRow[]>(
+    queryMainRows<WagerRow[]>(
       `WITH ${scope.sessionWindowsCte}
        SELECT
          COALESCE(SUM(CASE WHEN type::text = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS packs_wager,
@@ -206,7 +205,7 @@ async function getPackBattleLegs(window: MetricWindow): Promise<PackBattleLegs> 
          ${sinceClause("created_at", since)}
          AND ${WAGER_LEG_FILTER}`,
     ),
-    db.$queryRawUnsafe<InvRow[]>(
+    queryMainRows<InvRow[]>(
       `WITH ${scope.sessionWindowsCte}
        SELECT
          COALESCE(SUM(CASE WHEN source_type = 'pack' THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS packs_inv,
@@ -218,7 +217,7 @@ async function getPackBattleLegs(window: MetricWindow): Promise<PackBattleLegs> 
          ${sinceClause("obtained_at", since)}
          AND ${PAYOUT_LEG_FILTER}`,
     ),
-    db.$queryRawUnsafe<LedgerPayoutRow[]>(
+    queryMainRows<LedgerPayoutRow[]>(
       `WITH ${scope.sessionWindowsCte}
        SELECT
          COALESCE(SUM(ABS(amount::numeric)), 0)::text AS battle_refund
@@ -321,7 +320,6 @@ function buildGameTypes(
  * the ambiguity rather than fabricating a welcome set.
  */
 async function getWelcomePacks(): Promise<WelcomePackInfo[]> {
-  const db = await getDb();
   type Row = {
     reward_slug: string;
     reward_name: string;
@@ -335,7 +333,7 @@ async function getWelcomePacks(): Promise<WelcomePackInfo[]> {
   // each pack's card pool at the live `cards.price`. EV per open uses the pack's
   // own card pool (weight-share × price) × cards_per_open — identical math to
   // `getPackDetail`'s probability/value computation, expressed in one pass.
-  const rows = await db.$queryRawUnsafe<Row[]>(
+  const rows = await queryMainRows<Row[]>(
     `WITH one_time_packs AS (
        SELECT r.slug AS reward_slug, r.name AS reward_name, pid AS pack_id
        FROM rewards r
@@ -400,8 +398,7 @@ async function fetchPackVisuals(
   const unique = [...new Set(packIds.filter(Boolean))];
   if (unique.length === 0) return new Map();
 
-  const db = await getDb();
-  const rows = await db.$queryRawUnsafe<PackVisualSqlRow[]>(
+  const rows = await queryMainRows<PackVisualSqlRow[]>(
     `SELECT
        p.id::text AS pack_id,
        p.image_url,
@@ -434,7 +431,6 @@ async function fetchPackVisuals(
 
 /** Every reward pack in the catalog — gallery + visual enrichment source. */
 async function getRewardPackCatalog(): Promise<RewardPackCatalogItem[]> {
-  const db = await getDb();
   type Row = {
     id: string;
     name: string;
@@ -444,7 +440,7 @@ async function getRewardPackCatalog(): Promise<RewardPackCatalogItem[]> {
     cards_per_open: number;
     theoretical_ev: string;
   };
-  const rows = await db.$queryRawUnsafe<Row[]>(
+  const rows = await queryMainRows<Row[]>(
     `SELECT
        p.id::text,
        p.name,

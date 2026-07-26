@@ -8,7 +8,9 @@ import {
   type LeaderboardAdminRow,
 } from "@/lib/backend-api/affiliate-leaderboards";
 import { safeQuery } from "@/lib/errors/safe-query";
-import { getDb } from "@/lib/db";
+import { inArray } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
+import { user } from "@/lib/db-schema/main/schema";
 import { computeDealCost, weeklyDealsInFrame } from "@/lib/deal-economics";
 
 import {
@@ -367,11 +369,11 @@ export async function getFourWeekDealSummary(): Promise<FourWeekSummary> {
   const creatorIds = [...perCreator.keys()];
   const nameRes = await safeQuery(
     async () => {
-      const db = await getDb();
-      const users = await db.user.findMany({
-        where: { id: { in: creatorIds } },
-        select: { id: true, username: true },
-      });
+      const db = await getDrizzleDb();
+      const users = await db
+        .select({ id: user.id, username: user.username })
+        .from(user)
+        .where(inArray(user.id, creatorIds));
       return new Map<string, string | null>(
         users.map((u) => [u.id, u.username ?? null]),
       );

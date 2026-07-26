@@ -5,7 +5,7 @@ name: E2E
 # The E2E suite talks to a real Postgres — both the Main DB (`DATABASE_URL`)
 # and the Admin DB (`ADMIN_DATABASE_URL`). Standing up a disposable
 # production-shaped database inside GitHub Actions requires either:
-#   (a) exporting the full Prisma schema SQL into a migration that can be
+#   (a) exporting the full PostgreSQL schema SQL into a migration that can be
 #       applied to a fresh `postgres:16` service container, or
 #   (b) granting the runner read-only network access to a hosted staging DB.
 #

@@ -1,7 +1,8 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { withTiming } from "@/lib/observability/query-timings";
 import { filterVoucherOriginsLive } from "@/lib/queries/_voucher-origins";
 
@@ -26,7 +27,6 @@ import { filterVoucherOriginsLive } from "@/lib/queries/_voucher-origins";
  * them as context, it does not re-subtract them. House-POV: money paid out →
  * house cost → rose in the UI.
  *
- * Index-or-ClickHouse (indexed Postgres, EXPLAIN-verified on prod):
  *   • vouchers → `idx_vouchers_origin_created_at` (Bitmap Index Scan, ~1.4ms)
  *     via the NATIVE enum `origin IN (…::voucher_origin)` form — the `::text`
  *     cast forces a Seq Scan. `filterVoucherOriginsLive` keeps the native form
@@ -58,7 +58,7 @@ export type DailyCreatorCostPoint = {
 
 async function computeDailyCreatorCost(): Promise<DailyCreatorCostPoint[]> {
   return withTiming("dashboard.dailyCreatorCost", async () => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
 
     // Native-enum, drift-safe origin list (keeps the index path; never throws
     // 22P02 if a member is absent from the live enum).
@@ -68,7 +68,7 @@ async function computeDailyCreatorCost(): Promise<DailyCreatorCostPoint[]> {
 
     const voucherPromise =
       liveOrigins.length > 0
-        ? db.$queryRawUnsafe<Row[]>(
+        ? queryRows<Row[]>(db,
             `SELECT DATE(created_at) AS d, COALESCE(SUM(value::numeric), 0)::float8 AS amt
              FROM vouchers
              WHERE origin IN (${liveOrigins
@@ -79,7 +79,7 @@ async function computeDailyCreatorCost(): Promise<DailyCreatorCostPoint[]> {
           )
         : Promise.resolve([] as Row[]);
 
-    const ledgerPromise = db.$queryRawUnsafe<Row[]>(
+    const ledgerPromise = queryRows<Row[]>(db,
       `SELECT DATE(created_at) AS d, COALESCE(SUM(ABS(amount::numeric)), 0)::float8 AS amt
        FROM ledger_transactions
        WHERE status = 'completed'

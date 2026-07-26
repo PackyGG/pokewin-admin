@@ -1,13 +1,11 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   type InsightsRewardsPeriod,
 } from "../_period";
 import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getInactiveAffiliatesFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/inactive";
 
 /**
  * Inactive-affiliate lens. We surface affiliate_accounts rows that
@@ -56,11 +54,11 @@ async function compute(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<InactiveAffiliateRow[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const ctx = makePeriodCtx(period);
   const ltDate = ctx.dateFilterFor("lt.created_at");
   const acuDate = ctx.dateFilterFor("acu.created_at");
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Approach:
   //   - paid_in_window = affiliate user_ids with an affiliate_claim
@@ -71,7 +69,7 @@ async function compute(
   //     window wager.
   //   - Order by lifetime payout DESC so the most-valuable-dormant
   //     affiliates float to the top.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       affiliate_user_id: string;
       username: string | null;
@@ -82,7 +80,7 @@ async function compute(
       window_wager: string;
       has_window_usage: boolean;
     }[]
-  >(`
+  >(db, sql`
     WITH paid_in_window AS (
       SELECT DISTINCT lt.user_id
       FROM ledger_transactions lt
@@ -162,11 +160,7 @@ export async function getInactiveAffiliates(
   period: InsightsRewardsPeriod,
 ): Promise<InactiveAffiliateRow[]> {
   const blacklist = await loadBlacklist();
-  return resolveAdminRead<InactiveAffiliateRow[]>("insights_affiliate_inactive", {
-    pg: () =>
-      period === "all"
-        ? cachedLong(period, blacklist)
-        : cachedShort(period, blacklist),
-    ch: () => getInactiveAffiliatesFromClickHouse(period, blacklist, new Date()),
-  });
+  return period === "all"
+    ? cachedLong(period, blacklist)
+    : cachedShort(period, blacklist);
 }

@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
  * Route-level error boundary for /packs.
  *
  * Packs is the content tree — pack definitions + card pool composition.
- * A failure here is almost always a stale Prisma field (the cards
+ * A failure here is almost always a stale schema field (the cards
  * sub-tree migrated faster than the packs queries) or a transient
  * timeout on the cached KPI strip. The reset path re-runs the page's
  * server render without a full reload, which fixes most transient

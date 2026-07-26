@@ -42,7 +42,7 @@ import { RepinCustomButton } from "./repin-custom-button";
 // scores every active cash pack and upserts one ADMIN-DB row per pack inside a
 // single interactive transaction. Against the remote ADMIN DB on Vercel that
 // batch can run well past the platform's default function budget, so give the
-// route headroom — matching the raised Prisma transaction timeout in
+// route headroom — matching the transaction timeout in
 // `../_actions/snapshot.ts`. (The read render itself is fast and cached.)
 export const maxDuration = 120;
 

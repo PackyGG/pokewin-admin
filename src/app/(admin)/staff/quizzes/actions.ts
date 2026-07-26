@@ -2,13 +2,20 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { and, count, eq, inArray, sql } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
+import { staff_quiz_answers, staff_quiz_attempts, staff_quiz_options, staff_quiz_questions, staff_quizzes } from "@/lib/db-schema/admin/schema";
 import { sessionRoles } from "@/lib/dal";
 import { requireStaffLearner } from "@/lib/staff/access";
-import { awardStaffPoints } from "@/lib/staff/profile";
+import {
+  awardStaffPointsInTransaction,
+  sendStaffPointNotifications,
+  type AwardPointsInput,
+} from "@/lib/staff/profile";
 import { notifyStaff } from "@/lib/staff/notifications";
 import { quizVisibleToRoles, scoreAnswers } from "@/lib/staff/quiz";
+import { isPostgresError } from "@/lib/postgres-errors";
 
 /**
  * Taking a quiz.
@@ -41,15 +48,11 @@ export async function startQuizAttempt(input: unknown): Promise<{ id: string }> 
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const { quizId } = parsed.data;
 
-  const quiz = await adminDb.staff_quizzes.findUnique({
-    where: { id: quizId },
-    select: {
-      id: true,
-      status: true,
-      max_attempts: true,
-      audience_roles: true,
-    },
-  });
+  const [quiz] = await adminDrizzle.select({
+    id: staff_quizzes.id, status: staff_quizzes.status,
+    max_attempts: staff_quizzes.max_attempts,
+    audience_roles: staff_quizzes.audience_roles,
+  }).from(staff_quizzes).where(eq(staff_quizzes.id, quizId)).limit(1);
   if (!quiz || quiz.status !== "published") {
     throw new Error("That quiz isn't available");
   }
@@ -57,59 +60,53 @@ export async function startQuizAttempt(input: unknown): Promise<{ id: string }> 
     throw new Error("That quiz isn't for your role");
   }
 
-  const existing = await adminDb.staff_quiz_attempts.findFirst({
-    where: {
-      quiz_id: quizId,
-      admin_user_id: session.userId,
-      status: "in_progress",
-    },
-    select: { id: true },
-  });
+  const [existing] = await adminDrizzle.select({ id: staff_quiz_attempts.id })
+    .from(staff_quiz_attempts).where(and(
+      eq(staff_quiz_attempts.quiz_id, quizId),
+      eq(staff_quiz_attempts.admin_user_id, session.userId),
+      eq(staff_quiz_attempts.status, "in_progress"),
+    )).limit(1);
   if (existing) return { id: existing.id };
 
   if (quiz.max_attempts > 0) {
-    const used = await adminDb.staff_quiz_attempts.count({
-      where: {
-        quiz_id: quizId,
-        admin_user_id: session.userId,
-        status: "submitted",
-      },
-    });
+    const [usedRow] = await adminDrizzle.select({ value: count() })
+      .from(staff_quiz_attempts).where(and(
+        eq(staff_quiz_attempts.quiz_id, quizId),
+        eq(staff_quiz_attempts.admin_user_id, session.userId),
+        eq(staff_quiz_attempts.status, "submitted"),
+      ));
+    const used = usedRow?.value ?? 0;
     if (used >= quiz.max_attempts) {
       throw new Error("You've used all your attempts on this quiz");
     }
   }
 
-  const questionCount = await adminDb.staff_quiz_questions.count({
-    where: { quiz_id: quizId },
-  });
+  const [questionRow] = await adminDrizzle.select({ value: count() })
+    .from(staff_quiz_questions).where(eq(staff_quiz_questions.quiz_id, quizId));
+  const questionCount = questionRow?.value ?? 0;
   if (questionCount === 0) {
     throw new Error("That quiz has no questions yet");
   }
 
   try {
-    const created = await adminDb.staff_quiz_attempts.create({
-      data: {
+    const [created] = await adminDrizzle.insert(staff_quiz_attempts).values({
         quiz_id: quizId,
         admin_user_id: session.userId,
         status: "in_progress",
         question_count: questionCount,
-      },
-      select: { id: true },
-    });
+      }).returning({ id: staff_quiz_attempts.id });
+    if (!created) throw new Error("Quiz attempt insert returned no row");
     return { id: created.id };
   } catch (err) {
     // Lost the race against another tab — the partial unique index did its
     // job; use the winner.
-    if ((err as { code?: string })?.code === "P2002") {
-      const winner = await adminDb.staff_quiz_attempts.findFirst({
-        where: {
-          quiz_id: quizId,
-          admin_user_id: session.userId,
-          status: "in_progress",
-        },
-        select: { id: true },
-      });
+    if (isPostgresError(err, "23505")) {
+      const [winner] = await adminDrizzle.select({ id: staff_quiz_attempts.id })
+        .from(staff_quiz_attempts).where(and(
+          eq(staff_quiz_attempts.quiz_id, quizId),
+          eq(staff_quiz_attempts.admin_user_id, session.userId),
+          eq(staff_quiz_attempts.status, "in_progress"),
+        )).limit(1);
       if (winner) return { id: winner.id };
     }
     throw err;
@@ -147,20 +144,8 @@ export async function submitQuizAttempt(
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const { attemptId, answers } = parsed.data;
 
-  const attempt = await adminDb.staff_quiz_attempts.findUnique({
-    where: { id: attemptId },
-    select: {
-      id: true,
-      quiz_id: true,
-      admin_user_id: true,
-      status: true,
-      score: true,
-      max_score: true,
-      correct_count: true,
-      question_count: true,
-      points_awarded: true,
-    },
-  });
+  const [attempt] = await adminDrizzle.select().from(staff_quiz_attempts)
+    .where(eq(staff_quiz_attempts.id, attemptId)).limit(1);
   if (!attempt) throw new Error("That attempt no longer exists");
   // Ownership: an attempt id from the client can only ever grade the caller's
   // own attempt.
@@ -168,10 +153,10 @@ export async function submitQuizAttempt(
     throw new Error("That attempt isn't yours");
   }
 
-  const quiz = await adminDb.staff_quizzes.findUnique({
-    where: { id: attempt.quiz_id },
-    select: { id: true, title: true, pass_percent: true },
-  });
+  const [quiz] = await adminDrizzle.select({
+    id: staff_quizzes.id, title: staff_quizzes.title,
+    pass_percent: staff_quizzes.pass_percent,
+  }).from(staff_quizzes).where(eq(staff_quizzes.id, attempt.quiz_id)).limit(1);
   if (!quiz) throw new Error("That quiz no longer exists");
 
   // Already submitted (double-click, back button) — report the frozen result
@@ -191,17 +176,17 @@ export async function submitQuizAttempt(
   }
 
   // ── Load the answer key (server-side only) ───────────────────────────
-  const questions = await adminDb.staff_quiz_questions.findMany({
-    where: { quiz_id: attempt.quiz_id },
-    orderBy: { position: "asc" },
-    select: { id: true, points: true },
-  });
+  const questions = await adminDrizzle.select({
+    id: staff_quiz_questions.id, points: staff_quiz_questions.points,
+  }).from(staff_quiz_questions).where(eq(staff_quiz_questions.quiz_id, attempt.quiz_id))
+    .orderBy(staff_quiz_questions.position);
   if (questions.length === 0) throw new Error("That quiz has no questions");
 
-  const options = await adminDb.staff_quiz_options.findMany({
-    where: { question_id: { in: questions.map((q) => q.id) } },
-    select: { id: true, question_id: true, is_correct: true },
-  });
+  const options = await adminDrizzle.select({
+    id: staff_quiz_options.id, question_id: staff_quiz_options.question_id,
+    is_correct: staff_quiz_options.is_correct,
+  }).from(staff_quiz_options)
+    .where(inArray(staff_quiz_options.question_id, questions.map((q) => q.id)));
 
   const correctByQuestion = new Map<string, string[]>();
   const validByQuestion = new Map<string, Set<string>>();
@@ -238,75 +223,79 @@ export async function submitQuizAttempt(
 
   // ── Freeze the result ────────────────────────────────────────────────
   const submittedAt = new Date();
-  await adminDb.$transaction(async (tx) => {
+  const awardInput: AwardPointsInput = {
+    adminUserId: session.userId,
+    points: scored.score,
+    sourceKind: "quiz",
+    sourceId: attemptId,
+    reason: `${quiz.title} — ${scored.correctCount}/${scored.questionCount} correct`,
+    bump: { quizzesCompleted: 1 },
+    silent: true,
+  };
+  const awardResult = await adminDrizzle.transaction(async (tx) => {
     // Guarded update: only an attempt STILL in progress is closed here, so two
     // concurrent submits can't both write a result.
-    const updated = await tx.staff_quiz_attempts.updateMany({
-      where: { id: attemptId, status: "in_progress" },
-      data: {
+    const updated = await tx.update(staff_quiz_attempts).set({
         status: "submitted",
         score: scored.score,
         max_score: scored.maxScore,
         correct_count: scored.correctCount,
         question_count: scored.questionCount,
         points_awarded: scored.score,
-        submitted_at: submittedAt,
-      },
-    });
-    if (updated.count === 0) return; // another submit won the race
+        submitted_at: submittedAt.toISOString(),
+      }).where(and(eq(staff_quiz_attempts.id, attemptId),
+        eq(staff_quiz_attempts.status, "in_progress")))
+      .returning({ id: staff_quiz_attempts.id });
+    if (updated.length === 0) return null;
 
-    for (const answer of scored.answers) {
-      await tx.staff_quiz_answers.upsert({
-        where: {
-          attempt_id_question_id: {
-            attempt_id: attemptId,
-            question_id: answer.questionId,
-          },
-        },
-        update: {
-          selected_option_ids: answer.selectedOptionIds,
-          is_correct: answer.isCorrect,
-          points_awarded: answer.pointsAwarded,
-        },
-        create: {
+    if (scored.answers.length > 0) {
+      await tx.insert(staff_quiz_answers).values(
+        scored.answers.map((answer) => ({
           attempt_id: attemptId,
           question_id: answer.questionId,
           selected_option_ids: answer.selectedOptionIds,
           is_correct: answer.isCorrect,
           points_awarded: answer.pointsAwarded,
-        },
+        })),
+      ).onConflictDoUpdate({
+          target: [staff_quiz_answers.attempt_id, staff_quiz_answers.question_id],
+          set: {
+            selected_option_ids: sql`excluded.selected_option_ids`,
+            is_correct: sql`excluded.is_correct`,
+            points_awarded: sql`excluded.points_awarded`,
+          },
       });
     }
+
+    // The immutable event and profile roll-up commit with the attempt.
+    // Zero-point attempts get an event too, making completion idempotent.
+    return awardStaffPointsInTransaction(tx, awardInput);
   });
 
-  // ── Pay out ──────────────────────────────────────────────────────────
-  // Keyed on the attempt id: the unique index makes this idempotent, so a
-  // retry after a network blip cannot pay twice.
-  if (scored.score > 0) {
-    await awardStaffPoints({
-      adminUserId: session.userId,
-      points: scored.score,
-      sourceKind: "quiz",
-      sourceId: attemptId,
-      reason: `${quiz.title} — ${scored.correctCount}/${scored.questionCount} correct`,
-      bump: { quizzesCompleted: 1 },
-      // The quiz-result notification below is the one the taker should see.
-      silent: true,
-    });
-  } else {
-    // No points, but the attempt still counts as completed.
-    await adminDb.staff_profiles
-      .update({
-        where: { admin_user_id: session.userId },
-        data: { quizzes_completed: { increment: 1 } },
-      })
-      .catch(() => {});
+  if (!awardResult) {
+    const [frozen] = await adminDrizzle.select().from(staff_quiz_attempts)
+      .where(eq(staff_quiz_attempts.id, attemptId)).limit(1);
+    if (!frozen || frozen.status !== "submitted") {
+      throw new Error("Quiz submission did not complete");
+    }
+    return {
+      attemptId: frozen.id,
+      score: frozen.score,
+      maxScore: frozen.max_score,
+      correctCount: frozen.correct_count,
+      questionCount: frozen.question_count,
+      pointsAwarded: frozen.points_awarded,
+      passed:
+        frozen.max_score > 0 &&
+        (frozen.score / frozen.max_score) * 100 >= quiz.pass_percent,
+    };
   }
 
   const passed =
     scored.maxScore > 0 &&
     (scored.score / scored.maxScore) * 100 >= quiz.pass_percent;
 
+  await sendStaffPointNotifications(awardInput, awardResult);
   await notifyStaff({
     recipients: [session.userId],
     kind: "quiz_result",
@@ -322,7 +311,6 @@ export async function submitQuizAttempt(
   revalidatePath("/staff/quizzes");
   revalidatePath("/staff/profile");
   revalidatePath("/staff/members");
-  revalidatePath("/staff");
 
   return {
     attemptId,

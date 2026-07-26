@@ -1,10 +1,9 @@
+import { daysAgoFilter, blacklistNotInSql, queryRows, realCustomersScopeDrizzle, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
-import { realCustomersScopeSql } from "@/lib/queries/insights-games/_shared";
 import { toNumber } from "@/lib/utils/decimal";
 import { resolveRainHouseCost } from "@/lib/metrics";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -73,7 +72,7 @@ import { getDailyPacksGiveaway } from "./daily-packs";
  *
  * ─── SCOPE ──────────────────────────────────────────────────────────
  *
- * The ledger sweep uses `realCustomersScopeSql()` (drops admin / support /
+ * The ledger sweep uses `realCustomersScopeDrizzle()` (drops admin / support /
  * creator roles + the admin-managed blacklist) — the canonical customer
  * scope, same as the breakdown it replaces.
  *
@@ -325,42 +324,42 @@ async function computeProgramSpend(
   blacklistIds: string[],
 ): Promise<RewardProgramBreakdown> {
   return withTiming("insights-rewards.program-spend", async () => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
     const days = daysForInsightsPeriodCapped(period);
-    const dateFilter = `AND lt.created_at >= NOW() - INTERVAL '${days} days'`;
-    const customerScope = await realCustomersScopeSql();
+    const dateFilter = daysAgoFilter("lt.created_at", days);
+    const customerScope = await realCustomersScopeDrizzle();
     // The creator-pool leg is blacklist-only (see header) — build its own
     // exclusion rather than reusing the customer scope, which would drop
     // every creator-funded row.
-    const creatorPoolBlacklist = blacklistNotInClause("lt.user_id", blacklistIds);
+    const creatorPoolBlacklist = blacklistNotInSql("lt.user_id", blacklistIds);
 
     const [rollupRows, dailyRows, creatorRows, creatorDailyRows] =
       await Promise.all([
         // 1. Per-leaf rollup — cost / events / distinct claimants.
-        db.$queryRawUnsafe<
+        queryRows<
           { leaf: string; total: string; cnt: string; claimants: string }[]
-        >(`
+        >(db, sql`
           SELECT
-            ${LEAF_CASE_SQL} AS leaf,
+            ${sql.raw(LEAF_CASE_SQL)} AS leaf,
             COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total,
             COUNT(*)::text AS cnt,
             COUNT(DISTINCT lt.user_id)::text AS claimants
           FROM ledger_transactions lt
           WHERE lt.status = 'completed'
-            AND lt.type::text IN ${SCANNED_TYPES_SQL}
+            AND lt.type::text IN ${sql.raw(SCANNED_TYPES_SQL)}
             AND lt.user_id IN ${customerScope}
             ${dateFilter}
           GROUP BY 1
         `),
         // 2. Per-leaf daily series — drives the sparklines + stacked chart.
-        db.$queryRawUnsafe<{ date: Date; leaf: string; total: string }[]>(`
+        queryRows<{ date: Date; leaf: string; total: string }[]>(db, sql`
           SELECT
             DATE(lt.created_at) AS date,
-            ${LEAF_CASE_SQL} AS leaf,
+            ${sql.raw(LEAF_CASE_SQL)} AS leaf,
             COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
           FROM ledger_transactions lt
           WHERE lt.status = 'completed'
-            AND lt.type::text IN ${SCANNED_TYPES_SQL}
+            AND lt.type::text IN ${sql.raw(SCANNED_TYPES_SQL)}
             AND lt.user_id IN ${customerScope}
             ${dateFilter}
           GROUP BY 1, 2
@@ -368,9 +367,9 @@ async function computeProgramSpend(
         `),
         // 3. Creator pool rollup — blacklist-only scope, split by leg so the
         //    program row can itemise tips vs sponsored battles.
-        db.$queryRawUnsafe<
+        queryRows<
           { leg: string; total: string; cnt: string; claimants: string }[]
-        >(`
+        >(db, sql`
           SELECT
             lt.type::text AS leg,
             COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total,
@@ -378,19 +377,19 @@ async function computeProgramSpend(
             COUNT(DISTINCT lt.user_id)::text AS claimants
           FROM ledger_transactions lt
           WHERE lt.status = 'completed'
-            AND lt.type::text IN ${CREATOR_POOL_TYPES_SQL}
+            AND lt.type::text IN ${sql.raw(CREATOR_POOL_TYPES_SQL)}
             ${creatorPoolBlacklist}
             ${dateFilter}
           GROUP BY 1
         `),
         // 4. Creator pool daily series (both legs combined).
-        db.$queryRawUnsafe<{ date: Date; total: string }[]>(`
+        queryRows<{ date: Date; total: string }[]>(db, sql`
           SELECT
             DATE(lt.created_at) AS date,
             COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
           FROM ledger_transactions lt
           WHERE lt.status = 'completed'
-            AND lt.type::text IN ${CREATOR_POOL_TYPES_SQL}
+            AND lt.type::text IN ${sql.raw(CREATOR_POOL_TYPES_SQL)}
             ${creatorPoolBlacklist}
             ${dateFilter}
           GROUP BY 1

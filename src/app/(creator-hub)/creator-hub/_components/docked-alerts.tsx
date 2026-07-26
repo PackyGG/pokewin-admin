@@ -21,9 +21,7 @@ import { AlertsList } from "../alerts/_components/alerts-list";
 import { fetchDockedAlerts } from "./docked-alerts-actions";
 
 /**
- * Persistent docked Alerts widget on the right edge of the Creator Hub
- * shell — the third slot of the right rail (below Live + Recent). Mirrors
- * the `<DockedRecentActivity />` chrome + interactions.
+ * Persistent docked Alerts widget on the right edge of the Creator Hub shell.
  */
 
 const PANEL_WIDTH_PX = 320;

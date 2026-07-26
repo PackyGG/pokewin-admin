@@ -1,14 +1,13 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { compareSignupTopRecipients } from "@/lib/clickhouse/compare/insights-signup-top-recipients";
 import { SIGNUP_CACHE_TAG } from "./_shared";
 
 /**
@@ -51,13 +50,10 @@ async function computeTopRecipients(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<SignupTopRecipientRow[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const dateFilter =
-    days !== null
-      ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'`
-      : "";
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const dateFilter = daysAgoFilter("lt.created_at", days);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   type Row = {
     user_id: string;
@@ -72,7 +68,7 @@ async function computeTopRecipients(
     deposit_total: string;
   };
 
-  const rows = await db.$queryRawUnsafe<Row[]>(`
+  const rows = await queryRows<Row[]>(db, sql`
     WITH claims AS (
       SELECT
         lt.user_id,
@@ -149,9 +145,5 @@ export async function getSignupTopRecipients(
   const data = await (cacheTtlForInsightsPeriod(period) >= 300
     ? cachedLong(period, sorted)
     : cachedShort(period, sorted));
-  // CQRS rollout: fire-and-forget ClickHouse comparison (no-op unless the
-  // surface flag is in `comparison` mode; forced off when CH is dormant). The
-  // served value stays the Postgres payload above.
-  void compareSignupTopRecipients(period, data);
   return data;
 }

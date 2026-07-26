@@ -5,7 +5,7 @@ import { Secret } from "otpauth";
 
 /**
  * Idempotently seed a dedicated E2E admin account so tests don't touch
- * the root `admin@packy.gg` account from prisma/admin/seed.ts.
+ * the root `admin@packy.gg` account from scripts/seed-admin.ts.
  *
  * The account is:
  *   - email:    E2E_ADMIN_EMAIL      (default: e2e-admin@test.local)

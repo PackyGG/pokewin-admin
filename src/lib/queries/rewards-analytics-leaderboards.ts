@@ -1,10 +1,7 @@
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import {
-  excludeStaffCreatorsAndBlacklisted,
-  excludeStaffCreatorsAndBlacklistedSqlFromIds,
-} from "@/lib/queries/_blacklist";
+import { excludeStaffCreatorsAndBlacklistedSqlFromIds } from "@/lib/queries/_blacklist";
 
 /**
  * Platform leaderboards summary for /rewards/analytics.
@@ -84,23 +81,33 @@ async function raceClaimsUserScopeSql(): Promise<string> {
 async function buildRaceSummary(
   kind: RaceLeaderboardKind,
 ): Promise<RaceLeaderboardSummary> {
-  const db = await getDb();
   const userScopeSql = await raceClaimsUserScopeSql();
-  const userRelation = await excludeStaffCreatorsAndBlacklisted();
+  type TierRow = { position: number; prize_amount_usd: string };
+  type PeriodRow = {
+    starts_at: Date;
+    ends_at: Date;
+  };
 
   const [tiers, activePeriod, recentEndedPeriod] = await Promise.all([
-    db.race_prize_tiers.findMany({
-      where: { race_type: kind },
-      orderBy: { position: "asc" },
-    }),
-    db.race_periods.findFirst({
-      where: { race_type: kind, status: "active" },
-      orderBy: { starts_at: "desc" },
-    }),
-    db.race_periods.findFirst({
-      where: { race_type: kind, status: "ended" },
-      orderBy: { ends_at: "desc" },
-    }),
+    queryMainRows<TierRow[]>(
+      `SELECT position, prize_amount_usd::text AS prize_amount_usd
+       FROM race_prize_tiers
+       WHERE race_type::text = $1
+       ORDER BY position ASC`,
+      kind,
+    ),
+    queryMainRows<PeriodRow[]>(
+      `SELECT starts_at, ends_at FROM race_periods
+       WHERE race_type::text = $1 AND status::text = 'active'
+       ORDER BY starts_at DESC LIMIT 1`,
+      kind,
+    ).then((rows) => rows[0] ?? null),
+    queryMainRows<PeriodRow[]>(
+      `SELECT starts_at, ends_at FROM race_periods
+       WHERE race_type::text = $1 AND status::text = 'ended'
+       ORDER BY ends_at DESC LIMIT 1`,
+      kind,
+    ).then((rows) => rows[0] ?? null),
   ]);
 
   const prizePool = tiers.reduce((a, t) => a + toNumber(t.prize_amount_usd), 0);
@@ -128,7 +135,7 @@ async function buildRaceSummary(
   let topWinners: RaceLeaderboardWinnerRow[] = [];
 
   if (state === "ended") {
-    const rows = await db.$queryRawUnsafe<
+    const rows = await queryMainRows<
       {
         user_id: string;
         username: string | null;
@@ -136,7 +143,8 @@ async function buildRaceSummary(
         prize_amount_usd: string;
         wagered_usd: string | null;
       }[]
-    >(`
+    >(
+      `
       SELECT
         rc.user_id,
         u.username,
@@ -149,12 +157,16 @@ async function buildRaceSummary(
         ON rls.user_id = rc.user_id
        AND rls.race_type = rc.race_type
        AND rls.period_start = rc.race_period_start
-      WHERE rc.race_type = '${kind}'::race_type
-        AND rc.race_period_start = '${periodStartDateString}'::date
+      WHERE rc.race_type::text = $1
+        AND rc.race_period_start = $2::date
         AND rc.${userScopeSql}
       ORDER BY rc.position ASC
-      LIMIT ${TOP_WINNERS_LIMIT}
-    `);
+      LIMIT $3
+    `,
+      kind,
+      periodStartDateString,
+      TOP_WINNERS_LIMIT,
+    );
     topWinners = rows.map((r) => ({
       position: r.position,
       userId: r.user_id,
@@ -169,20 +181,29 @@ async function buildRaceSummary(
     // against prod), so ordering by it here would return an arbitrary set of
     // "winners", not the top wagerers. Rank live by wagered_usd instead; this
     // matches exactly how position gets finalized once the period ends.
-    const snapshots = await db.race_leaderboard_snapshots.findMany({
-      where: {
-        race_type: kind,
-        period_start: new Date(periodStartDateString),
-        user: userRelation,
-      },
-      orderBy: [{ wagered_usd: "desc" }, { user_id: "asc" }],
-      take: TOP_WINNERS_LIMIT,
-      include: { user: { select: { username: true } } },
-    });
+    const snapshotScope = userScopeSql.replace(/^user_id/, "rls.user_id");
+    const snapshots = await queryMainRows<{
+      user_id: string;
+      username: string | null;
+      wagered_usd: string;
+    }[]>(
+      `SELECT rls.user_id, u.username,
+              rls.wagered_usd::text AS wagered_usd
+       FROM race_leaderboard_snapshots rls
+       LEFT JOIN "user" u ON u.id = rls.user_id
+       WHERE rls.race_type::text = $1
+         AND rls.period_start = $2::date
+         AND ${snapshotScope}
+       ORDER BY rls.wagered_usd DESC, rls.user_id ASC
+       LIMIT $3`,
+      kind,
+      periodStartDateString,
+      TOP_WINNERS_LIMIT,
+    );
     topWinners = snapshots.map((s, i) => ({
       position: i + 1,
       userId: s.user_id,
-      username: s.user?.username ?? null,
+      username: s.username,
       prizeAmountUsd: tierByPosition.get(i + 1) ?? 0,
       wageredUsd: toNumber(s.wagered_usd),
     }));
@@ -219,19 +240,24 @@ export type LifetimePrizesBreakdown = {
  * /rewards/analytics.
  */
 export async function getLifetimePrizesBreakdown(): Promise<LifetimePrizesBreakdown> {
-  const db = await getDb();
-  const userScope = await excludeStaffCreatorsAndBlacklisted();
-  const rows = await db.race_claims.groupBy({
-    by: ["race_type"],
-    where: { user: userScope },
-    _sum: { prize_amount_usd: true },
-    _count: { _all: true },
-  });
+  const scope = await raceClaimsUserScopeSql();
+  const rows = await queryMainRows<{
+    race_type: string;
+    total: string;
+    claims: string;
+  }[]>(
+    `SELECT rc.race_type::text AS race_type,
+            COALESCE(SUM(rc.prize_amount_usd::numeric), 0)::text AS total,
+            COUNT(*)::text AS claims
+     FROM race_claims rc
+     WHERE rc.${scope}
+     GROUP BY rc.race_type`,
+  );
   const byRaceType: LifetimePrizesByRaceType[] = rows
     .map((r) => ({
       raceType: r.race_type,
-      total: toNumber(r._sum.prize_amount_usd ?? 0),
-      claims: r._count._all,
+      total: toNumber(r.total),
+      claims: Number(r.claims),
     }))
     .sort((a, b) => b.total - a.total);
   const total = byRaceType.reduce((a, r) => a + r.total, 0);
@@ -257,11 +283,21 @@ export type PrizeBudgetBreakdown = {
 export async function getPrizeBudgetBreakdown(
   raceTypes: string[],
 ): Promise<PrizeBudgetBreakdown> {
-  const db = await getDb();
-  const tiers = await db.race_prize_tiers.findMany({
-    where: { race_type: { in: raceTypes as RaceLeaderboardKind[] } },
-    orderBy: [{ race_type: "asc" }, { position: "asc" }],
-  });
+  const tiers =
+    raceTypes.length === 0
+      ? []
+      : await queryMainRows<{
+          race_type: string;
+          position: number;
+          prize_amount_usd: string;
+        }[]>(
+          `SELECT race_type::text AS race_type, position,
+                  prize_amount_usd::text AS prize_amount_usd
+           FROM race_prize_tiers
+           WHERE race_type::text = ANY($1::text[])
+           ORDER BY race_type ASC, position ASC`,
+          raceTypes,
+        );
   const rows: PrizeBudgetTierRow[] = tiers.map((t) => ({
     raceType: t.race_type,
     position: t.position,
@@ -272,23 +308,23 @@ export async function getPrizeBudgetBreakdown(
 }
 
 export async function getRewardsLeaderboards(): Promise<RewardsLeaderboardsData> {
-  const db = await getDb();
-  const userScope = await excludeStaffCreatorsAndBlacklisted();
+  const scope = await raceClaimsUserScopeSql();
 
   const [daily, weekly, lifetimeRow] = await Promise.all([
     buildRaceSummary("daily"),
     buildRaceSummary("weekly"),
-    db.race_claims.aggregate({
-      where: { user: userScope },
-      _sum: { prize_amount_usd: true },
-      _count: { _all: true },
-    }),
+    queryMainRows<{ total: string; count: string }[]>(
+      `SELECT COALESCE(SUM(rc.prize_amount_usd::numeric), 0)::text AS total,
+              COUNT(*)::text AS count
+       FROM race_claims rc
+       WHERE rc.${scope}`,
+    ).then((rows) => rows[0]),
   ]);
 
   return {
     daily,
     weekly,
-    lifetimePrizesPaid: toNumber(lifetimeRow._sum.prize_amount_usd ?? 0),
-    lifetimeClaimsCount: lifetimeRow._count._all,
+    lifetimePrizesPaid: toNumber(lifetimeRow?.total),
+    lifetimeClaimsCount: Number(lifetimeRow?.count ?? 0),
   };
 }

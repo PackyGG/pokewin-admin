@@ -68,7 +68,7 @@ cases possibly intentional. Each needs an owner call.
 ## Positive confirmations (no action)
 
 - Env-guard: `users-wager-progress.ts` column probe, the 8 security cards' try/catch→null, challenges
-  via backend-API indirection, `filterLedgerTxTypesLive` for unmigrated ledger types, narrowed Prisma
+  via backend-API indirection, `filterLedgerTxTypesLive` for unmigrated ledger types, narrowed schema
   selects — all correctly drift-safe.
 - Auth: challenges / rewards-analytics / security / users-`[id]` pages all call `requirePageAccess`;
   wager-requirement + weight + challenge + reward mutations all log `createAdminAuditEvent`.

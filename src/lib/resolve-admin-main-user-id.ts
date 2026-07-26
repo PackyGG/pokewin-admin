@@ -1,5 +1,7 @@
-import { adminDb } from "@/lib/admin-db";
-import { getDb } from "@/lib/db";
+import { eq, sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_users } from "@/lib/db-schema/admin/schema";
+import { getDrizzleDb } from "@/lib/db";
 
 /**
  * Resolve a Main-DB `User.id` for the calling admin so it can be written
@@ -32,16 +34,15 @@ import { getDb } from "@/lib/db";
 export async function resolveAdminMainUserId(
   adminUserId: string,
 ): Promise<string | null> {
-  const adminUser = await adminDb.admin_users.findUnique({
-    where: { id: adminUserId },
-    select: { email: true },
-  });
+  const [adminUser] = await adminDrizzle.select({ email: admin_users.email })
+    .from(admin_users).where(eq(admin_users.id, adminUserId)).limit(1);
   if (!adminUser?.email) return null;
 
-  const db = await getDb();
-  const mainUser = await db.user.findUnique({
-    where: { email: adminUser.email },
-    select: { id: true },
-  });
+  const db = await getDrizzleDb();
+  const mainUser = (
+    await db.execute<{ id: string }>(
+      sql`SELECT id FROM "user" WHERE email = ${adminUser.email} LIMIT 1`,
+    )
+  ).rows[0];
   return mainUser?.id ?? null;
 }

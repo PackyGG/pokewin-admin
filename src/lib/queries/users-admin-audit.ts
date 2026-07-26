@@ -1,4 +1,9 @@
-import { adminDb } from "@/lib/admin-db";
+import { count, desc, eq, sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import {
+  admin_audit_events,
+  admin_users,
+} from "@/lib/db-schema/admin/schema";
 
 /**
  * ADMIN-side action trail for ONE game user — "who did what to this
@@ -17,7 +22,7 @@ import { adminDb } from "@/lib/admin-db";
  * shows "system".
  *
  * Index: `admin_audit_events_target_user_id_idx` covers the filter
- * (see prisma/admin/schema.prisma).
+ * (see the checked-in Admin Drizzle schema).
  */
 
 export type UserAdminAuditEvent = {
@@ -89,52 +94,61 @@ export async function getUserAdminAuditFeed(
   userId: string,
 ): Promise<UserAdminAuditFeed> {
   const [rows, total, bulkRows] = await Promise.all([
-    adminDb.admin_audit_events.findMany({
-      where: { target_user_id: userId },
-      orderBy: { created_at: "desc" },
-      take: USER_ADMIN_AUDIT_MAX,
-      select: {
-        id: true,
-        event_type: true,
-        ip: true,
-        metadata: true,
-        created_at: true,
-        admin_user: { select: { id: true, username: true, role: true } },
-      },
-    }),
-    adminDb.admin_audit_events.count({ where: { target_user_id: userId } }),
+    adminDrizzle
+      .select({
+        id: admin_audit_events.id,
+        event_type: admin_audit_events.event_type,
+        ip: admin_audit_events.ip,
+        metadata: admin_audit_events.metadata,
+        created_at: admin_audit_events.created_at,
+        admin_id: admin_users.id,
+        admin_username: admin_users.username,
+        admin_role: admin_users.role,
+      })
+      .from(admin_audit_events)
+      .leftJoin(admin_users, eq(admin_users.id, admin_audit_events.admin_user_id))
+      .where(eq(admin_audit_events.target_user_id, userId))
+      .orderBy(desc(admin_audit_events.created_at))
+      .limit(USER_ADMIN_AUDIT_MAX),
+    adminDrizzle
+      .select({ value: count() })
+      .from(admin_audit_events)
+      .where(eq(admin_audit_events.target_user_id, userId))
+      .then((result) => result[0]?.value ?? 0),
     // `metadata - 'user_ids'` strips the id array server-side so the batch's
     // other 5,000 account ids never travel to the browser; the count is kept
     // separately so the row can say how wide the action was.
-    adminDb.$queryRaw<BulkAuditRow[]>`
-      SELECT e.id,
-             e.event_type,
-             e.ip,
-             e.created_at,
-             (e.metadata - 'user_ids') AS metadata,
-             jsonb_array_length(COALESCE(e.metadata -> 'user_ids', '[]'::jsonb)) AS bulk_count,
-             u.id AS admin_id,
-             u.username AS admin_username,
-             u.role::text AS admin_role
-      FROM admin_audit_events e
-      LEFT JOIN admin_users u ON u.id = e.admin_user_id
-      WHERE e.event_type = ${BULK_BAN_EVENT}
-        AND e.metadata -> 'user_ids' @> to_jsonb(${userId}::text)
-      ORDER BY e.created_at DESC
-      LIMIT ${USER_ADMIN_AUDIT_MAX}
-    `,
+    adminDrizzle
+      .execute<BulkAuditRow>(sql`
+        SELECT e.id,
+               e.event_type,
+               e.ip,
+               e.created_at,
+               (e.metadata - 'user_ids') AS metadata,
+               jsonb_array_length(COALESCE(e.metadata -> 'user_ids', '[]'::jsonb)) AS bulk_count,
+               u.id AS admin_id,
+               u.username AS admin_username,
+               u.role::text AS admin_role
+        FROM admin_audit_events e
+        LEFT JOIN admin_users u ON u.id = e.admin_user_id
+        WHERE e.event_type = ${BULK_BAN_EVENT}
+          AND e.metadata -> 'user_ids' @> to_jsonb(${userId}::text)
+        ORDER BY e.created_at DESC
+        LIMIT ${USER_ADMIN_AUDIT_MAX}
+      `)
+      .then((result) => result.rows),
   ]);
 
   const events: UserAdminAuditEvent[] = [
     ...rows.map((r) => ({
       id: r.id,
       eventType: r.event_type,
-      adminUserId: r.admin_user?.id ?? null,
-      adminUsername: r.admin_user?.username ?? null,
-      adminRole: r.admin_user?.role ?? null,
+      adminUserId: r.admin_id,
+      adminUsername: r.admin_username,
+      adminRole: r.admin_role,
       ip: r.ip,
       metadata: r.metadata,
-      createdAt: r.created_at.toISOString(),
+      createdAt: new Date(r.created_at).toISOString(),
       bulkCount: null,
     })),
     ...bulkRows.map((r) => ({
@@ -145,7 +159,7 @@ export async function getUserAdminAuditFeed(
       adminRole: r.admin_role,
       ip: r.ip,
       metadata: r.metadata,
-      createdAt: r.created_at.toISOString(),
+      createdAt: new Date(r.created_at).toISOString(),
       bulkCount: r.bulk_count ?? null,
     })),
   ].sort((a, b) => b.createdAt.localeCompare(a.createdAt));

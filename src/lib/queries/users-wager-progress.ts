@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import {
   getWagerRequirementDefaults,
   getUserWagerRequirement,
@@ -45,8 +45,8 @@ import {
  * `admin_db_env` cookie. We probe `information_schema.columns` for the newest
  * column (`wager_requirement_remaining`) first and return `null` (→ the card's
  * muted state) if a connected DB lacks it, so schema drift degrades gracefully
- * instead of throwing 42703. No `prisma/schema.prisma` change is needed — the
- * read is raw SQL, so Prisma never selects an absent column. READ-ONLY
+ * instead of throwing 42703. No Drizzle schema change is needed — the
+ * read is raw SQL, so the query never selects an absent column. READ-ONLY
  * throughout.
  *
  * EXEMPTION: a per-user override of 0 bps (`user_wager_requirements`) EXEMPTS
@@ -199,25 +199,24 @@ const round2 = (n: number): number => Math.round(n * 100) / 100;
 export async function getUserWagerProgress(
   userId: string,
 ): Promise<UserWagerProgress | null> {
-  const db = await getDb();
-
   // ── ENV-GUARD: column presence probe (read-only catalog lookup) ──────
   // Probe the newest column (`wager_requirement_remaining`, added by backend
   // migration 0130) before selecting it, so a DB that lacks it gets the muted
   // card (null) instead of a 42703 "column does not exist" throw. Cheap,
   // indexed catalog read — runs only on the Account tab.
-  const colCheck = await db.$queryRaw<{ exists: boolean }[]>`
+  const colCheck = await queryMainRows<{ exists: boolean }[]>(`
     SELECT EXISTS (
       SELECT 1
         FROM information_schema.columns
        WHERE table_schema = 'public'
          AND table_name = 'balances'
          AND column_name = 'wager_requirement_remaining'
-    ) AS exists`;
+    ) AS exists`);
   if (!colCheck[0]?.exists) return null;
 
   // ── Read the backend-written columns for this user ───────────────────
-  const rows = await db.$queryRaw<RawBalanceRow[]>`
+  const rows = await queryMainRows<RawBalanceRow[]>(
+    `
     SELECT
       available_balance::text            AS available_balance,
       total_deposited::text              AS total_deposited,
@@ -235,8 +234,10 @@ export async function getUserWagerProgress(
       unwagered_affiliate_usd::text      AS unwagered_affiliate_usd,
       unwagered_tips_usd::text           AS unwagered_tips_usd
     FROM balances
-    WHERE user_id = ${userId}
-    LIMIT 1`;
+    WHERE user_id = $1
+    LIMIT 1`,
+    userId,
+  );
   const row = rows[0];
   if (!row) return null;
 

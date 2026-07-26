@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
  * Why this segment gets its own boundary instead of falling through to
  * the umbrella `(admin)/error.tsx`: the analytics tree is the heaviest
  * query path in the admin (multi-level cohorts, PERCENTILE_CONT, LTV
- * funnels, choropleth map data). A single slow upstream — or a Prisma
+ * funnels, choropleth map data). A single slow upstream — or a schema
  * schema field that drifted — takes the entire tab down. The
  * segment-specific copy reassures the admin that the underlying data
  * isn't broken, only the read path that builds the report.
@@ -56,7 +56,7 @@ export default function AnalyticsError({
         <p className="text-xs text-muted-foreground">
           Analytics queries fan out across cohorts, retention windows, and
           deposit/wager aggregates — a single slow upstream or a stale
-          Prisma column can collapse the whole report. Server logs have
+          stale column can collapse the whole report. Server logs have
           the full stack trace.
         </p>
       </div>

@@ -265,14 +265,21 @@ async function QueueSection({
                     <div className="flex items-center gap-3 text-xs text-muted-foreground">
                       <span className="font-medium">{row.username}</span>
                       {row.url ? (
-                        <a
-                          href={row.url}
-                          target="_blank"
-                          rel="noreferrer noopener"
-                          className="truncate hover:underline"
-                        >
-                          {row.url}
-                        </a>
+                        // SECURITY (SECURITY_AUDIT.md LOW): only linkify http(s)
+                        // URLs — a stored `javascript:` / `data:` URL in an href
+                        // would execute on click. Anything else renders as text.
+                        /^https?:\/\//i.test(row.url) ? (
+                          <a
+                            href={row.url}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            className="truncate hover:underline"
+                          >
+                            {row.url}
+                          </a>
+                        ) : (
+                          <span className="truncate">{row.url}</span>
+                        )
                       ) : null}
                     </div>
                     <div className="flex items-center gap-3 text-[11px] text-muted-foreground">

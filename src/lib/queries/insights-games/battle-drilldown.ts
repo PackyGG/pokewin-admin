@@ -1,6 +1,6 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { ggr as ggrFormula } from "@/lib/metrics/formulas";
@@ -65,7 +65,6 @@ export async function getBattleDrilldown(
 ): Promise<BattleDrilldownData | null> {
   if (!UUID_RE.test(battleId)) return null;
   return withTiming("insights-games.battle-drilldown", async () => {
-    const db = await getDb();
 
     type BattleRow = {
       id: string;
@@ -101,7 +100,7 @@ export async function getBattleDrilldown(
     };
 
     const [battleRows, participantRows] = await Promise.all([
-      db.$queryRawUnsafe<BattleRow[]>(
+      queryMainRows<BattleRow[]>(
         `SELECT
            b.id::text AS id,
            b.mode::text AS mode,
@@ -118,7 +117,7 @@ export async function getBattleDrilldown(
          WHERE b.id = '${battleId}'::uuid
          LIMIT 1`,
       ),
-      db.$queryRawUnsafe<ParticipantRow[]>(
+      queryMainRows<ParticipantRow[]>(
         `SELECT
            bp.id::text AS id,
            bp.user_id AS user_id,
@@ -150,7 +149,7 @@ export async function getBattleDrilldown(
     const packIds = battle.pack_ids ?? [];
     let packs: PackRow[] = [];
     if (packIds.length > 0) {
-      packs = await db.$queryRawUnsafe<PackRow[]>(
+      packs = await queryMainRows<PackRow[]>(
         `SELECT id::text AS id, name, image_url, price::text AS price
          FROM packs
          WHERE id = ANY(ARRAY[${packIds.map((id) => `'${id}'::uuid`).join(",")}])

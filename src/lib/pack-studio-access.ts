@@ -68,7 +68,7 @@ function parseBool(value: string | null): boolean {
  * Reads through {@link getAdminSetting}, which already degrades a missing
  * `admin_settings` table to `null` — so a pre-migration DB yields all
  * toggles OFF (fail-closed) rather than throwing. Server-side only
- * (touches `adminDb`); never call from a Client Component.
+ * (touches the admin database); never call from a Client Component.
  *
  * `React.cache`-wrapped: the pack-studio access trio is read up to 3× per
  * request (layout gate, page gate, `requireRetuneOwner` action gate) — the

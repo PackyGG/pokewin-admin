@@ -10,7 +10,7 @@ import { UserDetailFixtureClient } from "./fixture-client";
  * the REAL components. The one route the Wave 0 acceptance gate targets —
  * /users/[id] — assembles its hero from `getUserDetail`, a ~19-query
  * aggregate against the MAIN game DB. On any environment whose main DB is
- * behind the current Prisma schema (e.g. a local copy missing the
+ * behind the current application schema (e.g. a local copy missing the
  * `user_battle_limits` table or the `upgrader_bet` enum value), that
  * aggregate throws and the page degrades to a "details failed to load"
  * banner — so the hero markup never renders and there is nothing for the

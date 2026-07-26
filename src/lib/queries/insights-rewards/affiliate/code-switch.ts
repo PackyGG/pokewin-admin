@@ -1,12 +1,10 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { getDrizzleDb } from "@/lib/db";
 import {
   type InsightsRewardsPeriod,
 } from "../_period";
 import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getAffiliateCodeSwitchFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/code-switch";
 
 /**
  * Code-switch correlation lens.
@@ -64,12 +62,12 @@ async function compute(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<CodeSwitchRow[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const ctx = makePeriodCtx(period);
   const acuDate = ctx.dateFilterFor("acu.created_at");
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       first_affiliate_user_id: string;
       username: string | null;
@@ -77,7 +75,7 @@ async function compute(
       switchers_any: string;
       switchers_away: string;
     }[]
-  >(`
+  >(db, sql`
     WITH active_referred AS (
       SELECT DISTINCT acu.referred_user_id
       FROM affiliate_code_usages acu
@@ -177,14 +175,9 @@ export async function getAffiliateCodeSwitch(
   period: InsightsRewardsPeriod,
 ): Promise<CodeSwitchRow[]> {
   const blacklist = await loadBlacklist();
-  return resolveAdminRead<CodeSwitchRow[]>("insights_affiliate_code_switch", {
-    pg: () =>
-      period === "all"
-        ? cachedLong(period, blacklist)
-        : cachedShort(period, blacklist),
-    ch: () =>
-      getAffiliateCodeSwitchFromClickHouse(period, blacklist, new Date()),
-  });
+  return period === "all"
+    ? cachedLong(period, blacklist)
+    : cachedShort(period, blacklist);
 }
 
 export const AFFILIATE_CODE_SWITCH_MIN_COHORT = COHORT_MIN_USERS;

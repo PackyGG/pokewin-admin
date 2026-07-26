@@ -97,7 +97,7 @@ export const RECENT_WORK_ENTRIES: RecentWorkEntry[] = [
       },
       {
         kind: "infra",
-        text: "admin_changelog_entries table provisioned via ensureChangelogSchema (the salaries / shifts self-heal pattern) — no Prisma migration needed.",
+        text: "admin_changelog_entries is provisioned through a reviewed ADMIN SQL migration.",
       },
       {
         kind: "feature",

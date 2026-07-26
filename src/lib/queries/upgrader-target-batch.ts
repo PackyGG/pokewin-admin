@@ -1,4 +1,5 @@
-import type { PrismaClient } from "@/generated/prisma/client";
+import { sql } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
 import {
   resolveUpgraderMetadata,
   upgraderTargetMultiplierSql,
@@ -47,7 +48,6 @@ function upgraderGameTargetSql(ugAlias: string): string {
  * so we don't miss the blob when the ledger FK points at a stale session.
  */
 export async function fetchUpgraderTargetByLedgerTxIds(
-  db: PrismaClient,
   ledgerTxIds: string[],
 ): Promise<Map<string, UpgraderTargetBatchRow>> {
   const out = new Map<string, UpgraderTargetBatchRow>();
@@ -58,8 +58,9 @@ export async function fetchUpgraderTargetByLedgerTxIds(
   const ugTargetExpr = upgraderGameTargetSql("ug");
 
   try {
-    const rows = await db.$queryRawUnsafe<UpgraderTargetBatchRow[]>(
-      `SELECT lt.id::text AS ledger_tx_id,
+    const db = await getDrizzleDb();
+    const result = await db.execute<UpgraderTargetBatchRow>(sql`
+       SELECT lt.id::text AS ledger_tx_id,
               gs.id::text AS gsid,
               ug.won_amount::text AS won_amount,
               to_jsonb(ug) AS upgrader_game,
@@ -69,10 +70,10 @@ export async function fetchUpgraderTargetByLedgerTxIds(
               lt.metadata AS ledger_metadata,
               COALESCE(
                 pf.best_target,
-                ${ltTargetExpr},
-                ${ugTargetExpr}
+                ${sql.raw(ltTargetExpr)},
+                ${sql.raw(ugTargetExpr)}
               )::text AS sql_target_multiplier
-       FROM unnest($1::uuid[]) AS bet_id(id)
+       FROM unnest(${ledgerTxIds}::uuid[]) AS bet_id(id)
        JOIN ledger_transactions lt ON lt.id = bet_id.id
        LEFT JOIN LATERAL (
          SELECT gs_inner.*
@@ -91,7 +92,7 @@ export async function fetchUpgraderTargetByLedgerTxIds(
        LEFT JOIN LATERAL (
          SELECT
            (array_agg(pf.result_metadata ORDER BY
-             CASE WHEN ${pfTargetExpr} IS NOT NULL THEN 0 ELSE 1 END,
+             CASE WHEN ${sql.raw(pfTargetExpr)} IS NOT NULL THEN 0 ELSE 1 END,
              pf.cursor ASC
            ))[1] AS best_metadata,
            COALESCE(
@@ -99,7 +100,7 @@ export async function fetchUpgraderTargetByLedgerTxIds(
                FILTER (WHERE pf.result_metadata IS NOT NULL),
              '[]'::jsonb
            ) AS all_metadata,
-           MAX(${pfTargetExpr}) AS best_target
+           MAX(${sql.raw(pfTargetExpr)}) AS best_target
          FROM provably_fair_results pf
          WHERE pf.game_session_id IN (
            SELECT gs2.id
@@ -111,11 +112,10 @@ export async function fetchUpgraderTargetByLedgerTxIds(
                OR (gs.id IS NOT NULL AND gs2.id = gs.id)
              )
          )
-       ) pf ON true`,
-      ledgerTxIds,
-    );
+       ) pf ON true
+    `);
 
-    for (const r of rows) {
+    for (const r of result.rows) {
       out.set(r.ledger_tx_id, r);
     }
   } catch (e) {
@@ -128,7 +128,7 @@ export async function fetchUpgraderTargetByLedgerTxIds(
   return out;
 }
 
-/** Merge batch row + optional Prisma-include sources into display fields. */
+/** Merge a batch row and optional joined sources into display fields. */
 export function resolveUpgraderTargetFromBatch(
   row: UpgraderTargetBatchRow | undefined,
   ...extraSources: unknown[]

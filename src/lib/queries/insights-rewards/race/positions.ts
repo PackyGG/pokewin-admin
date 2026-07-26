@@ -1,9 +1,7 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getRaceInsightsPositionsFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/race/positions";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -36,20 +34,17 @@ async function computePositions(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RacePositionBucket[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const dateFilter =
-    days !== null
-      ? `AND rc.claimed_at >= NOW() - INTERVAL '${days} days'`
-      : "";
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const dateFilter = daysAgoFilter("rc.claimed_at", days);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Single sweep over race_claims — pulls position + prize, then
   // buckets in JS so the SQL stays readable. Volume is small (≤ a few
   // thousand rows even for lifetime sweeps on this surface).
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     { position: number; prize: string }[]
-  >(`
+  >(db, sql`
     SELECT
       rc.position::int AS position,
       rc.prize_amount_usd::text AS prize
@@ -87,20 +82,14 @@ async function computePositions(
 
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveAdminRead<RacePositionBucket[]>("insights_race_positions", {
-      pg: () => computePositions(period, blacklistIds),
-      ch: () => getRaceInsightsPositionsFromClickHouse(period, blacklistIds),
-    }),
+    computePositions(period, blacklistIds),
   ["insights-rewards-race-positions-v1"],
   { revalidate: 60, tags: ["insights-rewards-race"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveAdminRead<RacePositionBucket[]>("insights_race_positions", {
-      pg: () => computePositions(period, blacklistIds),
-      ch: () => getRaceInsightsPositionsFromClickHouse(period, blacklistIds),
-    }),
+    computePositions(period, blacklistIds),
   ["insights-rewards-race-positions-lifetime-v1"],
   { revalidate: 300, tags: ["insights-rewards-race"] },
 );

@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
  * Route-level error boundary for /vouchers.
  *
  * The vouchers view lists voucher codes and their balance impact. A
- * failed query or a stale Prisma column would otherwise bubble to the
+ * failed query or a stale schema column would otherwise bubble to the
  * umbrella `(admin)/error.tsx`; this boundary scopes it to /vouchers with
  * a calm "the READ failed, the codes are fine" message. The reset path
  * re-runs the server render without a full reload.
@@ -56,7 +56,7 @@ export default function VouchersError({
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <p className="text-xs text-muted-foreground">
           Only the read path failed — voucher balances and redemption
-          records are unchanged. A transient timeout or a stale Prisma
+          records are unchanged. A transient timeout or a stale schema
           column is the most common cause. Server logs have the full stack —
           search for the digest above.
         </p>

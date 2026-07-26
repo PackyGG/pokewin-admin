@@ -62,7 +62,7 @@ export default async function CardDetailPage({
   // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
   if (!isUuid(id)) notFound();
   // Both fetches wrapped in safeQuery so a runtime DB fault (connection blip,
-  // or a stale Prisma column on the live cards/sets table the worktree schema
+  // or a stale column on the live cards/sets table the worktree schema
   // is ahead of) degrades in place instead of rejecting the page-body
   // Promise.all and bubbling to the (admin) route error boundary — the
   // documented white-screen. A genuine 404 (detail query OK, row absent) still
@@ -94,7 +94,7 @@ export default async function CardDetailPage({
         </PageHero>
         <InlineError
           title="Couldn't load this card"
-          hint="The card query failed — most likely a stale Prisma field that hasn't reached the live DB yet, or a transient connection blip. Retry, or head back to the catalog. Server logs hold the digest."
+          hint="The card query failed — most likely a stale schema field that hasn't reached the live DB yet, or a transient connection blip. Retry, or head back to the catalog. Server logs hold the digest."
         />
       </div>
     );

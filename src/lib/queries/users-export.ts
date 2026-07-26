@@ -1,10 +1,7 @@
-// `@/lib/db` on main was refactored to export `getDb()` (async) +
-// `getProdDb()` in place of the old `db` singleton — it now
-// resolves the prod/dev DB per-request from a cookie. Use getDb()
-// here so the email export follows whichever environment the
-// calling admin has toggled on.
-import { getDb } from "@/lib/db";
-import { Prisma } from "@/generated/prisma/client";
+// Use the request-scoped Drizzle client so the export follows whichever
+// environment the calling admin has toggled on.
+import { sql, type SQL } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 export type ExportDepositFilter = "any" | "has_deposited" | "no_deposit";
@@ -46,16 +43,17 @@ export type ExportedUser = {
 export async function getDistinctUserCountries(): Promise<
   { code: string; name: string }[]
 > {
-  const db = await getDb();
-  const rows = await db.$queryRawUnsafe<
-    { country_code: string | null; country: string | null }[]
-  >(`
+  const db = await getDrizzleDb();
+  const result = await db.execute<{
+    country_code: string | null;
+    country: string | null;
+  }>(sql`
     SELECT DISTINCT country_code, country
     FROM "user"
     WHERE country_code IS NOT NULL
     ORDER BY country ASC NULLS LAST
   `);
-  return rows
+  return result.rows
     .filter((r): r is { country_code: string; country: string | null } =>
       typeof r.country_code === "string" && r.country_code.length > 0,
     )
@@ -75,12 +73,11 @@ export async function getDistinctUserCountries(): Promise<
 export async function exportUsers(
   filters: UserExportFilters,
 ): Promise<ExportedUser[]> {
-  const where: Prisma.UserWhereInput = {};
+  const predicates: SQL[] = [];
 
   const excluded = await getExcludedUserIds();
-  if (excluded.length > 0) {
-    where.id = { notIn: excluded };
-  }
+  if (excluded.length > 0)
+    predicates.push(sql`u.id <> ALL(${excluded}::text[])`);
 
   // OR-groups that must be ANDed together. The country-exclude filter and
   // the no-deposit filter are EACH a 2-leg OR; the old code wrote both
@@ -89,7 +86,6 @@ export async function exportUsers(
   // EITHER condition leaked into the export (e.g. a depositing user from
   // a non-excluded country passed because the country legs matched).
   // Collect each group here and AND them at the end instead.
-  const orGroups: Prisma.UserWhereInput[][] = [];
 
   // Country filter
   const codes = [...new Set(
@@ -98,66 +94,64 @@ export async function exportUsers(
       .filter((c) => c.length > 0),
   )];
   if (filters.countryMode === "include" && codes.length > 0) {
-    where.country_code = { in: codes };
+    predicates.push(sql`u.country_code = ANY(${codes}::text[])`);
   } else if (filters.countryMode === "exclude" && codes.length > 0) {
-    // A user with a null country_code would match `notIn` in SQL via
-    // Prisma — but we ALSO explicitly include those (no country data =
+    // Explicitly include null country codes (no country data =
     // not one of the excluded) so the filter does what the admin expects.
-    orGroups.push([
-      { country_code: null },
-      { country_code: { notIn: codes } },
-    ]);
+    predicates.push(
+      sql`(u.country_code IS NULL OR u.country_code <> ALL(${codes}::text[]))`,
+    );
   }
 
   // Staff exclusion — mirrors the canonical CUSTOMER_EXCLUDED_ROLES
   // (src/lib/metrics/scope.ts: admin/support/creator). `support` was
   // previously missing here, so marketing exports emailed support staff.
   if (filters.excludeStaff) {
-    where.role = { notIn: ["admin", "support", "creator"] };
+    predicates.push(sql`u.role NOT IN ('admin', 'support', 'creator')`);
   }
 
   // Email requirement
   if (filters.requireEmail) {
-    where.email = { not: null };
+    predicates.push(sql`u.email IS NOT NULL`);
   }
 
   // Deposit filter
   if (filters.deposit === "has_deposited") {
-    where.balances = {
-      total_deposited: { gt: 0 },
-    };
+    predicates.push(sql`COALESCE(b.total_deposited, 0) > 0`);
   } else if (filters.deposit === "no_deposit") {
     // Users with no deposits — either no balances row or
-    // total_deposited = 0. Prisma's `is` + null combinator handles
-    // the missing-row case; we express it via an OR group.
-    orGroups.push([
-      { balances: { is: null } },
-      { balances: { is: { total_deposited: { equals: 0 } } } },
-    ]);
+    // total_deposited = 0. COALESCE handles the missing-row case.
+    predicates.push(sql`COALESCE(b.total_deposited, 0) = 0`);
   }
 
-  if (orGroups.length === 1) where.OR = orGroups[0];
-  else if (orGroups.length > 1)
-    where.AND = orGroups.map((g) => ({ OR: g }));
+  const whereSql =
+    predicates.length > 0
+      ? sql`WHERE ${sql.join(predicates, sql` AND `)}`
+      : sql``;
+  const db = await getDrizzleDb();
+  const result = await db.execute<{
+    email: string | null;
+    username: string | null;
+    country: string | null;
+    country_code: string | null;
+    total_deposited: string | null;
+    created_at: Date;
+  }>(sql`
+    SELECT
+      u.email,
+      u.username,
+      u.country,
+      u.country_code,
+      b.total_deposited::text AS total_deposited,
+      u.created_at
+    FROM "user" u
+    LEFT JOIN balances b ON b.user_id = u.id
+    ${whereSql}
+    ORDER BY u.created_at DESC
+    LIMIT 200000
+  `);
 
-  const db = await getDb();
-  const rows = await db.user.findMany({
-    where,
-    select: {
-      email: true,
-      username: true,
-      country: true,
-      country_code: true,
-      created_at: true,
-      balances: {
-        select: { total_deposited: true },
-      },
-    },
-    orderBy: { created_at: "desc" },
-    take: 200_000,
-  });
-
-  return rows
+  return result.rows
     .filter((r) => !filters.requireEmail || typeof r.email === "string")
     .map((r) => ({
       email: r.email ?? "",
@@ -165,9 +159,7 @@ export async function exportUsers(
       country: r.country,
       countryCode: r.country_code,
       totalDepositedUsd:
-        r.balances?.total_deposited != null
-          ? Number(r.balances.total_deposited)
-          : 0,
+        r.total_deposited != null ? Number(r.total_deposited) : 0,
       createdAt: r.created_at.toISOString(),
     }));
 }

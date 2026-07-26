@@ -1,6 +1,12 @@
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { adminDb } from "@/lib/admin-db";
+import { and, desc, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import { queryMainRows } from "@/lib/drizzle-query";
+import { adminDrizzle } from "@/lib/drizzle";
+import {
+  admin_audit_events,
+  admin_giveaway_actions,
+  admin_users,
+} from "@/lib/db-schema/admin/schema";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -13,7 +19,7 @@ import {
   MANUAL_WD_DESC_PREFIX,
 } from "./_shared";
 import {
-  officialStreamAdjustmentPrismaWhere,
+  officialStreamAdjustmentSqlPredicate,
   OFFICIAL_STREAM_ADJUSTMENT_CATEGORY,
 } from "@/lib/balance-adjustment-categories";
 
@@ -97,7 +103,6 @@ async function computeAuditTrail(
   period: InsightsRewardsPeriod,
   limit: number,
 ): Promise<AuditTrail> {
-  const db = await getDb();
   const days = daysForInsightsPeriod(period);
   const since =
     days !== null ? new Date(Date.now() - days * 86_400_000) : undefined;
@@ -108,33 +113,40 @@ async function computeAuditTrail(
   // everywhere. `NOT (admin_balance_adjustment AND category=official_stream)`
   // combined with the outer `type` filter leaves the non-official_stream
   // adjustments.
-  const notOfficialStream = { NOT: officialStreamAdjustmentPrismaWhere() };
+  const officialStreamPredicate = officialStreamAdjustmentSqlPredicate({
+    typeColumn: "lt.type",
+    metadataColumn: "lt.metadata",
+  });
+  type LedgerRow = {
+    id: string;
+    user_id: string;
+    amount: string;
+    description: string | null;
+    created_at: Date;
+  };
   const [ledgerRows, totalInWindow] = await Promise.all([
-    db.ledger_transactions.findMany({
-      where: {
-        type: "admin_balance_adjustment",
-        status: "completed",
-        ...(since ? { created_at: { gte: since } } : {}),
-        ...notOfficialStream,
-      },
-      orderBy: { created_at: "desc" },
-      take: limit,
-      select: {
-        id: true,
-        user_id: true,
-        amount: true,
-        description: true,
-        created_at: true,
-      },
-    }),
-    db.ledger_transactions.count({
-      where: {
-        type: "admin_balance_adjustment",
-        status: "completed",
-        ...(since ? { created_at: { gte: since } } : {}),
-        ...notOfficialStream,
-      },
-    }),
+    queryMainRows<LedgerRow[]>(
+      `SELECT lt.id, lt.user_id, lt.amount::text AS amount,
+              lt.description, lt.created_at
+       FROM ledger_transactions lt
+       WHERE lt.type::text = 'admin_balance_adjustment'
+         AND lt.status::text = 'completed'
+         AND ($1::timestamptz IS NULL OR lt.created_at >= $1::timestamptz)
+         AND NOT (${officialStreamPredicate})
+       ORDER BY lt.created_at DESC
+       LIMIT $2`,
+      since ?? null,
+      limit,
+    ),
+    queryMainRows<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count
+       FROM ledger_transactions lt
+       WHERE lt.type::text = 'admin_balance_adjustment'
+         AND lt.status::text = 'completed'
+         AND ($1::timestamptz IS NULL OR lt.created_at >= $1::timestamptz)
+         AND NOT (${officialStreamPredicate})`,
+      since ?? null,
+    ).then((rows) => Number(rows[0]?.count ?? 0)),
   ]);
 
   if (ledgerRows.length === 0) {
@@ -151,38 +163,42 @@ async function computeAuditTrail(
   const auditLowerBound = auditSince ?? new Date(oldestLedger.getTime() - MATCH_TOLERANCE_MS);
 
   const [auditEvents, giveawayRows] = await Promise.all([
-    adminDb.admin_audit_events.findMany({
-      where: {
-        event_type: { in: ["balance_adjustment", "manual_withdrawal_recorded"] },
-        admin_user_id: { not: null },
-        created_at: { gte: auditLowerBound },
-        // FAKE-BALANCE: drop official_stream attribution events too (the
-        // matching ledger rows are already filtered out above).
-        NOT: {
-          metadata: {
-            path: ["category"],
-            equals: OFFICIAL_STREAM_ADJUSTMENT_CATEGORY,
-          },
-        },
-      },
-      orderBy: { created_at: "desc" },
-      take: Math.max(limit * 3, 300),
-      select: {
-        id: true,
-        admin_user_id: true,
-        target_user_id: true,
-        event_type: true,
-        metadata: true,
-        created_at: true,
-      },
-    }),
+    adminDrizzle
+      .select({
+        id: admin_audit_events.id,
+        admin_user_id: admin_audit_events.admin_user_id,
+        target_user_id: admin_audit_events.target_user_id,
+        event_type: admin_audit_events.event_type,
+        metadata: admin_audit_events.metadata,
+        created_at: admin_audit_events.created_at,
+      })
+      .from(admin_audit_events)
+      .where(
+        and(
+          inArray(admin_audit_events.event_type, [
+            "balance_adjustment",
+            "manual_withdrawal_recorded",
+          ]),
+          isNotNull(admin_audit_events.admin_user_id),
+          gte(admin_audit_events.created_at, auditLowerBound.toISOString()),
+          sql`COALESCE(${admin_audit_events.metadata}->>'category', '') <> ${OFFICIAL_STREAM_ADJUSTMENT_CATEGORY}`,
+        ),
+      )
+      .orderBy(desc(admin_audit_events.created_at))
+      .limit(Math.max(limit * 3, 300)),
     // 2b. Giveaway rows carry a clean ledger_tx_id FK — the reliable path.
-    adminDb.admin_giveaway_actions.findMany({
-      where: {
-        ledger_tx_id: { in: ledgerRows.map((r) => r.id) },
-      },
-      select: { ledger_tx_id: true, admin_user_id: true },
-    }),
+    adminDrizzle
+      .select({
+        ledger_tx_id: admin_giveaway_actions.ledger_tx_id,
+        admin_user_id: admin_giveaway_actions.admin_user_id,
+      })
+      .from(admin_giveaway_actions)
+      .where(
+        inArray(
+          admin_giveaway_actions.ledger_tx_id,
+          ledgerRows.map((r) => r.id),
+        ),
+      ),
   ]);
 
   // Resolve usernames for both sides.
@@ -194,15 +210,17 @@ async function computeAuditTrail(
     ]),
   ];
   const [users, admins] = await Promise.all([
-    db.user.findMany({
-      where: { id: { in: userIds } },
-      select: { id: true, username: true },
-    }),
+    queryMainRows<{ id: string; username: string | null }[]>(
+      `SELECT id, username
+       FROM "user"
+       WHERE id = ANY($1::text[])`,
+      userIds,
+    ),
     adminIds.length > 0
-      ? adminDb.admin_users.findMany({
-          where: { id: { in: adminIds } },
-          select: { id: true, username: true },
-        })
+      ? adminDrizzle
+          .select({ id: admin_users.id, username: admin_users.username })
+          .from(admin_users)
+          .where(inArray(admin_users.id, adminIds))
       : Promise.resolve([]),
   ]);
   const userMap = new Map(users.map((u) => [u.id, u.username]));
@@ -260,7 +278,7 @@ async function computeAuditTrail(
           const ea = metaAmount(e);
           // amount must match (within a cent for float noise).
           if (ea === null || Math.abs(ea - amount) > 0.01) continue;
-          const dt = Math.abs(e.created_at.getTime() - ltTime);
+          const dt = Math.abs(new Date(e.created_at).getTime() - ltTime);
           if (dt <= MATCH_TOLERANCE_MS && dt < bestDt) {
             bestDt = dt;
             best = { id: e.id, admin: e.admin_user_id };

@@ -1,7 +1,8 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { sql } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getWindowMetrics, type WindowMetrics } from "@/lib/metrics/queries";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
@@ -66,31 +67,39 @@ function bucketedNow(): Date {
 
 async function getOrganicUpgraderStake(
   cutoff: Date,
-  blacklistIdNotIn: string,
+  excludedIds: readonly string[],
 ): Promise<number> {
-  const db = await getDb();
-  const probe = await db.$queryRaw<{ exists: string | null }[]>`
-    SELECT to_regclass('public.upgrader_games')::text AS exists`;
-  if (probe[0]?.exists == null) return 0;
+  const db = await getDrizzleDb();
+  const probe = await db.execute<{ exists: string | null }>(sql`
+    SELECT to_regclass('public.upgrader_games')::text AS exists
+  `);
+  if (probe.rows[0]?.exists == null) return 0;
 
-  const rows = await db.$queryRawUnsafe<{ upgrader_organic: string }[]>(
-    `WITH real_users AS (
+  const blacklistFilter =
+    excludedIds.length === 0
+      ? sql``
+      : sql`AND u.id NOT IN (${sql.join(
+          excludedIds.map((id) => sql`${id}`),
+          sql`, `,
+        )})`;
+  const result = await db.execute<{ upgrader_organic: string }>(sql`
+    WITH real_users AS (
        SELECT u.id,
               EXISTS (
                 SELECT 1 FROM "user" ref
                 WHERE ref.id = u.referred_by AND ref.role = 'creator'
               ) AS under_creator
        FROM "user" u
-       WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
+       WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistFilter}
      )
      SELECT
        COALESCE(SUM(ug.bet_amount::numeric), 0)::text AS upgrader_organic
      FROM upgrader_games ug
      JOIN real_users ru ON ru.id = ug.user_id
      WHERE NOT ru.under_creator
-       AND ug.created_at >= '${cutoff.toISOString()}'::timestamptz`,
-  );
-  return toNumber(rows[0]?.upgrader_organic);
+       AND ug.created_at >= ${cutoff}
+  `);
+  return toNumber(result.rows[0]?.upgrader_organic);
 }
 
 export async function getCanonicalMoneyKpis(cutoff: Date): Promise<HouseMoneyKpis> {
@@ -114,7 +123,7 @@ export async function getCanonicalMoneyKpis(cutoff: Date): Promise<HouseMoneyKpi
       "house-kpis.windowMetrics",
       REWARD_QUERY_TIMEOUT_MS,
     ),
-    getOrganicUpgraderStake(cutoff, blacklistIdNotIn),
+    getOrganicUpgraderStake(cutoff, [...excluded]),
   ]);
 
   const parsed = parsePeriodWindowRow(windowRows.current);

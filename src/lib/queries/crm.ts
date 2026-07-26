@@ -1,12 +1,9 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { WAGER_TYPES_SQL, GAMING_PAYOUT_TYPES_SQL } from "@/lib/metrics";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getCrmRowsFromClickHouse } from "@/lib/clickhouse/queries/crm";
-import { compareCrmSnapshot } from "@/lib/clickhouse/comparison";
 import { getCreatorSessionWindowsCte } from "./creator-session-windows";
 import {
   realCustomersScopeSql,
@@ -68,19 +65,17 @@ type RawRow = CrmAggregateRow;
  * probe avoids a 42P01 throw on a migration-lagged snapshot.
  */
 async function hasUpgraderGames(): Promise<boolean> {
-  const db = await getDb();
-  const probe = await db.$queryRaw<{ exists: string | null }[]>`
-    SELECT to_regclass('public.upgrader_games')::text AS exists`;
+  const probe = await queryMainRows<{ exists: string | null }[]>(
+    `SELECT to_regclass('public.upgrader_games')::text AS exists`,
+  );
   return probe[0]?.exists != null;
 }
 
 async function computeCrmRowsPg(anchor: Date): Promise<RawRow[]> {
-  const db = await getDb();
   const scope = await realCustomersScopeSql();
   const sessionWindowsCte = await getCreatorSessionWindowsCte();
   const upgrader = await hasUpgraderGames();
   // Anchor every NOW()-relative term (cutoff + recency + signup) to a single
-  // fixed instant so the read is deterministic — and so the ClickHouse twin,
   // fed the SAME anchor, computes identical recency/signup buckets (no
   // wall-clock skew between the two engines during comparison/parity). The
   // 365-day cutoff is computed as exact seconds (not a calendar INTERVAL) so
@@ -98,7 +93,7 @@ async function computeCrmRowsPg(anchor: Date): Promise<RawRow[]> {
         AND ${tsCol} <  sw.win_end
     )`;
 
-  const rows = await db.$queryRawUnsafe<RawRow[]>(`
+  const rows = await queryMainRows<RawRow[]>(`
     WITH ${sessionWindowsCte},
          ${BORROW_FILTER_CTES},
          deposit_src AS (
@@ -194,7 +189,6 @@ async function computeCrmRowsPg(anchor: Date): Promise<RawRow[]> {
  * returned.
  *
  * Read HERE and shared by BOTH read legs rather than derived inside each: the
- * level lives in `user_statistics`, which ClickHouse does not mirror, so a CH
  * leg computing its own would produce a snapshot the Postgres leg could never
  * match. It is also current state, not a windowed metric — nothing about it
  * belongs in the 365-day aggregate.
@@ -205,11 +199,12 @@ async function computeCrmRowsPg(anchor: Date): Promise<RawRow[]> {
  */
 async function fetchLevels(userIds: string[]): Promise<Map<string, number>> {
   if (userIds.length === 0) return new Map();
-  const db = await getDb();
-  const rows = await db.user_statistics.findMany({
-    where: { user_id: { in: userIds } },
-    select: { user_id: true, level: true },
-  });
+  const rows = await queryMainRows<{ user_id: string; level: number }[]>(
+    `SELECT user_id, level
+     FROM user_statistics
+     WHERE user_id = ANY($1::text[])`,
+    userIds,
+  );
   return new Map(rows.map((r) => [r.user_id, r.level]));
 }
 
@@ -218,7 +213,6 @@ async function fetchLevels(userIds: string[]): Promise<Map<string, number>> {
  * per-customer aggregate rows, bucketed by the SAME pure `bucketCrmSnapshot`,
  * so the served snapshot is identical regardless of engine:
  *
- *   • "clickhouse" → CH twin is the SOLE read (on failure it throws THROUGH the
  *     cache so the page's `safeQuery` degrades — never re-runs the heavy PG
  *     aggregate).
  *   • "comparison" → serve Postgres, fire-and-forget drift log.
@@ -228,20 +222,10 @@ async function fetchLevels(userIds: string[]): Promise<Map<string, number>> {
  * so cutoff/recency/signup are wall-clock-identical across the two paths.
  */
 async function computeCrmSnapshot(blacklist: string[]): Promise<CrmSnapshot> {
+  void blacklist;
   const anchor = new Date();
-  return resolveAdminRead<CrmSnapshot>("crm_snapshot", {
-    pg: async () => {
-      const rows = await computeCrmRowsPg(anchor);
-      return bucketCrmSnapshot(rows, await fetchLevels(rows.map((r) => r.user_id)));
-    },
-    ch: async () => {
-      const rows = await getCrmRowsFromClickHouse(anchor, blacklist);
-      return bucketCrmSnapshot(rows, await fetchLevels(rows.map((r) => r.user_id)));
-    },
-    compare: (snapshot) => {
-      void compareCrmSnapshot(anchor, blacklist, snapshot);
-    },
-  });
+  const rows = await computeCrmRowsPg(anchor);
+  return bucketCrmSnapshot(rows, await fetchLevels(rows.map((r) => r.user_id)));
 }
 
 /**

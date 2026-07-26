@@ -23,7 +23,6 @@ export type AnalyticsTab =
 
 // Cohorts / Funnel / Creator LTV / Retention / Top Performers were deleted
 // (owner, 2026-07-23: "never was used, over-engineered"). Their tab files,
-// query modules and ClickHouse twins went with them — these are not hidden
 // tabs, there is no code left behind them.
 //
 // Revenue went the same way (owner, 2026-07-23): its four source tables and

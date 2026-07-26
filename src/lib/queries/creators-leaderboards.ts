@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { calculateUsersBoundedWindowedPnlBatch } from "./pnl";
@@ -21,7 +21,6 @@ export type LeaderboardRanking = {
    * standings deliberately still INCLUDE them (so this view mirrors the
    * real, user-facing leaderboard on packy.gg) and just flag them so an
    * operator can tell they're excluded from analytics aggregates.
-   * Optional — the ClickHouse comparison twin doesn't populate it.
    */
   excluded?: boolean;
 };
@@ -109,8 +108,6 @@ export async function getAffiliateLeaderboardRankings(opts: {
   const participatingCreatorIds = [creatorUserId, ...coCreatorUserIds];
   const limit = Math.max(1, Math.min(Math.floor(opts.limit ?? 100), 500));
 
-  const db = await getDb();
-
   // Excluded-users blacklist — used only to FLAG rows now, never to drop
   // them. This view must mirror the real packy.gg leaderboard (a blacklisted
   // user who's actually #1 has to show as #1 here too); the badge tells the
@@ -130,18 +127,26 @@ export async function getAffiliateLeaderboardRankings(opts: {
   // Lookup is by (leaderboard_id, position) — hits
   // `affiliate_leaderboard_snapshots_leaderboard_position_idx`.
   if (opts.leaderboardId) {
-    const snaps = await db.affiliate_leaderboard_snapshots.findMany({
-      where: { leaderboard_id: opts.leaderboardId },
-      orderBy: { position: "asc" },
-      take: limit,
-      select: {
-        user_id: true,
-        position: true,
-        total_wagered_usd: true,
-        prize_amount_usd: true,
-        user: { select: { username: true, email: true } },
-      },
-    });
+    const snaps = await queryMainRows<{
+      user_id: string;
+      position: number;
+      total_wagered_usd: string;
+      prize_amount_usd: string;
+      username: string | null;
+      email: string | null;
+    }[]>(
+      `SELECT als.user_id, als.position,
+              als.total_wagered_usd::text AS total_wagered_usd,
+              als.prize_amount_usd::text AS prize_amount_usd,
+              u.username, u.email
+       FROM affiliate_leaderboard_snapshots als
+       LEFT JOIN "user" u ON u.id = als.user_id
+       WHERE als.leaderboard_id = $1
+       ORDER BY als.position ASC
+       LIMIT $2`,
+      opts.leaderboardId,
+      limit,
+    );
     if (snaps.length > 0) {
       const snapPrizeByPosition = new Map<number, number>();
       for (const t of prizeTiers) {
@@ -162,8 +167,8 @@ export async function getAffiliateLeaderboardRankings(opts: {
           return {
             position: s.position,
             userId: s.user_id,
-            username: s.user?.username ?? null,
-            email: s.user?.email ?? null,
+            username: s.username,
+            email: s.email,
             totalWageredUsd: toNumber(s.total_wagered_usd),
             housePnlUsd: pnlByUser.get(s.user_id) ?? 0,
             // Prefer the prize frozen on the snapshot; fall back to the
@@ -204,7 +209,7 @@ export async function getAffiliateLeaderboardRankings(opts: {
     // Multi-creator: union codes from primary + every co-creator. Each
     // participating creator's codes are eligible — that's the whole point
     // of the shared-leaderboard feature.
-    const owned = await db.$queryRawUnsafe<{ code: string }[]>(
+    const owned = await queryMainRows<{ code: string }[]>(
       `SELECT code FROM affiliate_codes WHERE user_id = ANY($1::text[])`,
       participatingCreatorIds,
     );
@@ -249,7 +254,7 @@ export async function getAffiliateLeaderboardRankings(opts: {
   // rows have NULL weighted values and count at full weight. Summing raw
   // wager_amount_usd here used to mis-rank/mis-total any board with non-1×
   // game weights vs what packy.gg actually shows.
-  const rows = await db.$queryRawUnsafe<Row[]>(
+  const rows = await queryMainRows<Row[]>(
     `SELECT
        acu.referred_user_id AS user_id,
        u.username,
@@ -289,7 +294,7 @@ export async function getAffiliateLeaderboardRankings(opts: {
         return new Map<string, number>();
       },
     ),
-    getPositionReachedAtBatch(db, {
+    getPositionReachedAtBatch({
       userIds,
       thresholds,
       totals,
@@ -346,24 +351,30 @@ export type LeaderboardClaim = {
 export async function getAffiliateLeaderboardClaims(
   leaderboardId: string,
 ): Promise<LeaderboardClaim[]> {
-  const db = await getDb();
-  const rows = await db.affiliate_leaderboard_claims.findMany({
-    where: { leaderboard_id: leaderboardId },
-    select: {
-      user_id: true,
-      position: true,
-      prize_amount_usd: true,
-      claimed_at: true,
-      ledger_tx_id: true,
-      user: { select: { username: true, email: true } },
-    },
-    orderBy: { position: "asc" },
-  });
+  const rows = await queryMainRows<{
+    user_id: string;
+    position: number;
+    prize_amount_usd: string;
+    claimed_at: Date;
+    ledger_tx_id: string;
+    username: string | null;
+    email: string | null;
+  }[]>(
+    `SELECT alc.user_id, alc.position,
+            alc.prize_amount_usd::text AS prize_amount_usd,
+            alc.claimed_at, alc.ledger_tx_id,
+            u.username, u.email
+     FROM affiliate_leaderboard_claims alc
+     LEFT JOIN "user" u ON u.id = alc.user_id
+     WHERE alc.leaderboard_id = $1
+     ORDER BY alc.position ASC`,
+    leaderboardId,
+  );
 
   return rows.map((r) => ({
     userId: r.user_id,
-    username: r.user?.username ?? null,
-    email: r.user?.email ?? null,
+    username: r.username,
+    email: r.email,
     position: r.position,
     prizeUsd: toNumber(r.prize_amount_usd),
     claimedAt: r.claimed_at.toISOString(),
@@ -383,7 +394,6 @@ type PositionReachedParams = {
 };
 
 async function getPositionReachedAtBatch(
-  db: Awaited<ReturnType<typeof getDb>>,
   params: PositionReachedParams,
 ): Promise<Map<string, Date>> {
   const {
@@ -457,7 +467,7 @@ async function getPositionReachedAtBatch(
     GROUP BY user_id
   `;
 
-  const reachedRows = await db.$queryRawUnsafe<
+  const reachedRows = await queryMainRows<
     { user_id: string; reached_at: Date | null }[]
   >(query, ...sqlParams);
 

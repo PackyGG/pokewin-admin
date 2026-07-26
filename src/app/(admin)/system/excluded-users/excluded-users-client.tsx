@@ -189,9 +189,9 @@ export function ExcludedUsersClient({
               <span className="font-medium text-foreground">
                 Balance 2.0 storage not provisioned.
               </span>{" "}
-              Apply{" "}
+              Ask the owner to apply the reviewed{" "}
               <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
-                prisma/admin/migrations/20260605000000_add_excluded_user_balance_v2/migration.sql
+                Balance 2.0 Admin DB migration
               </code>{" "}
               against the admin DB to enable editing. Reads will fall back
               to <span className="font-mono">—</span> until the table

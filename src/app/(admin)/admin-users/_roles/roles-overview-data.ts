@@ -1,7 +1,7 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
-import { readAdminUsersWithRoles } from "@/lib/admin-user-roles";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 import {
   ALL_ADMIN_ROLES,
   getEffectiveRoles,
@@ -208,28 +208,30 @@ function countTokens(tokens: readonly string[]): {
  */
 export async function getRolesOverview(): Promise<RolesOverview> {
   // ── 1. Holder counts per built-in enum role (one grouped query) ───────────
-  const roleGroups = await adminDb.admin_users.groupBy({
-    by: ["role"],
-    _count: { _all: true },
-  });
+  const roleGroups = (await adminDrizzle.execute<{
+    role: string;
+    count: string;
+  }>(sql`
+    SELECT role::text AS role, COUNT(*)::text AS count
+    FROM admin_users GROUP BY role
+  `)).rows;
   const holdersByRole = new Map<string, number>();
-  for (const g of roleGroups) holdersByRole.set(g.role, g._count._all);
+  for (const g of roleGroups) holdersByRole.set(g.role, Number(g.count));
 
   // ── 2. Every admin_roles row (system + custom) in one read ────────────────
-  const allRoleRows = await adminDb.admin_roles.findMany({
-    orderBy: { name: "asc" },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      is_system: true,
-      system_key: true,
-      capabilities: true,
-      landing_route: true,
-      updated_at: true,
-      _count: { select: { admin_users: true } },
-    },
-  });
+  const allRoleRows = (await adminDrizzle.execute<{
+    id: string; name: string; description: string | null; is_system: boolean;
+    system_key: string | null; capabilities: string[]; landing_route: string | null;
+    updated_at: Date; user_count: string;
+  }>(sql`
+    SELECT r.id::text, r.name, r.description, r.is_system, r.system_key,
+           r.capabilities, r.landing_route, r.updated_at,
+           COUNT(u.id)::text AS user_count
+    FROM admin_roles r
+    LEFT JOIN admin_users u ON u.role_id = r.id
+    GROUP BY r.id
+    ORDER BY r.name ASC
+  `)).rows;
 
   // Index the system rows by their enum key so each built-in's id / edited caps
   // can be looked up; collect the custom rows separately for the merge.
@@ -286,7 +288,7 @@ export async function getRolesOverview(): Promise<RolesOverview> {
       pageCount,
       capabilityCount,
       tokenCount: r.capabilities.length,
-      holderCount: r._count.admin_users,
+      holderCount: Number(r.user_count),
       landingRoute: r.landing_route ?? null,
       updatedAt: r.updated_at.toISOString(),
     };
@@ -301,29 +303,15 @@ export async function getRolesOverview(): Promise<RolesOverview> {
   // Per-user override count: read every NON-admin admin_user (roles column
   // degrades to [] pre-migration via readAdminUsersWithRoles) and compare
   // their effective set to their baseline-implied set.
-  const nonAdminUsers = await readAdminUsersWithRoles(
-    () =>
-      adminDb.admin_users.findMany({
-        where: { role: { not: "admin" } },
-        select: {
-          id: true,
-          role: true,
-          roles: true,
-          role_id: true,
-          allowed_pages: true,
-        },
-      }),
-    () =>
-      adminDb.admin_users.findMany({
-        where: { role: { not: "admin" } },
-        select: {
-          id: true,
-          role: true,
-          role_id: true,
-          allowed_pages: true,
-        },
-      }),
-  );
+  const nonAdminUsers = (await adminDrizzle.execute<{
+    id: string; role: string; roles: string[]; role_id: string | null;
+    allowed_pages: string[];
+  }>(sql`
+    SELECT id::text, role::text AS role, roles::text[] AS roles,
+           role_id::text, allowed_pages
+    FROM admin_users
+    WHERE role <> 'admin'
+  `)).rows;
 
   let overrideUserCount = 0;
   for (const u of nonAdminUsers as Array<{

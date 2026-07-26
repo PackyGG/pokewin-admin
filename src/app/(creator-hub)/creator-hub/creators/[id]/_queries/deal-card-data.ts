@@ -23,7 +23,7 @@ import {
  *
  * The admin `/creators/[userId]` page keeps the UNCACHED path — its
  * slices are URL-param-driven (deal/session/pending paging) and must stay
- * live. Backend API only inside (no `getDb()` / cookies) → env-safe to
+ * live. Backend API only inside (no request cookie reads) → env-safe to
  * cache. The userId argument is folded into the cache key.
  */
 const DEAL_CARD_PARAMS = {

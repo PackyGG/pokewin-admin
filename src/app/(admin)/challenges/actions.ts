@@ -2,7 +2,10 @@
 
 import { revalidatePath, unstable_cache } from "next/cache";
 import { z } from "zod";
-import { getDb, dbForEnv } from "@/lib/db";
+import { and, asc, eq, ilike, or, sql } from "drizzle-orm";
+
+import { drizzleForEnv, getDrizzleDb } from "@/lib/db";
+import { cards, pack_cards, packs } from "@/lib/db-schema/main/schema";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -28,8 +31,8 @@ import {
 // surface in a toast. Matches the pattern used by raffles/actions.ts.
 //
 // NOTE: challenge data lives in the MAIN game DB and is NOT in the admin
-// Prisma schema — every challenge read/write goes through challengesApi
-// (backend admin API). The only Prisma read here is `searchItems`, which
+// Drizzle schema — every challenge read/write goes through challengesApi
+// (backend admin API). The only direct MAIN read here is `searchItems`, which
 // resolves pack/card pickers against MAIN (a read, which is allowed).
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -85,27 +88,30 @@ export async function searchItems(
     packId?: string;
   } = {},
 ): Promise<SearchItem[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   await requirePageAccess("/rewards");
   const isUuid = UUID_RE.test(query);
 
   if (type === "pack") {
-    const or: Record<string, unknown>[] = [];
-    if (query) {
-      or.push({ name: { contains: query, mode: "insensitive" } });
-      or.push({ slug: { contains: query, mode: "insensitive" } });
-      if (isUuid) or.push({ id: query });
-    }
-    // Only active packs can be a challenge target.
-    const where: Record<string, unknown> = { active: true };
-    if (or.length > 0) where.OR = or;
-    const packs = await db.packs.findMany({
-      where,
-      select: { id: true, name: true, image_url: true, price: true },
-      orderBy: { name: "asc" },
-      take: 20,
-    });
-    return packs.map((p) => ({
+    const search = query
+      ? or(
+          ilike(packs.name, `%${query}%`),
+          ilike(packs.slug, `%${query}%`),
+          ...(isUuid ? [eq(packs.id, query)] : []),
+        )
+      : undefined;
+    const packRows = await db
+      .select({
+        id: packs.id,
+        name: packs.name,
+        image_url: packs.image_url,
+        price: packs.price,
+      })
+      .from(packs)
+      .where(and(eq(packs.active, true), search))
+      .orderBy(asc(packs.name))
+      .limit(20);
+    return packRows.map((p) => ({
       id: p.id,
       type: "pack" as const,
       name: p.name,
@@ -115,49 +121,43 @@ export async function searchItems(
   }
 
   // Card-hit target card → scope to the chosen pack's pool (pack_cards).
-  const or: Record<string, unknown>[] = [];
-  if (query) {
-    or.push({ name: { contains: query, mode: "insensitive" } });
-    if (isUuid) or.push({ id: query });
-  }
-  const where: Record<string, unknown> = {};
-  if (opts.packId) where.pack_cards = { some: { pack_id: opts.packId } };
-  if (or.length > 0) where.OR = or;
-
-  let totalWeight = 0;
-  if (opts.packId) {
-    const weights = await db.pack_cards.findMany({
-      where: { pack_id: opts.packId },
-      select: { weight: true },
-    });
-    totalWeight = weights.reduce((sum, row) => sum + row.weight, 0);
-  }
-
-  const cards = await db.cards.findMany({
-    where: Object.keys(where).length > 0 ? where : undefined,
-    select: {
-      id: true,
-      name: true,
-      image_url: true,
-      price: true,
-      ...(opts.packId
-        ? {
-            pack_cards: {
-              where: { pack_id: opts.packId },
-              select: { weight: true },
-              take: 1,
-            },
-          }
-        : {}),
-    },
-    orderBy: { name: "asc" },
-    take: 20,
-  });
-  return cards.map((c) => {
-    const weight =
-      opts.packId && "pack_cards" in c && Array.isArray(c.pack_cards)
-        ? (c.pack_cards[0]?.weight ?? 0)
-        : 0;
+  const search = query
+    ? or(
+        ilike(cards.name, `%${query}%`),
+        ...(isUuid ? [eq(cards.id, query)] : []),
+      )
+    : undefined;
+  const cardRows = await db
+    .select({
+      id: cards.id,
+      name: cards.name,
+      image_url: cards.image_url,
+      price: cards.price,
+      weight: opts.packId ? pack_cards.weight : sql<number>`0`,
+      total_weight: opts.packId
+        ? sql<number>`(
+            SELECT COALESCE(SUM(pc_total.weight), 0)::int
+            FROM pack_cards pc_total
+            WHERE pc_total.pack_id = ${opts.packId}
+          )`
+        : sql<number>`0`,
+    })
+    .from(cards)
+    .leftJoin(
+      pack_cards,
+      opts.packId
+        ? and(
+            eq(pack_cards.card_id, cards.id),
+            eq(pack_cards.pack_id, opts.packId),
+          )
+        : sql`false`,
+    )
+    .where(and(opts.packId ? eq(pack_cards.pack_id, opts.packId) : undefined, search))
+    .orderBy(asc(cards.name))
+    .limit(20);
+  return cardRows.map((c) => {
+    const weight = c.weight ?? 0;
+    const totalWeight = c.total_weight ?? 0;
     const probabilityPercent = opts.packId
       ? probabilityPercentFromWeight(weight, totalWeight)
       : undefined;
@@ -200,7 +200,7 @@ export async function searchItems(
  *      usable) instead of hanging the Server Action.
  *
  * `env` is threaded in (resolved by the public entry point) and the client
- * is taken via `dbForEnv(env)` — NOT `getDb()`, which reads the request
+ * is taken via `drizzleForEnv(env)` — NOT the request-scoped resolver
  * cookie via `cookies()` and is illegal inside `unstable_cache`. The
  * returned value is a plain `number` (no Date), so the cache JSON
  * round-trip is lossless.
@@ -214,8 +214,8 @@ async function computeCardPullCount(
   packId: string,
   cardId: string,
 ): Promise<number> {
-  const db = dbForEnv(env);
-  const pullRows = await db.$queryRaw<{ count: bigint }[]>`
+  const db = drizzleForEnv(env);
+  const pullRows = await db.execute<{ count: string }>(sql`
     SELECT COUNT(*)::bigint AS count
     FROM user_inventory ui
     WHERE ui.card_id = ${cardId}::uuid
@@ -241,8 +241,8 @@ async function computeCardPullCount(
           )
         )
       )
-  `;
-  return Number(pullRows[0]?.count ?? 0);
+  `);
+  return Number(pullRows.rows[0]?.count ?? 0);
 }
 
 const cachedCardPullCount = unstable_cache(
@@ -256,47 +256,44 @@ export async function getChallengeCardSummary(
   packId: string,
   cardId: string,
 ): Promise<ChallengeCardSummary | null> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   await requirePageAccess("/rewards");
 
   if (!UUID_RE.test(packId) || !UUID_RE.test(cardId)) {
     return null;
   }
 
-  const packCard = await db.pack_cards.findUnique({
-    where: { pack_id_card_id: { pack_id: packId, card_id: cardId } },
-    select: {
-      weight: true,
-      packs: {
-        select: {
-          name: true,
-          price: true,
-          total_openings: true,
-        },
-      },
-      cards: {
-        select: {
-          name: true,
-          image_url: true,
-          price: true,
-        },
-      },
-    },
-  });
+  const [packCard] = await db
+    .select({
+      weight: pack_cards.weight,
+      pack_name: packs.name,
+      pack_price: packs.price,
+      total_openings: packs.total_openings,
+      card_name: cards.name,
+      card_image_url: cards.image_url,
+      card_price: cards.price,
+      total_weight: sql<number>`(
+        SELECT COALESCE(SUM(pc_total.weight), 0)::int
+        FROM pack_cards pc_total
+        WHERE pc_total.pack_id = ${packId}
+      )`,
+    })
+    .from(pack_cards)
+    .innerJoin(packs, eq(packs.id, pack_cards.pack_id))
+    .innerJoin(cards, eq(cards.id, pack_cards.card_id))
+    .where(
+      and(eq(pack_cards.pack_id, packId), eq(pack_cards.card_id, cardId)),
+    )
+    .limit(1);
   if (!packCard) return null;
 
-  const allWeights = await db.pack_cards.findMany({
-    where: { pack_id: packId },
-    select: { weight: true },
-  });
-  const totalWeight = allWeights.reduce((sum, row) => sum + row.weight, 0);
   const probabilityPercent = probabilityPercentFromWeight(
     packCard.weight,
-    totalWeight,
+    packCard.total_weight,
   );
   const expectedOpenings =
     expectedOpeningsFromProbabilityPercent(probabilityPercent);
-  const packPriceUsd = toNumber(packCard.packs.price);
+  const packPriceUsd = toNumber(packCard.pack_price);
 
   // Historical pull-count is the ONE heavy read here (full seq-scan of the
   // unindexed `user_inventory.card_id`). Resolve the DB env in REQUEST scope
@@ -312,11 +309,11 @@ export async function getChallengeCardSummary(
 
   return {
     cardId,
-    cardName: packCard.cards.name,
-    cardImageUrl: packCard.cards.image_url,
-    cardPriceUsd: toNumber(packCard.cards.price),
+    cardName: packCard.card_name,
+    cardImageUrl: packCard.card_image_url,
+    cardPriceUsd: toNumber(packCard.card_price),
     packId,
-    packName: packCard.packs.name,
+    packName: packCard.pack_name,
     packPriceUsd,
     probabilityPercent,
     expectedOpenings,
@@ -324,7 +321,7 @@ export async function getChallengeCardSummary(
       ? theoreticalHouseProfitUsd(expectedOpenings, packPriceUsd)
       : 0,
     cardPullCount,
-    packOpenCount: Number(packCard.packs.total_openings),
+    packOpenCount: Number(packCard.total_openings),
   };
 }
 

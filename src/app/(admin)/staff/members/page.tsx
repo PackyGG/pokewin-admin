@@ -1,9 +1,6 @@
 import { Suspense } from "react";
 import {
-  ArrowDown,
-  ArrowUp,
   GraduationCap,
-  History,
   ShieldCheck,
   Trophy,
   Users,
@@ -22,16 +19,9 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { ROLE_COLORS } from "@/lib/constants";
-import {
-  formatDateTime,
-  formatNumber,
-  formatRelative,
-} from "@/lib/utils/format";
-import {
-  listRecentStaffPointEvents,
-  listStaffMembers,
-} from "@/lib/staff/profile";
-import { levelProgress, STAFF_LEVELS } from "@/lib/staff/levels";
+import { formatNumber, formatRelative } from "@/lib/utils/format";
+import { listStaffMembers } from "@/lib/staff/profile";
+import { levelProgress } from "@/lib/staff/levels";
 import { StaffLevelBadge } from "../_components/badges";
 import { AwardPointsDialog } from "./_components/award-points-dialog";
 
@@ -75,20 +65,12 @@ async function Board({
 }: {
   viewerId: string;
 }) {
-  const [{ data: members }, { data: pointEvents }] = await Promise.all([
-    safeQuery(
-      () => listStaffMembers(),
-      [],
-      "antifraud.staff-members",
-      QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => listRecentStaffPointEvents(100),
-      [],
-      "antifraud.staff-point-ledger",
-      QUERY_TIMEOUT_MS,
-    ),
-  ]);
+  const { data: members } = await safeQuery(
+    () => listStaffMembers(),
+    [],
+    "antifraud.staff-members",
+    QUERY_TIMEOUT_MS,
+  );
 
   const totalPoints = members.reduce(
     (sum, member) => sum + member.profile.pointsTotal,
@@ -271,87 +253,6 @@ async function Board({
           })}
         </ul>
       </div>
-
-      <section className="space-y-4">
-        <SectionHeading icon={History} title="Recent staff point events" />
-        {pointEvents.length === 0 ? (
-          <Empty text="No staff point events have been recorded yet." />
-        ) : (
-          <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
-            {pointEvents.map((event) => (
-              <li
-                key={event.id}
-                className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center"
-              >
-                <span
-                  className={cn(
-                    "flex w-14 shrink-0 items-center gap-1 text-sm font-bold tabular-nums",
-                    event.points > 0
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : "text-rose-600 dark:text-rose-400",
-                  )}
-                >
-                  {event.points > 0 ? (
-                    <ArrowUp className="size-3" />
-                  ) : (
-                    <ArrowDown className="size-3" />
-                  )}
-                  {event.points > 0 ? "+" : ""}
-                  {event.points}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex flex-wrap items-center gap-2">
-                    <span className="truncate text-sm font-semibold">
-                      {event.recipient?.label ?? event.adminUserId.slice(0, 8)}
-                    </span>
-                    <Badge variant="outline" className="h-5 text-[9px] uppercase">
-                      {event.sourceKind}
-                    </Badge>
-                  </span>
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
-                    {event.reason}
-                  </span>
-                </span>
-                <span className="shrink-0 text-right text-[11px] text-muted-foreground">
-                  <span className="block">
-                    {event.actor?.label ??
-                      (event.createdBy ? "Unknown" : "System")}
-                  </span>
-                  <span className="block">
-                    {formatDateTime(event.createdAt)}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="space-y-4">
-        <SectionHeading icon={Trophy} title="Staff level thresholds" />
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-          {STAFF_LEVELS.map((level) => (
-            <div
-              key={level.level}
-              className="rounded-xl border border-border/60 bg-card px-3 py-3"
-            >
-              <StaffLevelBadge level={level.level} />
-              <p className="mt-2 text-sm font-semibold">{level.title}</p>
-              <p className="text-[11px] text-muted-foreground">
-                {formatNumber(level.minPoints)} points
-              </p>
-            </div>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function Empty({ text }: { text: string }) {
-  return (
-    <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-10 text-center text-sm text-muted-foreground">
-      {text}
     </div>
   );
 }

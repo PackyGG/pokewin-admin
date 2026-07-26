@@ -1,5 +1,11 @@
 import { Suspense } from "react";
-import { ArrowDown, ArrowUp, History, Trophy, Users } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  History,
+  Trophy,
+  Users,
+} from "lucide-react";
 
 import { requireStaffManagerPage } from "@/lib/staff/access";
 import { safeQuery } from "@/lib/errors/safe-query";

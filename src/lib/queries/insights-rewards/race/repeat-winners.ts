@@ -1,9 +1,7 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getRaceInsightsRepeatWinnersFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/race/repeat-winners";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -49,26 +47,23 @@ async function computeRepeatWinners(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RaceRepeatWinnersResult> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const dateFilter =
-    days !== null
-      ? `AND rc.claimed_at >= NOW() - INTERVAL '${days} days'`
-      : "";
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const dateFilter = daysAgoFilter("rc.claimed_at", days);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // One sweep over race_claims grouped by user → per-user race count +
   // total prize. We then filter for races > 1 in JS for the buckets +
   // pull top 10 server-side to keep the payload small.
   const [topRows, allRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryRows<
       {
         user_id: string;
         username: string | null;
         race_count: string;
         total_prize: string;
       }[]
-    >(`
+    >(db, sql`
       WITH per_user AS (
         SELECT
           rc.user_id,
@@ -91,7 +86,7 @@ async function computeRepeatWinners(
       ORDER BY pu.total_prize DESC
       LIMIT 10
     `),
-    db.$queryRawUnsafe<{ race_count: string; total_prize: string }[]>(`
+    queryRows<{ race_count: string; total_prize: string }[]>(db, sql`
       SELECT
         COUNT(DISTINCT (rc.race_type, rc.race_period_start))::int::text AS race_count,
         SUM(rc.prize_amount_usd::numeric)::text AS total_prize
@@ -147,20 +142,14 @@ async function computeRepeatWinners(
 
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveAdminRead<RaceRepeatWinnersResult>("insights_race_repeat", {
-      pg: () => computeRepeatWinners(period, blacklistIds),
-      ch: () => getRaceInsightsRepeatWinnersFromClickHouse(period, blacklistIds),
-    }),
+    computeRepeatWinners(period, blacklistIds),
   ["insights-rewards-race-repeat-v1"],
   { revalidate: 60, tags: ["insights-rewards-race"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveAdminRead<RaceRepeatWinnersResult>("insights_race_repeat", {
-      pg: () => computeRepeatWinners(period, blacklistIds),
-      ch: () => getRaceInsightsRepeatWinnersFromClickHouse(period, blacklistIds),
-    }),
+    computeRepeatWinners(period, blacklistIds),
   ["insights-rewards-race-repeat-lifetime-v1"],
   { revalidate: 300, tags: ["insights-rewards-race"] },
 );

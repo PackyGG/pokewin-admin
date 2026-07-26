@@ -5,7 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
  * Matches /antifraud/settings: hero, the access block (role toggles + the two
  * username lists), then the integration status panels.
  */
-export default function WorkspaceSettingsLoading() {
+export default function SettingsLoading() {
   return (
     <div className="space-y-6">
       <PageHeroSkeleton />
@@ -26,7 +26,6 @@ export default function WorkspaceSettingsLoading() {
           <Skeleton className="h-4 w-40" />
         </div>
         <Skeleton className="h-56 w-full rounded-xl" />
-        <Skeleton className="h-40 w-full rounded-xl" />
       </div>
     </div>
   );

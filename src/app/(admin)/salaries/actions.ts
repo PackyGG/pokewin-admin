@@ -2,9 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { adminDb } from "@/lib/admin-db";
+import { count, eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { salary_employees, salary_payments, salary_payouts } from "@/lib/db-schema/admin/schema";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { ensureSalarySchema } from "@/lib/salary/ensure-schema";
 import { requireMotha } from "@/lib/salary/motha-gate";
 import { isAddress, normalizeAddress } from "@/lib/salary/wallet";
 
@@ -35,19 +36,12 @@ const updateEmployeeSchema = employeeSchema.partial().extend({
   id: z.string().uuid(),
 });
 
-// All write actions self-heal the schema so a missing migration
-// doesn't surface as a P2021 to the admin. The page does the same.
-async function ensure(): Promise<void> {
-  await ensureSalarySchema().catch(() => {});
-}
-
 // ── Employees ───────────────────────────────────────────────────────
 
 export async function addSalaryEmployee(
   data: z.infer<typeof employeeSchema>,
 ): Promise<{ success: true; id: string } | { success: false; error: string }> {
   const session = await requireMotha();
-  await ensure();
   const parsed = employeeSchema.safeParse(data);
   if (!parsed.success) {
     return {
@@ -63,20 +57,19 @@ export async function addSalaryEmployee(
     };
   }
 
-  const created = await adminDb.salary_employees.create({
-    data: {
+  const [created] = await adminDrizzle.insert(salary_employees).values({
       discord_name: parsed.data.discordName,
       eth_address: normalizeAddress(address),
       cadence: parsed.data.cadence ?? "monthly",
-      salary_usdt: parsed.data.salaryUsdt,
+      salary_usdt: String(parsed.data.salaryUsdt),
       max_per_payout: null,
       notes: parsed.data.notes?.trim() || null,
       active: parsed.data.active ?? true,
       pay_day_of_month: parsed.data.payDayOfMonth ?? null,
       created_by_id: session.userId,
-    },
-    select: { id: true },
-  });
+      updated_at: new Date().toISOString(),
+    }).returning({ id: salary_employees.id });
+  if (!created) throw new Error("Salary employee insert returned no row");
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -98,7 +91,6 @@ export async function updateSalaryEmployee(
   data: z.infer<typeof updateEmployeeSchema>,
 ): Promise<{ success: true } | { success: false; error: string }> {
   const session = await requireMotha();
-  await ensure();
   const parsed = updateEmployeeSchema.safeParse(data);
   if (!parsed.success) {
     return {
@@ -106,7 +98,7 @@ export async function updateSalaryEmployee(
       error: parsed.error.issues[0]?.message ?? "Invalid input",
     };
   }
-  const updateData: Record<string, unknown> = {};
+  const updateData: Partial<typeof salary_employees.$inferInsert> = {};
   if (parsed.data.discordName !== undefined)
     updateData.discord_name = parsed.data.discordName;
   if (parsed.data.ethAddress !== undefined) {
@@ -120,7 +112,7 @@ export async function updateSalaryEmployee(
   }
   if (parsed.data.cadence !== undefined) updateData.cadence = parsed.data.cadence;
   if (parsed.data.salaryUsdt !== undefined)
-    updateData.salary_usdt = parsed.data.salaryUsdt;
+    updateData.salary_usdt = String(parsed.data.salaryUsdt);
   if (parsed.data.notes !== undefined) {
     updateData.notes = parsed.data.notes?.trim() || null;
   }
@@ -132,11 +124,8 @@ export async function updateSalaryEmployee(
     return { success: false, error: "Nothing to update" };
   }
 
-  await adminDb.salary_employees.update({
-    where: { id: parsed.data.id },
-    data: updateData,
-    select: { id: true },
-  });
+  await adminDrizzle.update(salary_employees).set(updateData)
+    .where(eq(salary_employees.id, parsed.data.id));
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -152,15 +141,14 @@ export async function deleteSalaryEmployee(
   employeeId: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
   const session = await requireMotha();
-  await ensure();
   if (!z.string().uuid().safeParse(employeeId).success) {
     return { success: false, error: "Invalid id" };
   }
   // Refuse to delete if there are payouts on file — historical record
   // matters. Mark inactive instead.
-  const payoutCount = await adminDb.salary_payouts.count({
-    where: { employee_id: employeeId },
-  });
+  const [payout] = await adminDrizzle.select({ value: count() }).from(salary_payouts)
+    .where(eq(salary_payouts.employee_id, employeeId));
+  const payoutCount = payout?.value ?? 0;
   if (payoutCount > 0) {
     return {
       success: false,
@@ -168,10 +156,7 @@ export async function deleteSalaryEmployee(
     };
   }
 
-  await adminDb.salary_employees.delete({
-    where: { id: employeeId },
-    select: { id: true },
-  });
+  await adminDrizzle.delete(salary_employees).where(eq(salary_employees.id, employeeId));
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -221,7 +206,6 @@ export async function addSalaryPayment(data: {
   paidAt?: string;
 }): Promise<{ success: true; id: string } | { success: false; error: string }> {
   const session = await requireMotha();
-  await ensure();
   const parsed = addPaymentSchema.safeParse(data);
   if (!parsed.success) {
     return {
@@ -230,10 +214,9 @@ export async function addSalaryPayment(data: {
     };
   }
 
-  const employee = await adminDb.salary_employees.findUnique({
-    where: { id: parsed.data.employeeId },
-    select: { id: true, discord_name: true },
-  });
+  const [employee] = await adminDrizzle.select({
+    id: salary_employees.id, discord_name: salary_employees.discord_name,
+  }).from(salary_employees).where(eq(salary_employees.id, parsed.data.employeeId)).limit(1);
   if (!employee) return { success: false, error: "Employee not found" };
 
   let paidAt = new Date();
@@ -245,15 +228,13 @@ export async function addSalaryPayment(data: {
     paidAt = d;
   }
 
-  const created = await adminDb.salary_payments.create({
-    data: {
+  const [created] = await adminDrizzle.insert(salary_payments).values({
       employee_id: employee.id,
       payment_link: parsed.data.paymentLink,
-      paid_at: paidAt,
+      paid_at: paidAt.toISOString(),
       created_by_id: session.userId,
-    },
-    select: { id: true },
-  });
+    }).returning({ id: salary_payments.id });
+  if (!created) throw new Error("Salary payment insert returned no row");
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -274,17 +255,16 @@ export async function deleteSalaryPayment(
   paymentId: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
   const session = await requireMotha();
-  await ensure();
   const parsed = deletePaymentSchema.safeParse({ paymentId });
   if (!parsed.success) {
     return { success: false, error: "Invalid id" };
   }
 
   try {
-    await adminDb.salary_payments.delete({
-      where: { id: parsed.data.paymentId },
-      select: { id: true },
-    });
+    const deleted = await adminDrizzle.delete(salary_payments)
+      .where(eq(salary_payments.id, parsed.data.paymentId))
+      .returning({ id: salary_payments.id });
+    if (deleted.length === 0) throw new Error("Payment not found");
   } catch {
     return { success: false, error: "Payment not found" };
   }

@@ -2,10 +2,8 @@ import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
 
 const nextConfig: NextConfig = {
-  // @clickhouse/client is a Node-native client (http/https, streams). Keep it
-  // external so the bundler doesn't try to bundle it into server output. Inert
-  // until the ClickHouse read layer is actually imported by a query path.
-  serverExternalPackages: ["@clickhouse/client"],
+  // Don't advertise the framework/version (SECURITY_AUDIT.md MEDIUM-7).
+  poweredByHeader: false,
   turbopack: {
     root: __dirname,
   },
@@ -45,6 +43,32 @@ const nextConfig: NextConfig = {
       "recharts",
       "@tanstack/react-table",
     ],
+  },
+  // Security response headers on every route (SECURITY_AUDIT.md MEDIUM-7).
+  // Deliberately conservative: HSTS + anti-clickjacking + nosniff + referrer/
+  // permissions policy. The CSP is limited to `frame-ancestors 'none'` so it
+  // hardens against framing WITHOUT a script-src/style-src that could break
+  // Next's inline runtime — a full CSP is a separate, tested follow-up.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=31536000; includeSubDomains; preload",
+          },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=(), browsing-topics=()",
+          },
+          { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+        ],
+      },
+    ];
   },
   async redirects() {
     return [

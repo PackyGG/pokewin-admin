@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { adminDb } from "@/lib/admin-db";
+import { eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_users } from "@/lib/db-schema/admin/schema";
 import { verifySession } from "@/lib/dal";
 
 // UUID v4-ish validation — protects against SQL-probe ids being passed through.
@@ -28,16 +30,25 @@ export async function GET(
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
   }
 
-  let row: { profile_image: Uint8Array | null; profile_image_mime: string | null } | null;
+  let row:
+    | { profile_image: Uint8Array | null; profile_image_mime: string | null }
+    | undefined;
   try {
-    row = await adminDb.admin_users.findUnique({
-      where: { id },
-      select: { profile_image: true, profile_image_mime: true },
-    });
+    [row] = await adminDrizzle
+      .select({
+        profile_image: admin_users.profile_image,
+        profile_image_mime: admin_users.profile_image_mime,
+      })
+      .from(admin_users)
+      .where(eq(admin_users.id, id))
+      .limit(1);
   } catch (err) {
     // Pre-migration: columns missing → treat as "no avatar".
     const code = (err as { code?: string })?.code;
-    if (code === "P2022" || (err instanceof Error && /column .* does not exist/i.test(err.message))) {
+    if (
+      code === "42703" ||
+      (err instanceof Error && /column .* does not exist/i.test(err.message))
+    ) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     throw err;
@@ -47,7 +58,7 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Prisma returns Bytes as a Uint8Array. Copy into a fresh ArrayBuffer so
+  // node-postgres returns bytea as a Buffer/Uint8Array. Copy it so
   // we can hand it straight to NextResponse without BodyInit type friction.
   const src = row.profile_image;
   const body = new Uint8Array(new ArrayBuffer(src.length));

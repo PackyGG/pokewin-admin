@@ -2,10 +2,10 @@
 
 import { revalidatePath, revalidateTag, unstable_cache } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
+import { sql } from "drizzle-orm";
 import { isUuid } from "@/lib/utils/ids";
-import type { pack_tag } from "@/generated/prisma/enums";
-import { getDb } from "@/lib/db";
-import { adminDb } from "@/lib/admin-db";
+import { getDrizzleDb } from "@/lib/db";
+import { adminDrizzle } from "@/lib/admin-db";
 import { sessionHasRole } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
@@ -94,6 +94,16 @@ import {
   omitZeroWeightRows,
   type RetunePinnedOdds,
 } from "@/app/(admin)/packs/_lib/retune-params";
+
+type PackTag = "pct1" | "pct5" | "pct10" | "fifty50" | "onepiece";
+
+function packTagDbValue(tag: PackTag): string {
+  if (tag === "pct1") return "%1";
+  if (tag === "pct5") return "%5";
+  if (tag === "pct10") return "%10";
+  if (tag === "fifty50") return "50/50";
+  return "onepiece";
+}
 import { packRetunePlanTag } from "../_actions/retune-cache-tag";
 
 /**
@@ -395,37 +405,45 @@ export async function getPackEditPool(packId: string): Promise<EditPool> {
   await requireRetuneOwner();
   if (!isUuid(packId)) throw new Error("Invalid pack id");
 
-  const db = await getDb();
-  const pack = await db.packs.findUnique({
-    where: { id: packId },
-    select: {
-      name: true,
-      slug: true,
-      price: true,
-      active: true,
-      pack_type: true,
-      pack_cards: {
-        select: {
-          card_id: true,
-          weight: true,
-          color: true,
-          animation: true,
-          order: true,
-        },
-        orderBy: { order: "asc" },
-      },
-    },
-  });
+  const db = await getDrizzleDb();
+  const result = await db.execute<{
+    name: string;
+    slug: string;
+    price: string;
+    active: boolean;
+    pack_type: string;
+    pack_cards: Array<{
+      card_id: string; weight: number; color: string | null;
+      animation: boolean; order: number;
+    }>;
+  }>(sql`
+    SELECT p.name, p.slug, p.price::text AS price, p.active, p.pack_type,
+           COALESCE(jsonb_agg(jsonb_build_object(
+             'card_id', pc.card_id, 'weight', pc.weight, 'color', pc.color,
+             'animation', pc.animation, 'order', pc."order"
+           ) ORDER BY pc."order") FILTER (WHERE pc.id IS NOT NULL), '[]'::jsonb)
+             AS pack_cards
+    FROM packs p
+    LEFT JOIN pack_cards pc ON pc.pack_id = p.id
+    LEFT JOIN cards c ON c.id = pc.card_id
+    WHERE p.id = ${packId}::uuid
+    GROUP BY p.id
+  `);
+  const pack = result.rows[0];
   if (!pack) throw new Error("Pack not found");
 
   const cardIds = pack.pack_cards.map((pc) => pc.card_id);
   // Identity + value for each pool card (read-only PK probe on `cards`).
   const cardMeta = new Map<string, { name: string; imageUrl: string; value: number }>();
   if (cardIds.length > 0) {
-    const cardRows = await db.cards.findMany({
-      where: { id: { in: cardIds } },
-      select: { id: true, name: true, image_url: true, price: true },
-    });
+    const cardRows = (
+      await db.execute<{
+        id: string; name: string; image_url: string; price: string;
+      }>(sql`
+        SELECT id, name, image_url, price::text AS price
+        FROM cards WHERE id = ANY(${cardIds}::uuid[])
+      `)
+    ).rows;
     for (const r of cardRows) {
       cardMeta.set(r.id, {
         name: r.name,
@@ -576,10 +594,12 @@ async function enforcePackCreatorLiveGate(
 ): Promise<boolean> {
   if (!sessionHasRole(session, "pack_creator")) return false;
   if (!active) return false;
-  const perms = await adminDb.admin_users.findUnique({
-    where: { id: session.userId },
-    select: { allowed_pages: true },
-  });
+  const perms = (
+    await adminDrizzle.execute<{ allowed_pages: string[] }>(sql`
+      SELECT allowed_pages FROM admin_users
+      WHERE id = ${session.userId}::uuid
+    `)
+  ).rows[0];
   const canEditLive = perms
     ? hasCapability(perms.allowed_pages, "__can_edit_live_packs")
     : false;
@@ -669,21 +689,27 @@ async function applyPackEditInner(
     throw new Error("Refused: price must be greater than 0.");
   }
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
   // FRESH pack row: price + scope + the CURRENT live pool (so we can scope-check,
   // verify every edited card already exists, and compute the before/after risk).
-  const pack = await db.packs.findUnique({
-    where: { id: packId },
-    select: {
-      price: true,
-      active: true,
-      pack_type: true,
-      name: true,
-      tags: true,
-      pack_cards: { select: { card_id: true } },
-    },
-  });
+  const packResult = await db.execute<{
+    price: string; active: boolean; pack_type: string; name: string;
+    tags: PackTag[]; pack_cards: Array<{ card_id: string }>;
+  }>(sql`
+    SELECT p.price::text AS price, p.active, p.pack_type, p.name,
+           ARRAY(SELECT CASE tag::text
+             WHEN '%1' THEN 'pct1' WHEN '%5' THEN 'pct5'
+             WHEN '%10' THEN 'pct10' WHEN '50/50' THEN 'fifty50'
+             ELSE tag::text END FROM UNNEST(p.tags) AS tag) AS tags,
+           COALESCE(jsonb_agg(jsonb_build_object('card_id', pc.card_id))
+             FILTER (WHERE pc.id IS NOT NULL), '[]'::jsonb) AS pack_cards
+    FROM packs p
+    LEFT JOIN pack_cards pc ON pc.pack_id = p.id
+    WHERE p.id = ${packId}::uuid
+    GROUP BY p.id
+  `);
+  const pack = packResult.rows[0];
   if (!pack) throw new Error("Pack not found");
 
   if (!EDITABLE_PACK_TYPES.includes(pack.pack_type)) {
@@ -712,10 +738,11 @@ async function applyPackEditInner(
   // is exactly how an infeasible "no-win-cards" pack gets fixed inline.
   // READ-ONLY SELECT on MAIN — allowed.
   const editedIds = [...seen];
-  const existingCards = await db.cards.findMany({
-    where: { id: { in: editedIds } },
-    select: { id: true },
-  });
+  const existingCards = (
+    await db.execute<{ id: string }>(sql`
+      SELECT id FROM cards WHERE id = ANY(${editedIds}::uuid[])
+    `)
+  ).rows;
   const existingCardIds = new Set(existingCards.map((c) => c.id));
   const unknown = input.cards.filter((c) => !existingCardIds.has(c.cardId));
   if (unknown.length > 0) {
@@ -821,17 +848,28 @@ async function applyPackEditInner(
   });
 
   // SAME delete-all-then-createMany pattern updatePack / applyPackRetune use.
-  await db.$transaction(async (tx) => {
-    await tx.packs.update({
-      where: { id: packId },
-      data: {
-        ...(priceProvided ? { price: priceAfter } : {}),
-        updated_at: new Date(),
-      },
-    });
-    await tx.pack_cards.deleteMany({ where: { pack_id: packId } });
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`
+      UPDATE packs
+      SET price = CASE WHEN ${priceProvided} THEN ${priceAfter} ELSE price END,
+          updated_at = NOW()
+      WHERE id = ${packId}::uuid
+    `);
+    await tx.execute(sql`DELETE FROM pack_cards WHERE pack_id = ${packId}::uuid`);
     if (rows.length > 0) {
-      await tx.pack_cards.createMany({ data: rows });
+      await tx.execute(sql`
+        INSERT INTO pack_cards
+          (pack_id, card_id, weight, color, animation, "order")
+        SELECT ${packId}::uuid, input.card_id, input.weight, input.color,
+               input.animation, input.card_order
+        FROM UNNEST(
+          ${rows.map((r) => r.card_id)}::uuid[],
+          ${rows.map((r) => r.weight)}::int[],
+          ${rows.map((r) => r.color)}::text[],
+          ${rows.map((r) => r.animation)}::boolean[],
+          ${rows.map((r) => r.order)}::int[]
+        ) AS input(card_id, weight, color, animation, card_order)
+      `);
     }
   });
 
@@ -920,11 +958,23 @@ async function refreshEditedPackRiskScore(
       compliance: buildPackCompliance(risk, maxWinCap, { tagged }),
       computed_at: new Date(),
     };
-    await adminDb.pack_risk_scores.upsert({
-      where: { pack_id: packId },
-      update: riskRow,
-      create: { pack_id: packId, ...riskRow },
-    });
+    await adminDrizzle.execute(sql`
+      INSERT INTO pack_risk_scores
+        (pack_id, edge, cv, win_rate, near_miss, max_win, max_mult,
+         risk_score, tier, compliance, computed_at)
+      VALUES (
+        ${packId}, ${riskRow.edge}, ${riskRow.cv}, ${riskRow.win_rate},
+        ${riskRow.near_miss}, ${riskRow.max_win}, ${riskRow.max_mult},
+        ${riskRow.risk_score}, ${riskRow.tier},
+        ${JSON.stringify(riskRow.compliance)}::jsonb, NOW()
+      )
+      ON CONFLICT (pack_id) DO UPDATE SET
+        edge = EXCLUDED.edge, cv = EXCLUDED.cv,
+        win_rate = EXCLUDED.win_rate, near_miss = EXCLUDED.near_miss,
+        max_win = EXCLUDED.max_win, max_mult = EXCLUDED.max_mult,
+        risk_score = EXCLUDED.risk_score, tier = EXCLUDED.tier,
+        compliance = EXCLUDED.compliance, computed_at = EXCLUDED.computed_at
+    `);
     revalidateTag("pack-studio-overview");
   } catch (err) {
     console.error("applyPackEdit: pack_risk_scores refresh failed", err);
@@ -1264,21 +1314,27 @@ async function resolveAndShapeStagedPool(
     }
   }
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
   // FRESH pack row: price + scope + the CURRENT live pool (for before-risk +
   // card-count audit). Same select shape as `applyPackEdit`.
-  const pack = await db.packs.findUnique({
-    where: { id: packId },
-    select: {
-      price: true,
-      active: true,
-      pack_type: true,
-      name: true,
-      tags: true,
-      pack_cards: { select: { card_id: true } },
-    },
-  });
+  const packResult = await db.execute<{
+    price: string; active: boolean; pack_type: string; name: string;
+    tags: PackTag[]; pack_cards: Array<{ card_id: string }>;
+  }>(sql`
+    SELECT p.price::text AS price, p.active, p.pack_type, p.name,
+           ARRAY(SELECT CASE tag::text
+             WHEN '%1' THEN 'pct1' WHEN '%5' THEN 'pct5'
+             WHEN '%10' THEN 'pct10' WHEN '50/50' THEN 'fifty50'
+             ELSE tag::text END FROM UNNEST(p.tags) AS tag) AS tags,
+           COALESCE(jsonb_agg(jsonb_build_object('card_id', pc.card_id))
+             FILTER (WHERE pc.id IS NOT NULL), '[]'::jsonb) AS pack_cards
+    FROM packs p
+    LEFT JOIN pack_cards pc ON pc.pack_id = p.id
+    WHERE p.id = ${packId}::uuid
+    GROUP BY p.id
+  `);
+  const pack = packResult.rows[0];
   if (!pack) throw new Error("Pack not found");
 
   if (!EDITABLE_PACK_TYPES.includes(pack.pack_type)) {
@@ -1303,10 +1359,14 @@ async function resolveAndShapeStagedPool(
   // which a staged pool may extend with brand-new cards). Name + image ride
   // along so the dry-run can label its per-card plan without a second probe.
   const editedIds = [...seen];
-  const cardRows = await db.cards.findMany({
-    where: { id: { in: editedIds } },
-    select: { id: true, price: true, name: true, image_url: true },
-  });
+  const cardRows = (
+    await db.execute<{
+      id: string; price: string; name: string; image_url: string;
+    }>(sql`
+      SELECT id, price::text AS price, name, image_url
+      FROM cards WHERE id = ANY(${editedIds}::uuid[])
+    `)
+  ).rows;
   const cardMetaById = new Map<
     string,
     { value: number; name: string; imageUrl: string }
@@ -1961,23 +2021,34 @@ async function applyStagedPackEditAndRetuneInner(
   const nextTagSet =
     r.tagWrite !== null ? [...r.tagWrite].sort().join(",") : null;
   const shouldWriteTags = r.tagWrite !== null && nextTagSet !== priorTagSet;
+  const tagDbValues = (r.tagWrite ?? []).map(packTagDbValue);
 
   // SAME delete-all-then-createMany pattern used by every other writer.
-  const db = await getDb();
-  await db.$transaction(async (tx) => {
-    await tx.packs.update({
-      where: { id: packId },
-      data: {
-        ...(shouldWritePrice ? { price: priceAfter } : {}),
-        // packs.tags is a pack_tag[] enum column (updatePack writes it the same
-        // way). r.tagWrite is validated fail-closed to the selectable enum set.
-        ...(shouldWriteTags ? { tags: r.tagWrite as pack_tag[] } : {}),
-        updated_at: new Date(),
-      },
-    });
-    await tx.pack_cards.deleteMany({ where: { pack_id: packId } });
+  const db = await getDrizzleDb();
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`
+      UPDATE packs
+      SET price = CASE WHEN ${shouldWritePrice} THEN ${priceAfter} ELSE price END,
+          tags = CASE WHEN ${shouldWriteTags}
+            THEN ${tagDbValues}::pack_tag[] ELSE tags END,
+          updated_at = NOW()
+      WHERE id = ${packId}::uuid
+    `);
+    await tx.execute(sql`DELETE FROM pack_cards WHERE pack_id = ${packId}::uuid`);
     if (rows.length > 0) {
-      await tx.pack_cards.createMany({ data: rows });
+      await tx.execute(sql`
+        INSERT INTO pack_cards
+          (pack_id, card_id, weight, color, animation, "order")
+        SELECT ${packId}::uuid, input.card_id, input.weight, input.color,
+               input.animation, input.card_order
+        FROM UNNEST(
+          ${rows.map((row) => row.card_id)}::uuid[],
+          ${rows.map((row) => row.weight)}::int[],
+          ${rows.map((row) => row.color)}::text[],
+          ${rows.map((row) => row.animation)}::boolean[],
+          ${rows.map((row) => row.order)}::int[]
+        ) AS input(card_id, weight, color, animation, card_order)
+      `);
     }
   });
 
@@ -2549,9 +2620,8 @@ async function planPackTuneLiveUncached(
   if (!p || !p.active || !(p.price > 0)) return null;
 
   // One-pack pool read (same composite-index probe as the legacy single arm).
-  const db = await getDb();
-  const rows = await db.$queryRawUnsafe<BatchedPoolRow[]>(
-    `
+  const db = await getDrizzleDb();
+  const result = await db.execute<BatchedPoolRow>(sql`
       SELECT
         pc.pack_id      AS pack_id,
         pc.card_id      AS card_id,
@@ -2561,11 +2631,10 @@ async function planPackTuneLiveUncached(
         c.image_url     AS image_url
       FROM pack_cards pc
       JOIN cards c ON c.id = pc.card_id
-      WHERE pc.pack_id = $1::uuid
-      ORDER BY pc.order ASC
-    `,
-    packId,
-  );
+      WHERE pc.pack_id = ${packId}::uuid
+      ORDER BY pc."order" ASC
+  `);
+  const rows = result.rows;
   const cards = rows.map((r) => ({
     cardId: r.card_id,
     value: Number(r.value ?? 0),
@@ -3154,11 +3223,14 @@ async function planPackTuneStagedUncached(
   // deleted pack is out of scope — return null (data, not a throw) so the
   // workspace renders the neutral out-of-scope state. Also carries the slug
   // the resolver doesn't read.
-  const db = await getDb();
-  const pack = await db.packs.findUnique({
-    where: { id: packId },
-    select: { slug: true, active: true, price: true },
-  });
+  const db = await getDrizzleDb();
+  const result = await db.execute<{
+    slug: string; active: boolean; price: string;
+  }>(sql`
+    SELECT slug, active, price::text AS price
+    FROM packs WHERE id = ${packId}::uuid
+  `);
+  const pack = result.rows[0];
   if (!pack || !pack.active || !(Number(pack.price.toString()) > 0)) {
     return null;
   }

@@ -2,8 +2,10 @@ import "server-only";
 
 import { cache } from "react";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_withdrawal_unlocks } from "@/lib/db-schema/admin/schema";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { isPostgresError } from "@/lib/postgres-errors";
 
 /**
  * Withdrawal-lock model (admin DB only — no MAIN write required).
@@ -31,14 +33,11 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
  *     withdrawal we should have blocked.
  */
 
-// Postgres "undefined_table" — same signals the excluded-users layer treats
-// as "table missing" (P2021 typed model / P2010 raw / 42P01 SQLSTATE). Until
-// prisma/admin/sql/2026-07-01_add_withdrawal_unlocks.up.sql is applied, the
+// PostgreSQL "undefined_table" SQLSTATE. Until the reviewed
+// admin_withdrawal_unlocks migration is applied, the
 // override read degrades to "no override" so excluded users stay locked.
 function isTableMissing(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false;
-  const e = err as { code?: unknown; meta?: { code?: unknown } };
-  return e.code === "P2021" || e.code === "P2010" || e.meta?.code === "42P01";
+  return isPostgresError(err, "42P01");
 }
 
 /**
@@ -50,9 +49,9 @@ function isTableMissing(err: unknown): boolean {
 export const getWithdrawalUnlockedUserIds = cache(
   async (): Promise<Set<string>> => {
     try {
-      const rows = await adminDb.admin_withdrawal_unlocks.findMany({
-        select: { target_user_id: true },
-      });
+      const rows = await adminDrizzle.select({
+        target_user_id: admin_withdrawal_unlocks.target_user_id,
+      }).from(admin_withdrawal_unlocks);
       return new Set(rows.map((r) => r.target_user_id));
     } catch (err) {
       if (!isTableMissing(err)) {

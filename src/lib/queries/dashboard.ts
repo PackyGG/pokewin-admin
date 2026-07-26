@@ -1,9 +1,9 @@
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { singleFlight } from "@/lib/cache/single-flight";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb, type MainDrizzleDb } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
-import { Prisma, type PrismaClient } from "@/generated/prisma/client";
+import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming, withTimingResult } from "@/lib/observability/query-timings";
 import { MS_PER_DAY } from "@/lib/utils/time";
@@ -53,23 +53,6 @@ import {
   getDashboardTrendSeries,
   type DashboardTrendSeries,
 } from "./dashboard-trend-series";
-// Comparison-mode ClickHouse twin (Phase 2B) — fire-and-forget drift logger for
-// the headline KPI composite. Direct import (NOT via the comparison.ts barrel)
-// so this surface touches only its own NEW files + this one wiring point. No-op
-// unless the `dashboard_stats` surface flag is in `comparison` mode (forced off
-// while ClickHouse is dormant), and it never affects the served PG payload.
-import { compareDashboardStats } from "@/lib/clickhouse/compare/dashboard-stats";
-// Phase 2F cutover — when the `dashboard_stats` surface is in `clickhouse`
-// mode, the two heavy uncached scalar legs (periodAggregates +
-// windowedPeriodDelta) are served from this CH twin instead of Postgres. The
-// deferred `creatorWithdrawals` array-join leg has no twin, so it stays a small
-// standalone PG query. All other legs (cached counts/balances, charts, GGR)
-// are untouched.
-import {
-  getDashboardStatsFromClickHouse,
-  type DashboardStatsCh,
-} from "@/lib/clickhouse/queries/dashboard/stats";
-import { getAdminReadMode } from "@/lib/feature-flags/admin-read-source";
 
 // Re-export the client-safe period constants so existing call sites
 // that import from "@/lib/queries/dashboard" don't have to change. The
@@ -332,7 +315,7 @@ const cachedKpiWindowMetrics = unstable_cache(
  * leg now agree on the fee (closes M3).
  */
 export function getPeriodAggregates(
-  db: PrismaClient,
+  db: MainDrizzleDb,
   // Single rolling cutoff for the selected period. `new Date(0)` for
   // the "all" period.
   cutoff: Date,
@@ -346,13 +329,13 @@ export function getPeriodAggregates(
   // Wager-side type set — the canonical `WAGER_TYPES` from
   // `@/lib/metrics` (`pack_opening`/`battle_bet`/`battle_sponsorship`),
   // rendered as a pre-quoted SQL `IN` list. Hardcoded enum strings (no
-  // external input) so interpolation via Prisma.raw is injection-safe.
+  // external input) so direct interpolation is injection-safe.
   // This is the SAME set the canonical GGR wager leg uses, so the wager
   // DISPLAY tiles below reconcile with the headline GGR's wager leg
   // (closes M3 on the `withdrawal_shipping_fee` split — neither includes
   // the fee). The phantom `upgrader_bet` member is intentionally absent.
-  const wagerTypesIn = Prisma.raw(METRICS_WAGER_TYPES_SQL);
-  return db.$queryRaw<
+  const wagerTypesIn = METRICS_WAGER_TYPES_SQL;
+  return queryRows<
     {
       revenue: string;
       withdrawal: string;
@@ -404,7 +387,7 @@ export function getPeriodAggregates(
       creator_wd_amount: string;
       creator_wd_count: string;
     }[]
-  >`
+  >(db, `
     WITH real_users AS (
       SELECT u.id, u.role, u.referred_by,
              -- under_creator flags users who joined under an official
@@ -417,9 +400,9 @@ export function getPeriodAggregates(
                WHERE ref.id = u.referred_by AND ref.role = 'creator'
              ) AS under_creator
       FROM "user" u
-      WHERE u.role NOT IN ('admin', 'support', 'creator') ${Prisma.raw(blacklistIdNotIn)}
+      WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
     ),
-    ${Prisma.raw(sessionWindowsCte)},
+    ${sessionWindowsCte},
     base AS (
       -- in_session marks a wager a creator made while live on a deal/
       -- stream — its created_at falls inside one of that creator's
@@ -460,7 +443,7 @@ export function getPeriodAggregates(
       -- scans the window instead of all-history (the real perf win on the
       -- 24h view). The separate withdrawals / creator_deal_payouts CTEs
       -- filter on effective_at and are unaffected by this predicate.
-      WHERE lt.status = 'completed' AND lt.created_at >= ${cutoff}
+      WHERE lt.status = 'completed' AND lt.created_at >= $1
     ),
     withdrawals AS (
       SELECT
@@ -480,7 +463,7 @@ export function getPeriodAggregates(
       -- RESULT-IDENTICAL and stops this CTE scanning all-history withdrawals
       -- on the 24h view.
       WHERE cwr.status IN ('completed', 'shipped')
-        AND (cwr.completed_at >= ${cutoff} OR (cwr.completed_at IS NULL AND cwr.shipped_at >= ${cutoff}))
+        AND (cwr.completed_at >= $1 OR (cwr.completed_at IS NULL AND cwr.shipped_at >= $1))
     ),
     -- Creator DEAL-PAYOUT cash-outs — the house's REAL creator cost that
     -- has actually walked out the door. Joins completed/shipped
@@ -516,18 +499,18 @@ export function getPeriodAggregates(
         -- Window to the selected period (the same effective_at the outer
         -- creator_wd_amount / creator_wd_count aggregates gate on) -- RESULT-
         -- IDENTICAL, and avoids the full-history voucher_ids array-unnest.
-        AND (cwr.completed_at >= ${cutoff} OR (cwr.completed_at IS NULL AND cwr.shipped_at >= ${cutoff}))
+        AND (cwr.completed_at >= $1 OR (cwr.completed_at IS NULL AND cwr.shipped_at >= $1))
     )
     SELECT
-      COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS revenue,
+      COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= $1 THEN amount ELSE 0 END), 0)::text AS revenue,
 
-      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${cutoff} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal,
+      COALESCE((SELECT SUM(CASE WHEN effective_at >= $1 THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal,
 
       -- Period count of completed/shipped withdrawals — same
       -- withdrawals CTE / effective_at cutoff as the withdrawal amount,
       -- so the count + amount on the Withdrawals KPI card stay
       -- consistent (no separate roundtrip / no source-of-truth split).
-      (SELECT COUNT(*) FROM withdrawals WHERE effective_at >= ${cutoff})::text AS withdrawal_count,
+      (SELECT COUNT(*) FROM withdrawals WHERE effective_at >= $1)::text AS withdrawal_count,
 
       -- Creator DEAL-PAYOUT cash-outs for the period — Σ voucher value of
       -- creator deal-payout vouchers (creator_fill_conversion +
@@ -536,33 +519,33 @@ export function getPeriodAggregates(
       -- REAL house creator cost (deal payouts the creator cashed out), NOT
       -- a creator's personal balance cash-out. Read from the
       -- creator_deal_payouts CTE (request × deal-payout voucher).
-      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${cutoff} THEN amount ELSE 0 END) FROM creator_deal_payouts), 0)::text AS creator_wd_amount,
+      COALESCE((SELECT SUM(CASE WHEN effective_at >= $1 THEN amount ELSE 0 END) FROM creator_deal_payouts), 0)::text AS creator_wd_amount,
       -- Count of DISTINCT withdrawal requests that cashed out ≥1 deal-payout
       -- voucher in the period (one request can bundle several vouchers).
-      (SELECT COUNT(DISTINCT request_id) FROM creator_deal_payouts WHERE effective_at >= ${cutoff})::text AS creator_wd_count,
+      (SELECT COUNT(DISTINCT request_id) FROM creator_deal_payouts WHERE effective_at >= $1)::text AS creator_wd_count,
 
-      COALESCE(SUM(CASE WHEN type::text IN ${wagerTypesIn} AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager,
+      COALESCE(SUM(CASE WHEN type::text IN ${wagerTypesIn} AND created_at >= $1 THEN amount ELSE 0 END), 0)::text AS wager,
 
       -- Customer wager — the wager set MINUS wagers a creator made
       -- while live on a deal/stream (in_session). Creators wager
       -- house-funded "sponsored" balance on stream — recorded as
       -- ordinary pack_opening/battle_bet rows — which is not a real
       -- customer bet. A creator's OFF-session personal play stays in.
-      COALESCE(SUM(CASE WHEN type::text IN ${wagerTypesIn} AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager_excl_session,
+      COALESCE(SUM(CASE WHEN type::text IN ${wagerTypesIn} AND NOT in_session AND created_at >= $1 THEN amount ELSE 0 END), 0)::text AS wager_excl_session,
 
       -- Packs / Battles split of the customer GAMEPLAY wager. Same
       -- NOT in_session filter as wager_excl_session, so the two sum
       -- to it. Drives the "Where the wager comes from" chip row under
       -- the Total Wager card. Upgrader is added on top by the caller
       -- from upgrader_games (it is not a ledger wager source).
-      COALESCE(SUM(CASE WHEN type::text = 'pack_opening' AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session,
-      COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session,
+      COALESCE(SUM(CASE WHEN type::text = 'pack_opening' AND NOT in_session AND created_at >= $1 THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session,
+      COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= $1 THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session,
 
       -- Organic wager — pack / battle gameplay wager from users who
       -- did NOT join under an official creator code (and isn't a
       -- creator's own on-stream play, via NOT in_session). Reads off
       -- the under_creator flag set on the real_users CTE above.
-      COALESCE(SUM(CASE WHEN type::text IN ${wagerTypesIn} AND NOT in_session AND NOT under_creator AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager_organic,
+      COALESCE(SUM(CASE WHEN type::text IN ${wagerTypesIn} AND NOT in_session AND NOT under_creator AND created_at >= $1 THEN amount ELSE 0 END), 0)::text AS wager_organic,
 
       -- NOTE: GGR is intentionally NOT computed here anymore. It is
       -- produced by the canonical @/lib/metrics inventory-delta
@@ -574,7 +557,7 @@ export function getPeriodAggregates(
       -- Deposit COUNT — number of completed deposit transactions in
       -- the selected period. Pairs with revenue so the Deposits
       -- card can show "$X across N deposits".
-      COUNT(CASE WHEN type::text = 'deposit' AND created_at >= ${cutoff} THEN 1 END)::text AS deposit_count,
+      COUNT(CASE WHEN type::text = 'deposit' AND created_at >= $1 THEN 1 END)::text AS deposit_count,
 
       -- Windowed balance-change + manual-withdrawal sums for the
       -- windowed P&L figure (was 24h-only, now scoped to the selected
@@ -584,88 +567,20 @@ export function getPeriodAggregates(
       -- balance_before carries the signed delta on every completed
       -- row, so summing across the window gives Δbalance directly.
       COALESCE(SUM(CASE
-        WHEN created_at >= ${cutoff}
+        WHEN created_at >= $1
              -- FAKE-BALANCE carve-out: drop official_stream adjustments from
              -- the balance-delta term (owner-designated fake balance; mirrors
              -- calculateWindowedPnl / getDailyPnl).
-             AND NOT (${Prisma.raw(officialStreamAdjustmentSqlPredicate({ metadataColumn: "lt_metadata" }))})
+             AND NOT (${officialStreamAdjustmentSqlPredicate({ metadataColumn: "lt_metadata" })})
         THEN (lt_balance_after - lt_balance_before)::numeric ELSE 0 END), 0)::text AS balance_change,
       COALESCE(SUM(CASE
         WHEN type::text = 'admin_balance_adjustment'
              AND lt_description ILIKE 'Manual withdrawal:%'
              AND lt_balance_after < lt_balance_before
-             AND created_at >= ${cutoff}
+             AND created_at >= $1
         THEN amount ELSE 0 END), 0)::text AS manual_wd
     FROM base
-  `;
-}
-
-// ── Phase 2F cutover helpers (dashboard_stats → ClickHouse) ──────────────
-//
-// When the `dashboard_stats` surface is in `clickhouse` mode, the two heavy
-// uncached scalar legs of dashboardStatsInner are served from the CH twin
-// (getDashboardStatsFromClickHouse) instead of the full-table Postgres scans:
-//   • periodAggregates    → periodAggregatesFromCh (CH scalars + PG creator_wd)
-//   • windowedPeriodDelta → derived from the same CH twin result
-// The CH twin does NOT carry the creator deal-payout cash-out leg (a
-// card_withdrawal_requests.voucher_ids ⋈ vouchers.origin array pairing the
-// migration deferred), so it stays this small standalone PG query — RESULT-
-// IDENTICAL to the creator_deal_payouts CTE inside getPeriodAggregates above.
-async function creatorWithdrawalsPeriodFromPg(
-  db: PrismaClient,
-  cutoff: Date,
-): Promise<{ creator_wd_amount: string; creator_wd_count: string }> {
-  const rows = await db.$queryRaw<
-    { creator_wd_amount: string; creator_wd_count: string }[]
-  >`
-    WITH creator_deal_payouts AS (
-      SELECT DISTINCT
-        cwr.id AS request_id,
-        v.id   AS voucher_id,
-        v.value::numeric AS amount,
-        COALESCE(cwr.completed_at, cwr.shipped_at) AS effective_at
-      FROM card_withdrawal_requests cwr
-      JOIN vouchers v ON v.id = ANY(cwr.voucher_ids)
-      WHERE cwr.status IN ('completed', 'shipped')
-        AND v.origin::text IN ('creator_fill_conversion', 'creator_multiplier_payout')
-        AND (cwr.completed_at >= ${cutoff} OR (cwr.completed_at IS NULL AND cwr.shipped_at >= ${cutoff}))
-    )
-    SELECT
-      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${cutoff} THEN amount ELSE 0 END) FROM creator_deal_payouts), 0)::text AS creator_wd_amount,
-      (SELECT COUNT(DISTINCT request_id) FROM creator_deal_payouts WHERE effective_at >= ${cutoff})::text AS creator_wd_count
-  `;
-  return rows[0] ?? { creator_wd_amount: "0", creator_wd_count: "0" };
-}
-
-// Map the CH twin's scalar result into the EXACT row shape getPeriodAggregates
-// returns, so the downstream `num(pa.*)` reads stay byte-identical. The 3-role
-// scope has no creator-on-session carve-out, so wager ≡ wager_excl_session
-// (same ledger sum); upgrader wager is added downstream from the (still-PG)
-// upgraderWindow leg, so the ledger-only wager here EXCLUDES upgrader
-// (wagersRaw − wagersUpgrader). creator_wd_* come from the small PG query above.
-async function periodAggregatesFromCh(
-  chStats: Promise<DashboardStatsCh>,
-  creatorWd: Promise<{ creator_wd_amount: string; creator_wd_count: string }>,
-): Promise<Awaited<ReturnType<typeof getPeriodAggregates>>> {
-  const [s, cwd] = await Promise.all([chStats, creatorWd]);
-  const wagerLedger = s.wagersRaw - s.wagersUpgrader;
-  return [
-    {
-      revenue: String(s.deposits),
-      withdrawal: String(s.withdrawals),
-      withdrawal_count: String(s.withdrawalCountPeriod),
-      wager: String(wagerLedger),
-      wager_excl_session: String(wagerLedger),
-      pack_wager_excl_session: String(s.wagersPacks),
-      battle_wager_excl_session: String(s.wagersBattles),
-      wager_organic: String(s.wagersOrganic),
-      deposit_count: String(s.depositCountPeriod),
-      balance_change: String(s.balanceChangePeriod),
-      manual_wd: String(s.manualWdPeriod),
-      creator_wd_amount: cwd.creator_wd_amount,
-      creator_wd_count: cwd.creator_wd_count,
-    },
-  ];
+  `, cutoff);
 }
 
 // Lifetime realized P&L lives in src/lib/queries/_realized-pnl.ts so the
@@ -690,20 +605,20 @@ async function periodAggregatesFromCh(
 
 const cachedDailyChart = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
     // GAMEPLAY wager (packs + battles) + deposits per day, last 30 days,
     // from the ledger. Upgrader is NOT here — it lives only in
     // `upgrader_games` (see `cachedDailyUpgrader`); the phantom
     // `upgrader_bet` ledger member doesn't exist on a migration-lagged DB
     // and threw `22P02`. The daily upgrader series is merged in by the
     // caller from the upgrader-native table.
-    return db.$queryRaw<{
+    return queryRows<{
       date: Date;
       packs: string;
       battles: string;
       deposits: string;
       active_depositors: string;
-    }[]>`
+    }[]>(db, `
       SELECT
         DATE(created_at) as date,
         COALESCE(SUM(CASE WHEN type::text = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text as packs,
@@ -713,10 +628,10 @@ const cachedDailyChart = unstable_cache(
       FROM ledger_transactions
       WHERE type::text IN ('pack_opening','battle_bet','battle_sponsorship','deposit') AND status = 'completed'
         AND created_at >= NOW() - INTERVAL '30 days'
-        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)})
+        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
       GROUP BY DATE(created_at)
       ORDER BY date
-    `;
+    `);
   },
   ["dashboard-daily-chart-v2"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
@@ -737,11 +652,13 @@ const cachedDailyChart = unstable_cache(
  */
 const cachedDailyUpgrader = unstable_cache(
   async (blacklistIdNotIn: string): Promise<{ date: Date; upgrader: string }[]> => {
-    const db = await getDb();
-    const probe = await db.$queryRaw<{ exists: string | null }[]>`
-      SELECT to_regclass('public.upgrader_games')::text AS exists`;
+    const db = await getDrizzleDb();
+    const probe = await queryRows<{ exists: string | null }[]>(
+      db,
+      `SELECT to_regclass('public.upgrader_games')::text AS exists`,
+    );
     if (probe[0]?.exists == null) return [];
-    return db.$queryRaw<{ date: Date; upgrader: string }[]>`
+    return queryRows<{ date: Date; upgrader: string }[]>(db, `
       SELECT
         DATE(created_at) as date,
         COALESCE(SUM(bet_amount::numeric), 0)::text as upgrader
@@ -749,11 +666,11 @@ const cachedDailyUpgrader = unstable_cache(
       WHERE created_at >= NOW() - INTERVAL '30 days'
         AND user_id IN (
           SELECT id FROM "user"
-          WHERE role NOT IN ('admin', 'support', 'creator') ${Prisma.raw(blacklistIdNotIn)}
+          WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
         )
       GROUP BY DATE(created_at)
       ORDER BY date
-    `;
+    `);
   },
   ["dashboard-daily-upgrader-v1"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
@@ -767,16 +684,16 @@ const cachedDailyUpgrader = unstable_cache(
 // signup pipeline itself, so it is the canonical bot signal on this table.
 const cachedDailySignups = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDb();
-    return db.$queryRaw<{ date: Date; count: string }[]>`
+    const db = await getDrizzleDb();
+    return queryRows<{ date: Date; count: string }[]>(db, `
       SELECT DATE(created_at) as date, COUNT(*)::text as count
       FROM "user"
       WHERE created_at >= NOW() - INTERVAL '30 days'
-        AND role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        AND role NOT IN ('admin', 'support') ${blacklistIdNotIn}
         AND is_locked = false
       GROUP BY DATE(created_at)
       ORDER BY date
-    `;
+    `);
   },
   ["dashboard-daily-signups-v2"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
@@ -784,12 +701,12 @@ const cachedDailySignups = unstable_cache(
 
 const cachedDailyWagerAttribution = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDb();
-    return db.$queryRaw<{
+    const db = await getDrizzleDb();
+    return queryRows<{
       date: Date;
       organic: string;
       creator_attributed: string;
-    }[]>`
+    }[]>(db, `
       WITH customers AS (
         SELECT u.id,
                EXISTS (
@@ -797,7 +714,7 @@ const cachedDailyWagerAttribution = unstable_cache(
                  WHERE ref.id = u.referred_by AND ref.role = 'creator'
                ) AS under_creator
         FROM "user" u
-        WHERE u.role NOT IN ('admin', 'support', 'creator') ${Prisma.raw(blacklistIdNotIn)}
+        WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
       )
       SELECT
         DATE(lt.created_at) AS date,
@@ -817,7 +734,7 @@ const cachedDailyWagerAttribution = unstable_cache(
         AND lt.created_at >= NOW() - INTERVAL '30 days'
       GROUP BY DATE(lt.created_at)
       ORDER BY date
-    `;
+    `);
   },
   ["dashboard-daily-wager-attribution-v1"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
@@ -825,13 +742,13 @@ const cachedDailyWagerAttribution = unstable_cache(
 
 const cachedFtdCombined = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDb();
-    return db.$queryRaw<{
+    const db = await getDrizzleDb();
+    return queryRows<{
       tag: string;
       bucket: Date | null;
       count: string;
       total: string;
-    }[]>`
+    }[]>(db, `
       WITH first_deposits AS (
         SELECT DISTINCT ON (user_id)
           user_id, amount::numeric AS amount, created_at
@@ -839,7 +756,7 @@ const cachedFtdCombined = unstable_cache(
         WHERE type::text = 'deposit' AND status = 'completed'
           AND user_id IN (
             SELECT id FROM "user"
-            WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+            WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
           )
         ORDER BY user_id, created_at ASC
       )
@@ -857,7 +774,7 @@ const cachedFtdCombined = unstable_cache(
       FROM first_deposits
       WHERE created_at >= NOW() - INTERVAL '30 days'
       GROUP BY DATE(created_at)
-    `;
+    `);
   },
   ["dashboard-ftd-combined-v1"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
@@ -865,12 +782,12 @@ const cachedFtdCombined = unstable_cache(
 
 const cachedLifetimeDepositMetrics = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDb();
-    return db.$queryRaw<{
+    const db = await getDrizzleDb();
+    return queryRows<{
       lifetime: string;
       h24: string;
       d7: string;
-    }[]>`
+    }[]>(db, `
       SELECT
         COUNT(*)::text AS lifetime,
         COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::text AS h24,
@@ -880,9 +797,9 @@ const cachedLifetimeDepositMetrics = unstable_cache(
         AND status = 'completed'
         AND user_id IN (
           SELECT id FROM "user"
-          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+          WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
         )
-    `;
+    `);
   },
   ["dashboard-lifetime-deposit-metrics-v1"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
@@ -904,14 +821,11 @@ const cachedLifetimeDepositMetrics = unstable_cache(
 
 const cachedBalanceAggregates = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDb();
-    // Raw SQL instead of Prisma's `db.balances.aggregate` because
+    const db = await getDrizzleDb();
+    // Raw SQL keeps the cached query shape stable.
     // the unstable_cache key argument must be serializable —
-    // passing the Prisma `where` object would either fail (the
-    // staffRelation contains Prisma helpers) or hash to a string
-    // that drifts when the helper rebuilds. The raw query takes
-    // the blacklist string fragment directly.
-    const rows = await db.$queryRaw<
+    // The blacklist fragment is trusted output from blacklistNotInClause.
+    const rows = await queryRows<
       {
         total_deposited: string;
         total_withdrawn: string;
@@ -919,7 +833,7 @@ const cachedBalanceAggregates = unstable_cache(
         total_won: string;
         available_balance: string;
       }[]
-    >`
+    >(db, `
       SELECT
         COALESCE(SUM(total_deposited::numeric), 0)::text AS total_deposited,
         COALESCE(SUM(total_withdrawn::numeric), 0)::text AS total_withdrawn,
@@ -935,19 +849,19 @@ const cachedBalanceAggregates = unstable_cache(
              SELECT SUM(lt.amount::numeric)
              FROM ledger_transactions lt
              WHERE lt.status = 'completed'
-               AND ${Prisma.raw(officialStreamAdjustmentSqlPredicate({ typeColumn: "lt.type", metadataColumn: "lt.metadata" }))}
+               AND ${officialStreamAdjustmentSqlPredicate({ typeColumn: "lt.type", metadataColumn: "lt.metadata" })}
                AND lt.user_id IN (
                  SELECT id FROM "user"
-                 WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+                 WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
                )
            ), 0)
         )::text AS available_balance
       FROM balances
       WHERE user_id IN (
         SELECT id FROM "user"
-        WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
       )
-    `;
+    `);
     return rows[0] ?? null;
   },
   ["dashboard-balance-aggregates-v1"],
@@ -956,16 +870,16 @@ const cachedBalanceAggregates = unstable_cache(
 
 const cachedUniqueDepositors = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDb();
-    const rows = await db.$queryRaw<{ count: string }[]>`
+    const db = await getDrizzleDb();
+    const rows = await queryRows<{ count: string }[]>(db, `
       SELECT COUNT(*)::text AS count
       FROM balances
       WHERE total_deposited::numeric > 0
         AND user_id IN (
           SELECT id FROM "user"
-          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+          WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
         )
-    `;
+    `);
     return Number(rows[0]?.count ?? 0);
   },
   ["dashboard-unique-depositors-v1"],
@@ -974,17 +888,17 @@ const cachedUniqueDepositors = unstable_cache(
 
 const cached24hPackOpens = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDb();
-    const rows = await db.$queryRaw<{ count: string }[]>`
+    const db = await getDrizzleDb();
+    const rows = await queryRows<{ count: string }[]>(db, `
       SELECT COUNT(*)::text AS count
       FROM game_sessions
       WHERE game_type = 'pack'
         AND created_at >= NOW() - INTERVAL '24 hours'
         AND user_id IN (
           SELECT id FROM "user"
-          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+          WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
         )
-    `;
+    `);
     return Number(rows[0]?.count ?? 0);
   },
   ["dashboard-packs-opened-24h-v1"],
@@ -993,16 +907,16 @@ const cached24hPackOpens = unstable_cache(
 
 const cached24hBattles = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDb();
-    const rows = await db.$queryRaw<{ count: string }[]>`
+    const db = await getDrizzleDb();
+    const rows = await queryRows<{ count: string }[]>(db, `
       SELECT COUNT(*)::text AS count
       FROM battles
       WHERE created_at >= NOW() - INTERVAL '24 hours'
         AND user_id IN (
           SELECT id FROM "user"
-          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+          WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
         )
-    `;
+    `);
     return Number(rows[0]?.count ?? 0);
   },
   ["dashboard-battles-played-24h-v1"],
@@ -1016,31 +930,31 @@ const cachedUserCounts = unstable_cache(
     startOfWeekIso: string,
     startOfMonthIso: string,
   ) => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
     // Re-hydrate the ISO strings into Date objects on the SQL side so
-    // Prisma binds them as timestamps. rolling24h is recomputed from
+    // They are bound as timestamps. rolling24h is recomputed from
     // `now` here too — the cache TTL (5 min) bounds how stale this
     // number can get, so the slight rounding error is acceptable.
     const startOfDay = new Date(startOfDayIso);
     const startOfWeek = new Date(startOfWeekIso);
     const startOfMonth = new Date(startOfMonthIso);
     const rolling24h = new Date(Date.now() - 1 * MS_PER_DAY);
-    return db.$queryRaw<{
+    return queryRows<{
       total: string;
       today: string;
       week: string;
       month: string;
       rolling24h: string;
-    }[]>`
+    }[]>(db, `
       SELECT
         COUNT(*)::text AS total,
-        COUNT(*) FILTER (WHERE created_at >= ${startOfDay})::text AS today,
-        COUNT(*) FILTER (WHERE created_at >= ${startOfWeek})::text AS week,
-        COUNT(*) FILTER (WHERE created_at >= ${startOfMonth})::text AS month,
-        COUNT(*) FILTER (WHERE created_at >= ${rolling24h})::text AS rolling24h
+        COUNT(*) FILTER (WHERE created_at >= $1)::text AS today,
+        COUNT(*) FILTER (WHERE created_at >= $2)::text AS week,
+        COUNT(*) FILTER (WHERE created_at >= $3)::text AS month,
+        COUNT(*) FILTER (WHERE created_at >= $4)::text AS rolling24h
       FROM "user"
-      WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
-    `;
+      WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
+    `, startOfDay, startOfWeek, startOfMonth, rolling24h);
   },
   ["dashboard-user-counts-v1"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
@@ -1254,7 +1168,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
   // perceives when the streamed KPI strips resolve.
   const t0 = Date.now();
   const dbEnv = await readDbEnv();
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // Resolve the combined staff+blacklist filter ONCE per request so
   // every aggregate below applies the same exclusion set. The list is
   // cached via React `cache()` in fetch.ts → repeated invocations are
@@ -1293,7 +1207,6 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
   // rolling24h drives the 24h Activity tile (pack openings + battles
   // count) — the FTD / depositMetrics queries are now in cached helpers
   // that compute their own rolling cutoffs inside the cached fn.
-  const rolling24h = new Date(now.getTime() - 1 * MS_PER_DAY);
   // Cutoff for the SELECTED window — drives every period-bound query
   // (periodAggregates, windowed inventory/voucher delta, etc.). One
   // value, one set of indexed scans. Supplied by the caller's config:
@@ -1313,39 +1226,6 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
   // automatically). Supplied by the caller's config (capped for the chip
   // enum's "all"; a plain `{ since: cutoff }` for the today/24h windows).
   const metricWindow = config.metricWindow;
-
-  // Phase 2F cutover gate for the headline KPI composite. When the
-  // `dashboard_stats` surface is in `clickhouse` mode, the two heavy uncached
-  // scalar legs (periodAggregates + windowedPeriodDelta — full-table ledger /
-  // inventory / voucher scans) are served from the CH twin instead of
-  // Postgres. ONE CH fetch is shared by both legs (no double read). The
-  // deferred creator deal-payout leg has no twin, so it stays a small PG query.
-  // All other legs (cached counts/balances/FTDs, chart series, headline GGR)
-  // are untouched. On a CH failure the legs reject → the whole batch rejects →
-  // the page's safeQuery wrapper degrades to the fallback (never wrong money).
-  const rolling7d = new Date(now.getTime() - 7 * MS_PER_DAY);
-  const statsReadMode = await getAdminReadMode("dashboard_stats");
-  const useChStats = statsReadMode === "clickhouse";
-  const chStatsPromise: Promise<DashboardStatsCh> | null = useChStats
-    ? getDashboardStatsFromClickHouse(
-        {
-          periodCutoff,
-          upgraderSince: metricWindow.since ?? periodCutoff,
-          startOfDay,
-          startOfWeek,
-          startOfMonth,
-          rolling24h,
-          rolling7d,
-        },
-        Array.from(excluded),
-      )
-    : null;
-  const creatorWdPromise: Promise<{
-    creator_wd_amount: string;
-    creator_wd_count: string;
-  }> | null = useChStats
-    ? creatorWithdrawalsPeriodFromPg(db, periodCutoff)
-    : null;
 
   // Perf audit (2026-05-27): cut the dashboard's parallel query batch
   // from 17 to 12 queries, and dropped the 4-query
@@ -1424,8 +1304,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // the lifetime _sums so the dashboard pays one round-trip, not two.
     // 5-min cross-request cached — these are lifetime sums that move
     // by at most a few users per minute, so 5-min staleness is
-    // invisible. Switched from Prisma's aggregate to raw SQL so the
-    // blacklist string fragment can serve as a stable cache key.
+    // invisible. Raw SQL keeps the blacklist cache key stable.
     withTimingResult("dashboard.balanceAggregates", () =>
       cachedBalanceAggregates(blacklistIdNotIn),
     ),
@@ -1476,9 +1355,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // NOT cached — recomputes every render because the cutoff depends
     // on the selected period.
     withTimingResult("dashboard.periodAggregates", () =>
-      useChStats
-        ? periodAggregatesFromCh(chStatsPromise!, creatorWdPromise!)
-        : getPeriodAggregates(db, periodCutoff, blacklistIdNotIn, sessionWindowsCte),
+      getPeriodAggregates(db, periodCutoff, blacklistIdNotIn, sessionWindowsCte),
     ),
     // Canonical headline GGR (+ NGR / RTP / house-edge / bets) for the
     // selected window, from the `@/lib/metrics` inventory-delta
@@ -1557,45 +1434,32 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // composite query. Each subselect is a narrow indexed range scan;
     // PG materializes the common `real_users` CTE once.
     withTimingResult("dashboard.windowedPeriodDelta", () =>
-      useChStats
-        ? chStatsPromise!.then((s) => [
-            {
-              // CH twin returns the NET deltas (obtained−disposed, issued−claimed).
-              // Downstream reads `inv_obtained − inv_disposed` and
-              // `vch_issued − vch_claimed`, so park the net in the first term and
-              // zero the second to preserve the exact subtraction.
-              inv_obtained: String(s.inventoryChangePeriod),
-              inv_disposed: "0",
-              vch_issued: String(s.voucherChangePeriod),
-              vch_claimed: "0",
-            },
-          ])
-        : db.$queryRaw<{
+      queryRows<{
         inv_obtained: string;
         inv_disposed: string;
         vch_issued: string;
         vch_claimed: string;
-      }[]>`
+      }[]>(db, `
         WITH real_users AS (
           SELECT id FROM "user"
-          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+          WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
         )
         SELECT
           COALESCE((SELECT SUM(value_at_obtained::numeric) FROM user_inventory
-            WHERE obtained_at >= ${periodCutoff}
+            WHERE obtained_at >= $1
               AND user_id IN (SELECT id FROM real_users)
-              AND ${Prisma.raw(nonCreatorOwnerSql("user_id"))}), 0)::text AS inv_obtained,
+              AND ${nonCreatorOwnerSql("user_id")}), 0)::text AS inv_obtained,
           COALESCE((SELECT SUM(value_at_obtained::numeric) FROM user_inventory
-            WHERE (sold_at >= ${periodCutoff} OR exchanged_at >= ${periodCutoff})
+            WHERE (sold_at >= $1 OR exchanged_at >= $1)
               AND user_id IN (SELECT id FROM real_users)
-              AND ${Prisma.raw(nonCreatorOwnerSql("user_id"))}), 0)::text AS inv_disposed,
+              AND ${nonCreatorOwnerSql("user_id")}), 0)::text AS inv_disposed,
           COALESCE((SELECT SUM(value::numeric) FROM vouchers
-            WHERE created_at >= ${periodCutoff}
+            WHERE created_at >= $1
               AND user_id IN (SELECT id FROM real_users)), 0)::text AS vch_issued,
           COALESCE((SELECT SUM(value::numeric) FROM vouchers
-            WHERE claimed_at >= ${periodCutoff}
+            WHERE claimed_at >= $1
               AND user_id IN (SELECT id FROM real_users)), 0)::text AS vch_claimed
-      `,
+      `, periodCutoff),
     ),
     // Lifetime + 24h + 7d deposit transaction counts in one indexed
     // scan. 5-min cached. The rolling-24h / 7d cutoffs are recomputed
@@ -1663,9 +1527,8 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
   // rest of this function reads the metrics object as before.
   const windowMetrics = windowMetricsResult.data;
 
-  // balanceAggregates was switched to raw SQL so it could be wrapped
-  // with unstable_cache (Prisma's `where` object isn't a stable cache
-  // key). Field shape changed from `{ _sum: { total_wagered, ... } }`
+  // balanceAggregates uses a stable raw SQL shape for cross-request caching.
+  // Field shape changed from `{ _sum: { total_wagered, ... } }`
   // to `{ total_wagered, ... }` with string numeric values — parse via
   // parseFloat at each read site.
   const ba = balanceAggregates ?? {
@@ -1785,55 +1648,6 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
       Number(d.upgrader),
     ]),
   );
-
-  // Fire-and-forget ClickHouse comparison (Phase 2B, comparison mode only).
-  // Passes the SAME window cutoffs + scalar PG leg values this render produced
-  // so the CH twin diffs over identical windows; the served payload below is
-  // unchanged. `ggr`, the chart arrays, and the creator deal-payout leg are
-  // intentionally NOT diffed here (see compare/dashboard-stats.ts).
-  // `rolling7d` is computed once near the top of this function (shared with the
-  // Phase 2F cutover gate).
-  void compareDashboardStats({
-    periodCutoffIso: periodCutoff.toISOString(),
-    upgraderSinceIso: (metricWindow.since ?? periodCutoff).toISOString(),
-    startOfDayIso: startOfDay.toISOString(),
-    startOfWeekIso: startOfWeek.toISOString(),
-    startOfMonthIso: startOfMonth.toISOString(),
-    rolling24hIso: rolling24h.toISOString(),
-    rolling7dIso: rolling7d.toISOString(),
-    usersTotal: Number(userCounts[0]?.total ?? 0),
-    usersToday: Number(userCounts[0]?.today ?? 0),
-    usersWeek: Number(userCounts[0]?.week ?? 0),
-    usersMonth: Number(userCounts[0]?.month ?? 0),
-    signups24h: Number(userCounts[0]?.rolling24h ?? 0),
-    uniqueDepositors: uniqueDepositorsResult,
-    depositCountLifetime: depositCount,
-    depositCount24h,
-    depositCount7d,
-    depositCountPeriod: num(pa.deposit_count),
-    withdrawalCountPeriod: num(pa.withdrawal_count),
-    ftds24h: ftdCount,
-    packsOpened24h,
-    battlesPlayed24h,
-    deposits: depositsPeriod,
-    withdrawals: Math.abs(num(pa.withdrawal)),
-    wagers: Math.abs(num(pa.wager_excl_session)) + upgraderWagerPeriod,
-    wagersPacks: Math.abs(num(pa.pack_wager_excl_session)),
-    wagersBattles: Math.abs(num(pa.battle_wager_excl_session)),
-    wagersUpgrader: upgraderWagerPeriod,
-    wagersOrganic: Math.abs(num(pa.wager_organic)),
-    wagersRaw: Math.abs(num(pa.wager)) + upgraderWagerPeriod,
-    realizedPnlPeriod,
-    totalDeposited: parseFloat(ba.total_deposited) || 0,
-    totalWithdrawn: parseFloat(ba.total_withdrawn) || 0,
-    totalWagered,
-    totalWon,
-    ftdTotal24h: ftdTotal,
-    balanceChangePeriod,
-    manualWdPeriod,
-    inventoryChangePeriod,
-    voucherChangePeriod,
-  });
 
   return {
     // Selected window meta — drives the UI labels (so a card title can
@@ -2126,21 +1940,32 @@ export type ActiveRainSummary = {
 } | null;
 
 export async function getActiveRain(): Promise<ActiveRainSummary> {
-  const db = await getDb();
-  const rain = await db.rains.findFirst({
-    where: { status: { in: ["active", "drawing"] } },
-    orderBy: { starts_at: "desc" },
-    select: {
-      id: true,
-      participant_count: true,
-      total_pool_usd: true,
-      base_amount_usd: true,
-      tip_amount_usd: true,
-      status: true,
-      starts_at: true,
-      ends_at: true,
-    },
-  });
+  const db = await getDrizzleDb();
+  const [rain] = await queryRows<{
+    id: string;
+    participant_count: number;
+    total_pool_usd: string;
+    base_amount_usd: string;
+    tip_amount_usd: string;
+    status: string;
+    starts_at: Date;
+    ends_at: Date;
+  }[]>(
+    db,
+    `SELECT
+       id,
+       participant_count,
+       total_pool_usd::text AS total_pool_usd,
+       base_amount_usd::text AS base_amount_usd,
+       tip_amount_usd::text AS tip_amount_usd,
+       status::text AS status,
+       starts_at,
+       ends_at
+     FROM rains
+     WHERE status::text IN ('active', 'drawing')
+     ORDER BY starts_at DESC
+     LIMIT 1`,
+  );
   if (!rain) return null;
   return {
     id: rain.id,
@@ -2346,7 +2171,7 @@ async function ggrTopContributorsForCutoff(
   // Defensive clamp — server actions take a number from the client, so
   // an out-of-range value shouldn't blow up the query plan.
   const safeLimit = Math.max(1, Math.min(limit, 50));
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
   // Central canonical scope — staff + blacklist dropped, creators KEPT,
@@ -2355,12 +2180,14 @@ async function ggrTopContributorsForCutoff(
   // population as the headline `getWindowMetrics` (no more wholesale
   // creator drop; "one scope, fixed once").
   const scope = await getMetricsScope();
-  const sessionWindowsCte = Prisma.raw(scope.sessionWindowsCte);
-  const notInSessionLedger = Prisma.raw(
-    scope.notInCreatorSession("lt.user_id", "lt.created_at"),
+  const sessionWindowsCte = scope.sessionWindowsCte;
+  const notInSessionLedger = scope.notInCreatorSession(
+    "lt.user_id",
+    "lt.created_at",
   );
-  const notInSessionInv = Prisma.raw(
-    scope.notInCreatorSession("ui.user_id", "ui.obtained_at"),
+  const notInSessionInv = scope.notInCreatorSession(
+    "ui.user_id",
+    "ui.obtained_at",
   );
   // Window cutoff for the per-user join is supplied by the caller (the
   // chip-enum wrapper resolves it via `periodToMetricWindow` — bounded
@@ -2368,17 +2195,19 @@ async function ggrTopContributorsForCutoff(
   // wrapper via `kpiWindowToCutoff`). There is always a lower bound, so the
   // heavy ledger+inventory+upgrader join never runs a full-history scan and
   // each user's `net` reconciles with the (same-window) headline GGR.
-  const sinceLedger = Prisma.sql`AND lt.created_at >= ${cutoff}`;
-  const sinceInv = Prisma.sql`AND ui.obtained_at >= ${cutoff}`;
-  const wagerIn = Prisma.raw(METRICS_WAGER_TYPES_SQL);
-  const gamingPayoutIn = Prisma.raw(METRICS_GAMING_PAYOUT_TYPES_SQL);
+  const sinceLedger = "AND lt.created_at >= $1";
+  const sinceInv = "AND ui.obtained_at >= $1";
+  const wagerIn = METRICS_WAGER_TYPES_SQL;
+  const gamingPayoutIn = METRICS_GAMING_PAYOUT_TYPES_SQL;
   // Probe for the upgrader-native table (pre-upgrader DBs lack it —
   // to_regclass returns NULL, not an error). Gates the per-user upgrader
   // CTE below so it degrades to an empty leg rather than throwing 42P01.
   // Mirrors the canonical `upgraderMetrics` guard so the per-user net
   // folds upgrader on the SAME DBs the headline does.
-  const upgProbe = await db.$queryRaw<{ exists: string | null }[]>`
-    SELECT to_regclass('public.upgrader_games')::text AS exists`;
+  const upgProbe = await queryRows<{ exists: string | null }[]>(
+    db,
+    `SELECT to_regclass('public.upgrader_games')::text AS exists`,
+  );
   const hasUpgrader = upgProbe[0]?.exists != null;
   // Per-user upgrader leg from `upgrader_games` (real gameplay, NOT in
   // the ledger). Folded into wager + payout BEFORE the ORDER BY/LIMIT so
@@ -2401,9 +2230,9 @@ async function ggrTopContributorsForCutoff(
   // the "all" chip via `periodToMetricWindow`), so the per-user upgrader
   // leg never runs an unbounded `upgrader_games` scan and stays aligned
   // with the headline window.
-  const sinceUpg = Prisma.sql`AND ug.created_at >= ${cutoff}`;
+  const sinceUpg = "AND ug.created_at >= $1";
   const upgraderLegCte = hasUpgrader
-    ? Prisma.sql`
+    ? `
       upgrader_leg AS (
         SELECT
           ug.user_id,
@@ -2415,14 +2244,12 @@ async function ggrTopContributorsForCutoff(
           -- canonical upgraderMetrics. blacklistIdNotIn is keyed on
           -- "u.id", which matches this aliased subquery.
           SELECT u.id FROM "user" u
-          WHERE u.role NOT IN ('admin', 'support', 'creator') ${Prisma.raw(
-            blacklistIdNotIn,
-          )}
+          WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
         )
         ${sinceUpg}
         GROUP BY ug.user_id
       )`
-    : Prisma.sql`
+    : `
       upgrader_leg AS (
         -- Pre-upgrader DB: empty stub so the LEFT JOIN below contributes 0.
         SELECT NULL::text AS user_id, 0::numeric AS upg_wager, 0::numeric AS upg_payout
@@ -2453,7 +2280,7 @@ async function ggrTopContributorsForCutoff(
   // battles are borrow_percentage=0; Fix 1). Creator-on-session rows are
   // dropped on the ledger+inventory legs via the central session-window
   // predicate (symmetric, keyed on created_at / obtained_at).
-  const rows = await db.$queryRaw<
+  const rows = await queryRows<
     {
       user_id: string;
       username: string | null;
@@ -2461,7 +2288,7 @@ async function ggrTopContributorsForCutoff(
       payout_total: string;
       net: string;
     }[]
-  >`
+  >(db, `
     WITH ${sessionWindowsCte},
     real_users AS (
       -- Staff (admin/support) + blacklist dropped; creators KEPT (their
@@ -2469,7 +2296,7 @@ async function ggrTopContributorsForCutoff(
       -- matches @/lib/metrics/scope STAFF_ROLES.
       SELECT u.id, u.username
       FROM "user" u
-      WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+      WHERE u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
     ),
     non_borrow_pack_sessions AS (
       SELECT game_session_id FROM ledger_transactions
@@ -2569,8 +2396,8 @@ async function ggrTopContributorsForCutoff(
       (pu.wager_total - pu.payout_total)::text AS net
     FROM per_user pu
     ORDER BY ABS(pu.wager_total - pu.payout_total) DESC
-    LIMIT ${safeLimit}
-  `;
+    LIMIT $2
+  `, cutoff, safeLimit);
   return rows.map((r) => ({
     userId: r.user_id,
     username: r.username,

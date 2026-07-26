@@ -1,6 +1,7 @@
+import { queryRows } from "@/lib/drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDevDb, getProdDb } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
+import { drizzleForEnv } from "@/lib/db";
 import type { PaginatedResult } from "@/lib/types";
 import {
   resolveUpgraderMetadata,
@@ -164,12 +165,12 @@ async function computeUpgraderTransactions(
   },
 ): Promise<PaginatedResult<UpgraderTransactionRow>> {
   const { page = 1, perPage = 20, search, outcome, sortBy } = params;
-  // Resolve the Prisma client from the threaded env WITHOUT calling
-  // getDb() — getDb() reads the request cookie via cookies(), which is
+  // Resolve the Drizzle client from the threaded environment without reading
+  // the request cookie inside the cached callback.
   // illegal inside unstable_cache. Env is resolved in the request scope
   // by the public entry point and passed through as a cache-key dimension
   // (mirrors getDepositTransactions in transactions.ts).
-  const db = env === "dev" ? getDevDb() : getProdDb();
+  const db = drizzleForEnv(env);
 
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
   const safePage = Math.max(1, Math.floor(page));
@@ -362,8 +363,8 @@ async function computeUpgraderTransactions(
   };
 
   const [countResult, rows] = await Promise.all([
-    db.$queryRawUnsafe<{ total: string }[]>(countSql, ...queryParams),
-    db.$queryRawUnsafe<Raw[]>(dataSql, ...queryParams),
+    queryRows<{ total: string }[]>(db, countSql, ...queryParams),
+    queryRows<Raw[]>(db, dataSql, ...queryParams),
   ]);
 
   const total = Number(countResult[0]?.total ?? "0");

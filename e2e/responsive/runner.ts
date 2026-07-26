@@ -57,13 +57,8 @@ export async function injectSessionCookie(
  * admin shell renders in a state suitable for measuring PAGE CONTENT
  * layout rather than persistent chrome:
  *
- *   - The three right-edge docked widgets (live / recent / chat — see
- *     src/components/right-rail-context.tsx) DEFAULT to `live+chat open`.
- *     They are `position: fixed` panels that, on a phone-width viewport,
- *     blanket the screen and sit ON TOP of the page content. For a
- *     content-layout audit we collapse all three (storage value "0") so
- *     the hero/body is the measurement target. (The dock-open states are
- *     audited separately + explicitly only on the dock-reserving pages.)
+ *   - Creator Hub's Alerts dock is fixed and can cover page content at
+ *     phone widths, so responsive audits collapse it before measuring.
  *
  * Uses the EXACT storage keys the context reads (STORAGE_KEYS) so this is
  * a faithful "user collapsed the panels" state, not a hack.
@@ -71,9 +66,7 @@ export async function injectSessionCookie(
 export async function seedCollapsedRail(context: BrowserContext): Promise<void> {
   await context.addInitScript(() => {
     try {
-      window.localStorage.setItem("live-money-chat:open", "0");
-      window.localStorage.setItem("docked-recent-activity:open", "0");
-      window.localStorage.setItem("docked-chat:open", "0");
+      window.localStorage.setItem("docked-alerts:open", "0");
       window.localStorage.setItem("right-rail:open-order", "[]");
     } catch {
       /* localStorage unavailable — non-fatal */
@@ -150,8 +143,8 @@ export async function assertAuthenticated(page: Page): Promise<void> {
  * Settle a freshly-navigated page so we measure the REAL layout, not a
  * mid-stream skeleton.
  *
- * Deliberately NOT `networkidle`: this app has live-polling endpoints
- * (/api/packy-live, /api/live/activity) that can take 10s+ and never let
+ * Deliberately NOT `networkidle`: this app has live endpoints
+ * (such as /api/packy-live) that can take 10s+ and never let
  * the network go idle, so waiting on it just times out. Instead we:
  *   1. wait for DOM content,
  *   2. wait for any Suspense skeleton (aria-busy / .animate-pulse) to clear

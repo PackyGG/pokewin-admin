@@ -1,4 +1,9 @@
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import {
+  isPostgresError,
+  postgresErrorMessages,
+} from "@/lib/postgres-errors";
 
 /**
  * Known admin-panel setting keys. Extend this when adding new key/value
@@ -22,22 +27,19 @@ export const SETTINGS_KEYS = {
 export class AdminSettingsTableMissingError extends Error {
   constructor() {
     super(
-      "admin_settings table is not yet available. Run the migration at " +
-        "prisma/admin/migrations/20260418000000_add_admin_settings/ on the admin DB.",
+      "admin_settings is not available. Apply the reviewed Admin DB migration before retrying.",
     );
     this.name = "AdminSettingsTableMissingError";
   }
 }
 
 function isMissingTableError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const msg = err.message;
-  // Postgres "relation does not exist" + Prisma wrappers
+  if (isPostgresError(err, "42P01")) return true;
+  const msg = postgresErrorMessages(err);
   return (
     msg.includes("admin_settings") &&
     (msg.includes("does not exist") ||
       msg.includes("UndefinedTable") ||
-      msg.includes("P2021") ||
       msg.includes("ColumnNotFound"))
   );
 }
@@ -49,8 +51,10 @@ function isMissingTableError(err: unknown): boolean {
  */
 export async function getAdminSetting(key: string): Promise<string | null> {
   try {
-    const row = await adminDb.admin_settings.findUnique({ where: { key } });
-    return row?.value ?? null;
+    const result = await adminDrizzle.execute<{ value: string }>(sql`
+      SELECT value FROM admin_settings WHERE key = ${key} LIMIT 1
+    `);
+    return result.rows[0]?.value ?? null;
   } catch (err) {
     if (isMissingTableError(err)) return null;
     throw err;
@@ -67,11 +71,14 @@ export async function setAdminSetting(
   adminUserId: string,
 ): Promise<void> {
   try {
-    await adminDb.admin_settings.upsert({
-      where: { key },
-      update: { value, updated_by: adminUserId },
-      create: { key, value, updated_by: adminUserId },
-    });
+    await adminDrizzle.execute(sql`
+      INSERT INTO admin_settings (key, value, updated_by)
+      VALUES (${key}, ${value}, ${adminUserId}::uuid)
+      ON CONFLICT (key) DO UPDATE SET
+        value = EXCLUDED.value,
+        updated_by = EXCLUDED.updated_by,
+        updated_at = NOW()
+    `);
   } catch (err) {
     if (isMissingTableError(err)) throw new AdminSettingsTableMissingError();
     throw err;

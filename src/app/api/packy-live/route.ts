@@ -1,4 +1,12 @@
-import { requirePageAccess } from "@/lib/dal";
+import {
+  getUserPermissions,
+  sessionIsAdmin,
+  sessionIsOwner,
+  verifySession,
+} from "@/lib/dal";
+import { pageAccessGranted } from "@/lib/admin-pages";
+import { resolveBackendApiConfig } from "@/lib/backend-api/config";
+import { revalidateTag } from "next/cache";
 import https from "node:https";
 import crypto from "node:crypto";
 import type { Duplex, Writable } from "node:stream";
@@ -15,10 +23,8 @@ import * as ws from "ws";
 
 /**
  * Server-side proxy for the packy.gg live event stream. Opens the
- * upstream WebSocket with the exact handshake headers the browser
- * reference uses (browsers can't set Origin / Sec-WebSocket-Key
- * directly — the spec pins them), then fans every message out to
- * authenticated admins over SSE.
+ * upstream WebSocket with a fresh RFC 6455 handshake, then forwards
+ * only the event families the authenticated staff member may view.
  */
 
 // `Receiver` is a Writable stream but the @types/ws package doesn't
@@ -44,38 +50,101 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const PACKY_HOST = "api.packy.gg";
-const PACKY_PATH = "/v1/ws";
 const ROTATION_MS = 240_000;
 const HEARTBEAT_MS = 15_000;
+const PRODUCTION_DASHBOARD_ORIGIN = "https://packydash.com";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 /**
- * Full handshake header set copied 1:1 from the reference browser WS
- * to the packy.gg gateway. Sent literally — manual HTTP upgrade so
- * the `ws` library can't rewrite Sec-WebSocket-Key.
+ * Stable browser-compatible handshake headers. The target host,
+ * privileged credential and random nonce are derived per connection.
  */
-const PACKY_WS_KEY = "LMUTEH207xvS5FA2bTrXCw==";
-const PACKY_WS_HEADERS: Record<string, string> = {
-  Host: PACKY_HOST,
+const PACKY_WS_BASE_HEADERS: Record<string, string> = {
   Upgrade: "websocket",
-  Origin: "https://beta.packy.gg",
   "Cache-Control": "no-cache",
   "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
   Pragma: "no-cache",
   Connection: "Upgrade",
-  "Sec-WebSocket-Key": PACKY_WS_KEY,
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
   "Sec-WebSocket-Version": "13",
   "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits",
 };
 
-const EXPECTED_ACCEPT = crypto
-  .createHash("sha1")
-  .update(PACKY_WS_KEY + WS_GUID)
-  .digest("base64");
+type AdminActivityTopic =
+  | "deposits"
+  | "card_payments"
+  | "withdrawals"
+  | "balance"
+  | "gaming";
+
+function isLoopbackOrigin(origin: string): boolean {
+  try {
+    const hostname = new URL(origin).hostname;
+    return (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "[::1]"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function filterAndInvalidateAdminActivity(
+  raw: string,
+  allowedTopics: ReadonlySet<AdminActivityTopic>,
+  canReceiveChat: boolean,
+): string | null {
+  try {
+    const event = JSON.parse(raw) as {
+      type?: unknown;
+      payload?: {
+        user_id?: unknown;
+        topics?: unknown;
+      };
+    };
+    if (event.type === "chat.pull.history") {
+      return canReceiveChat ? raw : null;
+    }
+    if (event.type !== "admin.activity") return null;
+    if (!Array.isArray(event.payload?.topics)) return null;
+    const topics = event.payload.topics.filter(
+      (topic): topic is AdminActivityTopic =>
+        typeof topic === "string" &&
+        allowedTopics.has(topic as AdminActivityTopic),
+    );
+    if (topics.length === 0) {
+      return null;
+    }
+    const topicSet = new Set(topics);
+    if (topicSet.has("deposits")) {
+      revalidateTag("transactions-deposits-list");
+    }
+    if (topicSet.has("withdrawals")) {
+      revalidateTag("transactions-withdrawals-list");
+    }
+    // These writes feed the dashboard's short-lived activity aggregates.
+    // Evict the shared tag so a live refresh cannot serve a still-warm entry.
+    if (
+      topicSet.has("deposits") ||
+      topicSet.has("card_payments") ||
+      topicSet.has("withdrawals") ||
+      topicSet.has("balance") ||
+      topicSet.has("gaming")
+    ) {
+      revalidateTag("dashboard-activity");
+    }
+    if (typeof event.payload.user_id === "string") {
+      revalidateTag(`users-detail-${event.payload.user_id}`);
+    }
+    event.payload.topics = topics;
+    return JSON.stringify(event);
+  } catch {
+    return null;
+  }
+}
 
 // Per-user concurrent-stream cap. Maps `userId → openCount` for THIS
 // route in THIS Node.js process. Caps at 3 so a single admin tab-storm
@@ -90,17 +159,94 @@ const MAX_CONCURRENT = 4;
 const openStreams = new Map<string, number>();
 
 export async function GET(request: Request): Promise<Response> {
-  // Match the rest of the live SSE family — gate on the dashboard
-  // capability so non-admin roles without /dashboard access can't open
-  // a long-running upstream proxy. requirePageAccess throws via Next's
-  // redirect() on failure, which is meaningless for an SSE endpoint.
-  // Catch + return 401 so the EventSource client sees the failure.
+  const requestOrigin = new URL(request.url).origin;
+  const origin = request.headers.get("origin");
+  const fetchSite = request.headers.get("sec-fetch-site");
+  const trustedOrigins = new Set([PRODUCTION_DASHBOARD_ORIGIN]);
+  const trustedRequestOrigin =
+    trustedOrigins.has(requestOrigin) ||
+    (process.env.NODE_ENV !== "production" &&
+      isLoopbackOrigin(requestOrigin));
+  if (
+    !trustedRequestOrigin ||
+    (origin != null &&
+      (origin !== requestOrigin || !trustedOrigins.has(origin)) &&
+      !(
+        process.env.NODE_ENV !== "production" &&
+        origin === requestOrigin &&
+        isLoopbackOrigin(origin)
+      )) ||
+    (fetchSite != null && fetchSite !== "same-origin")
+  ) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  // Authenticate against current DB-backed roles, then derive the exact
+  // live topic families this staff member may receive.
   let userId: string;
+  let allowedTopics: Set<AdminActivityTopic>;
+  let canReceiveChat: boolean;
   try {
-    const session = await requirePageAccess("/dashboard");
+    const session = await verifySession();
     userId = session.userId;
+    const fullAccess = sessionIsAdmin(session) || sessionIsOwner(session);
+    const permissions = fullAccess
+      ? []
+      : await getUserPermissions(session.userId);
+    const canViewUsers =
+      fullAccess || pageAccessGranted(permissions, "/users");
+    const canViewTransactions =
+      fullAccess ||
+      pageAccessGranted(permissions, "/transactions/deposits");
+    canReceiveChat =
+      fullAccess || pageAccessGranted(permissions, "/chat");
+    allowedTopics = new Set<AdminActivityTopic>();
+    if (canViewUsers) {
+      allowedTopics.add("balance");
+      allowedTopics.add("gaming");
+    }
+    if (canViewTransactions) {
+      allowedTopics.add("deposits");
+      allowedTopics.add("card_payments");
+      allowedTopics.add("withdrawals");
+    }
+    if (allowedTopics.size === 0 && !canReceiveChat) {
+      return new Response("Forbidden", { status: 403 });
+    }
   } catch {
     return new Response("Unauthorized", { status: 401 });
+  }
+
+  let upstreamHeaders: Record<string, string>;
+  let upstreamHost: string;
+  let upstreamPort: number;
+  let upstreamPath: string;
+  let expectedAccept: string;
+  try {
+    const backend = await resolveBackendApiConfig();
+    const backendUrl = new URL(backend.baseUrl);
+    if (backendUrl.protocol !== "https:") {
+      throw new Error("Live backend must use HTTPS");
+    }
+    upstreamHost = backendUrl.hostname;
+    upstreamPort = Number(backendUrl.port || "443");
+    upstreamPath = `${backendUrl.pathname.replace(/\/+$/, "")}/ws`;
+    const websocketKey = crypto.randomBytes(16).toString("base64");
+    expectedAccept = crypto
+      .createHash("sha1")
+      .update(websocketKey + WS_GUID)
+      .digest("base64");
+    upstreamHeaders = {
+      ...PACKY_WS_BASE_HEADERS,
+      ...backend.cfHeaders,
+      Host: backendUrl.host,
+      Origin: requestOrigin,
+      "Sec-WebSocket-Key": websocketKey,
+      "x-api-key": backend.adminKey,
+    };
+  } catch (error) {
+    console.error("[packy-live] backend config unavailable", error);
+    return new Response("Live backend unavailable", { status: 503 });
   }
 
   const currentOpen = openStreams.get(userId) ?? 0;
@@ -191,11 +337,11 @@ export async function GET(request: Request): Promise<Response> {
 
       try {
         req = https.request({
-          host: PACKY_HOST,
-          port: 443,
-          path: PACKY_PATH,
+          host: upstreamHost,
+          port: upstreamPort,
+          path: upstreamPath,
           method: "GET",
-          headers: PACKY_WS_HEADERS,
+          headers: upstreamHeaders,
           timeout: 15_000,
         });
       } catch (err) {
@@ -239,12 +385,12 @@ export async function GET(request: Request): Promise<Response> {
         }
 
         const accept = res.headers["sec-websocket-accept"];
-        if (accept !== EXPECTED_ACCEPT) {
+        if (accept !== expectedAccept) {
           writeEvent(
             "error",
             JSON.stringify({
               message: "accept-mismatch",
-              expected: EXPECTED_ACCEPT,
+              expected: expectedAccept,
               got: String(accept ?? "(none)"),
             }),
           );
@@ -346,6 +492,13 @@ export async function GET(request: Request): Promise<Response> {
           } else {
             return;
           }
+          const filteredPayload = filterAndInvalidateAdminActivity(
+            payload,
+            allowedTopics,
+            canReceiveChat,
+          );
+          if (filteredPayload == null) return;
+          payload = filteredPayload;
           if (payload.includes("\n")) {
             payload = payload.replace(/\n/g, "\\n");
           }
@@ -435,7 +588,14 @@ export async function GET(request: Request): Promise<Response> {
         ).Sender;
         if (typeof SenderCtor === "function") {
           const sender = new SenderCtor(rawSocket, extensions);
-          const subscribes = [{ type: "chat.pull.feed.subscribe" }];
+          const subscribes = [
+            ...(canReceiveChat
+              ? [{ type: "chat.pull.feed.subscribe" }]
+              : []),
+            ...(allowedTopics.size > 0
+              ? [{ type: "admin.activity.feed.subscribe" }]
+              : []),
+          ];
           for (const msg of subscribes) {
             try {
               sender.send(JSON.stringify(msg), {
@@ -487,9 +647,14 @@ export async function GET(request: Request): Promise<Response> {
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
+      "Cache-Control": "private, no-store, no-transform",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
+      "X-Content-Type-Options": "nosniff",
+      "Cross-Origin-Resource-Policy": "same-origin",
+      "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+      "X-Frame-Options": "DENY",
+      Vary: "Cookie, Origin",
     },
   });
 }

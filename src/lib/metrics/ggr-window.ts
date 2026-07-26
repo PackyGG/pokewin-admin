@@ -9,13 +9,11 @@ import { type MetricWindow } from "@/lib/metrics/queries";
  * Client-safe `/ggr` window helpers — the two PURE date helpers
  * (`ggrWindowToMetricWindow` + `GGR_LIFETIME_LOOKBACK_DAYS`) extracted out
  * of the `server-only` `@/lib/queries/ggr` so they can be reused without
- * dragging the Postgres client (`getDb`) into the importer's graph. This
- * module imports NO `server-only`, NO `getDb`/`pg`/prisma — only the
+ * dragging the Postgres client into the importer's graph. This
+ * module imports no server-only database code — only the
  * client-safe period helpers, the `MS_PER_DAY` constant, and the
  * `MetricWindow` TYPE (erased at compile time). `@/lib/queries/ggr`
  * re-exports both symbols so existing Postgres consumers are unchanged,
- * and the ClickHouse `window-metrics.ts` twin imports them from here so the
- * ClickHouse read graph no longer transitively pulls the Postgres client.
  */
 
 // ─── Window helper ───────────────────────────────────────────────────

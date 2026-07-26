@@ -1,15 +1,23 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getDb } from "@/lib/db";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+
+import { getDrizzleDb } from "@/lib/db";
+import {
+  race_claim_holds,
+  race_claims,
+  race_periods,
+  race_prize_tiers,
+} from "@/lib/db-schema/main/schema";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import type { race_type } from "@/generated/prisma/enums";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 
-const VALID_RACE_TYPES = new Set<race_type>(["daily", "weekly", "monthly"]);
+const RACE_TYPES = ["daily", "weekly", "monthly"] as const;
+type RaceType = (typeof RACE_TYPES)[number];
+const VALID_RACE_TYPES = new Set<string>(RACE_TYPES);
 
 /**
  * Create or update a race prize tier. The unique key on the table is
@@ -23,10 +31,10 @@ export async function upsertRacePrizeTier(
   position: number,
   prizeAmountUsd: number,
 ) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
 
-  if (!VALID_RACE_TYPES.has(raceType as race_type)) {
+  if (!VALID_RACE_TYPES.has(raceType)) {
     throw new Error("Invalid race type (must be daily, weekly, or monthly)");
   }
   if (!Number.isInteger(position) || position < 1) {
@@ -42,25 +50,35 @@ export async function upsertRacePrizeTier(
     "upsert race prize tiers",
   );
 
-  const existing = await db.race_prize_tiers.findFirst({
-    where: { race_type: raceType as race_type, position },
-    select: { id: true, prize_amount_usd: true },
-  });
+  const validRaceType = raceType as RaceType;
+  const [existing] = await db
+    .select({
+      id: race_prize_tiers.id,
+      prize_amount_usd: race_prize_tiers.prize_amount_usd,
+    })
+    .from(race_prize_tiers)
+    .where(
+      and(
+        eq(race_prize_tiers.race_type, validRaceType),
+        eq(race_prize_tiers.position, position),
+      ),
+    )
+    .limit(1);
 
-  if (existing) {
-    await db.race_prize_tiers.update({
-      where: { id: existing.id },
-      data: { prize_amount_usd: prizeAmountUsd },
-    });
-  } else {
-    await db.race_prize_tiers.create({
-      data: {
-        race_type: raceType as race_type,
-        position,
-        prize_amount_usd: prizeAmountUsd,
+  await db
+    .insert(race_prize_tiers)
+    .values({
+      race_type: validRaceType,
+      position,
+      prize_amount_usd: String(prizeAmountUsd),
+    })
+    .onConflictDoUpdate({
+      target: [race_prize_tiers.position, race_prize_tiers.race_type],
+      set: {
+        prize_amount_usd: String(prizeAmountUsd),
+        updated_at: new Date().toISOString(),
       },
     });
-  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -86,7 +104,7 @@ export async function upsertRacePrizeTier(
  * positions and persist them in a single click instead of saving
  * after every row.
  *
- * Atomicity: all-or-nothing via `$transaction` — a bad row in the
+ * Atomicity: all-or-nothing via a database transaction — a bad row in the
  * middle (duplicate position, negative amount, etc.) rolls back any
  * partial work, so the table on screen never gets stuck with half a
  * podium applied. Validation runs UP FRONT before we touch the DB so
@@ -96,10 +114,10 @@ export async function upsertRacePrizeTiersBulk(
   raceType: string,
   rows: { position: number; prizeAmountUsd: number }[],
 ) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
 
-  if (!VALID_RACE_TYPES.has(raceType as race_type)) {
+  if (!VALID_RACE_TYPES.has(raceType)) {
     throw new Error("Invalid race type (must be daily, weekly, or monthly)");
   }
   if (!Array.isArray(rows) || rows.length === 0) {
@@ -141,33 +159,41 @@ export async function upsertRacePrizeTiersBulk(
   // Resolve which rows are inserts vs updates BEFORE the transaction
   // so the audit metadata can label each one accurately. One round-trip
   // for the page's worth of positions.
-  const existing = await db.race_prize_tiers.findMany({
-    where: {
-      race_type: raceType as race_type,
-      position: { in: rows.map((r) => r.position) },
-    },
-    select: { id: true, position: true, prize_amount_usd: true },
-  });
+  const validRaceType = raceType as RaceType;
+  const existing = await db
+    .select({
+      id: race_prize_tiers.id,
+      position: race_prize_tiers.position,
+      prize_amount_usd: race_prize_tiers.prize_amount_usd,
+    })
+    .from(race_prize_tiers)
+    .where(
+      and(
+        eq(race_prize_tiers.race_type, validRaceType),
+        inArray(
+          race_prize_tiers.position,
+          rows.map((r) => r.position),
+        ),
+      ),
+    );
   const existingByPosition = new Map(existing.map((e) => [e.position, e]));
 
-  const operations = rows.map((row) => {
-    const prior = existingByPosition.get(row.position);
-    if (prior) {
-      return db.race_prize_tiers.update({
-        where: { id: prior.id },
-        data: { prize_amount_usd: row.prizeAmountUsd },
-      });
-    }
-    return db.race_prize_tiers.create({
-      data: {
-        race_type: raceType as race_type,
+  await db
+    .insert(race_prize_tiers)
+    .values(
+      rows.map((row) => ({
+        race_type: validRaceType,
         position: row.position,
-        prize_amount_usd: row.prizeAmountUsd,
+        prize_amount_usd: String(row.prizeAmountUsd),
+      })),
+    )
+    .onConflictDoUpdate({
+      target: [race_prize_tiers.position, race_prize_tiers.race_type],
+      set: {
+        prize_amount_usd: sql`excluded.prize_amount_usd`,
+        updated_at: new Date().toISOString(),
       },
     });
-  });
-
-  await db.$transaction(operations);
 
   // One audit event for the whole batch (rather than N events) so the
   // audit log doesn't get spammed by a single "set up the podium" admin
@@ -202,13 +228,18 @@ export async function upsertRacePrizeTiersBulk(
  * podium. Deletion is hard; no soft-delete column on the table.
  */
 export async function deleteRacePrizeTier(id: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
 
-  const existing = await db.race_prize_tiers.findUnique({
-    where: { id },
-    select: { race_type: true, position: true, prize_amount_usd: true },
-  });
+  const [existing] = await db
+    .select({
+      race_type: race_prize_tiers.race_type,
+      position: race_prize_tiers.position,
+      prize_amount_usd: race_prize_tiers.prize_amount_usd,
+    })
+    .from(race_prize_tiers)
+    .where(eq(race_prize_tiers.id, id))
+    .limit(1);
   if (!existing) {
     throw new Error("Prize tier not found");
   }
@@ -219,7 +250,7 @@ export async function deleteRacePrizeTier(id: string) {
     "delete race prize tiers",
   );
 
-  await db.race_prize_tiers.delete({ where: { id } });
+  await db.delete(race_prize_tiers).where(eq(race_prize_tiers.id, id));
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -267,12 +298,12 @@ export async function startRacePeriod(params: {
   monthlyStartDate?: string;
   monthlyEndDate?: string;
 }) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
 
   const { raceType, autoRenew, monthlyStartDate, monthlyEndDate } = params;
 
-  if (!VALID_RACE_TYPES.has(raceType as race_type)) {
+  if (!VALID_RACE_TYPES.has(raceType)) {
     throw new Error("Invalid race type (must be daily, weekly, or monthly)");
   }
 
@@ -317,25 +348,33 @@ export async function startRacePeriod(params: {
 
   // Reject if an active period already exists for this type. A clearer
   // error than waiting for the partial unique index to fire.
-  const existing = await db.race_periods.findFirst({
-    where: { race_type: raceType as race_type, status: "active" },
-    select: { id: true, ends_at: true },
-  });
+  const validRaceType = raceType as RaceType;
+  const [existing] = await db
+    .select({ id: race_periods.id, ends_at: race_periods.ends_at })
+    .from(race_periods)
+    .where(
+      and(
+        eq(race_periods.race_type, validRaceType),
+        eq(race_periods.status, "active"),
+      ),
+    )
+    .limit(1);
   if (existing) {
     throw new Error(
-      `An active ${raceType} period already exists (ends ${existing.ends_at.toISOString()}). End it first.`,
+      `An active ${raceType} period already exists (ends ${new Date(existing.ends_at).toISOString()}). End it first.`,
     );
   }
 
-  const created = await db.race_periods.create({
-    data: {
-      race_type: raceType as race_type,
-      starts_at: startsAtDate,
-      ends_at: endsAtDate,
+  const [created] = await db
+    .insert(race_periods)
+    .values({
+      race_type: validRaceType,
+      starts_at: startsAtDate.toISOString(),
+      ends_at: endsAtDate.toISOString(),
       auto_renew: autoRenew,
       status: "active",
-    },
-  });
+    })
+    .returning({ id: race_periods.id });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -358,7 +397,7 @@ export async function startRacePeriod(params: {
  * until an admin starts a new one.
  */
 export async function toggleRacePeriodAutoRenew(periodId: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
 
   await requireCapability(
@@ -367,19 +406,25 @@ export async function toggleRacePeriodAutoRenew(periodId: string) {
     "manage race periods",
   );
 
-  const existing = await db.race_periods.findUnique({
-    where: { id: periodId },
-    select: { id: true, race_type: true, auto_renew: true, status: true },
-  });
+  const [existing] = await db
+    .select({
+      id: race_periods.id,
+      race_type: race_periods.race_type,
+      auto_renew: race_periods.auto_renew,
+      status: race_periods.status,
+    })
+    .from(race_periods)
+    .where(eq(race_periods.id, periodId))
+    .limit(1);
   if (!existing) {
     throw new Error("Race period not found");
   }
 
   const next = !existing.auto_renew;
-  await db.race_periods.update({
-    where: { id: periodId },
-    data: { auto_renew: next },
-  });
+  await db
+    .update(race_periods)
+    .set({ auto_renew: next, updated_at: new Date().toISOString() })
+    .where(eq(race_periods.id, periodId));
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -403,7 +448,7 @@ export async function toggleRacePeriodAutoRenew(periodId: string) {
  * is treated as an admin pause; the next period starts when admin says so.
  */
 export async function endRacePeriodNow(periodId: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
 
   await requireCapability(
@@ -412,16 +457,17 @@ export async function endRacePeriodNow(periodId: string) {
     "manage race periods",
   );
 
-  const existing = await db.race_periods.findUnique({
-    where: { id: periodId },
-    select: {
-      id: true,
-      race_type: true,
-      starts_at: true,
-      ends_at: true,
-      status: true,
-    },
-  });
+  const [existing] = await db
+    .select({
+      id: race_periods.id,
+      race_type: race_periods.race_type,
+      starts_at: race_periods.starts_at,
+      ends_at: race_periods.ends_at,
+      status: race_periods.status,
+    })
+    .from(race_periods)
+    .where(eq(race_periods.id, periodId))
+    .limit(1);
   if (!existing) {
     throw new Error("Race period not found");
   }
@@ -429,23 +475,28 @@ export async function endRacePeriodNow(periodId: string) {
     throw new Error("Period is not active");
   }
 
-  const periodStartIso = existing.starts_at.toISOString().slice(0, 10);
+  const periodStartIso = new Date(existing.starts_at).toISOString().slice(0, 10);
   const excluded = await getExcludedUserIds();
-  const blacklistJoin = blacklistNotInClause("u.id", excluded);
+  const blacklistFilter =
+    excluded.length === 0
+      ? sql``
+      : sql`AND u.id NOT IN (${sql.join(
+          excluded.map((id) => sql`${id}`),
+          sql`, `,
+        )})`;
 
-  await db.$transaction(async (tx) => {
+  await db.transaction(async (tx) => {
     // Snapshot generation: aggregate game_sessions over the period range,
     // assign dense_rank, exclude bots and ineligible roles. Mirrors
     // RaceSnapshotRepository.generateSnapshotsForPeriod in the backend.
-    await tx.$executeRawUnsafe(
-      `
+    await tx.execute(sql`
       INSERT INTO race_leaderboard_snapshots
         (user_id, race_type, period_start, period_end, position, wagered_usd)
       SELECT
         w.user_id,
-        $1::race_type,
-        $2::date,
-        $3::timestamp,
+        ${existing.race_type}::race_type,
+        ${periodStartIso}::date,
+        ${existing.ends_at}::timestamp,
         dense_rank() OVER (ORDER BY w.wagered_usd::decimal DESC),
         w.wagered_usd
       FROM (
@@ -455,25 +506,19 @@ export async function endRacePeriodNow(periodId: string) {
         FROM game_sessions gs
         INNER JOIN "user" u ON u.id = gs.user_id
         WHERE gs.user_id IS NOT NULL
-          AND gs.created_at >= $4
-          AND gs.created_at < $5
+          AND gs.created_at >= ${existing.starts_at}
+          AND gs.created_at < ${existing.ends_at}
           AND (u.role IS NULL OR u.role NOT IN ('admin', 'creator', 'support'))
-          ${blacklistJoin}
+          ${blacklistFilter}
         GROUP BY gs.user_id
       ) w
-      ON CONFLICT (user_id, race_type, period_start) DO NOTHING;
-      `,
-      existing.race_type,
-      periodStartIso,
-      existing.ends_at,
-      existing.starts_at,
-      existing.ends_at,
-    );
+      ON CONFLICT (user_id, race_type, period_start) DO NOTHING
+    `);
 
-    await tx.race_periods.update({
-      where: { id: periodId },
-      data: { status: "ended" },
-    });
+    await tx
+      .update(race_periods)
+      .set({ status: "ended", updated_at: new Date().toISOString() })
+      .where(eq(race_periods.id, periodId));
   });
 
   await createAdminAuditEvent({
@@ -482,8 +527,8 @@ export async function endRacePeriodNow(periodId: string) {
     metadata: {
       period_id: periodId,
       race_type: existing.race_type,
-      starts_at: existing.starts_at.toISOString(),
-      ends_at: existing.ends_at.toISOString(),
+      starts_at: new Date(existing.starts_at).toISOString(),
+      ends_at: new Date(existing.ends_at).toISOString(),
     },
   });
 
@@ -505,7 +550,7 @@ export async function setRacePeriodClaimsFrozen(
   periodId: string,
   frozen: boolean,
 ) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
 
   await requireCapability(
@@ -514,15 +559,16 @@ export async function setRacePeriodClaimsFrozen(
     "manage race periods",
   );
 
-  const existing = await db.race_periods.findUnique({
-    where: { id: periodId },
-    select: {
-      id: true,
-      race_type: true,
-      status: true,
-      claims_frozen: true,
-    },
-  });
+  const [existing] = await db
+    .select({
+      id: race_periods.id,
+      race_type: race_periods.race_type,
+      status: race_periods.status,
+      claims_frozen: race_periods.claims_frozen,
+    })
+    .from(race_periods)
+    .where(eq(race_periods.id, periodId))
+    .limit(1);
   if (!existing) {
     throw new Error("Race period not found");
   }
@@ -535,20 +581,28 @@ export async function setRacePeriodClaimsFrozen(
     );
   }
 
-  await db.race_periods.update({
-    where: { id: periodId },
-    data: frozen
+  await db
+    .update(race_periods)
+    .set(
+      frozen
       ? // Re-freezing after an open: clear the prior unfreeze audit fields so
         // they only ever reflect the most recent open.
-        { claims_frozen: true, claims_unfrozen_at: null, claims_unfrozen_by: null }
+        {
+          claims_frozen: true,
+          claims_unfrozen_at: null,
+          claims_unfrozen_by: null,
+          updated_at: new Date().toISOString(),
+        }
       : // Opening: stamp who released payouts and when, matching the backend's
         // setClaimsFrozen contract on the period row.
         {
           claims_frozen: false,
-          claims_unfrozen_at: new Date(),
+          claims_unfrozen_at: new Date().toISOString(),
           claims_unfrozen_by: session.userId,
+          updated_at: new Date().toISOString(),
         },
-  });
+    )
+    .where(eq(race_periods.id, periodId));
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -576,12 +630,12 @@ export async function setRacePeriodClaimsFrozen(
 // trail. periodStart is the snapshot's period_start ('YYYY-MM-DD', UTC date).
 // ──────────────────────────────────────────────────────────────────────────
 
-function parsePeriodStart(periodStart: string): Date {
+function parsePeriodStart(periodStart: string): string {
   const d = new Date(periodStart);
   if (Number.isNaN(d.getTime())) {
     throw new Error("Invalid period start date");
   }
-  return d;
+  return d.toISOString().slice(0, 10);
 }
 
 export async function freezeUserRaceClaim(params: {
@@ -590,12 +644,12 @@ export async function freezeUserRaceClaim(params: {
   periodStart: string;
   reason: string;
 }) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
 
   const { userId, raceType, periodStart, reason } = params;
 
-  if (!VALID_RACE_TYPES.has(raceType as race_type)) {
+  if (!VALID_RACE_TYPES.has(raceType)) {
     throw new Error("Invalid race type (must be daily, weekly, or monthly)");
   }
   if (!reason || reason.trim().length === 0) {
@@ -615,42 +669,54 @@ export async function freezeUserRaceClaim(params: {
 
   // Can't freeze a prize that's already been paid out — that needs a clawback,
   // not a hold. Mirrors the backend's RACE_ALREADY_CLAIMED guard.
-  const existingClaim = await db.race_claims.findFirst({
-    where: {
-      user_id: userId,
-      race_type: raceType as race_type,
-      race_period_start: periodDate,
-    },
-    select: { id: true },
-  });
+  const validRaceType = raceType as RaceType;
+  const [existingClaim] = await db
+    .select({ id: race_claims.id })
+    .from(race_claims)
+    .where(
+      and(
+        eq(race_claims.user_id, userId),
+        eq(race_claims.race_type, validRaceType),
+        eq(race_claims.race_period_start, periodDate),
+      ),
+    )
+    .limit(1);
   if (existingClaim) {
     throw new Error(
       "Prize already claimed — freezing cannot block a paid prize",
     );
   }
 
-  const alreadyHeld = await db.race_claim_holds.findFirst({
-    where: {
-      user_id: userId,
-      race_type: raceType as race_type,
-      race_period_start: periodDate,
-      released_at: null,
-    },
-    select: { id: true },
-  });
+  const [alreadyHeld] = await db
+    .select({ id: race_claim_holds.id })
+    .from(race_claim_holds)
+    .where(
+      and(
+        eq(race_claim_holds.user_id, userId),
+        eq(race_claim_holds.race_type, validRaceType),
+        eq(race_claim_holds.race_period_start, periodDate),
+        isNull(race_claim_holds.released_at),
+      ),
+    )
+    .limit(1);
   if (alreadyHeld) {
     throw new Error("This claim is already frozen");
   }
 
-  await db.race_claim_holds.create({
-    data: {
+  try {
+    await db.insert(race_claim_holds).values({
       user_id: userId,
-      race_type: raceType as race_type,
+      race_type: validRaceType,
       race_period_start: periodDate,
       reason: reason.trim(),
       created_by: session.userId,
-    },
-  });
+    });
+  } catch (error) {
+    if ((error as { code?: string })?.code === "23505") {
+      throw new Error("This claim is already frozen");
+    }
+    throw error;
+  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -672,12 +738,12 @@ export async function unfreezeUserRaceClaim(params: {
   periodStart: string;
   releaseReason?: string | null;
 }) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
 
   const { userId, raceType, periodStart, releaseReason } = params;
 
-  if (!VALID_RACE_TYPES.has(raceType as race_type)) {
+  if (!VALID_RACE_TYPES.has(raceType)) {
     throw new Error("Invalid race type (must be daily, weekly, or monthly)");
   }
   if (releaseReason && releaseReason.length > 500) {
@@ -695,20 +761,25 @@ export async function unfreezeUserRaceClaim(params: {
   // Release the active hold only. updateMany keeps this race-safe: if no active
   // hold matches (already released elsewhere), count is 0 and we surface a
   // clean error instead of silently succeeding. Mirrors releaseClaimHold.
-  const { count } = await db.race_claim_holds.updateMany({
-    where: {
-      user_id: userId,
-      race_type: raceType as race_type,
-      race_period_start: periodDate,
-      released_at: null,
-    },
-    data: {
-      released_at: new Date(),
+  const validRaceType = raceType as RaceType;
+  const updated = await db
+    .update(race_claim_holds)
+    .set({
+      released_at: new Date().toISOString(),
       released_by: session.userId,
       release_reason: releaseReason?.trim() || null,
-    },
-  });
-  if (count === 0) {
+      updated_at: new Date().toISOString(),
+    })
+    .where(
+      and(
+        eq(race_claim_holds.user_id, userId),
+        eq(race_claim_holds.race_type, validRaceType),
+        eq(race_claim_holds.race_period_start, periodDate),
+        isNull(race_claim_holds.released_at),
+      ),
+    )
+    .returning({ id: race_claim_holds.id });
+  if (updated.length === 0) {
     throw new Error("No active claim hold to release");
   }
 

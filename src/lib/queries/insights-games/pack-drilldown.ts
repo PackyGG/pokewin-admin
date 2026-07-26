@@ -1,6 +1,6 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getCreatorSessionWindowsCte } from "../creator-session-windows";
@@ -110,7 +110,6 @@ export async function getPackDrilldown(
 ): Promise<PackDrilldownData | null> {
   if (!UUID_RE.test(packId)) return null;
   return withTiming("insights-games.pack-drilldown", async () => {
-    const db = await getDb();
     const scope = await realCustomersScopeSql();
     const sessionWindowsCte = await getCreatorSessionWindowsCte();
     const hours = hoursForPeriod(period);
@@ -174,7 +173,7 @@ export async function getPackDrilldown(
     // them (`packs.ts` WHERE p.pack_type <> 'reward'), so they are never
     // linkable here; the guard makes that structural (a reward pack id
     // returns null rather than rendering giveaway data as gaming P&L).
-    const packRows = await db.$queryRawUnsafe<PackRow[]>(
+    const packRows = await queryMainRows<PackRow[]>(
       `SELECT id::text AS id, name, image_url, price::text AS price
        FROM packs WHERE id = '${packId}'::uuid AND pack_type <> 'reward' LIMIT 1`,
     );
@@ -194,7 +193,7 @@ export async function getPackDrilldown(
       // 1) Daily volume — borrow-corrected wager (non-borrow only)
       //    + payouts. Bucketed by DATE so the chart reads as a day
       //    curve.
-      db.$queryRawUnsafe<DailyRow[]>(
+      queryMainRows<DailyRow[]>(
         `WITH ${sessionWindowsCte},
               solo_wager AS (
            SELECT DATE(lt.created_at) AS day,
@@ -297,7 +296,7 @@ export async function getPackDrilldown(
          ORDER BY day`,
       ),
       // 2) Top users by borrow-corrected wager on the pack.
-      db.$queryRawUnsafe<UserRow[]>(
+      queryMainRows<UserRow[]>(
         `WITH ${sessionWindowsCte},
               solo_wager AS (
            SELECT lt.user_id,
@@ -405,7 +404,7 @@ export async function getPackDrilldown(
       // 3) Card distribution — top 15 cards pulled out of the pack in
       //    the period. ui rows whose value_at_obtained / unit_price
       //    rounds to a pull count. Joins to cards for price + image.
-      db.$queryRawUnsafe<CardRow[]>(
+      queryMainRows<CardRow[]>(
         `WITH ${sessionWindowsCte},
               solo_pulls AS (
            SELECT ui.card_id, ui.value_at_obtained::numeric AS value
@@ -464,7 +463,7 @@ export async function getPackDrilldown(
       //    borrow on battles is at battle level, not per-pack-open).
       //    Reads borrow_percentage off PF metadata for the per-row
       //    avg.
-      db.$queryRawUnsafe<BorrowRow[]>(
+      queryMainRows<BorrowRow[]>(
         `WITH ${sessionWindowsCte},
               base AS (
            SELECT
@@ -509,7 +508,7 @@ export async function getPackDrilldown(
       //    by pack price.
       //    Realized: payouts / borrow-corrected wager from the
       //    period — what the pack actually paid out vs collected.
-      db.$queryRawUnsafe<RtpRow[]>(
+      queryMainRows<RtpRow[]>(
         `WITH ${sessionWindowsCte},
               pack_meta AS (
            SELECT p.id, p.price::numeric AS pack_price, p.cards_per_open

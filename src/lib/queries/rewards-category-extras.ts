@@ -1,5 +1,5 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
@@ -106,7 +106,6 @@ async function computeRaceExtras(
   period: RewardsPeriod,
   blacklistIds: string[],
 ): Promise<RaceExtras> {
-  const db = await getDb();
   const days = daysForPeriod(period);
   const dateFilter =
     days !== null ? `AND rc.claimed_at >= NOW() - INTERVAL '${days} days'` : "";
@@ -118,7 +117,7 @@ async function computeRaceExtras(
   // (race_type, period_start) grouping is direct without parsing
   // metadata. Staff + blacklist excluded via JOIN to user.
   const [rollupRows, topRaceRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryMainRows<
       {
         distinct_races: string;
         largest_prize: string | null;
@@ -132,7 +131,7 @@ async function computeRaceExtras(
       WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
         ${dateFilter}
     `),
-    db.$queryRawUnsafe<
+    queryMainRows<
       {
         race_type: string;
         period_start: Date;
@@ -163,7 +162,7 @@ async function computeRaceExtras(
   // Re-derive total prize volume from the same race_claims source so
   // the avgPrizePerRace ratio is internally consistent (it pairs with
   // the count we already have here). Cheap separate aggregate.
-  const totalRows = await db.$queryRawUnsafe<{ total: string }[]>(`
+  const totalRows = await queryMainRows<{ total: string }[]>(`
     SELECT COALESCE(SUM(rc.prize_amount_usd::numeric), 0)::text AS total
     FROM race_claims rc
     JOIN "user" u ON u.id = rc.user_id
@@ -189,7 +188,7 @@ async function computeRaceExtras(
   // per race_type, then summed across daily + weekly + monthly so the
   // headline is "what every full race CAN cost". Cheap one-row aggregate
   // (table has ≤ ~60 rows total).
-  const budgetRows = await db.$queryRawUnsafe<{ total: string }[]>(`
+  const budgetRows = await queryMainRows<{ total: string }[]>(`
     SELECT COALESCE(SUM(prize_amount_usd::numeric), 0)::text AS total
     FROM race_prize_tiers
   `);
@@ -199,7 +198,7 @@ async function computeRaceExtras(
   // the tier budget per (race_type) for every distinct race instance
   // observed. Two-query approach: (1) get distinct race_type counts
   // in the window, (2) multiply by per-type budget.
-  const typeCountRows = await db.$queryRawUnsafe<
+  const typeCountRows = await queryMainRows<
     { race_type: string; instances: string; per_type_budget: string }[]
   >(`
     WITH distinct_in_window AS (
@@ -233,7 +232,7 @@ async function computeRaceExtras(
     budgetForRunRaces > 0 ? totalVolume / budgetForRunRaces : 0;
 
   // Winner position spread — avg, median, bucket distribution.
-  const positionRows = await db.$queryRawUnsafe<
+  const positionRows = await queryMainRows<
     { position: number; prize: string }[]
   >(`
     SELECT
@@ -284,7 +283,7 @@ async function computeRaceExtras(
   // Repeat winners — users with claims across multiple distinct
   // (race_type, race_period_start) instances. Returned as count + top
   // 5 by total prize volume so the UI can spotlight the heavy hitters.
-  const repeatRows = await db.$queryRawUnsafe<
+  const repeatRows = await queryMainRows<
     {
       user_id: string;
       username: string | null;
@@ -314,7 +313,7 @@ async function computeRaceExtras(
     ORDER BY pu.total_prize DESC
     LIMIT 5
   `);
-  const repeatCountRows = await db.$queryRawUnsafe<{ cnt: string }[]>(`
+  const repeatCountRows = await queryMainRows<{ cnt: string }[]>(`
     WITH per_user AS (
       SELECT rc.user_id, COUNT(DISTINCT (rc.race_type, rc.race_period_start))::int AS races
       FROM race_claims rc
@@ -402,7 +401,6 @@ async function computeAffiliateExtras(
   period: RewardsPeriod,
   blacklistIds: string[],
 ): Promise<AffiliateExtras> {
-  const db = await getDb();
   const days = daysForPeriod(period);
   const dateFilter =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
@@ -420,7 +418,7 @@ async function computeAffiliateExtras(
   // distinct count IS the number of paid affiliates in the window.
   // Staff + blacklist excluded via the same user_id subquery the
   // shared helper uses.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryMainRows<
     { affiliates: string; total: string }[]
   >(`
     SELECT
@@ -443,7 +441,7 @@ async function computeAffiliateExtras(
   // affiliate_code_usages where there's actual wager volume — pure
   // deposit-only usages also count since the affiliate earns from
   // either signal.
-  const referredRows = await db.$queryRawUnsafe<{ cnt: string }[]>(`
+  const referredRows = await queryMainRows<{ cnt: string }[]>(`
     SELECT COUNT(DISTINCT acu.referred_user_id)::text AS cnt
     FROM affiliate_code_usages acu
     WHERE acu.status = 'completed'
@@ -455,7 +453,7 @@ async function computeAffiliateExtras(
 
   // Top affiliates by their downstream cohort's WAGER volume — uses
   // affiliate_code_usages aggregated per affiliate.
-  const topWagerRows = await db.$queryRawUnsafe<
+  const topWagerRows = await queryMainRows<
     {
       affiliate_user_id: string;
       username: string | null;
@@ -490,7 +488,7 @@ async function computeAffiliateExtras(
   // the window. The set "had referrals before this window" =
   // affiliate_accounts.total_referred > 0 — a denormalised counter on
   // the account row, cheap to filter.
-  const inactiveRows = await db.$queryRawUnsafe<{ cnt: string }[]>(`
+  const inactiveRows = await queryMainRows<{ cnt: string }[]>(`
     WITH paid_in_window AS (
       SELECT DISTINCT lt.user_id
       FROM ledger_transactions lt
@@ -615,7 +613,6 @@ async function computeSignupExtras(
   period: RewardsPeriod,
   blacklistIds: string[],
 ): Promise<SignupExtras> {
-  const db = await getDb();
   const days = daysForPeriod(period);
   const signupDateFilter =
     days !== null
@@ -632,7 +629,7 @@ async function computeSignupExtras(
   // The drop-off metric pairs distinct signups in the window against
   // distinct claimants from the same signup cohort — so the
   // denominator is the signup count, not the all-users count.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryMainRows<
     {
       hours_diff: string;
       claimed_within_24h: number;
@@ -666,7 +663,7 @@ async function computeSignupExtras(
 
   // Cohort signup count drives the drop-off denominator. Cheap
   // separate aggregate keeps the main CTE focused on claimants.
-  const cohortCountRows = await db.$queryRawUnsafe<{ cnt: string }[]>(`
+  const cohortCountRows = await queryMainRows<{ cnt: string }[]>(`
     SELECT COUNT(*)::text AS cnt
     FROM "user" u
     WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
@@ -704,7 +701,7 @@ async function computeSignupExtras(
   // Avg first-deposit cohort cuts the same signups by claimant vs
   // non-claimant, then averages the FIRST deposit per user inside
   // each cut. One sweep over the cohort suffices.
-  const cohortDepositRows = await db.$queryRawUnsafe<
+  const cohortDepositRows = await queryMainRows<
     {
       user_id: string;
       signed_up_at: Date;
@@ -811,7 +808,7 @@ async function computeSignupExtras(
   // possible (multi-link accounts), so we pick the first by
   // created_at to give one provider per user. Unknown users with no
   // account row → "unknown".
-  const sourceRows = await db.$queryRawUnsafe<
+  const sourceRows = await queryMainRows<
     { provider: string; cnt: string }[]
   >(`
     WITH cohort AS (
@@ -846,7 +843,7 @@ async function computeSignupExtras(
   // bucket. Restricted to cohort users with at least one claim (so
   // the breakdown answers "where do claimants come from", not "where
   // do signups come from" which is a different question).
-  const countryRows = await db.$queryRawUnsafe<
+  const countryRows = await queryMainRows<
     { code: string; cnt: string }[]
   >(`
     WITH cohort AS (
@@ -900,7 +897,7 @@ async function computeSignupExtras(
   // Hour-of-day distribution — 24-bin (UTC). Buckets are claim
   // events for users in the signup cohort (so the histogram answers
   // "when do this cohort's bonuses get claimed").
-  const hourRows = await db.$queryRawUnsafe<
+  const hourRows = await queryMainRows<
     { hour: number; cnt: string; volume: string }[]
   >(`
     WITH cohort AS (
@@ -1066,7 +1063,6 @@ async function computeRakebackExtras(
   period: RewardsPeriod,
   blacklistIds: string[],
 ): Promise<RakebackExtras> {
-  const db = await getDb();
   const days = daysForPeriod(period);
   const dateFilter =
     days !== null
@@ -1077,7 +1073,7 @@ async function computeRakebackExtras(
   // Rollup: total wager + total rakeback + count + distinct claimants.
   // `rakeback_claims` has both wager and rakeback per row, so this is
   // a single aggregate, no ledger sweep.
-  const rollupRows = await db.$queryRawUnsafe<
+  const rollupRows = await queryMainRows<
     {
       total_wager: string | null;
       total_rakeback: string | null;
@@ -1108,7 +1104,7 @@ async function computeRakebackExtras(
   // `rakeback_config` defaults are sub-5%, but we widen the buckets
   // here so legitimate top-tier configurations don't crash off the
   // last bin.
-  const ratioRows = await db.$queryRawUnsafe<
+  const ratioRows = await queryMainRows<
     { ratio: string; rakeback: string }[]
   >(`
     SELECT
@@ -1154,7 +1150,7 @@ async function computeRakebackExtras(
   }
 
   // Rakeback type spread (daily / weekly / monthly).
-  const typeRows = await db.$queryRawUnsafe<
+  const typeRows = await queryMainRows<
     { rakeback_type: string; cnt: string; volume: string }[]
   >(`
     SELECT
@@ -1191,7 +1187,7 @@ async function computeRakebackExtras(
   });
 
   // Per-user claim count distribution → median.
-  const perUserRows = await db.$queryRawUnsafe<{ cnt: string }[]>(`
+  const perUserRows = await queryMainRows<{ cnt: string }[]>(`
     SELECT COUNT(*)::text AS cnt
     FROM rakeback_claims rc
     JOIN "user" u ON u.id = rc.user_id
@@ -1216,7 +1212,7 @@ async function computeRakebackExtras(
   // Median gap (hours) between consecutive claims per user — pulled
   // server-side via LAG so the round-trip is one query. Median taken
   // in JS over the user-mean gaps to avoid a per-user median CTE.
-  const gapRows = await db.$queryRawUnsafe<
+  const gapRows = await queryMainRows<
     { user_id: string; mean_gap_h: string }[]
   >(`
     WITH ordered AS (
@@ -1254,7 +1250,7 @@ async function computeRakebackExtras(
   // but not the current one. Only meaningful when `period !== all`.
   let lapsedClaimants: number | null = null;
   if (days !== null) {
-    const lapsedRows = await db.$queryRawUnsafe<{ cnt: string }[]>(`
+    const lapsedRows = await queryMainRows<{ cnt: string }[]>(`
       WITH current_users AS (
         SELECT DISTINCT rc.user_id
         FROM rakeback_claims rc

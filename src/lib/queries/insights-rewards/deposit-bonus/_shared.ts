@@ -1,5 +1,10 @@
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import {
+  blacklistNotInSql,
+  daysAgoFilter,
+  sql,
+} from "@/lib/queries/insights-rewards/_drizzle-query";
+import type { SQL } from "drizzle-orm";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
@@ -33,11 +38,11 @@ export const DEPOSIT_BONUS_CACHE_TAGS = [
  * raw SQL fragment that resolves to the lower-bound timestamp the
  * window opens at, or `-infinity` when the period is lifetime.
  */
-export function windowStartExpr(period: InsightsRewardsPeriod): string {
+export function windowStartExpr(period: InsightsRewardsPeriod): SQL {
   const days = daysForInsightsPeriod(period);
   return days !== null
-    ? `NOW() - INTERVAL '${days} days'`
-    : `'-infinity'::timestamp`;
+    ? sql`NOW() - (${days} * INTERVAL '1 day')`
+    : sql`'-infinity'::timestamp`;
 }
 
 /**
@@ -49,11 +54,9 @@ export function windowStartExpr(period: InsightsRewardsPeriod): string {
 export function windowDateFilter(
   period: InsightsRewardsPeriod,
   alias = "lt",
-): string {
+): SQL {
   const days = daysForInsightsPeriod(period);
-  return days !== null
-    ? `AND ${alias}.created_at >= NOW() - INTERVAL '${days} days'`
-    : "";
+  return daysAgoFilter(`${alias}.created_at`, days);
 }
 
 /**
@@ -79,10 +82,10 @@ export const LIFETIME_PAIRING_LOOKBACK_DAYS = 365;
 export function windowDateFilterCapped(
   period: InsightsRewardsPeriod,
   alias = "lt",
-): string {
+): SQL {
   const days = daysForInsightsPeriod(period);
   const bound = days ?? LIFETIME_PAIRING_LOOKBACK_DAYS;
-  return `AND ${alias}.created_at >= NOW() - INTERVAL '${bound} days'`;
+  return daysAgoFilter(`${alias}.created_at`, bound);
 }
 
 /**
@@ -107,10 +110,10 @@ export function windowDateFilterCappedTail(
   period: InsightsRewardsPeriod,
   alias: string,
   tailDays: number,
-): string {
+): SQL {
   const days = daysForInsightsPeriod(period) ?? LIFETIME_PAIRING_LOOKBACK_DAYS;
   const bound = days + tailDays;
-  return `AND ${alias}.created_at >= NOW() - INTERVAL '${bound} days'`;
+  return daysAgoFilter(`${alias}.created_at`, bound);
 }
 
 /**
@@ -135,9 +138,9 @@ export async function getResolvedBlacklist(): Promise<string[]> {
 export function staffAndBlacklistSubquery(
   blacklistIds: string[],
   subqueryColumn = "id",
-): string {
-  const tail = blacklistNotInClause(subqueryColumn, blacklistIds);
-  return `(SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${tail})`;
+): SQL {
+  const tail = blacklistNotInSql(subqueryColumn, blacklistIds);
+  return sql`(SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${tail})`;
 }
 
 /** Cache TTL for a given period — re-exported for convenience. */

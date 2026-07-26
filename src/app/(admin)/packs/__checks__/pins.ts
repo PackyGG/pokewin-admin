@@ -402,7 +402,7 @@ const MASAKI = {
 };
 const MASAKI_CFG: ResolvedAutoTargetCfg = {
   // The pure-harness defaults (risk-config's DEFAULT_MAX_WIN_CAP = 25000 —
-  // not importable here without pulling the adminDb module graph).
+  // not importable here without pulling the admin database module graph).
   globalCap: 25000,
   maxMultCeiling: DEFAULT_MAX_MULT_CEILING,
 };

@@ -1,19 +1,19 @@
 import "server-only";
 
 import { cache } from "react";
-import { adminDb } from "@/lib/admin-db";
-import { ensureBalanceAdjustmentMetaSchema } from "@/lib/balance-adjustment-meta/ensure-schema";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 
 /** Active admin_users.id for username `motha` (case-insensitive). */
 export const getMothaAdminUserId = cache(async (): Promise<string | null> => {
-  const user = await adminDb.admin_users.findFirst({
-    where: {
-      username: { equals: "motha", mode: "insensitive" },
-      is_active: true,
-    },
-    select: { id: true },
-  });
-  return user?.id ?? null;
+  const result = await adminDrizzle.execute<{ id: string }>(sql`
+    SELECT id
+    FROM admin_users
+    WHERE LOWER(username) = 'motha'
+      AND is_active = true
+    LIMIT 1
+  `);
+  return result.rows[0]?.id ?? null;
 });
 
 /**
@@ -26,16 +26,13 @@ export async function getMothaAdjustmentLedgerTxIdsForUser(
   const mothaId = await getMothaAdminUserId();
   if (!mothaId) return [];
 
-  await ensureBalanceAdjustmentMetaSchema();
+  const result = await adminDrizzle.execute<{ ledger_tx_id: string }>(sql`
+    SELECT ledger_tx_id
+    FROM admin_balance_adjustment_meta
+    WHERE target_user_id = ${targetUserId}
+      AND admin_user_id = ${mothaId}
+    ORDER BY created_at DESC
+  `);
 
-  const rows = await adminDb.admin_balance_adjustment_meta.findMany({
-    where: {
-      target_user_id: targetUserId,
-      admin_user_id: mothaId,
-    },
-    select: { ledger_tx_id: true },
-    orderBy: { created_at: "desc" },
-  });
-
-  return rows.map((r) => r.ledger_tx_id);
+  return result.rows.map((r) => r.ledger_tx_id);
 }

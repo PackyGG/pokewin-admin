@@ -13,7 +13,9 @@ import {
 } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
-import { getDb } from "@/lib/db";
+import { inArray } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
+import { user } from "@/lib/db-schema/main/schema";
 import {
     affiliateLeaderboardsApi,
     type LeaderboardAdminRow,
@@ -333,14 +335,14 @@ async function LeaderboardsBody({
     const sortedRows = sortLeaderboards(allRows, sort);
     const rows = sortedRows.slice(offset, offset + perPage);
 
-    // Hydrate creator usernames from local Prisma DB so admins see who owns each row.
+    // Hydrate creator usernames from MAIN so admins see who owns each row.
     const creatorIds = [...new Set(rows.map((r) => r.creator_user_id))];
-    const db = await getDb();
+    const db = await getDrizzleDb();
     const creators = creatorIds.length > 0
-        ? await db.user.findMany({
-              where: { id: { in: creatorIds } },
-              select: { id: true, username: true, email: true },
-          })
+        ? await db
+              .select({ id: user.id, username: user.username, email: user.email })
+              .from(user)
+              .where(inArray(user.id, creatorIds))
         : [];
     const creatorMap = new Map(creators.map((c) => [c.id, c]));
 

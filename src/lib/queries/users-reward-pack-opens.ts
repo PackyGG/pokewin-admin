@@ -1,6 +1,6 @@
 import "server-only";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { readDbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import { USERS_DETAIL_GLOBAL_TAG, userDetailTag } from "./users-detail-cache";
@@ -136,21 +136,20 @@ type RawOpenRow = {
 async function queryUserRewardPackOpens(
   userId: string,
 ): Promise<UserRewardPackOpensResult> {
-  const db = await getDb();
-
   // One scoped read: the user's reward-source inventory rows, grouped by the
   // pack-open session, resolved to the pack + reward that granted them, with
   // the granted cards aggregated into a JSON array. Same `user_id`-scoped
   // access pattern as getUserInventory. All joins LEFT so a legacy row with an
   // unresolved source_id still surfaces (bucketed under session_id IS NULL)
   // instead of vanishing.
-  const rows = await db.$queryRaw<RawOpenRow[]>`
+  const rows = await queryMainRows<RawOpenRow[]>(
+    `
     WITH reward_items AS (
       SELECT ui.id AS inv_id, ui.source_id AS session_id, ui.card_id,
              ui.value_at_obtained, ui.obtained_at,
              (ui.sold_at IS NULL AND ui.exchanged_at IS NULL) AS owned
         FROM user_inventory ui
-       WHERE ui.user_id = ${userId}
+       WHERE ui.user_id = $1
          AND ui.source_type = 'reward'::source_type
     )
     SELECT
@@ -181,8 +180,11 @@ async function queryUserRewardPackOpens(
     LEFT JOIN rewards r ON r.id = ur.reward_id
     GROUP BY ri.session_id, p.name, r.slug, r.name, r.type, gs.created_at
     ORDER BY gs.created_at DESC NULLS LAST
-    LIMIT ${OPENS_LIMIT}
-  `;
+    LIMIT $2
+  `,
+    userId,
+    OPENS_LIMIT,
+  );
 
   if (rows.length === 0) return EMPTY_RESULT;
 

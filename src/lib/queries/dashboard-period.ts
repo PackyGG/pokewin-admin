@@ -3,7 +3,7 @@ import { MS_PER_DAY, MS_PER_HOUR } from "@/lib/utils/time";
 /**
  * Period chip set the dashboard exposes via its global period selector.
  *
- * Lives in its own client-safe module (no DB imports, no Prisma) so the
+ * Lives in its own client-safe module (no DB imports) so the
  * `<DashboardPeriodSelector>` client component can pull the type and
  * constants without dragging the entire server-only query graph into
  * the browser bundle. `dashboard.ts` re-exports these for backend call

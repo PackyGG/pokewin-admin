@@ -1,10 +1,8 @@
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { sql } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import {
-  excludeStaffCreatorsAndBlacklistedSqlFromIds,
-} from "./_blacklist";
 
 // ─── Lifetime promo-code money stats for the /promo-codes hero strip ──
 //
@@ -21,7 +19,7 @@ import {
 //      CRITICAL — this is computed with NO JOIN to `promo_codes` /
 //      `promo_code_redemptions`. The FK
 //      `promo_code_redemptions.promo_code_id -> promo_codes` is
-//      `onDelete: Cascade` (prisma/schema.prisma), so deleting a promo
+//      `ON DELETE CASCADE` (checked-in MAIN schema), so deleting a promo
 //      code CASCADE-deletes its redemption rows. A JOIN through those
 //      tables (as the per-code claim queries do) would therefore SILENTLY
 //      DROP every deleted / old code. The ledger row is never deleted with
@@ -59,31 +57,36 @@ export type PromoCodesMoneyStats = {
 
 const cachedPromoCodesMoneyStats = unstable_cache(
   async (blacklistKey: string): Promise<PromoCodesMoneyStats> => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
     const blacklistIds = blacklistKey ? blacklistKey.split(",") : [];
-    const userScope = excludeStaffCreatorsAndBlacklistedSqlFromIds(blacklistIds);
+    const blacklistFilter =
+      blacklistIds.length > 0
+        ? sql`AND u.id <> ALL(${blacklistIds}::text[])`
+        : sql``;
 
-    const [claimedRows, allocatedRows] = await Promise.all([
-      db.$queryRawUnsafe<{ total: string }[]>(`
+    const [claimedResult, allocatedResult] = await Promise.all([
+      db.execute<{ total: string }>(sql`
         SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS total
-        FROM ledger_transactions
-        WHERE status = 'completed'
-          AND type::text = 'promo_code_redeemed'
-          AND ${userScope}
+        FROM ledger_transactions lt
+        JOIN "user" u ON u.id = lt.user_id
+        WHERE lt.status = 'completed'
+          AND lt.type::text = 'promo_code_redeemed'
+          AND u.role NOT IN ('admin', 'support', 'creator')
+          ${blacklistFilter}
           -- 365d house-convention cap (CLAUDE.md "Performance & Daten-Laden"):
           -- bounds this lifetime ledger scan instead of an unbounded
           -- full-history sweep. No-op on current data (< 90d old).
-          AND created_at >= NOW() - INTERVAL '365 days'
+          AND lt.created_at >= NOW() - INTERVAL '365 days'
       `),
-      db.$queryRaw<{ total: string }[]>`
+      db.execute<{ total: string }>(sql`
         SELECT COALESCE(SUM(value::numeric * max_uses), 0)::text AS total
         FROM promo_codes
-      `,
+      `),
     ]);
 
     return {
-      claimedGivenOut: toNumber(claimedRows[0]?.total ?? "0"),
-      allocatedOffered: toNumber(allocatedRows[0]?.total ?? "0"),
+      claimedGivenOut: toNumber(claimedResult.rows[0]?.total ?? "0"),
+      allocatedOffered: toNumber(allocatedResult.rows[0]?.total ?? "0"),
     };
   },
   ["promo-codes-money-stats-v4"],

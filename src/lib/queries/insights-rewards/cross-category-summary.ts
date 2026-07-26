@@ -1,7 +1,8 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
+import type { SQL } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   REWARD_PAYOUT_TYPES,
@@ -166,18 +167,18 @@ async function computeCrossCategorySummary(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RewardsCrossCategorySummary> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const blacklistSubquery = blacklistNotInClause("id", blacklistIds);
+  const blacklistSubquery = blacklistNotInSql("id", blacklistIds);
 
   // Build the per-window WHERE-clause snippet. Splitting it out keeps
   // the prior-equal query exactly symmetric to the current one — same
   // status filter, same staff/blacklist exclusion, same ledger-type
   // sets — so the comparison is apples-to-apples by construction.
   const buildScopeClause = (
-    dateClause: string,
-    typesSql: string,
-  ) => `
+    dateClause: SQL,
+    typesSql: SQL,
+  ): SQL => sql`
     WHERE lt.status = 'completed'
       AND lt.type::text IN ${typesSql}
       AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistSubquery})
@@ -190,7 +191,10 @@ async function computeCrossCategorySummary(
   // Daten-Laden" — Lifetime-Fenster bounden). Finite windows are
   // unchanged. The prior-window comparison below only runs for finite
   // windows, so it is never unbounded.
-  const currentDateClause = `AND lt.created_at >= NOW() - INTERVAL '${daysForInsightsPeriodCapped(period)} days'`;
+  const currentDateClause = daysAgoFilter(
+    "lt.created_at",
+    daysForInsightsPeriodCapped(period),
+  );
 
   // Single round-trip — rewards / wagers / payouts side by side via
   // FILTER on the same scan. The status + user-scope filter is
@@ -207,7 +211,7 @@ async function computeCrossCategorySummary(
   // `rain_tip` is the rain POOL FUNDING leg (user/founder contributions);
   // it is summed ONLY to net the rain cost and is included in the scan's
   // type filter for that reason — it is never added to the reward total.
-  const currentRows = await db.$queryRawUnsafe<
+  const currentRows = await queryRows<
     {
       reward_excl_rain: string;
       rain_win: string;
@@ -217,21 +221,21 @@ async function computeCrossCategorySummary(
       wager_total: string;
       payout_total: string;
     }[]
-  >(`
+  >(db, sql`
     SELECT
-      ${REWARD_EXCL_RAIN_SUM} AS reward_excl_rain,
+      ${sql.raw(REWARD_EXCL_RAIN_SUM)} AS reward_excl_rain,
       COALESCE(SUM(CASE WHEN lt.type::text = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_win,
       COALESCE(SUM(CASE WHEN lt.type::text = 'rain_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_tip,
-      COUNT(*) FILTER (WHERE lt.type::text IN ${REWARD_TYPES_SQL})::text AS reward_count,
-      COUNT(DISTINCT lt.user_id) FILTER (WHERE lt.type::text IN ${REWARD_TYPES_SQL})::text AS reward_claimants,
-      COALESCE(SUM(CASE WHEN lt.type::text IN ${WAGER_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wager_total,
-      COALESCE(SUM(CASE WHEN lt.type::text IN ${PAYOUT_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS payout_total
+      COUNT(*) FILTER (WHERE lt.type::text IN ${sql.raw(REWARD_TYPES_SQL)})::text AS reward_count,
+      COUNT(DISTINCT lt.user_id) FILTER (WHERE lt.type::text IN ${sql.raw(REWARD_TYPES_SQL)})::text AS reward_claimants,
+      COALESCE(SUM(CASE WHEN lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wager_total,
+      COALESCE(SUM(CASE WHEN lt.type::text IN ${sql.raw(PAYOUT_TYPES_SQL)} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS payout_total
     FROM ledger_transactions lt
     ${buildScopeClause(
       currentDateClause,
       // Scan reward types + rain_tip (net rain) + the carve-out source
       // types (manual voucher / counted adjustment) + wager/payout types.
-      `(${REWARD_TYPES_SQL.slice(1, -1)},'rain_tip',${CARVE_OUT_TYPES_SQL},${WAGER_TYPES_SQL.slice(1, -1)},${PAYOUT_TYPES_SQL.slice(1, -1)})`,
+      sql.raw(`(${REWARD_TYPES_SQL.slice(1, -1)},'rain_tip',${CARVE_OUT_TYPES_SQL},${WAGER_TYPES_SQL.slice(1, -1)},${PAYOUT_TYPES_SQL.slice(1, -1)})`),
     )}
   `);
 
@@ -276,8 +280,11 @@ async function computeCrossCategorySummary(
   // rain_tip)`), the SAME canonical-set count/claimant basis.
   let priorWindow: RewardsCrossCategorySummary["priorWindow"] = null;
   if (days !== null) {
-    const priorDateClause = `AND lt.created_at >= NOW() - INTERVAL '${days * 2} days' AND lt.created_at < NOW() - INTERVAL '${days} days'`;
-    const priorRows = await db.$queryRawUnsafe<
+    const priorDateClause = sql`
+      AND lt.created_at >= NOW() - (${days * 2} * INTERVAL '1 day')
+      AND lt.created_at < NOW() - (${days} * INTERVAL '1 day')
+    `;
+    const priorRows = await queryRows<
       {
         reward_excl_rain: string;
         rain_win: string;
@@ -285,17 +292,17 @@ async function computeCrossCategorySummary(
         reward_count: string;
         reward_claimants: string;
       }[]
-    >(`
+    >(db, sql`
       SELECT
-        ${REWARD_EXCL_RAIN_SUM} AS reward_excl_rain,
+        ${sql.raw(REWARD_EXCL_RAIN_SUM)} AS reward_excl_rain,
         COALESCE(SUM(CASE WHEN lt.type::text = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_win,
         COALESCE(SUM(CASE WHEN lt.type::text = 'rain_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_tip,
-        COUNT(*) FILTER (WHERE lt.type::text IN ${REWARD_TYPES_SQL})::text AS reward_count,
-        COUNT(DISTINCT lt.user_id) FILTER (WHERE lt.type::text IN ${REWARD_TYPES_SQL})::text AS reward_claimants
+        COUNT(*) FILTER (WHERE lt.type::text IN ${sql.raw(REWARD_TYPES_SQL)})::text AS reward_count,
+        COUNT(DISTINCT lt.user_id) FILTER (WHERE lt.type::text IN ${sql.raw(REWARD_TYPES_SQL)})::text AS reward_claimants
       FROM ledger_transactions lt
       ${buildScopeClause(
         priorDateClause,
-        `(${REWARD_TYPES_SQL.slice(1, -1)},'rain_tip',${CARVE_OUT_TYPES_SQL})`,
+        sql.raw(`(${REWARD_TYPES_SQL.slice(1, -1)},'rain_tip',${CARVE_OUT_TYPES_SQL})`),
       )}
     `);
     const prev = priorRows[0];

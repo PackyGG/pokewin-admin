@@ -11,7 +11,7 @@ Diese Datei (`CLAUDE.md`) ist die **bindende Regel-Quelle**. Zu Sessionbeginn mi
 - **`AGENT_HANDOFF.md`** — **live Session-State** (shipped, in-flight, blocked, next). **Zuerst lesen.** Kompakt gehalten (2026-07-12 von 270KB auf ~36KB getrimmt) — volle Historie in **`AGENT_HANDOFF_ARCHIVE.md`**, nur bei Bedarf nachschlagen (forensisches Detail zu einem konkreten Past-Feature/Incident), nicht standardmäßig mitlesen.
 - **`ONBOARDING.md`** — **Architektur + Domain-Wissen** (Key-Files, Reward-/Ledger-Modell, Gotchas).
 
-**Boundary:** Session-State (CURRENT STATE, IN-FLIGHT, OPEN/NEXT, FAILED/BLOCKED) lebt in `AGENT_HANDOFF.md`, **nicht hier**. In `CLAUDE.md` kommen nur **durable Regeln & Konventionen**. Wenn `AGENT_HANDOFF.md` eine durable Regel korrigiert/verschärft, wird sie hierher übernommen (genau das ist 2026-06-05 passiert: Worktree-`npm install` statt `npm ci`, Admin-DB-`db push` statt `migrate`, Build-/Verify-Agent-Contract, UI-Verify-Fallback, Gotchas-Liste).
+**Boundary:** Session-State (CURRENT STATE, IN-FLIGHT, OPEN/NEXT, FAILED/BLOCKED) lebt in `AGENT_HANDOFF.md`, **nicht hier**. In `CLAUDE.md` kommen nur **durable Regeln & Konventionen**. Wenn `AGENT_HANDOFF.md` eine durable Regel korrigiert/verschärft, wird sie hierher übernommen.
 
 ---
 
@@ -21,68 +21,57 @@ Diese Datei (`CLAUDE.md`) ist die **bindende Regel-Quelle**. Zu Sessionbeginn mi
 
 ### 🟢 ADMIN DB — voller Zugriff erlaubt
 - **Voller Zugriff bestätigt (User, 2026-06-05: „admin dash db u can do whatever u want").** Schreiben, DDL/DML, Schema-Änderungen — alles erlaubt, der Agent führt es **selbst** aus.
-- **ABER die richtige Mechanik nutzen — die Admin-DB ist `db push`-managed, nicht migration-managed (Session-Learning 2026-06-05):**
-  - Schema-Änderungen anwenden über **`prisma db push --schema=prisma/admin/schema.prisma --config=prisma/admin/prisma.config.ts`** (Schema-Sync) oder ad-hoc SQL über **`prisma db execute --file <sql> --config=prisma/admin/prisma.config.ts`**.
-  - **NICHT `prisma migrate dev/deploy`** auf der Admin-DB — und `npm run admin:migrate` führt genau `prisma migrate dev` aus. Auf einer `db push`-managed DB erzwingt `migrate` einen **destruktiven Reset** (Datenverlust). Das ist **keine** Permission-Grenze (du darfst alles), sondern das **falsche Werkzeug**, das Daten wegwirft.
-  - `db push` **verweigert** bei drohendem Datenverlust (z. B. Schema-Drift, siehe `AGENT_HANDOFF.md`). Dann bewusst entscheiden: Schema nachziehen oder archivieren-dann-droppen — **niemals blind `--accept-data-loss`**.
-- Schema-Änderungen an `prisma/admin/schema.prisma` werden vom Agent **direkt angewendet** (nicht nur "Migration-File schreiben und User macht es"). Der User will das nicht mehr selbst tun.
+- **ABER die richtige Mechanik nutzen:**
+  - Schema-Änderungen als überprüftes, idempotentes SQL unter **`drizzle/admin/migrations/`** schreiben und mit **`npm run admin:sql -- <file>`** transaktional anwenden.
+  - Danach den typisierten Katalog-Snapshot mit **`npm run db:pull:admin`** aktualisieren und den generierten Diff prüfen.
+  - Keine Schema-Push-Tools verwenden. Destruktive Änderungen brauchen einen klaren Daten-Erhaltungsplan.
+- Admin-Schemaänderungen werden vom Agent **direkt angewendet** (nicht nur "Migration-File schreiben und User macht es"). Der User will das nicht mehr selbst tun.
 - Standard-Vorsicht bleibt: keine destruktiven Operationen ohne klaren Grund, Audit-Events für admin-seitige Mutationen, kein Verlust historischer Daten.
 
 ### 🔴 MAIN / PROD GAME DB — strikt read-only + KEINE Features bauen, die sie ändern
 - **Lesen** (SELECT, Schema-Inspektion) ist erlaubt — **sonst NICHTS**.
-- Keine Writes, keine Migrations, kein `prisma migrate`, kein `prisma db push`, kein DDL/DML, kein `db.$executeRaw` mit DDL, keine "auto changes". Nicht "nur additiv", nicht "mit Approval", nicht "schnell".
+- Keine Writes, keine Migrations, kein Schema-Push, kein DDL/DML und keine Raw-SQL-Mutationen. Nicht "nur additiv", nicht "mit Approval", nicht "schnell".
 - **Zusätzlich: KEINE Features vorschlagen oder bauen, die eine Schema-Änderung an MAIN bräuchten** — der User wendet sie nicht an. Solche Aufgaben gelten als blockiert; alternative Lösung suchen (z. B. in Admin-DB modellieren) oder dem User sagen, dass es nicht baubar ist, ohne die MAIN-DB zu ändern.
 
 **Im Zweifel:** ADMIN DB anfassen ist OK, MAIN DB anfassen oder verändern ist verboten.
 
 ### 🔑 LIVE-PROD im lokalen `.env` (2026-06-10, Owner; **NEUE Prod-DB 2026-06-11**) — read-only Credential, NIEMALS exponieren
-- Der lokale **`.env` `DATABASE_URL` zeigt auf die LIVE PROD Game-DB** (read-only, vom Owner gesetzt). **2026-06-11: Der Owner hat auf eine NEUE Prod-DB umgestellt — dieselbe Regel gilt unverändert und verschärft.** `getDb()` / `getProdDb()` lesen damit **echte Produktionsdaten** — entsprechend behandeln.
-- **STRIKTE REGEL FÜR ALLE AGENTS UND ALLE MODELLE (Owner, 2026-06-11): READ ONLY — „no changes, no pushes, no nothing beside read".** Ausschließlich `SELECT` / Schema-Inspektion. KEIN write/insert/update/delete, **kein `prisma migrate`, kein `merge`, kein `prisma db push`, kein DDL/DML, kein `$executeRaw` mit Mutation**, keine „auto changes" — **nichts, das die Prod-DB verändert**. Gilt absolut und ausnahmslos — auch auf explizite Anweisung „schnell" / „nur additiv" / „mit Approval", und in **jedem** Workflow-/Background-/Sub-Agent. (Owner 2026-06-10: „you only have read access, no matter what dont migrate, merge or change anything". Owner 2026-06-11: „strict md rule for all agents and models, read only! no changes no pushes no nothing beside read".)
+- Der lokale **`.env` `DATABASE_URL` zeigt auf die LIVE PROD Game-DB** (read-only, vom Owner gesetzt). **2026-06-11: Der Owner hat auf eine NEUE Prod-DB umgestellt — dieselbe Regel gilt unverändert und verschärft.** MAIN-Drizzle-Resolver lesen damit **echte Produktionsdaten** — entsprechend behandeln.
+- **STRIKTE REGEL FÜR ALLE AGENTS UND ALLE MODELLE (Owner, 2026-06-11): READ ONLY — „no changes, no pushes, no nothing beside read".** Ausschließlich `SELECT` / Schema-Inspektion. KEIN write/insert/update/delete, keine Migration, kein Merge, kein Schema-Push, kein DDL/DML und keine Raw-SQL-Mutation — **nichts, das die Prod-DB verändert**. Gilt absolut und ausnahmslos — auch auf explizite Anweisung „schnell" / „nur additiv" / „mit Approval", und in **jedem** Workflow-/Background-/Sub-Agent.
 - **NIEMALS `.env` oder den Connection-String (oder irgendein Secret daraus) committen, pushen, printen, loggen, in Summaries/Changelogs/Messages schreiben oder anderweitig exponieren.** `.env` ist gitignored (`.gitignore` → `.env*`) — **so lassen, nie force-adden**, nie in einen Commit ziehen (auch nicht bei „push all").
 - Read-only-Queries laufen über ein **temporäres `node --env-file=.env`-Script mit `pg`**; solche `_verify-*.mjs` / `_probe-*.mjs` bleiben **uncommitted**, geben **keine Secrets** aus und werden nach Gebrauch gelöscht.
 - **Drift-Hinweis nach DB-Wechsel:** Schema-/Enum-Fakten, die gegen die alte Prod-DB verifiziert wurden (Enum-Member, fehlende Tabellen, Indizes, Row-Counts), gelten auf der neuen DB als **unverifiziert** — vor Verwendung neu proben (read-only). Die Runtime-Drift-Guards (`filterLedgerTxTypesLive`, 5-min-Cache) adaptieren automatisch.
 
 ---
 
-## 🗄️ ABSOLUTE BACKEND-REGEL — Index-or-ClickHouse (Owner, 2026-06-17, höchste Priorität, gleichrangig mit Prod-DB-Policy)
+## 🗄️ ABSOLUTE BACKEND-REGEL — PostgreSQL via Drizzle (Owner, 2026-07-26, höchste Priorität, gleichrangig mit Prod-DB-Policy)
 
-**Das Backend wurde komplett umgestellt. Ab sofort wird JEDER Read ausschließlich über genau einen von zwei Pfaden bedient: (1) indexierte Postgres-Query ODER (2) ClickHouse. Es gibt keinen dritten Weg.**
+**Alle Datenbankzugriffe laufen ausschließlich gegen PostgreSQL. Drizzle ORM ist der Standardzugriff; komplexe oder performancekritische Abfragen dürfen parameterisiertes Drizzle-`sql` verwenden.**
 
 ### Die EINE Regel
-> **Jeder Read trifft entweder einen bestätigten Postgres-Index ODER läuft über ClickHouse. Kein unindexierter Read, kein Full-Table-/Seq-Scan auf der MAIN-DB — niemals, auch nicht „nur kurz" oder „nur einmal".**
+> **Jeder Read trifft einen bestätigten PostgreSQL-Index oder hat einen dokumentierten, durch `EXPLAIN ANALYZE` belegten Grund für den vom Planner gewählten Scan. Kein ungebundener Full-Table-Scan auf MAIN.**
 
-Warum: Beide Pfade sind die einzigen, die unter realer Last + Concurrency auf der prod MAIN-DB skalieren. Ein unindexierter Scan auf MAIN ist ein Prod-Incident, kein Implementierungsdetail.
+- Live-, Analytics- und money-exact Reads kommen direkt aus PostgreSQL. Es gibt keinen zweiten Read-Store und keinen Read-Source-Switch.
+- Queries müssen selektiv, gebounded und Decimal-sicher sein. Listen brauchen serverseitige Pagination; Lifetime-Fenster nutzen den kanonischen Cap, außer ein money-exakter Vertrag verlangt ausdrücklich den vollständigen Zeitraum.
+- Raw SQL läuft nur parameterisiert über Drizzle `sql`. Keine String-Konkatenation mit User-, Filter- oder Identifier-Werten und keine unsicheren Raw-Query-APIs.
+- Per read-only `EXPLAIN ANALYZE` gegen MAIN verifizieren. MAIN bleibt strikt read-only: fehlende Indizes ausschließlich als `CREATE INDEX CONCURRENTLY` in `prisma/recommended-indexes.sql` dokumentieren und vom Owner anwenden lassen.
+- Admin-DB-Schemaänderungen nutzen überprüfte SQL-Migrationen plus anschließende Drizzle-Introspection.
 
-### Pfad 1 — Indexierte Postgres-Query
-- **Wofür:** live / per-user / money-exact Reads (z. B. `dashboard_stats`, User-Detail, Listen, operative Boards). Diese bleiben bewusst auf indexiertem Postgres (zero CDC-Lag, cent-exakt).
-- **Pflicht:** die Query MUSS einen Index treffen — per read-only `EXPLAIN ANALYZE` gegen prod verifiziert (Index-Scan, kein Seq-Scan). Probe über temporäres `node --env-file=.env`-Script mit `pg` (uncommitted, druckt keine Secrets, danach löschen).
-- **MAIN ist read-only** → der Agent legt einen fehlenden Index **nicht selbst an**. Stattdessen das `CREATE INDEX CONCURRENTLY`-Statement in **`prisma/recommended-indexes.sql`** ergänzen und dem Owner zum Anwenden flaggen. Eine Query, die ohne diesen Index nur per Seq-Scan läuft, gilt bis dahin als **BLOCKED**, nicht „done".
-
-### Pfad 2 — ClickHouse
-- **Wofür:** heavy Aggregate / Analytics / Fan-out (`/insights/*`, `/analytics/*`, creators-/rewards-analytics, dashboard-Legs).
-- **Pflicht:** über **`resolveAdminRead(surfaceKey, { pg, ch, compare })`** (`src/lib/clickhouse/resolve-read.ts`) verdrahten, gated durch **`getAdminReadMode`** (`src/lib/feature-flags/admin-read-source.ts`). CH-Twin muss cent/count-exakt gegen Postgres geprüft sein (Parity-Harness, `TZ=UTC`, zweimal), bevor der Surface-Key in `CUTOVER_DEFAULT_CLICKHOUSE`. Per-Surface Instant-Rollback via Edge Config bleibt erhalten.
-
-### Neue Queries = Pflicht-Konstrukt, alter PG-Layer = Legacy
-- **Jede NEUE Query / jedes neue Read-File MUSS auf dem Index-or-ClickHouse-Konstrukt aufbauen.** Keine neuen plain/unindexierten Prisma-/PG-Queries mehr.
-- Der bestehende direkte Prisma-/PG-Query-Layer gilt als **Legacy**. Wenn du einen Read anfasst, erweiterst oder eine Page neu baust: bring ihn auf einen bestätigten Index oder einen ClickHouse-Twin — nicht „so lassen wie er war".
-- **Verboten:** ein neues heavy Aggregate direkt auf MAIN ohne Index-Beleg oder CH-Twin; unbounded Lifetime-Scans (`windowDateFilterCapped` nutzen); „schnelle" Raw-Queries an der Regel vorbei.
-
-### Pflicht: Shell-first Suspense-Streaming (gleichrangig mit Index-or-ClickHouse)
+### Pflicht: Shell-first Suspense-Streaming
 - **Jede Admin-Page mit einem nicht-trivialen Read MUSS shell-first streamen.** Die Page-`page.tsx` rendert den `PageHero`-Shell (+ statische Controls) **sofort** und lädt die Daten in einer `async`-Child-Komponente hinter einer **`<Suspense fallback={<…Skeleton/>}>`**-Boundary. **Niemals** den heavy Read direkt im Page-Body awaiten — das blockiert First Paint.
 - **Pflicht-Begleiter:** eine `loading.tsx`, die denselben Shell + Skeletons rendert (Skeletons aus `@/components/loading-skeletons`); bei Timespan-/Tab-Seiten `<Suspense key={`${tab}-${period}`}>`. Referenz: `/creators/analytics`, `/crm`.
-- Der Read selbst läuft trotzdem über `safeQuery`/`safeQueryOrNull` + Timeout, ist gecached (`unstable_cache`, Active-Timeframe-Only) **und** über Pfad 1 (Index) oder Pfad 2 (ClickHouse) verdrahtet. Streaming ersetzt KEINEN der beiden Pfade — es kommt obendrauf.
+- Der Read selbst läuft über `safeQuery`/`safeQueryOrNull` + Timeout, ist gecached (`unstable_cache`, Active-Timeframe-Only) und nutzt den PostgreSQL-/Drizzle-Pfad. Streaming ersetzt Query-Optimierung nicht.
 
 ### Pflicht-Checkliste pro Read / Page (alle Punkte, sonst nicht „done")
-1. Read über Pfad 1 (bestätigter Index, per `EXPLAIN` belegt — oder dokumentiert warum Seq-Scan optimal ist) **oder** Pfad 2 (`resolveAdminRead` + CH-Twin, parity-proven).
+1. Read über PostgreSQL/Drizzle; bestätigter Index per `EXPLAIN` belegt oder dokumentiert, warum der Planner-Scan optimal ist.
 2. `page.tsx` = Shell sofort + `<Suspense>` + `loading.tsx` (kein Top-Level-await des heavy Reads).
 3. `safeQuery`/Timeout + `unstable_cache` (Active-Timeframe-Only, keine hidden Tabs/Timespans eager laden).
 4. Money Decimal-safe (`toString(sum)`→`toNumber`, nie Float), House-POV-Farben.
 5. tsc + lint grün (+ `npm run build` wenn die Änderungsklasse es verlangt, § Minimal-Overhead). **Kein Playwright/Render-Check — niemals, auch nicht für neue Pages** (§ Done-Kriterien, 2026-07-12).
-6. CH-Twin (falls gebaut) bleibt dormant (off/comparison) bis cent/count-exakte Parität (`TZ=UTC`, zweimal) **durch den automatisierten Parity-Harness** (kein Playwright-Render) — erst dann in `CUTOVER_DEFAULT_CLICKHOUSE`.
 
 **Volle Mechanik (Caching, Suspense-Streaming, Active-Timeframe-Only, `safeQuery`, House-POV-Farben, Checkliste neue Page):** **`docs/BACKEND_QUERY_SYSTEM.md`** — vor jeder Read-/Page-Arbeit lesen. Diese Regel hebt KEINE der Prod-DB-Regeln auf (MAIN bleibt read-only).
 
-**Merkregel:** Bedient eine Query weder einen bestätigten Index noch ClickHouse, ODER blockt eine Page First Paint statt zu streamen → sie ist falsch gebaut und darf nicht shippen.
+**Merkregel:** Ist eine Query weder indexgestützt noch als optimaler Planner-Scan belegt, oder blockt eine Page First Paint statt zu streamen, darf sie nicht shippen.
 
 ---
 
@@ -93,12 +82,12 @@ Warum: Beide Pfade sind die einzigen, die unter realer Last + Concurrency auf de
 - **Match the gate to the change — do NOT over-verify:**
   - Docs / markdown / comment-only edit → **no gate at all** (no `npm install`, no tsc/lint/build). Just commit + push.
   - Pure CSS / className / copy / static-JSX edit → **`tsc --noEmit` + `npm run lint` is enough**; do NOT run `npm run build`.
-  - Run the full **`npm run build` ONLY when the change can break what ONLY the build catches**: Server↔Client (RSC) boundaries, new/changed imports or exports, types, data flow, new deps, or route/config/prisma-generate changes.
+  - Run the full **`npm run build` ONLY when the change can break what ONLY the build catches**: Server↔Client (RSC) boundaries, new/changed imports or exports, types, data flow, new deps, or route/config/schema-generation changes.
 - **No redundant re-verification:** skip the separate composed-main build unless MULTIPLE agents changed INTERDEPENDENT code in the same area. One fitting gate → push.
 - **No unneeded ceremony:** no browser render unless asked; no belt-and-suspenders double-checks; don't spin a fresh worktree + full `npm install` for a trivial edit that can be shipped cleanly without it.
 - **NO headless rendering / Playwright / screenshots — EVER, absolute, permanent ban (Owner, 2026-07-12, EXPLICIT — verbatim: "never do playwright render check, never ever fucking do such useless shit!"; earlier verbatim: "u dont need to render or playwright anything, just push"):** for ANY UI/design change, do NOT start the dev server, the responsive Playwright harness (`e2e/responsive/*`), the dev fixtures (`src/app/responsive-fixture/*`), or any screenshot/visual-verify pass as a pre-push OR post-push gate — not even for a new page, not even for a redesign, not even when it "feels like it should be checked visually." The gate for a UI change is `npx tsc --noEmit` + `npm run lint` (full `npm run build` only when the change-class above requires it) → then **push**. The OWNER reviews the visual result himself in his browser. This applies to the main agent AND every background/workflow/sub-agent — never brief an agent to render/screenshot a UI change, and never let an agent decide on its own that "this case needs a visual check." The old JWT-mint + Playwright fallback mechanic for when no live browser is available is **removed entirely**, not just de-prioritized (§ Done-Kriterien). The ONLY exception: the owner explicitly asks for a live interactive check in that exact message — a deliberate one-off request, never a standing default or an agent's own judgment call.
 
-**Hard floor — this rule does NOT override these (NEVER skipped):** MAIN / prod-DB stays strictly read-only; never commit `.env` / secrets / `src/generated` / `recent-pushes.json`; the Index-or-ClickHouse backend rule; and honest reporting. Speed means cutting *verification overhead* — NEVER skipping *safety* rules or misreporting what was actually checked.
+**Hard floor — this rule does NOT override these (NEVER skipped):** MAIN / prod-DB stays strictly read-only; never commit `.env` / secrets / `src/generated` / `recent-pushes.json`; the PostgreSQL/Drizzle backend rule; and honest reporting. Speed means cutting *verification overhead* — NEVER skipping *safety* rules or misreporting what was actually checked.
 
 ---
 
@@ -113,7 +102,7 @@ Warum: Beide Pfade sind die einzigen, die unter realer Last + Concurrency auf de
 - Große, in viele unabhängige Einheiten zerlegbare Jobs (Audit über N Pages, ein Fix pro Reward-Typ, breite Recherche über viele Files) — hier lohnt sich echtes Fan-out.
 - Lange, unabhängige Recherche/Exploration, deren Suchweg den Hauptkontext nur unnötig aufbläht (nicht das Ergebnis selbst).
 
-**Bleibt bindend, unabhängig von inline vs. delegiert:** Hotspot-Kollisionsvermeidung, Commit/Push-Disziplin, DB-Policy, Index-or-ClickHouse-Regel, Minimal-Overhead-Gate (§ oben), Honest-Reporting. Diese Regel ändert nur *wer die Arbeit macht*, nicht die Sicherheits-/Qualitätsstandards.
+**Bleibt bindend, unabhängig von inline vs. delegiert:** Hotspot-Kollisionsvermeidung, Commit/Push-Disziplin, DB-Policy, PostgreSQL/Drizzle-Regel, Minimal-Overhead-Gate (§ oben), Honest-Reporting. Diese Regel ändert nur *wer die Arbeit macht*, nicht die Sicherheits-/Qualitätsstandards.
 
 **Merkregel:** Frag dich nicht mehr reflexhaft "Agent oder inline?" — Standard ist inline. Nur zu Agent/Workflow greifen, wenn es die Aufgabe nachweislich schneller oder breiter abdeckt (echte Unabhängigkeit, echte Breite), nicht weil "das ist die Regel".
 
@@ -136,7 +125,7 @@ Warum: Beide Pfade sind die einzigen, die unter realer Last + Concurrency auf de
 **Der User wartet NICHT 40 Minuten, während du 5 Sachen sammelst und alles zusammen pushst.** Jede fertige, gate-verifizierte Aufgabe (§ Minimal-Overhead — welches Gate passend ist, hängt von der Änderung ab, nicht immer der volle Build) wird SOFORT einzeln committet + gepusht — niemals zu einem Sammel-Push gebündelt.
 
 - **Ein Task fertig → sofort pushen.** Nicht auf andere laufende Tasks warten, nicht batchen.
-- **Unabhängige Tasks parallel in isolierten git-Worktrees** (`isolation: "worktree"` mit eigenem `npm install` + eigenem `.next` — **`npm install`, NICHT `npm ci`** (der committete `package-lock.json` weicht ab, `npm ci` schlägt fehl); NICHT node_modules junctionen, sonst korrumpiert ein paralleles `prisma generate` den Main-Checkout) bauen und jeweils eigenständig nach `main` pushen (bei non-fast-forward: `git fetch origin && git rebase origin/main && git push origin HEAD:main`, retry bis es durchgeht). So blockiert ein langer Job (großer Workflow) nicht den EINEN Build-Slot des Main-Checkouts, und kleine Tasks verhungern nicht in einer Queue.
+- **Unabhängige Tasks parallel in isolierten git-Worktrees** (`isolation: "worktree"` mit eigenem `npm install` + eigenem `.next` — **`npm install`, NICHT `npm ci`** (der committete `package-lock.json` weicht ab, `npm ci` schlägt fehl); keine `node_modules`-Junctions) bauen und jeweils eigenständig nach `main` pushen.
 - **Niemals einen großen ungepushten Stau anhäufen.** Mehrere offene Tasks → jeden so früh wie möglich einzeln rausschicken.
 - Passendes Gate (§ Minimal-Overhead), Hotspot-Vermeidung, no-prod-DB-Writes und Honest-Reporting bleiben bindend — aber INNERHALB dieser Regeln gilt: so früh + so oft pushen wie möglich.
 
@@ -405,11 +394,11 @@ Die Top-Regel oben (§ ⚡ Arbeitsmodus) ist bindend: **Standard ist inline**, A
    - `src/components/app-sidebar.tsx`
    - `src/lib/permissions.ts` + `src/app/(admin)/settings/roles/permissions-utils.ts`
    - `src/lib/admin-pages.ts`
-   - `prisma/admin/schema.prisma` + Migrations-Ordner
+   - `src/lib/db-schema/admin/schema.ts` + `drizzle/admin/migrations/`
    - `src/lib/dal.ts`
    - `src/app/(admin)/layout.tsx`
    - `package.json` / `next.config.ts`
-   - Jede Datei in `src/generated/` (nie direkt bearbeiten — Prisma regeneriert)
+   - Jede Datei in `src/lib/db-schema/` (Introspection-Output nie direkt bearbeiten)
    - `src/lib/queries/**`
    - zentrale Table-/Filter-/Toolbar-Komponenten
    - gemeinsame modern panel / KPI primitive Dateien
@@ -470,7 +459,7 @@ Diese Konventionen wurden aus der bestehenden Codebasis ermittelt. Sie sind bind
 - **Language:** TypeScript 5 (strict mode)
 - **React:** 19.1.0
 - **Styling:** Tailwind CSS 4 + shadcn/ui (base-nova)
-- **Datenbank:** PostgreSQL via Prisma 7.5.0
+- **Datenbank:** PostgreSQL via Drizzle ORM
 - **Auth:** JWT (`jose`) + TOTP 2FA (`otpauth`)
 - **Validation:** Zod 4.3.6
 - **Toasts:** `sonner`
@@ -589,20 +578,20 @@ Gilt für (checklist beim Neu-Bau oder Refactor):
 
 ### Dual-Database-Architektur (CRITICAL)
 
-Das Projekt nutzt **zwei vollständig getrennte PostgreSQL-Datenbanken** mit jeweils eigenem Prisma-Client. Diese Trennung ist strikt, nicht optional, und darf unter keinen Umständen aufgeweicht werden.
+Das Projekt nutzt **zwei vollständig getrennte PostgreSQL-Datenbanken** mit jeweils eigenem Drizzle-Pool. Diese Trennung ist strikt, nicht optional, und darf unter keinen Umständen aufgeweicht werden.
 
 #### 1. Main DB — die Produktions-DB der eigentlichen Website (packy.gg)
 
-- **Client:** `getDb()` (bzw. `db`) aus `src/lib/db.ts` — unterstützt einen prod/dev-Toggle (`admin_db_env`-Cookie + `DEV_DATABASE_URL`); Entry-Points `getDb()` / `getProdDb()` / `getDevDb()`, nicht mehr nur ein statischer Import. MAIN setzt zusätzlich `statement_timeout: 30s`.
-- **Schema:** `prisma/schema.prisma`
+- **Client:** MAIN-Drizzle-Resolver aus `src/lib/db.ts` — unterstützt einen prod/dev-Toggle (`admin_db_env`-Cookie + `DEV_DATABASE_URL`). MAIN setzt zusätzlich `statement_timeout: 30s`.
+- **Schema:** `src/lib/db-schema/main/schema.ts`
 - **Env-Var:** `DATABASE_URL`
 - **Inhalt:** alles was die eigentliche Game-Plattform betrifft — User-Accounts, Balances, Ledger-Transaktionen, Packs, Cards, Battles, Inventory, Rewards, Affiliate-System, Deposits/Withdrawals, Promo-Codes, Gift-Cards, Vouchers, Rain/Raffles/Races, etc.
 - **Diese DB ist die Live-Produktion der Website.** Sie enthält echte User, echtes Geld, echte Transaktionen. Jeder Zugriff — auch lesend, auch beim lokalen Entwickeln — wird so behandelt, als würde er gegen Produktion laufen. Schreibzugriffe auf diese DB ohne ausdrückliche Absprache mit dem User sind nicht erlaubt.
 
 #### 2. Admin DB — ausschließlich für das Admin-Panel
 
-- **Client:** `adminDb` aus `src/lib/admin-db.ts`
-- **Schema:** `prisma/admin/schema.prisma` (eigene `prisma.config.ts`)
+- **Client:** `adminDrizzle` aus `src/lib/admin-db.ts`
+- **Schema:** `src/lib/db-schema/admin/schema.ts` (Introspection über `drizzle.admin.config.ts`)
 - **Env-Var:** `ADMIN_DATABASE_URL`
 - **Inhalt:** nur Daten, die das Admin-Panel selbst betreffen — `admin_users`, `admin_sessions`, `admin_audit_events`, `admin_notes`, `admin_gift_card_actions`, `admin_voucher_actions`, `admin_balance_limits`, `creator_deals`, `creator_webhooks`, `expenses`, `recurring_expenses`.
 - **Keine Game- oder User-Daten.** Hier liegen nur Informationen darüber, wer sich wann als Admin eingeloggt hat, welcher Admin was getan hat, welche Creator-Deals existieren, welche Ausgaben getrackt werden, etc.
@@ -776,15 +765,16 @@ src/app/(admin)/{feature}/
 | Role Definitions | `src/lib/admin-roles.ts` |
 | Format Utilities | `src/lib/utils/format.ts` |
 | Constants (Colors, Status) | `src/lib/constants.ts` |
-| Main Schema | `prisma/schema.prisma` |
-| Admin Schema | `prisma/admin/schema.prisma` |
+| Main Schema | `src/lib/db-schema/main/schema.ts` |
+| Admin Schema | `src/lib/db-schema/admin/schema.ts` |
 | Middleware | `src/middleware.ts` |
 | UI Primitives (shadcn) | `src/components/ui/` |
 | Admin Layout | `src/app/(admin)/layout.tsx` |
 | Auth Layout | `src/app/(auth)/layout.tsx` |
 | Query-Module | `src/lib/queries/` |
-| Seed-Script (Admin) | `prisma/admin/seed.ts` |
-| Admin Prisma-Config (`db push`/`db execute`) | `prisma/admin/prisma.config.ts` |
+| Seed-Script (Admin) | `scripts/seed-admin.ts` |
+| Admin Drizzle-Config (Introspection) | `drizzle.admin.config.ts` |
+| Admin SQL migrations | `drizzle/admin/migrations/` |
 | Sidebar-Nav + `ICONS`-Map (React #130) | `src/components/app-sidebar.tsx` |
 | Render-/Responsive-Verify-Harness | `e2e/responsive/*` + `playwright.responsive.config.ts` |
 | Dev-only Render-Fixtures | `src/app/responsive-fixture/*` |
@@ -795,16 +785,17 @@ src/app/(admin)/{feature}/
 
 ```bash
 npm run dev              # Next.js dev (Turbopack)
-npm run build            # Prisma generate (beide DBs) + Next build — AUTORITATIVER Gate vor Push
+npm run build            # Next Production Build — AUTORITATIVER Gate vor Push
 npm run start            # Production Server
 npm run lint             # ESLint
 npm run admin:seed       # Admin DB Seed
 
-# Admin-DB Schema anwenden — die Admin-DB ist db-push-managed:
-npx prisma db push    --schema=prisma/admin/schema.prisma --config=prisma/admin/prisma.config.ts
-npx prisma db execute --file <sql>                        --config=prisma/admin/prisma.config.ts
+# Admin-DB Schema anwenden und Drizzle-Snapshot aktualisieren:
+npm run admin:sql -- drizzle/admin/migrations/<file>.sql
+npm run db:pull:admin
 
-# ⚠️ NICHT benutzen: npm run admin:migrate  (= `prisma migrate dev` → destruktiver Reset auf db-push-managed DB)
+# MAIN-Snapshot aktualisieren (read-only):
+npm run db:pull:main
 ```
 
 ### Env-Variablen (Pflicht)
@@ -812,7 +803,7 @@ npx prisma db execute --file <sql>                        --config=prisma/admin/
 - `DATABASE_URL` — Main DB Connection
 - `ADMIN_DATABASE_URL` — Admin DB Connection
 - `SESSION_SECRET` — JWT Signing Key
-- `ADMIN_SEED_PASSWORD` — Initial Admin Password (Default: "CHANGEME")
+- `ADMIN_SEED_PASSWORD` — Initial Admin Password (required; no default)
 
 **Optional — Discord rewards bot webhook** (`/creator-rewards` approve/decline
 DMs the player). Both must be set or the feature is simply off; approve/reject

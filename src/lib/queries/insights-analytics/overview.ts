@@ -1,8 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { Prisma } from "@/generated/prisma/client";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
@@ -618,10 +617,8 @@ function parseWindow(
  */
 const cachedDailyOverview = unstable_cache(
   async (sinceIso: string, blacklistIdNotIn: string, sessionWindowsCte: string) => {
-    const db = await getDb();
     const since = new Date(sinceIso);
-    const wagerIn = Prisma.raw(METRICS_WAGER_TYPES_SQL);
-    return db.$queryRaw<
+    return queryMainRows<
       {
         date: Date;
         deposits: string;
@@ -632,7 +629,8 @@ const cachedDailyOverview = unstable_cache(
         signups: string;
         active: string;
       }[]
-    >`
+    >(
+      `
       WITH real_users AS (
         SELECT u.id, u.role, u.created_at AS signup_at,
                EXISTS (
@@ -640,9 +638,9 @@ const cachedDailyOverview = unstable_cache(
                  WHERE ref.id = u.referred_by AND ref.role = 'creator'
                ) AS under_creator
         FROM "user" u
-        WHERE u.role NOT IN ('admin', 'support', 'creator') ${Prisma.raw(blacklistIdNotIn)}
+        WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
       ),
-      ${Prisma.raw(sessionWindowsCte)},
+      ${sessionWindowsCte},
       base AS (
         SELECT lt.user_id, lt.type, lt.amount::numeric AS amount, DATE(lt.created_at) AS d,
                ru.under_creator,
@@ -656,12 +654,12 @@ const cachedDailyOverview = unstable_cache(
                     ELSE false END AS in_session
         FROM ledger_transactions lt
         JOIN real_users ru ON ru.id = lt.user_id
-        WHERE lt.status = 'completed' AND lt.created_at >= ${since}
+        WHERE lt.status = 'completed' AND lt.created_at >= $1
       ),
       daily_signups AS (
         SELECT DATE(signup_at) AS d, COUNT(*)::text AS signups
         FROM real_users
-        WHERE signup_at >= ${since}
+        WHERE signup_at >= $1
         GROUP BY DATE(signup_at)
       ),
       daily_withdrawals AS (
@@ -670,16 +668,16 @@ const cachedDailyOverview = unstable_cache(
         FROM card_withdrawal_requests cwr
         JOIN real_users ru ON ru.id = cwr.user_id
         WHERE cwr.status IN ('completed', 'shipped')
-          AND COALESCE(cwr.completed_at, cwr.shipped_at) >= ${since}
+          AND COALESCE(cwr.completed_at, cwr.shipped_at) >= $1
         GROUP BY DATE(COALESCE(cwr.completed_at, cwr.shipped_at))
       ),
       daily_base AS (
         SELECT
           d,
           COALESCE(SUM(CASE WHEN type::text = 'deposit' THEN amount ELSE 0 END), 0)::text AS deposits,
-          COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
-          COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND NOT under_creator THEN ABS(amount) ELSE 0 END), 0)::text AS wager_organic,
-          COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND under_creator THEN ABS(amount) ELSE 0 END), 0)::text AS wager_creator_coded,
+          COALESCE(SUM(CASE WHEN type::text IN ${METRICS_WAGER_TYPES_SQL} AND NOT in_session THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
+          COALESCE(SUM(CASE WHEN type::text IN ${METRICS_WAGER_TYPES_SQL} AND NOT in_session AND NOT under_creator THEN ABS(amount) ELSE 0 END), 0)::text AS wager_organic,
+          COALESCE(SUM(CASE WHEN type::text IN ${METRICS_WAGER_TYPES_SQL} AND NOT in_session AND under_creator THEN ABS(amount) ELSE 0 END), 0)::text AS wager_creator_coded,
           COUNT(DISTINCT user_id)::text AS active
         FROM base
         GROUP BY d
@@ -697,7 +695,9 @@ const cachedDailyOverview = unstable_cache(
       LEFT JOIN daily_signups ds ON ds.d = db.d
       LEFT JOIN daily_withdrawals dw ON dw.d = db.d
       ORDER BY db.d
-    `;
+      `,
+      since,
+    );
   },
   ["insights-analytics-overview-daily-v2"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },

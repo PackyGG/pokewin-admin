@@ -1,6 +1,8 @@
 import { z } from "zod";
+import { eq } from "drizzle-orm";
 
-import { getProdDb } from "@/lib/db";
+import { getProdDrizzleDb } from "@/lib/db";
+import { account } from "@/lib/db-schema/main/schema";
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
 import { createClaimRequest } from "@/lib/creator-vip/queries";
 
@@ -108,11 +110,12 @@ export const POST = withApiKey(
     // Same single index probe the sibling routes use. providerId is asserted
     // so a same-valued account on another provider can't resolve to a Packy
     // user.
-    const account = await getProdDb().account.findUnique({
-      where: { accountId: discordUserId },
-      select: { providerId: true, userId: true },
-    });
-    if (!account || account.providerId !== "discord") {
+    const [linkedAccount] = await getProdDrizzleDb()
+      .select({ providerId: account.providerId, userId: account.userId })
+      .from(account)
+      .where(eq(account.accountId, discordUserId))
+      .limit(1);
+    if (!linkedAccount || linkedAccount.providerId !== "discord") {
       return apiError(
         404,
         "not_linked",
@@ -123,7 +126,7 @@ export const POST = withApiKey(
     const result = await createClaimRequest({
       programId,
       leg,
-      userId: account.userId,
+      userId: linkedAccount.userId,
       discordUserId,
     });
 

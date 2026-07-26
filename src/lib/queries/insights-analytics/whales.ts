@@ -1,8 +1,7 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { Prisma } from "@/generated/prisma/client";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
@@ -164,13 +163,10 @@ const cachedLifetimePnlWhales = unstable_cache(
   ): Promise<
     { id: string; username: string | null; image: string | null; pnl: string; wager: string }[]
   > => {
-    const db = await getDb();
-    const ggrWagerIn = Prisma.raw(WAGER_TYPES_SQL);
-    const ggrPayoutIn = Prisma.raw(PAYOUT_TYPES_SQL);
     const since = new Date(
       Date.now() - WHALES_LIFETIME_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
     );
-    return db.$queryRaw<
+    return queryMainRows<
       {
         id: string;
         username: string | null;
@@ -178,12 +174,13 @@ const cachedLifetimePnlWhales = unstable_cache(
         pnl: string;
         wager: string;
       }[]
-    >`
+    >(
+      `
       WITH real_users AS (
         SELECT u.id, u.username, u.image, u.role FROM "user" u
-        WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        WHERE u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
       ),
-      ${Prisma.raw(sessionWindowsCte)},
+      ${sessionWindowsCte},
       base AS (
         SELECT lt.user_id, lt.type, lt.amount::numeric AS amount,
                CASE WHEN ru.role = 'creator'
@@ -196,28 +193,31 @@ const cachedLifetimePnlWhales = unstable_cache(
                     ELSE false END AS in_session
         FROM ledger_transactions lt
         JOIN real_users ru ON ru.id = lt.user_id
-        WHERE lt.status = 'completed' AND lt.created_at >= ${since}
+        WHERE lt.status = 'completed' AND lt.created_at >= $1
       )
       SELECT
         ru.id, ru.username, ru.image,
         (
-          COALESCE(SUM(CASE WHEN b.type::text IN ${ggrWagerIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
-          - COALESCE(SUM(CASE WHEN b.type::text IN ${ggrPayoutIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
+          COALESCE(SUM(CASE WHEN b.type::text IN ${WAGER_TYPES_SQL} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
+          - COALESCE(SUM(CASE WHEN b.type::text IN ${PAYOUT_TYPES_SQL} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
         )::text AS pnl,
-        COALESCE(SUM(CASE WHEN b.type::text IN ${ggrWagerIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)::text AS wager
+        COALESCE(SUM(CASE WHEN b.type::text IN ${WAGER_TYPES_SQL} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)::text AS wager
       FROM real_users ru
       LEFT JOIN base b ON b.user_id = ru.id
       GROUP BY ru.id, ru.username, ru.image
       HAVING (
-        COALESCE(SUM(CASE WHEN b.type::text IN ${ggrWagerIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN b.type::text IN ${ggrPayoutIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
+        COALESCE(SUM(CASE WHEN b.type::text IN ${WAGER_TYPES_SQL} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN b.type::text IN ${PAYOUT_TYPES_SQL} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
       ) > 0
       ORDER BY (
-        COALESCE(SUM(CASE WHEN b.type::text IN ${ggrWagerIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN b.type::text IN ${ggrPayoutIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
+        COALESCE(SUM(CASE WHEN b.type::text IN ${WAGER_TYPES_SQL} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN b.type::text IN ${PAYOUT_TYPES_SQL} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
       ) DESC
-      LIMIT ${LIMIT}
-    `;
+      LIMIT $2
+      `,
+      since,
+      LIMIT,
+    );
   },
   ["insights-analytics-whales-lifetime-pnl-v1"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
@@ -242,25 +242,27 @@ const cachedLifetimeWagerWhales = unstable_cache(
   ): Promise<
     { id: string; username: string | null; image: string | null; amount: string }[]
   > => {
-    const db = await getDb();
-    const ggrWagerIn = Prisma.raw(WAGER_TYPES_SQL);
     const since = new Date(
       Date.now() - WHALES_LIFETIME_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
     );
-    return db.$queryRaw<
+    return queryMainRows<
       { id: string; username: string | null; image: string | null; amount: string }[]
-    >`
+    >(
+      `
       SELECT u.id, u.username, u.image,
              SUM(ABS(lt.amount::numeric))::text AS amount
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
-      WHERE lt.status = 'completed' AND lt.type::text IN ${ggrWagerIn}
-        AND lt.created_at >= ${since}
-        AND u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+      WHERE lt.status = 'completed' AND lt.type::text IN ${WAGER_TYPES_SQL}
+        AND lt.created_at >= $1
+        AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
       GROUP BY u.id, u.username, u.image
       ORDER BY SUM(ABS(lt.amount::numeric)) DESC
-      LIMIT ${LIMIT}
-    `;
+      LIMIT $2
+      `,
+      since,
+      LIMIT,
+    );
   },
   ["insights-analytics-whales-lifetime-wager-v1"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
@@ -286,8 +288,7 @@ const cachedWindowedWagerWhales = unstable_cache(
   ): Promise<
     { id: string; username: string | null; image: string | null; amount: string }[]
   > => {
-    const db = await getDb();
-    return db.$queryRawUnsafe<
+    return queryMainRows<
       { id: string; username: string | null; image: string | null; amount: string }[]
     >(`
       SELECT u.id, u.username, u.image,
@@ -296,11 +297,11 @@ const cachedWindowedWagerWhales = unstable_cache(
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed' AND lt.type::text IN ${WAGER_TYPES_SQL}
         AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
-        AND lt.created_at >= NOW() - INTERVAL '${days} days'
+        AND lt.created_at >= NOW() - make_interval(days => $1::int)
       GROUP BY u.id, u.username, u.image
       ORDER BY SUM(ABS(lt.amount::numeric)) DESC
-      LIMIT ${LIMIT}
-    `);
+      LIMIT $2
+    `, days, LIMIT);
   },
   ["insights-analytics-whales-windowed-wager-v1"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
@@ -333,11 +334,10 @@ const cachedBiggestSingleDeposit = unstable_cache(
       created_at: Date | string;
     }[]
   > => {
-    const db = await getDb();
     const since = new Date(
       Date.now() - WHALES_LIFETIME_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
     );
-    return db.$queryRaw<
+    return queryMainRows<
       {
         id: string;
         username: string | null;
@@ -345,18 +345,22 @@ const cachedBiggestSingleDeposit = unstable_cache(
         amount: string;
         created_at: Date;
       }[]
-    >`
+    >(
+      `
       SELECT u.id, u.username, u.image,
              ABS(lt.amount::numeric)::text AS amount,
              lt.created_at
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed' AND lt.type::text = 'deposit'
-        AND lt.created_at >= ${since}
-        AND u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        AND lt.created_at >= $1
+        AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
       ORDER BY ABS(lt.amount::numeric) DESC
-      LIMIT ${LIMIT}
-    `;
+      LIMIT $2
+      `,
+      since,
+      LIMIT,
+    );
   },
   ["insights-analytics-whales-biggest-deposit-v1"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
@@ -389,11 +393,10 @@ const cachedBiggestSingleWithdrawal = unstable_cache(
       created_at: Date | string;
     }[]
   > => {
-    const db = await getDb();
     const since = new Date(
       Date.now() - WHALES_LIFETIME_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
     );
-    return db.$queryRaw<
+    return queryMainRows<
       {
         id: string;
         username: string | null;
@@ -401,18 +404,22 @@ const cachedBiggestSingleWithdrawal = unstable_cache(
         amount: string;
         created_at: Date;
       }[]
-    >`
+    >(
+      `
       SELECT u.id, u.username, u.image,
              cwr.total_value_usd::text AS amount,
              COALESCE(cwr.completed_at, cwr.shipped_at, cwr.created_at) AS created_at
       FROM card_withdrawal_requests cwr
       JOIN "user" u ON u.id = cwr.user_id
       WHERE cwr.status IN ('completed', 'shipped')
-        AND COALESCE(cwr.completed_at, cwr.shipped_at, cwr.created_at) >= ${since}
-        AND u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        AND COALESCE(cwr.completed_at, cwr.shipped_at, cwr.created_at) >= $1
+        AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
       ORDER BY cwr.total_value_usd DESC
-      LIMIT ${LIMIT}
-    `;
+      LIMIT $2
+      `,
+      since,
+      LIMIT,
+    );
   },
   ["insights-analytics-whales-biggest-withdrawal-v1"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
@@ -450,12 +457,10 @@ const cachedBiggestSingleLoss = unstable_cache(
       created_at: Date | string;
     }[]
   > => {
-    const db = await getDb();
-    const ggrWagerIn = Prisma.raw(WAGER_TYPES_SQL);
     const since = new Date(
       Date.now() - WHALES_LIFETIME_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
     );
-    return db.$queryRaw<
+    return queryMainRows<
       {
         id: string;
         username: string | null;
@@ -464,19 +469,23 @@ const cachedBiggestSingleLoss = unstable_cache(
         type: string;
         created_at: Date;
       }[]
-    >`
+    >(
+      `
       SELECT u.id, u.username, u.image,
              ABS(lt.amount::numeric)::text AS amount,
              lt.type::text AS type,
              lt.created_at
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
-      WHERE lt.status = 'completed' AND lt.type::text IN ${ggrWagerIn}
-        AND lt.created_at >= ${since}
-        AND u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+      WHERE lt.status = 'completed' AND lt.type::text IN ${WAGER_TYPES_SQL}
+        AND lt.created_at >= $1
+        AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
       ORDER BY ABS(lt.amount::numeric) DESC
-      LIMIT ${LIMIT}
-    `;
+      LIMIT $2
+      `,
+      since,
+      LIMIT,
+    );
   },
   ["insights-analytics-whales-biggest-loss-v1"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
@@ -513,12 +522,10 @@ const cachedBiggestSingleWin = unstable_cache(
       created_at: Date | string;
     }[]
   > => {
-    const db = await getDb();
-    const ggrPayoutIn = Prisma.raw(PAYOUT_TYPES_SQL);
     const since = new Date(
       Date.now() - WHALES_LIFETIME_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
     );
-    return db.$queryRaw<
+    return queryMainRows<
       {
         id: string;
         username: string | null;
@@ -527,19 +534,23 @@ const cachedBiggestSingleWin = unstable_cache(
         type: string;
         created_at: Date;
       }[]
-    >`
+    >(
+      `
       SELECT u.id, u.username, u.image,
              ABS(lt.amount::numeric)::text AS amount,
              lt.type::text AS type,
              lt.created_at
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
-      WHERE lt.status = 'completed' AND lt.type::text IN ${ggrPayoutIn}
-        AND lt.created_at >= ${since}
-        AND u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+      WHERE lt.status = 'completed' AND lt.type::text IN ${PAYOUT_TYPES_SQL}
+        AND lt.created_at >= $1
+        AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
       ORDER BY ABS(lt.amount::numeric) DESC
-      LIMIT ${LIMIT}
-    `;
+      LIMIT $2
+      `,
+      since,
+      LIMIT,
+    );
   },
   ["insights-analytics-whales-biggest-win-v1"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },

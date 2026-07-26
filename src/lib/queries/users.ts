@@ -10,6 +10,5 @@ export * from "./users-transactions";
 export * from "./users-audit";
 export * from "./users-financial";
 export * from "./users-creator";
-export * from "./users-sessions";
 export * from "./users-provably-fair";
 export * from "./users-rewards";

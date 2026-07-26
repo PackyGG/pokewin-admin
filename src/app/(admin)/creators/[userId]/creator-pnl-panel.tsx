@@ -5,7 +5,6 @@ import { SectionHeading, StatPanel, PanelRow } from "@/components/modern-panels"
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
-import { compareCreatorsDetailPnl } from "@/lib/clickhouse/compare/creators-detail-pnl";
 
 import { getCreatorPnlCached } from "./_queries/_pnl-cache";
 import { CreatorPnlUsersPopover } from "./_components/creator-pnl-users-popover";
@@ -122,12 +121,9 @@ export async function CreatorPnlPanel({
     );
   }
 
-  // Phase 2B CQRS read-migration — fire-and-forget ClickHouse comparison of the
   // per-window + lifetime P&L headline (no-op unless `creators_detail_pnl` is in
   // comparison mode). The served value is ALWAYS the Postgres `data`; this only
   // logs drift and can never affect the rendered panel.
-  void compareCreatorsDetailPnl(userId, data);
-
   const byPeriod = new Map(data.byPeriod.map((p) => [p.period, p]));
 
   const lifetimePnl = data.lifetime.pnl;

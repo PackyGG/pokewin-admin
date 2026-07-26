@@ -1,5 +1,5 @@
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
@@ -7,7 +7,7 @@ import type { PaginatedResult } from "@/lib/types";
 import type { CodeListItem } from "./creators-types";
 
 // Prod has historically been ahead of / behind dev on schema changes, and
-// missing tables / columns surface as PrismaClient errors that crash the
+// missing tables or columns surface as database errors that crash the
 // whole route. Wrapping every query in `safe()` keeps the page rendering
 // with empty values instead of a 500 — admins still see the static layout
 // and any queries that DID succeed.
@@ -35,7 +35,6 @@ export async function getCodes(params: {
     sortOrder = "desc",
   } = params;
 
-  const db = await getDb();
   const validFields = ["code", "created_at"];
   const sortField = validFields.includes(sortBy) ? sortBy : "created_at";
   const direction = sortOrder === "asc" ? "ASC" : "DESC";
@@ -47,10 +46,17 @@ export async function getCodes(params: {
     whereClause = `WHERE (ac.code ILIKE $1 OR u.username ILIKE $1)`;
   }
 
-  const offset = (page - 1) * perPage;
+  const safePage = Math.max(1, Math.trunc(page) || 1);
+  const safePerPage = Math.min(
+    200,
+    Math.max(1, Math.trunc(perPage) || 20),
+  );
+  const offset = (safePage - 1) * safePerPage;
+  const limitParam = queryParams.length + 1;
+  const offsetParam = queryParams.length + 2;
 
   const [codes, countRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryMainRows<
       { code: string; user_id: string; created_at: Date; username: string | null }[]
     >(
       `SELECT ac.code, ac.user_id, ac.created_at, u.username
@@ -58,10 +64,12 @@ export async function getCodes(params: {
        JOIN "user" u ON u.id = ac.user_id
        ${whereClause}
        ORDER BY ac.${sortField} ${direction}
-       LIMIT ${perPage} OFFSET ${offset}`,
-      ...queryParams
+       LIMIT $${limitParam} OFFSET $${offsetParam}`,
+      ...queryParams,
+      safePerPage,
+      offset,
     ),
-    db.$queryRawUnsafe<{ count: string }[]>(
+    queryMainRows<{ count: string }[]>(
       `SELECT COUNT(*)::text AS count
        FROM affiliate_codes ac
        JOIN "user" u ON u.id = ac.user_id
@@ -81,9 +89,9 @@ export async function getCodes(params: {
       createdAt: c.created_at.toISOString(),
     })),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }
 
@@ -108,10 +116,8 @@ export type CreatorsCodesListStats = {
 
 const cachedCreatorsCodesListStats = unstable_cache(
   async (): Promise<CreatorsCodesListStats> => {
-    const db = await getDb();
-    const rows = await db.$queryRaw<
-      { total: string; active: string }[]
-    >`
+    const rows = await queryMainRows<{ total: string; active: string }[]>(
+      `
       SELECT
         COUNT(*)::text AS total,
         COUNT(*) FILTER (
@@ -123,7 +129,8 @@ const cachedCreatorsCodesListStats = unstable_cache(
           )
         )::text AS active
       FROM affiliate_codes ac
-    `;
+    `,
+    );
     const r = rows[0];
     const total = Number(r?.total ?? 0);
     const active = Number(r?.active ?? 0);
@@ -155,11 +162,10 @@ export async function getCodeAnalytics(code: string) {
   // legacy rows, (2) use the ROW's stored casing for usages queries so they
   // match the actual insert casing, (3) use UPPERCASE for affiliate_clicks
   // where we know the stored casing is always upper.
-  const db = await getDb();
   const uppercaseCode = code.toUpperCase();
 
   const codeRows = await safe(
-    db.$queryRawUnsafe<{ code: string; user_id: string; username: string | null }[]>(
+    queryMainRows<{ code: string; user_id: string; username: string | null }[]>(
       `SELECT ac.code, ac.user_id, u.username
        FROM affiliate_codes ac
        JOIN "user" u ON u.id = ac.user_id
@@ -197,7 +203,7 @@ export async function getCodeAnalytics(code: string) {
     // writes the signup row first, before any deposit/wager. has_signup
     // distinguishes "fully tracked" users from legacy orphans.
     safe(
-      db.$queryRawUnsafe<
+      queryMainRows<
         {
           referred_user_id: string;
           referred_username: string | null;
@@ -300,7 +306,7 @@ export async function getCodeAnalytics(code: string) {
     //  - total_wagers         = SUM(wager_amount_usd)
     //  - total_commission     = SUM(referrer_cut_usd)
     safe(
-      db.$queryRawUnsafe<{
+      queryMainRows<{
         total_signups: string;
         active_referrals: string;
         total_deposits: string;
@@ -340,7 +346,7 @@ export async function getCodeAnalytics(code: string) {
     //  - deposit_event_count = number of deposits booked to this code
     //  - unique_depositors   = distinct users behind those deposits
     safe(
-      db.$queryRawUnsafe<
+      queryMainRows<
         {
           total: string;
           deposit_event_count: string;
@@ -361,9 +367,17 @@ export async function getCodeAnalytics(code: string) {
         unique_depositors: string;
       }[],
     ),
-    safe(db.affiliate_clicks.count({ where: { code: uppercaseCode } }), 0),
     safe(
-      db.$queryRawUnsafe<
+      queryMainRows<{ count: string }[]>(
+        `SELECT COUNT(*)::text AS count
+         FROM affiliate_clicks
+         WHERE code = $1`,
+        uppercaseCode,
+      ).then((rows) => Number(rows[0]?.count ?? 0)),
+      0,
+    ),
+    safe(
+      queryMainRows<
         {
           date: Date;
           referrals: string;
@@ -392,7 +406,7 @@ export async function getCodeAnalytics(code: string) {
       }[],
     ),
     safe(
-      db.$queryRawUnsafe<{ date: Date; clicks: string }[]>(`
+      queryMainRows<{ date: Date; clicks: string }[]>(`
         SELECT DATE(created_at) AS date, COUNT(*)::text AS clicks
         FROM affiliate_clicks
         WHERE code = $1
@@ -410,7 +424,7 @@ export async function getCodeAnalytics(code: string) {
     //    casing). DISTINCT on referred_user_id so a user who made multiple
     //    usages under this code still counts once.
     safe(
-      db.$queryRawUnsafe<{ country: string; clicks: number; signups: number }[]>(
+      queryMainRows<{ country: string; clicks: number; signups: number }[]>(
         `
         WITH click_countries AS (
           SELECT country, COUNT(*)::int AS clicks
@@ -449,7 +463,7 @@ export async function getCodeAnalytics(code: string) {
     // generate_series + LEFT JOIN guarantees continuous buckets even when
     // a given hour saw zero activity — chart renders flat bar, not a gap.
     safe(
-      db.$queryRawUnsafe<{ bucket: string; clicks: number; signups: number }[]>(
+      queryMainRows<{ bucket: string; clicks: number; signups: number }[]>(
         `
         WITH series AS (
           SELECT generate_series(
@@ -490,7 +504,7 @@ export async function getCodeAnalytics(code: string) {
     // Daily acquisition series (last 7d, 7 buckets). Same structure as
     // hourly but truncated to day.
     safe(
-      db.$queryRawUnsafe<{ bucket: string; clicks: number; signups: number }[]>(
+      queryMainRows<{ bucket: string; clicks: number; signups: number }[]>(
         `
         WITH series AS (
           SELECT generate_series(
@@ -546,7 +560,7 @@ export async function getCodeAnalytics(code: string) {
   const totalWagers = toNumber(usageAggregate?.total_wagers ?? 0);
   const totalCommission = toNumber(usageAggregate?.total_commission ?? 0);
 
-  // Merge daily data. `DATE(created_at)` comes back from Prisma as either
+  // Merge daily data. `DATE(created_at)` comes back from PostgreSQL as either
   // a Date object or an ISO string depending on the driver; guard the
   // conversion so a null/invalid row never crashes the merge. Before the
   // uppercase-normalisation fix dailyClicks was always empty for lowercase
@@ -687,14 +701,13 @@ export async function getCodeReferrals(
   code: string,
   limit: number = 50,
 ): Promise<CodeReferralsResult> {
-  const db = await getDb();
   const uppercaseCode = code.toUpperCase();
   const safeLimit = Math.max(1, Math.min(Math.floor(limit), 200));
   const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
 
   try {
-    const rows = await db.$queryRawUnsafe<
+    const rows = await queryMainRows<
       {
         referred_user_id: string;
         referred_username: string | null;
@@ -779,7 +792,6 @@ export async function getRecentWagersOnCode(
   code: string,
   limit: number = 25,
 ): Promise<RecentWagersResult> {
-  const db = await getDb();
   const uppercaseCode = code.toUpperCase();
   // Cap and floor the limit so a buggy caller can't fetch the world.
   const safeLimit = Math.max(1, Math.min(Math.floor(limit), 100));
@@ -787,7 +799,7 @@ export async function getRecentWagersOnCode(
   const blacklistIdNotIn = blacklistNotInClause("u.id", excludedRecent);
 
   try {
-    const rows = await db.$queryRawUnsafe<
+    const rows = await queryMainRows<
       {
         id: string;
         user_id: string;

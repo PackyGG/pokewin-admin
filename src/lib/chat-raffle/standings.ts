@@ -1,8 +1,7 @@
 import "server-only";
 
-import { getDb } from "@/lib/db";
-import { Prisma } from "@/generated/prisma/client";
-import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
+import { sql } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { CUSTOMER_EXCLUDED_ROLES } from "@/lib/metrics/scope";
 import {
@@ -21,7 +20,7 @@ import {
  * The window predicate (`is_deleted = false AND created_at >= … AND < …`) is
  * served by the partial index `idx_chat_messages_created_at_user_id`
  * (created_at, user_id) WHERE is_deleted = false — applied + verified on prod,
- * see prisma/recommended-indexes.sql #33. The scorer additionally needs each
+ * see the PostgreSQL index migrations. The scorer additionally needs each
  * message's LENGTH and a dedupe key, which no index can cover, so the matched
  * rows are heap-fetched: an Index Scan over the window plus a heap visit per
  * row in it. That is bounded work — the window is capped at
@@ -113,29 +112,25 @@ export async function getChatRaffleStandings(params: {
     return { standings: [], totalTickets: 0, entrants: 0, truncated: false };
   }
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const bucketSeconds = scoring.bucketMinutes * 60;
 
-  // Blacklist ids go through the canonical escaper; the role list is a
-  // hardcoded module constant. No user input is interpolated into the SQL.
   const excluded = await getExcludedUserIds();
   const blacklistFilter =
     excluded.length > 0
-      ? Prisma.raw(`AND s.user_id NOT IN (${escapeBlacklistIds(excluded)})`)
-      : Prisma.empty;
-  const roleFilter = Prisma.raw(
-    `u.role::text NOT IN (${CUSTOMER_EXCLUDED_ROLES.map((r) => `'${r}'`).join(", ")})`,
-  );
+      ? sql`AND s.user_id <> ALL(${excluded}::text[])`
+      : sql``;
+  const roleFilter = sql`u.role::text <> ALL(${[...CUSTOMER_EXCLUDED_ROLES]}::text[])`;
 
   // Identical text counts once per bucket when the knob is on; otherwise the
   // dedupe rank is ignored.
   const dedupePredicate = scoring.dedupeIdentical
-    ? Prisma.raw("WHERE d.dupe_rn = 1")
-    : Prisma.empty;
+    ? sql`WHERE d.dupe_rn = 1`
+    : sql``;
 
   // One extra row so "more entrants than we can snapshot" is detectable
   // rather than silently truncated.
-  const rows = await db.$queryRaw<ScoredRow[]>`
+  const result = await db.execute<ScoredRow>(sql`
     WITH raw AS (
       SELECT
         cm.user_id,
@@ -188,7 +183,8 @@ export async function getChatRaffleStandings(params: {
       )
     ORDER BY s.base_points DESC, s.user_id ASC
     LIMIT ${limit + 1}
-  `;
+  `);
+  const rows = result.rows;
 
   const truncated = rows.length > limit;
   const capped = truncated ? rows.slice(0, limit) : rows;

@@ -1,9 +1,7 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getRaffleForecastBaselineFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/raffle/baseline";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriodCapped,
@@ -111,17 +109,17 @@ async function computeRaffleBaseline(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RaffleForecastBaseline> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // Completed raffles are a small set; still bound the lifetime window to the
   // standard insights lookback so `all` never scans unboundedly.
   const days = daysForInsightsPeriodCapped(period);
-  const blacklistTail = blacklistNotInClause("u.id", blacklistIds);
+  const blacklistTail = blacklistNotInSql("u.id", blacklistIds);
 
   // Pull the completed raffles in-window whose winner is an in-scope customer.
   // Join to "user" to enforce the staff + blacklist exclusion on the winner.
   // (A NULL winner can't pass the JOIN, which is correct — an un-drawn raffle
   // is not a realized cost.)
-  const raffleRows = await db.$queryRawUnsafe<RaffleRow[]>(`
+  const raffleRows = await queryRows<RaffleRow[]>(db, sql`
     SELECT
       r.id,
       r.prizes,
@@ -133,7 +131,7 @@ async function computeRaffleBaseline(
     JOIN "user" u ON u.id = r.winner_user_id
     WHERE r.status = 'completed'
       AND r.completed_at IS NOT NULL
-      AND r.completed_at >= NOW() - INTERVAL '${days} days'
+      AND r.completed_at >= NOW() - (${days} * INTERVAL '1 day')
       AND u.role NOT IN ('admin', 'support') ${blacklistTail}
     ORDER BY r.completed_at ASC
   `);
@@ -173,15 +171,18 @@ async function computeRaffleBaseline(
     // Distinct participants across the counted raffles + total points spent, so
     // the forecast has the real ticket-rate context. Customer scope is enforced
     // on the entrant too (consistent with the winner scope above).
-    db.$queryRawUnsafe<{ participants: string; entries: string; points: string }[]>(`
+    queryRows<{ participants: string; entries: string; points: string }[]>(db, sql`
       SELECT
         COUNT(DISTINCT re.user_id)::text AS participants,
         COUNT(*)::text AS entries,
         COALESCE(SUM(re.points_spent), 0)::text AS points
       FROM raffle_entries re
       JOIN "user" u ON u.id = re.user_id
-      WHERE re.raffle_id IN (${raffleIds.map((id) => `'${id}'::uuid`).join(", ")})
-        AND u.role NOT IN ('admin', 'support') ${blacklistNotInClause("u.id", blacklistIds)}
+      WHERE re.raffle_id IN (${sql.join(
+        raffleIds.map((id) => sql`${id}::uuid`),
+        sql`, `,
+      )})
+        AND u.role NOT IN ('admin', 'support') ${blacklistNotInSql("u.id", blacklistIds)}
     `),
   ]);
 
@@ -250,20 +251,14 @@ const RAFFLE_CACHE_TAGS = ["insights-rewards", "insights-rewards-raffle"] as con
 
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveAdminRead<RaffleForecastBaseline>("insights_raffle_baseline", {
-      pg: () => computeRaffleBaseline(period, blacklistIds),
-      ch: () => getRaffleForecastBaselineFromClickHouse(period, blacklistIds),
-    }),
+    computeRaffleBaseline(period, blacklistIds),
   ["insights-rewards-raffle-baseline-v1"],
   { revalidate: 60, tags: [...RAFFLE_CACHE_TAGS] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveAdminRead<RaffleForecastBaseline>("insights_raffle_baseline", {
-      pg: () => computeRaffleBaseline(period, blacklistIds),
-      ch: () => getRaffleForecastBaselineFromClickHouse(period, blacklistIds),
-    }),
+    computeRaffleBaseline(period, blacklistIds),
   ["insights-rewards-raffle-baseline-lifetime-v1"],
   { revalidate: 300, tags: [...RAFFLE_CACHE_TAGS] },
 );

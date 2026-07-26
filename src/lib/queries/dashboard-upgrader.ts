@@ -1,9 +1,6 @@
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { withTiming } from "@/lib/observability/query-timings";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getUpgraderStatsFromClickHouse } from "@/lib/clickhouse/queries/dashboard/upgrader-stats";
-import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { upgraderMetrics } from "@/lib/metrics/queries";
 
 /**
@@ -80,10 +77,8 @@ export const getUpgraderStats = cache(async (): Promise<UpgraderStats> => {
 });
 
 async function upgraderStatsInner(): Promise<UpgraderStats> {
-  // CQRS serve-path: clickhouse serves the CH upgrader-stats twin (SOLE read);
   // off/comparison serve Postgres. Parity confirmed exact (CDC-lag only).
-  return resolveAdminRead<UpgraderStats>("dashboard_upgrader_stats", {
-    pg: async () => {
+  return (async () => {
       // Lifetime window (`since: null`) — the canonical helper applies the
       // real-customer scope + the to_regclass guard internally.
       const m = await upgraderMetrics({ since: null });
@@ -102,7 +97,5 @@ async function upgraderStatsInner(): Promise<UpgraderStats> {
         losses,
         hitRate: bets > 0 ? (wins / bets) * 100 : 0,
       };
-    },
-    ch: async () => getUpgraderStatsFromClickHouse(await getExcludedUserIds()),
-  });
+  })();
 }

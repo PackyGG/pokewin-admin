@@ -1,13 +1,12 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getMetricsScope } from "@/lib/metrics/scope";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getRewardCostsTodayDbFromClickHouse } from "@/lib/clickhouse/queries/dashboard/reward-costs-today";
 import { getCreatorSessionWindowsCte } from "@/lib/queries/creator-session-windows";
 import { realCustomersScopeSql } from "@/lib/queries/insights-games/_shared";
 import {
@@ -200,34 +199,9 @@ const cachedLedgerAndPacks = unstable_cache(
   ): Promise<{ lines: RewardCostLine[] }> => {
     void dayKey; // part of the cache key only
     void blacklistKey; // part of the cache key only (scope re-resolves it)
-    // CQRS serve-path: clickhouse serves the CH DB-derived lines twin (SOLE
     // read; the non-DB flat-$2/hr rain line is added at the wrapper either
     // way); off/comparison serve Postgres. Parity confirmed cent-exact.
-    return resolveAdminRead<{ lines: RewardCostLine[] }>(
-      "dashboard_reward_costs_today",
-      {
-        pg: () => rewardCostsTodayLinesFromPg(sinceIso),
-        ch: async () => {
-          const c = await getRewardCostsTodayDbFromClickHouse(
-            new Date(sinceIso),
-            await getExcludedUserIds(),
-          );
-          const lines: RewardCostLine[] = [
-            { key: "deposit_bonus", label: "Deposit bonuses", amount: c.depositBonus },
-            { key: "daily_packs", label: "Daily / free packs", amount: c.dailyPacks },
-            { key: "signup_balance", label: "Signup / balance rewards", amount: c.signupBalance },
-            { key: "rakeback", label: "Rakeback claims", amount: c.rakeback },
-            { key: "promo_gift", label: "Promo / gift cards", amount: c.promoGift },
-            { key: "race", label: "Race wins", amount: c.race },
-            { key: "raffles", label: "Raffle prizes", amount: c.raffles },
-            { key: "motha", label: "Motha giveaways", amount: c.motha },
-            { key: "manual_voucher", label: "Manual vouchers", amount: c.manualVoucher },
-            { key: "counted_adjustments", label: "Promo balance credits", amount: c.countedAdjustments },
-          ];
-          return { lines };
-        },
-      },
-    );
+    return rewardCostsTodayLinesFromPg(sinceIso);
   },
   // v3: affiliate line MOVED WHOLESALE to Creators Costs (owner, 2026-07-02) —
   // no longer read/surfaced here. v2: split race/raffle, surface affiliate +
@@ -240,7 +214,7 @@ async function rewardCostsTodayLinesFromPg(
   sinceIso: string,
 ): Promise<{ lines: RewardCostLine[] }> {
   return withTiming("dashboard.rewardCostsToday", async () => {
-    const db = await getDb();
+    const queryDb = await getDrizzleDb();
     const since = `'${sinceIso}'::timestamptz`;
 
       // ── Ledger reward legs (today) ───────────────────────────────────
@@ -261,7 +235,7 @@ async function rewardCostsTodayLinesFromPg(
         manual_voucher: string;
         counted_adjustments: string;
       };
-      const ledgerRows = await db.$queryRawUnsafe<LedgerRow[]>(
+      const ledgerRows = await queryRows<LedgerRow[]>(queryDb,
         `WITH ${scope.sessionWindowsCte}
          SELECT
            COALESCE(SUM(CASE WHEN type::text = 'deposit_bonus' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS deposit_bonus,
@@ -296,7 +270,7 @@ async function rewardCostsTodayLinesFromPg(
       // motha IS the subject of the line, not a customer being measured.
       // If the account does not exist, both reads return 0.
       type MothaIdRow = { id: string };
-      const mothaIdRows = await db.$queryRawUnsafe<MothaIdRow[]>(
+      const mothaIdRows = await queryRows<MothaIdRow[]>(queryDb,
         `SELECT id FROM "user" WHERE LOWER(username) = $1 LIMIT 1`,
         MOTHA_USERNAME,
       );
@@ -307,7 +281,7 @@ async function rewardCostsTodayLinesFromPg(
         type MothaLedgerRow = { motha_ledger: string };
         type MothaRainRow = { motha_rain: string };
         const [mothaLedgerRows, mothaRainRows] = await Promise.all([
-          db.$queryRawUnsafe<MothaLedgerRow[]>(
+          queryRows<MothaLedgerRow[]>(queryDb,
             `SELECT
                COALESCE(SUM(ABS(amount::numeric)), 0)::text AS motha_ledger
              FROM ledger_transactions
@@ -317,7 +291,7 @@ async function rewardCostsTodayLinesFromPg(
                AND created_at >= ${since}`,
             mothaId,
           ),
-          db.$queryRawUnsafe<MothaRainRow[]>(
+          queryRows<MothaRainRow[]>(queryDb,
             `SELECT
                COALESCE(SUM(ABS(amount_usd::numeric)), 0)::text AS motha_rain
              FROM rain_tips
@@ -344,7 +318,7 @@ async function rewardCostsTodayLinesFromPg(
         id: string;
         prizes: unknown;
       };
-      const raffleRows = await db.$queryRawUnsafe<RaffleRow[]>(
+      const raffleRows = await queryRows<RaffleRow[]>(queryDb,
         `SELECT r.id, r.prizes
          FROM raffles r
          WHERE r.status = 'completed'
@@ -382,16 +356,22 @@ async function rewardCostsTodayLinesFromPg(
 
         const [packRows, cardRows] = await Promise.all([
           packIds.size > 0
-            ? db.packs.findMany({
-                where: { id: { in: [...packIds] } },
-                select: { id: true, price: true },
-              })
+            ? queryRows<{ id: string; price: string }[]>(
+                queryDb,
+                `SELECT id, price::text AS price
+                 FROM packs
+                 WHERE id = ANY($1::text[])`,
+                [...packIds],
+              )
             : Promise.resolve([] as Array<{ id: string; price: unknown }>),
           cardIds.size > 0
-            ? db.cards.findMany({
-                where: { id: { in: [...cardIds] } },
-                select: { id: true, price: true },
-              })
+            ? queryRows<{ id: string; price: string }[]>(
+                queryDb,
+                `SELECT id, price::text AS price
+                 FROM cards
+                 WHERE id = ANY($1::text[])`,
+                [...cardIds],
+              )
             : Promise.resolve([] as Array<{ id: string; price: unknown }>),
         ]);
         const packPrice = new Map(packRows.map((p) => [p.id, toNumber(p.price)]));
@@ -416,7 +396,7 @@ async function rewardCostsTodayLinesFromPg(
       const packScope = await realCustomersScopeSql();
       const sessionWindowsCte = await getCreatorSessionWindowsCte();
       type PackRow = { giveaway_payout: string };
-      const packRows = await db.$queryRawUnsafe<PackRow[]>(
+      const packRows = await queryRows<PackRow[]>(queryDb,
         `WITH ${sessionWindowsCte}
          SELECT
            COALESCE(SUM(ui.value_at_obtained::numeric), 0)::text AS giveaway_payout
@@ -601,7 +581,7 @@ export async function getRaceWinClaimants(): Promise<RaceWinClaimantsBreakdown> 
     const sinceIso = since.toISOString();
     const sinceSql = `'${sinceIso}'::timestamptz`;
 
-    const db = await getDb();
+    const queryDb = await getDrizzleDb();
     const scope = await getMetricsScope();
 
     type Row = {
@@ -611,7 +591,7 @@ export async function getRaceWinClaimants(): Promise<RaceWinClaimantsBreakdown> 
       race_type: string | null;
       claimed_at: Date;
     };
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryRows<Row[]>(queryDb,
       `WITH ${scope.sessionWindowsCte}
        SELECT
          lt.user_id,
@@ -686,7 +666,7 @@ export async function getPromoBalanceCreditClaimants(): Promise<PromoBalanceCred
       const sinceIso = since.toISOString();
       const sinceSql = `'${sinceIso}'::timestamptz`;
 
-      const db = await getDb();
+      const queryDb = await getDrizzleDb();
       const scope = await getMetricsScope();
       const countedAdj = countedAdjustmentSqlPredicate({
         typeColumn: "lt.type",
@@ -701,7 +681,7 @@ export async function getPromoBalanceCreditClaimants(): Promise<PromoBalanceCred
         category: string | null;
         credited_at: Date;
       };
-      const rows = await db.$queryRawUnsafe<Row[]>(
+      const rows = await queryRows<Row[]>(queryDb,
         `WITH ${scope.sessionWindowsCte}
          SELECT
            lt.user_id,

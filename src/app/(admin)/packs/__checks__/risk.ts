@@ -2498,7 +2498,7 @@ check("resolveIntendedHitRate: DB tags column first (both notations), name fallb
   assert(hitRateFromTags(["%1"]) === 0.01, "%1 → 0.01");
   assert(hitRateFromTags(["onepiece", "%5"]) === 0.05, "%5 among a non-hit-rate tag → 0.05");
   assert(hitRateFromTags(["%10"]) === 0.1, "%10 → 0.10");
-  // Prisma notation (TS enum names).
+  // Application enum notation.
   assert(hitRateFromTags(["pct1"]) === 0.01, "pct1 → 0.01");
   assert(hitRateFromTags(["onepiece", "pct10"]) === 0.1, "pct10 among other tags → 0.10");
   assert(hitRateFromTags(["fifty50"]) === 0.5, "fifty50 enum name → 0.5 (both notations, matches the '50/50' DB string)");

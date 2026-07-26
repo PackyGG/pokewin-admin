@@ -1,21 +1,36 @@
 import crypto from "crypto";
-import { adminDb } from "@/lib/admin-db";
-import type { webhook_type } from "@/generated/admin-prisma/client";
+import { and, eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import {
+  creator_webhooks,
+  webhook_deliveries,
+  webhook_type,
+} from "@/lib/db-schema/admin/schema";
+import { isSafeWebhookUrl } from "@/lib/security/webhook-url";
+
+type WebhookType = (typeof webhook_type.enumValues)[number];
 
 const RETRY_DELAYS = [1000, 5000, 30000]; // 1s, 5s, 30s
 const TIMEOUT_MS = 10000;
 
 export async function dispatchWebhook(
   userId: string,
-  type: webhook_type,
+  type: WebhookType,
   payload: Record<string, unknown>
 ): Promise<{ sent: number; failed: number }> {
-  const webhooks = await adminDb.creator_webhooks.findMany({
-    where: {
-      target_user_id: userId,
-      enabled: true,
-    },
-  });
+  const webhooks = await adminDrizzle
+    .select({
+      id: creator_webhooks.id,
+      url: creator_webhooks.url,
+      secret: creator_webhooks.secret,
+    })
+    .from(creator_webhooks)
+    .where(
+      and(
+        eq(creator_webhooks.target_user_id, userId),
+        eq(creator_webhooks.enabled, true),
+      ),
+    );
 
   let sent = 0;
   let failed = 0;
@@ -36,6 +51,21 @@ async function sendWithRetry(
   eventType: string,
   payload: Record<string, unknown>
 ): Promise<boolean> {
+  // SSRF egress guard (SECURITY_AUDIT.md MEDIUM-1) — never POST to a private /
+  // internal address, even for a URL stored before store-time validation.
+  if (!isSafeWebhookUrl(url)) {
+    await adminDrizzle.insert(webhook_deliveries).values({
+        webhook_id: webhookId,
+        event_type: eventType,
+        payload,
+        status_code: null,
+        response: "blocked: webhook URL host is not allowed",
+        success: false,
+        attempt: 1,
+    });
+    return false;
+  }
+
   const isDiscord = url.includes("discord.com/api/webhooks/");
 
   const body = isDiscord
@@ -70,15 +100,13 @@ async function sendWithRetry(
       });
 
       // Log delivery
-      await adminDb.webhook_deliveries.create({
-        data: {
+      await adminDrizzle.insert(webhook_deliveries).values({
           webhook_id: webhookId,
           event_type: eventType,
-          payload: payload as object,
+          payload,
           status_code: response.status,
           success: response.ok,
           attempt: attempt + 1,
-        },
       });
 
       if (response.ok) return true;
@@ -89,16 +117,14 @@ async function sendWithRetry(
       }
     } catch (error) {
       // Log failed delivery
-      await adminDb.webhook_deliveries.create({
-        data: {
+      await adminDrizzle.insert(webhook_deliveries).values({
           webhook_id: webhookId,
           event_type: eventType,
-          payload: payload as object,
+          payload,
           status_code: null,
           response: error instanceof Error ? error.message : "Unknown error",
           success: false,
           attempt: attempt + 1,
-        },
       });
 
       // If this was the last attempt, return false

@@ -75,7 +75,7 @@ Primary files (all under `src/app/(admin)/`):
 | NEARMISS | `0.5·price ≤ value < price` |
 | DUST | `value < 0.5·price` |
 
-**Tags** (`auto-targets.ts:240-343`): `SELECTABLE_TAG_HIT_RATES` = `pct1`→1%, `pct5`→5%, `pct10`→10%, `fifty50`→50% (both the Prisma enum name and the raw DB string, e.g. `"%1"` / `pct1`, resolve). `parseArbitraryTag` (`auto-targets.ts:276-301`) also accepts off-menu notations (`%4.9`, ratio strings) clamped to `(0, 0.5]` — anything implying >50% win share is "not a lottery" and falls back to untagged.
+**Tags** (`auto-targets.ts:240-343`): `SELECTABLE_TAG_HIT_RATES` = `pct1`→1%, `pct5`→5%, `pct10`→10%, `fifty50`→50% (both the schema enum name and the raw DB string, e.g. `"%1"` / `pct1`, resolve). `parseArbitraryTag` (`auto-targets.ts:276-301`) also accepts off-menu notations (`%4.9`, ratio strings) clamped to `(0, 0.5]` — anything implying >50% win share is "not a lottery" and falls back to untagged.
 
 ### 3.2 Target derivation (`autoRetuneTargets`, `auto-targets.ts:654-755`)
 
@@ -181,7 +181,7 @@ Main Retune **shapes** weights from targets — the operator never supplies raw 
 ### 5.1 Data model
 
 - **MAIN DB** — `packs` (`price` Decimal, `tags` `pack_tag[]`, `active` Boolean), `pack_cards` (`weight` Int — probability = weight/Σweights in the pool, `order` Int, unique on `[pack_id, card_id]`), `cards` (`price`/`price_raw` Decimal — the payout value the engine uses).
-- **`pack_tag` enum** maps Prisma enum names to literal DB strings: `pct1`↦`"%1"`, `pct5`↦`"%5"`, `pct10`↦`"%10"`, `fifty50`↦`"50/50"`, plus a non-hit-rate `onepiece` themed tag. Both notations are accepted everywhere in code because raw SQL returns the DB string while Prisma's client returns the enum name.
+- **`pack_tag` enum** maps application enum names to literal DB strings: `pct1`↦`"%1"`, `pct5`↦`"%5"`, `pct10`↦`"%10"`, `fifty50`↦`"50/50"`, plus a non-hit-rate `onepiece` themed tag. Both notations remain accepted for compatibility.
 - **ADMIN DB** — `admin_audit_events` (event_type is a plain string, not an enum; indexed on `event_type`/`created_at`/`admin_user_id`), `admin_settings` (generic key/value; `pack_system_config` is **one row in this table**, not a dedicated model).
 
 ### 5.2 Access control (three independent gates stack)

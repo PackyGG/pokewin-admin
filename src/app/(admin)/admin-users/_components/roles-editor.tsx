@@ -161,9 +161,8 @@ export function RolesEditor({
         <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
           <span>
-            Multiple roles require a pending database migration (
-            <code className="font-mono">npm run admin:migrate</code>). Until
-            it runs, only the primary role is saved — the extra roles will be
+            Multiple roles require the pending admin SQL migration. Until it
+            runs, only the primary role is saved — the extra roles will be
             dropped.
           </span>
         </div>

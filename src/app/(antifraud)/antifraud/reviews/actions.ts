@@ -2,8 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_users, antifraud_review_notes, antifraud_reviews, staff_profiles } from "@/lib/db-schema/admin/schema";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { notifyStaff } from "@/lib/staff/notifications";
@@ -59,22 +61,19 @@ export async function openReview(input: unknown): Promise<{ id: string }> {
   const { targetUserId, targetUsername, severity, reason } = parsed.data;
 
   // One live case per account (enforced by the partial unique index too) —
-  // surface the existing one instead of failing with a Prisma error.
-  const live = await adminDb.antifraud_reviews.findFirst({
-    where: {
-      target_user_id: targetUserId,
-      status: { in: ["open", "in_review"] },
-    },
-    select: { id: true },
-  });
+  // surface the existing one instead of failing with a uniqueness error.
+  const [live] = await adminDrizzle.select({ id: antifraud_reviews.id })
+    .from(antifraud_reviews).where(and(
+      eq(antifraud_reviews.target_user_id, targetUserId),
+      inArray(antifraud_reviews.status, ["open", "in_review"]),
+    )).limit(1);
   if (live) {
     throw new Error(
       "That account already has an open case — open it from the queue instead.",
     );
   }
 
-  const created = await adminDb.antifraud_reviews.create({
-    data: {
+  const [created] = await adminDrizzle.insert(antifraud_reviews).values({
       target_user_id: targetUserId,
       target_username: targetUsername ? targetUsername : null,
       status: "open",
@@ -82,17 +81,14 @@ export async function openReview(input: unknown): Promise<{ id: string }> {
       source: "manual",
       reason,
       opened_by: session.userId,
-    },
-    select: { id: true },
-  });
+    }).returning({ id: antifraud_reviews.id });
+  if (!created) throw new Error("Review insert returned no row");
 
-  await adminDb.antifraud_review_notes.create({
-    data: {
+  await adminDrizzle.insert(antifraud_review_notes).values({
       review_id: created.id,
       admin_user_id: session.userId,
       kind: "status",
       body: `Case opened (${severity}).`,
-    },
   });
 
   await createAdminAuditEvent({
@@ -129,16 +125,11 @@ export async function updateReviewStatus(input: unknown): Promise<void> {
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const { reviewId, status, resolution } = parsed.data;
 
-  const current = await adminDb.antifraud_reviews.findUnique({
-    where: { id: reviewId },
-    select: {
-      status: true,
-      target_user_id: true,
-      opened_by: true,
-      assigned_to: true,
-      resolved_by: true,
-    },
-  });
+  const [current] = await adminDrizzle.select({
+    status: antifraud_reviews.status, target_user_id: antifraud_reviews.target_user_id,
+    opened_by: antifraud_reviews.opened_by, assigned_to: antifraud_reviews.assigned_to,
+    resolved_by: antifraud_reviews.resolved_by,
+  }).from(antifraud_reviews).where(eq(antifraud_reviews.id, reviewId)).limit(1);
   if (!current) throw new Error("That case no longer exists");
   if (current.status === status && !resolution) return;
 
@@ -146,46 +137,37 @@ export async function updateReviewStatus(input: unknown): Promise<void> {
   const wasTerminal =
     current.status === "cleared" || current.status === "flagged";
 
-  await adminDb.antifraud_reviews.update({
-    where: { id: reviewId },
-    data: {
+  await adminDrizzle.update(antifraud_reviews).set({
       status,
       resolution: resolution ? resolution : isTerminal ? null : undefined,
       resolved_by: isTerminal ? session.userId : null,
-      resolved_at: isTerminal ? new Date() : null,
-    },
-  });
+      resolved_at: isTerminal ? new Date().toISOString() : null,
+    }).where(eq(antifraud_reviews.id, reviewId));
 
   // Counter bookkeeping — only on the transition INTO a terminal state, and
   // only ever for the person who actually closed it.
   if (isTerminal && !wasTerminal) {
-    await adminDb.staff_profiles
-      .update({
-        where: { admin_user_id: session.userId },
-        data: { reviews_resolved: { increment: 1 } },
-      })
+    await adminDrizzle.update(staff_profiles)
+      .set({ reviews_resolved: sql`${staff_profiles.reviews_resolved} + 1` })
+      .where(eq(staff_profiles.admin_user_id, session.userId))
       .catch(() => {
         // No profile row yet (or tables not provisioned) — the counter is a
         // convenience, never a reason to fail closing a case.
       });
   } else if (!isTerminal && wasTerminal && current.resolved_by) {
-    await adminDb.staff_profiles
-      .update({
-        where: { admin_user_id: current.resolved_by },
-        data: { reviews_resolved: { decrement: 1 } },
-      })
+    await adminDrizzle.update(staff_profiles)
+      .set({ reviews_resolved: sql`GREATEST(${staff_profiles.reviews_resolved} - 1, 0)` })
+      .where(eq(staff_profiles.admin_user_id, current.resolved_by))
       .catch(() => {});
   }
 
-  await adminDb.antifraud_review_notes.create({
-    data: {
+  await adminDrizzle.insert(antifraud_review_notes).values({
       review_id: reviewId,
       admin_user_id: session.userId,
       kind: "status",
       body: resolution
         ? `${REVIEW_STATUS_LABELS[status]} — ${resolution}`
         : `Status changed to ${REVIEW_STATUS_LABELS[status]}.`,
-    },
   });
 
   await createAdminAuditEvent({
@@ -231,33 +213,27 @@ export async function assignReview(input: unknown): Promise<void> {
   const { reviewId } = parsed.data;
   const assignee = parsed.data.adminUserId ? parsed.data.adminUserId : null;
 
-  const current = await adminDb.antifraud_reviews.findUnique({
-    where: { id: reviewId },
-    select: { assigned_to: true, status: true, target_user_id: true, reason: true },
-  });
+  const [current] = await adminDrizzle.select({
+    assigned_to: antifraud_reviews.assigned_to, status: antifraud_reviews.status,
+    target_user_id: antifraud_reviews.target_user_id, reason: antifraud_reviews.reason,
+  }).from(antifraud_reviews).where(eq(antifraud_reviews.id, reviewId)).limit(1);
   if (!current) throw new Error("That case no longer exists");
   if (current.assigned_to === assignee) return;
 
   if (assignee) {
     // Guard against assigning to somebody who isn't a real, active admin.
-    const target = await adminDb.admin_users.findUnique({
-      where: { id: assignee },
-      select: { is_active: true },
-    });
+    const [target] = await adminDrizzle.select({ is_active: admin_users.is_active })
+      .from(admin_users).where(eq(admin_users.id, assignee)).limit(1);
     if (!target?.is_active) throw new Error("That admin account isn't active");
   }
 
-  await adminDb.antifraud_reviews.update({
-    where: { id: reviewId },
-    data: {
+  await adminDrizzle.update(antifraud_reviews).set({
       assigned_to: assignee,
       // Picking a case up moves it out of the untouched "open" bucket.
       status: assignee && current.status === "open" ? "in_review" : undefined,
-    },
-  });
+    }).where(eq(antifraud_reviews.id, reviewId));
 
-  await adminDb.antifraud_review_notes.create({
-    data: {
+  await adminDrizzle.insert(antifraud_review_notes).values({
       review_id: reviewId,
       admin_user_id: session.userId,
       kind: "assign",
@@ -266,7 +242,6 @@ export async function assignReview(input: unknown): Promise<void> {
           ? "Picked this case up."
           : "Assigned this case to another analyst."
         : "Unassigned this case.",
-    },
   });
 
   if (assignee && assignee !== session.userId) {
@@ -299,19 +274,15 @@ export async function addReviewNote(input: unknown): Promise<void> {
   const parsed = noteSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
 
-  const exists = await adminDb.antifraud_reviews.findUnique({
-    where: { id: parsed.data.reviewId },
-    select: { id: true },
-  });
+  const [exists] = await adminDrizzle.select({ id: antifraud_reviews.id })
+    .from(antifraud_reviews).where(eq(antifraud_reviews.id, parsed.data.reviewId)).limit(1);
   if (!exists) throw new Error("That case no longer exists");
 
-  await adminDb.antifraud_review_notes.create({
-    data: {
+  await adminDrizzle.insert(antifraud_review_notes).values({
       review_id: parsed.data.reviewId,
       admin_user_id: session.userId,
       kind: "note",
       body: parsed.data.body,
-    },
   });
 
   revalidatePath(`/antifraud/reviews/${parsed.data.reviewId}`);
@@ -328,25 +299,19 @@ export async function updateReviewSeverity(input: unknown): Promise<void> {
   const parsed = severitySchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
 
-  const current = await adminDb.antifraud_reviews.findUnique({
-    where: { id: parsed.data.reviewId },
-    select: { severity: true },
-  });
+  const [current] = await adminDrizzle.select({ severity: antifraud_reviews.severity })
+    .from(antifraud_reviews).where(eq(antifraud_reviews.id, parsed.data.reviewId)).limit(1);
   if (!current) throw new Error("That case no longer exists");
   if (current.severity === parsed.data.severity) return;
 
-  await adminDb.antifraud_reviews.update({
-    where: { id: parsed.data.reviewId },
-    data: { severity: parsed.data.severity },
-  });
+  await adminDrizzle.update(antifraud_reviews).set({ severity: parsed.data.severity })
+    .where(eq(antifraud_reviews.id, parsed.data.reviewId));
 
-  await adminDb.antifraud_review_notes.create({
-    data: {
+  await adminDrizzle.insert(antifraud_review_notes).values({
       review_id: parsed.data.reviewId,
       admin_user_id: session.userId,
       kind: "status",
       body: `Severity changed ${current.severity} → ${parsed.data.severity}.`,
-    },
   });
 
   revalidatePath(`/antifraud/reviews/${parsed.data.reviewId}`);
@@ -359,18 +324,12 @@ export async function listAssignableAnalysts(): Promise<
 > {
   await requireAntifraudAccess();
   try {
-    const profiles = await adminDb.staff_profiles.findMany({
-      select: { admin_user_id: true },
-    });
-    if (profiles.length === 0) return [];
-    const users = await adminDb.admin_users.findMany({
-      where: {
-        id: { in: profiles.map((p) => p.admin_user_id) },
-        is_active: true,
-      },
-      select: { id: true, username: true, display_username: true },
-      orderBy: { username: "asc" },
-    });
+    const users = await adminDrizzle.select({
+      id: admin_users.id, username: admin_users.username,
+      display_username: admin_users.display_username,
+    }).from(staff_profiles).innerJoin(
+      admin_users, eq(admin_users.id, staff_profiles.admin_user_id),
+    ).where(eq(admin_users.is_active, true)).orderBy(admin_users.username);
     return users.map((u) => ({
       id: u.id,
       label: u.display_username ?? u.username,

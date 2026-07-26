@@ -14,7 +14,7 @@ import {
 //   • `try/catch` around `cookies()` so non-request contexts (cron,
 //     `unstable_cache`, top-level module code) degrade to `null` instead of
 //     throwing.
-//   • Returns the insertion-ordered list of OPEN dock keys (or `null` when
+//   • Returns the OPEN dock key (or `null` when
 //     the cookie is absent — the layout then falls back to the provider's
 //     default layout for a first-ever visit).
 //
@@ -25,7 +25,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * The insertion-ordered list of open dock keys from the `admin_rail` cookie,
+ * The open dock keys from the `admin_rail` cookie,
  * or `null` when the cookie is absent / unreadable (non-request context /
  * first-ever visit). An empty array means "explicitly nothing open".
  */

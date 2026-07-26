@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "./_blacklist";
 import { WITHDRAWAL_LIABILITY_STATUSES } from "./pnl";
@@ -130,7 +130,7 @@ const USERS_PER_PERIOD_CAP = 50;
 // ORDER BY created_at DESC LIMIT 1`. The form is already SARGABLE — the
 // bottleneck is the MISSING index. VERIFIED against live prod 2026-06-11:
 // `affiliate_code_usages` carries ONLY its primary key — NO secondary
-// indexes at all (the two acu indexes declared in prisma/schema.prisma,
+// indexes at all (the two ACU indexes in the checked-in MAIN schema,
 // idx_acu_referred_user_code_usage and idx_acu_affiliate_user_created_at,
 // do NOT exist on prod; an earlier revision of this comment wrongly
 // claimed they did). Every acu predicate in this module therefore
@@ -185,16 +185,6 @@ const LIFETIME_LOOKBACK_INTERVAL = `INTERVAL '${LIFETIME_LOOKBACK_DAYS} days'`;
 // leaks to other pool users). The app-level safeQuery wrapper around the
 // panel uses a matching budget so it doesn't cut the populating scan off
 // early. Genuine failures still surface; the happy path now completes.
-const COLD_SCAN_STATEMENT_TIMEOUT_MS = 55_000;
-
-// Prisma interactive-transaction options. `timeout` must comfortably
-// exceed the per-statement budget above so Prisma doesn't tear the
-// transaction down mid-scan; `maxWait` bounds how long we wait for a free
-// pool connection before giving up.
-const PNL_TX_OPTIONS = {
-  timeout: COLD_SCAN_STATEMENT_TIMEOUT_MS + 5_000,
-  maxWait: 10_000,
-} as const;
 
 // "Withdrawn unit" derived table: emits one row per value-unit (card
 // OR session-linked voucher) leaving the house via a
@@ -293,7 +283,6 @@ type LifetimeRow = {
 };
 
 export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
-  const db = await getDb();
   const blacklistAnd = await buildBlacklistAnd();
 
   // ── 30-day WINDOW block ──────────────────────────────────────────────
@@ -524,19 +513,11 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
   // per deposit row per scan instead of six times across the call), so the
   // total stays well within the raised budget — and after the first run the
   // 5-min cache serves every subsequent load.
-  const [perUserRows, cardWdHeadlineRows, lifetimeRows] = await db.$transaction(
-    async (tx) => {
-      await tx.$executeRawUnsafe(
-        `SET LOCAL statement_timeout = ${COLD_SCAN_STATEMENT_TIMEOUT_MS}`,
-      );
-      return Promise.all([
-        tx.$queryRawUnsafe<PerUserPeriodRow[]>(perUserSql, userId),
-        tx.$queryRawUnsafe<PeriodCardWdRow[]>(cardWdHeadlineSql, userId),
-        tx.$queryRawUnsafe<LifetimeRow[]>(lifetimeSql, userId),
-      ]);
-    },
-    PNL_TX_OPTIONS,
-  );
+  const [perUserRows, cardWdHeadlineRows, lifetimeRows] = await Promise.all([
+    queryMainRows<PerUserPeriodRow[]>(perUserSql, userId),
+    queryMainRows<PeriodCardWdRow[]>(cardWdHeadlineSql, userId),
+    queryMainRows<LifetimeRow[]>(lifetimeSql, userId),
+  ]);
 
   return assemble(perUserRows, cardWdHeadlineRows, lifetimeRows);
 }

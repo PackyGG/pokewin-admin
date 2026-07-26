@@ -18,12 +18,7 @@
  *     `metadata->>'adjustment_category'` predicate built here.
  *
  * Client-safe: no DB / `server-only` import, so the dialog component can
- * import the labels + required-input flags directly. The ONLY import is the
- * generated Prisma client's `browser` entry — the engine-free, explicitly
- * browser-safe namespace (needed for the `Prisma.AnyNull` JSON-null sentinel
- * in the null-safe Prisma filters below). Its sentinel is the SAME
- * `@prisma/client-runtime-utils` instance the server runtime validates
- * against, so the filters built here work in server queries unchanged.
+ * import the labels + required-input flags directly.
  *
  * ─── Counting model (house POV, per CLAUDE.md) ──────────────────────
  *
@@ -55,7 +50,6 @@
  * never a whole-type bucket move.
  */
 
-import { Prisma } from "@/generated/prisma/browser";
 
 /**
  * The canonical category keys, in dropdown order. These exact strings are
@@ -367,7 +361,7 @@ export const BALANCE_ADJUSTMENT_CATEGORY_META: Record<
     key: "creator_vip_reward",
     label: "Creator VIP reward",
     costLabel: "Creator VIP wager rewards (uncounted)",
-    why: "Wager-milestone reward paid to a user under a creator's VIP program (\"wager $X under my code, get $Y\"). Written ONLY by an approved `creator_reward_claims` row, never by hand — the ledger row carries `metadata.creator_id`, `metadata.vip_claim_id` and `metadata.vip_program_id` so every payout traces back to the claim and the program that authorized it. NOT counted in GGR/NGR/cost YET — it follows the `leaderboard` / `official_stream` precedent of persisting the creator link first; lifting it into reward cost requires updating the INLINED counted-category lists in the ClickHouse twins in lockstep (see COUNTED_ADJUSTMENT_CATEGORY_KEYS) so PG and CH can't drift.",
+    why: "Wager-milestone reward paid to a user under a creator's VIP program (\"wager $X under my code, get $Y\"). Written ONLY by an approved `creator_reward_claims` row, never by hand — the ledger row carries `metadata.creator_id`, `metadata.vip_claim_id` and `metadata.vip_program_id` so every payout traces back to the claim and the program that authorized it. NOT counted in GGR/NGR/cost YET — it follows the `leaderboard` / `official_stream` precedent of persisting the creator link first; lifting it into reward cost requires updating the canonical PostgreSQL counted-category lists (see COUNTED_ADJUSTMENT_CATEGORY_KEYS).",
     counted: false,
   },
   other: {
@@ -544,77 +538,4 @@ export function statsExcludedAdjustmentSqlPredicate(opts?: {
     (k) => `'${k.replace(/'/g, "''")}'`,
   ).join(",");
   return `${typeCol}::text = 'admin_balance_adjustment' AND ${metaCol}->>'adjustment_category' IS NOT NULL AND ${metaCol}->>'adjustment_category' IN (${list})`;
-}
-
-/**
- * Prisma JSON-filter for `remove_locked_balance` ledger rows. Same null-safe
- * shape as {@link officialStreamAdjustmentPrismaWhere} (see there for the
- * 3VL rationale); today's call sites are positive-only, where the guard is a
- * no-op.
- */
-export function removeLockedBalanceAdjustmentPrismaWhere(): Prisma.ledger_transactionsWhereInput {
-  return {
-    type: "admin_balance_adjustment",
-    AND: [
-      {
-        NOT: {
-          metadata: { path: ["adjustment_category"], equals: Prisma.AnyNull },
-        },
-      },
-      {
-        metadata: {
-          path: ["adjustment_category"],
-          equals: REMOVE_LOCKED_BALANCE_ADJUSTMENT_CATEGORY,
-        },
-      },
-    ],
-  };
-}
-
-/**
- * Prisma JSON-filter fragment that matches a ledger row whose
- * `metadata.adjustment_category` is `official_stream`. For Prisma
- * `.aggregate` / `.findMany` / `.count` `where` call-sites that filter the
- * fake-balance rows IN (e.g. a dedicated official_stream net aggregate) — or,
- * negated via Prisma's `NOT`, to EXCLUDE them.
- *
- * NULL-SAFE under `{ NOT: ... }` (3VL guard): the previous bare
- * `metadata.path.equals` shape compiled to
- * `NOT (type = 'admin_balance_adjustment' AND metadata#>>'{adjustment_category}' = 'official_stream')`,
- * and for rows WITHOUT a category (NULL metadata / missing key / JSON null —
- * every legacy uncategorized adjustment, 93/93 prod rows as of 2026-06-10)
- * the inner equality is SQL NULL, so `NOT (NULL)` is NULL and the row was
- * silently DROPPED from every feed that excludes official_stream
- * (getUserTransactions → owner adjustments block / Finances / Recent
- * Activity, global transactions, users-audit, dashboard-live, insights
- * audit-trail). The explicit `NOT (category IS NULL)` conjunct (Prisma:
- * `NOT { equals: Prisma.AnyNull }`, which compiles null-aware to
- * `NOT (path = 'null' OR path IS NULL)`) forces the whole conjunction to
- * FALSE — not NULL — for uncategorized rows, so the caller's `NOT` keeps
- * them. Only rows whose category IS NOT NULL and equals `official_stream`
- * are excluded; positive (match-IN) use is unchanged. Verified against prod
- * 2026-06-11: the prior shape dropped 3/3 of the reference profile's
- * adjustments, this shape keeps all of them and still excludes
- * official_stream rows (VALUES-table 3VL matrix).
- *
- * Returned as a `ledger_transactionsWhereInput` so callers can spread it
- * into a larger `where` or wrap it in `{ NOT: ... }`.
- */
-export function officialStreamAdjustmentPrismaWhere(): Prisma.ledger_transactionsWhereInput {
-  return {
-    type: "admin_balance_adjustment",
-    AND: [
-      {
-        NOT: {
-          metadata: { path: ["adjustment_category"], equals: Prisma.AnyNull },
-        },
-      },
-      {
-        metadata: {
-          path: ["adjustment_category"],
-          equals: OFFICIAL_STREAM_ADJUSTMENT_CATEGORY,
-        },
-      },
-    ],
-  };
 }

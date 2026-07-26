@@ -2,12 +2,12 @@
 
 import { revalidatePath, revalidateTag } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
-import { getDb } from "@/lib/db";
+import { sql } from "drizzle-orm";
+import { getDrizzleDb, type MainDrizzleDb } from "@/lib/db";
 import { isUuid } from "@/lib/utils/ids";
-import { ensurePackSetAssignmentsSchema } from "@/lib/pack-set-assignments/ensure-schema";
 import { getPackSetAssignment } from "@/lib/queries/pack-set-assignments";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
 import { requirePageAccess, sessionHasRole } from "@/lib/dal";
 import {
   isRepriceOwner,
@@ -86,7 +86,6 @@ import {
   type EdgeCurveConfig,
   type ResolvedAutoTargetCfg,
 } from "@/app/(admin)/packs/_lib/risk-config";
-import { pack_tag } from "@/generated/prisma/enums";
 import {
   capturePackSnapshot,
   getPackSnapshot,
@@ -94,30 +93,92 @@ import {
 } from "@/app/(admin)/packs/_lib/pack-history";
 import { computePoolFingerprint } from "@/app/(admin)/packs/_lib/pool-fingerprint";
 
+const pack_tag = {
+  pct1: "pct1",
+  pct5: "pct5",
+  pct10: "pct10",
+  fifty50: "fifty50",
+  onepiece: "onepiece",
+} as const;
+type pack_tag = (typeof pack_tag)[keyof typeof pack_tag];
+
 /**
  * Persists a pack's `shard_cost` via raw SQL. The column is on the dev schema
- * only (not prod), and the shared Prisma client can't type a column that's
+ * only (not prod), and the generated Drizzle schema can't type a column that's
  * absent on one DB — so writing it through `packs.create/update` data would
- * be a type error AND would P2022 on prod. Done as a separate post-commit
+ * be a type error AND would throw 42703 on prod. Done as a separate post-commit
  * UPDATE (never inside the caller's transaction, so a missing column can't
  * poison it) and swallowed when the column is absent. Intersection-schema +
  * raw pattern, matching the read side in queries/packs.ts.
  */
 async function writeShardCost(
-  db: Awaited<ReturnType<typeof getDb>>,
+  db: Pick<MainDrizzleDb, "execute">,
   packId: string,
   shardCost: number | null,
 ): Promise<void> {
   try {
-    await db.$executeRawUnsafe(
-      `UPDATE packs SET shard_cost = $1 WHERE id = $2`,
-      shardCost,
-      packId,
-    );
+    await db.execute(sql`
+      UPDATE packs SET shard_cost = ${shardCost} WHERE id = ${packId}::uuid
+    `);
   } catch {
     // shard_cost column absent on this DB (e.g. prod) — shard packs aren't
     // supported here, so there's nothing to persist.
   }
+}
+
+function packTagDbValues(tags: pack_tag[]): string[] {
+  return tags.map((tag) => {
+    if (tag === pack_tag.pct1) return "%1";
+    if (tag === pack_tag.pct5) return "%5";
+    if (tag === pack_tag.pct10) return "%10";
+    if (tag === pack_tag.fifty50) return "50/50";
+    return "onepiece";
+  });
+}
+
+async function replacePackState(
+  db: MainDrizzleDb,
+  packId: string,
+  rows: Array<{
+    card_id: string;
+    weight: number;
+    color: string | null;
+    animation: boolean;
+    order: number;
+  }>,
+  options?: { price?: number | string; tags?: pack_tag[] },
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const tagsUpdate =
+      options?.tags !== undefined
+        ? sql`, tags = ${packTagDbValues(options.tags)}::pack_tag[]`
+        : sql``;
+    const priceUpdate =
+      options?.price !== undefined ? sql`, price = ${options.price}` : sql``;
+    const updated = await tx.execute<{ id: string }>(sql`
+      UPDATE packs
+      SET updated_at = NOW() ${priceUpdate} ${tagsUpdate}
+      WHERE id = ${packId}::uuid
+      RETURNING id
+    `);
+    if (updated.rows.length === 0) throw new Error("Pack not found");
+    await tx.execute(sql`DELETE FROM pack_cards WHERE pack_id = ${packId}::uuid`);
+    if (rows.length > 0) {
+      await tx.execute(sql`
+        INSERT INTO pack_cards (
+          pack_id, card_id, weight, color, animation, "order"
+        )
+        SELECT ${packId}::uuid, *
+        FROM unnest(
+          ${rows.map((r) => r.card_id)}::uuid[],
+          ${rows.map((r) => r.weight)}::int[],
+          ${rows.map((r) => r.color)}::text[],
+          ${rows.map((r) => r.animation)}::boolean[],
+          ${rows.map((r) => r.order)}::int[]
+        )
+      `);
+    }
+  });
 }
 
 export type CardPickerItem = {
@@ -175,14 +236,16 @@ export async function getCardPickerFilters() {
 }
 
 export async function togglePackActive(packId: string, active: boolean) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/packs");
   await requireCapability(session, "__can_toggle_pack_active", "toggle pack active state");
 
-  await db.packs.update({
-    where: { id: packId },
-    data: { active },
-  });
+  const result = await db.execute<{ id: string }>(sql`
+    UPDATE packs SET active = ${active}, updated_at = NOW()
+    WHERE id = ${packId}::uuid
+    RETURNING id
+  `);
+  if (result.rows.length === 0) throw new Error("Pack not found");
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -243,7 +306,7 @@ export async function createPack(data: {
   difficulty: number | null;
   cards: PackCardInput[];
 }): Promise<string> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/packs");
 
   if (!data.name.trim()) throw new Error("Name is required");
@@ -257,33 +320,36 @@ export async function createPack(data: {
 
   await requireCapability(session, "__can_create_pack", "create packs");
 
-  const pack = await db.$transaction(async (tx) => {
-    const pack = await tx.packs.create({
-      data: {
-        name: data.name.trim(),
-        slug: data.slug.trim(),
-        description: data.description.trim() || null,
-        image_url: data.imageUrl,
-        price: data.price,
-        cards_per_open: data.cardsPerOpen,
-        pack_type: data.packType,
-        tags: data.tags,
-        difficulty: data.difficulty,
-        active: false,
-      },
-    });
+  const pack = await db.transaction(async (tx) => {
+    const packResult = await tx.execute<{ id: string }>(sql`
+      INSERT INTO packs (
+        name, slug, description, image_url, price, cards_per_open,
+        pack_type, tags, difficulty, active
+      ) VALUES (
+        ${data.name.trim()}, ${data.slug.trim()},
+        ${data.description.trim() || null}, ${data.imageUrl}, ${data.price},
+        ${data.cardsPerOpen}, ${data.packType},
+        ${packTagDbValues(data.tags)}::pack_tag[], ${data.difficulty}, false
+      )
+      RETURNING id
+    `);
+    const pack = packResult.rows[0];
+    if (!pack) throw new Error("Pack insert returned no row");
 
     if (data.cards.length > 0) {
-      await tx.pack_cards.createMany({
-        data: data.cards.map((c) => ({
-          pack_id: pack.id,
-          card_id: c.cardId,
-          weight: c.weight,
-          color: c.color,
-          animation: c.animation,
-          order: c.order,
-        })),
-      });
+      await tx.execute(sql`
+        INSERT INTO pack_cards (
+          pack_id, card_id, weight, color, animation, "order"
+        )
+        SELECT ${pack.id}::uuid, *
+        FROM unnest(
+          ${data.cards.map((c) => c.cardId)}::uuid[],
+          ${data.cards.map((c) => c.weight)}::int[],
+          ${data.cards.map((c) => c.color)}::text[],
+          ${data.cards.map((c) => c.animation)}::boolean[],
+          ${data.cards.map((c) => c.order)}::int[]
+        )
+      `);
     }
 
     return pack;
@@ -323,7 +389,7 @@ export async function updatePack(
     cards: PackCardInput[];
   },
 ): Promise<void> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/packs");
 
   if (!data.name.trim()) throw new Error("Name is required");
@@ -349,19 +415,22 @@ export async function updatePack(
   // never reached for admins.
   let editedLivePackUnderCapability = false;
   if (sessionHasRole(session, "pack_creator")) {
-    const target = await db.packs.findUnique({
-      where: { id },
-      select: { active: true },
-    });
+    const target = (
+      await db.execute<{ active: boolean }>(sql`
+        SELECT active FROM packs WHERE id = ${id}::uuid LIMIT 1
+      `)
+    ).rows[0];
     if (!target) throw new Error("Pack not found");
     if (target.active) {
       // Look up the admin user's allowed_pages once — same shape the
       // rest of the codebase uses for capability checks against
       // non-admin roles.
-      const perms = await adminDb.admin_users.findUnique({
-        where: { id: session.userId },
-        select: { allowed_pages: true },
-      });
+      const perms = (
+        await adminDrizzle.execute<{ allowed_pages: string[] }>(sql`
+          SELECT allowed_pages FROM admin_users
+          WHERE id = ${session.userId}::uuid
+        `)
+      ).rows[0];
       const canEditLive = perms
         ? hasCapability(perms.allowed_pages, "__can_edit_live_packs")
         : false;
@@ -380,36 +449,40 @@ export async function updatePack(
   // fail the committed edit (the helper swallows + logs its own errors).
   await capturePackSnapshot({ packId: id, action: "edit", capturedBy: session.userId });
 
-  await db.$transaction(async (tx) => {
-    await tx.packs.update({
-      where: { id },
-      data: {
-        name: data.name.trim(),
-        slug: data.slug.trim(),
-        description: data.description.trim() || null,
-        image_url: data.imageUrl,
-        price: data.price,
-        cards_per_open: data.cardsPerOpen,
-        pack_type: data.packType,
-        tags: data.tags,
-        difficulty: data.difficulty,
-        updated_at: new Date(),
-      },
-    });
+  await db.transaction(async (tx) => {
+    const updated = await tx.execute<{ id: string }>(sql`
+      UPDATE packs
+      SET name = ${data.name.trim()},
+          slug = ${data.slug.trim()},
+          description = ${data.description.trim() || null},
+          image_url = ${data.imageUrl},
+          price = ${data.price},
+          cards_per_open = ${data.cardsPerOpen},
+          pack_type = ${data.packType},
+          tags = ${packTagDbValues(data.tags)}::pack_tag[],
+          difficulty = ${data.difficulty},
+          updated_at = NOW()
+      WHERE id = ${id}::uuid
+      RETURNING id
+    `);
+    if (updated.rows.length === 0) throw new Error("Pack not found");
 
-    await tx.pack_cards.deleteMany({ where: { pack_id: id } });
+    await tx.execute(sql`DELETE FROM pack_cards WHERE pack_id = ${id}::uuid`);
 
     if (data.cards.length > 0) {
-      await tx.pack_cards.createMany({
-        data: data.cards.map((c) => ({
-          pack_id: id,
-          card_id: c.cardId,
-          weight: c.weight,
-          color: c.color,
-          animation: c.animation,
-          order: c.order,
-        })),
-      });
+      await tx.execute(sql`
+        INSERT INTO pack_cards (
+          pack_id, card_id, weight, color, animation, "order"
+        )
+        SELECT ${id}::uuid, *
+        FROM unnest(
+          ${data.cards.map((c) => c.cardId)}::uuid[],
+          ${data.cards.map((c) => c.weight)}::int[],
+          ${data.cards.map((c) => c.color)}::text[],
+          ${data.cards.map((c) => c.animation)}::boolean[],
+          ${data.cards.map((c) => c.order)}::int[]
+        )
+      `);
     }
   });
 
@@ -442,19 +515,25 @@ export async function updatePack(
 }
 
 export async function deletePack(packId: string): Promise<void> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/packs");
   await requireCapability(session, "__can_delete_pack", "delete packs");
 
-  const pack = await db.packs.findUnique({
-    where: { id: packId },
-    select: { name: true },
-  });
+  const pack = (
+    await db.execute<{ name: string }>(sql`
+      SELECT name FROM packs WHERE id = ${packId}::uuid LIMIT 1
+    `)
+  ).rows[0];
   if (!pack) throw new Error("Pack not found");
 
-  await db.$transaction(async (tx) => {
-    await tx.pack_cards.deleteMany({ where: { pack_id: packId } });
-    await tx.packs.delete({ where: { id: packId } });
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`
+      DELETE FROM pack_cards WHERE pack_id = ${packId}::uuid
+    `);
+    const deleted = await tx.execute<{ id: string }>(sql`
+      DELETE FROM packs WHERE id = ${packId}::uuid RETURNING id
+    `);
+    if (deleted.rows.length === 0) throw new Error("Pack not found");
   });
 
   await createAdminAuditEvent({
@@ -500,19 +579,15 @@ const EMPTY_GAMES_PAGE = {
 /** Lightweight identity read for modal header when the pack isn't on the list page. */
 export async function fetchPackListSeed(packId: string) {
   await requirePageAccess("/packs");
-  const db = await getDb();
-  const pack = await db.packs.findUnique({
-    where: { id: packId },
-    select: {
-      id: true,
-      name: true,
-      slug: true,
-      image_url: true,
-      price: true,
-      active: true,
-      pack_type: true,
-    },
-  });
+  const db = await getDrizzleDb();
+  const result = await db.execute<{
+    id: string; name: string; slug: string; image_url: string | null;
+    price: string; active: boolean; pack_type: string;
+  }>(sql`
+    SELECT id, name, slug, image_url, price::text AS price, active, pack_type
+    FROM packs WHERE id = ${packId}::uuid
+  `);
+  const pack = result.rows[0];
   if (!pack) return null;
   return {
     id: pack.id,
@@ -606,19 +681,22 @@ export async function setPackSet(
 
   // Validate the pack exists (read-only main DB) so we don't persist an
   // assignment for a deleted/typo'd id.
-  const db = await getDb();
-  const pack = await db.packs.findUnique({
-    where: { id: packId },
-    select: { id: true, name: true },
-  });
+  const db = await getDrizzleDb();
+  const result = await db.execute<{ id: string; name: string }>(sql`
+    SELECT id, name FROM packs WHERE id = ${packId}::uuid
+  `);
+  const pack = result.rows[0];
   if (!pack) throw new Error("Pack not found");
 
-  await ensurePackSetAssignmentsSchema();
-  await adminDb.pack_set_assignments.upsert({
-    where: { pack_id: packId },
-    create: { pack_id: packId, pack_set: pool, set_by_admin_id: session.userId },
-    update: { pack_set: pool, set_by_admin_id: session.userId, updated_at: new Date() },
-  });
+  await adminDrizzle.execute(sql`
+    INSERT INTO pack_set_assignments
+      (pack_id, pack_set, set_by_admin_id)
+    VALUES (${packId}::uuid, ${pool}, ${session.userId}::uuid)
+    ON CONFLICT (pack_id) DO UPDATE
+    SET pack_set = EXCLUDED.pack_set,
+        set_by_admin_id = EXCLUDED.set_by_admin_id,
+        updated_at = NOW()
+  `);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -707,11 +785,23 @@ async function refreshPackRiskScore(
       compliance: buildPackCompliance(risk, maxWinCap, { tagged }),
       computed_at: new Date(),
     };
-    await adminDb.pack_risk_scores.upsert({
-      where: { pack_id: packId },
-      update: riskRow,
-      create: { pack_id: packId, ...riskRow },
-    });
+    await adminDrizzle.execute(sql`
+      INSERT INTO pack_risk_scores
+        (pack_id, edge, cv, win_rate, near_miss, max_win, max_mult,
+         risk_score, tier, compliance, computed_at)
+      VALUES (
+        ${packId}, ${riskRow.edge}, ${riskRow.cv}, ${riskRow.win_rate},
+        ${riskRow.near_miss}, ${riskRow.max_win}, ${riskRow.max_mult},
+        ${riskRow.risk_score}, ${riskRow.tier},
+        ${JSON.stringify(riskRow.compliance)}::jsonb, NOW()
+      )
+      ON CONFLICT (pack_id) DO UPDATE SET
+        edge = EXCLUDED.edge, cv = EXCLUDED.cv,
+        win_rate = EXCLUDED.win_rate, near_miss = EXCLUDED.near_miss,
+        max_win = EXCLUDED.max_win, max_mult = EXCLUDED.max_mult,
+        risk_score = EXCLUDED.risk_score, tier = EXCLUDED.tier,
+        compliance = EXCLUDED.compliance, computed_at = EXCLUDED.computed_at
+    `);
 
     // Bust the caches that READ this row, here rather than at each call site.
     // The Pack Doctor grid, the Overview KPIs and the Retune rail all serve
@@ -983,7 +1073,7 @@ export async function repricePackToTargetEdge(
   // render…") — and the client can keep going through the rest of the batch.
   let comp: Awaited<ReturnType<typeof getPacksPoolComposition>>[number] | undefined;
   try {
-    const db = await getDb();
+    const db = await getDrizzleDb();
     [comp] = await getPacksPoolComposition({ packIds: [packId] });
     if (!comp) {
       return {
@@ -1130,10 +1220,24 @@ export async function repricePackToTargetEdge(
 
     // ONLY the price is written (+ updated_at). Card odds (pack_cards) are never
     // touched — re-pricing moves the sticker price, nothing else.
-    await db.packs.update({
-      where: { id: packId },
-      data: { price: plan.newPrice, updated_at: new Date() },
-    });
+    const updated = await db.execute<{ id: string }>(sql`
+      UPDATE packs
+      SET price = ${plan.newPrice}, updated_at = NOW()
+      WHERE id = ${packId}::uuid
+      RETURNING id
+    `);
+    if (updated.rows.length === 0) {
+      return {
+        packId,
+        name: comp.name,
+        status: "failed",
+        priceBefore: comp.price,
+        priceAfter: null,
+        edgeBefore: plan.currentEdge,
+        edgeAfter: null,
+        reason: "Pack not found.",
+      };
+    }
 
     await createAdminAuditEvent({
       adminUserId: session.userId,
@@ -1384,17 +1488,19 @@ function resolveRetuneTargetEdge(targetEdge: number | undefined): number {
  * an active pack was edited under the explicit capability (for the audit flag).
  */
 async function enforcePackCreatorLiveGate(
-  db: Awaited<ReturnType<typeof getDb>>,
+  _db: MainDrizzleDb,
   session: Awaited<ReturnType<typeof requirePageAccess>>,
   packId: string,
   active: boolean,
 ): Promise<boolean> {
   if (!sessionHasRole(session, "pack_creator")) return false;
   if (!active) return false;
-  const perms = await adminDb.admin_users.findUnique({
-    where: { id: session.userId },
-    select: { allowed_pages: true },
-  });
+  const perms = (
+    await adminDrizzle.execute<{ allowed_pages: string[] }>(sql`
+      SELECT allowed_pages FROM admin_users
+      WHERE id = ${session.userId}::uuid
+    `)
+  ).rows[0];
   const canEditLive = perms
     ? hasCapability(perms.allowed_pages, "__can_edit_live_packs")
     : false;
@@ -1425,11 +1531,14 @@ export async function planPackRetune(
 
   const targetEdge = resolveRetuneTargetEdge(targets.targetEdge);
 
-  const db = await getDb();
-  const pack = await db.packs.findUnique({
-    where: { id: packId },
-    select: { price: true, name: true, tags: true },
-  });
+  const db = await getDrizzleDb();
+  const result = await db.execute<{
+    price: string; name: string; tags: string[];
+  }>(sql`
+    SELECT price::text AS price, name, tags::text[] AS tags
+    FROM packs WHERE id = ${packId}::uuid
+  `);
+  const pack = result.rows[0];
   if (!pack) throw new Error("Pack not found");
   const price = Number(pack.price.toString());
 
@@ -1648,22 +1757,29 @@ async function applyPackRetuneInner(
   const targetEdge = resolveRetuneTargetEdge(targets.targetEdge);
   const winRateTol = 0.02; // matches shapeWeights' default winRateTol
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
   // Fresh pack row (price + scope + the existing pack_cards for color/anim/order).
-  const pack = await db.packs.findUnique({
-    where: { id: packId },
-    select: {
-      price: true,
-      active: true,
-      pack_type: true,
-      name: true,
-      tags: true,
-      pack_cards: {
-        select: { card_id: true, color: true, animation: true, order: true },
-      },
-    },
-  });
+  const packResult = await db.execute<{
+    price: string; active: boolean; pack_type: string; name: string;
+    tags: string[];
+    pack_cards: Array<{
+      card_id: string; color: string | null; animation: boolean; order: number;
+    }>;
+  }>(sql`
+    SELECT p.price::text AS price, p.active, p.pack_type, p.name,
+           p.tags::text[] AS tags,
+           COALESCE(jsonb_agg(jsonb_build_object(
+             'card_id', pc.card_id, 'color', pc.color,
+             'animation', pc.animation, 'order', pc."order"
+           ) ORDER BY pc."order") FILTER (WHERE pc.id IS NOT NULL), '[]'::jsonb)
+             AS pack_cards
+    FROM packs p
+    LEFT JOIN pack_cards pc ON pc.pack_id = p.id
+    WHERE p.id = ${packId}::uuid
+    GROUP BY p.id
+  `);
+  const pack = packResult.rows[0];
   if (!pack) throw new Error("Pack not found");
 
   if (!REPRICE_OR_RETUNE_PACK_TYPES.includes(pack.pack_type)) {
@@ -1996,18 +2112,12 @@ async function applyPackRetuneInner(
   // search lever picked a different price, write `packs.price` in the SAME
   // transaction so weights + price always commit atomically.
   const priceChanged = Math.abs(priceAfter - price) > 1e-9;
-  await db.$transaction(async (tx) => {
-    await tx.packs.update({
-      where: { id: packId },
-      data: priceChanged
-        ? { updated_at: new Date(), price: priceAfter.toFixed(2) }
-        : { updated_at: new Date() },
-    });
-    await tx.pack_cards.deleteMany({ where: { pack_id: packId } });
-    if (rows.length > 0) {
-      await tx.pack_cards.createMany({ data: rows });
-    }
-  });
+  await replacePackState(
+    await getDrizzleDb(),
+    packId,
+    rows,
+    priceChanged ? { price: priceAfter.toFixed(2) } : undefined,
+  );
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -2177,18 +2287,16 @@ export async function revertPackToSnapshot(
   const packId = snapshot.packId;
   if (!isUuid(packId)) throw new Error("Snapshot references an invalid pack id.");
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
   // Fresh pack row: scope + name + price (drift detection since capture).
-  const pack = await db.packs.findUnique({
-    where: { id: packId },
-    select: {
-      price: true,
-      active: true,
-      pack_type: true,
-      name: true,
-    },
-  });
+  const packResult = await db.execute<{
+    price: string; active: boolean; pack_type: string; name: string;
+  }>(sql`
+    SELECT price::text AS price, active, pack_type, name
+    FROM packs WHERE id = ${packId}::uuid
+  `);
+  const pack = packResult.rows[0];
   if (!pack) throw new Error("Pack not found.");
 
   if (!REPRICE_OR_RETUNE_PACK_TYPES.includes(pack.pack_type)) {
@@ -2226,10 +2334,11 @@ export async function revertPackToSnapshot(
   ];
   const existingCards =
     snapshotCardIds.length > 0
-      ? await db.cards.findMany({
-          where: { id: { in: snapshotCardIds } },
-          select: { id: true },
-        })
+      ? (
+          await db.execute<{ id: string }>(sql`
+            SELECT id FROM cards WHERE id = ANY(${snapshotCardIds}::uuid[])
+          `)
+        ).rows
       : [];
   const { restorable, skippedCardIds } = partitionSnapshotRestore(
     snapshotCards,
@@ -2278,19 +2387,9 @@ export async function revertPackToSnapshot(
 
   // SAME delete-all-then-createMany pattern updatePack / applyPackRetune use,
   // plus the snapshot price.
-  await db.$transaction(async (tx) => {
-    await tx.packs.update({
-      where: { id: packId },
-      data: {
-        price: snapshotPrice,
-        ...(restoreTags !== null ? { tags: restoreTags } : {}),
-        updated_at: new Date(),
-      },
-    });
-    await tx.pack_cards.deleteMany({ where: { pack_id: packId } });
-    if (rows.length > 0) {
-      await tx.pack_cards.createMany({ data: rows });
-    }
+  await replacePackState(await getDrizzleDb(), packId, rows, {
+    price: snapshotPrice,
+    ...(restoreTags !== null ? { tags: restoreTags } : {}),
   });
 
   await createAdminAuditEvent({
@@ -2369,6 +2468,70 @@ const buildPackCardSchema = z.union([
   z.object({ value: z.number().positive() }),
 ]);
 
+async function insertBuiltPack(
+  tx: Pick<MainDrizzleDb, "execute">,
+  input: {
+    data: {
+      name: string;
+      slug: string;
+      description: string | null;
+      image_url: string | null;
+      price: number;
+      cards_per_open: number;
+      difficulty: number | null;
+      pack_type: string;
+      active: boolean;
+    };
+  },
+): Promise<{ id: string }> {
+  const d = input.data;
+  const result = await tx.execute<{ id: string }>(sql`
+    INSERT INTO packs (
+      name, slug, description, image_url, price, cards_per_open,
+      difficulty, pack_type, active, tags
+    ) VALUES (
+      ${d.name}, ${d.slug}, ${d.description}, ${d.image_url}, ${d.price},
+      ${d.cards_per_open}, ${d.difficulty}, ${d.pack_type}, ${d.active},
+      ARRAY[]::pack_tag[]
+    )
+    RETURNING id
+  `);
+  const row = result.rows[0];
+  if (!row) throw new Error("Pack insert returned no row");
+  return row;
+}
+
+async function insertBuiltPackCards(
+  tx: Pick<MainDrizzleDb, "execute">,
+  input: {
+    data: Array<{
+      pack_id: string;
+      card_id: string;
+      weight: number;
+      color: string | null;
+      animation: boolean;
+      order: number;
+    }>;
+  },
+): Promise<void> {
+  const rows = input.data;
+  if (rows.length === 0) return;
+  await tx.execute(sql`
+    INSERT INTO pack_cards (
+      pack_id, card_id, weight, color, animation, "order"
+    )
+    SELECT *
+    FROM unnest(
+      ${rows.map((r) => r.pack_id)}::uuid[],
+      ${rows.map((r) => r.card_id)}::uuid[],
+      ${rows.map((r) => r.weight)}::int[],
+      ${rows.map((r) => r.color)}::text[],
+      ${rows.map((r) => r.animation)}::boolean[],
+      ${rows.map((r) => r.order)}::int[]
+    )
+  `);
+}
+
 const buildPackSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(60),
   slug: z.string().trim().min(1, "Slug is required").max(60),
@@ -2440,7 +2603,8 @@ export async function buildPack(input: BuildPackInput): Promise<BuildPackResult>
   // On-site risk bar: 0/undefined ships null (no bar), same as create/edit forms.
   const difficulty = data.difficulty && data.difficulty > 0 ? data.difficulty : null;
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
+  const readDb = db;
 
   // Resolve each card slot to a {cardId, value}. Card ids → read fresh prices
   // from `cards` (never trust a client-supplied value for a real card); bare
@@ -2451,11 +2615,12 @@ export async function buildPack(input: BuildPackInput): Promise<BuildPackResult>
 
   const priceByCard = new Map<string, number>();
   if (cardIds.length > 0) {
-    const cardRows = await db.cards.findMany({
-      where: { id: { in: cardIds } },
-      select: { id: true, price: true },
-    });
-    for (const row of cardRows) priceByCard.set(row.id, Number(row.price.toString()));
+    const cardResult = await readDb.execute<{ id: string; price: string }>(sql`
+      SELECT id, price::text AS price
+      FROM cards
+      WHERE id = ANY(${cardIds}::uuid[])
+    `);
+    for (const row of cardResult.rows) priceByCard.set(row.id, Number(row.price));
     const missing = cardIds.filter((id) => !priceByCard.has(id));
     if (missing.length > 0) {
       return { ok: false, error: `Unknown card id(s): ${missing.join(", ")}` };
@@ -2508,8 +2673,8 @@ export async function buildPack(input: BuildPackInput): Promise<BuildPackResult>
       order: i,
     }));
 
-  const pack = await db.$transaction(async (tx) => {
-    const created = await tx.packs.create({
+  const pack = await db.transaction(async (tx) => {
+    const created = await insertBuiltPack(tx, {
       data: {
         name: data.name,
         slug: data.slug,
@@ -2530,7 +2695,7 @@ export async function buildPack(input: BuildPackInput): Promise<BuildPackResult>
       },
     });
     if (cardRows.length > 0) {
-      await tx.pack_cards.createMany({
+      await insertBuiltPackCards(tx, {
         data: cardRows.map((r) => ({ ...r, pack_id: created.id })),
       });
     }

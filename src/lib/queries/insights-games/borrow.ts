@@ -1,6 +1,6 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getCreatorSessionWindowsCte } from "../creator-session-windows";
@@ -107,7 +107,6 @@ export async function getBorrowAnalytics(
   period: GamesPeriod,
 ): Promise<BorrowAnalyticsData> {
   return withTiming("insights-games.borrow", async () => {
-    const db = await getDb();
     const scope = await realCustomersScopeSql();
     const sessionWindowsCte = await getCreatorSessionWindowsCte();
     // Lifetime (`all`) capped to 365d via periodCutoffSqlCapped so the
@@ -169,7 +168,7 @@ export async function getBorrowAnalytics(
     // (We never trust pct=100 — that would mean fully sponsored,
     // not borrow; the LEAST(...) clamp keeps the math finite.)
     const [totalRows, topUserRows, biggestPlayRows, cohortRows] = await Promise.all([
-      db.$queryRawUnsafe<TotalRow[]>(
+      queryMainRows<TotalRow[]>(
         `WITH ${sessionWindowsCte},
               base AS (
            SELECT
@@ -233,7 +232,7 @@ export async function getBorrowAnalytics(
            ), 0)::text AS sticker_sum
          FROM base`,
       ),
-      db.$queryRawUnsafe<TopUserRow[]>(
+      queryMainRows<TopUserRow[]>(
         `WITH ${sessionWindowsCte},
               base AS (
            SELECT
@@ -310,7 +309,7 @@ export async function getBorrowAnalytics(
       // borrow amount (cash_paid × borrow_pct / (100 − borrow_pct)),
       // so a 90%-borrow $100 cash-paid open ($900 fronted) ranks above
       // a 50%-borrow $200 cash-paid open ($200 fronted).
-      db.$queryRawUnsafe<BiggestPlayRow[]>(
+      queryMainRows<BiggestPlayRow[]>(
         `WITH ${sessionWindowsCte},
               base AS (
            SELECT
@@ -376,7 +375,7 @@ export async function getBorrowAnalytics(
       // just the borrowed legs — the cohort comparison is total user
       // economics). Includes upgrader on both sides since
       // borrowers/non-borrowers can also play upgrader.
-      db.$queryRawUnsafe<CohortRow[]>(
+      queryMainRows<CohortRow[]>(
         `WITH ${sessionWindowsCte},
               non_borrow_pack_sessions AS (
            SELECT game_session_id FROM ledger_transactions

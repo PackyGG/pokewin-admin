@@ -2,17 +2,22 @@
 
 import { revalidatePath } from "next/cache";
 import bcrypt from "bcryptjs";
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
+import { isMainOwnerUsername } from "@/lib/owners";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { admin_role } from "@/generated/admin-prisma/client";
 import { require2FA } from "@/lib/require-2fa";
 import { ok, fail, type ServerActionResult } from "@/lib/errors/server-action-result";
 import { logError } from "@/lib/errors/logger";
+import { isPostgresError } from "@/lib/postgres-errors";
 import { computeAllowedPagesForRoles } from "@/lib/role-baselines";
-import { isPersistableAdminRole, pickPrimaryRole } from "@/lib/admin-roles";
-import { readAdminUserWithRoles, writeAdminUserWithRoles } from "@/lib/admin-user-roles";
+import {
+  isPersistableAdminRole,
+  pickPrimaryRole,
+  type AdminRole,
+} from "@/lib/admin-roles";
 import {
   loadUserPermissionState,
   rematerializeForRoleChange,
@@ -34,8 +39,8 @@ import {
 function normalizeRoles(input: {
   role?: string;
   roles?: string[];
-}): admin_role[] | null {
-  const set = new Set<admin_role>();
+}): AdminRole[] | null {
+  const set = new Set<AdminRole>();
   for (const r of [...(input.roles ?? []), ...(input.role ? [input.role] : [])]) {
     // Only PERSISTABLE built-in roles (admin-DB `admin_role` enum values).
     if (isPersistableAdminRole(r)) set.add(r);
@@ -77,11 +82,19 @@ export async function createAdminUser(data: {
   if (!roles) {
     return fail("Pick at least one valid role.", "VALIDATION");
   }
+
+  // SECURITY (SECURITY_AUDIT.md HIGH-1): block creating an account whose
+  // username normalizes to the reserved MAIN-OWNER identity. The owner bypass
+  // keys off `username === "motha"` (trim + lowercase), so without this an
+  // admin could mint an owner-equivalent account via " motha" / "MOTHA".
+  if (isMainOwnerUsername(data.username)) {
+    return fail("That username is reserved.", "VALIDATION");
+  }
   // The canonical primary role (highest-privilege member, admin first).
   // `roles` is already narrowed to the persistable `admin_role` subset by
   // `normalizeRoles`, and `pickPrimaryRole` returns a member of its input,
-  // so the result is a real `admin_role` — narrow it back for Prisma.
-  const primary = pickPrimaryRole(roles) as admin_role;
+  // so the result is a real `admin_role` — narrow it to the database enum.
+  const primary = pickPrimaryRole(roles);
 
   const passwordHash = await bcrypt.hash(data.password, 12);
 
@@ -90,51 +103,41 @@ export async function createAdminUser(data: {
   // baseline). admin among the roles → [] (admin bypasses the page list).
   const allowedPages = await computeAllowedPagesForRoles(roles);
 
-  // Explicit select — Prisma's default create() RETURNS * which references
+  // Explicit projection avoids returning unrelated additive columns that
   // every column the generated client knows about. If a new column is
   // missing from prod (preferences / role_id / profile_*), the insert
-  // crashes with P2022 even though the write itself would succeed.
+  // could otherwise depend on unrelated additive columns.
   let created: { id: string };
   try {
     // Resilient to the un-applied `roles` migration: if the additive
     // `roles` column doesn't exist yet, retry the create without it so the
     // canonical `role` + `allowed_pages` still persist (effective role set
     // collapses to `[role]` — identical to legacy single-role behaviour).
-    created = await writeAdminUserWithRoles(
-      () =>
-        adminDb.admin_users.create({
-          data: {
-            email: data.email,
-            username: data.username,
-            password_hash: passwordHash,
-            // `role` stays the canonical primary; `roles` holds the full set.
-            role: primary,
-            roles,
-            allowed_pages: allowedPages,
-          },
-          select: { id: true },
-        }),
-      () =>
-        adminDb.admin_users.create({
-          data: {
-            email: data.email,
-            username: data.username,
-            password_hash: passwordHash,
-            role: primary,
-            allowed_pages: allowedPages,
-          },
-          select: { id: true },
-        }),
-    );
+    const result = await adminDrizzle.execute<{ id: string }>(sql`
+      INSERT INTO admin_users (
+        email, username, password_hash, role, roles, allowed_pages,
+        recovery_codes, permission_grants, permission_revokes
+      )
+      VALUES (
+        ${data.email}, ${data.username}, ${passwordHash},
+        ${primary}::admin_role, ${roles}::admin_role[], ${allowedPages},
+        ARRAY[]::text[], ARRAY[]::text[], ARRAY[]::text[]
+      )
+      RETURNING id::text
+    `);
+    created = result.rows[0]!;
   } catch (err) {
-    // Most common path: P2002 unique-violation on email / username.
-    // Surface a friendly message; the raw Prisma error goes to logs.
+    // Most common path: SQLSTATE 23505 on email / username.
+    // Surface a friendly message; the raw database error goes to logs.
     logError(
       "admin-users.create",
       `failed to create admin user ${data.email}`,
       err,
     );
-    if (err instanceof Error && /unique constraint|already exists/i.test(err.message)) {
+    if (
+      isPostgresError(err, "23505") ||
+      (err instanceof Error && /unique constraint|already exists/i.test(err.message))
+    ) {
       return fail(
         "An admin with that email or username already exists.",
         "DUPLICATE",
@@ -179,18 +182,15 @@ export async function toggleAdminActive(
   // self-deactivation case is already blocked above; this covers deactivating
   // the last OTHER admin.
   if (!isActive) {
-    const target = await readAdminUserWithRoles(
-      () =>
-        adminDb.admin_users.findUnique({
-          where: { id: adminUserId },
-          select: { role: true, roles: true },
-        }),
-      () =>
-        adminDb.admin_users.findUnique({
-          where: { id: adminUserId },
-          select: { role: true },
-        }),
-    );
+    const target = (await adminDrizzle.execute<{
+      role: string;
+      roles: string[];
+    }>(sql`
+      SELECT role::text AS role, roles::text[] AS roles
+      FROM admin_users
+      WHERE id = ${adminUserId}::uuid
+      LIMIT 1
+    `)).rows[0];
     if (target) {
       const t = target as { role: string; roles?: string[] };
       const targetIsAdmin = roleSetHasAdmin(t.role, t.roles);
@@ -212,11 +212,11 @@ export async function toggleAdminActive(
     }
   }
 
-  await adminDb.admin_users.update({
-    where: { id: adminUserId },
-    data: { is_active: isActive },
-    select: { id: true },
-  });
+  await adminDrizzle.execute(sql`
+    UPDATE admin_users
+    SET is_active = ${isActive}, updated_at = NOW()
+    WHERE id = ${adminUserId}::uuid
+  `);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -232,15 +232,14 @@ export async function resetAdmin2FA(adminUserId: string, totpCode: string) {
   await requireCapability(session, "__can_reset_admin_2fa", "reset admin 2FA");
   await require2FA(session.userId, totpCode);
 
-  await adminDb.admin_users.update({
-    where: { id: adminUserId },
-    data: {
-      totp_secret: null,
-      totp_enabled: false,
-      recovery_codes: [],
-    },
-    select: { id: true },
-  });
+  await adminDrizzle.execute(sql`
+    UPDATE admin_users
+    SET totp_secret = NULL,
+        totp_enabled = false,
+        recovery_codes = ARRAY[]::text[],
+        updated_at = NOW()
+    WHERE id = ${adminUserId}::uuid
+  `);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -290,8 +289,8 @@ export async function setAdminRoles(
     throw new Error("Pick at least one valid role");
   }
   // `roles` is the persistable `admin_role` subset (normalizeRoles); the
-  // primary is one of those members, so narrow it back for the Prisma write.
-  const primary = pickPrimaryRole(roles) as admin_role;
+  // primary is one of those members, so narrow it for the database write.
+  const primary = pickPrimaryRole(roles);
 
   // Load the full permission state (role/roles + custom-role tokens + the
   // per-user override columns + current allowed_pages).
@@ -322,10 +321,12 @@ export async function setAdminRoles(
   // doesn't. We require the TARGET to be active today for it to "count" as the
   // last admin — a deactivated admin isn't holding an active admin slot.
   if (targetIsAdminNow && !targetStaysAdmin) {
-    const targetRow = await adminDb.admin_users.findUnique({
-      where: { id: adminUserId },
-      select: { is_active: true },
-    });
+    const targetRow = (await adminDrizzle.execute<{ is_active: boolean }>(sql`
+      SELECT is_active
+      FROM admin_users
+      WHERE id = ${adminUserId}::uuid
+      LIMIT 1
+    `)).rows[0];
     const otherActiveAdmins = await countOtherActiveEffectiveAdmins(adminUserId);
     if (
       wouldDropLastActiveAdmin({
@@ -364,20 +365,14 @@ export async function setAdminRoles(
   // `role` (primary) and the re-materialized `allowed_pages` still persist,
   // so the role change takes effect; the effective set collapses to `[role]`
   // until the migration is applied — identical to the legacy single-role path.
-  await writeAdminUserWithRoles(
-    () =>
-      adminDb.admin_users.update({
-        where: { id: adminUserId },
-        data: { role: primary, roles, allowed_pages: mergedAllowed },
-        select: { id: true },
-      }),
-    () =>
-      adminDb.admin_users.update({
-        where: { id: adminUserId },
-        data: { role: primary, allowed_pages: mergedAllowed },
-        select: { id: true },
-      }),
-  );
+  await adminDrizzle.execute(sql`
+    UPDATE admin_users
+    SET role = ${primary}::admin_role,
+        roles = ${roles}::admin_role[],
+        allowed_pages = ${mergedAllowed},
+        updated_at = NOW()
+    WHERE id = ${adminUserId}::uuid
+  `);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -416,18 +411,20 @@ export async function deleteAdminUser(
   // require2FA throws on invalid; the caller surfaces it via toast.
   await require2FA(session.userId, totpCode);
 
-  const target = await readAdminUserWithRoles(
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id: adminUserId },
-        select: { id: true, email: true, username: true, role: true, roles: true, is_active: true },
-      }),
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id: adminUserId },
-        select: { id: true, email: true, username: true, role: true, is_active: true },
-      }),
-  );
+  const target = (await adminDrizzle.execute<{
+    id: string;
+    email: string;
+    username: string;
+    role: string;
+    roles: string[];
+    is_active: boolean;
+  }>(sql`
+    SELECT id::text, email, username, role::text AS role,
+           roles::text[] AS roles, is_active
+    FROM admin_users
+    WHERE id = ${adminUserId}::uuid
+    LIMIT 1
+  `)).rows[0];
   if (!target) return { success: false, error: "Admin user not found" };
 
   // Guard 1 — last-admin. Deleting an active admin removes them from the pool.
@@ -460,50 +457,29 @@ export async function deleteAdminUser(
   });
 
   try {
-    await adminDb.$transaction(async (tx) => {
+    await adminDrizzle.transaction(async (tx) => {
       // ── Provenance-only nulling — PRESERVE the business/financial/CRM row,
       // drop only the "who did it" attribution. Each of these columns is a
       // RESTRICT / NO-ACTION FK to admin_users that would otherwise BLOCK the
       // delete; we NULL the attribution instead of destroying real data. The
       // columns were made nullable via
-      // prisma/admin/sql/2026-06-15_delete_admin_provenance_nullable.up.sql.
+      // the historical delete-admin provenance migration.
 
       // Null out admin_user_id on audit events (keep the logs)
-      await tx.admin_audit_events.updateMany({
-        where: { admin_user_id: adminUserId },
-        data: { admin_user_id: null },
-      });
+      await tx.execute(sql`UPDATE admin_audit_events SET admin_user_id = NULL WHERE admin_user_id = ${adminUserId}::uuid`);
 
       // VIP/CRM tag attribution — keep the tag, drop who set it.
-      await tx.admin_user_tags.updateMany({
-        where: { set_by_admin_id: adminUserId },
-        data: { set_by_admin_id: null },
-      });
+      await tx.execute(sql`UPDATE admin_user_tags SET set_by_admin_id = NULL WHERE set_by_admin_id = ${adminUserId}::uuid`);
       // Analytics exclusion — keep the user excluded, drop who excluded them.
-      await tx.excluded_users.updateMany({
-        where: { excluded_by: adminUserId },
-        data: { excluded_by: null },
-      });
+      await tx.execute(sql`UPDATE excluded_users SET excluded_by = NULL WHERE excluded_by = ${adminUserId}::uuid`);
       // Balance 2.0 annotation — keep the value, drop who set it.
-      await tx.admin_excluded_user_balance_v2.updateMany({
-        where: { set_by_admin_id: adminUserId },
-        data: { set_by_admin_id: null },
-      });
+      await tx.execute(sql`UPDATE admin_excluded_user_balance_v2 SET set_by_admin_id = NULL WHERE set_by_admin_id = ${adminUserId}::uuid`);
       // Salary registry / payout log — keep the financial record, drop attribution.
-      await tx.salary_employees.updateMany({
-        where: { created_by_id: adminUserId },
-        data: { created_by_id: null },
-      });
-      await tx.salary_payouts.updateMany({
-        where: { paid_by_id: adminUserId },
-        data: { paid_by_id: null },
-      });
+      await tx.execute(sql`UPDATE salary_employees SET created_by_id = NULL WHERE created_by_id = ${adminUserId}::uuid`);
+      await tx.execute(sql`UPDATE salary_payouts SET paid_by_id = NULL WHERE paid_by_id = ${adminUserId}::uuid`);
       // Shift schedule — keep the rota, drop who planned it.
-      await tx.admin_shifts.updateMany({
-        where: { created_by_id: adminUserId },
-        data: { created_by_id: null },
-      });
-      // creator_deal_estimates is NOT a Prisma model on the admin client
+      await tx.execute(sql`UPDATE admin_shifts SET created_by_id = NULL WHERE created_by_id = ${adminUserId}::uuid`);
+      // creator_deal_estimates is not in the generated admin schema
       // (table provisioned outside the schema, NO-ACTION FK) and is a KNOWN
       // drift table that may be ABSENT in a given admin DB. When present, NULL
       // its created_by_id via parameterized raw SQL — keep the estimate, drop
@@ -513,32 +489,32 @@ export async function deleteAdminUser(
       // "Delete failed: relation creator_deal_estimates does not exist" bug).
       // to_regclass() returns NULL (not an error) for a missing table, so this
       // existence probe is safe inside the transaction. Mirrors the
-      // "catch P2021/42P01 and degrade gracefully" contract in
-      // prisma/admin/sql/20260606_creator_hub_substrate.sql.
-      const estimatesProbe = await tx.$queryRaw<Array<{ has_table: boolean }>>`
+      // "catch 42P01 and degrade gracefully" contract for the historical
+      // Creator Hub substrate migration.
+      const estimatesProbe = await tx.execute<{ has_table: boolean }>(sql`
         SELECT to_regclass('"creator_deal_estimates"') IS NOT NULL AS has_table
-      `;
-      if (estimatesProbe[0]?.has_table) {
-        await tx.$executeRaw`UPDATE "creator_deal_estimates" SET "created_by_id" = NULL WHERE "created_by_id" = ${adminUserId}::uuid`;
+      `);
+      if (estimatesProbe.rows[0]?.has_table) {
+        await tx.execute(sql`UPDATE "creator_deal_estimates" SET "created_by_id" = NULL WHERE "created_by_id" = ${adminUserId}::uuid`);
       }
 
       // ── Pure admin action-logs / orphan rows — safe to DELETE (no business
       // data; consistent with the gift-card / voucher action deletes below).
-      await tx.admin_giveaway_actions.deleteMany({ where: { admin_user_id: adminUserId } });
+      await tx.execute(sql`DELETE FROM admin_giveaway_actions WHERE admin_user_id = ${adminUserId}::uuid`);
       // admin_balance_limits.admin_user_id is a plain String (no FK, doesn't
       // block) but would otherwise be orphaned — clean it up.
-      await tx.admin_balance_limits.deleteMany({ where: { admin_user_id: adminUserId } });
+      await tx.execute(sql`DELETE FROM admin_balance_limits WHERE admin_user_id = ${adminUserId}`);
 
       // Delete all related records with required FKs
-      await tx.admin_sessions.deleteMany({ where: { admin_user_id: adminUserId } });
-      await tx.admin_notes.deleteMany({ where: { admin_user_id: adminUserId } });
-      await tx.admin_gift_card_actions.deleteMany({ where: { admin_user_id: adminUserId } });
-      await tx.admin_voucher_actions.deleteMany({ where: { admin_user_id: adminUserId } });
-      await tx.expenses.deleteMany({ where: { created_by_id: adminUserId } });
-      await tx.recurring_expenses.deleteMany({ where: { created_by_id: adminUserId } });
+      await tx.execute(sql`DELETE FROM admin_sessions WHERE admin_user_id = ${adminUserId}::uuid`);
+      await tx.execute(sql`DELETE FROM admin_notes WHERE admin_user_id = ${adminUserId}::uuid`);
+      await tx.execute(sql`DELETE FROM admin_gift_card_actions WHERE admin_user_id = ${adminUserId}::uuid`);
+      await tx.execute(sql`DELETE FROM admin_voucher_actions WHERE admin_user_id = ${adminUserId}::uuid`);
+      await tx.execute(sql`DELETE FROM expenses WHERE created_by_id = ${adminUserId}::uuid`);
+      await tx.execute(sql`DELETE FROM recurring_expenses WHERE created_by_id = ${adminUserId}::uuid`);
 
       // Delete the admin user (admin_shift_assignments FK is CASCADE → auto-removed)
-      await tx.admin_users.delete({ where: { id: adminUserId } });
+      await tx.execute(sql`DELETE FROM admin_users WHERE id = ${adminUserId}::uuid`);
     });
   } catch (err) {
     console.error("[deleteAdminUser] Transaction failed:", err);

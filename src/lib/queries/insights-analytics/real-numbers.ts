@@ -1,8 +1,8 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { MS_PER_DAY, MS_PER_MINUTE } from "@/lib/utils/time";
@@ -171,7 +171,6 @@ const cachedGameSplit = unstable_cache(
     kenoWager: number;
     kenoPayout: number;
   }> => {
-    const db = await getDb();
     const since = `'${cutoffIso}'::timestamptz`;
 
     type WagerRow = {
@@ -190,7 +189,7 @@ const cachedGameSplit = unstable_cache(
       // (the SAME predicate getGamingLegs applies). pack_opening → packs;
       // battle_bet + battle_sponsorship → battles. battle_sponsorship is
       // counted directly (no borrow gate) exactly as the headline does.
-      db.$queryRawUnsafe<WagerRow[]>(
+      queryMainRows<WagerRow[]>(
         `WITH ${sessionWindowsCte}
          SELECT
            COALESCE(SUM(CASE WHEN type::text = 'pack_opening'
@@ -210,7 +209,7 @@ const cachedGameSplit = unstable_cache(
       // Per-product INVENTORY payout, under the canonical PAYOUT_LEG_FILTER
       // (the SAME predicate getGamingLegs applies). source_type splits the
       // two products; the borrow + reward-pack exclusion is identical.
-      db.$queryRawUnsafe<InvRow[]>(
+      queryMainRows<InvRow[]>(
         `WITH ${sessionWindowsCte}
          SELECT
            COALESCE(SUM(CASE WHEN source_type = 'pack'
@@ -232,7 +231,7 @@ const cachedGameSplit = unstable_cache(
       // — would silently book keno payouts as battle payouts. No borrow flag on
       // these legs (summed unconditionally within the type filter), matching
       // the headline.
-      db.$queryRawUnsafe<LedgerPayoutRow[]>(
+      queryMainRows<LedgerPayoutRow[]>(
         `WITH ${sessionWindowsCte}
          SELECT
            COALESCE(SUM(CASE WHEN type::text IN ('battle_refund','battle_excess_to_voucher')
@@ -518,7 +517,6 @@ const cachedRewardSpend = unstable_cache(
     rainWin: string;
     rainTip: string;
   }> => {
-    const db = await getDb();
     const since = `'${cutoffIso}'::timestamptz`;
 
     // Per-type reward legs (REWARD_PAYOUT_TYPES excl. rain_win) — the exact
@@ -552,7 +550,7 @@ const cachedRewardSpend = unstable_cache(
     ).join(",\n           ");
 
     type Row = Record<string, string>;
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryMainRows<Row[]>(
       `WITH ${sessionWindowsCte}
        SELECT
            ${typeAmountSelects},
@@ -767,14 +765,13 @@ export type RealizedPnlCustomersExclCreators = {
 
 const cachedPnlCustomersExclCreators = unstable_cache(
   async (userScopeSql: string): Promise<RealizedPnlCustomersExclCreators> => {
-    const db = await getDb();
     // `userScopeSql` is the canonical `(SELECT id FROM "user" u WHERE …)`
     // subquery from getMetricsScope (staff + creators + blacklist dropped).
     // Mirror the snapshot's per-user balance-sheet aggregates exactly, just
     // over this population. (No `WITH real_users` rename needed — the scope
     // subquery is inlined directly as the `user_id IN (...)` set, identical in
     // meaning to the snapshot's CTE.)
-    const rows = await db.$queryRawUnsafe<
+    const rows = await queryMainRows<
       {
         deposited: string;
         balance_withdrawn: string;
@@ -903,11 +900,10 @@ export type CreatorNetCashDetail = {
 
 const cachedCreatorNetCashDetail = unstable_cache(
   async (creatorScopeSql: string): Promise<CreatorNetCashDetail> => {
-    const db = await getDb();
     // Same per-user balance-sheet aggregates as the snapshot, over the
     // creator population (`role = 'creator'`, not blacklisted). The scope
     // subquery is inlined directly as the `user_id IN (...)` set.
-    const rows = await db.$queryRawUnsafe<
+    const rows = await queryMainRows<
       {
         deposited: string;
         balance_withdrawn: string;
@@ -1042,14 +1038,13 @@ const cachedCustomerRecycling = unstable_cache(
     cardSaleLeg: string;
     cardExchangeLeg: string;
   }> => {
-    const db = await getDb();
     const since = `'${cutoffIso}'::timestamptz`;
 
     const [depRows, sellRows] = await Promise.all([
       // Lifetime cash deposited — the authoritative `balances.total_deposited`
       // counter, customer scope (per-user total; no per-row session filter,
       // exactly like the snapshot's deposit leg).
-      db.$queryRawUnsafe<{ deposits: string }[]>(
+      queryMainRows<{ deposits: string }[]>(
         `SELECT COALESCE(SUM(total_deposited::numeric), 0)::text AS deposits
          FROM balances WHERE user_id IN ${userScopeSql}`,
       ),
@@ -1058,7 +1053,7 @@ const cachedCustomerRecycling = unstable_cache(
       // reward_card_sale (sold back) and card_exchange +
       // exchange_excess_credit (exchanged for credit), on the canonical
       // scope + window + creator-session exclusion.
-      db.$queryRawUnsafe<{ card_sale: string; card_exchange: string }[]>(
+      queryMainRows<{ card_sale: string; card_exchange: string }[]>(
         `WITH ${sessionWindowsCte}
          SELECT
            COALESCE(SUM(CASE WHEN type::text IN ('card_sale','reward_card_sale')
@@ -1165,7 +1160,7 @@ export async function getCustomerRecyclingDetail(): Promise<CustomerRecyclingDet
 //
 // ─── ENUM-SAFETY (CRITICAL) ─────────────────────────────────────────────
 // Every `creator_*` ledger type and the voucher `origin` are compared via
-// `::text` (NOT the bare enum). The generated Prisma enums are AHEAD of the
+// `::text` (not the bare enum). The generated application enums are ahead of the
 // live prod enum, so a bare comparison against a label prod doesn't yet carry
 // throws 22P02 at PARSE time and takes the whole query down (the documented
 // ffa61b5c / creator-fill failure class). `::text` makes it a plain string
@@ -1220,12 +1215,11 @@ const cachedCreatorProgramCost = unstable_cache(
     conversionVouchers: string;
     conversionVoucherCount: string;
   }> => {
-    const db = await getDb();
 
     // One ledger pass for the tip legs, the leaderboard-prize leg, and the
     // three fill-context legs (all enum-safe via ::text). Lifetime, all users —
     // house program spend is not customer-scoped.
-    const ledgerRows = await db.$queryRawUnsafe<
+    const ledgerRows = await queryMainRows<
       {
         creator_tip: string;
         fill_spend_tip: string;
@@ -1259,7 +1253,7 @@ const cachedCreatorProgramCost = unstable_cache(
 
     // Conversion-voucher value + count from the vouchers table — the SAME
     // origin + value source the /creators "Converted" KPI reads.
-    const voucherRows = await db.$queryRawUnsafe<
+    const voucherRows = await queryMainRows<
       { conversion_value: string; conversion_count: string }[]
     >(`
       SELECT

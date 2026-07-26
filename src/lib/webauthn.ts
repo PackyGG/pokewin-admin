@@ -51,7 +51,7 @@ import type {
 const RP_NAME = "Packy.gg Admin";
 
 /**
- * Copy bytes into a fresh ArrayBuffer-backed Uint8Array. Prisma `Bytes` come
+ * Copy bytes into a fresh ArrayBuffer-backed Uint8Array. Database bytes come
  * back as a Node Buffer (Uint8Array<ArrayBufferLike>), but the library's
  * credential type wants the narrower Uint8Array<ArrayBuffer> — `new
  * Uint8Array(length)` produces exactly that.

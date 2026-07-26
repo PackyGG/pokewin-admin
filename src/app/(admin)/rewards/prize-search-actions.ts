@@ -1,6 +1,18 @@
 "use server";
 
-import { getDb } from "@/lib/db";
+import {
+  and,
+  asc,
+  eq,
+  gte,
+  ilike,
+  lte,
+  or,
+  type SQL,
+} from "drizzle-orm";
+
+import { getDrizzleDb } from "@/lib/db";
+import { cards, packs } from "@/lib/db-schema/main/schema";
 import { requirePageAccess } from "@/lib/dal";
 import { toNumber } from "@/lib/utils/decimal";
 
@@ -20,33 +32,37 @@ export async function searchItems(
   type: "pack" | "card",
   filters?: { minPrice?: number; maxPrice?: number },
 ): Promise<SearchItem[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   await requirePageAccess("/rewards");
   const isUuid = UUID_RE.test(query);
 
-  const priceFilter: Record<string, unknown> = {};
-  if (filters?.minPrice != null) priceFilter.gte = filters.minPrice;
-  if (filters?.maxPrice != null) priceFilter.lte = filters.maxPrice;
-  const hasPriceFilter = Object.keys(priceFilter).length > 0;
-
   if (type === "pack") {
-    const or: Record<string, unknown>[] = [];
+    const conditions: SQL[] = [];
     if (query) {
-      or.push({ name: { contains: query, mode: "insensitive" } });
-      or.push({ slug: { contains: query, mode: "insensitive" } });
-      if (isUuid) or.push({ id: query });
+      const search = [
+        ilike(packs.name, `%${query}%`),
+        ilike(packs.slug, `%${query}%`),
+      ];
+      if (isUuid) search.push(eq(packs.id, query));
+      conditions.push(or(...search)!);
     }
-    const where: Record<string, unknown> = {};
-    if (or.length > 0) where.OR = or;
-    if (hasPriceFilter) where.price = priceFilter;
+    if (filters?.minPrice != null)
+      conditions.push(gte(packs.price, String(filters.minPrice)));
+    if (filters?.maxPrice != null)
+      conditions.push(lte(packs.price, String(filters.maxPrice)));
 
-    const packs = await db.packs.findMany({
-      where: Object.keys(where).length > 0 ? where : undefined,
-      select: { id: true, name: true, image_url: true, price: true },
-      orderBy: { name: "asc" },
-      take: 20,
-    });
-    return packs.map((p) => ({
+    const packRows = await db
+      .select({
+        id: packs.id,
+        name: packs.name,
+        image_url: packs.image_url,
+        price: packs.price,
+      })
+      .from(packs)
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(asc(packs.name))
+      .limit(20);
+    return packRows.map((p) => ({
       id: p.id,
       type: "pack",
       name: p.name,
@@ -55,22 +71,29 @@ export async function searchItems(
     }));
   }
 
-  const or: Record<string, unknown>[] = [];
+  const conditions: SQL[] = [];
   if (query) {
-    or.push({ name: { contains: query, mode: "insensitive" } });
-    if (isUuid) or.push({ id: query });
+    const search = [ilike(cards.name, `%${query}%`)];
+    if (isUuid) search.push(eq(cards.id, query));
+    conditions.push(or(...search)!);
   }
-  const where: Record<string, unknown> = {};
-  if (or.length > 0) where.OR = or;
-  if (hasPriceFilter) where.price = priceFilter;
+  if (filters?.minPrice != null)
+    conditions.push(gte(cards.price, String(filters.minPrice)));
+  if (filters?.maxPrice != null)
+    conditions.push(lte(cards.price, String(filters.maxPrice)));
 
-  const cards = await db.cards.findMany({
-    where: Object.keys(where).length > 0 ? where : undefined,
-    select: { id: true, name: true, image_url: true, price: true },
-    orderBy: { name: "asc" },
-    take: 20,
-  });
-  return cards.map((c) => ({
+  const cardRows = await db
+    .select({
+      id: cards.id,
+      name: cards.name,
+      image_url: cards.image_url,
+      price: cards.price,
+    })
+    .from(cards)
+    .where(conditions.length ? and(...conditions) : undefined)
+    .orderBy(asc(cards.name))
+    .limit(20);
+  return cardRows.map((c) => ({
     id: c.id,
     type: "card",
     name: c.name,

@@ -26,7 +26,7 @@ import "server-only";
  *
  * ─── ENV NOTE (matches the existing repo pattern) ────────────────────
  *
- * The Main-DB sources call `getDb()` INSIDE the cached function, exactly like
+ * The Main-DB sources resolve their pool INSIDE the cached function, exactly like
  * the existing `cachedCreatorsCodesListStats` (creators-codes.ts) and the
  * insights-rewards cached helpers. Inside an `unstable_cache` scope the
  * request cookie jar isn't readable, so `readDbEnv()` falls back to PROD

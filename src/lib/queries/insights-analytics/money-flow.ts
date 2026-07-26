@@ -1,7 +1,7 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
@@ -188,14 +188,13 @@ function residualSign(type: string): 1 | -1 | 0 {
  * terms (card withdrawals, inventory δ, voucher δ) on the canonical
  * real-customer scope (admin / support / creator + admin blacklist
  * dropped). Computed here so the waterfall foot reconciles with the metric
- * scope its head started from. `$queryRawUnsafe` with a server-built scope
+ * scope its head started from. `legacy raw query` with a server-built scope
  * predicate (same pattern as `cost-breakdown.ts` `getBridgeTerms`); the
  * cutoff is a server-constructed Date (never user input). Cached 60s to
  * match the dashboard cadence.
  */
 const cachedBridge = unstable_cache(
   async (cutoffIso: string, scopeSql: string) => {
-    const db = await getDb();
     const cutoff = new Date(cutoffIso);
     const since = `'${cutoff.toISOString()}'::timestamptz`;
 
@@ -205,7 +204,7 @@ const cachedBridge = unstable_cache(
     type VchRow = { issued: string; claimed: string };
 
     const [depWd, cardWd, inv, vch] = await Promise.all([
-      db.$queryRawUnsafe<DepWdRow[]>(
+      queryMainRows<DepWdRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits,
            COALESCE(SUM(CASE WHEN lt.type::text = 'admin_balance_adjustment'
@@ -217,7 +216,7 @@ const cachedBridge = unstable_cache(
          WHERE lt.status = 'completed' AND lt.created_at >= ${since}
            AND ${scopeSql}`,
       ),
-      db.$queryRawUnsafe<CardRow[]>(
+      queryMainRows<CardRow[]>(
         `SELECT COALESCE(SUM(cwr.total_value_usd::numeric), 0)::text AS total
          FROM card_withdrawal_requests cwr
          JOIN "user" u ON u.id = cwr.user_id
@@ -225,7 +224,7 @@ const cachedBridge = unstable_cache(
            AND COALESCE(cwr.completed_at, cwr.shipped_at) >= ${since}
            AND ${scopeSql}`,
       ),
-      db.$queryRawUnsafe<InvRow[]>(
+      queryMainRows<InvRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN ui.obtained_at >= ${since} THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained,
            COALESCE(SUM(CASE WHEN (ui.sold_at >= ${since} OR ui.exchanged_at >= ${since}) THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed
@@ -234,7 +233,7 @@ const cachedBridge = unstable_cache(
          WHERE (ui.obtained_at >= ${since} OR ui.sold_at >= ${since} OR ui.exchanged_at >= ${since})
            AND ${scopeSql}`,
       ),
-      db.$queryRawUnsafe<VchRow[]>(
+      queryMainRows<VchRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN v.created_at >= ${since} THEN v.value::numeric ELSE 0 END), 0)::text AS issued,
            COALESCE(SUM(CASE WHEN v.claimed_at >= ${since} THEN v.value::numeric ELSE 0 END), 0)::text AS claimed
@@ -265,16 +264,15 @@ const cachedBridge = unstable_cache(
  * This is balance-sheet arithmetic (the windowed-P&L identity), NOT a
  * gaming-margin formula, so it is reused here rather than re-deriving GGR.
  * Per day: deposits − (manual_wd + card_wd) − Δbalance − inventoryΔ −
- * voucherΔ. `$queryRawUnsafe` with a server-built scope predicate; cached
+ * voucherΔ. `legacy raw query` with a server-built scope predicate; cached
  * because the chart anchor is whole days.
  */
 const cachedDailyPnl = unstable_cache(
   async (cutoffIso: string, scopeSql: string) => {
-    const db = await getDb();
     const since = `'${new Date(cutoffIso).toISOString()}'::timestamptz`;
 
     type SeriesRow = { date: Date; pnl: string };
-    return db.$queryRawUnsafe<SeriesRow[]>(
+    return queryMainRows<SeriesRow[]>(
       `WITH real_users AS (
          SELECT u.id FROM "user" u WHERE ${scopeSql}
        ),
@@ -370,11 +368,9 @@ const cachedDailyPnl = unstable_cache(
  * whole waterfall sits on one population.
  */
 async function getCreatorIds(): Promise<string[]> {
-  const db = await getDb();
-  const rows = await db.user.findMany({
-    where: { role: "creator" },
-    select: { id: true },
-  });
+  const rows = await queryMainRows<{ id: string }[]>(
+    `SELECT id FROM "user" WHERE role::text = 'creator'`,
+  );
   return rows.map((r) => r.id);
 }
 

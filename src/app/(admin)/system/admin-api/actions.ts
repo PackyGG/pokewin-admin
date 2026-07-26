@@ -2,8 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
+import { api_keys } from "@/lib/db-schema/admin/schema";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { requireAdmin } from "@/lib/dal";
 import { generateApiKey } from "@/lib/api-auth/token";
@@ -113,19 +115,17 @@ export async function createApiKeyAction(input: {
       ? new Date(Date.now() + parsed.data.expiresInDays * 86_400_000)
       : null;
 
-  const created = await adminDb.api_keys.create({
-    data: {
+  const [created] = await adminDrizzle.insert(api_keys).values({
       name: parsed.data.name,
       prefix,
       key_hash: keyHash,
       scopes,
       allowed_ips: allowedIps,
-      expires_at: expiresAt,
+      expires_at: expiresAt?.toISOString() ?? null,
       rate_limit_per_min: parsed.data.rateLimitPerMin,
       created_by: session.userId,
-    },
-    select: { id: true },
-  });
+    }).returning({ id: api_keys.id });
+  if (!created) throw new Error("API key insert returned no row");
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -177,26 +177,18 @@ export async function updateApiKeyIpsAction(input: {
   const ips = parseAllowedIps(parsed.data.allowedIps);
   if (!ips.ok) return { success: false, error: ips.error };
 
-  const existing = await adminDb.api_keys.findUnique({
-    where: { id: parsed.data.keyId },
-    select: {
-      id: true,
-      name: true,
-      prefix: true,
-      allowed_ips: true,
-      revoked_at: true,
-    },
-  });
+  const [existing] = await adminDrizzle.select({
+    id: api_keys.id, name: api_keys.name, prefix: api_keys.prefix,
+    allowed_ips: api_keys.allowed_ips, revoked_at: api_keys.revoked_at,
+  }).from(api_keys).where(eq(api_keys.id, parsed.data.keyId)).limit(1);
   if (!existing) return { success: false, error: "Key not found" };
   // A revoked key is already dead; editing it would imply it still works.
   if (existing.revoked_at) {
     return { success: false, error: "Key is revoked" };
   }
 
-  await adminDb.api_keys.update({
-    where: { id: existing.id },
-    data: { allowed_ips: ips.value },
-  });
+  await adminDrizzle.update(api_keys).set({ allowed_ips: ips.value })
+    .where(eq(api_keys.id, existing.id));
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -252,10 +244,10 @@ export async function updateApiKeyScopesAction(input: {
   const scopes = parseScopes(parsed.data.scopes);
   if (!scopes.ok) return { success: false, error: scopes.error };
 
-  const existing = await adminDb.api_keys.findUnique({
-    where: { id: parsed.data.keyId },
-    select: { id: true, name: true, prefix: true, scopes: true, revoked_at: true },
-  });
+  const [existing] = await adminDrizzle.select({
+    id: api_keys.id, name: api_keys.name, prefix: api_keys.prefix,
+    scopes: api_keys.scopes, revoked_at: api_keys.revoked_at,
+  }).from(api_keys).where(eq(api_keys.id, parsed.data.keyId)).limit(1);
   if (!existing) return { success: false, error: "Key not found" };
   // A revoked key is already dead; editing it would imply it still works.
   if (existing.revoked_at) {
@@ -269,10 +261,8 @@ export async function updateApiKeyScopesAction(input: {
     return { success: true, scopes: scopes.value };
   }
 
-  await adminDb.api_keys.update({
-    where: { id: existing.id },
-    data: { scopes: scopes.value },
-  });
+  await adminDrizzle.update(api_keys).set({ scopes: scopes.value })
+    .where(eq(api_keys.id, existing.id));
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -309,23 +299,20 @@ export async function revokeApiKeyAction(
     return { success: false, error: "Invalid key id" };
   }
 
-  const existing = await adminDb.api_keys.findUnique({
-    where: { id: keyId },
-    select: { id: true, name: true, prefix: true, revoked_at: true },
-  });
+  const [existing] = await adminDrizzle.select({
+    id: api_keys.id, name: api_keys.name, prefix: api_keys.prefix,
+    revoked_at: api_keys.revoked_at,
+  }).from(api_keys).where(eq(api_keys.id, keyId)).limit(1);
   if (!existing) return { success: false, error: "Key not found" };
   if (existing.revoked_at) return { success: false, error: "Key already revoked" };
 
   // Revocation is immediate: authenticate() rejects on is_active=false OR a
   // non-null revoked_at, and it reads the row on every request (no token cache).
-  await adminDb.api_keys.update({
-    where: { id: keyId },
-    data: {
+  await adminDrizzle.update(api_keys).set({
       is_active: false,
-      revoked_at: new Date(),
+      revoked_at: new Date().toISOString(),
       revoked_by: session.userId,
-    },
-  });
+    }).where(eq(api_keys.id, keyId));
 
   await createAdminAuditEvent({
     adminUserId: session.userId,

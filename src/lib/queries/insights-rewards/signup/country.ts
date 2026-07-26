@@ -1,7 +1,7 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -9,7 +9,6 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { WAGER_TYPES_SQL } from "@/lib/queries/_wager-payout-types";
-import { compareSignupCountry } from "@/lib/clickhouse/compare/insights-signup-country";
 import { SIGNUP_CACHE_TAG } from "./_shared";
 
 /**
@@ -61,13 +60,10 @@ async function computeCountry(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<SignupCountryBreakdown> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const signupDateFilter =
-    days !== null
-      ? `AND u.created_at >= NOW() - INTERVAL '${days} days'`
-      : "";
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const signupDateFilter = daysAgoFilter("u.created_at", days);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   type CountryRow = {
     code: string;
@@ -76,7 +72,7 @@ async function computeCountry(
     claim_volume: string;
     retained_7d: string;
   };
-  const countryRows = await db.$queryRawUnsafe<CountryRow[]>(`
+  const countryRows = await queryRows<CountryRow[]>(db, sql`
     WITH cohort AS (
       SELECT
         u.id AS user_id,
@@ -110,7 +106,7 @@ async function computeCountry(
         SELECT 1 FROM ledger_transactions lt
         WHERE lt.user_id = c.user_id
           AND lt.status = 'completed'
-          AND (lt.type::text = 'deposit' OR lt.type::text IN ${WAGER_TYPES_SQL})
+          AND (lt.type::text = 'deposit' OR lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)})
           AND lt.created_at <= c.signed_up_at + INTERVAL '7 days'
       )
       GROUP BY c.code
@@ -188,7 +184,7 @@ async function computeCountry(
     signups: string;
     claimants: string;
   };
-  const continentRows = await db.$queryRawUnsafe<ContinentRow[]>(`
+  const continentRows = await queryRows<ContinentRow[]>(db, sql`
     WITH cohort AS (
       SELECT u.id AS user_id, u.continent_code AS code
       FROM "user" u
@@ -247,9 +243,5 @@ export async function getSignupCountryBreakdown(
   const data = await (cacheTtlForInsightsPeriod(period) >= 300
     ? cachedLong(period, sorted)
     : cachedShort(period, sorted));
-  // CQRS rollout: fire-and-forget ClickHouse comparison (no-op unless the
-  // surface flag is in `comparison` mode; forced off when CH is dormant). The
-  // served value stays the Postgres payload above.
-  void compareSignupCountry(period, data);
   return data;
 }

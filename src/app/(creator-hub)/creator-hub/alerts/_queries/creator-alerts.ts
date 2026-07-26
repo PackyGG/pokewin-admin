@@ -1,3 +1,7 @@
+import {
+  queryMainRows,
+  queryRows,
+} from "@/lib/drizzle-query";
 import "server-only";
 
 import { unstable_cache } from "next/cache";
@@ -8,16 +12,10 @@ import {
   type LeaderboardAdminRow,
 } from "@/lib/backend-api/affiliate-leaderboards";
 import { getCachedCreatorRoster } from "@/lib/cache/creator-backend-cache";
-import { adminDb } from "@/lib/admin-db";
-import { getDb } from "@/lib/db";
+import { adminDrizzle } from "@/lib/admin-db";
 import { getDealCapInfoByUser } from "../../../../(admin)/creators/_queries/deal-cap-by-user";
 import { getAllCreatorsLifetimePnl } from "../../../../(admin)/creators/_queries/all-creators-lifetime-pnl";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { deriveBigFtdAlertsFromClickHouse } from "@/lib/clickhouse/queries/creator-hub/big-ftd-alerts";
-import { Prisma } from "@/generated/prisma/client";
-import type { Prisma as AdminPrisma } from "@/generated/admin-prisma/client";
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -34,6 +32,18 @@ export const CREATOR_ALERT_TYPES = [
 export type CreatorAlertType = (typeof CREATOR_ALERT_TYPES)[number];
 
 export type CreatorAlertSeverity = "info" | "warning" | "critical";
+
+type PersistedCreatorAlert = {
+  id: string;
+  target_user_id: string | null;
+  alert_type: string;
+  dedupe_key: string;
+  severity: string;
+  metadata: unknown;
+  read_at: Date | null;
+  dismissed_at: Date | null;
+  created_at: Date;
+};
 
 export type CreatorAlertMetadata = {
   title: string;
@@ -109,44 +119,6 @@ const MAX_PAGES = 50;
 
 // ─── Schema self-heal (idempotent) ───────────────────────────────────
 
-let alertsSchemaEnsured = false;
-
-async function ensureCreatorAlertsSchema(): Promise<void> {
-  if (alertsSchemaEnsured) return;
-  await adminDb.$executeRawUnsafe(`
-    CREATE TABLE IF NOT EXISTS "creator_alerts" (
-      "id"             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      "target_user_id" TEXT,
-      "alert_type"     TEXT NOT NULL,
-      "dedupe_key"     TEXT NOT NULL,
-      "severity"       TEXT NOT NULL DEFAULT 'info',
-      "metadata"       JSONB,
-      "read_at"        TIMESTAMPTZ(6),
-      "read_by"        UUID,
-      "dismissed_at"   TIMESTAMPTZ(6),
-      "dismissed_by"   UUID,
-      "created_at"     TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
-      "updated_at"     TIMESTAMPTZ(6) NOT NULL DEFAULT now()
-    )
-  `);
-  await adminDb.$executeRawUnsafe(
-    `CREATE UNIQUE INDEX IF NOT EXISTS "creator_alerts_dedupe_key_key" ON "creator_alerts" ("dedupe_key")`,
-  );
-  await adminDb.$executeRawUnsafe(
-    `CREATE INDEX IF NOT EXISTS "creator_alerts_active_idx" ON "creator_alerts" ("dismissed_at", "severity", "created_at" DESC)`,
-  );
-  await adminDb.$executeRawUnsafe(
-    `CREATE INDEX IF NOT EXISTS "creator_alerts_target_user_idx" ON "creator_alerts" ("target_user_id")`,
-  );
-  alertsSchemaEnsured = true;
-}
-
-function isMissingTableError(err: unknown): boolean {
-  if (typeof err !== "object" || err === null) return false;
-  const code = (err as { code?: unknown }).code;
-  return code === "P2021" || code === "42P01";
-}
-
 // ─── Roster walk (shared cached roster) ──────────────────────────────
 
 /**
@@ -194,11 +166,9 @@ async function deriveBigFtdAlerts(): Promise<DerivedAlertCandidate[]> {
   const alerts: DerivedAlertCandidate[] = [];
   try {
     const excluded = await getExcludedUserIds();
-    const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
-    const db = await getDb();
     // Anchor BOTH engines to one instant for deterministic parity.
     const since = new Date(Date.now() - BIG_FTD_LOOKBACK_HOURS * 3_600_000);
-    const rows = await resolveAdminRead<
+    const rows = await queryMainRows<
       {
         ledger_tx_id: string;
         user_id: string;
@@ -206,18 +176,8 @@ async function deriveBigFtdAlerts(): Promise<DerivedAlertCandidate[]> {
         created_at: Date | string;
         creator_user_id: string | null;
       }[]
-    >("creator_hub_big_ftd_alerts", {
-      ch: () => deriveBigFtdAlertsFromClickHouse(excluded, since, BIG_FTD_MIN_USD),
-      pg: () =>
-        db.$queryRaw<
-          {
-            ledger_tx_id: string;
-            user_id: string;
-            amount: string;
-            created_at: Date | string;
-            creator_user_id: string | null;
-          }[]
-        >`
+    >(
+      `
       WITH first_deposits AS (
         SELECT DISTINCT ON (lt.user_id)
           lt.id AS ledger_tx_id,
@@ -229,7 +189,7 @@ async function deriveBigFtdAlerts(): Promise<DerivedAlertCandidate[]> {
         WHERE lt.type::text = 'deposit'
           AND lt.status = 'completed'
           AND u.role NOT IN ('admin', 'support', 'creator')
-          ${Prisma.raw(blacklistIdNotIn)}
+          AND NOT (u.id = ANY($3::text[]))
         ORDER BY lt.user_id, lt.created_at ASC
       )
       SELECT
@@ -247,10 +207,13 @@ async function deriveBigFtdAlerts(): Promise<DerivedAlertCandidate[]> {
            LIMIT 1
         ) AS creator_user_id
       FROM first_deposits fd
-      WHERE fd.created_at >= ${since}
-        AND fd.amount >= ${BIG_FTD_MIN_USD}
-    `,
-    });
+      WHERE fd.created_at >= $1
+        AND fd.amount >= $2
+      `,
+      since,
+      BIG_FTD_MIN_USD,
+      excluded,
+    );
 
     for (const row of rows) {
       if (!row.creator_user_id) continue;
@@ -490,54 +453,67 @@ async function syncCandidates(
   if (fingerprint === lastSyncedFingerprint) return false;
 
   try {
-    await ensureCreatorAlertsSchema();
-    const activeKeys = new Set(candidates.map((c) => c.dedupeKey));
+    const activeKeys = candidates.map((c) => c.dedupeKey);
+    const payload = candidates.map((c) => ({
+      target_user_id: c.targetUserId,
+      alert_type: c.alertType,
+      dedupe_key: c.dedupeKey,
+      severity: c.severity,
+      metadata: c.metadata,
+    }));
 
-    await Promise.all(
-      candidates.map((c) =>
-        adminDb.creator_alerts.upsert({
-          where: { dedupe_key: c.dedupeKey },
-          create: {
-            target_user_id: c.targetUserId,
-            alert_type: c.alertType,
-            dedupe_key: c.dedupeKey,
-            severity: c.severity,
-            metadata: c.metadata as AdminPrisma.InputJsonValue,
-          },
-          update: {
-            target_user_id: c.targetUserId,
-            alert_type: c.alertType,
-            severity: c.severity,
-            metadata: c.metadata as AdminPrisma.InputJsonValue,
-          },
-        }),
-      ),
-    );
+    await adminDrizzle.transaction(async (tx) => {
+      if (payload.length > 0) {
+        await queryRows<Record<string, never>[]>(
+          tx,
+          `
+            INSERT INTO creator_alerts (
+              target_user_id,
+              alert_type,
+              dedupe_key,
+              severity,
+              metadata
+            )
+            SELECT
+              target_user_id,
+              alert_type,
+              dedupe_key,
+              severity,
+              metadata
+              FROM jsonb_to_recordset($1::jsonb) AS candidate(
+                target_user_id text,
+                alert_type text,
+                dedupe_key text,
+                severity text,
+                metadata jsonb
+              )
+            ON CONFLICT (dedupe_key) DO UPDATE
+              SET target_user_id = EXCLUDED.target_user_id,
+                  alert_type = EXCLUDED.alert_type,
+                  severity = EXCLUDED.severity,
+                  metadata = EXCLUDED.metadata
+          `,
+          JSON.stringify(payload),
+        );
+      }
 
-    // Auto-dismiss stale alerts whose condition cleared (not user-dismissed).
-    const stale = await adminDb.creator_alerts.findMany({
-      where: {
-        dismissed_at: null,
-        dedupe_key: { notIn: [...activeKeys] },
-      },
-      select: { id: true },
+      // Auto-dismiss stale alerts whose condition cleared (not user-dismissed).
+      await queryRows<Record<string, never>[]>(
+        tx,
+        `
+          UPDATE creator_alerts
+             SET dismissed_at = now()
+           WHERE dismissed_at IS NULL
+             AND NOT (dedupe_key = ANY($1::text[]))
+        `,
+        activeKeys,
+      );
     });
-    if (stale.length > 0) {
-      await adminDb.creator_alerts.updateMany({
-        where: { id: { in: stale.map((s) => s.id) } },
-        data: { dismissed_at: new Date() },
-      });
-    }
     // Record only on a fully-successful pass so any failure path retries the
     // write next render instead of being skipped by the fingerprint gate.
     lastSyncedFingerprint = fingerprint;
     return false;
   } catch (err) {
-    if (isMissingTableError(err)) {
-      alertsSchemaEnsured = false;
-      await ensureCreatorAlertsSchema();
-      return true;
-    }
     console.error("[creator-alerts] sync failed:", err);
     return true;
   }
@@ -572,11 +548,16 @@ async function hydrateUsernames(
   const map = new Map<string, string | null>();
   if (userIds.length === 0) return map;
   try {
-    const db = await getDb();
-    const users = await db.user.findMany({
-      where: { id: { in: userIds } },
-      select: { id: true, username: true },
-    });
+    const users = await queryMainRows<
+      { id: string; username: string | null }[]
+    >(
+      `
+        SELECT id, username
+          FROM "user"
+         WHERE id = ANY($1::text[])
+      `,
+      userIds,
+    );
     for (const u of users) map.set(u.id, u.username ?? null);
   } catch (err) {
     console.error("[creator-alerts] username hydration failed:", err);
@@ -594,22 +575,30 @@ export async function getCreatorAlerts(): Promise<CreatorAlertsResult> {
   const syncError = await syncCandidates(candidates);
   const activeKeys = new Set(candidates.map((c) => c.dedupeKey));
 
-  let rows: Awaited<ReturnType<typeof adminDb.creator_alerts.findMany>> = [];
+  let rows: PersistedCreatorAlert[] = [];
   try {
-    await ensureCreatorAlertsSchema();
-    rows = await adminDb.creator_alerts.findMany({
-      where: {
-        dismissed_at: null,
-        dedupe_key: { in: [...activeKeys] },
-      },
-      orderBy: [{ severity: "asc" }, { created_at: "desc" }],
-    });
+    rows = await queryRows<PersistedCreatorAlert[]>(
+      adminDrizzle,
+      `
+        SELECT
+          id::text,
+          target_user_id,
+          alert_type,
+          dedupe_key,
+          severity,
+          metadata,
+          read_at,
+          dismissed_at,
+          created_at
+          FROM creator_alerts
+         WHERE dismissed_at IS NULL
+           AND dedupe_key = ANY($1::text[])
+         ORDER BY severity ASC, created_at DESC
+      `,
+      [...activeKeys],
+    );
   } catch (err) {
-    if (isMissingTableError(err)) {
-      alertsSchemaEnsured = false;
-    } else {
-      console.error("[creator-alerts] list read failed:", err);
-    }
+    console.error("[creator-alerts] list read failed:", err);
   }
 
   const candidateByKey = new Map(

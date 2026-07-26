@@ -50,7 +50,7 @@
  *
  *   • Business errors (invalid state, ownership mismatch, validation):
  *     surface a verbatim user-readable message. The toast will show it.
- *   • Unexpected crashes (DB unreachable, Prisma P-code, fetch fail):
+ *   • Unexpected crashes (DB unreachable, database error, fetch fail):
  *     surface a generic "Something went wrong" message — the real
  *     error goes to `logError` so prod doesn't echo internals.
  *

@@ -1,32 +1,30 @@
+import { queryMainRows, queryRows } from "@/lib/drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb, getDevDb, getProdDb } from "@/lib/db";
+import { drizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
-import { Prisma } from "@/generated/prisma/client";
 import {
   ledger_transaction_type,
   ledger_transaction_status,
-} from "@/generated/prisma/enums";
+} from "@/lib/db-schema/main/schema";
 import type { UserTagValue } from "@/lib/queries/user-tags";
 import {
   fetchUpgraderTargetByLedgerTxIds,
   resolveUpgraderTargetFromBatch,
 } from "./upgrader-target-batch";
-import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
   excludeStaffAndBlacklisted,
-  excludeStaffAndBlacklistedSqlFromIds,
 } from "./_blacklist";
 
-// Allowlists derived from the generated Prisma enums — used to validate
+// Allowlists derived from the generated Drizzle enums — used to validate
 // user-supplied filter values before they reach the query (instead of an
 // unchecked `as` cast). Object.values keeps them in sync with the schema
 // automatically.
-const LEDGER_TX_TYPES = new Set<string>(Object.values(ledger_transaction_type));
+const LEDGER_TX_TYPES = new Set<string>(ledger_transaction_type.enumValues);
 const LEDGER_TX_STATUSES = new Set<string>(
-  Object.values(ledger_transaction_status),
+  ledger_transaction_status.enumValues,
 );
 
 export type TransactionListItem = {
@@ -157,7 +155,7 @@ export type TransactionListItem = {
  * The public entry point is the `unstable_cache`-wrapped
  * {@link getDepositTransactions} below. This `compute*` does the actual
  * work and takes the resolved DB env as its first argument so it can
- * pick the right Prisma client WITHOUT calling `getDb()` (which reads
+ * pick the right Drizzle client without reading
  * the request cookie via `cookies()` — illegal inside `unstable_cache`).
  * Resolving the env in the request scope and threading it through as a
  * cache-key dimension keeps the dev-DB toggle honest: a dev-toggled
@@ -188,15 +186,21 @@ async function computeDepositTransactions(
     status,
     minAmount,
   } = params;
-  const db = env === "dev" ? getDevDb() : getProdDb();
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
   const safePage = Math.max(1, Math.floor(page));
   const offset = (safePage - 1) * safePerPage;
   const blacklistIds = blacklistKey ? blacklistKey.split(",") : [];
-  const userScopeFilter = `AND t.${excludeStaffAndBlacklistedSqlFromIds(blacklistIds)}`;
+  const userScopeFilter = `
+    AND t.user_id IN (
+      SELECT id
+        FROM "user"
+       WHERE role NOT IN ('admin', 'support')
+         AND NOT (id = ANY($1::text[]))
+    )
+  `;
 
   // Bind user-provided values via positional parameters to avoid SQL injection.
-  const queryParams: unknown[] = [];
+  const queryParams: unknown[] = [blacklistIds];
   let searchFilter = "";
   // Username search needs the "user" join in the COUNT query too; a UUID
   // search (or no search) keeps COUNT as a bare index scan over deposits.
@@ -289,8 +293,8 @@ async function computeDepositTransactions(
     ) b ON true
     ${baseWhere}
     ORDER BY t.created_at DESC
-    LIMIT ${safePerPage}
-    OFFSET ${offset}
+    LIMIT $${queryParams.length + 1}
+    OFFSET $${queryParams.length + 2}
   `;
 
   type Raw = {
@@ -310,9 +314,16 @@ async function computeDepositTransactions(
     bonus_balance_after: string | null;
   };
 
+  const drizzleDb = drizzleForEnv(env);
   const [countResult, rows] = await Promise.all([
-    db.$queryRawUnsafe<{ total: string }[]>(countSql, ...queryParams),
-    db.$queryRawUnsafe<Raw[]>(dataSql, ...queryParams),
+    queryRows<{ total: string }[]>(drizzleDb, countSql, ...queryParams),
+    queryRows<Raw[]>(
+      drizzleDb,
+      dataSql,
+      ...queryParams,
+      safePerPage,
+      offset,
+    ),
   ]);
 
   const total = Number(countResult[0]?.total ?? "0");
@@ -402,7 +413,7 @@ async function computeDepositTransactions(
  *
  * `env` is the FIRST key dimension so a dev-DB-toggled admin's cache
  * entries never collide with the prod ones — behaviour is identical to
- * the uncached `getDb()` path, just memoized.
+ * the uncached request-scoped path, just memoized.
  */
 const cachedDepositTransactions = unstable_cache(
   computeDepositTransactions,
@@ -471,7 +482,7 @@ type GetTransactionsParams = {
 
 /**
  * Does the actual list work. Takes the resolved DB env + user-scope
- * filter as its leading args so it NEVER calls `getDb()` /
+ * filter as its leading args so it never resolves request state /
  * `excludeStaffAndBlacklisted()` (both request-scoped: they read the
  * cookie / blacklist in the request) inside `unstable_cache`. Resolving
  * those in the request scope and threading them through keeps the dev-DB
@@ -496,89 +507,112 @@ async function computeTransactions(
   } = params;
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
   const safePage = Math.max(1, Math.floor(page));
-  const db = env === "dev" ? getDevDb() : getProdDb();
-
-  const where: Prisma.ledger_transactionsWhereInput = {
-    // FAKE-BALANCE: hide official_stream adjustments from the transactions
-    // list — owner-designated fake balance is never surfaced in any feed.
-    // Placed in AND so it combines safely with the search `OR` below and
-    // every other filter, and propagates to the pack_multiplier
-    // `filterWhere` (which spreads `...where`).
-    AND: [
-      { NOT: officialStreamAdjustmentPrismaWhere() },
-      { user: userScope },
-    ],
-  };
+  const rawDb = drizzleForEnv(env);
+  const excludedIds =
+    "id" in userScope && userScope.id && "notIn" in userScope.id
+      ? [...userScope.id.notIn]
+      : [];
+  const binds: unknown[] = [excludedIds];
+  const filters = [
+    `u.role::text NOT IN ('admin', 'support')`,
+    `NOT (u.id = ANY($1::text[]))`,
+    `NOT (
+      lt.type::text = 'admin_balance_adjustment'
+      AND lt.metadata->>'adjustment_category' = 'official_stream'
+    )`,
+  ];
 
   if (search) {
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(search);
-    where.OR = [
-      ...(isUuid ? [{ id: search }, { user_id: search }, { metadata: { path: ["battle_id"], equals: search } }] : []),
-      { user: { username: { contains: search, mode: "insensitive" as const } } },
-    ];
+    binds.push(search, `%${search.toLowerCase()}%`);
+    const exact = `$${binds.length - 1}`;
+    const fuzzy = `$${binds.length}`;
+    filters.push(
+      `(lt.id::text = ${exact} OR lt.user_id = ${exact}
+        OR lt.metadata->>'battle_id' = ${exact}
+        OR LOWER(u.username) LIKE ${fuzzy})`,
+    );
   }
 
-  if (types && types.length > 0) {
-    // Drop any value not in the generated enum; only filter if some
-    // valid types remain (an all-invalid list shouldn't match nothing).
-    const validTypes = types.filter(
-      (t): t is ledger_transaction_type => LEDGER_TX_TYPES.has(t),
-    );
-    if (validTypes.length > 0) where.type = { in: validTypes };
-  } else if (type && type !== "all" && LEDGER_TX_TYPES.has(type)) {
-    where.type = type as ledger_transaction_type;
+  const validTypes =
+    types && types.length > 0
+      ? types.filter((candidate) => LEDGER_TX_TYPES.has(candidate))
+      : type && type !== "all" && LEDGER_TX_TYPES.has(type)
+        ? [type]
+        : [];
+  if (validTypes.length > 0) {
+    binds.push(validTypes);
+    filters.push(`lt.type::text = ANY($${binds.length}::text[])`);
   }
 
   if (status && status !== "all" && LEDGER_TX_STATUSES.has(status)) {
-    where.status = status as ledger_transaction_status;
+    binds.push(status);
+    filters.push(`lt.status::text = $${binds.length}`);
   }
 
-  if (minAmount !== undefined || maxAmount !== undefined) {
-    where.amount = {
-      ...(minAmount !== undefined ? { gte: minAmount } : {}),
-      ...(maxAmount !== undefined ? { lte: maxAmount } : {}),
-    };
+  if (minAmount !== undefined && Number.isFinite(minAmount)) {
+    binds.push(minAmount);
+    filters.push(`lt.amount::numeric >= $${binds.length}`);
   }
+  if (maxAmount !== undefined && Number.isFinite(maxAmount)) {
+    binds.push(maxAmount);
+    filters.push(`lt.amount::numeric <= $${binds.length}`);
+  }
+  const whereSql = filters.join("\n AND ");
 
-  // Narrow the ledger_transactions select for the list view: skip the
-  // wide JSON `metadata` column plus blockchain/fireblocks/source/dest
-  // columns that the table cells don't render. The page only renders the
-  // fields below; everything else is detail-page concerns.
-  const SELECT = {
-    id: true,
-    user_id: true,
-    type: true,
-    balance_before: true,
-    balance_after: true,
-    status: true,
-    description: true,
-    created_at: true,
-    crypto_asset: true,
-    crypto_amount: true,
-    user: { select: { username: true, image: true } },
+  type TransactionRecord = {
+    id: string;
+    user_id: string;
+    type: string;
+    balance_before: string;
+    balance_after: string;
+    status: string;
+    description: string;
+    created_at: Date;
+    crypto_asset: string | null;
+    crypto_amount: string | null;
+    user: { username: string | null; image: string | null } | null;
     game_sessions_ledger_transactions_game_session_idTogame_sessions: {
-      select: {
-        id: true,
-        bet_amount: true,
-        provably_fair_results: {
-          // result_metadata carries the per-result `borrow_percentage`
-          // for solo pack opens; for battle rows it's stored on the
-          // battle (separate join below). battle_id distinguishes the
-          // two so we don't accidentally double-attribute.
-          select: {
-            battle_id: true,
-            result_metadata: true,
-            user_inventory: { select: { value_at_obtained: true } },
-          },
-        },
-      },
-    },
-  } as const;
-
-  let transactions: Prisma.ledger_transactionsGetPayload<{
-    select: typeof SELECT;
-  }>[];
+      id: string;
+      bet_amount: string;
+      provably_fair_results: {
+        battle_id: string | null;
+        result_metadata: unknown;
+        user_inventory: { value_at_obtained: string } | null;
+      }[];
+    } | null;
+  };
+  let transactions: TransactionRecord[];
   let total: number;
+  const selectSql = `
+    SELECT lt.id, lt.user_id, lt.type::text AS type,
+           lt.balance_before::text, lt.balance_after::text,
+           lt.status::text AS status, lt.description, lt.created_at,
+           lt.crypto_asset, lt.crypto_amount::text,
+           jsonb_build_object('username', u.username, 'image', u.image) AS "user",
+           CASE WHEN gs.id IS NULL THEN NULL ELSE jsonb_build_object(
+             'id', gs.id,
+             'bet_amount', gs.bet_amount::text,
+             'provably_fair_results', COALESCE(pf.rows, '[]'::jsonb)
+           ) END AS game_sessions_ledger_transactions_game_session_idTogame_sessions
+      FROM ledger_transactions lt
+      JOIN "user" u ON u.id = lt.user_id
+      LEFT JOIN game_sessions gs ON gs.id = lt.game_session_id
+      LEFT JOIN LATERAL (
+        SELECT jsonb_agg(
+          jsonb_build_object(
+            'battle_id', pfr.battle_id,
+            'result_metadata', pfr.result_metadata,
+            'user_inventory', CASE WHEN ui.id IS NULL THEN NULL ELSE
+              jsonb_build_object('value_at_obtained', ui.value_at_obtained::text)
+            END
+          )
+          ORDER BY pfr.cursor ASC
+        ) AS rows
+          FROM provably_fair_results pfr
+          LEFT JOIN user_inventory ui ON ui.id = pfr.inventory_item_id
+         WHERE pfr.game_session_id = gs.id
+      ) pf ON TRUE
+  `;
 
   if (sortBy === "pack_multiplier") {
     // SQL CTE pre-cap by computed multiplier (payout / bet). Same
@@ -601,7 +635,9 @@ async function computeTransactions(
     // honestly (potentially fewer than perPage rows on a narrow
     // search, which is fine for the "find the biggest hit matching X"
     // use case).
-    const topRows = await db.$queryRaw<{ id: string }[]>`
+    const topRows = await queryRows<{ id: string }[]>(
+      rawDb,
+      `
       WITH pack_multipliers AS (
         SELECT
           lt.id,
@@ -614,60 +650,85 @@ async function computeTransactions(
         WHERE lt.type::text = 'pack_opening'
           AND lt.status = 'completed'
           AND lt.amount::numeric > 0
-          AND lt.created_at >= ${Prisma.raw(
-            `NOW() - INTERVAL '${PACK_MULTIPLIER_LOOKBACK_DAYS} days'`,
-          )}
+          AND lt.created_at >= NOW() - make_interval(days => $1::int)
         GROUP BY lt.id, lt.amount
       )
       SELECT id::text AS id
       FROM pack_multipliers
       WHERE payout > 0
       ORDER BY (payout / bet) DESC NULLS LAST
-      LIMIT ${PACK_MULTIPLIER_CAP}
-    `;
+      LIMIT $2
+      `,
+      PACK_MULTIPLIER_LOOKBACK_DAYS,
+      PACK_MULTIPLIER_CAP,
+    );
     const topIds = topRows.map((r) => r.id);
 
-    // Apply the user's WHERE filters (search / status / minAmount)
-    // ON TOP of the pre-capped ID list — keeps the sort honest if
-    // the admin combines it with other filters.
-    const filterWhere: Prisma.ledger_transactionsWhereInput = {
-      ...where,
-      id: { in: topIds },
-    };
-    const [found, totalCount] = await Promise.all([
-      topIds.length === 0
-        ? Promise.resolve([])
-        : db.ledger_transactions.findMany({
-            where: filterWhere,
-            select: SELECT,
-          }),
-      db.ledger_transactions.count({ where: filterWhere }),
-    ]);
-    // Reorder to match the SQL CTE's multiplier order.
-    const byId = new Map(found.map((t) => [t.id, t]));
-    const orderedFull = topIds
-      .map((id) => byId.get(id))
-      .filter((t): t is NonNullable<typeof t> => t != null);
-    const sliceStart = (safePage - 1) * safePerPage;
-    transactions = orderedFull.slice(sliceStart, sliceStart + safePerPage);
-    total = totalCount;
+    if (topIds.length === 0) {
+      transactions = [];
+      total = 0;
+    } else {
+      const idsIndex = binds.length + 1;
+      const limitIndex = binds.length + 2;
+      const offsetIndex = binds.length + 3;
+      const scopedWhere = `${whereSql}
+        AND lt.id = ANY($${idsIndex}::uuid[])`;
+      const [rows, counts] = await Promise.all([
+        queryRows<TransactionRecord[]>(
+          rawDb,
+          `${selectSql}
+           WHERE ${scopedWhere}
+           ORDER BY array_position($${idsIndex}::uuid[], lt.id)
+           LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
+          ...binds,
+          topIds,
+          safePerPage,
+          (safePage - 1) * safePerPage,
+        ),
+        queryRows<{ total: string }[]>(
+          rawDb,
+          `SELECT COUNT(*)::text AS total
+             FROM ledger_transactions lt
+             JOIN "user" u ON u.id = lt.user_id
+            WHERE ${scopedWhere}`,
+          ...binds,
+          topIds,
+        ),
+      ]);
+      transactions = rows;
+      total = Number(counts[0]?.total ?? 0);
+    }
   } else {
-    [transactions, total] = await Promise.all([
-      db.ledger_transactions.findMany({
-        where,
-        orderBy: { created_at: "desc" },
-        skip: (safePage - 1) * safePerPage,
-        take: safePerPage,
-        select: SELECT,
-      }),
-      db.ledger_transactions.count({ where }),
+    const limitIndex = binds.length + 1;
+    const offsetIndex = binds.length + 2;
+    const [rows, counts] = await Promise.all([
+      queryRows<TransactionRecord[]>(
+        rawDb,
+        `${selectSql}
+         WHERE ${whereSql}
+         ORDER BY lt.created_at DESC
+         LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
+        ...binds,
+        safePerPage,
+        (safePage - 1) * safePerPage,
+      ),
+      queryRows<{ total: string }[]>(
+        rawDb,
+        `SELECT COUNT(*)::text AS total
+           FROM ledger_transactions lt
+           JOIN "user" u ON u.id = lt.user_id
+          WHERE ${whereSql}`,
+        ...binds,
+      ),
     ]);
+    transactions = rows;
+    total = Number(counts[0]?.total ?? 0);
   }
 
   // Battle borrow lookup — for any battle_bet / battle_sponsorship row
   // that has a linked PF result with a battle_id, we need the
   // battles.borrow_percentage to render the badge. One round-trip
-  // batched across the visible page; cheaper than letting Prisma fan
+  // batched across the visible page; cheaper than fanning out
   // out a per-row include.
   //
   // CRITICAL: this lookup is AUXILIARY — the page's whole job is to
@@ -689,10 +750,14 @@ async function computeTransactions(
   const battleBorrowMap = new Map<string, number>();
   if (battleIds.size > 0) {
     try {
-      const battles = await db.battles.findMany({
-        where: { id: { in: [...battleIds] } },
-        select: { id: true, borrow_percentage: true },
-      });
+      const battles = await queryRows<
+        { id: string; borrow_percentage: number | null }[]
+      >(
+        rawDb,
+        `SELECT id, borrow_percentage
+           FROM battles WHERE id = ANY($1::uuid[])`,
+        [...battleIds],
+      );
       for (const b of battles) {
         battleBorrowMap.set(b.id, b.borrow_percentage ?? 0);
       }
@@ -723,10 +788,14 @@ async function computeTransactions(
   const voucherValueBySession = new Map<string, number>();
   if (sessionIds.size > 0) {
     try {
-      const vouchers = await db.vouchers.findMany({
-        where: { origin_id: { in: [...sessionIds] } },
-        select: { origin_id: true, value: true },
-      });
+      const vouchers = await queryRows<
+        { origin_id: string | null; value: string }[]
+      >(
+        rawDb,
+        `SELECT origin_id, value::text
+           FROM vouchers WHERE origin_id = ANY($1::uuid[])`,
+        [...sessionIds],
+      );
       for (const v of vouchers) {
         if (!v.origin_id) continue;
         voucherValueBySession.set(
@@ -746,7 +815,6 @@ async function computeTransactions(
     .filter((t) => t.type === "upgrader_bet")
     .map((t) => t.id);
   const upgraderTargetByLedgerId = await fetchUpgraderTargetByLedgerTxIds(
-    db,
     upgraderBetLedgerIds,
   );
 
@@ -918,13 +986,45 @@ export async function getTransactions(
  * {@link getTransactionDetail} below; this `compute*` does the real work.
  */
 async function computeTransactionDetail(id: string) {
-  const db = await getDb();
-  const tx = await db.ledger_transactions.findUnique({
-    where: { id },
-    include: {
-      user: { select: { username: true, email: true } },
-    },
-  });
+  const [tx] = await queryMainRows<
+    {
+      id: string;
+      user_id: string;
+      username: string | null;
+      email: string | null;
+      type: string;
+      balance_before: string;
+      balance_after: string;
+      game_session_id: string | null;
+      crypto_asset: string | null;
+      crypto_amount: string | null;
+      exchange_rate: string | null;
+      blockchain_tx_hash: string | null;
+      source_address: string | null;
+      destination_address: string | null;
+      status: string;
+      failure_reason: string | null;
+      description: string;
+      metadata: unknown;
+      created_at: Date;
+      updated_at: Date;
+    }[]
+  >(
+    `
+      SELECT lt.id, lt.user_id, u.username, u.email, lt.type::text AS type,
+             lt.balance_before::text, lt.balance_after::text,
+             lt.game_session_id, lt.crypto_asset,
+             lt.crypto_amount::text, lt.exchange_rate::text,
+             lt.blockchain_tx_hash, lt.source_address, lt.destination_address,
+             lt.status::text AS status, lt.failure_reason, lt.description,
+             lt.metadata, lt.created_at, lt.updated_at
+        FROM ledger_transactions lt
+        LEFT JOIN "user" u ON u.id = lt.user_id
+       WHERE lt.id = $1::uuid
+       LIMIT 1
+    `,
+    id,
+  );
 
   if (!tx) return null;
 
@@ -1007,16 +1107,20 @@ async function computeTransactionDetail(id: string) {
   // null or point at a stale row. Prefer the bet_ledger_tx_id match.
   let resolvedSessionId = tx.game_session_id;
   if (tx.type === "upgrader_bet") {
-    const canonical = await db.game_sessions.findFirst({
-      where: { bet_ledger_tx_id: tx.id, game_type: "upgrader" },
-      select: { id: true },
-    });
+    const [canonical] = await queryMainRows<{ id: string }[]>(
+      `SELECT id FROM game_sessions
+        WHERE bet_ledger_tx_id = $1::uuid AND game_type::text = 'upgrader'
+        ORDER BY created_at DESC LIMIT 1`,
+      tx.id,
+    );
     if (canonical) resolvedSessionId = canonical.id;
     else if (!resolvedSessionId) {
-      const fallback = await db.game_sessions.findFirst({
-        where: { bet_ledger_tx_id: tx.id },
-        select: { id: true },
-      });
+      const [fallback] = await queryMainRows<{ id: string }[]>(
+        `SELECT id FROM game_sessions
+          WHERE bet_ledger_tx_id = $1::uuid
+          ORDER BY created_at DESC LIMIT 1`,
+        tx.id,
+      );
       resolvedSessionId = fallback?.id ?? null;
     }
   }
@@ -1026,37 +1130,57 @@ async function computeTransactionDetail(id: string) {
     // The PF table is wide (client_seed, server_seed, server_seed_hash,
     // result_hash, ticket, result_metadata, etc.) but on this page we only
     // join through it to grab the linked inventory item.
-    const session = await db.game_sessions.findUnique({
-      where: { id: resolvedSessionId },
-      select: {
-        game_type: true,
-        game_id: true,
-        bet_amount: true,
-        provably_fair_results: {
-          // Stable per-row ordering — `cursor` is the per-session
-          // index of each PF roll (0 = first card / first spin), so
-          // pack opens and upgrader sessions render in play order.
-          orderBy: { cursor: "asc" },
-          select: {
-            // PF proof material — feeds the new "Provably Fair"
-            // section on the transaction detail page (mirrors the
-            // modal on /users/[id] gaming tab).
-            id: true,
-            client_seed: true,
-            server_seed_hash: true,
-            server_seed: true,
-            nonce: true,
-            cursor: true,
-            ticket: true,
-            result_hash: true,
-            result_metadata: true,
-            user_inventory: {
-              select: { card_id: true, value_at_obtained: true },
-            },
-          },
-        },
-      },
-    });
+    const [sessionRows, pfRows] = await Promise.all([
+      queryMainRows<
+        { game_type: string; game_id: string | null; bet_amount: string }[]
+      >(
+        `SELECT game_type::text AS game_type, game_id, bet_amount::text
+           FROM game_sessions WHERE id = $1::uuid LIMIT 1`,
+        resolvedSessionId,
+      ),
+      queryMainRows<
+        {
+          id: string;
+          client_seed: string;
+          server_seed_hash: string;
+          server_seed: string | null;
+          nonce: number;
+          cursor: number;
+          ticket: number;
+          result_hash: string;
+          result_metadata: unknown;
+          battle_id: string | null;
+          card_id: string | null;
+          value_at_obtained: string | null;
+        }[]
+      >(
+        `SELECT pf.id, pf.client_seed, pf.server_seed_hash, pf.server_seed,
+                pf.nonce, pf.cursor, pf.ticket, pf.result_hash,
+                pf.result_metadata, pf.battle_id, ui.card_id,
+                ui.value_at_obtained::text
+           FROM provably_fair_results pf
+           LEFT JOIN user_inventory ui ON ui.id = pf.inventory_item_id
+          WHERE pf.game_session_id = $1::uuid
+          ORDER BY pf.cursor ASC`,
+        resolvedSessionId,
+      ),
+    ]);
+    const baseSession = sessionRows[0];
+    const session = baseSession
+      ? {
+          ...baseSession,
+          provably_fair_results: pfRows.map((pf) => ({
+            ...pf,
+            user_inventory:
+              pf.card_id && pf.value_at_obtained != null
+                ? {
+                    card_id: pf.card_id,
+                    value_at_obtained: pf.value_at_obtained,
+                  }
+                : null,
+          })),
+        }
+      : null;
 
     if (session) {
       // Fetch pack info based on game type, card details, and related
@@ -1069,12 +1193,18 @@ async function computeTransactionDetail(id: string) {
 
       const packsPromise =
         session.game_type === "pack"
-          ? db.packs
-              .findUnique({
-                where: { id: session.game_id },
-                select: { name: true, image_url: true, price: true, cards_per_open: true },
-              })
-              .then((pack) => {
+          ? queryMainRows<
+              {
+                name: string;
+                image_url: string | null;
+                price: string;
+                cards_per_open: number;
+              }[]
+            >(
+              `SELECT name, image_url, price::text, cards_per_open
+                 FROM packs WHERE id = $1::uuid LIMIT 1`,
+              session.game_id,
+            ).then(([pack]) => {
                 if (!pack) return [];
                 const cardsCount = session.provably_fair_results.length;
                 const packsOpened =
@@ -1089,17 +1219,18 @@ async function computeTransactionDetail(id: string) {
                 ];
               })
           : session.game_type === "battle"
-          ? db.battles
-              .findUnique({
-                where: { id: session.game_id },
-                select: { pack_ids: true, bet_amount: true },
-              })
-              .then(async (battle) => {
+          ? queryMainRows<{ pack_ids: string[] }[]>(
+              `SELECT pack_ids FROM battles WHERE id = $1::uuid LIMIT 1`,
+              session.game_id,
+            ).then(async ([battle]) => {
                 if (!battle || battle.pack_ids.length === 0) return [];
-                const battlePacks = await db.packs.findMany({
-                  where: { id: { in: battle.pack_ids } },
-                  select: { name: true, image_url: true, price: true },
-                });
+                const battlePacks = await queryMainRows<
+                  { name: string; image_url: string | null; price: string }[]
+                >(
+                  `SELECT name, image_url, price::text
+                     FROM packs WHERE id = ANY($1::uuid[])`,
+                  battle.pack_ids,
+                );
                 return battlePacks.map((p) => ({
                   name: p.name,
                   imageUrl: p.image_url,
@@ -1109,20 +1240,31 @@ async function computeTransactionDetail(id: string) {
               })
           : Promise.resolve([] as { name: string; imageUrl: string | null; priceUsd: number; quantity: number }[]);
 
-      const relatedTxsPromise = db.ledger_transactions.findMany({
-        where: { game_session_id: resolvedSessionId },
-        orderBy: { created_at: "asc" },
-        select: { id: true, type: true, amount: true, balance_before: true, balance_after: true, description: true },
-      });
+      const relatedTxsPromise = queryMainRows<
+        {
+          id: string;
+          type: string;
+          balance_before: string;
+          balance_after: string;
+          description: string;
+        }[]
+      >(
+        `SELECT id, type::text AS type, balance_before::text,
+                balance_after::text, description
+           FROM ledger_transactions
+          WHERE game_session_id = $1::uuid
+          ORDER BY created_at ASC`,
+        resolvedSessionId,
+      );
 
       // Voucher excess this session spun off — parked as a `vouchers`
       // row whose origin_id is the game_session id. Part of what the
       // user won (invariant inventory = cards + vouchers), so it's
       // surfaced alongside the cards on the detail page.
-      const vouchersPromise = db.vouchers.findMany({
-        where: { origin_id: resolvedSessionId },
-        select: { value: true },
-      });
+      const vouchersPromise = queryMainRows<{ value: string }[]>(
+        `SELECT value::text FROM vouchers WHERE origin_id = $1::uuid`,
+        resolvedSessionId,
+      );
 
       // Upgrader-only data path. Pack and battle sessions get
       // `provably_fair_results.user_inventory` populated by the
@@ -1146,38 +1288,33 @@ async function computeTransactionDetail(id: string) {
       const isUpgrader =
         session.game_type === "upgrader" && !!session.game_id;
       const upgraderWonPromise = isUpgrader
-        ? db.$queryRaw<{ won_amount: string }[]>`
-            SELECT won_amount::text AS won_amount
-            FROM upgrader_games
-            WHERE id = ${session.game_id}::uuid
-          `
+        ? queryMainRows<{ won_amount: string }[]>(
+            `
+              SELECT won_amount::text AS won_amount
+                FROM upgrader_games
+               WHERE id = $1::uuid
+            `,
+            session.game_id,
+          )
         : Promise.resolve([] as { won_amount: string }[]);
       const upgraderInventoryPromise = isUpgrader
-        ? db.user_inventory.findMany({
-            where: {
-              user_id: tx.user_id,
-              source_type: "upgrader",
-              // Backend convention isn't documented, so accept either
-              // the game_sessions.id (consistent with pack/battle) or
-              // the upgrader_games.id (game_sessions.game_id). The
-              // narrow `in` clause makes either lookup an index hit.
-              // tx.game_session_id == game_sessions.id (the row we just
-              // selected) so we read it off tx to avoid a redundant
-              // `select: { id: true }` on the session query.
-              source_id: { in: [resolvedSessionId, session.game_id!] },
-            },
-            select: {
-              id: true,
-              card_id: true,
-              value_at_obtained: true,
-            },
-            orderBy: { obtained_at: "asc" },
-          })
+        ? queryMainRows<
+            { id: string; card_id: string; value_at_obtained: string }[]
+          >(
+            `SELECT id, card_id, value_at_obtained::text
+               FROM user_inventory
+              WHERE user_id = $1
+                AND source_type::text = 'upgrader'
+                AND source_id = ANY($2::uuid[])
+              ORDER BY obtained_at ASC`,
+            tx.user_id,
+            [resolvedSessionId, session.game_id],
+          )
         : Promise.resolve(
             [] as Array<{
               id: string;
               card_id: string;
-              value_at_obtained: Prisma.Decimal;
+              value_at_obtained: string;
             }>,
           );
 
@@ -1211,10 +1348,19 @@ async function computeTransactionDetail(id: string) {
       );
       const cards =
         allCardIds.length > 0
-          ? await db.cards.findMany({
-              where: { id: { in: allCardIds } },
-              select: { id: true, name: true, image_url: true, rarity: true, price: true },
-            })
+          ? await queryMainRows<
+              {
+                id: string;
+                name: string;
+                image_url: string | null;
+                rarity: string | null;
+                price: string;
+              }[]
+            >(
+              `SELECT id, name, image_url, rarity::text, price::text
+                 FROM cards WHERE id = ANY($1::uuid[])`,
+              allCardIds,
+            )
           : ([] as Array<{
               id: string;
               name: string;
@@ -1375,18 +1521,27 @@ async function computeTransactionDetail(id: string) {
   if (tx.game_session_id) {
     // We need pf.battle_id and game_type — issue a focused lookup so
     // we don't have to re-shape the heavy session/PF select above.
-    const linkedSession = await db.game_sessions.findUnique({
-      where: { id: tx.game_session_id },
-      select: {
-        game_type: true,
-        game_id: true,
-        provably_fair_results: { select: { battle_id: true }, take: 1 },
-      },
-    });
+    const [linkedSession] = await queryMainRows<
+      { game_type: string; game_id: string | null; battle_id: string | null }[]
+    >(
+      `SELECT gs.game_type::text AS game_type, gs.game_id,
+              (
+                SELECT pf.battle_id
+                  FROM provably_fair_results pf
+                 WHERE pf.game_session_id = gs.id
+                   AND pf.battle_id IS NOT NULL
+                 ORDER BY pf.cursor ASC
+                 LIMIT 1
+              ) AS battle_id
+         FROM game_sessions gs
+        WHERE gs.id = $1::uuid
+        LIMIT 1`,
+      tx.game_session_id,
+    );
     if (linkedSession?.game_type === "battle" && linkedSession.game_id) {
       battleId = linkedSession.game_id;
-    } else if (linkedSession?.provably_fair_results[0]?.battle_id) {
-      battleId = linkedSession.provably_fair_results[0].battle_id;
+    } else if (linkedSession?.battle_id) {
+      battleId = linkedSession.battle_id;
     }
   }
   if (!battleId && tx.metadata && typeof tx.metadata === "object") {
@@ -1401,10 +1556,10 @@ async function computeTransactionDetail(id: string) {
   let hasPassword = false;
   if (battleId) {
     try {
-      const battle = await db.battles.findUnique({
-        where: { id: battleId },
-        select: { password: true },
-      });
+      const [battle] = await queryMainRows<{ password: string | null }[]>(
+        `SELECT password FROM battles WHERE id = $1::uuid LIMIT 1`,
+        battleId,
+      );
       hasPassword =
         battle?.password != null && battle.password.length > 0;
     } catch (e) {
@@ -1418,8 +1573,8 @@ async function computeTransactionDetail(id: string) {
   return {
     id: tx.id,
     userId: tx.user_id,
-    username: tx.user?.username ?? null,
-    email: tx.user?.email ?? null,
+    username: tx.username,
+    email: tx.email,
     type: tx.type,
     amount,
     balanceBefore,
@@ -1456,10 +1611,8 @@ async function computeTransactionDetail(id: string) {
  * safe (the served numbers do not change). Same prod-only, env-resolved-
  * outside pattern as `cachedUserDetail` in users-detail-cache.ts.
  *
- * Keyed on the tx id. `computeTransactionDetail` calls `getDb()` internally
- * (which resolves the `admin_db_env` cookie); inside the cache callback that
- * cookie read falls back to "prod", so the cached callback always queries
- * the PROD client. To avoid serving prod data to a dev-toggled admin we
+ * Keyed on the tx id. Inside the cache callback the request-scoped
+ * environment falls back to prod. To avoid serving prod data to a dev-toggled admin we
  * cache ONLY on prod (see {@link getTransactionDetail}); a dev-toggled admin
  * bypasses the cache and reads live.
  */

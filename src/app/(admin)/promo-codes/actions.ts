@@ -2,7 +2,14 @@
 
 import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
-import { getDb } from "@/lib/db";
+import { desc, eq, inArray } from "drizzle-orm";
+
+import { getDrizzleDb } from "@/lib/db";
+import {
+  promo_code_redemptions,
+  promo_codes,
+  user,
+} from "@/lib/db-schema/main/schema";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createHash } from "crypto";
@@ -58,7 +65,7 @@ const createPromoCodeSchema = z.object({
 export async function createPromoCode(
   data: z.infer<typeof createPromoCodeSchema>,
 ) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/promo-codes");
   await requireCapability(session, "__can_create_promo_code", "create promo codes");
 
@@ -78,32 +85,39 @@ export async function createPromoCode(
   const normalizedCode = v.code.toUpperCase().trim();
   const codeHash = createHash("sha256").update(normalizedCode + pepper).digest("hex");
 
-  const existing = await db.promo_codes.findFirst({
-    where: { code_hash: codeHash },
-  });
+  const [existing] = await db
+    .select({ id: promo_codes.id })
+    .from(promo_codes)
+    .where(eq(promo_codes.code_hash, codeHash))
+    .limit(1);
   if (existing) throw new Error("A promo code with this value already exists");
 
-  await db.promo_codes.create({
-    data: {
+  try {
+    await db.insert(promo_codes).values({
       id: crypto.randomUUID(),
       code_hash: codeHash,
-      value: v.value,
+      value: String(v.value),
       region: v.region,
       minimum_level: v.minimumLevel,
-      minimum_wager_amount: v.minimumWagerAmount,
+      minimum_wager_amount: String(v.minimumWagerAmount),
       wager_period_days: v.wagerPeriodDays,
       minimum_account_age_days: v.minimumAccountAgeDays,
       maximum_account_age_hours: v.maximumAccountAgeHours,
-      minimum_deposit_amount: v.minimumDepositAmount,
-      minimum_recent_deposit_amount: v.minimumRecentDepositAmount,
+      minimum_deposit_amount: String(v.minimumDepositAmount),
+      minimum_recent_deposit_amount: String(v.minimumRecentDepositAmount),
       recent_deposit_period_minutes: v.recentDepositPeriodMinutes,
       required_affiliate_code: v.requiredAffiliateCode,
       requires_discord: v.requiresDiscord,
       max_uses: v.maxUses,
-      expires_at: v.expiresAt ? new Date(v.expiresAt) : null,
+      expires_at: v.expiresAt ? new Date(v.expiresAt).toISOString() : null,
       metadata: { code: normalizedCode },
-    },
-  });
+    });
+  } catch (error) {
+    if ((error as { code?: string })?.code === "23505") {
+      throw new Error("A promo code with this value already exists");
+    }
+    throw error;
+  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -155,25 +169,32 @@ export async function getPromoCodeClaimDetail(promoCodeId: string): Promise<{
 }
 
 export async function getRedemptions(promoCodeId: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/promo-codes");
   await requireCapability(session, "__can_view_promo_redemptions", "view promo redemptions");
-  const redemptions = await db.promo_code_redemptions.findMany({
-    where: { promo_code_id: promoCodeId },
-    include: {
-      user: { select: { username: true, email: true, image: true } },
-    },
-    orderBy: { redeemed_at: "desc" },
-    take: 100,
-  });
+  const redemptions = await db
+    .select({
+      id: promo_code_redemptions.id,
+      user_id: promo_code_redemptions.user_id,
+      ip_address: promo_code_redemptions.ip_address,
+      redeemed_at: promo_code_redemptions.redeemed_at,
+      username: user.username,
+      email: user.email,
+      image: user.image,
+    })
+    .from(promo_code_redemptions)
+    .leftJoin(user, eq(user.id, promo_code_redemptions.user_id))
+    .where(eq(promo_code_redemptions.promo_code_id, promoCodeId))
+    .orderBy(desc(promo_code_redemptions.redeemed_at))
+    .limit(100);
   return redemptions.map((r) => ({
     id: r.id,
     userId: r.user_id,
-    username: r.user?.username ?? null,
-    email: r.user?.email ?? null,
-    image: r.user?.image ?? null,
+    username: r.username ?? null,
+    email: r.email ?? null,
+    image: r.image ?? null,
     ipAddress: r.ip_address,
-    redeemedAt: r.redeemed_at.toISOString(),
+    redeemedAt: new Date(r.redeemed_at).toISOString(),
   }));
 }
 
@@ -208,19 +229,21 @@ export async function getAllDeletablePromoCodeIds(): Promise<{
 }
 
 export async function deletePromoCode(promoCodeId: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/promo-codes");
   await requireCapability(session, "__can_delete_promo_code", "delete promo codes");
 
   // `deleteMany` is idempotent — returns `{ count: 0 }` instead of
-  // throwing P2025 when the record is already gone. Important for the
+  // throwing when the record is already gone. Important for the
   // list-page UX where a stuck-open AlertDialog could let an admin
   // double-click and trigger a second delete on a row that already
   // disappeared from the table on the first click. The audit row only
   // gets written if at least one record was actually deleted.
-  const result = await db.promo_codes.deleteMany({
-    where: { id: promoCodeId },
-  });
+  const deletedRows = await db
+    .delete(promo_codes)
+    .where(eq(promo_codes.id, promoCodeId))
+    .returning({ id: promo_codes.id });
+  const result = { count: deletedRows.length };
 
   if (result.count > 0) {
     await createAdminAuditEvent({
@@ -265,7 +288,7 @@ const BULK_DELETE_MAX = 20_000;
  * single capped one. Total request still bounded by BULK_DELETE_MAX.
  */
 export async function deletePromoCodesBulk(promoCodeIds: string[]) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/promo-codes");
   await requireCapability(session, "__can_delete_promo_code", "delete promo codes");
 
@@ -280,14 +303,18 @@ export async function deletePromoCodesBulk(promoCodeIds: string[]) {
   // Chunked delete so a cross-page selection larger than one page still
   // deletes completely. Each chunk is its own `id IN (...)` statement;
   // `deleteMany` is idempotent so already-gone ids in a chunk are no-ops.
-  let deleted = 0;
-  for (let i = 0; i < ids.length; i += BULK_DELETE_CHUNK) {
-    const chunk = ids.slice(i, i + BULK_DELETE_CHUNK);
-    const result = await db.promo_codes.deleteMany({
-      where: { id: { in: chunk } },
-    });
-    deleted += result.count;
-  }
+  const deleted = await db.transaction(async (tx) => {
+    let count = 0;
+    for (let i = 0; i < ids.length; i += BULK_DELETE_CHUNK) {
+      const chunk = ids.slice(i, i + BULK_DELETE_CHUNK);
+      const rows = await tx
+        .delete(promo_codes)
+        .where(inArray(promo_codes.id, chunk))
+        .returning({ id: promo_codes.id });
+      count += rows.length;
+    }
+    return count;
+  });
 
   if (deleted > 0) {
     await createAdminAuditEvent({

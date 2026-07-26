@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { adminDb } from "@/lib/admin-db";
+import { eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import { admin_users } from "@/lib/db-schema/admin/schema";
 import { requirePageAccess } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
@@ -34,11 +36,17 @@ export async function POST(request: Request): Promise<Response> {
   // emails is a separate capability that must be granted explicitly.
   // Admins always pass; non-admins need __can_export_users.
   if (session.role !== "admin") {
-    const perms = await adminDb.admin_users.findUnique({
-      where: { id: session.userId },
-      select: { allowed_pages: true },
-    });
-    if (!perms || !hasCapability(perms.allowed_pages, "__can_export_users")) {
+    const perms = (
+      await adminDrizzle
+        .select({ allowed_pages: admin_users.allowed_pages })
+        .from(admin_users)
+        .where(eq(admin_users.id, session.userId))
+        .limit(1)
+    )[0];
+    if (
+      !perms ||
+      !hasCapability(perms.allowed_pages ?? [], "__can_export_users")
+    ) {
       return NextResponse.json(
         { error: "Not permitted" },
         { status: 403 },

@@ -4,14 +4,12 @@
  * Client for the packy.gg live event stream via a server-side proxy.
  *
  * Uses an EventSource to /api/packy-live. The Node.js route on our
- * server opens the real WebSocket with the exact reference browser
- * handshake (headers the browser can't set directly) and forwards
- * every frame as an SSE `packy` event.
+ * server opens the real WebSocket with a fresh authenticated handshake
+ * and forwards only permission-filtered frames as SSE `packy` events.
  *
  * Public API is the `subscribePackyWs(eventType, handler)` imperative
  * subscription (one shared EventSource fans out to every subscriber).
- * Consumers call it from their own `useEffect`. The chat panel is the
- * only current consumer (`chat.pull.history`).
+ * Consumers call it from their own `useEffect`.
  */
 
 // ─── Types ────────────────────────────────────────────────────────
@@ -37,6 +35,22 @@ export type PackyEvent =
       payload: { messages: ChatMessage[] };
       timestamp: string;
     }
+  | {
+      type: "admin.activity";
+      payload: {
+        user_id: string | null;
+        topics: Array<
+          | "deposits"
+          | "card_payments"
+          | "withdrawals"
+          | "balance"
+          | "gaming"
+        >;
+        action: string;
+        entity_id?: string | null;
+      };
+      timestamp: string;
+    }
   | { type: string; payload: unknown; timestamp: string };
 
 // ─── Singleton state ──────────────────────────────────────────────
@@ -45,9 +59,12 @@ const SSE_PATH = "/api/packy-live";
 
 type Handler = (evt: PackyEvent) => void;
 const handlers = new Map<string, Set<Handler>>();
+type ConnectionHandler = (reconnected: boolean) => void;
+const connectionHandlers = new Set<ConnectionHandler>();
 
 let source: EventSource | null = null;
 let visibilityBound = false;
+let hasOpened = false;
 
 function totalSubscribers(): number {
   let count = 0;
@@ -102,6 +119,8 @@ function closeSource(reason: "manual" | "hidden" | "teardown" | "rotation") {
   }
   if (reason === "rotation") {
     openSource();
+  } else if (reason === "teardown") {
+    hasOpened = false;
   }
 }
 
@@ -125,6 +144,17 @@ function openSource() {
     return;
   }
   source = es;
+  es.onopen = () => {
+    const reconnected = hasOpened;
+    hasOpened = true;
+    for (const handler of connectionHandlers) {
+      try {
+        handler(reconnected);
+      } catch (err) {
+        console.error("[packy-ws] connection handler threw", err);
+      }
+    }
+  };
 
   es.addEventListener("packy", (ev: MessageEvent) => {
     if (typeof ev.data !== "string") return;
@@ -204,5 +234,15 @@ export function subscribePackyWs<T extends PackyEvent>(
     if (totalSubscribers() === 0) {
       closeSource("teardown");
     }
+  };
+}
+
+export function subscribePackyWsConnection(
+  handler: ConnectionHandler,
+): () => void {
+  if (typeof window === "undefined") return () => {};
+  connectionHandlers.add(handler);
+  return () => {
+    connectionHandlers.delete(handler);
   };
 }

@@ -43,9 +43,9 @@ import { cn } from "@/lib/utils";
  * `user_statistics.level` (XP-driven, 0–84 on prod), where every customer
  * lands in exactly one band.
  *
- * Read path: `getCrmSnapshot()` (resolveAdminRead("crm_snapshot"), real
- * customers only, borrow-corrected, last 365 days, House POV). Streamed behind
- * its own `<Suspense>` boundary on the analytics page.
+ * Read path: `getCrmSnapshot()` (PostgreSQL, real customers only,
+ * borrow-corrected, last 365 days, House POV). Streamed behind its own
+ * `<Suspense>` boundary on the analytics page.
  */
 
 // Lifecycle is genuinely CATEGORICAL (four named states an operator acts on

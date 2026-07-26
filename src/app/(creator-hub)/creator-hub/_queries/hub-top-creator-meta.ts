@@ -1,14 +1,13 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb, getDevDb, getProdDb } from "@/lib/db";
+import { drizzleForEnv, getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 import { type DashboardPeriod } from "@/lib/queries/dashboard-period";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getTopSignupLeadersFromClickHouse } from "@/lib/clickhouse/queries/creator-hub/top-signup-leaders";
 import {
   TOP_CREATORS_PERIODS,
   topCreatorsSinceClause,
@@ -49,7 +48,7 @@ export async function getWindowedSignupsByCreatorIds(
   const result = new Map<string, number>();
   if (creatorIds.length === 0) return result;
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const excluded = await getExcludedUserIds();
   const blacklistAnd =
     excluded.length > 0
@@ -60,7 +59,7 @@ export async function getWindowedSignupsByCreatorIds(
     .map((id) => `'${id.replace(/'/g, "''")}'`)
     .join(",");
 
-  const rows = await db.$queryRawUnsafe<CountRow[]>(
+  const rows = await queryRows<CountRow[]>(db,
     `SELECT u.referred_by AS creator_id, COUNT(*)::text AS value
        FROM "user" u
        JOIN "user" c ON c.id = u.referred_by AND c.role = 'creator'
@@ -83,7 +82,7 @@ async function fetchTopSignupLeaders(
   limit: number,
   env: DbEnv,
 ): Promise<HubSignupLeader[]> {
-  const db = env === "prod" ? getProdDb() : getDevDb();
+  const db = drizzleForEnv(env);
   const excluded = await getExcludedUserIds();
   const blacklistAnd =
     excluded.length > 0
@@ -93,10 +92,7 @@ async function fetchTopSignupLeaders(
   const since = hubPeriodToSinceDate(period);
   const sinceSignup = `AND u.created_at >= '${since.toISOString()}'::timestamptz`;
 
-  const rows = await resolveAdminRead<LeaderRow[]>("creator_hub_signup_leaders", {
-    ch: () => getTopSignupLeadersFromClickHouse(excluded, since, limit),
-    pg: () =>
-      db.$queryRawUnsafe<LeaderRow[]>(
+  const rows = await queryRows<LeaderRow[]>(db,
         `SELECT u.referred_by AS creator_id,
             c.username,
             COUNT(*)::text AS value
@@ -109,8 +105,7 @@ async function fetchTopSignupLeaders(
       GROUP BY u.referred_by, c.username
       ORDER BY COUNT(*) DESC
       LIMIT ${limit}`,
-      ),
-  });
+      );
 
   return rows.map((r) => ({
     creatorUserId: r.creator_id,
@@ -127,7 +122,7 @@ async function fetchTopSignupLeaders(
  * Overview section's `Promise.all`), so an uncached run paid a full
  * `"user"`-self-join scan each time. `env`/`blacklistKey` are resolved in the
  * request scope and folded into the cache key, and the inner fetch uses the
- * env-pinned `getProdDb`/`getDevDb` (NOT the cookie-based `getDb()`, which
+ * env-pinned Drizzle clients (not the request-scoped resolver, which
  * resolves to "prod" inside `unstable_cache` and would leak prod data to a
  * dev-toggled admin). The `HubSignupLeader[]` result is all-primitive (no
  * `Date` fields), so the `unstable_cache` JSON round-trip is identity-safe.

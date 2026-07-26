@@ -1,7 +1,7 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -56,11 +56,11 @@ async function computeCreatorWithdrawals(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<CreatorWithdrawalsSummary> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
   // Blacklist fragment applied to the user table inside the real_users
   // CTE (column `id`), matching the dashboard's real_users scope.
-  const blacklistSubquery = blacklistNotInClause("id", blacklistIds);
+  const blacklistSubquery = blacklistNotInSql("id", blacklistIds);
 
   // Rolling window on the effective "money out" timestamp. `all` →
   // no lower bound (every request counts). Mirrors the cross-category
@@ -68,12 +68,13 @@ async function computeCreatorWithdrawals(
   // window lines up with the rest of the page.
   const dateClause =
     days !== null
-      ? `AND COALESCE(cwr.completed_at, cwr.shipped_at) >= NOW() - INTERVAL '${days} days'`
-      : "";
+      ? sql`AND COALESCE(cwr.completed_at, cwr.shipped_at) >=
+            NOW() - (${days} * INTERVAL '1 day')`
+      : sql.raw("");
 
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     { total: string; count: string }[]
-  >(`
+  >(db, sql`
     WITH real_users AS (
       SELECT id, role FROM "user"
       WHERE role NOT IN ('admin', 'support') ${blacklistSubquery}

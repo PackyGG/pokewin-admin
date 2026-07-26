@@ -1,7 +1,8 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDevDb, getProdDb } from "@/lib/db";
+import { drizzleForEnv } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -11,13 +12,9 @@ import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { getCodeAndWagerByUser } from "../../../(admin)/creators/_queries/code-and-wager-by-user";
 import {
   type TopCreatorsPeriod,
+  topCreatorsSinceDate,
 } from "../_lib/top-creators-period";
 import { getWindowedSignupsByCreatorIds } from "./hub-top-creator-meta";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import {
-  rankTopCreatorsByDepositsFromClickHouse,
-  topCreatorsSinceDate,
-} from "@/lib/clickhouse/queries/creator-hub/top-creators";
 
 export type HubTopCreator = {
   creatorUserId: string;
@@ -39,10 +36,7 @@ type DepositRankRow = {
 
 /**
  * The heavy "rank creators by covered deposits" leg. Anchored to a single
- * `since` instant (deterministic), so the Postgres and ClickHouse twins are
  * directly comparable, and routed through `resolveAdminRead` (Index-or-
- * ClickHouse construct). Surface key `creator_hub_top_creators` is dormant
- * (not in CUTOVER_DEFAULT_CLICKHOUSE) → serves Postgres until proven + flipped.
  */
 async function rankTopCreatorsByDeposits(
   period: TopCreatorsPeriod,
@@ -50,11 +44,10 @@ async function rankTopCreatorsByDeposits(
   excluded: string[],
   since: Date,
 ): Promise<DepositRankRow[]> {
-  return resolveAdminRead("creator_hub_top_creators", {
-    pg: async () => {
-      const db = env === "prod" ? await getProdDb() : await getDevDb();
+  return (async () => {
+      const db = drizzleForEnv(env);
       const blacklistAnd = blacklistNotInClause("u.id", excluded);
-      return db.$queryRawUnsafe<DepositRankRow[]>(
+      return queryRows<DepositRankRow[]>(db,
         `WITH covered_deposits AS (
            SELECT DISTINCT ON (lt.id)
                   lt.amount::numeric AS amount,
@@ -86,9 +79,7 @@ async function rankTopCreatorsByDeposits(
           LIMIT ${TOP_CREATORS_LIMIT}`,
         since.toISOString(),
       );
-    },
-    ch: () => rankTopCreatorsByDepositsFromClickHouse(period, excluded, since),
-  });
+  })();
 }
 
 async function fetchTopCreatorsByDeposits(

@@ -1,4 +1,5 @@
-import { getDb } from "@/lib/db";
+import { sql } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
 
 export type SiteConfigRow = {
   key: string;
@@ -7,12 +8,14 @@ export type SiteConfigRow = {
 };
 
 export async function getSiteConfig(): Promise<SiteConfigRow[]> {
-  const db = await getDb();
-  const rows = await db.site_config.findMany({
-    orderBy: { key: "asc" },
-  });
+  const db = await getDrizzleDb();
+  const result = await db.execute<SiteConfigRow>(sql`
+    SELECT key, value, description
+    FROM site_config
+    ORDER BY key ASC
+  `);
 
-  return rows.map((r) => ({
+  return result.rows.map((r) => ({
     key: r.key,
     value: r.value,
     description: r.description,
@@ -31,12 +34,14 @@ export type VaultLockTimeRow = {
  * `getSettings`: `vault_lock_times` ordered by ascending hours). Read-only.
  */
 export async function getVaultLockTimes(): Promise<VaultLockTimeRow[]> {
-  const db = await getDb();
-  const rows = await db.vault_lock_times.findMany({
-    orderBy: { hours: "asc" },
-  });
+  const db = await getDrizzleDb();
+  const result = await db.execute<VaultLockTimeRow>(sql`
+    SELECT id, hours, label
+    FROM vault_lock_times
+    ORDER BY hours ASC
+  `);
 
-  return rows.map((v) => ({
+  return result.rows.map((v) => ({
     id: v.id,
     hours: v.hours,
     label: v.label,

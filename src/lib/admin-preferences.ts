@@ -1,7 +1,12 @@
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import {
+  isPostgresError,
+  postgresErrorMessages,
+} from "@/lib/postgres-errors";
 
 // Pure types + constants + validators moved to ./admin-preferences-types
-// so client components can import without pulling `adminDb` / `pg` into
+// so client components can import without pulling database drivers into
 // the browser bundle. Re-exported here for backward compat with
 // server-side callers.
 export {
@@ -71,10 +76,10 @@ function parsePreferences(raw: unknown): AdminPreferences {
 // of blowing up the layout — callers can render a pre-migration banner
 // if needed, and the rest of the UI falls back to browser-detected zone.
 function isMissingColumnError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const code = (err as { code?: string }).code;
-  if (code === "P2022") return true;
-  return /column .* does not exist/i.test(err.message);
+  return (
+    isPostgresError(err, "42703") ||
+    /column .* does not exist/i.test(postgresErrorMessages(err))
+  );
 }
 
 // ---- Reads / writes ------------------------------------------------------
@@ -87,11 +92,11 @@ export async function getAdminPreferences(
   adminUserId: string,
 ): Promise<AdminPreferences> {
   try {
-    const row = await adminDb.admin_users.findUnique({
-      where: { id: adminUserId },
-      select: { preferences: true },
-    });
-    return parsePreferences(row?.preferences);
+    const result = await adminDrizzle.execute<{ preferences: unknown }>(sql`
+      SELECT preferences FROM admin_users
+      WHERE id = ${adminUserId}::uuid LIMIT 1
+    `);
+    return parsePreferences(result.rows[0]?.preferences);
   } catch (err) {
     if (isMissingColumnError(err)) return { ...DEFAULT_PREFERENCES };
     throw err;
@@ -134,7 +139,7 @@ export async function setAdminPreferences(
   } catch (err) {
     if (isMissingColumnError(err)) {
       throw new Error(
-        "Preferences column is not enabled yet — run the database migration (npm run admin:migrate).",
+        "Preferences column is not enabled yet — apply the required admin SQL migration.",
       );
     }
     throw err;
@@ -146,17 +151,16 @@ export async function setAdminPreferences(
   };
 
   try {
-    await adminDb.admin_users.update({
-      where: { id: adminUserId },
-      // JSONB-typed column: Prisma accepts a plain object which it
-      // serializes via its input JSON encoder.
-      data: { preferences: merged },
-      select: { id: true },
-    });
+    await adminDrizzle.execute(sql`
+      UPDATE admin_users
+      SET preferences = ${JSON.stringify(merged)}::jsonb,
+          updated_at = NOW()
+      WHERE id = ${adminUserId}::uuid
+    `);
   } catch (err) {
     if (isMissingColumnError(err)) {
       throw new Error(
-        "Preferences column is not enabled yet — run the database migration (npm run admin:migrate).",
+        "Preferences column is not enabled yet — apply the required admin SQL migration.",
       );
     }
     throw err;

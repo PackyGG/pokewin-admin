@@ -2,7 +2,23 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { MS_PER_HOUR } from "@/lib/utils/time";
 
-const secretKey = process.env.SESSION_SECRET!;
+// SECURITY (SECURITY_AUDIT.md LOW): fail fast instead of the bare `!`. An
+// unset SESSION_SECRET would otherwise sign/verify every admin JWT, pending-2FA
+// cookie, WebAuthn challenge and step-up token with an empty key — a forgeable
+// session. Throwing at module load surfaces the misconfig immediately (the app
+// with a set secret is unaffected); a short secret is warned, not blocked, so a
+// currently-working deployment can't be bricked by this check.
+const secretKey = process.env.SESSION_SECRET;
+if (!secretKey) {
+  throw new Error(
+    "SESSION_SECRET is not set — refusing to sign tokens with an empty key.",
+  );
+}
+if (secretKey.length < 32) {
+  console.warn(
+    "[session] SESSION_SECRET is shorter than 32 characters — use a 32+ char random secret.",
+  );
+}
 const encodedKey = new TextEncoder().encode(secretKey);
 const COOKIE_NAME = "admin_session";
 const PENDING_COOKIE_NAME = "admin_2fa_pending";
@@ -255,30 +271,42 @@ const STEP_UP_TOKEN_TTL = "2m";
 type StepUpTokenPayload = {
   purpose: typeof STEP_UP_PURPOSE;
   adminUserId: string;
+  /** Single-use nonce (SECURITY_AUDIT.md L-5). require2FA records this jti in the
+   * admin DB on first use and rejects a token whose jti is already recorded, so
+   * one step-up proof authorizes exactly one privileged action. Optional for
+   * back-compat with tokens minted before this field (2-min TTL → the transition
+   * window is tiny); a jti-less token verifies but isn't single-use-tracked. */
+  jti?: string;
 };
 
 /** Mint a step-up proof token for `adminUserId`. Caller must have already
- * verified a passkey assertion for that same admin. */
+ * verified a passkey assertion for that same admin. Carries a random single-use
+ * nonce so the proof clears exactly one action gate (consumed in require2FA). */
 export async function createStepUpToken(adminUserId: string): Promise<string> {
   return encryptGeneric(
-    { purpose: STEP_UP_PURPOSE, adminUserId },
+    { purpose: STEP_UP_PURPOSE, adminUserId, jti: crypto.randomUUID() },
     STEP_UP_TOKEN_TTL,
   );
 }
 
-/** True iff `token` is a currently-valid step-up proof for `adminUserId`.
- * Returns false on a missing/expired/tampered token, a wrong purpose, or a
- * token minted for a different admin — never throws, so callers can treat a
- * non-token string (e.g. a 6-digit TOTP code) as simply "not a proof". */
+/** Validate a step-up proof for `adminUserId` and return its single-use nonce
+ * (`jti`, or null for a legacy jti-less token), or null when the string is not a
+ * currently-valid proof (missing/expired/tampered token, wrong purpose, or one
+ * minted for a different admin). Never throws, so callers can treat a non-token
+ * string (e.g. a 6-digit TOTP code) as simply "not a proof". Consuming the jti
+ * (single-use enforcement) is the caller's responsibility — see require2FA. */
 export async function verifyStepUpToken(
   token: string,
   adminUserId: string,
-): Promise<boolean> {
+): Promise<{ jti: string | null } | null> {
   const payload = await decryptGeneric<StepUpTokenPayload>(token);
-  return (
-    !!payload &&
-    payload.purpose === STEP_UP_PURPOSE &&
-    payload.adminUserId === adminUserId
-  );
+  if (
+    !payload ||
+    payload.purpose !== STEP_UP_PURPOSE ||
+    payload.adminUserId !== adminUserId
+  ) {
+    return null;
+  }
+  return { jti: payload.jti ?? null };
 }
 

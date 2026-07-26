@@ -334,7 +334,7 @@ export function parseUpgraderMetadata(metadata: unknown): UpgraderMetadata {
 }
 
 /**
- * Merge multiple metadata sources (PF rows, ledger metadata, Prisma
+ * Merge multiple metadata sources (PF rows, ledger metadata, database
  * includes) — first non-null field wins per attribute. Callers pass
  * sources in priority order (most authoritative first).
  */

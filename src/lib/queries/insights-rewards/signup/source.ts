@@ -1,7 +1,7 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -9,7 +9,6 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { WAGER_TYPES_SQL } from "@/lib/queries/_wager-payout-types";
-import { compareSignupSource } from "@/lib/clickhouse/compare/insights-signup-source";
 import { SIGNUP_CACHE_TAG } from "./_shared";
 
 /**
@@ -73,13 +72,10 @@ async function computeSourceBreakdown(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<SignupSourceBreakdown> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const signupDateFilter =
-    days !== null
-      ? `AND u.created_at >= NOW() - INTERVAL '${days} days'`
-      : "";
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const signupDateFilter = daysAgoFilter("u.created_at", days);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // ── Provider breakdown ────────────────────────────────────────────
   // One CTE per stage so the final SELECT can pivot on
@@ -92,7 +88,7 @@ async function computeSourceBreakdown(
     total_cost: string;
     retained_7d: string;
   };
-  const providerRows = await db.$queryRawUnsafe<ProviderRow[]>(`
+  const providerRows = await queryRows<ProviderRow[]>(db, sql`
     WITH cohort AS (
       SELECT u.id AS user_id, u.created_at AS signed_up_at
       FROM "user" u
@@ -139,7 +135,7 @@ async function computeSourceBreakdown(
         SELECT 1 FROM ledger_transactions lt
         WHERE lt.user_id = cwp.user_id
           AND lt.status = 'completed'
-          AND (lt.type::text = 'deposit' OR lt.type::text IN ${WAGER_TYPES_SQL})
+          AND (lt.type::text = 'deposit' OR lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)})
           AND lt.created_at <= cwp.signed_up_at + INTERVAL '7 days'
       )
       GROUP BY cwp.provider
@@ -189,7 +185,7 @@ async function computeSourceBreakdown(
     total_cost: string;
     retained_7d: string;
   };
-  const affiliateRows = await db.$queryRawUnsafe<AffiliateRow[]>(`
+  const affiliateRows = await queryRows<AffiliateRow[]>(db, sql`
     WITH cohort AS (
       SELECT u.id AS user_id, u.created_at AS signed_up_at,
              NULLIF(u.affiliate_code, '') AS affiliate_code
@@ -228,7 +224,7 @@ async function computeSourceBreakdown(
         SELECT 1 FROM ledger_transactions lt
         WHERE lt.user_id = cwc.user_id
           AND lt.status = 'completed'
-          AND (lt.type::text = 'deposit' OR lt.type::text IN ${WAGER_TYPES_SQL})
+          AND (lt.type::text = 'deposit' OR lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)})
           AND lt.created_at <= cwc.signed_up_at + INTERVAL '7 days'
       )
       GROUP BY cwc.code
@@ -314,9 +310,5 @@ export async function getSignupSourceBreakdown(
   const data = await (cacheTtlForInsightsPeriod(period) >= 300
     ? cachedLong(period, sorted)
     : cachedShort(period, sorted));
-  // CQRS rollout: fire-and-forget ClickHouse comparison (no-op unless the
-  // surface flag is in `comparison` mode; forced off when CH is dormant). The
-  // served value stays the Postgres payload above.
-  void compareSignupSource(period, data);
   return data;
 }

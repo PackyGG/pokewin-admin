@@ -1,5 +1,6 @@
+import { daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -81,7 +82,7 @@ async function computeSuspicious(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusSuspicious> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
   const days = daysForInsightsPeriod(period);
@@ -90,8 +91,8 @@ async function computeSuspicious(
   // generous lookback so the flag stays meaningful.
   const wagerWindowClause =
     days !== null
-      ? `AND w.created_at >= NOW() - INTERVAL '${days} days'`
-      : `AND w.created_at >= NOW() - INTERVAL '365 days'`;
+      ? daysAgoFilter("w.created_at", days)
+      : daysAgoFilter("w.created_at", 365);
 
   // Flag 1: cash-out abuse — bonus → withdrawal within 24h, no wager
   // activity in between.
@@ -121,7 +122,7 @@ async function computeSuspicious(
   // live prod: IDENTICAL top-25 output vs the original on the narrow
   // windows where the original completes (2026-05-28/29, 06-06, 06-11 —
   // 13–25 paired rows match key-for-key), and ~0.3–0.6s on 30d AND all.
-  const withdrewRows = await db.$queryRawUnsafe<
+  const withdrewRows = await queryRows<
     {
       user_id: string;
       username: string | null;
@@ -132,7 +133,7 @@ async function computeSuspicious(
       withdrew_at: Date;
       hours_to_withdraw: string;
     }[]
-  >(`
+  >(db, sql`
     WITH bonus_claimants AS MATERIALIZED (
       SELECT
         lt.user_id,
@@ -212,7 +213,7 @@ async function computeSuspicious(
   }));
 
   // Flag 2: claimed bonus, no wager in window.
-  const noWagerRows = await db.$queryRawUnsafe<
+  const noWagerRows = await queryRows<
     {
       user_id: string;
       username: string | null;
@@ -221,7 +222,7 @@ async function computeSuspicious(
       last_bonus_at: Date;
       has_ever_wagered: boolean;
     }[]
-  >(`
+  >(db, sql`
     WITH bonus_claimants AS (
       SELECT
         lt.user_id,
@@ -280,7 +281,7 @@ async function computeSuspicious(
 
   // Flag 3: shared visitor_id (fingerprint) among multiple in-window
   // bonus claimants.
-  const sharedRows = await db.$queryRawUnsafe<
+  const sharedRows = await queryRows<
     {
       visitor_id: string;
       user_count: string;
@@ -288,7 +289,7 @@ async function computeSuspicious(
       sample_usernames: (string | null)[];
       bonus_in_window: string;
     }[]
-  >(`
+  >(db, sql`
     WITH bonus_claimants AS (
       SELECT lt.user_id, SUM(ABS(lt.amount::numeric)) AS bonus_in_window
       FROM ledger_transactions lt

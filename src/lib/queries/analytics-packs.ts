@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
@@ -38,15 +39,15 @@ async function computeTopOpenedPacks24h(
   limit: number,
   excluded: string[],
 ): Promise<TopPack24hRow[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
 
   // Clamp the limit so a caller-side bug can't pull thousands of rows.
   const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
 
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     { id: string; name: string; image_url: string | null; opens: string }[]
-  >(`
+  >(db, `
     WITH solo_opens AS (
       SELECT gs.game_id AS pack_id, COUNT(*) AS opens
       FROM game_sessions gs
@@ -236,7 +237,7 @@ async function computePackProfitability(
   period: PacksPeriod,
   excluded: string[],
 ): Promise<PacksProfitData> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForPeriod(period);
   const ltWhere = `AND lt.created_at >= NOW() - INTERVAL '${days} days'`;
   // Inventory rows are bucketed by `obtained_at` (when the card landed),
@@ -266,7 +267,7 @@ async function computePackProfitability(
   )`;
 
   const [packRows, battleRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryRows<
       {
         id: string;
         name: string;
@@ -274,7 +275,7 @@ async function computePackProfitability(
         revenue: string;
         payouts: string;
       }[]
-    >(`
+    >(db, `
       WITH pack_opens AS (
         -- Solo wager: completed, non-borrow pack_opening rows. The ledger
         -- amount is the user's ACTUAL paid stake (the borrowed leg never
@@ -323,7 +324,7 @@ async function computePackProfitability(
       ORDER BY COALESCE(po.revenue::numeric, 0) DESC
       LIMIT 20
     `),
-    db.$queryRawUnsafe<
+    queryRows<
       {
         id: string;
         name: string;
@@ -331,7 +332,7 @@ async function computePackProfitability(
         revenue: string;
         payouts: string;
       }[]
-    >(`
+    >(db, `
       WITH battle_wager AS (
         -- Battle wager per pack: each participant's battle_bet /
         -- battle_sponsorship ledger row (their ACTUAL cash stake across all

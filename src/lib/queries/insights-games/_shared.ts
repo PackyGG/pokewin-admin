@@ -203,8 +203,8 @@ export function notInCreatorSessionSql(
  * what the user actually paid out of their balance).
  *
  *   • pack_opening:  ledger row's description carries "X% borrowed"
- *     when the open used borrow mode (verified pattern, used in
- *     analytics.ts + dashboard-live.ts). The check matches
+ *     when the open used borrow mode (verified pattern used by the
+ *     transaction analytics). The check matches
  *     "borrow" anywhere in the description so it survives label
  *     drift.
  *   • battle_bet: the linked battle's `borrow_percentage` column is

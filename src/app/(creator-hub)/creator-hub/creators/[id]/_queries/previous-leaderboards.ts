@@ -22,7 +22,7 @@ import type {
  * scan, no new transport. Cached (120s TTL) + tag-flushed on leaderboard
  * mutations exactly like the preview, so the modal stays cheap on re-render.
  *
- * Backend API only inside (no `getDb()` / cookies) → env-safe to cache.
+ * Backend API only inside (no request cookie reads) → env-safe to cache.
  * A THROWN fetch is NOT cached (Next only caches resolved values).
  */
 

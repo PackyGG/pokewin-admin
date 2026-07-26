@@ -1,19 +1,14 @@
 import "server-only";
 
+import { cache } from "react";
+
 import {
   getDashboardKpiStats,
   getGgrBreakdownForKpiWindow,
   type DashboardKpiWindow,
   type GgrBreakdown,
 } from "@/lib/queries/dashboard";
-import { compareDashboardCashflow } from "@/lib/clickhouse/comparison";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import {
-  getDashboardCashflowFromClickHouse,
-  type DashboardCashflowCh,
-} from "@/lib/clickhouse/queries/dashboard-cashflow";
 import { getDashboardCashflowFromPostgres } from "@/lib/queries/dashboard-cashflow-pg";
-import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getDepositFundedGgrForWindow } from "@/lib/queries/dashboard-deposit-funded-ggr";
 
 /**
@@ -50,7 +45,6 @@ export type KpiWindowPayload = {
    * intentionally EXCLUDES wagering funded by balance carried over from a
    * prior window, so headline GGR can no longer exceed what a "just this
    * window's money" reading would expect. Every OTHER GGR consumer
-   * (`/ggr`, insights, edge-plan, ClickHouse twin) is UNCHANGED and still
    * reads the industry definition (`wager − payouts`) via `getWindowMetrics`
    * — that figure is preserved in `ggrBreakdown` below as a reference.
    * Positive → house up → emerald; negative → house down → rose.
@@ -90,7 +84,7 @@ export type KpiWindowPayload = {
  * still renders its headline number (matches the page's existing
  * fallback shape for the chip-enum path).
  */
-export async function buildKpiWindowPayload(
+async function computeKpiWindowPayload(
   window: DashboardKpiWindow,
 ): Promise<KpiWindowPayload> {
   const [stats, ggrBreakdown, depositFundedGgr] = await Promise.all([
@@ -109,14 +103,9 @@ export async function buildKpiWindowPayload(
     getDepositFundedGgrForWindow(window).catch(() => null),
   ]);
 
-  // CQRS serve path for the `dashboard_cashflow` surface — a SUBSET cutover.
-  // The shared `getDashboardKpiStats` aggregate above still runs (it produces
-  // the GGR / wager / breakdown boxes), but the four cash-flow figures now
-  // resolve through their OWN dedicated read:
-  //   • clickhouse → serve the CH cash-flow twin (SOLE read for these 4 fields;
-  //     on failure resolveAdminRead degrades to the PG slice below).
-  //   • comparison → serve the Postgres slice, fire-and-forget drift log.
-  //   • off        → serve the Postgres slice (today's behavior).
+  // The shared aggregate above produces the GGR and wager boxes. Cash-flow
+  // figures use their dedicated PostgreSQL read so they stay aligned with the
+  // canonical P&L-today definition.
   //
   // RECONCILIATION FIX (2026-07-02): the PG slice is NO LONGER the shared
   // aggregate's `stats.deposits/withdrawals` (which scopes to the CUSTOMER
@@ -129,21 +118,8 @@ export async function buildKpiWindowPayload(
   // definition EXACTLY (creators kept, card + |manual| withdrawals), so the
   // box and P&L Today reconcile by construction — without touching the frozen
   // `calculateWindowedPnl` math or the creator-excluded wager / period-P&L
-  // boxes. The CH twin was aligned to the SAME definition, so PG↔CH parity is
-  // preserved.
-  const cashflow = await resolveAdminRead<DashboardCashflowCh>(
-    "dashboard_cashflow",
-    {
-      pg: () => getDashboardCashflowFromPostgres(window),
-      ch: async () => {
-        const blacklist = await getExcludedUserIds();
-        return getDashboardCashflowFromClickHouse(window, blacklist);
-      },
-      compare: (pg) => {
-        void compareDashboardCashflow(window, pg);
-      },
-    },
-  );
+  // boxes.
+  const cashflow = await getDashboardCashflowFromPostgres(window);
 
   // Owner reverted the GGR definition (2026-06-30 follow-up): the HEADLINE
   // GGR tile reads the industry definition again (`wager − payouts`, what
@@ -168,3 +144,11 @@ export async function buildKpiWindowPayload(
     ggrBreakdown,
   };
 }
+
+/**
+ * Request-local dedupe for the shared "today" payload. The dashboard renders
+ * it in both the KPI strip and the P&L tile; without React cache both
+ * Suspense branches independently assemble the same payload on a cold render.
+ * Cross-request freshness remains governed by the underlying tagged caches.
+ */
+export const buildKpiWindowPayload = cache(computeKpiWindowPayload);

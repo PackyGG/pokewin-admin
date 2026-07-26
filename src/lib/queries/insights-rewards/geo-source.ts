@@ -1,7 +1,7 @@
+import { daysAgoFilter, blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import { CUSTOMER_EXCLUDED_ROLES } from "@/lib/metrics/scope";
 import {
@@ -14,7 +14,7 @@ import {
 // PLUS creators, matching getMetricsScope()/CUSTOMER_EXCLUDED_ROLES. Creators
 // are dropped WHOLESALE so this geo/source distribution lines up with the
 // per-category sub-pages instead of being inflated by creator rows. Blacklist
-// is applied separately via blacklistNotInClause.
+// is applied separately via blacklistNotInSql.
 const CUSTOMER_EXCLUDED_ROLES_SQL = `(${CUSTOMER_EXCLUDED_ROLES.map(
   (r) => `'${r}'`,
 ).join(", ")})`;
@@ -85,42 +85,42 @@ async function computeGeoSource(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RewardsGeoSourceBreakdown> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // Lifetime (`all`) CAPPED to INSIGHTS_LIFETIME_LOOKBACK_DAYS (365d) via
   // daysForInsightsPeriodCapped so the reward sweeps over the full
   // ledger_transactions history never run unbounded (CLAUDE.md "Performance
   // & Daten-Laden"). Finite windows are unchanged; the filter is now always
   // present (capped never returns null).
   const days = daysForInsightsPeriodCapped(period);
-  const dateFilter = `AND lt.created_at >= NOW() - INTERVAL '${days} days'`;
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const dateFilter = daysAgoFilter("lt.created_at", days);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Country breakdown — JOIN ledger rows to users and group by their
   // country_code. Distinct user count via COUNT(DISTINCT user_id) per
   // country bucket.
   const [countryRows, sourceRows, totalRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryRows<
       { code: string; user_count: string; total: string }[]
-    >(`
+    >(db, sql`
       SELECT
         COALESCE(u.country_code, '??') AS code,
         -- Distinct claimants exclude rain_tip-only rows (funding leg is
         -- not a reward claim).
         COUNT(DISTINCT CASE WHEN lt.type::text <> 'rain_tip' THEN lt.user_id END)::text AS user_count,
-        (${NETTED_REWARD_SQL("lt.type::text", "lt.amount")})::text AS total
+        (${sql.raw(NETTED_REWARD_SQL("lt.type::text", "lt.amount"))})::text AS total
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
-        AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
-        AND u.role NOT IN ${CUSTOMER_EXCLUDED_ROLES_SQL} ${blacklistJoin}
+        AND lt.type::text IN ${sql.raw(ALL_REWARD_TYPES_SQL)}
+        AND u.role NOT IN ${sql.raw(CUSTOMER_EXCLUDED_ROLES_SQL)} ${blacklistJoin}
         ${dateFilter}
       GROUP BY COALESCE(u.country_code, '??')
-      ORDER BY (${NETTED_REWARD_SQL("lt.type::text", "lt.amount")}) DESC
+      ORDER BY (${sql.raw(NETTED_REWARD_SQL("lt.type::text", "lt.amount"))}) DESC
       LIMIT ${COUNTRY_LIMIT}
     `),
-    db.$queryRawUnsafe<
+    queryRows<
       { provider: string; user_count: string; total: string }[]
-    >(`
+    >(db, sql`
       WITH claim_users AS (
         -- Carry the row id + type so the per-provider rain netting below
         -- can distinguish rain legs. id keeps DISTINCT one-row-per-ledger.
@@ -128,8 +128,8 @@ async function computeGeoSource(
         FROM ledger_transactions lt
         JOIN "user" u ON u.id = lt.user_id
         WHERE lt.status = 'completed'
-          AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
-          AND u.role NOT IN ${CUSTOMER_EXCLUDED_ROLES_SQL} ${blacklistJoin}
+          AND lt.type::text IN ${sql.raw(ALL_REWARD_TYPES_SQL)}
+          AND u.role NOT IN ${sql.raw(CUSTOMER_EXCLUDED_ROLES_SQL)} ${blacklistJoin}
           ${dateFilter}
       ),
       primary_provider AS (
@@ -143,20 +143,20 @@ async function computeGeoSource(
       SELECT
         COALESCE(pp.provider, 'unknown') AS provider,
         COUNT(DISTINCT CASE WHEN cu.type <> 'rain_tip' THEN cu.user_id END)::text AS user_count,
-        (${NETTED_REWARD_SQL("cu.type", "cu.amount")})::text AS total
+        (${sql.raw(NETTED_REWARD_SQL("cu.type", "cu.amount"))})::text AS total
       FROM claim_users cu
       LEFT JOIN primary_provider pp ON pp.user_id = cu.user_id
       GROUP BY COALESCE(pp.provider, 'unknown')
-      ORDER BY (${NETTED_REWARD_SQL("cu.type", "cu.amount")}) DESC
+      ORDER BY (${sql.raw(NETTED_REWARD_SQL("cu.type", "cu.amount"))}) DESC
       LIMIT ${SOURCE_LIMIT}
     `),
-    db.$queryRawUnsafe<{ total: string }[]>(`
-      SELECT (${NETTED_REWARD_SQL("lt.type::text", "lt.amount")})::text AS total
+    queryRows<{ total: string }[]>(db, sql`
+      SELECT (${sql.raw(NETTED_REWARD_SQL("lt.type::text", "lt.amount"))})::text AS total
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
-        AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
-        AND u.role NOT IN ${CUSTOMER_EXCLUDED_ROLES_SQL} ${blacklistJoin}
+        AND lt.type::text IN ${sql.raw(ALL_REWARD_TYPES_SQL)}
+        AND u.role NOT IN ${sql.raw(CUSTOMER_EXCLUDED_ROLES_SQL)} ${blacklistJoin}
         ${dateFilter}
     `),
   ]);

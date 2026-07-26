@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import {
   getSourceWagerWeights,
   type FundingSourceWeights,
@@ -39,7 +39,7 @@ import {
  * ─────────────────────────
  * Probes `information_schema.columns` for `unwagered_bonus_other_usd` before
  * selecting the sweepstakes columns, returning `null` (→ muted card) if a
- * connected DB lacks them. READ-ONLY raw SQL; Prisma never selects an absent
+ * connected DB lacks them. READ-ONLY raw SQL; the query never selects an absent
  * column. The weight-matrix backend call is timeout-bounded and degrades to
  * `backendAvailable: false` (balance composition still shown, weights hidden).
  */
@@ -142,20 +142,19 @@ const DESTINATIONS: {
 export async function getUserBalanceWeighting(
   userId: string,
 ): Promise<UserBalanceWeighting | null> {
-  const db = await getDb();
-
   // ── ENV-GUARD: column presence probe (read-only catalog lookup) ──────
-  const colCheck = await db.$queryRaw<{ exists: boolean }[]>`
+  const colCheck = await queryMainRows<{ exists: boolean }[]>(`
     SELECT EXISTS (
       SELECT 1
         FROM information_schema.columns
        WHERE table_schema = 'public'
          AND table_name = 'balances'
          AND column_name = 'unwagered_bonus_other_usd'
-    ) AS exists`;
+    ) AS exists`);
   if (!colCheck[0]?.exists) return null;
 
-  const rows = await db.$queryRaw<RawRow[]>`
+  const rows = await queryMainRows<RawRow[]>(
+    `
     SELECT
       available_balance::text          AS available_balance,
       unwagered_race_prize_usd::text   AS unwagered_race_prize_usd,
@@ -164,8 +163,10 @@ export async function getUserBalanceWeighting(
       unwagered_affiliate_usd::text    AS unwagered_affiliate_usd,
       unwagered_tips_usd::text         AS unwagered_tips_usd
     FROM balances
-    WHERE user_id = ${userId}
-    LIMIT 1`;
+    WHERE user_id = $1
+    LIMIT 1`,
+    userId,
+  );
   const row = rows[0];
   if (!row) return null;
 

@@ -7,7 +7,9 @@ import {
   sessionRoles,
 } from "@/lib/dal";
 import { getDefaultRouteForRoles } from "@/lib/admin-roles";
-import { adminDb } from "@/lib/admin-db";
+import { eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_users } from "@/lib/db-schema/admin/schema";
 import {
   canAccessCreatorHub,
   getCreatorHubAccessSettings,
@@ -55,10 +57,9 @@ const resolveLiveSession = cache(
     active: boolean;
   }> => {
     const session = await verifySession();
-    const user = await adminDb.admin_users.findUnique({
-      where: { id: session.userId },
-      select: { username: true, is_active: true },
-    });
+    const [user] = await adminDrizzle.select({
+      username: admin_users.username, is_active: admin_users.is_active,
+    }).from(admin_users).where(eq(admin_users.id, session.userId)).limit(1);
     return {
       session,
       username: user?.username ?? null,

@@ -1,11 +1,8 @@
 import "server-only";
-import { Prisma } from "@/generated/prisma/client";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { readDbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { CUSTOMER_EXCLUDED_ROLES } from "@/lib/metrics/scope";
-import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 import {
   daysForDoubleDownPeriodCapped,
   cacheTtlForDoubleDownPeriod,
@@ -21,7 +18,7 @@ import {
 // Re-export the client-safe shared surface so server call sites keep a single
 // import path (`@/lib/queries/double-down`). The runtime period constants +
 // the row TYPES live in `double-down-shared.ts` (no server-only graph) so
-// client components can import them without pulling getDb / Prisma into the
+// client components can import them without pulling server database code into the
 // browser bundle.
 export { doubleDownPeriodLabel } from "@/lib/queries/double-down-shared";
 export type {
@@ -50,9 +47,9 @@ export type {
  *
  * ── DB facts (verified read-only against live prod, 2026-06-30) ──────────────
  * The tables/enums live ONLY in the live prod game DB — the local
- * prisma/schema.prisma is stale and does NOT model them, so every read here is
- * hand-written parameterized SQL through the prod client (getDb()) rather than
- * a generated Prisma model. MAIN is STRICTLY READ-ONLY — these are all SELECTs.
+ * The checked-in schema snapshot does not model them, so every read here is
+ * hand-written parameterized SQL through Drizzle. MAIN is STRICTLY
+ * READ-ONLY — these are all SELECTs.
  *
  *   TABLE public.battle_double_down_offers (one row per round)
  *     id uuid PK · battle_id uuid · user_id text→"user".id ·
@@ -88,7 +85,6 @@ export type {
  *   round's stake doesn't inflate house profit. All money is Decimal-safe
  *   (numeric → string → Number, exact Postgres SUM).
  *
- * ── Index-or-ClickHouse (CLAUDE.md, BACKEND_QUERY_SYSTEM.md) ──────────────────
  *   • Per-user lookup (getUserDoubleDownHistory) filters user_id → served by
  *     the (user_id,status) index (EXPLAIN → Bitmap Index Scan). Indexed. ✓
  *   • The global windowed aggregate + audit log ORDER BY created_at SEQ-SCAN
@@ -146,7 +142,7 @@ function num(v: string | null): number | null {
  * An 'accepted'-but-not-yet-'resolved' round IS started (rare/transient — PF
  * resolves fast) and is included; it reads as a pending RESULT.
  */
-const STARTED_STATUS = Prisma.sql`o.status IN ('accepted','resolved')`;
+const STARTED_STATUS = "o.status IN ('accepted','resolved')";
 
 /**
  * CANONICAL customer scope for the AGGREGATE Double Down surfaces (Insights
@@ -177,20 +173,11 @@ const STARTED_STATUS = Prisma.sql`o.status IN ('accepted','resolved')`;
  * NOT applied to the /users/[id] per-user history — that page intentionally
  * shows a specific user's own rounds even if they're a creator/blacklisted.
  */
-const CUSTOMER_EXCLUDED_ROLES_SQL = Prisma.join(
-  CUSTOMER_EXCLUDED_ROLES.map((r) => Prisma.sql`${r}`),
-);
-
-function customerScopeSql(excludedIds: string[]): Prisma.Sql {
-  // Blacklist tail — reuse escapeBlacklistIds (the single canonical escaper);
-  // Prisma.raw is safe here because the ids are already quote-escaped literals.
-  const blacklistTail =
-    excludedIds.length > 0
-      ? Prisma.sql` AND id NOT IN (${Prisma.raw(escapeBlacklistIds(excludedIds))})`
-      : Prisma.empty;
-  return Prisma.sql`o.user_id IN (
+function customerScopeSql(bindIndex = 1): string {
+  return `o.user_id IN (
     SELECT id FROM "user"
-    WHERE role NOT IN (${CUSTOMER_EXCLUDED_ROLES_SQL})${blacklistTail}
+    WHERE role::text NOT IN ('admin', 'support', 'creator')
+      AND NOT (id = ANY($${bindIndex}::text[]))
   )`;
 }
 
@@ -214,10 +201,9 @@ async function computeStats(
   period: DoubleDownPeriod,
   excludedIds: string[],
 ): Promise<DoubleDownStats> {
-  const db = await getDb();
   const days = daysForDoubleDownPeriodCapped(period);
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  const scope = customerScopeSql(excludedIds);
+  const scope = customerScopeSql(1);
 
   // STARTED-only (owner rule): only rounds the user actually played
   // (status IN accepted/resolved) — offered/expired offers are excluded.
@@ -250,7 +236,7 @@ async function computeStats(
   //       NO Seq Scan on the large battles table. NOT customer-scoped (a battle
   //       has no single owner) — it is the whole battle population since launch.
   const [rows, battleCountRows] = await Promise.all([
-    db.$queryRaw<
+    queryMainRows<
       {
         total_rounds: bigint;
         resolved_rounds: bigint;
@@ -260,7 +246,8 @@ async function computeStats(
         total_paid_out: string | null;
         distinct_battles_with_dd: bigint;
       }[]
-    >(Prisma.sql`
+    >(
+      `
       SELECT
         count(*)                                                          AS total_rounds,
         count(*) FILTER (WHERE o.result IS NOT NULL)                      AS resolved_rounds,
@@ -276,16 +263,19 @@ async function computeStats(
       LEFT JOIN vouchers v
         ON v.id = o.won_voucher_id
        AND v.origin = 'battle_double_down_payout'
-      WHERE ${STARTED_STATUS} AND o.created_at >= ${since} AND ${scope}
-    `),
-    db.$queryRaw<{ total_battles: bigint }[]>(Prisma.sql`
+      WHERE ${STARTED_STATUS} AND o.created_at >= $2 AND ${scope}
+      `,
+      excludedIds,
+      since,
+    ),
+    queryMainRows<{ total_battles: bigint }[]>(`
       SELECT count(*) AS total_battles
       FROM battles
       WHERE created_at >= GREATEST(
-        ${since},
+        $1,
         (SELECT min(created_at) FROM battle_double_down_offers)
       )
-    `),
+    `, since),
   ]);
 
   const r = rows[0];
@@ -351,10 +341,9 @@ async function computeTimeSeries(
   period: DoubleDownPeriod,
   excludedIds: string[],
 ): Promise<DoubleDownTimeSeriesPoint[]> {
-  const db = await getDb();
   const days = daysForDoubleDownPeriodCapped(period);
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  const scope = customerScopeSql(excludedIds);
+  const scope = customerScopeSql(1);
 
   // DAILY buckets (date_trunc('day', …), UTC). The page is locked to a 30d
   // window, so hourly buckets produced up to 720 bars crammed under 24 repeating
@@ -366,9 +355,10 @@ async function computeTimeSeries(
   // window (started-only). The table has no created_at index → this seq-scans
   // the tiny table (fine at this volume; flagged in recommended-indexes.sql like
   // the other reads).
-  const rows = await db.$queryRaw<
+  const rows = await queryMainRows<
     { bucket: Date; started: bigint; pnl: string | null }[]
-  >(Prisma.sql`
+  >(
+    `
     SELECT
       date_trunc('day', o.created_at)                             AS bucket,
       count(*)                                                    AS started,
@@ -378,10 +368,13 @@ async function computeTimeSeries(
     LEFT JOIN vouchers v
       ON v.id = o.won_voucher_id
      AND v.origin = 'battle_double_down_payout'
-    WHERE ${STARTED_STATUS} AND o.created_at >= ${since} AND ${scope}
+    WHERE ${STARTED_STATUS} AND o.created_at >= $2 AND ${scope}
     GROUP BY 1
     ORDER BY 1
-  `);
+    `,
+    excludedIds,
+    since,
+  );
 
   // Build the running cumulative P&L and the "yyyy-MM-dd" UTC day key (the
   // client chart pretty-prints it to "MMM d", same helper as the other daily
@@ -424,7 +417,7 @@ export async function getDoubleDownTimeSeries(
 
 // ── SURFACE 1: paginated audit log ────────────────────────────────────────────
 
-const LOG_SELECT = Prisma.sql`
+const LOG_SELECT = `
   SELECT
     o.id,
     o.user_id,
@@ -454,11 +447,10 @@ async function computeLog(args: {
   search: string;
   excludedIds: string[];
 }): Promise<DoubleDownLog> {
-  const db = await getDb();
   const { period, page, perPage, search, excludedIds } = args;
   const days = daysForDoubleDownPeriodCapped(period);
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  const scope = customerScopeSql(excludedIds);
+  const scope = customerScopeSql(1);
 
   // STARTED-only (owner rule): the audit log shows ONLY rounds the user
   // actually played (status IN accepted/resolved) — offered/expired offers
@@ -468,26 +460,31 @@ async function computeLog(args: {
   // (tiny table, no created_at index, flagged); the status + scope + username
   // predicates narrow the same scan.
   const trimmed = search.trim().toLowerCase();
-  const searchClause = trimmed
-    ? Prisma.sql`AND lower(u.username) LIKE ${trimmed + "%"}`
-    : Prisma.empty;
-  const whereClause = Prisma.sql`WHERE ${STARTED_STATUS} AND o.created_at >= ${since} AND ${scope} ${searchClause}`;
+  const searchClause = trimmed ? "AND lower(u.username) LIKE $3" : "";
+  const whereClause = `WHERE ${STARTED_STATUS} AND o.created_at >= $2
+    AND ${scope} ${searchClause}`;
 
   const offset = (page - 1) * perPage;
 
   const [countRows, rows] = await Promise.all([
-    db.$queryRaw<{ n: bigint }[]>(Prisma.sql`
+    queryMainRows<{ n: bigint }[]>(`
       SELECT count(*) AS n
       FROM battle_double_down_offers o
       LEFT JOIN "user" u ON u.id = o.user_id
       ${whereClause}
-    `),
-    db.$queryRaw<RawLogRow[]>(Prisma.sql`
+    `, excludedIds, since, ...(trimmed ? [`${trimmed}%`] : [])),
+    queryMainRows<RawLogRow[]>(`
       ${LOG_SELECT}
       ${whereClause}
       ORDER BY o.created_at DESC
-      LIMIT ${perPage} OFFSET ${offset}
-    `),
+      LIMIT $${trimmed ? 4 : 3} OFFSET $${trimmed ? 5 : 4}
+    `,
+      excludedIds,
+      since,
+      ...(trimmed ? [`${trimmed}%`] : []),
+      perPage,
+      offset,
+    ),
   ]);
 
   const total = Number(countRows[0]?.n ?? 0);
@@ -546,8 +543,7 @@ const EMPTY_DASHBOARD_STATS: DoubleDownDashboardStats = {
 async function computeDashboardStats(
   excludedIds: string[],
 ): Promise<DoubleDownDashboardStats> {
-  const db = await getDb();
-  const scope = customerScopeSql(excludedIds);
+  const scope = customerScopeSql(1);
 
   // DEV's CANONICAL method (source of truth for the dashboard's game-type
   // counting): start from game_sessions filtered to game_type
@@ -568,7 +564,7 @@ async function computeDashboardStats(
   // large table is index-served. No game_sessions(game_type) index is needed
   // at this shape; flagged in recommended-indexes.sql only if the offers table
   // grows large enough that game_type-first filtering becomes the better plan.
-  const rows = await db.$queryRaw<
+  const rows = await queryMainRows<
     {
       rounds: bigint;
       wins: bigint;
@@ -578,7 +574,8 @@ async function computeDashboardStats(
       staked: string | null;
       paid_out: string | null;
     }[]
-  >(Prisma.sql`
+  >(
+    `
     SELECT
       count(*)                                                          AS rounds,
       count(*) FILTER (WHERE o.result = 'win')                          AS wins,
@@ -593,7 +590,9 @@ async function computeDashboardStats(
       ON v.id = o.won_voucher_id
      AND v.origin = 'battle_double_down_payout'
     WHERE gs.game_type = 'battle_double_down' AND ${scope}
-  `);
+    `,
+    excludedIds,
+  );
 
   const r = rows[0];
   const wins = Number(r?.wins ?? 0);
@@ -628,12 +627,11 @@ async function computeDashboardStats(
 export async function getDoubleDownDashboardStats(): Promise<DoubleDownDashboardStats> {
   const excludedIds = [...(await getExcludedUserIds())].sort();
   const guarded = async (ids: string[]) => {
-    const db = await getDb();
     // to_regclass guard: on a DB without the table (e.g. an old snapshot) skip
     // the read and return zeros rather than throwing 42P01 — matches how
     // upgraderMetrics guards its table.
-    const exists = await db.$queryRaw<{ reg: string | null }[]>(
-      Prisma.sql`SELECT to_regclass('public.battle_double_down_offers')::text AS reg`,
+    const exists = await queryMainRows<{ reg: string | null }[]>(
+      `SELECT to_regclass('public.battle_double_down_offers')::text AS reg`,
     );
     if (!exists[0]?.reg) return EMPTY_DASHBOARD_STATS;
     return computeDashboardStats(ids);

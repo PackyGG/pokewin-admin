@@ -59,8 +59,8 @@ const WORKSPACE_NAV: NavItem[] = [
  */
 const MANAGE_NAV: NavItem[] = [
   { label: "Risk Scoring", href: "/antifraud/points", icon: Gauge },
-  { label: "API", href: "/antifraud/settings/api", icon: Braces },
-  { label: "Workspace Settings", href: "/antifraud/settings", icon: Settings },
+  { label: "API", href: "/antifraud/api", icon: Braces },
+  { label: "Settings", href: "/antifraud/settings", icon: Settings },
 ];
 
 function NavMenu({

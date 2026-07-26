@@ -1,6 +1,8 @@
 "use server";
 
-import { getDb } from "@/lib/db";
+import { and, desc, ilike, ne, or } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
+import { user } from "@/lib/db-schema/main/schema";
 import { requirePageAccess } from "@/lib/dal";
 
 export type NonCreatorCandidate = {
@@ -11,7 +13,7 @@ export type NonCreatorCandidate = {
 };
 
 /**
- * Pragmatic local Prisma query: find up to 8 users (NOT creators) whose
+ * Pragmatic local Drizzle query: find up to 8 users (NOT creators) whose
  * username or email matches `search`. Used by the "Add Creator" dialog so
  * the admin can pick a candidate and promote them.
  *
@@ -28,19 +30,26 @@ export async function searchNonCreatorUsers(
   const trimmed = search.trim();
   if (trimmed.length < 2) return [];
 
-  const db = await getDb();
-  const users = await db.user.findMany({
-    where: {
-      role: { not: "creator" },
-      OR: [
-        { username: { contains: trimmed, mode: "insensitive" } },
-        { email: { contains: trimmed, mode: "insensitive" } },
-      ],
-    },
-    select: { id: true, username: true, email: true, role: true },
-    take: 8,
-    orderBy: { created_at: "desc" },
-  });
+  const db = await getDrizzleDb();
+  const users = await db
+    .select({
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+    })
+    .from(user)
+    .where(
+      and(
+        ne(user.role, "creator"),
+        or(
+          ilike(user.username, `%${trimmed}%`),
+          ilike(user.email, `%${trimmed}%`),
+        ),
+      ),
+    )
+    .orderBy(desc(user.created_at))
+    .limit(8);
 
   return users.map((u) => ({
     userId: u.id,

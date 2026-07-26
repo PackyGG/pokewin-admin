@@ -1,10 +1,12 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { BadgeCheck, GraduationCap } from "lucide-react";
+import { count, eq } from "drizzle-orm";
 
 import { requireStaffManagerPage } from "@/lib/staff/access";
 import { safeQuery } from "@/lib/errors/safe-query";
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
+import { staff_quiz_attempts } from "@/lib/db-schema/admin/schema";
 import {
   PageHero,
   PageHeroIdentity,
@@ -60,15 +62,13 @@ async function QuizTable() {
   );
 
   // One grouped count for the whole page rather than a per-row query.
-  const attemptCounts = await adminDb.staff_quiz_attempts
-    .groupBy({
-      by: ["quiz_id"],
-      where: { status: "submitted" },
-      _count: { _all: true },
-    })
-    .catch(() => [] as { quiz_id: string; _count: { _all: number } }[]);
+  const attemptCounts = await adminDrizzle.select({
+    quiz_id: staff_quiz_attempts.quiz_id, value: count(),
+  }).from(staff_quiz_attempts)
+    .where(eq(staff_quiz_attempts.status, "submitted"))
+    .groupBy(staff_quiz_attempts.quiz_id).catch(() => []);
   const takenByQuiz = new Map(
-    attemptCounts.map((row) => [row.quiz_id, row._count._all]),
+    attemptCounts.map((row) => [row.quiz_id, row.value]),
   );
 
   if (quizzes.length === 0) {

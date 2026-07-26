@@ -1,10 +1,10 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { sql } from "drizzle-orm";
 import { getDefaultRouteForUser } from "@/lib/dal";
 import { getEffectiveRoles, pickPrimaryRole } from "@/lib/admin-roles";
-import { readAdminUserWithRoles } from "@/lib/admin-user-roles";
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
 import {
   getPendingSession,
   deletePendingSession,
@@ -18,6 +18,7 @@ import { buildAuthenticationOptions, checkAuthentication } from "@/lib/webauthn"
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { headers } from "next/headers";
 import { MS_PER_MINUTE, MS_PER_HOUR } from "@/lib/utils/time";
+import { rateLimit, buildCacheKey } from "@/lib/cache/redis";
 import type {
   AuthenticationResponseJSON,
   PublicKeyCredentialRequestOptionsJSON,
@@ -36,6 +37,11 @@ type VerifyState = {
 // is in place.
 const MAX_FAILED_VERIFIES = 5;
 const VERIFY_WINDOW_MS = 5 * MS_PER_MINUTE;
+// Fleet-wide attempt ceiling for the 6-digit code (SECURITY_AUDIT.md MEDIUM-6).
+// Counts EVERY verify attempt for a pending admin across all instances (the
+// per-instance failure map below can't). Fails OPEN when Upstash is dormant.
+const VERIFY_FLEET_MAX = 10;
+const VERIFY_FLEET_WINDOW_SECONDS = 300;
 const verifyFailures = new Map<
   string,
   { count: number; resetAt: number }
@@ -82,34 +88,35 @@ export async function verify2FA(
     };
   }
 
+  // Fleet-wide cap (SECURITY_AUDIT.md MEDIUM-6) — bounds a distributed
+  // brute-force of the 6-digit code that the per-instance map above can't.
+  // Fails OPEN when Upstash isn't configured.
+  const verifyFleet = await rateLimit(
+    buildCacheKey("ratelimit:verify2fa", [pending.adminUserId]),
+    VERIFY_FLEET_MAX,
+    VERIFY_FLEET_WINDOW_SECONDS,
+  );
+  if (!verifyFleet.allowed) {
+    return {
+      error: "Too many verification attempts. Try again in a few minutes.",
+    };
+  }
+
   // Explicit select — same reason as login/actions.ts: a missing column
   // (e.g. `preferences` added in a later migration that prod hasn't run yet)
-  // would otherwise throw P2022 and crash the 2FA verify page. The additive
+  // would otherwise throw 42703 and crash the 2FA verify page. The additive
   // `roles` column is read resiliently: if its migration hasn't run, the
   // read degrades to `roles: []` (→ effective `[role]`).
-  const adminUser = await readAdminUserWithRoles(
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id: pending.adminUserId },
-        select: {
-          id: true,
-          role: true,
-          roles: true,
-          totp_secret: true,
-          recovery_codes: true,
-        },
-      }),
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id: pending.adminUserId },
-        select: {
-          id: true,
-          role: true,
-          totp_secret: true,
-          recovery_codes: true,
-        },
-      }),
-  );
+  const adminUser = (await adminDrizzle.execute<{
+    id: string; role: string; roles: string[]; totp_secret: string | null;
+    recovery_codes: string[];
+  }>(sql`
+    SELECT id::text, role::text AS role, roles::text[] AS roles,
+           totp_secret, recovery_codes
+    FROM admin_users
+    WHERE id = ${pending.adminUserId}::uuid
+    LIMIT 1
+  `)).rows[0];
   if (!adminUser || !adminUser.totp_secret) {
     return { error: "Account error. Please contact an administrator." };
   }
@@ -129,11 +136,11 @@ export async function verify2FA(
     // Remove used recovery code
     const updatedCodes = [...adminUser.recovery_codes];
     updatedCodes.splice(index, 1);
-    await adminDb.admin_users.update({
-      where: { id: adminUser.id },
-      data: { recovery_codes: updatedCodes },
-      select: { id: true },
-    });
+    await adminDrizzle.execute(sql`
+      UPDATE admin_users
+      SET recovery_codes = ${updatedCodes}, updated_at = NOW()
+      WHERE id = ${adminUser.id}::uuid
+    `);
   } else {
     const code = formData.get("code") as string;
     if (!code || code.length !== 6) {
@@ -177,15 +184,15 @@ export async function verify2FA(
       ip,
       metadata: { method: mode === "recovery" ? "recovery_code" : "totp" },
     }),
-    adminDb.admin_sessions.create({
-      data: {
-        admin_user_id: pending.adminUserId,
-        ip,
-        user_agent: userAgent,
-        auth_method: mode === "recovery" ? "recovery_code" : "totp",
-        expires_at: new Date(Date.now() + 8 * MS_PER_HOUR),
-      },
-    }),
+    adminDrizzle.execute(sql`
+      INSERT INTO admin_sessions (
+        admin_user_id, ip, user_agent, auth_method, expires_at
+      ) VALUES (
+        ${pending.adminUserId}::uuid, ${ip}, ${userAgent},
+        ${mode === "recovery" ? "recovery_code" : "totp"},
+        ${new Date(Date.now() + 8 * MS_PER_HOUR)}
+      )
+    `),
   ]);
 
   await deletePendingSession();
@@ -208,10 +215,13 @@ export async function startPasskeyLogin(): Promise<PublicKeyCredentialRequestOpt
   if (!pending) {
     throw new Error("Session expired. Please login again.");
   }
-  const creds = await adminDb.admin_passkeys.findMany({
-    where: { admin_user_id: pending.adminUserId },
-    select: { credential_id: true, transports: true },
-  });
+  const creds = (await adminDrizzle.execute<{
+    credential_id: string; transports: string[];
+  }>(sql`
+    SELECT credential_id, transports
+    FROM admin_passkeys
+    WHERE admin_user_id = ${pending.adminUserId}::uuid
+  `)).rows;
   if (creds.length === 0) {
     throw new Error("No passkeys are registered for this account.");
   }
@@ -254,17 +264,16 @@ export async function verifyPasskeyLogin(
 
   // Resolve the exact credential the authenticator asserted with, and make sure
   // it actually belongs to the account that passed the password step.
-  const stored = await adminDb.admin_passkeys.findUnique({
-    where: { credential_id: response.id },
-    select: {
-      id: true,
-      admin_user_id: true,
-      credential_id: true,
-      public_key: true,
-      counter: true,
-      transports: true,
-    },
-  });
+  const stored = (await adminDrizzle.execute<{
+    id: string; admin_user_id: string; credential_id: string;
+    public_key: Uint8Array; counter: string; transports: string[];
+  }>(sql`
+    SELECT id::text, admin_user_id::text, credential_id, public_key,
+           counter::text, transports
+    FROM admin_passkeys
+    WHERE credential_id = ${response.id}
+    LIMIT 1
+  `)).rows[0];
   if (!stored || stored.admin_user_id !== pending.adminUserId) {
     recordVerifyFailure(pending.adminUserId);
     await deleteWebauthnChallenge();
@@ -299,10 +308,11 @@ export async function verifyPasskeyLogin(
   }
 
   // Replay guard: persist the authenticator's reported counter + usage time.
-  await adminDb.admin_passkeys.update({
-    where: { id: stored.id },
-    data: { counter: BigInt(newCounter), last_used_at: new Date() },
-  });
+  await adminDrizzle.execute(sql`
+    UPDATE admin_passkeys
+    SET counter = ${BigInt(newCounter)}, last_used_at = NOW()
+    WHERE id = ${stored.id}::uuid
+  `);
 
   clearVerifyFailures(pending.adminUserId);
   const redirectTo = await finalizePasskeyLogin(
@@ -331,18 +341,14 @@ async function finalizePasskeyLogin(
   username: string,
   fallbackRole: string,
 ): Promise<string> {
-  const adminUser = await readAdminUserWithRoles(
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id: adminUserId },
-        select: { role: true, roles: true },
-      }),
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id: adminUserId },
-        select: { role: true },
-      }),
-  );
+  const adminUser = (await adminDrizzle.execute<{
+    role: string; roles: string[];
+  }>(sql`
+    SELECT role::text AS role, roles::text[] AS roles
+    FROM admin_users
+    WHERE id = ${adminUserId}::uuid
+    LIMIT 1
+  `)).rows[0];
 
   const effectiveRoles = getEffectiveRoles(adminUser?.role ?? fallbackRole, adminUser?.roles);
   await createSession({
@@ -364,15 +370,14 @@ async function finalizePasskeyLogin(
       ip,
       metadata: { method: "passkey" },
     }),
-    adminDb.admin_sessions.create({
-      data: {
-        admin_user_id: adminUserId,
-        ip,
-        user_agent: userAgent,
-        auth_method: "passkey",
-        expires_at: new Date(Date.now() + 8 * MS_PER_HOUR),
-      },
-    }),
+    adminDrizzle.execute(sql`
+      INSERT INTO admin_sessions (
+        admin_user_id, ip, user_agent, auth_method, expires_at
+      ) VALUES (
+        ${adminUserId}::uuid, ${ip}, ${userAgent}, 'passkey',
+        ${new Date(Date.now() + 8 * MS_PER_HOUR)}
+      )
+    `),
   ]);
 
   await deletePendingSession();

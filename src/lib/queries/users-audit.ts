@@ -1,14 +1,8 @@
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
-import { Prisma } from "@/generated/prisma/client";
-import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
+import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
-// Only the audit_events.event_type values that the backend actually emits
-// AND are relevant to the "important account activity" view. Verified
-// against the prod audit_events table.
-// Deposits/withdrawals are merged in separately from ledger_transactions /
-// card_withdrawal_requests below.
 export const RELEVANT_AUDIT_EVENT_TYPES = [
   "login",
   "logout",
@@ -17,99 +11,117 @@ export const RELEVANT_AUDIT_EVENT_TYPES = [
   "settings_changed",
 ] as const;
 
+type AuditRow = {
+  id: string;
+  event_type: string;
+  ip: string | null;
+  country: string | null;
+  created_at: Date;
+  metadata: unknown;
+};
+
+type DepositRow = {
+  id: string;
+  amount: string;
+  crypto_asset: string | null;
+  crypto_amount: string | null;
+  created_at: Date;
+};
+
+type WithdrawalRow = {
+  id: string;
+  total_value_usd: string;
+  status: string;
+  method: string;
+  requested_at: Date;
+};
+
+type AdjustmentRow = {
+  id: string;
+  amount: string;
+  description: string | null;
+  created_at: Date;
+};
+
 export async function getUserAuditLog(
   userId: string,
   page: number = 1,
   perPage: number = 20,
-  filters?: { eventType?: string }
+  filters?: { eventType?: string },
 ) {
-  const db = await getDb();
-  // Blacklisted (excluded) users must never leak withdrawal events through
-  // any admin surface. When blacklisted, the card_withdrawal_requests fetch
-  // is skipped entirely and any admin_balance_adjustment row whose
-  // description references a withdrawal is suppressed post-fetch.
+  const safePage = Math.max(1, Math.trunc(page) || 1);
+  const safePerPage = Math.min(200, Math.max(1, Math.trunc(perPage) || 20));
   const isBlacklisted = (await getExcludedUserIds()).includes(userId);
   const explicitFilter =
     filters?.eventType && filters.eventType !== "all"
       ? filters.eventType
       : null;
-
-  // 1) Audit events from audit_events table, restricted to the relevant set
-  const auditWhere: Prisma.audit_eventsWhereInput = {
-    user_id: userId,
-    event_type: (explicitFilter
-      ? (explicitFilter as Prisma.audit_eventsWhereInput["event_type"])
-      : {
-          in: [...RELEVANT_AUDIT_EVENT_TYPES],
-        }) as Prisma.audit_eventsWhereInput["event_type"],
-  };
-
-  // 2) Synthetic events from ledger_transactions (deposits + crypto withdrawals)
-  //    and card_withdrawal_requests (item withdrawals). These run in parallel
-  //    so we get one merged, paginated, time-ordered stream.
   const showFinancials =
-    !explicitFilter || ["deposit", "withdrawal", "admin_balance_adjustment"].includes(explicitFilter);
+    !explicitFilter ||
+    ["deposit", "withdrawal", "admin_balance_adjustment"].includes(
+      explicitFilter,
+    );
 
-  const [auditRows, depositRows, cardWithdrawalRows, balanceAdjustRows] = await Promise.all([
-    db.audit_events.findMany({
-      where: auditWhere,
-      orderBy: { created_at: "desc" },
-      // Take a generous slice — we paginate after merging.
-      take: 200,
-    }),
-    showFinancials
-      ? db.ledger_transactions.findMany({
-          where: {
-            user_id: userId,
-            type: "deposit",
-            status: "completed",
-          },
-          orderBy: { created_at: "desc" },
-          take: 200,
-          select: {
-            id: true,
-            amount: true,
-            crypto_asset: true,
-            crypto_amount: true,
-            created_at: true,
-          },
-        })
-      : Promise.resolve([]),
-    showFinancials && !isBlacklisted
-      ? db.card_withdrawal_requests.findMany({
-          where: { user_id: userId },
-          orderBy: { requested_at: "desc" },
-          take: 200,
-          select: {
-            id: true,
-            total_value_usd: true,
-            status: true,
-            method: true,
-            requested_at: true,
-          },
-        })
-      : Promise.resolve([]),
-    showFinancials
-      ? db.ledger_transactions.findMany({
-          where: {
-            user_id: userId,
-            type: "admin_balance_adjustment",
-            status: "completed",
-            // FAKE-BALANCE: hide official_stream adjustments from this
-            // per-user account-activity feed (owner-designated fake balance).
-            NOT: officialStreamAdjustmentPrismaWhere(),
-          },
-          orderBy: { created_at: "desc" },
-          take: 200,
-          select: {
-            id: true,
-            amount: true,
-            description: true,
-            created_at: true,
-          },
-        })
-      : Promise.resolve([]),
-  ]);
+  const eventParams = explicitFilter
+    ? [userId, explicitFilter]
+    : [userId, ...RELEVANT_AUDIT_EVENT_TYPES];
+  const eventPredicate = explicitFilter
+    ? "event_type::text = $2"
+    : `event_type::text = ANY(ARRAY[${RELEVANT_AUDIT_EVENT_TYPES.map(
+        (_, index) => `$${index + 2}`,
+      ).join(",")}])`;
+
+  const [auditRows, depositRows, cardWithdrawalRows, balanceAdjustRows] =
+    await Promise.all([
+      queryMainRows<AuditRow[]>(
+        `SELECT id, event_type::text AS event_type, ip, country, created_at, metadata
+           FROM audit_events
+          WHERE user_id = $1 AND ${eventPredicate}
+          ORDER BY created_at DESC
+          LIMIT 200`,
+        ...eventParams,
+      ),
+      showFinancials
+        ? queryMainRows<DepositRow[]>(
+            `SELECT id, amount::text AS amount, crypto_asset,
+                    crypto_amount::text AS crypto_amount, created_at
+               FROM ledger_transactions
+              WHERE user_id = $1
+                AND type = 'deposit'
+                AND status = 'completed'
+              ORDER BY created_at DESC
+              LIMIT 200`,
+            userId,
+          )
+        : Promise.resolve([]),
+      showFinancials && !isBlacklisted
+        ? queryMainRows<WithdrawalRow[]>(
+            `SELECT id, total_value_usd::text AS total_value_usd,
+                    status::text AS status, method::text AS method, requested_at
+               FROM card_withdrawal_requests
+              WHERE user_id = $1
+              ORDER BY requested_at DESC
+              LIMIT 200`,
+            userId,
+          )
+        : Promise.resolve([]),
+      showFinancials
+        ? queryMainRows<AdjustmentRow[]>(
+            `SELECT id, amount::text AS amount, description, created_at
+               FROM ledger_transactions lt
+              WHERE user_id = $1
+                AND type = 'admin_balance_adjustment'
+                AND status = 'completed'
+                AND NOT (${officialStreamAdjustmentSqlPredicate({
+                  typeColumn: "lt.type",
+                  metadataColumn: "lt.metadata",
+                })})
+              ORDER BY created_at DESC
+              LIMIT 200`,
+            userId,
+          )
+        : Promise.resolve([]),
+    ]);
 
   type Row = {
     id: string;
@@ -121,71 +133,65 @@ export async function getUserAuditLog(
   };
 
   const merged: Row[] = [
-    ...auditRows.map((e) => ({
-      id: e.id,
-      eventType: e.event_type,
-      ip: e.ip,
-      country: e.country,
-      createdAt: e.created_at.toISOString(),
-      metadata: e.metadata,
+    ...auditRows.map((event) => ({
+      id: event.id,
+      eventType: event.event_type,
+      ip: event.ip,
+      country: event.country,
+      createdAt: event.created_at.toISOString(),
+      metadata: event.metadata,
     })),
-    ...depositRows.map((d) => ({
-      id: `dep_${d.id}`,
+    ...depositRows.map((deposit) => ({
+      id: `dep_${deposit.id}`,
       eventType: "deposit",
       ip: null,
       country: null,
-      createdAt: d.created_at.toISOString(),
+      createdAt: deposit.created_at.toISOString(),
       metadata: {
-        amountUsd: toNumber(d.amount),
-        cryptoAsset: d.crypto_asset,
-        cryptoAmount: d.crypto_amount ? toNumber(d.crypto_amount) : null,
+        amountUsd: toNumber(deposit.amount),
+        cryptoAsset: deposit.crypto_asset,
+        cryptoAmount:
+          deposit.crypto_amount === null ? null : toNumber(deposit.crypto_amount),
       },
     })),
-    ...cardWithdrawalRows.map((w) => ({
-      id: `wd_${w.id}`,
+    ...cardWithdrawalRows.map((withdrawal) => ({
+      id: `wd_${withdrawal.id}`,
       eventType: "withdrawal",
       ip: null,
       country: null,
-      createdAt: w.requested_at.toISOString(),
+      createdAt: withdrawal.requested_at.toISOString(),
       metadata: {
-        amountUsd: toNumber(w.total_value_usd),
-        method: w.method,
-        status: w.status,
+        amountUsd: toNumber(withdrawal.total_value_usd),
+        method: withdrawal.method,
+        status: withdrawal.status,
       },
     })),
     ...balanceAdjustRows
-      // For blacklisted users, suppress any manual adjustment whose
-      // description references a withdrawal so no withdrawal amount leaks
-      // via the adjustment channel.
       .filter(
-        (a) =>
-          !isBlacklisted ||
-          !/withdraw/i.test(a.description ?? ""),
+        (adjustment) =>
+          !isBlacklisted || !/withdraw/i.test(adjustment.description ?? ""),
       )
-      .map((a) => ({
-        id: `adj_${a.id}`,
+      .map((adjustment) => ({
+        id: `adj_${adjustment.id}`,
         eventType: "admin_balance_adjustment",
         ip: null,
         country: null,
-        createdAt: a.created_at.toISOString(),
+        createdAt: adjustment.created_at.toISOString(),
         metadata: {
-          amountUsd: toNumber(a.amount),
-          description: a.description,
+          amountUsd: toNumber(adjustment.amount),
+          description: adjustment.description,
         },
       })),
   ];
 
-  merged.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-
+  merged.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   const total = merged.length;
-  const start = (page - 1) * perPage;
-  const data = merged.slice(start, start + perPage);
-
+  const start = (safePage - 1) * safePerPage;
   return {
-    data,
+    data: merged.slice(start, start + safePerPage),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }

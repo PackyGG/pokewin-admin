@@ -1,14 +1,13 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { compareSignupHourOfDay } from "@/lib/clickhouse/compare/insights-signup-hour-of-day";
 import { SIGNUP_CACHE_TAG } from "./_shared";
 
 /**
@@ -65,19 +64,16 @@ async function computeHourOfDay(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<HourOfDay> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const signupDateFilter =
-    days !== null
-      ? `AND u.created_at >= NOW() - INTERVAL '${days} days'`
-      : "";
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const signupDateFilter = daysAgoFilter("u.created_at", days);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // One sweep over the heatmap (dow × hour) gives us all three series
   // — the hour-of-day and day-of-week marginals are just sums over
   // the heatmap matrix on the JS side. Cheaper than three SQL queries.
   type Row = { dow: number; hour: number; cnt: string; volume: string };
-  const rows = await db.$queryRawUnsafe<Row[]>(`
+  const rows = await queryRows<Row[]>(db, sql`
     WITH cohort AS (
       SELECT u.id AS user_id
       FROM "user" u
@@ -161,9 +157,5 @@ export async function getSignupHourOfDay(
   const data = await (cacheTtlForInsightsPeriod(period) >= 300
     ? cachedLong(period, sorted)
     : cachedShort(period, sorted));
-  // CQRS rollout: fire-and-forget ClickHouse comparison (no-op unless the
-  // surface flag is in `comparison` mode; forced off when CH is dormant). The
-  // served value stays the Postgres payload above.
-  void compareSignupHourOfDay(period, data);
   return data;
 }

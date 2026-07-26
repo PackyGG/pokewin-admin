@@ -1,6 +1,6 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getCreatorSessionWindowsCte } from "../creator-session-windows";
@@ -113,7 +113,6 @@ export async function getGamesOverview(
   period: GamesPeriod,
 ): Promise<GamesOverviewData> {
   return withTiming("insights-games.overview", async () => {
-    const db = await getDb();
     const scope = await realCustomersScopeSql();
     const sessionWindowsCte = await getCreatorSessionWindowsCte();
     const bucketByHour = period === "24h";
@@ -173,7 +172,7 @@ export async function getGamesOverview(
       await Promise.all([
         // ── Wager side (KPIs) — pack + battle only (upgrader is sourced
         //    from upgrader_games in the payout query below) ──
-        db.$queryRawUnsafe<KpiRow[]>(
+        queryMainRows<KpiRow[]>(
           `WITH ${sessionWindowsCte},
                 ${BORROW_FILTER_CTES}
            SELECT
@@ -218,7 +217,7 @@ export async function getGamesOverview(
         // value_at_obtained is net keep). upgrader: bet_amount +
         // won_amount + play count from `upgrader_games` (the canonical
         // upgrader source — it is NOT booked to the ledger).
-        db.$queryRawUnsafe<PayoutRow[]>(
+        queryMainRows<PayoutRow[]>(
           `WITH ${sessionWindowsCte},
                 ${BORROW_FILTER_CTES}
            SELECT
@@ -297,7 +296,7 @@ export async function getGamesOverview(
         //    plays both products is counted exactly once. (Upgrader is
         //    no longer in the ledger wager rows, so it must be unioned
         //    in explicitly here.) ──
-        db.$queryRawUnsafe<ActiveUsersRow[]>(
+        queryMainRows<ActiveUsersRow[]>(
           `WITH ${sessionWindowsCte}
            SELECT COUNT(*)::text AS active_users
            FROM (
@@ -333,7 +332,7 @@ export async function getGamesOverview(
            ) distinct_players`,
         ),
         // ── Series: pack + battle wagers and payouts ──
-        db.$queryRawUnsafe<SeriesRow[]>(
+        queryMainRows<SeriesRow[]>(
           `WITH ${sessionWindowsCte},
                 ${BORROW_FILTER_CTES},
                 wager_src AS (
@@ -387,7 +386,7 @@ export async function getGamesOverview(
            ORDER BY 1`,
         ),
         // ── Series: upgrader (separate so we can union into series) ──
-        db.$queryRawUnsafe<SeriesRow[]>(
+        queryMainRows<SeriesRow[]>(
           `WITH ${sessionWindowsCte},
                 src AS (
              SELECT ug.created_at AS ts,

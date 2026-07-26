@@ -52,7 +52,7 @@ export function blacklistNotInClause(column: string, ids: string[]): string {
  */
 
 /**
- * Prisma where-fragment for a `user: {…}` relation. Use to replace
+ * Legacy relation-filter fragment. Use to replace
  * `user: EXCLUDE_STAFF_USER_RELATION` with the combined filter.
  *
  *   Before: where: { user: EXCLUDE_STAFF_USER_RELATION }
@@ -86,7 +86,7 @@ const STAFF_AND_CREATOR_ROLES = [...STAFF_ROLES, "creator"] as const;
 
 /**
  * Creator-excluding sibling of {@link excludeStaffAndBlacklisted}: a
- * Prisma where-fragment for a `user: {…}` relation that drops staff
+ * Legacy relation-filter fragment that drops staff
  * (admin/support) AND creators AND the blacklist. Use on money/analytics
  * aggregates where creator play must NOT inflate the figures.
  *

@@ -4,7 +4,7 @@
  * These plain runtime values are shared by both the server query module
  * (`@/lib/queries/insights-rewards/rakeback/roi`) and the `"use client"`
  * lookback filter. They MUST stay free of any server-only imports
- * (no `@/lib/db`, no `server-only`, no `next/headers`, no Prisma) so the
+ * (no `@/lib/db`, no `server-only`, no `next/headers`) so the
  * client bundle can pull them in without dragging the query module along.
  */
 

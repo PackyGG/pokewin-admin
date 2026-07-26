@@ -2,7 +2,9 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { adminDb } from "@/lib/admin-db";
+import { asc, inArray } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import { creator_socials } from "@/lib/db-schema/admin/schema";
 import { resolveLinkedHandle } from "@/lib/creator-hub";
 import {
   creatorsApi,
@@ -121,16 +123,19 @@ export async function getAdminDbLinkedSocialsByUser(
   const result = new Map<string, CreatorSocialSummary[]>();
   if (userIds.length === 0) return result;
 
-  const rows = await adminDb.creator_socials.findMany({
-    where: { target_user_id: { in: userIds } },
-    select: {
-      id: true,
-      target_user_id: true,
-      platform: true,
-      username: true,
-    },
-    orderBy: [{ target_user_id: "asc" }, { platform: "asc" }],
-  });
+  const rows = await adminDrizzle
+    .select({
+      id: creator_socials.id,
+      target_user_id: creator_socials.target_user_id,
+      platform: creator_socials.platform,
+      username: creator_socials.username,
+    })
+    .from(creator_socials)
+    .where(inArray(creator_socials.target_user_id, userIds))
+    .orderBy(
+      asc(creator_socials.target_user_id),
+      asc(creator_socials.platform),
+    );
 
   for (const row of rows) {
     if (!isLinkedSocialUsername(row.username)) continue;
@@ -225,7 +230,7 @@ export const CREATOR_LINKED_SOCIALS_CACHE_TAG = "creator-linked-socials";
 // the full backend roster walk) on EVERY banner / metadata render,
 // including each `?activityPeriod=` / tab switch. The userId argument is
 // folded into the cache key by `unstable_cache`. ADMIN client + backend
-// API only inside — no `getDb()` / cookies, so caching is env-safe.
+// API only inside — no request cookie reads, so caching is env-safe.
 const cachedCreatorLinkedSocials = unstable_cache(
   (userId: string): Promise<CreatorSocialSummary[]> =>
     getCreatorLinkedSocials(userId),

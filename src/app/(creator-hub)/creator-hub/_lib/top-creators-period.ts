@@ -39,3 +39,11 @@ export function topCreatorsSinceClause(
 ): string {
   return `AND ${col} >= NOW() - INTERVAL '${topCreatorsPeriodToInterval(period)}'`;
 }
+
+export function topCreatorsSinceDate(
+  period: TopCreatorsPeriod,
+  now: Date = new Date(),
+): Date {
+  const days = period === "3d" ? 3 : period === "7d" ? 7 : 14;
+  return new Date(now.getTime() - days * 86_400_000);
+}

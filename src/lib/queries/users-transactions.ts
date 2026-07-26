@@ -1,6 +1,6 @@
-import { getDb } from "@/lib/db";
+import { sql, type SQL } from "drizzle-orm";
+import { getDrizzleDb, type MainDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
-import { Prisma } from "@/generated/prisma/client";
 import {
   filterLedgerTxTypes,
   filterLedgerTxTypesLive,
@@ -11,13 +11,12 @@ import {
   resolveUpgraderTargetFromBatch,
 } from "./upgrader-target-batch";
 import { getInstantRakebackLedgerTxIds } from "./rakeback-instant-ledger";
-import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
+import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import { getMothaAdjustmentLedgerTxIdsForUser } from "@/lib/queries/users-motha-adjustments";
 import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustments-profile";
 import { isAdjustmentVisibilityOwner } from "@/lib/users/owner-adjustments-visibility";
 import { verifySession } from "@/lib/dal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import type { ledger_transaction_type } from "@/generated/prisma/enums";
 import type {
   Transaction,
   PaginatedTransactions,
@@ -38,11 +37,11 @@ import type {
  * renders rows already in the table). Consistent with the user being fully
  * hidden per owner request 2026-07-01.
  */
-const BLACKLIST_HIDDEN_WITHDRAWAL_TYPES: readonly ledger_transaction_type[] = [
+const BLACKLIST_HIDDEN_WITHDRAWAL_TYPES = [
   "card_withdrawal",
   "balance_withdrawal",
   "withdrawal_shipping_fee",
-] as ledger_transaction_type[];
+] as const;
 
 /** Ledger types that pull in pack/battle/upgrader enrichment (expensive). */
 const GAMING_LEDGER_TYPES = new Set<string>([
@@ -73,23 +72,212 @@ function isFinancialOnlyFilter(filters?: {
 }
 
 async function resolveCanonicalUserId(
-  db: Awaited<ReturnType<typeof getDb>>,
+  db: MainDrizzleDb,
   userId: string,
 ): Promise<string | null> {
-  const user = await db.user.findFirst({
-    where: {
-      OR: [{ id: userId }, { id: { equals: userId, mode: "insensitive" } }],
-    },
-    select: { id: true },
-  });
-  return user?.id ?? null;
+  const exact = await db.execute<{ id: string }>(sql`
+    SELECT id
+    FROM "user"
+    WHERE id = ${userId}
+    LIMIT 1
+  `);
+  if (exact.rows[0]) return exact.rows[0].id;
+  const insensitive = await db.execute<{ id: string }>(sql`
+    SELECT id
+    FROM "user"
+    WHERE lower(id) = lower(${userId})
+    LIMIT 1
+  `);
+  return insensitive.rows[0]?.id ?? null;
 }
 
-type LedgerRow = Awaited<
-  ReturnType<
-    Awaited<ReturnType<typeof getDb>>["ledger_transactions"]["findMany"]
-  >
->[number];
+type LedgerRow = {
+  id: string;
+  user_id: string;
+  type: string;
+  amount: string;
+  balance_before: string;
+  balance_after: string;
+  game_session_id: string | null;
+  crypto_asset: string | null;
+  crypto_amount: string | null;
+  exchange_rate: string | null;
+  fireblocks_tx_id: string | null;
+  external_tx_id: string | null;
+  blockchain_tx_hash: string | null;
+  source_address: string | null;
+  destination_address: string | null;
+  deposit_address_id: string | null;
+  status: string;
+  failure_reason: string | null;
+  description: string;
+  metadata: unknown;
+  created_at: Date;
+  updated_at: Date;
+  game_sessions_ledger_transactions_game_session_idTogame_sessions:
+    | GameSessionRow
+    | null;
+};
+
+type GameSessionRow = {
+  id: string;
+  game_id: string;
+  game_type: string;
+  result: "win" | "lose" | "draw" | null;
+  bet_amount: string;
+  battle_participants: {
+    battle_id: string;
+    team_number: number;
+  } | null;
+  provably_fair_results: Array<{
+    battle_id: string | null;
+    result_metadata: unknown;
+    user_inventory: { value_at_obtained: string } | null;
+  }>;
+};
+
+type LedgerFilter = {
+  userId: string;
+  types?: string[];
+  status?: "pending" | "completed" | "failed";
+  dateFrom?: Date;
+  dateTo?: Date;
+  hideWithdrawals: boolean;
+  hideAdjustments: boolean;
+  mothaAdjustmentIds?: string[];
+};
+
+function ledgerWhereSql(filter: LedgerFilter, alias = "lt"): SQL {
+  const typeColumn = `${alias}.type`;
+  const metadataColumn = `${alias}.metadata`;
+  const clauses: SQL[] = [
+    sql`${sql.identifier(alias)}.user_id = ${filter.userId}`,
+    sql`NOT (${sql.raw(
+      officialStreamAdjustmentSqlPredicate({ typeColumn, metadataColumn }),
+    )})`,
+  ];
+  if (filter.types?.length) {
+    clauses.push(
+      sql`${sql.identifier(alias)}.type = ANY(${filter.types}::ledger_transaction_type[])`,
+    );
+  }
+  if (filter.status) {
+    clauses.push(
+      sql`${sql.identifier(alias)}.status = ${filter.status}::ledger_transaction_status`,
+    );
+  }
+  if (filter.dateFrom) {
+    clauses.push(sql`${sql.identifier(alias)}.created_at >= ${filter.dateFrom}`);
+  }
+  if (filter.dateTo) {
+    clauses.push(sql`${sql.identifier(alias)}.created_at <= ${filter.dateTo}`);
+  }
+  if (filter.hideWithdrawals) {
+    clauses.push(
+      sql`${sql.identifier(alias)}.type <> ALL(${[...BLACKLIST_HIDDEN_WITHDRAWAL_TYPES]}::ledger_transaction_type[])`,
+    );
+  }
+  if (filter.hideAdjustments) {
+    clauses.push(
+      sql`${sql.identifier(alias)}.type <> 'admin_balance_adjustment'::ledger_transaction_type`,
+    );
+  } else if (filter.mothaAdjustmentIds) {
+    clauses.push(
+      filter.mothaAdjustmentIds.length > 0
+        ? sql`(${sql.identifier(alias)}.type <> 'admin_balance_adjustment'::ledger_transaction_type OR ${sql.identifier(alias)}.id = ANY(${filter.mothaAdjustmentIds}::uuid[]))`
+        : sql`${sql.identifier(alias)}.type <> 'admin_balance_adjustment'::ledger_transaction_type`,
+    );
+  }
+  return sql.join(clauses, sql` AND `);
+}
+
+async function fetchLedgerRowsByIds(
+  db: MainDrizzleDb,
+  ids: string[],
+): Promise<LedgerRow[]> {
+  if (ids.length === 0) return [];
+  const ledgerResult = await db.execute<Omit<
+    LedgerRow,
+    "game_sessions_ledger_transactions_game_session_idTogame_sessions"
+  >>(sql`
+    SELECT lt.*
+    FROM unnest(${ids}::uuid[]) WITH ORDINALITY requested(id, ord)
+    JOIN ledger_transactions lt ON lt.id = requested.id
+    ORDER BY requested.ord
+  `);
+  const sessionIds = [
+    ...new Set(
+      ledgerResult.rows
+        .map((row) => row.game_session_id)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  const sessions = new Map<string, GameSessionRow>();
+  if (sessionIds.length > 0) {
+    const sessionResult = await db.execute<{
+      id: string;
+      game_id: string;
+      game_type: string;
+      result: "win" | "lose" | "draw" | null;
+      bet_amount: string;
+      battle_id: string | null;
+      team_number: number | null;
+      provably_fair_results: GameSessionRow["provably_fair_results"];
+    }>(sql`
+      SELECT gs.id,
+             gs.game_id,
+             gs.game_type::text AS game_type,
+             gs.result::text AS result,
+             gs.bet_amount::text AS bet_amount,
+             bp.battle_id,
+             bp.team_number,
+             COALESCE(pf.results, '[]'::jsonb) AS provably_fair_results
+      FROM game_sessions gs
+      LEFT JOIN LATERAL (
+        SELECT p.battle_id, p.team_number
+        FROM battle_participants p
+        WHERE p.game_session_id = gs.id
+        LIMIT 1
+      ) bp ON true
+      LEFT JOIN LATERAL (
+        SELECT jsonb_agg(
+          jsonb_build_object(
+            'battle_id', pfr.battle_id,
+            'result_metadata', pfr.result_metadata,
+            'user_inventory', CASE
+              WHEN ui.id IS NULL THEN NULL
+              ELSE jsonb_build_object('value_at_obtained', ui.value_at_obtained::text)
+            END
+          )
+          ORDER BY pfr.cursor, pfr.id
+        ) AS results
+        FROM provably_fair_results pfr
+        LEFT JOIN user_inventory ui ON ui.id = pfr.inventory_item_id
+        WHERE pfr.game_session_id = gs.id
+      ) pf ON true
+      WHERE gs.id = ANY(${sessionIds}::uuid[])
+    `);
+    for (const row of sessionResult.rows) {
+      sessions.set(row.id, {
+        id: row.id,
+        game_id: row.game_id,
+        game_type: row.game_type,
+        result: row.result,
+        bet_amount: row.bet_amount,
+        battle_participants:
+          row.battle_id && row.team_number !== null
+            ? { battle_id: row.battle_id, team_number: row.team_number }
+            : null,
+        provably_fair_results: row.provably_fair_results,
+      });
+    }
+  }
+  return ledgerResult.rows.map((row) => ({
+    ...row,
+    game_sessions_ledger_transactions_game_session_idTogame_sessions:
+      row.game_session_id ? sessions.get(row.game_session_id) ?? null : null,
+  }));
+}
 
 function mapFinancialLedgerRow(t: LedgerRow, instantRakebackIds?: Set<string>) {
   const balanceBeforeNum = toNumber(t.balance_before);
@@ -168,20 +356,35 @@ function mapFinancialLedgerRow(t: LedgerRow, instantRakebackIds?: Set<string>) {
 }
 
 async function getUserFinancialTransactionsLight(
-  db: Awaited<ReturnType<typeof getDb>>,
-  where: Prisma.ledger_transactionsWhereInput,
+  db: MainDrizzleDb,
+  filter: LedgerFilter,
   page: number,
   perPage: number,
 ) {
-  const [transactions, total] = await Promise.all([
-    db.ledger_transactions.findMany({
-      where,
-      orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-    }),
-    db.ledger_transactions.count({ where }),
+  const where = ledgerWhereSql(filter);
+  const [transactionResult, totalResult] = await Promise.all([
+    db.execute<Omit<
+      LedgerRow,
+      "game_sessions_ledger_transactions_game_session_idTogame_sessions"
+    >>(sql`
+      SELECT lt.*
+      FROM ledger_transactions lt
+      WHERE ${where}
+      ORDER BY lt.created_at DESC, lt.id DESC
+      LIMIT ${perPage}
+      OFFSET ${(page - 1) * perPage}
+    `),
+    db.execute<{ total: string }>(sql`
+      SELECT count(*)::text AS total
+      FROM ledger_transactions lt
+      WHERE ${where}
+    `),
   ]);
+  const transactions: LedgerRow[] = transactionResult.rows.map((row) => ({
+    ...row,
+    game_sessions_ledger_transactions_game_session_idTogame_sessions: null,
+  }));
+  const total = Number(totalResult.rows[0]?.total ?? 0);
 
   // Instant-rakeback enrichment — flag which rakeback_claim rows on this page
   // were early-claimed (rakeback_claims.last_preclaim_at non-null), joined by
@@ -223,7 +426,7 @@ async function getUserFinancialTransactionsLight(
 // current ledger page. This is what makes the row a "proper system": every one
 // of the user's rounds is counted and paginated, independent of the page.
 //
-// `battle_double_down_offers` is NOT modeled in prisma/schema.prisma (no
+// `battle_double_down_offers` is NOT modeled in the MAIN Drizzle schema (no
 // generated accessor), so this is hand-written READ-ONLY raw SQL through the
 // prod client. MAIN is strictly read-only — SELECT only.
 
@@ -251,25 +454,25 @@ type SyntheticDdRow = {
  * the voucher_redeemed ledger), NO multiplier — mirrors double-down.ts.
  */
 async function fetchUserDoubleDownRows(
-  db: Awaited<ReturnType<typeof getDb>>,
+  db: MainDrizzleDb,
   canonicalUserId: string,
+  ids?: string[],
 ): Promise<SyntheticDdRow[]> {
+  if (ids && ids.length === 0) return [];
   try {
-    const rows = await db.$queryRaw<
-      {
-        id: string;
-        game_session_id: string | null;
-        result: "win" | "lose";
-        won_amount_usd: string;
-        payout_amount_usd: string | null;
-        resolved_at: Date | null;
-        created_at: Date;
-      }[]
-    >(Prisma.sql`
+    const result = await db.execute<{
+      id: string;
+      game_session_id: string | null;
+      result: "win" | "lose";
+      won_amount_usd: string;
+      payout_amount_usd: string | null;
+      resolved_at: Date | null;
+      created_at: Date;
+    }>(sql`
       SELECT o.id,
              o.game_session_id,
              o.result,
-             o.won_amount_usd,
+             o.won_amount_usd::text AS won_amount_usd,
              o.resolved_at,
              o.created_at,
              CASE WHEN o.result = 'win' THEN v.value::text END AS payout_amount_usd
@@ -280,8 +483,10 @@ async function fetchUserDoubleDownRows(
       WHERE o.user_id = ${canonicalUserId}
         AND o.status = 'resolved'
         AND o.result IS NOT NULL
+        ${ids?.length ? sql`AND o.id = ANY(${ids}::uuid[])` : sql.empty()}
       ORDER BY COALESCE(o.resolved_at, o.created_at) DESC
     `);
+    const rows = result.rows;
     const ddNum = (v: string | null): number | null => {
       if (v === null) return null;
       const n = Number(v);
@@ -379,20 +584,11 @@ function buildDoubleDownRow(d: SyntheticDdRow): Transaction {
  * set is tiny per user (indexed lookup), so this is a handful of cheap indexed
  * COUNTs. Returns counts aligned to the input order.
  */
-async function countLedgerNewerThanEach(
-  db: Awaited<ReturnType<typeof getDb>>,
-  where: Prisma.ledger_transactionsWhereInput,
-  timestamps: Date[],
-): Promise<number[]> {
-  if (timestamps.length === 0) return [];
-  return Promise.all(
-    timestamps.map((ts) =>
-      db.ledger_transactions.count({
-        where: { AND: [where, { created_at: { gt: ts } }] },
-      }),
-    ),
-  );
-}
+type TimelineRow = {
+  id: string;
+  synthetic: boolean;
+  sort_at: Date;
+};
 
 export async function getUserTransactions(
   userId: string,
@@ -413,17 +609,17 @@ export async function getUserTransactions(
   // fetchUserTransactions action) the in-function resolution is used unchanged.
   viewerIsOwnerOverride?: boolean,
 ): Promise<PaginatedTransactions> {
-  const db = await getDb();
-  const where: Prisma.ledger_transactionsWhereInput = {
-    user_id: userId,
-    // FAKE-BALANCE: hide official_stream adjustments from the per-user
-    // activity / transactions feed (owner-designated fake balance is never
-    // surfaced). Combines with the optional type filter below.
-    NOT: officialStreamAdjustmentPrismaWhere(),
+  const db = await getDrizzleDb();
+  page = Math.max(1, Math.trunc(page) || 1);
+  perPage = Math.min(200, Math.max(1, Math.trunc(perPage) || 20));
+  const filter: LedgerFilter = {
+    userId,
+    hideWithdrawals: false,
+    hideAdjustments: false,
   };
 
   // IMPORTANT: filter the requested type(s) against the LIVE enum, not just
-  // the generated Prisma enum. The schema/generated client is AHEAD of prod
+  // the generated schema enum. The application schema is ahead of prod
   // for the un-launched upgrader feature (`upgrader_bet` / `upgrader_payout`
   // exist in the generated enum but NOT in the prod `ledger_transaction_type`
   // enum). Passing such a member into `type: { in: [...] }` makes Postgres
@@ -433,14 +629,20 @@ export async function getUserTransactions(
   // drops the not-yet-migrated members and self-heals once prod migrates.
   if (filters?.type && filters.type !== "all") {
     if (await isLiveLedgerTxType(filters.type)) {
-      where.type = filters.type as ledger_transaction_type;
+      filter.types = [filters.type];
     }
   } else if (filters?.types && filters.types.length > 0) {
     const validTypes = await filterLedgerTxTypesLive(filters.types);
-    if (validTypes.length > 0) where.type = { in: validTypes };
+    if (validTypes.length > 0) filter.types = validTypes;
   }
-  if (filters?.status && filters.status !== "all") {
-    where.status = filters.status as Prisma.Enumledger_transaction_statusFilter["equals"];
+  if (
+    filters?.status &&
+    filters.status !== "all" &&
+    (["pending", "completed", "failed"] as const).includes(
+      filters.status as "pending" | "completed" | "failed",
+    )
+  ) {
+    filter.status = filters.status as "pending" | "completed" | "failed";
   }
   if (filters?.dateFrom || filters?.dateTo) {
     const dateFilter: { gte?: Date; lte?: Date } = {};
@@ -456,7 +658,8 @@ export async function getUserTransactions(
       }
     }
     if (dateFilter.gte || dateFilter.lte) {
-      where.created_at = dateFilter;
+      filter.dateFrom = dateFilter.gte;
+      filter.dateTo = dateFilter.lte;
     }
   }
 
@@ -470,7 +673,7 @@ export async function getUserTransactions(
       totalPages: 0,
     };
   }
-  where.user_id = canonicalUserId;
+  filter.userId = canonicalUserId;
 
   // ── BLACKLISTED-USER WITHDRAWAL SUPPRESSION ─────────────────────────
   //
@@ -486,15 +689,7 @@ export async function getUserTransactions(
   // Deposits and every other type are untouched.
   const excludedIds = await getExcludedUserIds();
   if (excludedIds.includes(canonicalUserId)) {
-    const hideWithdrawals: Prisma.ledger_transactionsWhereInput = {
-      type: { notIn: [...BLACKLIST_HIDDEN_WITHDRAWAL_TYPES] },
-    };
-    const existingAnd = where.AND
-      ? Array.isArray(where.AND)
-        ? where.AND
-        : [where.AND]
-      : [];
-    where.AND = [...existingAnd, hideWithdrawals];
+    filter.hideWithdrawals = true;
   }
 
   // ── OWNER-ONLY ADMIN-ADJUSTMENT VISIBILITY (security) ───────────────
@@ -529,15 +724,7 @@ export async function getUserTransactions(
     }
   }
   if (!viewerIsOwner) {
-    const hideAdjustments: Prisma.ledger_transactionsWhereInput = {
-      type: { not: "admin_balance_adjustment" },
-    };
-    const existingAnd = where.AND
-      ? Array.isArray(where.AND)
-        ? where.AND
-        : [where.AND]
-      : [];
-    where.AND = [...existingAnd, hideAdjustments];
+    filter.hideAdjustments = true;
   } else if (isMothaOnlyAdjustmentsProfile(canonicalUserId)) {
     // Owner viewer: the legacy per-profile carve-out still applies on the
     // one designated profile — show ONLY motha-made adjustments, hide other
@@ -547,28 +734,11 @@ export async function getUserTransactions(
     const mothaLedgerIds = await getMothaAdjustmentLedgerTxIdsForUser(
       canonicalUserId,
     );
-    const mothaScope: Prisma.ledger_transactionsWhereInput =
-      mothaLedgerIds.length > 0
-        ? {
-            OR: [
-              { type: { not: "admin_balance_adjustment" } },
-              {
-                type: "admin_balance_adjustment",
-                id: { in: mothaLedgerIds },
-              },
-            ],
-          }
-        : { type: { not: "admin_balance_adjustment" } };
-    const existingAnd = where.AND
-      ? Array.isArray(where.AND)
-        ? where.AND
-        : [where.AND]
-      : [];
-    where.AND = [...existingAnd, mothaScope];
+    filter.mothaAdjustmentIds = mothaLedgerIds;
   }
 
   if (isFinancialOnlyFilter(filters)) {
-    return getUserFinancialTransactionsLight(db, where, page, perPage);
+    return getUserFinancialTransactionsLight(db, filter, page, perPage);
   }
 
   // ── Decoupled DOUBLE-DOWN source (PROPER system) ──────────────────────
@@ -584,7 +754,7 @@ export async function getUserTransactions(
   // synthetic row dated at `resolved_at`, merged into the desc-by-time feed
   // and counted in `total` so pagination stays exact (a page never silently
   // exceeds perPage; page counts add up). MAIN is READ-ONLY — SELECT only;
-  // `battle_double_down_offers` is not modeled in prisma/schema.prisma, so
+  // `battle_double_down_offers` is not modeled in the MAIN Drizzle schema, so
   // this is hand-written parameterized raw SQL through the prod client.
   //
   // House-POV (verified against the payout-voucher model, read-only on prod):
@@ -596,75 +766,51 @@ export async function getUserTransactions(
   //            `amount` = the forfeited stake (`won_amount_usd`).
   // Non-fatal: a failure here must NOT take down the gaming tab — on error
   // the synthetic list stays empty and only real ledger rows render.
-  const ddSynthetic = await fetchUserDoubleDownRows(db, canonicalUserId);
-  const ddTotal = ddSynthetic.length;
-
-  // Over-fetch the ledger window by `ddTotal` on each side so the in-memory
-  // merge below has every ledger row that could fall inside the merged page
-  // slice: at most `ddTotal` synthetic rows can shift the ledger boundary in
-  // either direction. DD volume is tiny (indexed per-user), so this is a
-  // negligible over-read. When there are no DD rows this is exactly the old
-  // skip/take.
   const rawOffset = (page - 1) * perPage;
-  const fetchSkip = Math.max(0, rawOffset - ddTotal);
-  const fetchTake = perPage + ddTotal + (rawOffset - fetchSkip);
-
-  const [transactions, ledgerTotal] = await Promise.all([
-    db.ledger_transactions.findMany({
-      where,
-      orderBy: { created_at: "desc" },
-      skip: fetchSkip,
-      take: fetchTake,
-      include: {
-        game_sessions_ledger_transactions_game_session_idTogame_sessions: {
-          select: {
-            id: true,
-            game_id: true,
-            game_type: true,
-            result: true,
-            bet_amount: true,
-            // One-to-one link to the battle (game_session →
-            // battle_participants → battles). battle_id is the
-            // authoritative id for the "watch live" link; team_number is
-            // compared against battles.winner_team to decide win/loss
-            // (the reliable signal — game_sessions.result does NOT track
-            // who won the battle).
-            battle_participants: {
-              select: { battle_id: true, team_number: true },
-            },
-            provably_fair_results: {
-              // result_metadata + battle_id are needed for the borrow
-              // badge — solo opens carry the % in metadata, battle
-              // opens link to a battle whose borrow_percentage is on
-              // the battles table (joined below).
-              select: {
-                battle_id: true,
-                result_metadata: true,
-                user_inventory: { select: { value_at_obtained: true } },
-              },
-            },
-          },
-        },
-      },
-    }),
-    db.ledger_transactions.count({ where }),
+  const where = ledgerWhereSql(filter);
+  const [timelineResult, totalResult] = await Promise.all([
+    db.execute<TimelineRow>(sql`
+      WITH timeline AS (
+        SELECT lt.id, false AS synthetic, lt.created_at AS sort_at
+        FROM ledger_transactions lt
+        WHERE ${where}
+        UNION ALL
+        SELECT o.id, true AS synthetic,
+               COALESCE(o.resolved_at, o.created_at) AS sort_at
+        FROM battle_double_down_offers o
+        WHERE o.user_id = ${canonicalUserId}
+          AND o.status = 'resolved'
+          AND o.result IS NOT NULL
+      )
+      SELECT id, synthetic, sort_at
+      FROM timeline
+      ORDER BY sort_at DESC, synthetic DESC, id DESC
+      LIMIT ${perPage}
+      OFFSET ${rawOffset}
+    `),
+    db.execute<{ total: string }>(sql`
+      SELECT (
+        (SELECT count(*) FROM ledger_transactions lt WHERE ${where}) +
+        (SELECT count(*) FROM battle_double_down_offers o
+          WHERE o.user_id = ${canonicalUserId}
+            AND o.status = 'resolved'
+            AND o.result IS NOT NULL)
+      )::text AS total
+    `),
   ]);
+  const timeline = timelineResult.rows;
+  const ledgerIds = timeline.filter((row) => !row.synthetic).map((row) => row.id);
+  const doubleDownIds = timeline.filter((row) => row.synthetic).map((row) => row.id);
+  const [transactions, ddSynthetic] = await Promise.all([
+    fetchLedgerRowsByIds(db, ledgerIds),
+    fetchUserDoubleDownRows(db, canonicalUserId, doubleDownIds),
+  ]);
+  const total = Number(totalResult.rows[0]?.total ?? 0);
 
-  // Upgrader-target batch lookup KICKED here (not awaited) — it depends only
-  // on `transactions` (already resolved above), NOT on the battle lookup /
-  // inventory+voucher fan-out / battle-winnings groupBy that follow. Those
-  // were previously all sequential awaits BEFORE this one started, adding a
-  // full extra round-trip of latency to every Gaming-tab load even though
-  // this query is fully independent of them. Kicking it now lets it run
-  // concurrently with that work; it's awaited later at its point of use
-  // (see `upgraderBetByLedgerId` below). `fetchUpgraderTargetByLedgerTxIds`
-  // never rejects (internal try/catch) and no-ops instantly on an empty id
-  // list, so this is free for pages with no upgrader_bet rows.
   const upgraderBetLedgerIds = transactions
     .filter((t) => t.type === "upgrader_bet")
     .map((t) => t.id);
   const upgraderBetByLedgerIdPromise = fetchUpgraderTargetByLedgerTxIds(
-    db,
     upgraderBetLedgerIds,
   );
 
@@ -708,20 +854,26 @@ export async function getUserTransactions(
   const battleModeMap = new Map<string, string>();
   if (battleIdsToFetch.size > 0) {
     try {
-      const battleRows = await db.battles.findMany({
-        where: { id: { in: [...battleIdsToFetch] } },
-        select: {
-          id: true,
-          mode: true,
-          borrow_percentage: true,
-          sponsorship_percentage: true,
-          winner_team: true,
-          status: true,
-          // Select the column so we can derive a boolean below — the raw
-          // string never escapes this function.
-          password: true,
-        },
-      });
+      const battleResult = await db.execute<{
+        id: string;
+        mode: string;
+        borrow_percentage: number | null;
+        sponsorship_percentage: number | null;
+        winner_team: number | null;
+        status: string;
+        password: string | null;
+      }>(sql`
+        SELECT id,
+               mode::text AS mode,
+               borrow_percentage,
+               sponsorship_percentage,
+               winner_team,
+               status::text AS status,
+               password
+        FROM battles
+        WHERE id = ANY(${[...battleIdsToFetch]}::uuid[])
+      `);
+      const battleRows = battleResult.rows;
       for (const b of battleRows) {
         battleBorrowMap.set(b.id, b.borrow_percentage ?? 0);
         battleSponsorshipMap.set(b.id, b.sponsorship_percentage ?? 0);
@@ -761,19 +913,26 @@ export async function getUserTransactions(
   async function resolvePacks(): Promise<Map<string, { id: string; name: string }>> {
     const result = new Map<string, { id: string; name: string }>();
     if (packGameIds.length === 0) return result;
-    const directPacks = await db.packs.findMany({
-      where: { id: { in: packGameIds } },
-      select: { id: true, name: true },
-    });
+    const directPacks = (await db.execute<{ id: string; name: string }>(sql`
+      SELECT id, name FROM packs WHERE id = ANY(${packGameIds}::uuid[])
+    `)).rows;
     for (const p of directPacks) result.set(p.id, p);
     const remaining = packGameIds.filter((id) => !result.has(id));
     if (remaining.length > 0) {
-      const userPacks = await db.user_packs.findMany({
-        where: { id: { in: remaining } },
-        include: { packs: { select: { id: true, name: true } } },
-      });
+      const userPacks = (await db.execute<{
+        id: string;
+        pack_id: string | null;
+        pack_name: string | null;
+      }>(sql`
+        SELECT up.id, p.id AS pack_id, p.name AS pack_name
+        FROM user_packs up
+        LEFT JOIN packs p ON p.id = up.pack_id
+        WHERE up.id = ANY(${remaining}::uuid[])
+      `)).rows;
       for (const up of userPacks) {
-        if (up.packs) result.set(up.id, up.packs);
+        if (up.pack_id && up.pack_name) {
+          result.set(up.id, { id: up.pack_id, name: up.pack_name });
+        }
       }
     }
     return result;
@@ -783,154 +942,122 @@ export async function getUserTransactions(
     if (cardSaleItemIds.length === 0) {
       return { inventoryItems: [] as Array<{ id: string; card_id: string; source_type: string | null; source_id: string | null }>, cards: [] as Array<{ id: string; name: string; image_url: string | null; rarity: string | null }> };
     }
-    const inventoryItems = await db.user_inventory.findMany({
-      where: { id: { in: cardSaleItemIds } },
-      select: { id: true, card_id: true, source_type: true, source_id: true },
-    });
+    const inventoryItems = (await db.execute<{
+      id: string;
+      card_id: string;
+      source_type: string | null;
+      source_id: string | null;
+    }>(sql`
+      SELECT id, card_id, source_type::text AS source_type, source_id
+      FROM user_inventory
+      WHERE id = ANY(${cardSaleItemIds}::uuid[])
+    `)).rows;
     const cardIds = [...new Set(inventoryItems.map((i) => i.card_id))];
     const cards = cardIds.length > 0
-      ? await db.cards.findMany({
-          where: { id: { in: cardIds } },
-          select: { id: true, name: true, image_url: true, rarity: true },
-        })
+      ? (await db.execute<{
+          id: string;
+          name: string;
+          image_url: string | null;
+          rarity: string | null;
+        }>(sql`
+          SELECT id, name, image_url, rarity::text AS rarity
+          FROM cards
+          WHERE id = ANY(${cardIds}::uuid[])
+        `)).rows
       : [];
     return { inventoryItems, cards };
   }
 
-  // Newest tx timestamp on this page (rows are ordered desc). An
-  // inventory item obtained AFTER this instant fails `obtained_at <= ts`
-  // for every tx on the page, so it can never contribute to the
-  // held-value snapshot here — bound the inventory pull by it to avoid
-  // dragging the user's entire lifetime inventory back on deep pages.
-  // Vouchers are NOT bounded the same way: `allVouchers` is also used
-  // below to value session-spun voucher excess by origin_id, where a
-  // voucher created after the bet tx (battle resolves later) still
-  // belongs to a session shown on the page.
-  const maxTxTs =
-    transactions.length > 0 ? transactions[0].created_at : undefined;
+  // Restrict voucher enrichment to sessions represented on this page.
+  const pageGameSessionIds = [
+    ...new Set(
+      transactions
+        .map((transaction) => transaction.game_session_id)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
 
-  const [packByGameId, invAndCards, allInventory, allVouchers] =
+  const [packByGameId, invAndCards, heldSnapshots, pageVouchers] =
     await Promise.all([
       resolvePacks(),
       resolveInventoryWithCards(),
-      db.user_inventory.findMany({
-        where: {
-          user_id: canonicalUserId,
-          ...(maxTxTs ? { obtained_at: { lte: maxTxTs } } : {}),
-        },
-        select: {
-          value_at_obtained: true,
-          obtained_at: true,
-          sold_at: true,
-          exchanged_at: true,
-          // Cards locked for card_withdrawal leave the user's holdings
-          // even before sold_at/exchanged_at flip — they're awaiting
-          // shipment. The worth sweep below treats this timestamp as a
-          // disposal event so a card_withdrawal row's Worth After
-          // drops by the withdrawn cards' value, matching the dashboard's
-          // inventory aggregate which already filters by this.
-          withdrawal_locked_at: true,
-        },
-      }),
-      // Vouchers are held value too — battle / exchange excess gets
-      // parked as a voucher until the user redeems it. Pulled so the
-      // per-tx held-value snapshot can count them alongside cards.
-      db.vouchers.findMany({
-        where: { user_id: canonicalUserId },
-        select: { value: true, created_at: true, claimed_at: true, origin_id: true },
-      }),
+      db.execute<{
+        id: string;
+        before_value: string;
+        after_value: string;
+      }>(sql`
+        WITH tx AS (
+          SELECT lt.id, lt.created_at
+          FROM unnest(${ledgerIds}::uuid[]) requested(id)
+          JOIN ledger_transactions lt ON lt.id = requested.id
+        )
+        SELECT tx.id,
+               COALESCE(held.before_value, 0)::text AS before_value,
+               COALESCE(held.after_value, 0)::text AS after_value
+        FROM tx
+        LEFT JOIN LATERAL (
+          SELECT
+            COALESCE(SUM(value) FILTER (
+              WHERE acquired_at < tx.created_at
+                AND disposed_at >= tx.created_at
+            ), 0) AS before_value,
+            COALESCE(SUM(value) FILTER (
+              WHERE acquired_at <= tx.created_at
+                AND disposed_at > tx.created_at
+            ), 0) AS after_value
+          FROM (
+            SELECT ui.value_at_obtained AS value,
+                   ui.obtained_at AS acquired_at,
+                   LEAST(
+                     COALESCE(ui.sold_at, 'infinity'::timestamp),
+                     COALESCE(ui.exchanged_at, 'infinity'::timestamp),
+                     COALESCE(ui.withdrawal_locked_at, 'infinity'::timestamp)
+                   ) AS disposed_at
+            FROM user_inventory ui
+            WHERE ui.user_id = ${canonicalUserId}
+              AND ui.obtained_at <= tx.created_at
+            UNION ALL
+            SELECT v.value,
+                   v.created_at,
+                   COALESCE(v.claimed_at, 'infinity'::timestamp)
+            FROM vouchers v
+            WHERE v.user_id = ${canonicalUserId}
+              AND v.created_at <= tx.created_at
+          ) holdings
+        ) held ON true
+      `).then((result) => result.rows),
+      db.execute<{
+        value: string;
+        origin_id: string | null;
+      }>(sql`
+        SELECT value::text AS value, origin_id
+        FROM vouchers
+        WHERE user_id = ${canonicalUserId}
+          AND origin_id = ANY(${pageGameSessionIds}::uuid[])
+      `).then((result) => result.rows),
     ]);
   const { inventoryItems, cards } = invAndCards;
   const cardMap = new Map(cards.map((c) => [c.id, c]));
   const inventoryMap = new Map(inventoryItems.map((i) => [i.id, { ...i, card: cardMap.get(i.card_id) ?? null }]));
-  // Held value at each tx timestamp = unsold/unexchanged cards PLUS
-  // unclaimed vouchers, each valued as of that moment (held = created
-  // on/before the tx and not yet disposed/claimed as of it). Vouchers
-  // are included because a voucher is value the user is holding exactly
-  // like card inventory — the same way the PnL formula subtracts both.
-  //
-  // Computed as a single chronological sweep instead of an
-  // O(tx × inventory) double-loop. The held value over time is a step
-  // function: each held unit contributes +value from when it's obtained
-  // until (but not including) when it leaves. So emit a +value event at
-  // the obtain time and a −value event at the disposal time, sort all
-  // events by time, then walk the page's transactions in ascending time
-  // applying every event at-or-before each tx's timestamp. The running
-  // sum at a tx's timestamp equals exactly the original predicate
-  // (`obtained_at <= ts AND disposal > ts`): an add at `ts` is included
-  // (<=), a removal at `ts` is also applied (<=), which nets the unit
-  // out — matching the strict `disposal > ts` exclusion. Disposal time
-  // is the EARLIER of sold_at / exchanged_at, since the unit drops out
-  // as soon as either trips.
-  type SweepEvent = { t: number; d: number };
-  const sweepEvents: SweepEvent[] = [];
-  for (const item of allInventory) {
-    const value = toNumber(item.value_at_obtained);
-    sweepEvents.push({ t: item.obtained_at.getTime(), d: value });
-    // Card leaves the user's holdings on the EARLIEST of: sold_at,
-    // exchanged_at, or withdrawal_locked_at. withdrawal_locked_at is
-    // included so cards en-route for a card_withdrawal are removed
-    // from "held value" at the moment they're locked (matches the
-    // dashboard's inventory aggregate, which already filters them
-    // out). Without this, a card_withdrawal row showed Worth Before
-    // == Worth After because the withdrawn cards stayed counted as
-    // held even after they left the platform.
-    const candidates = [
-      item.sold_at ? item.sold_at.getTime() : null,
-      item.exchanged_at ? item.exchanged_at.getTime() : null,
-      item.withdrawal_locked_at ? item.withdrawal_locked_at.getTime() : null,
-    ].filter((t): t is number => t !== null);
-    if (candidates.length > 0) {
-      sweepEvents.push({ t: Math.min(...candidates), d: -value });
-    }
-  }
-  for (const v of allVouchers) {
-    const value = toNumber(v.value);
-    sweepEvents.push({ t: v.created_at.getTime(), d: value });
-    if (v.claimed_at) sweepEvents.push({ t: v.claimed_at.getTime(), d: -value });
-  }
-  sweepEvents.sort((a, b) => a.t - b.t);
-
-  // Transactions ascending by timestamp so the sweep advances forward
-  // once. Keep ids to write the map; the returned `data` order is
-  // unaffected (it maps over the original `transactions` array).
-  const txAsc = transactions
-    .map((t) => ({ id: t.id, t: t.created_at.getTime() }))
-    .sort((a, b) => a.t - b.t);
-
-  // Two snapshots per tx from one forward sweep:
-  //   • "before" = held value STRICTLY before the tx (events t < tx.t)
-  //   • "after"  = held value AT the tx (events t <= tx.t)
-  // The gap between them is exactly the items this tx added/removed at its
-  // own instant (e.g. an atomic pack open's pulls), so Worth Before
-  // excludes just-won items WITHOUT a cardsValue back-out. It's correct
-  // for battles too: a battle's pulls land at a LATER timestamp
-  // (resolution) than the bet row, so they're in NEITHER snapshot of the
-  // bet row — Worth Before/After around the bet differ only by the cash bet.
-  const inventoryValueByTx = new Map<string, number>();
-  const inventoryValueBeforeByTx = new Map<string, number>();
-  let sweepIdx = 0;
-  let runningHeld = 0;
-  for (const tx of txAsc) {
-    while (sweepIdx < sweepEvents.length && sweepEvents[sweepIdx].t < tx.t) {
-      runningHeld += sweepEvents[sweepIdx].d;
-      sweepIdx++;
-    }
-    inventoryValueBeforeByTx.set(tx.id, runningHeld);
-    while (sweepIdx < sweepEvents.length && sweepEvents[sweepIdx].t <= tx.t) {
-      runningHeld += sweepEvents[sweepIdx].d;
-      sweepIdx++;
-    }
-    inventoryValueByTx.set(tx.id, runningHeld);
-  }
-
+  const inventoryValueBeforeByTx = new Map(
+    heldSnapshots.map((snapshot) => [
+      snapshot.id,
+      toNumber(snapshot.before_value),
+    ]),
+  );
+  const inventoryValueByTx = new Map(
+    heldSnapshots.map((snapshot) => [
+      snapshot.id,
+      toNumber(snapshot.after_value),
+    ]),
+  );
   // Voucher excess a game session produced (battle_excess_to_voucher /
   // pack_borrow_to_voucher) is parked as a voucher whose origin_id is
   // the originating game_session id. Map session id → total voucher
   // value so the value WON below counts the voucher as winnings, not
   // just the cards — a voucher is value the user pulled out of the play.
   const voucherValueByGameSession = new Map<string, number>();
-  for (const v of allVouchers) {
+  for (const v of pageVouchers) {
     if (v.origin_id) {
       voucherValueByGameSession.set(
         v.origin_id,
@@ -1017,20 +1144,22 @@ export async function getUserTransactions(
   const battleWinningsByGsid = new Map<string, number>();
   if (wonGameSessionIds.length > 0) {
     try {
-      const grouped = await db.user_inventory.groupBy({
-        by: ["source_id"],
-        where: {
-          user_id: canonicalUserId,
-          source_type: "battle",
-          source_id: { in: wonGameSessionIds },
-        },
-        _sum: { value_at_obtained: true },
-      });
+      const grouped = (await db.execute<{
+        source_id: string;
+        value_sum: string;
+      }>(sql`
+        SELECT source_id, SUM(value_at_obtained)::text AS value_sum
+        FROM user_inventory
+        WHERE user_id = ${canonicalUserId}
+          AND source_type = 'battle'::source_type
+          AND source_id = ANY(${wonGameSessionIds}::uuid[])
+        GROUP BY source_id
+      `)).rows;
       for (const g of grouped) {
         if (g.source_id) {
           battleWinningsByGsid.set(
             g.source_id,
-            toNumber(g._sum.value_at_obtained ?? 0),
+            toNumber(g.value_sum),
           );
         }
       }
@@ -1108,8 +1237,8 @@ export async function getUserTransactions(
       const invItemId = meta?.inventory_item_id as string | undefined;
       const soldItem = invItemId ? inventoryMap.get(invItemId) ?? null : null;
 
-      // Borrow extraction — same convention used by getTransactions
-      // and getLiveActivity. Battle rows read borrow_percentage off
+      // Borrow extraction — same convention used by getTransactions.
+      // Battle rows read borrow_percentage off
       // the linked battle; solo rows read it off the first PF
       // result's metadata. All PF results in a session share the
       // same borrow setting.
@@ -1388,63 +1517,16 @@ export async function getUserTransactions(
       };
     });
 
-  // ── Merge decoupled DOUBLE-DOWN rows into the paginated feed ───────────
-  // `data` currently holds the OVER-FETCHED ledger window (rows at global
-  // ledger positions [fetchSkip, fetchSkip + data.length), desc by
-  // created_at). We now merge the user's synthetic double-down rows
-  // (ddSynthetic, all of them, desc by resolved_at — read decoupled up-front)
-  // into the full desc-by-time timeline and return exactly the requested
-  // page's slice.
-  //
-  // Correct pagination WITHOUT fetching every ledger row: assign each row a
-  // GLOBAL merged position, then keep only the rows whose position falls in
-  // [rawOffset, rawOffset + perPage).
-  //   • A ledger row's global MERGED position = (its known global ledger rank)
-  //     + (number of DD rows strictly newer than it). Its ledger rank is
-  //     fetchSkip + its index in the desc window.
-  //   • A DD row's global MERGED position = (number of ledger rows strictly
-  //     newer than it) + (number of DD rows strictly newer than it). The
-  //     ledger-newer count per DD row is computed in ONE grouped query
-  //     (ddPrecedingLedger) so we never scan the whole ledger.
-  // Ties (equal timestamp) are broken deterministically: a DD row sorts
-  // ABOVE (newer than) a ledger row at the same instant, because a round
-  // resolves after — and is surfaced just above — its battle bet.
-  const ddPrecedingLedger = await countLedgerNewerThanEach(
-    db,
-    where,
-    ddSynthetic.map((d) => d.resolvedAt),
+  const ledgerRowsById = new Map(data.map((row) => [row.id, row]));
+  const doubleDownRowsById = new Map(
+    ddSynthetic.map((row) => [row.id, buildDoubleDownRow(row)]),
   );
-
-  type Positioned = { pos: number; row: Transaction };
-  const positioned: Positioned[] = [];
-
-  // DD rows first so equal-timestamp ties resolve DD-above-ledger (a DD's
-  // position counts only STRICTLY-newer ledger rows, so a same-instant ledger
-  // row is NOT counted as newer → the DD lands above it).
-  ddSynthetic.forEach((d, i) => {
-    const ddNewer = ddSynthetic.filter(
-      (o) => o.resolvedAt.getTime() > d.resolvedAt.getTime(),
-    ).length;
-    const pos = (ddPrecedingLedger[i] ?? 0) + ddNewer;
-    positioned.push({ pos, row: buildDoubleDownRow(d) });
+  const pageRows = timeline.flatMap((row) => {
+    const transaction = row.synthetic
+      ? doubleDownRowsById.get(row.id)
+      : ledgerRowsById.get(row.id);
+    return transaction ? [transaction] : [];
   });
-
-  // Ledger rows: known global ledger rank + DD rows strictly newer than it.
-  data.forEach((row, i) => {
-    const ledgerRank = fetchSkip + i;
-    const rowTs = new Date(row.createdAt).getTime();
-    const ddNewer = ddSynthetic.filter(
-      (o) => o.resolvedAt.getTime() > rowTs,
-    ).length;
-    positioned.push({ pos: ledgerRank + ddNewer, row });
-  });
-
-  positioned.sort((a, b) => a.pos - b.pos);
-  const pageRows = positioned
-    .filter((p) => p.pos >= rawOffset && p.pos < rawOffset + perPage)
-    .map((p) => p.row);
-
-  const total = ledgerTotal + ddTotal;
   return {
     data: pageRows,
     total,

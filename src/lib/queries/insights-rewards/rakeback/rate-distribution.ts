@@ -1,15 +1,13 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getRakebackRateDistributionFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/rakeback/rate-distribution";
 
 /**
  * "Rakeback as % of wager" cohort lens for the deep stats page.
@@ -56,22 +54,21 @@ async function computeRateDistribution(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RakebackRateDistribution> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
-  const dateFilter =
-    days !== null ? `AND rc.claimed_at >= NOW() - INTERVAL '${days} days'` : "";
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
+  const dateFilter = daysAgoFilter("rc.claimed_at", days);
 
   // One sweep, per-user aggregate. Filter wager>0 so the ratio is
   // well-defined; claims with zero wagered_amount_usd are config edge
   // cases (manual adjustments) and would skew the cohort.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       user_id: string;
       total_rakeback: string;
       total_wager: string;
     }[]
-  >(`
+  >(db, sql`
     SELECT
       rc.user_id,
       SUM(rc.rakeback_amount_usd::numeric)::text AS total_rakeback,
@@ -140,28 +137,16 @@ async function computeRateDistribution(
   };
 }
 
-// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
-// through the cache on failure); off/comparison serve Postgres unchanged.
-async function resolveRateDistribution(
-  period: InsightsRewardsPeriod,
-  blacklistIds: string[],
-): Promise<RakebackRateDistribution> {
-  return resolveAdminRead<RakebackRateDistribution>("insights_rakeback_rate", {
-    pg: () => computeRateDistribution(period, blacklistIds),
-    ch: () => getRakebackRateDistributionFromClickHouse(period, blacklistIds),
-  });
-}
-
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveRateDistribution(period, blacklistIds),
+    computeRateDistribution(period, blacklistIds),
   ["insights-rewards-rakeback-rate-dist-v1"],
   { revalidate: 60, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveRateDistribution(period, blacklistIds),
+    computeRateDistribution(period, blacklistIds),
   ["insights-rewards-rakeback-rate-dist-lifetime-v1"],
   { revalidate: 300, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );

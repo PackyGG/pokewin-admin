@@ -1,9 +1,7 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getRaceInsightsOverviewFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/race/overview";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -53,25 +51,22 @@ async function computeOverview(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RaceOverviewKpis> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const dateFilter =
-    days !== null
-      ? `AND rc.claimed_at >= NOW() - INTERVAL '${days} days'`
-      : "";
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const dateFilter = daysAgoFilter("rc.claimed_at", days);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // One rollup query + one daily-series query in parallel. Both join to
   // user for staff + blacklist exclusion, both sweep race_claims.
   const [rollupRows, dailyRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryRows<
       {
         total: string;
         distinct_races: string;
         distinct_winners: string;
         winner_count: string;
       }[]
-    >(`
+    >(db, sql`
       SELECT
         COALESCE(SUM(rc.prize_amount_usd::numeric), 0)::text AS total,
         COUNT(DISTINCT (rc.race_type, rc.race_period_start))::text AS distinct_races,
@@ -82,9 +77,9 @@ async function computeOverview(
       WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
         ${dateFilter}
     `),
-    db.$queryRawUnsafe<
+    queryRows<
       { date: Date; total: string; cnt: string }[]
-    >(`
+    >(db, sql`
       SELECT
         DATE(rc.claimed_at) AS date,
         COALESCE(SUM(rc.prize_amount_usd::numeric), 0)::text AS total,
@@ -127,20 +122,14 @@ async function computeOverview(
 
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveAdminRead<RaceOverviewKpis>("insights_race_overview", {
-      pg: () => computeOverview(period, blacklistIds),
-      ch: () => getRaceInsightsOverviewFromClickHouse(period, blacklistIds),
-    }),
+    computeOverview(period, blacklistIds),
   ["insights-rewards-race-overview-v1"],
   { revalidate: 60, tags: ["insights-rewards-race"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveAdminRead<RaceOverviewKpis>("insights_race_overview", {
-      pg: () => computeOverview(period, blacklistIds),
-      ch: () => getRaceInsightsOverviewFromClickHouse(period, blacklistIds),
-    }),
+    computeOverview(period, blacklistIds),
   ["insights-rewards-race-overview-lifetime-v1"],
   { revalidate: 300, tags: ["insights-rewards-race"] },
 );

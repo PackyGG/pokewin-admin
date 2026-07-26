@@ -1,5 +1,5 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   cacheTtlForInsightsPeriod,
@@ -56,7 +56,6 @@ async function computeByUser(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<ByUser> {
-  const db = await getDb();
   const dateFilter = windowDateFilter(period);
   const bl = blacklistFilter(blacklistIds);
   // FAKE-BALANCE: drop official_stream adjustments from every slice.
@@ -107,21 +106,21 @@ async function computeByUser(
   `;
 
   const [creditedRows, debitedRows, frequentRows] = await Promise.all([
-    db.$queryRawUnsafe<Raw[]>(`
+    queryMainRows<Raw[]>(`
       ${baseCte}
       ${select}
       WHERE pu.credit_vol > 0
       ORDER BY pu.credit_vol DESC
       LIMIT ${TOP_LIMIT}
     `),
-    db.$queryRawUnsafe<Raw[]>(`
+    queryMainRows<Raw[]>(`
       ${baseCte}
       ${select}
       WHERE pu.debit_vol > 0
       ORDER BY pu.debit_vol DESC
       LIMIT ${TOP_LIMIT}
     `),
-    db.$queryRawUnsafe<Raw[]>(`
+    queryMainRows<Raw[]>(`
       ${baseCte}
       ${select}
       WHERE pu.cnt >= ${FREQUENCY_FLAG_MIN}

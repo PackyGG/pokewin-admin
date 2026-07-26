@@ -1,6 +1,7 @@
 import { unstable_cache } from "next/cache";
+import { sql } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { toNumber } from "@/lib/utils/decimal";
 import {
@@ -122,14 +123,33 @@ type CachedScore = Omit<
  * Cached raw scores (ADMIN DB ONLY — no cookies, so safe inside `unstable_cache`).
  * Mapped to plain primitives INSIDE the cache so the JSON round-trip on a cache
  * hit can't hand back a Decimal/Date that later breaks `.toISOString()`. The MAIN
- * pack-meta join is deliberately NOT here: `getPackMetaByIds` → `getDb()` reads
- * the `admin_db_env` cookie, and calling `cookies()` inside `unstable_cache`
+ * pack-meta join is deliberately NOT here: `getPackMetaByIds` resolves its
+ * Drizzle client from the `admin_db_env` cookie, and calling `cookies()` inside
+ * `unstable_cache`
  * throws ("Server Components render" error). The join happens in the caller below.
  */
 const getCachedScores = unstable_cache(
   async (): Promise<CachedScore[]> => {
-    const scores = await adminDb.pack_risk_scores.findMany();
-    return scores.map((s) => ({
+    const result = await adminDrizzle.execute<{
+      pack_id: string;
+      edge: string;
+      cv: string;
+      win_rate: string;
+      near_miss: string;
+      max_win: string;
+      max_mult: string;
+      risk_score: number;
+      tier: string;
+      compliance: unknown;
+      computed_at: Date;
+    }>(sql`
+      SELECT pack_id, edge::text AS edge, cv::text AS cv,
+             win_rate::text AS win_rate, near_miss::text AS near_miss,
+             max_win::text AS max_win, max_mult::text AS max_mult,
+             risk_score, tier, compliance, computed_at
+      FROM pack_risk_scores
+    `);
+    return result.rows.map((s) => ({
       packId: s.pack_id,
       edge: toNumber(s.edge),
       cv: toNumber(s.cv),
@@ -173,7 +193,8 @@ export async function getPackRiskRowsResult(
     if (scoresError) return { rows: [], error: scoresError };
     if (scores.length === 0) return { rows: [], error: null };
 
-    // MAIN pack-meta join OUTSIDE the cache (getDb reads the db-env cookie).
+    // MAIN pack-meta join OUTSIDE the cache (the Drizzle client reads the
+    // db-env cookie).
     // The per-pack edge curve is also resolved here (ADMIN-only, cookie-free)
     // so every row carries its OWN target edge — `autoTargetEdge` is pure, so
     // it's safe to run in this post-cache step. Resolved ONCE for the batch.

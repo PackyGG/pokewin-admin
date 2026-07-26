@@ -2,9 +2,16 @@ import "server-only";
 
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
-import { getDb } from "@/lib/db";
+import { adminDrizzle } from "@/lib/drizzle";
+import {
+  admin_excluded_user_balance_v2,
+  admin_users,
+  admin_withdrawal_unlocks,
+  excluded_users,
+} from "@/lib/db-schema/admin/schema";
+import { getDrizzleDb } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 
@@ -29,9 +36,9 @@ export const EXCLUDED_USERS_LIST_TAG = "system-excluded-users-list";
 let lastKnownGoodExcludedUserIds: string[] | null = null;
 
 async function loadExcludedUserIdsFromDb(): Promise<string[]> {
-  const rows = await adminDb.excluded_users.findMany({
-    select: { user_id: true },
-  });
+  const rows = await adminDrizzle
+    .select({ user_id: excluded_users.user_id })
+    .from(excluded_users);
   return rows.map((r) => r.user_id);
 }
 
@@ -150,28 +157,26 @@ export type ExcludedUsersPageData = {
   balanceV2TableReady: boolean;
 };
 
-// Postgres "undefined_table" SQLSTATE. Prisma surfaces it via P2010 with
-// the meta.code on raw queries, and via P2021 ("table does not exist in
-// the current database") on typed model calls. We treat any of these
-// signals as "table missing" and degrade to an empty map so the page
-// keeps rendering until the owner applies the migration.
+// Postgres "undefined_table" SQLSTATE.
 function isTableMissing(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const e = err as { code?: unknown; meta?: { code?: unknown } };
   return (
-    e.code === "P2021" ||
-    e.code === "P2010" ||
-    e.meta?.code === "42P01"
+    e.code === "42P01" || e.meta?.code === "42P01"
   );
 }
 
 async function computeExcludedUsersForPage(): Promise<ExcludedUsersPageData> {
-  const rows = await adminDb.excluded_users.findMany({
-    orderBy: { created_at: "desc" },
-    include: {
-      admin_user: { select: { username: true } },
-    },
-  });
+  const rows = await adminDrizzle
+    .select({
+      user_id: excluded_users.user_id,
+      reason: excluded_users.reason,
+      created_at: excluded_users.created_at,
+      excludedByUsername: admin_users.username,
+    })
+    .from(excluded_users)
+    .leftJoin(admin_users, eq(admin_users.id, excluded_users.excluded_by))
+    .orderBy(desc(excluded_users.created_at));
 
   // The blacklist lives in the admin DB, but each user's lifetime
   // deposit total lives on `balances` in the main game DB. No cross-DB
@@ -181,11 +186,14 @@ async function computeExcludedUsersForPage(): Promise<ExcludedUsersPageData> {
   const userIds = rows.map((r) => r.user_id);
   const depositByUserId = new Map<string, number>();
   if (userIds.length > 0) {
-    const db = await getDb();
-    const balanceRows = await db.balances.findMany({
-      where: { user_id: { in: userIds } },
-      select: { user_id: true, total_deposited: true },
-    });
+    const db = await getDrizzleDb();
+    const balanceRows = (
+      await db.execute<{ user_id: string; total_deposited: string }>(sql`
+        SELECT user_id, total_deposited::text AS total_deposited
+        FROM balances
+        WHERE user_id = ANY(${userIds}::text[])
+      `)
+    ).rows;
     for (const b of balanceRows) {
       depositByUserId.set(b.user_id, toNumber(b.total_deposited));
     }
@@ -194,26 +202,26 @@ async function computeExcludedUsersForPage(): Promise<ExcludedUsersPageData> {
   // Balance 2.0 values live in admin_excluded_user_balance_v2 — same
   // admin DB, but a separate table that may not exist yet if the
   // 20260605000000_add_excluded_user_balance_v2 migration hasn't been
-  // applied. Catch the "undefined_table" / P2021 case and degrade to
+  // applied. Catch PostgreSQL's undefined_table (42P01) and degrade to
   // an empty map so the page still renders.
   type BalanceV2Entry = { value: number; setAt: string; notes: string | null };
   const balanceV2ByUserId = new Map<string, BalanceV2Entry>();
   let balanceV2TableReady = true;
   if (userIds.length > 0) {
     try {
-      const v2Rows = await adminDb.admin_excluded_user_balance_v2.findMany({
-        where: { target_user_id: { in: userIds } },
-        select: {
-          target_user_id: true,
-          balance_v2: true,
-          set_at: true,
-          notes: true,
-        },
-      });
+      const v2Rows = await adminDrizzle
+        .select({
+          target_user_id: admin_excluded_user_balance_v2.target_user_id,
+          balance_v2: admin_excluded_user_balance_v2.balance_v2,
+          set_at: admin_excluded_user_balance_v2.set_at,
+          notes: admin_excluded_user_balance_v2.notes,
+        })
+        .from(admin_excluded_user_balance_v2)
+        .where(inArray(admin_excluded_user_balance_v2.target_user_id, userIds));
       for (const v of v2Rows) {
         balanceV2ByUserId.set(v.target_user_id, {
           value: toNumber(v.balance_v2),
-          setAt: v.set_at.toISOString(),
+          setAt: new Date(v.set_at).toISOString(),
           notes: v.notes,
         });
       }
@@ -238,12 +246,18 @@ async function computeExcludedUsersForPage(): Promise<ExcludedUsersPageData> {
   const unlockByUserId = new Map<string, string>();
   if (userIds.length > 0) {
     try {
-      const unlockRows = await adminDb.admin_withdrawal_unlocks.findMany({
-        where: { target_user_id: { in: userIds } },
-        select: { target_user_id: true, unlocked_at: true },
-      });
+      const unlockRows = await adminDrizzle
+        .select({
+          target_user_id: admin_withdrawal_unlocks.target_user_id,
+          unlocked_at: admin_withdrawal_unlocks.unlocked_at,
+        })
+        .from(admin_withdrawal_unlocks)
+        .where(inArray(admin_withdrawal_unlocks.target_user_id, userIds));
       for (const u of unlockRows) {
-        unlockByUserId.set(u.target_user_id, u.unlocked_at.toISOString());
+        unlockByUserId.set(
+          u.target_user_id,
+          new Date(u.unlocked_at).toISOString(),
+        );
       }
     } catch (err) {
       if (!isTableMissing(err)) {
@@ -261,8 +275,8 @@ async function computeExcludedUsersForPage(): Promise<ExcludedUsersPageData> {
     return {
       userId: r.user_id,
       reason: r.reason,
-      excludedByUsername: r.admin_user?.username ?? "(unknown)",
-      createdAt: r.created_at.toISOString(),
+      excludedByUsername: r.excludedByUsername ?? "(unknown)",
+      createdAt: new Date(r.created_at).toISOString(),
       totalDeposited: depositByUserId.get(r.user_id) ?? 0,
       balanceV2: v2?.value ?? null,
       balanceV2SetAt: v2?.setAt ?? null,
@@ -284,8 +298,7 @@ async function computeExcludedUsersForPage(): Promise<ExcludedUsersPageData> {
  * balance-v2 / withdrawal lock) busts the tag, so the next read is fresh.
  *
  * The compute reads BOTH the admin DB (blacklist rows, balance-v2, unlocks)
- * and the main DB (deposit totals). Both resolve their client via `getDb()` /
- * the module-level `adminDb`; the main-DB client is env-switched by the
+ * and the main DB (deposit totals). The main-DB client is env-switched by the
  * per-admin `admin_db_env` cookie, which `unstable_cache` cannot see (its
  * callback runs outside the request's dynamic scope, so `cookies()` would
  * throw and fall back to prod). Same fix as `rain-detail-cache.ts`: cache ONLY

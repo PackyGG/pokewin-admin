@@ -1,9 +1,11 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { BadgeCheck, ListChecks, Users } from "lucide-react";
+import { and, count, desc, eq } from "drizzle-orm";
 
 import { requireStaffManagerPage } from "@/lib/staff/access";
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
+import { staff_quiz_attempts } from "@/lib/db-schema/admin/schema";
 import {
   KpiTile,
   PageHero,
@@ -65,16 +67,15 @@ async function QuizEditor({ quizId: id }: { quizId: string }) {
   const { quiz, questions } = loaded;
 
   const [attempts, takers] = await Promise.all([
-    adminDb.staff_quiz_attempts
-      .findMany({
-        where: { quiz_id: id, status: "submitted" },
-        orderBy: { submitted_at: "desc" },
-        take: 25,
-      })
+    adminDrizzle.select().from(staff_quiz_attempts).where(and(
+      eq(staff_quiz_attempts.quiz_id, id),
+      eq(staff_quiz_attempts.status, "submitted"),
+    )).orderBy(desc(staff_quiz_attempts.submitted_at)).limit(25)
       .catch(() => []),
-    adminDb.staff_quiz_attempts
-      .count({ where: { quiz_id: id, status: "submitted" } })
-      .catch(() => 0),
+    adminDrizzle.select({ value: count() }).from(staff_quiz_attempts).where(and(
+      eq(staff_quiz_attempts.quiz_id, id),
+      eq(staff_quiz_attempts.status, "submitted"),
+    )).then((rows) => rows[0]?.value ?? 0).catch(() => 0),
   ]);
 
   const identities = await loadAdminIdentities(

@@ -1,6 +1,7 @@
 import "server-only";
 
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 
@@ -45,7 +46,7 @@ export async function getWithdrawnFromConvertedByDeal(
   const userIds = deals.map((d) => d.userId);
   const dealIds = deals.map((d) => d.dealId);
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
   // Blacklist gate: drop excluded (staff-flagged / owner-locked) creator ids
   // from this identifiable per-(creator,deal) withdrawn figure on the card.
@@ -68,7 +69,7 @@ export async function getWithdrawnFromConvertedByDeal(
     withdraw_in_flight: string | null;
   };
 
-  const rows = await db.$queryRawUnsafe<Row[]>(
+  const rows = await queryRows<Row[]>(db,
     `SELECT
         deal_id,
         COALESCE(SUM(CASE WHEN best_status = 'completed' THEN value END), 0)::text AS withdrawn_completed,

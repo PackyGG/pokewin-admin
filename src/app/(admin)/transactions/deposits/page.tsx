@@ -12,7 +12,6 @@ import {
 import { getDepositTransactions } from "@/lib/queries/transactions";
 import { getCardPayments } from "@/lib/queries/card-payments";
 import { getWithdrawals } from "@/lib/queries/withdrawals";
-import { readDbEnv } from "@/lib/db-env";
 import { requirePageAccess } from "@/lib/dal";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TransactionsDataTable } from "../data-table";
@@ -35,7 +34,7 @@ import {
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { LinkPendingShell } from "@/components/ux";
-import { AutoRefresh } from "@/app/(admin)/dashboard/auto-refresh";
+import { LiveDataRefresh } from "@/components/live-data-refresh";
 import { BigDepositsToggle } from "./big-deposits-toggle";
 import { CardPaymentsTable } from "./card-payments-table";
 
@@ -93,14 +92,22 @@ export default async function TransactionsPage({
           window just re-reads the warm cache (no seq-scan), so the
           cadence here is independent of the cache TTL. The component
           itself skips the refresh when the tab is backgrounded. */}
-      <AutoRefresh intervalMs={60_000} />
+      <LiveDataRefresh
+        topics={[
+          tab === "card-payments"
+            ? "card_payments"
+            : tab === "withdrawals"
+              ? "withdrawals"
+              : "deposits",
+        ]}
+      />
       <PageHero>
         <PageHeroIdentity
           icon={Receipt}
           title="Transactions"
           subtitle={
             tab === "card-payments"
-              ? "Mirrored Whop card-payment lifecycle, fees, and ledger reconciliation."
+              ? "Whop card-payment lifecycle, fees, and ledger reconciliation."
               : tab === "deposits"
               ? "All inbound deposit transactions across users."
               : "All physical and crypto withdrawal requests — filter by status and method."
@@ -358,7 +365,7 @@ function CardPaymentsTab({
           <SectionHeading icon={CreditCard} title="Card payments" />
           <div className="inline-flex items-center gap-1.5 rounded-full border bg-muted/40 px-2.5 py-1 text-[11px] text-muted-foreground">
             <DatabaseZap className="size-3" />
-            ClickHouse mirror
+            PostgreSQL
           </div>
         </div>
         <Suspense
@@ -393,13 +400,6 @@ async function CardPaymentsTableSection({
   search?: string;
   status?: string;
 }) {
-  const env = await readDbEnv();
-  if (env === "dev") {
-    return (
-      <MirrorUnavailableNotice message="A development ClickHouse mirror is not configured. Card payments are intentionally hidden to prevent production data from appearing while DEV is selected." />
-    );
-  }
-
   const empty = {
     data: [],
     total: 0,
@@ -418,7 +418,7 @@ async function CardPaymentsTableSection({
   return (
     <>
       {listResult.error && (
-        <MirrorUnavailableNotice message="Card-payment mirror data could not be loaded. Verify ClickHouse credentials and that the Whop payment tables are included in the PeerDB mirror." />
+        <MirrorUnavailableNotice message="Card-payment data could not be loaded from PostgreSQL. Refresh to retry." />
       )}
       <FadeIn>
         <CardPaymentsTable data={listResult.data.data} />

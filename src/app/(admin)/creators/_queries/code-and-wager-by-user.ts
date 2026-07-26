@@ -2,9 +2,12 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { getDevDb, getProdDb } from "@/lib/db";
+import { drizzleForEnv } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
-import { adminDb } from "@/lib/admin-db";
+import { asc, and, eq, inArray } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import { admin_audit_events } from "@/lib/db-schema/admin/schema";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
@@ -67,12 +70,6 @@ type WagerRow = {
   total_wagered: string;
 };
 
-type AuditCodeRow = {
-  target_user_id: string | null;
-  metadata: unknown;
-  created_at: Date;
-};
-
 function metadataCode(metadata: unknown): string | null {
   if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) {
     return null;
@@ -104,7 +101,7 @@ const cachedCodeAndWagerEntries = (
 ) =>
   unstable_cache(
     async (): Promise<[string, CreatorCodeAndWager][]> => {
-      const db = env === "dev" ? getDevDb() : getProdDb();
+      const db = drizzleForEnv(env);
       const blacklistAnd =
         excludedIds.length > 0
           ? ` AND u.id NOT IN (${excludedIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
@@ -135,7 +132,7 @@ const cachedCodeAndWagerEntries = (
       ] = await Promise.all([
       // Oldest affiliate_codes row per user_id — same convention as
       // `/creators/[id]`'s primaryCode.
-      db.$queryRawUnsafe<{ user_id: string; code: string }[]>(
+      queryRows<{ user_id: string; code: string }[]>(db,
         `SELECT DISTINCT ON (user_id) user_id, code
            FROM affiliate_codes
           WHERE user_id = ANY($1::text[])
@@ -143,7 +140,7 @@ const cachedCodeAndWagerEntries = (
         userIds,
       ),
 
-      db.$queryRawUnsafe<{ user_id: string; signups: string }[]>(
+      queryRows<{ user_id: string; signups: string }[]>(db,
         `SELECT referred_by AS user_id, COUNT(*)::text AS signups
            FROM "user"
           WHERE referred_by = ANY($1::text[])
@@ -153,7 +150,7 @@ const cachedCodeAndWagerEntries = (
 
       // Lifetime FTDs per creator: DISTINCT referred users (via acu
       // `usage_type='deposit'`) who have non-zero `balances.total_deposited`.
-      db.$queryRawUnsafe<{ user_id: string; ftds: string }[]>(
+      queryRows<{ user_id: string; ftds: string }[]>(db,
         `SELECT acu.affiliate_user_id AS user_id,
                 COUNT(DISTINCT acu.referred_user_id)::text AS ftds
            FROM affiliate_code_usages acu
@@ -168,7 +165,7 @@ const cachedCodeAndWagerEntries = (
 
       // Per-creator 3-day deposits — `acu.deposit_amount_usd` with
       // `usage_type='deposit'` in the last 3 days.
-      db.$queryRawUnsafe<DepositRow[]>(
+      queryRows<DepositRow[]>(db,
         `SELECT acu.affiliate_user_id AS creator_user_id,
                 COALESCE(SUM(acu.deposit_amount_usd::numeric), 0)::text AS deposits_3d
            FROM affiliate_code_usages acu
@@ -183,7 +180,7 @@ const cachedCodeAndWagerEntries = (
       ),
 
       // Per-creator wager totals — 3-day and lifetime, in one scan.
-      db.$queryRawUnsafe<WagerRow[]>(
+      queryRows<WagerRow[]>(db,
         `SELECT acu.affiliate_user_id AS creator_user_id,
                 COALESCE(SUM(CASE WHEN acu.created_at >= NOW() - INTERVAL '3 days'
                                    THEN acu.wager_amount_usd::numeric ELSE 0 END), 0)::text AS wagers_3d,
@@ -198,18 +195,20 @@ const cachedCodeAndWagerEntries = (
         userIds,
       ),
 
-      adminDb.admin_audit_events.findMany({
-        where: {
-          target_user_id: { in: userIds },
-          event_type: "user_made_creator",
-        },
-        select: {
-          target_user_id: true,
-          metadata: true,
-          created_at: true,
-        },
-        orderBy: { created_at: "asc" },
-      }) as Promise<AuditCodeRow[]>,
+      adminDrizzle
+        .select({
+          target_user_id: admin_audit_events.target_user_id,
+          metadata: admin_audit_events.metadata,
+          created_at: admin_audit_events.created_at,
+        })
+        .from(admin_audit_events)
+        .where(
+          and(
+            inArray(admin_audit_events.target_user_id, userIds),
+            eq(admin_audit_events.event_type, "user_made_creator"),
+          ),
+        )
+        .orderBy(asc(admin_audit_events.created_at)),
     ]);
 
       const codeById = new Map(codeRows.map((r) => [r.user_id, r.code]));

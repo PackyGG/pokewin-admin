@@ -2,12 +2,11 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { getDevDb, getProdDb } from "@/lib/db";
+import { drizzleForEnv } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getAllCreatorsLifetimePnlRowsFromClickHouse } from "@/lib/clickhouse/queries/creators/lifetime-pnl";
 import type { CreatorsTab } from "../_lib/search-params";
 import { getFillCreatorIds } from "./fill-creator-count";
 import { getMultiplierCreatorIds } from "./multiplier-creator-count";
@@ -121,7 +120,7 @@ type LifetimePnlRow = {
 const cachedLifetimePnlRows = (env: DbEnv, blacklistIds: string[]) =>
   unstable_cache(
     async (): Promise<LifetimePnlRow[]> => {
-      const db = env === "dev" ? getDevDb() : getProdDb();
+      const db = drizzleForEnv(env);
       // Blacklist guard applied as an extra AND on every WHERE that aliases
       // the referred user as `u`. Inlined per query because we can't share
       // a binding across CTE definitions in raw SQL cleanly.
@@ -130,14 +129,9 @@ const cachedLifetimePnlRows = (env: DbEnv, blacklistIds: string[]) =>
           ? ` AND u.id NOT IN (${escapeBlacklistIds(blacklistIds)})`
           : "";
 
-      // Index-or-ClickHouse: serve this heavy lifetime-coverage scan from the
-      // ClickHouse twin when cut over (gated per surface key); the tab-filter +
       // sort + aggregate downstream run unchanged on either source. The twin is
       // parity-proven cent-exact (TZ=UTC, twice) against this Postgres query.
-      return resolveAdminRead<LifetimePnlRow[]>("creators_lifetime_pnl", {
-        ch: () => getAllCreatorsLifetimePnlRowsFromClickHouse(blacklistIds),
-        pg: () =>
-          db.$queryRawUnsafe<LifetimePnlRow[]>(`
+      return queryRows<LifetimePnlRow[]>(db, `
     WITH covered_deposits AS (
       -- DISTINCT ON picks the most recent acu row per ledger deposit
       -- whose created_at falls in the 7-day pre-deposit window.
@@ -251,8 +245,7 @@ const cachedLifetimePnlRows = (env: DbEnv, blacklistIds: string[]) =>
       FULL OUTER JOIN creator_cardwd ccw  ON ccw.creator_id = COALESCE(cd.creator_id, cw.creator_id)
       JOIN "user" cu ON cu.id = COALESCE(cd.creator_id, cw.creator_id, ccw.creator_id)
      WHERE cu.role = 'creator'
-  `),
-      });
+  `);
     },
     ["creators-lifetime-pnl-rows-v1", env, ...blacklistIds],
     { revalidate: 900, tags: ["creators-lifetime-pnl"] },

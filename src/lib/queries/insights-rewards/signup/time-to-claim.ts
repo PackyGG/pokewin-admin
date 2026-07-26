@@ -1,14 +1,13 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { compareSignupTimeToClaim } from "@/lib/clickhouse/compare/insights-signup-time-to-claim";
 import { SIGNUP_CACHE_TAG } from "./_shared";
 
 /**
@@ -73,13 +72,10 @@ async function computeTimeToClaim(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<TimeToClaim> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const signupDateFilter =
-    days !== null
-      ? `AND u.created_at >= NOW() - INTERVAL '${days} days'`
-      : "";
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const signupDateFilter = daysAgoFilter("u.created_at", days);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Pull each claimant's gap hours + the percentile summary in one
   // sweep. The histogram is computed in JS from the raw gap list so
@@ -93,7 +89,7 @@ async function computeTimeToClaim(
     p95: string | null;
     total_claimants: string;
   };
-  const rows = await db.$queryRawUnsafe<Row[]>(`
+  const rows = await queryRows<Row[]>(db, sql`
     WITH cohort AS (
       SELECT u.id AS user_id, u.created_at AS signed_up_at
       FROM "user" u
@@ -137,7 +133,7 @@ async function computeTimeToClaim(
   `);
 
   // Total cohort signups (for never-claimed denominator).
-  const cohortRows = await db.$queryRawUnsafe<{ cnt: string }[]>(`
+  const cohortRows = await queryRows<{ cnt: string }[]>(db, sql`
     SELECT COUNT(*)::text AS cnt
     FROM "user" u
     WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
@@ -237,9 +233,5 @@ export async function getSignupTimeToClaim(
   const data = await (cacheTtlForInsightsPeriod(period) >= 300
     ? cachedLong(period, sorted)
     : cachedShort(period, sorted));
-  // CQRS rollout: fire-and-forget ClickHouse comparison (no-op unless the
-  // surface flag is in `comparison` mode; forced off when CH is dormant). The
-  // served value stays the Postgres payload above.
-  void compareSignupTimeToClaim(period, data);
   return data;
 }

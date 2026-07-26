@@ -1,10 +1,10 @@
 "use server";
 
 import { revalidateTag } from "next/cache";
-import { Prisma } from "@/generated/admin-prisma/client";
+import { sql } from "drizzle-orm";
 import { requirePackStudioAccess } from "@/lib/require-pack-studio-access";
-import { adminDb } from "@/lib/admin-db";
-import { getDb } from "@/lib/db";
+import { adminDrizzle } from "@/lib/admin-db";
+import { getDrizzleDb } from "@/lib/db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { getPacksPoolComposition } from "@/lib/queries/packs";
 import { computePackRiskFromAggregates } from "@/app/(admin)/insights/edge-calc/risk";
@@ -71,19 +71,20 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
   // filtered id read is a cheap seq scan (the planner declines an index at
   // this cardinality — verified read-only EXPLAIN), matching the Foundation's
   // own composition query.
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // SAFETY INVARIANT: `included` is built ONLY from `PACK_STUDIO_CASH_PACK_TYPES`,
   // a hardcoded module constant of trusted string literals — never user input.
-  // This is the ONLY reason interpolating it into `$queryRawUnsafe` is safe. If
-  // this list is ever made dynamic/settings-derived, this becomes a SQL-injection
-  // vector with no compiler signal — switch to a parameterized `pack_type = ANY($1)`
+  // The current query still binds the resulting array. If this list ever
+  // becomes settings-derived, keep it parameterized as `pack_type = ANY($1)`
   // bind before doing so.
-  const included = PACK_STUDIO_CASH_PACK_TYPES.map((t) => `'${t}'`).join(", ");
-  const idRows = await db.$queryRawUnsafe<{ id: string }[]>(
-    `SELECT id FROM packs
-     WHERE pack_type IN (${included}) AND price > 0 AND active = true`,
-  );
-  const packIds = idRows.map((r) => r.id);
+  const idResult = await db.execute<{ id: string }>(sql`
+    SELECT id
+    FROM packs
+    WHERE pack_type::text = ANY(${[...PACK_STUDIO_CASH_PACK_TYPES]}::text[])
+      AND price > 0
+      AND active = true
+  `);
+  const packIds = idResult.rows.map((r) => r.id);
 
   if (packIds.length === 0) {
     await createAdminAuditEvent({
@@ -149,7 +150,7 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
   });
 
   // Commit every score row in a SINGLE round-trip via `INSERT … ON CONFLICT
-  // (pack_id) DO UPDATE` — atomic by definition (one statement), no Prisma
+  // (pack_id) DO UPDATE` — atomic by definition (one statement), no client-side
   // transaction overhead, no interactive-transaction timeout to trip.
   //
   // The history of this loop is a chain of timeouts the previous shapes kept
@@ -158,18 +159,17 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
   //      With ~180 active cash packs and ~50–100ms RTT from a cold serverless
   //      pool, the cumulative wall-clock outran the platform's default
   //      function budget and surfaced as a "timed out" snapshot.
-  //   2) `$transaction([...arrayOfUpserts])` → batched into one round-trip
-  //      but Prisma's array form does NOT accept `timeout`.
-  //   3) `$transaction(async (tx) => { for(...) await tx.upsert(...) }, {
-  //      timeout })` → back to N round-trips inside one interactive tx;
-  //      Prisma's default 5s tx timeout produced `P2028` in prod
+  //   2) An array of individual upserts still created avoidable statement
+  //      overhead and offered no useful timeout control.
+  //   3) A loop inside an interactive transaction returned to N round-trips
+  //      and could hit the transaction timeout in production.
   //      (~5257ms > 5000ms), which surfaced as the user-visible
   //      "An error occurred in the Server Components render" digest.
   //
   // The right shape is the one Postgres was built for: a multi-row `INSERT`
   // with `ON CONFLICT (pack_id) DO UPDATE` and parameter arrays. ONE
   // statement, ONE round-trip, ONE connection slot — independent of N.
-  // No `$transaction` wrapper, no timeout knobs to keep tuned.
+  // No wrapper transaction or per-row timeout knobs are needed.
   //
   // The `array_length` defensive bail-out is unreachable in practice
   // (we already returned at `packIds.length === 0` above), but guards
@@ -189,7 +189,7 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
     // the rest. Avoids any per-row `Json` typing dance.
     const complianceArr = scoredRows.map((r) => JSON.stringify(r.compliance));
 
-    await adminDb.$executeRaw(Prisma.sql`
+    await adminDrizzle.execute(sql`
       INSERT INTO pack_risk_scores (
         pack_id, edge, cv, win_rate, near_miss, max_win, max_mult,
         risk_score, tier, compliance, computed_at

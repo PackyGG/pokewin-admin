@@ -1,10 +1,8 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import { unstable_cache } from "next/cache";
 import { cache } from "react";
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
-import { Prisma } from "@/generated/prisma/client";
-import { user_role } from "@/generated/prisma/enums";
 import {
   officialStreamAdjustmentSqlPredicate,
   removeLockedBalanceAdjustmentSqlPredicate,
@@ -12,15 +10,15 @@ import {
 import { calculateUsersPnlBatch, type UserPnl } from "./pnl";
 import { isUserId, isUuid } from "@/lib/utils/ids";
 import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-visible-override";
-import { blacklistNotInClause, escapeBlacklistIds } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getCreatorProtectedUserIds } from "./creator-protected-ids";
 import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
 
-// Allowlist from the generated Prisma user_role enum — validate the
-// role filter before it reaches either the Prisma where or the raw-SQL
+// Allowlist from the database user_role enum — validate the
+// role filter before it reaches SQL
 // sort branch, instead of an unchecked cast.
-const USER_ROLES = new Set<string>(Object.values(user_role));
+const USER_ROLES = new Set(["user", "support", "admin", "creator"]);
+const USER_ROLE_USER = "user";
 
 /**
  * Whether a free-form search term could plausibly be a genuine partial
@@ -83,7 +81,7 @@ export type UserSearchMode = "prefix" | "substring";
  * can be memoised with `unstable_cache` (which keys on the stringified
  * args). The search-shape flags (isExactId / isEmailLike / isDiscordId) are
  * computed once in getUsers and threaded through so the cached SQL build
- * matches the Prisma-path routing exactly.
+ * matches the standard routing exactly.
  */
 /** Whitelist for the `provider` filter — inlined into raw SQL. */
 const SIGNUP_PROVIDERS = new Set(["discord", "google", "steam", "credential"]);
@@ -188,15 +186,6 @@ function parseSearchTerm(raw: string | undefined): {
   return code
     ? { codeSearch: true, term: code }
     : { codeSearch: false, term: undefined };
-}
-
-/** AND-wrap a Prisma where with the analytics blacklist exclusion. */
-function withExcludedUsers(
-  where: Prisma.UserWhereInput,
-  excludedIds: string[],
-): Prisma.UserWhereInput {
-  if (excludedIds.length === 0) return where;
-  return { AND: [where, { id: { notIn: excludedIds } }] };
 }
 
 type RankedUserIdsInput = UserListFilterInput & {
@@ -365,7 +354,7 @@ type UserListWhereClause = {
 /**
  * Shared WHERE builder for every raw-SQL user-list path (ranking scan AND
  * the column-sort search fast path). Free-form text uses `LOWER(col) LIKE`
- * — NOT Prisma ILIKE — so Postgres can use the recommended lower(col)
+ * — not ILIKE — so Postgres can use the recommended lower(col)
  * text_pattern_ops / pg_trgm indexes.
  *
  * The search TERM is bound as a SQL parameter ($1/$2), never interpolated
@@ -445,17 +434,24 @@ function buildUserListWhereClause(
         )`,
       );
     } else if (isExactId) {
-      params.push(searchTerm);
+      params.push(searchTerm, searchTerm.toUpperCase());
       // Primary-key lookup — exact match first, then case-insensitive fallback
       // for pasted ids with different casing (nanoid ids are mixed-case).
-      whereSql.push(`(u.id = $1 OR LOWER(u.id) = LOWER($1))`);
+      whereSql.push(`(
+        u.id = $1 OR LOWER(u.id) = LOWER($1)
+        OR u.id IN (SELECT user_id FROM affiliate_codes WHERE UPPER(code) = $2)
+      )`);
     } else if (isEmailLike) {
-      params.push(searchTerm);
-      whereSql.push(`LOWER(u.email) = LOWER($1)`);
+      params.push(searchTerm, searchTerm.toUpperCase());
+      whereSql.push(`(
+        LOWER(u.email) = LOWER($1)
+        OR u.id IN (SELECT user_id FROM affiliate_codes WHERE UPPER(code) = $2)
+      )`);
     } else if (isDiscordId) {
-      params.push(searchTerm);
+      params.push(searchTerm, searchTerm.toUpperCase());
       whereSql.push(
-        `EXISTS (SELECT 1 FROM account a WHERE a."userId" = u.id AND a."providerId" = 'discord' AND a."accountId" = $1)`,
+        `(EXISTS (SELECT 1 FROM account a WHERE a."userId" = u.id AND a."providerId" = 'discord' AND a."accountId" = $1)
+          OR u.id IN (SELECT user_id FROM affiliate_codes WHERE UPPER(code) = $2))`,
       );
     } else {
       // Pattern computed in JS: lowercase (SQL side compares LOWER(col)),
@@ -511,7 +507,6 @@ function buildUserListWhereClause(
       // (idx_affiliate_codes_upper_code) — table is only ~1k rows today so
       // the scan is sub-millisecond and does not regress the pre-existing
       // outer "user" scan in this same branch, but this leg is NOT yet
-      // index-backed per the Index-or-ClickHouse rule.
       params.push(searchTerm.toUpperCase()); // $2 — exact code match
       const affiliateCodeOwnerLeg = `
             UNION
@@ -532,7 +527,8 @@ function buildUserListWhereClause(
     }
   }
   if (role && role !== "all" && USER_ROLES.has(role)) {
-    whereSql.push(`u.role = '${role}'::user_role`);
+    params.push(role);
+    whereSql.push(`u.role = $${params.length}::user_role`);
   }
   if (status === "banned") whereSql.push("u.is_banned = true");
   else if (status === "locked") whereSql.push("u.is_locked = true");
@@ -558,9 +554,10 @@ function buildUserListWhereClause(
   else if (deposited === "no") whereSql.push(`NOT ${DEPOSIT_EXISTS}`);
 
   if (provider && SIGNUP_PROVIDERS.has(provider)) {
+    params.push(provider);
     whereSql.push(`EXISTS (
       SELECT 1 FROM account a
-       WHERE a."userId" = u.id AND a."providerId" = '${provider}'
+       WHERE a."userId" = u.id AND a."providerId" = $${params.length}
     )`);
   }
 
@@ -590,10 +587,11 @@ function buildUserListWhereClause(
 
   // "Took free value, never paid" — the core farming shape.
   if (freeOnly && FREE_ONLY_TYPES.has(freeOnly)) {
+    params.push(FREE_ONLY_TYPES.get(freeOnly));
     whereSql.push(`EXISTS (
       SELECT 1 FROM ledger_transactions lt
        WHERE lt.user_id = u.id
-         AND lt.type = '${FREE_ONLY_TYPES.get(freeOnly)}'
+         AND lt.type = $${params.length}::ledger_transaction_type
     ) AND NOT ${DEPOSIT_EXISTS}`);
   }
   // affiliateOwnerId (all codes this owner has ever had) and affiliateCode
@@ -605,8 +603,8 @@ function buildUserListWhereClause(
     // matched directly on affiliate_code_usages.affiliate_user_id, so
     // rotated/extra codes are covered without needing the code strings.
     // `affiliate_user_id` is the LEADING column of
-    // idx_affiliate_code_usages_affiliate_referred (applied on prod, see
-    // prisma/schema.prisma), so this is an index scan, not a seq scan.
+    // idx_affiliate_code_usages_affiliate_referred (applied on prod and
+    // captured in the MAIN schema snapshot), so this is an index scan.
     params.push(affiliateOwnerId);
     whereSql.push(
       `u.id IN (
@@ -635,9 +633,8 @@ function buildUserListWhereClause(
     );
   }
   if (input.excludedUserIds.length > 0) {
-    whereSql.push(
-      `u.id NOT IN (${escapeBlacklistIds(input.excludedUserIds)})`,
-    );
+    params.push(input.excludedUserIds);
+    whereSql.push(`NOT (u.id = ANY($${params.length}::text[]))`);
   }
   return {
     sql: whereSql.length ? `WHERE ${whereSql.join(" AND ")}` : "",
@@ -700,14 +697,13 @@ type ColumnSortUserIdsInput = UserListFilterInput & {
 
 /**
  * Index-friendly ID fetch for column sorts when free-form text search is
- * active. Prisma `startsWith` + `mode:"insensitive"` compiles to ILIKE,
+ * active. A case-insensitive prefix filter compiles to ILIKE,
  * which cannot use the lower(col) text_pattern_ops indexes.
  */
 async function fetchColumnSortUserIds(
   input: ColumnSortUserIdsInput,
 ): Promise<{ ids: string[]; total: number }> {
   const { sortBy, order, page, perPage, ...filter } = input;
-  const db = await getDb();
   const whereClause = buildUserListWhereClause(filter);
   const { orderSql, needsBalanceJoin } = buildUserListColumnOrderSql(
     sortBy,
@@ -722,7 +718,7 @@ async function fetchColumnSortUserIds(
   // UNFILTERED total to a `pg_class.reltuples` estimate; filtered counts
   // stay exact.
   const [orderedRows, totalCount] = await Promise.all([
-    db.$queryRawUnsafe<{ id: string }[]>(
+    queryMainRows<{ id: string }[]>(
       `
       SELECT u.id
       FROM "user" u
@@ -733,7 +729,7 @@ async function fetchColumnSortUserIds(
     `,
       ...whereClause.params,
     ),
-    db.$queryRawUnsafe<{ c: string }[]>(
+    queryMainRows<{ c: string }[]>(
       `
       SELECT COUNT(*)::text AS c FROM "user" u ${whereClause.sql}
     `,
@@ -780,7 +776,6 @@ async function computeRankedUserIds(
   input: RankedUserIdsInput,
 ): Promise<RankedUserIdsResult> {
   const { sortBy, order, page, perPage, ...filter } = input;
-  const db = await getDb();
   const orderSql = order === "asc" ? "ASC" : "DESC";
   const whereClause = buildUserListWhereClause(filter);
   const aggregateKeys = SORT_AGGREGATE_KEYS[sortBy] ?? [];
@@ -791,7 +786,7 @@ async function computeRankedUserIds(
   // COUNT(*) stays EXACT — see fetchColumnSortUserIds for the upgrade path
   // (switch the unfiltered total to a reltuples estimate past ~500k rows).
   const [orderedRows, totalCount] = await Promise.all([
-    db.$queryRawUnsafe<{ id: string }[]>(
+    queryMainRows<{ id: string }[]>(
       `
       WITH filtered AS (
         SELECT u.id
@@ -806,7 +801,7 @@ async function computeRankedUserIds(
     `,
       ...whereClause.params,
     ),
-    db.$queryRawUnsafe<{ c: string }[]>(
+    queryMainRows<{ c: string }[]>(
       `
       SELECT COUNT(*)::text AS c FROM "user" u ${whereClause.sql}
     `,
@@ -857,7 +852,7 @@ async function computeRankedUserIds(
  * PnL are always live even when the ID ordering is served from
  * cache.
  *
- * `getDb()` inside each cache callback resolves to the prod client (its
+ * The shared Drizzle resolver inside each cache callback selects prod (its
  * cookie read falls back to prod outside a request scope — see
  * readDbEnv), which is the right behaviour for a cross-request ranking
  * cache: it must not be keyed to one admin's dev-DB toggle. This mirrors
@@ -989,17 +984,17 @@ type SignupProviderRow = {
   provider: string | null;
 };
 
-const USER_LIST_SELECT = {
-  id: true,
-  username: true,
-  email: true,
-  image: true,
-  role: true,
-  is_banned: true,
-  is_locked: true,
-  country: true,
-  country_code: true,
-  signup_ip: true,
+type UserListRow = {
+  id: string;
+  username: string | null;
+  email: string | null;
+  image: string | null;
+  role: string;
+  is_banned: boolean;
+  is_locked: boolean;
+  country: string | null;
+  country_code: string | null;
+  signup_ip: string | null;
   // The live "affiliate/referral code this user is carrying" — written
   // together with `referred_by` when an admin sets a referrer, or by the
   // backend when the user signed up under a link/cookie (see the
@@ -1014,13 +1009,12 @@ const USER_LIST_SELECT = {
   // that chain needs a batch query on affiliate_code_usages filtered by
   // referred_user_id, which has no supporting index (the only index on
   // that table leads with affiliate_user_id — see
-  // idx_affiliate_code_usages_affiliate_referred in prisma/schema.prisma;
+  // idx_affiliate_code_usages_affiliate_referred in the MAIN schema snapshot;
   // the referred_user_id-first index is recommended-but-NOT-applied, see
   // prisma/recommended-indexes.sql #28). Doing that scan for every page of
-  // the list would violate the Index-or-ClickHouse rule, so the list uses
   // the always-available column instead.
-  affiliate_code: true,
-  created_at: true,
+  affiliate_code: string | null;
+  created_at: Date;
   // Only `locked_balance` and `total_wagered` are actually READ off this
   // relation in hydrateUserListPage below — `availableBalance`,
   // `totalDeposited`, and `totalWithdrawn` on the displayed row all come
@@ -1031,18 +1025,31 @@ const USER_LIST_SELECT = {
   // fetched on every row of every page/search and never read. Removing
   // them shrinks this JOIN's result set on every getUsers call. NOTE: the
   // "balance" / "totalDeposited" / "totalWagered" column-sort `orderBy`
-  // below (`balanceSortFields`) still works — Prisma's `orderBy` on a
+  // below (`balanceSortFields`) still works — sorting on a
   // relation field is independent of `select`, so ordering by
   // `balances.available_balance` needs no change here.
   balances: {
-    select: {
-      locked_balance: true,
-      total_wagered: true,
-    },
-  },
-} satisfies Prisma.UserSelect;
+    locked_balance: string | null;
+    total_wagered: string | null;
+  } | null;
+};
 
-type UserListRow = Prisma.UserGetPayload<{ select: typeof USER_LIST_SELECT }>;
+async function fetchUserListRows(ids: string[]): Promise<UserListRow[]> {
+  if (ids.length === 0) return [];
+  return queryMainRows<UserListRow[]>(
+    `SELECT u.id, u.username, u.email, u.image, u.role::text AS role,
+            u.is_banned, u.is_locked, u.country, u.country_code, u.signup_ip,
+            u.affiliate_code, u.created_at,
+            CASE WHEN b.user_id IS NULL THEN NULL ELSE jsonb_build_object(
+              'locked_balance', b.locked_balance::text,
+              'total_wagered', b.total_wagered::text
+            ) END AS balances
+       FROM "user" u
+       LEFT JOIN balances b ON b.user_id = u.id
+      WHERE u.id = ANY($1::text[])`,
+    ids,
+  );
+}
 
 /**
  * Hydrate the page slice with live per-row financials.
@@ -1071,7 +1078,6 @@ async function hydrateUserListPage(
   page: number,
   perPage: number,
 ): Promise<PaginatedResult<UserListItem>> {
-  const db = await getDb();
   const userIds = users.map((u) => u.id);
   const signupIps = [
     ...new Set(users.map((u) => u.signup_ip).filter((ip): ip is string => !!ip)),
@@ -1094,7 +1100,8 @@ async function hydrateUserListPage(
     // degrades every row on this page to "unknown" rather than breaking the
     // list render.
     userIds.length > 0
-      ? db.$queryRaw<DeviceRow[]>`
+      ? queryMainRows<DeviceRow[]>(
+          `
           SELECT
             user_id,
             bool_or(suspected_alt_triggered) AS suspected_alt,
@@ -1102,9 +1109,11 @@ async function hydrateUserListPage(
             -- devices / storage clears; the latest is the one worth showing.
             (array_agg(visitor_id ORDER BY created_at DESC))[1] AS visitor_id
           FROM fingerprints
-          WHERE user_id = ANY(${userIds})
+          WHERE user_id = ANY($1::text[])
           GROUP BY user_id
-        `.catch((e) => {
+        `,
+          userIds,
+        ).catch((e) => {
           console.error("[getUsers] device fingerprint lookup failed:", e);
           return [] as DeviceRow[];
         })
@@ -1120,14 +1129,17 @@ async function hydrateUserListPage(
     // Best-effort like the fingerprint leg above: a failure degrades this
     // page's rows to "—" rather than breaking the list render.
     userIds.length > 0
-      ? db.$queryRaw<SignupProviderRow[]>`
+      ? queryMainRows<SignupProviderRow[]>(
+          `
           SELECT DISTINCT ON (a."userId")
                  a."userId" AS user_id,
                  a."providerId" AS provider
             FROM account a
-           WHERE a."userId" = ANY(${userIds})
+           WHERE a."userId" = ANY($1::text[])
            ORDER BY a."userId", a.created_at ASC NULLS LAST
-        `.catch((e) => {
+        `,
+          userIds,
+        ).catch((e) => {
           console.error("[getUsers] signup provider lookup failed:", e);
           return [] as SignupProviderRow[];
         })
@@ -1140,12 +1152,15 @@ async function hydrateUserListPage(
     // Best-effort like the legs above: a failure degrades every row on this
     // page to "unique" rather than breaking the list render.
     signupIps.length > 0
-      ? db.$queryRaw<SharedIpRow[]>`
+      ? queryMainRows<SharedIpRow[]>(
+          `
           SELECT signup_ip, COUNT(*) AS n
             FROM "user"
-           WHERE signup_ip = ANY(${signupIps})
+           WHERE signup_ip = ANY($1::text[])
            GROUP BY signup_ip
-        `.catch((e) => {
+        `,
+          signupIps,
+        ).catch((e) => {
           console.error("[getUsers] shared signup_ip lookup failed:", e);
           return [] as SharedIpRow[];
         })
@@ -1260,10 +1275,9 @@ export async function getUsers(params: {
    */
   affiliateOwnerId?: string;
 }): Promise<PaginatedResult<UserListItem>> {
-  const db = await getDb();
   const {
-    page = 1,
-    perPage = 20,
+    page: requestedPage = 1,
+    perPage: requestedPerPage = 20,
     search,
     role,
     status,
@@ -1274,6 +1288,11 @@ export async function getUsers(params: {
     affiliateCode: affiliateCodeParam,
     affiliateOwnerId: affiliateOwnerIdParam,
   } = params;
+  const page = Math.max(1, Math.trunc(requestedPage) || 1);
+  const perPage = Math.min(
+    200,
+    Math.max(1, Math.trunc(requestedPerPage) || 20),
+  );
 
   // `c:<code>` → code-only search; everything else is the normal term. See
   // parseSearchTerm: `searchTerm` is already stripped of the prefix, so every
@@ -1293,8 +1312,6 @@ export async function getUsers(params: {
     includeAllBlacklisted: includeExcludedInSearch,
     isSearching: isAnySearch,
   });
-
-  const where: Prisma.UserWhereInput = {};
 
   // Trim so stray leading/trailing whitespace (easy to paste in by
   // accident) doesn't turn a valid handle into a miss.
@@ -1369,333 +1386,62 @@ export async function getUsers(params: {
 
   // ── Exact-match fast path (user id / email / discord snowflake) ───────
   // Single indexed lookup — never touch the global PnL ranking scan or
-  // the heavy raw-SQL sort path. Case on user id is ignored (OR + Prisma
+  // the heavy raw-SQL sort path. Case on user id is ignored (OR +
   // insensitive). This is what admins paste from the URL bar.
-  if (isAnySearch && (isExactId || isEmailLike || isDiscordId)) {
-    const exactWhere: Prisma.UserWhereInput = {};
-    // The shape-specific exact lookup (id PK / unique email / discord
-    // account) OR the affiliate-code owner. A creator-chosen affiliate code
-    // can be shaped like a user id (21-64 alnum chars), a Discord snowflake
-    // (17-20 digits), or even an email — in which case the search routes to
-    // THIS exact fast path and would otherwise SKIP the affiliate_codes
-    // owner resolution the free-form branch (buildUserListWhereClause) does,
-    // so a code of any of those shapes could never be searched back to its
-    // owner. Including the same affiliate_codes leg the free-form / Prisma
-    // paths already use keeps "search a code → its owner" working for EVERY
-    // code shape, not just the free-form ones. (affiliate_codes is ~1k rows,
-    // so the extra case-insensitive code match is a sub-millisecond scan and
-    // only runs on the rare exact-shaped search.)
-    const shapeOr: Prisma.UserWhereInput[] = [];
-    if (isExactId) {
-      shapeOr.push(
-        { id: searchTerm },
-        { id: { equals: searchTerm, mode: "insensitive" } },
-      );
-    } else if (isEmailLike) {
-      shapeOr.push({ email: { equals: searchTerm, mode: "insensitive" } });
-    } else if (isDiscordId) {
-      shapeOr.push({
-        account: { some: { providerId: "discord", accountId: searchTerm } },
-      });
-    }
-    shapeOr.push({
-      affiliate_codes: {
-        some: { code: { equals: searchTerm, mode: "insensitive" } },
-      },
-    });
-    exactWhere.OR = shapeOr;
-    if (role && role !== "all" && USER_ROLES.has(role)) {
-      exactWhere.role = role as user_role;
-    }
-    if (status === "banned") exactWhere.is_banned = true;
-    else if (status === "locked") exactWhere.is_locked = true;
-    else if (status === "active") {
-      exactWhere.is_banned = false;
-      exactWhere.is_locked = false;
-    }
-    if (affiliateOwnerId) {
-      // Same relation as the affiliateCode branch below, but constrained by
-      // affiliate_user_id (ANY code this owner has) instead of one code —
-      // mirrors the raw-SQL path's `u.id IN (SELECT referred_user_id FROM
-      // affiliate_code_usages WHERE affiliate_user_id = …)` so an
-      // exact-shaped search combined with an active affiliateOwnerId filter
-      // can't silently ignore it.
-      exactWhere.affiliate_code_usages_affiliate_code_usages_referred_user_idTouser =
-        { some: { affiliate_user_id: affiliateOwnerId } };
-    } else if (affiliateCode) {
-      // Same relation the raw-SQL path's `u.id IN (SELECT referred_user_id
-      // FROM affiliate_code_usages WHERE UPPER(code) = …)` targets — applied
-      // here too so an exact-shaped search (id/email/discord) combined with
-      // an active affiliateCode filter can't silently ignore it.
-      exactWhere.affiliate_code_usages_affiliate_code_usages_referred_user_idTouser =
-        { some: { code: { equals: affiliateCode, mode: "insensitive" } } };
-    }
-
-    const exactWhereFiltered = withExcludedUsers(exactWhere, excludedUserIds);
-
-    const [exactUsers, exactTotal] = await Promise.all([
-      db.user.findMany({
-        where: exactWhereFiltered,
-        select: USER_LIST_SELECT,
-        orderBy: { created_at: "desc" },
-        take: perPage,
-        skip: (page - 1) * perPage,
-      }),
-      db.user.count({ where: exactWhereFiltered }),
-    ]);
-
-    // Full truthful hydration — the old `skipPnlBatch: true` here is what
-    // rendered $0.00 P&L / Inventory / Net for every exact-match search.
-    return hydrateUserListPage(exactUsers, exactTotal, page, perPage);
-  }
-
-  if (searchTerm) {
-    if (codeSearch) {
-      // `c:<code>` — owners of the matching code(s), nothing else. Mirrors
-      // the raw-SQL code-only leg in buildUserListWhereClause, with one
-      // documented gap: Prisma can't express that leg's "exact match wins,
-      // prefix only when no code equals the term" switch in a single `where`,
-      // so this approximates it with the prefix half. Harmless today — this
-      // branch is UNREACHABLE (a code search is always free-form-shaped, so
-      // getUsers routes it to the raw-SQL column-sort path) — and it's kept
-      // per this file's Prisma-path/raw-SQL-path invariant. The raw-SQL leg
-      // is the authority; if routing ever changes, port the NOT EXISTS.
-      where.affiliate_codes = {
-        some: { code: { startsWith: searchTerm, mode: "insensitive" } },
-      };
-    } else if (isExactId) {
-      // Primary-key lookup — single index hit. mode insensitive so pasted
-      // ids with different casing still resolve (nanoid ids are mixed-case).
-      where.id = { equals: searchTerm, mode: "insensitive" };
-    } else if (isEmailLike) {
-      // user.email has a unique index — equality lookup is O(log n).
-      // mode insensitive normalises case for the rare user whose
-      // email was stored mixed-case before the lowercasing pass.
-      where.email = { equals: searchTerm, mode: "insensitive" };
-    } else if (isDiscordId) {
-      // account.accountId is indexed; the EXISTS subquery is a single
-      // index seek per matching row.
-      where.account = {
-        some: { providerId: "discord", accountId: searchTerm },
-      };
-    } else {
-      // Free-form handle/name match. Search the handle, the display name
-      // + OAuth name (so a user can be found by what Discord/Google
-      // shows, not just the lowercase handle), and the email; id is
-      // included for short partial UUID pastes that didn't pass UUID_RE.
-      // Only runs when the input shape didn't match any fast path above.
-      //
-      // PREFIX by default: `startsWith` → left-anchored `ILIKE 'term%'`,
-      // sargable against the recommended lower(col) text_pattern_ops
-      // indexes (index range scan, not a full seq scan). SUBSTRING
-      // (`contains` → `%term%`) is the opt-in interior-fragment fallback
-      // and stays a seq scan until the pg_trgm GIN index is applied.
-      // The matcher is chosen ONCE so the four handle/name legs stay
-      // consistent; `mode: "insensitive"` lowercases both sides exactly
-      // as the raw-SQL ranking path's LOWER(col) LIKE LOWER(term) does,
-      // so the Prisma-path and ranking-path result sets agree.
-      const textMatch =
-        searchMode === "substring"
-          ? { contains: searchTerm, mode: "insensitive" as const }
-          : { startsWith: searchTerm, mode: "insensitive" as const };
-      where.OR = [
-        { username: textMatch },
-        { display_username: textMatch },
-        { name: textMatch },
-        { email: textMatch },
-        { id: { equals: searchTerm, mode: "insensitive" } },
-        // Affiliate/creator CODE ownership — a searchTerm that exactly
-        // (case-insensitively) matches a row in `affiliate_codes` surfaces
-        // that CODE'S OWNER, mirroring what the raw-SQL free-form branch in
-        // buildUserListWhereClause does. EXACT match only (codes are short
-        // unique identifiers, not names) — never loosen this leg to
-        // startsWith/contains. NOT yet index-backed for the case-insensitive
-        // match (see the UPPER(code) note + prisma/recommended-indexes.sql
-        // #31 in buildUserListWhereClause) — this Prisma leg is also DEAD
-        // for actual free-form queries today (isFreeFormTextSearch always
-        // routes to the raw-SQL path below instead, per the #15 note in
-        // recommended-indexes.sql), kept in sync per this file's own
-        // documented Prisma-path/ranking-path invariant.
-        {
-          affiliate_codes: {
-            some: { code: { equals: searchTerm, mode: "insensitive" } },
-          },
-        },
-      ];
-    }
-  }
-
-  if (role && role !== "all" && USER_ROLES.has(role)) {
-    where.role = role as user_role;
-  }
-
-  if (status === "banned") where.is_banned = true;
-  else if (status === "locked") where.is_locked = true;
-  else if (status === "active") {
-    where.is_banned = false;
-    where.is_locked = false;
-  }
-
   const order = sortOrder === "asc" ? "asc" : "desc";
-  const balanceSortFields = new Set([
-    "balance",
-    "totalDeposited",
-    "totalWagered",
-  ]);
-  const userSortFields = new Set([
-    "created_at",
-    "email",
-    "username",
-    "role",
-    "country",
-    // Kept in sync with the identically-named Set in
-    // buildUserListColumnOrderSql (the search-time column-sort path).
-    "affiliate_code",
-  ]);
+  const exactSearch =
+    isAnySearch && (isExactId || isEmailLike || isDiscordId);
+  const useComputedRanking =
+    RAW_SQL_SORTS.has(sortBy) && !skipHeavyRanking;
+  const effectiveSort = exactSearch
+    ? "created_at"
+    : skipHeavyRanking && RAW_SQL_SORTS.has(sortBy)
+      ? "created_at"
+      : sortBy;
+  const effectiveOrder = exactSearch ? "desc" : order;
 
-  // Narrow projection — see USER_LIST_SELECT at module scope.
-  const userSelect = USER_LIST_SELECT;
-
-  let users: UserListRow[];
-  let total: number;
-
-  // Never run the computed-sort ranking scan while a search filter is
-  // active — that was the main source of 15s timeouts on ?search=….
-  // Text / id searches use the index-friendly column-sort SQL instead
-  // (see branch below). Role / status filters route to the filter-first
-  // ranking path (cachedFilteredRankedUserIds).
-  if (RAW_SQL_SORTS.has(sortBy) && !skipHeavyRanking) {
-    // Heavy computed-sort path. The global ORDER BY scan (the source of
-    // the "/users timed out" failure — most acutely the Top winners /
-    // Top losers lifetime-PnL ranking) is delegated to the cached
-    // ranking helper, which memoises the ordered ID slice + total for
-    // this (sort / filter / page) tuple with a long TTL. Page row
-    // HYDRATION stays here and stays UNCACHED so balances / PnL
-    // are always live; only the slow ordering is served from cache.
-    const { ids, total: totalCount } = await cachedRankedUserIds({
-      ...filterInput,
-      sortBy,
-      order,
-      page,
-      perPage,
-    });
-    const unordered =
-      ids.length > 0
-        ? await db.user.findMany({
-            where: { id: { in: ids } },
-            select: userSelect,
-          })
-        : ([] as typeof users);
-    const byId = new Map(unordered.map((u) => [u.id, u]));
-    users = ids
-      .map((id) => byId.get(id))
-      .filter((u): u is (typeof unordered)[number] => Boolean(u));
-    total = totalCount;
-
-    // Server row order is preserved (ids → findMany → reorder map above);
-    // hydration fills live financials via the PnL batch. The ORDER BY and
-    // the displayed values share one formula (osrl carve-out in both), so
-    // the only residual display-vs-order drift is ranking-cache staleness
-    // (≤300s global / 30s filtered TTL).
-    return hydrateUserListPage(users, total, page, perPage);
-  } else {
-    // Build a compound orderBy so every Prisma-path sort gets a
-    // deterministic tie-breaker (id ASC). Without it, many users with
-    // identical $0 balance / NULL totals come back in arbitrary
-    // Postgres-internal order across page navigations, which is what
-    // makes "sort by Balance" look broken once the page scrolls past
-    // the handful of non-zero balances.
-    let orderBy: Prisma.UserOrderByWithRelationInput[];
-    if (balanceSortFields.has(sortBy)) {
-      const balanceField = (
-        {
-          balance: "available_balance",
-          totalDeposited: "total_deposited",
-          totalWagered: "total_wagered",
-        } as Record<string, string>
-      )[sortBy];
-      orderBy = [
-        {
-          balances: {
-            [balanceField]: order,
-          } as Prisma.balancesOrderByWithRelationInput,
-        },
-        { id: "asc" },
-      ];
-    } else if (sortBy === "status") {
-      // Computed status = "banned" | "locked" | "active".  Prisma
-      // can't ORDER BY a derived expression, so we sort by the two
-      // boolean columns the status string is derived from. For DESC
-      // order, banned (true) sorts before locked (true) sorts before
-      // active (both false) — which matches the alphabetical reading
-      // a user expects when they click "Status DESC".
-      orderBy = [
-        { is_banned: order },
-        { is_locked: order },
-        { id: "asc" },
-      ];
-    } else {
-      const field = userSortFields.has(sortBy) ? sortBy : "created_at";
-      orderBy = [
-        { [field]: order } as Prisma.UserOrderByWithRelationInput,
-        { id: "asc" },
-      ];
-    }
-
-    if (
-      isFreeFormTextSearch ||
-      hasAffiliateCodeFilter ||
-      hasAffiliateOwnerIdFilter ||
-      (skipHeavyRanking && RAW_SQL_SORTS.has(sortBy))
-    ) {
-      // affiliateCode / affiliateOwnerId have no plain Prisma-`where`
-      // equivalent (both are subqueries against affiliate_code_usages, not
-      // a scalar column) — either ALWAYS routes through the raw-SQL
-      // column-sort path below (buildUserListWhereClause), same as
-      // free-form text search, so the filter can never be silently dropped
-      // by falling into the plain Prisma `where`/`orderBy` branch further
-      // down.
-      const effectiveSort =
-        skipHeavyRanking && RAW_SQL_SORTS.has(sortBy) ? "created_at" : sortBy;
-      const { ids, total: totalCount } = await cachedFilteredColumnSortUserIds(
-        {
+  const idPage = exactSearch
+    ? await fetchColumnSortUserIds({
+        ...filterInput,
+        sortBy: effectiveSort,
+        order: effectiveOrder,
+        page,
+        perPage,
+      })
+    : useComputedRanking
+      ? await cachedRankedUserIds({
           ...filterInput,
-          sortBy: effectiveSort,
+          sortBy,
           order,
           page,
           perPage,
-        },
-      );
-      const unordered =
-        ids.length > 0
-          ? await db.user.findMany({
-              where: { id: { in: ids } },
-              select: userSelect,
-            })
-          : ([] as typeof users);
-      const byId = new Map(unordered.map((u) => [u.id, u]));
-      users = ids
-        .map((id) => byId.get(id))
-        .filter((u): u is (typeof unordered)[number] => Boolean(u));
-      total = totalCount;
-    } else {
-      const whereFiltered = withExcludedUsers(where, excludedUserIds);
-      const result = await Promise.all([
-        db.user.findMany({
-          where: whereFiltered,
-          orderBy,
-          skip: (page - 1) * perPage,
-          take: perPage,
-          select: userSelect,
-        }),
-        db.user.count({ where: whereFiltered }),
-      ]);
-      users = result[0];
-      total = result[1];
-    }
-  }
+        })
+      : isFreeFormTextSearch ||
+          hasAffiliateCodeFilter ||
+          hasAffiliateOwnerIdFilter ||
+          (skipHeavyRanking && RAW_SQL_SORTS.has(sortBy))
+        ? await cachedFilteredColumnSortUserIds({
+            ...filterInput,
+            sortBy: effectiveSort,
+            order: effectiveOrder,
+            page,
+            perPage,
+          })
+        : await fetchColumnSortUserIds({
+            ...filterInput,
+            sortBy: effectiveSort,
+            order: effectiveOrder,
+            page,
+            perPage,
+          });
 
-  return hydrateUserListPage(users, total, page, perPage);
+  const unordered = await fetchUserListRows(idPage.ids);
+  const byId = new Map(unordered.map((user) => [user.id, user]));
+  const users = idPage.ids
+    .map((id) => byId.get(id))
+    .filter((user): user is UserListRow => Boolean(user));
+
+  return hydrateUserListPage(users, idPage.total, page, perPage);
 }
 
 // ─── Global KPI stats for the /users page hero strip ──────────────────
@@ -1708,7 +1454,7 @@ export async function getUsers(params: {
 //
 // Three COUNT(*) FILTER aggregates over the user table in a single
 // round-trip — Postgres folds them into a single sequential scan with
-// FILTER predicates, so it's strictly cheaper than three Prisma
+// FILTER predicates, so it's strictly cheaper than three separate
 // .count() calls. The depositor count (`balances`) and the FTD-24h count
 // (`ledger_transactions`) live on other tables, so they run as two more
 // statements in parallel with it.
@@ -1765,33 +1511,32 @@ const cachedUsersListStats = unstable_cache(
   // (empty string when nothing is excluded). Passed in as an argument —
   // not read inside — so the cache key tracks the admin-managed
   // /system/excluded-users list and the tiles re-fetch when it changes.
-  async (blacklistIdNotIn: string): Promise<UsersListStats> => {
-    const db = await getDb();
+  async (excludedUserIds: string[]): Promise<UsersListStats> => {
     const [userRows, depositorRows, ftdRows] = await Promise.all([
-      db.$queryRaw<
+      queryMainRows<
         {
           non_banned: string;
           banned: string;
           signups_24h: string;
         }[]
-      >`
+      >(`
         SELECT
           COUNT(*) FILTER (WHERE is_banned = false)::text                                 AS non_banned,
           COUNT(*) FILTER (WHERE is_banned = true)::text                                  AS banned,
           COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::text         AS signups_24h
         FROM "user"
-      `,
+      `),
       // Deliberate SEQ SCAN, not an index miss: `balances` is one row per
       // user (16.5k rows / 626 pages today) and this counts ~11% of them,
       // so a btree on total_deposited would be read in full anyway while
       // adding write cost to a table every bet touches. Measured 3.2 ms
       // end-to-end (EXPLAIN ANALYZE, read-only prod 2026-07-23) behind a
       // 60s cache. Revisit if `balances` ever grows an order of magnitude.
-      db.$queryRaw<{ depositors: string }[]>`
+      queryMainRows<{ depositors: string }[]>(`
         SELECT COUNT(*)::text AS depositors
           FROM balances
          WHERE total_deposited > 0
-      `,
+      `),
       // FTDs (24h). Fully index-served — EXPLAIN (ANALYZE, BUFFERS) on
       // read-only prod, 2026-07-23, 0.31 ms execution / 86 shared hits:
       //   • the window leg index-scans idx_ledger_tx_deposit_created_at
@@ -1803,7 +1548,8 @@ const cachedUsersListStats = unstable_cache(
       // never touches the deposit history outside the window: "first
       // deposit is in the last 24h" ⟺ "deposited in the window AND has no
       // completed deposit older than it".
-      db.$queryRaw<{ ftds_24h: string }[]>`
+      queryMainRows<{ ftds_24h: string }[]>(
+        `
         WITH d24 AS (
           SELECT DISTINCT user_id
             FROM ledger_transactions
@@ -1825,9 +1571,11 @@ const cachedUsersListStats = unstable_cache(
                  SELECT id
                    FROM "user"
                   WHERE role NOT IN ('admin', 'support')
-                    ${Prisma.raw(blacklistIdNotIn)}
+                    AND NOT (id = ANY($1::text[]))
                )
       `,
+        excludedUserIds,
+      ),
     ]);
     const r = userRows[0];
     return {
@@ -1844,7 +1592,7 @@ const cachedUsersListStats = unstable_cache(
 
 export async function getUsersListStats(): Promise<UsersListStats> {
   const excludedUserIds = await getExcludedUserIds();
-  return cachedUsersListStats(blacklistNotInClause("id", excludedUserIds));
+  return cachedUsersListStats(excludedUserIds);
 }
 
 // `getMatchingAffiliateCodes` / `MatchingAffiliateCode` lived here and fed the
@@ -1864,7 +1612,7 @@ export const BULK_BAN_MAX = 25_000;
  * admin, support and creator are all excluded, and any future enum member
  * is excluded until someone deliberately opts it in here.
  */
-const BULK_BANNABLE_ROLE: (typeof user_role)["user"] = user_role.user;
+const BULK_BANNABLE_ROLE = USER_ROLE_USER;
 
 /**
  * Roles that must never be caught by a bulk ban, and that mark an account
@@ -1898,15 +1646,14 @@ const PROTECTED_PRIMARY_ROLE_SQL = `u.role IN (${PROTECTED_ROLES.map(
  * action does.
  */
 const hasUserRolesColumn = cache(async (): Promise<boolean> => {
-  const db = await getDb();
-  const rows = await db.$queryRaw<{ present: boolean }[]>`
+  const rows = await queryMainRows<{ present: boolean }[]>(`
     SELECT EXISTS (
       SELECT 1 FROM information_schema.columns
        WHERE table_schema = current_schema()
          AND table_name = 'user'
          AND column_name = 'roles'
     ) AS present
-  `;
+  `);
   return rows[0]?.present === true;
 });
 
@@ -1947,7 +1694,6 @@ export async function getUserIdsMatchingFilters(params: {
   affiliateCode?: string;
   affiliateOwnerId?: string;
 }): Promise<string[]> {
-  const db = await getDb();
   const [excludedUserIds, creatorProtectedIds, rolesColumn] = await Promise.all([
     getExcludedUserIds(),
     // Throws on failure — see the helper: an unresolvable protection set
@@ -1976,17 +1722,20 @@ export async function getUserIdsMatchingFilters(params: {
     excludedUserIds,
   });
 
-  const creatorProtectedClause =
-    creatorProtectedIds.length > 0
-      ? `AND u.id NOT IN (${escapeBlacklistIds(creatorProtectedIds)})`
-      : "";
+  const queryParams = [...whereClause.params];
+  let creatorProtectedClause = "";
+  if (creatorProtectedIds.length > 0) {
+    queryParams.push(creatorProtectedIds);
+    creatorProtectedClause =
+      `AND NOT (u.id = ANY($${queryParams.length}::text[]))`;
+  }
 
   // A multi-role account can't slip through on its primary role alone.
   const multiRoleGate = rolesColumn
     ? `AND NOT (${PROTECTED_ROLES_ARRAY_SQL})`
     : "";
 
-  const rows = await db.$queryRawUnsafe<{ id: string }[]>(
+  const rows = await queryMainRows<{ id: string }[]>(
     `
     SELECT u.id
     FROM "user" u
@@ -1997,7 +1746,7 @@ export async function getUserIdsMatchingFilters(params: {
       ${creatorProtectedClause}
     LIMIT ${BULK_BAN_MAX + 1}
     `,
-    ...whereClause.params,
+    ...queryParams,
   );
   return rows.map((r) => r.id);
 }
@@ -2059,7 +1808,6 @@ export type BulkUnbanFilters = {
 export async function getBannedUserIdsMatchingFilters(
   filters: BulkUnbanFilters,
 ): Promise<string[]> {
-  const db = await getDb();
   const [excludedUserIds, creatorProtectedIds, rolesColumn] = await Promise.all([
     getExcludedUserIds(),
     // Throws on failure, like the ban path — an unresolvable creator set
@@ -2092,12 +1840,15 @@ export async function getBannedUserIdsMatchingFilters(
   // placeholders after the ones it already numbered.
   const params = [...whereClause.params];
   const extra: string[] = [];
+  let creatorProtectedPredicate: string | null = null;
+  if (creatorProtectedIds.length > 0) {
+    params.push(creatorProtectedIds);
+    creatorProtectedPredicate = `u.id = ANY($${params.length}::text[])`;
+  }
 
   const isCreator = [
     `u.role = 'creator'::user_role`,
-    ...(creatorProtectedIds.length > 0
-      ? [`u.id IN (${escapeBlacklistIds(creatorProtectedIds)})`]
-      : []),
+    ...(creatorProtectedPredicate ? [creatorProtectedPredicate] : []),
     ...(rolesColumn ? [`'creator' = ANY(u.roles)`] : []),
   ].join(" OR ");
   const isStaff = [
@@ -2108,13 +1859,13 @@ export async function getBannedUserIdsMatchingFilters(
   ].join(" OR ");
   const isProtected = rolesColumn
     ? `${PROTECTED_PRIMARY_ROLE_SQL} OR ${PROTECTED_ROLES_ARRAY_SQL}${
-        creatorProtectedIds.length > 0
-          ? ` OR u.id IN (${escapeBlacklistIds(creatorProtectedIds)})`
+        creatorProtectedPredicate
+          ? ` OR ${creatorProtectedPredicate}`
           : ""
       }`
     : `${PROTECTED_PRIMARY_ROLE_SQL}${
-        creatorProtectedIds.length > 0
-          ? ` OR u.id IN (${escapeBlacklistIds(creatorProtectedIds)})`
+        creatorProtectedPredicate
+          ? ` OR ${creatorProtectedPredicate}`
           : ""
       }`;
 
@@ -2159,7 +1910,7 @@ export async function getBannedUserIdsMatchingFilters(
 
   // `whereClause.sql` is always non-empty here (status: "banned" pushes a
   // predicate), so AND-prefixing the extras is safe.
-  const rows = await db.$queryRawUnsafe<{ id: string }[]>(
+  const rows = await queryMainRows<{ id: string }[]>(
     `
     SELECT u.id
     FROM "user" u
@@ -2195,20 +1946,17 @@ export async function getBulkUnbanPreviewUsers(
   limit: number,
 ): Promise<BulkUnbanPreviewUser[]> {
   if (ids.length === 0 || limit <= 0) return [];
-  const db = await getDb();
-  const slice = ids.slice(0, limit);
+  const safeLimit = Math.min(200, Math.max(1, Math.trunc(limit) || 1));
+  const slice = ids.slice(0, safeLimit);
   const [users, creatorProtectedIds] = await Promise.all([
-    db.user.findMany({
-      where: { id: { in: slice } },
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        role: true,
-        banned_reason: true,
-        banned_at: true,
-      },
-    }),
+    queryMainRows<{
+      id: string; username: string | null; email: string | null;
+      role: string; banned_reason: string | null; banned_at: Date | null;
+    }[]>(
+      `SELECT id, username, email, role::text AS role, banned_reason, banned_at
+         FROM "user" WHERE id = ANY($1::text[])`,
+      slice,
+    ),
     getCreatorProtectedUserIds(),
   ]);
   const protectedSet = new Set(creatorProtectedIds);
@@ -2226,7 +1974,7 @@ export async function getBulkUnbanPreviewUsers(
         bannedReason: u.banned_reason,
         bannedAt: u.banned_at?.toISOString() ?? null,
         isProtected:
-          u.role !== user_role.user || protectedSet.has(u.id),
+          u.role !== USER_ROLE_USER || protectedSet.has(u.id),
       },
     ];
   });

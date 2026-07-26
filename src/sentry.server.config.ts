@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 
 /**
  * Sentry server-runtime init (Node.js). DORMANT BY DEFAULT — same contract as
- * the ClickHouse / Redis layers: with no SENTRY_DSN the SDK is `enabled: false`
+ * the PostgreSQL / Redis layers: with no SENTRY_DSN the SDK is `enabled: false`
  * and captures/sends nothing, so behavior is identical to not having it.
  *
  * Loaded by src/instrumentation.ts register() only for the nodejs runtime.
@@ -19,4 +19,10 @@ Sentry.init({
   tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? "0.1"),
   // Never attach cookies / headers / user PII automatically.
   sendDefaultPii: false,
+  // SECURITY (SECURITY_AUDIT.md LOW): drop console breadcrumbs. Server logs
+  // (e.g. backend-api error payloads) can carry user data; keep them out of
+  // Sentry events entirely rather than risk egressing PII on the next capture.
+  beforeBreadcrumb(breadcrumb) {
+    return breadcrumb.category === "console" ? null : breadcrumb;
+  },
 });

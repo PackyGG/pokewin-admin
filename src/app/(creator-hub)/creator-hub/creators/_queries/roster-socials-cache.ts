@@ -20,7 +20,7 @@ import {
  * keyed on the sorted creator id list, so repeat roster paints serve the
  * warmed entry instead of re-walking the backend.
  *
- * Admin-DB + backend-API only inside (no `getDb()` / cookies), so caching
+ * Admin-DB + backend-API only inside (no request cookie reads), so caching
  * is env-safe — the backend resolves to the prod env inside the cache
  * scope, matching the sibling cached creator-pool walks. Tagged with
  * {@link CREATOR_LINKED_SOCIALS_CACHE_TAG} so the Hub social-edit / refetch

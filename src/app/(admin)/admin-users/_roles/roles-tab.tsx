@@ -1,6 +1,7 @@
 import { KeyRound, Crown, UserCog, ListChecks, Sparkles } from "lucide-react";
+import { sql } from "drizzle-orm";
 import { requireAdmin } from "@/lib/dal";
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
 import {
   isCreatorHubAccessOwner,
   getCreatorHubAccessSettings,
@@ -71,13 +72,14 @@ export async function RolesTab() {
   // admin never sees it; the server actions enforce the same gate.
   const [overview, ownerRow] = await Promise.all([
     getRolesOverview(),
-    adminDb.admin_users.findUnique({
-      where: { id: session.userId },
-      select: { username: true },
-    }),
+    adminDrizzle.execute<{ username: string }>(sql`
+      SELECT username FROM admin_users
+      WHERE id = ${session.userId}::uuid
+      LIMIT 1
+    `),
   ]);
   const isHubAccessOwner = isCreatorHubAccessOwner({
-    username: ownerRow?.username ?? "",
+    username: ownerRow.rows[0]?.username ?? "",
   });
   const hubAccessEnabled = isHubAccessOwner
     ? await getCreatorHubAccessSettings()

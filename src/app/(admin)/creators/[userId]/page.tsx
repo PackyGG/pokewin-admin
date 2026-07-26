@@ -38,7 +38,6 @@ import { LeaderboardsCard } from "./leaderboards-card";
 import { CreatorPnlPanel } from "./creator-pnl-panel";
 import { CreatorDealCostPanel } from "./creator-deal-cost-panel";
 
-import { compareCreatorsDetailAggregates } from "@/lib/clickhouse/compare/creators-detail-aggregates";
 
 import { parseCreatorDetailSearchParams } from "./_lib/search-params";
 import { getCreatorDealData } from "./_queries/get-creator-deal-data";
@@ -334,13 +333,10 @@ async function CreatorKpiStrip({
     );
   }
 
-  // Phase 2B CQRS read-migration — fire-and-forget ClickHouse comparison of the
   // detail-page aggregate (no-op unless `creators_detail_aggregates` is in
   // comparison mode). The served value above is ALWAYS the Postgres `profile`;
   // this only logs drift and can never affect the rendered strip. Fired here
   // (the first of the two profile consumers) so the compare runs exactly once.
-  void compareCreatorsDetailAggregates(profile.userId, profile);
-
   return (
     <div className="space-y-4 sm:space-y-6">
       {!profile.hasAffiliateAccount && (

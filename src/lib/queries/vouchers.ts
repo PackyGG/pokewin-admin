@@ -1,6 +1,8 @@
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { adminDb } from "@/lib/admin-db";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
+import { adminDrizzle } from "@/lib/drizzle";
+import { admin_users, admin_voucher_actions } from "@/lib/db-schema/admin/schema";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTimeout } from "@/lib/errors/safe-query";
 import type { PaginatedResult } from "@/lib/types";
@@ -74,8 +76,13 @@ async function getVouchersImpl(params: {
   maxValue?: number;
   createdBy?: string;
 }): Promise<PaginatedResult<VoucherListItem>> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const { page = 1, perPage = 20, claimed, search, minValue, maxValue, createdBy } = params;
+  const safePage = Math.max(1, Math.trunc(page) || 1);
+  const safePerPage = Math.min(
+    100,
+    Math.max(1, Math.trunc(perPage) || 20),
+  );
 
   // Translate the "Created By" filter into a Main-DB id constraint by
   // pre-fetching the relevant voucher_ids from Admin DB. Only IDs are
@@ -84,64 +91,95 @@ async function getVouchersImpl(params: {
   // - createdBy = <admin uuid>: WHERE id IN (their created voucher ids)
   // - createdBy = "system":     WHERE id NOT IN (any admin-created voucher ids)
   // - createdBy = undefined:    no constraint added.
-  const where: Record<string, unknown> = {};
+  const conditions: SQL[] = [];
 
   if (createdBy === "system") {
-    const allAdminCreated = await adminDb.admin_voucher_actions.findMany({
-      where: { action: "created" },
-      select: { voucher_id: true },
-    });
+    const allAdminCreated = await adminDrizzle
+      .select({ voucher_id: admin_voucher_actions.voucher_id })
+      .from(admin_voucher_actions)
+      .where(eq(admin_voucher_actions.action, "created"));
     const adminCreatedIds = allAdminCreated.map((a) => a.voucher_id);
     // If there are no admin-created vouchers at all, "system" matches
     // everything — leave the where clause untouched.
     if (adminCreatedIds.length > 0) {
-      where.id = { notIn: adminCreatedIds };
+      conditions.push(sql`v.id::text <> ALL(${adminCreatedIds}::text[])`);
     }
   } else if (createdBy) {
-    const actions = await adminDb.admin_voucher_actions.findMany({
-      where: { admin_user_id: createdBy, action: "created" },
-      select: { voucher_id: true },
-    });
+    const actions = await adminDrizzle
+      .select({ voucher_id: admin_voucher_actions.voucher_id })
+      .from(admin_voucher_actions)
+      .where(
+        and(
+          eq(admin_voucher_actions.admin_user_id, createdBy),
+          eq(admin_voucher_actions.action, "created"),
+        ),
+      );
     const createdByVoucherIds = actions.map((a) => a.voucher_id);
     if (createdByVoucherIds.length === 0) {
-      return { data: [], total: 0, page, perPage, totalPages: 0 };
+      return { data: [], total: 0, page: safePage, perPage: safePerPage, totalPages: 0 };
     }
-    where.id = { in: createdByVoucherIds };
+    conditions.push(sql`v.id::text = ANY(${createdByVoucherIds}::text[])`);
   }
 
-  if (claimed === true) where.claimed_at = { not: null };
-  else if (claimed === false) where.claimed_at = null;
+  if (claimed === true) conditions.push(sql`v.claimed_at IS NOT NULL`);
+  else if (claimed === false) conditions.push(sql`v.claimed_at IS NULL`);
 
   if (search) {
-    where.user = {
-      OR: [
-        { username: { contains: search, mode: "insensitive" } },
-        { email: { contains: search, mode: "insensitive" } },
-        { id: search },
-      ],
-    };
+    const pattern = `%${search.replace(/[\\%_]/g, "\\$&")}%`;
+    conditions.push(sql`(
+      u.username ILIKE ${pattern} ESCAPE '\'
+      OR u.email ILIKE ${pattern} ESCAPE '\'
+      OR u.id = ${search}
+    )`);
   }
 
-  if (minValue !== undefined || maxValue !== undefined) {
-    const valueFilter: Record<string, number> = {};
-    if (minValue !== undefined) valueFilter.gte = minValue;
-    if (maxValue !== undefined) valueFilter.lte = maxValue;
-    where.value = valueFilter;
-  }
+  if (minValue !== undefined) conditions.push(sql`v.value >= ${minValue}`);
+  if (maxValue !== undefined) conditions.push(sql`v.value <= ${maxValue}`);
+
+  const whereClause =
+    conditions.length > 0
+      ? sql`WHERE ${sql.join(conditions, sql` AND `)}`
+      : sql.empty();
+
+  type VoucherRow = {
+    id: string;
+    user_id: string;
+    username: string | null;
+    value: unknown;
+    origin: string;
+    description: string | null;
+    claimed_at: Date | null;
+    created_at: Date;
+  };
 
   // SQL-level ORDER BY + LIMIT/OFFSET + COUNT on the authoritative source.
-  const [vouchers, total] = await Promise.all([
-    db.vouchers.findMany({
-      where,
-      orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-      include: {
-        user: { select: { username: true } },
-      },
-    }),
-    db.vouchers.count({ where }),
+  const [voucherResult, countResult] = await Promise.all([
+    db.execute<VoucherRow>(sql`
+      SELECT
+        v.id::text AS id,
+        v.user_id,
+        u.username,
+        v.value,
+        v.origin::text AS origin,
+        v.description,
+        v.claimed_at,
+        v.created_at
+      FROM vouchers v
+      INNER JOIN "user" u ON u.id = v.user_id
+      ${whereClause}
+      ORDER BY v.created_at DESC, v.id DESC
+      LIMIT ${safePerPage}
+      OFFSET ${(safePage - 1) * safePerPage}
+    `),
+    db.execute<{ total: string }>(sql`
+      SELECT COUNT(*)::text AS total
+      FROM vouchers v
+      INNER JOIN "user" u ON u.id = v.user_id
+      ${whereClause}
+    `),
   ]);
+  const vouchers = voucherResult.rows;
+  const total = Number(countResult.rows[0]?.total ?? 0);
 
   // Enrichment pass: fetch admin-actor metadata + (when filtering claimed)
   // FTD balance flags in parallel — they target different DBs and have no
@@ -152,16 +190,32 @@ async function getVouchersImpl(params: {
     : [];
 
   const adminActionsPromise = voucherIds.length > 0
-    ? adminDb.admin_voucher_actions.findMany({
-        where: { voucher_id: { in: voucherIds }, action: "created" },
-        include: { admin_user: { select: { id: true, username: true } } },
-      })
+    ? adminDrizzle
+        .select({
+          voucher_id: admin_voucher_actions.voucher_id,
+          adminId: admin_users.id,
+          adminUsername: admin_users.username,
+        })
+        .from(admin_voucher_actions)
+        .innerJoin(
+          admin_users,
+          eq(admin_users.id, admin_voucher_actions.admin_user_id),
+        )
+        .where(
+          and(
+            inArray(admin_voucher_actions.voucher_id, voucherIds),
+            eq(admin_voucher_actions.action, "created"),
+          ),
+        )
     : Promise.resolve([]);
   const balanceRowsPromise = ftdUserIds.length > 0
-    ? db.balances.findMany({
-        where: { user_id: { in: ftdUserIds } },
-        select: { user_id: true, total_deposited: true },
-      })
+    ? db
+        .execute<{ user_id: string; total_deposited: unknown }>(sql`
+          SELECT user_id, total_deposited
+          FROM balances
+          WHERE user_id = ANY(${ftdUserIds}::text[])
+        `)
+        .then((result) => result.rows)
     : Promise.resolve(
         [] as Array<{ user_id: string; total_deposited: unknown }>,
       );
@@ -172,7 +226,10 @@ async function getVouchersImpl(params: {
   ]);
 
   const creatorByVoucherId = new Map(
-    adminActions.map((a) => [a.voucher_id, { id: a.admin_user.id, username: a.admin_user.username }])
+    adminActions.map((a) => [
+      a.voucher_id,
+      { id: a.adminId, username: a.adminUsername },
+    ])
   );
 
   const ftdMap = claimed
@@ -183,7 +240,7 @@ async function getVouchersImpl(params: {
     data: vouchers.map((v) => ({
       id: v.id,
       userId: v.user_id,
-      username: v.user?.username ?? null,
+      username: v.username,
       value: toNumber(v.value),
       origin: v.origin,
       originLabel: ORIGIN_LABELS[v.origin] ?? v.origin,
@@ -195,9 +252,9 @@ async function getVouchersImpl(params: {
       ...(ftdMap ? { isFtd: ftdMap.get(v.user_id) ?? false } : {}),
     })),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }
 
@@ -207,13 +264,14 @@ async function getVouchersImpl(params: {
 // cross-request (60s) — mirrors the getVouchersListStats cache below.
 const cachedVoucherCreators = unstable_cache(
   async () => {
-    const admins = await adminDb.admin_users.findMany({
-      where: {
-        voucher_actions: { some: { action: "created" } },
-      },
-      select: { id: true, username: true },
-    });
-    return admins;
+    return adminDrizzle
+      .selectDistinct({ id: admin_users.id, username: admin_users.username })
+      .from(admin_users)
+      .innerJoin(
+        admin_voucher_actions,
+        eq(admin_voucher_actions.admin_user_id, admin_users.id),
+      )
+      .where(eq(admin_voucher_actions.action, "created"));
   },
   ["voucher-creators-v1"],
   { revalidate: 60, tags: ["voucher-creators"] },
@@ -241,22 +299,22 @@ export type VouchersListStats = {
 
 const cachedVouchersListStats = unstable_cache(
   async (): Promise<VouchersListStats> => {
-    const db = await getDb();
-    const rows = await db.$queryRaw<
-      {
+    const db = await getDrizzleDb();
+    const rows = (
+      await db.execute<{
         unclaimed_count: string;
         unclaimed_total: string;
         claimed_count: string;
         claimed_total: string;
-      }[]
-    >`
+      }>(sql`
       SELECT
         COUNT(*) FILTER (WHERE claimed_at IS NULL)::text                                           AS unclaimed_count,
         COALESCE(SUM(value::numeric) FILTER (WHERE claimed_at IS NULL), 0)::text                   AS unclaimed_total,
         COUNT(*) FILTER (WHERE claimed_at IS NOT NULL)::text                                       AS claimed_count,
         COALESCE(SUM(value::numeric) FILTER (WHERE claimed_at IS NOT NULL), 0)::text               AS claimed_total
       FROM vouchers
-    `;
+    `)
+    ).rows;
     const r = rows[0];
     return {
       unclaimedCount: Number(r?.unclaimed_count ?? 0),

@@ -1,8 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { Prisma } from "@/generated/prisma/client";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
@@ -238,13 +237,9 @@ const cachedPerUserLtv = unstable_cache(
       bonuses: string;
     }[]
   > => {
-    const db = await getDb();
-    const ggrWagerIn = Prisma.raw(WAGER_TYPES_SQL);
-    const ggrPayoutIn = Prisma.raw(PAYOUT_TYPES_SQL);
-    const bonusTypesSql = Prisma.raw(
-      `('deposit_bonus','promo_code_redeemed','gift_card_redeemed','rakeback_claim','affiliate_claim','rain_win','race_prize','creator_tip','waitlist_prize','voucher_redeemed','voucher_exchange','exchange_excess_credit','exchange_excess_to_voucher','battle_excess_to_voucher')`,
-    );
-    return db.$queryRaw<
+    const bonusTypesSql =
+      "('deposit_bonus','promo_code_redeemed','gift_card_redeemed','rakeback_claim','affiliate_claim','rain_win','race_prize','creator_tip','waitlist_prize','voucher_redeemed','voucher_exchange','exchange_excess_credit','exchange_excess_to_voucher','battle_excess_to_voucher')";
+    return queryMainRows<
       {
         user_id: string;
         username: string | null;
@@ -257,15 +252,16 @@ const cachedPerUserLtv = unstable_cache(
         payouts: string;
         bonuses: string;
       }[]
-    >`
+    >(
+      `
       WITH real_users AS (
         SELECT u.id, u.username, u.role, u.referred_by,
                (CASE WHEN EXISTS (SELECT 1 FROM "user" ref WHERE ref.id = u.referred_by AND ref.role = 'creator')
                      THEN 'true' ELSE 'false' END) AS referrer_is_creator
         FROM "user" u
-        WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        WHERE u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
       ),
-      ${Prisma.raw(sessionWindowsCte)},
+      ${sessionWindowsCte},
       base AS (
         SELECT lt.user_id, lt.type, lt.amount::numeric AS amount,
                CASE WHEN ru.role = 'creator'
@@ -295,14 +291,15 @@ const cachedPerUserLtv = unstable_cache(
         ru.referrer_is_creator,
         COALESCE(SUM(CASE WHEN b.type::text = 'deposit' THEN b.amount ELSE 0 END), 0)::text AS deposits,
         COALESCE(MAX(wa.amount), 0)::text AS withdrawals,
-        COALESCE(SUM(CASE WHEN b.type::text IN ${ggrWagerIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)::text AS wager,
-        COALESCE(SUM(CASE WHEN b.type::text IN ${ggrPayoutIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)::text AS payouts,
+        COALESCE(SUM(CASE WHEN b.type::text IN ${WAGER_TYPES_SQL} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)::text AS wager,
+        COALESCE(SUM(CASE WHEN b.type::text IN ${PAYOUT_TYPES_SQL} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)::text AS payouts,
         COALESCE(SUM(CASE WHEN b.type::text IN ${bonusTypesSql} THEN ABS(b.amount) ELSE 0 END), 0)::text AS bonuses
       FROM real_users ru
       LEFT JOIN base b ON b.user_id = ru.id
       LEFT JOIN withdrawal_amounts wa ON wa.user_id = ru.id
       GROUP BY ru.id, ru.username, ru.role, ru.referred_by, ru.referrer_is_creator
-    `;
+      `,
+    );
   },
   ["insights-analytics-per-user-ltv-v1"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },

@@ -1,5 +1,6 @@
+import { queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   cacheTtlForInsightsPeriod,
@@ -74,7 +75,7 @@ async function computeTimeToClaim(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusTimeToClaim> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // Lifetime is capped to the pairing lookback (365d) so the deposit-side
   // scan doesn't span the entire deposit history.
   const dateFilter = windowDateFilterCapped(period, "d");
@@ -97,12 +98,12 @@ async function computeTimeToClaim(
   // → only paired deposits, identical to the original). Drops the query
   // from a >30s timeout to <1s on live prod data. MATERIALIZED stops
   // Postgres re-inlining the bonus CTE into a correlated form.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       bucket: number;
       cnt: string;
     }[]
-  >(`
+  >(db, sql`
     WITH window_deposits AS MATERIALIZED (
       SELECT d.id, d.user_id, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
@@ -162,7 +163,7 @@ async function computeTimeToClaim(
 
   // Percentile pull — separate query but same materialised hash-join
   // shape as the bucket query above (see its PERFORMANCE comment).
-  const statsRows = await db.$queryRawUnsafe<
+  const statsRows = await queryRows<
     {
       median_s: string | null;
       p95_s: string | null;
@@ -170,7 +171,7 @@ async function computeTimeToClaim(
       mean_s: string | null;
       max_s: string | null;
     }[]
-  >(`
+  >(db, sql`
     WITH window_deposits AS MATERIALIZED (
       SELECT d.id, d.user_id, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
@@ -264,21 +265,21 @@ async function computeRepeatClaimants(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusRepeatClaimants> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
 
   // Per-user lifetime claim count snapshot (across all time), plus
   // their window-bounded bonus volume + wager volume. Segments by
   // lifetime count match the spec.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       user_id: string;
       lifetime_claims: string;
       bonus_in_window: string;
       wager_in_window: string;
     }[]
-  >(`
+  >(db, sql`
     WITH window_users AS (
       SELECT DISTINCT lt.user_id
       FROM ledger_transactions lt
@@ -395,7 +396,7 @@ async function computeNewVsReturning(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusNewVsReturning> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
   const windowStart = windowStartExpr(period);
@@ -406,7 +407,7 @@ async function computeNewVsReturning(
   //   - first deposit size in window (joined via pairing rule)
   //   - 7d retention via subsequent wager
   //   - second deposit within 30d
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       cohort: "new" | "returning";
       users: string;
@@ -415,7 +416,7 @@ async function computeNewVsReturning(
       retain7d_users: string;
       second_dep_users: string;
     }[]
-  >(`
+  >(db, sql`
     WITH first_claim AS (
       SELECT lt.user_id, MIN(lt.created_at) AS first_claim_at
       FROM ledger_transactions lt
@@ -555,14 +556,14 @@ async function computeTimeOfDay(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusTimeOfDay> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
 
   const [hourlyRows, dailyRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryRows<
       { hour: number; cnt: string; volume: string }[]
-    >(`
+    >(db, sql`
       SELECT
         EXTRACT(HOUR FROM lt.created_at AT TIME ZONE 'UTC')::int AS hour,
         COUNT(*)::text AS cnt,
@@ -575,9 +576,9 @@ async function computeTimeOfDay(
       GROUP BY 1
       ORDER BY 1
     `),
-    db.$queryRawUnsafe<
+    queryRows<
       { dow: number; cnt: string; volume: string }[]
-    >(`
+    >(db, sql`
       SELECT
         EXTRACT(DOW FROM lt.created_at AT TIME ZONE 'UTC')::int AS dow,
         COUNT(*)::text AS cnt,

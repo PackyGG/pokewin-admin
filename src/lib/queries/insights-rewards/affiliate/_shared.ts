@@ -4,6 +4,8 @@ import {
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "../_period";
+import { daysAgoFilter } from "../_drizzle-query";
+import type { SQL } from "drizzle-orm";
 
 /**
  * Shared helpers for /insights/rewards/affiliate query modules.
@@ -19,10 +21,7 @@ import {
  *     windows, 5min for the lifetime sweep.
  *
  * The page is read-only against the Main DB. No mutations, no shape
- * changes to upstream tables. Every query uses `$queryRawUnsafe` with
- * inline-quoted constants (NEVER user input) so it can take the
- * statement-level filters PostgreSQL would otherwise refuse on a
- * prepared statement (e.g. `INTERVAL '7 days'`).
+ * changes to upstream tables. Queries use parameterized Drizzle SQL.
  */
 
 export const CACHE_TAG = "insights-rewards-affiliate";
@@ -32,7 +31,7 @@ export type AffiliatePeriodCtx = {
   /** day count for the active window, null = lifetime */
   days: number | null;
   /** SQL fragment for date-filtering a column. Includes the leading `AND`. */
-  dateFilterFor: (column: string) => string;
+  dateFilterFor: (column: string) => SQL;
   /** Cache TTL in seconds for the active window. */
   ttl: number;
 };
@@ -42,8 +41,7 @@ export function makePeriodCtx(period: InsightsRewardsPeriod): AffiliatePeriodCtx
   return {
     period,
     days,
-    dateFilterFor: (column: string) =>
-      days !== null ? `AND ${column} >= NOW() - INTERVAL '${days} days'` : "",
+    dateFilterFor: (column: string) => daysAgoFilter(column, days),
     ttl: cacheTtlForInsightsPeriod(period),
   };
 }

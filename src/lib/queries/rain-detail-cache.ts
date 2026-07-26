@@ -27,7 +27,8 @@ import {
  *
  * DB-env correctness (prod-only cache)
  * ────────────────────────────────────
- * `getRainHeader` / `getRainTips` call `getDb()` internally, which resolves
+ * `getRainHeader` / `getRainTips` resolve the request-scoped Drizzle client,
+ * which reads
  * the per-admin `admin_db_env` cookie. `unstable_cache` runs its callback
  * OUTSIDE the request's dynamic scope, so a `cookies()` read inside it
  * throws and `readDbEnv` falls back to "prod" — the cached callback always

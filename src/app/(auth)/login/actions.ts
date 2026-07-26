@@ -3,13 +3,14 @@
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { headers } from "next/headers";
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 import { createSession, createPendingSession } from "@/lib/session";
+import { rateLimit, buildCacheKey } from "@/lib/cache/redis";
 import { generateSecret } from "@/lib/totp";
 import { redirect } from "next/navigation";
 import { getDefaultRouteForUser } from "@/lib/dal";
 import { getEffectiveRoles, pickPrimaryRole } from "@/lib/admin-roles";
-import { readAdminUserWithRoles } from "@/lib/admin-user-roles";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { isMandatory2faEnabled } from "@/lib/admin-guards";
 import { MS_PER_MINUTE, MS_PER_HOUR } from "@/lib/utils/time";
@@ -24,6 +25,13 @@ export type LoginState = {
   requires2FA?: boolean;
   requiresSetup?: boolean;
 };
+
+// Fleet-wide brute-force ceilings (SECURITY_AUDIT.md MEDIUM-6). Enforced via the
+// shared Upstash limiter IN ADDITION to the per-instance map below; both fail
+// OPEN when Upstash isn't configured, so local / KV-less deploys behave exactly
+// as before.
+const LOGIN_IP_MAX_PER_MIN = 20;
+const LOGIN_EMAIL_MAX_PER_MIN = 10;
 
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 
@@ -59,42 +67,43 @@ export async function login(
     return { error: "Too many login attempts. Try again in a minute." };
   }
 
+  // Fleet-wide limits (SECURITY_AUDIT.md MEDIUM-6): the in-memory map above is
+  // per-instance and resets on cold start, so it can't bound a distributed
+  // attack. Per-IP bounds a password-spray from one source across many emails;
+  // per-email bounds targeting one account across sources. Both fail OPEN when
+  // Upstash is dormant (no KV env) → no behavior change without Upstash.
+  const loginHeaders = await headers();
+  const loginIp =
+    loginHeaders.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const [ipLimit, emailLimit] = await Promise.all([
+    rateLimit(buildCacheKey("ratelimit:login-ip", [loginIp]), LOGIN_IP_MAX_PER_MIN, 60),
+    rateLimit(
+      buildCacheKey("ratelimit:login-email", [email.toLowerCase()]),
+      LOGIN_EMAIL_MAX_PER_MIN,
+      60,
+    ),
+  ]);
+  if (!ipLimit.allowed || !emailLimit.allowed) {
+    return { error: "Too many login attempts. Please wait a minute and try again." };
+  }
+
   // Explicit select so missing columns (e.g. `preferences` when the
   // migration hasn't been applied on prod yet) don't crash the login
   // flow. Only fields actually used below. The additive `roles` column is
   // read resiliently — if its migration hasn't run, the read degrades to
   // `roles: []` (→ effective `[role]`) so admins can still log in.
-  const adminUser = await readAdminUserWithRoles(
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { email },
-        select: {
-          id: true,
-          email: true,
-          username: true,
-          role: true,
-          roles: true,
-          password_hash: true,
-          totp_enabled: true,
-          totp_secret: true,
-          is_active: true,
-        },
-      }),
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { email },
-        select: {
-          id: true,
-          email: true,
-          username: true,
-          role: true,
-          password_hash: true,
-          totp_enabled: true,
-          totp_secret: true,
-          is_active: true,
-        },
-      }),
-  );
+  const adminUser = (await adminDrizzle.execute<{
+    id: string; email: string; username: string; role: string; roles: string[];
+    password_hash: string; totp_enabled: boolean; totp_secret: string | null;
+    is_active: boolean;
+  }>(sql`
+    SELECT id::text, email, username, role::text AS role,
+           roles::text[] AS roles, password_hash, totp_enabled,
+           totp_secret, is_active
+    FROM admin_users
+    WHERE email = ${email}
+    LIMIT 1
+  `)).rows[0];
 
   if (!adminUser) {
     return { error: "Invalid email or password" };
@@ -182,15 +191,14 @@ export async function login(
       ip,
       metadata: { method: "no_2fa" },
     }),
-    adminDb.admin_sessions.create({
-      data: {
-        admin_user_id: adminUser.id,
-        ip,
-        user_agent: userAgent,
-        auth_method: "no_2fa",
-        expires_at: new Date(Date.now() + 8 * MS_PER_HOUR),
-      },
-    }),
+    adminDrizzle.execute(sql`
+      INSERT INTO admin_sessions (
+        admin_user_id, ip, user_agent, auth_method, expires_at
+      ) VALUES (
+        ${adminUser.id}::uuid, ${ip}, ${userAgent}, 'no_2fa',
+        ${new Date(Date.now() + 8 * MS_PER_HOUR)}
+      )
+    `),
   ]);
 
   redirect(await getDefaultRouteForUser(adminUser.id, adminUser.role));

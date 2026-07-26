@@ -6,9 +6,7 @@
  *   User loses money     → HOUSE GAIN → emerald
  *   Neutral / info event → blue
  *
- * Mirrors `classifyLedgerKind` in `src/lib/queries/dashboard-live.ts` so the
- * Recent Activity feed and any other ledger-row UI stay in sync. Kept in a
- * shared util so transaction tables, timelines, audit pages and other
+ * Kept in a shared util so transaction tables, timelines, audit pages and other
  * consumers never re-derive the mapping (which is exactly how the colors
  * drifted out of spec in the first place).
  */
@@ -17,8 +15,7 @@ export type LedgerDirection = "house-gain" | "house-loss" | "neutral";
 /**
  * Classify a raw ledger `type` string into its house-perspective direction.
  * Unknown types default to "house-loss" so new payout-shaped events stay
- * visually flagged as red until a mapping is added explicitly — matches the
- * defensive default in dashboard-live's classifier.
+ * visually flagged as red until a mapping is added explicitly.
  */
 export function ledgerDirection(type: string): LedgerDirection {
   switch (type) {

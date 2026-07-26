@@ -1,5 +1,5 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
@@ -93,7 +93,6 @@ async function computeCategoryAnalytics(
   ledgerTypes: readonly string[],
   blacklistIds: string[],
 ): Promise<CategoryAnalytics> {
-  const db = await getDb();
   const days = daysForPeriod(period);
   const dateFilter =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
@@ -106,7 +105,7 @@ async function computeCategoryAnalytics(
   // status + ledger-type + staff/blacklist filter so totals reconcile
   // across surfaces by construction.
   const [rollupRows, dailyRows, topUserRows, topDayRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryMainRows<
       {
         total: string;
         cnt: string;
@@ -127,7 +126,7 @@ async function computeCategoryAnalytics(
         AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
         ${dateFilter}
     `),
-    db.$queryRawUnsafe<
+    queryMainRows<
       { date: Date; volume: string; cnt: string }[]
     >(`
       SELECT
@@ -142,7 +141,7 @@ async function computeCategoryAnalytics(
       GROUP BY DATE(lt.created_at)
       ORDER BY date ASC
     `),
-    db.$queryRawUnsafe<
+    queryMainRows<
       {
         user_id: string;
         username: string | null;
@@ -165,7 +164,7 @@ async function computeCategoryAnalytics(
       ORDER BY SUM(ABS(lt.amount::numeric)) DESC
       LIMIT ${TOP_LIMIT}
     `),
-    db.$queryRawUnsafe<
+    queryMainRows<
       { date: Date; volume: string; cnt: string }[]
     >(`
       SELECT

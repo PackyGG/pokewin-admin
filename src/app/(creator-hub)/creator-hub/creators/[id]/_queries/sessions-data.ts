@@ -1,6 +1,7 @@
+import { queryRows } from "@/lib/drizzle-query";
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
 import {
   BackendApiError,
   creatorsApi,
@@ -28,15 +29,9 @@ import {
  *
  * The two are merged by session id into one row shape the client renders.
  *
- * RESILIENCE (owner: ADD an ensure-schema/IF-NOT-EXISTS guard + catch
- * P2021/42P01 in read paths): the substrate table is provisioned via
- * `prisma db execute` (the admin DB is db-push/execute-managed with a drifted
- * migration history), so on an environment where the table hasn't been
- * provisioned yet a read would throw P2021 ("table does not exist") / Postgres
- * 42P01. {@link readSessionMetaByIds} self-heals the table (idempotent
- * CREATE … IF NOT EXISTS, mirroring `changelog/ensure-schema.ts`) and degrades
- * to "no meta" so the session list still renders. A backend miss (creator not
- * promoted / 404) degrades to an empty list, never a crash.
+ * RESILIENCE: the sidecar is provisioned through reviewed ADMIN SQL. A read
+ * failure degrades to "no meta" so the session list still renders. A backend
+ * miss (creator not promoted / 404) degrades to an empty list.
  *
  * LAZY: the only caller is the Sessions tab component, which is mounted solely
  * when that tab is opened — so this never runs on Overview / other tabs.
@@ -63,47 +58,6 @@ export type SessionsData = {
   metaDegraded: boolean;
 };
 
-// Module-level flag so the IF-NOT-EXISTS self-heal runs at most once per
-// server process (reset on failure so the next caller retries). Same pattern
-// as `changelog/ensure-schema.ts`.
-let sessionMetaEnsured = false;
-
-/**
- * Create `creator_session_meta` + its indexes if missing — the runtime
- * self-heal the owner asked for. Idempotent (IF NOT EXISTS); mirrors the
- * mirror in `prisma/admin/schema.prisma` + the substrate SQL. No-op after the
- * first success in this process.
- */
-export async function ensureSessionMetaSchema(): Promise<void> {
-  if (sessionMetaEnsured) return;
-  await adminDb.$executeRawUnsafe(`
-    CREATE TABLE IF NOT EXISTS "creator_session_meta" (
-      "id"             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      "session_id"     TEXT NOT NULL,
-      "target_user_id" TEXT NOT NULL,
-      "kick_vod_url"   TEXT,
-      "notes"          TEXT,
-      "updated_by"     UUID,
-      "created_at"     TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
-      "updated_at"     TIMESTAMPTZ(6) NOT NULL DEFAULT now()
-    )
-  `);
-  await adminDb.$executeRawUnsafe(
-    `CREATE UNIQUE INDEX IF NOT EXISTS "creator_session_meta_session_id_key" ON "creator_session_meta" ("session_id")`,
-  );
-  await adminDb.$executeRawUnsafe(
-    `CREATE INDEX IF NOT EXISTS "creator_session_meta_target_user_idx" ON "creator_session_meta" ("target_user_id")`,
-  );
-  sessionMetaEnsured = true;
-}
-
-/** Postgres "undefined_table" (42P01) / Prisma "table does not exist" (P2021). */
-function isMissingTableError(err: unknown): boolean {
-  if (typeof err !== "object" || err === null) return false;
-  const code = (err as { code?: unknown }).code;
-  return code === "P2021" || code === "42P01";
-}
-
 /**
  * Read the admin-DB VOD/notes sidecar for a set of session ids, returned as a
  * map keyed on session id. Self-heals the table on a missing-table error and
@@ -121,34 +75,28 @@ export async function readSessionMetaByIds(sessionIds: string[]): Promise<{
   if (sessionIds.length === 0) return { byId, degraded: false };
 
   const run = () =>
-    adminDb.creator_session_meta.findMany({
-      where: { session_id: { in: sessionIds } },
-      select: { session_id: true, kick_vod_url: true, notes: true },
-    });
+    queryRows<
+      {
+        session_id: string;
+        kick_vod_url: string | null;
+        notes: string | null;
+      }[]
+    >(
+      adminDrizzle,
+      `
+        SELECT session_id, kick_vod_url, notes
+          FROM creator_session_meta
+         WHERE session_id = ANY($1::text[])
+      `,
+      sessionIds,
+    );
 
   let rows: Awaited<ReturnType<typeof run>>;
   try {
     rows = await run();
   } catch (err) {
-    if (isMissingTableError(err)) {
-      // Table not provisioned on this environment yet — create it, retry once.
-      try {
-        await ensureSessionMetaSchema();
-        rows = await run();
-      } catch (retryErr) {
-        console.error(
-          "[creator-hub.creators.sessions] meta read failed after ensure-schema:",
-          retryErr,
-        );
-        return { byId, degraded: true };
-      }
-    } else {
-      console.error(
-        "[creator-hub.creators.sessions] meta read failed:",
-        err,
-      );
-      return { byId, degraded: true };
-    }
+    console.error("[creator-hub.creators.sessions] meta read failed:", err);
+    return { byId, degraded: true };
   }
 
   for (const r of rows) {

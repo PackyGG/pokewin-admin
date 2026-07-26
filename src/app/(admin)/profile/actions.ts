@@ -2,9 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { adminDb } from "@/lib/admin-db";
+import { eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_users } from "@/lib/db-schema/admin/schema";
 import { verifySession } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import {
+  isPostgresError,
+  postgresErrorMessages,
+} from "@/lib/postgres-errors";
 
 // ---- Constants ----------------------------------------------------------
 
@@ -70,19 +76,17 @@ const updateProfileSchema = z
 
 // ---- Graceful pre-migration handling ------------------------------------
 
-// Prisma errors for missing columns come through as P2022 ("The column ...
-// does not exist in the current database"). If the user has generated the
-// client but not yet run `npm run admin:migrate`, we want a clear message
-// instead of a 500.
+// Missing-column errors should produce a clear message instead of a 500 while
+// an admin SQL migration is still pending.
 function isMissingColumnError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const code = (err as { code?: string }).code;
-  if (code === "P2022") return true;
-  return /column .* does not exist/i.test(err.message);
+  return (
+    isPostgresError(err, "42703") ||
+    /column .* does not exist/i.test(postgresErrorMessages(err))
+  );
 }
 
 const PRE_MIGRATION_MESSAGE =
-  "Profile fields are not enabled yet — please run the database migration (npm run admin:migrate).";
+  "Profile fields are not enabled yet — please apply the required admin SQL migration.";
 
 // ---- Actions ------------------------------------------------------------
 
@@ -99,7 +103,7 @@ export async function updateProfile(input: {
 
   const data: {
     display_username?: string;
-    profile_image?: Uint8Array<ArrayBuffer> | null;
+    profile_image?: Buffer | null;
     profile_image_mime?: string | null;
   } = {};
 
@@ -112,11 +116,8 @@ export async function updateProfile(input: {
   }
 
   try {
-    await adminDb.admin_users.update({
-      where: { id: session.userId },
-      data,
-      select: { id: true },
-    });
+    await adminDrizzle.update(admin_users).set(data)
+      .where(eq(admin_users.id, session.userId));
   } catch (err) {
     if (isMissingColumnError(err)) throw new Error(PRE_MIGRATION_MESSAGE);
     throw err;
@@ -173,18 +174,13 @@ export async function uploadAvatar(formData: FormData) {
   }
 
   try {
-    // Prisma 7 expects Uint8Array<ArrayBuffer> for Bytes columns. Copy into
+    // Copy into an ArrayBuffer-backed Uint8Array for the bytea column.
     // a fresh ArrayBuffer-backed Uint8Array so the type lines up.
-    const storedBytes = new Uint8Array(new ArrayBuffer(bytes.length));
-    storedBytes.set(bytes);
-    await adminDb.admin_users.update({
-      where: { id: session.userId },
-      data: {
+    const storedBytes = Buffer.from(bytes);
+    await adminDrizzle.update(admin_users).set({
         profile_image: storedBytes,
         profile_image_mime: mime,
-      },
-      select: { id: true },
-    });
+      }).where(eq(admin_users.id, session.userId));
   } catch (err) {
     if (isMissingColumnError(err)) throw new Error(PRE_MIGRATION_MESSAGE);
     throw err;

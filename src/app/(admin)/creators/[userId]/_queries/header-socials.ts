@@ -1,6 +1,8 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
+import { asc, eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import { creator_socials } from "@/lib/db-schema/admin/schema";
 import type { CreatorSocialPlatform } from "@/lib/backend-api";
 import {
   getCreatorLinkedSocialsCached,
@@ -34,18 +36,18 @@ export async function getCreatorHeaderSocials(
   userId: string,
 ): Promise<HeaderSocial[]> {
   const [adminSocials, merged] = await Promise.all([
-    adminDb.creator_socials.findMany({
-      where: { target_user_id: userId },
-      orderBy: { platform: "asc" },
-      select: {
-        id: true,
-        platform: true,
-        username: true,
-        follower_count: true,
-        subscriber_count: true,
-        last_fetched_at: true,
-      },
-    }),
+    adminDrizzle
+      .select({
+        id: creator_socials.id,
+        platform: creator_socials.platform,
+        username: creator_socials.username,
+        follower_count: creator_socials.follower_count,
+        subscriber_count: creator_socials.subscriber_count,
+        last_fetched_at: creator_socials.last_fetched_at,
+      })
+      .from(creator_socials)
+      .where(eq(creator_socials.target_user_id, userId))
+      .orderBy(asc(creator_socials.platform)),
     getCreatorLinkedSocialsCached(userId),
   ]);
 
@@ -69,7 +71,9 @@ export async function getCreatorHeaderSocials(
         username: s.username,
         followerCount: admin?.follower_count ?? null,
         subscriberCount: admin?.subscriber_count ?? null,
-        lastFetchedAt: admin?.last_fetched_at?.toISOString() ?? null,
+        lastFetchedAt: admin?.last_fetched_at
+          ? new Date(admin.last_fetched_at).toISOString()
+          : null,
       };
     })
     .sort((a, b) => a.platform.localeCompare(b.platform));

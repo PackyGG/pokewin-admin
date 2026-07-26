@@ -1,6 +1,9 @@
 "use server";
 
-import { getDb } from "@/lib/db";
+import { eq, ilike, or } from "drizzle-orm";
+
+import { getDrizzleDb } from "@/lib/db";
+import { user } from "@/lib/db-schema/main/schema";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -306,21 +309,21 @@ export async function searchNotificationUsers(
   const q = query.trim();
   if (q.length < 2) return [];
 
-  const or: Record<string, unknown>[] = [
-    { id: q },
-    { username: { contains: q, mode: "insensitive" } },
-    { email: { contains: q, mode: "insensitive" } },
+  const conditions = [
+    eq(user.id, q),
+    ilike(user.username, `%${q}%`),
+    ilike(user.email, `%${q}%`),
   ];
   // Prefix matching only past 4 characters — below that nearly every id in
   // the table would match and the 10-row cap would return noise.
-  if (q.length >= 4) or.push({ id: { startsWith: q } });
+  if (q.length >= 4) conditions.push(ilike(user.id, `${q}%`));
 
-  const db = await getDb();
-  const users = await db.user.findMany({
-    where: { OR: or },
-    select: { id: true, username: true, email: true },
-    take: 10,
-  });
+  const db = await getDrizzleDb();
+  const users = await db
+    .select({ id: user.id, username: user.username, email: user.email })
+    .from(user)
+    .where(or(...conditions))
+    .limit(10);
 
   return users.map((u) => ({
     id: u.id,

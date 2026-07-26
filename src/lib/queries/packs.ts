@@ -1,33 +1,39 @@
 import { unstable_cache } from "next/cache";
-import { getDb, getDevDb, getProdDb } from "@/lib/db";
+import { sql, type SQL } from "drizzle-orm";
+import {
+  getDrizzleDb,
+  getDevDrizzleDb,
+  getProdDrizzleDb,
+  type MainDrizzleDb,
+} from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
-import { Prisma } from "@/generated/prisma/client";
-import { pack_tag } from "@/generated/prisma/enums";
 import { MS_PER_DAY } from "@/lib/utils/time";
 import { getPackSetAssignmentsGrouped } from "@/lib/queries/pack-set-assignments";
+
+type PackTag = "pct1" | "pct5" | "pct10" | "fifty50" | "onepiece";
 
 /**
  * Reads pack `shard_cost` values schema-defensively. The shard-packs
  * migration (the `shard_cost` column) is on dev but NOT prod, and the same
- * Prisma client serves both — so a typed `select: { shard_cost: true }` would
- * throw P2022 on prod. Read it via raw SQL instead and treat a missing column
+ * generated schema serves both — so a typed `shard_cost` selection would
+ * throw 42703 on prod. Read it via bound SQL instead and treat a missing column
  * as "no shard cost" (null). Intersection-schema + raw pattern: the divergent
  * column never enters the typed client, and this lights up on prod
  * automatically once the column lands there.
  */
 async function fetchShardCosts(
-  db: Awaited<ReturnType<typeof getDb>>,
+  db: Pick<MainDrizzleDb, "execute">,
   ids: string[],
 ): Promise<Map<string, number | null>> {
   if (ids.length === 0) return new Map();
   try {
-    const rows = await db.$queryRawUnsafe<
-      Array<{ id: string; shard_cost: number | null }>
-    >(`SELECT id, shard_cost FROM packs WHERE id = ANY($1::uuid[])`, ids);
+    const result = await db.execute<{ id: string; shard_cost: number | null }>(sql`
+      SELECT id, shard_cost FROM packs WHERE id = ANY(${ids}::uuid[])
+    `);
     return new Map(
-      rows.map((r) => [
+      result.rows.map((r) => [
         r.id,
         r.shard_cost === null ? null : Number(r.shard_cost),
       ]),
@@ -90,18 +96,18 @@ export function parsePackCategory(
  */
 function buildPackCategoryWhere(
   category: PackCategoryFilter,
-): Prisma.packsWhereInput {
+): SQL {
   switch (category) {
     case "pct1":
-      return { tags: { has: pack_tag.pct1 } };
+      return sql`${"%1"}::pack_tag = ANY(p.tags)`;
     case "pct5":
-      return { tags: { has: pack_tag.pct5 } };
+      return sql`${"%5"}::pack_tag = ANY(p.tags)`;
     case "pct10":
-      return { tags: { has: pack_tag.pct10 } };
+      return sql`${"%10"}::pack_tag = ANY(p.tags)`;
     case "reward":
-      return { pack_type: "reward" };
+      return sql`p.pack_type = ${"reward"}`;
     case "shard":
-      return { pack_type: "shard" };
+      return sql`p.pack_type = ${"shard"}`;
   }
 }
 
@@ -174,19 +180,13 @@ export async function getPacks(params: {
     sortOrder = "desc",
     set = "pokemon",
   } = params;
-  const db = await getDb();
-
-  const where: Prisma.packsWhereInput = {};
-
+  const db = await getDrizzleDb();
+  const predicates: SQL[] = [];
   if (search) {
-    where.OR = [
-      { name: { contains: search, mode: "insensitive" } },
-      { slug: { contains: search, mode: "insensitive" } },
-    ];
+    predicates.push(sql`(p.name ILIKE ${`%${search}%`} OR p.slug ILIKE ${`%${search}%`})`);
   }
-
-  if (active === "active") where.active = true;
-  else if (active === "inactive") where.active = false;
+  if (active === "active") predicates.push(sql`p.active = true`);
+  else if (active === "inactive") predicates.push(sql`p.active = false`);
 
   // Category filter (1% / 5% / 10% tag, daily/reward, or shard pack type).
   // Combines with status + search + pool + sort — Object.assign merges the
@@ -199,8 +199,9 @@ export async function getPacks(params: {
   // out of the default /packs list and any official dropdowns avoids mixing
   // a shard-currency pack into the cash pack catalog. The "shard" filter is
   // the explicit opt-in to see only shard packs.
-  if (tag) Object.assign(where, buildPackCategoryWhere(tag));
-  else where.pack_type = { not: "shard" };
+  predicates.push(
+    tag ? buildPackCategoryWhere(tag) : sql`p.pack_type <> ${"shard"}`,
+  );
 
   // Scope to the active pool (Pokemon / One Piece / Rewards / Meme). The set is
   // a PACK-LEVEL admin assignment (admin DB), not derived from cards: a pack
@@ -209,19 +210,24 @@ export async function getPacks(params: {
   const assigned = await getPackSetAssignmentsGrouped();
   const assignedToThis = assigned.idsBySet[set] ?? [];
   if (set === "pokemon") {
-    const poolOr: Prisma.packsWhereInput[] = [];
-    if (assignedToThis.length > 0) poolOr.push({ id: { in: assignedToThis } });
-    // Unassigned packs default to Pokemon.
+    const poolOr: SQL[] = [];
+    if (assignedToThis.length > 0) {
+      poolOr.push(sql`p.id = ANY(${assignedToThis}::uuid[])`);
+    }
     poolOr.push(
-      assigned.allIds.length > 0 ? { id: { notIn: assigned.allIds } } : {},
+      assigned.allIds.length > 0
+        ? sql`NOT (p.id = ANY(${assigned.allIds}::uuid[]))`
+        : sql`true`,
     );
-    where.AND = [{ OR: poolOr }];
+    predicates.push(sql`(${sql.join(poolOr, sql` OR `)})`);
   } else {
-    // Only explicitly-assigned packs appear under a non-default set.
-    where.AND = [{ id: { in: assignedToThis } }];
+    predicates.push(
+      assignedToThis.length > 0
+        ? sql`p.id = ANY(${assignedToThis}::uuid[])`
+        : sql`false`,
+    );
   }
 
-  const orderBy: Prisma.packsOrderByWithRelationInput = {};
   // Whitelisted sortable columns — all first-class `packs` columns. `price`,
   // `actual_rtp` and `total_payout` were added so the rebuilt list table can
   // sort by the same economic signals it surfaces as columns (the old grid
@@ -239,7 +245,23 @@ export async function getPacks(params: {
   ];
   const field = validSortFields.includes(sortBy) ? sortBy : "created_at";
   const order = sortOrder === "asc" ? "asc" : "desc";
-  (orderBy as Record<string, string>)[field] = order;
+  const orderColumns: Record<string, SQL> = {
+    created_at: sql`p.created_at`,
+    name: sql`p.name`,
+    price: sql`p.price`,
+    total_revenue: sql`p.total_revenue`,
+    total_payout: sql`p.total_payout`,
+    total_openings: sql`p.total_openings`,
+    actual_rtp: sql`p.actual_rtp`,
+    actual_house_edge: sql`p.actual_house_edge`,
+  };
+  const orderBy =
+    order === "asc"
+      ? sql`${orderColumns[field]} ASC`
+      : sql`${orderColumns[field]} DESC`;
+  const where = sql`WHERE ${sql.join(predicates, sql` AND `)}`;
+  const safePage = Math.max(1, Math.trunc(page) || 1);
+  const safePerPage = Math.min(200, Math.max(1, Math.trunc(perPage) || 20));
 
   // On the list view we only render a 10-card preview strip + total count.
   // Eagerly including every pack_card for every pack was pulling back 100s
@@ -255,55 +277,62 @@ export async function getPacks(params: {
   // default "all columns" behaviour means a newly-added `packs` field that
   // hasn't reached the live game DB (which the website backend owns and can
   // be migration-lagged vs this admin repo's schema) cannot crash this query
-  // on production with P2022. Same defense-in-depth `getCardDetail` /
+  // on production with 42703. Same defense-in-depth `getCardDetail` /
   // `getCards` apply for the `cards.cost` / `cards.power` columns.
-  const [packs, total] = await Promise.all([
-    db.packs.findMany({
-      where,
-      orderBy,
-      skip: (page - 1) * perPage,
-      take: perPage,
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        image_url: true,
-        price: true,
-        cards_per_open: true,
-        total_openings: true,
-        total_revenue: true,
-        total_payout: true,
-        actual_rtp: true,
-        actual_house_edge: true,
-        active: true,
-        pack_cards: {
-          select: {
-            cards: { select: { id: true, name: true, image_url: true, rarity: true } },
-          },
-          orderBy: { order: "asc" },
-          take: 10,
-        },
-      },
-    }),
-    db.packs.count({ where }),
+  const [packResult, countResult] = await Promise.all([
+    db.execute<{
+      id: string;
+      name: string;
+      slug: string;
+      image_url: string | null;
+      price: string;
+      cards_per_open: number;
+      total_openings: string;
+      total_revenue: string;
+      total_payout: string;
+      actual_rtp: string;
+      actual_house_edge: string;
+      active: boolean;
+      cards: PackListCard[];
+      total_card_count: string;
+    }>(sql`
+      SELECT p.id, p.name, p.slug, p.image_url, p.price::text AS price,
+             p.cards_per_open, p.total_openings::text AS total_openings,
+             p.total_revenue::text AS total_revenue,
+             p.total_payout::text AS total_payout,
+             p.actual_rtp::text AS actual_rtp,
+             p.actual_house_edge::text AS actual_house_edge, p.active,
+             COALESCE((
+               SELECT jsonb_agg(jsonb_build_object(
+                 'id', preview.id, 'name', preview.name,
+                 'imageUrl', preview.image_url, 'rarity', preview.rarity
+               ) ORDER BY preview.card_order)
+               FROM (
+                 SELECT c.id, c.name, c.image_url, c.rarity,
+                        pc."order" AS card_order
+                 FROM pack_cards pc
+                 JOIN cards c ON c.id = pc.card_id
+                 WHERE pc.pack_id = p.id
+                 ORDER BY pc."order" ASC
+                 LIMIT 10
+               ) preview
+             ), '[]'::jsonb) AS cards,
+             (SELECT COUNT(*)::text FROM pack_cards pc
+              WHERE pc.pack_id = p.id) AS total_card_count
+      FROM packs p
+      ${where}
+      ORDER BY ${orderBy}
+      LIMIT ${safePerPage} OFFSET ${(safePage - 1) * safePerPage}
+    `),
+    db.execute<{ count: string }>(sql`
+      SELECT COUNT(*)::text AS count FROM packs p ${where}
+    `),
   ]);
+  const packs = packResult.rows;
+  const total = Number(countResult.rows[0]?.count ?? 0);
 
   // Total card counts per visible pack — cheap groupBy, but it serializes
   // after the main query because it needs the page's pack ids.
-  const visiblePackIds = packs.map((p) => p.id);
-  const cardCounts =
-    visiblePackIds.length > 0
-      ? await db.pack_cards.groupBy({
-          by: ["pack_id"],
-          where: { pack_id: { in: visiblePackIds } },
-          _count: { _all: true },
-        })
-      : [];
-
-  const totalCardsByPack = new Map(
-    cardCounts.map((c) => [c.pack_id, c._count._all]),
-  );
-
   return {
     data: packs.map((p) => ({
       id: p.id,
@@ -318,18 +347,13 @@ export async function getPacks(params: {
       actualRtp: toNumber(p.actual_rtp),
       actualHouseEdge: toNumber(p.actual_house_edge),
       active: p.active,
-      cards: p.pack_cards.map((pc) => ({
-        id: pc.cards.id,
-        name: pc.cards.name,
-        imageUrl: pc.cards.image_url,
-        rarity: pc.cards.rarity,
-      })),
-      totalCardCount: totalCardsByPack.get(p.id) ?? p.pack_cards.length,
+      cards: p.cards,
+      totalCardCount: Number(p.total_card_count),
     })),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }
 
@@ -377,52 +401,43 @@ export type PacksListStats = {
 async function fetchPacksListStats(
   set: PackSetFilter,
 ): Promise<PacksListStats> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
   // Build the pool predicate from the PACK-LEVEL admin assignments: a pack
   // counts toward the set it's assigned to; any pack without an assignment
   // defaults to Pokemon.
   const assigned = await getPackSetAssignmentsGrouped();
   const assignedToThis = assigned.idsBySet[set] ?? [];
-  const queryParams: unknown[] = [];
-  const pushParam = (v: unknown): number => {
-    queryParams.push(v);
-    return queryParams.length;
-  };
-
-  let poolPredicate: string;
+  let poolPredicate: SQL;
   if (set === "pokemon") {
-    const branches: string[] = [];
+    const branches: SQL[] = [];
     if (assignedToThis.length > 0) {
-      branches.push(`packs.id = ANY($${pushParam(assignedToThis)}::uuid[])`);
+      branches.push(sql`packs.id = ANY(${assignedToThis}::uuid[])`);
     }
     // Unassigned packs default to Pokemon.
     branches.push(
       assigned.allIds.length > 0
-        ? `NOT (packs.id = ANY($${pushParam(assigned.allIds)}::uuid[]))`
-        : "TRUE",
+        ? sql`NOT (packs.id = ANY(${assigned.allIds}::uuid[]))`
+        : sql`true`,
     );
-    poolPredicate = `(${branches.join(" OR ")})`;
+    poolPredicate = sql`(${sql.join(branches, sql` OR `)})`;
   } else {
     poolPredicate =
       assignedToThis.length > 0
-        ? `packs.id = ANY($${pushParam(assignedToThis)}::uuid[])`
-        : "FALSE";
+        ? sql`packs.id = ANY(${assignedToThis}::uuid[])`
+        : sql`false`;
   }
 
   // Single round-trip aggregate using FILTER for the count breakdown.
   // Postgres folds these into a single scan with FILTER predicates —
   // strictly cheaper than separate count calls.
-  const rows = await db.$queryRawUnsafe<
-    {
-      total: string;
-      active: string;
-      openings: string;
-      revenue: string;
-      payout: string;
-    }[]
-  >(
-    `
+  const result = await db.execute<{
+    total: string;
+    active: string;
+    openings: string;
+    revenue: string;
+    payout: string;
+  }>(sql`
       SELECT
         COUNT(*)::text                                          AS total,
         COUNT(*) FILTER (WHERE active = true)::text             AS active,
@@ -431,10 +446,8 @@ async function fetchPacksListStats(
         COALESCE(SUM(total_payout), 0)::text                    AS payout
       FROM packs
       WHERE ${poolPredicate}
-    `,
-    ...queryParams,
-  );
-  const r = rows[0];
+  `);
+  const r = result.rows[0];
   const totalRevenue = Number(r?.revenue ?? 0);
   const totalPayout = Number(r?.payout ?? 0);
   const houseEdgePct =
@@ -533,20 +546,16 @@ export type PackPoolComposition = {
 export async function getPacksPoolComposition(opts?: {
   packIds?: string[];
 }): Promise<PackPoolComposition[]> {
-  const db = await getDb();
-
-  const params: unknown[] = [];
-  let whereClause: string;
+  const db = await getDrizzleDb();
+  let whereClause: SQL;
   if (opts?.packIds && opts.packIds.length > 0) {
-    whereClause = `p.id = ANY($1::uuid[])`;
-    params.push(opts.packIds);
+    whereClause = sql`p.id = ANY(${opts.packIds}::uuid[])`;
   } else {
-    const included = REPRICE_INCLUDED_PACK_TYPES.map((t) => `'${t}'`).join(", ");
-    whereClause = `p.pack_type IN (${included}) AND p.price > 0 AND p.active = true`;
+    whereClause = sql`p.pack_type = ANY(${[...REPRICE_INCLUDED_PACK_TYPES]}::text[])
+                      AND p.price > 0 AND p.active = true`;
   }
 
-  const rows = await db.$queryRawUnsafe<
-    {
+  const result = await db.execute<{
       id: string;
       name: string;
       slug: string;
@@ -562,9 +571,7 @@ export async function getPacksPoolComposition(opts?: {
       near_miss_weight: string;
       max_value: string | null;
       floor_value: string | null;
-    }[]
-  >(
-    `
+    }>(sql`
       SELECT
         p.id,
         p.name,
@@ -597,9 +604,8 @@ export async function getPacksPoolComposition(opts?: {
       WHERE ${whereClause}
       GROUP BY p.id, p.name, p.slug, p.pack_type, p.active, p.tags, p.price, p.cards_per_open
       ORDER BY p.name ASC
-    `,
-    ...params,
-  );
+  `);
+  const rows = result.rows;
 
   return rows.map((r) => ({
     id: r.id,
@@ -621,65 +627,63 @@ export async function getPacksPoolComposition(opts?: {
 }
 
 export async function getPackDetail(id: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // Explicit top-level `select` listing only the columns the detail mapper
   // consumes. Mirrors `getCardDetail`'s defense-in-depth pattern (commit
   // dfe8af1): switching off `findUnique`'s default "all columns" behaviour
   // means a newly-added `packs` field that hasn't reached the live game DB
   // (which the website backend owns and can be migration-lagged vs this
-  // admin repo's schema) cannot crash this query on production with P2022.
+  // admin repo's schema) cannot crash this query on production with 42703.
   // Narrow the select on cards/sets too — the page only renders a handful of
   // fields per card (name/image/rarity/price/setName) so pulling every
   // column from `cards` (and every column from `sets`) is wasted bytes.
-  const pack = await db.packs.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      name: true,
-      slug: true,
-      description: true,
-      image_url: true,
-      price: true,
-      cards_per_open: true,
-      total_openings: true,
-      total_revenue: true,
-      total_payout: true,
-      actual_rtp: true,
-      actual_house_edge: true,
-      active: true,
-      pack_type: true,
-      tags: true,
-      difficulty: true,
-      pack_cards: {
-        select: {
-          id: true,
-          card_id: true,
-          weight: true,
-          color: true,
-          animation: true,
-          order: true,
-          cards: {
-            select: {
-              name: true,
-              image_url: true,
-              price: true,
-              rarity: true,
-              sets: { select: { name: true } },
-            },
-          },
-        },
-        orderBy: { order: "asc" },
-      },
-    },
-  });
-
+  type DetailCard = {
+    id: string; cardId: string; name: string; imageUrl: string;
+    price: string; rarity: string | null; setName: string | null;
+    weight: number; color: string | null; animation: boolean; order: number;
+  };
+  const result = await db.execute<{
+    id: string; name: string; slug: string; description: string | null;
+    image_url: string | null; price: string; cards_per_open: number;
+    total_openings: string; total_revenue: string; total_payout: string;
+    actual_rtp: string; actual_house_edge: string; active: boolean;
+    pack_type: string; tags: PackTag[]; difficulty: number | null;
+    cards: DetailCard[];
+  }>(sql`
+    SELECT p.id, p.name, p.slug, p.description, p.image_url,
+           p.price::text AS price, p.cards_per_open,
+           p.total_openings::text AS total_openings,
+           p.total_revenue::text AS total_revenue,
+           p.total_payout::text AS total_payout,
+           p.actual_rtp::text AS actual_rtp,
+           p.actual_house_edge::text AS actual_house_edge,
+           p.active, p.pack_type,
+           ARRAY(SELECT CASE tag::text
+             WHEN '%1' THEN 'pct1' WHEN '%5' THEN 'pct5'
+             WHEN '%10' THEN 'pct10' WHEN '50/50' THEN 'fifty50'
+             ELSE tag::text END FROM UNNEST(p.tags) AS tag) AS tags,
+           p.difficulty,
+           COALESCE(jsonb_agg(jsonb_build_object(
+             'id', pc.id, 'cardId', pc.card_id, 'name', c.name,
+             'imageUrl', c.image_url, 'price', c.price::text,
+             'rarity', c.rarity, 'setName', s.name, 'weight', pc.weight,
+             'color', pc.color, 'animation', pc.animation, 'order', pc."order"
+           ) ORDER BY pc."order") FILTER (WHERE pc.id IS NOT NULL), '[]'::jsonb) AS cards
+    FROM packs p
+    LEFT JOIN pack_cards pc ON pc.pack_id = p.id
+    LEFT JOIN cards c ON c.id = pc.card_id
+    LEFT JOIN sets s ON s.id = c.set_id
+    WHERE p.id = ${id}::uuid
+    GROUP BY p.id
+  `);
+  const pack = result.rows[0];
   if (!pack) return null;
 
   // shard_cost lives only on the dev schema — read it via raw SQL (null on
   // a DB without the column) so this detail query works on both DBs.
   const shardCost = (await fetchShardCosts(db, [pack.id])).get(pack.id) ?? null;
 
-  const totalWeight = pack.pack_cards.reduce((sum, pc) => sum + pc.weight, 0);
+  const totalWeight = pack.cards.reduce((sum, pc) => sum + pc.weight, 0);
 
   return {
     id: pack.id,
@@ -699,14 +703,14 @@ export async function getPackDetail(id: string) {
     shardCost,
     tags: pack.tags,
     difficulty: pack.difficulty,
-    cards: pack.pack_cards.map((pc) => ({
+    cards: pack.cards.map((pc) => ({
       id: pc.id,
-      cardId: pc.card_id,
-      name: pc.cards.name,
-      imageUrl: pc.cards.image_url,
-      priceUsd: toNumber(pc.cards.price),
-      rarity: pc.cards.rarity,
-      setName: pc.cards.sets?.name ?? null,
+      cardId: pc.cardId,
+      name: pc.name,
+      imageUrl: pc.imageUrl,
+      priceUsd: toNumber(pc.price),
+      rarity: pc.rarity,
+      setName: pc.setName,
       weight: pc.weight,
       probability: totalWeight > 0 ? ((pc.weight / totalWeight) * 100) : 0,
       color: pc.color,
@@ -763,14 +767,13 @@ export type PackStats = {
 const cachedPackStatScans = (packId: string, env: DbEnv) =>
   unstable_cache(
     async () => {
-      const db = env === "dev" ? getDevDb() : getProdDb();
+      const db = env === "dev" ? getDevDrizzleDb() : getProdDrizzleDb();
       // The single source of truth: provably_fair_results.result_metadata->>'pack_id'
       // tells us exactly which pack produced each card in both solo and battle openings.
       // Fetch the daily breakdown and the borrow/sponsor breakdown in parallel —
       // they're independent queries against the same base table.
       return Promise.all([
-        db.$queryRawUnsafe<
-          {
+        db.execute<{
             date: Date;
             openings: string;
             solo: string;
@@ -778,8 +781,7 @@ const cachedPackStatScans = (packId: string, env: DbEnv) =>
             borrowed: string;
             sponsored: string;
             payout: string;
-          }[]
-        >(`
+          }>(sql`
       SELECT
         DATE(pf.created_at) AS date,
         COUNT(*)::text AS openings,
@@ -791,23 +793,21 @@ const cachedPackStatScans = (packId: string, env: DbEnv) =>
       FROM provably_fair_results pf
       LEFT JOIN cards c ON c.id = (pf.result_metadata->>'card_id')::uuid
       LEFT JOIN battles b ON b.id = pf.battle_id
-      WHERE pf.result_metadata->>'pack_id' = $1
+      WHERE pf.result_metadata->>'pack_id' = ${packId}
       GROUP BY DATE(pf.created_at)
       ORDER BY date
-    `, packId),
+    `).then((result) => result.rows),
         // Breakdown for pie charts: borrow% / sponsored% per mode.
         // For battles: borrow_percentage / sponsorship_percentage from battles table.
         // For solo: borrow% from ledger_transactions description (e.g. "90% borrowed").
         // result_metadata contains borrow_percentage for BOTH solo and battle results.
         // For battles, sponsorship_percentage comes from the battles table.
-        db.$queryRawUnsafe<
-          {
+        db.execute<{
             is_battle: boolean;
             borrow_pct: number;
             sponsor_pct: number;
             count: string;
-          }[]
-        >(`
+          }>(sql`
       SELECT
         (pf.battle_id IS NOT NULL) AS is_battle,
         CASE
@@ -818,10 +818,10 @@ const cachedPackStatScans = (packId: string, env: DbEnv) =>
         COUNT(*)::text AS count
       FROM provably_fair_results pf
       LEFT JOIN battles b ON b.id = pf.battle_id
-      WHERE pf.result_metadata->>'pack_id' = $1
+      WHERE pf.result_metadata->>'pack_id' = ${packId}
       GROUP BY is_battle, borrow_pct, sponsor_pct
       ORDER BY COUNT(*) DESC
-    `, packId),
+    `).then((result) => result.rows),
       ]);
     },
     ["pack-stat-scans-v1", packId, env],
@@ -955,29 +955,22 @@ export async function getPackGames(
     type?: string; // "all" | "solo" | "battle"
   }
 ) {
-  const db = await getDb();
-  // Build WHERE clauses for the raw query
-  const conditions: string[] = [`pf.result_metadata->>'pack_id' = $1`];
-  const params: unknown[] = [packId];
-  let paramIdx = 2;
+  const db = await getDrizzleDb();
+  const conditions: SQL[] = [sql`pf.result_metadata->>'pack_id' = ${packId}`];
 
   if (filters?.type === "solo") {
-    conditions.push("pf.battle_id IS NULL");
+    conditions.push(sql`pf.battle_id IS NULL`);
   } else if (filters?.type === "battle") {
-    conditions.push("pf.battle_id IS NOT NULL");
+    conditions.push(sql`pf.battle_id IS NOT NULL`);
   }
 
   if (filters?.dateFrom) {
-    conditions.push(`pf.created_at >= $${paramIdx}::timestamp`);
-    params.push(new Date(filters.dateFrom));
-    paramIdx++;
+    conditions.push(sql`pf.created_at >= ${new Date(filters.dateFrom)}::timestamp`);
   }
   if (filters?.dateTo) {
     const to = new Date(filters.dateTo);
     to.setDate(to.getDate() + 1);
-    conditions.push(`pf.created_at < $${paramIdx}::timestamp`);
-    params.push(to);
-    paramIdx++;
+    conditions.push(sql`pf.created_at < ${to}::timestamp`);
   }
   if (filters?.search) {
     // Substring match on the joined `user` (username/email) + exact id. The
@@ -993,30 +986,31 @@ export async function getPackGames(
     // / idx_user_lower_email_prefix) would only accelerate PREFIX matches, so
     // it would change these into prefix search and lose substring semantics.
     // The current shape is the planner's optimal choice for substring search.
-    conditions.push(`(u.username ILIKE $${paramIdx} OR u.email ILIKE $${paramIdx} OR u.id = $${paramIdx + 1})`);
-    params.push(`%${filters.search}%`, filters.search);
-    paramIdx += 2;
+    conditions.push(sql`(
+      u.username ILIKE ${`%${filters.search}%`}
+      OR u.email ILIKE ${`%${filters.search}%`}
+      OR u.id = ${filters.search}
+    )`);
   }
 
-  const whereClause = conditions.join(" AND ");
+  const whereClause = sql.join(conditions, sql` AND `);
   const orderCol =
     filters?.sortBy === "payout"
-      ? "COALESCE(c.price, 0)"
-      : filters?.sortBy === "date"
-        ? "pf.created_at"
-        : "pf.created_at";
-  const orderDir = filters?.sortOrder === "asc" ? "ASC" : "DESC";
+      ? sql`COALESCE(c.price, 0)`
+      : sql`pf.created_at`;
+  const orderBy =
+    filters?.sortOrder === "asc" ? sql`${orderCol} ASC` : sql`${orderCol} DESC`;
+  const safePage = Math.max(1, Math.trunc(page) || 1);
+  const safePerPage = Math.min(200, Math.max(1, Math.trunc(perPage) || 20));
 
-  const [countResult, rows] = await Promise.all([
-    db.$queryRawUnsafe<{ count: string }[]>(
-      `SELECT COUNT(*)::text AS count
+  const [countResult, rowResult] = await Promise.all([
+    db.execute<{ count: string }>(sql`
+       SELECT COUNT(*)::text AS count
        FROM provably_fair_results pf
        LEFT JOIN "user" u ON u.id = (pf.result_metadata->>'user_id')
-       WHERE ${whereClause}`,
-      ...params,
-    ),
-    db.$queryRawUnsafe<
-    {
+       WHERE ${whereClause}
+    `),
+    db.execute<{
       id: string;
       user_id: string | null;
       username: string | null;
@@ -1030,9 +1024,8 @@ export async function getPackGames(
       is_borrowed: boolean;
       is_sponsored: boolean;
       created_at: Date;
-    }[]
-  >(
-    `SELECT
+    }>(sql`
+     SELECT
        pf.id,
        (pf.result_metadata->>'user_id') AS user_id,
        u.username,
@@ -1051,12 +1044,12 @@ export async function getPackGames(
      LEFT JOIN "user" u ON u.id = (pf.result_metadata->>'user_id')
      LEFT JOIN battles b ON b.id = pf.battle_id
      WHERE ${whereClause}
-     ORDER BY ${orderCol} ${orderDir}
-     LIMIT ${perPage} OFFSET ${(page - 1) * perPage}`,
-      ...params,
-    ),
+     ORDER BY ${orderBy}
+     LIMIT ${safePerPage} OFFSET ${(safePage - 1) * safePerPage}
+    `),
   ]);
-  const total = Number(countResult[0]?.count ?? 0);
+  const rows = rowResult.rows;
+  const total = Number(countResult.rows[0]?.count ?? 0);
 
   return {
     data: rows.map((r) => ({
@@ -1074,8 +1067,8 @@ export async function getPackGames(
       createdAt: r.created_at.toISOString(),
     })),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }

@@ -1,7 +1,5 @@
 import { unstable_cache } from "next/cache";
 import { withTiming } from "@/lib/observability/query-timings";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getWindowedPnlFromClickHouse } from "@/lib/clickhouse/queries/dashboard/windowed-pnl";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { calculateWindowedPnl, type WindowedPnl } from "./pnl";
 
@@ -56,7 +54,7 @@ function utcStartOfDay(now: Date): Date {
  * Pattern note: the blacklist is resolved OUTSIDE `unstable_cache` and
  * passed in as a serializable arg (same as `cachedDailyChart` &c. in
  * dashboard.ts) — `getExcludedUserIds()` reads the admin DB and can't run
- * inside the cache scope. `calculateWindowedPnl` itself calls `getDb()`,
+ * inside the cache scope. `calculateWindowedPnl` resolves the MAIN client,
  * which resolves to the prod client inside the cache scope (cookies are
  * unavailable there, so `readDbEnv` falls back to prod) — identical to the
  * established dashboard cache wrappers.
@@ -68,16 +66,11 @@ const cachedTodayPnl = unstable_cache(
     excludeUserIds: string[],
   ): Promise<WindowedPnl> => {
     void dayKey; // part of the cache key only
-    // CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
     // through the cache on failure); off/comparison serve Postgres. Parity
     // confirmed cent-exact (aligned-window harness; live-tail CDC-lag only).
-    return resolveAdminRead<WindowedPnl>("dashboard_today_pnl", {
-      pg: () =>
-        calculateWindowedPnl({
-          since: new Date(sinceIso),
-          excludeUserIds,
-        }),
-      ch: () => getWindowedPnlFromClickHouse(new Date(sinceIso), excludeUserIds),
+    return calculateWindowedPnl({
+      since: new Date(sinceIso),
+      excludeUserIds,
     });
   },
   ["dashboard-today-pnl-v2"],

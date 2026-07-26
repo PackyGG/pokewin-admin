@@ -1,5 +1,5 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   cacheTtlForInsightsPeriod,
@@ -83,7 +83,6 @@ async function computeDirectionReason(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DirectionReason> {
-  const db = await getDb();
   const dateFilter = windowDateFilter(period);
   const bl = blacklistFilter(blacklistIds);
   // FAKE-BALANCE: drop official_stream adjustments from every block.
@@ -103,7 +102,7 @@ async function computeDirectionReason(
   `;
 
   const [directionRows, reasonRows, sizeRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryMainRows<
       {
         credit_vol: string;
         credit_cnt: string;
@@ -123,7 +122,7 @@ async function computeDirectionReason(
         ${bl}
         ${dateFilter}
     `),
-    db.$queryRawUnsafe<
+    queryMainRows<
       {
         reason_key: string | null;
         credit_vol: string;
@@ -148,7 +147,7 @@ async function computeDirectionReason(
       ORDER BY SUM(ABS(lt.amount::numeric)) DESC
       LIMIT 40
     `),
-    db.$queryRawUnsafe<
+    queryMainRows<
       { bucket: string; cnt: string; vol: string }[]
     >(`
       WITH amts AS (

@@ -5,7 +5,7 @@
  * price lookup, and on `sortBy=hit` also runs a multiplier CTE) and the
  * detail query (`getBattleDetail`, a deeply-nested per-battle include).
  *
- * On prod the ClickHouse path is dormant, so every list page / detail
+ * On production every list page / detail
  * page repays the full Postgres scan cost on each load. Memoizing the
  * existing query results keyed on the (serializable) URL params means a
  * given view's scan runs at most once per `REVALIDATE_SECONDS`; repeat
@@ -16,7 +16,8 @@
  *
  * DB-env correctness (prod-only cache)
  * ────────────────────────────────────
- * `getBattles` / `getBattleDetail` each call `getDb()` internally, which
+ * `getBattles` / `getBattleDetail` each resolve the request-scoped Drizzle client,
+ * which
  * resolves the per-admin `admin_db_env` cookie. `unstable_cache` runs its
  * callback OUTSIDE the request's dynamic scope, so a `cookies()` read
  * inside it throws and `readDbEnv` falls back to "prod" — the cached

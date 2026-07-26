@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Trash2, X, Wallet } from "lucide-react";
 import { Spinner } from "@/components/ux";
 import { setAdminLimit, deleteAdminLimit } from "../limits-actions";
-import type { limit_period_type } from "@/generated/admin-prisma/client";
+import type { limit_period_type } from "@/lib/balance-limits";
 
 export type BalanceLimit = {
   id: string;

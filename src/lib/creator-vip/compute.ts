@@ -1,7 +1,15 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
-import { getProdDb } from "@/lib/db";
+import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import {
+  admin_user_tags,
+  creator_reward_claims,
+  creator_reward_program_windows,
+  creator_reward_programs,
+} from "@/lib/db-schema/admin/schema";
+import { user as mainUsers } from "@/lib/db-schema/main/schema";
+import { getProdDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 import {
@@ -43,7 +51,7 @@ import {
  * The prod read is index-served: `idx_acu_upper_code` ∧
  * `idx_acu_referred_user_created_at` resolve as a BitmapAnd (verified by
  * EXPLAIN ANALYZE against prod 2026-07-22: 0.18 ms, 2 shared buffers). It is
- * read-only and uses `getProdDb()` rather than `getDb()` so a machine caller
+ * read-only and uses `getProdDrizzleDb()` so a machine caller
  * can never be served the admin's dev/prod cookie toggle.
  *
  * `usage_type` is compared as `::text` for the same 22P02 hardening every
@@ -112,11 +120,19 @@ export type ProgramForCompute = {
  * the (target_user_id, tag) unique pair.
  */
 async function isVipNow(userId: string): Promise<boolean> {
-  const row = await adminDb.admin_user_tags.findFirst({
-    where: { target_user_id: userId, tag: "vip" },
-    select: { id: true },
-  });
-  return row !== null;
+  const row = (
+    await adminDrizzle
+      .select({ id: admin_user_tags.id })
+      .from(admin_user_tags)
+      .where(
+        and(
+          eq(admin_user_tags.target_user_id, userId),
+          eq(admin_user_tags.tag, "vip"),
+        ),
+      )
+      .limit(1)
+  )[0];
+  return row !== undefined;
 }
 
 /**
@@ -161,22 +177,25 @@ async function userStanding(userId: string): Promise<{
   currentCode: string | null;
   codeExpiresAt: Date | null;
 } | null> {
-  const row = await getProdDb().user.findUnique({
-    where: { id: userId },
-    select: {
-      is_banned: true,
-      is_locked: true,
-      affiliate_code: true,
-      affiliate_code_expires_at: true,
-    },
-  });
+  const [row] = await getProdDrizzleDb()
+    .select({
+      is_banned: mainUsers.is_banned,
+      is_locked: mainUsers.is_locked,
+      affiliate_code: mainUsers.affiliate_code,
+      affiliate_code_expires_at: mainUsers.affiliate_code_expires_at,
+    })
+    .from(mainUsers)
+    .where(eq(mainUsers.id, userId))
+    .limit(1);
   if (!row) return null;
 
   return {
     banned: row.is_banned,
     locked: row.is_locked,
     currentCode: row.affiliate_code ? row.affiliate_code.toUpperCase() : null,
-    codeExpiresAt: row.affiliate_code_expires_at,
+    codeExpiresAt: row.affiliate_code_expires_at
+      ? new Date(row.affiliate_code_expires_at)
+      : null,
   };
 }
 
@@ -197,10 +216,18 @@ async function programWindows(
 ): Promise<{ started_at: Date; ended_at: Date | null }[]> {
   const rows =
     program.windows ??
-    (await adminDb.creator_reward_program_windows.findMany({
-      where: { program_id: program.id },
-      select: { started_at: true, ended_at: true },
-      orderBy: { started_at: "asc" },
+    (
+      await adminDrizzle
+        .select({
+          started_at: creator_reward_program_windows.started_at,
+          ended_at: creator_reward_program_windows.ended_at,
+        })
+        .from(creator_reward_program_windows)
+        .where(eq(creator_reward_program_windows.program_id, program.id))
+        .orderBy(asc(creator_reward_program_windows.started_at))
+    ).map((row) => ({
+      started_at: new Date(row.started_at),
+      ended_at: row.ended_at ? new Date(row.ended_at) : null,
     }));
   if (rows.length === 0) {
     return [{ started_at: program.accrual_start_at, ended_at: null }];
@@ -285,9 +312,11 @@ async function wagerPosition(
   const upper = codes.map((c) => c.toUpperCase());
   const since = utcNaive(accrualStart);
 
-  const rows = await getProdDb().$queryRaw<
-    { run_start: Date; current: string; lifetime: string }[]
-  >`
+  const result = await getProdDrizzleDb().execute<{
+    run_start: Date;
+    current: string;
+    lifetime: string;
+  }>(sql`
     WITH boundary AS (
       SELECT COALESCE(MAX(created_at), ${since}::timestamp) AS run_start
         FROM affiliate_code_usages
@@ -315,9 +344,9 @@ async function wagerPosition(
       ), 0)::text AS current,
       COALESCE(SUM(live.wager_amount_usd::numeric), 0)::text AS lifetime
     FROM live
-  `;
+  `);
 
-  const row = rows[0];
+  const row = result.rows[0];
   if (!row) return fallback;
   return {
     runStart: row.run_start ?? accrualStart,
@@ -338,32 +367,38 @@ async function priorHoldings(
   // ONE grouped read instead of two aggregates. Consumed basis and approved
   // reward differ only in which rows they count, so they are derived in JS
   // from a single pass rather than costing a second round-trip.
-  const rows = await adminDb.creator_reward_claims.groupBy({
-    by: ["status"],
-    where: {
-      program_id: programId,
-      user_id: userId,
+  const rows = await adminDrizzle
+    .select({
+      status: creator_reward_claims.status,
+      consumed: sql<string>`COALESCE(SUM(${creator_reward_claims.consumed_wager_usd}), 0)::text`,
+      amount: sql<string>`COALESCE(SUM(${creator_reward_claims.amount_usd}), 0)::text`,
+    })
+    .from(creator_reward_claims)
+    .where(
+      and(
+        eq(creator_reward_claims.program_id, programId),
+        eq(creator_reward_claims.user_id, userId),
       // WAGER leg only. A lossback claim consumes no wager basis (it writes
       // 0), so today this changes nothing — but leaving the legs mixed here
       // would silently break the moment that stopped being true.
-      leg: "wager",
-    },
-    _sum: { consumed_wager_usd: true, amount_usd: true },
+        eq(creator_reward_claims.leg, "wager"),
+      ),
+    )
     // Consumption is scoped to the CURRENT run for the same reason the wager
     // is: basis burned on a previous run must not eat into the new one, or the
     // reset would be one-sided and a returning player could never claim again.
     // The per-user reward CAP is deliberately NOT run-scoped — it is a
     // lifetime ceiling, so it is summed from every approved row below.
-  });
+    .groupBy(creator_reward_claims.status);
 
   let consumedUsd = 0;
   let approvedRewardUsd = 0;
   for (const r of rows) {
     if (r.status === "approved") {
-      approvedRewardUsd += toNumber(r._sum.amount_usd ?? 0);
+      approvedRewardUsd += toNumber(r.amount);
     }
     if (r.status === "approved" || r.status === "pending") {
-      consumedUsd += toNumber(r._sum.consumed_wager_usd ?? 0);
+      consumedUsd += toNumber(r.consumed);
     }
   }
 
@@ -372,17 +407,21 @@ async function priorHoldings(
   // (program, user) are few, so this correction is a cheap targeted read and
   // only runs when there is something to correct.
   if (consumedUsd > 0) {
-    const stale = await adminDb.creator_reward_claims.aggregate({
-      where: {
-        program_id: programId,
-        user_id: userId,
-        leg: "wager",
-        status: { in: [...BASIS_HOLDING_STATUSES] },
-        requested_at: { lt: runStart },
-      },
-      _sum: { consumed_wager_usd: true },
-    });
-    consumedUsd -= toNumber(stale._sum.consumed_wager_usd ?? 0);
+    const stale = await adminDrizzle
+      .select({
+        value: sql<string>`COALESCE(SUM(${creator_reward_claims.consumed_wager_usd}), 0)::text`,
+      })
+      .from(creator_reward_claims)
+      .where(
+        and(
+          eq(creator_reward_claims.program_id, programId),
+          eq(creator_reward_claims.user_id, userId),
+          eq(creator_reward_claims.leg, "wager"),
+          inArray(creator_reward_claims.status, [...BASIS_HOLDING_STATUSES]),
+          lt(creator_reward_claims.requested_at, runStart.toISOString()),
+        ),
+      );
+    consumedUsd -= toNumber(stale[0]?.value);
     if (consumedUsd < 0) consumedUsd = 0;
   }
 
@@ -667,14 +706,22 @@ export async function computeLossbackEntitlement(
   let payout = ftd.payoutUsd;
   let capped = false;
   if (program.max_reward_per_user_usd != null) {
-    const approved = await adminDb.creator_reward_claims.aggregate({
-      where: { program_id: program.id, user_id: userId, status: "approved" },
-      _sum: { amount_usd: true },
-    });
+    const approved = await adminDrizzle
+      .select({
+        value: sql<string>`COALESCE(SUM(${creator_reward_claims.amount_usd}), 0)::text`,
+      })
+      .from(creator_reward_claims)
+      .where(
+        and(
+          eq(creator_reward_claims.program_id, program.id),
+          eq(creator_reward_claims.user_id, userId),
+          eq(creator_reward_claims.status, "approved"),
+        ),
+      );
     const remainingCents = Math.max(
       0,
       toCents(toNumber(program.max_reward_per_user_usd)) -
-        toCents(toNumber(approved._sum.amount_usd ?? 0)),
+        toCents(toNumber(approved[0]?.value)),
     );
     if (toCents(payout) > remainingCents) {
       payout = fromCents(remainingCents);
@@ -735,19 +782,42 @@ export async function computeProgramOffers(
 export async function computeAllEntitlements(
   userId: string,
 ): Promise<CreatorRewardEntitlement[]> {
-  const programs = await adminDb.creator_reward_programs.findMany({
-    where: { is_active: true },
+  const programRows = await adminDrizzle
+    .select()
+    .from(creator_reward_programs)
+    .where(eq(creator_reward_programs.is_active, true))
     // Windows come along for the ride — otherwise every program would
     // trigger its own lookup inside the fan-out.
-    include: {
-      windows: {
-        select: { started_at: true, ended_at: true },
-        orderBy: { started_at: "asc" },
-      },
-    },
-    orderBy: { created_at: "desc" },
-  });
-  if (programs.length === 0) return [];
+    .orderBy(desc(creator_reward_programs.created_at));
+  if (programRows.length === 0) return [];
+  const windowRows = await adminDrizzle
+    .select()
+    .from(creator_reward_program_windows)
+    .where(
+      inArray(
+        creator_reward_program_windows.program_id,
+        programRows.map((program) => program.id),
+      ),
+    )
+    .orderBy(asc(creator_reward_program_windows.started_at));
+  const windowsByProgram = new Map<
+    string,
+    { started_at: Date; ended_at: Date | null }[]
+  >();
+  for (const window of windowRows) {
+    const list = windowsByProgram.get(window.program_id) ?? [];
+    list.push({
+      started_at: new Date(window.started_at),
+      ended_at: window.ended_at ? new Date(window.ended_at) : null,
+    });
+    windowsByProgram.set(window.program_id, list);
+  }
+  const programs: ProgramForCompute[] = programRows.map((program) => ({
+    ...program,
+    codes: program.codes ?? [],
+    accrual_start_at: new Date(program.accrual_start_at),
+    windows: windowsByProgram.get(program.id) ?? [],
+  }));
 
   // SHORT-CIRCUIT. Both legs require an `affiliate_code_usages` row under one
   // of the program's codes — the wager leg needs wager rows, the lossback leg
@@ -768,14 +838,14 @@ export async function computeAllEntitlements(
   ];
   if (allCodes.length === 0) return [];
 
-  const attached = await getProdDb().$queryRaw<{ hit: boolean }[]>`
+  const attached = await getProdDrizzleDb().execute<{ hit: boolean }>(sql`
     SELECT EXISTS (
       SELECT 1 FROM affiliate_code_usages
        WHERE referred_user_id = ${userId}
          AND UPPER(code) = ANY(${allCodes}::text[])
     ) AS hit
-  `;
-  if (attached[0]?.hit !== true) return [];
+  `);
+  if (attached.rows[0]?.hit !== true) return [];
 
   // Load the program-independent facts ONCE, then fan out. Without this a
   // player with 4 programs would trigger 4 deposit lookups and 4 holdings

@@ -2,10 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
 import { require2FA } from "@/lib/require-2fa";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { isPostgresError } from "@/lib/postgres-errors";
 
 // ---------------------------------------------------------------------------
 // RoleV2 P3 — rename a role's DISPLAY name (built-in OR custom).
@@ -52,8 +54,7 @@ const renameSchema = z.object({
 });
 
 function isUniqueViolation(err: unknown): boolean {
-  const code = (err as { code?: string })?.code;
-  if (code === "P2002") return true;
+  if (isPostgresError(err, "23505")) return true;
   const msg = err instanceof Error ? err.message.toLowerCase() : "";
   return msg.includes("unique") || msg.includes("duplicate");
 }
@@ -77,10 +78,17 @@ export async function renameRole(
 
   await require2FA(session.userId, parsed.data.code);
 
-  const existing = await adminDb.admin_roles.findUnique({
-    where: { id },
-    select: { id: true, name: true, is_system: true, system_key: true },
-  });
+  const existing = (await adminDrizzle.execute<{
+    id: string;
+    name: string;
+    is_system: boolean;
+    system_key: string | null;
+  }>(sql`
+    SELECT id::text, name, is_system, system_key
+    FROM admin_roles
+    WHERE id = ${id}::uuid
+    LIMIT 1
+  `)).rows[0];
   if (!existing) return { ok: false, error: "Role not found" };
 
   // `admin` (the one superuser role) name is locked.
@@ -110,11 +118,11 @@ export async function renameRole(
   if (name === existing.name) return { ok: true };
 
   try {
-    await adminDb.admin_roles.update({
-      where: { id },
-      data: { name },
-      select: { id: true },
-    });
+    await adminDrizzle.execute(sql`
+      UPDATE admin_roles
+      SET name = ${name}, updated_at = NOW()
+      WHERE id = ${id}::uuid
+    `);
   } catch (err) {
     if (isUniqueViolation(err)) {
       return { ok: false, error: "A role with that name already exists" };

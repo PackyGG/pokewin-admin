@@ -2,7 +2,7 @@
  * Pure client-safe types + constants + validators for admin preferences.
  *
  * Split out of `./admin-preferences.ts` so "use client" components (like
- * the profile preferences form) can import without dragging `adminDb` +
+ * the profile preferences form) can import without dragging the database +
  * `pg` into the browser bundle — Turbopack pulls the whole module even
  * for type-only imports when any value import crosses the boundary.
  */

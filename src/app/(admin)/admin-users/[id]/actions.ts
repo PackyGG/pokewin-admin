@@ -1,8 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { adminDb } from "@/lib/admin-db";
-import { getDb } from "@/lib/db";
+import { eq, ilike, or, sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { getDrizzleDb } from "@/lib/db";
+import {
+  affiliate_accounts,
+  affiliate_codes,
+  user,
+} from "@/lib/db-schema/main/schema";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { require2FA } from "@/lib/require-2fa";
@@ -14,6 +20,7 @@ import {
   getBaselineMap,
 } from "@/lib/permissions/write-paths";
 import { wouldReduceOwnAccessViaOverride } from "@/lib/admin-guards";
+import { isPostgresError } from "@/lib/postgres-errors";
 
 export async function forceExpireAllSessions(adminUserId: string) {
   const session = await requireAdmin();
@@ -23,14 +30,13 @@ export async function forceExpireAllSessions(adminUserId: string) {
 
   // Mark the admin_sessions rows logged-out (the existing behavior — keeps the
   // sessions list accurate).
-  await adminDb.admin_sessions.updateMany({
-    where: {
-      admin_user_id: adminUserId,
-      logged_out_at: null,
-      expires_at: { gt: now },
-    },
-    data: { logged_out_at: now },
-  });
+  await adminDrizzle.execute(sql`
+    UPDATE admin_sessions
+    SET logged_out_at = ${now}
+    WHERE admin_user_id = ${adminUserId}::uuid
+      AND logged_out_at IS NULL
+      AND expires_at > ${now}
+  `);
 
   // Guard 3 — REAL revocation. The admin_sessions rows are an audit record, not
   // the auth token; the live session is the signed `admin_session` JWT in the
@@ -41,16 +47,13 @@ export async function forceExpireAllSessions(adminUserId: string) {
   // Wrapped so a DB without the column (shouldn't happen — it's applied on
   // prod) still completes the logged-out write + audit rather than throwing.
   try {
-    await adminDb.admin_users.update({
-      where: { id: adminUserId },
-      data: { sessions_valid_after: now },
-      select: { id: true },
-    });
+    await adminDrizzle.execute(sql`
+      UPDATE admin_users
+      SET sessions_valid_after = ${now}
+      WHERE id = ${adminUserId}::uuid
+    `);
   } catch (err) {
-    const code = (err as { code?: string })?.code;
-    const missingColumn =
-      code === "P2022" ||
-      (err instanceof Error && /column .* does not exist/i.test(err.message));
+    const missingColumn = isPostgresError(err, "42703");
     if (!missingColumn) throw err;
     console.error(
       "[forceExpireAllSessions] sessions_valid_after column missing — JWT-level revocation skipped:",
@@ -128,15 +131,14 @@ export async function updateUserPermissions(
     throw new Error("You can't remove your own admin access");
   }
 
-  await adminDb.admin_users.update({
-    where: { id: userId },
-    data: {
-      permission_grants: grants,
-      permission_revokes: revokes,
-      allowed_pages: allowedPages,
-    },
-    select: { id: true },
-  });
+  await adminDrizzle.execute(sql`
+    UPDATE admin_users
+    SET permission_grants = ${grants},
+        permission_revokes = ${revokes},
+        allowed_pages = ${allowedPages},
+        updated_at = NOW()
+    WHERE id = ${userId}::uuid
+  `);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -154,21 +156,21 @@ export async function updateUserPermissions(
 }
 
 export async function searchMainSiteUsers(query: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   await requireAdmin();
 
   if (!query || query.length < 2) return [];
 
-  const users = await db.user.findMany({
-    where: {
-      OR: [
-        { username: { contains: query, mode: "insensitive" } },
-        { email: { contains: query, mode: "insensitive" } },
-      ],
-    },
-    select: { id: true, username: true, email: true, role: true },
-    take: 10,
-  });
+  const users = await db
+    .select({ id: user.id, username: user.username, email: user.email, role: user.role })
+    .from(user)
+    .where(
+      or(
+        ilike(user.username, `%${query}%`),
+        ilike(user.email, `%${query}%`),
+      ),
+    )
+    .limit(10);
 
   return users.map((u) => ({
     id: u.id,
@@ -179,30 +181,37 @@ export async function searchMainSiteUsers(query: string) {
 }
 
 export async function linkCreatorToMainUser(adminUserId: string, mainUserId: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
 
-  const adminUser = await adminDb.admin_users.findUnique({
-    where: { id: adminUserId },
-    select: { role: true, email: true },
-  });
+  const adminResult = await adminDrizzle.execute<{
+    role: string;
+    email: string;
+  }>(sql`
+    SELECT role::text AS role, email
+    FROM admin_users
+    WHERE id = ${adminUserId}::uuid
+    LIMIT 1
+  `);
+  const adminUser = adminResult.rows[0];
   if (!adminUser || adminUser.role !== "creator") {
     throw new Error("Admin user is not a creator");
   }
 
-  const mainUser = await db.user.findUnique({
-    where: { id: mainUserId },
-    select: { id: true, email: true, username: true, role: true },
-  });
+  const [mainUser] = await db
+    .select({ id: user.id, email: user.email, username: user.username, role: user.role })
+    .from(user)
+    .where(eq(user.id, mainUserId))
+    .limit(1);
   if (!mainUser) throw new Error("Main site user not found");
   if (!mainUser.email) throw new Error("Main site user has no email");
 
   // Update admin_user email to match main site user (this is how linking works)
-  await adminDb.admin_users.update({
-    where: { id: adminUserId },
-    data: { email: mainUser.email },
-    select: { id: true },
-  });
+  await adminDrizzle.execute(sql`
+    UPDATE admin_users
+    SET email = ${mainUser.email}, updated_at = NOW()
+    WHERE id = ${adminUserId}::uuid
+  `);
 
   // If the main user isn't already a creator, set them up
   if (mainUser.role !== "creator") {
@@ -211,23 +220,30 @@ export async function linkCreatorToMainUser(adminUserId: string, mainUserId: str
       .replace(/[^a-z0-9]/g, "");
 
     let finalCode = code;
-    const existingCode = await db.affiliate_codes.findUnique({ where: { code: finalCode } });
+    const [existingCode] = await db
+      .select({ id: affiliate_codes.id })
+      .from(affiliate_codes)
+      .where(eq(affiliate_codes.code, finalCode))
+      .limit(1);
     if (existingCode) {
       finalCode = `${code}${Math.floor(Math.random() * 1000)}`;
     }
 
-    await db.$transaction([
-      db.user.update({
-        where: { id: mainUserId },
-        data: { role: "creator", affiliate_code: finalCode, affiliate_code_active: true },
-      }),
-      db.affiliate_accounts.create({
-        data: { user_id: mainUserId },
-      }),
-      db.affiliate_codes.create({
-        data: { user_id: mainUserId, code: finalCode },
-      }),
-    ]);
+    await db.transaction(async (tx) => {
+      await tx
+        .update(user)
+        .set({
+          role: "creator",
+          affiliate_code: finalCode,
+          affiliate_code_active: true,
+          updated_at: new Date().toISOString(),
+        })
+        .where(eq(user.id, mainUserId));
+      await tx.insert(affiliate_accounts).values({ user_id: mainUserId });
+      await tx
+        .insert(affiliate_codes)
+        .values({ user_id: mainUserId, code: finalCode });
+    });
   }
 
   await createAdminAuditEvent({

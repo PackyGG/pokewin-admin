@@ -1,9 +1,7 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getRaceInsightsPerTypeFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/race/per-type";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -63,23 +61,20 @@ async function computePerType(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RacePerTypeRow[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const dateClaims =
-    days !== null
-      ? `AND rc.claimed_at >= NOW() - INTERVAL '${days} days'`
-      : "";
+  const dateClaims = daysAgoFilter("rc.claimed_at", days);
   const dateSnapshots =
     days !== null
-      ? `AND rls.period_start >= (NOW() - INTERVAL '${days} days')::date`
-      : "";
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+      ? sql`AND rls.period_start >= (NOW() - (${days} * INTERVAL '1 day'))::date`
+      : sql.raw("");
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Three parallel queries: per-type claim rollup + per-type entrant
   // (snapshot) rollup + per-type configured budget. All zip together in
   // post-processing.
   const [claimRows, entrantRows, budgetRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryRows<
       {
         race_type: string;
         distinct_races: string;
@@ -87,7 +82,7 @@ async function computePerType(
         winner_count: string;
         distinct_winners: string;
       }[]
-    >(`
+    >(db, sql`
       SELECT
         rc.race_type::text AS race_type,
         COUNT(DISTINCT (rc.race_period_start))::text AS distinct_races,
@@ -104,14 +99,14 @@ async function computePerType(
     // (user, race_type, period_start) as one entrant. The avg entrants
     // per race = total entries / distinct races. Same staff + blacklist
     // exclusion via JOIN to user.
-    db.$queryRawUnsafe<
+    queryRows<
       {
         race_type: string;
         distinct_races: string;
         total_entries: string;
         distinct_entrants: string;
       }[]
-    >(`
+    >(db, sql`
       SELECT
         rls.race_type::text AS race_type,
         COUNT(DISTINCT (rls.period_start))::text AS distinct_races,
@@ -123,7 +118,7 @@ async function computePerType(
         ${dateSnapshots}
       GROUP BY rls.race_type
     `),
-    db.$queryRawUnsafe<{ race_type: string; total: string }[]>(`
+    queryRows<{ race_type: string; total: string }[]>(db, sql`
       SELECT race_type::text AS race_type, COALESCE(SUM(prize_amount_usd::numeric), 0)::text AS total
       FROM race_prize_tiers
       GROUP BY race_type
@@ -211,20 +206,14 @@ async function computePerType(
 
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveAdminRead<RacePerTypeRow[]>("insights_race_per_type", {
-      pg: () => computePerType(period, blacklistIds),
-      ch: () => getRaceInsightsPerTypeFromClickHouse(period, blacklistIds),
-    }),
+    computePerType(period, blacklistIds),
   ["insights-rewards-race-per-type-v1"],
   { revalidate: 60, tags: ["insights-rewards-race"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveAdminRead<RacePerTypeRow[]>("insights_race_per_type", {
-      pg: () => computePerType(period, blacklistIds),
-      ch: () => getRaceInsightsPerTypeFromClickHouse(period, blacklistIds),
-    }),
+    computePerType(period, blacklistIds),
   ["insights-rewards-race-per-type-lifetime-v1"],
   { revalidate: 300, tags: ["insights-rewards-race"] },
 );

@@ -26,7 +26,14 @@ import {
 } from "@/app/(admin)/insights/edge-calc/math";
 import { createPack, getCardPickerFilters } from "./actions";
 import { uploadImageClient } from "@/lib/upload-image-client";
-import { pack_tag } from "@/generated/prisma/enums";
+const pack_tag = {
+  pct1: "pct1",
+  pct5: "pct5",
+  pct10: "pct10",
+  fifty50: "fifty50",
+  onepiece: "onepiece",
+} as const;
+type pack_tag = (typeof pack_tag)[keyof typeof pack_tag];
 import { RiskLevelSlider } from "./risk-level-slider";
 import { TargetEvOddsSetter } from "./target-ev-odds-setter";
 

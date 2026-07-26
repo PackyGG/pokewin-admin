@@ -1,12 +1,14 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
+import { inArray } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_users } from "@/lib/db-schema/admin/schema";
 
 /**
  * Identity resolution for the antifraud/staff tables.
  *
  * The `staff_*` and `antifraud_*` tables carry bare `admin_user_id` UUIDs
- * (real FKs in the DB, but deliberately NOT modelled as Prisma relations — see
+ * (real FKs in the DB, but deliberately not modeled as application relations — see
  * the schema note: modelling six relations would mean six disambiguated
  * back-relation fields on the `admin_users` hotspot model). So every surface
  * that needs a name or an avatar resolves it here, with ONE batched read per
@@ -44,19 +46,13 @@ export async function loadAdminIdentities(
   if (unique.length === 0) return EMPTY;
 
   try {
-    const rows = await adminDb.admin_users.findMany({
-      where: { id: { in: unique } },
-      select: {
-        id: true,
-        username: true,
-        display_username: true,
-        email: true,
-        role: true,
-        roles: true,
-        is_active: true,
-        profile_image_mime: true,
-      },
-    });
+    const rows = await adminDrizzle.select({
+      id: admin_users.id, username: admin_users.username,
+      display_username: admin_users.display_username, email: admin_users.email,
+      role: admin_users.role, roles: admin_users.roles,
+      is_active: admin_users.is_active,
+      profile_image_mime: admin_users.profile_image_mime,
+    }).from(admin_users).where(inArray(admin_users.id, unique));
 
     return new Map(
       rows.map((row) => [

@@ -1,13 +1,12 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { compareSignupGeoTimeSeries } from "@/lib/clickhouse/compare/insights-signup-geo-timeseries";
 import { SIGNUP_CACHE_TAG } from "./_shared";
 
 /**
@@ -36,16 +35,16 @@ async function computeGeoTimeSeries(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<GeoTimeSeriesCountry[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
   // Cap to 90 days on lifetime so we don't shovel years of points.
   const effectiveDays = days !== null ? days : 90;
-  const dateFilter = `AND u.created_at >= NOW() - INTERVAL '${effectiveDays} days'`;
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const dateFilter = daysAgoFilter("u.created_at", effectiveDays);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Step 1: identify top 5 countries by signup count in window.
   type TopCountryRow = { code: string; signups: string };
-  const topCountries = await db.$queryRawUnsafe<TopCountryRow[]>(`
+  const topCountries = await queryRows<TopCountryRow[]>(db, sql`
     SELECT
       COALESCE(u.country_code, '??') AS code,
       COUNT(*)::text AS signups
@@ -62,9 +61,10 @@ async function computeGeoTimeSeries(
   const topCodes = topCountries.map((r) => r.code);
   // Inline-quote since codes are ISO-2 alphanumeric (or our "??" / "Other"
   // sentinels) — same safety profile as the blacklist helper.
-  const topCodesSql = topCodes
-    .map((c) => `'${c.replace(/'/g, "''")}'`)
-    .join(",");
+  const topCodesSql = sql.join(
+    topCodes.map((code) => sql`${code}`),
+    sql`, `,
+  );
 
   // Step 2: daily series per top country.
   type SeriesRow = {
@@ -73,7 +73,7 @@ async function computeGeoTimeSeries(
     signups: string;
     claimers: string;
   };
-  const seriesRows = await db.$queryRawUnsafe<SeriesRow[]>(`
+  const seriesRows = await queryRows<SeriesRow[]>(db, sql`
     WITH cohort AS (
       SELECT
         u.id AS user_id,
@@ -149,9 +149,5 @@ export async function getSignupGeoTimeSeries(
   const data = await (cacheTtlForInsightsPeriod(period) >= 300
     ? cachedLong(period, sorted)
     : cachedShort(period, sorted));
-  // CQRS rollout: fire-and-forget ClickHouse comparison (no-op unless the
-  // surface flag is in `comparison` mode; forced off when CH is dormant). The
-  // served value stays the Postgres payload above.
-  void compareSignupGeoTimeSeries(period, data);
   return data;
 }

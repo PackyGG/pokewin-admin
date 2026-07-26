@@ -1,6 +1,13 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-import { adminDb } from "@/lib/admin-db";
+import { and, eq, inArray } from "drizzle-orm";
+
+import {
+  antifraud_review_notes,
+  antifraud_reviews,
+  antifraud_signals,
+} from "@/lib/db-schema/admin/schema";
+import { adminDrizzle } from "@/lib/drizzle";
 import {
   parseAntifraudEvent,
   SEVERITY_RANK,
@@ -206,10 +213,11 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
   // partial unique index and is reported as a duplicate rather than
   // double-opening a case.
   if (signal.id) {
-    const existing = await adminDb.antifraud_signals.findFirst({
-      where: { external_id: signal.id },
-      select: { id: true },
-    });
+    const [existing] = await adminDrizzle
+      .select({ id: antifraud_signals.id })
+      .from(antifraud_signals)
+      .where(eq(antifraud_signals.external_id, signal.id))
+      .limit(1);
     if (existing) return "duplicate";
   }
 
@@ -221,13 +229,21 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
   let opened = false;
 
   if (shouldOpenCase && signal.userId) {
-    const live = await adminDb.antifraud_reviews.findFirst({
-      where: {
-        target_user_id: signal.userId,
-        status: { in: ["open", "in_review"] },
-      },
-      select: { id: true, severity: true, risk_score: true, signals: true },
-    });
+    const [live] = await adminDrizzle
+      .select({
+        id: antifraud_reviews.id,
+        severity: antifraud_reviews.severity,
+        risk_score: antifraud_reviews.risk_score,
+        signals: antifraud_reviews.signals,
+      })
+      .from(antifraud_reviews)
+      .where(
+        and(
+          eq(antifraud_reviews.target_user_id, signal.userId),
+          inArray(antifraud_reviews.status, ["open", "in_review"]),
+        ),
+      )
+      .limit(1);
 
     if (live) {
       reviewId = live.id;
@@ -238,9 +254,9 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
         SEVERITY_RANK[
           (live.severity as AntifraudSignalEvent["severity"]) ?? "medium"
         ];
-      await adminDb.antifraud_reviews.update({
-        where: { id: live.id },
-        data: {
+      await adminDrizzle
+        .update(antifraud_reviews)
+        .set({
           severity: worseSeverity ? signal.severity : undefined,
           risk_score:
             signal.riskScore != null &&
@@ -249,20 +265,20 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
               : undefined,
           signals: live.signals.includes(signal.kind)
             ? undefined
-            : { set: [...live.signals, signal.kind] },
-        },
-      });
-      await adminDb.antifraud_review_notes.create({
-        data: {
+            : [...live.signals, signal.kind],
+          updated_at: new Date().toISOString(),
+        })
+        .where(eq(antifraud_reviews.id, live.id));
+      await adminDrizzle.insert(antifraud_review_notes).values({
           review_id: live.id,
           kind: "signal",
           body: `[${signal.severity}] ${signal.kind} — ${signal.summary}`,
-        },
       });
     } else {
       try {
-        const created = await adminDb.antifraud_reviews.create({
-          data: {
+        const [created] = await adminDrizzle
+          .insert(antifraud_reviews)
+          .values({
             target_user_id: signal.userId,
             target_username: signal.username ?? null,
             status: "open",
@@ -271,23 +287,25 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
             risk_score: signal.riskScore ?? null,
             reason: signal.summary,
             signals: [signal.kind],
-            metadata: (signal.payload ?? undefined) as never,
-          },
-          select: { id: true },
-        });
+            metadata: signal.payload ?? undefined,
+          })
+          .returning({ id: antifraud_reviews.id });
         reviewId = created.id;
         opened = true;
       } catch (err) {
         // Lost a race against a concurrent delivery for the same account —
         // the partial unique index did its job. Attach to the winner.
-        if ((err as { code?: string })?.code === "P2002") {
-          const winner = await adminDb.antifraud_reviews.findFirst({
-            where: {
-              target_user_id: signal.userId,
-              status: { in: ["open", "in_review"] },
-            },
-            select: { id: true },
-          });
+        if ((err as { code?: string })?.code === "23505") {
+          const [winner] = await adminDrizzle
+            .select({ id: antifraud_reviews.id })
+            .from(antifraud_reviews)
+            .where(
+              and(
+                eq(antifraud_reviews.target_user_id, signal.userId),
+                inArray(antifraud_reviews.status, ["open", "in_review"]),
+              ),
+            )
+            .limit(1);
           reviewId = winner?.id ?? null;
         } else {
           throw err;
@@ -297,8 +315,7 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
   }
 
   try {
-    await adminDb.antifraud_signals.create({
-      data: {
+    await adminDrizzle.insert(antifraud_signals).values({
         external_id: signal.id || null,
         kind: signal.kind,
         severity: signal.severity,
@@ -306,13 +323,12 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
         target_user_id: signal.userId ?? null,
         target_username: signal.username ?? null,
         summary: signal.summary,
-        payload: (signal.payload ?? undefined) as never,
+        payload: signal.payload ?? undefined,
         review_id: reviewId,
-      },
     });
   } catch (err) {
     // The external-id unique index rejected a concurrent duplicate.
-    if ((err as { code?: string })?.code === "P2002") return "duplicate";
+    if ((err as { code?: string })?.code === "23505") return "duplicate";
     throw err;
   }
 

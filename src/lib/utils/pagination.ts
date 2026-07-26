@@ -1,19 +1,19 @@
 /**
  * URL pagination parsing — the ONE place `?page=` / `?perPage=` become
- * numbers safe to hand to Prisma `skip`/`take` or a SQL OFFSET/LIMIT.
+ * numbers safe to hand to SQL OFFSET/LIMIT.
  *
  * The pattern this replaces was `Number(params.page) || 1` /
  * `Number(params.perPage) || 20`, repeated per tab. `|| fallback` only
  * catches values that coerce to NaN or 0, which leaves three real holes:
  *
- *   • `?page=-5`      → -5 is truthy → `skip: -100` → Prisma throws (500).
+ *   • `?page=-5`      → -5 is truthy → a negative offset throws (500).
  *   • `?page=1e9`     → a billion-row OFFSET → the DB scans and discards
  *                       the whole table before returning nothing.
  *   • `?perPage=1000000` → `take: 1000000` → an authenticated user can pull
  *                       the entire table into memory and serialize it into
  *                       the RSC payload. No upper bound existed anywhere.
  *
- * Fractions (`?perPage=1.5`) are also rejected by Prisma at runtime. All of
+ * Fractions (`?perPage=1.5`) are also invalid at runtime. All of
  * these are reachable by anyone who can load the page, so they are handled
  * here rather than trusted per call site.
  *

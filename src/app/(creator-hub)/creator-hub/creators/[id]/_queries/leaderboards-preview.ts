@@ -16,7 +16,7 @@ import { backendApi } from "@/lib/backend-api/client";
  * new/approved/cancelled board shows immediately (`revalidatePath` does
  * NOT bust `unstable_cache`).
  *
- * Backend API only inside (no `getDb()` / cookies) → env-safe to cache.
+ * Backend API only inside (no request cookie reads) → env-safe to cache.
  * A THROWN fetch is NOT cached (Next only caches resolved values), so a
  * backend outage never pins the failure for the TTL — the card's own
  * catch discriminates it per render.

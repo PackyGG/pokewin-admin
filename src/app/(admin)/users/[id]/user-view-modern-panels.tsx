@@ -290,7 +290,7 @@ function RollingPnlChip({ label, value }: { label: string; value: number }) {
  *
  *   • Locked (`removeKind="wager"`) — the bonus/wager-requirement debt is
  *     cleared by `clearUserWagerRequirementAction`, which routes through
- *     the backend HTTP API (not Prisma). That action exists but it's a
+ *     the backend HTTP API. That action exists but it is a
  *     panel-wide action surfaced on the dedicated Wager Requirement card
  *     (`user-wager-requirement-card.tsx`); reusing it from this row
  *     would dilute the dialog UX that card carries (confirm copy +

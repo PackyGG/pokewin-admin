@@ -1,5 +1,6 @@
+import { queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -52,7 +53,7 @@ async function computeDailyBreakdown(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusDailyRow[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
   // Lifetime is capped to the pairing lookback (365d) so the per-day
@@ -60,11 +61,12 @@ async function computeDailyBreakdown(
   // The table itself is additionally row-capped below.
   const dateFilter = windowDateFilterCapped(period, "lt");
   const dateFilterD = windowDateFilterCapped(period, "d");
-  const limitClause = days === null ? `LIMIT ${LIFETIME_DAY_LIMIT}` : "";
+  const limitClause =
+    days === null ? sql`LIMIT ${LIFETIME_DAY_LIMIT}` : sql.raw("");
 
   // Three small per-day rollups joined on date — deposits / bonuses /
   // bonus-attached deposits via the canonical pairing rule.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       date: Date;
       deposit_count: string;
@@ -74,7 +76,7 @@ async function computeDailyBreakdown(
       bonus_volume: string;
       claimants: string;
     }[]
-  >(`
+  >(db, sql`
     WITH deposits AS (
       SELECT
         DATE(d.created_at) AS date,

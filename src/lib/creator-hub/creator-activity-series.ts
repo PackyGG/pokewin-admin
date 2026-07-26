@@ -1,8 +1,9 @@
+import { queryRows } from "@/lib/drizzle-query";
 import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { getDevDb, getProdDb } from "@/lib/db";
+import { drizzleForEnv } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -160,7 +161,7 @@ const cachedCreatorActivityInner = (
 ) =>
   unstable_cache(
     async (): Promise<CreatorActivitySeries> => {
-      const db = env === "dev" ? getDevDb() : getProdDb();
+      const db = drizzleForEnv(env);
       const days = periodToDays(period);
       const sinceClause = (col: string) =>
         `AND ${col} >= NOW() - INTERVAL '${days} days'`;
@@ -168,9 +169,9 @@ const cachedCreatorActivityInner = (
       const lateral = coveringLateralForCreator;
 
       const [ledgerRows, invRows, upgRows, depositRows] = await Promise.all([
-        db.$queryRawUnsafe<
+        queryRows<
           { bucket: string; wager: string; ledger_payout: string }[]
-        >(
+        >(db,
           `SELECT to_char(DATE(ledger_transactions.created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS bucket,
                   COALESCE(SUM(CASE WHEN ledger_transactions.type IN ${WAGER_TYPES_SQL} THEN ABS(ledger_transactions.amount::numeric) ELSE 0 END), 0)::text AS wager,
                   COALESCE(SUM(CASE WHEN ledger_transactions.type IN ${GAMING_PAYOUT_TYPES_SQL} THEN ABS(ledger_transactions.amount::numeric) ELSE 0 END), 0)::text AS ledger_payout
@@ -185,7 +186,7 @@ const cachedCreatorActivityInner = (
             ORDER BY bucket`,
           creatorUserId,
         ),
-        db.$queryRawUnsafe<{ bucket: string; inv_payout: string }[]>(
+        queryRows<{ bucket: string; inv_payout: string }[]>(db,
           `SELECT to_char(DATE(user_inventory.obtained_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS bucket,
                   COALESCE(SUM(user_inventory.value_at_obtained::numeric), 0)::text AS inv_payout
              FROM user_inventory
@@ -200,9 +201,9 @@ const cachedCreatorActivityInner = (
           creatorUserId,
         ),
         hasUpgrader
-          ? db.$queryRawUnsafe<
+          ? queryRows<
               { bucket: string; upg_wager: string; upg_payout: string }[]
-            >(
+            >(db,
               `SELECT to_char(DATE(upgrader_games.created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS bucket,
                       COALESCE(SUM(upgrader_games.bet_amount::numeric), 0)::text AS upg_wager,
                       COALESCE(SUM(upgrader_games.won_amount::numeric), 0)::text AS upg_payout
@@ -221,7 +222,7 @@ const cachedCreatorActivityInner = (
           : Promise.resolve(
               [] as { bucket: string; upg_wager: string; upg_payout: string }[],
             ),
-        db.$queryRawUnsafe<BucketRow[]>(
+        queryRows<BucketRow[]>(db,
           `SELECT to_char(DATE(lt.created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS bucket,
                   COALESCE(SUM(lt.amount::numeric), 0)::text AS amount
              FROM ledger_transactions lt
@@ -331,7 +332,7 @@ export async function getCreatorActivitySeries(
 ): Promise<CreatorActivitySeries> {
   return withTiming("creator-hub.activitySeries", async () => {
     const env = await readDbEnv();
-    const probeDb = env === "dev" ? getDevDb() : getProdDb();
+    const probeDb = drizzleForEnv(env);
     const scope = await getMetricsScope();
     const excluded = await getExcludedUserIds();
 
@@ -343,8 +344,10 @@ export async function getCreatorActivitySeries(
         ? ` AND u.id NOT IN (${escapeBlacklistIds(excluded)})`
         : "";
 
-    const upgProbe = await probeDb.$queryRaw<{ exists: string | null }[]>`
-      SELECT to_regclass('public.upgrader_games')::text AS exists`;
+    const upgProbe = await queryRows<{ exists: string | null }[]>(
+      probeDb,
+      "SELECT to_regclass('public.upgrader_games')::text AS exists",
+    );
     const hasUpgrader = upgProbe[0]?.exists != null;
 
     return cachedCreatorActivityInner(

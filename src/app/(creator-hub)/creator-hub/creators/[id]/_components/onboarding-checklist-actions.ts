@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/drizzle";
+import { creator_onboarding_checklist } from "@/lib/db-schema/admin/schema";
 import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
@@ -59,6 +60,22 @@ const txUrlSchema = z
   );
 
 type ActionResult = { success: true } | { success: false; error: string };
+type ChecklistPatch = Partial<
+  typeof creator_onboarding_checklist.$inferInsert
+>;
+
+async function upsertChecklist(
+  targetUserId: string,
+  patch: ChecklistPatch,
+): Promise<void> {
+  await adminDrizzle
+    .insert(creator_onboarding_checklist)
+    .values({ target_user_id: targetUserId, ...patch })
+    .onConflictDoUpdate({
+      target: creator_onboarding_checklist.target_user_id,
+      set: patch,
+    });
+}
 
 /** Refresh both the Hub detail route and the legacy admin detail route. */
 function revalidateCreator(userId: string) {
@@ -113,19 +130,14 @@ export async function setChecklistToggle(
 
   // Build the column patch. The `*_at` timestamp (only lb_funds_collected has
   // one) is stamped when turning on, cleared when turning off.
-  const data: Record<string, unknown> = {
+  const data: ChecklistPatch = {
     [boolCol]: value,
     updated_by: adminUserId,
   };
-  if (atCol) data[atCol] = value ? new Date() : null;
+  if (atCol) data[atCol] = value ? new Date().toISOString() : null;
 
   try {
-    await adminDb.creator_onboarding_checklist.upsert({
-      where: { target_user_id: userId },
-      create: { target_user_id: userId, ...data },
-      update: data,
-      select: { id: true },
-    });
+    await upsertChecklist(userId, data);
   } catch {
     return {
       success: false,
@@ -176,19 +188,14 @@ export async function setChecklistGiveawayUrl(
 
   // Pasting a URL also flips the giveaway item on (the manager clearly hosted
   // it); clearing the URL does NOT auto-flip it off.
-  const data: Record<string, unknown> = {
+  const data: ChecklistPatch = {
     twitter_giveaway_url: normalized,
     updated_by: adminUserId,
   };
   if (normalized) data.twitter_giveaway_done = true;
 
   try {
-    await adminDb.creator_onboarding_checklist.upsert({
-      where: { target_user_id: userId },
-      create: { target_user_id: userId, ...data },
-      update: data,
-      select: { id: true },
-    });
+    await upsertChecklist(userId, data);
   } catch {
     return {
       success: false,
@@ -252,12 +259,7 @@ export async function setChecklistLbPrepaidProof(
   };
 
   try {
-    await adminDb.creator_onboarding_checklist.upsert({
-      where: { target_user_id: userId },
-      create: { target_user_id: userId, ...data },
-      update: data,
-      select: { id: true },
-    });
+    await upsertChecklist(userId, data);
   } catch {
     return {
       success: false,

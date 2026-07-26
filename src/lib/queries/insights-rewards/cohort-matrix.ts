@@ -1,7 +1,7 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import type { InsightsRewardsPeriod } from "./_period";
 
@@ -92,8 +92,8 @@ export type RewardsCohortMatrix = {
 async function computeCohortMatrix(
   blacklistIds: string[],
 ): Promise<RewardsCohortMatrix> {
-  const db = await getDb();
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const db = await getDrizzleDb();
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Per-cohort rollup:
   //   cohort_users   : signup → cohort_month
@@ -104,7 +104,7 @@ async function computeCohortMatrix(
   // and the claimer / non-claimer split via FILTER. Limits to the most
   // recent 12 months via a DATE_TRUNC filter so older cohorts don't
   // explode the row count.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       cohort: Date;
       cohort_size: string;
@@ -115,14 +115,14 @@ async function computeCohortMatrix(
       claimer_user_count: string;
       non_claimer_user_count: string;
     }[]
-  >(`
+  >(db, sql`
     WITH cohort_users AS (
       SELECT
         u.id AS user_id,
         DATE_TRUNC('month', u.created_at) AS cohort_month
       FROM "user" u
       WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
-        AND u.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '${COHORT_MONTHS - 1} months'
+        AND u.created_at >= DATE_TRUNC('month', NOW()) - ((${COHORT_MONTHS - 1}) * INTERVAL '1 month')
     ),
     user_rewards AS (
       -- Reward $ NETS rain to its house slice per user
@@ -144,7 +144,7 @@ async function computeCohortMatrix(
       LEFT JOIN ledger_transactions lt
         ON lt.user_id = cu.user_id
        AND lt.status = 'completed'
-       AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
+       AND lt.type::text IN ${sql.raw(ALL_REWARD_TYPES_SQL)}
       GROUP BY cu.user_id
     ),
     user_wager AS (
@@ -153,7 +153,7 @@ async function computeCohortMatrix(
       LEFT JOIN ledger_transactions lt
         ON lt.user_id = cu.user_id
        AND lt.status = 'completed'
-       AND lt.type::text IN ${WAGER_TYPES_SQL}
+       AND lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
       GROUP BY cu.user_id
     ),
     user_payout AS (
@@ -162,7 +162,7 @@ async function computeCohortMatrix(
       LEFT JOIN ledger_transactions lt
         ON lt.user_id = cu.user_id
        AND lt.status = 'completed'
-       AND lt.type::text IN ${PAYOUT_TYPES_SQL}
+       AND lt.type::text IN ${sql.raw(PAYOUT_TYPES_SQL)}
       GROUP BY cu.user_id
     ),
     per_user AS (

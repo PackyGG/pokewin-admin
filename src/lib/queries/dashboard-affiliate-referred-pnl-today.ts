@@ -2,8 +2,6 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 import { withTiming } from "@/lib/observability/query-timings";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getAffiliateReferredPnlTodayFromClickHouse } from "@/lib/clickhouse/queries/dashboard/affiliate-referred-pnl-today";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { calculateWindowedPnl } from "./pnl";
 
@@ -113,25 +111,15 @@ const cachedAffiliateReferredPnlToday = unstable_cache(
     excludeUserIds: string[],
   ): Promise<number> => {
     void dayKey; // part of the cache key only
-    // CQRS serve-path: clickhouse serves the CH twin (SOLE read);
     // off/comparison serve Postgres. Parity confirmed cent-exact.
-    return resolveAdminRead<number>("dashboard_affiliate_referred_pnl_today", {
-      pg: async () => {
+    return (async () => {
         const { pnl } = await calculateWindowedPnl({
           since: new Date(sinceIso),
           excludeUserIds,
           populationScopeSql: AFFILIATE_REFERRED_POPULATION_SCOPE_SQL,
         });
         return pnl;
-      },
-      ch: async () => {
-        const { pnl } = await getAffiliateReferredPnlTodayFromClickHouse(
-          new Date(sinceIso),
-          excludeUserIds,
-        );
-        return pnl;
-      },
-    });
+    })();
   },
   ["dashboard-affiliate-referred-pnl-today-v1"],
   { revalidate: 60, tags: ["dashboard-activity"] },

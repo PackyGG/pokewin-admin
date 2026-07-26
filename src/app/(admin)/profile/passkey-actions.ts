@@ -1,8 +1,10 @@
 "use server";
 
 import { z } from "zod";
+import { and, count, desc, eq } from "drizzle-orm";
 import { verifySession } from "@/lib/dal";
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_passkeys } from "@/lib/db-schema/admin/schema";
 import { buildRegistrationOptions, checkRegistration } from "@/lib/webauthn";
 import {
   createWebauthnChallenge,
@@ -41,32 +43,27 @@ export type PasskeySummary = {
 
 export async function listMyPasskeys(): Promise<PasskeySummary[]> {
   const session = await verifySession();
-  const rows = await adminDb.admin_passkeys.findMany({
-    where: { admin_user_id: session.userId },
-    orderBy: { created_at: "desc" },
-    select: {
-      id: true,
-      device_name: true,
-      created_at: true,
-      last_used_at: true,
-      backed_up: true,
-    },
-  });
+  const rows = await adminDrizzle.select({
+    id: admin_passkeys.id, device_name: admin_passkeys.device_name,
+    created_at: admin_passkeys.created_at, last_used_at: admin_passkeys.last_used_at,
+    backed_up: admin_passkeys.backed_up,
+  }).from(admin_passkeys).where(eq(admin_passkeys.admin_user_id, session.userId))
+    .orderBy(desc(admin_passkeys.created_at));
   return rows.map((r) => ({
     id: r.id,
     deviceName: r.device_name,
-    createdAt: r.created_at.toISOString(),
-    lastUsedAt: r.last_used_at ? r.last_used_at.toISOString() : null,
+    createdAt: new Date(r.created_at).toISOString(),
+    lastUsedAt: r.last_used_at ? new Date(r.last_used_at).toISOString() : null,
     backedUp: r.backed_up,
   }));
 }
 
 export async function startPasskeyRegistration(): Promise<PublicKeyCredentialCreationOptionsJSON> {
   const session = await verifySession();
-  const existing = await adminDb.admin_passkeys.findMany({
-    where: { admin_user_id: session.userId },
-    select: { credential_id: true, transports: true },
-  });
+  const existing = await adminDrizzle.select({
+    credential_id: admin_passkeys.credential_id,
+    transports: admin_passkeys.transports,
+  }).from(admin_passkeys).where(eq(admin_passkeys.admin_user_id, session.userId));
   if (existing.length >= MAX_PASSKEYS_PER_ADMIN) {
     throw new Error(PASSKEY_LIMIT_MESSAGE);
   }
@@ -129,36 +126,32 @@ export async function finishPasskeyRegistration(
 
   const { credential, credentialBackedUp } = verification.registrationInfo;
 
-  const dup = await adminDb.admin_passkeys.findUnique({
-    where: { credential_id: credential.id },
-    select: { id: true },
-  });
+  const [dup] = await adminDrizzle.select({ id: admin_passkeys.id })
+    .from(admin_passkeys).where(eq(admin_passkeys.credential_id, credential.id)).limit(1);
   if (dup) {
     throw new Error("This passkey is already registered.");
   }
 
   // Authoritative cap check: re-count right before insert so a second
   // concurrent registration can't slip past the start-time guard.
-  const ownedCount = await adminDb.admin_passkeys.count({
-    where: { admin_user_id: session.userId },
-  });
+  const [owned] = await adminDrizzle.select({ value: count() }).from(admin_passkeys)
+    .where(eq(admin_passkeys.admin_user_id, session.userId));
+  const ownedCount = owned?.value ?? 0;
   if (ownedCount >= MAX_PASSKEYS_PER_ADMIN) {
     throw new Error(PASSKEY_LIMIT_MESSAGE);
   }
 
   const cleanName = parsedName.data ? parsedName.data : null;
-  const created = await adminDb.admin_passkeys.create({
-    data: {
+  const [created] = await adminDrizzle.insert(admin_passkeys).values({
       admin_user_id: session.userId,
       credential_id: credential.id,
       public_key: Buffer.from(credential.publicKey),
-      counter: BigInt(credential.counter),
+      counter: credential.counter,
       transports: credential.transports ?? [],
       device_name: cleanName,
       backed_up: credentialBackedUp,
-    },
-    select: { id: true },
-  });
+    }).returning({ id: admin_passkeys.id });
+  if (!created) throw new Error("Passkey insert returned no row");
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -177,11 +170,11 @@ export async function renamePasskey(
   const name = deviceName.trim().slice(0, 60);
   // updateMany with both the id AND the owner so it can only ever hit the
   // caller's own credential.
-  const result = await adminDb.admin_passkeys.updateMany({
-    where: { id, admin_user_id: session.userId },
-    data: { device_name: name || null },
-  });
-  if (result.count === 0) {
+  const result = await adminDrizzle.update(admin_passkeys)
+    .set({ device_name: name || null })
+    .where(and(eq(admin_passkeys.id, id), eq(admin_passkeys.admin_user_id, session.userId)))
+    .returning({ id: admin_passkeys.id });
+  if (result.length === 0) {
     throw new Error("Passkey not found.");
   }
   return { success: true };
@@ -189,10 +182,10 @@ export async function renamePasskey(
 
 export async function deletePasskey(id: string): Promise<{ success: true }> {
   const session = await verifySession();
-  const result = await adminDb.admin_passkeys.deleteMany({
-    where: { id, admin_user_id: session.userId },
-  });
-  if (result.count === 0) {
+  const result = await adminDrizzle.delete(admin_passkeys)
+    .where(and(eq(admin_passkeys.id, id), eq(admin_passkeys.admin_user_id, session.userId)))
+    .returning({ id: admin_passkeys.id });
+  if (result.length === 0) {
     throw new Error("Passkey not found.");
   }
   await createAdminAuditEvent({

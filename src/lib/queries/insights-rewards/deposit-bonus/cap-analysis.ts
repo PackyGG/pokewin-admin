@@ -1,5 +1,6 @@
+import { queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   cacheTtlForInsightsPeriod,
@@ -93,14 +94,14 @@ async function computeCapAnalysis(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusCapAnalysis> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
 
   // Step 1: empirical cap = MAX(ABS(amount)). Always cheap.
-  const capRows = await db.$queryRawUnsafe<
+  const capRows = await queryRows<
     { max_amount: string | null; cnt: string }[]
-  >(`
+  >(db, sql`
     SELECT
       MAX(ABS(lt.amount::numeric))::text AS max_amount,
       COUNT(*)::text AS cnt
@@ -130,12 +131,12 @@ async function computeCapAnalysis(
   // Step 2: cap-equal rows + per-day series + histogram + top hitters.
   // capValue is used as a literal numeric — toFixed(2) keeps the SQL
   // safe (we already validated it's a positive number).
-  const capLiteral = capValue.toFixed(2);
+  const capLiteral = Number(capValue.toFixed(2));
   const [hitsRows, dailyRows, histogramRows, topHittersRows] =
     await Promise.all([
-      db.$queryRawUnsafe<
+      queryRows<
         { hits: string; hitters: string }[]
-      >(`
+      >(db, sql`
         SELECT
           COUNT(*)::text AS hits,
           COUNT(DISTINCT lt.user_id)::text AS hitters
@@ -146,9 +147,9 @@ async function computeCapAnalysis(
           AND ABS(lt.amount::numeric) = ${capLiteral}
           ${dateFilter}
       `),
-      db.$queryRawUnsafe<
+      queryRows<
         { date: Date; bonuses: string; cap_hits: string }[]
-      >(`
+      >(db, sql`
         SELECT
           DATE(lt.created_at) AS date,
           COUNT(*)::text AS bonuses,
@@ -161,9 +162,9 @@ async function computeCapAnalysis(
         GROUP BY DATE(lt.created_at)
         ORDER BY date ASC
       `),
-      db.$queryRawUnsafe<
+      queryRows<
         { bucket: number; cnt: string; volume: string }[]
-      >(`
+      >(db, sql`
         WITH bounded AS (
           SELECT
             ABS(lt.amount::numeric) AS amt
@@ -183,7 +184,7 @@ async function computeCapAnalysis(
         GROUP BY 1
         ORDER BY 1
       `),
-      db.$queryRawUnsafe<
+      queryRows<
         {
           user_id: string;
           username: string | null;
@@ -191,7 +192,7 @@ async function computeCapAnalysis(
           total_bonus: string;
           last_hit_at: Date;
         }[]
-      >(`
+      >(db, sql`
         SELECT
           u.id AS user_id,
           u.username,
@@ -282,7 +283,7 @@ async function computeCapAnalysis(
   // deposits, identical to the original). The cap-equal predicate
   // (ABS(amount) = capValue) is pushed into the materialised bonus CTE.
   // Drops the query from a >30s timeout to <0.5s on live prod data.
-  const biggestCapDepositsRows = await db.$queryRawUnsafe<
+  const biggestCapDepositsRows = await queryRows<
     {
       user_id: string;
       username: string | null;
@@ -290,7 +291,7 @@ async function computeCapAnalysis(
       bonus_usd: string;
       created_at: Date;
     }[]
-  >(`
+  >(db, sql`
     WITH window_deposits AS MATERIALIZED (
       SELECT d.id, d.user_id, d.amount::numeric AS deposit_amt, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
@@ -380,13 +381,13 @@ async function computeCapHitRate(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusCapHitRate> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
 
-  const capRows = await db.$queryRawUnsafe<
+  const capRows = await queryRows<
     { max_amount: string | null; cnt: string }[]
-  >(`
+  >(db, sql`
     SELECT
       MAX(ABS(lt.amount::numeric))::text AS max_amount,
       COUNT(*)::text AS cnt
@@ -404,8 +405,8 @@ async function computeCapHitRate(
     return { capValue: 0, capHits: 0, totalCount, capHitRate: 0 };
   }
 
-  const capLiteral = capValue.toFixed(2);
-  const hitsRows = await db.$queryRawUnsafe<{ hits: string }[]>(`
+  const capLiteral = Number(capValue.toFixed(2));
+  const hitsRows = await queryRows<{ hits: string }[]>(db, sql`
     SELECT COUNT(*)::text AS hits
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'

@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
  * /promo-codes/[id]).
  *
  * The promo-codes view lists campaign codes and their redemption /
- * balance impact. A failed query or a stale Prisma column would
+ * balance impact. A failed query or a stale schema column would
  * otherwise bubble to the umbrella `(admin)/error.tsx`; this boundary
  * scopes it to /promo-codes with a calm "the READ failed, the codes are
  * fine" message. The reset path re-runs the server render without a full
@@ -58,7 +58,7 @@ export default function PromoCodesError({
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <p className="text-xs text-muted-foreground">
           Only the read path failed — promo-code definitions and redemption
-          counts are unchanged. A transient timeout or a stale Prisma column
+          counts are unchanged. A transient timeout or a stale schema column
           is the most common cause. Server logs have the full stack — search
           for the digest above.
         </p>

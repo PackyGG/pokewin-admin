@@ -1,15 +1,15 @@
 import { unstable_cache } from "next/cache";
-import {
-  ledger_transaction_type,
-  type ledger_transaction_type as LedgerTransactionType,
-} from "@/generated/prisma/enums";
-import { dbForEnv } from "@/lib/db";
+import { sql } from "drizzle-orm";
+import { ledger_transaction_type } from "@/lib/db-schema/main/schema";
+import { drizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 
-/** Generated Prisma enum values — keep queries in sync with schema.prisma. */
-const LEDGER_TX_TYPES = new Set<string>(Object.values(ledger_transaction_type));
+/** Ledger enum values — keep queries in sync with the database schema. */
+export type LedgerTransactionType =
+  (typeof ledger_transaction_type.enumValues)[number];
+const LEDGER_TX_TYPES = new Set<string>(ledger_transaction_type.enumValues);
 
-/** Drop strings that are not in the generated client (e.g. after schema drift before `prisma generate`). */
+/** Drop strings that are not in the checked-in enum snapshot after schema drift. */
 export function filterLedgerTxTypes(types: readonly string[]): LedgerTransactionType[] {
   return types.filter((t): t is LedgerTransactionType => LEDGER_TX_TYPES.has(t));
 }
@@ -17,10 +17,10 @@ export function filterLedgerTxTypes(types: readonly string[]): LedgerTransaction
 /**
  * Live `ledger_transaction_type` enum members on the CONNECTED database.
  *
- * WHY: the generated Prisma client (and `prisma/schema.prisma`) is AHEAD of
+ * WHY: the application schema can be ahead of
  * prod for the not-yet-launched upgrader feature — it carries `upgrader_bet`
  * / `upgrader_payout`, but the prod enum does NOT have those members yet.
- * Passing a value the live enum lacks into a Prisma `type: { in: [...] }`
+ * Passing a value the live enum lacks into an `IN` predicate
  * (or any bare `type IN (...)` SQL) makes Postgres coerce the literal to the
  * enum and throw `22P02 invalid input value for enum` — which takes the WHOLE
  * query down. (This is the same drift the streamer-insights layer already
@@ -42,15 +42,16 @@ const liveLedgerEnumCached = unstable_cache(
   // separate entries. Reading the cookie inside `unstable_cache` throws (no
   // request scope) and `readDbEnv` then silently falls back to "prod", which
   // poisoned a dev-toggled request with the PROD enum and dropped dev-only
-  // ledger types. Use the sync `dbForEnv(env)` for the same reason.
+  // ledger types. Use the explicit `drizzleForEnv(env)` for the same reason.
   async (env: DbEnv): Promise<string[]> => {
-    const db = dbForEnv(env);
-    const rows = await db.$queryRaw<{ enumlabel: string }[]>`
+    const db = drizzleForEnv(env);
+    const result = await db.execute<{ enumlabel: string }>(sql`
       SELECT e.enumlabel
         FROM pg_enum e
         JOIN pg_type t ON t.oid = e.enumtypid
-       WHERE t.typname = 'ledger_transaction_type'`;
-    return rows.map((r) => r.enumlabel);
+       WHERE t.typname = 'ledger_transaction_type'
+    `);
+    return result.rows.map((r) => r.enumlabel);
   },
   ["live-ledger-tx-enum-v2"],
   { revalidate: 300 },

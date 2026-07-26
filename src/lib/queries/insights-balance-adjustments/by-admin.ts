@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -69,8 +70,8 @@ async function computeByAdmin(
   const days = daysForInsightsPeriod(period);
   const windowFilter =
     days !== null
-      ? `AND ae.created_at >= NOW() - INTERVAL '${days} days'`
-      : "";
+      ? sql`AND ae.created_at >= NOW() - (${days} * INTERVAL '1 day')`
+      : sql``;
 
   // Extract a signed amount per audit event:
   //   balance_adjustment       → metadata->>'amount'   (already signed)
@@ -80,17 +81,17 @@ async function computeByAdmin(
   // Rows whose metadata can't be parsed to a number contribute 0 to the
   // volume sums but still count toward `count` (so an admin who fired a
   // malformed-metadata event isn't dropped from the accountability list).
-  const rows = await adminDb.$queryRawUnsafe<
-    {
-      admin_user_id: string;
-      net: string;
-      credit_vol: string;
-      debit_vol: string;
-      cnt: string;
-      users: string;
-      max_abs: string | null;
-    }[]
-  >(`
+  const result = await adminDrizzle.execute<{
+    admin_user_id: string;
+    username: string | null;
+    display_username: string | null;
+    net: string;
+    credit_vol: string;
+    debit_vol: string;
+    cnt: string;
+    users: string;
+    max_abs: string | null;
+  }>(sql`
     WITH ev AS (
       SELECT
         ae.admin_user_id,
@@ -106,44 +107,40 @@ async function computeByAdmin(
         -- FAKE-BALANCE: drop official_stream events (the writer stamps
         -- metadata.category on the audit row, actions.ts). IS DISTINCT FROM
         -- keeps NULL-category rows (manual withdrawals carry no category).
-        AND (ae.metadata->>'category') IS DISTINCT FROM '${OFFICIAL_STREAM_ADJUSTMENT_CATEGORY.replace(/'/g, "''")}'
+        AND (ae.metadata->>'category') IS DISTINCT FROM ${OFFICIAL_STREAM_ADJUSTMENT_CATEGORY}
         ${windowFilter}
     )
     SELECT
-      admin_user_id::text AS admin_user_id,
-      COALESCE(SUM(signed_amt), 0)::text AS net,
-      COALESCE(SUM(CASE WHEN signed_amt > 0 THEN signed_amt ELSE 0 END), 0)::text AS credit_vol,
-      COALESCE(SUM(CASE WHEN signed_amt < 0 THEN ABS(signed_amt) ELSE 0 END), 0)::text AS debit_vol,
+      ev.admin_user_id::text AS admin_user_id,
+      au.username,
+      au.display_username,
+      COALESCE(SUM(ev.signed_amt), 0)::text AS net,
+      COALESCE(SUM(CASE WHEN ev.signed_amt > 0 THEN ev.signed_amt ELSE 0 END), 0)::text AS credit_vol,
+      COALESCE(SUM(CASE WHEN ev.signed_amt < 0 THEN ABS(ev.signed_amt) ELSE 0 END), 0)::text AS debit_vol,
       COUNT(*)::text AS cnt,
-      COUNT(DISTINCT target_user_id)::text AS users,
-      MAX(ABS(signed_amt))::text AS max_abs
+      COUNT(DISTINCT ev.target_user_id)::text AS users,
+      MAX(ABS(ev.signed_amt))::text AS max_abs
     FROM ev
-    GROUP BY admin_user_id
-    ORDER BY SUM(ABS(signed_amt)) DESC
+    LEFT JOIN admin_users au ON au.id = ev.admin_user_id
+    GROUP BY ev.admin_user_id, au.username, au.display_username
+    ORDER BY SUM(ABS(ev.signed_amt)) DESC
     LIMIT 100
   `);
+  const rows = result.rows;
 
   if (rows.length === 0) return [];
 
   // Resolve admin identities from the admin DB (same cluster — a normal
   // query, not a cross-DB join).
-  const adminIds = rows.map((r) => r.admin_user_id);
-  const admins = await adminDb.admin_users.findMany({
-    where: { id: { in: adminIds } },
-    select: { id: true, username: true, display_username: true },
-  });
-  const adminMap = new Map(admins.map((a) => [a.id, a]));
-
   return rows.map((r) => {
     const creditVolume = toNumber(r.credit_vol);
     const debitVolume = toNumber(r.debit_vol);
     const grossVolume = creditVolume + debitVolume;
     const count = Number(r.cnt);
-    const meta = adminMap.get(r.admin_user_id);
     return {
       adminUserId: r.admin_user_id,
-      username: meta?.username ?? null,
-      displayUsername: meta?.display_username ?? null,
+      username: r.username,
+      displayUsername: r.display_username,
       net: toNumber(r.net),
       creditVolume,
       debitVolume,

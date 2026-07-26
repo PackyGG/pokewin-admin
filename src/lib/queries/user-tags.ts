@@ -1,7 +1,9 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
-import { getDb } from "@/lib/db";
+import { asc, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import { admin_user_tags, admin_users } from "@/lib/db-schema/admin/schema";
+import { getDrizzleDb } from "@/lib/db";
 import { calculateUsersPnlBatch } from "./pnl";
 
 export type UserTagValue = "vip" | "wager_abuser";
@@ -23,21 +25,25 @@ export type UserTagRow = {
  * tooltip and for forensic audit reads.
  */
 export async function getUserTags(userId: string): Promise<UserTagRow[]> {
-  const rows = await adminDb.admin_user_tags.findMany({
-    where: { target_user_id: userId },
-    include: {
-      admin_user: { select: { username: true } },
-    },
-    orderBy: { created_at: "asc" },
-  });
+  const rows = await adminDrizzle
+    .select({
+      tag: admin_user_tags.tag,
+      setByAdminId: admin_user_tags.set_by_admin_id,
+      setByAdminUsername: admin_users.username,
+      createdAt: admin_user_tags.created_at,
+    })
+    .from(admin_user_tags)
+    .leftJoin(admin_users, eq(admin_users.id, admin_user_tags.set_by_admin_id))
+    .where(eq(admin_user_tags.target_user_id, userId))
+    .orderBy(asc(admin_user_tags.created_at));
 
   return rows.map((r) => ({
     // The tag column is constrained to the allow-listed values by the
     // DB CHECK constraint; cast is safe.
     tag: r.tag as UserTagValue,
-    setByAdminId: r.set_by_admin_id,
-    setByAdminUsername: r.admin_user?.username ?? null,
-    createdAt: r.created_at.toISOString(),
+    setByAdminId: r.setByAdminId,
+    setByAdminUsername: r.setByAdminUsername,
+    createdAt: new Date(r.createdAt).toISOString(),
   }));
 }
 
@@ -90,41 +96,56 @@ export async function getUsersWithTags(
     includeFinancials = false,
   }: { limit: number; offset: number; includeFinancials?: boolean },
 ): Promise<{ items: TaggedUserRow[]; total: number }> {
-  const [tagRows, total] = await Promise.all([
-    adminDb.admin_user_tags.findMany({
-      where: { tag: { in: [...tags] } },
-      include: {
-        admin_user: { select: { username: true } },
-      },
-      orderBy: { created_at: "desc" },
-      skip: offset,
-      take: limit,
-    }),
-    adminDb.admin_user_tags.count({ where: { tag: { in: [...tags] } } }),
+  if (tags.length === 0) return { items: [], total: 0 };
+  const safeLimit = Math.min(Math.max(1, limit), 100);
+  const safeOffset = Math.max(0, offset);
+  const tagFilter = inArray(admin_user_tags.tag, [...tags]);
+  const [tagRows, totalRows] = await Promise.all([
+    adminDrizzle
+      .select({
+        tag: admin_user_tags.tag,
+        targetUserId: admin_user_tags.target_user_id,
+        createdAt: admin_user_tags.created_at,
+        setByAdminUsername: admin_users.username,
+      })
+      .from(admin_user_tags)
+      .leftJoin(admin_users, eq(admin_users.id, admin_user_tags.set_by_admin_id))
+      .where(tagFilter)
+      .orderBy(desc(admin_user_tags.created_at))
+      .limit(safeLimit)
+      .offset(safeOffset),
+    adminDrizzle
+      .select({ value: count() })
+      .from(admin_user_tags)
+      .where(tagFilter),
   ]);
+  const total = totalRows[0]?.value ?? 0;
 
   if (tagRows.length === 0) {
     return { items: [], total };
   }
 
-  const targetUserIds = tagRows.map((r) => r.target_user_id);
-  const db = await getDb();
+  const targetUserIds = tagRows.map((r) => r.targetUserId);
+  const db = await getDrizzleDb();
   // country/country_code are plain scalar columns on the same PK-IN row
   // lookup — selecting them costs nothing extra (no new query), so they're
   // always fetched. Only the PnL batch (a genuinely separate, heavier
   // round-trip across balances/inventory/vouchers/ledger) is gated behind
   // `includeFinancials`.
   const [users, pnlByUserId] = await Promise.all([
-    db.user.findMany({
-      where: { id: { in: targetUserIds } },
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        country: true,
-        country_code: true,
-      },
-    }),
+    db
+      .execute<{
+        id: string;
+        username: string | null;
+        email: string | null;
+        country: string | null;
+        country_code: string | null;
+      }>(sql`
+        SELECT id, username, email, country, country_code
+        FROM "user"
+        WHERE id = ANY(${targetUserIds}::text[])
+      `)
+      .then((result) => result.rows),
     includeFinancials
       ? calculateUsersPnlBatch(targetUserIds)
       : Promise.resolve(null),
@@ -133,14 +154,14 @@ export async function getUsersWithTags(
 
   return {
     items: tagRows.map((r) => {
-      const user = userById.get(r.target_user_id);
-      const userPnl = pnlByUserId?.get(r.target_user_id) ?? null;
+      const user = userById.get(r.targetUserId);
+      const userPnl = pnlByUserId?.get(r.targetUserId) ?? null;
       return {
-        userId: r.target_user_id,
+        userId: r.targetUserId,
         username: user?.username ?? null,
         email: user?.email ?? null,
-        taggedAt: r.created_at.toISOString(),
-        setByAdminUsername: r.admin_user?.username ?? null,
+        taggedAt: new Date(r.createdAt).toISOString(),
+        setByAdminUsername: r.setByAdminUsername,
         tag: r.tag as UserTagValue,
         // House formula → user-perspective sign, same convention as
         // hydrateUserListPage's `pnl` field on /users.

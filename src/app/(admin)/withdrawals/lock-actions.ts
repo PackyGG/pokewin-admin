@@ -2,8 +2,10 @@
 
 import { revalidateTag } from "next/cache";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/drizzle";
+import { admin_withdrawal_unlocks } from "@/lib/db-schema/admin/schema";
 import { verifySession } from "@/lib/dal";
 import { isMainOwner } from "@/lib/owners";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -82,19 +84,21 @@ export async function unlockUserWithdrawals(input: {
   }
   const { userId, notes } = parsed.data;
 
-  await adminDb.admin_withdrawal_unlocks.upsert({
-    where: { target_user_id: userId },
-    create: {
+  await adminDrizzle
+    .insert(admin_withdrawal_unlocks)
+    .values({
       target_user_id: userId,
       unlocked_by: session.userId,
       notes,
-    },
-    update: {
-      unlocked_by: session.userId,
-      unlocked_at: new Date(),
-      notes,
-    },
-  });
+    })
+    .onConflictDoUpdate({
+      target: admin_withdrawal_unlocks.target_user_id,
+      set: {
+        unlocked_by: session.userId,
+        unlocked_at: new Date().toISOString(),
+        notes,
+      },
+    });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -110,7 +114,7 @@ export async function unlockUserWithdrawals(input: {
 /**
  * Revoke a user's withdrawal unlock override (motha-only) — re-locking them
  * while they remain on the blacklist. `deleteMany` so a stale double-click
- * after another tab already removed the row is a no-op, not a P2025 throw.
+ * after another tab already removed the row is a no-op.
  */
 export async function relockUserWithdrawals(
   userId: string,
@@ -125,11 +129,12 @@ export async function relockUserWithdrawals(
     return fail(parsed.error.issues[0]?.message ?? "Invalid user ID", "INVALID_INPUT");
   }
 
-  const result = await adminDb.admin_withdrawal_unlocks.deleteMany({
-    where: { target_user_id: parsed.data },
-  });
+  const result = await adminDrizzle
+    .delete(admin_withdrawal_unlocks)
+    .where(eq(admin_withdrawal_unlocks.target_user_id, parsed.data))
+    .returning({ id: admin_withdrawal_unlocks.target_user_id });
 
-  if (result.count > 0) {
+  if (result.length > 0) {
     await createAdminAuditEvent({
       adminUserId: session.userId,
       eventType: "withdrawal_relocked",
@@ -138,5 +143,5 @@ export async function relockUserWithdrawals(
   }
 
   revalidateWithdrawalSurfaces();
-  return ok({ userId: parsed.data, deleted: result.count });
+  return ok({ userId: parsed.data, deleted: result.length });
 }

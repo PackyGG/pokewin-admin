@@ -3,11 +3,10 @@
 import crypto from "crypto";
 import { revalidatePath, revalidateTag, unstable_cache } from "next/cache";
 import { z } from "zod";
-import { getDb } from "@/lib/db";
-import { adminDb } from "@/lib/admin-db";
+import { getDrizzleDb, type MainDrizzleDb } from "@/lib/db";
+import { adminDrizzle, sql } from "@/lib/drizzle";
 import { requireAdmin, requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
-import { Prisma, user_role } from "@/generated/prisma/client";
 import { getUserInventory, getUserTransactions, getCreatorReferralClicks, getCreatorCodeUsages, getCreatorWithdrawalLimits, getUserAttributionJourney, getProvablyFairResults, getSeedRotationHistory, getUserBalanceHistory } from "@/lib/queries/users";
 import type { AttributionJourneyEntry } from "@/lib/queries/users";
 import { safeQuery } from "@/lib/errors/safe-query";
@@ -31,14 +30,19 @@ import {
   type BalanceAdjustmentCategory,
 } from "@/lib/balance-adjustment-categories";
 import type { SessionPayload } from "@/lib/session";
-import { ensureBalanceAdjustmentMetaSchema } from "@/lib/balance-adjustment-meta/ensure-schema";
 import { isEverCreator } from "@/app/(admin)/creators/_queries/list-ex-creators";
 import {
   canEditBalanceAdjustments,
   requireBalanceAdjustmentEditAdmin,
 } from "@/lib/balance-adjustment-edit/motha-gate";
 import { generateRandomAffiliateCode } from "@/lib/affiliate/generate-code";
-import { isSiteRole, pickPrimaryRole, writeUserWithRoles } from "@/lib/user-site-roles";
+import {
+  isSiteRole,
+  pickPrimaryRole,
+  writeUserWithRoles,
+  type SiteRole,
+} from "@/lib/user-site-roles";
+import { isSafeWebhookUrl } from "@/lib/security/webhook-url";
 
 /**
  * Bust BOTH the route segment AND the per-user `unstable_cache` entries for
@@ -66,31 +70,22 @@ function invalidateUserCaches(userId: string): void {
  * can tell a schema/DB fault from a generic crash, instead of the old
  * opaque "please try again" black box.
  *
- * Critically this names the schema-drift case (Prisma P2022 "column does
+ * Critically this names the schema-drift case (raw 42703 "column does
  * not exist" / raw 42703) that caused the original incident — a stale
- * `balances` Prisma mirror requesting a column the live game DB had
+ * `balances` schema mirror requesting a column the live game DB had
  * renamed. If it ever recurs, the toast itself says "database schema
  * mismatch" so it's diagnosable without log access. No secrets, no query
  * text, no stack ever reach the client.
  */
 function classifyAdjustBalanceError(err: unknown): string {
-  if (err instanceof Prisma.PrismaClientKnownRequestError) {
-    // P2022: column does not exist — the schema-drift class that broke
-    // this action before (bonus_points -> shards rename on the game DB).
-    if (err.code === "P2022") {
+  if (err instanceof Error) {
+    const code = (err as Error & { code?: string }).code;
+    if (code === "42703") {
       return "Balance adjustment failed — database schema mismatch (a column the admin expects is missing on the live DB). This needs a code/schema fix, not a retry.";
     }
-    // Other known request errors (constraint, FK, etc.) — distinguishable
-    // from a generic crash but still safe to show.
-    return `Balance adjustment failed — database error (${err.code}). Please report this; a retry alone may not help.`;
-  }
-  if (
-    err instanceof Prisma.PrismaClientValidationError ||
-    err instanceof Prisma.PrismaClientUnknownRequestError ||
-    err instanceof Prisma.PrismaClientRustPanicError ||
-    err instanceof Prisma.PrismaClientInitializationError
-  ) {
-    return "Balance adjustment failed — a database error occurred. Please report this if it persists.";
+    if (code) {
+      return `Balance adjustment failed — database error (${code}). Please report this; a retry alone may not help.`;
+    }
   }
   return "Balance adjustment failed — please try again";
 }
@@ -546,7 +541,7 @@ export async function adjustBalance(data: {
 }): Promise<
   { success: true; ledgerTxId: string } | { success: false; error: string }
 > {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/users");
 
   const parseResult = adjustBalanceSchema.safeParse(data);
@@ -579,10 +574,10 @@ export async function adjustBalance(data: {
     if (!meta.creatorId) {
       return { success: false, error: "This adjustment requires a linked creator" };
     }
-    const linkedUser = await db.user.findUnique({
-      where: { id: meta.creatorId },
-      select: { id: true, role: true },
-    });
+    const linkedUser = (await db.execute<{ id: string; role: string }>(sql`
+      SELECT id, role::text AS role FROM "user"
+      WHERE id = ${meta.creatorId} LIMIT 1
+    `)).rows[0];
     if (!linkedUser) {
       return { success: false, error: "Linked creator not found" };
     }
@@ -611,15 +606,13 @@ export async function adjustBalance(data: {
     //
     // Index-served: EXPLAIN ANALYZE on prod (2026-07-23) gives an Index Scan
     // on `idx_affiliate_codes_user_created_at` (user_id), 0.24 ms. NOTE that
-    // index is NOT declared in `prisma/schema.prisma` — it exists on the live
+    // index is not represented in the Drizzle schema — it exists on the live
     // DB only, so don't "fix" the schema by assuming it's missing.
     if (!meta.creatorCodes) {
-      const ownedCodes = await db.affiliate_codes.findMany({
-        where: { user_id: meta.creatorId },
-        select: { code: true },
-        orderBy: { code: "asc" },
-        take: 25,
-      });
+      const ownedCodes = (await db.execute<{ code: string }>(sql`
+        SELECT code FROM affiliate_codes WHERE user_id = ${meta.creatorId}
+        ORDER BY code ASC LIMIT 25
+      `)).rows;
       if (ownedCodes.length > 0) {
         meta.creatorCodes = ownedCodes.map((c) => c.code.toUpperCase());
       }
@@ -628,11 +621,11 @@ export async function adjustBalance(data: {
 
   // Admins can always adjust; non-admins need the __can_adjust_balance capability
   if (session.role !== "admin") {
-    const perms = await adminDb.admin_users.findUnique({
-      where: { id: session.userId },
-      select: { allowed_pages: true },
-    });
-    if (!perms || !canUserAdjustBalance(perms.allowed_pages)) {
+    const perms = (await adminDrizzle.execute<{ allowed_pages: string[] }>(sql`
+      SELECT allowed_pages FROM admin_users
+      WHERE id = ${session.userId}::uuid LIMIT 1
+    `)).rows[0];
+    if (!perms || !canUserAdjustBalance(perms.allowed_pages ?? [])) {
       return { success: false, error: "You do not have permission to adjust balances" };
     }
   }
@@ -658,10 +651,13 @@ export async function adjustBalance(data: {
   // version still matches; on mismatch we abort + return a friendly retry.
   let currentBalance = 0;
   let newBalance = 0;
+  let currentBalanceText = "0";
+  let newBalanceText = "0";
   const affectsLockedBalance = parsed.category === "remove_locked_balance";
   // Capture the ledger row id so the admin-side metadata write below can
   // cross-reference it.
-  const ledgerTxId = crypto.randomUUID();
+  let ledgerTxId: string = crypto.randomUUID();
+  let reusedCreatorRewardLedger = false;
 
   // Resolve the admin-adjustment wager requirement (FROZEN per credit, exactly
   // the model deposits/bonuses use on the backend). Read the global site_config
@@ -671,9 +667,10 @@ export async function adjustBalance(data: {
   // accrue debt; removals and locked-balance ops never do.
   let adminAdjustmentWagerBps = 10_000;
   try {
-    const cfg = await db.site_config.findUnique({
-      where: { key: "withdrawal_admin_adjustment_wager_requirement_bps" },
-    });
+    const cfg = (await db.execute<{ value: unknown }>(sql`
+      SELECT value FROM site_config
+      WHERE key = 'withdrawal_admin_adjustment_wager_requirement_bps' LIMIT 1
+    `)).rows[0];
     if (cfg) {
       const n = Number(cfg.value);
       if (Number.isFinite(n) && n >= 0) {
@@ -686,11 +683,11 @@ export async function adjustBalance(data: {
   // Per-user override: admin_adjustment_wager_requirement_bps in
   // user_wager_requirements takes precedence over the global config.
   try {
-    const rows = await db.$queryRaw<{ admin_adjustment_wager_requirement_bps: number | null }[]>`
+    const rows = (await db.execute<{ admin_adjustment_wager_requirement_bps: number | null }>(sql`
       SELECT admin_adjustment_wager_requirement_bps
       FROM user_wager_requirements
       WHERE user_id = ${parsed.userId}
-      LIMIT 1`;
+      LIMIT 1`)).rows;
     const override = rows[0]?.admin_adjustment_wager_requirement_bps;
     if (override !== null && override !== undefined && Number.isFinite(override) && override >= 0) {
       adminAdjustmentWagerBps = Math.round(override);
@@ -702,163 +699,110 @@ export async function adjustBalance(data: {
   const accruesWagerDebt =
     !affectsLockedBalance && parsed.amount > 0 && adminAdjustmentWagerBps > 0;
   try {
-    await db.$transaction(async (tx) => {
-      const b = await tx.balances.findUnique({
-        where: { user_id: parsed.userId },
-      });
-      if (!b) throw new Error("User balances not found");
+    await db.transaction(async (tx) => {
+      if (meta.vipClaimId) {
+        // A claim approval spans ADMIN and MAIN, so there is no cross-database
+        // unique constraint available. Serialize on the immutable claim id and
+        // check the MAIN ledger while holding that lock. This closes the last
+        // crash/retry race: even if two workers both reach the money path, only
+        // the first may change the balance.
+        await tx.execute(sql`
+          SELECT pg_advisory_xact_lock(hashtextextended(${meta.vipClaimId}, 0))
+        `);
+        const existing = (
+          await tx.execute<{ id: string }>(sql`
+            SELECT id
+            FROM ledger_transactions
+            WHERE user_id = ${parsed.userId}
+              AND type::text = 'admin_balance_adjustment'
+              AND status::text = 'completed'
+              AND metadata->>'vip_claim_id' = ${meta.vipClaimId}
+            ORDER BY created_at DESC
+            LIMIT 1
+          `)
+        ).rows[0];
+        if (existing) {
+          ledgerTxId = existing.id;
+          reusedCreatorRewardLedger = true;
+          return;
+        }
+      }
 
-      currentBalance = Number(b.available_balance);
+      const balance = (await tx.execute<{
+        id: string; available_balance: string; locked_balance: string;
+      }>(sql`
+        SELECT id, available_balance::text, locked_balance::text
+        FROM balances WHERE user_id = ${parsed.userId} FOR UPDATE
+      `)).rows[0];
+      if (!balance) throw new Error("User balances not found");
 
+      currentBalanceText = balance.available_balance;
+      currentBalance = Number(currentBalanceText);
+      let ledgerMetadata: Record<string, unknown>;
       if (affectsLockedBalance) {
-        const lockedBefore = Number(b.locked_balance);
-        const lockedAfter = lockedBefore + parsed.amount;
-        if (lockedAfter < 0) {
+        const updated = await tx.execute<{ locked_balance: string }>(sql`
+          UPDATE balances
+          SET locked_balance = locked_balance::numeric + ${parsed.amount}::numeric,
+              version = version + 1, updated_at = NOW()
+          WHERE id = ${balance.id}::uuid
+            AND locked_balance::numeric + ${parsed.amount}::numeric >= 0
+          RETURNING locked_balance::text
+        `);
+        if (updated.rows.length === 0) {
           throw new Error("Resulting locked balance would be negative");
         }
         newBalance = currentBalance;
-
-        const updated = await tx.balances.updateMany({
-          where: { user_id: parsed.userId, version: b.version },
-          data: {
-            locked_balance: lockedAfter,
-            version: { increment: 1 },
-          },
-        });
-        if (updated.count !== 1) {
-          throw new Error("Balance changed concurrently — please retry");
-        }
-
-        await tx.ledger_transactions.create({
-          data: {
-            id: ledgerTxId,
-            user_id: parsed.userId,
-            type: "admin_balance_adjustment",
-            amount: parsed.amount,
-            // Ledger balance_before/after track available_balance (platform
-            // convention). Locked-balance removals leave available unchanged.
-            balance_before: currentBalance,
-            balance_after: currentBalance,
-            description: `Admin adjustment: ${parsed.reason}`,
-            metadata: {
-              adjustment_category: parsed.category,
-              balance_target: "locked",
-            },
-            status: "completed",
-          },
-        });
-        return;
-      }
-
-      newBalance = currentBalance + parsed.amount;
-      if (newBalance < 0) {
-        throw new Error("Resulting balance would be negative");
-      }
-
-      const updated = await tx.balances.updateMany({
-        where: { user_id: parsed.userId, version: b.version },
-        data: {
-          available_balance: newBalance,
-          version: { increment: 1 },
-        },
-      });
-      if (updated.count !== 1) {
-        throw new Error("Balance changed concurrently — please retry");
-      }
-
-      if (accruesWagerDebt) {
-        // FREEZE `amount × bps / 10000` into the rollover debt
-        // (`balances.wager_requirement_remaining`) — the exact SQL the backend
-        // uses for deposit/bonus credits (transactions.ts wagerRemainingAccrual).
-        // Real weighted wagers burn it down; the withdrawal gate reserves it,
-        // so this credit can't be instantly withdrawn. Keyed on the balance row
-        // we just version-locked above (same row, held until commit).
-        await tx.$executeRaw`
+        newBalanceText = currentBalanceText;
+        ledgerMetadata = {
+          adjustment_category: parsed.category,
+          balance_target: "locked",
+        };
+      } else {
+        const updated = await tx.execute<{ available_balance: string }>(sql`
           UPDATE balances
-          SET wager_requirement_remaining =
-            COALESCE(wager_requirement_remaining, 0)::numeric
-            + (${parsed.amount}::numeric * ${adminAdjustmentWagerBps}::numeric / 10000)
-          WHERE id = ${b.id}::uuid
-        `;
+          SET available_balance = available_balance::numeric + ${parsed.amount}::numeric,
+              version = version + 1,
+              wager_requirement_remaining =
+                COALESCE(wager_requirement_remaining, 0)::numeric +
+                CASE WHEN ${accruesWagerDebt}
+                  THEN ${parsed.amount}::numeric * ${adminAdjustmentWagerBps}::numeric / 10000
+                  ELSE 0 END,
+              updated_at = NOW()
+          WHERE id = ${balance.id}::uuid
+            AND available_balance::numeric + ${parsed.amount}::numeric >= 0
+          RETURNING available_balance::text
+        `);
+        if (updated.rows.length === 0) {
+          throw new Error("Resulting balance would be negative");
+        }
+        newBalanceText = updated.rows[0]!.available_balance;
+        newBalance = Number(newBalanceText);
+        ledgerMetadata = {
+          adjustment_category: parsed.category,
+          ...(isCreatorLinkedAdjustmentCategory(parsed.category) && meta.creatorId
+            ? { creator_id: meta.creatorId, creator_spend: true } : {}),
+          ...(accruesWagerDebt ? { wager_requirement_bps: adminAdjustmentWagerBps } : {}),
+          ...(meta.vipClaimId && meta.vipProgramId
+            ? { vip_claim_id: meta.vipClaimId, vip_program_id: meta.vipProgramId } : {}),
+          ...(meta.creatorCodes ? { creator_codes: meta.creatorCodes } : {}),
+          ...(meta.creatorProgramName ? { creator_program_name: meta.creatorProgramName } : {}),
+          ...(meta.creatorRewardLeg ? { creator_reward_leg: meta.creatorRewardLeg } : {}),
+          ...(meta.chatRaffleRoundId && meta.chatRafflePosition !== null
+            ? { chat_raffle_round_id: meta.chatRaffleRoundId,
+                chat_raffle_position: meta.chatRafflePosition } : {}),
+        };
       }
-
-      await tx.ledger_transactions.create({
-        data: {
-          id: ledgerTxId,
-          user_id: parsed.userId,
-          type: "admin_balance_adjustment",
-          amount: parsed.amount,
-          balance_before: currentBalance,
-          balance_after: newBalance,
-          description: `Admin adjustment: ${parsed.reason}`,
-          // Stamp the canonical category key onto the ledger row so the
-          // GGR/NGR/cost queries can classify this adjustment with NO
-          // cross-DB join. Counted categories (everything but `other`)
-          // are lifted into the reward-cost side via this exact field
-          // (`metadata->>'adjustment_category'`), mirroring the existing
-          // manual-voucher carve-out (`metadata->>'origin'`).
-          //
-          // For a creator-linked category (`leaderboard`,
-          // `official_stream`) we also stamp the linked creator id
-          // (`metadata->>'creator_id'`) so the row is cleanly attributable
-          // to a creator with no schema migration. NOTE: wiring this into
-          // the dashboard "Creators Costs" / leaderboard-spend accounting
-          // is a deliberate follow-up — this only persists the link. Driven
-          // by the guard so a new creator-linked category is covered.
-          metadata: {
-            adjustment_category: parsed.category,
-            ...(isCreatorLinkedAdjustmentCategory(parsed.category) &&
-            meta.creatorId
-              ? {
-                  creator_id: meta.creatorId,
-                  // ONE predicate for "this dollar was spent on a creator",
-                  // across every creator-linked category. Reporting asks
-                  // `metadata->>'creator_spend' = 'true'` instead of having to
-                  // know (and keep up with) the category list — a new
-                  // creator-linked category is covered the day it is added.
-                  creator_spend: true,
-                }
-              : {}),
-            // Record the frozen requirement so support can see WHY a giveaway
-            // credit is locked (and at what rate). Only stamped when debt was
-            // actually accrued (positive credit, bps > 0).
-            ...(accruesWagerDebt
-              ? { wager_requirement_bps: adminAdjustmentWagerBps }
-              : {}),
-            // `creator_vip_reward` only — makes the prod row self-describing:
-            // from a credit you can reach the exact admin-DB claim (and its
-            // program) that authorized it, with no cross-DB hunt. The reverse
-            // link is `creator_reward_claims.ledger_tx_id`.
-            ...(meta.vipClaimId && meta.vipProgramId
-              ? {
-                  vip_claim_id: meta.vipClaimId,
-                  vip_program_id: meta.vipProgramId,
-                }
-              : {}),
-            // Per-CODE attribution. `creator_id` says WHO was spent on;
-            // these say under which affiliate code(s), which program, and
-            // which leg — so spend can be split per code, not just per
-            // creator, straight off the ledger row.
-            ...(meta.creatorCodes ? { creator_codes: meta.creatorCodes } : {}),
-            ...(meta.creatorProgramName
-              ? { creator_program_name: meta.creatorProgramName }
-              : {}),
-            ...(meta.creatorRewardLeg
-              ? { creator_reward_leg: meta.creatorRewardLeg }
-              : {}),
-            // `chat_raffle` only — from the credit you can reach the exact
-            // admin-DB round + prize place that authorized it. The reverse
-            // link is `chat_raffle_prizes.ledger_tx_id`.
-            ...(meta.chatRaffleRoundId && meta.chatRafflePosition !== null
-              ? {
-                  chat_raffle_round_id: meta.chatRaffleRoundId,
-                  chat_raffle_position: meta.chatRafflePosition,
-                }
-              : {}),
-          },
-          status: "completed",
-        },
-      });
+      await tx.execute(sql`
+        INSERT INTO ledger_transactions (
+          id, user_id, type, amount, balance_before, balance_after,
+          description, metadata, status
+        ) VALUES (
+          ${ledgerTxId}::uuid, ${parsed.userId}, 'admin_balance_adjustment',
+          ${parsed.amount}, ${currentBalanceText}::numeric, ${newBalanceText}::numeric,
+          ${`Admin adjustment: ${parsed.reason}`},
+          ${JSON.stringify(ledgerMetadata)}::jsonb, 'completed'
+        )
+      `);
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
@@ -873,7 +817,7 @@ export async function adjustBalance(data: {
       return { success: false, error: message };
     }
     // ALWAYS log the real exception server-side so this is never again a
-    // black box (the prior incident was a swallowed P2022 schema-drift
+    // black box (the prior incident was a swallowed 42703 schema-drift
     // error — `SELECT ... bonus_points` on a DB that had renamed the
     // column to `shards`). The classifier below turns the opaque "please
     // try again" into a SAFE, category-distinguishing client message
@@ -881,6 +825,10 @@ export async function adjustBalance(data: {
     // query text, or stack — those stay in the server log only.
     console.error("[adjustBalance] Transaction failed:", err);
     return { success: false, error: classifyAdjustBalanceError(err) };
+  }
+
+  if (reusedCreatorRewardLedger) {
+    return { success: true, ledgerTxId };
   }
 
   await createAdminAuditEvent({
@@ -911,22 +859,17 @@ export async function adjustBalance(data: {
   // classification reads the ledger metadata, not this table). A separate
   // console.error surfaces a row-write failure without blocking the toast.
   try {
-    await ensureBalanceAdjustmentMetaSchema();
-    await adminDb.admin_balance_adjustment_meta.create({
-      data: {
-        admin_user_id: session.userId,
-        target_user_id: parsed.userId,
-        ledger_tx_id: ledgerTxId,
-        category: parsed.category,
-        amount_usd: parsed.amount,
-        coin_type: meta.coinType,
-        tx_hash: meta.txHash,
-        social_link: meta.socialLink,
-        reason_text: meta.reasonText,
-        lossback_pct: meta.lossbackPercent,
-        pnl_7d_usd: meta.pnl7dUsd,
-      },
-    });
+    await adminDrizzle.execute(sql`
+      INSERT INTO admin_balance_adjustment_meta (
+        admin_user_id, target_user_id, ledger_tx_id, category, amount_usd,
+        coin_type, tx_hash, social_link, reason_text, lossback_pct, pnl_7d_usd
+      ) VALUES (
+        ${session.userId}, ${parsed.userId}, ${ledgerTxId}, ${parsed.category},
+        ${parsed.amount}, ${meta.coinType ?? null}, ${meta.txHash ?? null},
+        ${meta.socialLink ?? null}, ${meta.reasonText ?? null},
+        ${meta.lossbackPercent ?? null}, ${meta.pnl7dUsd ?? null}
+      )
+    `);
   } catch (err) {
     console.error(
       "[adjustBalance] meta-row write failed (ledger already committed):",
@@ -938,17 +881,16 @@ export async function adjustBalance(data: {
   // unchanged. Best-effort, same as above.
   if (parsed.category === "giveaway" && meta.giveawaySource) {
     try {
-      await adminDb.admin_giveaway_actions.create({
-        data: {
-          admin_user_id: session.userId,
-          target_user_id: parsed.userId,
-          amount_usd: parsed.amount,
-          source_url: meta.giveawaySource.url,
-          source_type: meta.giveawaySource.sourceType,
-          reason: parsed.reason,
-          ledger_tx_id: ledgerTxId,
-        },
-      });
+      await adminDrizzle.execute(sql`
+        INSERT INTO admin_giveaway_actions (
+          admin_user_id, target_user_id, amount_usd, source_url,
+          source_type, reason, ledger_tx_id
+        ) VALUES (
+          ${session.userId}::uuid, ${parsed.userId}, ${parsed.amount},
+          ${meta.giveawaySource.url}, ${meta.giveawaySource.sourceType},
+          ${parsed.reason}, ${ledgerTxId}
+        )
+      `);
     } catch (err) {
       console.error(
         "[adjustBalance] giveaway-row write failed (ledger already committed):",
@@ -958,12 +900,15 @@ export async function adjustBalance(data: {
   }
 
   // Fire balance_fill webhooks (non-blocking)
-  adminDb.creator_webhooks
-    .findMany({
-      where: { target_user_id: parsed.userId, type: "balance_fill", enabled: true },
-    })
-    .then((webhooks) => {
+  adminDrizzle
+    .execute<{ url: string; secret: string }>(sql`
+      SELECT url, secret FROM creator_webhooks
+      WHERE target_user_id = ${parsed.userId}
+        AND type = 'balance_fill' AND enabled = TRUE
+    `)
+    .then(({ rows: webhooks }) => {
       for (const webhook of webhooks) {
+        if (!isSafeWebhookUrl(webhook.url)) continue;
         const isDiscord = webhook.url.includes("discord.com/api/webhooks/");
         const sign = parsed.amount >= 0 ? "+" : "";
 
@@ -1099,17 +1044,15 @@ export async function getBalanceAdjustmentForEdit(
 
   await requirePageAccess("/users");
 
-  const db = await getDb();
-  const row = await db.ledger_transactions.findFirst({
-    where: { id: ledgerTxId, user_id: targetUserId },
-    select: {
-      id: true,
-      type: true,
-      amount: true,
-      description: true,
-      metadata: true,
-    },
-  });
+  const db = await getDrizzleDb();
+  const row = (await db.execute<{
+    id: string; type: string; amount: string; description: string; metadata: unknown;
+  }>(sql`
+    SELECT id, type::text, amount::text, description, metadata
+    FROM ledger_transactions
+    WHERE id = ${ledgerTxId}::uuid AND user_id = ${targetUserId}
+    LIMIT 1
+  `)).rows[0];
 
   if (!row || row.type !== "admin_balance_adjustment") {
     return { success: false, error: "Balance adjustment not found" };
@@ -1127,11 +1070,13 @@ export async function getBalanceAdjustmentForEdit(
   let reason = parsed.reason;
 
   try {
-    await ensureBalanceAdjustmentMetaSchema();
-    const metaRow = await adminDb.admin_balance_adjustment_meta.findFirst({
-      where: { ledger_tx_id: ledgerTxId, target_user_id: targetUserId },
-      select: { category: true, reason_text: true },
-    });
+    const metaRow = (await adminDrizzle.execute<{
+      category: string; reason_text: string | null;
+    }>(sql`
+      SELECT category, reason_text FROM admin_balance_adjustment_meta
+      WHERE ledger_tx_id = ${ledgerTxId} AND target_user_id = ${targetUserId}
+      LIMIT 1
+    `)).rows[0];
     if (metaRow) {
       hasMetaRow = true;
       if (metaRow.reason_text?.trim()) {
@@ -1192,17 +1137,15 @@ export async function updateBalanceAdjustmentMeta(data: {
     };
   }
 
-  const db = await getDb();
-  const row = await db.ledger_transactions.findFirst({
-    where: { id: parsed.ledgerTxId, user_id: parsed.targetUserId },
-    select: {
-      id: true,
-      type: true,
-      amount: true,
-      description: true,
-      metadata: true,
-    },
-  });
+  const db = await getDrizzleDb();
+  const row = (await db.execute<{
+    id: string; type: string; amount: string; description: string; metadata: unknown;
+  }>(sql`
+    SELECT id, type::text, amount::text, description, metadata
+    FROM ledger_transactions
+    WHERE id = ${parsed.ledgerTxId}::uuid AND user_id = ${parsed.targetUserId}
+    LIMIT 1
+  `)).rows[0];
 
   if (!row || row.type !== "admin_balance_adjustment") {
     return { success: false, error: "Balance adjustment not found" };
@@ -1267,13 +1210,15 @@ export async function updateBalanceAdjustmentMeta(data: {
   const previousDescription = row.description;
 
   try {
-    await db.ledger_transactions.update({
-      where: { id: parsed.ledgerTxId },
-      data: {
-        description: newDescription,
-        metadata: nextMetadata as Prisma.InputJsonValue,
-      },
-    });
+    const updated = await db.execute(sql`
+      UPDATE ledger_transactions
+      SET description = ${newDescription},
+          metadata = ${JSON.stringify(nextMetadata)}::jsonb,
+          updated_at = NOW()
+      WHERE id = ${parsed.ledgerTxId}::uuid AND user_id = ${parsed.targetUserId}
+      RETURNING id
+    `);
+    if (updated.rows.length === 0) throw new Error("Adjustment not found");
   } catch (err) {
     console.error("[updateBalanceAdjustmentMeta] ledger update failed:", err);
     return { success: false, error: "Failed to update adjustment" };
@@ -1281,30 +1226,22 @@ export async function updateBalanceAdjustmentMeta(data: {
 
   if (nextCategory) {
     try {
-      await ensureBalanceAdjustmentMetaSchema();
-      const metaUpdate = {
-        category: nextCategory,
-        reason_text: parsed.reason.trim(),
-      };
-      const updated = await adminDb.admin_balance_adjustment_meta.updateMany({
-        where: {
-          ledger_tx_id: parsed.ledgerTxId,
-          target_user_id: parsed.targetUserId,
-        },
-        data: metaUpdate,
-      });
-      if (updated.count === 0) {
-        await adminDb.admin_balance_adjustment_meta.create({
-          data: {
-            admin_user_id: session.userId,
-            target_user_id: parsed.targetUserId,
-            ledger_tx_id: parsed.ledgerTxId,
-            category: nextCategory,
-            amount_usd: Number(row.amount),
-            reason_text: parsed.reason.trim(),
-          },
-        });
-      }
+      await adminDrizzle.execute(sql`
+        WITH changed AS (
+          UPDATE admin_balance_adjustment_meta
+          SET category = ${nextCategory}, reason_text = ${parsed.reason.trim()}
+          WHERE ledger_tx_id = ${parsed.ledgerTxId}
+            AND target_user_id = ${parsed.targetUserId}
+          RETURNING 1
+        )
+        INSERT INTO admin_balance_adjustment_meta (
+          admin_user_id, target_user_id, ledger_tx_id, category,
+          amount_usd, reason_text
+        )
+        SELECT ${session.userId}, ${parsed.targetUserId}, ${parsed.ledgerTxId},
+               ${nextCategory}, ${Number(row.amount)}, ${parsed.reason.trim()}
+        WHERE NOT EXISTS (SELECT 1 FROM changed)
+      `);
     } catch (err) {
       console.error(
         "[updateBalanceAdjustmentMeta] admin meta update failed (ledger already committed):",
@@ -1314,10 +1251,10 @@ export async function updateBalanceAdjustmentMeta(data: {
 
     if (nextCategory === "giveaway") {
       try {
-        await adminDb.admin_giveaway_actions.updateMany({
-          where: { ledger_tx_id: parsed.ledgerTxId },
-          data: { reason: parsed.reason.trim() },
-        });
+        await adminDrizzle.execute(sql`
+          UPDATE admin_giveaway_actions SET reason = ${parsed.reason.trim()}
+          WHERE ledger_tx_id = ${parsed.ledgerTxId}
+        `);
       } catch (err) {
         console.error(
           "[updateBalanceAdjustmentMeta] giveaway row update failed:",
@@ -1371,18 +1308,18 @@ export async function moveBalanceToVault(
   | { success: true; movedAmount: number }
   | { success: false; error: string }
 > {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/users");
   // Reuses the same gate as the adjust-balance action — anyone with
   // permission to manipulate a user's balance is permitted to park
   // it in the vault. Admins always pass; non-admins need the explicit
   // capability on their role.
   if (session.role !== "admin") {
-    const perms = await adminDb.admin_users.findUnique({
-      where: { id: session.userId },
-      select: { allowed_pages: true },
-    });
-    if (!perms || !canUserAdjustBalance(perms.allowed_pages)) {
+    const perms = (await adminDrizzle.execute<{ allowed_pages: string[] }>(sql`
+      SELECT allowed_pages FROM admin_users
+      WHERE id = ${session.userId}::uuid LIMIT 1
+    `)).rows[0];
+    if (!perms || !canUserAdjustBalance(perms.allowed_pages ?? [])) {
       return {
         success: false,
         error: "You do not have permission to move balances to vault",
@@ -1395,50 +1332,39 @@ export async function moveBalanceToVault(
   // write — keeps two concurrent moves (or a move racing with a
   // wager / admin adjust) from double-spending the available pool.
   let available = 0;
+  let availableText = "0";
   try {
-    await db.$transaction(async (tx) => {
-      const b = await tx.balances.findUnique({ where: { user_id: userId } });
+    await db.transaction(async (tx) => {
+      const b = (await tx.execute<{
+        id: string; available_balance: string; locked_balance: string;
+      }>(sql`
+        SELECT id, available_balance::text, locked_balance::text
+        FROM balances WHERE user_id = ${userId} FOR UPDATE
+      `)).rows[0];
       if (!b) throw new Error("User has no balance row");
 
-      available = Number(b.available_balance);
+      availableText = b.available_balance;
+      available = Number(availableText);
       if (available <= 0) {
         throw new Error("Available balance is already 0 — nothing to move");
       }
 
-      const locked = Number(b.locked_balance);
-      const newLocked = locked + available;
-
-      const updated = await tx.balances.updateMany({
-        where: { user_id: userId, version: b.version },
-        data: {
-          available_balance: 0,
-          locked_balance: newLocked,
-          // Per user spec: "no unlock time, just instant". Override
-          // any existing unlock_at on the row so the whole locked
-          // pool is admin-/user-controlled rather than time-gated.
-          unlock_at: null,
-          version: { increment: 1 },
-        },
-      });
-      if (updated.count !== 1) {
-        throw new Error("Balance changed concurrently — please retry");
-      }
-
-      await tx.ledger_transactions.create({
-        data: {
-          id: crypto.randomUUID(),
-          user_id: userId,
-          type: "vault_lock",
-          // Negative because available_balance dropped by `available`.
-          // The ledger's balance_before/after track available_balance
-          // (matches the convention in adjustBalance).
-          amount: -available,
-          balance_before: available,
-          balance_after: 0,
-          description: "Admin moved entire balance to vault (no unlock time)",
-          status: "completed",
-        },
-      });
+      await tx.execute(sql`
+        UPDATE balances SET available_balance = 0,
+          locked_balance = locked_balance::numeric + ${availableText}::numeric,
+          unlock_at = NULL, version = version + 1, updated_at = NOW()
+        WHERE id = ${b.id}::uuid
+      `);
+      await tx.execute(sql`
+        INSERT INTO ledger_transactions (
+          id, user_id, type, amount, balance_before, balance_after,
+          description, status
+        ) VALUES (
+          ${crypto.randomUUID()}::uuid, ${userId}, 'vault_lock',
+          ${`-${availableText}`}::numeric, ${availableText}::numeric, 0,
+          'Admin moved entire balance to vault (no unlock time)', 'completed'
+        )
+      `);
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
@@ -1489,7 +1415,7 @@ export async function extendVaultLock(
   | { success: true; new_unlock_at: string; locked_amount_usd: string }
   | { success: false; error: string }
 > {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/users");
   // Capability gate — admins / owner bypass automatically inside
   // requireCapability. Non-admins need the explicit
@@ -1506,8 +1432,13 @@ export async function extendVaultLock(
   let lockedAmount = 0;
 
   try {
-    await db.$transaction(async (tx) => {
-      const b = await tx.balances.findUnique({ where: { user_id: userId } });
+    await db.transaction(async (tx) => {
+      const b = (await tx.execute<{
+        id: string; locked_balance: string; unlock_at: Date | null;
+      }>(sql`
+        SELECT id, locked_balance::text, unlock_at
+        FROM balances WHERE user_id = ${userId} FOR UPDATE
+      `)).rows[0];
       if (!b) throw new Error("User has no balance row");
 
       lockedAmount = Number(b.locked_balance);
@@ -1526,16 +1457,11 @@ export async function extendVaultLock(
       // Optimistic concurrency — bail if the row moved between read and
       // write (e.g. a concurrent admin adjust / wager). Money columns are
       // intentionally untouched: this action ONLY changes the timer.
-      const updated = await tx.balances.updateMany({
-        where: { user_id: userId, version: b.version },
-        data: {
-          unlock_at: stamp,
-          version: { increment: 1 },
-        },
-      });
-      if (updated.count !== 1) {
-        throw new Error("Balance changed concurrently — please retry");
-      }
+      await tx.execute(sql`
+        UPDATE balances SET unlock_at = ${stamp}, version = version + 1,
+          updated_at = NOW()
+        WHERE id = ${b.id}::uuid
+      `);
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
@@ -1626,7 +1552,7 @@ export async function recordManualWithdrawal(data: {
   reason: string;
   totpCode: string;
 }): Promise<{ success: true } | { success: false; error: string }> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/users");
 
   const parseResult = manualWithdrawalSchema.safeParse(data);
@@ -1640,10 +1566,10 @@ export async function recordManualWithdrawal(data: {
 
   // Admins always pass; non-admins need the dedicated capability.
   if (session.role !== "admin") {
-    const perms = await adminDb.admin_users.findUnique({
-      where: { id: session.userId },
-      select: { allowed_pages: true },
-    });
+    const perms = (await adminDrizzle.execute<{ allowed_pages: string[] }>(sql`
+      SELECT allowed_pages FROM admin_users
+      WHERE id = ${session.userId}::uuid LIMIT 1
+    `)).rows[0];
     if (
       !perms ||
       !hasCapability(perms.allowed_pages, "__can_record_manual_withdrawal")
@@ -1681,17 +1607,22 @@ export async function recordManualWithdrawal(data: {
   // and write — without locking we'd deduct from a stale snapshot
   // and either overdraw the user or under-bump total_withdrawn.
   let currentBalance = 0;
-  let newBalance = 0;
   let balanceDeducted = 0;
   let phantomPortion = 0;
+  let currentBalanceText = "0";
+  let newBalanceText = "0";
   try {
-    await db.$transaction(async (tx) => {
-      const b = await tx.balances.findUnique({
-        where: { user_id: parsed.userId },
-      });
+    await db.transaction(async (tx) => {
+      const b = (await tx.execute<{
+        id: string; available_balance: string; total_withdrawn: string;
+      }>(sql`
+        SELECT id, available_balance::text, total_withdrawn::text
+        FROM balances WHERE user_id = ${parsed.userId} FOR UPDATE
+      `)).rows[0];
       if (!b) throw new Error("User balances not found");
 
-      currentBalance = Number(b.available_balance);
+      currentBalanceText = b.available_balance;
+      currentBalance = Number(currentBalanceText);
 
       // Two flavors of manual withdrawal, and we support both:
       //
@@ -1716,48 +1647,50 @@ export async function recordManualWithdrawal(data: {
       // We never let `available_balance` go negative — that would
       // misrepresent the user's debt-vs-credit relationship with the
       // platform and break wager-balance checks elsewhere.
-      balanceDeducted = Math.min(currentBalance, parsed.amountUsd);
-      newBalance = currentBalance - balanceDeducted;
-      const newTotalWithdrawn =
-        Number(b.total_withdrawn) + parsed.amountUsd;
-      phantomPortion = parsed.amountUsd - balanceDeducted;
+      const updated = await tx.execute<{
+        available_balance: string;
+        balance_deducted: string;
+        phantom_portion: string;
+      }>(sql`
+        WITH changed AS (
+          UPDATE balances
+          SET available_balance =
+                GREATEST(available_balance::numeric - ${parsed.amountUsd}::numeric, 0),
+              total_withdrawn =
+                total_withdrawn::numeric + ${parsed.amountUsd}::numeric,
+              version = version + 1,
+              updated_at = NOW()
+          WHERE id = ${b.id}::uuid
+          RETURNING available_balance
+        )
+        SELECT available_balance::text,
+               LEAST(${currentBalanceText}::numeric, ${parsed.amountUsd}::numeric)::text
+                 AS balance_deducted,
+               GREATEST(${parsed.amountUsd}::numeric - ${currentBalanceText}::numeric, 0)::text
+                 AS phantom_portion
+        FROM changed
+      `);
+      newBalanceText = updated.rows[0]!.available_balance;
+      balanceDeducted = Number(updated.rows[0]!.balance_deducted);
+      phantomPortion = Number(updated.rows[0]!.phantom_portion);
 
-      const updated = await tx.balances.updateMany({
-        where: { user_id: parsed.userId, version: b.version },
-        data: {
-          available_balance: newBalance,
-          total_withdrawn: newTotalWithdrawn,
-          version: { increment: 1 },
-        },
-      });
-      if (updated.count !== 1) {
-        throw new Error("Balance changed concurrently — please retry");
-      }
-
-      // Only write a ledger row when something was actually deducted
-      // from on-site balance. A pure-record case (balance was 0,
-      // payout fully phantom) gets recorded via the audit event and
-      // total_withdrawn — writing a ledger row with amount=0 would
-      // pollute transaction listings without conveying anything.
       if (balanceDeducted > 0) {
-        await tx.ledger_transactions.create({
-          data: {
-            id: crypto.randomUUID(),
-            user_id: parsed.userId,
-            // Reuse the existing type — we don't have schema-write
-            // access on the main DB; the "Manual withdrawal:"
-            // prefix + audit event keep these distinguishable.
-            type: "admin_balance_adjustment",
-            amount: -balanceDeducted,
-            balance_before: currentBalance,
-            balance_after: newBalance,
-            description:
-              phantomPortion > 0
-                ? `Manual withdrawal: ${parsed.reason} (total $${parsed.amountUsd.toFixed(2)}, $${balanceDeducted.toFixed(2)} from on-site)`
-                : `Manual withdrawal: ${parsed.reason}`,
-            status: "completed",
-          },
-        });
+        const description =
+          phantomPortion > 0
+            ? `Manual withdrawal: ${parsed.reason} (total $${parsed.amountUsd.toFixed(2)}, $${balanceDeducted.toFixed(2)} from on-site)`
+            : `Manual withdrawal: ${parsed.reason}`;
+        await tx.execute(sql`
+          INSERT INTO ledger_transactions (
+            id, user_id, type, amount, balance_before, balance_after,
+            description, status
+          ) VALUES (
+            ${crypto.randomUUID()}::uuid, ${parsed.userId},
+            'admin_balance_adjustment',
+            ${newBalanceText}::numeric - ${currentBalanceText}::numeric,
+            ${currentBalanceText}::numeric, ${newBalanceText}::numeric,
+            ${description}, 'completed'
+          )
+        `);
       }
     });
   } catch (err) {
@@ -1816,7 +1749,7 @@ export async function changeRole(
   roles: string[],
   totpCode: string,
 ): Promise<{ rolesColumnExists: boolean }> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // Role changes remain admin-only (+ 2FA). The capability check is kept as
   // defence-in-depth so `__can_change_user_roles` is catalogued; admins pass
   // automatically.
@@ -1831,33 +1764,36 @@ export async function changeRole(
   if (!roles.every(isSiteRole)) {
     throw new Error("Invalid role");
   }
-  const dedupedRoles = [...new Set(roles)] as user_role[];
-  const primary = pickPrimaryRole(dedupedRoles) as user_role;
+  const dedupedRoles = [...new Set(roles)] as SiteRole[];
+  const primary = pickPrimaryRole(dedupedRoles);
 
   // Read the prior role BEFORE the update so the audit row records the full
   // before→after transition (not just the new role). This is what lets the
   // /creators changelog detect a creator-removal (prev_role === 'creator',
   // new_role !== 'creator') from a generic role change — otherwise firing a
   // creator via this dropdown is indistinguishable from any other role edit.
-  const before = await db.user.findUnique({
-    where: { id: userId },
-    select: { role: true },
-  });
-  const prevRole = before?.role ?? null;
+  const before = await db.execute<{ role: string }>(sql`
+    SELECT role::text AS role FROM "user" WHERE id = ${userId}
+  `);
+  const prevRole = before.rows[0]?.role ?? null;
 
   const { rolesColumnExists } = await writeUserWithRoles(
     () =>
-      db.user.update({
-        where: { id: userId },
-        data: { role: primary, roles: dedupedRoles },
-        select: { id: true },
-      }),
+      db.execute(sql`
+        UPDATE "user"
+        SET role = ${primary}::user_role,
+            roles = ${dedupedRoles}::user_role[],
+            updated_at = NOW()
+        WHERE id = ${userId}
+        RETURNING id
+      `),
     () =>
-      db.user.update({
-        where: { id: userId },
-        data: { role: primary },
-        select: { id: true },
-      }),
+      db.execute(sql`
+        UPDATE "user"
+        SET role = ${primary}::user_role, updated_at = NOW()
+        WHERE id = ${userId}
+        RETURNING id
+      `),
   );
 
   await createAdminAuditEvent({
@@ -1899,7 +1835,7 @@ export async function forceResetCreatorToUser(
   | { success: true; backendDemoted: boolean; backendError: string | null }
   | { success: false; error: string }
 > {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_change_user_roles", "change user roles");
   await require2FA(session.userId, totpCode);
@@ -1923,10 +1859,15 @@ export async function forceResetCreatorToUser(
   }
 
   // Step 2: local role flip. Always runs.
-  await db.user.update({
-    where: { id: userId },
-    data: { role: "user" as user_role },
-  });
+  const updated = await db.execute(sql`
+    UPDATE "user"
+    SET role = 'user'::user_role, updated_at = NOW()
+    WHERE id = ${userId}
+    RETURNING id
+  `);
+  if (updated.rows.length === 0) {
+    return { success: false, error: "User not found" };
+  }
 
   // Step 3: single audit row capturing both attempts.
   await createAdminAuditEvent({
@@ -1953,7 +1894,7 @@ export async function updateUserIdentity(
     displayUsername?: string;
   },
 ): Promise<{ success: true } | { success: false; error: string }> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_edit_identity", "edit user identity");
 
@@ -1967,11 +1908,6 @@ export async function updateUserIdentity(
       return { success: false, error: "Invalid email format" };
     }
     // Check uniqueness
-    const existing = await db.user.findFirst({
-      where: { email, id: { not: userId } },
-      select: { id: true },
-    });
-    if (existing) return { success: false, error: "Email is already in use" };
     updateData.email = email;
     updateData.email_verified = true;
     metadata.email = email;
@@ -1984,11 +1920,6 @@ export async function updateUserIdentity(
       return { success: false, error: "Username must be 3–20 characters" };
     }
     // Check uniqueness
-    const existing = await db.user.findFirst({
-      where: { username, id: { not: userId } },
-      select: { id: true },
-    });
-    if (existing) return { success: false, error: "Username is already taken" };
     updateData.username = username;
     metadata.username = username;
   }
@@ -2003,13 +1934,53 @@ export async function updateUserIdentity(
     return { success: false, error: "Nothing to update" };
   }
 
-  updateData.updated_at = new Date();
-
   try {
-    await db.user.update({
-      where: { id: userId },
-      data: updateData,
-    });
+    const email = typeof updateData.email === "string" ? updateData.email : null;
+    const username =
+      typeof updateData.username === "string" ? updateData.username : null;
+    const conflicts = await db.execute<{
+      email_conflict: boolean;
+      username_conflict: boolean;
+    }>(sql`
+      SELECT
+        EXISTS(
+          SELECT 1 FROM "user"
+          WHERE id <> ${userId} AND ${email}::text IS NOT NULL AND email = ${email}
+        ) AS email_conflict,
+        EXISTS(
+          SELECT 1 FROM "user"
+          WHERE id <> ${userId} AND ${username}::text IS NOT NULL
+            AND username = ${username}
+        ) AS username_conflict
+    `);
+    if (conflicts.rows[0]?.email_conflict) {
+      return { success: false, error: "Email is already in use" };
+    }
+    if (conflicts.rows[0]?.username_conflict) {
+      return { success: false, error: "Username is already taken" };
+    }
+
+    const updated = await db.execute(sql`
+      UPDATE "user"
+      SET email = CASE WHEN ${data.email !== undefined} THEN ${email} ELSE email END,
+          email_verified = CASE
+            WHEN ${data.email !== undefined} THEN TRUE ELSE email_verified
+          END,
+          username = CASE
+            WHEN ${data.username !== undefined} THEN ${username} ELSE username
+          END,
+          display_username = CASE
+            WHEN ${data.displayUsername !== undefined}
+              THEN ${updateData.display_username as string | null}
+            ELSE display_username
+          END,
+          updated_at = NOW()
+      WHERE id = ${userId}
+      RETURNING id
+    `);
+    if (updated.rows.length === 0) {
+      return { success: false, error: "User not found" };
+    }
   } catch (err) {
     console.error("[updateUserIdentity] DB update failed:", err);
     const message = err instanceof Error ? err.message : "Unknown error";
@@ -2039,7 +2010,7 @@ export async function toggleFeatureLock(
   feature: string,
   locked: boolean
 ) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_toggle_feature_locks", "toggle feature locks");
 
@@ -2058,25 +2029,19 @@ export async function toggleFeatureLock(
     ? (locked ? ["all"] : [])
     : locked;
 
-  const updateData: Record<string, unknown> = {
-    [feature]: value,
-  };
-
   // Set timestamps only — admin identity is tracked via audit events
   const byField = feature.startsWith("locked_withdrawals")
     ? "locked_withdrawals"
     : feature;
-  updateData[`${byField}_at`] = locked ? new Date() : null;
-
-  await db.user_feature_locks.upsert({
-    where: { user_id: userId },
-    update: updateData,
-    create: {
-      id: crypto.randomUUID(),
-      user_id: userId,
-      ...updateData,
-    },
-  });
+  const featureColumn = sql.identifier(feature);
+  const atColumn = sql.identifier(`${byField}_at`);
+  await db.execute(sql`
+    INSERT INTO user_feature_locks (id, user_id, ${featureColumn}, ${atColumn})
+    VALUES (${crypto.randomUUID()}, ${userId}, ${value}, ${locked ? new Date() : null})
+    ON CONFLICT (user_id) DO UPDATE SET
+      ${featureColumn} = EXCLUDED.${featureColumn},
+      ${atColumn} = EXCLUDED.${atColumn}
+  `);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -2125,47 +2090,46 @@ export async function getUserDeposits(
   userId: string,
 ): Promise<UserDepositRow[]> {
   await requirePageAccess("/users");
-  const db = await getDb();
-  const rows = await db.ledger_transactions.findMany({
-    where: {
-      user_id: userId,
-      type: "deposit",
-      status: "completed",
-    },
-    select: { id: true, amount: true, created_at: true, fireblocks_tx_id: true },
-    orderBy: { created_at: "desc" },
-    take: 50,
-  });
-
-  // The live deposit-bonus system pays 5% per deposit but CAPS it at $20 per
-  // rolling 6h window, so the bonus already credited for a deposit can be less
-  // than the full %. To support a cap-aware top-up, sum the bonus already paid
-  // per deposit. The 1:1 link is deposit.fireblocks_tx_id (column) ===
-  // deposit_bonus.metadata->>'fireblocks_tx_id' (the bonus row's own
-  // fireblocks_tx_id column is NULL). Single-user, user_id-indexed read.
-  const bonusRows = await db.ledger_transactions.findMany({
-    where: {
-      user_id: userId,
-      type: "deposit_bonus",
-      status: "completed",
-    },
-    select: { amount: true, metadata: true },
-  });
-  const bonusByFb = new Map<string, number>();
-  for (const b of bonusRows) {
-    const meta = b.metadata as Record<string, unknown> | null;
-    const fb = meta?.fireblocks_tx_id;
-    if (typeof fb !== "string" || fb === "") continue;
-    bonusByFb.set(fb, (bonusByFb.get(fb) ?? 0) + Math.abs(Number(b.amount)));
-  }
+  const db = await getDrizzleDb();
+  const rows = (
+    await db.execute<{
+      id: string;
+      amount: string;
+      created_at: Date;
+      bonus_paid: string;
+    }>(sql`
+      WITH deposits AS (
+        SELECT id, amount, created_at, fireblocks_tx_id
+        FROM ledger_transactions
+        WHERE user_id = ${userId}
+          AND type = 'deposit'
+          AND status = 'completed'
+        ORDER BY created_at DESC
+        LIMIT 50
+      ),
+      bonuses AS (
+        SELECT metadata->>'fireblocks_tx_id' AS fireblocks_tx_id,
+               SUM(ABS(amount)) AS bonus_paid
+        FROM ledger_transactions
+        WHERE user_id = ${userId}
+          AND type = 'deposit_bonus'
+          AND status = 'completed'
+          AND metadata->>'fireblocks_tx_id' IS NOT NULL
+        GROUP BY metadata->>'fireblocks_tx_id'
+      )
+      SELECT d.id, d.amount::text, d.created_at,
+             COALESCE(b.bonus_paid, 0)::text AS bonus_paid
+      FROM deposits d
+      LEFT JOIN bonuses b ON b.fireblocks_tx_id = d.fireblocks_tx_id
+      ORDER BY d.created_at DESC
+    `)
+  ).rows;
 
   return rows.map((r) => ({
     id: r.id,
     amount: Math.abs(Number(r.amount)),
     createdAt: r.created_at.toISOString(),
-    bonusPaid: r.fireblocks_tx_id
-      ? Math.round((bonusByFb.get(r.fireblocks_tx_id) ?? 0) * 100) / 100
-      : 0,
+    bonusPaid: Math.round(Number(r.bonus_paid) * 100) / 100,
   }));
 }
 
@@ -2191,8 +2155,9 @@ export async function getUserJoinedSponsoredBattles(
   userId: string,
 ): Promise<JoinedBattleRow[]> {
   await requirePageAccess("/users");
-  const db = await getDb();
-  const rows = await db.$queryRawUnsafe<
+  const db = await getDrizzleDb();
+  const rows = (
+    await db.execute<
     {
       battle_id: string;
       game_session_id: string;
@@ -2203,14 +2168,14 @@ export async function getUserJoinedSponsoredBattles(
       sponsorship_percentage: number;
       created_at: Date;
       winnings: string;
-    }[]
+    }
   >(
     // Winnings per Voucher=Card invariant: kept cards (user_inventory) PLUS the
     // paired battle_excess_to_voucher voucher leg (vouchers.origin_id = the
     // battle's game_session_id). Same fix pattern as commit a87aae37 applied to
     // getUserTransactions — without the voucher leg, a sponsored battle that
     // paid out mostly as a voucher reads as a near-zero win.
-    `SELECT bp.battle_id,
+    sql`SELECT bp.battle_id,
             bp.game_session_id,
             bp.team_number,
             b.winner_team,
@@ -2237,7 +2202,7 @@ export async function getUserJoinedSponsoredBattles(
        FROM battle_participants bp
        JOIN battles b ON b.id = bp.battle_id
        JOIN game_sessions gs ON gs.id = bp.game_session_id
-      WHERE bp.user_id = $1
+      WHERE bp.user_id = ${userId}
         AND bp.bot_id IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM ledger_transactions lt
@@ -2247,8 +2212,8 @@ export async function getUserJoinedSponsoredBattles(
         )
       ORDER BY gs.created_at DESC
       LIMIT 100`,
-    userId,
-  );
+    )
+  ).rows;
 
   return rows.map((r) => {
     let result: JoinedBattleRow["result"] = "pending";
@@ -2289,24 +2254,25 @@ export async function getUserInventorySaleBatches(
   userId: string,
 ): Promise<InventorySaleBatch[]> {
   await requirePageAccess("/users");
-  const db = await getDb();
-  const rows = await db.user_inventory.findMany({
-    where: { user_id: userId, sold_at: { not: null } },
-    select: { id: true, card_id: true, value_at_obtained: true, sold_at: true },
-    orderBy: { sold_at: "desc" },
-    take: 500,
-  });
+  const db = await getDrizzleDb();
+  const rows = (
+    await db.execute<{
+      id: string;
+      card_id: string;
+      card_name: string | null;
+      value_at_obtained: string;
+      sold_at: Date;
+    }>(sql`
+      SELECT ui.id, ui.card_id, c.name AS card_name,
+             ui.value_at_obtained::text, ui.sold_at
+      FROM user_inventory ui
+      LEFT JOIN cards c ON c.id = ui.card_id
+      WHERE ui.user_id = ${userId} AND ui.sold_at IS NOT NULL
+      ORDER BY ui.sold_at DESC
+      LIMIT 500
+    `)
+  ).rows;
   if (rows.length === 0) return [];
-
-  const cardIds = [...new Set(rows.map((r) => r.card_id))];
-  const cards =
-    cardIds.length > 0
-      ? await db.cards.findMany({
-          where: { id: { in: cardIds } },
-          select: { id: true, name: true },
-        })
-      : [];
-  const cardName = new Map(cards.map((c) => [c.id, c.name]));
 
   // Group by second-truncated sold_at — a multi-card "sell" sets sold_at on
   // all rows at the same instant. `rows` is desc, so the Map preserves
@@ -2324,7 +2290,7 @@ export async function getUserInventorySaleBatches(
     b.count += 1;
     b.total += value;
     if (b.cards.length < 30) {
-      b.cards.push({ name: cardName.get(r.card_id) ?? "Card", value });
+      b.cards.push({ name: r.card_name ?? "Card", value });
     }
   }
   return [...batches.values()];
@@ -2361,7 +2327,7 @@ export async function deleteUserVoucher(data: {
   reason: string;
   totpCode: string;
 }): Promise<{ success: true } | { success: false; error: string }> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/users");
 
   const parsed = deleteVoucherSchema.safeParse(data);
@@ -2373,11 +2339,11 @@ export async function deleteUserVoucher(data: {
   }
 
   if (session.role !== "admin") {
-    const perms = await adminDb.admin_users.findUnique({
-      where: { id: session.userId },
-      select: { allowed_pages: true },
-    });
-    if (!perms || !canUserAdjustBalance(perms.allowed_pages)) {
+    const perms = (await adminDrizzle.execute<{ allowed_pages: string[] }>(sql`
+      SELECT allowed_pages FROM admin_users
+      WHERE id = ${session.userId}::uuid LIMIT 1
+    `)).rows[0];
+    if (!perms || !canUserAdjustBalance(perms.allowed_pages ?? [])) {
       return {
         success: false,
         error: "You do not have permission to remove vouchers",
@@ -2394,10 +2360,14 @@ export async function deleteUserVoucher(data: {
     };
   }
 
-  const voucher = await db.vouchers.findFirst({
-    where: { id: parsed.data.voucherId, user_id: parsed.data.userId },
-    select: { id: true, value: true, origin: true, claimed_at: true },
-  });
+  const voucher = (await db.execute<{
+    id: string; value: string; origin: string; claimed_at: Date | null;
+  }>(sql`
+    SELECT id, value::text, origin::text, claimed_at FROM vouchers
+    WHERE id = ${parsed.data.voucherId}::uuid
+      AND user_id = ${parsed.data.userId}
+    LIMIT 1
+  `)).rows[0];
   if (!voucher) {
     return { success: false, error: "Voucher not found for this user" };
   }
@@ -2411,44 +2381,42 @@ export async function deleteUserVoucher(data: {
   const value = Number(voucher.value);
 
   try {
-    await db.$transaction(async (tx) => {
-      const bal = await tx.balances.findUnique({
-        where: { user_id: parsed.data.userId },
-        select: { available_balance: true },
-      });
-      const currentAvailable = bal ? Number(bal.available_balance) : 0;
+    await db.transaction(async (tx) => {
+      const bal = (await tx.execute<{ available_balance: string }>(sql`
+        SELECT available_balance::text FROM balances
+        WHERE user_id = ${parsed.data.userId} FOR UPDATE
+      `)).rows[0];
+      const currentAvailable = bal?.available_balance ?? "0";
 
       const removedAt = new Date();
-      const updated = await tx.vouchers.updateMany({
-        where: {
-          id: parsed.data.voucherId,
-          user_id: parsed.data.userId,
-          claimed_at: null,
-        },
-        data: { claimed_at: removedAt },
-      });
-      if (updated.count !== 1) {
+      const updated = await tx.execute(sql`
+        UPDATE vouchers SET claimed_at = ${removedAt}, updated_at = NOW()
+        WHERE id = ${parsed.data.voucherId}::uuid
+          AND user_id = ${parsed.data.userId} AND claimed_at IS NULL
+        RETURNING id
+      `);
+      if (updated.rows.length !== 1) {
         throw new Error("Voucher changed since you opened this dialog");
       }
 
-      await tx.ledger_transactions.create({
-        data: {
-          id: crypto.randomUUID(),
-          user_id: parsed.data.userId,
-          type: "admin_balance_adjustment",
-          amount: -Math.abs(value),
-          balance_before: currentAvailable,
-          balance_after: currentAvailable,
-          description: `Voucher removed: $${value.toFixed(2)} (${String(voucher.origin)}) — ${parsed.data.reason}`,
-          metadata: {
+      await tx.execute(sql`
+        INSERT INTO ledger_transactions (
+          id, user_id, type, amount, balance_before, balance_after,
+          description, metadata, status
+        ) VALUES (
+          ${crypto.randomUUID()}::uuid, ${parsed.data.userId},
+          'admin_balance_adjustment', -ABS(${voucher.value}::numeric),
+          ${currentAvailable}::numeric, ${currentAvailable}::numeric,
+          ${`Voucher removed: $${value.toFixed(2)} (${voucher.origin}) — ${parsed.data.reason}`},
+          ${JSON.stringify({
             kind: "voucher_removal",
             voucher_id: parsed.data.voucherId,
-            origin: String(voucher.origin),
+            origin: voucher.origin,
             value,
-          },
-          status: "completed",
-        },
-      });
+          })}::jsonb,
+          'completed'
+        )
+      `);
     });
   } catch (err) {
     console.error("[deleteUserVoucher] delete failed:", err);
@@ -2491,19 +2459,22 @@ export async function getUserVouchers(
   userId: string,
 ): Promise<UserVoucherRow[]> {
   await requirePageAccess("/users");
-  const db = await getDb();
-  const rows = await db.vouchers.findMany({
-    where: { user_id: userId, claimed_at: null },
-    select: {
-      id: true,
-      value: true,
-      origin: true,
-      description: true,
-      created_at: true,
-    },
-    orderBy: { created_at: "desc" },
-    take: 200,
-  });
+  const db = await getDrizzleDb();
+  const rows = (
+    await db.execute<{
+      id: string;
+      value: string;
+      origin: string;
+      description: string | null;
+      created_at: Date;
+    }>(sql`
+      SELECT id, value::text, origin::text, description, created_at
+      FROM vouchers
+      WHERE user_id = ${userId} AND claimed_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT 200
+    `)
+  ).rows;
   return rows.map((v) => ({
     id: v.id,
     value: Number(v.value),
@@ -2541,7 +2512,7 @@ export async function deleteUserInventoryItem(data: {
   reason: string;
   totpCode: string;
 }): Promise<{ success: true } | { success: false; error: string }> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/users");
 
   const parsed = deleteInventoryItemSchema.safeParse(data);
@@ -2553,11 +2524,12 @@ export async function deleteUserInventoryItem(data: {
   }
 
   if (session.role !== "admin") {
-    const perms = await adminDb.admin_users.findUnique({
-      where: { id: session.userId },
-      select: { allowed_pages: true },
-    });
-    if (!perms || !canUserAdjustBalance(perms.allowed_pages)) {
+    const perms = (
+      await adminDrizzle.execute<{ allowed_pages: string[] | null }>(sql`
+        SELECT allowed_pages FROM admin_users WHERE id = ${session.userId}::uuid
+      `)
+    ).rows[0];
+    if (!perms || !canUserAdjustBalance(perms.allowed_pages ?? [])) {
       return {
         success: false,
         error: "You do not have permission to remove inventory items",
@@ -2607,112 +2579,151 @@ type RemoveInventoryItemResult = { ok: true } | { ok: false; error: string };
  * once). Returns ok/error per item so the bulk path can skip-and-continue.
  */
 async function removeOneInventoryItem(
-  db: Awaited<ReturnType<typeof getDb>>,
+  db: MainDrizzleDb,
   adminUserId: string,
   userId: string,
   inventoryItemId: string,
   reason: string,
 ): Promise<RemoveInventoryItemResult> {
-  const item = await db.user_inventory.findFirst({
-    where: { id: inventoryItemId, user_id: userId },
-    select: {
-      id: true,
-      card_id: true,
-      value_at_obtained: true,
-      sold_at: true,
-      exchanged_at: true,
-      withdrawal_locked_at: true,
-    },
-  });
+  type ItemRow = {
+    id: string;
+    card_id: string;
+    value_at_obtained: string;
+    sold_at: Date | null;
+    exchanged_at: Date | null;
+    withdrawal_locked_at: Date | null;
+    card_name: string | null;
+    has_open_withdrawal: boolean;
+  };
 
-  if (!item) {
-    return { ok: false, error: "Inventory item not found for this user" };
-  }
-  if (item.sold_at || item.exchanged_at) {
-    return {
-      ok: false,
-      error: "Only open items can be removed — this one was already sold or exchanged",
-    };
-  }
-  if (item.withdrawal_locked_at) {
-    return {
-      ok: false,
-      error: "This item is withdrawal-locked — unlock or cancel the withdrawal first",
-    };
-  }
-
-  const openWithdrawal = await db.card_withdrawal_requests.findFirst({
-    where: {
-      user_id: userId,
-      status: { in: [...OPEN_WITHDRAWAL_STATUSES] },
-      inventory_item_ids: { has: inventoryItemId },
-    },
-    select: { id: true },
-  });
-  if (openWithdrawal) {
-    return {
-      ok: false,
-      error: "This item is tied to an open card withdrawal — cancel or complete it first",
-    };
-  }
-
-  const card = await db.cards.findUnique({
-    where: { id: item.card_id },
-    select: { name: true },
-  });
-  const value = Number(item.value_at_obtained);
-  const cardName = card?.name ?? "Unknown item";
-
-  let deletedCount = 0;
   try {
-    deletedCount = await db.$transaction(async (tx) => {
-      const bal = await tx.balances.findUnique({
-        where: { user_id: userId },
-        select: { available_balance: true },
-      });
-      const currentAvailable = bal ? Number(bal.available_balance) : 0;
+    const outcome = await db.transaction(async (tx) => {
+      const item = (
+        await tx.execute<ItemRow>(sql`
+          SELECT ui.id, ui.card_id,
+                 ui.value_at_obtained::text AS value_at_obtained,
+                 ui.sold_at, ui.exchanged_at, ui.withdrawal_locked_at,
+                 c.name AS card_name,
+                 EXISTS (
+                   SELECT 1
+                   FROM card_withdrawal_requests cwr
+                   WHERE cwr.user_id = ${userId}
+                     AND cwr.status::text = ANY(${[...OPEN_WITHDRAWAL_STATUSES]}::text[])
+                     AND cwr.inventory_item_ids @> ARRAY[${inventoryItemId}::uuid]
+                 ) AS has_open_withdrawal
+          FROM user_inventory ui
+          LEFT JOIN cards c ON c.id = ui.card_id
+          WHERE ui.id = ${inventoryItemId}::uuid
+            AND ui.user_id = ${userId}
+          FOR UPDATE OF ui
+        `)
+      ).rows[0];
 
-      // Stamp sold_at so windowed P&L counts the disposal (open-inventory
-      // queries filter sold_at IS NULL). Keep the row for audit; do not
-      // hard-delete — hard-deletes were invisible to calculateWindowedPnl.
-      await tx.provably_fair_results.deleteMany({
-        where: { inventory_item_id: inventoryItemId },
-      });
-      const removedAt = new Date();
-      const updated = await tx.user_inventory.updateMany({
-        where: {
-          id: inventoryItemId,
-          user_id: userId,
-          sold_at: null,
-          exchanged_at: null,
-        },
-        data: { sold_at: removedAt },
-      });
-
-      if (updated.count === 1) {
-        // Visible record in the transactions box. Balance UNCHANGED.
-        await tx.ledger_transactions.create({
-          data: {
-            id: crypto.randomUUID(),
-            user_id: userId,
-            type: "admin_balance_adjustment",
-            amount: -Math.abs(value),
-            balance_before: currentAvailable,
-            balance_after: currentAvailable,
-            description: `Inventory removed: ${cardName} ($${value.toFixed(2)}) — ${reason}`,
-            metadata: {
-              kind: "inventory_removal",
-              inventory_item_id: inventoryItemId,
-              card_id: item.card_id,
-              card_name: cardName,
-              value_at_obtained: value,
-            },
-            status: "completed",
-          },
-        });
+      if (!item) {
+        return { ok: false as const, error: "Inventory item not found for this user" };
       }
-      return updated.count;
+      if (item.sold_at || item.exchanged_at) {
+        return {
+          ok: false as const,
+          error: "Only open items can be removed — this one was already sold or exchanged",
+        };
+      }
+      if (item.withdrawal_locked_at) {
+        return {
+          ok: false as const,
+          error: "This item is withdrawal-locked — unlock or cancel the withdrawal first",
+        };
+      }
+      if (item.has_open_withdrawal) {
+        return {
+          ok: false as const,
+          error: "This item is tied to an open card withdrawal — cancel or complete it first",
+        };
+      }
+
+      const balance = (
+        await tx.execute<{ available_balance: string }>(sql`
+          SELECT available_balance::text AS available_balance
+          FROM balances
+          WHERE user_id = ${userId}
+          FOR UPDATE
+        `)
+      ).rows[0];
+      const currentAvailable = balance?.available_balance ?? "0";
+      const value = Number(item.value_at_obtained);
+      const cardName = item.card_name ?? "Unknown item";
+      const removedAt = new Date();
+
+      await tx.execute(sql`
+        DELETE FROM provably_fair_results
+        WHERE inventory_item_id = ${inventoryItemId}::uuid
+      `);
+      const updated = await tx.execute<{ id: string }>(sql`
+        UPDATE user_inventory
+        SET sold_at = ${removedAt}, updated_at = NOW()
+        WHERE id = ${inventoryItemId}::uuid
+          AND user_id = ${userId}
+          AND sold_at IS NULL
+          AND exchanged_at IS NULL
+        RETURNING id
+      `);
+      if (updated.rows.length !== 1) {
+        return {
+          ok: false as const,
+          error: "Could not remove item — it may have changed since you opened this dialog",
+        };
+      }
+
+      const metadata = {
+        kind: "inventory_removal",
+        inventory_item_id: inventoryItemId,
+        card_id: item.card_id,
+        card_name: cardName,
+        value_at_obtained: value,
+      };
+      await tx.execute(sql`
+        INSERT INTO ledger_transactions (
+          id, user_id, type, amount, balance_before, balance_after,
+          description, metadata, status, created_at, updated_at
+        ) VALUES (
+          ${crypto.randomUUID()}::uuid,
+          ${userId},
+          'admin_balance_adjustment',
+          -ABS(${item.value_at_obtained}::numeric),
+          ${currentAvailable}::numeric,
+          ${currentAvailable}::numeric,
+          ${`Inventory removed: ${cardName} ($${value.toFixed(2)}) — ${reason}`},
+          ${JSON.stringify(metadata)}::jsonb,
+          'completed',
+          NOW(),
+          NOW()
+        )
+      `);
+
+      return {
+        ok: true as const,
+        itemId: item.id,
+        cardId: item.card_id,
+        cardName,
+        value,
+      };
     });
+
+    if (!outcome.ok) return outcome;
+
+    await createAdminAuditEvent({
+      adminUserId,
+      eventType: "inventory_item_deleted",
+      targetUserId: userId,
+      metadata: {
+        inventoryItemId: outcome.itemId,
+        cardId: outcome.cardId,
+        cardName: outcome.cardName,
+        valueAtObtained: outcome.value,
+        reason,
+      },
+    });
+    return { ok: true };
   } catch (err) {
     console.error("[removeOneInventoryItem] delete failed:", err);
     return {
@@ -2723,30 +2734,7 @@ async function removeOneInventoryItem(
           : "Failed to remove inventory item",
     };
   }
-
-  if (deletedCount !== 1) {
-    return {
-      ok: false,
-      error: "Could not remove item — it may have changed since you opened this dialog",
-    };
-  }
-
-  await createAdminAuditEvent({
-    adminUserId,
-    eventType: "inventory_item_deleted",
-    targetUserId: userId,
-    metadata: {
-      inventoryItemId: item.id,
-      cardId: item.card_id,
-      cardName,
-      valueAtObtained: value,
-      reason,
-    },
-  });
-
-  return { ok: true };
 }
-
 const bulkDeleteInventorySchema = z.object({
   userId: z.string().min(1),
   inventoryItemIds: z
@@ -2779,7 +2767,7 @@ export async function bulkDeleteUserInventoryItems(data: {
   | { success: true; deleted: number; skipped: number; firstError?: string }
   | { success: false; error: string }
 > {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/users");
 
   const parsed = bulkDeleteInventorySchema.safeParse(data);
@@ -2791,11 +2779,12 @@ export async function bulkDeleteUserInventoryItems(data: {
   }
 
   if (session.role !== "admin") {
-    const perms = await adminDb.admin_users.findUnique({
-      where: { id: session.userId },
-      select: { allowed_pages: true },
-    });
-    if (!perms || !canUserAdjustBalance(perms.allowed_pages)) {
+    const perms = (
+      await adminDrizzle.execute<{ allowed_pages: string[] | null }>(sql`
+        SELECT allowed_pages FROM admin_users WHERE id = ${session.userId}::uuid
+      `)
+    ).rows[0];
+    if (!perms || !canUserAdjustBalance(perms.allowed_pages ?? [])) {
       return {
         success: false,
         error: "You do not have permission to remove inventory items",
@@ -2848,19 +2837,26 @@ export async function getGameSessionDetails(
   gameSessionId: string,
   userId: string,
 ) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   await requirePageAccess("/users");
 
-  const session = await db.game_sessions.findUnique({
-    where: { id: gameSessionId },
-    include: {
-      provably_fair_results: {
-        include: {
-          user_inventory: true,
-        },
-      },
-    },
-  });
+  const session = (
+    await db.execute<{
+      id: string;
+      user_id: string;
+      game_type: string;
+      game_id: string | null;
+      result: string | null;
+      bet_amount: string;
+      created_at: Date;
+    }>(sql`
+      SELECT id, user_id, game_type::text AS game_type, game_id,
+             result, bet_amount::text AS bet_amount, created_at
+      FROM game_sessions
+      WHERE id = ${gameSessionId}::uuid
+      LIMIT 1
+    `)
+  ).rows[0];
 
   // Ownership check — without this, anyone with access to /users could
   // join across users by passing any session id (which leaks the
@@ -2871,42 +2867,104 @@ export async function getGameSessionDetails(
   // existence of the session to admins viewing the wrong user.
   if (!session || session.user_id !== userId) return null;
 
+  const provablyFairResults = (
+    await db.execute<{
+      id: string;
+      client_seed: string;
+      server_seed_hash: string;
+      server_seed: string | null;
+      nonce: number;
+      cursor: number;
+      ticket: number;
+      result_hash: string;
+      result_metadata: unknown;
+      inventory_item_id: string | null;
+      inventory_id: string | null;
+      inventory_card_id: string | null;
+      inventory_value_at_obtained: string | null;
+    }>(sql`
+      SELECT pfr.id, pfr.client_seed, pfr.server_seed_hash,
+             pfr.server_seed, pfr.nonce, pfr.cursor, pfr.ticket,
+             pfr.result_hash, pfr.result_metadata, pfr.inventory_item_id,
+             ui.id AS inventory_id, ui.card_id AS inventory_card_id,
+             ui.value_at_obtained::text AS inventory_value_at_obtained
+      FROM provably_fair_results pfr
+      LEFT JOIN user_inventory ui ON ui.id = pfr.inventory_item_id
+      WHERE pfr.game_session_id = ${gameSessionId}::uuid
+      ORDER BY pfr.nonce ASC, pfr.cursor ASC
+    `)
+  ).rows.map((row) => ({
+    id: row.id,
+    client_seed: row.client_seed,
+    server_seed_hash: row.server_seed_hash,
+    server_seed: row.server_seed,
+    nonce: row.nonce,
+    cursor: row.cursor,
+    ticket: row.ticket,
+    result_hash: row.result_hash,
+    result_metadata: row.result_metadata,
+    inventory_item_id: row.inventory_item_id,
+    user_inventory:
+      row.inventory_id && row.inventory_card_id
+        ? {
+            id: row.inventory_id,
+            card_id: row.inventory_card_id,
+            value_at_obtained: row.inventory_value_at_obtained ?? "0",
+          }
+        : null,
+  }));
+
   // Fetch pack details if it's a pack opening
   let pack: { id: string; name: string; imageUrl: string | null } | null = null;
   if (session.game_type === "pack" && session.game_id) {
-    const directPack = await db.packs.findUnique({
-      where: { id: session.game_id },
-      select: { id: true, name: true, image_url: true },
-    });
+    const directPack = (
+      await db.execute<{ id: string; name: string; image_url: string | null }>(
+        sql`SELECT id, name, image_url FROM packs WHERE id = ${session.game_id} LIMIT 1`,
+      )
+    ).rows[0];
     if (directPack) {
       pack = { id: directPack.id, name: directPack.name, imageUrl: directPack.image_url };
     } else {
-      const userPack = await db.user_packs.findUnique({
-        where: { id: session.game_id },
-        include: {
-          packs: { select: { id: true, name: true, image_url: true } },
-        },
-      });
-      if (userPack?.packs) {
+      const userPack = (
+        await db.execute<{ id: string; name: string; image_url: string | null }>(
+          sql`
+            SELECT p.id, p.name, p.image_url
+            FROM user_packs up
+            JOIN packs p ON p.id = up.pack_id
+            WHERE up.id = ${session.game_id}::uuid
+            LIMIT 1
+          `,
+        )
+      ).rows[0];
+      if (userPack) {
         pack = {
-          id: userPack.packs.id,
-          name: userPack.packs.name,
-          imageUrl: userPack.packs.image_url,
+          id: userPack.id,
+          name: userPack.name,
+          imageUrl: userPack.image_url,
         };
       }
     }
   }
 
-  const inventoryItems = session.provably_fair_results
+  const inventoryItems = provablyFairResults
     .filter((r) => r.user_inventory)
     .map((r) => r.user_inventory!);
 
   const cardIds = [...new Set(inventoryItems.map((i) => i.card_id))];
   const cards = cardIds.length > 0
-    ? await db.cards.findMany({
-        where: { id: { in: cardIds } },
-        select: { id: true, name: true, image_url: true, rarity: true, price: true },
-      })
+    ? (
+        await db.execute<{
+          id: string;
+          name: string;
+          image_url: string | null;
+          rarity: string | null;
+          price: string;
+        }>(sql`
+          SELECT id, name, image_url, rarity::text AS rarity, price::text AS price
+          FROM cards
+          WHERE id = ANY(${cardIds}::uuid[])
+        `)
+      ).rows
     : [];
   const cardMap = new Map(cards.map((c) => [c.id, c]));
 
@@ -2922,7 +2980,7 @@ export async function getGameSessionDetails(
     };
   });
 
-  const pfResults = session.provably_fair_results.map((r) => ({
+  const pfResults = provablyFairResults.map((r) => ({
     id: r.id,
     clientSeed: r.client_seed,
     serverSeedHash: r.server_seed_hash,
@@ -2948,7 +3006,7 @@ export async function getGameSessionDetails(
   // PF row's own inventory_item_id → card. This makes the section render
   // consistently for both pack_opening and battle_bet, with no fabrication:
   // both fields are read straight off the same provably_fair row.
-  type PfRow = (typeof session.provably_fair_results)[number];
+  type PfRow = (typeof provablyFairResults)[number];
   const metaOf = (r: PfRow): Record<string, unknown> =>
     r.result_metadata && typeof r.result_metadata === "object"
       ? (r.result_metadata as Record<string, unknown>)
@@ -2970,7 +3028,7 @@ export async function getGameSessionDetails(
   // round_id). Within a round, prefer the leg the user kept so the displayed
   // card matches what landed in their inventory.
   const roundGroups = new Map<string, PfRow[]>();
-  for (const r of session.provably_fair_results) {
+  for (const r of provablyFairResults) {
     const meta = metaOf(r);
     // Only rows that actually reference a pack belong in this section.
     if (!asStr(meta.pack_id)) continue;
@@ -2998,17 +3056,29 @@ export async function getGameSessionDetails(
   const missingCardIds = [...metaCardIdSet].filter((id) => !cardMap.has(id));
   const [packsOpenedRows, extraCards] = await Promise.all([
     packIdSet.size > 0
-      ? db.packs.findMany({
-          where: { id: { in: [...packIdSet] } },
-          select: { id: true, name: true, image_url: true },
-        })
+      ? db
+          .execute<{ id: string; name: string; image_url: string | null }>(sql`
+            SELECT id, name, image_url
+            FROM packs
+            WHERE id = ANY(${[...packIdSet]}::uuid[])
+          `)
+          .then((result) => result.rows)
       : Promise.resolve([] as { id: string; name: string; image_url: string | null }[]),
     missingCardIds.length > 0
-      ? db.cards.findMany({
-          where: { id: { in: missingCardIds } },
-          select: { id: true, name: true, image_url: true, rarity: true, price: true },
-        })
-      : Promise.resolve([] as { id: string; name: string; image_url: string; rarity: string | null; price: Prisma.Decimal }[]),
+      ? db
+          .execute<{
+            id: string;
+            name: string;
+            image_url: string | null;
+            rarity: string | null;
+            price: string;
+          }>(sql`
+            SELECT id, name, image_url, rarity::text AS rarity, price::text AS price
+            FROM cards
+            WHERE id = ANY(${missingCardIds}::uuid[])
+          `)
+          .then((result) => result.rows)
+      : Promise.resolve([]),
   ]);
   const packMap = new Map(packsOpenedRows.map((p) => [p.id, p]));
   const fullCardMap = new Map(cardMap);
@@ -3124,31 +3194,35 @@ export async function getInventoryItemOrigin(
   userId: string,
   itemId: string,
 ): Promise<InventoryItemOrigin | null> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   await requirePageAccess("/users");
 
-  const item = await db.user_inventory.findUnique({
-    where: { id: itemId },
-    select: {
-      id: true,
-      user_id: true,
-      card_id: true,
-      value_at_obtained: true,
-      source_type: true,
-      source_id: true,
-      obtained_at: true,
-      pull_chance: true,
-    },
-  });
+  const item = (
+    await db.execute<{
+      id: string;
+      user_id: string;
+      value_at_obtained: string;
+      source_type: string;
+      source_id: string | null;
+      obtained_at: Date;
+      pull_chance: string | null;
+      card_name: string | null;
+      image_url: string | null;
+      rarity: string | null;
+    }>(sql`
+      SELECT ui.id, ui.user_id, ui.value_at_obtained::text,
+             ui.source_type::text, ui.source_id, ui.obtained_at,
+             ui.pull_chance::text, c.name AS card_name, c.image_url, c.rarity
+      FROM user_inventory ui
+      LEFT JOIN cards c ON c.id = ui.card_id
+      WHERE ui.id = ${itemId}
+      LIMIT 1
+    `)
+  ).rows[0];
   // Ownership check — same convention as getGameSessionDetails: compare
   // against the URL's userId so a wrong-page click returns "not found"
   // rather than leaking another user's item across a guessed id.
   if (!item || item.user_id !== userId) return null;
-
-  const card = await db.cards.findUnique({
-    where: { id: item.card_id },
-    select: { name: true, image_url: true, rarity: true },
-  });
 
   const session = item.source_id
     ? await getGameSessionDetails(item.source_id, userId)
@@ -3156,9 +3230,9 @@ export async function getInventoryItemOrigin(
 
   return {
     itemId: item.id,
-    cardName: card?.name ?? "Unknown",
-    imageUrl: card?.image_url ?? null,
-    rarity: card?.rarity ?? null,
+    cardName: item.card_name ?? "Unknown",
+    imageUrl: item.image_url,
+    rarity: item.rarity,
     value: Number(item.value_at_obtained),
     sourceType: item.source_type,
     obtainedAt: item.obtained_at.toISOString(),
@@ -3182,29 +3256,27 @@ export async function updateWithdrawalLimits(data: {
   currencyLimitResetDays: number | null;
   percentageLimit: number | null;
 }) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_update_user_withdrawal_limits", "update user withdrawal limits");
   const parsed = withdrawalLimitsSchema.parse(data);
 
-  await db.creator_withdrawal_limits.upsert({
-    where: { user_id: parsed.userId },
-    update: {
-      currency_limit_amount: parsed.currencyLimitAmount,
-      currency_limit_start_date: parsed.currencyLimitStartDate ? new Date(parsed.currencyLimitStartDate) : null,
-      currency_limit_reset_days: parsed.currencyLimitResetDays,
-      percentage_limit: parsed.percentageLimit,
-      updated_at: new Date(),
-    },
-    create: {
-      id: crypto.randomUUID(),
-      user_id: parsed.userId,
-      currency_limit_amount: parsed.currencyLimitAmount,
-      currency_limit_start_date: parsed.currencyLimitStartDate ? new Date(parsed.currencyLimitStartDate) : null,
-      currency_limit_reset_days: parsed.currencyLimitResetDays,
-      percentage_limit: parsed.percentageLimit,
-    },
-  });
+  await db.execute(sql`
+    INSERT INTO creator_withdrawal_limits (
+      id, user_id, currency_limit_amount, currency_limit_start_date,
+      currency_limit_reset_days, percentage_limit
+    ) VALUES (
+      ${crypto.randomUUID()}, ${parsed.userId}, ${parsed.currencyLimitAmount},
+      ${parsed.currencyLimitStartDate ? new Date(parsed.currencyLimitStartDate) : null},
+      ${parsed.currencyLimitResetDays}, ${parsed.percentageLimit}
+    )
+    ON CONFLICT (user_id) DO UPDATE SET
+      currency_limit_amount = EXCLUDED.currency_limit_amount,
+      currency_limit_start_date = EXCLUDED.currency_limit_start_date,
+      currency_limit_reset_days = EXCLUDED.currency_limit_reset_days,
+      percentage_limit = EXCLUDED.percentage_limit,
+      updated_at = NOW()
+  `);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -3264,41 +3336,47 @@ export async function fetchUserAttributionJourney(
   );
 }
 
-export async function assignAffiliateCode(userId: string, affiliateCode: string | null) {
-  const db = await getDb();
+export async function assignAffiliateCode(
+  userId: string,
+  affiliateCode: string | null,
+) {
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_assign_affiliate", "assign affiliate codes");
 
   if (!affiliateCode || affiliateCode.trim() === "") {
-    const currentUser = await db.user.findUnique({
-      where: { id: userId },
-      select: { referred_by: true, affiliate_code: true },
+    const currentUser = await db.transaction(async (tx) => {
+      const current = (
+        await tx.execute<{ referred_by: string | null; affiliate_code: string | null }>(sql`
+          SELECT referred_by, affiliate_code
+          FROM "user"
+          WHERE id = ${userId}
+          FOR UPDATE
+        `)
+      ).rows[0];
+
+      await tx.execute(sql`
+        UPDATE "user"
+        SET referred_by = NULL,
+            affiliate_code = NULL,
+            affiliate_code_active = false,
+            affiliate_code_expires_at = NULL,
+            updated_at = NOW()
+        WHERE id = ${userId}
+      `);
+      await tx.execute(sql`
+        DELETE FROM affiliate_code_queue WHERE user_id = ${userId}
+      `);
+      if (current?.referred_by) {
+        await tx.execute(sql`
+          UPDATE affiliate_accounts
+          SET total_referred = GREATEST(total_referred - 1, 0),
+              updated_at = NOW()
+          WHERE user_id = ${current.referred_by}
+        `);
+      }
+      return current;
     });
-
-    await db.$transaction([
-      db.user.update({
-        where: { id: userId },
-        data: {
-          referred_by: null,
-          // Drop the active code so FUTURE wager affiliate income stops
-          // routing to the old owner. Historical affiliate_code_usages
-          // rows are kept as audit (see dialog copy).
-          affiliate_code: null,
-          affiliate_code_active: false,
-          affiliate_code_expires_at: null,
-        },
-      }),
-      // Pending frontend lock / cookie queue — drop so the site can't
-      // re-apply the old code from a stale queue row.
-      db.affiliate_code_queue.deleteMany({ where: { user_id: userId } }),
-    ]);
-
-    if (currentUser?.referred_by) {
-      await db.affiliate_accounts.update({
-        where: { user_id: currentUser.referred_by },
-        data: { total_referred: { decrement: 1 } },
-      });
-    }
 
     await createAdminAuditEvent({
       adminUserId: session.userId,
@@ -3316,67 +3394,70 @@ export async function assignAffiliateCode(userId: string, affiliateCode: string 
     return { success: true };
   }
 
-  const codeRecord = await db.affiliate_codes.findUnique({
-    where: { code: affiliateCode.trim() },
-  });
+  const normalizedCode = affiliateCode.trim();
+  const codeRecord = (
+    await db.execute<{ code: string; user_id: string }>(sql`
+      SELECT code, user_id
+      FROM affiliate_codes
+      WHERE code = ${normalizedCode}
+      LIMIT 1
+    `)
+  ).rows[0];
 
-  if (!codeRecord) {
-    throw new Error("Affiliate code not found");
-  }
-
+  if (!codeRecord) throw new Error("Affiliate code not found");
   if (codeRecord.user_id === userId) {
     throw new Error("Cannot assign a user to their own affiliate code");
   }
 
-  await db.$transaction([
-    db.user.update({
-      where: { id: userId },
-      data: {
-        // Formal attribution — WHO referred this user in.
-        referred_by: codeRecord.user_id,
-        // The ACTIVE code the user is "on" right now. This is the field
-        // the backend reads to route WAGER affiliate income to the
-        // code's owner — setting referred_by alone does NOT move wager
-        // income (referred_by is just the permanent attribution).
-        // Store the canonical code string (exact case from the codes
-        // table), not the raw admin input.
-        affiliate_code: codeRecord.code,
-        affiliate_code_active: true,
-        // No frontend lock on an admin override: a null expiry leaves
-        // the code active for attribution while letting the user change
-        // it again on the site. (Entering a code in the site UI sets
-        // expires_at = entry + 7 DAYS and the user is bound until it
-        // lapses — verified read-only against prod 2026-07-22 across
-        // 6,208 rows. Setting a code here REPLACES any pending lock.)
-        affiliate_code_expires_at: null,
-      },
-    }),
-    db.affiliate_accounts.update({
-      where: { user_id: codeRecord.user_id },
-      data: { total_referred: { increment: 1 } },
-    }),
-    db.affiliate_code_usages.create({
-      data: {
-        affiliate_user_id: codeRecord.user_id,
-        code: codeRecord.code,
-        referred_user_id: userId,
-        usage_type: "deposit",
-      },
-    }),
-  ]);
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`
+      UPDATE "user"
+      SET referred_by = ${codeRecord.user_id},
+          affiliate_code = ${codeRecord.code},
+          affiliate_code_active = true,
+          affiliate_code_expires_at = NULL,
+          updated_at = NOW()
+      WHERE id = ${userId}
+    `);
+    const ownerUpdated = await tx.execute(sql`
+      UPDATE affiliate_accounts
+      SET total_referred = total_referred + 1,
+          updated_at = NOW()
+      WHERE user_id = ${codeRecord.user_id}
+    `);
+    if (ownerUpdated.rowCount !== 1) {
+      throw new Error("Affiliate owner account not found");
+    }
+    await tx.execute(sql`
+      INSERT INTO affiliate_code_usages (
+        id, affiliate_user_id, code, referred_user_id, usage_type,
+        created_at, updated_at
+      ) VALUES (
+        ${crypto.randomUUID()}::uuid,
+        ${codeRecord.user_id},
+        ${codeRecord.code},
+        ${userId},
+        'deposit',
+        NOW(),
+        NOW()
+      )
+    `);
+  });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "affiliate_code_assigned",
     targetUserId: userId,
-    metadata: { affiliateCode: affiliateCode.trim(), affiliateOwnerId: codeRecord.user_id },
+    metadata: {
+      affiliateCode: normalizedCode,
+      affiliateOwnerId: codeRecord.user_id,
+    },
   });
 
   invalidateUserCaches(userId);
   invalidateUserCaches(codeRecord.user_id);
   return { success: true };
 }
-
 /**
  * Result shape for createAffiliateCode. Returns a structured "conflict"
  * object when the code is already owned by someone else so the UI can
@@ -3399,65 +3480,49 @@ export async function createAffiliateCode(
   userId: string,
   code: string,
 ): Promise<CreateAffiliateCodeResult> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_assign_affiliate", "create affiliate codes");
   const trimmed = code.trim();
   if (!trimmed) return { success: false, error: "Code cannot be empty" };
 
-  // SCHEMA NOTE (per src/lib/queries/creators-detail.ts:58):
-  //   user.affiliate_code = the referral cookie this user is CARRYING
-  //                          (i.e. the code they USED, set when they
-  //                          clicked someone else's referral link)
-  //   affiliate_codes      = the codes this user OWNS
-  // Earlier versions of this action wrote `user.affiliate_code = trimmed`
-  // when creating a new owned code — confusing the cookie field with
-  // ownership. The result was /users/[id] showing the cookie ("twitter")
-  // labeled as the user's own code while /creators/[id] correctly
-  // showed the owned code from affiliate_codes ("wynn"). This action
-  // now ONLY writes to affiliate_codes; user.affiliate_code stays
-  // untouched (it belongs to the backend's referral-cookie machinery).
-  //
-  //   - taken by ANOTHER user → return a structured conflict so the
-  //     UI can prompt for a transfer
-  //   - already owned by THIS user → no-op success (the row already
-  //     exists; nothing to do)
-  const existingCode = await db.affiliate_codes.findUnique({
-    where: { code: trimmed },
-    select: { user_id: true },
-  });
+  const existingCode = (
+    await db.execute<{
+      user_id: string;
+      username: string | null;
+      email: string | null;
+    }>(sql`
+      SELECT ac.user_id, u.username, u.email
+      FROM affiliate_codes ac
+      LEFT JOIN "user" u ON u.id = ac.user_id
+      WHERE ac.code = ${trimmed}
+      LIMIT 1
+    `)
+  ).rows[0];
   if (existingCode) {
-    if (existingCode.user_id === userId) {
-      return { success: true };
-    }
-    const owner = await db.user.findUnique({
-      where: { id: existingCode.user_id },
-      select: { id: true, username: true, email: true },
-    });
+    if (existingCode.user_id === userId) return { success: true };
     return {
       success: false,
       conflict: {
         currentOwnerId: existingCode.user_id,
-        currentOwnerUsername: owner?.username ?? null,
-        currentOwnerEmail: owner?.email ?? null,
+        currentOwnerUsername: existingCode.username,
+        currentOwnerEmail: existingCode.email,
         code: trimmed,
       },
     };
   }
 
-  await db.$transaction([
-    db.affiliate_accounts.upsert({
-      where: { user_id: userId },
-      create: { user_id: userId },
-      update: {},
-    }),
-    db.affiliate_codes.create({
-      data: {
-        user_id: userId,
-        code: trimmed,
-      },
-    }),
-  ]);
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`
+      INSERT INTO affiliate_accounts (user_id, created_at, updated_at)
+      VALUES (${userId}, NOW(), NOW())
+      ON CONFLICT (user_id) DO NOTHING
+    `);
+    await tx.execute(sql`
+      INSERT INTO affiliate_codes (id, user_id, code, created_at, updated_at)
+      VALUES (${crypto.randomUUID()}::uuid, ${userId}, ${trimmed}, NOW(), NOW())
+    `);
+  });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -3470,7 +3535,6 @@ export async function createAffiliateCode(
   revalidatePath(`/creators/${userId}`);
   return { success: true };
 }
-
 // `generateRandomAffiliateCode` now lives in the shared helper
 // `@/lib/affiliate/generate-code` so the Insights Affiliate Codes transfer
 // reuses the identical generation/uniqueness mechanism (no parallel
@@ -3506,13 +3570,10 @@ export async function transferAffiliateCode(args: {
   | { success: true; replacementCode: string; previousOwnerId: string }
   | { success: false; error: string }
 > {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_assign_affiliate", "transfer affiliate codes");
 
-  // 2FA gate — transferring an affiliate code reassigns the future
-  // referral revenue stream of the code, so we lift it to the same
-  // protection tier as a balance adjustment / role change.
   try {
     await require2FA(session.userId, args.totpCode);
   } catch (err) {
@@ -3529,35 +3590,32 @@ export async function transferAffiliateCode(args: {
     return { success: false, error: "Target user is required" };
   }
 
-  // Verify current ownership and target user exist + are different.
-  const codeRow = await db.affiliate_codes.findUnique({
-    where: { code },
-    select: { id: true, user_id: true },
-  });
+  const [codeRows, targetRows] = await Promise.all([
+    db.execute<{ id: string; user_id: string }>(sql`
+      SELECT id, user_id
+      FROM affiliate_codes
+      WHERE code = ${code}
+      LIMIT 1
+    `),
+    db.execute<{ id: string }>(sql`
+      SELECT id
+      FROM "user"
+      WHERE id = ${targetIdentifier}
+         OR LOWER(username) = LOWER(${targetIdentifier})
+      ORDER BY CASE WHEN id = ${targetIdentifier} THEN 0 ELSE 1 END
+      LIMIT 1
+    `),
+  ]);
+  const codeRow = codeRows.rows[0];
   if (!codeRow) {
     return {
       success: false,
       error: "That code doesn't exist anymore — refresh and try again",
     };
   }
-
-  // `toUserId` accepts either a real user id OR a username (case-insensitive)
-  // — the id-transfer callers (SetAffiliateCodeDialog) always pass a real
-  // id, which matches on the first lookup; the username fallback lets the
-  // Account tab's "Transfer to another account" dialog take a typed username
-  // (e.g. the default "motha") without a separate resolve round-trip.
-  const target =
-    (await db.user.findUnique({
-      where: { id: targetIdentifier },
-      select: { id: true },
-    })) ??
-    (await db.user.findFirst({
-      where: { username: { equals: targetIdentifier, mode: "insensitive" } },
-      select: { id: true },
-    }));
+  const target = targetRows.rows[0];
   if (!target) return { success: false, error: "Target user not found" };
   const toUserId = target.id;
-
   if (codeRow.user_id === toUserId) {
     return { success: false, error: "Target user already owns that code" };
   }
@@ -3565,33 +3623,36 @@ export async function transferAffiliateCode(args: {
   const previousOwnerId = codeRow.user_id;
   const replacementCode = await generateRandomAffiliateCode(db);
 
-  await db.$transaction(async (tx) => {
-    // Move the code row to the target user.
-    await tx.affiliate_codes.update({
-      where: { id: codeRow.id },
-      data: { user_id: toUserId, updated_at: new Date() },
-    });
-    // Give the previous owner a random replacement code.
-    await tx.affiliate_codes.create({
-      data: { user_id: previousOwnerId, code: replacementCode },
-    });
-    // Make sure both sides have an affiliate_accounts row.
-    await tx.affiliate_accounts.upsert({
-      where: { user_id: toUserId },
-      create: { user_id: toUserId },
-      update: {},
-    });
-    await tx.affiliate_accounts.upsert({
-      where: { user_id: previousOwnerId },
-      create: { user_id: previousOwnerId },
-      update: {},
-    });
-    // Note: deliberately NOT touching user.affiliate_code on either
-    // side. user.affiliate_code is the referral cookie this user is
-    // CARRYING (set by the backend when they click someone's link),
-    // not an indicator of which code they own. Code ownership lives
-    // entirely in affiliate_codes — moving the row + creating the
-    // replacement is the full transfer.
+  await db.transaction(async (tx) => {
+    const moved = await tx.execute(sql`
+      UPDATE affiliate_codes
+      SET user_id = ${toUserId}, updated_at = NOW()
+      WHERE id = ${codeRow.id}::uuid
+        AND user_id = ${previousOwnerId}
+    `);
+    if (moved.rowCount !== 1) {
+      throw new Error("Affiliate code ownership changed; refresh and try again");
+    }
+    await tx.execute(sql`
+      INSERT INTO affiliate_codes (id, user_id, code, created_at, updated_at)
+      VALUES (
+        ${crypto.randomUUID()}::uuid,
+        ${previousOwnerId},
+        ${replacementCode},
+        NOW(),
+        NOW()
+      )
+    `);
+    await tx.execute(sql`
+      INSERT INTO affiliate_accounts (user_id, created_at, updated_at)
+      VALUES (${toUserId}, NOW(), NOW())
+      ON CONFLICT (user_id) DO NOTHING
+    `);
+    await tx.execute(sql`
+      INSERT INTO affiliate_accounts (user_id, created_at, updated_at)
+      VALUES (${previousOwnerId}, NOW(), NOW())
+      ON CONFLICT (user_id) DO NOTHING
+    `);
   });
 
   await createAdminAuditEvent({
@@ -3602,9 +3663,6 @@ export async function transferAffiliateCode(args: {
       code,
       previousOwnerId,
       replacementCode,
-      // Note that 2FA was used to authorise this transfer — useful when
-      // reading the trail later because we can distinguish 2FA-gated
-      // actions from older transfers that bypassed the check.
       two_factor_verified: true,
     },
   });
@@ -3613,7 +3671,6 @@ export async function transferAffiliateCode(args: {
   invalidateUserCaches(previousOwnerId);
   return { success: true, replacementCode, previousOwnerId };
 }
-
 const adjustXpSchema = z.object({
   userId: z.string(),
   amount: z.number(),
@@ -3630,7 +3687,7 @@ export async function adjustXp(data: {
   reason: string;
   totpCode: string;
 }) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_adjust_xp", "adjust user XP");
   const parsed = adjustXpSchema.parse(data);
@@ -3641,18 +3698,27 @@ export async function adjustXp(data: {
   // via the existing try/catch + toast pattern.
   await require2FA(session.userId, parsed.totpCode);
 
-  const stats = await db.user_statistics.findUnique({
-    where: { user_id: parsed.userId },
-  });
-  if (!stats) throw new Error("User statistics not found");
-
-  const currentXp = Number(stats.xp);
-  const newXp = Math.max(0, currentXp + parsed.amount);
-
-  await db.user_statistics.update({
-    where: { user_id: parsed.userId },
-    data: { xp: newXp },
-  });
+  const result = await db.execute<{
+    previous_xp: number;
+    new_xp: number;
+  }>(sql`
+    WITH previous AS (
+      SELECT user_id, xp
+      FROM user_statistics
+      WHERE user_id = ${parsed.userId}
+      FOR UPDATE
+    )
+    UPDATE user_statistics us
+    SET xp = GREATEST(0, previous.xp + ${parsed.amount}),
+        updated_at = NOW()
+    FROM previous
+    WHERE us.user_id = previous.user_id
+    RETURNING previous.xp AS previous_xp, us.xp AS new_xp
+  `);
+  const changed = result.rows[0];
+  if (!changed) throw new Error("User statistics not found");
+  const currentXp = Number(changed.previous_xp);
+  const newXp = Number(changed.new_xp);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -3790,7 +3856,7 @@ export async function updateUserBattleLimits(data: {
   maxValueUsd: number | null;
   baseBetLimitUsd: number | null;
 }): Promise<{ success: true } | { success: false; error: string }> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
 
   const parseResult = userBattleLimitsSchema.safeParse(data);
@@ -3803,20 +3869,18 @@ export async function updateUserBattleLimits(data: {
   const parsed = parseResult.data;
 
   try {
-    await db.user_battle_limits.upsert({
-      where: { user_id: parsed.userId },
-      update: {
-        max_value_usd: parsed.maxValueUsd,
-        base_bet_limit_usd: parsed.baseBetLimitUsd,
-        updated_at: new Date(),
-      },
-      create: {
-        id: crypto.randomUUID(),
-        user_id: parsed.userId,
-        max_value_usd: parsed.maxValueUsd,
-        base_bet_limit_usd: parsed.baseBetLimitUsd,
-      },
-    });
+    await db.execute(sql`
+      INSERT INTO user_battle_limits (
+        id, user_id, max_value_usd, base_bet_limit_usd
+      ) VALUES (
+        ${crypto.randomUUID()}, ${parsed.userId}, ${parsed.maxValueUsd},
+        ${parsed.baseBetLimitUsd}
+      )
+      ON CONFLICT (user_id) DO UPDATE SET
+        max_value_usd = EXCLUDED.max_value_usd,
+        base_bet_limit_usd = EXCLUDED.base_bet_limit_usd,
+        updated_at = NOW()
+    `);
   } catch (err) {
     console.error("[updateUserBattleLimits] upsert failed:", err);
     return { success: false, error: "Failed to update battle limits" };
@@ -3843,7 +3907,7 @@ export async function updateUserBattleLimits(data: {
 export async function clearUserBattleLimits(
   userId: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
 
   if (!userId || typeof userId !== "string") {
@@ -3854,7 +3918,7 @@ export async function clearUserBattleLimits(
     // deleteMany is idempotent — count: 0 when no row exists, no throw.
     // Matches the removeUserTag pattern so a double-click on "Clear"
     // can't crash the page.
-    await db.user_battle_limits.deleteMany({ where: { user_id: userId } });
+    await db.execute(sql`DELETE FROM user_battle_limits WHERE user_id = ${userId}`);
   } catch (err) {
     console.error("[clearUserBattleLimits] delete failed:", err);
     return { success: false, error: "Failed to clear battle limits" };
@@ -3882,7 +3946,7 @@ export async function clearUserBattleLimits(
 // `admin_user_tags` table; this action only knows about the allow-listed
 // tag values. Adding a new tag = update both the Zod enum here AND the
 // CHECK constraint in
-// prisma/admin/migrations/20260708000000_admin_user_tags_vip_consolidate/migration.sql.
+// the historical ADMIN user-tags VIP consolidation migration.
 
 const USER_TAG_VALUES = ["vip", "wager_abuser"] as const;
 export type UserTagValue = (typeof USER_TAG_VALUES)[number];
@@ -3917,20 +3981,11 @@ export async function setUserTag(
   }
 
   try {
-    await adminDb.admin_user_tags.upsert({
-      where: {
-        target_user_id_tag: {
-          target_user_id: parsed.data.userId,
-          tag: parsed.data.tag,
-        },
-      },
-      update: {},
-      create: {
-        target_user_id: parsed.data.userId,
-        tag: parsed.data.tag,
-        set_by_admin_id: session.userId,
-      },
-    });
+    await adminDrizzle.execute(sql`
+      INSERT INTO admin_user_tags (target_user_id, tag, set_by_admin_id)
+      VALUES (${parsed.data.userId}, ${parsed.data.tag}, ${session.userId}::uuid)
+      ON CONFLICT (target_user_id, tag) DO NOTHING
+    `);
   } catch (err) {
     console.error("[setUserTag] upsert failed:", err);
     return { success: false, error: "Failed to set tag" };
@@ -3955,7 +4010,7 @@ export async function setUserTag(
 
 /**
  * Remove a single (user, tag) pair. Idempotent — `deleteMany` returns
- * `{ count: 0 }` instead of throwing P2025 when the row is already
+ * `{ count: 0 }` instead of throwing when the row is already
  * gone, so a double-click on the toggle can't crash the page.
  */
 export async function removeUserTag(
@@ -3978,14 +4033,14 @@ export async function removeUserTag(
   }
 
   try {
-    const result = await adminDb.admin_user_tags.deleteMany({
-      where: {
-        target_user_id: parsed.data.userId,
-        tag: parsed.data.tag,
-      },
-    });
+    const result = await adminDrizzle.execute(sql`
+      DELETE FROM admin_user_tags
+      WHERE target_user_id = ${parsed.data.userId}
+        AND tag = ${parsed.data.tag}
+      RETURNING target_user_id
+    `);
 
-    if (result.count > 0) {
+    if (result.rows.length > 0) {
       await createAdminAuditEvent({
         adminUserId: session.userId,
         eventType: "user_tag_removed",

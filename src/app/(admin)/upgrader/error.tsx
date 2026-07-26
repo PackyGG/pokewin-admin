@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
  * Route-level error boundary for /upgrader.
  *
  * The upgrader view aggregates bet / win legs and house edge for the
- * upgrader game mode. A failed aggregate or a stale Prisma column would
+ * upgrader game mode. A failed aggregate or a stale schema column would
  * otherwise bubble to the umbrella `(admin)/error.tsx`; this boundary
  * scopes it to /upgrader with accurate copy. The reset path re-runs the
  * server render without a full reload.
@@ -56,7 +56,7 @@ export default function UpgraderError({
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <p className="text-xs text-muted-foreground">
           The upgrader view sums bet / win legs and house edge for the
-          upgrader mode — a slow leg query or a stale Prisma column is the
+          upgrader mode — a slow leg query or a stale schema column is the
           most common cause. Server logs have the full stack — search for the
           digest above.
         </p>

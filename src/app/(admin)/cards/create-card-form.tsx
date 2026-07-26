@@ -253,7 +253,7 @@ export function CreateCardForm({
   // without forcing a default value the operator didn't pick.
   //
   // `opLife` is OnePiece's "Life" stat. There is no dedicated `life`
-  // column on the cards table (see prisma/schema.prisma — only hp / cost
+  // column on the cards table (see the MAIN Drizzle schema — only hp / cost
   // / power exist), so Life persists into the existing `hp` Int column.
   // Pokemon still write their own `hp` from the `hp` state above; the two
   // never overlap because the variant branch picks exactly one.
@@ -412,7 +412,7 @@ export function CreateCardForm({
         // Expected failures now come back as a structured result (not a
         // thrown, prod-redacted 500) so the toast shows the REAL cause —
         // "Set not found", "Invalid OnePiece rarity", or the actual
-        // Prisma error from the DB.
+        // Database error.
         if (!result.success) {
           toast.error(result.error);
           return;

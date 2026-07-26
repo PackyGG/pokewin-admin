@@ -1,15 +1,13 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getRakebackLapsedFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/rakeback/lapsed";
 
 /**
  * Lapsed claimants — users who claimed in the PRIOR-equal window but
@@ -80,14 +78,14 @@ async function computeLapsed(
 ): Promise<RakebackLapsed | null> {
   const days = daysForInsightsPeriod(period);
   if (days === null) return null;
-  const db = await getDb();
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const db = await getDrizzleDb();
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Single CTE-driven query: identify lapsed users, compute their
   // prior-window rakeback + prior/current wager + prior/current deposit.
   // Limit returned rows to TOP_LIMIT by prior rakeback for the sample
   // table; aggregates use the full set.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       user_id: string;
       username: string | null;
@@ -98,14 +96,14 @@ async function computeLapsed(
       current_wager: string;
       prior_wager: string;
     }[]
-  >(`
+  >(db, sql`
     WITH current_users AS (
       SELECT DISTINCT rc.user_id
       FROM rakeback_claims rc
       JOIN "user" u ON u.id = rc.user_id
       WHERE rc.claimed_at IS NOT NULL
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
-        AND rc.claimed_at >= NOW() - INTERVAL '${days} days'
+        AND rc.claimed_at >= NOW() - (${days} * INTERVAL '1 day')
     ),
     prior_lapsed AS (
       SELECT
@@ -116,8 +114,8 @@ async function computeLapsed(
       JOIN "user" u ON u.id = rc.user_id
       WHERE rc.claimed_at IS NOT NULL
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
-        AND rc.claimed_at >= NOW() - INTERVAL '${days * 2} days'
-        AND rc.claimed_at < NOW() - INTERVAL '${days} days'
+        AND rc.claimed_at >= NOW() - (${days * 2} * INTERVAL '1 day')
+        AND rc.claimed_at < NOW() - (${days} * INTERVAL '1 day')
       GROUP BY rc.user_id
       HAVING SUM(rc.rakeback_amount_usd::numeric) > 0
     ),
@@ -131,27 +129,27 @@ async function computeLapsed(
         l.user_id,
         COALESCE(SUM(CASE
           WHEN lt.type::text = 'deposit'
-           AND lt.created_at >= NOW() - INTERVAL '${days} days'
+           AND lt.created_at >= NOW() - (${days} * INTERVAL '1 day')
           THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS current_deposit,
         COALESCE(SUM(CASE
           WHEN lt.type::text = 'deposit'
-           AND lt.created_at >= NOW() - INTERVAL '${days * 2} days'
-           AND lt.created_at <  NOW() - INTERVAL '${days} days'
+           AND lt.created_at >= NOW() - (${days * 2} * INTERVAL '1 day')
+           AND lt.created_at <  NOW() - (${days} * INTERVAL '1 day')
           THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS prior_deposit,
         COALESCE(SUM(CASE
-          WHEN lt.type::text IN ${WAGER_TYPES_SQL}
-           AND lt.created_at >= NOW() - INTERVAL '${days} days'
+          WHEN lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
+           AND lt.created_at >= NOW() - (${days} * INTERVAL '1 day')
           THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS current_wager,
         COALESCE(SUM(CASE
-          WHEN lt.type::text IN ${WAGER_TYPES_SQL}
-           AND lt.created_at >= NOW() - INTERVAL '${days * 2} days'
-           AND lt.created_at <  NOW() - INTERVAL '${days} days'
+          WHEN lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
+           AND lt.created_at >= NOW() - (${days * 2} * INTERVAL '1 day')
+           AND lt.created_at <  NOW() - (${days} * INTERVAL '1 day')
           THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS prior_wager
       FROM lapsed l
       LEFT JOIN ledger_transactions lt
         ON lt.user_id = l.user_id
        AND lt.status = 'completed'
-       AND lt.created_at >= NOW() - INTERVAL '${days * 2} days'
+       AND lt.created_at >= NOW() - (${days * 2} * INTERVAL '1 day')
       GROUP BY l.user_id
     )
     SELECT
@@ -231,29 +229,16 @@ async function computeLapsed(
   };
 }
 
-// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
-// through the cache on failure); off/comparison serve Postgres unchanged.
-// Both legs return null for lifetime windows (no prior frame).
-async function resolveLapsed(
-  period: InsightsRewardsPeriod,
-  blacklistIds: string[],
-): Promise<RakebackLapsed | null> {
-  return resolveAdminRead<RakebackLapsed | null>("insights_rakeback_lapsed", {
-    pg: () => computeLapsed(period, blacklistIds),
-    ch: () => getRakebackLapsedFromClickHouse(period, blacklistIds),
-  });
-}
-
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveLapsed(period, blacklistIds),
+    computeLapsed(period, blacklistIds),
   ["insights-rewards-rakeback-lapsed-v1"],
   { revalidate: 60, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveLapsed(period, blacklistIds),
+    computeLapsed(period, blacklistIds),
   ["insights-rewards-rakeback-lapsed-lifetime-v1"],
   { revalidate: 300, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );

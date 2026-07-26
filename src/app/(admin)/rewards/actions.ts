@@ -1,8 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getDb } from "@/lib/db";
-import { Prisma } from "@/generated/prisma/client";
+import { eq } from "drizzle-orm";
+
+import { getDrizzleDb } from "@/lib/db";
+import {
+  rakeback_config,
+  rewards,
+  user_rewards,
+} from "@/lib/db-schema/main/schema";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -50,7 +56,7 @@ export async function createReward(data: {
   dailyUnlockPercentage?: number | null;
   metadata?: Record<string, unknown>;
 }) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
 
   if (!data.slug.trim() || !data.name.trim()) {
@@ -61,23 +67,25 @@ export async function createReward(data: {
 
   let reward;
   try {
-    reward = await db.rewards.create({
-      data: {
+    [reward] = await db
+      .insert(rewards)
+      .values({
         slug: data.slug.trim(),
         name: data.name.trim(),
         type: data.type,
         level_required: data.levelRequired ?? 0,
         pack_ids: data.packIds ?? [],
-        cash_amount: data.cashAmount ?? null,
+        cash_amount:
+          data.cashAmount == null ? null : String(data.cashAmount),
         daily_unlock_percentage:
-          data.type === "daily" ? data.dailyUnlockPercentage ?? null : null,
-        metadata: data.metadata
-          ? (data.metadata as Prisma.InputJsonValue)
-          : Prisma.JsonNull,
-      },
-    });
+          data.type === "daily" && data.dailyUnlockPercentage != null
+            ? String(data.dailyUnlockPercentage)
+            : null,
+        metadata: data.metadata ?? null,
+      })
+      .returning();
   } catch (e) {
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+    if ((e as { code?: string })?.code === "23505") {
       throw new Error("A reward with this slug already exists");
     }
     throw e;
@@ -109,7 +117,7 @@ export async function updateReward(
     metadata?: Record<string, unknown>;
   }
 ) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
 
   if (!data.slug.trim() || !data.name.trim()) {
@@ -118,23 +126,25 @@ export async function updateReward(
 
   await requireCapability(session, "__can_update_reward", "update rewards");
 
-  const reward = await db.rewards.update({
-    where: { id },
-    data: {
+  const [reward] = await db
+    .update(rewards)
+    .set({
       slug: data.slug.trim(),
       name: data.name.trim(),
       type: data.type,
       level_required: data.levelRequired ?? 0,
       pack_ids: data.packIds ?? [],
-      cash_amount: data.cashAmount ?? null,
+      cash_amount: data.cashAmount == null ? null : String(data.cashAmount),
       daily_unlock_percentage:
-        data.type === "daily" ? data.dailyUnlockPercentage ?? null : null,
-      metadata: data.metadata
-        ? (data.metadata as Prisma.InputJsonValue)
-        : Prisma.JsonNull,
-      updated_at: new Date(),
-    },
-  });
+        data.type === "daily" && data.dailyUnlockPercentage != null
+          ? String(data.dailyUnlockPercentage)
+          : null,
+      metadata: data.metadata ?? null,
+      updated_at: new Date().toISOString(),
+    })
+    .where(eq(rewards.id, id))
+    .returning();
+  if (!reward) throw new Error("Reward not found");
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -149,12 +159,18 @@ export async function updateReward(
 }
 
 export async function deleteReward(rewardId: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_delete_reward", "delete rewards");
 
-  await db.user_rewards.deleteMany({ where: { reward_id: rewardId } });
-  await db.rewards.delete({ where: { id: rewardId } });
+  await db.transaction(async (tx) => {
+    await tx.delete(user_rewards).where(eq(user_rewards.reward_id, rewardId));
+    const deleted = await tx
+      .delete(rewards)
+      .where(eq(rewards.id, rewardId))
+      .returning({ id: rewards.id });
+    if (!deleted[0]) throw new Error("Reward not found");
+  });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -171,18 +187,21 @@ export async function updateRakebackConfig(
   id: string,
   data: { percentage: number; expirationDays: number; enabled: boolean }
 ) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_update_rakeback", "update rakeback config");
 
-  await db.rakeback_config.update({
-    where: { id },
-    data: {
-      percentage: data.percentage,
+  const updated = await db
+    .update(rakeback_config)
+    .set({
+      percentage: String(data.percentage),
       expiration_days: data.expirationDays,
       enabled: data.enabled,
-    },
-  });
+      updated_at: new Date().toISOString(),
+    })
+    .where(eq(rakeback_config.id, id))
+    .returning({ id: rakeback_config.id });
+  if (!updated[0]) throw new Error("Rakeback config not found");
 
   await createAdminAuditEvent({
     adminUserId: session.userId,

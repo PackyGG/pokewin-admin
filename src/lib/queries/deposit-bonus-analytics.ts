@@ -1,5 +1,5 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
 import type { RewardsPeriod } from "./rewards-analytics";
@@ -89,13 +89,12 @@ async function computeCapHits(
   blacklistIds: string[],
 ): Promise<number> {
   if (capValue <= 0) return 0;
-  const db = await getDb();
   const days = daysForPeriod(period);
   const dateFilter =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
   const blacklistSubquery = blacklistNotInClause("id", blacklistIds);
 
-  const rows = await db.$queryRawUnsafe<{ cnt: string }[]>(`
+  const rows = await queryMainRows<{ cnt: string }[]>(`
     SELECT COUNT(*)::text AS cnt
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
@@ -135,15 +134,13 @@ export async function getDepositBonusAnalytics(
 /**
  * Cohort split — completed deposits in the period, with vs without an
  * accompanying `deposit_bonus` ledger row. Links each bonus to its
- * triggering deposit using the SAME rule the live money-movement feed
- * uses (`bonus.balance_before == deposit.balance_after`). That rule is
- * canonical in `dashboard-live.ts` — reusing it here keeps the
+ * triggering deposit using the canonical transaction pairing rule
+ * (`bonus.balance_before == deposit.balance_after`). Reusing it keeps the
  * with/without split reconciled with every other deposit↔bonus pairing
  * on the admin panel.
  *
- * Note: dashboard-live.ts allows up to 2 minutes between the deposit
- * and the bonus (defensive upper bound for slow ledger writes). For
- * the analytics rollups here we tighten to 30 seconds — bonuses fire
+ * The transaction list allows up to 2 minutes between the deposit and
+ * bonus. For the analytics rollups here we tighten to 30 seconds — bonuses fire
  * immediately after deposits in practice, and the tighter window
  * dramatically shrinks the LATERAL join's cross-product before the
  * time-window filter. The pairing accuracy is unchanged for the
@@ -237,7 +234,6 @@ async function computeDepositBonusCohortExtras(
   capValue: number,
   blacklistIds: string[],
 ): Promise<DepositBonusCohortExtras> {
-  const db = await getDb();
   // Lifetime (`all`) is CAPPED to COHORT_LIFETIME_LOOKBACK_DAYS (365d):
   // both the deposit and the bonus side of the pairing are bounded so a
   // lifetime view does not scan the entire ledger history. Finite windows
@@ -253,7 +249,7 @@ async function computeDepositBonusCohortExtras(
   const windowStartExpr = `NOW() - INTERVAL '${cappedDays} days'`;
   const blacklistSubquery = blacklistNotInClause("id", blacklistIds);
 
-  // Canonical bonus↔deposit linking rule (from dashboard-live.ts):
+  // Canonical bonus↔deposit linking rule:
   // bonus.balance_before == deposit.balance_after AND bonus fires
   // within 30s of the deposit (tightened from 2 min for query
   // performance — see header comment).
@@ -279,7 +275,7 @@ async function computeDepositBonusCohortExtras(
   // definition simple ("did the window introduce this claimant?") and
   // matches how acquisition analytics elsewhere in the codebase treats
   // first-time events (analytics-funnel.ts, analytics-ltv.ts).
-  const rollupRows = await db.$queryRawUnsafe<CohortRollupRow[]>(`
+  const rollupRows = await queryMainRows<CohortRollupRow[]>(`
     WITH window_deposits AS MATERIALIZED (
       SELECT d.id, d.user_id, d.amount::numeric AS deposit_amt, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
@@ -361,7 +357,7 @@ async function computeDepositBonusCohortExtras(
   // PERFORMANCE comment there) — an inner JOIN keeps only deposits that
   // matched a bonus, and `DISTINCT ON (wd.id)` keeps the first match per
   // deposit (old `JOIN LATERAL … LIMIT 1` semantics).
-  const bucketRows = await db.$queryRawUnsafe<
+  const bucketRows = await queryMainRows<
     { bucket: number; cnt: string; volume: string }[]
   >(`
     WITH window_deposits AS MATERIALIZED (
@@ -422,7 +418,7 @@ async function computeDepositBonusCohortExtras(
   // paired bonus equalled the empirical cap. Skipped when cap is 0.
   let topCapDeposits: DepositBonusCohortExtras["topCapDeposits"] = [];
   if (capValue > 0) {
-    const capRows = await db.$queryRawUnsafe<
+    const capRows = await queryMainRows<
       {
         user_id: string;
         username: string | null;

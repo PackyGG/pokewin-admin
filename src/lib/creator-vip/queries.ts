@@ -1,7 +1,22 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
-import { getProdDb } from "@/lib/db";
+import {
+  asc,
+  desc,
+  eq,
+  getTableColumns,
+  inArray,
+  sql,
+} from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import {
+  admin_users,
+  creator_reward_claims,
+  creator_reward_programs,
+} from "@/lib/db-schema/admin/schema";
+import { user as mainUsers } from "@/lib/db-schema/main/schema";
+import { getProdDrizzleDb } from "@/lib/db";
+import { isPostgresError } from "@/lib/postgres-errors";
 import { toNumber } from "@/lib/utils/decimal";
 
 import {
@@ -52,27 +67,27 @@ async function resolveUsers(
   try {
     // Still one `WHERE id IN (...)` point lookup on the primary key — this
     // widens the projection, not the access path.
-    const rows = await getProdDb().user.findMany({
-      where: { id: { in: unique } },
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        image: true,
-        created_at: true,
-        is_banned: true,
-        is_locked: true,
-        is_suspected_alt: true,
-        country_code: true,
-      },
-    });
+    const rows = await getProdDrizzleDb()
+      .select({
+        id: mainUsers.id,
+        username: mainUsers.username,
+        email: mainUsers.email,
+        image: mainUsers.image,
+        created_at: mainUsers.created_at,
+        is_banned: mainUsers.is_banned,
+        is_locked: mainUsers.is_locked,
+        is_suspected_alt: mainUsers.is_suspected_alt,
+        country_code: mainUsers.country_code,
+      })
+      .from(mainUsers)
+      .where(inArray(mainUsers.id, unique));
     return new Map(
       rows.map((r) => [
         r.id,
         {
           name: r.username ?? r.email ?? null,
           image: r.image,
-          createdAt: r.created_at.toISOString(),
+          createdAt: new Date(r.created_at).toISOString(),
           isBanned: r.is_banned,
           isLocked: r.is_locked,
           suspectedAlt: r.is_suspected_alt,
@@ -92,24 +107,32 @@ async function resolveUsers(
 export async function getProgramsWithStats(): Promise<
   CreatorRewardProgramWithStats[]
 > {
-  const programs = await adminDb.creator_reward_programs.findMany({
-    orderBy: [{ is_active: "desc" }, { created_at: "desc" }],
-  });
+  const programs = await adminDrizzle
+    .select()
+    .from(creator_reward_programs)
+    .orderBy(
+      desc(creator_reward_programs.is_active),
+      desc(creator_reward_programs.created_at),
+    );
   if (programs.length === 0) return [];
 
   // One grouped pass over claims rather than N per-program queries.
-  const grouped = await adminDb.creator_reward_claims.groupBy({
-    by: ["program_id", "status"],
-    _count: { _all: true },
-    _sum: { amount_usd: true },
-  });
+  const grouped = await adminDrizzle
+    .select({
+      program_id: creator_reward_claims.program_id,
+      status: creator_reward_claims.status,
+      claimCount: sql<number>`COUNT(*)::int`,
+      amount: sql<string>`COALESCE(SUM(${creator_reward_claims.amount_usd}), 0)::text`,
+    })
+    .from(creator_reward_claims)
+    .groupBy(creator_reward_claims.program_id, creator_reward_claims.status);
 
   const users = await resolveUsers(programs.map((p) => p.creator_user_id));
 
   return programs.map((p) => {
     const rows = grouped.filter((g) => g.program_id === p.id);
     const countOf = (s: CreatorRewardClaimStatus) =>
-      rows.find((r) => r.status === s)?._count._all ?? 0;
+      rows.find((r) => r.status === s)?.claimCount ?? 0;
     const approved = rows.find((r) => r.status === "approved");
 
     return {
@@ -122,7 +145,7 @@ export async function getProgramsWithStats(): Promise<
       // Default false, not null: a failed lookup renders as no badge, and a
       // missing badge must never read as "checked and clean".
       creatorIsBanned: users.get(p.creator_user_id)?.isBanned ?? false,
-      codes: p.codes,
+      codes: p.codes ?? [],
       thresholdUsd: p.threshold_usd == null ? null : toNumber(p.threshold_usd),
       rewardUsd: p.reward_usd == null ? null : toNumber(p.reward_usd),
       lossbackPct: p.lossback_pct == null ? null : toNumber(p.lossback_pct),
@@ -131,16 +154,16 @@ export async function getProgramsWithStats(): Promise<
       vipRewardUsd:
         p.vip_reward_usd == null ? null : toNumber(p.vip_reward_usd),
       isActive: p.is_active,
-      accrualStartAt: p.accrual_start_at.toISOString(),
+      accrualStartAt: new Date(p.accrual_start_at).toISOString(),
       maxRewardPerUserUsd:
         p.max_reward_per_user_usd == null
           ? null
           : toNumber(p.max_reward_per_user_usd),
-      createdAt: p.created_at.toISOString(),
-      updatedAt: p.updated_at.toISOString(),
+      createdAt: new Date(p.created_at).toISOString(),
+      updatedAt: new Date(p.updated_at).toISOString(),
       pendingClaims: countOf("pending"),
       approvedClaims: countOf("approved"),
-      paidOutUsd: toNumber(approved?._sum.amount_usd ?? 0),
+      paidOutUsd: toNumber(approved?.amount),
     };
   });
 }
@@ -216,15 +239,33 @@ export async function getClaims(params: {
 }): Promise<CreatorRewardClaimRow[]> {
   const limit = Math.max(1, Math.min(params.limit ?? 100, 500));
 
-  const claims = await adminDb.creator_reward_claims.findMany({
-    where: params.status ? { status: params.status } : undefined,
-    include: { program: true },
+  const claimRows = await adminDrizzle
+    .select({
+      claim: getTableColumns(creator_reward_claims),
+      program: getTableColumns(creator_reward_programs),
+    })
+    .from(creator_reward_claims)
+    .innerJoin(
+      creator_reward_programs,
+      eq(creator_reward_programs.id, creator_reward_claims.program_id),
+    )
+    .where(
+      params.status
+        ? eq(creator_reward_claims.status, params.status)
+        : undefined,
+    )
     // Pending first when unfiltered, then newest — the review queue is the
     // point of this table, so an old pending row must never sink below a
     // freshly-approved one.
-    orderBy: [{ status: "asc" }, { requested_at: "desc" }],
-    take: limit,
-  });
+    .orderBy(
+      asc(creator_reward_claims.status),
+      desc(creator_reward_claims.requested_at),
+    )
+    .limit(limit);
+  const claims = claimRows.map((row) => ({
+    ...row.claim,
+    program: row.program,
+  }));
   if (claims.length === 0) return [];
 
   const users = await resolveUsers([
@@ -243,10 +284,10 @@ export async function getClaims(params: {
   const activeCodeByUser = new Map<string, string | null>();
   if (pendingUserIds.length > 0) {
     try {
-      const rows = await getProdDb().user.findMany({
-        where: { id: { in: pendingUserIds } },
-        select: { id: true, affiliate_code: true },
-      });
+      const rows = await getProdDrizzleDb()
+        .select({ id: mainUsers.id, affiliate_code: mainUsers.affiliate_code })
+        .from(mainUsers)
+        .where(inArray(mainUsers.id, pendingUserIds));
       for (const r of rows) {
         activeCodeByUser.set(
           r.id,
@@ -266,10 +307,10 @@ export async function getClaims(params: {
   ] as string[];
   const reviewers =
     reviewerIds.length > 0
-      ? await adminDb.admin_users.findMany({
-          where: { id: { in: reviewerIds } },
-          select: { id: true, username: true },
-        })
+      ? await adminDrizzle
+          .select({ id: admin_users.id, username: admin_users.username })
+          .from(admin_users)
+          .where(inArray(admin_users.id, reviewerIds))
       : [];
   const reviewerById = new Map(reviewers.map((r) => [r.id, r.username]));
 
@@ -301,16 +342,20 @@ export async function getClaims(params: {
     appliedRewardUsd: toNumber(c.applied_reward_usd),
     wasVip: c.was_vip,
     status: c.status as CreatorRewardClaimStatus,
-    requestedAt: c.requested_at.toISOString(),
+    requestedAt: new Date(c.requested_at).toISOString(),
     reviewedBy: c.reviewed_by,
     reviewerName: c.reviewed_by
       ? (reviewerById.get(c.reviewed_by) ?? null)
       : null,
-    reviewedAt: c.reviewed_at?.toISOString() ?? null,
+    reviewedAt: c.reviewed_at ? new Date(c.reviewed_at).toISOString() : null,
     reviewNote: c.review_note,
     ledgerTxId: c.ledger_tx_id,
-    reinstatedAt: c.reinstated_at?.toISOString() ?? null,
-    botNotifiedAt: c.bot_notified_at?.toISOString() ?? null,
+    reinstatedAt: c.reinstated_at
+      ? new Date(c.reinstated_at).toISOString()
+      : null,
+    botNotifiedAt: c.bot_notified_at
+      ? new Date(c.bot_notified_at).toISOString()
+      : null,
     botNotifyError: c.bot_notify_error,
     switchedAway: (() => {
       if (c.status !== "pending" || !activeCodeByUser.has(c.user_id)) {
@@ -319,7 +364,9 @@ export async function getClaims(params: {
       const now = activeCodeByUser.get(c.user_id) ?? null;
       // No code set is not a switch — only being on a DIFFERENT one is.
       if (!now) return false;
-      return !c.program.codes.map((x) => x.toUpperCase()).includes(now);
+      return !(c.program.codes ?? [])
+        .map((x) => x.toUpperCase())
+        .includes(now);
     })(),
   }));
 }
@@ -364,36 +411,43 @@ export async function getPlayerRewardSummary(
     return [] as Awaited<ReturnType<typeof computeAllEntitlements>>;
   });
 
-  const [user, entitlements, claimTotals] = await Promise.all([
-    getProdDb().user.findUnique({
-      where: { id: userId },
-      select: {
-        username: true,
-        affiliate_code: true,
-        affiliate_code_expires_at: true,
-      },
-    }),
+  const [userRows, entitlements, claimTotals] = await Promise.all([
+    getProdDrizzleDb()
+      .select({
+        username: mainUsers.username,
+        affiliate_code: mainUsers.affiliate_code,
+        affiliate_code_expires_at: mainUsers.affiliate_code_expires_at,
+      })
+      .from(mainUsers)
+      .where(eq(mainUsers.id, userId))
+      .limit(1),
     safeEntitlements,
-    adminDb.creator_reward_claims.groupBy({
-      by: ["status"],
-      where: { user_id: userId },
-      _sum: { amount_usd: true },
-    }),
+    adminDrizzle
+      .select({
+        status: creator_reward_claims.status,
+        amount: sql<string>`COALESCE(SUM(${creator_reward_claims.amount_usd}), 0)::text`,
+      })
+      .from(creator_reward_claims)
+      .where(eq(creator_reward_claims.user_id, userId))
+      .groupBy(creator_reward_claims.status),
   ]);
+  const user = userRows[0];
 
   const expiresAt = user?.affiliate_code_expires_at ?? null;
-  const msLeft = expiresAt ? expiresAt.getTime() - Date.now() : null;
+  const msLeft = expiresAt
+    ? new Date(expiresAt).getTime() - Date.now()
+    : null;
 
   const sumFor = (status: string) =>
     toNumber(
-      claimTotals.find((t) => t.status === status)?._sum.amount_usd ?? 0,
+      claimTotals.find((t) => t.status === status)?.amount ?? 0,
     );
 
   return {
     userId,
     username: user?.username ?? null,
     code: user?.affiliate_code ? user.affiliate_code.toUpperCase() : null,
-    codeExpiresAt: expiresAt?.toISOString() ?? null,
+    codeExpiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
     codeSecondsRemaining:
       msLeft === null ? null : Math.max(0, Math.floor(msLeft / 1000)),
     codeExpired: msLeft !== null && msLeft <= 0,
@@ -420,7 +474,7 @@ export type CreateClaimResult =
  * Concurrency: two simultaneous claims for the same (program, user) both pass
  * the compute step and both try to insert. The partial unique index
  * `creator_reward_claims_one_pending_per_user` makes the loser fail with
- * P2002, which is translated into a friendly "already pending" rather than a
+ * SQLSTATE 23505, which is translated into a friendly "already pending" rather than a
  * 500 — that index, not this function, is what actually guarantees the
  * one-open-claim rule.
  */
@@ -431,12 +485,21 @@ export async function createClaimRequest(params: {
   userId: string;
   discordUserId?: string | null;
 }): Promise<CreateClaimResult> {
-  const program = await adminDb.creator_reward_programs.findUnique({
-    where: { id: params.programId },
-  });
-  if (!program) {
+  const programRow = (
+    await adminDrizzle
+      .select()
+      .from(creator_reward_programs)
+      .where(eq(creator_reward_programs.id, params.programId))
+      .limit(1)
+  )[0];
+  if (!programRow) {
     return { ok: false, error: "Program not found.", code: "program_not_found" };
   }
+  const program = {
+    ...programRow,
+    codes: programRow.codes ?? [],
+    accrual_start_at: new Date(programRow.accrual_start_at),
+  };
 
   const entitlement =
     params.leg === "ftd_lossback"
@@ -461,8 +524,9 @@ export async function createClaimRequest(params: {
   }
 
   try {
-    const created = await adminDb.creator_reward_claims.create({
-      data: {
+    const [created] = await adminDrizzle
+      .insert(creator_reward_claims)
+      .values({
         program_id: program.id,
         leg: params.leg,
         user_id: params.userId,
@@ -470,22 +534,27 @@ export async function createClaimRequest(params: {
         // FTD lossback has no wager basis; its own snapshot lives in the
         // ftd_* columns. The wager columns stay 0 rather than being reused for
         // a different meaning.
-        ftd_deposit_usd: entitlement.ftd?.firstDepositUsd ?? null,
-        ftd_loss_usd: entitlement.ftd?.lostUsd ?? null,
-        wager_basis_usd: entitlement.qualifyingWagerUsd,
-        lifetime_wager_usd: entitlement.lifetimeWagerUsd,
-        forfeited_wager_usd: entitlement.forfeitedWagerUsd,
-        run_started_at: new Date(entitlement.runStartedAt),
-        prior_consumed_usd: entitlement.priorConsumedUsd,
-        consumed_wager_usd: entitlement.consumesWagerUsd,
+        ftd_deposit_usd:
+          entitlement.ftd?.firstDepositUsd != null
+            ? String(entitlement.ftd.firstDepositUsd)
+            : null,
+        ftd_loss_usd:
+          entitlement.ftd?.lostUsd != null
+            ? String(entitlement.ftd.lostUsd)
+            : null,
+        wager_basis_usd: String(entitlement.qualifyingWagerUsd),
+        lifetime_wager_usd: String(entitlement.lifetimeWagerUsd),
+        forfeited_wager_usd: String(entitlement.forfeitedWagerUsd),
+        run_started_at: new Date(entitlement.runStartedAt).toISOString(),
+        prior_consumed_usd: String(entitlement.priorConsumedUsd),
+        consumed_wager_usd: String(entitlement.consumesWagerUsd),
         units: entitlement.units,
-        amount_usd: entitlement.amountUsd,
-        applied_reward_usd: entitlement.appliedRewardUsd,
+        amount_usd: String(entitlement.amountUsd),
+        applied_reward_usd: String(entitlement.appliedRewardUsd),
         was_vip: entitlement.isVip,
         status: "pending",
-      },
-      select: { id: true },
-    });
+      })
+      .returning({ id: creator_reward_claims.id });
 
     return {
       ok: true,
@@ -494,11 +563,7 @@ export async function createClaimRequest(params: {
       units: entitlement.units,
     };
   } catch (err) {
-    if (
-      typeof err === "object" &&
-      err !== null &&
-      (err as { code?: string }).code === "P2002"
-    ) {
+    if (isPostgresError(err, "23505")) {
       return {
         ok: false,
         error: "You already have a claim awaiting review for this reward.",

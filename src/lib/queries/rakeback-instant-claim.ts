@@ -1,7 +1,7 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { excludeStaffCreatorsAndBlacklistedSqlFromIds } from "./_blacklist";
@@ -24,10 +24,10 @@ import { excludeStaffCreatorsAndBlacklistedSqlFromIds } from "./_blacklist";
  * ────────────────────────
  * The early-claim feature is LIVE on prod: these columns exist on the live
  * PROD game DB and there are real instant claims on it (verified read-only,
- * 2026-06-14). It is also present on dev. The committed `prisma/schema.prisma`
- * does NOT carry these columns, though, so the typed Prisma client cannot
+ * 2026-06-14). It is also present on dev. The checked-in Drizzle schema
+ * does NOT carry these columns, so the generated table schema cannot
  * reference them. We therefore:
- *   1. read via raw SQL against the env-resolved client (`getDb()`), and
+ *   1. read via parameterized SQL through the env-resolved Drizzle client, and
  *   2. PROBE `information_schema.columns` first, returning a `supported:
  *      false` shape if the column is ever absent on the active env (e.g. a
  *      dev DB that hasn't been migrated) so the surface degrades gracefully
@@ -176,18 +176,20 @@ export type InstantClaimUsage =
 type ColExistsRow = { exists: boolean };
 
 async function columnExists(
-  db: Awaited<ReturnType<typeof getDb>>,
   table: string,
   column: string,
 ): Promise<boolean> {
-  const rows = await db.$queryRaw<ColExistsRow[]>`
-    SELECT EXISTS (
+  const rows = await queryMainRows<ColExistsRow[]>(
+    `SELECT EXISTS (
       SELECT 1
-        FROM information_schema.columns
-       WHERE table_schema = 'public'
-         AND table_name = ${table}
-         AND column_name = ${column}
-    ) AS exists`;
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = $1
+        AND column_name = $2
+    ) AS exists`,
+    table,
+    column,
+  );
   return rows[0]?.exists === true;
 }
 
@@ -198,15 +200,13 @@ async function columnExists(
  * env). Read-only.
  */
 async function queryRakebackInstantClaimConfig(): Promise<InstantClaimConfig> {
-  const db = await getDb();
-
   // Probe the gating column once — if the payout column is missing the
   // whole early-claim feature is absent on this env.
-  if (!(await columnExists(db, "rakeback_config", "early_claim_payout_percent"))) {
+  if (!(await columnExists("rakeback_config", "early_claim_payout_percent"))) {
     return { supported: false };
   }
 
-  const rows = await db.$queryRaw<
+  const rows = await queryMainRows<
     {
       type: string;
       display_name: string;
@@ -214,15 +214,16 @@ async function queryRakebackInstantClaimConfig(): Promise<InstantClaimConfig> {
       early_claim_payout_percent: string | null;
       early_claim_cooldown_seconds: number | null;
     }[]
-  >`
-    SELECT
+  >(
+    `SELECT
       type::text                        AS type,
       display_name                      AS display_name,
       enabled                           AS enabled,
       early_claim_payout_percent::text  AS early_claim_payout_percent,
       early_claim_cooldown_seconds      AS early_claim_cooldown_seconds
     FROM rakeback_config
-    ORDER BY type ASC`;
+    ORDER BY type ASC`,
+  );
 
   return {
     supported: true,
@@ -257,14 +258,12 @@ async function queryRakebackInstantClaimConfig(): Promise<InstantClaimConfig> {
 async function queryRakebackInstantClaimUsage(
   period: InstantClaimPeriod,
 ): Promise<InstantClaimUsage> {
-  const db = await getDb();
-
   // Run the two cheap column probes + the exclusion-id resolution
   // concurrently (they're independent) instead of three serial round-trips.
   const [hasPreclaim, excludedIds, hasPayoutPercent] = await Promise.all([
-    columnExists(db, "rakeback_claims", "last_preclaim_at"),
+    columnExists("rakeback_claims", "last_preclaim_at"),
     getExcludedUserIds(),
-    columnExists(db, "rakeback_config", "early_claim_payout_percent"),
+    columnExists("rakeback_config", "early_claim_payout_percent"),
   ]);
 
   if (!hasPreclaim) {
@@ -295,7 +294,7 @@ async function queryRakebackInstantClaimUsage(
   // scans of the same window — run them concurrently so a cold load pays one
   // round-trip's latency, not two in series.
   const [aggRows, byTypeRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryMainRows<
       {
         total_count: bigint;
         instant_count: bigint;
@@ -318,7 +317,7 @@ async function queryRakebackInstantClaimUsage(
        ${windowSql}
        AND ${scopeSql}`,
     ),
-    db.$queryRawUnsafe<
+    queryMainRows<
       { type: string; instant_count: bigint; instant_usd: string | null }[]
     >(
       `SELECT
@@ -375,7 +374,7 @@ async function queryRakebackInstantClaimUsage(
 // `rakeback_claims`).
 //
 // `unstable_cache` runs its callback OUTSIDE the request's dynamic scope, so
-// `cookies()` (and `readDbEnv` inside `getDb()`) falls back to "prod". Caching
+// `cookies()` (and `readDbEnv` inside the client resolver) falls back to "prod". Caching
 // a dev-toggled request would serve PROD data to a dev admin, so we cache ONLY
 // on prod (the default + hot path); a dev-toggled admin runs the query
 // directly. Payloads are all-primitive shapes, so the cache JSON round-trip is

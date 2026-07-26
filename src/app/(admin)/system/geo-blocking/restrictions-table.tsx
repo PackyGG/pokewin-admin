@@ -38,7 +38,7 @@ import { EmptyState } from "@/components/empty-state";
  * physical_withdrawal / digital_withdrawal / gift_card_deposit /
  * promo_code_deposit = true and only the US has blocked = true):
  *   - physicalWithdrawal / digitalWithdrawal / giftCardDeposit /
- *     promoCodeDeposit: `true` = ALLOWED (the Prisma defaults are all
+ *     promoCodeDeposit: `true` = ALLOWED (the database defaults are all
  *     `true`, i.e. a brand-new row starts fully open — so `false` is what
  *     disables that capability for the country).
  *   - blocked: `true` = the country is fully blocked (default `false`).

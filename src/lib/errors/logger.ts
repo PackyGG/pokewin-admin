@@ -87,10 +87,8 @@ export function logInfo(area: string, message: string) {
   emit("info", area, message);
 }
 
-/** Which read engine a degraded query was hitting — kept unambiguous so a
- *  failed Postgres tile and a failed ClickHouse read are distinguishable by
- *  a single greppable token. */
-export type QueryEngine = "postgres" | "clickhouse";
+/** Which read engine a degraded query was hitting. */
+export type QueryEngine = "postgres";
 
 /**
  * Emit one structured query-failure line carrying the engine token,
@@ -99,7 +97,7 @@ export type QueryEngine = "postgres" | "clickhouse";
  * prefix and redaction rules (name/message/digest only, no stack;
  * non-Error sliced to 500 chars), so a failed PG tile and a failed CH read
  * log in the same shape and grep the same way (`kind=timeout`, `kind=error`,
- * `engine=postgres`, `engine=clickhouse`, `duration_ms=<int>`). Carries no
+ * `engine=postgres`, `duration_ms=<int>`). Carries no
  * SQL/params/row payloads.
  */
 export function logQueryFailure(

@@ -1,9 +1,9 @@
+import { daysAgoFilter, queryRows, realCustomersScopeDrizzle, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { realCustomersScopeSql } from "@/lib/queries/insights-games/_shared";
 import { toNumber } from "@/lib/utils/decimal";
 import { resolveRainHouseCost } from "@/lib/metrics";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -35,7 +35,7 @@ import {
  *
  * ─── SCOPE / MODEL ──────────────────────────────────────────────────
  *
- * `realCustomersScopeSql()` (staff + creators + blacklist dropped) — this
+ * `realCustomersScopeDrizzle()` (staff + creators + blacklist dropped) — this
  * is a PLAYER leaderboard, so the customer scope is the right one. That
  * deliberately excludes the creator tips/sponsorship pool, whose spend is
  * attributed to creators rather than to the players ranked here; it is
@@ -91,12 +91,12 @@ async function computeRecipients(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RewardRecipientRow[]> {
-  void blacklistIds; // consumed by realCustomersScopeSql; kept for the cache key
+  void blacklistIds; // consumed by realCustomersScopeDrizzle; kept for the cache key
   return withTiming("insights-rewards.program-recipients", async () => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
     const days = daysForInsightsPeriodCapped(period);
-    const dateFilter = `AND lt.created_at >= NOW() - INTERVAL '${days} days'`;
-    const scope = await realCustomersScopeSql();
+    const dateFilter = daysAgoFilter("lt.created_at", days);
+    const scope = await realCustomersScopeDrizzle();
 
     // One pass, pivoted per program. Rain legs stay split so the per-player
     // house slice can be netted below before it joins `other`. Ranking uses
@@ -104,7 +104,7 @@ async function computeRecipients(
     // recomputed from the netted programs, so a rain-heavy player can shift
     // slightly within the list but never enters it on rain that was
     // user-funded.
-    const rows = await db.$queryRawUnsafe<
+    const rows = await queryRows<
       {
         user_id: string;
         username: string | null;
@@ -119,7 +119,7 @@ async function computeRecipients(
         wager_total: string;
         payout_total: string;
       }[]
-    >(`
+    >(db, sql`
       WITH rewards AS (
         SELECT
           lt.user_id,
@@ -184,8 +184,8 @@ async function computeRecipients(
       play AS (
         SELECT
           lt.user_id,
-          COALESCE(SUM(CASE WHEN lt.type::text IN ${WAGER_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS wager_total,
-          COALESCE(SUM(CASE WHEN lt.type::text IN ${PAYOUT_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS payout_total
+          COALESCE(SUM(CASE WHEN lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)} THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS wager_total,
+          COALESCE(SUM(CASE WHEN lt.type::text IN ${sql.raw(PAYOUT_TYPES_SQL)} THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS payout_total
         FROM ledger_transactions lt
         WHERE lt.status = 'completed'
           AND lt.user_id IN (SELECT user_id FROM rewards)

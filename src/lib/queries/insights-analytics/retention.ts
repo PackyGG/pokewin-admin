@@ -1,7 +1,7 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
@@ -72,7 +72,6 @@ const cachedRetentionRows = unstable_cache(
     breakdownBy: RetentionBreakdownKey,
     blacklistIdNotIn: string,
   ): Promise<RetentionRawRow[]> => {
-    const db = await getDb();
     // Group expression. The expressions are inlined verbatim (whitelisted
     // strings; no user input) so the GROUP BY can take a free-form SQL
     // bucket directly.
@@ -96,7 +95,7 @@ const cachedRetentionRows = unstable_cache(
       }
     })();
 
-    return db.$queryRawUnsafe<RetentionRawRow[]>(`
+    return queryMainRows<RetentionRawRow[]>(`
       WITH eligible AS (
         SELECT id AS user_id, created_at, (${groupExpr}) AS bucket
         FROM "user"

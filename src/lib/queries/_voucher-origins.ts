@@ -1,15 +1,14 @@
 import { unstable_cache } from "next/cache";
-import {
-  voucher_origin,
-  type voucher_origin as VoucherOrigin,
-} from "@/generated/prisma/enums";
-import { dbForEnv } from "@/lib/db";
+import { sql } from "drizzle-orm";
+import { voucher_origin } from "@/lib/db-schema/main/schema";
+import { drizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 
-/** Generated Prisma `voucher_origin` members — keep in sync with schema.prisma. */
-const VOUCHER_ORIGINS = new Set<string>(Object.values(voucher_origin));
+/** `voucher_origin` members — keep in sync with the database schema. */
+export type VoucherOrigin = (typeof voucher_origin.enumValues)[number];
+const VOUCHER_ORIGINS = new Set<string>(voucher_origin.enumValues);
 
-/** Drop strings not in the generated client (schema drift before `prisma generate`). */
+/** Drop strings not in the checked-in enum snapshot after schema drift. */
 function filterVoucherOrigins(origins: readonly string[]): VoucherOrigin[] {
   return origins.filter((o): o is VoucherOrigin => VOUCHER_ORIGINS.has(o));
 }
@@ -30,13 +29,14 @@ function filterVoucherOrigins(origins: readonly string[]): VoucherOrigin[] {
  */
 const liveVoucherOriginEnumCached = unstable_cache(
   async (env: DbEnv): Promise<string[]> => {
-    const db = dbForEnv(env);
-    const rows = await db.$queryRaw<{ enumlabel: string }[]>`
+    const db = drizzleForEnv(env);
+    const result = await db.execute<{ enumlabel: string }>(sql`
       SELECT e.enumlabel
         FROM pg_enum e
         JOIN pg_type t ON t.oid = e.enumtypid
-       WHERE t.typname = 'voucher_origin'`;
-    return rows.map((r) => r.enumlabel);
+       WHERE t.typname = 'voucher_origin'
+    `);
+    return result.rows.map((r) => r.enumlabel);
   },
   ["live-voucher-origin-enum-v1"],
   { revalidate: 300 },

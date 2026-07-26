@@ -1,16 +1,13 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { WAGER_TYPES_SQL } from "@/lib/queries/_wager-payout-types";
-import { compareSignupRetention } from "@/lib/clickhouse/compare/insights-signup-retention";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getSignupRetentionFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/signup/retention";
 import { SIGNUP_CACHE_TAG } from "./_shared";
 
 /**
@@ -64,13 +61,10 @@ async function computeRetention(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<Retention> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const signupDateFilter =
-    days !== null
-      ? `AND u.created_at >= NOW() - INTERVAL '${days} days'`
-      : "";
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const signupDateFilter = daysAgoFilter("u.created_at", days);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Build one CTE per retention window. Each row has per-user
   // signup_at + had_claim + retained_24h / 7d / 30d booleans so we can
@@ -84,7 +78,7 @@ async function computeRetention(
     retained_7d: number;
     retained_30d: number;
   };
-  const rows = await db.$queryRawUnsafe<Row[]>(`
+  const rows = await queryRows<Row[]>(db, sql`
     WITH cohort AS (
       SELECT u.id AS user_id, u.created_at AS signed_up_at
       FROM "user" u
@@ -105,21 +99,21 @@ async function computeRetention(
         SELECT 1 FROM ledger_transactions lt
         WHERE lt.user_id = c.user_id
           AND lt.status = 'completed'
-          AND (lt.type::text = 'deposit' OR lt.type::text IN ${WAGER_TYPES_SQL})
+          AND (lt.type::text = 'deposit' OR lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)})
           AND lt.created_at <= c.signed_up_at + INTERVAL '1 day'
       ) THEN 1 ELSE 0 END AS retained_24h,
       CASE WHEN EXISTS (
         SELECT 1 FROM ledger_transactions lt
         WHERE lt.user_id = c.user_id
           AND lt.status = 'completed'
-          AND (lt.type::text = 'deposit' OR lt.type::text IN ${WAGER_TYPES_SQL})
+          AND (lt.type::text = 'deposit' OR lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)})
           AND lt.created_at <= c.signed_up_at + INTERVAL '7 days'
       ) THEN 1 ELSE 0 END AS retained_7d,
       CASE WHEN EXISTS (
         SELECT 1 FROM ledger_transactions lt
         WHERE lt.user_id = c.user_id
           AND lt.status = 'completed'
-          AND (lt.type::text = 'deposit' OR lt.type::text IN ${WAGER_TYPES_SQL})
+          AND (lt.type::text = 'deposit' OR lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)})
           AND lt.created_at <= c.signed_up_at + INTERVAL '30 days'
       ) THEN 1 ELSE 0 END AS retained_30d
     FROM cohort c
@@ -179,65 +173,16 @@ async function computeRetention(
   };
 }
 
-// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
-// through the cache on failure); off/comparison serve Postgres. Wrapped inside
-// the cache so the served leg (CH or PG) is memoized identically. The CH twin
-// returns the raw claimer/non-claimer retained + cohort counts; the shares +
-// lift % are reconstructed here with the SAME derivation as the PG `build`
-// helper above, so the served Retention is byte-identical to the PG shape.
-async function resolveRetention(
-  period: InsightsRewardsPeriod,
-  blacklistIds: string[],
-): Promise<Retention> {
-  return resolveAdminRead<Retention>("insights_signup_retention", {
-    pg: () => computeRetention(period, blacklistIds),
-    ch: async () => {
-      const r = await getSignupRetentionFromClickHouse(
-        period,
-        blacklistIds,
-        new Date(),
-      );
-      const build = (
-        claimerRetained: number,
-        nonClaimerRetained: number,
-      ): RetentionCurveValue => {
-        const claimerShare =
-          r.claimerTotal > 0 ? claimerRetained / r.claimerTotal : 0;
-        const nonClaimerShare =
-          r.nonClaimerTotal > 0 ? nonClaimerRetained / r.nonClaimerTotal : 0;
-        const liftPct =
-          nonClaimerShare > 0
-            ? ((claimerShare - nonClaimerShare) / nonClaimerShare) * 100
-            : null;
-        return {
-          claimerCount: r.claimerTotal,
-          claimerRetained,
-          claimerShare,
-          nonClaimerCount: r.nonClaimerTotal,
-          nonClaimerRetained,
-          nonClaimerShare,
-          liftPct,
-        };
-      };
-      return {
-        retention24h: build(r.claimer24h, r.nonClaimer24h),
-        retention7d: build(r.claimer7d, r.nonClaimer7d),
-        retention30d: build(r.claimer30d, r.nonClaimer30d),
-      };
-    },
-  });
-}
-
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveRetention(period, blacklistIds),
+    computeRetention(period, blacklistIds),
   ["insights-rewards-signup-retention-v1"],
   { revalidate: 60, tags: [SIGNUP_CACHE_TAG] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveRetention(period, blacklistIds),
+    computeRetention(period, blacklistIds),
   ["insights-rewards-signup-retention-lifetime-v1"],
   { revalidate: 300, tags: [SIGNUP_CACHE_TAG] },
 );
@@ -250,9 +195,5 @@ export async function getSignupRetention(
   const data = await (cacheTtlForInsightsPeriod(period) >= 300
     ? cachedLong(period, sorted)
     : cachedShort(period, sorted));
-  // CQRS rollout: fire-and-forget ClickHouse comparison (no-op unless the
-  // surface flag is in `comparison` mode; forced off when CH is dormant). The
-  // served value stays the Postgres payload above.
-  void compareSignupRetention(period, data);
   return data;
 }

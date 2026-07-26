@@ -1,6 +1,5 @@
-import { getDb } from "@/lib/db";
-import { Prisma } from "@/generated/prisma/client";
-import { affiliate_usage_type } from "@/generated/prisma/enums";
+import { queryMainRows } from "@/lib/drizzle-query";
+import * as mainSchema from "@/lib/db-schema/main/schema";
 import { toNumber } from "@/lib/utils/decimal";
 import { isUserId, isUuid } from "@/lib/utils/ids";
 import { filterLedgerTxTypesLive } from "./_ledger-tx-types";
@@ -8,11 +7,16 @@ import { calculateUserPnl } from "./pnl";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-visible-override";
-import { escapeBlacklistIds } from "./_blacklist";
-
-type Db = Awaited<ReturnType<typeof getDb>>;
 
 const TIP_RECENT_LIMIT = 10;
+
+function toIso(value: string | Date): string {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function toMillis(value: string | Date | null): number {
+  return value == null ? Infinity : new Date(value).getTime();
+}
 
 /**
  * Creator tips for a user, split into received vs sent.
@@ -25,74 +29,71 @@ const TIP_RECENT_LIMIT = 10;
  * `amount` is the magnitude on both rows; for older rows that predate the
  * metadata flag we fall back to the balance delta to infer direction.
  */
-async function getUserTips(db: Db, userId: string) {
-  const [rows, rainAgg, rainRecent, leaderboardAgg, leaderboardRecent, raceAgg, raceRecent] =
+async function getUserTips(userId: string) {
+  const [rows, aggregateRows, recentRows] =
     await Promise.all([
-      db.ledger_transactions.findMany({
-        where: { user_id: userId, type: "creator_tip" },
-        orderBy: { created_at: "desc" },
-        select: {
-          id: true,
-          amount: true,
-          balance_before: true,
-          balance_after: true,
-          metadata: true,
-          created_at: true,
-        },
-      }),
-      // Rain prizes the user won (rain_win) — count + total in one pass…
-      db.ledger_transactions.aggregate({
-        where: { user_id: userId, type: "rain_win" },
-        _count: { _all: true },
-        _sum: { amount: true },
-      }),
-      // …plus the most recent few for the list.
-      db.ledger_transactions.findMany({
-        where: { user_id: userId, type: "rain_win" },
-        orderBy: { created_at: "desc" },
-        take: TIP_RECENT_LIMIT,
-        select: { id: true, amount: true, created_at: true },
-      }),
-      // Affiliate-leaderboard prize payouts — credits to users who placed
-      // on a creator-leaderboard ranking. Same pattern as rain_win: no
-      // counterparty (the pool pays out). House cost ⇒ rose color downstream.
-      db.ledger_transactions.aggregate({
-        where: { user_id: userId, type: "affiliate_leaderboard_prize" },
-        _count: { _all: true },
-        _sum: { amount: true },
-      }),
-      // Same recent-N pull as rain, with metadata so we can extract
-      // the source leaderboard id + position. Backend writes both
-      // fields onto the prize ledger row when the rank settles.
-      db.ledger_transactions.findMany({
-        where: { user_id: userId, type: "affiliate_leaderboard_prize" },
-        orderBy: { created_at: "desc" },
-        take: TIP_RECENT_LIMIT,
-        select: {
-          id: true,
-          amount: true,
-          created_at: true,
-          metadata: true,
-        },
-      }),
-      // On-site race prize claims (race_prize) — same pattern as rain_win.
-      db.ledger_transactions.aggregate({
-        where: { user_id: userId, type: "race_prize" },
-        _count: { _all: true },
-        _sum: { amount: true },
-      }),
-      db.ledger_transactions.findMany({
-        where: { user_id: userId, type: "race_prize" },
-        orderBy: { created_at: "desc" },
-        take: TIP_RECENT_LIMIT,
-        select: {
-          id: true,
-          amount: true,
-          created_at: true,
-          metadata: true,
-        },
-      }),
+      queryMainRows<
+        {
+          id: string;
+          amount: string;
+          balance_before: string;
+          balance_after: string;
+          metadata: unknown;
+          created_at: Date;
+        }[]
+      >(
+        `SELECT id, amount::text, balance_before::text, balance_after::text,
+                metadata, created_at
+           FROM ledger_transactions
+          WHERE user_id = $1 AND type::text = 'creator_tip'
+          ORDER BY created_at DESC`,
+        userId,
+      ),
+      queryMainRows<
+        { type: string; count: string; total: string | null }[]
+      >(
+        `SELECT type::text AS type, COUNT(*)::text AS count,
+                SUM(amount::numeric)::text AS total
+           FROM ledger_transactions
+          WHERE user_id = $1
+            AND type::text = ANY($2::text[])
+          GROUP BY type`,
+        userId,
+        ["rain_win", "affiliate_leaderboard_prize", "race_prize"],
+      ),
+      queryMainRows<
+        {
+          id: string;
+          type: string;
+          amount: string;
+          created_at: Date;
+          metadata: unknown;
+        }[]
+      >(
+        `SELECT id, type, amount, created_at, metadata
+           FROM (
+             SELECT id, type::text AS type, amount::text AS amount,
+                    created_at, metadata,
+                    ROW_NUMBER() OVER (PARTITION BY type ORDER BY created_at DESC) AS rn
+               FROM ledger_transactions
+              WHERE user_id = $1
+                AND type::text = ANY($2::text[])
+           ) ranked
+          WHERE rn <= $3`,
+        userId,
+        ["rain_win", "affiliate_leaderboard_prize", "race_prize"],
+        TIP_RECENT_LIMIT,
+      ),
     ]);
+  const aggregate = new Map(aggregateRows.map((row) => [row.type, row]));
+  const recentByType = (type: string) =>
+    recentRows.filter((row) => row.type === type);
+  const rainAgg = aggregate.get("rain_win");
+  const leaderboardAgg = aggregate.get("affiliate_leaderboard_prize");
+  const raceAgg = aggregate.get("race_prize");
+  const rainRecent = recentByType("rain_win");
+  const leaderboardRecent = recentByType("affiliate_leaderboard_prize");
+  const raceRecent = recentByType("race_prize");
 
   type Entry = {
     id: string;
@@ -142,10 +143,12 @@ async function getUserTips(db: Db, userId: string) {
     ),
   ];
   if (ids.length > 0) {
-    const users = await db.user.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, username: true, email: true },
-    });
+    const users = await queryMainRows<
+      { id: string; username: string | null; email: string | null }[]
+    >(
+      `SELECT id, username, email FROM "user" WHERE id = ANY($1::text[])`,
+      ids,
+    );
     const nameById = new Map(
       users.map((u) => [u.id, u.username ?? u.email ?? u.id]),
     );
@@ -177,8 +180,8 @@ async function getUserTips(db: Db, userId: string) {
     },
     // Rain prizes have no counterparty — they come from the rain pool.
     rainPrizes: {
-      count: rainAgg._count._all,
-      totalUsd: toNumber(rainAgg._sum.amount ?? 0),
+      count: Number(rainAgg?.count ?? 0),
+      totalUsd: toNumber(rainAgg?.total ?? 0),
       recent: rainRecent.map((r) => ({
         id: r.id,
         amountUsd: toNumber(r.amount),
@@ -193,13 +196,13 @@ async function getUserTips(db: Db, userId: string) {
     // off the prize ledger row's metadata so the UI can label which
     // leaderboard the win came from and deep-link to it.
     leaderboardWins: {
-      count: leaderboardAgg._count._all,
-      totalUsd: toNumber(leaderboardAgg._sum.amount ?? 0),
+      count: Number(leaderboardAgg?.count ?? 0),
+      totalUsd: toNumber(leaderboardAgg?.total ?? 0),
       recent: await enrichLeaderboardWins(leaderboardRecent),
     },
     raceClaims: {
-      count: raceAgg._count._all,
-      totalUsd: toNumber(raceAgg._sum.amount ?? 0),
+      count: Number(raceAgg?.count ?? 0),
+      totalUsd: toNumber(raceAgg?.total ?? 0),
       recent: raceRecent.map((r) => {
         const meta = parseRaceClaimMetadata(r.metadata);
         return {
@@ -357,7 +360,7 @@ async function enrichLeaderboardWins(
  * Accepts UUIDs, nanoid-style user ids, or a username (case-insensitive).
  *
  * The username branch is a RAW parameterized `lower(username) = lower($1)`
- * lookup — NOT Prisma's `{ equals, mode:"insensitive" }`, which compiles to
+ * lookup rather than an `ILIKE`, which
  * `username ILIKE $1` and (EXPLAIN-proven against prod, read-only) SEQ-SCANS
  * the `"user"` table (cost ≈ 912). Under the MAIN `max:3` pool that seq scan
  * is the crash source on this (#1-traffic) route. The `lower(username) = $1`
@@ -376,21 +379,21 @@ export async function resolveUserIdFromRouteKey(
   const trimmed = key.trim();
   if (!trimmed) return null;
 
-  const db = await getDb();
   if (isUuid(trimmed) || isUserId(trimmed)) {
-    const user = await db.user.findUnique({
-      where: { id: trimmed },
-      select: { id: true },
-    });
-    return user?.id ?? null;
+    const rows = await queryMainRows<{ id: string }[]>(
+      `SELECT id FROM "user" WHERE id = $1 LIMIT 1`,
+      trimmed,
+    );
+    return rows[0]?.id ?? null;
   }
 
   // Case-insensitive EXACT username → id. Parameterized ($1 via tagged
   // template), so no injection surface; served by
   // idx_user_lower_username_prefix as an Index Scan (see doc comment above).
-  const rows = await db.$queryRaw<Array<{ id: string }>>`
-    SELECT id FROM "user" WHERE lower(username) = lower(${trimmed}) LIMIT 1
-  `;
+  const rows = await queryMainRows<{ id: string }[]>(
+    `SELECT id FROM "user" WHERE lower(username) = lower($1) LIMIT 1`,
+    trimmed,
+  );
   return rows[0]?.id ?? null;
 }
 
@@ -399,11 +402,9 @@ export async function getUserHeader(id: string): Promise<{
   username: string | null;
   email: string | null;
 } | null> {
-  const db = await getDb();
-  const user = await db.user.findUnique({
-    where: { id },
-    select: { id: true, username: true, email: true },
-  });
+  const [user] = await queryMainRows<
+    { id: string; username: string | null; email: string | null }[]
+  >(`SELECT id, username, email FROM "user" WHERE id = $1 LIMIT 1`, id);
   if (!user) return null;
   return { id: user.id, username: user.username, email: user.email };
 }
@@ -412,16 +413,16 @@ export async function getUserHeader(id: string): Promise<{
  * Reads the spendable-points counter name-agnostically across schema drift.
  * The dev and prod DBs are on different migrations: 0127 renamed
  * balances.bonus_points -> shards on dev but not (yet) on prod. The same
- * generated Prisma client serves BOTH DBs, so a bare findUnique() (which
- * pulls every model column) requests the divergent column and throws P2022
+ * generated clients serve both DBs, so broad selects request the divergent
+ * column and fail
  * on whichever DB lacks it. Try the post-rename name first, fall back to the
  * legacy name, and treat "column absent" as 0. id is parameterised and the
- * column names are a fixed allowlist, so $queryRawUnsafe is safe here.
+ * column names are a fixed allowlist, so legacy raw query is safe here.
  */
-async function fetchBalancePoints(db: Db, id: string): Promise<number> {
+async function fetchBalancePoints(id: string): Promise<number> {
   for (const col of ["shards", "bonus_points"] as const) {
     try {
-      const rows = await db.$queryRawUnsafe<Array<{ pts: number | null }>>(
+      const rows = await queryMainRows<Array<{ pts: number | null }>>(
         `SELECT "${col}" AS pts FROM balances WHERE user_id = $1`,
         id,
       );
@@ -454,31 +455,33 @@ async function fetchBalancePoints(db: Db, id: string): Promise<number> {
  * as the per-source weighting / wager-progress reads.
  */
 async function fetchWagerLocked(
-  db: Db,
   id: string,
 ): Promise<{ wagerLocked: number | null; wagerProgress: number | null }> {
   // Cheap indexed catalog read — runs once per detail load.
-  const colCheck = await db.$queryRaw<{ exists: boolean }[]>`
+  const colCheck = await queryMainRows<{ exists: boolean }[]>(`
     SELECT EXISTS (
       SELECT 1
         FROM information_schema.columns
        WHERE table_schema = 'public'
          AND table_name = 'balances'
          AND column_name = 'wager_requirement_remaining'
-    ) AS exists`;
+    ) AS exists`);
   if (!colCheck[0]?.exists) {
     return { wagerLocked: null, wagerProgress: null };
   }
   try {
-    const rows = await db.$queryRaw<
+    const rows = await queryMainRows<
       { wager_requirement_remaining: string | null; wager_requirement_progress: string | null }[]
-    >`
+    >(
+      `
       SELECT
         wager_requirement_remaining::text  AS wager_requirement_remaining,
         wager_requirement_progress::text   AS wager_requirement_progress
       FROM balances
-      WHERE user_id = ${id}
-      LIMIT 1`;
+      WHERE user_id = $1
+      LIMIT 1`,
+      id,
+    );
     const row = rows[0];
     if (!row) return { wagerLocked: null, wagerProgress: null };
     const num = (v: string | null): number => {
@@ -499,20 +502,18 @@ async function fetchWagerLocked(
 }
 
 export async function getUserDetail(id: string) {
-  const db = await getDb();
   // Everything is independent — one Promise.all instead of two serialized ones
   // cuts the worst-case latency roughly in half on hot user-detail loads.
   let wagerBreakdown: { type: string; _sum: { amount: unknown } }[] = [];
 
   // Wager-breakdown groupBy — the requested type list is intersected against
   // the LIVE prod enum at call time (filterLedgerTxTypesLive), NOT just the
-  // generated Prisma enum. The generated client is AHEAD of prod for the
-  // unlaunched upgrader feature: passing `upgrader_bet` into a Prisma
-  // `type: { in: [...] }` made Postgres throw `22P02 invalid input value for
+  // generated enum. The generated schema is ahead of prod for the
+  // unlaunched upgrader feature: passing `upgrader_bet` into an enum
+  // predicate made Postgres throw `22P02 invalid input value for
   // enum`, which the .catch below silently swallowed → packs/battles-wagered
   // tiles rendered 0 on every prod profile. The live probe is 5-min
-  // unstable_cache'd, so steady-state adds no extra round trip. (Prisma
-  // `in: []` on an empty live list is valid and returns no rows.)
+  // unstable_cache'd, so steady-state adds no extra round trip.
   const wagerBreakdownPromise = filterLedgerTxTypesLive([
     "pack_opening",
     "battle_bet",
@@ -520,15 +521,23 @@ export async function getUserDetail(id: string) {
     "upgrader_bet",
   ])
     .then((types) =>
-      db.ledger_transactions.groupBy({
-        by: ["type"],
-        where: {
-          user_id: id,
-          type: { in: types },
-          status: "completed",
-        },
-        _sum: { amount: true },
-      }),
+      types.length === 0
+        ? []
+        : queryMainRows<{ type: string; amount: string | null }[]>(
+            `SELECT type::text AS type, SUM(amount::numeric)::text AS amount
+               FROM ledger_transactions
+              WHERE user_id = $1
+                AND type::text = ANY($2::text[])
+                AND status::text = 'completed'
+              GROUP BY type`,
+            id,
+            types,
+          ).then((rows) =>
+            rows.map((row) => ({
+              type: row.type,
+              _sum: { amount: row.amount },
+            })),
+          ),
     )
     .catch((e) => {
       console.error("[getUserDetail] wager breakdown query failed:", e);
@@ -549,24 +558,26 @@ export async function getUserDetail(id: string) {
     includeAllBlacklisted: false,
     isSearching: false,
   })
-    .then((excludedUserIds) => {
-      const blacklistClause =
-        excludedUserIds.length > 0
-          ? Prisma.sql`AND acu.referred_user_id NOT IN (${Prisma.raw(escapeBlacklistIds(excludedUserIds))})`
-          : Prisma.empty;
-      return db.$queryRaw<Array<{ upper_code: string; referral_count: bigint | number | null }>>`
+    .then((excludedUserIds) =>
+      queryMainRows<
+        { upper_code: string; referral_count: bigint | number | null }[]
+      >(
+        `
         WITH codes AS (
-          SELECT UPPER(code) AS upper_code FROM affiliate_codes WHERE user_id = ${id}
+          SELECT UPPER(code) AS upper_code FROM affiliate_codes WHERE user_id = $1
         )
         SELECT c.upper_code,
                COUNT(DISTINCT acu.referred_user_id) AS referral_count
           FROM codes c
           LEFT JOIN affiliate_code_usages acu
                  ON UPPER(acu.code) = c.upper_code
-                ${blacklistClause}
+                AND NOT (acu.referred_user_id = ANY($2::text[]))
          GROUP BY c.upper_code
-      `;
-    })
+        `,
+        id,
+        excludedUserIds,
+      ),
+    )
     .catch((e) => {
       console.error("[getUserDetail] owned-code referral count query failed:", e);
       return [] as Array<{ upper_code: string; referral_count: bigint | number | null }>;
@@ -603,21 +614,19 @@ export async function getUserDetail(id: string) {
   // Keyed on the user ID, not on signup_ip, so it can run inside the same
   // parallel fan-out — resolving the IP first would cost a sequential
   // round-trip. GREATEST(...,0) keeps a NULL signup_ip at 0 rather than -1.
-  const signupIpSharedPromise = db
-    .$queryRaw<{ others: number | null }[]>`
+  const signupIpSharedPromise = queryMainRows<{ others: number | null }[]>(`
       SELECT GREATEST(COUNT(*) - 1, 0)::int AS others
         FROM "user"
        WHERE signup_ip IS NOT NULL
-         AND signup_ip = (SELECT signup_ip FROM "user" WHERE id = ${id})
-    `
+         AND signup_ip = (SELECT signup_ip FROM "user" WHERE id = $1)
+    `, id)
     .then((rows) => Number(rows[0]?.others ?? 0))
     .catch((e) => {
       console.error("[getUserDetail] shared signup_ip query failed:", e);
       return 0;
     });
 
-  const fingerprintSignalPromise = db
-    .$queryRaw<
+  const fingerprintSignalPromise = queryMainRows<
       {
         suspected_alt: boolean | null;
         linked_count: bigint | number | null;
@@ -627,11 +636,12 @@ export async function getUserDetail(id: string) {
         visitor_id: string | null;
         distinct_visitor_ids: number | null;
       }[]
-    >`
+    >(
+      `
       WITH my_fp AS (
         SELECT visitor_id, suspected_alt_triggered, confidence, created_at
         FROM fingerprints
-        WHERE user_id = ${id}
+        WHERE user_id = $1
       )
       SELECT
         COALESCE(bool_or(suspected_alt_triggered), false) AS suspected_alt,
@@ -648,10 +658,12 @@ export async function getUserDetail(id: string) {
           FROM fingerprints f
           WHERE f.visitor_id IN (SELECT visitor_id FROM my_fp)
             AND f.user_id IS NOT NULL
-            AND f.user_id != ${id}
+            AND f.user_id != $1
         ) AS linked_count
       FROM my_fp
-    `
+      `,
+      id,
+    )
     .then((rows) => ({
       suspectedAlt: rows[0]?.suspected_alt ?? false,
       linkedDeviceAccountCount: Number(rows[0]?.linked_count ?? 0),
@@ -706,34 +718,60 @@ export async function getUserDetail(id: string) {
     fingerprintSignal,
     signupIpSharedCount,
   ] = await Promise.all([
-    db.user.findUnique({
-      where: { id },
-      include: {
+    queryMainRows<
+      (typeof mainSchema.user.$inferSelect & {
         account: {
-          select: { providerId: true, accountId: true, created_at: true },
-        },
-      },
-    }),
+          providerId: string;
+          accountId: string;
+          created_at: string | null;
+        }[];
+      })[]
+    >(
+      `SELECT u.*,
+              COALESCE(
+                jsonb_agg(jsonb_build_object(
+                  'providerId', a."providerId",
+                  'accountId', a."accountId",
+                  'created_at', a.created_at
+                )) FILTER (WHERE a.id IS NOT NULL),
+                '[]'::jsonb
+              ) AS account
+         FROM "user" u
+         LEFT JOIN account a ON a."userId" = u.id
+        WHERE u.id = $1
+        GROUP BY u.id`,
+      id,
+    ).then((rows) => rows[0] ?? null),
     // SCHEMA-DRIFT GUARD: dev and prod are on different migrations (0127
     // renamed balances.bonus_points -> shards on dev only). A bare
     // findUnique() pulls EVERY model column, so it requests the divergent
-    // column and throws P2022 on whichever DB lacks it. Select only columns
+    // column and throws 42703 on whichever DB lacks it. Select only columns
     // that exist identically in BOTH DBs; the points value is read
     // name-agnostically via fetchBalancePoints below.
-    db.balances.findUnique({
-      where: { user_id: id },
-      select: {
-        available_balance: true,
-        locked_balance: true,
-        total_wagered: true,
-        total_won: true,
-        unlock_at: true,
-      },
-    }),
-    db.user_statistics.findUnique({ where: { user_id: id } }),
-    db.user_feature_locks.findUnique({ where: { user_id: id } }),
+    queryMainRows<
+      {
+        available_balance: string;
+        locked_balance: string;
+        total_wagered: string;
+        total_won: string;
+        unlock_at: Date | null;
+      }[]
+    >(
+      `SELECT available_balance::text, locked_balance::text,
+              total_wagered::text, total_won::text, unlock_at
+         FROM balances WHERE user_id = $1 LIMIT 1`,
+      id,
+    ).then((rows) => rows[0] ?? null),
+    queryMainRows<(typeof mainSchema.user_statistics.$inferSelect)[]>(
+      `SELECT * FROM user_statistics WHERE user_id = $1 LIMIT 1`,
+      id,
+    ).then((rows) => rows[0] ?? null),
+    queryMainRows<(typeof mainSchema.user_feature_locks.$inferSelect)[]>(
+      `SELECT * FROM user_feature_locks WHERE user_id = $1 LIMIT 1`,
+      id,
+    ).then((rows) => rows[0] ?? null),
     // user_battle_limits now EXISTS on live prod (verified read-only via
-    // to_regclass, 2026-07-01), so the historical P2021-missing-table throw
+    // to_regclass, 2026-07-01), so the historical missing-table throw
     // this .catch was written for no longer fires there. The .catch is KEPT
     // as defence-in-depth: the same generated client also serves the
     // dev-toggled DB (which can lag prod's migration state), and a bare
@@ -741,71 +779,84 @@ export async function getUserDetail(id: string) {
     // render the amber error instead of the page. On prod a null now means
     // "no per-user override row" (site_config defaults apply) — the TRUE
     // answer — returned by the query itself, not the catch.
-    db.user_battle_limits.findUnique({ where: { user_id: id } }).catch(() => null),
-    db.user_inventory.count({ where: { user_id: id, sold_at: null, exchanged_at: null } }),
-    db.affiliate_accounts.findUnique({
-      where: { user_id: id },
-      select: {
-        total_referred: true,
-        total_wager_volume_usd: true,
-        total_earned_usd: true,
-        available_usd: true,
-        total_paid_out_usd: true,
-        total_bonus_distributed_usd: true,
-        last_payout_at: true,
-      },
-    }),
-    db.shipping_addresses.findUnique({ where: { user_id: id } }),
-    db.vaults.findUnique({ where: { user_id: id } }),
-    db.user_mutes.findMany({
-      where: { user_id: id },
-      orderBy: { created_at: "desc" },
-      take: 10,
-    }),
-    db.card_withdrawal_requests.findMany({
-      where: { user_id: id },
-      orderBy: { requested_at: "desc" },
-      take: 10,
-    }),
-    db.active_seeds.findUnique({ where: { user_id: id } }),
-    db.deposit_addresses.findMany({
-      where: { user_id: id },
-      orderBy: { created_at: "desc" },
-    }),
+    queryMainRows<(typeof mainSchema.user_battle_limits.$inferSelect)[]>(
+      `SELECT * FROM user_battle_limits WHERE user_id = $1 LIMIT 1`,
+      id,
+    ).then((rows) => rows[0] ?? null).catch(() => null),
+    queryMainRows<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count FROM user_inventory
+        WHERE user_id = $1 AND sold_at IS NULL AND exchanged_at IS NULL`,
+      id,
+    ).then((rows) => Number(rows[0]?.count ?? 0)),
+    queryMainRows<(typeof mainSchema.affiliate_accounts.$inferSelect)[]>(
+      `SELECT * FROM affiliate_accounts WHERE user_id = $1 LIMIT 1`,
+      id,
+    ).then((rows) => rows[0] ?? null),
+    queryMainRows<(typeof mainSchema.shipping_addresses.$inferSelect)[]>(
+      `SELECT * FROM shipping_addresses WHERE user_id = $1 LIMIT 1`,
+      id,
+    ).then((rows) => rows[0] ?? null),
+    queryMainRows<(typeof mainSchema.vaults.$inferSelect)[]>(
+      `SELECT * FROM vaults WHERE user_id = $1 LIMIT 1`,
+      id,
+    ).then((rows) => rows[0] ?? null),
+    queryMainRows<(typeof mainSchema.user_mutes.$inferSelect)[]>(
+      `SELECT * FROM user_mutes WHERE user_id = $1
+        ORDER BY created_at DESC LIMIT $2`,
+      id,
+      10,
+    ),
+    queryMainRows<(typeof mainSchema.card_withdrawal_requests.$inferSelect)[]>(
+      `SELECT * FROM card_withdrawal_requests WHERE user_id = $1
+        ORDER BY requested_at DESC LIMIT $2`,
+      id,
+      10,
+    ),
+    queryMainRows<(typeof mainSchema.active_seeds.$inferSelect)[]>(
+      `SELECT * FROM active_seeds WHERE user_id = $1 LIMIT 1`,
+      id,
+    ).then((rows) => rows[0] ?? null),
+    queryMainRows<(typeof mainSchema.deposit_addresses.$inferSelect)[]>(
+      `SELECT * FROM deposit_addresses
+        WHERE user_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2`,
+      id,
+      50,
+    ),
     // Event counts surfaced at the top of the detail page header. Counts
     // are defined to mirror the existing "total withdrawn" aggregate in
     // balances so the header and the Balances card agree on what counts
     // as a completed deposit / withdrawal. Combined count + sum into one
     // aggregate call so we hit the deposit ledger filter exactly once
     // instead of twice — same plan, half the round-trips.
-    db.ledger_transactions.aggregate({
-      where: {
-        user_id: id,
-        type: "deposit",
-        status: "completed",
-      },
-      _count: { _all: true },
-      _sum: { amount: true },
-    }),
+    queryMainRows<{ count: string; total: string | null }[]>(
+      `SELECT COUNT(*)::text AS count, SUM(amount::numeric)::text AS total
+         FROM ledger_transactions
+        WHERE user_id = $1 AND type::text = 'deposit'
+          AND status::text = 'completed'`,
+      id,
+    ).then(([row]) => ({
+      _count: { _all: Number(row?.count ?? 0) },
+      _sum: { amount: row?.total ?? null },
+    })),
     // Fiat (non-crypto) deposits only — completed deposit-ledger rows with no
     // crypto_asset. Splits the completed-deposit total into fiat vs crypto so
     // the P&L / KYC / dashboard surfaces can show "of which $X fiat". Same
     // filter as depositAgg above, plus crypto_asset IS NULL.
-    db.ledger_transactions.aggregate({
-      where: {
-        user_id: id,
-        type: "deposit",
-        status: "completed",
-        crypto_asset: null,
-      },
-      _sum: { amount: true },
-    }),
-    db.card_withdrawal_requests.count({
-      where: {
-        user_id: id,
-        status: { in: ["completed", "shipped"] },
-      },
-    }),
+    queryMainRows<{ total: string | null }[]>(
+      `SELECT SUM(amount::numeric)::text AS total
+         FROM ledger_transactions
+        WHERE user_id = $1 AND type::text = 'deposit'
+          AND status::text = 'completed' AND crypto_asset IS NULL`,
+      id,
+    ).then(([row]) => ({ _sum: { amount: row?.total ?? null } })),
+    queryMainRows<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count FROM card_withdrawal_requests
+        WHERE user_id = $1 AND status::text = ANY($2::text[])`,
+      id,
+      ["completed", "shipped"],
+    ).then((rows) => Number(rows[0]?.count ?? 0)),
     userPnlPromise,
     wagerBreakdownPromise,
     // Every code this user owns (rows in affiliate_codes). No dependency
@@ -813,11 +864,11 @@ export async function getUserDetail(id: string) {
     // the main batch instead of a serial tail. orderBy created_at ASC:
     // the LAST row is the newest, used as the affiliate-code fallback
     // below (replaces the dropped findFirst ... orderBy desc limit 1).
-    db.affiliate_codes.findMany({
-      where: { user_id: id },
-      orderBy: { created_at: "asc" },
-      select: { code: true, created_at: true },
-    }),
+    queryMainRows<{ code: string; created_at: Date }[]>(
+      `SELECT code, created_at FROM affiliate_codes
+        WHERE user_id = $1 ORDER BY created_at ASC`,
+      id,
+    ),
     // Per-owned-code referral counts for the "Codes they own" list — DISTINCT
     // referred_user_id per code, same case-fold (UPPER(code)) and
     // no-usage_type-restriction semantics as getCodeReferrals/getCodeAnalytics
@@ -837,14 +888,14 @@ export async function getUserDetail(id: string) {
     // Creator tips received + sent (both are creator_tip rows, split by
     // metadata.direction). Runs in parallel; resolves counterparty names
     // for the shown rows internally.
-    getUserTips(db, id),
+    getUserTips(id),
     // Spendable points counter, read name-agnostically across the
     // bonus_points -> shards rename (see fetchBalancePoints).
-    fetchBalancePoints(db, id),
+    fetchBalancePoints(id),
     // Wager-requirement debt + cleared progress for the new "Locked" line in
     // the balance breakdown (see fetchWagerLocked). Drift-safe: returns nulls
     // if the columns aren't on this DB → the row hides.
-    fetchWagerLocked(db, id),
+    fetchWagerLocked(id),
     // LIVE affiliate aggregates — sourced from the canonical
     // affiliate_code_usages table the leaderboard reads (see
     // creators-leaderboards.ts:142-161). The denormalized
@@ -857,9 +908,12 @@ export async function getUserDetail(id: string) {
     // referred_user_id counted DISTINCT. Lifetime (no window) to
     // match what the user-page currently shows. Single round-trip,
     // .catch keeps page from breaking on enum/schema drift.
-    db.$queryRaw<Array<{ total_referred: bigint | number | null; total_wager_volume_usd: string | null }>>`
+    queryMainRows<
+      { total_referred: bigint | number | null; total_wager_volume_usd: string | null }[]
+    >(
+      `
       WITH codes AS (
-        SELECT UPPER(code) AS uc FROM affiliate_codes WHERE user_id = ${id}
+        SELECT UPPER(code) AS uc FROM affiliate_codes WHERE user_id = $1
       )
       SELECT
         (SELECT COUNT(DISTINCT acu.referred_user_id)
@@ -869,7 +923,9 @@ export async function getUserDetail(id: string) {
            FROM affiliate_code_usages acu
            WHERE UPPER(acu.code) IN (SELECT uc FROM codes)
              AND acu.usage_type::text = 'wager') AS total_wager_volume_usd
-    `.catch((e) => {
+      `,
+      id,
+    ).catch((e) => {
       console.error("[getUserDetail] live affiliate aggregate query failed:", e);
       return [] as Array<{ total_referred: bigint | number | null; total_wager_volume_usd: string | null }>;
     }),
@@ -911,10 +967,17 @@ export async function getUserDetail(id: string) {
   let referredByCode: string | null = null;
   if (user.referred_by) {
     const [referrer, signupUsage, latestUsage] = await Promise.all([
-      db.user.findUnique({
-        where: { id: user.referred_by },
-        select: { username: true, email: true, affiliate_code: true },
-      }),
+      queryMainRows<
+        {
+          username: string | null;
+          email: string | null;
+          affiliate_code: string | null;
+        }[]
+      >(
+        `SELECT username, email, affiliate_code
+           FROM "user" WHERE id = $1 LIMIT 1`,
+        user.referred_by,
+      ).then((rows) => rows[0] ?? null),
       // Historical signup-time code — preferred, since it preserves the
       // exact string even if the owner later rotated their code.
       // The LIVE prod affiliate_usage_type enum is {deposit,wager} only —
@@ -923,25 +986,21 @@ export async function getUserDetail(id: string) {
       // null is the TRUE result; the fallback chain below (user.affiliate_code
       // → latestUsage → referrer) absorbs it. No live-probe infra for this
       // enum — a single .catch is the house rule for one-off enum reads.
-      db.affiliate_code_usages
-        .findFirst({
-          where: {
-            referred_user_id: user.id,
-            usage_type: affiliate_usage_type.signup,
-          },
-          orderBy: { created_at: "desc" },
-          select: { code: true },
-        })
-        .catch(() => null),
+      queryMainRows<{ code: string }[]>(
+        `SELECT code FROM affiliate_code_usages
+          WHERE referred_user_id = $1 AND usage_type::text = 'signup'
+          ORDER BY created_at DESC LIMIT 1`,
+        user.id,
+      ).then((rows) => rows[0] ?? null).catch(() => null),
       // Most recent usage row of ANY type. The admin "set referrer"
       // path writes a non-signup usage row, so this surfaces the code
       // when there's no signup row — without it the code shows as
       // "unknown" after a manual attribution.
-      db.affiliate_code_usages.findFirst({
-        where: { referred_user_id: user.id },
-        orderBy: { created_at: "desc" },
-        select: { code: true },
-      }),
+      queryMainRows<{ code: string }[]>(
+        `SELECT code FROM affiliate_code_usages
+          WHERE referred_user_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        user.id,
+      ).then((rows) => rows[0] ?? null),
     ]);
     referredByUsername =
       referrer?.username ?? referrer?.email ?? user.referred_by;
@@ -1006,17 +1065,17 @@ export async function getUserDetail(id: string) {
       twoFactorEnabled: user.two_factor_enabled ?? false,
       isBanned: user.is_banned,
       bannedReason: user.banned_reason,
-      bannedAt: user.banned_at?.toISOString() ?? null,
+      bannedAt: user.banned_at ? toIso(user.banned_at) : null,
       bannedBy: user.banned_by,
       isLocked: user.is_locked,
       lockedReason: user.locked_reason,
-      lockedAt: user.locked_at?.toISOString() ?? null,
+      lockedAt: user.locked_at ? toIso(user.locked_at) : null,
       lockedBy: user.locked_by,
-      lockedUntil: user.locked_until?.toISOString() ?? null,
+      lockedUntil: user.locked_until ? toIso(user.locked_until) : null,
       // Self-exclusion (responsible-gambling). USER-initiated on the game
       // platform — there is no admin endpoint to impose/lift it, so this is
       // DISPLAY-ONLY here. Mirrors the four game-DB columns straight off the
-      // Prisma `user` model (no extra query — they live on the same findUnique
+      // user row (no extra query — they live on the same select
       // as banned/locked). `isSelfExcluded` can be true while
       // `selfExcludedUntil` is in the PAST = EXPIRED; the view derives
       // active-vs-expired from the timestamp, this just surfaces the raw
@@ -1024,8 +1083,8 @@ export async function getUserDetail(id: string) {
       // platform (the betting/withdrawal routes 403 for them).
       isSelfExcluded: user.is_self_excluded,
       selfExcludedReason: user.self_excluded_reason,
-      selfExcludedAt: user.self_excluded_at?.toISOString() ?? null,
-      selfExcludedUntil: user.self_excluded_until?.toISOString() ?? null,
+      selfExcludedAt: user.self_excluded_at ? toIso(user.self_excluded_at) : null,
+      selfExcludedUntil: user.self_excluded_until ? toIso(user.self_excluded_until) : null,
       // Device-fingerprint alt-account signal — see fingerprintSignalPromise
       // above. suspectedAlt mirrors the platform's own heuristic;
       // linkedDeviceAccountCount is the broader device-overlap count (can be
@@ -1050,11 +1109,13 @@ export async function getUserDetail(id: string) {
       ownedCodes,
       affiliateCode: user.affiliate_code,
       affiliateCodeActive: user.affiliate_code_active ?? false,
-      affiliateCodeExpiresAt: user.affiliate_code_expires_at?.toISOString() ?? null,
+      affiliateCodeExpiresAt: user.affiliate_code_expires_at
+        ? toIso(user.affiliate_code_expires_at)
+        : null,
       affiliateBonusOptedIn: user.affiliate_bonus_opted_in ?? false,
       hasApiKey: !!user.api_key,
-      createdAt: user.created_at.toISOString(),
-      updatedAt: user.updated_at.toISOString(),
+      createdAt: toIso(user.created_at),
+      updatedAt: toIso(user.updated_at),
       providers: user.account.map((a) => a.providerId),
       // The provider this user signed up with — i.e. the FIRST linked
       // account. We sort by account.created_at ASC and take the oldest;
@@ -1065,8 +1126,8 @@ export async function getUserDetail(id: string) {
       signupProvider: (() => {
         if (user.account.length === 0) return null;
         const sorted = [...user.account].sort((a, b) => {
-          const ta = a.created_at?.getTime() ?? Infinity;
-          const tb = b.created_at?.getTime() ?? Infinity;
+          const ta = toMillis(a.created_at);
+          const tb = toMillis(b.created_at);
           return ta - tb;
         });
         return sorted[0]?.providerId ?? null;
@@ -1076,7 +1137,7 @@ export async function getUserDetail(id: string) {
         if (!dc) return null;
         return {
           id: dc.accountId,
-          linkedAt: dc.created_at?.toISOString() ?? null,
+          linkedAt: dc.created_at ? toIso(dc.created_at) : null,
         };
       })(),
     },
@@ -1148,7 +1209,9 @@ export async function getUserDetail(id: string) {
           xp: statistics.xp,
           level: statistics.level,
           weeklyWagerCount: statistics.weekly_wager_count,
-          lastWageredAt: statistics.last_wagered_at?.toISOString() ?? null,
+          lastWageredAt: statistics.last_wagered_at
+            ? toIso(statistics.last_wagered_at)
+            : null,
           currentDayWageredUsd: toNumber(statistics.current_day_wagered_usd),
           currentWeekWageredUsd: toNumber(statistics.current_week_wagered_usd),
           currentMonthWageredUsd: toNumber(statistics.current_month_wagered_usd),
@@ -1212,7 +1275,9 @@ export async function getUserDetail(id: string) {
         totalBonusDistributedUsd: affiliateAccount
           ? toNumber(affiliateAccount.total_bonus_distributed_usd)
           : 0,
-        lastPayoutAt: affiliateAccount?.last_payout_at?.toISOString() ?? null,
+        lastPayoutAt: affiliateAccount?.last_payout_at
+          ? toIso(affiliateAccount.last_payout_at)
+          : null,
       };
     })(),
     shippingAddress: shippingAddress
@@ -1235,17 +1300,17 @@ export async function getUserDetail(id: string) {
           name: vault.name,
           customerRefId: vault.customer_ref_id,
           fireblocksVaultId: vault.fireblocks_vault_id ?? null,
-          createdAt: vault.created_at.toISOString(),
+          createdAt: toIso(vault.created_at),
         }
       : null,
     mutes: mutes.map((m) => ({
       id: m.id,
       mutedBy: m.muted_by,
       reason: m.reason,
-      expiresAt: m.expires_at?.toISOString() ?? null,
-      unmutedAt: m.unmuted_at?.toISOString() ?? null,
+      expiresAt: m.expires_at ? toIso(m.expires_at) : null,
+      unmutedAt: m.unmuted_at ? toIso(m.unmuted_at) : null,
       unmutedBy: m.unmuted_by,
-      createdAt: m.created_at.toISOString(),
+      createdAt: toIso(m.created_at),
     })),
     // Blacklisted user → hide the whole card-withdrawal-requests list (the
     // "Card Withdrawals" sub-table on the Deposits & Withdrawals tab).
@@ -1260,8 +1325,8 @@ export async function getUserDetail(id: string) {
           carrier: cw.carrier,
           status: cw.status,
           failureReason: cw.failure_reason,
-          requestedAt: cw.requested_at.toISOString(),
-          completedAt: cw.completed_at?.toISOString() ?? null,
+          requestedAt: toIso(cw.requested_at),
+          completedAt: cw.completed_at ? toIso(cw.completed_at) : null,
         })),
     activeSeed: activeSeed
       ? {
@@ -1276,7 +1341,7 @@ export async function getUserDetail(id: string) {
       address: da.address,
       tag: da.tag,
       legacyAddress: da.legacy_address,
-      createdAt: da.created_at.toISOString(),
+      createdAt: toIso(da.created_at),
     })),
     counts: {
       deposits: depositCount,

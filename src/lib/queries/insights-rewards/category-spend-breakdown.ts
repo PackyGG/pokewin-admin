@@ -1,10 +1,10 @@
+import { daysAgoFilter, queryRows, realCustomersScopeDrizzle, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 import { resolveRainHouseCost } from "@/lib/metrics";
 import { countedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
-import { realCustomersScopeSql } from "@/lib/queries/insights-games/_shared";
 import {
   daysForInsightsPeriodCapped,
   cacheTtlForInsightsPeriod,
@@ -46,7 +46,7 @@ import { getDailyPacksGiveaway } from "./daily-packs";
  *     empty reward line never clutters the breakdown).
  *
  * SCOPE: real customers only — staff AND creators dropped + blacklist, via
- * `realCustomersScopeSql()` (the canonical customer scope). The previous
+ * `realCustomersScopeDrizzle()` (the canonical customer scope). The previous
  * `role NOT IN ('admin','support')` shape leaked creator reward rows into
  * the customer total.
  *
@@ -146,19 +146,22 @@ async function computeCategorySpendBreakdown(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<CategorySpendBreakdown> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // Lifetime (`all`) CAPPED to INSIGHTS_LIFETIME_LOOKBACK_DAYS (365d) via
   // daysForInsightsPeriodCapped so the per-category ledger rollup + daily
   // series never scan the full ledger unbounded (CLAUDE.md "Performance &
   // Daten-Laden"). Matches the capped cross-category-summary so grandTotal
   // keeps reconciling with its totalCost on the lifetime window too.
-  const dateFilter = `AND lt.created_at >= NOW() - INTERVAL '${daysForInsightsPeriodCapped(period)} days'`;
+  const dateFilter = daysAgoFilter(
+    "lt.created_at",
+    daysForInsightsPeriodCapped(period),
+  );
   // Canonical real-customer scope: drop staff + creators + blacklist. The
   // resolved blacklist ids are already baked into the cache key (the
-  // wrapper passes a sorted snapshot); realCustomersScopeSql re-reads the
+  // wrapper passes a sorted snapshot); realCustomersScopeDrizzle re-reads the
   // request-cached list, returning the same set.
-  const customerScope = await realCustomersScopeSql();
-  // realCustomersScopeSql returns `(SELECT id FROM "user" u WHERE ...)`,
+  const customerScope = await realCustomersScopeDrizzle();
+  // realCustomersScopeDrizzle returns `(SELECT id FROM "user" u WHERE ...)`,
   // aliasing the subquery row as `u`; `void blacklistIds` keeps the cache
   // key param referenced (it is consumed by getExcludedUserIds inside the
   // helper, but we keep the param so the cache key still varies on it).
@@ -171,36 +174,36 @@ async function computeCategorySpendBreakdown(
   //      the breakdown panel + the per-category cost-over-time chart
   //      on the Overview tab.
   const [rollupRows, dailyRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryRows<
       {
         category: string;
         total: string;
         cnt: string;
         claimants: string;
       }[]
-    >(`
+    >(db, sql`
       SELECT
-        ${CATEGORY_CASE_SQL} AS category,
+        ${sql.raw(CATEGORY_CASE_SQL)} AS category,
         COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total,
         COUNT(*)::text AS cnt,
         COUNT(DISTINCT lt.user_id)::text AS claimants
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
+        AND lt.type::text IN ${sql.raw(ALL_REWARD_TYPES_SQL)}
         AND lt.user_id IN ${customerScope}
         ${dateFilter}
       GROUP BY 1
     `),
-    db.$queryRawUnsafe<
+    queryRows<
       { date: Date; category: string; total: string }[]
-    >(`
+    >(db, sql`
       SELECT
         DATE(lt.created_at) AS date,
-        ${CATEGORY_CASE_SQL} AS category,
+        ${sql.raw(CATEGORY_CASE_SQL)} AS category,
         COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
+        AND lt.type::text IN ${sql.raw(ALL_REWARD_TYPES_SQL)}
         AND lt.user_id IN ${customerScope}
         ${dateFilter}
       GROUP BY 1, 2

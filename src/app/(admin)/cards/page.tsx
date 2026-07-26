@@ -110,7 +110,7 @@ export const metadata = { title: "Cards" };
  * summary + pagination. The hero + KPI strip + filter bar render immediately
  * from `stats` / `rarities` / `sets`; only the per-page slice waits here.
  *
- * `getCards()` runs through `loadPrimary` (safeQuery + timeout) so a Prisma
+ * `getCards()` runs through `loadPrimary` (safeQuery + timeout) so a schema
  * column drift or a pathological scan degrades to an inline error tile instead
  * of crashing the whole `(admin)` route group via error.tsx.
  */
@@ -152,7 +152,7 @@ async function CardsContent({
     return (
       <TileErrorFallback
         label="Card catalog"
-        hint="The cards query failed — most likely a Prisma schema field that hasn't reached the live DB yet. Server logs hold the digest."
+        hint="The cards query failed — most likely a schema field that hasn't reached the live DB yet. Server logs hold the digest."
         size="panel"
       />
     );

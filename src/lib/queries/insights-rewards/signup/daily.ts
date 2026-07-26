@@ -1,14 +1,13 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { compareSignupDaily } from "@/lib/clickhouse/compare/insights-signup-daily";
 import { SIGNUP_CACHE_TAG } from "./_shared";
 
 /**
@@ -42,11 +41,11 @@ async function computeDaily(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<SignupDailyPoint[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
   const effectiveDays = days !== null ? days : 365;
-  const dateFilter = `AND u.created_at >= NOW() - INTERVAL '${effectiveDays} days'`;
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const dateFilter = daysAgoFilter("u.created_at", effectiveDays);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Two parallel daily series: signups by day + cohort claim rows by
   // day. Joined in JS so the SQL stays simple and PG doesn't have to
@@ -54,7 +53,7 @@ async function computeDaily(
   type SignupRow = { day: Date; cnt: string };
   type ClaimRow = { day: Date; cnt: string; volume: string };
   const [signupRows, claimRows] = await Promise.all([
-    db.$queryRawUnsafe<SignupRow[]>(`
+    queryRows<SignupRow[]>(db, sql`
       SELECT DATE(u.created_at) AS day, COUNT(*)::text AS cnt
       FROM "user" u
       WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
@@ -62,7 +61,7 @@ async function computeDaily(
       GROUP BY DATE(u.created_at)
       ORDER BY day ASC
     `),
-    db.$queryRawUnsafe<ClaimRow[]>(`
+    queryRows<ClaimRow[]>(db, sql`
       WITH cohort AS (
         SELECT u.id AS user_id
         FROM "user" u
@@ -126,9 +125,5 @@ export async function getSignupDaily(
   const data = await (cacheTtlForInsightsPeriod(period) >= 300
     ? cachedLong(period, sorted)
     : cachedShort(period, sorted));
-  // CQRS rollout: fire-and-forget ClickHouse comparison (no-op unless the
-  // surface flag is in `comparison` mode; forced off when CH is dormant). The
-  // served value stays the Postgres payload above.
-  void compareSignupDaily(period, data);
   return data;
 }

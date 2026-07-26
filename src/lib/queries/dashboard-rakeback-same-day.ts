@@ -1,7 +1,8 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -37,20 +38,18 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
  * (`getMetricsScope()`: staff + creators + blacklist dropped, creator-
  * on-session rows excluded) so "$X of $Y" reconciles.
  *
- * INDEX-OR-CLICKHOUSE: `rakeback_claims` has no `to_regclass` guard because
  * two existing direct-Postgres readers already query it unconditionally
  * (`insights-rewards/rakeback/daily.ts`, `rakeback-instant-claim.ts`) — the
  * table is a foundational, always-present part of the rakeback feature.
  * This is a live/per-window, money-exact dashboard read bounded to a single
  * UTC day (Path 1 — indexed Postgres), matching the precedent set by
  * `dashboard-cashflow-pg.ts` / `dashboard-deposit-funded-ggr.ts`: it does
- * NOT route through the reward-costs `resolveAdminRead`/ClickHouse pipeline
  * — it is an independent, additive overlay figure, not a new cost line.
  */
 
 async function computeRakebackFromTodayWager(sinceIso: string): Promise<number> {
   return withTiming("dashboard.rakebackFromTodayWager", async () => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
     const scope = await getMetricsScope();
     const since = `'${sinceIso}'::timestamptz`;
     const todayDate = `'${sinceIso.slice(0, 10)}'::date`;
@@ -69,7 +68,7 @@ async function computeRakebackFromTodayWager(sinceIso: string): Promise<number> 
     });
 
     type Row = { same_day_amount: string };
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryRows<Row[]>(db,
       `SELECT COALESCE(SUM(rc.rakeback_amount_usd::numeric), 0)::text AS same_day_amount
        FROM rakeback_claims rc
        WHERE rc.claimed_at IS NOT NULL

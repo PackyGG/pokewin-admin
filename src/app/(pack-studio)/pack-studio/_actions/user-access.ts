@@ -1,8 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { sql } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
 import { verifySession, sessionIsOwner } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { AdminSettingsTableMissingError } from "@/lib/admin-settings";
@@ -76,12 +77,15 @@ export async function setPackStudioUserAccess(
   // Username lookup is case-insensitive against the stored value.
   let targetUserId: string | null = null;
   try {
-    const row = await adminDb.admin_users.findFirst({
-      where: {
-        username: { equals: normalized, mode: "insensitive" },
-      },
-      select: { id: true, is_owner: true, username: true },
-    });
+    const row = (
+      await adminDrizzle.execute<{
+        id: string; is_owner: boolean; username: string;
+      }>(sql`
+        SELECT id, is_owner, username FROM admin_users
+        WHERE LOWER(username) = ${normalized}
+        LIMIT 1
+      `)
+    ).rows[0];
     if (!row) {
       return {
         success: false,

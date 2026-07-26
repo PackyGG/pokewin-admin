@@ -1,7 +1,8 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -11,7 +12,12 @@ import {
   kpiWindowToCutoff,
   type DashboardKpiWindow,
 } from "./dashboard-period";
-import type { DashboardCashflowCh } from "@/lib/clickhouse/queries/dashboard-cashflow";
+export type DashboardCashflow = {
+  deposits: number;
+  depositCount: number;
+  withdrawals: number;
+  withdrawalCount: number;
+};
 
 /**
  * Dashboard "Deposits / Withdrawals" KPI-box cash-flow — the Postgres
@@ -57,7 +63,6 @@ import type { DashboardCashflowCh } from "@/lib/clickhouse/queries/dashboard-cas
  *   Counts pair 1:1 with the dollar figures so the box's "$X / N tx"
  *   subtitle stays internally consistent (card + manual withdrawal events).
  *
- * INDEX-OR-CLICKHOUSE: the deposit + manual-withdrawal legs Index-Scan
  * `idx_ledger_tx_created_at` (EXPLAIN ANALYZE on prod 2026-07-01: ~5–9 ms).
  * The card-withdrawal leg seq-scans `card_withdrawal_requests` (~1.7k-row
  * table, the planner's optimal choice — ~4.5 ms) — the SAME scan the prior
@@ -69,9 +74,9 @@ import type { DashboardCashflowCh } from "@/lib/clickhouse/queries/dashboard-cas
 async function computeCashflow(
   cutoff: Date,
   blacklist: string[],
-): Promise<DashboardCashflowCh> {
+): Promise<DashboardCashflow> {
   return withTiming("dashboard.cashflowPg", async () => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
     // Self-contained `user_id IN (SELECT id FROM "user" WHERE role NOT IN
     // ('admin','support') AND id NOT IN (...))` — the SAME real-customer
     // population calculateWindowedPnl's global scope uses (creators KEPT).
@@ -89,7 +94,7 @@ async function computeCashflow(
     type ManualRow = { amt: string; cnt: string };
 
     const [dep, card, manual] = await Promise.all([
-      db.$queryRawUnsafe<DepRow[]>(
+      queryRows<DepRow[]>(db,
         `SELECT COALESCE(SUM(lt.amount::numeric), 0)::text AS amt,
                 COUNT(*)::text AS cnt
          FROM ledger_transactions lt
@@ -99,7 +104,7 @@ async function computeCashflow(
            AND ${scopeLt}`,
         cutoff,
       ),
-      db.$queryRawUnsafe<CardRow[]>(
+      queryRows<CardRow[]>(db,
         `SELECT COALESCE(SUM(cwr.total_value_usd::numeric), 0)::text AS amt,
                 COUNT(*)::text AS cnt
          FROM card_withdrawal_requests cwr
@@ -108,7 +113,7 @@ async function computeCashflow(
            AND ${scopeCwr}`,
         cutoff,
       ),
-      db.$queryRawUnsafe<ManualRow[]>(
+      queryRows<ManualRow[]>(db,
         `SELECT COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS amt,
                 COUNT(*)::text AS cnt
          FROM ledger_transactions lt
@@ -154,7 +159,7 @@ const cachedCashflow = unstable_cache(
     _window: DashboardKpiWindow,
     cutoffIso: string,
     blacklist: string[],
-  ): Promise<DashboardCashflowCh> => {
+  ): Promise<DashboardCashflow> => {
     void _window; // cache-key discriminator only
     return computeCashflow(new Date(cutoffIso), blacklist);
   },
@@ -171,7 +176,7 @@ const cachedCashflow = unstable_cache(
 export async function getDashboardCashflowFromPostgres(
   window: DashboardKpiWindow,
   now: Date = new Date(),
-): Promise<DashboardCashflowCh> {
+): Promise<DashboardCashflow> {
   const cutoff = kpiWindowToCutoff(window, now);
   const cutoffIso = cutoff.toISOString();
   const blacklist = await getExcludedUserIds();

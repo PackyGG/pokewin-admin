@@ -1,13 +1,11 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   type InsightsRewardsPeriod,
 } from "../_period";
 import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getTopAffiliatesByWagerFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/leaderboards";
 
 /**
  * Two-lens leaderboards for the affiliate program. Both lenses sit on
@@ -62,13 +60,13 @@ async function computeTopByCommission(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<TopAffiliateByCommission[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const ctx = makePeriodCtx(period);
   const ltDate = ctx.dateFilterFor("lt.created_at");
   const acuDate = ctx.dateFilterFor("acu.created_at");
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       affiliate_user_id: string;
       username: string | null;
@@ -76,7 +74,7 @@ async function computeTopByCommission(
       claims: string;
       referred_users: string;
     }[]
-  >(`
+  >(db, sql`
     WITH claim_agg AS (
       SELECT
         lt.user_id,
@@ -124,13 +122,13 @@ async function computeTopByWager(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<TopAffiliateByWager[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const ctx = makePeriodCtx(period);
   const ltDate = ctx.dateFilterFor("lt.created_at");
   const acuDate = ctx.dateFilterFor("acu.created_at");
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       affiliate_user_id: string;
       username: string | null;
@@ -138,7 +136,7 @@ async function computeTopByWager(
       referred_count: string;
       commission: string;
     }[]
-  >(`
+  >(db, sql`
     WITH wager_agg AS (
       SELECT
         acu.affiliate_user_id,
@@ -222,12 +220,7 @@ export async function getTopAffiliatesByWager(
   period: InsightsRewardsPeriod,
 ): Promise<TopAffiliateByWager[]> {
   const blacklist = await loadBlacklist();
-  return resolveAdminRead<TopAffiliateByWager[]>("insights_affiliate_top_wager", {
-    pg: () =>
-      period === "all"
-        ? cachedTopByWagerLong(period, blacklist)
-        : cachedTopByWagerShort(period, blacklist),
-    ch: () =>
-      getTopAffiliatesByWagerFromClickHouse(period, blacklist, new Date()),
-  });
+  return period === "all"
+    ? cachedTopByWagerLong(period, blacklist)
+    : cachedTopByWagerShort(period, blacklist);
 }

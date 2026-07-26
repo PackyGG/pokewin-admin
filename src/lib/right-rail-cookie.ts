@@ -13,8 +13,8 @@
 // route handler, middleware).
 //
 // ─── Why a cookie ──────────────────────────────────────────────────────────
-// The right-rail docked widgets (live / recent / alerts / chat) persist their
-// open/collapsed state in localStorage. localStorage is client-only, so the
+// Creator Hub's docked Alerts panel persists its open/collapsed state in
+// localStorage. localStorage is client-only, so the
 // SERVER render + first client render can't know the admin's saved layout —
 // they fall back to a default, then a post-mount effect snaps to the stored
 // state. That snap is the visible "rail flashes open then closed on reload"
@@ -24,20 +24,17 @@
 // cookie that removed the timezone hydration flash.
 // ---------------------------------------------------------------------------
 
-export const RAIL_KEYS = ["live", "recent", "alerts", "chat"] as const;
+export const RAIL_KEYS = ["alerts"] as const;
 export type RailKey = (typeof RAIL_KEYS)[number];
 
 /**
  * Cookie holding the right-rail open state. Written client-side whenever the
  * admin toggles a dock (see right-rail-context.tsx) and read server-side in
  * the admin layout so the FIRST server render of the next request already
- * knows which docks are open — eliminating the open/close flash a pure
+ * knows whether the dock is open — eliminating the open/close flash a pure
  * post-mount localStorage read causes.
  *
- * Wire format: a comma-joined list of the OPEN widget keys in insertion
- * order (oldest-opened first — this doubles as the FIFO-eviction `openOrder`).
- * Example: `"live,chat"` or `"recent,live"`. An empty string means nothing is
- * open. At most two keys are ever present (the at-most-2-open rule).
+ * Wire format: `"alerts"` when open or an empty string when closed.
  */
 export const RAIL_COOKIE = "admin_rail";
 

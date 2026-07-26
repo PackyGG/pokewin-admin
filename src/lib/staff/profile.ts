@@ -1,6 +1,8 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
+import { asc, desc, eq, sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { staff_point_events, staff_profiles } from "@/lib/db-schema/admin/schema";
 import { levelForPoints, levelInfo, type StaffLevel } from "./levels";
 import { isMissingRelationError, notifyStaff } from "./notifications";
 import { loadAdminIdentities, type AdminIdentity } from "./identities";
@@ -76,14 +78,16 @@ export async function ensureStaffProfile(
   adminUserId: string,
 ): Promise<StaffProfile | null> {
   try {
-    const row = await adminDb.staff_profiles.upsert({
-      where: { admin_user_id: adminUserId },
+    const [row] = await adminDrizzle.insert(staff_profiles).values({
+      admin_user_id: adminUserId,
       // Only the heartbeat on an existing row — never touch the profile fields
       // the staff member owns.
-      update: { last_seen_at: new Date() },
-      create: { admin_user_id: adminUserId, last_seen_at: new Date() },
-    });
-    return toProfile(row);
+      last_seen_at: new Date().toISOString(),
+    }).onConflictDoUpdate({
+      target: staff_profiles.admin_user_id,
+      set: { last_seen_at: new Date().toISOString() },
+    }).returning();
+    return row ? toProfile({ ...row, last_seen_at: row.last_seen_at ? new Date(row.last_seen_at) : null, created_at: new Date(row.created_at) }) : null;
   } catch (err) {
     if (!isMissingRelationError(err)) {
       console.error("[antifraud] ensureStaffProfile failed:", err);
@@ -97,10 +101,9 @@ export async function getStaffProfile(
   adminUserId: string,
 ): Promise<StaffProfile | null> {
   try {
-    const row = await adminDb.staff_profiles.findUnique({
-      where: { admin_user_id: adminUserId },
-    });
-    return row ? toProfile(row) : null;
+    const [row] = await adminDrizzle.select().from(staff_profiles)
+      .where(eq(staff_profiles.admin_user_id, adminUserId)).limit(1);
+    return row ? toProfile({ ...row, last_seen_at: row.last_seen_at ? new Date(row.last_seen_at) : null, created_at: new Date(row.created_at) }) : null;
   } catch (err) {
     if (!isMissingRelationError(err)) {
       console.error("[antifraud] getStaffProfile failed:", err);
@@ -121,15 +124,13 @@ export type StaffMember = {
  */
 export async function listStaffMembers(): Promise<StaffMember[]> {
   try {
-    const rows = await adminDb.staff_profiles.findMany({
-      orderBy: [{ points_total: "desc" }, { created_at: "asc" }],
-      take: 200,
-    });
+    const rows = await adminDrizzle.select().from(staff_profiles)
+      .orderBy(desc(staff_profiles.points_total), asc(staff_profiles.created_at)).limit(200);
     const identities = await loadAdminIdentities(
       rows.map((r) => r.admin_user_id),
     );
     return rows.map((row, index) => ({
-      profile: toProfile(row),
+      profile: toProfile({ ...row, last_seen_at: row.last_seen_at ? new Date(row.last_seen_at) : null, created_at: new Date(row.created_at) }),
       identity: identities.get(row.admin_user_id) ?? null,
       rank: index + 1,
     }));
@@ -170,121 +171,136 @@ export type AwardPointsResult = {
   leveledUp: boolean;
 };
 
+type AdminTransaction = Parameters<
+  Parameters<typeof adminDrizzle.transaction>[0]
+>[0];
+
+const failedAward: AwardPointsResult = {
+  ok: false,
+  duplicate: false,
+  pointsTotal: 0,
+  previousLevel: 1,
+  level: 1,
+  leveledUp: false,
+};
+
+export async function awardStaffPointsInTransaction(
+  tx: AdminTransaction,
+  input: AwardPointsInput,
+): Promise<AwardPointsResult> {
+  await tx.insert(staff_profiles).values({ admin_user_id: input.adminUserId })
+    .onConflictDoNothing({ target: staff_profiles.admin_user_id });
+  const [before] = await tx.select().from(staff_profiles)
+    .where(eq(staff_profiles.admin_user_id, input.adminUserId))
+    .for("update").limit(1);
+  if (!before) throw new Error("Staff profile upsert returned no row");
+
+  const inserted = await tx.insert(staff_point_events).values({
+    admin_user_id: input.adminUserId,
+    points: input.points,
+    source_kind: input.sourceKind,
+    source_id: input.sourceId ?? null,
+    reason: input.reason,
+    created_by: input.createdBy ?? null,
+  }).onConflictDoNothing({
+    target: [staff_point_events.source_kind, staff_point_events.source_id],
+    // This must stay literal so PostgreSQL can infer the matching partial
+    // unique index while planning a prepared statement.
+    where: sql`${staff_point_events.source_id} IS NOT NULL
+      AND ${staff_point_events.source_kind} <> 'manual'`,
+  }).returning({ id: staff_point_events.id });
+  if (inserted.length === 0) {
+    return {
+      ok: true,
+      duplicate: true,
+      pointsTotal: before.points_total,
+      previousLevel: before.level,
+      level: before.level,
+      leveledUp: false,
+    };
+  }
+
+  const pointsTotal = before.points_total + input.points;
+  const level = levelForPoints(pointsTotal).level;
+  await tx.update(staff_profiles).set({
+    points_total: pointsTotal,
+    level,
+    quizzes_completed:
+      input.bump?.quizzesCompleted != null
+        ? sql`${staff_profiles.quizzes_completed} + ${input.bump.quizzesCompleted}`
+        : undefined,
+    reviews_resolved:
+      input.bump?.reviewsResolved != null
+        ? sql`${staff_profiles.reviews_resolved} + ${input.bump.reviewsResolved}`
+        : undefined,
+  }).where(eq(staff_profiles.admin_user_id, input.adminUserId));
+
+  return {
+    ok: true,
+    duplicate: false,
+    pointsTotal,
+    previousLevel: before.level,
+    level,
+    leveledUp: level > before.level,
+  };
+}
+
+export async function sendStaffPointNotifications(
+  input: AwardPointsInput,
+  result: AwardPointsResult,
+): Promise<void> {
+  if (!result.ok || result.duplicate) return;
+  if (result.leveledUp) {
+    const info = levelInfo(result.level);
+    await notifyStaff({
+      recipients: [input.adminUserId],
+      kind: "level_up",
+      title: `Level ${result.level} — ${info.title}`,
+      body: `You reached ${result.pointsTotal} points.`,
+      href: "/staff/profile",
+      metadata: { level: result.level, points: result.pointsTotal },
+    });
+  }
+  if (!input.silent && input.points !== 0) {
+    await notifyStaff({
+      recipients: [input.adminUserId],
+      kind: "points_awarded",
+      title:
+        input.points > 0
+          ? `+${input.points} point${input.points === 1 ? "" : "s"}`
+          : `${input.points} points`,
+      body: input.reason,
+      href: "/staff/profile",
+      metadata: { points: input.points, source: input.sourceKind },
+    });
+  }
+}
+
 /**
  * Write one points event and roll the profile forward, atomically.
  *
  * IDEMPOTENT for automatic awards: the partial unique index on
  * (source_kind, source_id) means a retried quiz submit can never pay twice —
- * the second write raises P2002 and this returns `duplicate: true` with the
- * profile untouched.
+ * the second insert becomes a no-op and this returns `duplicate: true` with
+ * the profile untouched.
  */
 export async function awardStaffPoints(
   input: AwardPointsInput,
 ): Promise<AwardPointsResult> {
-  const failed: AwardPointsResult = {
-    ok: false,
-    duplicate: false,
-    pointsTotal: 0,
-    previousLevel: 1,
-    level: 1,
-    leveledUp: false,
-  };
-
   try {
-    const result = await adminDb.$transaction(async (tx) => {
-      // Make sure the profile exists — a manual award can land on someone who
-      // has never opened the workspace.
-      const before = await tx.staff_profiles.upsert({
-        where: { admin_user_id: input.adminUserId },
-        update: {},
-        create: { admin_user_id: input.adminUserId },
-      });
-
-      await tx.staff_point_events.create({
-        data: {
-          admin_user_id: input.adminUserId,
-          points: input.points,
-          source_kind: input.sourceKind,
-          source_id: input.sourceId ?? null,
-          reason: input.reason,
-          created_by: input.createdBy ?? null,
-        },
-      });
-
-      const pointsTotal = before.points_total + input.points;
-      const level = levelForPoints(pointsTotal).level;
-
-      await tx.staff_profiles.update({
-        where: { admin_user_id: input.adminUserId },
-        data: {
-          points_total: pointsTotal,
-          level,
-          quizzes_completed:
-            input.bump?.quizzesCompleted != null
-              ? { increment: input.bump.quizzesCompleted }
-              : undefined,
-          reviews_resolved:
-            input.bump?.reviewsResolved != null
-              ? { increment: input.bump.reviewsResolved }
-              : undefined,
-        },
-      });
-
-      return {
-        ok: true,
-        duplicate: false,
-        pointsTotal,
-        previousLevel: before.level,
-        level,
-        leveledUp: level > before.level,
-      } satisfies AwardPointsResult;
-    });
+    const result = await adminDrizzle.transaction((tx) =>
+      awardStaffPointsInTransaction(tx, input),
+    );
 
     // Notifications live OUTSIDE the transaction — an external ping must never
     // hold a DB transaction open, and a failed ping must never roll back points.
-    if (result.leveledUp) {
-      const info = levelInfo(result.level);
-      await notifyStaff({
-        recipients: [input.adminUserId],
-        kind: "level_up",
-        title: `Level ${result.level} — ${info.title}`,
-        body: `You reached ${result.pointsTotal} points.`,
-        href: "/staff/profile",
-        metadata: { level: result.level, points: result.pointsTotal },
-      });
-    }
-    if (!input.silent && input.points !== 0) {
-      await notifyStaff({
-        recipients: [input.adminUserId],
-        kind: "points_awarded",
-        title:
-          input.points > 0
-            ? `+${input.points} point${input.points === 1 ? "" : "s"}`
-            : `${input.points} points`,
-        body: input.reason,
-        href: "/staff/profile",
-        metadata: { points: input.points, source: input.sourceKind },
-      });
-    }
-
+    await sendStaffPointNotifications(input, result);
     return result;
   } catch (err) {
-    // P2002 = the idempotency index rejected a duplicate automatic award.
-    if ((err as { code?: string })?.code === "P2002") {
-      const profile = await getStaffProfile(input.adminUserId);
-      return {
-        ok: true,
-        duplicate: true,
-        pointsTotal: profile?.pointsTotal ?? 0,
-        previousLevel: profile?.level ?? 1,
-        level: profile?.level ?? 1,
-        leveledUp: false,
-      };
-    }
     if (!isMissingRelationError(err)) {
       console.error("[antifraud] awardStaffPoints failed:", err);
     }
-    return failed;
+    return failedAward;
   }
 }
 
@@ -313,20 +329,20 @@ export async function listRecentStaffPointEvents(
   limit = 100,
 ): Promise<StaffPointLedgerEvent[]> {
   try {
-    const rows = await adminDb.staff_point_events.findMany({
-      select: {
-        id: true,
-        admin_user_id: true,
-        points: true,
-        source_kind: true,
-        source_id: true,
-        reason: true,
-        created_by: true,
-        created_at: true,
-      },
-      orderBy: { created_at: "desc" },
-      take: Math.min(Math.max(limit, 1), 200),
-    });
+    const rows = await adminDrizzle
+      .select({
+        id: staff_point_events.id,
+        admin_user_id: staff_point_events.admin_user_id,
+        points: staff_point_events.points,
+        source_kind: staff_point_events.source_kind,
+        source_id: staff_point_events.source_id,
+        reason: staff_point_events.reason,
+        created_by: staff_point_events.created_by,
+        created_at: staff_point_events.created_at,
+      })
+      .from(staff_point_events)
+      .orderBy(desc(staff_point_events.created_at))
+      .limit(Math.min(Math.max(limit, 1), 200));
     const identities = await loadAdminIdentities(
       rows.flatMap((row) => [row.admin_user_id, row.created_by]),
     );
@@ -338,7 +354,7 @@ export async function listRecentStaffPointEvents(
       sourceId: row.source_id,
       reason: row.reason,
       createdBy: row.created_by,
-      createdAt: row.created_at,
+      createdAt: new Date(row.created_at),
       recipient: identities.get(row.admin_user_id) ?? null,
       actor: row.created_by
         ? identities.get(row.created_by) ?? null
@@ -358,18 +374,17 @@ export async function listStaffPointEvents(
   limit = 25,
 ): Promise<StaffPointEvent[]> {
   try {
-    const rows = await adminDb.staff_point_events.findMany({
-      where: { admin_user_id: adminUserId },
-      orderBy: { created_at: "desc" },
-      take: Math.min(Math.max(limit, 1), 100),
-    });
+    const rows = await adminDrizzle.select().from(staff_point_events)
+      .where(eq(staff_point_events.admin_user_id, adminUserId))
+      .orderBy(desc(staff_point_events.created_at))
+      .limit(Math.min(Math.max(limit, 1), 100));
     return rows.map((row) => ({
       id: row.id,
       points: row.points,
       sourceKind: row.source_kind,
       reason: row.reason,
       createdBy: row.created_by,
-      createdAt: row.created_at,
+      createdAt: new Date(row.created_at),
     }));
   } catch (err) {
     if (!isMissingRelationError(err)) {

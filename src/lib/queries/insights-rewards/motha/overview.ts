@@ -1,8 +1,11 @@
+import {
+  daysAgoFilter,
+  queryRows,
+  sql,
+} from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getMothaGiveawayOverviewFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/motha/overview";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
@@ -96,23 +99,21 @@ const EMPTY: MothaGiveawayOverview = {
 async function computeOverview(
   period: InsightsRewardsPeriod,
 ): Promise<MothaGiveawayOverview> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
 
   // Window filters. `lt` for ledger_transactions, `rt` for rain_tips. Lifetime
   // (days === null) drops the lower bound — motha's giveaway history is a tiny
   // single-account slice (no full-table scan risk), so no lookback cap needed.
-  const ledgerDateFilter =
-    days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
-  const rainDateFilter =
-    days !== null ? `AND rt.created_at >= NOW() - INTERVAL '${days} days'` : "";
+  const ledgerDateFilter = daysAgoFilter("lt.created_at", days);
+  const rainDateFilter = daysAgoFilter("rt.created_at", days);
 
   // Resolve motha's user id once (case-insensitive). If the account does not
   // exist there is nothing to model → empty baseline (the tab renders a clean
   // empty state). Parameterized to keep the username off the raw SQL string.
-  const idRows = await db.$queryRawUnsafe<{ id: string }[]>(
-    `SELECT id FROM "user" WHERE LOWER(username) = $1 LIMIT 1`,
-    MOTHA_USERNAME,
+  const idRows = await queryRows<{ id: string }[]>(
+    db,
+    sql`SELECT id FROM "user" WHERE LOWER(username) = ${MOTHA_USERNAME} LIMIT 1`,
   );
   const mothaId = idRows[0]?.id;
   if (!mothaId) return EMPTY;
@@ -121,7 +122,7 @@ async function computeOverview(
   // scoped to motha, both summed via ABS(amount). The ledger query pivots the
   // two ledger channels in one pass; the rain query sums the rain_tips table.
   const [ledgerRows, rainRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryRows<
       {
         tips_total: string;
         tips_cnt: string;
@@ -129,8 +130,7 @@ async function computeOverview(
         sponsorship_cnt: string;
         max_amount: string | null;
       }[]
-    >(
-      `
+    >(db, sql`
       SELECT
         COALESCE(SUM(CASE WHEN lt.type::text = 'creator_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS tips_total,
         COUNT(*) FILTER (WHERE lt.type::text = 'creator_tip')::text AS tips_cnt,
@@ -139,50 +139,42 @@ async function computeOverview(
         MAX(ABS(lt.amount::numeric))::text AS max_amount
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.user_id = $1
+        AND lt.user_id = ${mothaId}::uuid
         AND lt.type::text IN ('creator_tip', 'battle_sponsorship')
         ${ledgerDateFilter}
-    `,
-      mothaId,
-    ),
-    db.$queryRawUnsafe<
+    `),
+    queryRows<
       { rain_total: string; rain_cnt: string; max_amount: string | null }[]
-    >(
-      `
+    >(db, sql`
       SELECT
         COALESCE(SUM(ABS(rt.amount_usd::numeric)), 0)::text AS rain_total,
         COUNT(*)::text AS rain_cnt,
         MAX(ABS(rt.amount_usd::numeric))::text AS max_amount
       FROM rain_tips rt
-      WHERE rt.user_id = $1
+      WHERE rt.user_id = ${mothaId}::uuid
         ${rainDateFilter}
-    `,
-      mothaId,
-    ),
+    `),
   ]);
 
   // Distinct active days across BOTH sources (the volume anchor). A UNION of
   // the per-source DATE() sets, counted distinct — so a day motha tipped AND
   // rained still counts once.
-  const dayRows = await db.$queryRawUnsafe<{ active_days: string }[]>(
-    `
+  const dayRows = await queryRows<{ active_days: string }[]>(db, sql`
     SELECT COUNT(DISTINCT d)::text AS active_days
     FROM (
       SELECT DATE(lt.created_at) AS d
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.user_id = $1
+        AND lt.user_id = ${mothaId}::uuid
         AND lt.type::text IN ('creator_tip', 'battle_sponsorship')
         ${ledgerDateFilter}
       UNION
       SELECT DATE(rt.created_at) AS d
       FROM rain_tips rt
-      WHERE rt.user_id = $1
+      WHERE rt.user_id = ${mothaId}::uuid
         ${rainDateFilter}
     ) days
-  `,
-    mothaId,
-  );
+  `);
 
   const lr = ledgerRows[0];
   const rr = rainRows[0];
@@ -229,17 +221,8 @@ const cachedOverviewLifetime = unstable_cache(
 export async function getMothaGiveawayOverview(
   period: InsightsRewardsPeriod,
 ): Promise<MothaGiveawayOverview> {
-  // CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
-  // through on failure); off/comparison serve Postgres unchanged. Comparison-
-  // mode drift is logged by the motha forecast tab's existing
-  // compareMothaOverview() call, so no compare thunk here.
-  return resolveAdminRead<MothaGiveawayOverview>("insights_motha_overview", {
-    pg: () => {
-      const ttl = cacheTtlForInsightsPeriod(period);
-      return ttl >= 300
-        ? cachedOverviewLifetime(period)
-        : cachedOverview(period);
-    },
-    ch: () => getMothaGiveawayOverviewFromClickHouse(period),
-  });
+  const ttl = cacheTtlForInsightsPeriod(period);
+  return ttl >= 300
+    ? cachedOverviewLifetime(period)
+    : cachedOverview(period);
 }

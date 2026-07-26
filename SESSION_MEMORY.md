@@ -111,7 +111,7 @@ Rules: only claim shipped work that is **committed**; remove completed in-flight
 ```
 MANDATORY — Session Memory Protocol:
 1. READ: AGENT_HANDOFF.md → ONBOARDING.md → AGENTS.md
-2. WORK: follow all binding rules (MAIN DB read-only, ADMIN writable via db push)
+2. WORK: follow all binding rules (MAIN DB read-only, ADMIN writable via reviewed SQL migrations)
 3. WRITE before finishing: update AGENT_HANDOFF.md (+ ONBOARDING.md if durable facts changed)
 4. REPORT honest status: DONE / PARTIAL / PROPOSED / BLOCKED
 You are NOT done until step 3 is complete.

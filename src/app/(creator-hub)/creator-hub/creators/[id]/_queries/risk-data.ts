@@ -2,8 +2,7 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import type { PrismaClient } from "@/generated/prisma/client";
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
@@ -123,11 +122,6 @@ const LIFETIME_LOOKBACK_INTERVAL = `INTERVAL '${LIFETIME_LOOKBACK_DAYS} days'`;
 
 // Cold-scan statement timeout — the scan runs at most once per cache TTL,
 // so a generous budget is safe (same reasoning as creators-pnl.ts).
-const COLD_SCAN_STATEMENT_TIMEOUT_MS = 55_000;
-const RISK_TX_OPTIONS = {
-  timeout: COLD_SCAN_STATEMENT_TIMEOUT_MS + 5_000,
-  maxWait: 10_000,
-} as const;
 
 const CACHE_TTL_SECONDS = 300;
 
@@ -306,9 +300,9 @@ type PerGameRow = {
  * upgrader behavioural scan when the value actually exists. This keeps the
  * whole Risk scan safe pre-upgrader-launch and self-enabling after it.
  */
-async function upgraderEnumExists(db: PrismaClient): Promise<boolean> {
+async function upgraderEnumExists(): Promise<boolean> {
   try {
-    const rows = await db.$queryRawUnsafe<{ exists: boolean }[]>(
+    const rows = await queryMainRows<{ exists: boolean }[]>(
       `SELECT EXISTS (
          SELECT 1 FROM pg_enum e
          JOIN pg_type t ON t.oid = e.enumtypid
@@ -348,9 +342,8 @@ function edgeForGame(game: RiskGame | "unknown"): number {
 }
 
 async function computeRiskData(creatorUserId: string): Promise<RiskData> {
-  const db = await getDb();
   const blacklistAnd = await buildBlacklistAnd();
-  const hasUpgrader = await upgraderEnumExists(db);
+  const hasUpgrader = await upgraderEnumExists();
 
   // ── Per-user deposits (coverage-attributed) + attributed card
   //    withdrawals + depositor flag, lifetime-capped. Same CTE shapes as
@@ -434,15 +427,10 @@ async function computeRiskData(creatorUserId: string): Promise<RiskData> {
   let partial = false;
 
   try {
-    [perUserRows, perGameRows] = await db.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(
-        `SET LOCAL statement_timeout = ${COLD_SCAN_STATEMENT_TIMEOUT_MS}`,
-      );
-      return Promise.all([
-        tx.$queryRawUnsafe<PerUserRow[]>(perUserSql, creatorUserId),
-        tx.$queryRawUnsafe<PerGameRow[]>(perGameSql, creatorUserId),
-      ]);
-    }, RISK_TX_OPTIONS);
+    [perUserRows, perGameRows] = await Promise.all([
+      queryMainRows<PerUserRow[]>(perUserSql, creatorUserId),
+      queryMainRows<PerGameRow[]>(perGameSql, creatorUserId),
+    ]);
   } catch (e) {
     console.error("[creator-hub.creators.risk] core scan failed:", e);
     partial = true;
@@ -502,7 +490,7 @@ async function computeRiskData(creatorUserId: string): Promise<RiskData> {
   if (wagerOnlyIds.size > 0) {
     try {
       const idList = Array.from(wagerOnlyIds);
-      const nameRows = await db.$queryRawUnsafe<
+      const nameRows = await queryMainRows<
         { id: string; username: string | null; image: string | null }[]
       >(
         `SELECT id, username, image FROM "user" WHERE id = ANY($1::text[])`,
@@ -640,8 +628,6 @@ async function scanUpgraderSignal(
   creatorUserId: string,
   blacklistAnd: string,
 ): Promise<UpgraderBehaviorSignal> {
-  const db = await getDb();
-
   // Target multiplier via the same COALESCE convention as
   // insights-games/upgrader.ts. Win-chance via explicit chance keys when
   // present, else derived as (1 / multiplier) * 100.
@@ -700,7 +686,7 @@ async function scanUpgraderSignal(
        FROM bets`;
 
   try {
-    const rows = await db.$queryRawUnsafe<{ total: string; high: string }[]>(
+    const rows = await queryMainRows<{ total: string; high: string }[]>(
       sql,
       creatorUserId,
     );

@@ -24,7 +24,7 @@ export function stableShuffle<T extends { id: string }>(
 ): T[] {
   const keyed = items.map((item) => ({ item, key: fnv1a(seed + item.id) }));
   keyed.sort((a, b) => (a.key === b.key ? 0 : a.key < b.key ? -1 : 1));
-  return keyed.map((k) => k.item);
+  return keyed.map((entry) => entry.item);
 }
 
 function fnv1a(input: string): number {

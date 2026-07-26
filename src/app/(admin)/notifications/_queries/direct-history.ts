@@ -1,6 +1,8 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
+import { desc, eq, inArray } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import { admin_audit_events, admin_users } from "@/lib/db-schema/admin/schema";
 
 /**
  * History of per-user notifications sent from this admin.
@@ -73,19 +75,20 @@ const asPayload = (v: unknown): Record<string, unknown> | null =>
 export async function getDirectNotificationHistory(): Promise<
   DirectNotificationHistoryEntry[]
 > {
-  const rows = await adminDb.admin_audit_events.findMany({
-    where: { event_type: { in: EVENT_TYPES } },
-    orderBy: { created_at: "desc" },
-    take: SCAN_LIMIT,
-    select: {
-      id: true,
-      event_type: true,
-      target_user_id: true,
-      created_at: true,
-      metadata: true,
-      admin_user: { select: { username: true } },
-    },
-  });
+  const rows = await adminDrizzle
+    .select({
+      id: admin_audit_events.id,
+      event_type: admin_audit_events.event_type,
+      target_user_id: admin_audit_events.target_user_id,
+      created_at: admin_audit_events.created_at,
+      metadata: admin_audit_events.metadata,
+      adminUsername: admin_users.username,
+    })
+    .from(admin_audit_events)
+    .leftJoin(admin_users, eq(admin_users.id, admin_audit_events.admin_user_id))
+    .where(inArray(admin_audit_events.event_type, EVENT_TYPES))
+    .orderBy(desc(admin_audit_events.created_at))
+    .limit(SCAN_LIMIT);
 
   const entries: DirectNotificationHistoryEntry[] = [];
   // Campaign key → index into `entries`, so later chunks fold into the first
@@ -94,8 +97,8 @@ export async function getDirectNotificationHistory(): Promise<
 
   for (const row of rows) {
     const meta = asPayload(row.metadata) ?? {};
-    const sentAt = row.created_at.toISOString();
-    const adminUsername = row.admin_user?.username ?? null;
+    const sentAt = new Date(row.created_at).toISOString();
+    const adminUsername = row.adminUsername;
     const category = str(meta.category);
     const type = str(meta.type);
     const env = str(meta.env);

@@ -1,13 +1,11 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   type InsightsRewardsPeriod,
 } from "../_period";
 import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getAffiliateOverviewFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/overview";
 
 /**
  * Overview KPI summary for /insights/rewards/affiliate.
@@ -81,11 +79,11 @@ async function compute(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<AffiliateOverview> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const ctx = makePeriodCtx(period);
   const ltDate = ctx.dateFilterFor("lt.created_at");
   const acuDate = ctx.dateFilterFor("acu.created_at");
-  const blacklistSub = blacklistNotInClause("id", blacklistIds);
+  const blacklistSub = blacklistNotInSql("id", blacklistIds);
 
   const chartDays = ctx.days === null ? MAX_CHART_DAYS : Math.min(ctx.days, MAX_CHART_DAYS);
 
@@ -96,7 +94,7 @@ async function compute(
     // REWARD_PAYOUT_TYPES; the leaderboard prize was previously surfaced
     // NOWHERE in insights-rewards. activeAffiliates counts distinct
     // commission recipients (the affiliate-account metric) as before.
-    db.$queryRawUnsafe<
+    queryRows<
       {
         affiliates: string;
         total: string;
@@ -104,7 +102,7 @@ async function compute(
         lb_total: string;
         lb_cnt: string;
       }[]
-    >(`
+    >(db, sql`
       SELECT
         COUNT(DISTINCT CASE WHEN lt.type::text = 'affiliate_claim' THEN lt.user_id END)::text AS affiliates,
         COALESCE(SUM(CASE WHEN lt.type::text = 'affiliate_claim' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS total,
@@ -118,21 +116,21 @@ async function compute(
         ${ltDate}
     `),
     // Downstream wager + distinct referred users.
-    db.$queryRawUnsafe<
+    queryRows<
       { wager: string; referred: string }[]
-    >(`
+    >(db, sql`
       SELECT
         COALESCE(SUM(acu.wager_amount_usd::numeric), 0)::text AS wager,
         COUNT(DISTINCT acu.referred_user_id)::text AS referred
       FROM affiliate_code_usages acu
       WHERE acu.status = 'completed'
         ${acuDate}
-        ${blacklistNotInClause("acu.affiliate_user_id", blacklistIds)}
+        ${blacklistNotInSql("acu.affiliate_user_id", blacklistIds)}
     `),
     // Daily commission paid — capped at chart horizon to keep payload sane.
-    db.$queryRawUnsafe<
+    queryRows<
       { date: Date; total: string; cnt: string }[]
-    >(`
+    >(db, sql`
       SELECT
         DATE(lt.created_at) AS date,
         COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total,
@@ -140,21 +138,21 @@ async function compute(
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
         AND lt.type::text = 'affiliate_claim'
-        AND lt.created_at >= NOW() - INTERVAL '${chartDays} days'
+        AND lt.created_at >= NOW() - (${chartDays} * INTERVAL '1 day')
         AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistSub})
       GROUP BY 1
       ORDER BY 1 ASC
     `),
-    db.$queryRawUnsafe<
+    queryRows<
       { date: Date; wager: string }[]
-    >(`
+    >(db, sql`
       SELECT
         DATE(acu.created_at) AS date,
         COALESCE(SUM(acu.wager_amount_usd::numeric), 0)::text AS wager
       FROM affiliate_code_usages acu
       WHERE acu.status = 'completed'
-        AND acu.created_at >= NOW() - INTERVAL '${chartDays} days'
-        ${blacklistNotInClause("acu.affiliate_user_id", blacklistIds)}
+        AND acu.created_at >= NOW() - (${chartDays} * INTERVAL '1 day')
+        ${blacklistNotInSql("acu.affiliate_user_id", blacklistIds)}
       GROUP BY 1
       ORDER BY 1 ASC
     `),
@@ -244,11 +242,7 @@ export async function getAffiliateOverview(
   period: InsightsRewardsPeriod,
 ): Promise<AffiliateOverview> {
   const blacklist = await loadBlacklist();
-  return resolveAdminRead<AffiliateOverview>("insights_affiliate_overview", {
-    pg: () =>
-      period === "all"
-        ? cachedLong(period, blacklist)
-        : cachedShort(period, blacklist),
-    ch: () => getAffiliateOverviewFromClickHouse(period, blacklist, new Date()),
-  });
+  return period === "all"
+    ? cachedLong(period, blacklist)
+    : cachedShort(period, blacklist);
 }

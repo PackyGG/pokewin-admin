@@ -18,14 +18,16 @@
 // (`per-user-row → else role default → else unlimited`) is applied in
 // `checkBalanceAdjustmentLimit` (src/lib/balance-limits.ts).
 //
-// Reads only the ADMIN DB (adminDb). No game-DB access. No re-materialization
+// Reads only the ADMIN DB. No game-DB access. No re-materialization
 // of `allowed_pages` — limits are enforced live at spend time, not baked into
 // the page list. The mutating server action lives in `role-limits-actions.ts`
 // (a `"use server"` module), matching the existing balance-limits split
 // (balance-limits.ts logic ↔ admin-users/limits-actions.ts action).
 // =============================================================================
 
-import { adminDb } from "@/lib/admin-db";
+import { eq, inArray, or } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_roles, admin_users } from "@/lib/db-schema/admin/schema";
 import { getEffectiveRoles } from "@/lib/admin-roles";
 import type { RoleLimits } from "@/lib/permissions/types";
 import {
@@ -64,10 +66,9 @@ export type {
 export async function getRoleBalanceLimitDefaults(
   adminUserId: string,
 ): Promise<RoleBalanceLimitDefaults> {
-  const user = await adminDb.admin_users.findUnique({
-    where: { id: adminUserId },
-    select: { role: true, roles: true, role_id: true },
-  });
+  const [user] = await adminDrizzle.select({
+    role: admin_users.role, roles: admin_users.roles, role_id: admin_users.role_id,
+  }).from(admin_users).where(eq(admin_users.id, adminUserId)).limit(1);
   if (!user) return { ...EMPTY_ROLE_BALANCE_LIMIT_DEFAULTS };
 
   const effective = getEffectiveRoles(user.role, user.roles);
@@ -76,19 +77,16 @@ export async function getRoleBalanceLimitDefaults(
   // `system_key` is one of the effective roles, PLUS the custom role row keyed
   // by `role_id` (if any). One query, OR'd. (Empty `effective` + null
   // `role_id` ⇒ no rows ⇒ all-null defaults.)
-  const orFilters: Array<Record<string, unknown>> = [];
-  if (effective.length > 0) orFilters.push({ system_key: { in: effective } });
-  if (user.role_id) orFilters.push({ id: user.role_id });
-  if (orFilters.length === 0) return { ...EMPTY_ROLE_BALANCE_LIMIT_DEFAULTS };
+  const conditions = [];
+  if (effective.length > 0) conditions.push(inArray(admin_roles.system_key, effective));
+  if (user.role_id) conditions.push(eq(admin_roles.id, user.role_id));
+  if (conditions.length === 0) return { ...EMPTY_ROLE_BALANCE_LIMIT_DEFAULTS };
 
-  const roleRows = await adminDb.admin_roles.findMany({
-    where: { OR: orFilters },
-    select: {
-      balance_limit_daily: true,
-      balance_limit_weekly: true,
-      balance_limit_monthly: true,
-    },
-  });
+  const roleRows = await adminDrizzle.select({
+      balance_limit_daily: admin_roles.balance_limit_daily,
+      balance_limit_weekly: admin_roles.balance_limit_weekly,
+      balance_limit_monthly: admin_roles.balance_limit_monthly,
+    }).from(admin_roles).where(or(...conditions));
 
   const rows: RoleBalanceLimitRow[] = roleRows.map((r) => ({
     daily: r.balance_limit_daily === null ? null : Number(r.balance_limit_daily),
@@ -106,17 +104,14 @@ export async function getRoleBalanceLimitDefaults(
  * action in `role-limits-actions.ts` reads/writes under `requireAdmin`).
  */
 export async function getRoleLimits(roleId: string): Promise<RoleLimits | null> {
-  const row = await adminDb.admin_roles.findUnique({
-    where: { id: roleId },
-    select: {
-      balance_limit_daily: true,
-      balance_limit_weekly: true,
-      balance_limit_monthly: true,
-      issuance_limit_daily: true,
-      issuance_limit_weekly: true,
-      issuance_limit_monthly: true,
-    },
-  });
+  const [row] = await adminDrizzle.select({
+      balance_limit_daily: admin_roles.balance_limit_daily,
+      balance_limit_weekly: admin_roles.balance_limit_weekly,
+      balance_limit_monthly: admin_roles.balance_limit_monthly,
+      issuance_limit_daily: admin_roles.issuance_limit_daily,
+      issuance_limit_weekly: admin_roles.issuance_limit_weekly,
+      issuance_limit_monthly: admin_roles.issuance_limit_monthly,
+    }).from(admin_roles).where(eq(admin_roles.id, roleId)).limit(1);
   if (!row) return null;
 
   const num = (v: { toString(): string } | null): number | null =>

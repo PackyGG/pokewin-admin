@@ -1,8 +1,7 @@
 import type { FastifyBaseLogger } from "fastify";
-import type pg from "pg";
-
 import type { Config } from "./config.js";
 import type { Databases } from "./db.js";
+import { DiscordAlerts } from "./discord.js";
 import { EnrichmentService, type EnrichmentResult } from "./enrichment.js";
 import type { LiveBus } from "./live.js";
 import { baseSignupSignals, severity } from "./scoring.js";
@@ -40,6 +39,7 @@ export class MonitorEngine {
   private running = false;
   private timer: NodeJS.Timeout | null = null;
   private readonly enrichment: EnrichmentService;
+  private readonly discord: DiscordAlerts;
 
   constructor(
     private readonly config: Config,
@@ -48,6 +48,7 @@ export class MonitorEngine {
     private readonly log: FastifyBaseLogger,
   ) {
     this.enrichment = new EnrichmentService(config);
+    this.discord = new DiscordAlerts(config, log);
   }
 
   async start(): Promise<void> {
@@ -555,6 +556,15 @@ export class MonitorEngine {
         scoreDelta: rule.score_delta,
         score: nextScore,
         actionType: rule.action_type,
+      });
+      await this.discord.send({
+        title: `Rule matched: ${rule.name}`,
+        description:
+          "A monitored account matched an antifraud rule and needs support review.",
+        userId: session.user_id,
+        caseId: session.case_id,
+        score: nextScore,
+        trigger: rule.key,
       });
     }
   }

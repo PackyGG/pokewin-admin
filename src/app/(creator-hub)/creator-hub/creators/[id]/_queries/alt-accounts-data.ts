@@ -2,7 +2,10 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { getDb } from "@/lib/db";
+import { inArray } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
+import { user } from "@/lib/db-schema/main/schema";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { readDbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
@@ -279,18 +282,17 @@ type SignalGroup = {
 async function resolveCohort(
   creatorUserId: string,
 ): Promise<{ codes: string[]; userIds: string[] }> {
-  const db = await getDb();
   const excluded = await getExcludedUserIds();
   const blacklistAnd = blacklistNotInClause("u.id", excluded);
 
-  const codeRows = await db.$queryRawUnsafe<{ code: string }[]>(
+  const codeRows = await queryMainRows<{ code: string }[]>(
     `SELECT code FROM affiliate_codes WHERE user_id = $1 ORDER BY created_at ASC`,
     creatorUserId,
   );
   const codes = codeRows.map((r) => r.code.toUpperCase());
   if (codes.length === 0) return { codes: [], userIds: [] };
 
-  const cohortRows = await db.$queryRawUnsafe<{ referred_user_id: string }[]>(
+  const cohortRows = await queryMainRows<{ referred_user_id: string }[]>(
     // NOTE the space before ${blacklistAnd}: blacklistNotInClause returns
     // "AND <col> NOT IN (…)" with NO leading space. Concatenated directly
     // onto the $2 placeholder it produced `$2AND …` → Postgres 42601
@@ -362,7 +364,6 @@ async function computeSignals(
   platformAltFlagged: Set<string>;
   gaps: AltDataGap[];
 }> {
-  const db = await getDb();
   const gaps: AltDataGap[] = [];
 
   // Probe once whether the `fingerprints` table exists on this DB snapshot —
@@ -370,7 +371,7 @@ async function computeSignals(
   // single clear gap rather than three identical "table missing" errors.
   let hasFingerprints = false;
   try {
-    const probe = await db.$queryRawUnsafe<{ exists: boolean }[]>(
+    const probe = await queryMainRows<{ exists: boolean }[]>(
       `SELECT to_regclass('public.fingerprints') IS NOT NULL AS exists`,
     );
     hasFingerprints = probe[0]?.exists === true;
@@ -406,7 +407,7 @@ async function computeSignals(
 
   const sharedIpGroups = await runSignal(
     async () => {
-      const rows = await db.$queryRawUnsafe<{ ip: string; ids: string[] }[]>(
+      const rows = await queryMainRows<{ ip: string; ids: string[] }[]>(
         `${ipSelect}
          SELECT host(ip)::text AS ip,
                 array_agg(DISTINCT user_id) AS ids
@@ -426,7 +427,7 @@ async function computeSignals(
 
   const sharedSubnetGroups = await runSignal(
     async () => {
-      const rows = await db.$queryRawUnsafe<
+      const rows = await queryMainRows<
         { subnet: string; ids: string[] }[]
       >(
         `${ipSelect}
@@ -451,7 +452,7 @@ async function computeSignals(
   const sharedDeviceGroups = hasFingerprints
     ? await runSignal(
         async () => {
-          const rows = await db.$queryRawUnsafe<
+          const rows = await queryMainRows<
             { visitor_id: string; ids: string[] }[]
           >(
             `SELECT visitor_id, array_agg(DISTINCT user_id) AS ids
@@ -476,7 +477,7 @@ async function computeSignals(
   // ── Signal 4: reused deposit wallet (on-chain sender address) ──
   const reusedWalletGroups = await runSignal(
     async () => {
-      const rows = await db.$queryRawUnsafe<
+      const rows = await queryMainRows<
         { source_address: string; ids: string[] }[]
       >(
         `SELECT source_address, array_agg(DISTINCT user_id) AS ids
@@ -500,7 +501,7 @@ async function computeSignals(
   // ── Signal 5: synchronized deposits (same second) ──
   const syncDepositGroups = await runSignal(
     async () => {
-      const rows = await db.$queryRawUnsafe<{ sec: string; ids: string[] }[]>(
+      const rows = await queryMainRows<{ sec: string; ids: string[] }[]>(
         `SELECT to_char(date_trunc('second', created_at), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS sec,
                 array_agg(DISTINCT user_id) AS ids
            FROM ledger_transactions
@@ -523,7 +524,7 @@ async function computeSignals(
   // ── Signal 6: identical deposit amount + same crypto ──
   const identicalDepositGroups = await runSignal(
     async () => {
-      const rows = await db.$queryRawUnsafe<
+      const rows = await queryMainRows<
         { asset: string; amt: string; ids: string[] }[]
       >(
         `SELECT crypto_asset AS asset,
@@ -558,7 +559,7 @@ async function computeSignals(
   const platformAltFlagged = new Set<string>();
   if (hasFingerprints) {
     try {
-      const rows = await db.$queryRawUnsafe<{ user_id: string }[]>(
+      const rows = await queryMainRows<{ user_id: string }[]>(
         `SELECT DISTINCT user_id
            FROM fingerprints
           WHERE user_id = ANY($1::text[])
@@ -621,15 +622,23 @@ async function enrichMembers(
   >();
   if (memberIds.length === 0) return out;
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
   const [users, deposits, wagers] = await Promise.all([
-    db.user.findMany({
-      where: { id: { in: memberIds } },
-      select: { id: true, username: true, email: true, created_at: true },
-    }),
+    db
+      .select({
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        created_at: user.created_at,
+      })
+      .from(user)
+      .where(inArray(user.id, memberIds))
+      .then((rows) =>
+        rows.map((row) => ({ ...row, created_at: new Date(row.created_at) })),
+      ),
     // Lifetime completed deposits per member (USD `amount`).
-    db.$queryRawUnsafe<{ user_id: string; total: string }[]>(
+    queryMainRows<{ user_id: string; total: string }[]>(
       `SELECT user_id, COALESCE(SUM(amount::numeric), 0)::text AS total
          FROM ledger_transactions
         WHERE user_id = ANY($1::text[])
@@ -639,7 +648,7 @@ async function enrichMembers(
       memberIds,
     ),
     // Wager booked under THIS creator's code per member (acu wager rows).
-    db.$queryRawUnsafe<{ user_id: string; total: string }[]>(
+    queryMainRows<{ user_id: string; total: string }[]>(
       `SELECT referred_user_id AS user_id,
               COALESCE(SUM(wager_amount_usd::numeric), 0)::text AS total
          FROM affiliate_code_usages
@@ -839,7 +848,7 @@ const cachedAltAccounts = unstable_cache(
 /**
  * Cached on prod; direct (uncached) on a dev-toggled admin so they see live dev
  * data. `unstable_cache` runs its callback OUTSIDE the request's dynamic scope,
- * so the inner `getDb()` → `readDbEnv()` falls back to "prod"; we therefore
+ * so the inner request-scoped resolver falls back to "prod"; we therefore
  * only cache when the request is itself on prod (the default), exactly like
  * `getCreatorPnlCached`.
  */

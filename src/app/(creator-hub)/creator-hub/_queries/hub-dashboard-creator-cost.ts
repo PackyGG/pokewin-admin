@@ -1,7 +1,8 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { type DashboardPeriod } from "@/lib/queries/dashboard-period";
@@ -39,7 +40,7 @@ export type HubCreatorCostBreakdown = {
 const cachedHubCreatorCost = unstable_cache(
   async (period: DashboardPeriod): Promise<HubCreatorCostBreakdown> => {
     return withTiming("creator-hub.creatorCost", async () => {
-      const db = await getDb();
+      const db = await getDrizzleDb();
       const interval = hubPeriodToInterval(period);
       const since = `NOW() - INTERVAL '${interval}'`;
 
@@ -56,7 +57,7 @@ const cachedHubCreatorCost = unstable_cache(
       }
 
       type MultiplierRow = { multiplier_payouts: string };
-      const multiplierRows = await db.$queryRawUnsafe<MultiplierRow[]>(
+      const multiplierRows = await queryRows<MultiplierRow[]>(db,
         `SELECT COALESCE(SUM(v.value::numeric), 0)::text AS multiplier_payouts
          FROM vouchers v
          WHERE v.origin::text = 'creator_multiplier_payout'
@@ -66,7 +67,7 @@ const cachedHubCreatorCost = unstable_cache(
         fillConverted + toNumber(multiplierRows[0]?.multiplier_payouts);
 
       type TipsRow = { tips: string };
-      const tipsRows = await db.$queryRawUnsafe<TipsRow[]>(
+      const tipsRows = await queryRows<TipsRow[]>(db,
         `SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS tips
          FROM ledger_transactions
          WHERE status = 'completed'
@@ -76,7 +77,7 @@ const cachedHubCreatorCost = unstable_cache(
       const tips = toNumber(tipsRows[0]?.tips);
 
       type LeaderboardRow = { gross: string };
-      const leaderboardRows = await db.$queryRawUnsafe<LeaderboardRow[]>(
+      const leaderboardRows = await queryRows<LeaderboardRow[]>(db,
         `SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS gross
          FROM ledger_transactions
          WHERE status = 'completed'

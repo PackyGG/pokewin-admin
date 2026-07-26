@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
 import { countedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
@@ -283,7 +283,6 @@ const ALL_SCANNED_TYPES_SQL = typeListSql([
 export async function getRewardsAnalytics(
   period: RewardsPeriod,
 ): Promise<RewardsAnalyticsData> {
-  const db = await getDb();
   const days = daysForPeriod(period);
   const dateFilter =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
@@ -302,7 +301,7 @@ export async function getRewardsAnalytics(
     `COUNT(*) FILTER (WHERE ${categoryCostPredicate(cat, "lt")})::text AS ${col}`;
 
   const [dailyRows, recipientRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryMainRows<
       {
         date: Date;
         bonuses: string;
@@ -355,7 +354,7 @@ export async function getRewardsAnalytics(
     // matching as the headline — net rain is a cost adjustment, so the
     // per-user recipient total uses the gross rain_win magnitude for
     // ranking; the headline cost still nets rain).
-    db.$queryRawUnsafe<
+    queryMainRows<
       {
         id: string;
         username: string | null;
@@ -557,7 +556,6 @@ export async function getRewardCategoryBreakdown(
   period: RewardsPeriod,
   category: RewardCategoryKey,
 ): Promise<RewardCategoryBreakdown> {
-  const db = await getDb();
   const days = daysForPeriod(period);
   const dateFilter =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
@@ -565,7 +563,7 @@ export async function getRewardCategoryBreakdown(
   const blacklistSubquery = blacklistNotInClause("id", excluded);
   const customerScope = `(SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistSubquery})`;
 
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryMainRows<
     { type: string; total: string; cnt: string }[]
   >(`
     SELECT
@@ -705,7 +703,6 @@ export async function getRewardCategoryTopRecipients(
   limit = 10,
 ): Promise<RewardTopRecipientRow[]> {
   const safeLimit = Math.max(1, Math.min(limit, 50));
-  const db = await getDb();
   const days = daysForPeriod(period);
   const dateFilter =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
@@ -720,7 +717,7 @@ export async function getRewardCategoryTopRecipients(
         ? `lt.type::text IN ('race_prize','rain_win')`
         : categoryCostPredicate(category, "lt");
 
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryMainRows<
     {
       user_id: string;
       username: string | null;
@@ -787,7 +784,6 @@ export async function getRewardsTopPromoCodes(
   limit = 10,
 ): Promise<RewardTopPromoCodeRow[]> {
   const safeLimit = Math.max(1, Math.min(limit, 50));
-  const db = await getDb();
   const days = daysForPeriod(period);
   const dateFilter =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
@@ -795,7 +791,7 @@ export async function getRewardsTopPromoCodes(
   const blacklistSubquery = blacklistNotInClause("id", excluded);
   const customerScope = `(SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistSubquery})`;
 
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryMainRows<
     {
       code_id: string;
       code: string | null;

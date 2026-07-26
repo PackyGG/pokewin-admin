@@ -1,7 +1,7 @@
 // =============================================================================
 // role-limits-merge.ts — PURE per-ROLE balance-limit math (RoleV2 P3).
 //
-// Zero runtime dependencies (no adminDb, no server-only) so it loads under a
+// Zero runtime database dependencies so it loads under a
 // plain `tsx --test` / `node:test` context. The DB-backed resolvers + the
 // server action live in `role-limits.ts` / `role-limits-actions.ts` and import
 // from HERE, so the enforcement path and the unit test exercise the exact same
@@ -26,7 +26,7 @@ export const EMPTY_ROLE_BALANCE_LIMIT_DEFAULTS: RoleBalanceLimitDefaults = {
 
 /**
  * The three balance-limit period slots a single `admin_roles` row contributes.
- * Decimal columns arrive from Prisma as `Decimal | null`; the DB resolver
+ * Numeric columns arrive as decimal-compatible values; the DB resolver
  * coerces to `number | null` via `Number(...)` (mirrors
  * `checkBalanceAdjustmentLimit`'s existing `Number(limit.max_amount)`
  * coercion). A `Decimal(12,2)` value is always within JS safe-integer range

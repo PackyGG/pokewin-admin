@@ -1,6 +1,9 @@
 "use server";
 
-import { getDb } from "@/lib/db";
+import { eq } from "drizzle-orm";
+
+import { getDrizzleDb } from "@/lib/db";
+import { battles } from "@/lib/db-schema/main/schema";
 import { requireRole } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { isUuid } from "@/lib/utils/ids";
@@ -29,12 +32,17 @@ export async function revealBattlePassword(battleId: string): Promise<string> {
   if (!isUuid(battleId)) throw new Error("Invalid battle id");
 
   const session = await requireRole(["admin"]);
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
-  const battle = await db.battles.findUnique({
-    where: { id: battleId },
-    select: { id: true, user_id: true, password: true },
-  });
+  const [battle] = await db
+    .select({
+      id: battles.id,
+      user_id: battles.user_id,
+      password: battles.password,
+    })
+    .from(battles)
+    .where(eq(battles.id, battleId))
+    .limit(1);
 
   if (!battle) throw new Error("Battle not found");
   if (!battle.password) throw new Error("This battle has no password set");

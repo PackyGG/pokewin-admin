@@ -3,8 +3,10 @@
 import { randomInt } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { and, eq, sql } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
+import { staff_notification_channels, staff_notification_prefs, staff_profiles } from "@/lib/db-schema/admin/schema";
 import { requireStaffAccess } from "@/lib/staff/access";
 import {
   isChannelConfigured,
@@ -69,21 +71,20 @@ export async function updateStaffProfile(input: unknown): Promise<void> {
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const { displayName, title, bio, accent } = parsed.data;
 
-  await adminDb.staff_profiles.upsert({
-    where: { admin_user_id: session.userId },
-    update: {
-      display_name: displayName ? displayName : null,
-      title: title ? title : null,
-      bio: bio ? bio : null,
-      accent,
-    },
-    create: {
+  await adminDrizzle.insert(staff_profiles).values({
       admin_user_id: session.userId,
       display_name: displayName ? displayName : null,
       title: title ? title : null,
       bio: bio ? bio : null,
       accent,
-    },
+    }).onConflictDoUpdate({
+      target: staff_profiles.admin_user_id,
+      set: {
+      display_name: displayName ? displayName : null,
+      title: title ? title : null,
+      bio: bio ? bio : null,
+      accent,
+      },
   });
 
   revalidatePath("/staff/profile");
@@ -111,18 +112,15 @@ export async function setNotificationPref(input: unknown): Promise<void> {
   const { kind, inApp, discord, telegram } = parsed.data;
   if (!isStaffNotificationKind(kind)) throw new Error("Unknown notification");
 
-  await adminDb.staff_notification_prefs.upsert({
-    where: {
-      admin_user_id_kind: { admin_user_id: session.userId, kind },
-    },
-    update: { in_app: inApp, discord, telegram },
-    create: {
+  await adminDrizzle.insert(staff_notification_prefs).values({
       admin_user_id: session.userId,
       kind,
       in_app: inApp,
       discord,
       telegram,
-    },
+    }).onConflictDoUpdate({
+      target: [staff_notification_prefs.admin_user_id, staff_notification_prefs.kind],
+      set: { in_app: inApp, discord, telegram },
   });
 
   revalidatePath("/staff/profile");
@@ -137,15 +135,9 @@ export async function resetNotificationPref(input: unknown): Promise<void> {
     throw new Error("Unknown notification");
   }
 
-  await adminDb.staff_notification_prefs
-    .delete({
-      where: {
-        admin_user_id_kind: {
-          admin_user_id: session.userId,
-          kind: parsed.data.kind,
-        },
-      },
-    })
+  await adminDrizzle.delete(staff_notification_prefs)
+    .where(and(eq(staff_notification_prefs.admin_user_id, session.userId),
+      eq(staff_notification_prefs.kind, parsed.data.kind)))
     .catch(() => {
       // No override existed — already at the default.
     });
@@ -207,30 +199,24 @@ export async function saveNotificationChannel(
 
   const code = newVerificationCode();
 
-  await adminDb.staff_notification_channels.upsert({
-    where: {
-      admin_user_id_channel: {
-        admin_user_id: session.userId,
-        channel,
-      },
-    },
-    update: {
+  await adminDrizzle.insert(staff_notification_channels).values({
+      admin_user_id: session.userId,
+      channel,
+      target,
+      verification_code: code,
+      verification_sent_at: new Date().toISOString(),
+    }).onConflictDoUpdate({
+      target: [staff_notification_channels.admin_user_id, staff_notification_channels.channel],
+      set: {
       target,
       // Changing the target invalidates any previous verification — the new id
       // has to prove itself on its own.
       verified_at: null,
       verification_code: code,
-      verification_sent_at: new Date(),
+      verification_sent_at: new Date().toISOString(),
       verify_attempts: 0,
       last_error: null,
-    },
-    create: {
-      admin_user_id: session.userId,
-      channel,
-      target,
-      verification_code: code,
-      verification_sent_at: new Date(),
-    },
+      },
   });
 
   const result = await sendOnChannel(channel as ChannelKind, {
@@ -240,11 +226,10 @@ export async function saveNotificationChannel(
   });
 
   if (!result.ok) {
-    await adminDb.staff_notification_channels
-      .updateMany({
-        where: { admin_user_id: session.userId, channel },
-        data: { last_error: result.error.slice(0, 200) },
-      })
+    await adminDrizzle.update(staff_notification_channels)
+      .set({ last_error: result.error.slice(0, 200) })
+      .where(and(eq(staff_notification_channels.admin_user_id, session.userId),
+        eq(staff_notification_channels.channel, channel)))
       .catch(() => {});
     revalidatePath("/staff/profile");
     return { sent: false, message: result.error };
@@ -279,11 +264,9 @@ export async function verifyNotificationChannel(
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const { channel, code } = parsed.data;
 
-  const row = await adminDb.staff_notification_channels.findUnique({
-    where: {
-      admin_user_id_channel: { admin_user_id: session.userId, channel },
-    },
-  });
+  const [row] = await adminDrizzle.select().from(staff_notification_channels)
+    .where(and(eq(staff_notification_channels.admin_user_id, session.userId),
+      eq(staff_notification_channels.channel, channel))).limit(1);
   if (!row) throw new Error("Set the channel up first");
   if (row.verified_at) return; // already done
 
@@ -293,29 +276,25 @@ export async function verifyNotificationChannel(
   if (
     !row.verification_code ||
     !row.verification_sent_at ||
-    Date.now() - row.verification_sent_at.getTime() > CODE_TTL_MS
+    Date.now() - new Date(row.verification_sent_at).getTime() > CODE_TTL_MS
   ) {
     throw new Error("That code expired — send yourself a new one.");
   }
 
   if (row.verification_code !== code) {
-    await adminDb.staff_notification_channels.update({
-      where: { id: row.id },
-      data: { verify_attempts: { increment: 1 } },
-    });
+    await adminDrizzle.update(staff_notification_channels)
+      .set({ verify_attempts: sql`${staff_notification_channels.verify_attempts} + 1` })
+      .where(eq(staff_notification_channels.id, row.id));
     throw new Error("That code doesn't match");
   }
 
-  await adminDb.staff_notification_channels.update({
-    where: { id: row.id },
-    data: {
-      verified_at: new Date(),
+  await adminDrizzle.update(staff_notification_channels).set({
+      verified_at: new Date().toISOString(),
       verification_code: null,
       verify_attempts: 0,
       enabled: true,
       last_error: null,
-    },
-  });
+    }).where(eq(staff_notification_channels.id, row.id));
 
   revalidatePath("/staff/profile");
 }
@@ -329,10 +308,10 @@ export async function toggleNotificationChannel(
     .safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
 
-  await adminDb.staff_notification_channels.updateMany({
-    where: { admin_user_id: session.userId, channel: parsed.data.channel },
-    data: { enabled: parsed.data.enabled },
-  });
+  await adminDrizzle.update(staff_notification_channels)
+    .set({ enabled: parsed.data.enabled })
+    .where(and(eq(staff_notification_channels.admin_user_id, session.userId),
+      eq(staff_notification_channels.channel, parsed.data.channel)));
 
   revalidatePath("/staff/profile");
 }
@@ -344,9 +323,9 @@ export async function removeNotificationChannel(
   const parsed = z.object({ channel: z.enum(CHANNELS) }).safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
 
-  await adminDb.staff_notification_channels.deleteMany({
-    where: { admin_user_id: session.userId, channel: parsed.data.channel },
-  });
+  await adminDrizzle.delete(staff_notification_channels)
+    .where(and(eq(staff_notification_channels.admin_user_id, session.userId),
+      eq(staff_notification_channels.channel, parsed.data.channel)));
 
   revalidatePath("/staff/profile");
 }
@@ -358,12 +337,12 @@ export async function sendTestPing(input: unknown): Promise<void> {
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const { channel } = parsed.data;
 
-  const row = await adminDb.staff_notification_channels.findUnique({
-    where: {
-      admin_user_id_channel: { admin_user_id: session.userId, channel },
-    },
-    select: { target: true, verified_at: true },
-  });
+  const [row] = await adminDrizzle.select({
+    target: staff_notification_channels.target,
+    verified_at: staff_notification_channels.verified_at,
+  }).from(staff_notification_channels)
+    .where(and(eq(staff_notification_channels.admin_user_id, session.userId),
+      eq(staff_notification_channels.channel, channel))).limit(1);
   if (!row) throw new Error("Set the channel up first");
   if (!row.verified_at) throw new Error("Verify the channel first");
 
@@ -374,13 +353,12 @@ export async function sendTestPing(input: unknown): Promise<void> {
     href: "/staff",
   });
 
-  await adminDb.staff_notification_channels
-    .updateMany({
-      where: { admin_user_id: session.userId, channel },
-      data: result.ok
-        ? { last_sent_at: new Date(), last_error: null }
-        : { last_error: result.error.slice(0, 200) },
-    })
+  await adminDrizzle.update(staff_notification_channels)
+    .set(result.ok
+      ? { last_sent_at: new Date().toISOString(), last_error: null }
+      : { last_error: result.error.slice(0, 200) })
+    .where(and(eq(staff_notification_channels.admin_user_id, session.userId),
+      eq(staff_notification_channels.channel, channel)))
     .catch(() => {});
 
   if (!result.ok) throw new Error(result.error);

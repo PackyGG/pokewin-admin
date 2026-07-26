@@ -9,7 +9,6 @@ import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { requirePageAccess } from "@/lib/dal";
-import { readDbEnv } from "@/lib/db-env";
 import { safeQueryOrNull, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { getCardPaymentDetail } from "@/lib/queries/card-payments";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
@@ -52,18 +51,13 @@ export default async function CardPaymentDetailPage({ params }: { params: Promis
 }
 
 async function CardPaymentDetailBody({ intentId }: { intentId: string }) {
-  const env = await readDbEnv();
-  if (env === "dev") {
-    return <TileErrorFallback label="Development card-payment mirror" kind="error" hint="No development ClickHouse mirror is configured. Production mirror data is intentionally not shown while DEV is selected." size="panel" />;
-  }
-
   const { data, error, kind } = await safeQueryOrNull(
     () => getCardPaymentDetail(intentId),
     "transactions.card-payments.detail",
     REWARD_QUERY_TIMEOUT_MS,
   );
   if (error) {
-    return <TileErrorFallback label="Card-payment mirror" kind={kind ?? "error"} hint="Verify ClickHouse connectivity and PeerDB table replication, then refresh." size="panel" />;
+    return <TileErrorFallback label="Card payment" kind={kind ?? "error"} hint="The PostgreSQL query failed. Refresh to retry." size="panel" />;
   }
   if (!data) notFound();
 
@@ -73,7 +67,7 @@ async function CardPaymentDetailBody({ intentId }: { intentId: string }) {
         <Badge variant="outline" className={STATUS_CLASSES[data.status] ?? ""}>{data.status.replaceAll("_", " ")}</Badge>
         <Badge variant="outline">{data.provider}</Badge>
         {data.providerPaymentStatus && <Badge variant="secondary">Provider: {data.providerPaymentStatus}</Badge>}
-        <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border bg-muted/40 px-2.5 py-1 text-[11px] text-muted-foreground"><DatabaseZap className="size-3" />ClickHouse mirror</span>
+        <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border bg-muted/40 px-2.5 py-1 text-[11px] text-muted-foreground"><DatabaseZap className="size-3" />PostgreSQL</span>
       </div>
 
       <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
@@ -117,7 +111,7 @@ async function CardPaymentDetailBody({ intentId }: { intentId: string }) {
       <div className="space-y-3">
         <SectionHeading icon={ReceiptText} title="Provider fees" />
         <FadeIn><div className="overflow-hidden rounded-2xl border bg-card/60">
-          {data.fees.length === 0 ? <p className="p-4 text-sm text-muted-foreground">No mirrored fee rows.</p> : <div className="divide-y">
+          {data.fees.length === 0 ? <p className="p-4 text-sm text-muted-foreground">No fee rows.</p> : <div className="divide-y">
             {data.fees.map((fee) => <div key={fee.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
               <div><p className="text-sm font-medium">{fee.feeName}</p><p className="font-mono text-[10px] text-muted-foreground">{fee.feeType} · {fee.feeKey}</p></div>
               <div className="text-right"><p className="font-medium tabular-nums text-rose-600 dark:text-rose-400">{usd(fee.amountCents)}</p><p className="text-[10px] text-muted-foreground">{formatDateTime(fee.createdAt)}</p></div>
@@ -129,7 +123,7 @@ async function CardPaymentDetailBody({ intentId }: { intentId: string }) {
       <div className="space-y-3">
         <SectionHeading icon={Webhook} title="Webhook timeline" />
         <FadeIn><div className="overflow-hidden rounded-2xl border bg-card/60">
-          {data.webhookEvents.length === 0 ? <p className="p-4 text-sm text-muted-foreground">No mirrored webhook events matched this payment or checkout ID.</p> : <div className="divide-y">
+          {data.webhookEvents.length === 0 ? <p className="p-4 text-sm text-muted-foreground">No webhook events matched this payment or checkout ID.</p> : <div className="divide-y">
             {data.webhookEvents.map((event) => <details key={event.id} className="group p-4">
               <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3">
                 <div><p className="text-sm font-medium">{event.eventType}</p><p className="font-mono text-[10px] text-muted-foreground">{event.providerEventId}</p></div>

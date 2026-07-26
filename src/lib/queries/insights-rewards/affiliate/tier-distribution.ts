@@ -1,10 +1,8 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { CACHE_TAG, loadBlacklist } from "./_shared";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getAffiliateTierDistributionFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/tier-distribution";
 
 /**
  * Tier (affiliate level) distribution.
@@ -12,7 +10,7 @@ import { getAffiliateTierDistributionFromClickHouse } from "@/lib/clickhouse/que
  * HOW A TIER IS DETERMINED — read this before changing anything:
  *
  * There is NO stored per-affiliate level column. `affiliate_accounts`
- * (prisma/schema.prisma:42) carries `total_wager_volume_usd`,
+ * in the checked-in MAIN Drizzle schema carries `total_wager_volume_usd`,
  * `total_earned_usd`, `total_paid_out_usd`, `total_referred` — but no
  * `level`. The admin "set level" action
  * (src/app/(admin)/creators/actions.ts:205) is a documented no-op for
@@ -76,8 +74,8 @@ export type TierDistribution = {
 };
 
 async function compute(blacklistIds: string[]): Promise<TierDistribution> {
-  const db = await getDb();
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const db = await getDrizzleDb();
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // One pass: every real affiliate row picks its level via a LATERAL
   // over the config ladder (highest threshold the wager meets, min
@@ -85,7 +83,7 @@ async function compute(blacklistIds: string[]): Promise<TierDistribution> {
   // level appears even with zero affiliates. Aggregates are summed per
   // level. `affiliate_level_configs` is the metadata source so the view
   // tracks any retuned ladder.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       level: number;
       label: string;
@@ -95,7 +93,7 @@ async function compute(blacklistIds: string[]): Promise<TierDistribution> {
       total_wager: string;
       total_paid_out: string;
     }[]
-  >(`
+  >(db, sql`
     WITH affiliate_levels AS (
       SELECT
         aa.user_id,
@@ -158,11 +156,5 @@ const cached = unstable_cache(
 
 export async function getAffiliateTierDistribution(): Promise<TierDistribution> {
   const blacklist = await loadBlacklist();
-  return resolveAdminRead<TierDistribution>(
-    "insights_affiliate_tier_distribution",
-    {
-      pg: () => cached(blacklist),
-      ch: () => getAffiliateTierDistributionFromClickHouse(blacklist),
-    },
-  );
+  return cached(blacklist);
 }

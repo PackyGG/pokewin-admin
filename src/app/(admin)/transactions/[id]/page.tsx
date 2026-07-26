@@ -732,7 +732,7 @@ async function TransactionDetailBody({
         </FadeIn>
       </div>
 
-      {data.metadata && (
+      {Boolean(data.metadata) && (
         <div className="space-y-3">
           <SectionHeading icon={Boxes} title="Metadata" />
           <FadeIn>

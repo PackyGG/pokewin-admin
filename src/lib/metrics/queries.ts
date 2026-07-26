@@ -1,6 +1,7 @@
 import "server-only";
 
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
@@ -33,9 +34,6 @@ import {
   WAGER_LEG_FILTER,
   PAYOUT_LEG_FILTER,
 } from "./gaming-sql";
-import { compareWindowMetrics } from "@/lib/clickhouse/comparison";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getWindowMetricsFromClickHouse } from "@/lib/clickhouse/queries/window-metrics";
 
 /**
  * queries.ts — the CANONICAL, WIRED DB-read builders for the metric layer.
@@ -223,7 +221,7 @@ export type GamingLegs = {
  */
 export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
   return withTiming("metrics.gamingLegs", async () => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
     // Canonical scope: staff + blacklist dropped, creators KEPT, with
     // creator-on-session rows excluded per-row via the session-window
     // predicate (symmetric on wager + payout). See scope.ts.
@@ -234,7 +232,7 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
     type InvRow = { inv_payout: string };
 
     const [ledger, inv, upg, dd] = await Promise.all([
-      db.$queryRawUnsafe<LedgerRow[]>(
+      queryRows<LedgerRow[]>(db,
         `WITH ${scope.sessionWindowsCte}
          SELECT
            COALESCE(SUM(CASE WHEN type::text IN ${WAGER_TYPES_SQL} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS wager,
@@ -255,7 +253,7 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
            -- their type filter above — symmetric with this wager leg.
            AND ${WAGER_LEG_FILTER}`,
       ),
-      db.$queryRawUnsafe<InvRow[]>(
+      queryRows<InvRow[]>(db,
         `WITH ${scope.sessionWindowsCte}
          SELECT
            COALESCE(SUM(value_at_obtained::numeric), 0)::text AS inv_payout
@@ -387,11 +385,13 @@ async function doubleDownLegs(
   window: MetricWindow,
 ): Promise<DoubleDownLegs | null> {
   return withTiming("metrics.doubleDown", async () => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
 
     // Probe: skip entirely if the table is absent (pre-DD DB).
-    const probe = await db.$queryRaw<{ exists: string | null }[]>`
-      SELECT to_regclass('public.battle_double_down_offers')::text AS exists`;
+    const probe = await queryRows<{ exists: string | null }[]>(
+      db,
+      "SELECT to_regclass('public.battle_double_down_offers')::text AS exists",
+    );
     if (probe[0]?.exists == null) return null;
 
     const excluded = await getExcludedUserIds();
@@ -399,7 +399,7 @@ async function doubleDownLegs(
     const since = window.since;
 
     type Row = { wager: string; payout: string; bets: string };
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryRows<Row[]>(db,
       `WITH real_users AS (
          SELECT id FROM "user"
          WHERE role NOT IN ('admin', 'support', 'creator') ${blacklist}
@@ -473,7 +473,7 @@ export type RewardCost = {
  */
 export async function getRewardCost(window: MetricWindow): Promise<RewardCost> {
   return withTiming("metrics.rewardCost", async () => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
     // Same canonical session-window scope as the gaming legs so NGR is on
     // the SAME population as GGR (staff + blacklist dropped, creators kept,
     // creator-on-session reward rows excluded).
@@ -486,7 +486,7 @@ export async function getRewardCost(window: MetricWindow): Promise<RewardCost> {
       rain_win: string;
       rain_tip: string;
     };
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryRows<Row[]>(db,
       `WITH ${scope.sessionWindowsCte}
        SELECT
          COALESCE(SUM(CASE
@@ -549,12 +549,14 @@ export async function upgraderMetrics(
   window: MetricWindow,
 ): Promise<UpgraderMetrics | null> {
   return withTiming("metrics.upgrader", async () => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
 
     // Probe: skip entirely if the table is absent (pre-upgrader DB).
     // to_regclass returns NULL (not an error) for a missing relation.
-    const probe = await db.$queryRaw<{ exists: string | null }[]>`
-      SELECT to_regclass('public.upgrader_games')::text AS exists`;
+    const probe = await queryRows<{ exists: string | null }[]>(
+      db,
+      "SELECT to_regclass('public.upgrader_games')::text AS exists",
+    );
     if (probe[0]?.exists == null) return null;
 
     const excluded = await getExcludedUserIds();
@@ -568,7 +570,7 @@ export async function upgraderMetrics(
       players: string;
       wins: string;
     };
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryRows<Row[]>(db,
       `WITH real_users AS (
          SELECT id FROM "user"
          WHERE role NOT IN ('admin', 'support', 'creator') ${blacklist}
@@ -649,7 +651,6 @@ export async function getWindowMetrics(opts: {
   // The canonical Postgres read — the gaming legs + reward legs composed with
   // the pure `formulas.ts` arithmetic. Deferred into a thunk so the CQRS
   // serve-path resolver (`resolveAdminRead`) can run it ONLY when this surface
-  // is not on ClickHouse (in `clickhouse` mode the CH twin is the sole read and
   // this never executes — no heavy Postgres aggregate).
   const pgRead = async (): Promise<WindowMetrics> => {
     const [legs, reward] = await Promise.all([
@@ -700,8 +701,6 @@ export async function getWindowMetrics(opts: {
   };
 
   // A caller-supplied CUSTOM `rainHouseCost` (e.g. `{ kind: "full" }`) has no
-  // ClickHouse-twin equivalent — the CH twin always uses the owner-confirmed
-  // net rain model — so such a call must NEVER serve from ClickHouse. Every
   // current caller uses the default net model (so this only guards a future
   // override), and it keeps the served NGR correct under a custom rain model.
   if (opts.rainHouseCost) {
@@ -709,35 +708,10 @@ export async function getWindowMetrics(opts: {
   }
 
   // CQRS serve path for the `dashboard_headline_ggr` surface:
-  //   • clickhouse → serve the CH twin (SOLE read; on failure THROWS so the
   //     caller's unstable_cache/safeQuery degrades — no Postgres re-run).
   //   • comparison → serve Postgres, fire-and-forget drift log (unchanged).
   //   • off        → serve Postgres (today's behavior).
-  return resolveAdminRead<WindowMetrics>("dashboard_headline_ggr", {
-    pg: pgRead,
-    ch: async () => {
-      const blacklist = await getExcludedUserIds();
-      return getWindowMetricsFromClickHouse(window, blacklist);
-    },
-    compare: (pg) => {
-      void compareWindowMetrics(
-        {
-          window,
-          windowLabel: window.since ? window.since.toISOString() : "lifetime",
-        },
-        {
-          wager: pg.wager,
-          gamingPayout: pg.gamingPayout,
-          ggr: pg.ggr,
-          ngr: pg.ngr,
-          bets: pg.bets,
-          rainWinTotal: pg.rainWinTotal,
-          rainTipTotal: pg.rainTipTotal,
-          rainHouseCost: pg.rainHouseCost,
-        },
-      );
-    },
-  });
+  return pgRead();
 }
 
 // ─── Daily canonical gaming-margin series ────────────────────────────
@@ -791,7 +765,7 @@ export async function getDailyGamingMetrics(
   window: MetricWindow,
 ): Promise<DailyGamingMetricPoint[]> {
   return withTiming("metrics.dailyGamingMetrics", async () => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
     // Canonical session-window scope for the ledger + inventory legs.
     const scope = await getMetricsScope();
     const since = window.since;
@@ -812,10 +786,14 @@ export async function getDailyGamingMetrics(
     // degrades to 0 rather than throwing 42P01. Same probe pattern for
     // battle_double_down_offers (pre-DD snapshot).
     const [upgProbe, ddProbe] = await Promise.all([
-      db.$queryRaw<{ exists: string | null }[]>`
-        SELECT to_regclass('public.upgrader_games')::text AS exists`,
-      db.$queryRaw<{ exists: string | null }[]>`
-        SELECT to_regclass('public.battle_double_down_offers')::text AS exists`,
+      queryRows<{ exists: string | null }[]>(
+        db,
+        "SELECT to_regclass('public.upgrader_games')::text AS exists",
+      ),
+      queryRows<{ exists: string | null }[]>(
+        db,
+        "SELECT to_regclass('public.battle_double_down_offers')::text AS exists",
+      ),
     ]);
     const hasUpgrader = upgProbe[0]?.exists != null;
     const hasDoubleDown = ddProbe[0]?.exists != null;
@@ -833,7 +811,7 @@ export async function getDailyGamingMetrics(
     type DdDayRow = { date: Date; dd_wager: string; dd_payout: string };
 
     const [ledgerRows, invRows, upgRows, ddRows] = await Promise.all([
-      db.$queryRawUnsafe<LedgerDayRow[]>(
+      queryRows<LedgerDayRow[]>(db,
         `WITH ${scope.sessionWindowsCte}
          SELECT
            DATE(created_at) AS date,
@@ -880,7 +858,7 @@ export async function getDailyGamingMetrics(
            ${sinceClause("created_at", since)}
          GROUP BY DATE(created_at)`,
       ),
-      db.$queryRawUnsafe<InvDayRow[]>(
+      queryRows<InvDayRow[]>(db,
         `WITH ${scope.sessionWindowsCte}
          SELECT
            DATE(obtained_at) AS date,
@@ -902,7 +880,7 @@ export async function getDailyGamingMetrics(
       // match the shared `upgraderMetrics` reader (see note above).
       // Skipped (empty) on a pre-upgrader DB via the to_regclass probe.
       hasUpgrader
-        ? db.$queryRawUnsafe<UpgDayRow[]>(
+        ? queryRows<UpgDayRow[]>(db,
             `SELECT
                DATE(created_at) AS date,
                COALESCE(SUM(bet_amount::numeric), 0)::text AS upg_wager,
@@ -919,7 +897,7 @@ export async function getDailyGamingMetrics(
       // `upgScope`. WAGER = Σ won_amount_usd over RESOLVED offers;
       // PAYOUT = Σ paired voucher `value` on wins. Skipped on a pre-DD DB.
       hasDoubleDown
-        ? db.$queryRawUnsafe<DdDayRow[]>(
+        ? queryRows<DdDayRow[]>(db,
             `SELECT
                DATE(o.resolved_at) AS date,
                COALESCE(SUM(o.won_amount_usd::numeric), 0)::text AS dd_wager,
@@ -1053,11 +1031,11 @@ export async function sumLedgerTypes(opts: {
 }): Promise<number> {
   if (opts.types.length === 0) return 0;
   return withTiming("metrics.sumLedgerTypes", async () => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
     const scope = await getMetricsScope();
     const list = ledgerTypesToSqlList(opts.types);
     type Row = { total: string };
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryRows<Row[]>(db,
       `WITH ${scope.sessionWindowsCte}
        SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS total
        FROM ledger_transactions
@@ -1098,11 +1076,11 @@ export async function sumLedgerTypesGrouped(opts: {
   const result = new Map<string, number>();
   if (opts.types.length === 0) return result;
   return withTiming("metrics.sumLedgerTypesGrouped", async () => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
     const scope = await getMetricsScope();
     const list = ledgerTypesToSqlList(opts.types);
     type Row = { type: string; total: string };
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryRows<Row[]>(db,
       `WITH ${scope.sessionWindowsCte}
        SELECT type::text AS type, COALESCE(SUM(ABS(amount::numeric)), 0)::text AS total
        FROM ledger_transactions
@@ -1136,10 +1114,10 @@ export async function sumOfficialStreamAdjustments(opts: {
   window: MetricWindow;
 }): Promise<number> {
   return withTiming("metrics.sumOfficialStreamAdjustments", async () => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
     const scope = await getMetricsScope();
     type Row = { total: string };
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryRows<Row[]>(db,
       `WITH ${scope.sessionWindowsCte}
        SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS total
        FROM ledger_transactions
@@ -1163,10 +1141,10 @@ export async function sumStatsExcludedAdjustments(opts: {
   window: MetricWindow;
 }): Promise<number> {
   return withTiming("metrics.sumStatsExcludedAdjustments", async () => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
     const scope = await getMetricsScope();
     type Row = { total: string };
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryRows<Row[]>(db,
       `WITH ${scope.sessionWindowsCte}
        SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS total
        FROM ledger_transactions

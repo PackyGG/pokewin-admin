@@ -1,6 +1,6 @@
-import { getDb } from "@/lib/db";
+import { sql, type SQL } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
-import { Prisma } from "@/generated/prisma/client";
 
 export async function getUserInventory(
   userId: string,
@@ -13,79 +13,93 @@ export async function getUserInventory(
     sort?: string;
     priceMin?: number;
     priceMax?: number;
-  }
+  },
 ) {
-  const db = await getDb();
-  const where: Prisma.user_inventoryWhereInput = { user_id: userId };
+  const db = await getDrizzleDb();
+  const predicates: SQL[] = [sql`ui.user_id = ${userId}`];
 
   if (filters?.status === "owned") {
-    where.sold_at = { equals: null };
-    where.exchanged_at = { equals: null };
+    predicates.push(sql`ui.sold_at IS NULL`, sql`ui.exchanged_at IS NULL`);
   } else if (filters?.status === "sold") {
-    where.sold_at = { not: null };
+    predicates.push(sql`ui.sold_at IS NOT NULL`);
   } else if (filters?.status === "exchanged") {
-    where.exchanged_at = { not: null };
+    predicates.push(sql`ui.exchanged_at IS NOT NULL`);
   } else if (filters?.status === "disposed") {
     // Items that have left the user's owned inventory either via sale or
     // exchange. Used for the combined "Sold & Exchanged" admin section.
-    where.OR = [{ sold_at: { not: null } }, { exchanged_at: { not: null } }];
+    predicates.push(sql`(ui.sold_at IS NOT NULL OR ui.exchanged_at IS NOT NULL)`);
   }
 
   if (filters?.priceMin != null) {
-    where.value_at_obtained = { ...(where.value_at_obtained as object ?? {}), gte: filters.priceMin };
+    predicates.push(sql`ui.value_at_obtained >= ${filters.priceMin}`);
   }
   if (filters?.priceMax != null) {
-    where.value_at_obtained = { ...(where.value_at_obtained as object ?? {}), lte: filters.priceMax };
+    predicates.push(sql`ui.value_at_obtained <= ${filters.priceMax}`);
   }
 
-  // For rarity / search filtering, we need to find matching card IDs first
-  let cardIdFilter: string[] | null = null;
-  if (filters?.rarity || filters?.search) {
-    const cardWhere: Prisma.cardsWhereInput = {};
-    if (filters.rarity) cardWhere.rarity = { equals: filters.rarity, mode: "insensitive" };
-    if (filters.search) cardWhere.name = { contains: filters.search, mode: "insensitive" };
-    const matchingCards = await db.cards.findMany({
-      where: cardWhere,
-      select: { id: true },
-    });
-    cardIdFilter = matchingCards.map((c) => c.id);
-    where.card_id = { in: cardIdFilter };
-  }
+  if (filters?.rarity)
+    predicates.push(sql`c.rarity ILIKE ${filters.rarity}`);
+  if (filters?.search)
+    predicates.push(sql`c.name ILIKE ${`%${filters.search}%`}`);
 
-  // Sort
-  let orderBy: Prisma.user_inventoryOrderByWithRelationInput = { created_at: "desc" };
-  if (filters?.sort === "price_asc") orderBy = { value_at_obtained: "asc" };
-  else if (filters?.sort === "price_desc") orderBy = { value_at_obtained: "desc" };
-  else if (filters?.sort === "oldest") orderBy = { created_at: "asc" };
+  const orderBy =
+    filters?.sort === "price_asc"
+      ? sql`ui.value_at_obtained ASC`
+      : filters?.sort === "price_desc"
+        ? sql`ui.value_at_obtained DESC`
+        : filters?.sort === "oldest"
+          ? sql`ui.created_at ASC`
+          : sql`ui.created_at DESC`;
+  const safePage = Math.max(1, Math.trunc(page) || 1);
+  const safePerPage = Math.min(200, Math.max(1, Math.trunc(perPage) || 20));
+  const offset = (safePage - 1) * safePerPage;
+  const whereSql = sql.join(predicates, sql` AND `);
 
-  const [items, total] = await Promise.all([
-    db.user_inventory.findMany({
-      where,
-      orderBy,
-      skip: (page - 1) * perPage,
-      take: perPage,
-    }),
-    db.user_inventory.count({ where }),
+  const [itemsResult, totalResult] = await Promise.all([
+    db.execute<{
+      id: string;
+      card_name: string | null;
+      image_url: string | null;
+      rarity: string | null;
+      value_at_obtained: string;
+      source_type: string;
+      obtained_at: Date;
+      sold_at: Date | null;
+      exchanged_at: Date | null;
+    }>(sql`
+      SELECT
+        ui.id,
+        c.name AS card_name,
+        c.image_url,
+        c.rarity,
+        ui.value_at_obtained::text AS value_at_obtained,
+        ui.source_type::text AS source_type,
+        ui.obtained_at,
+        ui.sold_at,
+        ui.exchanged_at
+      FROM user_inventory ui
+      LEFT JOIN cards c ON c.id = ui.card_id
+      WHERE ${whereSql}
+      ORDER BY ${orderBy}
+      LIMIT ${safePerPage}
+      OFFSET ${offset}
+    `),
+    db.execute<{ total: string }>(sql`
+      SELECT COUNT(*)::text AS total
+      FROM user_inventory ui
+      LEFT JOIN cards c ON c.id = ui.card_id
+      WHERE ${whereSql}
+    `),
   ]);
-
-  // Fetch card details for the items
-  const cardIds = [...new Set(items.map((i) => i.card_id))];
-  const cards = cardIds.length > 0
-    ? await db.cards.findMany({
-        where: { id: { in: cardIds } },
-        select: { id: true, name: true, image_url: true, rarity: true },
-      })
-    : [];
-  const cardMap = new Map(cards.map((c) => [c.id, c]));
+  const total = Number(totalResult.rows[0]?.total ?? 0);
 
   return {
-    data: items.map((item) => {
-      const card = cardMap.get(item.card_id);
+    data: itemsResult.rows.map((item) => {
       return {
         id: item.id,
-        cardName: card?.name ?? "Unknown Card",
-        imageUrl: card?.image_url ?? null,
-        rarity: card?.rarity ?? null,
+        cardName: item.card_name ?? "Unknown Card",
+        imageUrl: item.image_url,
+        rarity: item.rarity,
         value: toNumber(item.value_at_obtained),
         sourceType: item.source_type,
         obtainedAt: item.obtained_at.toISOString(),
@@ -94,8 +108,8 @@ export async function getUserInventory(
       };
     }),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }

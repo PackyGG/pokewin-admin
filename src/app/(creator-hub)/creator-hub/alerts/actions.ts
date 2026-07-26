@@ -2,8 +2,10 @@
 
 import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
+import { and, eq, isNull } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/drizzle";
+import { creator_alerts } from "@/lib/db-schema/admin/schema";
 import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 
 const alertIdSchema = z.string().uuid("Invalid alert id");
@@ -35,10 +37,10 @@ export async function markAlertRead(alertId: string): Promise<AlertActionResult>
   }
 
   try {
-    await adminDb.creator_alerts.update({
-      where: { id: parsed.data },
-      data: { read_at: new Date(), read_by: userId },
-    });
+    await adminDrizzle
+      .update(creator_alerts)
+      .set({ read_at: new Date().toISOString(), read_by: userId })
+      .where(eq(creator_alerts.id, parsed.data));
     revalidateAlerts();
     return { success: true };
   } catch (err) {
@@ -65,15 +67,15 @@ export async function dismissAlert(alertId: string): Promise<AlertActionResult> 
   }
 
   try {
-    await adminDb.creator_alerts.update({
-      where: { id: parsed.data },
-      data: {
-        dismissed_at: new Date(),
+    await adminDrizzle
+      .update(creator_alerts)
+      .set({
+        dismissed_at: new Date().toISOString(),
         dismissed_by: userId,
-        read_at: new Date(),
+        read_at: new Date().toISOString(),
         read_by: userId,
-      },
-    });
+      })
+      .where(eq(creator_alerts.id, parsed.data));
     revalidateAlerts();
     return { success: true };
   } catch (err) {
@@ -95,10 +97,15 @@ export async function markAllAlertsRead(): Promise<AlertActionResult> {
   }
 
   try {
-    await adminDb.creator_alerts.updateMany({
-      where: { dismissed_at: null, read_at: null },
-      data: { read_at: new Date(), read_by: userId },
-    });
+    await adminDrizzle
+      .update(creator_alerts)
+      .set({ read_at: new Date().toISOString(), read_by: userId })
+      .where(
+        and(
+          isNull(creator_alerts.dismissed_at),
+          isNull(creator_alerts.read_at),
+        ),
+      );
     revalidateAlerts();
     return { success: true };
   } catch (err) {

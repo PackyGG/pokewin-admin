@@ -1,4 +1,5 @@
-import { getDb } from "@/lib/db";
+import { sql } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
 
 /**
  * One row per pool card of a pack, reduced to the facts the weight-shaping
@@ -35,29 +36,24 @@ export type PackCardValue = {
 export async function getPackCardValues(
   packId: string,
 ): Promise<PackCardValue[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
-  const rows = await db.$queryRawUnsafe<
-    {
-      card_id: string;
-      value: string | null;
-      weight: number;
-    }[]
-  >(
-    `
+  const result = await db.execute<{
+    card_id: string;
+    value: string | null;
+    weight: number;
+  }>(sql`
       SELECT
         pc.card_id      AS card_id,
         c.price::text   AS value,
         pc.weight       AS weight
       FROM pack_cards pc
       JOIN cards c ON c.id = pc.card_id
-      WHERE pc.pack_id = $1::uuid
+      WHERE pc.pack_id = ${packId}::uuid
       ORDER BY pc.order ASC
-    `,
-    packId,
-  );
+  `);
 
-  return rows.map((r) => ({
+  return result.rows.map((r) => ({
     cardId: r.card_id,
     value: Number(r.value ?? 0),
     weight: Number(r.weight),

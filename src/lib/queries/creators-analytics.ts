@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { realCustomerIdsSubquery } from "./_blacklist";
@@ -12,9 +13,7 @@ type Period = "today" | "7d" | "30d" | "90d" | "all";
 // history with no lower bound — the unbounded-lifetime pattern CLAUDE.md
 // ("Performance & Daten-Laden") forbids. Mirrors the reward-side
 // `INSIGHTS_LIFETIME_LOOKBACK_DAYS` (365d). No-op on current data
-// (< 90d old); bounds pathological future scans. The ClickHouse twin
-// (clickhouse/queries/creators/analytics.ts) caps the `all` window
-// identically for cutover/comparison parity.
+// (< 90d old); bounds pathological future scans.
 const LIFETIME_LOOKBACK_DAYS = 365;
 
 function periodToDateFilter(period: Period): string {
@@ -36,7 +35,7 @@ async function computeAffiliateAnalytics(
   period: Period,
   excluded: string[],
 ): Promise<AffiliateAnalyticsData> {
-  const db = await getDb();
+  const queryDb = await getDrizzleDb();
   const dateFilter = periodToDateFilter(period);
   const referredScope = realCustomerIdsSubquery(excluded);
   const referredFilter = `AND referred_user_id IN ${referredScope}`;
@@ -48,36 +47,39 @@ async function computeAffiliateAnalytics(
       // against an unknown label throws 22P02 at parse time (ffa61b5c
       // class) — taking the whole analytics page down. ::text compares
       // false instead, so a missing label just counts 0.
-      db.$queryRawUnsafe<{ count: string }[]>(`
+      queryRows<{ count: string }[]>(queryDb, `
         SELECT COUNT(*)::text AS count
         FROM affiliate_code_usages
         WHERE usage_type::text = 'signup' ${referredFilter} ${dateFilter}
       `),
-      db.$queryRawUnsafe<{ total: string }[]>(`
+      queryRows<{ total: string }[]>(queryDb, `
         SELECT COALESCE(SUM(amount_usd::numeric), 0)::text AS total
         FROM affiliate_payouts
         WHERE status = 'paid' ${dateFilter}
       `),
-      db.$queryRawUnsafe<{ wager: string; deposit: string }[]>(`
+      queryRows<{ wager: string; deposit: string }[]>(queryDb, `
         SELECT
           COALESCE(SUM(wager_amount_usd::numeric), 0)::text AS wager,
           COALESCE(SUM(deposit_amount_usd::numeric), 0)::text AS deposit
         FROM affiliate_code_usages
         WHERE 1=1 ${referredFilter} ${dateFilter}
       `),
-      db.$queryRawUnsafe<{ count: string }[]>(`
+      queryRows<{ count: string }[]>(queryDb, `
         SELECT COUNT(*)::text AS count
         FROM affiliate_clicks
         WHERE 1=1 ${dateFilter}
       `),
-      db.affiliate_accounts.count({
-        where: {
-          user: { role: "creator", affiliate_code_active: true },
-        },
-      }),
-      db.$queryRawUnsafe<
+      queryRows<{ count: string }[]>(
+        queryDb,
+        `SELECT COUNT(*)::text AS count
+         FROM affiliate_accounts aa
+         JOIN "user" u ON u.id = aa.user_id
+         WHERE u.role::text = 'creator'
+           AND u.affiliate_code_active = true`,
+      ).then((rows) => Number(rows[0]?.count ?? 0)),
+      queryRows<
         { date: Date; signups: string; wager: string; deposit: string; commission: string }[]
-      >(`
+      >(queryDb, `
         SELECT
           DATE(created_at) AS date,
           COUNT(CASE WHEN usage_type::text = 'signup' THEN 1 END)::text AS signups,
@@ -89,7 +91,7 @@ async function computeAffiliateAnalytics(
         GROUP BY DATE(created_at)
         ORDER BY date
       `),
-      db.$queryRawUnsafe<{ date: Date; clicks: string }[]>(`
+      queryRows<{ date: Date; clicks: string }[]>(queryDb, `
         SELECT DATE(created_at) AS date, COUNT(*)::text AS clicks
         FROM affiliate_clicks
         WHERE 1=1 ${dateFilter}
@@ -171,10 +173,19 @@ export async function getAffiliateAnalytics(
 }
 
 export async function getAffiliateLevelConfigs() {
-  const db = await getDb();
-  const configs = await db.affiliate_level_configs.findMany({
-    orderBy: { level: "asc" },
-  });
+  const queryDb = await getDrizzleDb();
+  const configs = await queryRows<{
+    level: number;
+    label: string;
+    commission_rate: string;
+    threshold: string;
+  }[]>(
+    queryDb,
+    `SELECT level, label, commission_rate::text AS commission_rate,
+            threshold::text AS threshold
+     FROM affiliate_level_configs
+     ORDER BY level ASC`,
+  );
   return configs.map((c) => ({
     level: c.level,
     label: c.label,

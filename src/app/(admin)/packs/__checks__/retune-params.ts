@@ -473,7 +473,7 @@ check("tag override: the pct tags round-trip through hitRateFromTags (DB label)"
   // pushed tag and a later untagged-read win-rate target agree.
   //
   // BOTH notations resolve for EVERY tier (pct1/5/10 AND fifty50): the DB-string
-  // label (raw-SQL live arm) and the Prisma enum name (staged arm) both map to
+  // label (live arm) and the application enum name (staged arm) both map to
   // the same hit-rate, so a 50/50 pack targets 0.5 on both arms (plan == write).
   // (The `fifty50` enum name used to fall through to null while `50/50` resolved
   // — that asymmetry made a staged 50/50 re-read plan UNTAGGED; now fixed.)

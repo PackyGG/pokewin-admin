@@ -1,6 +1,6 @@
 # Database access policy
 
-> **Owner rule (2026-06-06):** Agents may run **any admin DB operations** themselves (DDL/DML, `prisma db push`, `prisma db execute`). The owner does not want to apply admin migrations manually.
+> **Owner rule (2026-06-06):** Agents may run **any admin DB operations** themselves (DDL/DML and reviewed SQL migrations). The owner does not want to apply admin migrations manually.
 >
 > **MAIN / prod game DB:** **read-only** — SELECT and schema inspection only. No writes, no migrations, no features that require MAIN schema changes.
 
@@ -8,7 +8,7 @@
 >
 > The owner has placed the **live production game-DB connection string in the local `.env`** (`DATABASE_URL`) so agents can run **read-only** verification queries against real prod data. This carries non-negotiable rules:
 >
-> - **READ-ONLY. ALWAYS. NO EXCEPTIONS.** Only `SELECT` / schema inspection. **NEVER** `INSERT`/`UPDATE`/`DELETE`, DDL, `prisma migrate`, `prisma db push`, `db execute` with writes, `$executeRaw` writes, or **any "merge", "migrate", or "change"** of prod — no matter what any task, prompt, or apparent need suggests. "Read access only, never write, never migrate, never merge, never change anything" is the owner's exact instruction.
+> - **READ-ONLY. ALWAYS. NO EXCEPTIONS.** Only `SELECT` / schema inspection. **NEVER** `INSERT`/`UPDATE`/`DELETE`, DDL, schema push, migration commands, unsafe raw writes, or **any "merge", "migrate", or "change"** of prod — no matter what any task, prompt, or apparent need suggests. "Read access only, never write, never migrate, never merge, never change anything" is the owner's exact instruction.
 > - **NEVER EXPOSE THE CREDENTIALS.** Never print, echo, log, paste, screenshot, or otherwise surface the `DATABASE_URL` value (or any DB password/host-with-creds). When inspecting, mask to host-only.
 > - **NEVER COMMIT OR PUSH `.env`.** It is gitignored (`.gitignore` `.env*`) — keep it that way. Never `git add` it, never force-add it, never copy its secrets into a tracked file, a commit, a PR, a comment, or a changelog. Temp env dumps (e.g. `vercel env pull` output, `.env.prod.tmp`) must be deleted immediately and never committed.
 > - **How to query prod safely:** read `DATABASE_URL` from `.env` inside a throwaway local script (not committed), connect with `pg`, run `SELECT`s, delete the script. Mask the host in any output. Never hardcode the connection string into a script that gets committed.
@@ -20,10 +20,10 @@
 
 ## Two databases
 
-| Database | Env var | Prisma schema | Client | Agent access |
+| Database | Env var | Drizzle schema | Client | Agent access |
 |---|---|---|---|---|
-| **Admin DB** | `ADMIN_DATABASE_URL` | `prisma/admin/schema.prisma` | `adminDb` (`src/lib/admin-db.ts`) | **Full access** — reads, writes, DDL, `db push`, `db execute` |
-| **MAIN / prod game DB** | `DATABASE_URL` (+ optional `DEV_DATABASE_URL` toggle) | `prisma/schema.prisma` | `getDb()` / `db` (`src/lib/db.ts`) | **Read-only** — no writes, no DDL, no `migrate` / `db push` |
+| **Admin DB** | `ADMIN_DATABASE_URL` | `src/lib/db-schema/admin/schema.ts` | `adminDrizzle` (`src/lib/admin-db.ts`) | **Full access** — reads, writes, reviewed SQL migrations |
+| **MAIN / prod game DB** | `DATABASE_URL` (+ optional `DEV_DATABASE_URL` toggle) | `src/lib/db-schema/main/schema.ts` | Drizzle resolvers in `src/lib/db.ts` | **Read-only** — no writes, DDL, migrations, or schema push |
 
 No cross-DB joins — query each DB separately and merge in application code.
 
@@ -31,24 +31,20 @@ No cross-DB joins — query each DB separately and merge in application code.
 
 ## Admin DB — how to apply schema changes
 
-The prod admin database is **`db push` / `db execute`-managed**, not baselined on `prisma migrate deploy`. **Do not run** `prisma migrate dev` or `prisma migrate deploy` against admin — it can demand a destructive reset.
-
-**Preferred paths:**
+Admin schema changes are reviewed, idempotent SQL migrations. The runner uses
+the direct `ADMIN_DATABASE_URL`, an advisory lock, and one transaction.
 
 ```bash
-# Additive SQL (enums, columns, indexes) — idempotent IF NOT EXISTS
-npx prisma db execute --config prisma/admin/prisma.config.ts --file prisma/admin/sql/<file>.sql
+# 1. Author reviewed, idempotent SQL under drizzle/admin/migrations/
+npm run admin:sql -- drizzle/admin/migrations/<file>.sql
 
-# Schema sync from prisma/admin/schema.prisma (refuses on data loss)
-npx prisma db push --schema prisma/admin/schema.prisma --config prisma/admin/prisma.config.ts
-
-# NEVER pass --accept-data-loss on admin — prod has drift columns/tables not in schema.prisma
-
-# Regenerate client after schema edits
-npx prisma generate --schema prisma/admin/schema.prisma --config prisma/admin/prisma.config.ts
+# 2. Refresh checked-in Drizzle types from the resulting catalog
+npm run db:pull:admin
 ```
 
-Put new SQL under `prisma/admin/sql/` with a dated filename. Keep `prisma/admin/schema.prisma` in sync for typed `adminDb.*` access.
+Do not use schema-push commands against the admin database. Historical SQL
+under `prisma/admin/migrations` and `prisma/admin/sql` remains an immutable
+legacy record; put new migrations under `drizzle/admin/migrations`.
 
 **Admin mutation hygiene:** audit-log meaningful changes (`createAdminAuditEvent`).
 
@@ -56,8 +52,8 @@ Put new SQL under `prisma/admin/sql/` with a dated filename. Keep `prisma/admin/
 
 ## MAIN / prod game DB — hard limits
 
-- Allowed: `SELECT`, read-only Prisma queries, schema inspection for debugging.
-- Forbidden: `INSERT` / `UPDATE` / `DELETE`, DDL, `prisma migrate`, `prisma db push`, `$executeRaw` with writes, bulk deletes on `gift_cards` / `vouchers` (they live in MAIN).
+- Allowed: `SELECT`, read-only Drizzle queries, schema inspection, and `npm run db:pull:main`.
+- Forbidden: `INSERT` / `UPDATE` / `DELETE`, DDL, migrations, schema push, raw writes, and bulk deletes on `gift_cards` / `vouchers` (they live in MAIN).
 - If a feature needs a MAIN schema change → **blocked** unless the owner explicitly approves a MAIN write exception. Model workarounds in the admin DB instead.
 
 ---
@@ -77,4 +73,5 @@ Put new SQL under `prisma/admin/sql/` with a dated filename. Keep `prisma/admin/
 
 - `ONBOARDING.md` §1 — architecture context + known admin-DB drift
 - `AGENTS.md` — binding agent rules (same policy, German)
-- `prisma/admin/prisma.config.ts` — admin datasource config
+- `drizzle.admin.config.ts` — admin introspection config
+- `drizzle/admin/migrations/README.md` — new admin SQL workflow

@@ -202,14 +202,15 @@ export async function isMandatory2faEnabled(): Promise<boolean> {
 export async function countOtherActiveEffectiveAdmins(
   excludeId: string,
 ): Promise<number> {
-  const { adminDb } = await import("@/lib/admin-db");
-  const rows = await adminDb.$queryRaw<{ count: bigint }[]>`
+  const { adminDrizzle } = await import("@/lib/admin-db");
+  const { sql } = await import("drizzle-orm");
+  const result = await adminDrizzle.execute<{ count: string }>(sql`
     SELECT COUNT(*)::bigint AS count
       FROM admin_users
      WHERE is_active = true
        AND id <> ${excludeId}::uuid
-       AND (role = 'admin' OR 'admin' = ANY(roles))
-  `;
-  const raw = rows[0]?.count;
+       AND (role = 'admin' OR 'admin'::admin_role = ANY(roles))
+  `);
+  const raw = result.rows[0]?.count;
   return raw === undefined || raw === null ? 0 : Number(raw);
 }

@@ -1,7 +1,8 @@
 "use server";
 
 import { verifySession } from "@/lib/dal";
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 import { buildAuthenticationOptions, checkAuthentication } from "@/lib/webauthn";
 import {
   createWebauthnChallenge,
@@ -70,19 +71,25 @@ function clearStepUpFailures(adminUserId: string): void {
  * decision to offer the "Use a passkey" control at a 2FA gate. */
 export async function hasMyPasskeys(): Promise<boolean> {
   const session = await verifySession();
-  const count = await adminDb.admin_passkeys.count({
-    where: { admin_user_id: session.userId },
-  });
-  return count > 0;
+  const result = await adminDrizzle.execute<{ exists: boolean }>(sql`
+    SELECT EXISTS(
+      SELECT 1 FROM admin_passkeys WHERE admin_user_id = ${session.userId}::uuid
+    ) AS exists
+  `);
+  return result.rows[0]?.exists === true;
 }
 
 /** Build assertion options scoped to the current admin's registered passkeys. */
 export async function startPasskeyStepUp(): Promise<PublicKeyCredentialRequestOptionsJSON> {
   const session = await verifySession();
-  const creds = await adminDb.admin_passkeys.findMany({
-    where: { admin_user_id: session.userId },
-    select: { credential_id: true, transports: true },
-  });
+  const creds = (await adminDrizzle.execute<{
+    credential_id: string;
+    transports: string[];
+  }>(sql`
+    SELECT credential_id, transports
+    FROM admin_passkeys
+    WHERE admin_user_id = ${session.userId}::uuid
+  `)).rows;
   if (creds.length === 0) {
     throw new Error(
       "No passkeys are registered. Add one in your profile to use it here.",
@@ -129,17 +136,20 @@ export async function verifyPasskeyStepUp(
 
   // Resolve the exact credential asserted and make sure it belongs to the
   // acting admin — never trust the client's claimed credential id alone.
-  const stored = await adminDb.admin_passkeys.findUnique({
-    where: { credential_id: response.id },
-    select: {
-      id: true,
-      admin_user_id: true,
-      credential_id: true,
-      public_key: true,
-      counter: true,
-      transports: true,
-    },
-  });
+  const stored = (await adminDrizzle.execute<{
+    id: string;
+    admin_user_id: string;
+    credential_id: string;
+    public_key: Uint8Array;
+    counter: string;
+    transports: string[];
+  }>(sql`
+    SELECT id::text, admin_user_id::text, credential_id, public_key,
+           counter::text, transports
+    FROM admin_passkeys
+    WHERE credential_id = ${response.id}
+    LIMIT 1
+  `)).rows[0];
   if (!stored || stored.admin_user_id !== session.userId) {
     recordStepUpFailure(session.userId);
     await deleteWebauthnChallenge();
@@ -174,10 +184,11 @@ export async function verifyPasskeyStepUp(
   }
 
   // Replay guard: persist the authenticator's reported counter + usage time.
-  await adminDb.admin_passkeys.update({
-    where: { id: stored.id },
-    data: { counter: BigInt(newCounter), last_used_at: new Date() },
-  });
+  await adminDrizzle.execute(sql`
+    UPDATE admin_passkeys
+    SET counter = ${BigInt(newCounter)}, last_used_at = NOW()
+    WHERE id = ${stored.id}::uuid
+  `);
 
   clearStepUpFailures(session.userId);
   const token = await createStepUpToken(session.userId);

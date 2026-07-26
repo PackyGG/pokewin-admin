@@ -43,13 +43,13 @@
  *
  * ─── ENUM SOURCE ────────────────────────────────────────────────────
  *
- * The full enum is `prisma/schema.prisma` `enum ledger_transaction_type`
+ * The full enum is `ledgerTransactionType` in the checked-in MAIN Drizzle schema.
  * — 53 members (the original 42 + 11 creator-multiplier / creator-
  * leaderboard legs profiled on prod 2026-06-11). This file is a
  * hand-maintained literal union built against the SCHEMA, not the
  * generated client, so a new prod enum member can be classified here
  * (via the `::text`-cast string membership the SQL helpers use) without
- * the generated Prisma enum having to contain it yet. The compile-time
+ * the generated application enum having to contain it yet. The compile-time
  * exhaustiveness check at the bottom
  * (`_EXHAUSTIVE`) fails the build if any enum member is added to the
  * schema-derived `LedgerTransactionType` union without being assigned to
@@ -60,9 +60,9 @@
 /**
  * The full `ledger_transaction_type` enum, as a literal union, in schema
  * order. Kept as a local literal (rather than importing the generated
- * Prisma enum) so this module stays a pure, dependency-light value layer
+ * generated enum) so this module stays a pure, dependency-light value layer
  * that the `__checks__` script and any client-safe consumer can import
- * without pulling the Prisma client. The `_EXHAUSTIVE` guard below ties
+ * without pulling the database client. The `_EXHAUSTIVE` guard below ties
  * it back to the partition so the two can never drift.
  */
 export type LedgerTransactionType =

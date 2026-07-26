@@ -1,5 +1,6 @@
+import { queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -70,24 +71,25 @@ async function computeRoi(
   rawLookbackDays: number,
   blacklistIds: string[],
 ): Promise<DepositBonusROI> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
   const lookbackDays = resolveLookback(period, rawLookbackDays);
   const costDateClause = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
   const forwardWindowClause =
     days !== null
-      ? `AND lt.created_at >= claim_at AND lt.created_at < claim_at + INTERVAL '${lookbackDays} days'`
-      : `AND lt.created_at >= claim_at`;
+      ? sql`AND lt.created_at >= claim_at
+            AND lt.created_at < claim_at + (${lookbackDays} * INTERVAL '1 day')`
+      : sql`AND lt.created_at >= claim_at`;
 
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       cost: string;
       claimants: string;
       wager: string;
       payout: string;
     }[]
-  >(`
+  >(db, sql`
     WITH cost_claimants AS (
       SELECT
         lt.user_id,
@@ -106,7 +108,7 @@ async function computeRoi(
       JOIN ledger_transactions lt
         ON lt.user_id = cc.user_id
        AND lt.status = 'completed'
-       AND lt.type::text IN ${WAGER_TYPES_SQL}
+       AND lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
       WHERE 1=1 ${forwardWindowClause}
       GROUP BY cc.user_id
     ),
@@ -116,7 +118,7 @@ async function computeRoi(
       JOIN ledger_transactions lt
         ON lt.user_id = cc.user_id
        AND lt.status = 'completed'
-       AND lt.type::text IN ${PAYOUT_TYPES_SQL}
+       AND lt.type::text IN ${sql.raw(PAYOUT_TYPES_SQL)}
       WHERE 1=1 ${forwardWindowClause}
       GROUP BY cc.user_id
     )

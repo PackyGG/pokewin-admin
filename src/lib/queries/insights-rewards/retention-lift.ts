@@ -1,7 +1,7 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { CUSTOMER_EXCLUDED_ROLES } from "@/lib/metrics/scope";
 import {
   daysForInsightsPeriodCapped,
@@ -13,7 +13,7 @@ import {
 // PLUS creators, matching getMetricsScope()/CUSTOMER_EXCLUDED_ROLES. Creators
 // are dropped WHOLESALE so the claimant + non-claimant cohorts line up with
 // the per-category sub-pages instead of being inflated by creator rows.
-// Blacklist is applied separately via blacklistNotInClause.
+// Blacklist is applied separately via blacklistNotInSql.
 const CUSTOMER_EXCLUDED_ROLES_SQL = `(${CUSTOMER_EXCLUDED_ROLES.map(
   (r) => `'${r}'`,
 ).join(", ")})`;
@@ -146,7 +146,7 @@ async function computeRetentionLift(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RewardsRetentionLift> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // Lifetime (`all`) CAPPED to INSIGHTS_LIFETIME_LOOKBACK_DAYS (365d) via
   // daysForInsightsPeriodCapped so the claim-window, baseline-wager, and
   // non-claimant reward-exclusion sweeps over the full ledger_transactions
@@ -155,23 +155,23 @@ async function computeRetentionLift(
   // "Performance & Daten-Laden"). Finite windows are unchanged; every window
   // clause below is now always present (capped never returns null).
   const days = daysForInsightsPeriodCapped(period);
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Each category sweeps:
   //   - first in-window claim per user (cohort + anchor)
   //   - wager rows in the 7d / 30d buckets after anchor
   // Counts roll up into retention buckets — a user can be in both
   // 7d and 30d buckets simultaneously (30d is a superset of 7d).
-  const sql = (typesSql: string) => {
-    const claimWindowClause = `AND lt.created_at >= NOW() - INTERVAL '${days} days'`;
-    return `
+  const queryForTypes = (typesSql: string) => {
+    const claimWindowClause = daysAgoFilter("lt.created_at", days);
+    return sql`
       WITH first_claim AS (
         SELECT lt.user_id, MIN(lt.created_at) AS anchor
         FROM ledger_transactions lt
         JOIN "user" u ON u.id = lt.user_id
         WHERE lt.status = 'completed'
-          AND lt.type::text IN ${typesSql}
-          AND u.role NOT IN ${CUSTOMER_EXCLUDED_ROLES_SQL} ${blacklistJoin}
+          AND lt.type::text IN ${sql.raw(typesSql)}
+          AND u.role NOT IN ${sql.raw(CUSTOMER_EXCLUDED_ROLES_SQL)} ${blacklistJoin}
           ${claimWindowClause}
         GROUP BY lt.user_id
       )
@@ -183,7 +183,7 @@ async function computeRetentionLift(
             FROM ledger_transactions w
             WHERE w.user_id = fc.user_id
               AND w.status = 'completed'
-              AND w.type::text IN ${WAGER_TYPES_SQL}
+              AND w.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
               AND w.created_at > fc.anchor + INTERVAL '1 hour'
               AND w.created_at <= fc.anchor + INTERVAL '7 days'
           ) THEN fc.user_id END)::text AS retain7d,
@@ -193,7 +193,7 @@ async function computeRetentionLift(
             FROM ledger_transactions w
             WHERE w.user_id = fc.user_id
               AND w.status = 'completed'
-              AND w.type::text IN ${WAGER_TYPES_SQL}
+              AND w.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
               AND w.created_at > fc.anchor + INTERVAL '1 hour'
               AND w.created_at <= fc.anchor + INTERVAL '30 days'
           ) THEN fc.user_id END)::text AS retain30d
@@ -205,15 +205,15 @@ async function computeRetentionLift(
   // window but were active (had a wager row) in the window. Anchor =
   // first wager in window. Retention buckets count returns AFTER that
   // anchor in the same 7d / 30d windows.
-  const baselineWindowClause = `AND wager.created_at >= NOW() - INTERVAL '${days} days'`;
-  const baselineSql = `
+  const baselineWindowClause = daysAgoFilter("wager.created_at", days);
+  const baselineSql = sql`
     WITH first_wager AS (
       SELECT wager.user_id, MIN(wager.created_at) AS anchor
       FROM ledger_transactions wager
       JOIN "user" u ON u.id = wager.user_id
       WHERE wager.status = 'completed'
-        AND wager.type::text IN ${WAGER_TYPES_SQL}
-        AND u.role NOT IN ${CUSTOMER_EXCLUDED_ROLES_SQL} ${blacklistJoin}
+        AND wager.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
+        AND u.role NOT IN ${sql.raw(CUSTOMER_EXCLUDED_ROLES_SQL)} ${blacklistJoin}
         ${baselineWindowClause}
       GROUP BY wager.user_id
     ),
@@ -225,8 +225,8 @@ async function computeRetentionLift(
         FROM ledger_transactions r
         WHERE r.user_id = fw.user_id
           AND r.status = 'completed'
-          AND r.type::text IN ${ALL_REWARD_TYPES_SQL}
-          AND r.created_at >= NOW() - INTERVAL '${days} days'
+          AND r.type::text IN ${sql.raw(ALL_REWARD_TYPES_SQL)}
+          AND r.created_at >= NOW() - (${days} * INTERVAL '1 day')
       )
     )
     SELECT
@@ -237,7 +237,7 @@ async function computeRetentionLift(
           FROM ledger_transactions w
           WHERE w.user_id = nc.user_id
             AND w.status = 'completed'
-            AND w.type::text IN ${WAGER_TYPES_SQL}
+            AND w.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
             AND w.created_at > nc.anchor + INTERVAL '1 hour'
             AND w.created_at <= nc.anchor + INTERVAL '7 days'
         ) THEN nc.user_id END)::text AS retain7d,
@@ -247,7 +247,7 @@ async function computeRetentionLift(
           FROM ledger_transactions w
           WHERE w.user_id = nc.user_id
             AND w.status = 'completed'
-            AND w.type::text IN ${WAGER_TYPES_SQL}
+            AND w.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
             AND w.created_at > nc.anchor + INTERVAL '1 hour'
             AND w.created_at <= nc.anchor + INTERVAL '30 days'
         ) THEN nc.user_id END)::text AS retain30d
@@ -255,13 +255,13 @@ async function computeRetentionLift(
   `;
 
   const [baselineRows, ...categoryRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryRows<
       { cohort: string; retain7d: string; retain30d: string }[]
-    >(baselineSql),
+    >(db, baselineSql),
     ...CATEGORIES.map((cat) =>
-      db.$queryRawUnsafe<
+      queryRows<
         { cohort: string; retain7d: string; retain30d: string }[]
-      >(sql(typeListSql(cat.types))),
+      >(db, queryForTypes(typeListSql(cat.types))),
     ),
   ]);
 

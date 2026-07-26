@@ -1,13 +1,14 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
+import { sql } from "drizzle-orm";
 import { Wallet } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
 import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { TableSkeleton } from "@/components/loading-skeletons";
 import { BalanceLimitsOverview } from "./balance-limits-overview";
-import type { limit_period_type } from "@/generated/admin-prisma/client";
+import type { limit_period_type } from "@/lib/balance-limits";
 
 export const metadata = { title: "Balance Limits" };
 
@@ -33,11 +34,17 @@ type LimitRow = {
 async function BalanceLimitsTableSection({ rows }: { rows: LimitRow[] }) {
   // Every active admin — used by the "Add limit" dialog so a cap can be
   // placed on any target, not only ones that already have one.
-  const allAdmins = await adminDb.admin_users.findMany({
-    where: { is_active: true },
-    select: { id: true, username: true, email: true, role: true },
-    orderBy: { username: "asc" },
-  });
+  const allAdmins = (await adminDrizzle.execute<{
+    id: string;
+    username: string;
+    email: string;
+    role: string;
+  }>(sql`
+    SELECT id::text, username, email, role::text AS role
+    FROM admin_users
+    WHERE is_active
+    ORDER BY username ASC
+  `)).rows;
 
   return (
     <BalanceLimitsOverview
@@ -72,43 +79,40 @@ export default async function BalanceLimitsOverviewPage() {
   // Two separate queries because admin_balance_limits has no FK back
   // to admin_users — joining client-side keeps the schema simple and
   // the data volumes here are tiny (one row per period per admin).
-  const limits = await adminDb.admin_balance_limits.findMany({
-    orderBy: [{ admin_user_id: "asc" }, { period_type: "asc" }],
-  });
+  const limits = (await adminDrizzle.execute<{
+    id: string;
+    admin_user_id: string;
+    admin_username: string;
+    admin_email: string;
+    admin_role: string;
+    period_type: limit_period_type;
+    max_amount: string;
+    set_by_username: string | null;
+    updated_at: Date;
+  }>(sql`
+    SELECT l.id::text, l.admin_user_id,
+           COALESCE(target.username, 'Unknown') AS admin_username,
+           COALESCE(target.email, '') AS admin_email,
+           COALESCE(target.role::text, 'unknown') AS admin_role,
+           l.period_type::text AS period_type, l.max_amount::text AS max_amount,
+           setter.username AS set_by_username, l.updated_at
+    FROM admin_balance_limits l
+    LEFT JOIN admin_users target ON target.id::text = l.admin_user_id
+    LEFT JOIN admin_users setter ON setter.id::text = l.updated_by
+    ORDER BY l.admin_user_id ASC, l.period_type ASC
+  `)).rows;
 
-  const adminIds = [
-    ...new Set(
-      limits
-        .flatMap((l) => [l.admin_user_id, l.created_by, l.updated_by])
-        .filter((id): id is string => !!id),
-    ),
-  ];
-
-  const admins =
-    adminIds.length > 0
-      ? await adminDb.admin_users.findMany({
-          where: { id: { in: adminIds } },
-          select: { id: true, username: true, email: true, role: true },
-        })
-      : [];
-
-  const adminMap = new Map(admins.map((a) => [a.id, a]));
-
-  const rows = limits.map((l) => {
-    const target = adminMap.get(l.admin_user_id);
-    const setBy = l.updated_by ? adminMap.get(l.updated_by) : null;
-    return {
-      id: l.id,
-      adminUserId: l.admin_user_id,
-      adminUsername: target?.username ?? "Unknown",
-      adminEmail: target?.email ?? "",
-      adminRole: target?.role ?? "unknown",
-      periodType: l.period_type,
-      maxAmount: Number(l.max_amount),
-      setByUsername: setBy?.username ?? null,
-      updatedAt: l.updated_at.toISOString(),
-    };
-  });
+  const rows = limits.map((l) => ({
+    id: l.id,
+    adminUserId: l.admin_user_id,
+    adminUsername: l.admin_username,
+    adminEmail: l.admin_email,
+    adminRole: l.admin_role,
+    periodType: l.period_type,
+    maxAmount: Number(l.max_amount),
+    setByUsername: l.set_by_username,
+    updatedAt: l.updated_at.toISOString(),
+  }));
 
   // KPI summary — useful at a glance for spotting whether caps look
   // proportionate to the team size.

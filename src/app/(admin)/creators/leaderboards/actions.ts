@@ -2,6 +2,7 @@
 
 import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
+import { asc, eq, sql } from "drizzle-orm";
 
 import {
     affiliateLeaderboardsApi,
@@ -13,8 +14,13 @@ import { requirePageAccess, verifySession, sessionIsAdmin, getUserPermissions } 
 import { requireCapability } from "@/lib/require-capability";
 import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { getDb } from "@/lib/db";
-import { adminDb } from "@/lib/admin-db";
+import { getDrizzleDb } from "@/lib/db";
+import { adminDrizzle } from "@/lib/drizzle";
+import {
+    admin_leaderboard_creator_paid,
+    admin_leaderboard_sponsorship,
+} from "@/lib/db-schema/admin/schema";
+import { affiliate_codes } from "@/lib/db-schema/main/schema";
 
 export type CreatorSearchResult = {
     userId: string;
@@ -29,17 +35,15 @@ export async function searchCreators(query: string): Promise<CreatorSearchResult
     const trimmed = query.trim();
     if (trimmed.length < 2) return [];
 
-    const db = await getDb();
+    const db = await getDrizzleDb();
     // Match on the creator's own affiliate codes (from affiliate_codes table),
     // not on user.affiliate_code (which is the code the user signed up with).
-    const rows = await db.$queryRaw<
-        Array<{
+    const result = await db.execute<{
             id: string;
             username: string | null;
             email: string | null;
             codes: string[] | null;
-        }>
-    >`
+        }>(sql`
         SELECT
             u.id,
             u.username,
@@ -65,7 +69,8 @@ export async function searchCreators(query: string): Promise<CreatorSearchResult
           )
         ORDER BY u.username ASC NULLS LAST
         LIMIT 8
-    `;
+    `);
+    const rows = result.rows;
 
     return rows.map((r) => ({
         userId: r.id,
@@ -79,12 +84,12 @@ export async function searchCreators(query: string): Promise<CreatorSearchResult
 export async function getCreatorCodes(userId: string): Promise<string[]> {
     await requirePageAccess(PAGE_KEY);
     if (!userId) return [];
-    const db = await getDb();
-    const rows = await db.affiliate_codes.findMany({
-        where: { user_id: userId },
-        select: { code: true },
-        orderBy: { created_at: "asc" },
-    });
+    const db = await getDrizzleDb();
+    const rows = await db
+        .select({ code: affiliate_codes.code })
+        .from(affiliate_codes)
+        .where(eq(affiliate_codes.user_id, userId))
+        .orderBy(asc(affiliate_codes.created_at));
     return rows.map((r) => r.code);
 }
 
@@ -425,19 +430,21 @@ export async function setLeaderboardSponsorship(
     );
 
     try {
-        await adminDb.admin_leaderboard_sponsorship.upsert({
-            where: { leaderboard_id: parsedId.data },
-            create: {
+        await adminDrizzle
+          .insert(admin_leaderboard_sponsorship)
+          .values({
                 leaderboard_id: parsedId.data,
-                sponsored_percentage: parsed.data.sponsored_percentage,
+                sponsored_percentage: String(parsed.data.sponsored_percentage),
                 set_by_admin_id: session.userId,
+          })
+          .onConflictDoUpdate({
+            target: admin_leaderboard_sponsorship.leaderboard_id,
+            set: {
+              sponsored_percentage: String(parsed.data.sponsored_percentage),
+              set_by_admin_id: session.userId,
+              updated_at: new Date().toISOString(),
             },
-            update: {
-                sponsored_percentage: parsed.data.sponsored_percentage,
-                set_by_admin_id: session.userId,
-                updated_at: new Date(),
-            },
-        });
+          });
     } catch (err) {
         return { success: false, error: toErrorMessage(err) };
     }
@@ -493,24 +500,26 @@ export async function setLeaderboardCreatorPaid(
         "edit creator leaderboards",
     );
 
-    const paidAt = parsed.data.paid ? new Date() : null;
+    const paidAt = parsed.data.paid ? new Date().toISOString() : null;
 
     try {
-        await adminDb.admin_leaderboard_creator_paid.upsert({
-            where: { leaderboard_id: parsedId.data },
-            create: {
+        await adminDrizzle
+          .insert(admin_leaderboard_creator_paid)
+          .values({
                 leaderboard_id: parsedId.data,
                 paid: parsed.data.paid,
                 paid_at: paidAt,
                 set_by_admin_id: session.userId,
+          })
+          .onConflictDoUpdate({
+            target: admin_leaderboard_creator_paid.leaderboard_id,
+            set: {
+              paid: parsed.data.paid,
+              paid_at: paidAt,
+              set_by_admin_id: session.userId,
+              updated_at: new Date().toISOString(),
             },
-            update: {
-                paid: parsed.data.paid,
-                paid_at: paidAt,
-                set_by_admin_id: session.userId,
-                updated_at: new Date(),
-            },
-        });
+          });
     } catch (err) {
         return { success: false, error: toErrorMessage(err) };
     }

@@ -2,10 +2,10 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { getDevDb, getProdDb } from "@/lib/db";
+import { drizzleForEnv } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 
 /**
@@ -55,7 +55,7 @@ const cachedDealWager = (
 ) =>
   unstable_cache(
     async (): Promise<[string, number][]> => {
-      const db = env === "dev" ? getDevDb() : getProdDb();
+      const db = drizzleForEnv(env);
 
       // (dealId, creatorUserId, start, end) tuples — dealId is unique per
       // row; creatorUserId may repeat (same creator, multiple ended deals).
@@ -71,18 +71,19 @@ const cachedDealWager = (
 
       const blacklistAnd =
         blacklistIds.length > 0
-          ? ` AND u.id NOT IN (${escapeBlacklistIds(blacklistIds)})`
+          ? ` AND NOT (u.id = ANY($${params.length + 1}::text[]))`
           : "";
+      if (blacklistIds.length > 0) params.push(blacklistIds);
 
-      const rows = await db.$queryRawUnsafe<
+      const rows = await queryRows<
         { deal_id: string; wager: string }[]
-      >(
+      >(db,
         `SELECT f.did AS deal_id,
                 COALESCE(SUM(acu.wager_amount_usd::numeric), 0)::text AS wager
            FROM (VALUES ${tuples.join(", ")}) AS f(did, cid, start_ts, end_ts)
            JOIN affiliate_code_usages acu
              ON acu.affiliate_user_id = f.cid
-            AND acu.usage_type::text = 'wager'
+            AND acu.usage_type = 'wager'
             AND acu.created_at >= f.start_ts
             AND acu.created_at <= f.end_ts
            JOIN "user" u ON u.id = acu.referred_user_id

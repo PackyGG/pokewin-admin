@@ -1,6 +1,7 @@
 import { cache } from "react";
+import { sql } from "drizzle-orm";
 
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 /**
@@ -38,8 +39,9 @@ export type PackMeta = {
  * cheap indexed PK probe.
  *
  * REQUEST-DEDUPED: the ADMIN score read this joins onto is `unstable_cache`d,
- * but this MAIN join deliberately sits OUTSIDE that cache (`getDb()` reads the
- * db-env cookie, which throws inside `unstable_cache`), so it re-queried on
+ * but this MAIN join deliberately sits OUTSIDE that cache (the request-scoped
+ * Drizzle client reads the db-env cookie, which throws inside
+ * `unstable_cache`), so it is re-queried on
  * every call. Pack Doctor renders two independent server children off the same
  * snapshot — the grid and the owner re-pin action — which meant two identical
  * `id = ANY(...)` round-trips to MAIN per page load.
@@ -66,26 +68,23 @@ const getPackMetaByKey = cache(async function getPackMetaByKey(
   const packIds = key.length === 0 ? [] : key.split(",");
   if (packIds.length === 0) return out;
 
-  const db = await getDb();
-  const rows = await db.$queryRawUnsafe<
-    {
-      id: string;
-      name: string;
-      slug: string;
-      price: string;
-      pack_type: string;
-      active: boolean;
-      tags: string[] | null;
-    }[]
-  >(
-    `SELECT id, name, slug, price::text AS price, pack_type, active,
-            tags::text[] AS tags
-     FROM packs
-     WHERE id = ANY($1::uuid[])`,
-    packIds,
-  );
+  const db = await getDrizzleDb();
+  const result = await db.execute<{
+    id: string;
+    name: string;
+    slug: string;
+    price: string;
+    pack_type: string;
+    active: boolean;
+    tags: string[] | null;
+  }>(sql`
+    SELECT id, name, slug, price::text AS price, pack_type::text AS pack_type,
+           active, tags::text[] AS tags
+    FROM packs
+    WHERE id = ANY(${packIds}::uuid[])
+  `);
 
-  for (const r of rows) {
+  for (const r of result.rows) {
     out.set(r.id, {
       name: r.name,
       slug: r.slug,

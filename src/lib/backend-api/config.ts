@@ -38,7 +38,7 @@ const keyFor = (env: DbEnv): string | undefined =>
  * Pick the effective env for the backend-api client.
  *
  * The cookie is authoritative — same contract as the main-DB
- * Prisma client (`getDb()` in @/lib/db). Pages that mix the two
+ * request-scoped Drizzle client. Pages that mix the two
  * data sources would otherwise show data from different envs in
  * the same response (e.g. creators list from dev, social data
  * from prod) when the admin toggles env locally.

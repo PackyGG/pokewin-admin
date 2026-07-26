@@ -1,4 +1,5 @@
-import { getDb } from "@/lib/db";
+import { sql } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 /** Per-frequency rakeback slice (daily / weekly / monthly). */
@@ -66,46 +67,44 @@ export const EMPTY_USER_REWARDS: UserRewards = {
 };
 
 export async function getUserRewards(userId: string): Promise<UserRewards> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // Each number is pushed down to SQL so the payload stays O(1) regardless of
   // the user's reward history size. All three reads are per-user and hit the
   // user_id-leading index (rakeback: the
   // `rakeback_claims_user_id_rakeback_type_period_start_unique` index — Bitmap
   // Index Scan verified read-only via EXPLAIN against live prod 2026-07-11;
   // user_rewards: the user_id FK). No seq scan on MAIN.
-  const [openOneTimeCount, byTypeRows, instantRow] = await Promise.all([
-    db.user_rewards.count({
-      where: {
-        user_id: userId,
-        opened_at: null,
-        rewards: { type: "one_time" },
-      },
-    }),
+  const [openOneTimeResult, byTypeResult, instantRow] = await Promise.all([
+    db.execute<{ total: string }>(sql`
+      SELECT COUNT(*)::text AS total
+      FROM user_rewards ur
+      JOIN rewards r ON r.id = ur.reward_id
+      WHERE ur.user_id = ${userId}
+        AND ur.opened_at IS NULL
+        AND r.type::text = 'one_time'
+    `),
     // Grouped by cadence — uses ONLY always-present columns so it can never
     // drift-fault. Sums reconcile to the totals below.
-    db.$queryRaw<
-      {
-        rakeback_type: RakebackType;
-        claimable: string;
-        claimed: string;
-        claimed_count: number | bigint;
-      }[]
-    >`
+    db.execute<{
+      rakeback_type: RakebackType;
+      claimable: string;
+      claimed: string;
+      claimed_count: number;
+    }>(sql`
       SELECT
-        rakeback_type,
+        rakeback_type::text AS rakeback_type,
         COALESCE(SUM(CASE WHEN claimed_at IS NULL     THEN rakeback_amount_usd::numeric ELSE 0 END), 0)::text AS claimable,
         COALESCE(SUM(CASE WHEN claimed_at IS NOT NULL THEN rakeback_amount_usd::numeric ELSE 0 END), 0)::text AS claimed,
         COUNT(*) FILTER (WHERE claimed_at IS NOT NULL)::int                                                  AS claimed_count
       FROM rakeback_claims
       WHERE user_id = ${userId}
       GROUP BY rakeback_type
-    `,
+    `),
     // Instant / early-claim SUBSET — references the drift-prone
     // `last_preclaim_at` column, so it is isolated with its own `.catch` →
     // null. A dev-toggled admin on a DB without the column degrades to null
     // (UI hides the line) instead of zeroing the whole rewards card.
-    db
-      .$queryRaw<{ amt: string; n: number | bigint }[]>`
+    db.execute<{ amt: string; n: number }>(sql`
         SELECT
           COALESCE(SUM(rakeback_amount_usd::numeric), 0)::text AS amt,
           COUNT(*)::int                                        AS n
@@ -113,10 +112,11 @@ export async function getUserRewards(userId: string): Promise<UserRewards> {
         WHERE user_id = ${userId}
           AND claimed_at IS NOT NULL
           AND last_preclaim_at IS NOT NULL
-      `
-      .then((rows) => rows[0] ?? null)
+      `)
+      .then((result) => result.rows[0] ?? null)
       .catch(() => null),
   ]);
+  const openOneTimeCount = Number(openOneTimeResult.rows[0]?.total ?? 0);
 
   const byFrequency = {
     daily: { ...EMPTY_FREQ },
@@ -127,7 +127,7 @@ export async function getUserRewards(userId: string): Promise<UserRewards> {
   let rakebackClaimedUsd = 0;
   let rakebackClaimedCount = 0;
 
-  for (const row of byTypeRows) {
+  for (const row of byTypeResult.rows) {
     const slice = byFrequency[row.rakeback_type];
     if (!slice) continue; // guard an unexpected/future enum member
     slice.claimableUsd = toNumber(row.claimable ?? 0);

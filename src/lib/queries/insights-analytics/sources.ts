@@ -1,7 +1,7 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
@@ -103,7 +103,6 @@ const cachedSourcesBuckets = unstable_cache(
     period: InsightsPeriod,
     blacklistIdNotIn: string,
   ): Promise<SourceBucketRawRow[]> => {
-    const db = await getDb();
     const days = cappedDaysForPeriod(period);
     const usersDateFilter = `AND u.created_at >= NOW() - INTERVAL '${days} days'`;
     const ledgerDateFilter = `AND lt.created_at >= NOW() - INTERVAL '${days} days'`;
@@ -117,7 +116,7 @@ const cachedSourcesBuckets = unstable_cache(
       END
     `;
 
-    return db.$queryRawUnsafe<SourceBucketRawRow[]>(`
+    return queryMainRows<SourceBucketRawRow[]>(`
       WITH cohort AS (
         SELECT u.id, (${groupExpr}) AS bucket
         FROM "user" u
@@ -222,7 +221,6 @@ const cachedSourcesCodes = unstable_cache(
     period: InsightsPeriod,
     blacklistIdNotIn: string,
   ): Promise<SourceCodeRawRow[]> => {
-    const db = await getDb();
     const days = cappedDaysForPeriod(period);
     const usersDateFilter = `AND u.created_at >= NOW() - INTERVAL '${days} days'`;
     const ledgerDateFilter = `AND lt.created_at >= NOW() - INTERVAL '${days} days'`;
@@ -231,7 +229,7 @@ const cachedSourcesCodes = unstable_cache(
     // (which references a user with an affiliate_code). The affiliate
     // code itself lives on the User row, so we join from the referred
     // user back through referred_by → user.affiliate_code.
-    return db.$queryRawUnsafe<SourceCodeRawRow[]>(`
+    return queryMainRows<SourceCodeRawRow[]>(`
       WITH cohort AS (
         SELECT u.id, u.referred_by, ref.affiliate_code, ref.id AS affiliate_user_id
         FROM "user" u

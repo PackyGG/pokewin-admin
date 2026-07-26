@@ -1,6 +1,8 @@
 import "server-only";
 import crypto from "crypto";
-import type { getDb } from "@/lib/db";
+import { sql } from "drizzle-orm";
+
+import type { MainDrizzleDb } from "@/lib/db";
 
 /**
  * Generate a unique random replacement affiliate code.
@@ -17,7 +19,7 @@ import type { getDb } from "@/lib/db";
  * `affiliate_codes.code` unique index.
  */
 export async function generateRandomAffiliateCode(
-  db: Awaited<ReturnType<typeof getDb>>,
+  db: Pick<MainDrizzleDb, "execute">,
 ): Promise<string> {
   const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
   const length = 10;
@@ -26,11 +28,14 @@ export async function generateRandomAffiliateCode(
     for (let i = 0; i < length; i++) {
       code += alphabet[crypto.randomInt(0, alphabet.length)];
     }
-    const exists = await db.affiliate_codes.findUnique({
-      where: { code },
-      select: { user_id: true },
-    });
-    if (!exists) return code;
+    const existing = await db.execute<{ exists: boolean }>(sql`
+      SELECT EXISTS (
+        SELECT 1
+        FROM affiliate_codes
+        WHERE code = ${code}
+      ) AS exists
+    `);
+    if (!existing.rows[0]?.exists) return code;
   }
   throw new Error("Could not generate a unique replacement affiliate code");
 }

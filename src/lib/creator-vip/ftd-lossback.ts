@@ -1,7 +1,9 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
-import { getProdDb } from "@/lib/db";
+import { and, count, eq, inArray, sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import { creator_reward_claims } from "@/lib/db-schema/admin/schema";
+import { getProdDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 import { BASIS_HOLDING_STATUSES } from "./types";
@@ -90,15 +92,15 @@ async function signedUpUnderCode(
 ): Promise<boolean> {
   if (codes.length === 0) return false;
   const upper = codes.map((c) => c.toUpperCase());
-  const rows = await getProdDb().$queryRaw<{ hit: boolean }[]>`
+  const result = await getProdDrizzleDb().execute<{ hit: boolean }>(sql`
     SELECT EXISTS (
       SELECT 1 FROM affiliate_code_usages
        WHERE referred_user_id = ${userId}
          AND usage_type::text = 'signup'
          AND UPPER(code) = ANY(${upper}::text[])
     ) AS hit
-  `;
-  return rows[0]?.hit === true;
+  `);
+  return result.rows[0]?.hit === true;
 }
 
 /**
@@ -133,9 +135,10 @@ async function signedUpUnderCode(
 export async function firstDeposits(
   userId: string,
 ): Promise<{ amountUsd: number; at: Date }[]> {
-  const rows = await getProdDb().$queryRaw<
-    { amount: string; created_at: Date }[]
-  >`
+  const result = await getProdDrizzleDb().execute<{
+    amount: string;
+    created_at: Date;
+  }>(sql`
     SELECT amount::text, created_at
       FROM ledger_transactions
      WHERE user_id = ${userId}
@@ -143,8 +146,8 @@ export async function firstDeposits(
        AND status = 'completed'
      ORDER BY created_at ASC
      LIMIT 2
-  `;
-  return rows.map((r) => ({
+  `);
+  return result.rows.map((r) => ({
     amountUsd: Math.abs(toNumber(r.amount)),
     at: r.created_at,
   }));
@@ -158,7 +161,7 @@ export async function firstDeposits(
  * inventoryValue + unclaimedVouchers). They are computed directly here rather
  * than by calling `calculateUserPnl`, deliberately:
  *
- * that helper is a DASHBOARD query. Importing it pulls ClickHouse read
+ * that helper is a dashboard query. Importing it pulls the analytics read
  * resolution, Edge Config feature flags, the excluded-users cache and the
  * daily-P&L comparison harness into what is otherwise a three-index-probe
  * Discord endpoint — an enormous dependency graph for one number, and every
@@ -180,7 +183,7 @@ export async function holdingsUsd(userId: string): Promise<number> {
   // query: they are independent, all index-served, and on this path network
   // latency dwarfs execution time — three 20 ms trips cost 60 ms to compute a
   // number that takes under a millisecond.
-  const rows = await getProdDb().$queryRaw<{ total: string }[]>`
+  const result = await getProdDrizzleDb().execute<{ total: string }>(sql`
     SELECT (
       COALESCE((
         SELECT available_balance::numeric + locked_balance::numeric
@@ -198,8 +201,8 @@ export async function holdingsUsd(userId: string): Promise<number> {
          WHERE user_id = ${userId} AND claimed_at IS NULL
       ), 0)
     )::text AS total
-  `;
-  return toNumber(rows[0]?.total ?? 0);
+  `);
+  return toNumber(result.rows[0]?.total ?? 0);
 }
 
 /**
@@ -238,14 +241,18 @@ export async function computeFtdLossback(
   // SCOPED TO THIS LEG. A program can also run wager milestones, and those
   // share this table: without the `leg` filter a single pending wager claim
   // would report the lossback as "already claimed" and silently withhold it.
-  const existing = await adminDb.creator_reward_claims.count({
-    where: {
-      program_id: program.id,
-      user_id: userId,
-      leg: "ftd_lossback",
-      status: { in: [...BASIS_HOLDING_STATUSES] },
-    },
-  });
+  const existingRows = await adminDrizzle
+    .select({ value: count() })
+    .from(creator_reward_claims)
+    .where(
+      and(
+        eq(creator_reward_claims.program_id, program.id),
+        eq(creator_reward_claims.user_id, userId),
+        eq(creator_reward_claims.leg, "ftd_lossback"),
+        inArray(creator_reward_claims.status, [...BASIS_HOLDING_STATUSES]),
+      ),
+    );
+  const existing = existingRows[0]?.value ?? 0;
   if (existing > 0) {
     return { ...EMPTY, blockedReason: "Already claimed." };
   }

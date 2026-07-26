@@ -1,47 +1,41 @@
 import { Suspense } from "react";
-import { Check, Globe, Plug, Settings, Users, X } from "lucide-react";
+import { Check, Plug, Settings, Users, X } from "lucide-react";
 
-import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
 import {
   PageHero,
   PageHeroIdentity,
   SectionHeading,
 } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
 import {
   ANTIFRAUD_TOGGLE_ROLES,
   getAntifraudAccessSettings,
   getAntifraudUserAccess,
 } from "@/lib/antifraud/access";
+import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
 import { channelConfigStatus } from "@/lib/staff/channels";
-import { APP_HOSTS, ROOT_DOMAIN } from "@/lib/app-hosts";
+import { cn } from "@/lib/utils";
 import {
   AccessListEditor,
   RoleAccessToggles,
 } from "./_components/access-controls";
+import { DiscordConfigSection } from "./_components/discord-config-section";
+import {
+  SettingsTabNav,
+  type SettingsTab,
+} from "./_components/settings-tab-nav";
 
-export const metadata = { title: "Workspace Settings" };
+export const metadata = { title: "Settings" };
 
-/**
- * Antifraud â†’ Manage â†’ Workspace Settings. OWNER / ADMIN ONLY.
- *
- * Two things live here:
- *
- *  1. ACCESS â€” who can enter the workspace (per-role toggles + per-username
- *     overrides). Owners and admins are always in and can never be denied.
- *
- *  2. INTEGRATION STATUS â€” whether the deployment has the credentials for
- *     Discord pings, Telegram pings, the fraud-backend WebSocket and the signed
- *     ingest webhook, plus which hostnames serve this app.
- *
- * The status panel reports PRESENCE ONLY. No token, URL or secret is ever read
- * into the page â€” an operator needs to know whether a thing is configured, not
- * what it is configured to.
- */
-
-export default async function WorkspaceSettingsPage() {
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
   await requireAntifraudManagerPage();
+  const requestedTab = (await searchParams).tab;
+  const tab: SettingsTab =
+    requestedTab === "discord" ? "discord" : "general";
 
   return (
     <div className="space-y-6">
@@ -49,22 +43,27 @@ export default async function WorkspaceSettingsPage() {
         <PageHeroIdentity
           icon={Settings}
           accent="cyan"
-          title="Workspace Settings"
-          subtitle="Who gets in, and what this deployment is wired to"
+          title="Settings"
+          subtitle="Access, integrations, and alert delivery"
           backHref="/antifraud"
         />
       </PageHero>
 
-      <Suspense fallback={<Skeleton className="h-64 w-full rounded-xl" />}>
-        <AccessSection />
-      </Suspense>
+      <SettingsTabNav active={tab} />
 
-      <IntegrationSection />
+      {tab === "discord" ? (
+        <DiscordConfigSection />
+      ) : (
+        <>
+          <Suspense fallback={<Skeleton className="h-64 w-full rounded-xl" />}>
+            <AccessSection />
+          </Suspense>
+          <IntegrationSection />
+        </>
+      )}
     </div>
   );
 }
-
-// â”€â”€â”€ Access â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function AccessSection() {
   const [settings, userAccess] = await Promise.all([
@@ -94,13 +93,8 @@ async function AccessSection() {
   );
 }
 
-// â”€â”€â”€ Integrations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
 function IntegrationSection() {
   const channels = channelConfigStatus();
-  // Every hostname this deployment answers on, and what each one fronts.
-  const hosts = APP_HOSTS;
-
   const integrations = [
     {
       name: "Discord pings",
@@ -118,13 +112,13 @@ function IntegrationSection() {
       name: "Fraud backend stream",
       env: "ANTIFRAUD_WS_URL",
       ready: Boolean(process.env.ANTIFRAUD_WS_URL),
-      note: "The WebSocket this app proxies to the browser as a live signal feed. Optional â€” the workspace runs without it.",
+      note: "The WebSocket this app proxies to the browser as a live signal feed.",
     },
     {
       name: "Signed ingest webhook",
       env: "ANTIFRAUD_INGEST_SECRET",
       ready: Boolean(process.env.ANTIFRAUD_INGEST_SECRET),
-      note: "Shared HMAC secret for POST /api/antifraud/ingest. Until it is set the endpoint refuses everything (fail-closed).",
+      note: "Shared HMAC secret for POST /api/antifraud/ingest. Until it is set the endpoint refuses everything.",
     },
   ];
 
@@ -132,9 +126,7 @@ function IntegrationSection() {
     <div className="space-y-4">
       <SectionHeading icon={Plug} title="Backend integrations" />
       <p className="text-xs text-muted-foreground">
-        Presence only â€” no secret is ever read into this page. Everything here
-        is optional: with none of it configured the workspace still runs
-        entirely off the dashboard database.
+        Presence only. Secrets are never shown on this page.
       </p>
 
       <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
@@ -181,53 +173,6 @@ function IntegrationSection() {
           </li>
         ))}
       </ul>
-
-      <div className="space-y-2 rounded-xl border border-border/60 bg-card p-4">
-        <div className="flex items-center gap-2">
-          <Globe className="size-4 text-muted-foreground" />
-          <span className="text-sm font-semibold">Hostnames</span>
-        </div>
-        <p className="text-[11px] text-muted-foreground">
-          One deployment answers on all of these. Every section is served from
-          its own host without a route prefix, for example{" "}
-          <code className="font-mono">fraud.{ROOT_DOMAIN}/reviews</code>. Old
-          prefixed links redirect to the clean URL. Add extra hosts (preview
-          domains, local) with{" "}
-          <code className="font-mono">NEXT_PUBLIC_APP_HOST_MAP</code>.
-        </p>
-        <ul className="space-y-1.5">
-          {hosts.map((entry) => (
-            <li
-              key={entry.host}
-              className={cn(
-                "flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[11px]",
-                entry.basePath === "/antifraud"
-                  ? "border-cyan-500/40 bg-cyan-500/10"
-                  : "border-border/60 bg-muted/30",
-              )}
-            >
-              <code className="font-mono font-medium">{entry.host}</code>
-              <span className="text-muted-foreground">â†’ {entry.label}</span>
-              <span className="ml-auto text-muted-foreground">
-                lands {entry.basePath ? "/" : entry.landing}
-              </span>
-              <span className="rounded-sm border border-border/60 px-1.5 py-0.5 uppercase tracking-wide text-muted-foreground">
-                {entry.allowRoles ? entry.allowRoles.join(" Â· ") : "all roles"}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <p className="text-[11px] text-muted-foreground">
-          The role chips are the front-door routing rule only â€” someone on the
-          wrong door is bounced to the apex. Actual authorization is unchanged:
-          each sub-app still runs its own DB-backed access gate, and every page
-          still runs its own permission check. Set{" "}
-          <code className="font-mono">SESSION_COOKIE_DOMAIN=.{ROOT_DOMAIN}</code>{" "}
-          so one login covers every host; leaving it unset keeps the cookie
-          host-only and forces a separate login per sub-domain.
-        </p>
-      </div>
-
     </div>
   );
 }

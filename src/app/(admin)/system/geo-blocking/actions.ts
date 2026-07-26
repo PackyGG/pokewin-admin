@@ -3,7 +3,10 @@
 import { revalidatePath, revalidateTag } from "next/cache";
 import { after } from "next/server";
 import countries from "i18n-iso-countries";
-import { getDb } from "@/lib/db";
+import { eq } from "drizzle-orm";
+
+import { getDrizzleDb } from "@/lib/db";
+import { country_restrictions } from "@/lib/db-schema/main/schema";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -56,7 +59,7 @@ export async function updateCountryRestrictionArray(
   field: string,
   values: string[]
 ) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_update_country_restriction", "update country restrictions");
 
@@ -67,10 +70,15 @@ export async function updateCountryRestrictionArray(
   ];
   if (!validFields.includes(field)) throw new Error("Invalid field");
 
-  await db.country_restrictions.update({
-    where: { country_code: countryCode },
-    data: { [field]: values },
-  });
+  const updated = await db
+    .update(country_restrictions)
+    .set({
+      [field]: values,
+      updated_at: new Date().toISOString(),
+    })
+    .where(eq(country_restrictions.country_code, countryCode))
+    .returning({ country_code: country_restrictions.country_code });
+  if (!updated[0]) throw new Error("Country restriction not found");
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -102,7 +110,7 @@ export async function seedMissingCountryRestrictions(): Promise<{
   seeded: number;
   total: number;
 }> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(
     session,
@@ -110,9 +118,9 @@ export async function seedMissingCountryRestrictions(): Promise<{
     "seed country restrictions",
   );
 
-  const existing = await db.country_restrictions.findMany({
-    select: { country_code: true },
-  });
+  const existing = await db
+    .select({ country_code: country_restrictions.country_code })
+    .from(country_restrictions);
   const existingSet = new Set(existing.map((r) => r.country_code));
 
   const allCodes = Object.keys(countries.getAlpha2Codes());
@@ -122,16 +130,25 @@ export async function seedMissingCountryRestrictions(): Promise<{
     return { seeded: 0, total: existingSet.size };
   }
 
-  await db.country_restrictions.createMany({
+  const inserted = await db
+    .insert(country_restrictions)
     // Item/physical withdrawal OFF baseline; the rest use the schema defaults.
-    data: missing.map((country_code) => ({ country_code, physical_withdrawal: false })),
-    skipDuplicates: true,
-  });
+    .values(
+      missing.map((country_code) => ({
+        country_code,
+        physical_withdrawal: false,
+      })),
+    )
+    .onConflictDoNothing()
+    .returning({ country_code: country_restrictions.country_code });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "country_restrictions_seeded",
-    metadata: { seeded_count: missing.length, seeded_codes: missing },
+    metadata: {
+      seeded_count: inserted.length,
+      seeded_codes: inserted.map((row) => row.country_code),
+    },
   });
 
   after(() => {
@@ -139,7 +156,7 @@ export async function seedMissingCountryRestrictions(): Promise<{
   });
   revalidateTag(GEO_BLOCKING_CACHE_TAG);
   revalidatePath("/system/geo-blocking");
-  return { seeded: missing.length, total: existingSet.size + missing.length };
+  return { seeded: inserted.length, total: existingSet.size + inserted.length };
 }
 
 export async function toggleCountryRestriction(
@@ -147,7 +164,7 @@ export async function toggleCountryRestriction(
   field: string,
   value: boolean
 ) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_toggle_country_restriction", "toggle country restrictions");
 
@@ -160,10 +177,15 @@ export async function toggleCountryRestriction(
   ];
   if (!validFields.includes(field)) throw new Error("Invalid field");
 
-  await db.country_restrictions.update({
-    where: { country_code: countryCode },
-    data: { [field]: value },
-  });
+  const updated = await db
+    .update(country_restrictions)
+    .set({
+      [field]: value,
+      updated_at: new Date().toISOString(),
+    })
+    .where(eq(country_restrictions.country_code, countryCode))
+    .returning({ country_code: country_restrictions.country_code });
+  if (!updated[0]) throw new Error("Country restriction not found");
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -223,4 +245,49 @@ export async function reloadCountryRestrictionsCache(): Promise<{
   });
 
   return { requestedEnv, resolvedEnv };
+}
+
+/**
+ * Global fiat-deposit switch — allow or disable fiat (card) deposits for EVERY
+ * country + US-state row in one bulk write. `locked_deposits_fiat = []` = fiat
+ * allowed; `["fiat"]` = fiat locked — the same single-element marker the per-row
+ * Fiat toggle writes (see FIAT_LOCK_VALUE in restrictions-table.tsx). Gated by
+ * the same admin + `__can_update_country_restriction` capability as the per-row
+ * array edit; audited + cache-busted like its siblings. Writes the MAIN/PROD
+ * game DB (operator-triggered), same as the per-row actions above.
+ */
+export async function setGlobalFiatDeposits(
+  allowed: boolean,
+): Promise<{ affected: number }> {
+  const db = await getDrizzleDb();
+  const session = await requireAdmin();
+  await requireCapability(
+    session,
+    "__can_update_country_restriction",
+    "update country restrictions",
+  );
+
+  // [] = fiat allowed; ["fiat"] = fiat locked (matches the per-row Fiat toggle).
+  const value: string[] = allowed ? [] : ["fiat"];
+  const updated = await db
+    .update(country_restrictions)
+    .set({
+      locked_deposits_fiat: value,
+      updated_at: new Date().toISOString(),
+    })
+    .returning({ country_code: country_restrictions.country_code });
+  const res = { count: updated.length };
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "country_restriction_updated",
+    metadata: { action: "global_fiat_deposits", allowed, affected: res.count },
+  });
+
+  after(() => {
+    invalidateCountryRestrictionsCache().catch(() => {});
+  });
+  revalidateTag(GEO_BLOCKING_CACHE_TAG);
+  revalidatePath("/system/geo-blocking");
+  return { affected: res.count };
 }

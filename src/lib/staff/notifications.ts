@@ -1,7 +1,27 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+} from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import {
+  admin_users,
+  staff_notification_channels,
+  staff_notification_prefs,
+  staff_notifications,
+} from "@/lib/db-schema/admin/schema";
 import { sendOnChannel, type ChannelKind } from "./channels";
+import {
+  isPostgresError,
+  postgresErrorMessages,
+} from "@/lib/postgres-errors";
 
 /**
  * The staff notification system.
@@ -89,18 +109,17 @@ export function isStaffNotificationKind(
 
 /**
  * True for "this table/column doesn't exist here yet". The antifraud tables are
- * provisioned by `prisma db execute`, so a deploy can briefly run ahead of the
+ * provisioned by reviewed Admin SQL, so a deploy can briefly run ahead of the
  * SQL — every read degrades to empty and every write to a no-op rather than
  * 500ing a page that merely renders a bell.
  */
 export function isMissingRelationError(err: unknown): boolean {
-  const code = (err as { code?: string })?.code;
-  if (code === "P2021" || code === "P2022") return true;
-  if (!(err instanceof Error)) return false;
+  if (isPostgresError(err, "42P01", "42703")) return true;
+  const message = postgresErrorMessages(err);
   return (
-    /does not exist/i.test(err.message) ||
-    /UndefinedTable/i.test(err.message) ||
-    /relation .* does not exist/i.test(err.message)
+    /does not exist/i.test(message) ||
+    /UndefinedTable/i.test(message) ||
+    /relation .* does not exist/i.test(message)
   );
 }
 
@@ -117,33 +136,95 @@ export type StaffNotificationRow = {
 };
 
 /** The bell's dropdown list — newest first, hard-capped. */
+export type StaffNotificationRecipient = {
+  id: string;
+  username: string;
+  displayName: string | null;
+  email: string;
+  role: string;
+  roles: string[];
+  verifiedChannels: number;
+};
+
+/**
+ * Active dashboard accounts available to the custom staff composer.
+ *
+ * This intentionally reads `admin_users`, not `staff_profiles`: the inbox is
+ * global dashboard infrastructure, so a colleague does not have to visit the
+ * Anti-Fraud workspace before an admin can notify them.
+ */
+export async function listStaffNotificationRecipients(): Promise<
+  StaffNotificationRecipient[]
+> {
+  try {
+    const [users, channels] = await Promise.all([
+      adminDrizzle
+        .select({
+          id: admin_users.id,
+          username: admin_users.username,
+          display_name: admin_users.display_username,
+          email: admin_users.email,
+          role: admin_users.role,
+          roles: admin_users.roles,
+        })
+        .from(admin_users)
+        .where(eq(admin_users.is_active, true))
+        .orderBy(asc(admin_users.username)),
+      adminDrizzle
+        .select({
+          admin_user_id: staff_notification_channels.admin_user_id,
+        })
+        .from(staff_notification_channels)
+        .where(
+          and(
+            eq(staff_notification_channels.enabled, true),
+            isNotNull(staff_notification_channels.verified_at),
+          ),
+        ),
+    ]);
+
+    const channelCount = new Map<string, number>();
+    for (const channel of channels) {
+      channelCount.set(
+        channel.admin_user_id,
+        (channelCount.get(channel.admin_user_id) ?? 0) + 1,
+      );
+    }
+
+    return users.map((user) => ({
+      id: user.id,
+      username: user.username,
+      displayName: user.display_name,
+      email: user.email,
+      role: user.role,
+      roles: user.roles.length > 0 ? user.roles : [user.role],
+      verifiedChannels: channelCount.get(user.id) ?? 0,
+    }));
+  } catch (err) {
+    if (!isMissingRelationError(err)) {
+      console.error("[staff-notifications] recipient list failed:", err);
+    }
+    return [];
+  }
+}
+
 export async function listStaffNotifications(
   adminUserId: string,
   limit = 12,
 ): Promise<StaffNotificationRow[]> {
   try {
-    const rows = await adminDb.staff_notifications.findMany({
-      where: { admin_user_id: adminUserId },
-      orderBy: { created_at: "desc" },
-      take: Math.min(Math.max(limit, 1), 50),
-      select: {
-        id: true,
-        kind: true,
-        title: true,
-        body: true,
-        href: true,
-        read_at: true,
-        created_at: true,
-      },
-    });
+    const rows = await adminDrizzle.select().from(staff_notifications)
+      .where(eq(staff_notifications.admin_user_id, adminUserId))
+      .orderBy(desc(staff_notifications.created_at))
+      .limit(Math.min(Math.max(limit, 1), 50));
     return rows.map((row) => ({
       id: row.id,
       kind: row.kind,
       title: row.title,
       body: row.body,
       href: row.href,
-      readAt: row.read_at,
-      createdAt: row.created_at,
+      readAt: row.read_at ? new Date(row.read_at) : null,
+      createdAt: new Date(row.created_at),
     }));
   } catch (err) {
     if (!isMissingRelationError(err)) {
@@ -158,9 +239,12 @@ export async function countUnreadStaffNotifications(
   adminUserId: string,
 ): Promise<number> {
   try {
-    return await adminDb.staff_notifications.count({
-      where: { admin_user_id: adminUserId, read_at: null },
-    });
+    const [row] = await adminDrizzle.select({ value: count() })
+      .from(staff_notifications).where(and(
+        eq(staff_notifications.admin_user_id, adminUserId),
+        isNull(staff_notifications.read_at),
+      ));
+    return row?.value ?? 0;
   } catch (err) {
     if (!isMissingRelationError(err)) {
       console.error("[antifraud] countUnreadStaffNotifications failed:", err);
@@ -179,10 +263,11 @@ export async function markStaffNotificationRead(
   notificationId: string,
 ): Promise<void> {
   try {
-    await adminDb.staff_notifications.updateMany({
-      where: { id: notificationId, admin_user_id: adminUserId, read_at: null },
-      data: { read_at: new Date() },
-    });
+    await adminDrizzle.update(staff_notifications)
+      .set({ read_at: new Date().toISOString() })
+      .where(and(eq(staff_notifications.id, notificationId),
+        eq(staff_notifications.admin_user_id, adminUserId),
+        isNull(staff_notifications.read_at)));
   } catch (err) {
     if (!isMissingRelationError(err)) {
       console.error("[antifraud] markStaffNotificationRead failed:", err);
@@ -194,10 +279,10 @@ export async function markAllStaffNotificationsRead(
   adminUserId: string,
 ): Promise<void> {
   try {
-    await adminDb.staff_notifications.updateMany({
-      where: { admin_user_id: adminUserId, read_at: null },
-      data: { read_at: new Date() },
-    });
+    await adminDrizzle.update(staff_notifications)
+      .set({ read_at: new Date().toISOString() })
+      .where(and(eq(staff_notifications.admin_user_id, adminUserId),
+        isNull(staff_notifications.read_at)));
   } catch (err) {
     if (!isMissingRelationError(err)) {
       console.error("[antifraud] markAllStaffNotificationsRead failed:", err);
@@ -256,16 +341,9 @@ export async function notifyStaff(input: NotifyStaffInput): Promise<number> {
   // Per-recipient preference overrides for THIS kind (missing row = default).
   let prefs: PrefRow[] = [];
   try {
-    prefs = await adminDb.staff_notification_prefs.findMany({
-      where: { admin_user_id: { in: recipients }, kind: input.kind },
-      select: {
-        admin_user_id: true,
-        kind: true,
-        in_app: true,
-        discord: true,
-        telegram: true,
-      },
-    });
+    prefs = await adminDrizzle.select().from(staff_notification_prefs)
+      .where(and(inArray(staff_notification_prefs.admin_user_id, recipients),
+        eq(staff_notification_prefs.kind, input.kind)));
   } catch (err) {
     if (!isMissingRelationError(err)) {
       console.error("[antifraud] notifyStaff pref read failed:", err);
@@ -286,17 +364,17 @@ export async function notifyStaff(input: NotifyStaffInput): Promise<number> {
   let written = 0;
   if (inAppRecipients.length > 0) {
     try {
-      const result = await adminDb.staff_notifications.createMany({
-        data: inAppRecipients.map((adminUserId) => ({
+      const result = await adminDrizzle.insert(staff_notifications).values(
+        inAppRecipients.map((adminUserId) => ({
           admin_user_id: adminUserId,
           kind: input.kind,
           title: input.title,
           body: input.body ?? null,
           href: input.href ?? null,
-          metadata: (input.metadata ?? undefined) as never,
+          metadata: input.metadata,
         })),
-      });
-      written = result.count;
+      ).returning({ id: staff_notifications.id });
+      written = result.length;
     } catch (err) {
       if (!isMissingRelationError(err)) {
         console.error("[antifraud] notifyStaff in-app write failed:", err);
@@ -310,14 +388,15 @@ export async function notifyStaff(input: NotifyStaffInput): Promise<number> {
   // ONLY verified + enabled rows are eligible; an unverified channel is inert.
   let channels: ChannelRow[] = [];
   try {
-    channels = await adminDb.staff_notification_channels.findMany({
-      where: {
-        admin_user_id: { in: recipients },
-        enabled: true,
-        verified_at: { not: null },
-      },
-      select: { admin_user_id: true, channel: true, target: true },
-    });
+    channels = await adminDrizzle.select({
+      admin_user_id: staff_notification_channels.admin_user_id,
+      channel: staff_notification_channels.channel,
+      target: staff_notification_channels.target,
+    }).from(staff_notification_channels).where(and(
+      inArray(staff_notification_channels.admin_user_id, recipients),
+      eq(staff_notification_channels.enabled, true),
+      isNotNull(staff_notification_channels.verified_at),
+    ));
   } catch (err) {
     if (!isMissingRelationError(err)) {
       console.error("[antifraud] notifyStaff channel read failed:", err);
@@ -345,15 +424,13 @@ export async function notifyStaff(input: NotifyStaffInput): Promise<number> {
       // Record the outcome so the staff member can see WHY their pings stopped
       // arriving, without any of this being able to fail the caller.
       try {
-        await adminDb.staff_notification_channels.updateMany({
-          where: {
-            admin_user_id: row.admin_user_id,
-            channel: row.channel,
-          },
-          data: result.ok
-            ? { last_sent_at: new Date(), last_error: null }
-            : { last_error: result.error.slice(0, 200) },
-        });
+        await adminDrizzle.update(staff_notification_channels).set(result.ok
+            ? { last_sent_at: new Date().toISOString(), last_error: null }
+            : { last_error: result.error.slice(0, 200) })
+          .where(and(
+            eq(staff_notification_channels.admin_user_id, row.admin_user_id),
+            eq(staff_notification_channels.channel, row.channel),
+          ));
       } catch {
         // Bookkeeping only — never escalate.
       }
@@ -380,29 +457,17 @@ function absoluteHref(href: string | null | undefined): string | null {
 }
 
 /**
- * The recipient set for a broadcast: every staff member who has entered the
- * workspace (i.e. has a `staff_profiles` row) and is still an active admin
- * user. Optionally narrowed to holders of specific roles — used by a quiz with
- * a role audience.
- *
- * Deliberately NOT "every admin_user": someone who has never opened the
- * workspace has no staff profile, and pinging them about a quiz they can't see
- * would be noise.
+ * The recipient set for a broadcast: every active dashboard account,
+ * regardless of whether it has opened the Staff hub. The audience
+ * can be narrowed to holders of specific roles.
  */
 export async function staffBroadcastRecipients(
   roles?: readonly string[],
 ): Promise<string[]> {
   try {
-    const profiles = await adminDb.staff_profiles.findMany({
-      select: { admin_user_id: true },
-    });
-    const ids = profiles.map((p) => p.admin_user_id);
-    if (ids.length === 0) return [];
-
-    const users = await adminDb.admin_users.findMany({
-      where: { id: { in: ids }, is_active: true },
-      select: { id: true, role: true, roles: true },
-    });
+    const users = await adminDrizzle.select({
+      id: admin_users.id, role: admin_users.role, roles: admin_users.roles,
+    }).from(admin_users).where(eq(admin_users.is_active, true));
 
     if (!roles || roles.length === 0) return users.map((u) => u.id);
     const wanted = new Set(roles);

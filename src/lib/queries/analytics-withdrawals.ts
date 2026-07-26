@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
 
@@ -75,7 +76,7 @@ async function computeWithdrawnCoinsBreakdown(
   period: WithdrawalsPeriod,
   excluded: string[],
 ): Promise<WithdrawnCoinsData> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const interval = intervalSqlForPeriod(period);
   const dateFilter = interval
     ? `AND COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - ${interval}`
@@ -86,7 +87,7 @@ async function computeWithdrawnCoinsBreakdown(
   // bucket. Results merged in JS into the WithdrawnCoinsData shape so
   // the UI can render the crypto breakdown table + a physical-cards
   // tile alongside without a second query.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       bucket: string;
       asset: string | null;
@@ -94,7 +95,7 @@ async function computeWithdrawnCoinsBreakdown(
       total_usd: string;
       total_crypto: string;
     }[]
-  >(`
+  >(db, `
     SELECT
       CASE WHEN cwr.method = 'crypto' THEN 'crypto' ELSE 'physical' END AS bucket,
       cwr.crypto_asset                                                  AS asset,

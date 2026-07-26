@@ -1,7 +1,7 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
@@ -83,11 +83,10 @@ const cachedCohortRows = unstable_cache(
     granularity: CohortsGranularity,
     blacklistIdNotIn: string,
   ): Promise<CohortRawRow[]> => {
-    const db = await getDb();
     const dateTrunc = granularity === "week" ? "week" : "month";
     const periodInterval = granularity === "week" ? "7 days" : "1 month";
     const horizon = granularity === "week" ? "140 days" : "36 months";
-    return db.$queryRawUnsafe<CohortRawRow[]>(`
+    return queryMainRows<CohortRawRow[]>(`
       WITH cohorts AS (
         SELECT date_trunc('${dateTrunc}', u.created_at)::date AS cohort,
                u.id AS user_id,

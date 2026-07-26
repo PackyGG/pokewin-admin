@@ -23,7 +23,7 @@ import "server-only";
  * (`challenge_claims` time-series and the `challenge_prize` ledger cost)
  * have no backend admin endpoint — they are ledger/claim aggregates, exactly
  * the kind of read every other /insights/* surface does against the Main DB
- * via `getDb()`. No game-DB writes are performed here.
+ * through the request-scoped Drizzle client. No game-DB writes are performed here.
  *
  * House-POV (CLAUDE.md, strict): a challenge prize is money paid TO the user
  * → a house COST → rendered ROSE. Counts / rates are neutral (blue / cyan).

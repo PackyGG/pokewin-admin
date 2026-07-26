@@ -1,9 +1,9 @@
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { sql, type SQL } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import type { PaginatedResult } from "@/lib/types";
-import { Prisma } from "@/generated/prisma/client";
 
 export type CardListItem = {
   id: string;
@@ -33,7 +33,7 @@ export type CardListItem = {
 export const CARD_SORT_FIELDS = ["created_at", "name", "price"] as const;
 
 /**
- * Translate the list filter params into a Prisma `where`. Pulled out of
+ * Translate the list filter params into SQL predicates. Pulled out of
  * `getCards` so the (cached) count helper applies the EXACT same predicate as
  * the page slice — the count and the rows can never drift apart.
  */
@@ -43,34 +43,28 @@ function buildCardsWhere(params: {
   setId?: string;
   minPrice?: string;
   maxPrice?: string;
-}): Prisma.cardsWhereInput {
+}): SQL {
   const { search, rarity, setId, minPrice, maxPrice } = params;
-  const where: Prisma.cardsWhereInput = {};
-
-  if (search) {
-    where.name = { contains: search, mode: "insensitive" };
-  }
-
-  if (rarity) {
-    where.rarity = rarity;
-  }
+  const predicates: SQL[] = [];
+  if (search) predicates.push(sql`c.name ILIKE ${`%${search}%`}`);
+  if (rarity) predicates.push(sql`c.rarity = ${rarity}`);
 
   // `setId === "unassigned"` is a sentinel for cards with `set_id IS NULL`.
   // Lets the operator narrow the catalog to the un-grouped backlog before
   // bulk-moving them into a real set.
   if (setId === "unassigned") {
-    where.set_id = null;
+    predicates.push(sql`c.set_id IS NULL`);
   } else if (setId) {
-    where.set_id = setId;
+    predicates.push(sql`c.set_id = ${setId}::uuid`);
   }
 
-  if (minPrice || maxPrice) {
-    where.price = {};
-    if (minPrice) where.price.gte = parseFloat(minPrice);
-    if (maxPrice) where.price.lte = parseFloat(maxPrice);
-  }
-
-  return where;
+  const min = minPrice ? Number(minPrice) : null;
+  const max = maxPrice ? Number(maxPrice) : null;
+  if (min != null && Number.isFinite(min)) predicates.push(sql`c.price >= ${min}`);
+  if (max != null && Number.isFinite(max)) predicates.push(sql`c.price <= ${max}`);
+  return predicates.length > 0
+    ? sql`WHERE ${sql.join(predicates, sql` AND `)}`
+    : sql``;
 }
 
 /**
@@ -83,14 +77,17 @@ function buildCardsWhere(params: {
  * navigations stop re-counting the whole predicate.
  */
 async function fetchCardsListCount(
-  where: Prisma.cardsWhereInput,
+  where: SQL,
 ): Promise<number> {
-  const db = await getDb();
-  return db.cards.count({ where });
+  const db = await getDrizzleDb();
+  const result = await db.execute<{ count: string }>(sql`
+    SELECT COUNT(*)::text AS count FROM cards c ${where}
+  `);
+  return Number(result.rows[0]?.count ?? 0);
 }
 
 function getCardsListCount(
-  where: Prisma.cardsWhereInput,
+  where: SQL,
   cacheKey: string,
 ): Promise<number> {
   return unstable_cache(
@@ -122,16 +119,22 @@ export async function getCards(params: {
     sortBy = "created_at",
     sortOrder = "desc",
   } = params;
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
   const where = buildCardsWhere({ search, rarity, setId, minPrice, maxPrice });
 
-  const orderBy: Prisma.cardsOrderByWithRelationInput = {};
   const field = (CARD_SORT_FIELDS as readonly string[]).includes(sortBy)
     ? sortBy
     : "created_at";
   const order = sortOrder === "asc" ? "asc" : "desc";
-  (orderBy as Record<string, string>)[field] = order;
+  const orderBy =
+    field === "name"
+      ? order === "asc" ? sql`c.name ASC` : sql`c.name DESC`
+      : field === "price"
+        ? order === "asc" ? sql`c.price ASC` : sql`c.price DESC`
+        : order === "asc" ? sql`c.created_at ASC` : sql`c.created_at DESC`;
+  const safePage = Math.max(1, Math.trunc(page) || 1);
+  const safePerPage = Math.min(200, Math.max(1, Math.trunc(perPage) || 20));
 
   // Stable cache key for the COUNT — only the FILTER params change the total,
   // not page/perPage/sort, so they're excluded. Empty string for an absent
@@ -153,24 +156,22 @@ export async function getCards(params: {
   // is an aggregated subquery in the SAME findMany — it gives the table an
   // "In Packs" column without an N+1 per-row fetch.
   const [cards, total] = await Promise.all([
-    db.cards.findMany({
-      where,
-      orderBy,
-      skip: (page - 1) * perPage,
-      take: perPage,
-      select: {
-        id: true,
-        name: true,
-        image_url: true,
-        price: true,
-        hp: true,
-        rarity: true,
-        type: true,
-        card_number: true,
-        sets: { select: { name: true } },
-        _count: { select: { pack_cards: true } },
-      },
-    }),
+    db.execute<{
+      id: string; name: string; image_url: string; price: string;
+      hp: number | null; rarity: string | null; type: string;
+      card_number: string | null; set_name: string | null; in_packs: string;
+    }>(sql`
+      SELECT c.id, c.name, c.image_url, c.price::text AS price, c.hp,
+             c.rarity, c.type, c.card_number, s.name AS set_name,
+             COUNT(pc.id)::text AS in_packs
+      FROM cards c
+      LEFT JOIN sets s ON s.id = c.set_id
+      LEFT JOIN pack_cards pc ON pc.card_id = c.id
+      ${where}
+      GROUP BY c.id, s.name
+      ORDER BY ${orderBy}
+      LIMIT ${safePerPage} OFFSET ${(safePage - 1) * safePerPage}
+    `).then((result) => result.rows),
     getCardsListCount(where, countKey),
   ]);
 
@@ -184,13 +185,13 @@ export async function getCards(params: {
       rarity: c.rarity,
       type: c.type,
       cardNumber: c.card_number,
-      setName: c.sets?.name ?? null,
-      inPacks: c._count.pack_cards,
+      setName: c.set_name,
+      inPacks: Number(c.in_packs),
     })),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }
 
@@ -212,15 +213,17 @@ export async function getCardIdsForFilter(
   },
   limit: number,
 ): Promise<string[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const where = buildCardsWhere(params);
-  const rows = await db.cards.findMany({
-    where,
-    orderBy: { created_at: "desc" },
-    take: limit,
-    select: { id: true },
-  });
-  return rows.map((r) => r.id);
+  const safeLimit = Math.min(500, Math.max(1, Math.trunc(limit) || 1));
+  const result = await db.execute<{ id: string }>(sql`
+    SELECT c.id
+    FROM cards c
+    ${where}
+    ORDER BY c.created_at DESC
+    LIMIT ${safeLimit}
+  `);
+  return result.rows.map((r) => r.id);
 }
 
 /**
@@ -260,37 +263,38 @@ export type CardInspector = {
 export async function getCardInspector(
   id: string,
 ): Promise<CardInspector | null> {
-  const db = await getDb();
-  const [card, statsResult] = await Promise.all([
-    db.cards.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        name: true,
-        image_url: true,
-        price: true,
-        price_raw: true,
-        hp: true,
-        rarity: true,
-        artist: true,
-        tcgplayer_id: true,
-        type: true,
-        card_number: true,
-        set_id: true,
-        created_at: true,
-        updated_at: true,
-        sets: { select: { name: true } },
-        _count: { select: { pack_cards: true } },
-      },
-    }),
+  const db = await getDrizzleDb();
+  const [cardResult, statsResult] = await Promise.all([
+    db.execute<{
+      id: string; name: string; image_url: string; price: string; price_raw: string;
+      hp: number | null; rarity: string | null; artist: string | null;
+      tcgplayer_id: number | null; type: string; card_number: string | null;
+      set_id: string | null; set_name: string | null; pack_count: string;
+      created_at: Date; updated_at: Date;
+    }>(sql`
+      SELECT c.id, c.name, c.image_url, c.price::text AS price,
+             c.price_raw::text AS price_raw, c.hp, c.rarity, c.artist,
+             c.tcgplayer_id, c.type, c.card_number, c.set_id,
+             s.name AS set_name, COUNT(pc.id)::text AS pack_count,
+             c.created_at, c.updated_at
+      FROM cards c
+      LEFT JOIN sets s ON s.id = c.set_id
+      LEFT JOIN pack_cards pc ON pc.card_id = c.id
+      WHERE c.id = ${id}::uuid
+      GROUP BY c.id, s.name
+    `),
     safeQueryOrNull(
-      () =>
-        db.$queryRaw<{ cost: number | null; power: number | null }[]>`
-          SELECT cost, power FROM cards WHERE id = ${id}::uuid`,
+      async () => {
+        const result = await db.execute<{ cost: number | null; power: number | null }>(sql`
+          SELECT cost, power FROM cards WHERE id = ${id}::uuid
+        `);
+        return result.rows;
+      },
       "cards.getCardInspector.costPower",
     ),
   ]);
 
+  const card = cardResult.rows[0];
   if (!card) return null;
 
   const statsRow = statsResult.data?.[0] ?? null;
@@ -310,8 +314,8 @@ export async function getCardInspector(
     type: card.type,
     cardNumber: card.card_number,
     setId: card.set_id,
-    setName: card.sets?.name ?? null,
-    packCount: card._count.pack_cards,
+    setName: card.set_name,
+    packCount: Number(card.pack_count),
     createdAt: card.created_at.toISOString(),
     updatedAt: card.updated_at.toISOString(),
   };
@@ -326,12 +330,13 @@ export async function getCardInspector(
  * surfaced number is unchanged, only fresher reads degrade to ≤60s lag.
  */
 async function fetchCardInventoryCount(id: string): Promise<number> {
-  const db = await getDb();
-  const rows = await db.$queryRawUnsafe<{ count: string }[]>(
-    `SELECT COUNT(*)::text AS count FROM user_inventory WHERE card_id = $1`,
-    id,
-  );
-  return Number(rows[0]?.count ?? 0);
+  const db = await getDrizzleDb();
+  const result = await db.execute<{ count: string }>(sql`
+    SELECT COUNT(*)::text AS count
+    FROM user_inventory
+    WHERE card_id = ${id}::uuid
+  `);
+  return Number(result.rows[0]?.count ?? 0);
 }
 
 function getCardInventoryCount(id: string): Promise<number> {
@@ -343,7 +348,7 @@ function getCardInventoryCount(id: string): Promise<number> {
 }
 
 export async function getCardDetail(id: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // Explicit `select` on the card columns. Everything named here is a
   // column present on EVERY card DB (original schema), so the typed
   // `findUnique` is safe on production and on older snapshots alike.
@@ -351,8 +356,8 @@ export async function getCardDetail(id: string) {
   // `cost` / `power` are deliberately NOT in this select: they're the
   // OnePiece-only columns added by a later migration (commit a865aa8) and
   // may be absent on a DB that hasn't run it yet. Naming them here would
-  // make Prisma emit them in the SELECT column list and crash the whole
-  // detail query with P2022 on such a DB. Instead we read them in a
+  // add them to the SELECT column list and crash the whole
+  // detail query with 42703 on such a DB. Instead we read them in a
   // SEPARATE, defensively-wrapped raw query below (safeQueryOrNull) so a
   // missing column degrades those two attributes to "—" rather than
   // taking the page down. `price_raw` IS an original column (the pre-fee
@@ -362,47 +367,56 @@ export async function getCardDetail(id: string) {
   // pack_cards relation: we only need the related `packs` row per join,
   // not the join-row's own columns (weight, color, animation, etc.).
   // Switching include → select drops them from the wire.
-  const [card, inventoryCount, statsResult] = await Promise.all([
-    db.cards.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        name: true,
-        image_url: true,
-        price: true,
-        price_raw: true,
-        hp: true,
-        rarity: true,
-        artist: true,
-        tcgplayer_id: true,
-        type: true,
-        card_number: true,
-        set_id: true,
-        created_at: true,
-        updated_at: true,
-        sets: { select: { id: true, name: true } },
-        pack_cards: {
-          select: {
-            packs: { select: { id: true, name: true, image_url: true } },
-          },
-        },
-      },
-    }),
+  const [cardResult, inventoryCount, statsResult] = await Promise.all([
+    db.execute<{
+      id: string; name: string; image_url: string; price: string; price_raw: string;
+      hp: number | null; rarity: string | null; artist: string | null;
+      tcgplayer_id: number | null; type: string; card_number: string | null;
+      set_id: string | null; set_name: string | null; created_at: Date;
+      updated_at: Date;
+      packs: Array<{ id: string; name: string; imageUrl: string | null }>;
+    }>(sql`
+      SELECT c.id, c.name, c.image_url, c.price::text AS price,
+             c.price_raw::text AS price_raw, c.hp, c.rarity, c.artist,
+             c.tcgplayer_id, c.type, c.card_number, c.set_id,
+             s.name AS set_name, c.created_at, c.updated_at,
+             COALESCE(
+               jsonb_agg(
+                 jsonb_build_object(
+                   'id', p.id,
+                   'name', p.name,
+                   'imageUrl', p.image_url
+                 )
+                 ORDER BY p.name
+               ) FILTER (WHERE p.id IS NOT NULL),
+               '[]'::jsonb
+             ) AS packs
+      FROM cards c
+      LEFT JOIN sets s ON s.id = c.set_id
+      LEFT JOIN pack_cards pc ON pc.card_id = c.id
+      LEFT JOIN packs p ON p.id = pc.pack_id
+      WHERE c.id = ${id}::uuid
+      GROUP BY c.id, s.name
+    `),
     getCardInventoryCount(id),
     // OnePiece game-design columns. Read on their own so a DB without the
-    // cost/power migration (missing-column → P2022 / 42703) degrades to
+    // cost/power migration (missing-column → 42703) degrades to
     // `null` here instead of crashing the detail page. Mirrors the
     // schema-defensive pattern in src/lib/queries/insights-streamers/
     // _schema-probe.ts. `cost`/`power` are stored as `Int?` so the row
     // values come back as numbers (or null) — cast nothing.
     safeQueryOrNull(
-      () =>
-        db.$queryRaw<{ cost: number | null; power: number | null }[]>`
-          SELECT cost, power FROM cards WHERE id = ${id}::uuid`,
+      async () => {
+        const result = await db.execute<{ cost: number | null; power: number | null }>(sql`
+          SELECT cost, power FROM cards WHERE id = ${id}::uuid
+        `);
+        return result.rows;
+      },
       "cards.getCardDetail.costPower",
     ),
   ]);
 
+  const card = cardResult.rows[0];
   if (!card) return null;
 
   const statsRow = statsResult.data?.[0] ?? null;
@@ -425,25 +439,20 @@ export async function getCardDetail(id: string) {
     type: card.type,
     cardNumber: card.card_number,
     setId: card.set_id,
-    setName: card.sets?.name ?? null,
+    setName: card.set_name,
     inventoryCount,
-    packs: card.pack_cards.map((pc: { packs: { id: string; name: string; image_url: string | null } }) => ({
-      id: pc.packs.id,
-      name: pc.packs.name,
-      imageUrl: pc.packs.image_url,
-    })),
+    packs: card.packs,
     createdAt: card.created_at.toISOString(),
     updatedAt: card.updated_at.toISOString(),
   };
 }
 
 export async function getSets() {
-  const db = await getDb();
-  const sets = await db.sets.findMany({
-    orderBy: { name: "asc" },
-    select: { id: true, name: true },
-  });
-  return sets;
+  const db = await getDrizzleDb();
+  const result = await db.execute<{ id: string; name: string }>(sql`
+    SELECT id, name FROM sets ORDER BY name ASC
+  `);
+  return result.rows;
 }
 
 export type SetForMoveDialog = {
@@ -461,18 +470,18 @@ export type SetForMoveDialog = {
  * create-form) don't pay for the extra columns.
  */
 export async function getSetsForMoveDialog(): Promise<SetForMoveDialog[]> {
-  const db = await getDb();
-  const sets = await db.sets.findMany({
-    orderBy: [{ series: "asc" }, { name: "asc" }],
-    select: {
-      id: true,
-      name: true,
-      series: true,
-      language: true,
-      release_date: true,
-    },
-  });
-  return sets.map((s) => ({
+  const db = await getDrizzleDb();
+  const result = await db.execute<{
+    id: string;
+    name: string;
+    series: string;
+    language: string;
+    release_date: Date | null;
+  }>(sql`
+    SELECT id, name, series, language, release_date
+    FROM sets ORDER BY series ASC, name ASC
+  `);
+  return result.rows.map((s) => ({
     id: s.id,
     name: s.name,
     series: s.series,
@@ -487,12 +496,13 @@ export async function getSetsForMoveDialog(): Promise<SetForMoveDialog[]> {
  * the dropdown reads alphabetically.
  */
 export async function getDistinctSeries(): Promise<string[]> {
-  const db = await getDb();
-  const result = await db.sets.groupBy({
-    by: ["series"],
-    orderBy: { series: "asc" },
-  });
-  return result.map((r) => r.series).filter((s) => s.trim().length > 0);
+  const db = await getDrizzleDb();
+  const result = await db.execute<{ series: string }>(sql`
+    SELECT DISTINCT series FROM sets
+    WHERE BTRIM(series) <> ''
+    ORDER BY series ASC
+  `);
+  return result.rows.map((r) => r.series);
 }
 
 /**
@@ -525,19 +535,17 @@ export async function getMoveDialogData(): Promise<MoveDialogData> {
  * `findMany` would do. `"all"` is the catalog-wide sentinel for the cache key.
  */
 async function fetchRarities(setId?: string): Promise<(string | null)[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const where =
     setId && setId !== "unassigned"
-      ? { set_id: setId }
+      ? sql`WHERE set_id = ${setId}::uuid`
       : setId === "unassigned"
-        ? { set_id: null }
-        : undefined;
-  const result = await db.cards.groupBy({
-    by: ["rarity"],
-    where,
-    orderBy: { rarity: "asc" },
-  });
-  return result.map((r) => r.rarity);
+        ? sql`WHERE set_id IS NULL`
+        : sql``;
+  const result = await db.execute<{ rarity: string | null }>(sql`
+    SELECT DISTINCT rarity FROM cards ${where} ORDER BY rarity ASC
+  `);
+  return result.rows.map((r) => r.rarity);
 }
 
 export async function getRarities(setId?: string): Promise<(string | null)[]> {
@@ -570,7 +578,7 @@ export type CardsStats = {
  * deduplicates so a Suspense fan-out only runs the query once.
  */
 async function fetchCardsStats(setId?: string): Promise<CardsStats> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // When `setId` is provided, narrow every aggregate to that set so the
   // KPI strip + total count reflect the active per-set tab on /cards.
   // `totalSets` keeps the catalog-wide value either way — it's a meta
@@ -580,42 +588,49 @@ async function fetchCardsStats(setId?: string): Promise<CardsStats> {
   // `"unassigned"` is the sentinel for the un-grouped backlog (`set_id IS
   // NULL`) — the SAME sentinel `buildCardsWhere` / `fetchRarities` honour.
   // It MUST NOT reach the query as a literal `set_id = "unassigned"`: the
-  // `set_id` column is a uuid, so Prisma throws P2023 and the whole KPI
+  // `set_id` column is a uuid, so invalid values fail and the whole KPI
   // strip degrades to a permanent error tile on `/cards?set=unassigned`.
   // Map it to `{ set_id: null }` so the aggregates scope to the backlog.
   const where =
     setId === "unassigned"
-      ? { set_id: null }
+      ? sql`WHERE set_id IS NULL`
       : setId
-        ? { set_id: setId }
-        : undefined;
-  const [total, totalSets, priceAgg, rarityGroups] = await Promise.all([
-    db.cards.count({ where }),
-    db.sets.count(),
-    db.cards.aggregate({
-      where,
-      _avg: { price: true },
-      _max: { price: true },
-    }),
-    db.cards.groupBy({
-      by: ["rarity"],
-      where,
-      _count: { _all: true },
-    }),
+        ? sql`WHERE set_id = ${setId}::uuid`
+        : sql``;
+  const [summaryResult, rarityResult] = await Promise.all([
+    db.execute<{
+      total: string;
+      total_sets: string;
+      avg_price: string | null;
+      max_price: string | null;
+    }>(sql`
+      SELECT
+        COUNT(*)::text AS total,
+        (SELECT COUNT(*)::text FROM sets) AS total_sets,
+        AVG(price)::text AS avg_price,
+        MAX(price)::text AS max_price
+      FROM cards ${where}
+    `),
+    db.execute<{ rarity: string | null; count: string }>(sql`
+      SELECT rarity, COUNT(*)::text AS count
+      FROM cards ${where}
+      GROUP BY rarity
+    `),
   ]);
+  const summary = summaryResult.rows[0];
 
-  const byRarity = rarityGroups
+  const byRarity = rarityResult.rows
     .map((g) => ({
       rarity: g.rarity ?? "Unknown",
-      count: g._count._all,
+      count: Number(g.count),
     }))
     .sort((a, b) => b.count - a.count);
 
   return {
-    total,
-    totalSets,
-    avgPriceUsd: toNumber(priceAgg._avg.price),
-    maxPriceUsd: toNumber(priceAgg._max.price),
+    total: Number(summary?.total ?? 0),
+    totalSets: Number(summary?.total_sets ?? 0),
+    avgPriceUsd: toNumber(summary?.avg_price),
+    maxPriceUsd: toNumber(summary?.max_price),
     byRarity,
   };
 }

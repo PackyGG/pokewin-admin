@@ -1,9 +1,13 @@
 import { ROLES } from "@/lib/constants";
+import {
+  isPostgresError,
+  postgresErrorMessages,
+} from "@/lib/postgres-errors";
 
 /**
  * The MAIN-DB `user_role` Postgres enum, mirrored as a string-literal type.
- * Values MUST stay in sync with `enum user_role` in `prisma/schema.prisma`
- * and the `ROLES` array in `src/lib/constants.ts`.
+ * Values MUST stay in sync with `userRole` in the checked-in MAIN Drizzle
+ * schema and the `ROLES` array in `src/lib/constants.ts`.
  */
 export type SiteRole = (typeof ROLES)[number];
 
@@ -85,15 +89,14 @@ export function pickPrimaryRole(roles: readonly string[]): SiteRole {
  * column migration produces. Mirrors the identical predicate in
  * `src/lib/admin-user-roles.ts` (`isMissingColumnError`, the same class of
  * problem for `admin_users.roles`) and `src/lib/admin-preferences.ts`.
- * Matches Prisma's known-request-error code (`P2022`), the raw Postgres
- * `undefined_column` SQLSTATE (`42703`) that can surface via lower-level
- * error paths, and defensively the raw message.
+ * Matches PostgreSQL's `undefined_column` SQLSTATE (`42703`) and defensively
+ * checks the nested driver message.
  */
 export function isMissingRolesColumnError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const code = (err as { code?: string }).code;
-  if (code === "P2022" || code === "42703") return true;
-  return /column .* does not exist/i.test(err.message);
+  return (
+    isPostgresError(err, "42703") ||
+    /column .* does not exist/i.test(postgresErrorMessages(err))
+  );
 }
 
 /**

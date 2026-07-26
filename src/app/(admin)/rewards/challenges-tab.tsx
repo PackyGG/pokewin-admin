@@ -22,7 +22,7 @@ import { LinkPending } from "@/components/ux";
 /**
  * Challenges tab of the merged /rewards page (was the standalone /challenges
  * page). Challenge data lives in the MAIN game DB and is read/written via the
- * backend admin API (challengesApi) — this panel never touches it via Prisma.
+ * backend admin API (challengesApi) — this panel never writes it directly.
  *
  * Status filtering is driven by `?status=`. Only this tab's list is awaited
  * when the top-level tab is `challenges` (active-tab-only, CLAUDE.md).

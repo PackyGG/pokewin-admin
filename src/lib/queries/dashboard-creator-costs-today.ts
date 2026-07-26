@@ -1,13 +1,12 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getCreatorCostsTodayFromClickHouse } from "@/lib/clickhouse/queries/dashboard/creator-costs-today";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 import {
   getConvertedFillSessionsInWindow,
@@ -184,30 +183,8 @@ const cachedCreatorCostsToday = unstable_cache(
     void dayKey; // part of the cache key only
     void blacklistKey; // part of the cache key only (ids re-resolved below)
     return withTiming("dashboard.creatorCostsToday", async () => {
-      // CQRS serve-path: clickhouse serves the CH twin (SOLE read);
       // off/comparison serve Postgres. Parity confirmed exact (CDC-lag only).
-      return resolveAdminRead<{
-        creatorWithdrawals: number;
-        tips: number;
-        sponsoredBattles: number;
-        leaderboardGross: number;
-        affiliate: number;
-      }>("dashboard_creator_costs_today", {
-        pg: () => creatorCostsTodayFromPg(sinceIso),
-        ch: async () => {
-          const r = await getCreatorCostsTodayFromClickHouse(
-            new Date(sinceIso),
-            await getExcludedUserIds(),
-          );
-          return {
-            creatorWithdrawals: r.creatorWithdrawals,
-            tips: r.tips,
-            sponsoredBattles: r.sponsoredBattles,
-            leaderboardGross: r.leaderboardGross,
-            affiliate: r.affiliate,
-          };
-        },
-      });
+      return creatorCostsTodayFromPg(sinceIso);
     });
   },
   ["dashboard-creator-costs-today-v8-sponsor"],
@@ -221,7 +198,7 @@ async function creatorCostsTodayFromPg(sinceIso: string): Promise<{
   leaderboardGross: number;
   affiliate: number;
 }> {
-  const db = await getDb();
+  const queryDb = await getDrizzleDb();
   const since = `'${sinceIso}'::timestamptz`;
 
   // Admin-managed excluded_users blacklist — applied to the receiving
@@ -238,7 +215,7 @@ async function creatorCostsTodayFromPg(sinceIso: string): Promise<{
       const fillConverted = sumConvertedFillSessions(fillSessions);
 
       type MultiplierRow = { multiplier_payouts: string };
-      const multiplierRows = await db.$queryRawUnsafe<MultiplierRow[]>(
+      const multiplierRows = await queryRows<MultiplierRow[]>(queryDb,
         `SELECT COALESCE(SUM(v.value::numeric), 0)::text AS multiplier_payouts
          FROM vouchers v
          WHERE v.origin::text = 'creator_multiplier_payout'
@@ -254,7 +231,7 @@ async function creatorCostsTodayFromPg(sinceIso: string): Promise<{
       // (see tips-sponsor-spend.ts ENUM-SAFETY header). Matches zero rows
       // until the fill system is live → reads $0 safely.
       type TipsRow = { tips: string };
-      const tipsRows = await db.$queryRawUnsafe<TipsRow[]>(
+      const tipsRows = await queryRows<TipsRow[]>(queryDb,
         `SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS tips
          FROM ledger_transactions
          WHERE status = 'completed'
@@ -271,9 +248,9 @@ async function creatorCostsTodayFromPg(sinceIso: string): Promise<{
       // until the fill system is live → reads $0 safely. Sibling leg of
       // `tips` from the same house-funded tips/sponsor pool.
       type SponsoredBattlesRow = { sponsored_battles: string };
-      const sponsoredBattlesRows = await db.$queryRawUnsafe<
+      const sponsoredBattlesRows = await queryRows<
         SponsoredBattlesRow[]
-      >(
+      >(queryDb,
         `SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS sponsored_battles
          FROM ledger_transactions
          WHERE status = 'completed'
@@ -292,7 +269,7 @@ async function creatorCostsTodayFromPg(sinceIso: string): Promise<{
       // a creator cost here — no sponsored-% split on the dashboard. The
       // sibling Reward Costs box counts $0 of it, so no double-count.
       type LeaderboardRow = { gross: string };
-      const leaderboardRows = await db.$queryRawUnsafe<LeaderboardRow[]>(
+      const leaderboardRows = await queryRows<LeaderboardRow[]>(queryDb,
         `SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS gross
          FROM ledger_transactions
          WHERE status = 'completed'
@@ -313,7 +290,7 @@ async function creatorCostsTodayFromPg(sinceIso: string): Promise<{
       // NOT use). The Reward Costs box counts $0 of it now, so no
       // double-count between the two boxes.
       type AffiliateRow = { affiliate: string };
-      const affiliateRows = await db.$queryRawUnsafe<AffiliateRow[]>(
+      const affiliateRows = await queryRows<AffiliateRow[]>(queryDb,
         `SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS affiliate
          FROM ledger_transactions
          WHERE status = 'completed'
@@ -474,7 +451,7 @@ export async function getLeaderboardGrossClaimants(): Promise<LeaderboardGrossBr
       const since = utcStartOfDay(now);
       const sinceIso = since.toISOString();
 
-      const db = await getDb();
+      const queryDb = await getDrizzleDb();
       const sinceSql = `'${sinceIso}'::timestamptz`;
       const excludedIds = await getExcludedUserIds();
 
@@ -488,7 +465,7 @@ export async function getLeaderboardGrossClaimants(): Promise<LeaderboardGrossBr
         username: string | null;
         gross: string;
       };
-      const rows = await db.$queryRawUnsafe<ClaimantRow[]>(
+      const rows = await queryRows<ClaimantRow[]>(queryDb,
         `SELECT
            lt.metadata->>'leaderboard_id' AS leaderboard_id,
            lt.user_id AS user_id,
@@ -643,7 +620,7 @@ export async function getCreatorWithdrawalsBreakdown(): Promise<CreatorWithdrawa
       const since = utcStartOfDay(now);
       const sinceIso = since.toISOString();
 
-      const db = await getDb();
+      const queryDb = await getDrizzleDb();
       const sinceSql = `'${sinceIso}'::timestamptz`;
       const excludedIds = await getExcludedUserIds();
 
@@ -657,7 +634,7 @@ export async function getCreatorWithdrawalsBreakdown(): Promise<CreatorWithdrawa
         amount: string;
         minted_at: Date;
       };
-      const multiplierRows = await db.$queryRawUnsafe<MultiplierVoucherRow[]>(
+      const multiplierRows = await queryRows<MultiplierVoucherRow[]>(queryDb,
         `SELECT
            v.user_id AS creator_user_id,
            u.username,

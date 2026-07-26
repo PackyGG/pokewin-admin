@@ -1,8 +1,11 @@
 "use server";
 
 import { revalidatePath, revalidateTag } from "next/cache";
+import { eq } from "drizzle-orm";
+
 import { SECURITY_CACHE_TAG } from "./security-cache-tag";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { site_config } from "@/lib/db-schema/main/schema";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -13,18 +16,20 @@ export async function upsertSiteConfig(
   value: string,
   description: string | null
 ) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_upsert_site_config", "update site config");
 
   const trimmedKey = key.trim();
   if (!trimmedKey) throw new Error("Key is required");
 
-  await db.site_config.upsert({
-    where: { key: trimmedKey },
-    update: { value, description },
-    create: { key: trimmedKey, value, description },
-  });
+  await db
+    .insert(site_config)
+    .values({ key: trimmedKey, value, description })
+    .onConflictDoUpdate({
+      target: site_config.key,
+      set: { value, description, updated_at: new Date().toISOString() },
+    });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -39,11 +44,15 @@ export async function upsertSiteConfig(
 }
 
 export async function deleteSiteConfig(key: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_delete_site_config", "delete site config");
 
-  await db.site_config.delete({ where: { key } });
+  const deleted = await db
+    .delete(site_config)
+    .where(eq(site_config.key, key))
+    .returning({ key: site_config.key });
+  if (!deleted[0]) throw new Error("Site config not found");
 
   await createAdminAuditEvent({
     adminUserId: session.userId,

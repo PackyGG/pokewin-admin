@@ -1,8 +1,11 @@
 "use server";
 
 import { revalidatePath, revalidateTag } from "next/cache";
+import { eq } from "drizzle-orm";
+
 import { SECURITY_CACHE_TAG } from "./security-cache-tag";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { vault_lock_times } from "@/lib/db-schema/main/schema";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -23,7 +26,7 @@ export async function upsertVaultLockTime(
   hours: number,
   label: string
 ) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_upsert_vault_lock", "upsert vault lock windows");
 
@@ -31,14 +34,18 @@ export async function upsertVaultLockTime(
   if (!label.trim()) throw new Error("Label is required");
 
   if (id) {
-    await db.vault_lock_times.update({
-      where: { id },
-      data: { hours, label: label.trim() },
-    });
+    const updated = await db
+      .update(vault_lock_times)
+      .set({
+        hours,
+        label: label.trim(),
+        updated_at: new Date().toISOString(),
+      })
+      .where(eq(vault_lock_times.id, id))
+      .returning({ id: vault_lock_times.id });
+    if (!updated[0]) throw new Error("Vault lock time not found");
   } else {
-    await db.vault_lock_times.create({
-      data: { hours, label: label.trim() },
-    });
+    await db.insert(vault_lock_times).values({ hours, label: label.trim() });
   }
 
   await createAdminAuditEvent({
@@ -52,11 +59,15 @@ export async function upsertVaultLockTime(
 }
 
 export async function deleteVaultLockTime(id: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_delete_vault_lock", "delete vault lock windows");
 
-  await db.vault_lock_times.delete({ where: { id } });
+  const deleted = await db
+    .delete(vault_lock_times)
+    .where(eq(vault_lock_times.id, id))
+    .returning({ id: vault_lock_times.id });
+  if (!deleted[0]) throw new Error("Vault lock time not found");
 
   await createAdminAuditEvent({
     adminUserId: session.userId,

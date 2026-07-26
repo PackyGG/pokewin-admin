@@ -1,6 +1,6 @@
 # AGENTS.md — pokewin-admin
 
-Agent rulebook for Codex/Cursor sessions in this repo. **The binding rules live in [`CLAUDE.md`](./CLAUDE.md) — read that first.** This file used to carry its own full copy of those rules (~65KB); as of 2026-07-12 it's a pointer instead, so the rules have exactly one source of truth and can't drift out of sync. `CLAUDE.md` covers: Prod-DB policy, Index-or-ClickHouse, the minimal-overhead speed rule, push discipline, browser-verification/done-criteria, UI & design conventions, dual-DB architecture, auth/permission patterns, and the file organization/naming conventions.
+Agent rulebook for Codex/Cursor sessions in this repo. **The binding rules live in [`CLAUDE.md`](./CLAUDE.md) — read that first.** This file used to carry its own full copy of those rules (~65KB); as of 2026-07-12 it's a pointer instead, so the rules have exactly one source of truth and can't drift out of sync. `CLAUDE.md` covers: Prod-DB policy, the PostgreSQL/Drizzle query rule, the minimal-overhead speed rule, push discipline, browser-verification/done-criteria, UI & design conventions, dual-DB architecture, auth/permission patterns, and the file organization/naming conventions.
 
 ---
 
@@ -20,7 +20,7 @@ Full protocol: `SESSION_MEMORY.md`.
 
 | Service | Required | Notes |
 |---|---|---|
-| **Next.js dev server** | Yes | `npm run dev` → `http://localhost:3000` (Turbopack; runs dual `prisma generate` first) |
+| **Next.js dev server** | Yes | `npm run dev` → `http://localhost:3000` (Turbopack) |
 | **PostgreSQL — Admin DB** | Yes | `ADMIN_DATABASE_URL` — auth, audit, admin-only tables |
 | **PostgreSQL — Main DB** | Yes (most pages) | `DATABASE_URL` — game data; **read-only** in agent policy |
 | **Backend API / Packy WS** | Optional | Creator mutations, live chat — need `BACKEND_API_*` / upstream WS |
@@ -29,7 +29,8 @@ No Docker Compose in repo. Databases are external hosted Postgres **or** a local
 
 ### Dependency install (update script)
 
-`npm install` only. Prisma clients are regenerated automatically by `npm run dev` / `npm run build`.
+`npm install` only. Refresh checked-in Drizzle schema snapshots only after a
+database catalog change (`npm run db:pull:main` / `npm run db:pull:admin`).
 
 ### Environment
 
@@ -40,18 +41,22 @@ Create `.env.local` (gitignored) with at minimum:
 - `SESSION_SECRET`
 - `ADMIN_SEED_PASSWORD` (for `npm run admin:seed`)
 
-Prisma CLI reads `.env` / shell exports — `dotenv/config` in `prisma*.config.ts` does **not** load `.env.local`. Either export vars before `prisma db push`, or duplicate keys into `.env`.
+Drizzle tooling reads `.env` / shell exports and does **not** load `.env.local`
+automatically. Export the variables or duplicate the required keys into `.env`
+before introspection or admin SQL work.
 
 **Preferred for real work:** use the owner's hosted `ADMIN_DATABASE_URL` + `DATABASE_URL` secrets (Cursor Cloud secrets). **Ephemeral VM fallback:** local Postgres 16 (`sudo pg_ctlcluster 16 main start`), two databases, then:
 
 ```bash
 export $(grep -v '^#' .env.local | xargs)
-npx prisma db push --schema=prisma/admin/schema.prisma --config=prisma/admin/prisma.config.ts
-npx prisma db push
+npm run db:pull:main
+npm run db:pull:admin
 npm run admin:seed
 ```
 
-Admin DB is **`db push`-managed** — do **not** run `npm run admin:migrate` on a db-push-shaped DB (destructive reset risk).
+Admin schema changes use reviewed, idempotent SQL under
+`drizzle/admin/migrations`: `npm run admin:sql -- <file>`, followed by
+`npm run db:pull:admin`. Never run schema-push tooling against MAIN.
 
 ### Lint / typecheck / build / test
 

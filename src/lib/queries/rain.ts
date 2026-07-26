@@ -1,5 +1,6 @@
-import { getDb } from "@/lib/db";
-import { adminDb } from "@/lib/admin-db";
+import { queryMainRows } from "@/lib/drizzle-query";
+import { adminDrizzle } from "@/lib/drizzle";
+import { admin_users } from "@/lib/db-schema/admin/schema";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 
@@ -27,58 +28,70 @@ export async function getRains(params: {
   minParticipants?: number;
   maxParticipants?: number;
 }): Promise<PaginatedResult<RainListItem>> {
-  const db = await getDb();
-  const { page = 1, perPage = 20, status, search } = params;
-
-  const where: Record<string, unknown> = {};
-  if (status && status !== "all") {
-    where.status = status;
-  }
-
-  if (search) {
-    const isUuid = /^[0-9a-f]{8}-/i.test(search);
-    where.OR = [
-      ...(isUuid ? [{ id: search }] : []),
-      { user: { username: { contains: search, mode: "insensitive" } } },
-    ];
-  }
-
-  const tipFilter: Record<string, number> = {};
-  if (params.minTips != null && !isNaN(params.minTips)) tipFilter.gte = params.minTips;
-  if (params.maxTips != null && !isNaN(params.maxTips)) tipFilter.lte = params.maxTips;
-  if (Object.keys(tipFilter).length > 0) where.tip_amount_usd = tipFilter;
-
-  const poolFilter: Record<string, number> = {};
-  if (params.minPool != null && !isNaN(params.minPool)) poolFilter.gte = params.minPool;
-  if (params.maxPool != null && !isNaN(params.maxPool)) poolFilter.lte = params.maxPool;
-  if (Object.keys(poolFilter).length > 0) where.total_pool_usd = poolFilter;
-
-  const partFilter: Record<string, number> = {};
-  if (params.minParticipants != null && !isNaN(params.minParticipants)) partFilter.gte = params.minParticipants;
-  if (params.maxParticipants != null && !isNaN(params.maxParticipants)) partFilter.lte = params.maxParticipants;
-  if (Object.keys(partFilter).length > 0) where.participant_count = partFilter;
+  const page = Math.max(1, Math.floor(params.page ?? 1));
+  const perPage = Math.max(1, Math.min(200, Math.floor(params.perPage ?? 20)));
+  const status = params.status && params.status !== "all" ? params.status : null;
+  const search = params.search?.trim() || null;
+  const searchId =
+    search && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(search) ? search : null;
+  const numberOrNull = (value: number | undefined) =>
+    value != null && Number.isFinite(value) ? value : null;
+  type RainRow = {
+    id: string;
+    base_amount_usd: string;
+    tip_amount_usd: string;
+    total_pool_usd: string;
+    status: string;
+    participant_count: number;
+    winner_username: string | null;
+    starts_at: Date;
+    ends_at: Date;
+  };
 
   // List view skips provably-fair columns (server/client seeds, result
   // hashes) — those are only surfaced on the detail page.
   const [rains, total] = await Promise.all([
-    db.rains.findMany({
-      where,
-      orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-      select: {
-        id: true,
-        base_amount_usd: true,
-        tip_amount_usd: true,
-        total_pool_usd: true,
-        status: true,
-        participant_count: true,
-        starts_at: true,
-        ends_at: true,
-        user: { select: { username: true } },
-      },
-    }),
-    db.rains.count({ where }),
+    queryMainRows<RainRow[]>(
+      `SELECT r.id, r.base_amount_usd::text AS base_amount_usd,
+              r.tip_amount_usd::text AS tip_amount_usd,
+              r.total_pool_usd::text AS total_pool_usd,
+              r.status::text AS status, r.participant_count,
+              u.username AS winner_username, r.starts_at, r.ends_at
+       FROM rains r
+       LEFT JOIN "user" u ON u.id = r.winner_user_id
+       WHERE ($1::text IS NULL OR r.status::text = $1)
+         AND ($3::text IS NULL OR ($2::text IS NOT NULL AND r.id = $2::uuid)
+              OR u.username ILIKE '%' || $3 || '%')
+         AND ($4::numeric IS NULL OR r.tip_amount_usd >= $4)
+         AND ($5::numeric IS NULL OR r.tip_amount_usd <= $5)
+         AND ($6::numeric IS NULL OR r.total_pool_usd >= $6)
+         AND ($7::numeric IS NULL OR r.total_pool_usd <= $7)
+         AND ($8::integer IS NULL OR r.participant_count >= $8)
+         AND ($9::integer IS NULL OR r.participant_count <= $9)
+       ORDER BY r.created_at DESC
+       LIMIT $10 OFFSET $11`,
+      status, searchId, search, numberOrNull(params.minTips),
+      numberOrNull(params.maxTips), numberOrNull(params.minPool),
+      numberOrNull(params.maxPool), numberOrNull(params.minParticipants),
+      numberOrNull(params.maxParticipants), perPage, (page - 1) * perPage,
+    ),
+    queryMainRows<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count
+       FROM rains r LEFT JOIN "user" u ON u.id = r.winner_user_id
+       WHERE ($1::text IS NULL OR r.status::text = $1)
+         AND ($3::text IS NULL OR ($2::text IS NOT NULL AND r.id = $2::uuid)
+              OR u.username ILIKE '%' || $3 || '%')
+         AND ($4::numeric IS NULL OR r.tip_amount_usd >= $4)
+         AND ($5::numeric IS NULL OR r.tip_amount_usd <= $5)
+         AND ($6::numeric IS NULL OR r.total_pool_usd >= $6)
+         AND ($7::numeric IS NULL OR r.total_pool_usd <= $7)
+         AND ($8::integer IS NULL OR r.participant_count >= $8)
+         AND ($9::integer IS NULL OR r.participant_count <= $9)`,
+      status, searchId, search, numberOrNull(params.minTips),
+      numberOrNull(params.maxTips), numberOrNull(params.minPool),
+      numberOrNull(params.maxPool), numberOrNull(params.minParticipants),
+      numberOrNull(params.maxParticipants),
+    ).then((rows) => Number(rows[0]?.count ?? 0)),
   ]);
 
   return {
@@ -89,7 +102,7 @@ export async function getRains(params: {
       totalPoolUsd: toNumber(r.total_pool_usd),
       status: r.status,
       participantCount: r.participant_count,
-      winnerUsername: r.user?.username ?? null,
+      winnerUsername: r.winner_username,
       startsAt: r.starts_at.toISOString(),
       endsAt: r.ends_at.toISOString(),
     })),
@@ -147,24 +160,36 @@ export type RainHeader = {
 };
 
 export async function getRainHeader(id: string): Promise<RainHeader | null> {
-  const db = await getDb();
-  const rain = await db.rains.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      status: true,
-      base_amount_usd: true,
-      tip_amount_usd: true,
-      total_pool_usd: true,
-      participant_count: true,
-      starts_at: true,
-      ends_at: true,
-      completed_at: true,
-      winner_user_id: true,
-      user: { select: { username: true } },
-      _count: { select: { rain_tips: true } },
-    },
-  });
+  const rain = (
+    await queryMainRows<{
+      id: string;
+      status: string;
+      base_amount_usd: string;
+      tip_amount_usd: string;
+      total_pool_usd: string;
+      participant_count: number;
+      starts_at: Date;
+      ends_at: Date;
+      completed_at: Date | null;
+      winner_user_id: string | null;
+      winner_username: string | null;
+      tip_count: string;
+    }[]>(
+      `SELECT r.id, r.status::text AS status,
+              r.base_amount_usd::text AS base_amount_usd,
+              r.tip_amount_usd::text AS tip_amount_usd,
+              r.total_pool_usd::text AS total_pool_usd,
+              r.participant_count, r.starts_at, r.ends_at, r.completed_at,
+              r.winner_user_id, u.username AS winner_username,
+              COUNT(rt.id)::text AS tip_count
+       FROM rains r
+       LEFT JOIN "user" u ON u.id = r.winner_user_id
+       LEFT JOIN rain_tips rt ON rt.rain_id = r.id
+       WHERE r.id = $1::uuid
+       GROUP BY r.id, u.username`,
+      id,
+    )
+  )[0];
 
   if (!rain) return null;
 
@@ -179,8 +204,8 @@ export async function getRainHeader(id: string): Promise<RainHeader | null> {
     endsAt: rain.ends_at.toISOString(),
     completedAt: rain.completed_at?.toISOString() ?? null,
     winnerUserId: rain.winner_user_id,
-    winnerUsername: rain.user?.username ?? null,
-    tipCount: rain._count.rain_tips,
+    winnerUsername: rain.winner_username,
+    tipCount: Number(rain.tip_count),
   };
 }
 
@@ -193,29 +218,39 @@ export async function getRainHeader(id: string): Promise<RainHeader | null> {
  * parallel (separate-DB lookup, joined in code — no cross-DB join).
  */
 export async function getRainTips(id: string): Promise<RainTipItem[]> {
-  const db = await getDb();
   const [tips, adminUsers] = await Promise.all([
-    db.rain_tips.findMany({
-      where: { rain_id: id },
-      include: {
-        user: { select: { username: true, email: true, role: true } },
-      },
-      orderBy: { created_at: "desc" },
-    }),
-    adminDb.admin_users.findMany({ select: { email: true } }),
+    queryMainRows<{
+      id: string;
+      user_id: string;
+      username: string | null;
+      email: string | null;
+      role: string | null;
+      amount_usd: string;
+      created_at: Date;
+    }[]>(
+      `SELECT rt.id, rt.user_id, u.username, u.email,
+              u.role::text AS role, rt.amount_usd::text AS amount_usd,
+              rt.created_at
+       FROM rain_tips rt
+       LEFT JOIN "user" u ON u.id = rt.user_id
+       WHERE rt.rain_id = $1::uuid
+       ORDER BY rt.created_at DESC`,
+      id,
+    ),
+    adminDrizzle.select({ email: admin_users.email }).from(admin_users),
   ]);
 
   const adminEmails = new Set(adminUsers.map((a) => a.email));
 
   return tips.map((t) => {
     const isTeam =
-      t.user?.role === "admin" ||
-      t.user?.role === "support" ||
-      (t.user?.email ? adminEmails.has(t.user.email) : false);
+      t.role === "admin" ||
+      t.role === "support" ||
+      (t.email ? adminEmails.has(t.email) : false);
     return {
       id: t.id,
       userId: t.user_id,
-      username: t.user?.username ?? null,
+      username: t.username,
       amountUsd: toNumber(t.amount_usd),
       isTeamMember: isTeam,
       createdAt: t.created_at.toISOString(),
@@ -229,30 +264,39 @@ export async function getRainEntries(
   page = 1,
   perPage = 20,
 ): Promise<PaginatedResult<RainEntryItem>> {
-  const db = await getDb();
+  page = Math.max(1, Math.floor(page));
+  perPage = Math.max(1, Math.min(200, Math.floor(perPage)));
 
   const [entries, total] = await Promise.all([
-    db.rain_entries.findMany({
-      where: { rain_id: id },
-      select: {
-        id: true,
-        user_id: true,
-        turnstile_verified_at: true,
-        created_at: true,
-        user: { select: { username: true } },
-      },
-      orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-    }),
-    db.rain_entries.count({ where: { rain_id: id } }),
+    queryMainRows<{
+      id: string;
+      user_id: string;
+      username: string | null;
+      turnstile_verified_at: Date;
+      created_at: Date;
+    }[]>(
+      `SELECT re.id, re.user_id, u.username,
+              re.turnstile_verified_at, re.created_at
+       FROM rain_entries re
+       LEFT JOIN "user" u ON u.id = re.user_id
+       WHERE re.rain_id = $1::uuid
+       ORDER BY re.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      id,
+      perPage,
+      (page - 1) * perPage,
+    ),
+    queryMainRows<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count FROM rain_entries WHERE rain_id = $1::uuid`,
+      id,
+    ).then((rows) => Number(rows[0]?.count ?? 0)),
   ]);
 
   return {
     data: entries.map((e) => ({
       id: e.id,
       userId: e.user_id,
-      username: e.user?.username ?? null,
+      username: e.username,
       turnstileVerifiedAt: e.turnstile_verified_at.toISOString(),
       createdAt: e.created_at.toISOString(),
     })),

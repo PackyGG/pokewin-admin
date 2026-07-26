@@ -1,6 +1,7 @@
 import "server-only";
 
-import { getDb } from "@/lib/db";
+import { sql } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
 import { creatorsApi } from "@/lib/backend-api";
 
 // Creator deal/stream sessions live ONLY in the backend creators API —
@@ -40,7 +41,7 @@ let inflight: Promise<string> | null = null;
  * creator made while live on a deal — house-funded "sponsored" play that
  * isn't a real customer bet.
  *
- * Returns a ready-to-inject CTE definition (use via `Prisma.raw`). A
+ * Returns a ready-to-inject CTE definition. A
  * still-live session (no `ended_at`) is treated as running until "now".
  *
  * Cross-request cached for 5 minutes, and SINGLE-FLIGHT: concurrent
@@ -73,11 +74,13 @@ export async function getCreatorSessionWindowsCte(): Promise<string> {
 }
 
 async function buildCte(): Promise<string> {
-  const db = await getDb();
-  const creators = await db.user.findMany({
-    where: { role: "creator" },
-    select: { id: true },
-  });
+  const db = await getDrizzleDb();
+  const result = await db.execute<{ id: string }>(sql`
+    SELECT id
+    FROM "user"
+    WHERE role = 'creator'
+  `);
+  const creators = result.rows;
   if (creators.length === 0) return EMPTY_CTE;
 
   const nowMs = Date.now();

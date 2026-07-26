@@ -1,5 +1,5 @@
-import { adminDb } from "@/lib/admin-db";
-import type { Prisma } from "@/generated/admin-prisma/client";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 
 export async function createAdminAuditEvent(params: {
   adminUserId: string;
@@ -27,13 +27,18 @@ export async function createAdminAuditEvent(params: {
     }
   }
 
-  await adminDb.admin_audit_events.create({
-    data: {
-      admin_user_id: params.adminUserId,
-      event_type: params.eventType,
-      target_user_id: params.targetUserId ?? null,
-      ip: ip ?? null,
-      metadata: (params.metadata ?? undefined) as Prisma.InputJsonValue | undefined,
-    },
-  });
+  const metadata =
+    params.metadata === undefined ? null : JSON.stringify(params.metadata);
+  await adminDrizzle.execute(sql`
+    INSERT INTO admin_audit_events (
+      admin_user_id, event_type, target_user_id, ip, metadata
+    )
+    VALUES (
+      ${params.adminUserId}::uuid,
+      ${params.eventType},
+      ${params.targetUserId ?? null},
+      ${ip ?? null},
+      ${metadata}::jsonb
+    )
+  `);
 }

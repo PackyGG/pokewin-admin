@@ -2,10 +2,14 @@
 
 import crypto from "crypto";
 import { revalidatePath } from "next/cache";
-import { adminDb } from "@/lib/admin-db";
+import { and, eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_users, creator_socials, creator_webhooks } from "@/lib/db-schema/admin/schema";
+import { user } from "@/lib/db-schema/main/schema";
 import { verifySession, sessionHasRole } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { fetchPublicStats } from "@/lib/socials-public";
+import { assertSafeWebhookUrl, isSafeWebhookUrl } from "@/lib/security/webhook-url";
 
 /**
  * Get the main site user_id linked to the current admin creator.
@@ -18,25 +22,24 @@ import { fetchPublicStats } from "@/lib/socials-public";
  * the main user_id in the admin_users username field as "creator_{username}"
  * and match by email. We query the main DB to find the user by email.
  */
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 
 async function getCreatorTargetUserId(): Promise<string> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await verifySession();
   // Holds the creator role (primary OR secondary in a multi-role set).
   if (!sessionHasRole(session, "creator")) throw new Error("Not a creator");
 
   // Look up the admin_user to get email, then find main user by email
-  const adminUser = await adminDb.admin_users.findUnique({
-    where: { id: session.userId },
-    select: { email: true },
-  });
+  const [adminUser] = await adminDrizzle.select({ email: admin_users.email })
+    .from(admin_users).where(eq(admin_users.id, session.userId)).limit(1);
   if (!adminUser) throw new Error("Admin user not found");
 
-  const mainUser = await db.user.findFirst({
-    where: { email: adminUser.email, role: "creator" },
-    select: { id: true },
-  });
+  const [mainUser] = await db
+    .select({ id: user.id })
+    .from(user)
+    .where(and(eq(user.email, adminUser.email), eq(user.role, "creator")))
+    .limit(1);
 
   // Use main user id if linked, otherwise use admin user id
   return mainUser?.id ?? session.userId;
@@ -47,26 +50,22 @@ async function getCreatorTargetUserId(): Promise<string> {
 export async function createCreatorWebhook(data: { url: string }) {
   const userId = await getCreatorTargetUserId();
 
-  try {
-    new URL(data.url);
-  } catch {
-    throw new Error("Invalid webhook URL");
-  }
+  // SSRF egress guard (SECURITY_AUDIT.md MEDIUM-1) — replaces the parse-only
+  // `new URL()` check: also rejects non-http(s) + private/loopback/internal.
+  assertSafeWebhookUrl(data.url);
 
   const secret = crypto.randomBytes(32).toString("hex");
 
   // Explicit select — only the id is consumed downstream, and a default
-  // RETURNING * crashes with P2022 when prod is missing a later-migration
+  // RETURNING * crashes with 42703 when prod is missing a later-migration
   // column the generated client knows about.
-  const webhook = await adminDb.creator_webhooks.create({
-    data: {
+  const [webhook] = await adminDrizzle.insert(creator_webhooks).values({
       target_user_id: userId,
       url: data.url,
       secret,
       type: "balance_fill",
-    },
-    select: { id: true },
-  });
+    }).returning({ id: creator_webhooks.id });
+  if (!webhook) throw new Error("Webhook insert returned no row");
 
   // Audit: the admin-side createWebhook in creators/actions.ts logs the same
   // creator_webhooks insert; mirror it here so the self-service path leaves an
@@ -89,26 +88,20 @@ export async function updateCreatorWebhook(
 ) {
   const userId = await getCreatorTargetUserId();
 
+  // SSRF egress guard (SECURITY_AUDIT.md MEDIUM-1).
   if (data.url) {
-    try {
-      new URL(data.url);
-    } catch {
-      throw new Error("Invalid webhook URL");
-    }
+    assertSafeWebhookUrl(data.url);
   }
 
-  const webhook = await adminDb.creator_webhooks.findUnique({ where: { id: webhookId } });
+  const [webhook] = await adminDrizzle.select().from(creator_webhooks)
+    .where(and(eq(creator_webhooks.id, webhookId), eq(creator_webhooks.target_user_id, userId))).limit(1);
   if (!webhook || webhook.target_user_id !== userId) throw new Error("Webhook not found");
 
-  await adminDb.creator_webhooks.update({
-    where: { id: webhookId },
-    data: {
+  await adminDrizzle.update(creator_webhooks).set({
       ...(data.url !== undefined && { url: data.url }),
       ...(data.enabled !== undefined && { enabled: data.enabled }),
-      updated_at: new Date(),
-    },
-    select: { id: true },
-  });
+      updated_at: new Date().toISOString(),
+    }).where(and(eq(creator_webhooks.id, webhookId), eq(creator_webhooks.target_user_id, userId)));
 
   // Audit: editing the URL re-points where signed balance-fill payloads go,
   // so trace it like the admin-side updateWebhook does. Capture before/after
@@ -134,18 +127,25 @@ export async function updateCreatorWebhook(
 export async function deleteCreatorWebhook(webhookId: string) {
   const userId = await getCreatorTargetUserId();
 
-  const webhook = await adminDb.creator_webhooks.findUnique({ where: { id: webhookId } });
-  if (!webhook || webhook.target_user_id !== userId) throw new Error("Webhook not found");
-
-  await adminDb.creator_webhooks.delete({ where: { id: webhookId }, select: { id: true } });
+  const deleted = await adminDrizzle.delete(creator_webhooks)
+    .where(and(eq(creator_webhooks.id, webhookId), eq(creator_webhooks.target_user_id, userId)))
+    .returning({ id: creator_webhooks.id });
+  if (deleted.length === 0) throw new Error("Webhook not found");
   revalidatePath("/my-profile");
 }
 
 export async function testCreatorWebhook(webhookId: string) {
   const userId = await getCreatorTargetUserId();
 
-  const webhook = await adminDb.creator_webhooks.findUnique({ where: { id: webhookId } });
+  const [webhook] = await adminDrizzle.select().from(creator_webhooks)
+    .where(and(eq(creator_webhooks.id, webhookId), eq(creator_webhooks.target_user_id, userId))).limit(1);
   if (!webhook || webhook.target_user_id !== userId) throw new Error("Webhook not found");
+
+  // Fetch-time SSRF guard (SECURITY_AUDIT.md MEDIUM-1) — defends against any
+  // URL stored before the store-time validation above.
+  if (!isSafeWebhookUrl(webhook.url)) {
+    return { success: false, status: 0, error: "Webhook URL host is not allowed" };
+  }
 
   const isDiscord = webhook.url.includes("discord.com/api/webhooks/");
 
@@ -184,10 +184,10 @@ export async function testCreatorWebhook(webhookId: string) {
 export async function unlinkSocial(socialId: string) {
   const userId = await getCreatorTargetUserId();
 
-  const social = await adminDb.creator_socials.findUnique({ where: { id: socialId } });
-  if (!social || social.target_user_id !== userId) throw new Error("Social connection not found");
-
-  await adminDb.creator_socials.delete({ where: { id: socialId }, select: { id: true } });
+  const deleted = await adminDrizzle.delete(creator_socials)
+    .where(and(eq(creator_socials.id, socialId), eq(creator_socials.target_user_id, userId)))
+    .returning({ id: creator_socials.id });
+  if (deleted.length === 0) throw new Error("Social connection not found");
   revalidatePath("/my-profile");
 }
 
@@ -201,25 +201,22 @@ export async function linkSocialByUsername(platform: string, username: string) {
 
   const stats = await fetchPublicStats(platform, trimmed);
 
-  await adminDb.creator_socials.upsert({
-    where: {
-      target_user_id_platform: { target_user_id: userId, platform: platform as "twitter" | "youtube" | "kick" | "instagram" },
-    },
-    create: {
+  const socialPlatform = platform as "twitter" | "youtube" | "kick" | "instagram";
+  await adminDrizzle.insert(creator_socials).values({
       target_user_id: userId,
-      platform: platform as "twitter" | "youtube" | "kick" | "instagram",
+      platform: socialPlatform,
       username: trimmed,
       platform_user_id: stats.platformUserId ?? null,
       follower_count: stats.followerCount ?? 0,
-      last_fetched_at: new Date(),
-    },
-    update: {
+      last_fetched_at: new Date().toISOString(),
+    }).onConflictDoUpdate({
+      target: [creator_socials.target_user_id, creator_socials.platform],
+      set: {
       username: trimmed,
       platform_user_id: stats.platformUserId ?? null,
       follower_count: stats.followerCount ?? 0,
-      last_fetched_at: new Date(),
+      last_fetched_at: new Date().toISOString(),
     },
-    select: { id: true },
   });
 
   revalidatePath("/my-profile");

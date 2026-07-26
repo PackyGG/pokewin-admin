@@ -1,9 +1,8 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
 import { unstable_cache } from "next/cache";
 import { singleFlight } from "@/lib/cache/single-flight";
-import { getDb } from "@/lib/db";
-import { Prisma } from "@/generated/prisma/client";
 import { toNumber } from "@/lib/utils/decimal";
 import { MS_PER_DAY } from "@/lib/utils/time";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -546,11 +545,9 @@ async function getCostContributors(
   limit: number,
 ): Promise<CostBreakdownContributor[]> {
   const safeLimit = Math.max(1, Math.min(limit, 50));
-  const db = await getDb();
   const excluded = await getExcludedUserIds();
-  const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
 
-  const rows = await db.$queryRaw<
+  const rows = await queryMainRows<
     {
       user_id: string;
       username: string | null;
@@ -558,7 +555,8 @@ async function getCostContributors(
       payout_total: string;
       net: string;
     }[]
-  >`
+  >(
+    `
     SELECT
       u.id::text AS user_id,
       u.username,
@@ -568,11 +566,14 @@ async function getCostContributors(
     FROM balances b
     JOIN "user" u ON u.id = b.user_id
     WHERE u.role NOT IN ('admin', 'support', 'creator')
-      ${Prisma.raw(blacklistIdNotIn)}
+      AND NOT (u.id = ANY($1::text[]))
       AND (b.total_wagered <> 0 OR b.total_won <> 0)
     ORDER BY ABS(b.total_wagered - b.total_won) DESC
-    LIMIT ${safeLimit}
-  `;
+    LIMIT $2
+    `,
+    excluded,
+    safeLimit,
+  );
   return rows.map((r) => ({
     userId: r.user_id,
     username: r.username,
@@ -607,7 +608,6 @@ async function getBridgeTerms(
   dropUserIds: string[],
 ): Promise<BridgeTerms> {
   return withTiming("insights.costBreakdown.bridge", async () => {
-    const db = await getDb();
     // Same scope predicate `realCustomersScope` bakes in: drop admin /
     // support / creator + the admin blacklist. `dropUserIds` is the
     // blacklist ∪ creator-id list (server-built ids, escaped defensively
@@ -622,7 +622,7 @@ async function getBridgeTerms(
     type VchRow = { issued: string; claimed: string };
 
     const [cardWd, inv, vch] = await Promise.all([
-      db.$queryRawUnsafe<CardRow[]>(
+      queryMainRows<CardRow[]>(
         `SELECT COALESCE(SUM(cwr.total_value_usd::numeric), 0)::text AS total
          FROM card_withdrawal_requests cwr
          JOIN "user" u ON u.id = cwr.user_id
@@ -630,7 +630,7 @@ async function getBridgeTerms(
            AND COALESCE(cwr.completed_at, cwr.shipped_at) >= ${since}
            AND ${scope}`,
       ),
-      db.$queryRawUnsafe<InvRow[]>(
+      queryMainRows<InvRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN ui.obtained_at >= ${since} THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained,
            COALESCE(SUM(CASE WHEN (ui.sold_at >= ${since} OR ui.exchanged_at >= ${since}) THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed
@@ -639,7 +639,7 @@ async function getBridgeTerms(
          WHERE (ui.obtained_at >= ${since} OR ui.sold_at >= ${since} OR ui.exchanged_at >= ${since})
            AND ${scope}`,
       ),
-      db.$queryRawUnsafe<VchRow[]>(
+      queryMainRows<VchRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN v.created_at >= ${since} THEN v.value::numeric ELSE 0 END), 0)::text AS issued,
            COALESCE(SUM(CASE WHEN v.claimed_at >= ${since} THEN v.value::numeric ELSE 0 END), 0)::text AS claimed
@@ -666,11 +666,9 @@ async function getBridgeTerms(
  * `getWindowMetrics` scope so the whole waterfall sits on one population.
  */
 async function getCreatorIds(): Promise<string[]> {
-  const db = await getDb();
-  const rows = await db.user.findMany({
-    where: { role: "creator" },
-    select: { id: true },
-  });
+  const rows = await queryMainRows<{ id: string }[]>(
+    `SELECT id FROM "user" WHERE role::text = 'creator'`,
+  );
   return rows.map((r) => r.id);
 }
 
@@ -691,7 +689,6 @@ async function getCountedAdjustmentSumsByCategory(
   window: MetricWindow,
 ): Promise<{ byCategory: Map<BalanceAdjustmentCategory, number>; total: number }> {
   return withTiming("insights.costBreakdown.countedAdjustments", async () => {
-    const db = await getDb();
     const scope = await getMetricsScope();
     const since = window.since;
     const sinceClause =
@@ -708,7 +705,7 @@ async function getCountedAdjustmentSumsByCategory(
     ).join(",\n         ");
 
     type Row = Record<string, string>;
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryMainRows<Row[]>(
       `WITH ${scope.sessionWindowsCte}
        SELECT
          ${selects}

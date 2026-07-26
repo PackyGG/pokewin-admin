@@ -2,8 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { Prisma, type PrismaClient } from "@/generated/prisma/client";
-import { getDb } from "@/lib/db";
+import { sql } from "drizzle-orm";
+import { getDrizzleDb, type MainDrizzleDb } from "@/lib/db";
 import { verifySession, requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -14,6 +14,10 @@ import {
   type ServerActionResult,
 } from "@/lib/errors/server-action-result";
 import { logError, logWarn } from "@/lib/errors/logger";
+import {
+  isPostgresError,
+  postgresErrorMessages,
+} from "@/lib/postgres-errors";
 import {
   ONEPIECE_RARITY_VALUES,
   isOnePieceSetName,
@@ -56,7 +60,7 @@ const createCardSchema = z.object({
  * doesn't exist on this database. These are OnePiece-only game-design
  * columns added by a later migration; on a DB where that migration
  * hasn't run yet, any INSERT/UPDATE that names them fails with Postgres
- * "column does not exist" → Prisma surfaces it as P2022.
+ * "column does not exist" errors.
  *
  * We match the engine code first (stable across messages) and fall back
  * to the message text so we still recognise it if a future engine
@@ -64,16 +68,12 @@ const createCardSchema = z.object({
  * cost/power so we never silently swallow an unrelated missing column.
  */
 function isMissingCostPowerColumnError(e: unknown): boolean {
-  if (
-    e instanceof Prisma.PrismaClientKnownRequestError &&
-    e.code === "P2022"
-  ) {
-    return true;
-  }
-  if (e instanceof Error) {
-    return /column\b[^]*\b(cost|power)\b[^]*does not exist/i.test(e.message);
-  }
-  return false;
+  return (
+    isPostgresError(e, "42703") ||
+    /column\b[^]*\b(cost|power)\b[^]*does not exist/i.test(
+      postgresErrorMessages(e),
+    )
+  );
 }
 
 export async function uploadCardImage(formData: FormData): Promise<string> {
@@ -104,7 +104,7 @@ export async function createCard(data: {
   cost?: number | null;
   power?: number | null;
 }): Promise<ServerActionResult<{ id: string }>> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await verifySession();
 
   const parsed = createCardSchema.safeParse(data);
@@ -132,10 +132,11 @@ export async function createCard(data: {
   // expected to live under their set.
   let isOnePiece = false;
   if (input.setId) {
-    const set = await db.sets.findUnique({
-      where: { id: input.setId },
-      select: { id: true, name: true },
-    });
+    const set = (
+      await db.execute<{ id: string; name: string }>(sql`
+        SELECT id, name FROM sets WHERE id = ${input.setId}::uuid LIMIT 1
+      `)
+    ).rows[0];
     if (!set) return fail("Set not found", "NOT_FOUND");
     isOnePiece = isOnePieceSetName(set.name);
   }
@@ -166,37 +167,50 @@ export async function createCard(data: {
   }
 
   // Build the row WITHOUT cost/power first. Omitting them entirely (vs.
-  // passing `null`) keeps those columns out of Prisma's generated INSERT
+  // passing `null`) keeps those columns out of the INSERT
   // column list — so the write succeeds even on a DB where the
   // cost/power migration hasn't run. `select: { id: true }` is the other
   // half of that: it restricts the RETURNING clause to `id` only,
-  // otherwise Prisma's default RETURNING lists every model column
+  // and the explicit RETURNING avoids unrelated model columns
   // (including cost/power) and would fail before we ever read the row.
-  const baseData = {
-    name: input.name,
-    image_url: input.imageUrl,
-    price: input.price,
-    price_raw: input.price,
-    hp: input.hp,
-    rarity: input.rarity,
-    artist: input.artist?.trim() ? input.artist.trim() : null,
-    tcgplayer_id: input.tcgplayerId,
-    type: input.type,
-    card_number: input.cardNumber?.trim() || null,
-    set_id: input.setId,
-  };
-  // Only OnePiece cards with real values include cost/power. (Pokemon
-  // had them forced to null above, so this spread is empty for them.)
-  const withStats = {
-    ...baseData,
-    ...(input.cost != null ? { cost: input.cost } : {}),
-    ...(input.power != null ? { power: input.power } : {}),
+  const insertCard = async (includeStats: boolean): Promise<{ id: string }> => {
+    const result = includeStats
+      ? await db.execute<{ id: string }>(sql`
+          INSERT INTO cards (
+            name, image_url, price, price_raw, hp, rarity, artist,
+            tcgplayer_id, type, card_number, set_id, cost, power
+          ) VALUES (
+            ${input.name}, ${input.imageUrl}, ${input.price}, ${input.price},
+            ${input.hp}, ${input.rarity},
+            ${input.artist?.trim() ? input.artist.trim() : null},
+            ${input.tcgplayerId}, ${input.type},
+            ${input.cardNumber?.trim() || null}, ${input.setId}::uuid,
+            ${input.cost ?? null}, ${input.power ?? null}
+          )
+          RETURNING id
+        `)
+      : await db.execute<{ id: string }>(sql`
+          INSERT INTO cards (
+            name, image_url, price, price_raw, hp, rarity, artist,
+            tcgplayer_id, type, card_number, set_id
+          ) VALUES (
+            ${input.name}, ${input.imageUrl}, ${input.price}, ${input.price},
+            ${input.hp}, ${input.rarity},
+            ${input.artist?.trim() ? input.artist.trim() : null},
+            ${input.tcgplayerId}, ${input.type},
+            ${input.cardNumber?.trim() || null}, ${input.setId}::uuid
+          )
+          RETURNING id
+        `);
+    const row = result.rows[0];
+    if (!row) throw new Error("Card insert returned no row");
+    return row;
   };
 
   let card: { id: string };
   try {
     try {
-      card = await db.cards.create({ data: withStats, select: { id: true } });
+      card = await insertCard(input.cost != null || input.power != null);
     } catch (err) {
       // OnePiece path: we tried to write cost/power but this DB doesn't
       // have the columns yet. Retry without them so the card is still
@@ -209,15 +223,15 @@ export async function createCard(data: {
           "cost/power columns missing on this DB — inserting without them; run the cards cost/power migration to persist these fields",
           err,
         );
-        card = await db.cards.create({ data: baseData, select: { id: true } });
+        card = await insertCard(false);
       } else {
         throw err;
       }
     }
   } catch (err) {
-    // Real Prisma error → server log (Vercel function logs) so the
+    // Real database error → server log (Vercel function logs) so the
     // on-call sees the column / constraint that actually failed. The
-    // client gets the message too (no secrets in a Prisma schema/
+    // client gets the message too (no secrets in a database schema/
     // constraint message) so the toast finally shows the real cause
     // instead of an opaque 500 digest.
     logError("cards.createCard", "db.cards.create failed", err);
@@ -255,7 +269,7 @@ export async function updateCard(
     setId: string | null;
   },
 ): Promise<ServerActionResult<{ id: string }>> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await verifySession();
 
   if (!data.name.trim()) return fail("Name is required", "VALIDATION");
@@ -274,29 +288,29 @@ export async function updateCard(
 
   // The update payload never names cost/power (those are set only at
   // create time for OnePiece). The resilience that matters here is
-  // `select: { id: true }`: without it, Prisma's UPDATE adds a RETURNING
+  // Return only the id so the update does not depend on unrelated columns.
   // listing every model column — including cost/power — and the write
-  // fails with P2022 on a DB that hasn't run the cost/power migration.
+  // fails with 42703 on a DB that hasn't run the cost/power migration.
   // Restricting RETURNING to `id` keeps update working regardless.
   try {
-    await db.cards.update({
-      where: { id },
-      data: {
-        name: data.name.trim(),
-        image_url: data.imageUrl,
-        price: data.price,
-        price_raw: data.price,
-        hp: data.hp,
-        rarity: data.rarity,
-        artist: data.artist?.trim() ?? null,
-        tcgplayer_id: data.tcgplayerId,
-        type: data.type,
-        card_number: data.cardNumber?.trim() || null,
-        set_id: data.setId || null,
-        updated_at: new Date(),
-      },
-      select: { id: true },
-    });
+    const result = await db.execute<{ id: string }>(sql`
+      UPDATE cards
+      SET name = ${data.name.trim()},
+          image_url = ${data.imageUrl},
+          price = ${data.price},
+          price_raw = ${data.price},
+          hp = ${data.hp},
+          rarity = ${data.rarity},
+          artist = ${data.artist?.trim() ?? null},
+          tcgplayer_id = ${data.tcgplayerId},
+          type = ${data.type},
+          card_number = ${data.cardNumber?.trim() || null},
+          set_id = ${data.setId || null}::uuid,
+          updated_at = NOW()
+      WHERE id = ${id}::uuid
+      RETURNING id
+    `);
+    if (result.rows.length === 0) return fail("Card not found", "NOT_FOUND");
   } catch (err) {
     // Defence in depth: if a future change adds cost/power to the update
     // payload, the missing-column case is still recognised and surfaced
@@ -312,8 +326,7 @@ export async function updateCard(
       );
     }
     // Surface the real DB failure server-side (Vercel logs) and to the
-    // client toast — same reasoning as createCard. Prisma P2025 =
-    // record not found.
+    // client toast — same reasoning as createCard.
     logError("cards.updateCard", `db.cards.update failed for ${id}`, err);
     if (err instanceof Error && /No record was found/i.test(err.message)) {
       return fail("Card not found", "NOT_FOUND");
@@ -335,27 +348,33 @@ export async function updateCard(
 }
 
 export async function deleteCard(cardId: string): Promise<void> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const session = await verifySession();
   await requireCapability(session, "__can_delete_card", "delete cards");
 
-  const card = await db.cards.findUnique({
-    where: { id: cardId },
-    select: {
-      name: true,
-      pack_cards: {
-        select: { packs: { select: { name: true } } },
-      },
-    },
-  });
+  const card = (
+    await db.execute<{
+      name: string;
+      pack_names: string[];
+    }>(sql`
+      SELECT c.name,
+             COALESCE(array_agg(p.name) FILTER (WHERE p.id IS NOT NULL),
+                      ARRAY[]::text[]) AS pack_names
+      FROM cards c
+      LEFT JOIN pack_cards pc ON pc.card_id = c.id
+      LEFT JOIN packs p ON p.id = pc.pack_id
+      WHERE c.id = ${cardId}::uuid
+      GROUP BY c.id
+    `)
+  ).rows[0];
 
   if (!card) throw new Error("Card not found");
 
   // Keep the rich pack-names message (most common, most actionable case)…
-  if (card.pack_cards.length > 0) {
-    const packNames = card.pack_cards.map((pc) => pc.packs.name).join(", ");
+  if (card.pack_names.length > 0) {
+    const packNames = card.pack_names.join(", ");
     throw new Error(
-      `Card is used in ${card.pack_cards.length} pack(s): ${packNames}. Remove it from those packs first.`,
+      `Card is used in ${card.pack_names.length} pack(s): ${packNames}. Remove it from those packs first.`,
     );
   }
 
@@ -369,7 +388,10 @@ export async function deleteCard(cardId: string): Promise<void> {
     );
   }
 
-  await db.cards.delete({ where: { id: cardId } });
+  const deleted = await db.execute<{ id: string }>(sql`
+    DELETE FROM cards WHERE id = ${cardId}::uuid RETURNING id
+  `);
+  if (deleted.rows.length === 0) throw new Error("Card not found");
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -472,7 +494,7 @@ type CardReferenceCheck = {
  *      an index lookup once the owner applies it).
  */
 async function checkCardReferences(
-  db: PrismaClient | Prisma.TransactionClient,
+  db: Pick<MainDrizzleDb, "execute">,
   ids: string[],
 ): Promise<CardReferenceCheck> {
   // De-dup defensively so counts/maps are keyed once per id.
@@ -495,30 +517,32 @@ async function checkCardReferences(
     provablyFairRows,
   ] = await Promise.all([
     // 1. pack_cards — count references per candidate card.
-    db.pack_cards.groupBy({
-      by: ["card_id"],
-      where: { card_id: { in: uniqueIds } },
-      _count: { _all: true },
-    }),
+    db.execute<{ card_id: string; count: string }>(sql`
+      SELECT card_id, COUNT(*)::text AS count
+      FROM pack_cards
+      WHERE card_id = ANY(${uniqueIds}::uuid[])
+      GROUP BY card_id
+    `),
     // 2. user_inventory — soft reference (no FK); count holdings per card.
-    db.user_inventory.groupBy({
-      by: ["card_id"],
-      where: { card_id: { in: uniqueIds } },
-      _count: { _all: true },
-    }),
+    db.execute<{ card_id: string; count: string }>(sql`
+      SELECT card_id, COUNT(*)::text AS count
+      FROM user_inventory
+      WHERE card_id = ANY(${uniqueIds}::uuid[])
+      GROUP BY card_id
+    `),
     // 3. upgrader_output_cards — card_id is UNIQUE, so just fetch the ids that
     //    appear; presence ⇒ blocked.
-    db.upgrader_output_cards.findMany({
-      where: { card_id: { in: uniqueIds } },
-      select: { card_id: true },
-    }),
+    db.execute<{ card_id: string }>(sql`
+      SELECT card_id FROM upgrader_output_cards
+      WHERE card_id = ANY(${uniqueIds}::uuid[])
+    `),
     // 4. upgrader_games.target_card_id — RESTRICT FK; group so we know which
     //    candidate ids are referenced as an upgrader target.
-    db.upgrader_games.groupBy({
-      by: ["target_card_id"],
-      where: { target_card_id: { in: uniqueIds } },
-      _count: { _all: true },
-    }),
+    db.execute<{ target_card_id: string }>(sql`
+      SELECT DISTINCT target_card_id
+      FROM upgrader_games
+      WHERE target_card_id = ANY(${uniqueIds}::uuid[])
+    `),
     // 5. provably_fair_results.result_metadata — Json soft reference. A card id
     //    can sit at the top level as the rolled `card_id` OR (for upgrader
     //    rolls) nested as `target_card_id`. Each branch probes with jsonb
@@ -527,39 +551,41 @@ async function checkCardReferences(
     //    Scan. The `->>'…' IN (...)` text-extraction form a jsonb_path_ops GIN
     //    CANNOT use — it seq-scans the whole 3.4M-row table (~1s); EXPLAIN
     //    against prod confirms the `@>` form is the index lookup (cost ~1.3k vs
-    //    ~379k). The SELECT still extracts the matched id; `Prisma.sql` safely
+    //    ~379k). The SELECT still extracts the matched id; Drizzle safely
     //    parameterises each id (no string interpolation).
-    db.$queryRaw<{ card_id: string }[]>(Prisma.sql`
+    db.execute<{ card_id: string }>(sql`
       SELECT DISTINCT t.card_id FROM (
         SELECT (result_metadata->>'card_id') AS card_id
           FROM provably_fair_results
-         WHERE result_metadata @> ANY (ARRAY[${Prisma.join(
-           uniqueIds.map((id) => Prisma.sql`jsonb_build_object('card_id', ${id})`),
-         )}]::jsonb[])
+         WHERE result_metadata @> ANY (
+           SELECT jsonb_build_object('card_id', id)
+           FROM unnest(${uniqueIds}::text[]) AS ids(id)
+         )
         UNION ALL
         SELECT (result_metadata->>'target_card_id') AS card_id
           FROM provably_fair_results
-         WHERE result_metadata @> ANY (ARRAY[${Prisma.join(
-           uniqueIds.map((id) => Prisma.sql`jsonb_build_object('target_card_id', ${id})`),
-         )}]::jsonb[])
+         WHERE result_metadata @> ANY (
+           SELECT jsonb_build_object('target_card_id', id)
+           FROM unnest(${uniqueIds}::text[]) AS ids(id)
+         )
       ) t
     `),
   ]);
 
   const packCountById = new Map<string, number>(
-    packGroups.map((g) => [g.card_id, g._count._all]),
+    packGroups.rows.map((g) => [g.card_id, Number(g.count)]),
   );
   const inventoryCountById = new Map<string, number>(
-    inventoryGroups.map((g) => [g.card_id, g._count._all]),
+    inventoryGroups.rows.map((g) => [g.card_id, Number(g.count)]),
   );
-  const upgraderOutputIds = new Set(upgraderOutputs.map((r) => r.card_id));
+  const upgraderOutputIds = new Set(upgraderOutputs.rows.map((r) => r.card_id));
   const upgraderTargetIds = new Set(
-    upgraderTargetGroups
+    upgraderTargetGroups.rows
       .map((g) => g.target_card_id)
       .filter((id): id is string => id != null),
   );
   const provablyFairIds = new Set(
-    provablyFairRows
+    provablyFairRows.rows
       .map((r) => r.card_id)
       .filter((id): id is string => id != null),
   );
@@ -611,7 +637,7 @@ const BLOCKED_REASON_LABEL: Record<BlockedReason, string> = {
  *        single-delete (`deleteCard`) already BLOCKS when a card is in any
  *        pack so a delete never silently rips a card out of a live pack pool;
  *        we apply the SAME rule here.
- *     2. `user_inventory.card_id` → a SOFT reference: in the Prisma schema
+ *     2. `user_inventory.card_id` → a SOFT reference: in the application schema
  *        `user_inventory` has only an INDEX on `card_id` and NO `@relation`/FK
  *        back to `cards`. So a raw `cards.delete()` would SUCCEED at the DB
  *        level even while real users hold that card, orphaning every matching
@@ -642,15 +668,16 @@ export async function deleteCards(input: {
   // De-dup just in case the client passed duplicate ids.
   const ids = Array.from(new Set(parsed.data.ids));
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
   try {
     // Load the candidate cards (for their names in the blocked report). Missing
     // ids simply don't come back; we only ever delete ids that still exist.
-    const cards = await db.cards.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, name: true },
-    });
+    const cards = (
+      await db.execute<{ id: string; name: string }>(sql`
+        SELECT id, name FROM cards WHERE id = ANY(${ids}::uuid[])
+      `)
+    ).rows;
 
     if (cards.length === 0) {
       return fail("None of the selected cards still exist.", "NOT_FOUND");
@@ -700,7 +727,7 @@ export async function deleteCards(input: {
     // unreferenced. FK-backed classes (pack_cards, upgrader) are already caught
     // by their constraints; this closes the soft-ref window too. Ids that became
     // referenced in the window are reported back as freshly blocked.
-    const { result, lateBlockedIds } = await db.$transaction(
+    const { result, lateBlockedIds } = await db.transaction(
       async (tx) => {
         const recheck = await checkCardReferences(tx, deletableIds);
         const safeNow = recheck.deletableIds;
@@ -710,10 +737,15 @@ export async function deleteCards(input: {
         if (safeNow.length === 0) {
           return { result: { count: 0 }, lateBlockedIds: lateBlocked };
         }
-        const r = await tx.cards.deleteMany({ where: { id: { in: safeNow } } });
-        return { result: r, lateBlockedIds: lateBlocked };
+        const deleted = await tx.execute<{ id: string }>(sql`
+          DELETE FROM cards WHERE id = ANY(${safeNow}::uuid[]) RETURNING id
+        `);
+        return {
+          result: { count: deleted.rowCount ?? deleted.rows.length },
+          lateBlockedIds: lateBlocked,
+        };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      { isolationLevel: "serializable" },
     );
 
     // The ids actually removed (the deletable set minus any that became

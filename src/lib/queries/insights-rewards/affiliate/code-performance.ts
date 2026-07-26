@@ -1,13 +1,11 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   type InsightsRewardsPeriod,
 } from "../_period";
 import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getAffiliateCodePerformanceFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/code-performance";
 
 /**
  * Per-affiliate-code funnel — click → signup → first deposit → wager.
@@ -69,13 +67,13 @@ async function compute(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<CodePerformanceRow[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const ctx = makePeriodCtx(period);
   const clickDate = ctx.dateFilterFor("ac.created_at");
   const acuDate = ctx.dateFilterFor("acu.created_at");
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       code: string;
       affiliate_user_id: string;
@@ -87,7 +85,7 @@ async function compute(
       total_wager: string;
       commission_accrued: string;
     }[]
-  >(`
+  >(db, sql`
     WITH usage_agg AS (
       SELECT
         acu.code,
@@ -168,12 +166,7 @@ export async function getAffiliateCodePerformance(
   period: InsightsRewardsPeriod,
 ): Promise<CodePerformanceRow[]> {
   const blacklist = await loadBlacklist();
-  return resolveAdminRead<CodePerformanceRow[]>("insights_affiliate_code_perf", {
-    pg: () =>
-      period === "all"
-        ? cachedLong(period, blacklist)
-        : cachedShort(period, blacklist),
-    ch: () =>
-      getAffiliateCodePerformanceFromClickHouse(period, blacklist, new Date()),
-  });
+  return period === "all"
+    ? cachedLong(period, blacklist)
+    : cachedShort(period, blacklist);
 }

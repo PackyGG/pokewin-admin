@@ -1,13 +1,11 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   type InsightsRewardsPeriod,
 } from "../_period";
 import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getAffiliateCohortFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/cohort";
 
 /**
  * Referred-user cohort metrics. For each top affiliate by downstream
@@ -53,15 +51,15 @@ async function compute(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<AffiliateCohortRow[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const ctx = makePeriodCtx(period);
   const acuDate = ctx.dateFilterFor("acu.created_at");
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Step 1 — identify top N affiliates by referred-user wager in window.
-  const topAffiliates = await db.$queryRawUnsafe<
+  const topAffiliates = await queryRows<
     { affiliate_user_id: string }[]
-  >(`
+  >(db, sql`
     SELECT acu.affiliate_user_id
     FROM affiliate_code_usages acu
     JOIN "user" u ON u.id = acu.affiliate_user_id
@@ -77,12 +75,13 @@ async function compute(
 
   // Inline-quote the affiliate id list — safe because it came from our
   // own DB query above (already an array of strings).
-  const affiliateIdsSql = `(${topAffiliates
-    .map((a) => `'${a.affiliate_user_id.replace(/'/g, "''")}'`)
-    .join(",")})`;
+  const affiliateIdsSql = sql.join(
+    topAffiliates.map((affiliate) => sql`${affiliate.affiliate_user_id}::uuid`),
+    sql`, `,
+  );
 
   // Step 2 — aggregate per-affiliate cohort metrics.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       affiliate_user_id: string;
       username: string | null;
@@ -92,14 +91,14 @@ async function compute(
       repeat_depositors: string;
       avg_first_deposit: string;
     }[]
-  >(`
+  >(db, sql`
     WITH cohort AS (
       SELECT DISTINCT
         acu.affiliate_user_id,
         acu.referred_user_id
       FROM affiliate_code_usages acu
       WHERE acu.status = 'completed'
-        AND acu.affiliate_user_id IN ${affiliateIdsSql}
+        AND acu.affiliate_user_id IN (${affiliateIdsSql})
         ${acuDate}
     ),
     cohort_wager AS (
@@ -108,7 +107,7 @@ async function compute(
         SUM(acu.wager_amount_usd::numeric) AS wager
       FROM affiliate_code_usages acu
       WHERE acu.status = 'completed'
-        AND acu.affiliate_user_id IN ${affiliateIdsSql}
+        AND acu.affiliate_user_id IN (${affiliateIdsSql})
         ${acuDate}
       GROUP BY acu.affiliate_user_id
     ),
@@ -186,11 +185,7 @@ export async function getAffiliateCohort(
   period: InsightsRewardsPeriod,
 ): Promise<AffiliateCohortRow[]> {
   const blacklist = await loadBlacklist();
-  return resolveAdminRead<AffiliateCohortRow[]>("insights_affiliate_cohort", {
-    pg: () =>
-      period === "all"
-        ? cachedLong(period, blacklist)
-        : cachedShort(period, blacklist),
-    ch: () => getAffiliateCohortFromClickHouse(period, blacklist, new Date()),
-  });
+  return period === "all"
+    ? cachedLong(period, blacklist)
+    : cachedShort(period, blacklist);
 }

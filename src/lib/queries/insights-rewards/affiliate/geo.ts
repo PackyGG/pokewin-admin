@@ -1,13 +1,11 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   type InsightsRewardsPeriod,
 } from "../_period";
 import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getAffiliateGeoBreakdownFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/geo";
 
 /**
  * Geo distribution lens. Two side-by-side breakdowns:
@@ -58,16 +56,16 @@ async function compute(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<AffiliateGeoBreakdown> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const ctx = makePeriodCtx(period);
   const ltDate = ctx.dateFilterFor("lt.created_at");
   const acuDate = ctx.dateFilterFor("acu.created_at");
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   const [affRows, refRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryRows<
       { code: string; affiliates: string; commission: string }[]
-    >(`
+    >(db, sql`
       SELECT
         COALESCE(u.country_code, '??') AS code,
         COUNT(DISTINCT lt.user_id)::text AS affiliates,
@@ -82,9 +80,9 @@ async function compute(
       ORDER BY SUM(ABS(lt.amount::numeric)) DESC
       LIMIT ${COUNTRY_LIMIT}
     `),
-    db.$queryRawUnsafe<
+    queryRows<
       { code: string; referred_users: string; wager: string }[]
-    >(`
+    >(db, sql`
       SELECT
         COALESCE(u.country_code, '??') AS code,
         COUNT(DISTINCT acu.referred_user_id)::text AS referred_users,
@@ -148,12 +146,7 @@ export async function getAffiliateGeoBreakdown(
   period: InsightsRewardsPeriod,
 ): Promise<AffiliateGeoBreakdown> {
   const blacklist = await loadBlacklist();
-  return resolveAdminRead<AffiliateGeoBreakdown>("insights_affiliate_geo", {
-    pg: () =>
-      period === "all"
-        ? cachedLong(period, blacklist)
-        : cachedShort(period, blacklist),
-    ch: () =>
-      getAffiliateGeoBreakdownFromClickHouse(period, blacklist, new Date()),
-  });
+  return period === "all"
+    ? cachedLong(period, blacklist)
+    : cachedShort(period, blacklist);
 }

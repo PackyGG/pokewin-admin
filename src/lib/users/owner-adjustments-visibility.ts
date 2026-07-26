@@ -1,7 +1,9 @@
 import "server-only";
 
 import { cache } from "react";
-import { adminDb } from "@/lib/admin-db";
+import { eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import { admin_users } from "@/lib/db-schema/admin/schema";
 import { readAdminUserWithOverrides } from "@/lib/admin-user-roles";
 import { isOwnerById, isMainOwnerUsername } from "@/lib/owners";
 
@@ -80,20 +82,29 @@ export const isAdjustmentVisibilityOwner = cache(
     // etc. — so a hiccup can only ever HIDE adjustments, never reveal them.
     try {
       const row = await readAdminUserWithOverrides(
-        () =>
-          adminDb.admin_users.findUnique({
-            where: { id: adminUserId },
-            select: {
-              is_active: true,
-              allowed_pages: true,
-              permission_grants: true,
-            },
-          }),
-        () =>
-          adminDb.admin_users.findUnique({
-            where: { id: adminUserId },
-            select: { is_active: true, allowed_pages: true },
-          }),
+        async () =>
+          (
+            await adminDrizzle
+              .select({
+                is_active: admin_users.is_active,
+                allowed_pages: admin_users.allowed_pages,
+                permission_grants: admin_users.permission_grants,
+              })
+              .from(admin_users)
+              .where(eq(admin_users.id, adminUserId))
+              .limit(1)
+          )[0] ?? null,
+        async () =>
+          (
+            await adminDrizzle
+              .select({
+                is_active: admin_users.is_active,
+                allowed_pages: admin_users.allowed_pages,
+              })
+              .from(admin_users)
+              .where(eq(admin_users.id, adminUserId))
+              .limit(1)
+          )[0] ?? null,
       );
       if (!row?.is_active) return false;
       const r = row as {

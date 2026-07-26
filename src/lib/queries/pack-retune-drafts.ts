@@ -1,8 +1,10 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
+import { count, desc, eq, inArray } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/drizzle";
+import { admin_users, pack_retune_drafts } from "@/lib/db-schema/admin/schema";
 import type { EditPoolInputCard } from "@/app/(pack-studio)/pack-studio/doctor/retune-actions";
 import type { PackRisk, RiskTier } from "@/app/(admin)/insights/edge-calc/risk";
 
@@ -40,9 +42,9 @@ export {
  * never a full-table scan.
  *
  * IMPORTANT: this module is `import "server-only"` because it pulls in the
- * admin Prisma client. Anything a client component needs (the types + pure
+ * admin database client. Anything a client component needs (the types + pure
  * helpers) lives in `pack-retune-drafts-shared.ts` so the browser bundle
- * doesn't try to bundle Prisma.
+ * doesn't try to bundle server-only database code.
  */
 
 // ─── Internal JSON parsers (defensive — JSONB can be anything) ───────────
@@ -160,23 +162,23 @@ function parseSourceSnapshot(json: unknown): DraftSourceSnapshot {
  * while still busting cleanly via `revalidateTag('pack-retune-drafts')`.
  */
 async function readPendingDrafts(): Promise<PendingDraftRow[]> {
-  const rows = await adminDb.pack_retune_drafts.findMany({
-    where: { status: "draft" },
-    orderBy: { last_edited_at: "desc" },
-    select: {
-      id: true,
-      pack_id: true,
-      proposed_price: true,
-      proposed_pool: true,
-      computed_risk: true,
-      source_snapshot: true,
-      notes: true,
-      created_by: true,
-      last_edited_by: true,
-      created_at: true,
-      last_edited_at: true,
-    },
-  });
+  const rows = await adminDrizzle
+    .select({
+      id: pack_retune_drafts.id,
+      pack_id: pack_retune_drafts.pack_id,
+      proposed_price: pack_retune_drafts.proposed_price,
+      proposed_pool: pack_retune_drafts.proposed_pool,
+      computed_risk: pack_retune_drafts.computed_risk,
+      source_snapshot: pack_retune_drafts.source_snapshot,
+      notes: pack_retune_drafts.notes,
+      created_by: pack_retune_drafts.created_by,
+      last_edited_by: pack_retune_drafts.last_edited_by,
+      created_at: pack_retune_drafts.created_at,
+      last_edited_at: pack_retune_drafts.last_edited_at,
+    })
+    .from(pack_retune_drafts)
+    .where(eq(pack_retune_drafts.status, "draft"))
+    .orderBy(desc(pack_retune_drafts.last_edited_at));
 
   if (rows.length === 0) return [];
 
@@ -190,20 +192,24 @@ async function readPendingDrafts(): Promise<PendingDraftRow[]> {
   const display = new Map<string, string | null>();
   if (ids.size > 0) {
     try {
-      const users = await adminDb.admin_users.findMany({
-        where: { id: { in: Array.from(ids) } },
-        select: { id: true, username: true, display_username: true },
-      });
+      const users = await adminDrizzle
+        .select({
+          id: admin_users.id,
+          username: admin_users.username,
+          display_username: admin_users.display_username,
+        })
+        .from(admin_users)
+        .where(inArray(admin_users.id, Array.from(ids)));
       for (const u of users) {
         display.set(u.id, u.display_username || u.username || null);
       }
     } catch {
       // display_username column missing on older schemas — degrade gracefully.
       try {
-        const users = await adminDb.admin_users.findMany({
-          where: { id: { in: Array.from(ids) } },
-          select: { id: true, username: true },
-        });
+        const users = await adminDrizzle
+          .select({ id: admin_users.id, username: admin_users.username })
+          .from(admin_users)
+          .where(inArray(admin_users.id, Array.from(ids)));
         for (const u of users) display.set(u.id, u.username || null);
       } catch {
         /* leave display map empty */
@@ -230,7 +236,7 @@ async function readPendingDrafts(): Promise<PendingDraftRow[]> {
     return {
       draftId: r.id,
       packId: r.pack_id,
-      proposedPrice: Number(r.proposed_price.toString()),
+      proposedPrice: Number(r.proposed_price),
       proposedPool,
       computedRisk,
       source,
@@ -239,8 +245,8 @@ async function readPendingDrafts(): Promise<PendingDraftRow[]> {
       createdByDisplay: display.get(r.created_by) ?? null,
       lastEditedBy: r.last_edited_by,
       lastEditedByDisplay: display.get(r.last_edited_by) ?? null,
-      createdAt: r.created_at.toISOString(),
-      lastEditedAt: r.last_edited_at.toISOString(),
+      createdAt: new Date(r.created_at).toISOString(),
+      lastEditedAt: new Date(r.last_edited_at).toISOString(),
     };
   });
 }
@@ -268,7 +274,11 @@ export const listPendingDrafts = unstable_cache(
  */
 export const countPendingDrafts = unstable_cache(
   async (): Promise<number> => {
-    return adminDb.pack_retune_drafts.count({ where: { status: "draft" } });
+    const rows = await adminDrizzle
+      .select({ value: count() })
+      .from(pack_retune_drafts)
+      .where(eq(pack_retune_drafts.status, "draft"));
+    return rows[0]?.value ?? 0;
   },
   ["pack-retune-drafts", "pending-count"],
   { tags: ["pack-retune-drafts"], revalidate: 60 },

@@ -37,6 +37,31 @@ export function verifyTOTP(secret: string, token: string): boolean {
   return delta !== null;
 }
 
+/**
+ * Verify a TOTP code and return its INTRINSIC step (the HOTP counter the code
+ * was generated for), or null if invalid. The step is stable for a given code
+ * regardless of when it is checked within its ±1 window, so it can be used as a
+ * single-use watermark: `require2FA` records the last consumed step and rejects
+ * a code whose step was already used (SECURITY_AUDIT.md MEDIUM-5).
+ *
+ * `validate` returns the offset (delta) of the matched step from the current
+ * time-step; the absolute step is `currentStep + delta`, which equals the
+ * code's own counter — identical no matter when it matched.
+ */
+export function verifyTOTPWithStep(secret: string, token: string): number | null {
+  const totp = new TOTP({
+    issuer: ISSUER,
+    algorithm: "SHA1",
+    digits: 6,
+    period: 30,
+    secret: Secret.fromBase32(secret),
+  });
+  const delta = totp.validate({ token, window: 1 });
+  if (delta === null) return null;
+  const currentStep = Math.floor(Date.now() / 1000 / 30);
+  return currentStep + delta;
+}
+
 export function generateRecoveryCodes(count = 8): string[] {
   return Array.from({ length: count }, () =>
     crypto.randomBytes(4).toString("hex").toUpperCase()

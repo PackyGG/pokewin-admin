@@ -1,6 +1,8 @@
 import { z } from "zod";
+import { eq } from "drizzle-orm";
 
-import { getProdDb } from "@/lib/db";
+import { getProdDrizzleDb } from "@/lib/db";
+import { account } from "@/lib/db-schema/main/schema";
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
 
 /**
@@ -18,8 +20,8 @@ import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
  * cannot be used to enumerate or profile players, only to confirm a link for an
  * ID the caller already knows. Ask before widening this.
  *
- * DATA BOUNDARY: read-only, and explicitly `getProdDb()` rather than `getDb()`.
- * `getDb()` resolves the admin's dev/prod cookie toggle, which is meaningless
+ * DATA BOUNDARY: read-only, and explicitly `getProdDrizzleDb()`.
+ * The request-scoped resolver uses the admin's dev/prod cookie toggle, which is meaningless
  * for a machine caller — a bot must always read prod, never a dev database.
  *
  * COST: `account.accountId` is UNIQUE-indexed, so this is a single index probe
@@ -73,17 +75,18 @@ export const POST = withApiKey({ scopes: ["discord:read"] }, async (request) => 
 
   const { discordUserId } = parsed.data;
 
-  const db = getProdDb();
+  const db = getProdDrizzleDb();
   // accountId is globally unique, so this is one index probe. We still assert
   // providerId so a same-valued account on another provider can never be
   // mistaken for a Discord link.
-  const account = await db.account.findUnique({
-    where: { accountId: discordUserId },
-    select: { providerId: true },
-  });
+  const [linkedAccount] = await db
+    .select({ providerId: account.providerId })
+    .from(account)
+    .where(eq(account.accountId, discordUserId))
+    .limit(1);
 
   return {
     discordUserId,
-    linked: account?.providerId === "discord",
+    linked: linkedAccount?.providerId === "discord",
   };
 });

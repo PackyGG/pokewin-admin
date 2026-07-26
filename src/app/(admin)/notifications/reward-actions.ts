@@ -1,6 +1,9 @@
 "use server";
 
-import { getDb } from "@/lib/db";
+import { inArray } from "drizzle-orm";
+
+import { getDrizzleDb } from "@/lib/db";
+import { promo_codes, user } from "@/lib/db-schema/main/schema";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -38,7 +41,7 @@ import {
  * This is the one action here that writes to the MAIN game database
  * (`promo_codes` rows carry real money). It is therefore restricted to the
  * DEV environment by TWO independent checks — the backend availability gate
- * AND a direct read of the db-env cookie that `getDb()` itself resolves. Both
+ * AND a direct read of the db-env cookie that `getDrizzleDb()` resolves. Both
  * must say dev. Owner authorisation, 2026-07-23: dev game DB only.
  */
 
@@ -80,9 +83,9 @@ export async function sendRewardCampaignChunkAction(
   if (!availability.ready) {
     return { success: false, error: availability.reason ?? "Sending is not available." };
   }
-  // Gate 2 — the database `getDb()` will actually write to. Deliberately not
+  // Gate 2 — the database `getDrizzleDb()` will actually write to. Deliberately not
   // derived from gate 1: this one writes money-bearing rows, so it re-reads
-  // the cookie that drives the Prisma client rather than trusting a value
+  // the cookie that drives the database client rather than trusting a value
   // resolved for a different client.
   if ((await readDbEnvFromCookie()) !== "dev") {
     return {
@@ -121,16 +124,16 @@ export async function sendRewardCampaignChunkAction(
   const userIds = [...new Set(input.userIds.map((id) => id.trim()).filter(Boolean))];
   if (userIds.length === 0) return { success: false, error: "Chunk is empty" };
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
   // Only mint for accounts that exist. Primary-key `IN` lookup — index-served.
   // Unknown ids are reported, not fatal, mirroring the bulk endpoint.
   let users: { id: string; continent_code: string | null }[];
   try {
-    users = await db.user.findMany({
-      where: { id: { in: userIds } },
-      select: { id: true, continent_code: true },
-    });
+    users = await db
+      .select({ id: user.id, continent_code: user.continent_code })
+      .from(user)
+      .where(inArray(user.id, userIds));
   } catch (err) {
     return {
       success: false,
@@ -186,10 +189,15 @@ export async function sendRewardCampaignChunkAction(
   // grows with campaign rows.
   let toMint: typeof planned;
   try {
-    const existing = await db.promo_codes.findMany({
-      where: { code_hash: { in: planned.map((p) => p.codeHash) } },
-      select: { code_hash: true },
-    });
+    const existing = await db
+      .select({ code_hash: promo_codes.code_hash })
+      .from(promo_codes)
+      .where(
+        inArray(
+          promo_codes.code_hash,
+          planned.map((p) => p.codeHash),
+        ),
+      );
     const existingHashes = new Set(existing.map((e) => e.code_hash));
     toMint = planned.filter((p) => !existingHashes.has(p.codeHash));
   } catch (err) {
@@ -204,13 +212,16 @@ export async function sendRewardCampaignChunkAction(
       ? new Date(Date.now() + input.expiresInDays * 86_400_000)
       : null;
 
+  let codesMinted = 0;
   if (toMint.length > 0) {
     try {
-      await db.promo_codes.createMany({
-      data: toMint.map((p) => ({
-        code_hash: p.codeHash,
-        value: valueUsd,
-        region: p.region,
+      const minted = await db
+        .insert(promo_codes)
+        .values(
+          toMint.map((p) => ({
+            code_hash: p.codeHash,
+            value: String(valueUsd),
+            region: p.region,
         // Single use, and bound to the one account it was minted for —
         // `metadata.bound_user_id` is enforced at redeem by the backend
         // (PackyGG/backend#462). max_uses alone would let anyone who learns
@@ -218,14 +229,17 @@ export async function sendRewardCampaignChunkAction(
         max_uses: 1,
         // A granted reward must not be gated behind linking Discord.
         requires_discord: false,
-        expires_at: expiresAt,
-        metadata: {
-          code: p.code,
-          bound_user_id: p.userId,
-          campaign,
-        },
-        })),
-      });
+            expires_at: expiresAt?.toISOString() ?? null,
+            metadata: {
+              code: p.code,
+              bound_user_id: p.userId,
+              campaign,
+            },
+          })),
+        )
+        .onConflictDoNothing()
+        .returning({ code_hash: promo_codes.code_hash });
+      codesMinted = minted.length;
     } catch (err) {
       // Nothing was delivered yet, so no recipient has been promised a code
       // that doesn't exist. Retrying re-derives the same codes.
@@ -259,7 +273,7 @@ export async function sendRewardCampaignChunkAction(
         err instanceof BackendApiError || err instanceof Error
           ? err.message
           : "Delivery failed"
-      } — ${toMint.length} code(s) were already created; retrying this chunk reuses them.`,
+      } — ${codesMinted} code(s) were already created; retrying this chunk reuses them.`,
     };
   }
 
@@ -280,18 +294,18 @@ export async function sendRewardCampaignChunkAction(
         chunkIndex: input.chunkIndex,
         chunkCount: input.chunkCount,
         requested: userIds.length,
-        codesMinted: toMint.length,
-        codesReused: planned.length - toMint.length,
+        codesMinted,
+        codesReused: planned.length - codesMinted,
         created: result.created,
         deduped: result.deduped,
         unknownUsers: [...new Set([...unknownUsers, ...result.unknown_users])],
         // Money moved per recipient — the number an audit reader needs most.
-        totalValueUsd: Number((toMint.length * valueUsd).toFixed(2)),
+        totalValueUsd: Number((codesMinted * valueUsd).toFixed(2)),
       },
     });
   } catch (err) {
     console.log(
-      `[reward-campaign] audit write failed campaign=${campaign} chunk=${input.chunkIndex} minted=${toMint.length} err=${err instanceof Error ? err.message : "unknown"}`,
+      `[reward-campaign] audit write failed campaign=${campaign} chunk=${input.chunkIndex} minted=${codesMinted} err=${err instanceof Error ? err.message : "unknown"}`,
     );
   }
 
@@ -301,7 +315,7 @@ export async function sendRewardCampaignChunkAction(
     created: result.created,
     deduped: result.deduped,
     unknownUsers: [...new Set([...unknownUsers, ...result.unknown_users])],
-    codesMinted: toMint.length,
-    codesReused: planned.length - toMint.length,
+    codesMinted,
+    codesReused: planned.length - codesMinted,
   };
 }

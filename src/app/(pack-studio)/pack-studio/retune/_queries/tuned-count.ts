@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 
 /**
  * Persistent "Tuned this fleet" counter (owner feature, 2026-07-04; source
@@ -51,24 +52,13 @@ export async function getTunedPackIds(): Promise<string[]> {
   return unstable_cache(
     async () => {
       try {
-        // The three retune-workspace event types are a tiny slice of the audit
-        // table (single digits of packs). Prisma has no JSON-path DISTINCT, so
-        // we pull just the metadata for those rows and distinct pack_id in code.
-        const rows = await adminDb.admin_audit_events.findMany({
-          where: { event_type: { in: [...RETUNE_WORKSPACE_EVENT_TYPES] } },
-          select: { metadata: true },
-        });
-        const packIds = new Set<string>();
-        for (const row of rows) {
-          const meta = row.metadata;
-          if (meta && typeof meta === "object" && !Array.isArray(meta)) {
-            const packId = (meta as { pack_id?: unknown }).pack_id;
-            if (typeof packId === "string" && packId.length > 0) {
-              packIds.add(packId);
-            }
-          }
-        }
-        return [...packIds];
+        const result = await adminDrizzle.execute<{ pack_id: string }>(sql`
+          SELECT DISTINCT metadata->>'pack_id' AS pack_id
+          FROM admin_audit_events
+          WHERE event_type = ANY(${[...RETUNE_WORKSPACE_EVENT_TYPES]}::text[])
+            AND COALESCE(metadata->>'pack_id', '') <> ''
+        `);
+        return result.rows.map((row) => row.pack_id);
       } catch (err) {
         console.error("[retune] getTunedPackIds failed", err);
         return [];

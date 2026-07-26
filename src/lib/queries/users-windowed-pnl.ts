@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { statsExcludedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
@@ -43,7 +43,6 @@ export async function getUserWindowedPnlMulti(
   if (windows.length === 0) return result;
 
   return withTiming("pnl.userWindowedMulti", async () => {
-    const db = await getDb();
 
     // Deepest cutoff (earliest `since`) drives the outer WHERE per
     // table. Each per-window CASE compares against its own `since`
@@ -141,13 +140,13 @@ export async function getUserWindowedPnlMulti(
     type VchRow = Record<string, string>;
 
     const [ledger, card, inv, vch, adminInvRem, adminVchRem] = await Promise.all([
-      db.$queryRawUnsafe<LedgerRow[]>(
+      queryMainRows<LedgerRow[]>(
         `SELECT ${ledgerDepositCase}, ${ledgerManualWdCase}, ${ledgerBalanceChangeCase}
          FROM ledger_transactions lt
          WHERE lt.status = 'completed' AND lt.created_at >= $2 AND lt.user_id = $1`,
         ...params,
       ),
-      db.$queryRawUnsafe<CardRow[]>(
+      queryMainRows<CardRow[]>(
         `SELECT ${cardWdCase}
          FROM card_withdrawal_requests cwr
          WHERE cwr.status IN ('completed', 'shipped')
@@ -155,7 +154,7 @@ export async function getUserWindowedPnlMulti(
            AND cwr.user_id = $1`,
         ...params,
       ),
-      db.$queryRawUnsafe<InvRow[]>(
+      queryMainRows<InvRow[]>(
         // CREATOR-INVENTORY carve-out (matches calculateWindowedPnl).
         `SELECT ${invObtainedCase}, ${invDisposedCase}
          FROM user_inventory ui
@@ -164,14 +163,14 @@ export async function getUserWindowedPnlMulti(
            AND ${nonCreatorOwnerSql("ui.user_id")}`,
         ...params,
       ),
-      db.$queryRawUnsafe<VchRow[]>(
+      queryMainRows<VchRow[]>(
         `SELECT ${vchIssuedCase}, ${vchClaimedCase}
          FROM vouchers v
          WHERE (v.created_at >= $2 OR v.claimed_at >= $2)
            AND v.user_id = $1`,
         ...params,
       ),
-      db.$queryRawUnsafe<Record<string, string>[]>(
+      queryMainRows<Record<string, string>[]>(
         `SELECT ${adminInvDisposedCase}
          FROM ledger_transactions lt
          WHERE lt.status = 'completed'
@@ -186,7 +185,7 @@ export async function getUserWindowedPnlMulti(
            )`,
         ...params,
       ),
-      db.$queryRawUnsafe<Record<string, string>[]>(
+      queryMainRows<Record<string, string>[]>(
         `SELECT ${adminVchClaimedCase}
          FROM ledger_transactions lt
          WHERE lt.status = 'completed'

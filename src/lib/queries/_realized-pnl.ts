@@ -1,10 +1,7 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
-import { getProdDb } from "@/lib/db";
 import { withTiming } from "@/lib/observability/query-timings";
-import { compareRealizedPnl } from "@/lib/clickhouse/comparison";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getRealizedPnlSnapshotFromClickHouse } from "@/lib/clickhouse/queries/realized-pnl";
 import { computeHousePnl } from "./pnl";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
@@ -104,11 +101,10 @@ async function realizedPnlSnapshotPg(): Promise<RealizedPnlSnapshot> {
   // PROD-PINNED ON PURPOSE. This snapshot is cached under a STATIC key (no
   // env arg), so a dev-DB render must never be able to populate the shared
   // entry and serve dev numbers to every admin for the next 5 minutes.
-  // It previously called the cookie-aware `getDb()` and was prod-only by
+  // It previously called the cookie-aware request client and was prod-only by
   // accident: `cookies()` throws inside an `unstable_cache` callback and
   // `readDbEnv` swallows that into a "prod" fallback. Pin it explicitly so
   // the guarantee survives any future change to that fallback.
-  const db = getProdDb();
   // Pull the blacklist alongside the role-based staff exclusion so
   // admin-managed exclusions (the /system/excluded-users page) drop
   // out of lifetime PnL too. Empty list → no extra filter, query
@@ -117,7 +113,7 @@ async function realizedPnlSnapshotPg(): Promise<RealizedPnlSnapshot> {
   // embedded single quote defensively before inlining.
   const excluded = await getExcludedUserIds();
   const blacklistFrag = blacklistNotInClause("id", excluded);
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryMainRows<
     {
       deposited: string;
       balance_withdrawn: string;
@@ -196,28 +192,15 @@ async function realizedPnlSnapshotPg(): Promise<RealizedPnlSnapshot> {
 
 /**
  * CQRS serve-path inner for the `dashboard_realized_pnl_lifetime` surface (the
- * uncached computor — `cachedSnapshot` wraps it, so a CH failure in `clickhouse`
  * mode throws THROUGH the cache and degrades via the caller rather than caching
  * an error or re-running the heavy Postgres balance-sheet scan).
  *
- *   • clickhouse → serve the CH twin (SOLE read; on failure THROWS).
  *   • comparison → serve Postgres, fire-and-forget drift log (unchanged; the
  *     hook is single-arg lifetime and fetches its own blacklist).
  *   • off        → serve Postgres (today's behavior).
  *
- * Note: this snapshot reads via `getDb()` and is cached under a STATIC key (no
- * env arg), so it is already prod-oriented; the CH mirror (prod-only) is
- * consistent with that existing behavior.
+ * The snapshot is explicitly prod-pinned because its cache key is static.
  */
 async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
-  return resolveAdminRead<RealizedPnlSnapshot>("dashboard_realized_pnl_lifetime", {
-    pg: realizedPnlSnapshotPg,
-    ch: async () => {
-      const blacklist = await getExcludedUserIds();
-      return getRealizedPnlSnapshotFromClickHouse(blacklist);
-    },
-    compare: (snapshot) => {
-      void compareRealizedPnl(snapshot);
-    },
-  });
+  return realizedPnlSnapshotPg();
 }

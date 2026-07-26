@@ -1,6 +1,7 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 import { isMissingColumnError } from "@/lib/admin-user-roles";
 
 // Module-level cache so we only hit the DB once per server process.
@@ -36,7 +37,7 @@ let ensured = false;
  *   (marketing / custom role) or remove the user. Same trade-off
  *   `ensurePackCreatorCapabilities` already makes.
  *
- * Safe to call from anywhere — uses `adminDb` directly, no session
+ * Safe to call from anywhere — uses the admin Drizzle client directly, no session
  * required, idempotent UPDATE with a NOT-EXISTS guard.
  */
 export async function ensureSupportBaseline(): Promise<void> {
@@ -46,7 +47,7 @@ export async function ensureSupportBaseline(): Promise<void> {
     ensured = true;
   } catch (err) {
     // If the additive `roles` column hasn't been migrated yet, the
-    // `ANY("roles")` predicate throws P2022. Retry the legacy
+    // `ANY("roles")` predicate throws 42703. Retry the legacy
     // single-role-only form so the /users + /dashboard baseline still
     // self-heals exactly as it did before multi-role shipped. Behaviour
     // is then identical to the pre-migration code path.
@@ -78,16 +79,16 @@ async function runSupportBaseline(includeRolesArray: boolean): Promise<void> {
   const match = includeRolesArray
     ? `(role = 'support' OR 'support'::"admin_role" = ANY("roles"))`
     : `role = 'support'`;
-  await adminDb.$executeRawUnsafe(
+  await adminDrizzle.execute(sql.raw(
     `UPDATE "admin_users"
         SET "allowed_pages" = array_append("allowed_pages", '/users')
       WHERE ${match}
         AND NOT ('/users' = ANY("allowed_pages"))`,
-  );
-  await adminDb.$executeRawUnsafe(
+  ));
+  await adminDrizzle.execute(sql.raw(
     `UPDATE "admin_users"
         SET "allowed_pages" = array_append("allowed_pages", '/dashboard')
       WHERE ${match}
         AND NOT ('/dashboard' = ANY("allowed_pages"))`,
-  );
+  ));
 }

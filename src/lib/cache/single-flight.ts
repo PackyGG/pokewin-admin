@@ -64,8 +64,8 @@ import "server-only";
 
 /**
  * Module-level in-flight map, stashed on `globalThis` so it survives dev HMR
- * reloads (the same pattern `src/lib/db.ts` / `src/lib/clickhouse/client.ts`
- * use for their singletons). In production this is a plain module singleton.
+ * reloads (the same pattern `src/lib/db.ts` uses for its singletons). In
+ * production this is a plain module singleton.
  *
  * Value type is `Promise<unknown>` because the map is heterogeneous across
  * callers; each `singleFlight<T>` call re-asserts its own `T` on the way out.

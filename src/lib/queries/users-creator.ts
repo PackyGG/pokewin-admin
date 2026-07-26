@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 
@@ -16,33 +16,60 @@ export async function getCreatorReferralClicks(
   city: string;
   createdAt: string | null;
 }>> {
-  const db = await getDb();
-  const where = { code: affiliateCode };
-  const [clicks, total] = await Promise.all([
-    db.affiliate_clicks.findMany({
-      where,
-      orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-    }),
-    db.affiliate_clicks.count({ where }),
-  ]);
+  const safePage = Math.max(1, Math.trunc(page) || 1);
+  const safePerPage = Math.min(
+    200,
+    Math.max(1, Math.trunc(perPage) || 20),
+  );
+  const clicks = await queryMainRows<
+    {
+      id: number | null;
+      code: string | null;
+      user_agent: string | null;
+      ip: string;
+      country: string;
+      region: string;
+      city: string;
+      created_at: Date | null;
+      total_count: string;
+    }[]
+  >(
+    `WITH filtered AS MATERIALIZED (
+       SELECT id, code, user_agent, ip, country, region, city, created_at
+         FROM affiliate_clicks
+        WHERE code = $1
+     )
+     SELECT page.*, totals.total_count
+       FROM (SELECT COUNT(*)::text AS total_count FROM filtered) totals
+       LEFT JOIN LATERAL (
+         SELECT *
+           FROM filtered
+          ORDER BY created_at DESC
+          OFFSET $2 LIMIT $3
+       ) page ON TRUE`,
+    affiliateCode,
+    (safePage - 1) * safePerPage,
+    safePerPage,
+  );
+  const total = Number(clicks[0]?.total_count ?? 0);
 
   return {
-    data: clicks.map((c) => ({
+    data: clicks
+      .filter((c): c is typeof c & { id: number } => c.id !== null)
+      .map((c) => ({
       id: c.id,
-      code: c.code,
+      code: c.code ?? affiliateCode,
       userAgent: c.user_agent,
       ip: c.ip,
       country: c.country,
       region: c.region,
       city: c.city,
       createdAt: c.created_at?.toISOString() ?? null,
-    })),
+      })),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }
 
@@ -61,42 +88,73 @@ export async function getCreatorCodeUsages(
   userBonusUsd: number;
   createdAt: string;
 }>> {
-  const db = await getDb();
-  const where = { affiliate_user_id: userId };
-  const [usages, total] = await Promise.all([
-    db.affiliate_code_usages.findMany({
-      where,
-      orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-      include: {
-        user_affiliate_code_usages_referred_user_idTouser: {
-          select: { username: true, email: true },
-        },
-      },
-    }),
-    db.affiliate_code_usages.count({ where }),
-  ]);
+  const safePage = Math.max(1, Math.trunc(page) || 1);
+  const safePerPage = Math.min(
+    200,
+    Math.max(1, Math.trunc(perPage) || 20),
+  );
+  const usages = await queryMainRows<
+    {
+      id: string | null;
+      referred_user_id: string | null;
+      referred_username: string | null;
+      usage_type: string;
+      deposit_amount_usd: string;
+      wager_amount_usd: string;
+      referrer_cut_usd: string;
+      user_bonus_usd: string;
+      created_at: Date;
+      total_count: string;
+    }[]
+  >(
+    `WITH filtered AS MATERIALIZED (
+       SELECT acu.id, acu.referred_user_id,
+              COALESCE(u.username, u.email) AS referred_username,
+              acu.usage_type::text AS usage_type,
+              acu.deposit_amount_usd::text AS deposit_amount_usd,
+              acu.wager_amount_usd::text AS wager_amount_usd,
+              acu.referrer_cut_usd::text AS referrer_cut_usd,
+              acu.user_bonus_usd::text AS user_bonus_usd,
+              acu.created_at
+         FROM affiliate_code_usages acu
+         LEFT JOIN "user" u ON u.id = acu.referred_user_id
+        WHERE acu.affiliate_user_id = $1
+     )
+     SELECT page.*, totals.total_count
+       FROM (SELECT COUNT(*)::text AS total_count FROM filtered) totals
+       LEFT JOIN LATERAL (
+         SELECT *
+           FROM filtered
+          ORDER BY created_at DESC
+          OFFSET $2 LIMIT $3
+       ) page ON TRUE`,
+    userId,
+    (safePage - 1) * safePerPage,
+    safePerPage,
+  );
+  const total = Number(usages[0]?.total_count ?? 0);
 
   return {
-    data: usages.map((u) => ({
+    data: usages
+      .filter(
+        (u): u is typeof u & { id: string; referred_user_id: string } =>
+          u.id !== null && u.referred_user_id !== null,
+      )
+      .map((u) => ({
       id: u.id,
       referredUserId: u.referred_user_id,
-      referredUsername:
-        u.user_affiliate_code_usages_referred_user_idTouser?.username ??
-        u.user_affiliate_code_usages_referred_user_idTouser?.email ??
-        null,
+      referredUsername: u.referred_username,
       usageType: u.usage_type,
       depositAmountUsd: toNumber(u.deposit_amount_usd),
       wagerAmountUsd: toNumber(u.wager_amount_usd),
       referrerCutUsd: toNumber(u.referrer_cut_usd),
       userBonusUsd: toNumber(u.user_bonus_usd),
       createdAt: u.created_at.toISOString(),
-    })),
+      })),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }
 
@@ -182,13 +240,12 @@ const ATTRIBUTION_LOOKBACK_DAYS = 365;
 export async function getUserAttributionJourney(
   userId: string,
 ): Promise<AttributionJourneyEntry[]> {
-  const db = await getDb();
 
   // One grouped scan over the user's acu rows. DISTINCT-ON-style picks of
   // the latest-seen code spelling + owning creator are done with
   // (array_agg ... ORDER BY created_at DESC)[1] so a single GROUP BY on
   // UPPER(code) yields both the aggregates and the representative labels.
-  const rows = await db.$queryRawUnsafe<AttributionJourneyRow[]>(
+  const rows = await queryMainRows<AttributionJourneyRow[]>(
     `SELECT (array_agg(acu.code ORDER BY acu.created_at DESC))[1] AS code,
             (array_agg(acu.affiliate_user_id ORDER BY acu.created_at DESC))[1] AS affiliate_user_id,
             (array_agg(COALESCE(u.username, u.email) ORDER BY acu.created_at DESC))[1] AS creator_name,
@@ -222,10 +279,23 @@ export async function getUserAttributionJourney(
 }
 
 export async function getCreatorWithdrawalLimits(userId: string) {
-  const db = await getDb();
-  const limits = await db.creator_withdrawal_limits.findUnique({
-    where: { user_id: userId },
-  });
+  const [limits] = await queryMainRows<
+    {
+      currency_limit_amount: string | null;
+      currency_limit_start_date: Date | null;
+      currency_limit_reset_days: number | null;
+      percentage_limit: string | null;
+    }[]
+  >(
+    `SELECT currency_limit_amount::text AS currency_limit_amount,
+            currency_limit_start_date,
+            currency_limit_reset_days,
+            percentage_limit::text AS percentage_limit
+       FROM creator_withdrawal_limits
+      WHERE user_id = $1
+      LIMIT 1`,
+    userId,
+  );
   if (!limits) return null;
   return {
     currencyLimitAmount: limits.currency_limit_amount ? toNumber(limits.currency_limit_amount) : null,

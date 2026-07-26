@@ -10,11 +10,8 @@ import { Button } from "@/components/ui/button";
  * still initializing, missing env, etc.) and shows a soft error
  * instead of the raw Vercel runtime overlay.
  *
- * Most likely cause if you see this in the wild: the migration at
- * prisma/admin/migrations/20260429300000_add_salary_tables hasn't
- * run yet AND the auto-heal in ensureSalarySchema() also failed
- * (e.g. the running DB user can't CREATE TABLE). The error.digest
- * shown below is what Vercel logs match against.
+ * Schema changes are provisioned through reviewed ADMIN migrations. The
+ * error.digest shown below is what Vercel logs match against.
  *
  * SECURITY: the raw `error.message` is never rendered — only the digest
  * (safe correlation handle) is shown. Full stack lives in server logs.
@@ -59,12 +56,11 @@ export default function SalariesError({
           Likely cause
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
-          The salary tables aren&apos;t initialized in the admin DB yet. The
-          page tries to auto-create them on first load — if that&apos;s
-          failing, run the migration manually:
+          The salary tables aren&apos;t initialized in the Admin DB yet.
+          Ask the owner to apply the reviewed salary migration:
         </p>
         <pre className="mt-2 whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-[11px]">
-          npx prisma db execute --file=./prisma/admin/migrations/20260429300000_add_salary_tables/migration.sql --config=prisma/admin/prisma.config.ts
+          npm run admin:sql -- drizzle/admin/migrations/&lt;reviewed-salary-migration&gt;.sql
         </pre>
       </div>
 

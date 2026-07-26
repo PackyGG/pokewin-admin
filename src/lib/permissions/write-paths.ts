@@ -7,7 +7,7 @@ import "server-only";
  * routes through the ONE materializer `computeEffectivePermissions`
  * (src/lib/permissions/materialize.ts) instead of the old divergent
  * `materializeAllowedPages` diff. This module READS a user's persisted
- * permission state from the ADMIN DB (`adminDb`) and delegates all the actual
+ * permission state from the ADMIN DB and delegates all the actual
  * (pure) override math to src/lib/permissions/override.ts — which is therefore
  * unit-testable without a DB (see scripts/__fixtures__/override-materializer.test.ts).
  *
@@ -23,9 +23,13 @@ import "server-only";
  */
 
 import { unstable_cache } from "next/cache";
-import { adminDb } from "@/lib/admin-db";
+import { eq, inArray, isNotNull } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 import { getEffectiveRoles, isAdminRole } from "@/lib/admin-roles";
-import { readAdminUserWithOverrides } from "@/lib/admin-user-roles";
+import {
+  readAdminUsersWithOverrides,
+} from "@/lib/admin-user-roles";
+import { admin_roles, admin_users } from "@/lib/db-schema/admin/schema";
 import type { BaselineMap } from "@/lib/role-baselines";
 import { sanitizePermissionKeys } from "@/app/(admin)/settings/roles/permissions-utils";
 import type {
@@ -59,61 +63,64 @@ export type UserPermissionState = PermissionStateCore & { id: string };
 export async function loadUserPermissionState(
   userId: string,
 ): Promise<UserPermissionState | null> {
-  const row = await readAdminUserWithOverrides(
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id: userId },
-        select: {
-          id: true,
-          role: true,
-          roles: true,
-          allowed_pages: true,
-          permission_grants: true,
-          permission_revokes: true,
-          custom_role: { select: { capabilities: true } },
-        },
-      }),
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id: userId },
-        select: {
-          id: true,
-          role: true,
-          roles: true,
-          allowed_pages: true,
-          custom_role: { select: { capabilities: true } },
-        },
-      }),
+  return (await loadUserPermissionStates([userId]))[0] ?? null;
+}
+
+/** Batch variant used by role edits so assigned users cost one joined read. */
+export async function loadUserPermissionStates(
+  userIds: readonly string[],
+): Promise<UserPermissionState[]> {
+  if (userIds.length === 0) return [];
+  const rowIds = [...new Set(userIds)];
+  const rows = await readAdminUsersWithOverrides(
+    async () => {
+      return adminDrizzle
+        .select({
+          id: admin_users.id,
+          role: admin_users.role,
+          roles: admin_users.roles,
+          allowed_pages: admin_users.allowed_pages,
+          permission_grants: admin_users.permission_grants,
+          permission_revokes: admin_users.permission_revokes,
+          custom_role_capabilities: admin_roles.capabilities,
+        })
+        .from(admin_users)
+        .leftJoin(admin_roles, eq(admin_roles.id, admin_users.role_id))
+        .where(inArray(admin_users.id, rowIds));
+    },
+    async () => {
+      return adminDrizzle
+        .select({
+          id: admin_users.id,
+          role: admin_users.role,
+          roles: admin_users.roles,
+          allowed_pages: admin_users.allowed_pages,
+          custom_role_capabilities: admin_roles.capabilities,
+        })
+        .from(admin_users)
+        .leftJoin(admin_roles, eq(admin_roles.id, admin_users.role_id))
+        .where(inArray(admin_users.id, rowIds));
+    },
   );
 
-  if (!row) return null;
-
-  // `readAdminUserWithOverrides` guarantees the override fields exist on the
-  // result (real columns on the happy path, injected `[]` on degrade).
-  const r = row as {
-    id: string;
-    role: string;
-    roles: string[] | null | undefined;
-    allowed_pages: string[];
-    permission_grants: string[];
-    permission_revokes: string[];
-    custom_role: { capabilities: string[] } | null;
-  };
-
-  const customRoleTokens: PermissionToken[] = r.custom_role?.capabilities ?? [];
-  const override: PermissionOverride = {
-    grants: r.permission_grants ?? [],
-    revokes: r.permission_revokes ?? [],
-  };
-
-  return {
-    id: r.id,
-    role: r.role,
-    roles: getEffectiveRoles(r.role, r.roles),
-    customRoleTokens,
-    allowedPages: r.allowed_pages,
-    override,
-  };
+  return (rows ?? []).map((row) => {
+    const customRoleTokens: PermissionToken[] =
+      row.custom_role_capabilities ?? [];
+    const override: PermissionOverride = {
+      grants:
+        "permission_grants" in row ? (row.permission_grants ?? []) : [],
+      revokes:
+        "permission_revokes" in row ? (row.permission_revokes ?? []) : [],
+    };
+    return {
+      id: row.id,
+      role: row.role,
+      roles: getEffectiveRoles(row.role, row.roles),
+      customRoleTokens,
+      allowedPages: row.allowed_pages ?? [],
+      override,
+    };
+  });
 }
 
 /**
@@ -142,10 +149,13 @@ export async function loadUserPermissionState(
 export const getBaselineMap = unstable_cache(
   async (): Promise<BaselineMap> => {
     try {
-      const rows = await adminDb.admin_roles.findMany({
-        where: { system_key: { not: null } },
-        select: { system_key: true, capabilities: true },
-      });
+      const rows = await adminDrizzle
+        .select({
+          system_key: admin_roles.system_key,
+          capabilities: admin_roles.capabilities,
+        })
+        .from(admin_roles)
+        .where(isNotNull(admin_roles.system_key));
       const map: BaselineMap = {};
       for (const row of rows) {
         const key = row.system_key;
@@ -155,7 +165,7 @@ export const getBaselineMap = unstable_cache(
       }
       return map;
     } catch (err) {
-      // The column may not exist yet (applied via prisma db execute, owner-
+      // The column may not exist yet (applied via reviewed Admin SQL, owner-
       // gated). An empty map = full fallback to code ROLE_BASELINES = identical
       // behavior. Never let a baseline-map read crash a write path.
       console.error(

@@ -51,7 +51,7 @@ function userDetailTags(userId: string): string[] {
  * DB-env correctness (prod-only cache)
  * ────────────────────────────────────
  * `getUserDetail` / `getUserPnlBreakdown` each call
- * `getDb()` internally, which resolves the per-admin `admin_db_env`
+ * resolve the request-scoped Drizzle client, which reads the per-admin `admin_db_env`
  * cookie. `unstable_cache` runs its callback OUTSIDE the request's
  * dynamic scope, so a `cookies()` read inside it throws and `readDbEnv`
  * falls back to "prod" — the cached callback therefore always queries the
@@ -177,8 +177,8 @@ export async function getUserPnlBreakdownCached(
  * — see getUserFinancialTransactionsCached below.
  *
  * Cache-safety of the cookie-scoped reads (same as the detail caches above):
- * the callback runs OUTSIDE the request's dynamic scope, so both `getDb()`
- * → `readDbEnv()` (falls back to prod) and `getUserTransactions`'
+ * the callback runs OUTSIDE the request's dynamic scope, so both the MAIN
+ * client resolver (which falls back to prod) and `getUserTransactions`'
  * `verifySession()` (caught → fail-closed non-owner, a no-op for gaming
  * types) behave deterministically. We therefore cache ONLY on prod and run
  * the query directly for a dev-toggled admin.

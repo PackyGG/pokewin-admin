@@ -20,7 +20,6 @@
  * consulted here at all (see the note on the async helper below).
  */
 
-import type { admin_role } from "@/generated/admin-prisma/client";
 import type { AdminRole } from "@/lib/admin-roles";
 import type { RoleBaseline, PermissionToken } from "@/lib/permissions/types";
 
@@ -45,7 +44,7 @@ export type BaselineMap = Partial<Record<AdminRole, PermissionToken[]>>;
  * the canonical code baseline. It is byte-equal (as a SET) to
  * `PACK_CREATOR_DEFAULT_PAGES` in
  * `src/lib/pack-creator/ensure-capabilities.ts` — that module is `server-only`
- * (it imports `adminDb`), so the tokens are duplicated here verbatim to keep
+ * (it imports the admin database), so the tokens are duplicated here verbatim to keep
  * THIS module DB-free. The live parity harness proves the two stay in
  * lock-step (Skailer reconciles to exactly this set).
  */
@@ -242,7 +241,7 @@ export function baselineTokensFor(
  * reuse it).
  */
 export async function computeAllowedPagesForRoles(
-  roles: readonly admin_role[],
+  roles: readonly AdminRole[],
 ): Promise<string[]> {
   if (roles.includes("admin")) return [];
 

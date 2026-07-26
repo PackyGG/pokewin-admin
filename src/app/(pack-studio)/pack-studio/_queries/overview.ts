@@ -1,6 +1,7 @@
 import { unstable_cache } from "next/cache";
+import { sql } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { toNumber } from "@/lib/utils/decimal";
 import {
@@ -107,25 +108,29 @@ type CachedScoreLite = {
  * Cached cookie-free base: the ADMIN `pack_risk_scores` rows (mapped to plain
  * primitives INSIDE the cache so the JSON round-trip is safe) + the
  * `pack_system_config` blob (also ADMIN-only). The MAIN pack-meta join is NOT
- * here — `getPackMetaByIds` → `getDb()` reads the `admin_db_env` cookie, and
+ * here — `getPackMetaByIds` resolves its Drizzle client from the
+ * `admin_db_env` cookie, and
  * `cookies()` inside `unstable_cache` throws ("Server Components render" error).
  */
 const getCachedOverviewBase = unstable_cache(
   async (): Promise<{ scores: CachedScoreLite[]; cfg: PackSystemConfig | null }> => {
     const [rows, cfg] = await Promise.all([
-      adminDb.pack_risk_scores.findMany({
-        select: {
-          pack_id: true,
-          edge: true,
-          near_miss: true,
-          max_win: true,
-          cv: true,
-          risk_score: true,
-          tier: true,
-          compliance: true,
-          computed_at: true,
-        },
-      }),
+      adminDrizzle.execute<{
+        pack_id: string;
+        edge: string;
+        near_miss: string;
+        max_win: string;
+        cv: string;
+        risk_score: number;
+        tier: string;
+        compliance: unknown;
+        computed_at: Date;
+      }>(sql`
+        SELECT pack_id, edge::text AS edge, near_miss::text AS near_miss,
+               max_win::text AS max_win, cv::text AS cv, risk_score, tier,
+               compliance, computed_at
+        FROM pack_risk_scores
+      `).then((result) => result.rows),
       readPackSystemConfig(),
     ]);
     const scores: CachedScoreLite[] = rows.map((r) => ({
@@ -148,7 +153,7 @@ const getCachedOverviewBase = unstable_cache(
 /**
  * Compute the Pack-Studio overview KPIs from the cached `pack_risk_scores` base
  * plus a single batched pack-meta read from MAIN (done OUTSIDE the cache, since
- * `getDb()` reads a cookie). The pack-meta read doubles as the freshness/active
+ * the MAIN client reads a cookie). The pack-meta read doubles as the freshness/active
  * check + the name/slug source for the alert lists.
  */
 async function computeOverview(): Promise<PackStudioOverview> {

@@ -120,7 +120,7 @@ test("harness embedded baselines match the source ROLE_BASELINES", () => {
 });
 
 // ── 2b. RoleV2 seed source == code == harness (the seed==code drift guard) ──
-// The RoleV2 seed (prisma/admin/seed-rolev2.ts) persists, for EVERY built-in
+// The RoleV2 seed (scripts/seed-admin-rolev2.ts) persists, for EVERY built-in
 // `admin_role` value, `capabilities = ROLE_BASELINES[role].tokens` — imported
 // from THE SAME module this test imports. The live harness then asserts each
 // persisted system row's capabilities == HARNESS_ROLE_BASELINES[key]. This

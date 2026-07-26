@@ -1,5 +1,5 @@
-import { getDb } from "@/lib/db";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -9,14 +9,11 @@ import { makeCachedPair } from "@/lib/queries/insights-rewards/_cache";
 import { RAKEBACK_CACHE_TAGS } from "@/lib/queries/insights-rewards/rakeback/_cache-tags";
 import {
   LIFETIME_PAIRING_LOOKBACK_DAYS,
-  windowDateFilterCapped,
 } from "@/lib/queries/insights-rewards/deposit-bonus/_shared";
 import {
   RAKEBACK_ROI_LOOKBACK_DEFAULT,
   type RakebackRoiLookback,
 } from "@/app/(admin)/insights/_shared/rakeback-constants";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getRakebackRoiFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/rakeback/roi";
 
 // Re-export the client-safe lookback constants/helpers so server callers
 // can keep importing them from this module. The runtime values live in
@@ -83,11 +80,10 @@ async function computeRoi(
   lookbackDays: RakebackRoiLookback,
   blacklistIds: string[],
 ): Promise<RakebackRoi> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
-  const dateFilter =
-    days !== null ? `AND rc.claimed_at >= NOW() - INTERVAL '${days} days'` : "";
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
+  const dateFilter = daysAgoFilter("rc.claimed_at", days);
   // For very short windows we collapse the lookback to the period itself
   // so the math stays bounded (a 24h period with 14d lookback would let
   // unrelated future activity bleed into the comparison).
@@ -106,17 +102,17 @@ async function computeRoi(
   // surfaces 365 on lifetime (was `null`) so the bound is honest in the UI.
   const lookbackClause =
     days !== null
-      ? `AND lt.created_at <= fc.first_claim_at + INTERVAL '${effectiveLookback} days'`
-      : windowDateFilterCapped("all", "lt");
+      ? sql`AND lt.created_at <= fc.first_claim_at + (${effectiveLookback} * INTERVAL '1 day')`
+      : daysAgoFilter("lt.created_at", LIFETIME_PAIRING_LOOKBACK_DAYS);
 
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       cost: string;
       claimants: string;
       wager: string;
       payouts: string;
     }[]
-  >(`
+  >(db, sql`
     WITH first_claim AS (
       SELECT rc.user_id, MIN(rc.claimed_at) AS first_claim_at
       FROM rakeback_claims rc
@@ -140,14 +136,14 @@ async function computeRoi(
     forward_play AS (
       SELECT
         fc.user_id,
-        COALESCE(SUM(CASE WHEN lt.type::text IN ${WAGER_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS wager,
-        COALESCE(SUM(CASE WHEN lt.type::text IN ${PAYOUT_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS payouts
+        COALESCE(SUM(CASE WHEN lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)} THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS wager,
+        COALESCE(SUM(CASE WHEN lt.type::text IN ${sql.raw(PAYOUT_TYPES_SQL)} THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS payouts
       FROM first_claim fc
       LEFT JOIN ledger_transactions lt
         ON lt.user_id = fc.user_id
        AND lt.status = 'completed'
        AND lt.created_at >= fc.first_claim_at
-       AND lt.type IN (${WAGER_TYPES_SQL.slice(1, -1)},${PAYOUT_TYPES_SQL.slice(1, -1)})
+       AND lt.type IN (${sql.raw(WAGER_TYPES_SQL.slice(1, -1))},${sql.raw(PAYOUT_TYPES_SQL.slice(1, -1))})
        ${lookbackClause}
       GROUP BY fc.user_id
     )
@@ -179,26 +175,12 @@ async function computeRoi(
   };
 }
 
-// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
-// through the cache on failure); off/comparison serve Postgres unchanged. The
-// SAME lookback the PG path used is forwarded so the windows match exactly.
-async function resolveRoi(
-  period: InsightsRewardsPeriod,
-  lookbackDays: RakebackRoiLookback,
-  blacklistIds: string[],
-): Promise<RakebackRoi> {
-  return resolveAdminRead<RakebackRoi>("insights_rakeback_roi", {
-    pg: () => computeRoi(period, lookbackDays, blacklistIds),
-    ch: () => getRakebackRoiFromClickHouse(period, lookbackDays, blacklistIds),
-  });
-}
-
 // Shared 60s/300s cache pair, keyed on `(period, lookbackDays, blacklist)`.
 // The lookback selector stays part of the cache key (an extra key dimension
 // threaded through `makeCachedPair`), so each `?lookback=` value caches
 // independently — identical behaviour to the hand-rolled pair this replaces.
 const cachedRoi = makeCachedPair(
-  resolveRoi,
+  computeRoi,
   "insights-rewards-rakeback-roi",
   RAKEBACK_CACHE_TAGS,
 );

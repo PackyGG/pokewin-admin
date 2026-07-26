@@ -1,6 +1,23 @@
 "use server";
 
-import { getDb } from "@/lib/db";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  ilike,
+  isNull,
+  or,
+} from "drizzle-orm";
+
+import { getDrizzleDb } from "@/lib/db";
+import {
+  packs,
+  promo_code_redemptions,
+  promo_codes,
+} from "@/lib/db-schema/main/schema";
 import {
   requirePageAccess,
   getUserPermissions,
@@ -69,27 +86,31 @@ export async function searchAnnouncementPacks(
     "compose announcements",
   );
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const q = query.trim();
-  const or: Record<string, unknown>[] = [];
-  if (q) {
-    or.push({ name: { contains: q, mode: "insensitive" } });
-    or.push({ slug: { contains: q, mode: "insensitive" } });
-    if (UUID_RE.test(q)) or.push({ id: q });
-  }
+  const search = q
+    ? or(
+        ilike(packs.name, `%${q}%`),
+        ilike(packs.slug, `%${q}%`),
+        ...(UUID_RE.test(q) ? [eq(packs.id, q)] : []),
+      )
+    : undefined;
   // Only active packs — announcing a disabled pack would link users to a
   // page they can't open.
-  const where: Record<string, unknown> = { active: true };
-  if (or.length > 0) where.OR = or;
+  const packRows = await db
+    .select({
+      id: packs.id,
+      name: packs.name,
+      slug: packs.slug,
+      image_url: packs.image_url,
+      price: packs.price,
+    })
+    .from(packs)
+    .where(and(eq(packs.active, true), search))
+    .orderBy(asc(packs.name))
+    .limit(20);
 
-  const packs = await db.packs.findMany({
-    where,
-    select: { id: true, name: true, slug: true, image_url: true, price: true },
-    orderBy: { name: "asc" },
-    take: 20,
-  });
-
-  return packs.map((p) => ({
+  return packRows.map((p) => ({
     id: p.id,
     name: p.name,
     slug: p.slug,
@@ -121,30 +142,37 @@ export async function searchAnnouncementPromoCodes(
     pageAccessGranted(allowedPages, "/promo-codes");
   if (!canSeeCodes) return { items: [], restricted: true };
 
-  const db = await getDb();
-  const now = new Date();
-  const codes = await db.promo_codes.findMany({
-    where: { OR: [{ expires_at: null }, { expires_at: { gt: now } }] },
-    orderBy: { created_at: "desc" },
-    take: 50,
-  });
+  const db = await getDrizzleDb();
+  const codes = await db
+    .select({
+      id: promo_codes.id,
+      value: promo_codes.value,
+      region: promo_codes.region,
+      max_uses: promo_codes.max_uses,
+      requires_discord: promo_codes.requires_discord,
+      minimum_level: promo_codes.minimum_level,
+      expires_at: promo_codes.expires_at,
+      metadata: promo_codes.metadata,
+      redeemed_count: count(promo_code_redemptions.id),
+    })
+    .from(promo_codes)
+    .leftJoin(
+      promo_code_redemptions,
+      eq(promo_code_redemptions.promo_code_id, promo_codes.id),
+    )
+    .where(
+      or(
+        isNull(promo_codes.expires_at),
+        gt(promo_codes.expires_at, new Date().toISOString()),
+      ),
+    )
+    .groupBy(promo_codes.id)
+    .orderBy(desc(promo_codes.created_at))
+    .limit(50);
 
   // Redemption counts for the returned page only — same scoped groupBy the
   // /promo-codes list uses, so a heavily-redeemed code can't drag an
   // unbounded row set into the request.
-  const ids = codes.map((c) => c.id);
-  const counts =
-    ids.length > 0
-      ? await db.promo_code_redemptions.groupBy({
-          by: ["promo_code_id"],
-          where: { promo_code_id: { in: ids } },
-          _count: { _all: true },
-        })
-      : [];
-  const countById = new Map(
-    counts.map((c) => [c.promo_code_id, c._count._all]),
-  );
-
   const q = query.trim().toUpperCase();
   const items = codes
     .map((c) => {
@@ -157,10 +185,12 @@ export async function searchAnnouncementPromoCodes(
         valueUsd: toNumber(c.value),
         region: c.region as string,
         maxUses: c.max_uses,
-        redeemedCount: countById.get(c.id) ?? 0,
+        redeemedCount: c.redeemed_count,
         requiresDiscord: c.requires_discord,
         minimumLevel: c.minimum_level,
-        expiresAt: c.expires_at ? c.expires_at.toISOString() : null,
+        expiresAt: c.expires_at
+          ? new Date(c.expires_at).toISOString()
+          : null,
       } satisfies AnnouncementPromoOption;
     })
     .filter((c): c is AnnouncementPromoOption => c !== null)

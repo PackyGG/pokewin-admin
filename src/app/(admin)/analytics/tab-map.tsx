@@ -6,10 +6,6 @@ import {
   Swords,
 } from "lucide-react";
 import { getUsersByCountry } from "@/lib/queries/map";
-import { compareAnalyticsMap } from "@/lib/clickhouse/compare/analytics-map-compare";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getUsersByCountryFromClickHouse } from "@/lib/clickhouse/queries/analytics/map";
-import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
@@ -44,15 +40,7 @@ export async function MapTab({
   metric: MapMetric;
 }) {
   const { data, error } = await safeQuery(
-    () =>
-      resolveAdminRead<Awaited<ReturnType<typeof getUsersByCountry>>>(
-        "analytics_map",
-        {
-          pg: () => getUsersByCountry(period),
-          ch: async () =>
-            getUsersByCountryFromClickHouse(period, await getExcludedUserIds()),
-        },
-      ),
+    () => getUsersByCountry(period),
     null,
     "analytics.map",
     REWARD_QUERY_TIMEOUT_MS,
@@ -67,8 +55,6 @@ export async function MapTab({
     );
   }
   // CQRS comparison-mode shadow read (fire-and-forget; served payload stays PG).
-  void compareAnalyticsMap(period, data);
-
   const topCountry = data.byCountry[0];
 
   // Platform-wide aggregates for the KPI strip. We roll up from the

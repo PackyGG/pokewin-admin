@@ -1,18 +1,14 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
+import { and, eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { creator_socials } from "@/lib/db-schema/admin/schema";
 
 /** Trimmed URL fields read from `creator_socials` rows for one creator. */
 export type CreatorSocialUrls = {
   discordChannelUrl: string | null;
   rewardPageUrl: string | null;
 };
-
-const URL_SELECT = {
-  platform: true,
-  discord_channel_url: true,
-  reward_page_url: true,
-} as const;
 
 /**
  * Read discord-channel + reward-page URLs for a creator. Scans all
@@ -22,10 +18,11 @@ const URL_SELECT = {
 export async function getCreatorSocialUrls(
   targetUserId: string,
 ): Promise<CreatorSocialUrls> {
-  const rows = await adminDb.creator_socials.findMany({
-    where: { target_user_id: targetUserId },
-    select: URL_SELECT,
-  });
+  const rows = await adminDrizzle.select({
+    platform: creator_socials.platform,
+    discord_channel_url: creator_socials.discord_channel_url,
+    reward_page_url: creator_socials.reward_page_url,
+  }).from(creator_socials).where(eq(creator_socials.target_user_id, targetUserId));
 
   const discordRow = rows.find((r) => r.platform === "discord");
   const discordChannelUrl =
@@ -66,24 +63,17 @@ export async function persistDiscordChannelUrl(
 ): Promise<void> {
   const normalized = normalizeUrl(channelUrl, "Discord channel link");
 
-  await adminDb.creator_socials.upsert({
-    where: {
-      target_user_id_platform: {
-        target_user_id: targetUserId,
-        platform: "discord",
-      },
-    },
-    create: {
+  await adminDrizzle.insert(creator_socials).values({
       target_user_id: targetUserId,
       platform: "discord",
       username: existingDiscordUsername?.trim() || "pending",
       discord_channel_url: normalized,
-    },
-    update: {
+    }).onConflictDoUpdate({
+      target: [creator_socials.target_user_id, creator_socials.platform],
+      set: {
       discord_channel_url: normalized,
-      updated_at: new Date(),
-    },
-    select: { id: true },
+      updated_at: new Date().toISOString(),
+      },
   });
 }
 
@@ -95,24 +85,17 @@ export async function persistRewardPageUrl(
 ): Promise<void> {
   const normalized = normalizeUrl(rewardUrl, "Reward page URL");
 
-  await adminDb.creator_socials.upsert({
-    where: {
-      target_user_id_platform: {
-        target_user_id: targetUserId,
-        platform: "discord",
-      },
-    },
-    create: {
+  await adminDrizzle.insert(creator_socials).values({
       target_user_id: targetUserId,
       platform: "discord",
       username: existingDiscordUsername?.trim() || "pending",
       reward_page_url: normalized,
-    },
-    update: {
+    }).onConflictDoUpdate({
+      target: [creator_socials.target_user_id, creator_socials.platform],
+      set: {
       reward_page_url: normalized,
-      updated_at: new Date(),
-    },
-    select: { id: true },
+      updated_at: new Date().toISOString(),
+      },
   });
 }
 
@@ -120,40 +103,16 @@ export async function persistRewardPageUrl(
 export async function clearDiscordChannelUrl(
   targetUserId: string,
 ): Promise<void> {
-  const row = await adminDb.creator_socials.findUnique({
-    where: {
-      target_user_id_platform: {
-        target_user_id: targetUserId,
-        platform: "discord",
-      },
-    },
-    select: { id: true },
-  });
-  if (!row) return;
-
-  await adminDb.creator_socials.update({
-    where: { id: row.id },
-    data: { discord_channel_url: null, updated_at: new Date() },
-    select: { id: true },
-  });
+  await adminDrizzle.update(creator_socials)
+    .set({ discord_channel_url: null, updated_at: new Date().toISOString() })
+    .where(and(eq(creator_socials.target_user_id, targetUserId),
+      eq(creator_socials.platform, "discord")));
 }
 
 /** Clear the reward-page URL for a creator (no-op when unset). */
 export async function clearRewardPageUrl(targetUserId: string): Promise<void> {
-  const row = await adminDb.creator_socials.findUnique({
-    where: {
-      target_user_id_platform: {
-        target_user_id: targetUserId,
-        platform: "discord",
-      },
-    },
-    select: { id: true },
-  });
-  if (!row) return;
-
-  await adminDb.creator_socials.update({
-    where: { id: row.id },
-    data: { reward_page_url: null, updated_at: new Date() },
-    select: { id: true },
-  });
+  await adminDrizzle.update(creator_socials)
+    .set({ reward_page_url: null, updated_at: new Date().toISOString() })
+    .where(and(eq(creator_socials.target_user_id, targetUserId),
+      eq(creator_socials.platform, "discord")));
 }

@@ -98,20 +98,14 @@ export const INTERNAL_ENDPOINTS: readonly InternalEndpoint[] = [
   },
   {
     method: "GET",
-    path: "/api/health/clickhouse",
-    summary: "ClickHouse health probe. No in-app caller — external monitoring only.",
-    auth: "admin session",
+    path: "/api/health/postgres",
+    summary: "PostgreSQL health probe. No in-app caller — external monitoring only.",
+    auth: "cron secret",
   },
   {
     method: "GET",
     path: "/api/imagekit-auth",
     summary: "Short-lived ImageKit upload token for the client uploader.",
-    auth: "admin session",
-  },
-  {
-    method: "GET",
-    path: "/api/live/activity",
-    summary: "SSE stream powering the docked recent-activity feed.",
     auth: "admin session",
   },
   {
@@ -130,7 +124,7 @@ export const INTERNAL_ENDPOINTS: readonly InternalEndpoint[] = [
     method: "GET",
     path: "/api/cron/warm",
     summary:
-      "Keep-warm cron: pings ClickHouse and refreshes the hottest cached aggregates.",
+      "Keep-warm cron: pings PostgreSQL and refreshes the hottest cached aggregates.",
     auth: "cron secret",
   },
 ];

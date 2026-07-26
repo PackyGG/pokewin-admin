@@ -1,6 +1,7 @@
 import "server-only";
 
-import type { PrismaClient } from "@/generated/prisma/client";
+import { sql } from "drizzle-orm";
+import type { MainDrizzleDb } from "@/lib/db";
 
 // Hard ceiling on the JSON blob we persist into admin_deleted_users.
 // Postgres JSONB can technically hold much more, but a single user with
@@ -19,15 +20,13 @@ const HISTORICAL_ROW_CAP = 1000;
  * Shape of the JSONB blob stored in `admin_deleted_users.snapshot`.
  *
  * Decimal / Date / BigInt values in the main DB serialize to:
- *   - Decimal → string (Prisma already returns Decimal as a Decimal.js
- *     instance — we JSON.stringify it so it lands as the canonical
- *     decimal string the restore path parses back via `new Decimal()`).
+ *   - Decimal → string (numeric columns are selected as canonical text).
  *   - Date    → ISO string (default JSON.stringify behaviour).
  *   - BigInt  → not used on the snapshotted models, but if encountered
  *     we coerce to string via the replacer below to avoid throwing.
  *
- * Restore reads each section back, parses any decimal/date strings via
- * Prisma's input coercion, and runs db.$transaction(...) — see
+ * Restore reads each section back, binds decimal/date strings through
+ * parameterized SQL, and runs a Drizzle transaction — see
  * src/app/(admin)/users/deleted/actions.ts.
  */
 export type DeletedUserSnapshot = {
@@ -48,9 +47,8 @@ export type DeletedUserSnapshot = {
 };
 
 // JSON.stringify replacer: keep Decimal.js / BigInt values addressable
-// after a JSON round-trip. Prisma returns Decimal via `decimal.js` —
-// instances expose `toFixed()`; without this they'd serialize as
-// `{ s, e, d }` (Decimal's internal shape) which restore can't parse.
+// after a JSON round-trip. Decimal.js instances expose `toFixed()`; without
+// this they serialize as their internal shape, which restore cannot parse.
 function snapshotJsonReplacer(_key: string, value: unknown): unknown {
   if (typeof value === "bigint") return value.toString();
   if (
@@ -97,7 +95,7 @@ function snapshotByteLength(value: unknown): number {
  * row is missing — the caller must abort the delete in that case.
  */
 export async function buildUserSnapshot(
-  db: PrismaClient,
+  db: Pick<MainDrizzleDb, "execute">,
   userId: string,
 ): Promise<DeletedUserSnapshot> {
   const [
@@ -109,31 +107,50 @@ export async function buildUserSnapshot(
     gameSessionsRows,
     ledgerRows,
   ] = await Promise.all([
-    db.user.findUnique({ where: { id: userId } }),
-    db.balances.findUnique({ where: { user_id: userId } }),
+    db.execute<{ row: Record<string, unknown> }>(sql`
+      SELECT to_jsonb(u) AS row FROM "user" u WHERE id = ${userId}
+    `).then((result) => result.rows[0]?.row ?? null),
+    db.execute<{ row: Record<string, unknown> }>(sql`
+      SELECT to_jsonb(b) || jsonb_build_object(
+        'available_balance', b.available_balance::text,
+        'locked_balance', b.locked_balance::text,
+        'total_deposited', b.total_deposited::text,
+        'total_withdrawn', b.total_withdrawn::text,
+        'total_wagered', b.total_wagered::text,
+        'total_won', b.total_won::text
+      ) AS row
+      FROM balances b WHERE user_id = ${userId}
+    `).then((result) => result.rows[0]?.row ?? null),
     // Newest first so the truncation cap keeps the most recent rows.
-    db.user_inventory.findMany({
-      where: { user_id: userId },
-      orderBy: { created_at: "desc" },
-    }),
-    db.vouchers.findMany({
-      where: { user_id: userId },
-      orderBy: { created_at: "desc" },
-    }),
-    db.rakeback_claims.findMany({
-      where: { user_id: userId },
-      orderBy: { created_at: "desc" },
-    }),
-    db.game_sessions.findMany({
-      where: { user_id: userId },
-      orderBy: { created_at: "desc" },
-      take: HISTORICAL_ROW_CAP,
-    }),
-    db.ledger_transactions.findMany({
-      where: { user_id: userId },
-      orderBy: { created_at: "desc" },
-      take: HISTORICAL_ROW_CAP,
-    }),
+    db.execute<{ row: Record<string, unknown> }>(sql`
+      SELECT to_jsonb(ui) || jsonb_build_object(
+        'value_at_obtained', ui.value_at_obtained::text,
+        'pull_chance', ui.pull_chance::text
+      ) AS row FROM user_inventory ui
+      WHERE user_id = ${userId} ORDER BY created_at DESC
+    `).then((result) => result.rows.map((row) => row.row)),
+    db.execute<{ row: Record<string, unknown> }>(sql`
+      SELECT to_jsonb(v) || jsonb_build_object('value', v.value::text) AS row
+      FROM vouchers v
+      WHERE user_id = ${userId} ORDER BY created_at DESC
+    `).then((result) => result.rows.map((row) => row.row)),
+    db.execute<{ row: Record<string, unknown> }>(sql`
+      SELECT to_jsonb(rc) || jsonb_build_object(
+        'wagered_amount_usd', rc.wagered_amount_usd::text,
+        'rakeback_amount_usd', rc.rakeback_amount_usd::text
+      ) AS row FROM rakeback_claims rc
+      WHERE user_id = ${userId} ORDER BY created_at DESC
+    `).then((result) => result.rows.map((row) => row.row)),
+    db.execute<{ row: Record<string, unknown> }>(sql`
+      SELECT to_jsonb(gs) AS row FROM game_sessions gs
+      WHERE user_id = ${userId} ORDER BY created_at DESC
+      LIMIT ${HISTORICAL_ROW_CAP}
+    `).then((result) => result.rows.map((row) => row.row)),
+    db.execute<{ row: Record<string, unknown> }>(sql`
+      SELECT to_jsonb(lt) AS row FROM ledger_transactions lt
+      WHERE user_id = ${userId} ORDER BY created_at DESC
+      LIMIT ${HISTORICAL_ROW_CAP}
+    `).then((result) => result.rows.map((row) => row.row)),
   ]);
 
   if (!userRow) {
@@ -171,10 +188,10 @@ export async function buildUserSnapshot(
 }
 
 /**
- * Convert the snapshot to a `Prisma.InputJsonValue`-compatible structure
- * by round-tripping through the replacer. The result is JSON-safe
+ * Convert the snapshot to a JSON-safe structure by round-tripping through the
+ * replacer. The result is
  * (Decimal → string, BigInt → string, Date → ISO string) and ready to
- * hand directly to `adminDb.admin_deleted_users.create({ data: ... })`.
+ * hand directly to the admin deleted-users insert.
  */
 export function snapshotToJsonValue(
   snapshot: DeletedUserSnapshot,

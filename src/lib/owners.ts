@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
-import { adminDb } from "@/lib/admin-db";
+import { and, eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_users } from "@/lib/db-schema/admin/schema";
 import { verifySession } from "@/lib/dal";
 import type { SessionPayload } from "@/lib/session";
 
@@ -106,7 +108,7 @@ export function isMainOwnerUsername(username: string | null | undefined): boolea
 }
 
 /**
- * P2022-safe DB read of `admin_users.is_owner` for a given admin id. The column
+ * Missing-column-safe DB read of `admin_users.is_owner` for a given admin id. The column
  * may ship ahead of code on some deploy (or behind, on an un-migrated dev DB) —
  * a missing column / any read failure degrades to `false` (fail-closed: a blip
  * can only ever HIDE owner power from a non-root admin, never grant it). The
@@ -114,13 +116,14 @@ export function isMainOwnerUsername(username: string | null | undefined): boolea
  */
 export async function readIsOwnerColumn(adminUserId: string): Promise<boolean> {
   try {
-    const row = await adminDb.admin_users.findUnique({
-      where: { id: adminUserId },
-      select: { is_owner: true, is_active: true },
-    });
-    return Boolean(row?.is_active && row.is_owner);
+    const [row] = await adminDrizzle
+      .select({ is_owner: admin_users.is_owner })
+      .from(admin_users)
+      .where(and(eq(admin_users.id, adminUserId), eq(admin_users.is_active, true)))
+      .limit(1);
+    return row?.is_owner === true;
   } catch {
-    // P2022 (column missing) or any transient fault → fail-closed.
+    // 42703 (column missing) or any transient fault → fail-closed.
     return false;
   }
 }
@@ -132,11 +135,15 @@ export async function readIsOwnerColumn(adminUserId: string): Promise<boolean> {
  */
 export async function isOwnerById(adminUserId: string): Promise<boolean> {
   try {
-    const row = await adminDb.admin_users.findUnique({
-      where: { id: adminUserId },
-      select: { username: true, is_active: true, is_owner: true },
-    });
-    if (!row?.is_active) return false;
+    const [row] = await adminDrizzle
+      .select({
+        username: admin_users.username,
+        is_owner: admin_users.is_owner,
+      })
+      .from(admin_users)
+      .where(and(eq(admin_users.id, adminUserId), eq(admin_users.is_active, true)))
+      .limit(1);
+    if (!row) return false;
     return isMainOwnerUsername(row.username) || row.is_owner === true;
   } catch {
     return false;

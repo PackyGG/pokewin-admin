@@ -7,12 +7,9 @@
 -- on the live ledger / user / inventory tables.
 --
 -- These indexes are intended for the MAIN game DB (the one packy.gg uses).
--- They do NOT belong in `prisma/schema.prisma` until a maintenance window
--- is scheduled, because Prisma's default migration runner uses plain
--- CREATE INDEX (which takes AccessExclusiveLock). The schema can be
--- updated AFTER each index has been created concurrently, by adding the
--- matching `@@index([...])` declaration and using
--- `prisma migrate resolve --applied <migration_name>` to record it.
+-- MAIN is strictly read-only from this repository. The database owner must
+-- review and apply selected statements outside an application transaction,
+-- then refresh the checked-in Drizzle snapshot with `npm run db:pull:main`.
 --
 -- Each section corresponds to a hot query path identified in the audit.
 -- Estimated impact ranges assume ledger_transactions of 1M+ rows.
@@ -523,7 +520,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_role_banned_locked
 -- #17 ----------------------------------------------------------------
 -- /crm Player-CRM snapshot — NO new index recommended (documented finding)
 -- ===================================================================
--- Added by the 2026-06-17 Index-or-ClickHouse compliance pass for
+-- Added by the 2026-06-17 PostgreSQL index compliance pass for
 -- src/lib/queries/crm.ts (computeCrmRowsPg).
 --
 -- The CRM snapshot is a 365-day, cross-customer per-user aggregate over
@@ -545,15 +542,12 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_role_banned_locked
 --   • non_borrow_battle_sessions is a FULL non-borrow scan (no date bound) by
 --     design → inherently a scan.
 --
--- Compliance posture (Index-or-ClickHouse): this read is NOT index-fixable;
+-- Compliance posture: this read is not index-fixable;
 -- it is served from indexed Postgres behind (a) shell-first <Suspense>
 -- streaming so it never blocks first paint, (b) a 300s unstable_cache so the
 -- ~1.45s cold aggregate runs at most once per 5 min, and (c) a safeQuery
--- timeout. The cent/count-exact ClickHouse twin
--- (src/lib/clickhouse/queries/crm.ts, surface `crm_snapshot`) is wired via
--- resolveAdminRead and parity-proven (TZ=UTC, run twice: 3387/3387 users,
--- every total Δ=0.00) — it stays dormant until ClickHouse creds + an
--- explicit Edge-Config/cutover flip, then offloads this scan to the columnar
+-- timeout. The cent/count-exact PostgreSQL query is parity-proven
+-- (TZ=UTC, run twice: 3387/3387 users, every total Δ=0.00).
 -- mirror. Same reasoning as the `dashboard_stats` note in
 -- src/lib/feature-flags/admin-read-source.ts.
 
@@ -904,7 +898,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS admin_audit_events_target_user_id_idx
 -- That rewrite is NOT done in this pass: this sort is a manual button
 -- click (not on every page load / not on every keystroke, unlike #15
 -- above), and 26.9 ms is not itself slow in absolute terms — there is no
--- user-visible complaint and no Index-or-ClickHouse violation (the read is
+-- user-visible complaint and no PostgreSQL index-policy violation (the read is
 -- fully indexed-table Seq Scan at a size where Seq Scan is still a
 -- reasonable planner choice, not an unindexed hot path). Re-escalate to an
 -- actual code change if /users approaches the ~50k mark this section
@@ -919,7 +913,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS admin_audit_events_target_user_id_idx
 -- lookup is EXACT (`code = $1`), which already hits the existing
 -- `affiliate_codes_code_unique` btree (Index Scan, EXPLAIN-proven). But a
 -- code PREFIX search (`code LIKE 'ABC%'`) CANNOT use that default-collation
--- index — EXPLAIN shows a Seq Scan. Per the Index-or-ClickHouse rule the
+-- index — EXPLAIN shows a Seq Scan. Per the PostgreSQL index rule the
 -- prefix path is therefore DISABLED in code today
 -- (`CODE_PREFIX_INDEX_APPLIED = false` in
 -- src/lib/queries/affiliate-codes-lookup.ts); only exact-code + owner
@@ -957,7 +951,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS admin_audit_events_target_user_id_idx
 -- planner correctly chooses a Seq Scan and the page is instant; the global
 -- reads are ALSO cached (unstable_cache, period-keyed) + timeout-wrapped and
 -- the lifetime window is bounded (365d), so no unbounded scan ships. Per the
--- Index-or-ClickHouse rule the missing index is flagged so the global
+-- PostgreSQL index rule the missing index is flagged so the global
 -- window/log stays index-served as the table grows:
 --
 --   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_bdd_offers_created_at
@@ -1028,7 +1022,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_inventory_obtained_at
 -- #28 creators-analytics PG-degradation fallback (computeAffiliateAnalytics
 -- signup/usage/daily legs) filter/group affiliate_code_usages by referred_user_id
 -- / created_at, but the only relevant index leads with affiliate_user_id → seq-scan.
--- (Only bites when ClickHouse is down and the surface degrades to Postgres.)
+-- Required for the PostgreSQL serving path.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_affiliate_code_usages_referred_created
   ON affiliate_code_usages (referred_user_id, created_at);
 
@@ -1153,7 +1147,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vouchers_user_id
 -- rows) the Seq Scan is sub-millisecond and does not make the pre-existing
 -- outer `user`-table scan in this same free-form branch (documented at #15)
 -- any worse — confirmed via EXPLAIN ANALYZE on the full combined free-form
--- WHERE shape with this leg included. Per the Index-or-ClickHouse rule this
+-- WHERE shape with this leg included. Per the PostgreSQL index rule this
 -- specific leg is BLOCKED from being a true index-backed read until the
 -- owner applies the statement below; ship the feature now (correct,
 -- negligible-cost, and consistent with #21/#22/#29's precedent for a small,
@@ -1189,7 +1183,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_affiliate_codes_upper_code
 -- the exact code-only prefix leg is a Seq Scan over 1,040 rows at 0.44 ms —
 -- sub-millisecond at today's size, so the feature ships now (correct,
 -- negligible-cost, consistent with the #21/#31 precedent). Per the
--- Index-or-ClickHouse rule this leg is BLOCKED from being a true index-backed
+-- PostgreSQL index rule this leg is BLOCKED from being a true index-backed
 -- read until the owner applies the statement above; re-verify once applied.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_affiliate_codes_upper_code_prefix
   ON affiliate_codes (UPPER(code) text_pattern_ops);
@@ -1299,3 +1293,65 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ledger_user_deposit_created
 -- NOT APPLIED — MAIN is read-only for the admin dashboard. Owner to apply.
 CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS promo_codes_code_hash_unique
   ON promo_codes (code_hash);
+
+-- =============================================================================
+-- #31+ — 2026-07-26 PostgreSQL-only analytics migration
+-- MAIN is read-only; these statements are recommendations for owner execution.
+-- =============================================================================
+
+-- #31 reward analytics now reads every rakeback dashboard directly from
+-- PostgreSQL. Windowed totals filter by claimed_at and consume user_id plus the
+-- two numeric measures. The partial covering shape keeps unclaimed rows out and
+-- avoids heap reads for the common date-window aggregates.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_rakeback_claims_claimed_at_cover
+  ON rakeback_claims (claimed_at, user_id)
+  INCLUDE (rakeback_amount_usd, wagered_amount_usd)
+  WHERE claimed_at IS NOT NULL;
+
+-- #32 cohort, cadence, lapsed-user, and top-claimer queries start from a user
+-- and walk that user's claims chronologically. The unique business key begins
+-- with user_id but cannot provide claimed_at order, so this complementary
+-- partial index removes repeated sorts and bounded nested scans.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_rakeback_claims_user_claimed_at
+  ON rakeback_claims (user_id, claimed_at)
+  WHERE claimed_at IS NOT NULL;
+
+-- #33 the former secondary analytics path is gone, so type/date reward and
+-- ledger aggregates always execute on PostgreSQL. This composite is now a
+-- required primary-path index instead of the previously deferred fallback
+-- recommendation.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ledger_tx_type_created_at
+  ON ledger_transactions (type, created_at DESC);
+
+-- #34 card-payment list pagination orders by newest intent with a stable id
+-- tie-breaker. Read-only catalog verification on 2026-07-26 found only 39
+-- rows, so two list-only indexes would currently cost more write/storage
+-- overhead than the tiny in-memory sort they avoid. Reconsider the following
+-- shapes only after the table grows materially (for example, >50k rows):
+--   (created_at DESC, id DESC)
+--   (status, created_at DESC, id DESC)
+
+-- #35 deposit-bonus detail resolves a provider transaction id from JSON for a
+-- single user. The partial expression index is limited to the exact completed
+-- bonus rows read by that workflow.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ledger_bonus_fireblocks_user
+  ON ledger_transactions (user_id, (metadata->>'fireblocks_tx_id'))
+  WHERE type = 'deposit_bonus' AND status = 'completed';
+
+-- #36 provably-fair history is a per-user newest-first bounded page.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_seed_rotation_user_rotated
+  ON seed_rotation_history (user_id, rotated_at DESC);
+
+-- #37 sold inventory history pages by user and sale time and renders the card
+-- and obtained value. The partial covering shape excludes live inventory.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_inventory_sold_user_time_cover
+  ON user_inventory (user_id, sold_at DESC)
+  INCLUDE (id, card_id, value_at_obtained)
+  WHERE sold_at IS NOT NULL;
+
+-- #38 open vouchers are fetched newest-first per user. Include the displayed
+-- monetary fields so the common page can remain index-only.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vouchers_open_user_created_cover
+  ON vouchers (user_id, created_at DESC)
+  INCLUDE (value, origin, description)
+  WHERE claimed_at IS NULL;

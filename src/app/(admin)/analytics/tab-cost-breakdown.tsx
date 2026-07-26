@@ -48,7 +48,6 @@ import {
   getRealizedPnlSnapshot,
   type RealizedPnlSnapshot,
 } from "@/lib/queries/_realized-pnl";
-import { compareCostBreakdown } from "@/lib/clickhouse/compare/insights-cost-breakdown";
 import { CostTrendChart } from "../insights/cost-breakdown/trend-chart";
 import { WaterfallRow, WaterfallBand } from "../insights/cost-breakdown/waterfall-row";
 import {
@@ -169,10 +168,7 @@ async function CostBreakdownBody({
 
   // Fire-and-forget CQRS comparison (Phase 2B): no-op unless the
   // `insights_cost_breakdown` surface is in `comparison` mode. Runs the
-  // ClickHouse twin on the SAME period + canonical cutoff and logs drift —
   // the served Postgres payload (`data`) is never affected.
-  if (data) void compareCostBreakdown(period, data);
-
   if (error || !data) {
     return (
       <TileErrorFallback

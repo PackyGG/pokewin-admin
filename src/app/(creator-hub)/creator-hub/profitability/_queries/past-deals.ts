@@ -2,13 +2,14 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { getDb } from "@/lib/db";
+import { inArray } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
+import { user } from "@/lib/db-schema/main/schema";
 import { creatorsApi, type CreatorDealResponse } from "@/lib/backend-api";
 import {
   affiliateLeaderboardsApi,
   type LeaderboardAdminRow,
 } from "@/lib/backend-api/affiliate-leaderboards";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
 import { safeQuery } from "@/lib/errors/safe-query";
 import {
   HOUSE_EDGE,
@@ -111,16 +112,11 @@ const PAST_DEALS_LEG_TIMEOUT_MS = 60_000;
 /**
  * `resolveAdminRead` surface key for the past-deals page-scoped compute.
  *
- * Sits in the dormant state (NOT in `CUTOVER_DEFAULT_CLICKHOUSE`): with no
- * ClickHouse client provisioned the resolver returns `"off"` and the surface
  * serves Postgres unchanged. Wiring the call through `resolveAdminRead`
- * satisfies the Index-or-ClickHouse construct so a CH twin can later be
  * dropped in without re-plumbing the page. The `ch` leg throws by design —
  * it is unreachable today, and on a future flip without a built twin the
  * resolver THROWS so the page's empty-state path is taken.
  */
-const PAST_DEALS_SURFACE_KEY = "creator_hub_profitability_past_deals";
-
 /**
  * Whole weeks in a frame — used to scale the per-week withdraw cap +
  * tip/sponsor allowance over the frame length. Boards run in weekly multiples
@@ -449,22 +445,12 @@ export function parsePastDealsPage(raw: string | undefined): number {
  * therefore ALL page-scoped so the strip stays internally coherent; only the
  * ended-deal COUNT is full-set.
  *
- * Routed through `resolveAdminRead` (Index-or-ClickHouse construct). With no
- * ClickHouse twin built, the surface stays dormant; the resolver returns the
  * `pg()` value. The `pg` leg uses `safeQuery` per heavy leg so a slow scan
  * degrades the leg to its fallback instead of taking down the request.
  */
 export async function getPastDeals(page: number): Promise<PastDealsData> {
   try {
-    return await resolveAdminRead(PAST_DEALS_SURFACE_KEY, {
-      pg: () => computePastDealsFromPostgres(page),
-      ch: () => {
-        throw new Error(
-          "[past-deals] ClickHouse twin is not implemented for " +
-            PAST_DEALS_SURFACE_KEY,
-        );
-      },
-    });
+    return await computePastDealsFromPostgres(page);
   } catch (err) {
     console.error("[past-deals] hard failure — degrading to empty:", err);
     return {
@@ -558,11 +544,11 @@ async function computePastDealsFromPostgres(
   const [creatorRes, wagerRes, pnlRes] = await Promise.all([
     safeQuery(
       async () => {
-        const db = await getDb();
-        const creators = await db.user.findMany({
-          where: { id: { in: ownerIds } },
-          select: { id: true, username: true, image: true },
-        });
+        const db = await getDrizzleDb();
+        const creators = await db
+          .select({ id: user.id, username: user.username, image: user.image })
+          .from(user)
+          .where(inArray(user.id, ownerIds));
         return new Map(
           creators.map((c) => [
             c.id,

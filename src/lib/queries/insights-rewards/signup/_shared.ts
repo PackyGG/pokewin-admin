@@ -12,7 +12,7 @@
  *
  * The platform has NO dedicated `signup_bonus` ledger type — all signup
  * pack / welcome reward claims land in the generic
- * `balance_reward_claim` row (verified against `prisma/schema.prisma`
+ * `balance_reward_claim` row (verified against the MAIN Drizzle schema
  * enum `ledger_transaction_type`). The narrowing comes from joining
  * the signup-window cohort against the user's `balance_reward_claim`
  * rows, exactly as the existing `getSignupExtras` helper does.

@@ -5,7 +5,9 @@ import { AlertTriangle, Trophy } from "lucide-react";
 import { requirePageAccess, verifySession } from "@/lib/dal";
 import { canSeeAdminMarking } from "@/lib/owners";
 import { isUuid } from "@/lib/utils/ids";
-import { getDb } from "@/lib/db";
+import { inArray } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
+import { user } from "@/lib/db-schema/main/schema";
 import {
     affiliateLeaderboardsApi,
     type ApprovalStatus,
@@ -38,7 +40,6 @@ import {
 } from "@/lib/queries/creators";
 import { getRewardExpiry } from "@/lib/backend-api/reward-expiry";
 import { computeLeaderboardClaimWindow } from "@/lib/reward-expiry/leaderboard-claim-window";
-import { compareCreatorsLeaderboards } from "@/lib/clickhouse/compare/creators-leaderboards";
 
 import { DetailActions } from "../_components/detail-actions";
 import { ManualPaymentPanel } from "../_components/manual-payment-panel";
@@ -211,18 +212,17 @@ async function LeaderboardDetailBody({
     // badge; every other admin gets a clean board (matches the owner-only
     // Excluded Users page).
     const canSeeMarking = canSeeAdminMarking(await verifySession());
-    const db = await getDb();
+    const db = await getDrizzleDb();
     const participatingCreatorIds = [lb.creator_user_id, ...(lb.co_creator_user_ids ?? [])];
     const [creators, standings, claimHolds, claims, leaderboardExpiryDays] = await Promise.all([
         // Hydrate the primary creator plus every co-creator in one query so we
         // can render names alongside each id on the definition card.
         // Best-effort — a failure just renders the raw ids (names omitted)
         // instead of throwing the whole page via the Promise.all reject.
-        db.user
-            .findMany({
-                where: { id: { in: participatingCreatorIds } },
-                select: { id: true, username: true, email: true },
-            })
+        db
+            .select({ id: user.id, username: user.username, email: user.email })
+            .from(user)
+            .where(inArray(user.id, participatingCreatorIds))
             .catch((err) => {
                 console.error("[leaderboard] creator hydration query failed", err);
                 return [] as { id: string; username: string | null; email: string | null }[];
@@ -270,7 +270,6 @@ async function LeaderboardDetailBody({
     const rankings = standings.rankings;
     // "settled" → weighted snapshot (matches what was paid); "live" →
     // unweighted live estimate for an active board with no snapshot yet.
-    const standingsSettled = standings.source === "settled";
     const claimWindow = computeLeaderboardClaimWindow({
         endIso: lb.end_date,
         expiryDays: leaderboardExpiryDays,
@@ -295,22 +294,6 @@ async function LeaderboardDetailBody({
     // twin replicates the EXACT 2-role + blacklist scope. Only meaningful for
     // the LIVE raw path — settled boards now serve the weighted snapshot,
     // which the raw CH twin can't reproduce, so skip the comparison there.
-    if (!standingsSettled) {
-        void compareCreatorsLeaderboards(
-            lb.id,
-            {
-                creatorUserId: lb.creator_user_id,
-                coCreatorUserIds: lb.co_creator_user_ids ?? [],
-                affiliateCodes: lb.affiliate_codes,
-                startDate: new Date(lb.start_date),
-                endDate: new Date(lb.end_date),
-                prizeTiers: lb.prize_tiers,
-                limit: 100,
-            },
-            rankings,
-        );
-    }
-
     return (
         <>
             <div className="grid gap-6 md:grid-cols-2">

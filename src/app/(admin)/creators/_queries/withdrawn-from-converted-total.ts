@@ -1,6 +1,7 @@
 import "server-only";
 
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 
@@ -38,12 +39,12 @@ export type WithdrawnFromConvertedTotal = {
 };
 
 export async function getWithdrawnFromConvertedTotal(): Promise<WithdrawnFromConvertedTotal> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
   // Blacklist gate: drop excluded (staff-flagged / owner-locked) creator ids
   // from this identifiable lifetime withdrawn total. Guarded for the empty set
   // so the SQL stays valid when nothing is excluded. Inlined into a
-  // $queryRawUnsafe string (no bind params on this whole-table aggregate) via
+  // Static whole-table aggregate executed through the Drizzle query adapter.
   // the canonical pre-escaped id list — same shape as the per-deal sibling.
   const excluded = await getExcludedUserIds();
   const blacklistClause =
@@ -51,12 +52,12 @@ export async function getWithdrawnFromConvertedTotal(): Promise<WithdrawnFromCon
       ? `AND v.user_id NOT IN (${escapeBlacklistIds(excluded)})`
       : "";
 
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       withdrawn_completed: string | null;
       withdraw_in_flight: string | null;
     }[]
-  >(
+  >(db,
     `SELECT
       COALESCE(SUM(CASE WHEN best_status = 'completed' THEN value END), 0)::text AS withdrawn_completed,
       COALESCE(SUM(CASE WHEN best_status IN ('pending', 'processing', 'shipped') THEN value END), 0)::text AS withdraw_in_flight

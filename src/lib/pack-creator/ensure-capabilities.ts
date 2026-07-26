@@ -1,6 +1,7 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 import { isMissingColumnError } from "@/lib/admin-user-roles";
 
 // Module-level cache so we only hit the DB once per server process.
@@ -97,7 +98,7 @@ export async function ensurePackCreatorCapabilities(): Promise<void> {
     ensured = true;
   } catch (err) {
     // If the additive `roles` column hasn't been migrated yet, the
-    // `ANY("roles")` predicate throws P2022. Retry the legacy
+    // `ANY("roles")` predicate throws 42703. Retry the legacy
     // single-role-only form so existing pack_creator rows still get their
     // capability baseline exactly as before multi-role shipped.
     if (isMissingColumnError(err)) {
@@ -132,21 +133,35 @@ export async function ensurePackCreatorCapabilities(): Promise<void> {
 // pack_creator among `roles`. When false (the `roles` column hasn't been
 // migrated yet) it matches the legacy single-role rows only.
 async function runPackCreatorBaseline(includeRolesArray: boolean): Promise<void> {
-  for (const key of PACK_CREATOR_DEFAULT_PAGES) {
-    if (includeRolesArray) {
-      // The `::"admin_role"` cast keeps the array-membership test
-      // type-safe.
-      await adminDb.$executeRaw`
-        UPDATE "admin_users"
-           SET "allowed_pages" = array_append("allowed_pages", ${key})
-         WHERE (role = 'pack_creator' OR 'pack_creator'::"admin_role" = ANY("roles"))
-           AND NOT (${key} = ANY("allowed_pages"))`;
-    } else {
-      await adminDb.$executeRaw`
-        UPDATE "admin_users"
-           SET "allowed_pages" = array_append("allowed_pages", ${key})
-         WHERE role = 'pack_creator'
-           AND NOT (${key} = ANY("allowed_pages"))`;
-    }
-  }
+  const defaults = [...PACK_CREATOR_DEFAULT_PAGES];
+  const rolesPredicate = includeRolesArray
+    ? sql`(role = 'pack_creator' OR 'pack_creator'::"admin_role" = ANY("roles"))`
+    : sql`role = 'pack_creator'`;
+
+  // One set-based update replaces one round-trip per capability. Preserve the
+  // existing page order and append only missing defaults in baseline order.
+  await adminDrizzle.execute(sql`
+    WITH defaults AS (
+      SELECT key, ord
+      FROM unnest(${defaults}::text[]) WITH ORDINALITY AS d(key, ord)
+    )
+    UPDATE "admin_users" au
+       SET "allowed_pages" =
+             COALESCE(au."allowed_pages", ARRAY[]::text[])
+             || ARRAY(
+                  SELECT d.key
+                  FROM defaults d
+                  WHERE NOT (
+                    d.key = ANY(COALESCE(au."allowed_pages", ARRAY[]::text[]))
+                  )
+                  ORDER BY d.ord
+                )
+     WHERE ${rolesPredicate}
+       AND EXISTS (
+             SELECT 1
+             FROM defaults d
+             WHERE NOT (
+               d.key = ANY(COALESCE(au."allowed_pages", ARRAY[]::text[]))
+             )
+           )`);
 }

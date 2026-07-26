@@ -52,7 +52,7 @@ import {
 } from "@/components/filter-toolbar";
 import { Spinner, transition } from "@/components/ux";
 import { setAdminLimit, deleteAdminLimit } from "../limits-actions";
-import type { limit_period_type } from "@/generated/admin-prisma/client";
+import type { limit_period_type } from "@/lib/balance-limits";
 
 type Row = {
   id: string;

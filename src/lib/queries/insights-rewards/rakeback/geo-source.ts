@@ -1,15 +1,13 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getRakebackGeoSourceFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/rakeback/geo-source";
 
 /**
  * Geo + signup-source breakdown for rakeback claimants.
@@ -46,16 +44,15 @@ async function computeGeoSource(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RakebackGeoSource> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
-  const dateFilter =
-    days !== null ? `AND rc.claimed_at >= NOW() - INTERVAL '${days} days'` : "";
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
+  const dateFilter = daysAgoFilter("rc.claimed_at", days);
 
   const [countryRows, sourceRows, totalRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryRows<
       { code: string; user_count: string; total: string }[]
-    >(`
+    >(db, sql`
       SELECT
         COALESCE(u.country_code, '??') AS code,
         COUNT(DISTINCT rc.user_id)::text AS user_count,
@@ -69,9 +66,9 @@ async function computeGeoSource(
       ORDER BY SUM(rc.rakeback_amount_usd::numeric) DESC
       LIMIT ${COUNTRY_LIMIT}
     `),
-    db.$queryRawUnsafe<
+    queryRows<
       { provider: string; user_count: string; total: string }[]
-    >(`
+    >(db, sql`
       WITH claim_agg AS (
         SELECT
           rc.user_id,
@@ -101,7 +98,7 @@ async function computeGeoSource(
       ORDER BY SUM(c.rakeback) DESC
       LIMIT ${SOURCE_LIMIT}
     `),
-    db.$queryRawUnsafe<{ total: string }[]>(`
+    queryRows<{ total: string }[]>(db, sql`
       SELECT COALESCE(SUM(rc.rakeback_amount_usd::numeric), 0)::text AS total
       FROM rakeback_claims rc
       JOIN "user" u ON u.id = rc.user_id
@@ -136,28 +133,16 @@ async function computeGeoSource(
   return { countries, sources, totalRakeback };
 }
 
-// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
-// through the cache on failure); off/comparison serve Postgres unchanged.
-async function resolveGeoSource(
-  period: InsightsRewardsPeriod,
-  blacklistIds: string[],
-): Promise<RakebackGeoSource> {
-  return resolveAdminRead<RakebackGeoSource>("insights_rakeback_geo", {
-    pg: () => computeGeoSource(period, blacklistIds),
-    ch: () => getRakebackGeoSourceFromClickHouse(period, blacklistIds),
-  });
-}
-
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveGeoSource(period, blacklistIds),
+    computeGeoSource(period, blacklistIds),
   ["insights-rewards-rakeback-geo-v1"],
   { revalidate: 60, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveGeoSource(period, blacklistIds),
+    computeGeoSource(period, blacklistIds),
   ["insights-rewards-rakeback-geo-lifetime-v1"],
   { revalidate: 300, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );

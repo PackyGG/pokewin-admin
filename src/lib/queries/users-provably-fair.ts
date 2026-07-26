@@ -1,6 +1,13 @@
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
-import { Prisma } from "@/generated/prisma/client";
+
+const GAME_TYPES = new Set([
+  "pack",
+  "battle",
+  "upgrader",
+  "battle_double_down",
+  "keno",
+]);
 
 // ---------------------------------------------------------------------------
 // Provably Fair
@@ -29,45 +36,60 @@ export async function getProvablyFairResults(
   perPage: number = 20,
   filters?: { search?: string; gameType?: string }
 ) {
-  const db = await getDb();
-  const where: Prisma.provably_fair_resultsWhereInput = {
-    game_sessions: { user_id: userId },
-  };
-
-  if (filters?.gameType && filters.gameType !== "all") {
-    where.game_sessions = {
-      ...(where.game_sessions as object),
-      game_type: filters.gameType as Prisma.Enumgame_typeFilter["equals"],
-    };
+  const safePage = Math.max(1, Math.trunc(page) || 1);
+  const safePerPage = Math.min(200, Math.max(1, Math.trunc(perPage) || 20));
+  const params: unknown[] = [userId];
+  const predicates = [`gs.user_id = $1`];
+  if (
+    filters?.gameType &&
+    filters.gameType !== "all" &&
+    GAME_TYPES.has(filters.gameType)
+  ) {
+    params.push(filters.gameType);
+    predicates.push(`gs.game_type = $${params.length}::game_type`);
   }
-
-  if (filters?.search) {
-    const s = filters.search;
-    const asInt = parseInt(s, 10);
-    where.OR = [
-      { result_hash: { contains: s, mode: "insensitive" } },
-      { server_seed_hash: { contains: s, mode: "insensitive" } },
-      { client_seed: { contains: s, mode: "insensitive" } },
-      ...(Number.isFinite(asInt) ? [{ ticket: asInt }] : []),
-    ];
+  const search = filters?.search?.trim();
+  if (search) {
+    params.push(`%${search.replace(/[\\%_]/g, "\\$&")}%`);
+    const searchParam = params.length;
+    const ticket = Number.parseInt(search, 10);
+    if (Number.isFinite(ticket)) params.push(ticket);
+    predicates.push(`(
+      pfr.result_hash ILIKE $${searchParam} ESCAPE '\\'
+      OR pfr.server_seed_hash ILIKE $${searchParam} ESCAPE '\\'
+      OR pfr.client_seed ILIKE $${searchParam} ESCAPE '\\'
+      ${Number.isFinite(ticket) ? `OR pfr.ticket = $${params.length}` : ""}
+    )`);
   }
+  const where = predicates.join(" AND ");
 
   const [items, total] = await Promise.all([
-    db.provably_fair_results.findMany({
-      where,
-      orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-      include: {
-        game_sessions: { select: { game_type: true } },
-        user_inventory: {
-          select: {
-            value_at_obtained: true,
-          },
-        },
-      },
-    }),
-    db.provably_fair_results.count({ where }),
+    queryMainRows<{
+      id: string; client_seed: string; server_seed_hash: string;
+      server_seed: string | null; nonce: number; cursor: number; ticket: number;
+      result_hash: string; result_metadata: unknown; game_type: string;
+      battle_id: string | null; value_at_obtained: string | null; created_at: Date;
+    }[]>(
+      `SELECT pfr.id, pfr.client_seed, pfr.server_seed_hash, pfr.server_seed,
+              pfr.nonce, pfr.cursor, pfr.ticket, pfr.result_hash,
+              pfr.result_metadata, gs.game_type::text AS game_type,
+              pfr.battle_id, ui.value_at_obtained::text AS value_at_obtained,
+              pfr.created_at
+         FROM provably_fair_results pfr
+         JOIN game_sessions gs ON gs.id = pfr.game_session_id
+         LEFT JOIN user_inventory ui ON ui.id = pfr.inventory_item_id
+        WHERE ${where}
+        ORDER BY pfr.created_at DESC
+        LIMIT ${safePerPage} OFFSET ${(safePage - 1) * safePerPage}`,
+      ...params,
+    ),
+    queryMainRows<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count
+         FROM provably_fair_results pfr
+         JOIN game_sessions gs ON gs.id = pfr.game_session_id
+        WHERE ${where}`,
+      ...params,
+    ).then((rows) => Number(rows[0]?.count ?? 0)),
   ]);
 
   return {
@@ -81,16 +103,16 @@ export async function getProvablyFairResults(
       ticket: r.ticket,
       resultHash: r.result_hash,
       resultMetadata: r.result_metadata,
-      gameType: r.game_sessions.game_type,
+      gameType: r.game_type,
       battleId: r.battle_id,
       cardName: null,
-      cardValue: r.user_inventory ? toNumber(r.user_inventory.value_at_obtained) : null,
+      cardValue: r.value_at_obtained === null ? null : toNumber(r.value_at_obtained),
       createdAt: r.created_at.toISOString(),
     })),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }
 
@@ -110,17 +132,28 @@ export async function getSeedRotationHistory(
   page: number = 1,
   perPage: number = 10
 ) {
-  const db = await getDb();
-  const where: Prisma.seed_rotation_historyWhereInput = { user_id: userId };
+  const safePage = Math.max(1, Math.trunc(page) || 1);
+  const safePerPage = Math.min(200, Math.max(1, Math.trunc(perPage) || 10));
 
   const [items, total] = await Promise.all([
-    db.seed_rotation_history.findMany({
-      where,
-      orderBy: { rotated_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-    }),
-    db.seed_rotation_history.count({ where }),
+    queryMainRows<{
+      id: string; old_client_seed: string; old_server_seed: string;
+      old_server_seed_hash: string; old_nonce: number; new_client_seed: string;
+      new_server_seed_hash: string; rotated_at: Date;
+    }[]>(
+      `SELECT id, old_client_seed, old_server_seed, old_server_seed_hash,
+              old_nonce, new_client_seed, new_server_seed_hash, rotated_at
+         FROM seed_rotation_history
+        WHERE user_id = $1
+        ORDER BY rotated_at DESC
+        LIMIT ${safePerPage} OFFSET ${(safePage - 1) * safePerPage}`,
+      userId,
+    ),
+    queryMainRows<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count
+         FROM seed_rotation_history WHERE user_id = $1`,
+      userId,
+    ).then((rows) => Number(rows[0]?.count ?? 0)),
   ]);
 
   return {
@@ -135,8 +168,8 @@ export async function getSeedRotationHistory(
       rotatedAt: r.rotated_at.toISOString(),
     })),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }

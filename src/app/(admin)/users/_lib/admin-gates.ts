@@ -1,4 +1,4 @@
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle, sql } from "@/lib/drizzle";
 import { isExcludedSearchOwnerRow } from "@/lib/excluded-users/search-gate";
 import { logError } from "@/lib/errors/logger";
 import type { SessionPayload } from "@/lib/session";
@@ -7,11 +7,11 @@ import type { SessionPayload } from "@/lib/session";
  * Render-cosmetic gate flags for the /users list page, resolved from ONE
  * admin-DB read.
  *
- * The page previously issued three sequential, unguarded adminDb lookups
+ * The page previously issued three sequential, unguarded Admin DB lookups
  * before first paint (an `allowed_pages` read for the Deleted-users
  * button, an owner check for the Export-all button, and the
  * excluded-search check — the last two reading the SAME `admin_users` row
- * twice). Any adminDb hiccup bypassed the page's safeQuery wrappers
+ * twice). Any Admin DB hiccup bypassed the page's safeQuery wrappers
  * entirely and crashed the whole view to error.tsx.
  *
  * Both button gates are gone with their buttons (owner, 2026-07-22), so
@@ -42,10 +42,18 @@ export async function getUsersPageGates(
     (session.roles?.includes("admin") ?? session.role === "admin") ||
     Boolean(session.isOwner);
   try {
-    const row = await adminDb.admin_users.findUnique({
-      where: { id: session.userId },
-      select: { username: true, is_active: true, is_owner: true },
-    });
+    const row = (
+      await adminDrizzle.execute<{
+        username: string;
+        is_active: boolean;
+        is_owner: boolean;
+      }>(sql`
+        SELECT username, is_active, is_owner
+        FROM admin_users
+        WHERE id = ${session.userId}::uuid
+        LIMIT 1
+      `)
+    ).rows[0];
     const active = Boolean(row?.is_active);
     return {
       includeExcludedInSearch:

@@ -212,8 +212,7 @@ agents can grep for.
 - Inside `error.tsx` boundaries (`useEffect` on client side mirrors the
   log to devtools; the server already logged the throw).
 - Inside the catch of a long-polling client widget's fetch (`logError`
-  is server-only — for client-side polling, use the silent-recovery
-  pattern in `live-money-chat.tsx` and surface the failure via a
+  is server-only — surface transient client failures with a
   "Reconnecting…" status pill instead of console spam).
 
 ---

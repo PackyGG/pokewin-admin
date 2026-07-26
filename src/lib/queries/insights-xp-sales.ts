@@ -1,6 +1,6 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
 import { getMetricsScope } from "@/lib/metrics/scope";
 import { isLiveLedgerTxType } from "@/lib/queries/_ledger-tx-types";
@@ -181,7 +181,6 @@ async function queryXpSales(period: XpSalesPeriod): Promise<XpSalesResult> {
     return EMPTY_RESULT(period);
   }
 
-  const db = await getDb();
   const days = daysForPeriod(period);
   const scope = await getMetricsScope();
   // Customer scope as a flat fragment (no CTE needed for these aggregates) —
@@ -189,7 +188,7 @@ async function queryXpSales(period: XpSalesPeriod): Promise<XpSalesResult> {
   // like every other money-metric surface. The fragment inlines only
   // hardcoded identifiers (see scope.ts contract). `days` is a number literal
   // (numeric switch above), `'xp_purchase'` and `RECENT_LIMIT` are constants —
-  // no injection surface, so $queryRawUnsafe matches the house pattern in
+  // no injection surface, so legacy raw query matches the house pattern in
   // analytics.ts (which composes the same scope fragment into raw SQL).
   const scopeFrag = scope.exclStaffSessionFrag({
     userCol: "lt.user_id",
@@ -200,7 +199,7 @@ async function queryXpSales(period: XpSalesPeriod): Promise<XpSalesResult> {
   // ── Window aggregate: count, revenue (Σ amount), distinct buyers, and XP
   //    granted (Σ metadata.xp_awarded — guarded to a numeric cast so a row
   //    without the key contributes 0 rather than erroring).
-  const aggRows = await db.$queryRawUnsafe<RawAggRow[]>(`
+  const aggRows = await queryMainRows<RawAggRow[]>(`
     SELECT
       COUNT(*)::bigint AS sale_count,
       COALESCE(SUM(lt.amount), 0)::text AS revenue,
@@ -232,7 +231,7 @@ async function queryXpSales(period: XpSalesPeriod): Promise<XpSalesResult> {
   // above stays sequential because its `saleCount` gates whether these run.
   const [recentRows, dailyRows] = await Promise.all([
     // ── Recent sales (newest first), joined to the username for display.
-    db.$queryRawUnsafe<RawRecentRow[]>(`
+    queryMainRows<RawRecentRow[]>(`
       SELECT
         lt.id::text AS id,
         lt.user_id::text AS user_id,
@@ -251,7 +250,7 @@ async function queryXpSales(period: XpSalesPeriod): Promise<XpSalesResult> {
       LIMIT ${RECENT_LIMIT}
     `),
     // ── Daily revenue + sales trend over the window.
-    db.$queryRawUnsafe<RawDailyRow[]>(`
+    queryMainRows<RawDailyRow[]>(`
       SELECT
         to_char(date_trunc('day', lt.created_at), 'YYYY-MM-DD') AS day,
         COALESCE(SUM(lt.amount), 0)::text AS revenue,
@@ -299,7 +298,7 @@ async function queryXpSales(period: XpSalesPeriod): Promise<XpSalesResult> {
 //
 // Identical reasoning to `insights-coins.ts` / `users-detail-cache.ts`:
 // `unstable_cache` runs its callback OUTSIDE request scope, so `cookies()`
-// (and `readDbEnv`) inside `getDb()` falls back to "prod". Caching a
+// (and `readDbEnv`) inside the MAIN client resolver falls back to "prod". Caching a
 // dev-toggled request would serve PROD data to a dev admin. So: cache ONLY on
 // prod (the default + hot path); a dev-toggled admin runs the query directly
 // so they always see live dev data.

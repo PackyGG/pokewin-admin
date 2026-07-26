@@ -1,6 +1,7 @@
 import "server-only";
 
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 
 /**
  * Per-user "code-hopper" (code-switcher) flag for a set of referred
@@ -43,12 +44,12 @@ export async function getCodeHopperFlags(
   const out = new Map<string, CodeHopperInfo>();
   if (referredUserIds.length === 0) return out;
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
   try {
-    const rows = await db.$queryRawUnsafe<
+    const rows = await queryRows<
       { user_id: string; code_count: string }[]
-    >(
+    >(db,
       `SELECT acu.referred_user_id AS user_id,
               COUNT(DISTINCT UPPER(acu.code))::text AS code_count
          FROM affiliate_code_usages acu

@@ -11,11 +11,6 @@ import {
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getAffiliateAnalytics } from "@/lib/queries/creators";
-import type { AffiliateAnalyticsData } from "@/lib/queries/creators-types";
-import { compareCreatorsAnalytics } from "@/lib/clickhouse/compare/creators-analytics";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getAffiliateAnalyticsFromClickHouse } from "@/lib/clickhouse/queries/creators/analytics";
-import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
@@ -88,22 +83,12 @@ async function CreatorAnalyticsBody({
 }: {
   period: CreatorAnalyticsPeriod;
 }) {
-  // CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws on
   // failure); off/comparison serve Postgres. The CH twin returns the SAME full
   // `AffiliateAnalyticsData` (scalars + per-day series) the page renders.
   // safeQuery + a statement timeout degrade a slow/failed read to a panel
   // fallback instead of hanging the segment or escaping to the route boundary.
   const { data, error } = await safeQuery(
-    () =>
-      resolveAdminRead<AffiliateAnalyticsData>("creators_analytics", {
-        pg: () => getAffiliateAnalytics(period),
-        ch: async () =>
-          getAffiliateAnalyticsFromClickHouse(
-            period,
-            await getExcludedUserIds(),
-            new Date(),
-          ),
-      }),
+    () => getAffiliateAnalytics(period),
     null,
     "creators.analytics",
     REWARD_QUERY_TIMEOUT_MS,
@@ -117,8 +102,6 @@ async function CreatorAnalyticsBody({
       />
     );
   }
-  void compareCreatorsAnalytics(period, data);
-
   return (
     <>
       {/* Modern KPI grid — migrated off the legacy <StatCard>/<Card> to

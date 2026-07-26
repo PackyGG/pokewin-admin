@@ -1,6 +1,6 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getCreatorSessionWindowsCte } from "../creator-session-windows";
@@ -78,7 +78,6 @@ export async function getPacksProfitability(
   period: GamesPeriod,
 ): Promise<PacksProfitabilityData> {
   return withTiming("insights-games.packs", async () => {
-    const db = await getDb();
     const scope = await realCustomersScopeSql();
     const sessionWindowsCte = await getCreatorSessionWindowsCte();
 
@@ -116,7 +115,7 @@ export async function getPacksProfitability(
     // UNNESTed `battles.pack_ids` element; `payouts.pack_id` is the
     // joined-through `game_sessions.game_id` (and for battle opens,
     // the battle's pack list).
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryMainRows<Row[]>(
       `WITH ${sessionWindowsCte},
             solo_opens AS (
         -- Solo pack opens: one row per ledger pack_opening tx, joined

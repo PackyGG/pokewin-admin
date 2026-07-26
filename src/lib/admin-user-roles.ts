@@ -4,8 +4,8 @@
  * The multi-role feature (migration
  * 20260602000000_add_admin_users_roles_array) adds a `roles admin_role[]`
  * column. Until that migration is applied on a given database, selecting
- * `roles` through the typed Prisma client throws a P2022
- * ("column does not exist") error. Because `verifySession` runs in the
+ * `roles` before the migration throws a PostgreSQL missing-column error.
+ * Because `verifySession` runs in the
  * root layout on EVERY request, an unapplied migration would crash the
  * entire admin panel.
  *
@@ -17,21 +17,23 @@
  * seamlessly uses the real column with no fallback.
  *
  * Mirrors the existing pre-migration handling for the `preferences`
- * column in src/lib/admin-preferences.ts (same P2022 detection).
+ * column in src/lib/admin-preferences.ts.
  */
 
+import {
+  isPostgresError,
+  postgresErrorMessages,
+} from "@/lib/postgres-errors";
+
 /**
- * True for the Prisma "column does not exist" error (P2022) that an
- * unapplied additive-column migration produces. Also matches the raw
- * Postgres message defensively, since the adapter/raw paths can surface
- * the error slightly differently. Identical predicate to
- * admin-preferences.ts's `isMissingColumnError`.
+ * True for PostgreSQL's undefined-column error from an unapplied additive
+ * migration. Identical predicate to admin-preferences.ts's helper.
  */
 export function isMissingColumnError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const code = (err as { code?: string }).code;
-  if (code === "P2022") return true;
-  return /column .* does not exist/i.test(err.message);
+  return (
+    isPostgresError(err, "42703") ||
+    /column .* does not exist/i.test(postgresErrorMessages(err))
+  );
 }
 
 /**
@@ -74,8 +76,8 @@ export async function readAdminUserWithRoles<
  * role/permission rebuild — see `ROLE_REDESIGN_DESIGN.md`).
  *
  * These columns do NOT exist yet (they ship in Phase C via
- * `prisma db execute`, owner-gated). Until then, selecting them through the
- * typed Prisma client throws P2022 ("column does not exist"). This wrapper —
+ * owner-gated schema tooling). Until then, selecting them throws a
+ * missing-column error. This wrapper —
  * the exact analogue of {@link readAdminUserWithRoles} — runs the
  * override-selecting read on the happy path and, ONLY on a missing-column
  * error, falls back to a read WITHOUT the override columns and augments the
@@ -144,13 +146,40 @@ export async function readAdminUsersWithRoles<
   }
 }
 
+/** List variant of {@link readAdminUserWithOverrides}. */
+export async function readAdminUsersWithOverrides<
+  TWith,
+  TWithout extends object,
+>(
+  withOverrides: () => Promise<TWith[]>,
+  withoutOverrides: () => Promise<TWithout[]>,
+): Promise<
+  | TWith[]
+  | (TWithout & {
+      permission_grants: string[];
+      permission_revokes: string[];
+    })[]
+> {
+  try {
+    return await withOverrides();
+  } catch (err) {
+    if (!isMissingColumnError(err)) throw err;
+    const rows = await withoutOverrides();
+    return rows.map((row) => ({
+      ...row,
+      permission_grants: [] as string[],
+      permission_revokes: [] as string[],
+    }));
+  }
+}
+
 /**
  * Resilient WRITE for an `admin_users` mutation that sets `roles` (create
  * or update). The read wrappers above degrade reads of the additive
  * `roles` column; this is the symmetric guard for WRITES.
  *
  * Until migration 20260602000000_add_admin_users_roles_array is applied,
- * any write touching `roles` throws P2022 ("column does not exist"). That
+ * any write touching `roles` throws SQLSTATE 42703 ("column does not exist"). That
  * means — on an un-migrated DB — every "Edit Roles" action (setAdminRoles)
  * and every new-admin creation (createAdminUser) would throw instead of
  * persisting. This wrapper retries the SAME write with `roles` omitted, so
@@ -183,8 +212,8 @@ export async function writeAdminUserWithRoles<T>(
  * Process-level memo for {@link adminRolesColumnExists}. Only `true` is
  * cached permanently: once the migration is applied the column never goes
  * away, so re-probing would be wasted work. A `false`/unknown result is
- * NOT cached, so the very next request after the owner runs
- * `npm run admin:migrate` immediately reflects the new column without a
+ * NOT cached, so the very next request after the admin SQL migration
+ * immediately reflects the new column without a
  * server restart.
  */
 let rolesColumnPresent: boolean | null = null;
@@ -198,7 +227,7 @@ let rolesColumnPresent: boolean | null = null;
  * it worked.
  *
  * Implemented as a metadata probe against `information_schema.columns` —
- * never selects the column itself, so it can't throw P2022. Any unexpected
+ * never selects the column itself, so it can't throw 42703. Any unexpected
  * error degrades to `false` (treat as "not migrated") rather than throwing:
  * a failed probe must never crash the page, and the conservative answer is
  * the one that shows the warning instead of hiding it. The Admin DB client
@@ -208,16 +237,17 @@ let rolesColumnPresent: boolean | null = null;
 export async function adminRolesColumnExists(): Promise<boolean> {
   if (rolesColumnPresent === true) return true;
   try {
-    const { adminDb } = await import("@/lib/admin-db");
-    const rows = await adminDb.$queryRaw<{ exists: boolean }[]>`
+    const { adminDrizzle } = await import("@/lib/admin-db");
+    const { sql } = await import("drizzle-orm");
+    const result = await adminDrizzle.execute<{ exists: boolean }>(sql`
       SELECT EXISTS (
         SELECT 1
           FROM information_schema.columns
          WHERE table_name = 'admin_users'
            AND column_name = 'roles'
       ) AS exists
-    `;
-    const present = rows[0]?.exists === true;
+    `);
+    const present = result.rows[0]?.exists === true;
     if (present) rolesColumnPresent = true;
     return present;
   } catch {

@@ -1,7 +1,6 @@
 import "server-only";
 
-import { getDb } from "@/lib/db";
-import { Prisma } from "@/generated/prisma/client";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { WAGER_TYPES_SQL as METRICS_WAGER_TYPES_SQL } from "@/lib/metrics";
 
@@ -70,7 +69,6 @@ export function parsePeriodWindowRow(r: PeriodWindowRow): PeriodWindowKpis {
 export async function runPeriodWindowQuery(
   args: PeriodWindowQueryArgs,
 ): Promise<{ current: PeriodWindowRow; previous: PeriodWindowRow }> {
-  const db = await getDb();
   const {
     currentCutoff,
     previousStart,
@@ -82,9 +80,7 @@ export async function runPeriodWindowQuery(
   const prevStart = previousStart ?? new Date(0);
   const prevEnd = previousEnd ?? new Date(0);
   const baseSince = prevStart < currentCutoff ? prevStart : currentCutoff;
-  const wagerIn = Prisma.raw(METRICS_WAGER_TYPES_SQL);
-
-  const rows = await db.$queryRaw<
+  const rows = await queryMainRows<
     {
       window: "current" | "previous";
       deposits: string;
@@ -96,7 +92,8 @@ export async function runPeriodWindowQuery(
       signups: string;
       active: string;
     }[]
-  >`
+  >(
+    `
     WITH real_users AS (
       SELECT u.id, u.role, u.created_at AS signup_at,
              EXISTS (
@@ -104,9 +101,9 @@ export async function runPeriodWindowQuery(
                WHERE ref.id = u.referred_by AND ref.role = 'creator'
              ) AS under_creator
       FROM "user" u
-      WHERE u.role NOT IN ('admin', 'support', 'creator') ${Prisma.raw(blacklistIdNotIn)}
+      WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
     ),
-    ${Prisma.raw(sessionWindowsCte)},
+    ${sessionWindowsCte},
     base AS (
       SELECT lt.user_id, lt.type, lt.amount::numeric AS amount, lt.created_at,
              ru.under_creator,
@@ -120,7 +117,7 @@ export async function runPeriodWindowQuery(
                   ELSE false END AS in_session
       FROM ledger_transactions lt
       JOIN real_users ru ON ru.id = lt.user_id
-      WHERE lt.status = 'completed' AND lt.created_at >= ${baseSince}
+      WHERE lt.status = 'completed' AND lt.created_at >= $1
     ),
     withdrawals AS (
       SELECT
@@ -132,28 +129,33 @@ export async function runPeriodWindowQuery(
     )
     SELECT
       'current'::text AS window,
-      COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= ${currentCutoff} THEN amount ELSE 0 END), 0)::text AS deposits,
-      COUNT(CASE WHEN type::text = 'deposit' AND created_at >= ${currentCutoff} THEN 1 END)::text AS deposit_count,
-      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${currentCutoff} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawals,
-      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
-      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND NOT under_creator AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_organic,
-      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND under_creator AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_creator_coded,
-      (SELECT COUNT(*)::text FROM real_users WHERE signup_at >= ${currentCutoff}) AS signups,
-      COUNT(DISTINCT CASE WHEN created_at >= ${currentCutoff} THEN user_id END)::text AS active
+      COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= $2 THEN amount ELSE 0 END), 0)::text AS deposits,
+      COUNT(CASE WHEN type::text = 'deposit' AND created_at >= $2 THEN 1 END)::text AS deposit_count,
+      COALESCE((SELECT SUM(CASE WHEN effective_at >= $2 THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawals,
+      COALESCE(SUM(CASE WHEN type::text IN ${METRICS_WAGER_TYPES_SQL} AND NOT in_session AND created_at >= $2 THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
+      COALESCE(SUM(CASE WHEN type::text IN ${METRICS_WAGER_TYPES_SQL} AND NOT in_session AND NOT under_creator AND created_at >= $2 THEN ABS(amount) ELSE 0 END), 0)::text AS wager_organic,
+      COALESCE(SUM(CASE WHEN type::text IN ${METRICS_WAGER_TYPES_SQL} AND NOT in_session AND under_creator AND created_at >= $2 THEN ABS(amount) ELSE 0 END), 0)::text AS wager_creator_coded,
+      (SELECT COUNT(*)::text FROM real_users WHERE signup_at >= $2) AS signups,
+      COUNT(DISTINCT CASE WHEN created_at >= $2 THEN user_id END)::text AS active
     FROM base
     UNION ALL
     SELECT
       'previous'::text AS window,
-      COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN amount ELSE 0 END), 0)::text AS deposits,
-      COUNT(CASE WHEN type::text = 'deposit' AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN 1 END)::text AS deposit_count,
-      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${prevStart} AND effective_at < ${prevEnd} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawals,
-      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
-      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND NOT under_creator AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_organic,
-      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND under_creator AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_creator_coded,
-      (SELECT COUNT(*)::text FROM real_users WHERE signup_at >= ${prevStart} AND signup_at < ${prevEnd}) AS signups,
-      COUNT(DISTINCT CASE WHEN created_at >= ${prevStart} AND created_at < ${prevEnd} THEN user_id END)::text AS active
+      COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= $3 AND created_at < $4 THEN amount ELSE 0 END), 0)::text AS deposits,
+      COUNT(CASE WHEN type::text = 'deposit' AND created_at >= $3 AND created_at < $4 THEN 1 END)::text AS deposit_count,
+      COALESCE((SELECT SUM(CASE WHEN effective_at >= $3 AND effective_at < $4 THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawals,
+      COALESCE(SUM(CASE WHEN type::text IN ${METRICS_WAGER_TYPES_SQL} AND NOT in_session AND created_at >= $3 AND created_at < $4 THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
+      COALESCE(SUM(CASE WHEN type::text IN ${METRICS_WAGER_TYPES_SQL} AND NOT in_session AND NOT under_creator AND created_at >= $3 AND created_at < $4 THEN ABS(amount) ELSE 0 END), 0)::text AS wager_organic,
+      COALESCE(SUM(CASE WHEN type::text IN ${METRICS_WAGER_TYPES_SQL} AND NOT in_session AND under_creator AND created_at >= $3 AND created_at < $4 THEN ABS(amount) ELSE 0 END), 0)::text AS wager_creator_coded,
+      (SELECT COUNT(*)::text FROM real_users WHERE signup_at >= $3 AND signup_at < $4) AS signups,
+      COUNT(DISTINCT CASE WHEN created_at >= $3 AND created_at < $4 THEN user_id END)::text AS active
     FROM base
-  `;
+    `,
+    baseSince,
+    currentCutoff,
+    prevStart,
+    prevEnd,
+  );
 
   const current = rows.find((r) => r.window === "current");
   const prev = rows.find((r) => r.window === "previous");

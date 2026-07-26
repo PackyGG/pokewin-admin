@@ -1,16 +1,13 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { WAGER_TYPES_SQL } from "@/lib/queries/_wager-payout-types";
-import { compareSignupDropOff } from "@/lib/clickhouse/compare/insights-signup-drop-off";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getSignupDropOffFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/signup/drop-off";
 import { SIGNUP_CACHE_TAG } from "./_shared";
 
 /**
@@ -50,13 +47,10 @@ async function computeDropOff(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DropOffBreakdown> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const signupDateFilter =
-    days !== null
-      ? `AND u.created_at >= NOW() - INTERVAL '${days} days'`
-      : "";
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const signupDateFilter = daysAgoFilter("u.created_at", days);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   type Row = {
     cohort_size: string;
@@ -67,7 +61,7 @@ async function computeDropOff(
     banned_or_locked: string;
     other: string;
   };
-  const rows = await db.$queryRawUnsafe<Row[]>(`
+  const rows = await queryRows<Row[]>(db, sql`
     WITH cohort AS (
       SELECT
         u.id AS user_id,
@@ -99,7 +93,7 @@ async function computeDropOff(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type::text IN ${WAGER_TYPES_SQL}
+       AND lt.type::text IN ${sql.raw(WAGER_TYPES_SQL)}
     ),
     has_any_ledger AS (
       SELECT DISTINCT c.user_id
@@ -145,46 +139,16 @@ async function computeDropOff(
   };
 }
 
-// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
-// through the cache on failure); off/comparison serve Postgres. Wrapped inside
-// the cache so the served leg (CH or PG) is memoized identically. The CH twin
-// replicates the same priority-ordered bucket predicates verbatim and returns
-// the same 7 exact counts, mapped explicitly to DropOffBreakdown.
-async function resolveDropOff(
-  period: InsightsRewardsPeriod,
-  blacklistIds: string[],
-): Promise<DropOffBreakdown> {
-  return resolveAdminRead<DropOffBreakdown>("insights_signup_drop_off", {
-    pg: () => computeDropOff(period, blacklistIds),
-    ch: async () => {
-      const r = await getSignupDropOffFromClickHouse(
-        period,
-        blacklistIds,
-        new Date(),
-      );
-      return {
-        cohortSize: r.cohortSize,
-        claimers: r.claimers,
-        dormant: r.dormant,
-        depositedNoClaim: r.depositedNoClaim,
-        wageredNoClaim: r.wageredNoClaim,
-        bannedOrLocked: r.bannedOrLocked,
-        other: r.other,
-      };
-    },
-  });
-}
-
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveDropOff(period, blacklistIds),
+    computeDropOff(period, blacklistIds),
   ["insights-rewards-signup-drop-off-v1"],
   { revalidate: 60, tags: [SIGNUP_CACHE_TAG] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveDropOff(period, blacklistIds),
+    computeDropOff(period, blacklistIds),
   ["insights-rewards-signup-drop-off-lifetime-v1"],
   { revalidate: 300, tags: [SIGNUP_CACHE_TAG] },
 );
@@ -197,9 +161,5 @@ export async function getSignupDropOff(
   const data = await (cacheTtlForInsightsPeriod(period) >= 300
     ? cachedLong(period, sorted)
     : cachedShort(period, sorted));
-  // CQRS rollout: fire-and-forget ClickHouse comparison (no-op unless the
-  // surface flag is in `comparison` mode; forced off when CH is dormant). The
-  // served value stays the Postgres payload above.
-  void compareSignupDropOff(period, data);
   return data;
 }

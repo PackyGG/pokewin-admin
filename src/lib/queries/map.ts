@@ -1,7 +1,7 @@
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { sql, type SQL } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "./_blacklist";
 
 export type Period = "today" | "7d" | "30d" | "90d" | "all";
 
@@ -22,16 +22,26 @@ function utcStartOfDay(): Date {
   return d;
 }
 
-// Hardcoded values — no injection risk when used with $queryRawUnsafe.
+// Hardcoded values are still bound through Drizzle.
 // `today` binds an ISO timestamp literal cast to timestamptz so the window
 // is "since midnight UTC today", not a rolling 24-hour interval.
-function periodToDateFilter(period: Period): string {
-  if (period === "all") return "";
+function userDateFilter(period: Period): SQL {
+  if (period === "all") return sql``;
   if (period === "today") {
-    return `AND created_at >= '${utcStartOfDay().toISOString()}'::timestamptz`;
+    return sql`AND u.created_at >= ${utcStartOfDay()}`;
   }
   const days = periodToDays[period];
-  return `AND created_at >= NOW() - INTERVAL '${days} days'`;
+  return sql`AND u.created_at >= NOW() - (${days} * INTERVAL '1 day')`;
+}
+
+function transactionDateFilter(period: Period): SQL {
+  if (period === "all") {
+    return sql`AND lt.created_at >= NOW() - (365 * INTERVAL '1 day')`;
+  }
+  if (period === "today") {
+    return sql`AND lt.created_at >= ${utcStartOfDay()}`;
+  }
+  return sql`AND lt.created_at >= NOW() - (${periodToDays[period]} * INTERVAL '1 day')`;
 }
 
 export type CountryUserCount = {
@@ -60,17 +70,20 @@ async function computeUsersByCountry(
   period: Period,
   excluded: string[],
 ): Promise<MapData> {
-  const db = await getDb();
-  const dateFilter = periodToDateFilter(period);
-  const blacklistFragment = blacklistNotInClause("id", excluded);
-  const userScope = `role NOT IN ('admin', 'support') ${blacklistFragment}`;
+  const db = await getDrizzleDb();
+  const blacklistFilter =
+    excluded.length === 0
+      ? sql``
+      : sql`AND u.id NOT IN (${sql.join(
+          excluded.map((id) => sql`${id}`),
+          sql`, `,
+        )})`;
   // Join-scoped variant for the financials query: it joins
   // ledger_transactions (which also has an `id` column), so the blacklist
   // column must be alias-qualified. The previous `WHERE u.${userScope}`
   // only qualified `role` — the fragment's bare `id NOT IN (...)` was
   // ambiguous (Postgres 42702) and threw whenever the excluded-users
   // blacklist was non-empty, killing the whole map tab.
-  const userScopeJoined = `u.role NOT IN ('admin', 'support') ${blacklistNotInClause("u.id", excluded)}`;
 
   // dateFilter above is phrased as "AND created_at >= ...", works for both
   // u.created_at (signups) and lt.created_at (tx) because each query
@@ -83,43 +96,34 @@ async function computeUsersByCountry(
   // mirrors the reward-side INSIGHTS_LIFETIME_LOOKBACK_DAYS). The signup
   // user-count leg (dateFilter above) stays lifetime — it scans the much
   // smaller users table, not the ledger.
-  const txDateFilter =
-    period === "all"
-      ? "AND lt.created_at >= NOW() - INTERVAL '365 days'"
-      : period === "today"
-        ? `AND lt.created_at >= '${utcStartOfDay().toISOString()}'::timestamptz`
-        : `AND lt.created_at >= NOW() - INTERVAL '${periodToDays[period]} days'`;
-
-  const [byCountryRaw, financialsRaw, totalRaw, withoutLocationRaw] =
+  const [countryResult, financialsResult] =
     await Promise.all([
-      db.$queryRawUnsafe<
-        Array<{
-          country_code: string;
-          country: string | null;
-          user_count: string;
-        }>
-      >(`
+      db.execute<{
+        country_code: string | null;
+        country: string | null;
+        user_count: string;
+        total_users: string;
+      }>(sql`
         SELECT
-          country_code,
-          MAX(country) AS country,
-          COUNT(*)::text AS user_count
-        FROM "user"
-        WHERE ${userScope}
-          AND country_code IS NOT NULL
-          ${dateFilter}
-        GROUP BY country_code
+          u.country_code,
+          MAX(u.country) AS country,
+          COUNT(*)::text AS user_count,
+          SUM(COUNT(*)) OVER ()::text AS total_users
+        FROM "user" u
+        WHERE u.role NOT IN ('admin', 'support')
+          ${blacklistFilter}
+          ${userDateFilter(period)}
+        GROUP BY u.country_code
         ORDER BY COUNT(*) DESC
       `),
       // Per-country deposit/wager aggregates, filtered by transaction date
       // in the same period. Users without a country_code are ignored.
-      db.$queryRawUnsafe<
-        Array<{
-          country_code: string;
-          total_deposits: string;
-          deposit_count: string;
-          total_wager: string;
-        }>
-      >(`
+      db.execute<{
+        country_code: string;
+        total_deposits: string;
+        deposit_count: string;
+        total_wager: string;
+      }>(sql`
         SELECT
           u.country_code,
           COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' AND lt.status = 'completed' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS total_deposits,
@@ -127,25 +131,19 @@ async function computeUsersByCountry(
           COALESCE(SUM(CASE WHEN lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND lt.status = 'completed' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS total_wager
         FROM "user" u
         INNER JOIN ledger_transactions lt ON lt.user_id = u.id
-        WHERE ${userScopeJoined}
+        WHERE u.role NOT IN ('admin', 'support')
+          ${blacklistFilter}
           AND u.country_code IS NOT NULL
-          ${txDateFilter}
+          ${transactionDateFilter(period)}
         GROUP BY u.country_code
       `),
-      db.$queryRawUnsafe<Array<{ total: string }>>(`
-        SELECT COUNT(*)::text AS total
-        FROM "user"
-        WHERE ${userScope}
-          ${dateFilter}
-      `),
-      db.$queryRawUnsafe<Array<{ total: string }>>(`
-        SELECT COUNT(*)::text AS total
-        FROM "user"
-        WHERE ${userScope}
-          AND country_code IS NULL
-          ${dateFilter}
-      `),
     ]);
+  const countryRows = countryResult.rows;
+  const byCountryRaw = countryRows.filter(
+    (row): row is typeof row & { country_code: string } =>
+      row.country_code !== null,
+  );
+  const financialsRaw = financialsResult.rows;
 
   const financialsMap = new Map(
     financialsRaw.map((f) => [
@@ -170,8 +168,10 @@ async function computeUsersByCountry(
         total_wager: fin?.total_wager ?? 0,
       };
     }),
-    totalUsers: Number(totalRaw[0]?.total ?? "0"),
-    withoutLocation: Number(withoutLocationRaw[0]?.total ?? "0"),
+    totalUsers: Number(countryRows[0]?.total_users ?? 0),
+    withoutLocation: Number(
+      countryRows.find((row) => row.country_code === null)?.user_count ?? 0,
+    ),
   };
 }
 

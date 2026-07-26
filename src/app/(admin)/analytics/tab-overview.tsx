@@ -1,9 +1,5 @@
 import { Suspense } from "react";
 import { getAnalyticsData } from "@/lib/queries/analytics";
-import { compareAnalyticsOverview } from "@/lib/clickhouse/compare/analytics-overview";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getAnalyticsDataFromClickHouse } from "@/lib/clickhouse/queries/analytics/overview";
-import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getPackBattlePurePnl } from "@/lib/queries/pnl";
 import {
   getTopDepositors,
@@ -25,8 +21,6 @@ import {
   WithdrawalRailsSection,
 } from "./overview-sections";
 import { getWithdrawnCoinsBreakdown } from "@/lib/queries/analytics-withdrawals";
-import { getWithdrawnCoinsBreakdownFromClickHouse } from "@/lib/clickhouse/queries/analytics/withdrawals";
-import { compareWithdrawals } from "@/lib/clickhouse/compare/analytics-revenue-withdrawals";
 import type { AnalyticsPeriod } from "./types";
 
 /**
@@ -51,21 +45,12 @@ import type { AnalyticsPeriod } from "./types";
  *
  * Everything composes queries that already exist and are already proven
  * (getAnalyticsData, getPackBattlePurePnl, getTopDepositors) — no new heavy
- * aggregate against MAIN, so the Index-or-ClickHouse rule is satisfied by
  * construction. Each independent read streams behind its own Suspense with
  * safeQuery, so one slow leg never blanks the page.
  */
 export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
   const { data, error } = await safeQuery(
-    () =>
-      resolveAdminRead<Awaited<ReturnType<typeof getAnalyticsData>>>(
-        "analytics_overview",
-        {
-          pg: () => getAnalyticsData(period),
-          ch: async () =>
-            getAnalyticsDataFromClickHouse(period, await getExcludedUserIds()),
-        },
-      ),
+    () => getAnalyticsData(period),
     null,
     "analytics.overview",
     REWARD_QUERY_TIMEOUT_MS,
@@ -80,11 +65,8 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
     );
   }
 
-  // Comparison-mode ClickHouse twin (fire-and-forget). No-op unless the
   // `analytics_overview` surface is in `comparison` mode; never awaited,
   // swallows its own errors, and never affects the rendered Postgres payload.
-  void compareAnalyticsOverview(period, data);
-
   return (
     <div className="space-y-6">
       <HeadlineSection data={data} />
@@ -123,31 +105,17 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
 
 /**
  * Withdrawn cash per rail. Routed through `resolveAdminRead` so the
- * `analytics_revenue_withdrawals` surface keeps its ClickHouse twin +
  * per-surface rollback; degrades to a null (the section renders its own
  * "unavailable" line) rather than blanking the tab.
  */
 async function WithdrawalRailsLeg({ period }: { period: AnalyticsPeriod }) {
   const { data } = await safeQuery(
-    () =>
-      resolveAdminRead<Awaited<ReturnType<typeof getWithdrawnCoinsBreakdown>>>(
-        "analytics_revenue_withdrawals",
-        {
-          pg: () => getWithdrawnCoinsBreakdown(period),
-          ch: async () =>
-            getWithdrawnCoinsBreakdownFromClickHouse(
-              period,
-              await getExcludedUserIds(),
-            ),
-        },
-      ),
+    () => getWithdrawnCoinsBreakdown(period),
     null,
     "analytics.overview.withdrawalRails",
     REWARD_QUERY_TIMEOUT_MS,
   );
-  // Comparison-mode ClickHouse twin (fire-and-forget). No-op unless the
   // surface is in `comparison` mode; never awaited, swallows its own errors.
-  if (data) void compareWithdrawals(data);
   return <WithdrawalRailsSection data={data} />;
 }
 

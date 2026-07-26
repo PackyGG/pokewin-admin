@@ -1,13 +1,11 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   type InsightsRewardsPeriod,
 } from "../_period";
 import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getAffiliateClaimCadenceFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/claim-cadence";
 
 /**
  * Repeat-claim cadence per affiliate. Surfaces how often each
@@ -62,15 +60,15 @@ async function compute(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<ClaimCadenceRow[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const ctx = makePeriodCtx(period);
   const ltDate = ctx.dateFilterFor("lt.created_at");
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // LAG over created_at per user → gap between consecutive claims.
   // Then aggregate count / sum / mean / median per affiliate.
   // PERCENTILE_CONT on the gap distribution for median gap.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       affiliate_user_id: string;
       username: string | null;
@@ -81,7 +79,7 @@ async function compute(
       mean_gap_hours: string | null;
       median_gap_hours: string | null;
     }[]
-  >(`
+  >(db, sql`
     WITH claim_rows AS (
       SELECT
         lt.user_id,
@@ -154,12 +152,7 @@ export async function getAffiliateClaimCadence(
   period: InsightsRewardsPeriod,
 ): Promise<ClaimCadenceRow[]> {
   const blacklist = await loadBlacklist();
-  return resolveAdminRead<ClaimCadenceRow[]>("insights_affiliate_cadence", {
-    pg: () =>
-      period === "all"
-        ? cachedLong(period, blacklist)
-        : cachedShort(period, blacklist),
-    ch: () =>
-      getAffiliateClaimCadenceFromClickHouse(period, blacklist, new Date()),
-  });
+  return period === "all"
+    ? cachedLong(period, blacklist)
+    : cachedShort(period, blacklist);
 }

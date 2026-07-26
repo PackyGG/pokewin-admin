@@ -3,7 +3,8 @@
 import { redirect } from "next/navigation";
 import { getDefaultRouteForUser } from "@/lib/dal";
 import { headers } from "next/headers";
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 import {
   getSession,
   getPendingSession,
@@ -46,10 +47,14 @@ export async function bootstrapSetupFromSession(): Promise<void> {
   const session = await getSession();
   if (!session) redirect("/login");
 
-  const adminUser = await adminDb.admin_users.findUnique({
-    where: { id: session.userId },
-    select: { id: true, email: true, username: true, role: true, totp_enabled: true },
-  });
+  const adminUser = (await adminDrizzle.execute<{
+    id: string; email: string; username: string; role: string; totp_enabled: boolean;
+  }>(sql`
+    SELECT id::text, email, username, role::text AS role, totp_enabled
+    FROM admin_users
+    WHERE id = ${session.userId}::uuid
+    LIMIT 1
+  `)).rows[0];
   // No row / inactive-handled-elsewhere: fall back to login rather than minting.
   if (!adminUser) redirect("/login");
 
@@ -83,6 +88,17 @@ export async function confirmSetup(
     return { error: "Session expired. Please login again." };
   }
 
+  // ── SECURITY (SECURITY_AUDIT.md CRITICAL-1) ────────────────────────────────
+  // A pending cookie WITHOUT a setup secret is a VERIFY-flow cookie: it is
+  // minted by login() for an ALREADY-ENROLLED admin after only the password
+  // check. Such a cookie must never mint a session here — the second factor is
+  // proven only in verify-2fa. Without this guard, an enrolled admin's
+  // `requires2FA` cookie could be replayed to this action with step=confirm to
+  // obtain a full session with no TOTP/passkey. Mirrors the page-render guard.
+  if (!pending.totpSecret) {
+    return { error: "Please complete two-factor verification to sign in." };
+  }
+
   // Step 1: Verify TOTP code, show recovery codes
   if (step !== "confirm") {
     const code = formData.get("code") as string;
@@ -107,27 +123,34 @@ export async function confirmSetup(
     const recoveryCodes = generateRecoveryCodes(8);
     const hashedCodes = await hashRecoveryCodes(recoveryCodes);
 
-    // Explicit select — without it, Prisma emits RETURNING * which
-    // references every column the generated client knows about
-    // (preferences, role_id, display_username, profile_image*). If
-    // any of those hasn't been applied to the prod DB yet, the
-    // otherwise-valid update throws P2022 and the client sees the
-    // generic "Application error: a client-side exception" page
-    // exactly when a new admin enters their first TOTP code.
-    await adminDb.admin_users.update({
-      where: { id: pending.adminUserId },
-      data: {
-        totp_secret: secret,
-        totp_enabled: true,
-        recovery_codes: hashedCodes,
-      },
-      select: { id: true },
-    });
+    // Explicit projection keeps the returned row minimal and
+    // avoids coupling this update to unrelated additive columns.
+    await adminDrizzle.execute(sql`
+      UPDATE admin_users
+      SET totp_secret = ${secret}, totp_enabled = true,
+          recovery_codes = ${hashedCodes}, updated_at = NOW()
+      WHERE id = ${pending.adminUserId}::uuid
+    `);
 
     return { recoveryCodes };
   }
 
-  // Step 2: User confirmed they saved recovery codes — create session
+  // Step 2: User confirmed they saved recovery codes — create session.
+  // SECURITY (SECURITY_AUDIT.md CRITICAL-1): only mint the session AFTER step 1
+  // actually enrolled the factor. A confirm POST that skips step 1 leaves
+  // totp_enabled false → refuse (defense-in-depth on top of the totpSecret
+  // guard above). The legit flow enables 2FA in step 1, so this always passes
+  // for a real setup; an attacker replaying step=confirm without verifying a
+  // code is stopped here.
+  const enrolled = (await adminDrizzle.execute<{ totp_enabled: boolean }>(sql`
+    SELECT totp_enabled FROM admin_users
+    WHERE id = ${pending.adminUserId}::uuid
+    LIMIT 1
+  `)).rows[0];
+  if (!enrolled?.totp_enabled) {
+    return { error: "Finish two-factor setup before continuing." };
+  }
+
   await createSession({
     userId: pending.adminUserId,
     role: pending.role,
@@ -146,15 +169,14 @@ export async function confirmSetup(
       ip,
       metadata: { method: "totp_setup" },
     }),
-    adminDb.admin_sessions.create({
-      data: {
-        admin_user_id: pending.adminUserId,
-        ip,
-        user_agent: userAgent,
-        auth_method: "totp",
-        expires_at: new Date(Date.now() + 8 * MS_PER_HOUR),
-      },
-    }),
+    adminDrizzle.execute(sql`
+      INSERT INTO admin_sessions (
+        admin_user_id, ip, user_agent, auth_method, expires_at
+      ) VALUES (
+        ${pending.adminUserId}::uuid, ${ip}, ${userAgent}, 'totp',
+        ${new Date(Date.now() + 8 * MS_PER_HOUR)}
+      )
+    `),
   ]);
 
   await deletePendingSession();

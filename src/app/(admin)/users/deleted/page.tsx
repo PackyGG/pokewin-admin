@@ -1,5 +1,5 @@
 import { Trash2, Archive, Clock, RefreshCw } from "lucide-react";
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle, sql } from "@/lib/drizzle";
 import { requirePageAccess } from "@/lib/dal";
 import {
   PageHero,
@@ -24,8 +24,8 @@ export default async function DeletedUsersPage() {
   // wait for the deleteMany to finish before listing the live rows.
   // The same query 100ms later would just skip them anyway because of
   // the < new Date() filter on the listing query below.
-  void adminDb.admin_deleted_users
-    .deleteMany({ where: { expires_at: { lt: new Date() } } })
+  void adminDrizzle
+    .execute(sql`DELETE FROM admin_deleted_users WHERE expires_at < NOW()`)
     .catch((err) => {
       console.error("[/users/deleted] expired-snapshot purge failed:", err);
     });
@@ -33,11 +33,25 @@ export default async function DeletedUsersPage() {
   // Listing query — newest deletions first. We intentionally read AFTER
   // firing the purge so the page never shows a row that's actually
   // expired (purge may still be running but the filter handles that).
-  const snapshots = await adminDb.admin_deleted_users.findMany({
-    where: { expires_at: { gte: new Date() } },
-    orderBy: { deleted_at: "desc" },
-    take: 200,
-  });
+  const snapshots = (
+    await adminDrizzle.execute<{
+      id: string;
+      username: string;
+      email: string;
+      deleted_at: Date;
+      deleted_by: string;
+      expires_at: Date;
+      restored_at: Date | null;
+      restored_by: string | null;
+    }>(sql`
+      SELECT id, username, email, deleted_at, deleted_by, expires_at,
+             restored_at, restored_by
+      FROM admin_deleted_users
+      WHERE expires_at >= NOW()
+      ORDER BY deleted_at DESC
+      LIMIT 200
+    `)
+  ).rows;
 
   // Resolve admin usernames for the deleted_by / restored_by display.
   // Single query covering both sets, then a Map lookup per row.
@@ -47,10 +61,17 @@ export default async function DeletedUsersPage() {
     if (row.restored_by) adminIds.add(row.restored_by);
   }
   const admins = adminIds.size
-    ? await adminDb.admin_users.findMany({
-        where: { id: { in: Array.from(adminIds) } },
-        select: { id: true, username: true, display_username: true },
-      })
+    ? (
+        await adminDrizzle.execute<{
+          id: string;
+          username: string;
+          display_username: string | null;
+        }>(sql`
+          SELECT id, username, display_username
+          FROM admin_users
+          WHERE id = ANY(${Array.from(adminIds)}::uuid[])
+        `)
+      ).rows
     : [];
   const adminLabels = new Map(
     admins.map((a) => [a.id, a.display_username ?? a.username]),

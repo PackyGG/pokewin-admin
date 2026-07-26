@@ -3,15 +3,15 @@
 -- ============================================================================
 --
 -- WHY THIS FILE EXISTS
---   The /creator-hub section was audited against the Index-or-ClickHouse rule
+--   The /creator-hub section was audited against the PostgreSQL index rule
 --   (docs/BACKEND_QUERY_SYSTEM.md). Every read is being moved onto exactly one
 --   of two paths:
 --     • Path 1 (indexed Postgres) — keyed / type-filtered / bounded reads.
---     • Path 2 (ClickHouse twin)  — the heavy multi-table fan-out aggregates
+--     • Path 2 (bounded aggregate) — the heavy multi-table fan-out aggregates
 --                                    (covered-deposit DISTINCT-ON + 7d lateral,
 --                                    correlated cohort subqueries). Those do NOT
 --                                    need a PG index; they are served from the
---                                    ClickHouse mirror via resolveAdminRead.
+--                                    bounded PostgreSQL query path.
 --
 --   This file contains ONLY the Path-1 indexes the EXPLAIN audit proved are
 --   missing. Agents NEVER apply indexes to MAIN (it is strictly read-only) —
@@ -87,7 +87,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_acu_upper_code
 -- AUDIT OUTCOME for the creator-DETAIL reads (EXPLAIN on prod, 2026-06-17):
 --   These are per-creator / per-entity scoped reads with 365d-capped lookbacks,
 --   NOT global fan-out aggregates — so they stay on Path-1 (indexed Postgres),
---   NOT ClickHouse:
+--   PostgreSQL-only reads:
 --   • getRiskData    — Index Only Scan on idx_ledger_tx_user_type_status_created_at
 --                      + idx_acu_referred_user_created_at; ~561 ms for the BUSIEST
 --                      creator (11,551 wager usages). Index-backed → Path-1.
@@ -96,7 +96,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_acu_upper_code
 --   • getAltAccountsData — user_id = ANY(<bounded cohort>) index lookups → Path-1,
 --                      EXCEPT the UPPER(code) cohort resolution above (index #4).
 --
--- Served by ClickHouse twins (Path 2 — no PG index; resolveAdminRead, dormant):
+-- Heavy PostgreSQL aggregates (Path 2):
 --   • getHubCohortWindowed        (_queries/hub-dashboard-cohort.ts)
 --   • getHubTopCreatorsByDeposits (_queries/hub-top-creators-query.ts)
 --   • getTopSignupLeaders         (_queries/hub-top-creator-meta.ts)
@@ -104,7 +104,6 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_acu_upper_code
 -- These are the hot per-render dashboard fan-out aggregates (covered-deposit
 -- DISTINCT-ON + 7d lateral; first-deposit-per-user over all ledger rows);
 -- twinned + parity-proven (TZ=UTC, twice), dormant until the owner adds
--- CLICKHOUSE_* env on Vercel + the surface key joins CUTOVER_DEFAULT_CLICKHOUSE.
 --
 -- DEFERRED — shared (admin)/creators aggregates consumed by /creator-hub but
 -- OWNED by the /creators surface (a cross-section HOTSPOT; migrating them must
@@ -112,7 +111,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_acu_upper_code
 -- belongs to its own focused effort, not the /creator-hub pass):
 --   • getAllCreatorsNetGgr     ((admin)/creators/_queries/all-creators-net-pnl.ts)
 --   • getAllCreatorsLifetimePnl((admin)/creators/_queries/all-creators-lifetime-pnl.ts)
--- Both are legacy $queryRawUnsafe global covering-attribution fan-outs over
+-- Both are global covering-attribution fan-outs over
 -- ledger + inventory + upgrader (same shape as the cohort wager leg already
 -- twinned) → Path-2 candidates. getCreatorsGlobalStats (creators-stats.ts) is
 -- backend-API-served (no DB scan) and needs no migration.

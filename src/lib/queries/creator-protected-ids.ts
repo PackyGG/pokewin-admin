@@ -1,8 +1,8 @@
+import { queryMainRows, queryRows } from "@/lib/drizzle-query";
 import "server-only";
 
 import { cache } from "react";
-import { getDb } from "@/lib/db";
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
 
 /**
  * Every user id that is, or has ever been, a creator — the set that a bulk
@@ -55,12 +55,11 @@ import { adminDb } from "@/lib/admin-db";
  */
 export const getCreatorProtectedUserIds = cache(
   async (): Promise<string[]> => {
-    const db = await getDb();
 
-    const [mainRows, adminSources] = await Promise.all([
+    const [mainRows, adminRows] = await Promise.all([
       // Main DB: one UNION so the six creator-only tables cost a single
       // round-trip. UNION already dedupes.
-      db.$queryRawUnsafe<{ user_id: string }[]>(`
+      queryMainRows<{ user_id: string }[]>(`
         SELECT user_id FROM creator_deals WHERE user_id IS NOT NULL
         UNION SELECT user_id FROM creator_multiplier_deals WHERE user_id IS NOT NULL
         UNION SELECT user_id FROM creator_socials WHERE user_id IS NOT NULL
@@ -69,54 +68,48 @@ export const getCreatorProtectedUserIds = cache(
         UNION SELECT creator_user_id FROM affiliate_leaderboards WHERE creator_user_id IS NOT NULL
         UNION SELECT unnest(co_creator_user_ids) FROM affiliate_leaderboards
       `),
-      // Admin DB: separate connection, so these run as their own batch.
-      Promise.all([
-        adminDb.creator_deals.findMany({
-          select: { target_user_id: true },
-          distinct: ["target_user_id"],
-        }),
-        adminDb.creator_webhooks.findMany({
-          select: { target_user_id: true },
-          distinct: ["target_user_id"],
-        }),
-        adminDb.creator_socials.findMany({
-          select: { target_user_id: true },
-          distinct: ["target_user_id"],
-        }),
-        adminDb.creator_balance_fills.findMany({
-          select: { target_user_id: true },
-          distinct: ["target_user_id"],
-        }),
-        adminDb.admin_audit_events.findMany({
-          where: {
-            target_user_id: { not: null },
-            event_type: {
-              in: [
-                "user_made_creator",
-                "creator_deal_created",
-                "creator_deal_deleted",
-                "creator_social_approved",
-                "creator_force_reset_to_user",
-                "role_changed",
-              ],
-            },
-          },
-          select: { event_type: true, target_user_id: true, metadata: true },
-        }),
-      ]),
+      // Admin DB: one round-trip across the creator-only evidence tables.
+      queryRows<
+        {
+          event_type: string | null;
+          target_user_id: string;
+          metadata: unknown;
+        }[]
+      >(
+        adminDrizzle,
+        `
+          SELECT NULL::text AS event_type, target_user_id, NULL::jsonb AS metadata
+            FROM creator_deals
+          UNION
+          SELECT NULL::text, target_user_id, NULL::jsonb FROM creator_webhooks
+          UNION
+          SELECT NULL::text, target_user_id, NULL::jsonb FROM creator_socials
+          UNION
+          SELECT NULL::text, target_user_id, NULL::jsonb FROM creator_balance_fills
+          UNION ALL
+          SELECT event_type, target_user_id, metadata
+            FROM admin_audit_events
+           WHERE target_user_id IS NOT NULL
+             AND event_type IN (
+               'user_made_creator',
+               'creator_deal_created',
+               'creator_deal_deleted',
+               'creator_social_approved',
+               'creator_force_reset_to_user',
+               'role_changed'
+             )
+        `,
+      ),
     ]);
 
-    const [deals, webhooks, socials, fills, audits] = adminSources;
     const ids = new Set<string>();
 
     for (const r of mainRows) if (r.user_id) ids.add(r.user_id);
-    for (const r of deals) ids.add(r.target_user_id);
-    for (const r of webhooks) ids.add(r.target_user_id);
-    for (const r of socials) ids.add(r.target_user_id);
-    for (const r of fills) ids.add(r.target_user_id);
-
-    for (const e of audits) {
-      if (!e.target_user_id) continue;
+    for (const e of adminRows) {
+      if (e.event_type === null) {
+        ids.add(e.target_user_id);
+        continue;
+      }
       // The dedicated creator event types count outright. `role_changed` is
       // the generic dropdown path, so it only counts when the metadata names
       // creator on one side — a promotion TO creator, or a demotion FROM one.

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
+import { sql } from "drizzle-orm";
 import { getPendingSession } from "@/lib/session";
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
 import { VerifyForm } from "./verify-form";
 
 export const metadata = { title: "Verify 2FA" };
@@ -14,10 +15,13 @@ export default async function Verify2FAPage() {
   // always renders.
   let hasPasskeys = false;
   try {
-    hasPasskeys =
-      (await adminDb.admin_passkeys.count({
-        where: { admin_user_id: pending.adminUserId },
-      })) > 0;
+    const result = await adminDrizzle.execute<{ exists: boolean }>(sql`
+      SELECT EXISTS(
+        SELECT 1 FROM admin_passkeys
+        WHERE admin_user_id = ${pending.adminUserId}::uuid
+      ) AS exists
+    `);
+    hasPasskeys = result.rows[0]?.exists === true;
   } catch {
     hasPasskeys = false;
   }

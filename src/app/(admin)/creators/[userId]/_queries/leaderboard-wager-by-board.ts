@@ -1,8 +1,11 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
+import { inArray, sql } from "drizzle-orm";
 
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { affiliate_leaderboard_snapshots } from "@/lib/db-schema/main/schema";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { CREATOR_COST_CACHE_TTL_SECONDS } from "./_cost-cache";
 
@@ -88,7 +91,7 @@ async function computeCreatorLeaderboardWagerMap(
   const result = new Map<string, WagerBreakdown>();
   if (boards.length === 0) return result;
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
   // ── Settled boards: authoritative weighted snapshot total ──
   // Per-game wager weights (packs / battles / upgrader) are applied at wager
@@ -97,16 +100,20 @@ async function computeCreatorLeaderboardWagerMap(
   // boards so it matches exactly what was paid. `raw` always comes from the
   // scan below (snapshots don't carry an unweighted total).
   const boardIds = boards.map((b) => b.id);
-  const snapSums = await db.affiliate_leaderboard_snapshots.groupBy({
-    by: ["leaderboard_id"],
-    where: { leaderboard_id: { in: boardIds } },
-    _sum: { total_wagered_usd: true },
-  });
+  const snapSums = await db
+    .select({
+      leaderboard_id: affiliate_leaderboard_snapshots.leaderboard_id,
+      total_wagered_usd:
+        sql<string>`COALESCE(SUM(${affiliate_leaderboard_snapshots.total_wagered_usd}), 0)`,
+    })
+    .from(affiliate_leaderboard_snapshots)
+    .where(inArray(affiliate_leaderboard_snapshots.leaderboard_id, boardIds))
+    .groupBy(affiliate_leaderboard_snapshots.leaderboard_id);
   const settledWeightedById = new Map<string, number>();
   for (const s of snapSums) {
     settledWeightedById.set(
       s.leaderboard_id,
-      toNumber(s._sum.total_wagered_usd ?? 0),
+      toNumber(s.total_wagered_usd),
     );
   }
 
@@ -129,7 +136,7 @@ async function computeCreatorLeaderboardWagerMap(
       ),
     );
     if (ownerIds.length > 0) {
-      const owned = await db.$queryRawUnsafe<{ user_id: string; code: string }[]>(
+      const owned = await queryMainRows<{ user_id: string; code: string }[]>(
         `SELECT user_id, code FROM affiliate_codes WHERE user_id = ANY($1::text[])`,
         ownerIds,
       );
@@ -209,7 +216,7 @@ async function computeCreatorLeaderboardWagerMap(
   // boards) the participating-creator guard, and sum per leaderboard.
   // usage_type is compared via ::text because the dev DB's enum can lag
   // the schema — same enum-drift guard the rest of the queries layer uses.
-  const rows = await db.$queryRawUnsafe<WagerRow[]>(
+  const rows = await queryMainRows<WagerRow[]>(
     `WITH board_codes (leaderboard_id, code, start_ts, end_ts, restrict_creator, creator_ids) AS (
        VALUES
         ${valuesRows}
@@ -257,7 +264,7 @@ async function computeCreatorLeaderboardWagerMap(
  * panels) keeps a repeat load / "Refresh to retry" from re-scanning
  * while still surfacing fresh activity within a few minutes.
  *
- * `getDb()` is called INSIDE the cached function, so — like the sibling
+ * The request-scoped resolver runs INSIDE the cached function, so — like the sibling
  * cost caches — the env resolves to PROD inside the `unstable_cache`
  * scope. That's correct for this admin surface (prod is the real data).
  */

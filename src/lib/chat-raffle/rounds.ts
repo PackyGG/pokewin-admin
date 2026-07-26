@@ -1,6 +1,14 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
+import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import {
+  admin_users,
+  chat_raffle_adjustments,
+  chat_raffle_entries,
+  chat_raffle_prizes,
+  chat_raffle_rounds,
+} from "@/lib/db-schema/admin/schema";
 import {
   DEFAULT_CHAT_RAFFLE_SCORING,
   deriveRoundPhase,
@@ -86,21 +94,21 @@ type RoundWithPrizes = RoundConfigColumns & {
   id: string;
   name: string;
   status: string;
-  starts_at: Date;
-  ends_at: Date;
-  drawn_at: Date | null;
+  starts_at: string;
+  ends_at: string;
+  drawn_at: string | null;
   draw_seed: string | null;
   entrants_at_draw: number | null;
   tickets_at_draw: number | null;
   prizes: {
     id: string;
     position: number;
-    amount_usd: { toString(): string };
+    amount_usd: string;
     label: string | null;
     winner_user_id: string | null;
     winner_username: string | null;
     winner_tickets: number | null;
-    paid_at: Date | null;
+    paid_at: string | null;
     ledger_tx_id: string | null;
   }[];
 };
@@ -109,7 +117,7 @@ type RoundWithPrizes = RoundConfigColumns & {
  * Money is Decimal(20,2) in the DB. Go through `toString()` → `Number` and
  * never touch the Decimal with JS float arithmetic (house rule).
  */
-function decimalToNumber(d: { toString(): string }): number {
+function decimalToNumber(d: { toString(): string } | string): number {
   return Number(d.toString());
 }
 
@@ -125,7 +133,7 @@ function toRoundView(row: RoundWithPrizes, now: Date): ChatRaffleRoundView {
       winnerUserId: p.winner_user_id,
       winnerUsername: p.winner_username,
       winnerTickets: p.winner_tickets,
-      paidAt: p.paid_at?.toISOString() ?? null,
+      paidAt: p.paid_at ? new Date(p.paid_at).toISOString() : null,
       ledgerTxId: p.ledger_tx_id,
     }));
 
@@ -133,13 +141,20 @@ function toRoundView(row: RoundWithPrizes, now: Date): ChatRaffleRoundView {
     id: row.id,
     name: row.name,
     status: row.status,
-    phase: deriveRoundPhase(row, now),
-    startsAt: row.starts_at.toISOString(),
-    endsAt: row.ends_at.toISOString(),
+    phase: deriveRoundPhase(
+      {
+        ...row,
+        starts_at: new Date(row.starts_at),
+        ends_at: new Date(row.ends_at),
+      },
+      now,
+    ),
+    startsAt: new Date(row.starts_at).toISOString(),
+    endsAt: new Date(row.ends_at).toISOString(),
     scoring: scoringFromRow(row),
     prizePoolUsd: prizes.reduce((sum, p) => sum + p.amountUsd, 0),
     prizes,
-    drawnAt: row.drawn_at?.toISOString() ?? null,
+    drawnAt: row.drawn_at ? new Date(row.drawn_at).toISOString() : null,
     entrantsAtDraw: row.entrants_at_draw,
     ticketsAtDraw: row.tickets_at_draw,
     drawSeed: row.draw_seed,
@@ -147,7 +162,23 @@ function toRoundView(row: RoundWithPrizes, now: Date): ChatRaffleRoundView {
   };
 }
 
-const ROUND_INCLUDE = { prizes: true } as const;
+async function attachPrizes(
+  rows: Array<Omit<RoundWithPrizes, "prizes">>,
+): Promise<RoundWithPrizes[]> {
+  if (rows.length === 0) return [];
+  const prizes = await adminDrizzle
+    .select()
+    .from(chat_raffle_prizes)
+    .where(inArray(chat_raffle_prizes.round_id, rows.map((row) => row.id)))
+    .orderBy(asc(chat_raffle_prizes.position));
+  const byRound = new Map<string, RoundWithPrizes["prizes"]>();
+  for (const prize of prizes) {
+    const list = byRound.get(prize.round_id) ?? [];
+    list.push(prize);
+    byRound.set(prize.round_id, list);
+  }
+  return rows.map((row) => ({ ...row, prizes: byRound.get(row.id) ?? [] }));
+}
 
 /**
  * The round the page opens on.
@@ -187,22 +218,29 @@ export function pickActiveRound(
 
 export async function getActiveChatRaffleRound(): Promise<ChatRaffleRoundView | null> {
   const now = new Date();
-  const rows = await adminDb.chat_raffle_rounds.findMany({
-    where: { status: "open" },
-    orderBy: [{ starts_at: "desc" }],
-    take: 50,
-    include: ROUND_INCLUDE,
-  });
+  const rows = await attachPrizes(
+    await adminDrizzle
+      .select()
+      .from(chat_raffle_rounds)
+      .where(eq(chat_raffle_rounds.status, "open"))
+      .orderBy(desc(chat_raffle_rounds.starts_at))
+      .limit(50),
+  );
   return pickActiveRound(rows.map((r) => toRoundView(r, now)));
 }
 
 export async function getChatRaffleRound(
   id: string,
 ): Promise<ChatRaffleRoundView | null> {
-  const row = await adminDb.chat_raffle_rounds.findUnique({
-    where: { id },
-    include: ROUND_INCLUDE,
-  });
+  const row = (
+    await attachPrizes(
+      await adminDrizzle
+        .select()
+        .from(chat_raffle_rounds)
+        .where(eq(chat_raffle_rounds.id, id))
+        .limit(1),
+    )
+  )[0];
   return row ? toRoundView(row, new Date()) : null;
 }
 
@@ -211,11 +249,13 @@ export async function getChatRaffleRounds(
   limit = 50,
 ): Promise<ChatRaffleRoundView[]> {
   const now = new Date();
-  const rows = await adminDb.chat_raffle_rounds.findMany({
-    orderBy: [{ starts_at: "desc" }],
-    take: limit,
-    include: ROUND_INCLUDE,
-  });
+  const rows = await attachPrizes(
+    await adminDrizzle
+      .select()
+      .from(chat_raffle_rounds)
+      .orderBy(desc(chat_raffle_rounds.starts_at))
+      .limit(Math.min(Math.max(limit, 1), 200)),
+  );
   return rows.map((r) => toRoundView(r, now));
 }
 
@@ -223,12 +263,15 @@ export async function getChatRaffleRounds(
 export async function getRoundAdjustmentTotals(
   roundId: string,
 ): Promise<Map<string, number>> {
-  const grouped = await adminDb.chat_raffle_adjustments.groupBy({
-    by: ["user_id"],
-    where: { round_id: roundId },
-    _sum: { points: true },
-  });
-  return new Map(grouped.map((g) => [g.user_id, g._sum.points ?? 0]));
+  const grouped = await adminDrizzle
+    .select({
+      user_id: chat_raffle_adjustments.user_id,
+      points: sql<number>`COALESCE(SUM(${chat_raffle_adjustments.points}), 0)::int`,
+    })
+    .from(chat_raffle_adjustments)
+    .where(eq(chat_raffle_adjustments.round_id, roundId))
+    .groupBy(chat_raffle_adjustments.user_id);
+  return new Map(grouped.map((g) => [g.user_id, g.points]));
 }
 
 export type ChatRaffleAdjustmentView = {
@@ -243,18 +286,26 @@ export type ChatRaffleAdjustmentView = {
 export async function getRoundAdjustments(
   roundId: string,
 ): Promise<ChatRaffleAdjustmentView[]> {
-  const rows = await adminDb.chat_raffle_adjustments.findMany({
-    where: { round_id: roundId },
-    orderBy: { created_at: "desc" },
-    include: { admin_user: { select: { username: true } } },
-  });
+  const rows = await adminDrizzle
+    .select({
+      id: chat_raffle_adjustments.id,
+      user_id: chat_raffle_adjustments.user_id,
+      points: chat_raffle_adjustments.points,
+      reason: chat_raffle_adjustments.reason,
+      created_at: chat_raffle_adjustments.created_at,
+      adminUsername: admin_users.username,
+    })
+    .from(chat_raffle_adjustments)
+    .leftJoin(admin_users, eq(admin_users.id, chat_raffle_adjustments.created_by))
+    .where(eq(chat_raffle_adjustments.round_id, roundId))
+    .orderBy(desc(chat_raffle_adjustments.created_at));
   return rows.map((r) => ({
     id: r.id,
     userId: r.user_id,
     points: r.points,
     reason: r.reason,
-    createdAt: r.created_at.toISOString(),
-    adminUsername: r.admin_user?.username ?? null,
+    createdAt: new Date(r.created_at).toISOString(),
+    adminUsername: r.adminUsername,
   }));
 }
 
@@ -273,11 +324,12 @@ export async function getRoundEntries(
   roundId: string,
   limit = 200,
 ): Promise<ChatRaffleEntryView[]> {
-  const rows = await adminDb.chat_raffle_entries.findMany({
-    where: { round_id: roundId },
-    orderBy: { position: "asc" },
-    take: limit,
-  });
+  const rows = await adminDrizzle
+    .select()
+    .from(chat_raffle_entries)
+    .where(eq(chat_raffle_entries.round_id, roundId))
+    .orderBy(asc(chat_raffle_entries.position))
+    .limit(Math.min(Math.max(limit, 1), 1_000));
   return rows.map((r) => ({
     userId: r.user_id,
     username: r.username,
@@ -295,8 +347,12 @@ export async function getRoundEntries(
  * defaults for the very first round.
  */
 export async function getDefaultScoringForNewRound(): Promise<ChatRaffleScoring> {
-  const latest = await adminDb.chat_raffle_rounds.findFirst({
-    orderBy: { created_at: "desc" },
-  });
+  const latest = (
+    await adminDrizzle
+      .select()
+      .from(chat_raffle_rounds)
+      .orderBy(desc(chat_raffle_rounds.created_at))
+      .limit(1)
+  )[0];
   return latest ? scoringFromRow(latest) : DEFAULT_CHAT_RAFFLE_SCORING;
 }

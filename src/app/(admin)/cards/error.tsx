@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
  *
  * Cards is content data in the main DB — read-only on these pages, so a
  * render failure is never destructive. A throw is almost always a stale
- * Prisma field or a transient timeout on the cached KPI strip. This
+ * schema field or a transient timeout on the cached KPI strip. This
  * boundary scopes the failure to /cards instead of bubbling to the
  * umbrella. The reset path re-runs the server render without a full
  * reload.
@@ -57,7 +57,7 @@ export default function CardsError({
         <p className="text-xs text-muted-foreground">
           Card definitions live in the main DB and are read-only on these
           pages — nothing destructive happens on a render failure. A stale
-          Prisma field or a transient timeout is the most common cause.
+          schema field or a transient timeout is the most common cause.
           Server logs have the full stack — search for the digest above.
         </p>
       </div>

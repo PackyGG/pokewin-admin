@@ -1,5 +1,5 @@
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -62,7 +62,7 @@ function periodToMetricWindow(period: Period): MetricWindow {
 }
 
 function periodToDateFilter(period: Period): string {
-  // Values are hardcoded — no injection risk with $queryRawUnsafe.
+  // Values are fixed server-side query structure.
   // `today` binds the boundary as an ISO timestamp literal cast to
   // timestamptz so the window is "since midnight UTC today" (matching
   // `periodToMetricWindow` above), not a rolling 24-hour interval.
@@ -184,7 +184,6 @@ async function computeAnalyticsData(
   period: Period,
   excluded: string[],
 ): Promise<AnalyticsData> {
-  const db = await getDb();
   const dateFilter = periodToDateFilter(period);
   // Per-request blacklist (cached via React cache) → build the staff
   // + blacklist SQL fragment once and re-use across every sub-query
@@ -241,7 +240,7 @@ async function computeAnalyticsData(
   ] = await Promise.all([
       getDailyGamingMetrics(metricWindow),
       upgraderMetrics(metricWindow),
-      db.$queryRawUnsafe<
+      queryMainRows<
         {
           pack_wager: string;
           battle_wager: string;
@@ -265,12 +264,12 @@ async function computeAnalyticsData(
         FROM ledger_transactions
         WHERE status = 'completed' ${dateFilter} ${EXCL_STAFF_FRAG}
       `),
-      db.$queryRawUnsafe<{ count: string }[]>(`
+      queryMainRows<{ count: string }[]>(`
         SELECT COUNT(DISTINCT user_id)::text AS count
         FROM ledger_transactions
         WHERE status = 'completed' ${dateFilter} ${EXCL_STAFF_FRAG}
       `),
-      db.$queryRawUnsafe<
+      queryMainRows<
         {
           date: Date;
           pack_wager: string;
@@ -350,28 +349,28 @@ async function computeAnalyticsData(
         GROUP BY DATE(created_at)
         ORDER BY date
       `),
-      db.$queryRawUnsafe<{ date: Date; count: string }[]>(`
+      queryMainRows<{ date: Date; count: string }[]>(`
         SELECT DATE(created_at) AS date, COUNT(*)::text AS count
         FROM "user"
         WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn} ${dateFilter}
         GROUP BY DATE(created_at)
         ORDER BY date
       `),
-      db.$queryRawUnsafe<{ mode: string; count: string }[]>(`
+      queryMainRows<{ mode: string; count: string }[]>(`
         SELECT mode::text AS mode, COUNT(*)::text AS count
         FROM battles
         ${battleDateWhere}
         GROUP BY mode
         ORDER BY COUNT(*) DESC
       `),
-      db.$queryRawUnsafe<{ setting: string; count: string }[]>(`
+      queryMainRows<{ setting: string; count: string }[]>(`
         SELECT setting, COUNT(*)::text AS count
         FROM battles, UNNEST(additional_settings) AS setting
         ${battleDateWhere}
         GROUP BY setting
         ORDER BY COUNT(*) DESC
       `),
-      db.$queryRawUnsafe<
+      queryMainRows<
         {
           total_battles: string;
           borrow_count: string;
@@ -387,14 +386,14 @@ async function computeAnalyticsData(
         FROM battles
         ${battleDateWhere}
       `),
-      db.$queryRawUnsafe<{ teams: number; players_per_team: number; count: string }[]>(`
+      queryMainRows<{ teams: number; players_per_team: number; count: string }[]>(`
         SELECT teams, players_per_team, COUNT(*)::text AS count
         FROM battles
         ${battleDateWhere}
         GROUP BY teams, players_per_team
         ORDER BY COUNT(*) DESC
       `),
-      db.$queryRawUnsafe<{ id: string; name: string; count: string }[]>(`
+      queryMainRows<{ id: string; name: string; count: string }[]>(`
         SELECT p.id::text AS id, p.name AS name, COUNT(*)::text AS count
         FROM battles b
         CROSS JOIN LATERAL UNNEST(b.pack_ids::uuid[]) AS pid
@@ -404,7 +403,7 @@ async function computeAnalyticsData(
         ORDER BY COUNT(*) DESC
         LIMIT 10
       `),
-      db.$queryRawUnsafe<
+      queryMainRows<
         {
           id: string;
           name: string;
@@ -702,7 +701,6 @@ async function computePackAndBattleStats(
   period: Period,
   excluded: string[],
 ): Promise<{ battleStats: BattleModeStats; packStats: PackPopularityStats }> {
-  const db = await getDb();
   const dateFilter = periodToDateFilter(period);
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
   const battleStaffExcl = `user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
@@ -727,21 +725,21 @@ async function computePackAndBattleStats(
     topBattlePackRows,
     topPacksRows,
   ] = await Promise.all([
-    db.$queryRawUnsafe<{ mode: string; count: string }[]>(`
+    queryMainRows<{ mode: string; count: string }[]>(`
       SELECT mode::text AS mode, COUNT(*)::text AS count
       FROM battles
       ${battleDateWhere}
       GROUP BY mode
       ORDER BY COUNT(*) DESC
     `),
-    db.$queryRawUnsafe<{ setting: string; count: string }[]>(`
+    queryMainRows<{ setting: string; count: string }[]>(`
       SELECT setting, COUNT(*)::text AS count
       FROM battles, UNNEST(additional_settings) AS setting
       ${battleDateWhere}
       GROUP BY setting
       ORDER BY COUNT(*) DESC
     `),
-    db.$queryRawUnsafe<{
+    queryMainRows<{
       total_battles: string;
       borrow_count: string;
       sponsored_count: string;
@@ -755,14 +753,14 @@ async function computePackAndBattleStats(
       FROM battles
       ${battleDateWhere}
     `),
-    db.$queryRawUnsafe<{ teams: number; players_per_team: number; count: string }[]>(`
+    queryMainRows<{ teams: number; players_per_team: number; count: string }[]>(`
       SELECT teams, players_per_team, COUNT(*)::text AS count
       FROM battles
       ${battleDateWhere}
       GROUP BY teams, players_per_team
       ORDER BY COUNT(*) DESC
     `),
-    db.$queryRawUnsafe<{ id: string; name: string; count: string }[]>(`
+    queryMainRows<{ id: string; name: string; count: string }[]>(`
       SELECT p.id::text AS id, p.name AS name, COUNT(*)::text AS count
       FROM battles b
       CROSS JOIN LATERAL UNNEST(b.pack_ids::uuid[]) AS pid
@@ -772,7 +770,7 @@ async function computePackAndBattleStats(
       ORDER BY COUNT(*) DESC
       LIMIT 10
     `),
-    db.$queryRawUnsafe<{
+    queryMainRows<{
       id: string;
       name: string;
       opens_total: string;

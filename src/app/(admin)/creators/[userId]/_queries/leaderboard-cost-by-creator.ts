@@ -127,7 +127,7 @@ async function computeCreatorLeaderboardCost(
 // approved leaderboard this creator owns, built from a paginated backend
 // walk. A few-minutes TTL stops repeat loads / "Refresh to retry" from
 // re-walking every page. The backend client resolves env via the same
-// cookie→prod fallback as getDb() inside an unstable_cache scope (see
+// cookie→prod fallback from resolving the database inside unstable_cache (see
 // `_cost-cache.ts`). A thrown error is NOT cached (unstable_cache only
 // stores resolved values), so the caller's best-effort `.catch()` still
 // degrades the line on a real failure.

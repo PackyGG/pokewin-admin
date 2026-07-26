@@ -1,9 +1,7 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getRaceInsightsCohortFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/race/cohort";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -47,18 +45,15 @@ async function computeCohort(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RaceCohortResult> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const dateFilter =
-    days !== null
-      ? `AND rc.claimed_at >= NOW() - INTERVAL '${days} days'`
-      : "";
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const dateFilter = daysAgoFilter("rc.claimed_at", days);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   const [countryRows, sourceRows, cohortRows, totalRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryRows<
       { code: string; winners: string; prize: string }[]
-    >(`
+    >(db, sql`
       SELECT
         COALESCE(u.country_code, '??') AS code,
         COUNT(DISTINCT rc.user_id)::text AS winners,
@@ -71,9 +66,9 @@ async function computeCohort(
       ORDER BY SUM(rc.prize_amount_usd::numeric) DESC
       LIMIT ${COUNTRY_LIMIT}
     `),
-    db.$queryRawUnsafe<
+    queryRows<
       { provider: string; winners: string; prize: string }[]
-    >(`
+    >(db, sql`
       WITH winners AS (
         SELECT DISTINCT rc.user_id
         FROM race_claims rc
@@ -111,9 +106,9 @@ async function computeCohort(
     // of their first in-window claim. Buckets keep clean breakpoints
     // common across the rest of the rewards-insights module so the
     // page reads consistently against the other rewards sub-pages.
-    db.$queryRawUnsafe<
+    queryRows<
       { bucket: string; winners: string; prize: string }[]
-    >(`
+    >(db, sql`
       WITH winner_first_claim AS (
         SELECT
           rc.user_id,
@@ -147,7 +142,7 @@ async function computeCohort(
       FROM bucketed
       GROUP BY bucket
     `),
-    db.$queryRawUnsafe<{ winners: string }[]>(`
+    queryRows<{ winners: string }[]>(db, sql`
       SELECT COUNT(DISTINCT rc.user_id)::text AS winners
       FROM race_claims rc
       JOIN "user" u ON u.id = rc.user_id
@@ -218,20 +213,14 @@ async function computeCohort(
 
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveAdminRead<RaceCohortResult>("insights_race_cohort", {
-      pg: () => computeCohort(period, blacklistIds),
-      ch: () => getRaceInsightsCohortFromClickHouse(period, blacklistIds),
-    }),
+    computeCohort(period, blacklistIds),
   ["insights-rewards-race-cohort-v1"],
   { revalidate: 60, tags: ["insights-rewards-race"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveAdminRead<RaceCohortResult>("insights_race_cohort", {
-      pg: () => computeCohort(period, blacklistIds),
-      ch: () => getRaceInsightsCohortFromClickHouse(period, blacklistIds),
-    }),
+    computeCohort(period, blacklistIds),
   ["insights-rewards-race-cohort-lifetime-v1"],
   { revalidate: 300, tags: ["insights-rewards-race"] },
 );

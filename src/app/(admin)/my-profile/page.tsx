@@ -66,7 +66,7 @@ export default async function MyProfilePage() {
   const isCreator = sessionHasRole(session, "creator");
 
   // Shell-first: the hero paints immediately; the heavy cross-DB read
-  // (adminDb.admin_users + main-DB user/affiliate/account fan-out inside
+  // (Admin DB user + main-DB user/affiliate/account fan-out inside
   // getMyProfileData) streams behind a <Suspense> boundary so it never
   // blocks first paint. Non-creators short-circuit to the empty state with
   // no data call at all.

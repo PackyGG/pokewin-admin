@@ -1,7 +1,9 @@
 import { Suspense } from "react";
 import { KeyRound, Plug } from "lucide-react";
+import { and, desc, eq, isNull } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
+import { api_keys } from "@/lib/db-schema/admin/schema";
 import { requireAdmin } from "@/lib/dal";
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -62,8 +64,16 @@ export default async function ApiKeysPage() {
 }
 
 async function ApiKeysBody() {
-  const rows = await adminDb.api_keys.findMany({
-    // Revoked keys are HIDDEN, not deleted: the row stays for the audit trail
+  const rows = await adminDrizzle.select({
+    id: api_keys.id, name: api_keys.name, prefix: api_keys.prefix,
+    scopes: api_keys.scopes, allowed_ips: api_keys.allowed_ips,
+    is_active: api_keys.is_active, expires_at: api_keys.expires_at,
+    last_used_at: api_keys.last_used_at, last_used_ip: api_keys.last_used_ip,
+    request_count: api_keys.request_count, created_at: api_keys.created_at,
+    revoked_at: api_keys.revoked_at,
+  }).from(api_keys).where(and(isNull(api_keys.revoked_at), eq(api_keys.is_active, true)))
+    .orderBy(desc(api_keys.created_at));
+  /* Revoked keys are HIDDEN, not deleted: the row stays for the audit trail
     // (who revoked it, when, how many requests it made) but a dead credential
     // is noise in the operator's list. Mirrors `statusOf` in the client, which
     // treats either flag as revoked. Expired keys still show — they're
@@ -84,8 +94,7 @@ async function ApiKeysBody() {
       request_count: true,
       created_at: true,
       revoked_at: true,
-    },
-  });
+    } */
 
   const keys: ApiKeyRow[] = rows.map((r) => ({
     id: r.id,
@@ -94,12 +103,12 @@ async function ApiKeysBody() {
     scopes: r.scopes,
     allowedIps: r.allowed_ips,
     isActive: r.is_active,
-    expiresAt: r.expires_at?.toISOString() ?? null,
-    lastUsedAt: r.last_used_at?.toISOString() ?? null,
+    expiresAt: r.expires_at ? new Date(r.expires_at).toISOString() : null,
+    lastUsedAt: r.last_used_at ? new Date(r.last_used_at).toISOString() : null,
     lastUsedIp: r.last_used_ip,
     requestCount: r.request_count,
-    createdAt: r.created_at.toISOString(),
-    revokedAt: r.revoked_at?.toISOString() ?? null,
+    createdAt: new Date(r.created_at).toISOString(),
+    revokedAt: r.revoked_at ? new Date(r.revoked_at).toISOString() : null,
   }));
 
   return (

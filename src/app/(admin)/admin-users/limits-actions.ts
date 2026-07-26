@@ -1,8 +1,9 @@
 "use server";
 
 import { z } from "zod";
+import { sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import {
@@ -12,9 +13,8 @@ import {
   deleteLimit,
 } from "@/lib/balance-limits";
 
-// The Prisma enum is generated, but we mirror it as a string-literal
-// union here so the Zod parser doesn't depend on the generated client
-// (and so this file compiles cleanly before `admin:migrate`).
+// Mirror the database enum as a string-literal union so the Zod parser stays
+// independent of catalog-introspection timing.
 const LIMIT_PERIOD = ["daily", "weekly", "monthly"] as const;
 type LimitPeriod = (typeof LIMIT_PERIOD)[number];
 
@@ -43,11 +43,12 @@ const deleteLimitSchema = z.object({
  * since there's no FK back to admin_users in the schema.
  */
 async function assertTargetExists(adminUserId: string): Promise<void> {
-  const exists = await adminDb.admin_users.findUnique({
-    where: { id: adminUserId },
-    select: { id: true },
-  });
-  if (!exists) {
+  const exists = await adminDrizzle.execute<{ exists: boolean }>(sql`
+    SELECT EXISTS(
+      SELECT 1 FROM admin_users WHERE id = ${adminUserId}::uuid
+    ) AS exists
+  `);
+  if (!exists.rows[0]?.exists) {
     throw new Error("Admin user not found");
   }
 }
@@ -110,7 +111,7 @@ export async function deleteAdminLimit(
     await deleteLimit(parsed.data.adminUserId, parsed.data.periodType, session.userId);
   } catch (err) {
     // Delete throws on not-found — surface a clean error rather than
-    // letting Prisma's "Record to delete does not exist" leak.
+    // leaking an opaque missing-record error.
     return {
       success: false,
       error: err instanceof Error ? err.message : "Failed to remove limit",

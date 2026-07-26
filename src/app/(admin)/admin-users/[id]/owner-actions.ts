@@ -1,7 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 import { requireMainOwner, MAIN_OWNER_USERNAME } from "@/lib/owners";
 import { require2FA } from "@/lib/require-2fa";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -30,10 +31,18 @@ export async function setAdminOwner(
   const session = await requireMainOwner();
   await require2FA(session.userId, totpCode);
 
-  const target = await adminDb.admin_users.findUnique({
-    where: { id: adminUserId },
-    select: { id: true, username: true, is_active: true, is_owner: true },
-  });
+  const targetResult = await adminDrizzle.execute<{
+    id: string;
+    username: string;
+    is_active: boolean;
+    is_owner: boolean;
+  }>(sql`
+    SELECT id::text, username, is_active, is_owner
+    FROM admin_users
+    WHERE id = ${adminUserId}::uuid
+    LIMIT 1
+  `);
+  const target = targetResult.rows[0];
   if (!target) {
     throw new Error("Admin user not found");
   }
@@ -50,11 +59,11 @@ export async function setAdminOwner(
     return;
   }
 
-  await adminDb.admin_users.update({
-    where: { id: adminUserId },
-    data: { is_owner: isOwner },
-    select: { id: true },
-  });
+  await adminDrizzle.execute(sql`
+    UPDATE admin_users
+    SET is_owner = ${isOwner}, updated_at = NOW()
+    WHERE id = ${adminUserId}::uuid
+  `);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,

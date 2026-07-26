@@ -1,10 +1,8 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { CACHE_TAG, loadBlacklist } from "./_shared";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getAffiliateLifetimeRoiFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/lifetime-roi";
 
 /**
  * Lifetime ROI per affiliate.
@@ -63,10 +61,10 @@ export type LifetimeRoiRow = {
 };
 
 async function compute(blacklistIds: string[]): Promise<LifetimeRoiRow[]> {
-  const db = await getDb();
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const db = await getDrizzleDb();
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       affiliate_user_id: string;
       username: string | null;
@@ -76,7 +74,7 @@ async function compute(blacklistIds: string[]): Promise<LifetimeRoiRow[]> {
       total_earned: string;
       total_wager: string;
     }[]
-  >(`
+  >(db, sql`
     SELECT
       aa.user_id AS affiliate_user_id,
       u.username,
@@ -120,8 +118,5 @@ const cached = unstable_cache(
 
 export async function getAffiliateLifetimeRoi(): Promise<LifetimeRoiRow[]> {
   const blacklist = await loadBlacklist();
-  return resolveAdminRead<LifetimeRoiRow[]>("insights_affiliate_lifetime_roi", {
-    pg: () => cached(blacklist),
-    ch: () => getAffiliateLifetimeRoiFromClickHouse(blacklist),
-  });
+  return cached(blacklist);
 }

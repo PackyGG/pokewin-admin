@@ -1,14 +1,13 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { compareSignupOverview } from "@/lib/clickhouse/compare/insights-signup-overview";
 import { SIGNUP_CACHE_TAG } from "./_shared";
 
 /**
@@ -60,13 +59,10 @@ async function computeOverview(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<SignupOverview> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const signupDateFilter =
-    days !== null
-      ? `AND u.created_at >= NOW() - INTERVAL '${days} days'`
-      : "";
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const signupDateFilter = daysAgoFilter("u.created_at", days);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // ── Window aggregate ──────────────────────────────────────────────
   // Two-stage CTE: cohort = in-window signups; claim_first = each
@@ -78,7 +74,7 @@ async function computeOverview(
     total_cost: string;
     median_hours: string | null;
   };
-  const windowRows = await db.$queryRawUnsafe<WindowRow[]>(`
+  const windowRows = await queryRows<WindowRow[]>(db, sql`
     WITH cohort AS (
       SELECT u.id AS user_id, u.created_at AS signed_up_at
       FROM "user" u
@@ -120,7 +116,7 @@ async function computeOverview(
   // First depositors in the signup cohort — distinct users in the
   // cohort who made ≥1 `deposit` ledger row at any time. Counts users
   // who actually completed a deposit, not just those who initiated one.
-  const firstDepRows = await db.$queryRawUnsafe<{ cnt: string }[]>(`
+  const firstDepRows = await queryRows<{ cnt: string }[]>(db, sql`
     SELECT COUNT(DISTINCT lt.user_id)::text AS cnt
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
@@ -144,13 +140,13 @@ async function computeOverview(
       claimants: string;
       total_cost: string;
     };
-    const priorRows = await db.$queryRawUnsafe<PriorRow[]>(`
+    const priorRows = await queryRows<PriorRow[]>(db, sql`
       WITH cohort AS (
         SELECT u.id AS user_id
         FROM "user" u
         WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
-          AND u.created_at >= NOW() - INTERVAL '${days * 2} days'
-          AND u.created_at < NOW() - INTERVAL '${days} days'
+          AND u.created_at >= NOW() - (${days * 2} * INTERVAL '1 day')
+          AND u.created_at < NOW() - (${days} * INTERVAL '1 day')
       ),
       claim_first AS (
         SELECT
@@ -224,9 +220,5 @@ export async function getSignupOverview(
   const data = await (cacheTtlForInsightsPeriod(period) >= 300
     ? cachedLong(period, sorted)
     : cachedShort(period, sorted));
-  // CQRS rollout: fire-and-forget ClickHouse comparison (no-op unless the
-  // surface flag is in `comparison` mode; forced off when CH is dormant). The
-  // served value stays the Postgres payload above.
-  void compareSignupOverview(period, data);
   return data;
 }

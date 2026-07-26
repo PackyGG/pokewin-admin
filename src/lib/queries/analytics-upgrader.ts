@@ -1,7 +1,8 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -29,7 +30,7 @@ import { blacklistNotInClause } from "./_blacklist";
  * these numbers reconcile with the dashboard card and with the canonical
  * `upgraderMetrics` for the same window.
  *
- * ─── Index-or-ClickHouse (CLAUDE.md) ──────────────────────────────────
+ * ─── PostgreSQL index policy (CLAUDE.md) ───────────────────────────────
  *
  * This read is Path 1 with a DOCUMENTED seq scan, verified read-only against
  * prod with EXPLAIN (ANALYZE, BUFFERS) on 2026-07-23:
@@ -143,13 +144,15 @@ async function computeUpgraderAnalytics(
   period: UpgraderPeriod,
   excluded: string[],
 ): Promise<UpgraderAnalytics> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
   // Probe: skip entirely if the table is absent (pre-upgrader DB).
   // to_regclass returns NULL (not an error) for a missing relation — same
   // guard the canonical `upgraderMetrics` uses.
-  const probe = await db.$queryRaw<{ exists: string | null }[]>`
-    SELECT to_regclass('public.upgrader_games')::text AS exists`;
+  const probe = await queryRows<{ exists: string | null }[]>(
+    db,
+    "SELECT to_regclass('public.upgrader_games')::text AS exists",
+  );
   if (probe[0]?.exists == null) return emptyAnalytics(period);
 
   const blacklist = blacklistNotInClause("id", excluded);
@@ -167,7 +170,7 @@ async function computeUpgraderAnalytics(
   // `players` is per-day distinct — summing it would double-count anyone who
   // played on two days, so the window's unique-player count is taken from a
   // separate aggregate over the same scan (see `totalPlayers` below).
-  const rows = await db.$queryRawUnsafe<Row[]>(
+  const rows = await queryRows<Row[]>(db,
     `WITH real_users AS (
        SELECT id FROM "user"
        WHERE role NOT IN ('admin', 'support', 'creator') ${blacklist}
@@ -187,7 +190,7 @@ async function computeUpgraderAnalytics(
   );
 
   // Window-wide distinct players — cannot be summed from the daily rows.
-  const playerRows = await db.$queryRawUnsafe<{ players: string }[]>(
+  const playerRows = await queryRows<{ players: string }[]>(db,
     `WITH real_users AS (
        SELECT id FROM "user"
        WHERE role NOT IN ('admin', 'support', 'creator') ${blacklist}

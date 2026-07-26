@@ -2,7 +2,8 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { getDevDb, getProdDb } from "@/lib/db";
+import { drizzleForEnv } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
@@ -97,7 +98,7 @@ export type TipsSponsorSpend = {
 const cachedTipsSponsorSpend = (env: DbEnv, excludedIds: string[]) =>
   unstable_cache(
     async (): Promise<TipsSponsorSpend> => {
-      const db = env === "dev" ? getDevDb() : getProdDb();
+      const db = drizzleForEnv(env);
 
       // Blacklist gate: drop excluded (owner-locked) recipient ids so a
       // blacklisted user who received a creator-funded tip/sponsorship never
@@ -114,9 +115,9 @@ const cachedTipsSponsorSpend = (env: DbEnv, excludedIds: string[]) =>
       // header). Bounded to the last TIPS_SPONSOR_LOOKBACK_DAYS so a lifetime
       // scan can't hit the whole `ledger_transactions` history once the fill
       // enum populates.
-      const rows = await db.$queryRawUnsafe<
+      const rows = await queryRows<
         { type: string; total: string | null }[]
-      >(
+      >(db,
         `SELECT lt.type::text AS type,
                COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
         FROM ledger_transactions lt

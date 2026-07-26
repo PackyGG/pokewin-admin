@@ -1,14 +1,18 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
+import { sql } from "drizzle-orm";
 import { getSession, type SessionPayload } from "./session";
-import { adminDb } from "./admin-db";
+import { adminDrizzle } from "./admin-db";
 import {
   getDefaultRoute,
   getDefaultRouteForRoles,
   getEffectiveRoles,
   pickPrimaryRole,
 } from "./admin-roles";
-import { readAdminUserWithRoles, isMissingColumnError } from "./admin-user-roles";
+import {
+  isMissingColumnError,
+  readAdminUserWithRoles,
+} from "./admin-user-roles";
 import type { AdminRole } from "./admin-roles";
 import { pageAccessGranted } from "./admin-pages";
 import { resolveLandingRoute } from "./role-landing";
@@ -70,7 +74,7 @@ export const verifySession = cache(async (): Promise<SessionPayload> => {
   // totp_enabled / is_owner) are read in ONE findUnique on the happy path —
   // the previous two serial reads cost a full extra admin-DB round-trip per
   // page load. The resilience contract is unchanged: if ANY of the additive
-  // columns is missing (P2022 — e.g. `roles` or a guard column not migrated
+  // columns is missing (SQLSTATE 42703 — e.g. `roles` or a guard column not migrated
   // on some DB), we fall back to the EXACT legacy two-step read below, which
   // degrades each column independently (`roles` → `[]` → legacy `[role]`;
   // guard columns → safe no-op defaults). A transient non-schema fault
@@ -91,17 +95,16 @@ export const verifySession = cache(async (): Promise<SessionPayload> => {
   // the username (DB-independent) so the root owner can never be locked out.
   let isOwnerFlag = false;
   try {
-    const row = await adminDb.admin_users.findUnique({
-      where: { id: session.userId },
-      select: {
-        is_active: true,
-        role: true,
-        roles: true,
-        sessions_valid_after: true,
-        totp_enabled: true,
-        is_owner: true,
-      },
-    });
+    const row = (await adminDrizzle.execute<{
+      is_active: boolean; role: string; roles: string[];
+      sessions_valid_after: Date | null; totp_enabled: boolean; is_owner: boolean;
+    }>(sql`
+      SELECT is_active, role::text AS role, roles::text[] AS roles,
+             sessions_valid_after, totp_enabled, is_owner
+      FROM admin_users
+      WHERE id = ${session.userId}::uuid
+      LIMIT 1
+    `)).rows[0] ?? null;
     adminUser = row;
     sessionsValidAfter = row?.sessions_valid_after ?? null;
     totpEnabled = row?.totp_enabled ?? true;
@@ -115,18 +118,14 @@ export const verifySession = cache(async (): Promise<SessionPayload> => {
     // `getEffectiveRoles` collapses to the legacy `[role]`), and the guard
     // columns are read SEPARATELY so a missing guard column can't perturb the
     // battle-tested role/active path.
-    adminUser = await readAdminUserWithRoles(
-      () =>
-        adminDb.admin_users.findUnique({
-          where: { id: session.userId },
-          select: { is_active: true, role: true, roles: true },
-        }),
-      () =>
-        adminDb.admin_users.findUnique({
-          where: { id: session.userId },
-          select: { is_active: true, role: true },
-        }),
-    );
+    adminUser = (await adminDrizzle.execute<{
+      is_active: boolean; role: string;
+    }>(sql`
+      SELECT is_active, role::text AS role
+      FROM admin_users
+      WHERE id = ${session.userId}::uuid
+      LIMIT 1
+    `)).rows[0] ?? null;
 
     // ── Phase D safety guards (session revocation + mandatory 2FA) ──────────
     // If either guard column is absent the read degrades to the SAFE no-op
@@ -134,15 +133,19 @@ export const verifySession = cache(async (): Promise<SessionPayload> => {
     // a normal enrolled admin because of a schema gap. It must not throw on
     // this path.
     try {
-      const guardRow = await adminDb.admin_users.findUnique({
-        where: { id: session.userId },
-        select: { sessions_valid_after: true, totp_enabled: true, is_owner: true },
-      });
+      const guardRow = (await adminDrizzle.execute<{
+        sessions_valid_after: Date | null; totp_enabled: boolean; is_owner: boolean;
+      }>(sql`
+        SELECT sessions_valid_after, totp_enabled, is_owner
+        FROM admin_users
+        WHERE id = ${session.userId}::uuid
+        LIMIT 1
+      `)).rows[0];
       sessionsValidAfter = guardRow?.sessions_valid_after ?? null;
       totpEnabled = guardRow?.totp_enabled ?? true;
       isOwnerFlag = guardRow?.is_owner ?? false;
     } catch (guardErr) {
-      // P2022 (column missing) → degrade to the no-op defaults above. Any
+      // 42703 (column missing) → degrade to the no-op defaults above. Any
       // OTHER error is also swallowed to the safe defaults: the role/active
       // read already succeeded, so a blip here must not white-screen the shell.
       if (!isMissingColumnError(guardErr)) {
@@ -212,16 +215,27 @@ export const getUserPermissions = cache(async (userId: string): Promise<string[]
   // Resilient to the unapplied `roles` migration: degrades to `roles: []`
   // (→ effective `[role]`) so this read can't crash a non-admin's request.
   const user = await readAdminUserWithRoles(
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id: userId },
-        select: { role: true, roles: true, allowed_pages: true },
-      }),
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id: userId },
-        select: { role: true, allowed_pages: true },
-      }),
+    async () =>
+      (await adminDrizzle.execute<{
+        role: string;
+        roles: string[];
+        allowed_pages: string[];
+      }>(sql`
+        SELECT role::text AS role, roles::text[] AS roles, allowed_pages
+        FROM admin_users
+        WHERE id = ${userId}::uuid
+        LIMIT 1
+      `)).rows[0] ?? null,
+    async () =>
+      (await adminDrizzle.execute<{
+        role: string;
+        allowed_pages: string[];
+      }>(sql`
+        SELECT role::text AS role, allowed_pages
+        FROM admin_users
+        WHERE id = ${userId}::uuid
+        LIMIT 1
+      `)).rows[0] ?? null,
   );
   if (!user) return [];
   // `admin` among the user's effective roles = full access, no page list.
@@ -271,16 +285,23 @@ export async function getDefaultRouteForUser(userId: string, role: string): Prom
   // argument is the login-time primary; the DB is authoritative. Resilient
   // to the unapplied `roles` migration → falls back to `[role]`.
   const user = await readAdminUserWithRoles(
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id: userId },
-        select: { role: true, roles: true },
-      }),
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id: userId },
-        select: { role: true },
-      }),
+    async () =>
+      (await adminDrizzle.execute<{
+        role: string;
+        roles: string[];
+      }>(sql`
+        SELECT role::text AS role, roles::text[] AS roles
+        FROM admin_users
+        WHERE id = ${userId}::uuid
+        LIMIT 1
+      `)).rows[0] ?? null,
+    async () =>
+      (await adminDrizzle.execute<{ role: string }>(sql`
+        SELECT role::text AS role
+        FROM admin_users
+        WHERE id = ${userId}::uuid
+        LIMIT 1
+      `)).rows[0] ?? null,
   );
   const roles = getEffectiveRoles(user?.role ?? role, user?.roles);
   // `admin` (the one superuser) is a hard bypass — always /dashboard, NEVER a
@@ -320,27 +341,27 @@ async function resolveUserLandingRoute(
   allowedPages: string[],
 ): Promise<string | null> {
   try {
-    const row = await adminDb.admin_users.findUnique({
-      where: { id: userId },
-      select: {
-        role_id: true,
-        custom_role: { select: { landing_route: true } },
-      },
-    });
+    const primary = roles.length > 0 ? pickPrimaryRole(roles) : null;
+    const row = (await adminDrizzle.execute<{
+      custom_landing_route: string | null;
+      system_landing_route: string | null;
+    }>(sql`
+      SELECT
+        custom.landing_route AS custom_landing_route,
+        system.landing_route AS system_landing_route
+      FROM admin_users u
+      LEFT JOIN admin_roles custom ON custom.id = u.role_id
+      LEFT JOIN admin_roles system ON system.system_key = ${primary}
+      WHERE u.id = ${userId}::uuid
+      LIMIT 1
+    `)).rows[0];
 
     // Candidate landing routes in priority order: assigned custom role first,
     // then the primary built-in role's system-row override.
     const candidates: Array<string | null | undefined> = [];
-    candidates.push(row?.custom_role?.landing_route);
+    candidates.push(row?.custom_landing_route);
 
-    if (roles.length > 0) {
-      const primary = pickPrimaryRole(roles);
-      const systemRow = await adminDb.admin_roles.findUnique({
-        where: { system_key: primary },
-        select: { landing_route: true },
-      });
-      candidates.push(systemRow?.landing_route);
-    }
+    candidates.push(row?.system_landing_route);
 
     for (const candidate of candidates) {
       const resolved = resolveLandingRoute(candidate);

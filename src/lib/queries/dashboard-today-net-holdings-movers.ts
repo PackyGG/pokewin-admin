@@ -1,15 +1,14 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
 import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
 import { statsExcludedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getTodayNetHoldingsTopHoldersFromClickHouse } from "@/lib/clickhouse/queries/dashboard/net-holdings-movers";
 
 /**
  * Top net-holdings movers for the P&L Today tile's "Net holdings Δ"
@@ -51,7 +50,7 @@ const cachedTodayNetHoldingsTopHolders = unstable_cache(
     excludeUserIds: string[],
   ): Promise<Omit<TodayNetHoldingsTopHolders, "dayStartIso">> => {
     void dayKey;
-    const db = await getDb();
+    const db = await getDrizzleDb();
     const since = new Date(sinceIso);
     const blacklist = blacklistNotInClause("u.id", excludeUserIds);
     const statsExcluded = statsExcludedAdjustmentSqlPredicate({
@@ -68,7 +67,7 @@ const cachedTodayNetHoldingsTopHolders = unstable_cache(
       net_holdings_change: string;
     };
 
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryRows<Row[]>(db,
       `WITH eligible AS (
          SELECT id FROM "user" u
          WHERE u.role NOT IN ('admin', 'support') ${blacklist}
@@ -204,17 +203,15 @@ export async function getTodayNetHoldingsTopHolders(): Promise<TodayNetHoldingsT
     const dayKey = sinceIso.slice(0, 10);
     const excluded = await getExcludedUserIds();
 
-    // CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
     // through on failure); off/comparison serve Postgres unchanged. The
     // `dayStartIso` scalar is assembled here from the same window; comparison-
     // mode drift is logged by the dashboard action's existing
     // compareDashboardNetHoldingsMovers() call, so no compare thunk here.
-    const { holders } = await resolveAdminRead<
-      Omit<TodayNetHoldingsTopHolders, "dayStartIso">
-    >("dashboard_net_holdings_movers", {
-      pg: () => cachedTodayNetHoldingsTopHolders(dayKey, sinceIso, excluded),
-      ch: () => getTodayNetHoldingsTopHoldersFromClickHouse(since, excluded),
-    });
+    const { holders } = await cachedTodayNetHoldingsTopHolders(
+      dayKey,
+      sinceIso,
+      excluded,
+    );
     return { holders, dayStartIso: sinceIso };
   });
 }

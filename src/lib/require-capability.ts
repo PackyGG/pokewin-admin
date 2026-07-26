@@ -1,4 +1,6 @@
-import { adminDb } from "@/lib/admin-db";
+import { eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_users } from "@/lib/db-schema/admin/schema";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { getEffectiveRoles } from "@/lib/admin-roles";
 import { readAdminUserWithRoles } from "@/lib/admin-user-roles";
@@ -46,16 +48,19 @@ export async function requireCapability(
   // column is absent. Security is unchanged — `[role]` grants no more than
   // the user's single role.
   const perms = await readAdminUserWithRoles(
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id: session.userId },
-        select: { role: true, roles: true, allowed_pages: true },
-      }),
-    () =>
-      adminDb.admin_users.findUnique({
-        where: { id: session.userId },
-        select: { role: true, allowed_pages: true },
-      }),
+    async () => {
+      const [row] = await adminDrizzle.select({
+        role: admin_users.role, roles: admin_users.roles,
+        allowed_pages: admin_users.allowed_pages,
+      }).from(admin_users).where(eq(admin_users.id, session.userId)).limit(1);
+      return row ?? null;
+    },
+    async () => {
+      const [row] = await adminDrizzle.select({
+        role: admin_users.role, allowed_pages: admin_users.allowed_pages,
+      }).from(admin_users).where(eq(admin_users.id, session.userId)).limit(1);
+      return row ?? null;
+    },
   );
 
   if (!perms) {
@@ -67,14 +72,14 @@ export async function requireCapability(
 
   // Defence in depth for the owner bypass: re-read username + is_owner from the
   // DB so a thin / spoofed caller session can't slip past, mirroring the admin
-  // re-derivation above. P2022-safe (the column may be absent on an un-migrated
+  // re-derivation above. Missing-column safe (the column may be absent on an un-migrated
   // DB) → degrades to non-owner so it can only ever DENY, never grant. The
   // permanent `motha` username owner is re-confirmed here too.
   try {
-    const ownerRow = await adminDb.admin_users.findUnique({
-      where: { id: session.userId },
-      select: { username: true, is_active: true, is_owner: true },
-    });
+    const [ownerRow] = await adminDrizzle.select({
+      username: admin_users.username, is_active: admin_users.is_active,
+      is_owner: admin_users.is_owner,
+    }).from(admin_users).where(eq(admin_users.id, session.userId)).limit(1);
     if (
       ownerRow?.is_active &&
       ((ownerRow.username ?? "").trim().toLowerCase() === "motha" ||
@@ -83,11 +88,11 @@ export async function requireCapability(
       return;
     }
   } catch {
-    // P2022 (column missing) / transient fault → fail-closed: fall through to
+    // 42703 (column missing) / transient fault → fail-closed: fall through to
     // the capability check below. No owner power granted on a read failure.
   }
 
-  if (!hasCapability(perms.allowed_pages, capability)) {
+  if (!hasCapability(perms.allowed_pages ?? [], capability)) {
     throw new Error(`You do not have permission to ${actionLabel}`);
   }
 }

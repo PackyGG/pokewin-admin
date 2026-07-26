@@ -2,7 +2,7 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import {
@@ -101,10 +101,9 @@ function sessionSpend(session: CreatorSessionResponse): {
 async function queryLedgerWindow(
   sinceSql: string | null,
 ): Promise<TipsSponsorWindowStats> {
-  const db = await getDb();
   const sinceClause = sinceSql ? `AND lt.created_at >= ${sinceSql}` : "";
 
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryMainRows<
     { type: string; total: string | null; count: string }[]
   >(
     `SELECT lt.type::text AS type,
@@ -134,8 +133,7 @@ async function queryLedgerWindow(
 }
 
 async function queryChart30d(): Promise<TipsSponsorChartRow[]> {
-  const db = await getDb();
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryMainRows<
     { bucket: Date; type: string; total: string | null }[]
   >(
     `SELECT date_trunc('day', lt.created_at AT TIME ZONE 'UTC') AS bucket,

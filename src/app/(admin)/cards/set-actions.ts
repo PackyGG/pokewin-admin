@@ -2,8 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { Prisma } from "@/generated/prisma/client";
-import { getDb } from "@/lib/db";
+import { sql } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -13,6 +13,13 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 // roughly 12 default-pages worth of cards which covers any realistic
 // human-driven bulk operation.
 const BULK_MOVE_MAX = 500;
+
+function postgresErrorCode(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const code = (error as { code?: string }).code;
+  if (code) return code;
+  return postgresErrorCode(error.cause);
+}
 
 // ────────────────────────────────────────────────────────────────────
 //  bulkMoveCardsToSet
@@ -39,38 +46,44 @@ export async function bulkMoveCardsToSet(input: {
   }
   const { cardIds, setId } = parsed.data;
 
-  const db = await getDb();
-
-  // Validate the target set exists up-front so we can surface a clean
-  // error instead of letting `updateMany` quietly affect 0 rows when the
-  // FK target was deleted between the dialog opening and the submit.
-  const set = await db.sets.findUnique({
-    where: { id: setId },
-    select: { id: true, name: true },
-  });
-  if (!set) throw new Error("Set not found");
-
   // De-dup just-in-case the client passed duplicate ids.
   const uniqueIds = Array.from(new Set(cardIds));
-
-  const result = await db.cards.updateMany({
-    where: { id: { in: uniqueIds } },
-    data: { set_id: set.id, updated_at: new Date() },
+  const db = await getDrizzleDb();
+  const result = await db.transaction(async (tx) => {
+    const set = (
+      await tx.execute<{ id: string; name: string }>(sql`
+        SELECT id, name
+        FROM sets
+        WHERE id = ${setId}::uuid
+        FOR UPDATE
+      `)
+    ).rows[0];
+    if (!set) throw new Error("Set not found");
+    const updated = await tx.execute<{ id: string }>(sql`
+      UPDATE cards
+      SET set_id = ${set.id}::uuid, updated_at = NOW()
+      WHERE id = ANY(${uniqueIds}::uuid[])
+      RETURNING id
+    `);
+    return {
+      count: updated.rowCount ?? updated.rows.length,
+      set,
+    };
   });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "cards_bulk_moved_to_set",
     metadata: {
-      setId: set.id,
-      setName: set.name,
+      setId: result.set.id,
+      setName: result.set.name,
       count: result.count,
       cardIds: uniqueIds,
     },
   });
 
   revalidatePath("/cards");
-  return { count: result.count, setName: set.name };
+  return { count: result.count, setName: result.set.name };
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -133,28 +146,34 @@ export async function createSetForCards(input: {
     parsedReleaseDate = d;
   }
 
-  const db = await getDb();
+  const db = await getDrizzleDb();
 
   // Generate the next free negative tcgplayer_id. Retry on the rare
   // UNIQUE-collision (two admins creating simultaneously) by recomputing.
   let attempt = 0;
   while (attempt < 3) {
-    const min = await db.sets.aggregate({ _min: { tcgplayer_id: true } });
-    const baseline = min._min.tcgplayer_id ?? 0;
-    // If the only existing sets have positive ids, start at -1. Otherwise
-    // step one below the current minimum.
-    const nextId = baseline < 0 ? baseline - 1 : -1;
-
     try {
-      const set = await db.sets.create({
-        data: {
-          name,
-          series,
-          image_url: "",
-          language,
-          tcgplayer_id: nextId,
-          release_date: parsedReleaseDate,
-        },
+      const set = await db.transaction(async (tx) => {
+        const minResult = await tx.execute<{ min_id: number | null }>(sql`
+          SELECT MIN(tcgplayer_id)::int AS min_id FROM sets
+        `);
+        const baseline = minResult.rows[0]?.min_id ?? 0;
+        const nextId = baseline < 0 ? baseline - 1 : -1;
+        const result = await tx.execute<{
+          id: string;
+          name: string;
+          tcgplayer_id: number;
+        }>(sql`
+          INSERT INTO sets (
+            name, series, image_url, language, tcgplayer_id, release_date
+          ) VALUES (
+            ${name}, ${series}, '', ${language}, ${nextId}, ${parsedReleaseDate}
+          )
+          RETURNING id, name, tcgplayer_id
+        `);
+        const row = result.rows[0];
+        if (!row) throw new Error("Set insert returned no row");
+        return row;
       });
 
       await createAdminAuditEvent({
@@ -165,7 +184,7 @@ export async function createSetForCards(input: {
           name,
           series,
           source: "bulk_move_dialog",
-          tcgplayer_id: nextId,
+          tcgplayer_id: set.tcgplayer_id,
         },
       });
 
@@ -175,8 +194,7 @@ export async function createSetForCards(input: {
     } catch (e) {
       // Re-roll on UNIQUE collision and bubble anything else up unchanged.
       if (
-        e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === "P2002"
+        postgresErrorCode(e) === "23505"
       ) {
         attempt += 1;
         continue;

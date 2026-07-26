@@ -1,17 +1,17 @@
 import { unstable_cache } from "next/cache";
-import { getDb, dbForEnv } from "@/lib/db";
+import { drizzleForEnv } from "@/lib/db";
+import { queryMainRows, queryRows } from "@/lib/drizzle-query";
 import { readDbEnv } from "@/lib/db-env";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { isUuid } from "@/lib/utils/ids";
 import type { PaginatedResult } from "@/lib/types";
-import { Prisma } from "@/generated/prisma/client";
-import { battle_status, battle_mode } from "@/generated/prisma/enums";
+import { battle_status, battle_mode } from "@/lib/db-schema/main/schema";
 
-// Allowlists from the generated Prisma enums — validate user-supplied
+// Allowlists from the generated Drizzle enums — validate user-supplied
 // filter values before they hit the query rather than blind-casting.
-const BATTLE_STATUSES = new Set<string>(Object.values(battle_status));
-const BATTLE_MODES = new Set<string>(Object.values(battle_mode));
+const BATTLE_STATUSES = new Set<string>(battle_status.enumValues);
+const BATTLE_MODES = new Set<string>(battle_mode.enumValues);
 
 export type BattleListItem = {
   id: string;
@@ -130,16 +130,19 @@ export async function getBattles(params: {
   since?: "24h";
 }): Promise<PaginatedResult<BattleListItem>> {
   const { page = 1, perPage = 20, status, mode, search, sortBy = "recent", since } = params;
-  const db = await getDb();
-
-  const where: Prisma.battlesWhereInput = {};
+  const safePage = Math.max(1, Math.floor(page));
+  const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
+  const binds: unknown[] = [];
+  const filters: string[] = [];
 
   if (status && status !== "all" && BATTLE_STATUSES.has(status)) {
-    where.status = status as battle_status;
+    binds.push(status);
+    filters.push(`b.status::text = $${binds.length}`);
   }
 
   if (mode && mode !== "all" && BATTLE_MODES.has(mode)) {
-    where.mode = mode as battle_mode;
+    binds.push(mode);
+    filters.push(`b.mode::text = $${binds.length}`);
   }
 
   if (search) {
@@ -150,18 +153,26 @@ export async function getBattles(params: {
     // band, so username search never returns results. Only include the id
     // leg when the term is actually UUID-shaped; otherwise search username
     // only. Mirrors the `isUuid` guard in rain.ts / transactions.ts.
-    where.OR = [
-      ...(isUuid(search) ? [{ id: search }] : []),
-      { user: { username: { contains: search, mode: "insensitive" } } },
-    ];
+    binds.push(`%${search.toLowerCase()}%`);
+    const usernameBind = `$${binds.length}`;
+    if (isUuid(search)) {
+      binds.push(search);
+      filters.push(
+        `(LOWER(u.username) LIKE ${usernameBind} OR b.id = $${binds.length}::uuid)`,
+      );
+    } else {
+      filters.push(`LOWER(u.username) LIKE ${usernameBind}`);
+    }
   }
 
   // Time-window filter — applied additively so it composes cleanly with
   // the status/mode/search filters above. 24h is the only supported
   // window for now; expand here if we ever need 7d/30d.
   if (since === "24h") {
-    where.created_at = { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) };
+    binds.push(new Date(Date.now() - 24 * 60 * 60 * 1000));
+    filters.push(`b.created_at >= $${binds.length}`);
   }
+  const whereSql = filters.length > 0 ? filters.join(" AND ") : "TRUE";
 
   // "Biggest hit" only makes sense for battles that finished — pending
   // / cancelled rows have no payout. The dedicated SQL path below
@@ -169,57 +180,133 @@ export async function getBattles(params: {
   // CTE, so we don't need to touch `where.status` for that case.
   // Non-hit sorts respect the user's status tab as-is.
 
-  // Prisma orderBy — only meaningful for recent / bet. The hit sort
-  // is handled separately below via a SQL CTE that computes the
-  // multiplier server-side, so the `orderBy` here is a no-op for it.
-  const orderBy: Prisma.battlesOrderByWithRelationInput =
-    sortBy === "bet" ? { bet_amount: "desc" } : { created_at: "desc" };
-
   // Pagination strategy diverges by sort mode:
   //   - recent / bet → standard DB-side skip/take, count() for total
   //   - hit → two-stage: SQL CTE picks the top `BIGGEST_HIT_CAP`
-  //     battle IDs by computed multiplier, then Prisma findMany
+  //     battle IDs by computed multiplier, then a bounded detail read
   //     loads full data for those IDs. We re-order to match the SQL
   //     result, project, then slice for the page. `total` is clamped
   //     to the cap so the pagination UI doesn't offer pages we
   //     can't render.
 
-  // SHARED include block — both paths read the same shape so the
-  // projection logic below doesn't have to branch.
-  const battleInclude = {
-    user: { select: { username: true } },
+  type ListBattle = {
+    id: string;
+    user_id: string;
+    username: string | null;
+    mode: string;
+    teams: number;
+    players_per_team: number;
+    status: string;
+    bet_amount: string;
+    winner_team: number | null;
+    region_code: string;
+    created_at: Date;
+    borrow_percentage: number | null;
+    sponsorship_percentage: number | null;
+    total_unpacked: string | null;
+    user: { username: string | null } | null;
     battle_participants: {
-      select: {
-        id: true,
-        user_id: true,
-        team_number: true,
-        game_sessions: {
-          select: {
-            provably_fair_results: {
-              select: {
-                result_metadata: true,
-                user_inventory: {
-                  select: { value_at_obtained: true },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  } as const;
-
-  let battles: Awaited<ReturnType<typeof fetchBattles>>;
+      id: string;
+      user_id: string;
+      team_number: number;
+      game_sessions: {
+        provably_fair_results: {
+          result_metadata: unknown;
+          user_inventory: { value_at_obtained: string } | null;
+        }[];
+      };
+    }[];
+  };
+  let battles: ListBattle[];
   let total: number;
 
-  async function fetchBattles() {
-    return db.battles.findMany({
-      where,
-      orderBy,
-      skip: (page - 1) * perPage,
-      take: perPage,
-      include: battleInclude,
-    });
+  async function hydrateBattles(
+    baseRows: Omit<ListBattle, "user" | "battle_participants">[],
+  ): Promise<ListBattle[]> {
+    if (baseRows.length === 0) return [];
+    const ids = baseRows.map((battle) => battle.id);
+    const participantRows = await queryMainRows<
+      {
+        battle_id: string;
+        participant_id: string;
+        user_id: string;
+        team_number: number;
+        result_metadata: unknown;
+        value_at_obtained: string | null;
+        pf_id: string | null;
+      }[]
+    >(
+      `SELECT bp.battle_id, bp.id AS participant_id, bp.user_id,
+              bp.team_number, pf.id AS pf_id, pf.result_metadata,
+              ui.value_at_obtained::text
+         FROM battle_participants bp
+         LEFT JOIN game_sessions gs ON gs.id = bp.game_session_id
+         LEFT JOIN provably_fair_results pf ON pf.game_session_id = gs.id
+         LEFT JOIN user_inventory ui ON ui.id = pf.inventory_item_id
+        WHERE bp.battle_id = ANY($1::uuid[])
+        ORDER BY bp.battle_id, bp.team_number, bp.team_position, pf.nonce`,
+      ids,
+    );
+    const byBattle = new Map<string, ListBattle["battle_participants"]>();
+    const byParticipant = new Map<
+      string,
+      ListBattle["battle_participants"][number]
+    >();
+    for (const row of participantRows) {
+      let participant = byParticipant.get(row.participant_id);
+      if (!participant) {
+        participant = {
+          id: row.participant_id,
+          user_id: row.user_id,
+          team_number: row.team_number,
+          game_sessions: { provably_fair_results: [] },
+        };
+        byParticipant.set(row.participant_id, participant);
+        const list = byBattle.get(row.battle_id) ?? [];
+        list.push(participant);
+        byBattle.set(row.battle_id, list);
+      }
+      if (row.pf_id) {
+        participant.game_sessions.provably_fair_results.push({
+          result_metadata: row.result_metadata,
+          user_inventory:
+            row.value_at_obtained == null
+              ? null
+              : { value_at_obtained: row.value_at_obtained },
+        });
+      }
+    }
+    return baseRows.map((battle) => ({
+      ...battle,
+      user: { username: battle.username },
+      battle_participants: byBattle.get(battle.id) ?? [],
+    }));
+  }
+
+  async function loadBaseBattles(
+    filter: string,
+    order: string,
+    values: readonly unknown[],
+    limit: number,
+    offset: number,
+  ) {
+    return queryMainRows<
+      Omit<ListBattle, "user" | "battle_participants">[]
+    >(
+      `SELECT b.id, b.user_id, u.username, b.mode::text AS mode, b.teams,
+              b.players_per_team, b.status::text AS status,
+              b.bet_amount::text, b.winner_team, b.region_code, b.created_at,
+              b.borrow_percentage, b.sponsorship_percentage,
+              b.total_unpacked::text
+         FROM battles b
+         LEFT JOIN "user" u ON u.id = b.user_id
+        WHERE ${filter}
+        ORDER BY ${order}
+        LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+      ...values,
+      limit,
+      offset,
+    );
   }
 
   if (sortBy === "hit") {
@@ -250,21 +337,19 @@ export async function getBattles(params: {
     const env = await readDbEnv();
     const loadTopHitIds = unstable_cache(
       async (m: string | null, s: string | null): Promise<string[]> => {
-        const cdb = dbForEnv(env);
-        const modeClause =
-          m && m !== "all"
-            ? Prisma.sql`AND b.mode::text = ${m}`
-            : Prisma.empty;
+        const cdb = drizzleForEnv(env);
+        const modeClause = m && m !== "all" ? "AND b.mode::text = $1" : "";
         // 24h keeps its tight floor; every other mode (lifetime/all) is
         // capped at the 365d house convention (CLAUDE.md "Performance &
         // Daten-Laden") so this 5-way-join CTE always has a lower bound
         // instead of scanning the full battle history. No-op on current
         // data (< 90d old); bounds pathological future scans.
-        const sinceClause =
-          s === "24h"
-            ? Prisma.sql`AND b.created_at >= NOW() - INTERVAL '24 hours'`
-            : Prisma.sql`AND b.created_at >= NOW() - INTERVAL '365 days'`;
-        const rows = await cdb.$queryRaw<{ id: string }[]>`
+        const lookbackDays = s === "24h" ? 1 : 365;
+        const dayBind = m && m !== "all" ? 2 : 1;
+        const limitBind = dayBind + 1;
+        const rows = await queryRows<{ id: string }[]>(
+          cdb,
+          `
           WITH battle_multipliers AS (
             SELECT
               b.id,
@@ -279,15 +364,19 @@ export async function getBattles(params: {
             WHERE b.status = 'completed'
               AND b.bet_amount::numeric > 0
               ${modeClause}
-              ${sinceClause}
+              AND b.created_at >= NOW() - make_interval(days => $${dayBind}::int)
             GROUP BY b.id, b.bet_amount
           )
           SELECT id::text AS id
           FROM battle_multipliers
           WHERE total_card_value > 0
           ORDER BY (total_card_value / bet_amount) DESC NULLS LAST
-          LIMIT ${BIGGEST_HIT_CAP}
-        `;
+          LIMIT $${limitBind}
+          `,
+          ...(m && m !== "all" ? [m] : []),
+          lookbackDays,
+          BIGGEST_HIT_CAP,
+        );
         return rows.map((r) => r.id);
       },
       ["battles-biggest-hit-ids-v1", env],
@@ -307,38 +396,50 @@ export async function getBattles(params: {
     // admins combining search with sort=hit still get accurate top-
     // multiplier results that match their query — at the cost of
     // potentially fewer than perPage rows when the search is narrow.
-    const found = topIds.length === 0
-      ? []
-      : await db.battles.findMany({
-          where: search
-            ? {
-                AND: [
-                  { id: { in: topIds } },
-                  {
-                    // Same UUID guard as the main search path above — a
-                    // username search here would otherwise throw 22P02 on
-                    // the `id` leg (battles.id is @db.Uuid) and crash the
-                    // biggest-hit query. UUID-shaped terms keep the id leg.
-                    OR: [
-                      ...(isUuid(search) ? [{ id: search }] : []),
-                      { user: { username: { contains: search, mode: "insensitive" } } },
-                    ],
-                  },
-                ],
-              }
-            : { id: { in: topIds } },
-          include: battleInclude,
-        });
-    const byId = new Map(found.map((b) => [b.id, b]));
-    battles = topIds
-      .map((id) => byId.get(id))
-      .filter((b): b is NonNullable<typeof b> => b != null);
+    const hitValues: unknown[] = [topIds];
+    const hitFilters = [`b.id = ANY($1::uuid[])`];
+    if (search) {
+      hitValues.push(`%${search.toLowerCase()}%`);
+      const usernameBind = `$${hitValues.length}`;
+      if (isUuid(search)) {
+        hitValues.push(search);
+        hitFilters.push(
+          `(LOWER(u.username) LIKE ${usernameBind} OR b.id = $${hitValues.length}::uuid)`,
+        );
+      } else {
+        hitFilters.push(`LOWER(u.username) LIKE ${usernameBind}`);
+      }
+    }
+    const found =
+      topIds.length === 0
+        ? []
+        : await loadBaseBattles(
+            hitFilters.join(" AND "),
+            "array_position($1::uuid[], b.id)",
+            hitValues,
+            BIGGEST_HIT_CAP,
+            0,
+          );
+    battles = await hydrateBattles(found);
     total = battles.length;
   } else {
-    [battles, total] = await Promise.all([
-      fetchBattles(),
-      db.battles.count({ where }),
+    const [baseRows, countRows] = await Promise.all([
+      loadBaseBattles(
+        whereSql,
+        sortBy === "bet" ? "b.bet_amount DESC" : "b.created_at DESC",
+        binds,
+        safePerPage,
+        (safePage - 1) * safePerPage,
+      ),
+      queryMainRows<{ total: string }[]>(
+        `SELECT COUNT(*)::text AS total
+           FROM battles b LEFT JOIN "user" u ON u.id = b.user_id
+          WHERE ${whereSql}`,
+        ...binds,
+      ),
     ]);
+    battles = await hydrateBattles(baseRows);
+    total = Number(countRows[0]?.total ?? 0);
   }
 
   // Collect ALL card IDs from result_metadata across all battles for price lookup
@@ -355,10 +456,10 @@ export async function getBattles(params: {
   }
   const cardPriceMap = new Map<string, number>();
   if (allCardIds.size > 0) {
-    const cards = await db.cards.findMany({
-      where: { id: { in: [...allCardIds] } },
-      select: { id: true, price: true },
-    });
+    const cards = await queryMainRows<{ id: string; price: string }[]>(
+      `SELECT id, price::text FROM cards WHERE id = ANY($1::uuid[])`,
+      [...allCardIds],
+    );
     for (const c of cards) cardPriceMap.set(c.id, toNumber(c.price));
   }
 
@@ -476,81 +577,177 @@ export async function getBattles(params: {
   // in JS — the JS-side multiplier should match the SQL one (same
   // COALESCE rule), and small drift from sold cards is acceptable.
   if (sortBy === "hit") {
-    const sliceStart = (page - 1) * perPage;
+    const sliceStart = (safePage - 1) * safePerPage;
     return {
-      data: projected.slice(sliceStart, sliceStart + perPage),
+      data: projected.slice(sliceStart, sliceStart + safePerPage),
       total,
-      page,
-      perPage,
-      totalPages: Math.ceil(total / perPage),
+      page: safePage,
+      perPage: safePerPage,
+      totalPages: Math.ceil(total / safePerPage),
     };
   }
 
   return {
     data: projected,
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }
 
 export async function getBattleDetail(id: string) {
-  const db = await getDb();
-  // Narrow `user_inventory` and `game_sessions` to only the columns the
-  // page actually consumes — `user_inventory` is a wide table (mints,
-  // metadata, listing data, etc.) that we only need 3 fields off of.
-  const battle = await db.battles.findUnique({
-    where: { id },
-    include: {
-      user: { select: { username: true } },
-      battle_participants: {
-        select: {
-          id: true,
-          user_id: true,
-          team_number: true,
-          team_position: true,
-          client_seed: true,
-          user: { select: { username: true } },
-          bots: { select: { username: true } },
-          game_sessions: {
-            select: {
-              result: true,
-              bet_amount: true,
-              provably_fair_results: {
-                select: {
-                  id: true,
-                  result_metadata: true,
-                  user_inventory: {
-                    select: {
-                      id: true,
-                      card_id: true,
-                      value_at_obtained: true,
-                    },
-                  },
-                },
-                orderBy: { nonce: "asc" },
-              },
-            },
-          },
+  type DetailPf = {
+    id: string;
+    result_metadata: unknown;
+    user_inventory: {
+      id: string;
+      card_id: string;
+      value_at_obtained: string;
+    } | null;
+  };
+  type DetailParticipant = {
+    id: string;
+    user_id: string;
+    team_number: number;
+    team_position: number;
+    client_seed: string;
+    user: { username: string | null } | null;
+    bots: { username: string | null } | null;
+    game_sessions: {
+      result: unknown;
+      bet_amount: string;
+      provably_fair_results: DetailPf[];
+    };
+  };
+  const [battleRows, participantRows, proofRows] = await Promise.all([
+    queryMainRows<
+      {
+        id: string;
+        user_id: string;
+        username: string | null;
+        mode: string;
+        teams: number;
+        players_per_team: number;
+        status: string;
+        bet_amount: string;
+        winner_team: number | null;
+        total_unpacked: string | null;
+        pack_ids: string[];
+        region_code: string;
+        created_at: Date;
+        borrow_percentage: number | null;
+        sponsorship_percentage: number | null;
+        server_seed_hash: string;
+        eos_block_hash: string | null;
+        password: string | null;
+      }[]
+    >(
+      `SELECT b.id, b.user_id, u.username, b.mode::text AS mode, b.teams,
+              b.players_per_team, b.status::text AS status, b.bet_amount::text,
+              b.winner_team, b.total_unpacked::text, b.pack_ids, b.region_code,
+              b.created_at, b.borrow_percentage, b.sponsorship_percentage
+              , b.server_seed_hash, b.eos_block_hash, b.password
+         FROM battles b LEFT JOIN "user" u ON u.id = b.user_id
+        WHERE b.id = $1::uuid LIMIT 1`,
+      id,
+    ),
+    queryMainRows<
+      {
+        participant_id: string;
+        user_id: string;
+        team_number: number;
+        team_position: number;
+        client_seed: string;
+        username: string | null;
+        bot_username: string | null;
+        result: unknown;
+        bet_amount: string;
+        pf_id: string | null;
+        result_metadata: unknown;
+        inventory_id: string | null;
+        card_id: string | null;
+        value_at_obtained: string | null;
+      }[]
+    >(
+      `SELECT bp.id AS participant_id, bp.user_id, bp.team_number,
+              bp.team_position, bp.client_seed, u.username,
+              bot.username AS bot_username, gs.result, gs.bet_amount::text,
+              pf.id AS pf_id, pf.result_metadata, ui.id AS inventory_id,
+              ui.card_id, ui.value_at_obtained::text
+         FROM battle_participants bp
+         LEFT JOIN "user" u ON u.id = bp.user_id
+         LEFT JOIN bots bot ON bot.id = bp.bot_id
+         LEFT JOIN game_sessions gs ON gs.id = bp.game_session_id
+         LEFT JOIN provably_fair_results pf ON pf.game_session_id = gs.id
+         LEFT JOIN user_inventory ui ON ui.id = pf.inventory_item_id
+        WHERE bp.battle_id = $1::uuid
+        ORDER BY bp.team_number, bp.team_position, pf.nonce`,
+      id,
+    ),
+    queryMainRows<
+      {
+        id: string;
+        client_seed: string;
+        server_seed_hash: string;
+        server_seed: string | null;
+        nonce: number;
+        ticket: number;
+        result_hash: string;
+        result_metadata: unknown;
+      }[]
+    >(
+      `SELECT id, client_seed, server_seed_hash, server_seed, nonce,
+              ticket, result_hash, result_metadata
+         FROM provably_fair_results
+        WHERE battle_id = $1::uuid ORDER BY created_at ASC`,
+      id,
+    ),
+  ]);
+  const baseBattle = battleRows[0];
+  const participantMap = new Map<string, DetailParticipant>();
+  for (const row of participantRows) {
+    let participant = participantMap.get(row.participant_id);
+    if (!participant) {
+      participant = {
+        id: row.participant_id,
+        user_id: row.user_id,
+        team_number: row.team_number,
+        team_position: row.team_position,
+        client_seed: row.client_seed,
+        user: { username: row.username },
+        bots: row.bot_username == null ? null : { username: row.bot_username },
+        game_sessions: {
+          result: row.result,
+          bet_amount: row.bet_amount,
+          provably_fair_results: [],
         },
-        orderBy: [{ team_number: "asc" }, { team_position: "asc" }],
-      },
-      provably_fair_results: {
-        select: {
-          id: true,
-          client_seed: true,
-          server_seed_hash: true,
-          server_seed: true,
-          nonce: true,
-          ticket: true,
-          result_hash: true,
-          result_metadata: true,
-        },
-        orderBy: { created_at: "asc" },
-      },
-    },
-  });
+      };
+      participantMap.set(row.participant_id, participant);
+    }
+    if (row.pf_id) {
+      participant.game_sessions.provably_fair_results.push({
+        id: row.pf_id,
+        result_metadata: row.result_metadata,
+        user_inventory:
+          row.inventory_id && row.card_id && row.value_at_obtained != null
+            ? {
+                id: row.inventory_id,
+                card_id: row.card_id,
+                value_at_obtained: row.value_at_obtained,
+              }
+            : null,
+      });
+    }
+  }
+  const battle = baseBattle
+    ? {
+        ...baseBattle,
+        user: { username: baseBattle.username },
+        battle_participants: [...participantMap.values()],
+        provably_fair_results: proofRows,
+      }
+    : null;
 
   if (!battle) return null;
 
@@ -581,16 +778,28 @@ export async function getBattleDetail(id: string) {
   // Fetch packs and cards in parallel — they're independent lookups.
   const [packs, cards] = await Promise.all([
     battle.pack_ids.length > 0
-      ? db.packs.findMany({
-          where: { id: { in: battle.pack_ids } },
-          select: { id: true, name: true, image_url: true, price: true },
-        })
+      ? queryMainRows<
+          { id: string; name: string; image_url: string | null; price: string }[]
+        >(
+          `SELECT id, name, image_url, price::text
+             FROM packs WHERE id = ANY($1::uuid[])`,
+          battle.pack_ids,
+        )
       : Promise.resolve([] as Array<{ id: string; name: string; image_url: string | null; price: unknown }>),
     cardIds.size > 0
-      ? db.cards.findMany({
-          where: { id: { in: [...cardIds] } },
-          select: { id: true, name: true, image_url: true, rarity: true, price: true },
-        })
+      ? queryMainRows<
+          {
+            id: string;
+            name: string;
+            image_url: string | null;
+            rarity: string | null;
+            price: string;
+          }[]
+        >(
+          `SELECT id, name, image_url, rarity::text, price::text
+             FROM cards WHERE id = ANY($1::uuid[])`,
+          [...cardIds],
+        )
       : Promise.resolve([] as Array<{ id: string; name: string; image_url: string | null; rarity: string | null; price: unknown }>),
   ]);
   const cardMap = new Map(cards.map((c) => [c.id, c]));

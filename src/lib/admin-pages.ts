@@ -22,7 +22,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // Chat Raffle (Players sidebar section) — chat activity scored into
   // tickets, drawn per prize place, paid out in balance. Replaced the old
   // read-only "Top Chatters" leaderboard; the permission token was renamed
-  // in place (prisma/admin/sql/2026-07-23_chat_raffle.up.sql), so anyone who
+  // in place through reviewed Admin SQL, so anyone who
   // had /top-chatters granted keeps access. Note the PAYOUT step also
   // requires /users — it goes through the normal balance-adjustment path.
   { group: "Navigation", label: "Chat Raffle", key: "/chat-raffle" },
@@ -39,7 +39,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Navigation", label: "Creator Rewards", key: "/creator-rewards" },
   // XP Sales was merged into the /rewards tab hub (XP Sales tab); the page
   // now gates on /rewards, so the standalone /xp-sales key was retired. The
-  // ClickHouse twin + insights-xp-sales data layer are unaffected.
+  // The insights XP-sales data layer is unaffected.
   // Recovery bin for hard-deleted users — 7-day snapshot window. Gated
   // by the same __can_delete_user capability since restoring is the
   // inverse of deleting.
@@ -196,6 +196,11 @@ export const ADMIN_PAGES: AdminPage[] = [
   // System
   { group: "System", label: "Security", key: "/security" },
   { group: "System", label: "Admins & Access", key: "/admin-users" },
+  {
+    group: "System",
+    label: "Staff Notifications",
+    key: "/system/staff-notifications",
+  },
   // The former "/settings/roles" page key was removed: Roles & Permissions is
   // now an ADMIN-ONLY tab of /admin-users, gated by requireAdmin (not a
   // grantable page key), so the key is vestigial. No role baseline references

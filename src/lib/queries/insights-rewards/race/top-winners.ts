@@ -1,9 +1,7 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getRaceInsightsTopWinnersFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/race/top-winners";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -51,13 +49,10 @@ async function computeTopWinners(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RaceTopWinnersResult> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const dateFilter =
-    days !== null
-      ? `AND rc.claimed_at >= NOW() - INTERVAL '${days} days'`
-      : "";
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const dateFilter = daysAgoFilter("rc.claimed_at", days);
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Two queries: top by period prize + top by lifetime prize. Both
   // group by user, aggregate prize + race count, return the top N.
@@ -65,7 +60,7 @@ async function computeTopWinners(
   // the lifetime sub-aggregate so the table can show "lifetime total"
   // alongside the in-window number without a per-row round trip.
   const [periodRows, lifetimeRows] = await Promise.all([
-    db.$queryRawUnsafe<
+    queryRows<
       {
         user_id: string;
         username: string | null;
@@ -73,7 +68,7 @@ async function computeTopWinners(
         total_prize: string;
         lifetime_total: string;
       }[]
-    >(`
+    >(db, sql`
       WITH lifetime AS (
         SELECT rc.user_id, SUM(rc.prize_amount_usd::numeric) AS total
         FROM race_claims rc
@@ -106,14 +101,14 @@ async function computeTopWinners(
       LEFT JOIN lifetime l ON l.user_id = p.user_id
       ORDER BY p.total_prize DESC
     `),
-    db.$queryRawUnsafe<
+    queryRows<
       {
         user_id: string;
         username: string | null;
         race_count: string;
         total_prize: string;
       }[]
-    >(`
+    >(db, sql`
       SELECT
         rc.user_id,
         u.username,
@@ -160,20 +155,14 @@ async function computeTopWinners(
 
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveAdminRead<RaceTopWinnersResult>("insights_race_top", {
-      pg: () => computeTopWinners(period, blacklistIds),
-      ch: () => getRaceInsightsTopWinnersFromClickHouse(period, blacklistIds),
-    }),
+    computeTopWinners(period, blacklistIds),
   ["insights-rewards-race-top-winners-v1"],
   { revalidate: 60, tags: ["insights-rewards-race"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveAdminRead<RaceTopWinnersResult>("insights_race_top", {
-      pg: () => computeTopWinners(period, blacklistIds),
-      ch: () => getRaceInsightsTopWinnersFromClickHouse(period, blacklistIds),
-    }),
+    computeTopWinners(period, blacklistIds),
   ["insights-rewards-race-top-winners-lifetime-v1"],
   { revalidate: 300, tags: ["insights-rewards-race"] },
 );

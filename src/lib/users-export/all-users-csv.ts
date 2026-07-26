@@ -1,8 +1,10 @@
-// MAIN DB read. `@/lib/db` exposes `getDb()` (async, resolves the
+// MAIN DB read. The request-scoped Drizzle resolver selects the
 // prod/dev client from the admin's env cookie) — use it so this export
 // follows whichever environment the calling admin has toggled on, same
 // as the existing email-export query.
-import { getDb } from "@/lib/db";
+import { desc, eq, sql } from "drizzle-orm";
+import { getDrizzleDb } from "@/lib/db";
+import { balances, user } from "@/lib/db-schema/main/schema";
 
 /**
  * One CSV row of the motha-only "all users" export: exactly the three
@@ -30,26 +32,26 @@ export type AllUsersRow = {
  * counts are far below this.
  */
 export async function getAllUsersForExport(): Promise<AllUsersRow[]> {
-  const db = await getDb();
-  const rows = await db.user.findMany({
-    select: {
-      email: true,
-      username: true,
+  const db = await getDrizzleDb();
+  const rows = await db
+    .select({
+      email: user.email,
+      username: user.username,
       // 1:1 relation on user_id; left join — null when the user has no
       // balances row, handled below as "0.00".
-      balances: { select: { total_deposited: true } },
-    },
-    orderBy: { created_at: "desc" },
-    take: 500_000,
-  });
+      deposit: sql<string>`COALESCE(${balances.total_deposited}, 0)::numeric(20,2)::text`,
+    })
+    .from(user)
+    .leftJoin(balances, eq(balances.user_id, user.id))
+    .orderBy(desc(user.created_at))
+    .limit(500_000);
 
   return rows.map((r) => ({
     email: r.email ?? "",
     username: r.username ?? "",
-    // total_deposited is a Prisma Decimal — `.toFixed(2)` keeps the
-    // exact 2-dp value as a string WITHOUT going through a lossy JS
-    // number. Missing balances row → "0.00".
-    deposit: r.balances?.total_deposited?.toFixed(2) ?? "0.00",
+    // total_deposited is selected as an exact numeric string, avoiding a
+    // lossy JavaScript number conversion. Missing balances row → "0.00".
+    deposit: r.deposit,
   }));
 }
 

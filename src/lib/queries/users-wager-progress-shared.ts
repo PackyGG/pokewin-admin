@@ -4,7 +4,7 @@
  * This module deliberately carries NO `import "server-only"` and NO DB /
  * backend-api imports, so a CLIENT component (the transaction-detail popup,
  * the deposits/withdrawals table) can value-import `toWagerRequirementSummary`
- * + the `WagerRequirementSummary` type without dragging the Prisma client and
+ * + the `WagerRequirementSummary` type without dragging the database client and
  * the server-only `users-wager-progress.ts` module graph into the client
  * bundle (which breaks `next build` — see the crypto-fees-assets precedent in
  * CLAUDE.md / AGENT_HANDOFF "Crypto deposit/withdrawal exchange-rate fee").

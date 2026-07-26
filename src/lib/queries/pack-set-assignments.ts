@@ -1,7 +1,12 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
 import type { PackSetFilter } from "@/lib/queries/packs";
+import {
+  isPostgresError,
+  postgresErrorMessages,
+} from "@/lib/postgres-errors";
 
 // Runtime pool list kept LOCAL (not imported from packs.ts) so this admin-DB
 // helper doesn't create a runtime import cycle with the main-DB query module
@@ -24,16 +29,13 @@ const EMPTY: PackSetAssignments = {
 };
 
 /**
- * The `pack_set_assignments` table is provisioned via a runtime ensure-schema
- * fallback, so on a fresh env it may not exist yet. Treat "table/relation does
- * not exist" as "no overrides" and degrade to the card-derived classification,
- * exactly like the other admin self-heal tables (src/lib/admin-settings.ts).
+ * The `pack_set_assignments` table is provisioned through reviewed ADMIN SQL.
+ * Treat a migration-lagged environment as "no overrides" and degrade to the
+ * card-derived classification.
  */
 function isMissingTableError(e: unknown): boolean {
-  if (typeof e !== "object" || e === null) return false;
-  const code = (e as { code?: string }).code;
-  if (code === "P2021" || code === "P2022") return true;
-  const msg = ((e as { message?: string }).message ?? "").toLowerCase();
+  if (isPostgresError(e, "42P01", "42703")) return true;
+  const msg = postgresErrorMessages(e).toLowerCase();
   return msg.includes("42p01") || msg.includes("does not exist");
 }
 
@@ -46,13 +48,17 @@ function asPool(value: string): PackSetFilter | null {
 /** All per-pack set overrides, grouped for the /packs pool predicates. */
 export async function getPackSetAssignmentsGrouped(): Promise<PackSetAssignments> {
   try {
-    const rows = await adminDb.pack_set_assignments.findMany({
-      select: { pack_id: true, pack_set: true },
-    });
+    const result = await adminDrizzle.execute<{
+      pack_id: string;
+      pack_set: string;
+    }>(sql`
+      SELECT pack_id, pack_set
+      FROM pack_set_assignments
+    `);
     const byId = new Map<string, PackSetFilter>();
     const idsBySet: Partial<Record<PackSetFilter, string[]>> = {};
     const allIds: string[] = [];
-    for (const r of rows) {
+    for (const r of result.rows) {
       const pool = asPool(r.pack_set);
       if (!pool) continue;
       byId.set(r.pack_id, pool);
@@ -71,10 +77,13 @@ export async function getPackSetAssignment(
   packId: string,
 ): Promise<PackSetFilter | null> {
   try {
-    const row = await adminDb.pack_set_assignments.findUnique({
-      where: { pack_id: packId },
-      select: { pack_set: true },
-    });
+    const result = await adminDrizzle.execute<{ pack_set: string }>(sql`
+      SELECT pack_set
+      FROM pack_set_assignments
+      WHERE pack_id = ${packId}
+      LIMIT 1
+    `);
+    const row = result.rows[0];
     return row ? asPool(row.pack_set) : null;
   } catch (e) {
     if (isMissingTableError(e)) return null;

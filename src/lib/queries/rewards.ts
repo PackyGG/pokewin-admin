@@ -1,7 +1,8 @@
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
-import { excludeStaffCreatorsAndBlacklisted } from "./_blacklist";
+import { excludeStaffCreatorsAndBlacklistedSqlFromIds } from "./_blacklist";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { RAKEBACK_CACHE_TAGS } from "./insights-rewards/rakeback/_cache-tags";
 import { getInstantRakebackClaimIds } from "./rakeback-instant-ledger";
 import {
@@ -57,10 +58,19 @@ export type RakebackStats = {
 };
 
 export async function getRakebackConfigs(): Promise<RakebackConfigItem[]> {
-  const db = await getDb();
-  const configs = await db.rakeback_config.findMany({
-    orderBy: { type: "asc" },
-  });
+  const configs = await queryMainRows<{
+    id: string;
+    type: string;
+    percentage: string;
+    expiration_days: number;
+    display_name: string;
+    enabled: boolean;
+  }[]>(
+    `SELECT id, type::text AS type, percentage::text AS percentage,
+            expiration_days, display_name, enabled
+     FROM rakeback_config
+     ORDER BY type ASC`,
+  );
 
   return configs.map((r) => ({
     id: r.id,
@@ -78,28 +88,50 @@ export async function getRakebackClaims(params: {
   type?: string;
   search?: string;
 }): Promise<PaginatedResult<RakebackClaimItem>> {
-  const db = await getDb();
-  const { page = 1, perPage = 20, type, search } = params;
-
-  const where: Record<string, unknown> = {};
-  if (type && type !== "all") {
-    where.rakeback_type = type;
-  }
-  if (search) {
-    where.user = { username: { contains: search, mode: "insensitive" } };
-  }
+  const page = Math.max(1, Math.floor(params.page ?? 1));
+  const perPage = Math.max(1, Math.min(200, Math.floor(params.perPage ?? 20)));
+  const type = params.type && params.type !== "all" ? params.type : null;
+  const search = params.search?.trim() || null;
+  type ClaimRow = {
+    id: string;
+    user_id: string;
+    username: string | null;
+    rakeback_type: string;
+    period_start: Date;
+    wagered_amount_usd: string;
+    rakeback_amount_usd: string;
+    claimed_at: Date | null;
+    created_at: Date;
+  };
 
   const [claims, total] = await Promise.all([
-    db.rakeback_claims.findMany({
-      where,
-      orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-      include: {
-        user: { select: { username: true } },
-      },
-    }),
-    db.rakeback_claims.count({ where }),
+    queryMainRows<ClaimRow[]>(
+      `SELECT rc.id, rc.user_id, u.username,
+              rc.rakeback_type::text AS rakeback_type,
+              rc.period_start,
+              rc.wagered_amount_usd::text AS wagered_amount_usd,
+              rc.rakeback_amount_usd::text AS rakeback_amount_usd,
+              rc.claimed_at, rc.created_at
+       FROM rakeback_claims rc
+       LEFT JOIN "user" u ON u.id = rc.user_id
+       WHERE ($1::text IS NULL OR rc.rakeback_type::text = $1)
+         AND ($2::text IS NULL OR u.username ILIKE '%' || $2 || '%')
+       ORDER BY rc.created_at DESC
+       LIMIT $3 OFFSET $4`,
+      type,
+      search,
+      perPage,
+      (page - 1) * perPage,
+    ),
+    queryMainRows<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count
+       FROM rakeback_claims rc
+       LEFT JOIN "user" u ON u.id = rc.user_id
+       WHERE ($1::text IS NULL OR rc.rakeback_type::text = $1)
+         AND ($2::text IS NULL OR u.username ILIKE '%' || $2 || '%')`,
+      type,
+      search,
+    ).then((rows) => Number(rows[0]?.count ?? 0)),
   ]);
 
   // Instant-claim enrichment — flag which claims on this page were early-
@@ -138,7 +170,7 @@ export async function getRakebackClaims(params: {
       return {
         id: c.id,
         userId: c.user_id,
-        username: c.user?.username ?? null,
+        username: c.username,
         rakebackType: c.rakeback_type,
         periodStart: c.period_start.toISOString(),
         wageredAmountUsd: toNumber(c.wagered_amount_usd),
@@ -178,6 +210,64 @@ export type RewardItem = {
   createdAt: string;
 };
 
+type RewardRow = {
+  id: string;
+  slug: string;
+  name: string;
+  type: string;
+  level_required: number;
+  cash_amount: string | null;
+  daily_unlock_percentage: string | null;
+  pack_ids: string[];
+  created_at: Date;
+};
+
+async function hydrateRewards(rewards: RewardRow[]): Promise<RewardItem[]> {
+  const allPackIds = [...new Set(rewards.flatMap((reward) => reward.pack_ids))];
+  const packsMap = new Map<string, RewardPack>();
+  if (allPackIds.length > 0) {
+    const packs = await queryMainRows<{
+      id: string;
+      name: string;
+      image_url: string | null;
+      price: string;
+    }[]>(
+      `SELECT id, name, image_url, price::text AS price
+       FROM packs
+       WHERE id = ANY($1::text[])`,
+      allPackIds,
+    );
+    for (const pack of packs) {
+      packsMap.set(pack.id, {
+        id: pack.id,
+        name: pack.name,
+        imageUrl: pack.image_url,
+        priceUsd: toNumber(pack.price),
+      });
+    }
+  }
+
+  return rewards.map((reward) => ({
+    id: reward.id,
+    slug: reward.slug,
+    name: reward.name,
+    type: reward.type,
+    levelRequired: reward.level_required,
+    cashAmount:
+      reward.cash_amount == null ? null : toNumber(reward.cash_amount),
+    dailyUnlockPercentage:
+      reward.daily_unlock_percentage == null
+        ? null
+        : toNumber(reward.daily_unlock_percentage),
+    packIds: reward.pack_ids,
+    packs: reward.pack_ids
+      .map((id) => packsMap.get(id))
+      .filter((pack): pack is RewardPack => pack != null),
+    packCount: reward.pack_ids.length,
+    createdAt: reward.created_at.toISOString(),
+  }));
+}
+
 export async function getRewards(params: {
   page?: number;
   perPage?: number;
@@ -186,67 +276,47 @@ export async function getRewards(params: {
   minCashAmount?: number;
   maxCashAmount?: number;
 }): Promise<PaginatedResult<RewardItem>> {
-  const db = await getDb();
-  const { page = 1, perPage = 20, search, type, minCashAmount, maxCashAmount } = params;
-
-  const where: Record<string, unknown> = {};
-  if (type && type !== "all") {
-    where.type = type;
-  }
-  if (search) {
-    where.OR = [
-      { name: { contains: search, mode: "insensitive" } },
-      { slug: { contains: search, mode: "insensitive" } },
-    ];
-  }
-  if (minCashAmount != null || maxCashAmount != null) {
-    const cashFilter: Record<string, number> = {};
-    if (minCashAmount != null) cashFilter.gte = minCashAmount;
-    if (maxCashAmount != null) cashFilter.lte = maxCashAmount;
-    where.cash_amount = cashFilter;
-  }
+  const page = Math.max(1, Math.floor(params.page ?? 1));
+  const perPage = Math.max(1, Math.min(200, Math.floor(params.perPage ?? 20)));
+  const search = params.search?.trim() || null;
+  const type = params.type && params.type !== "all" ? params.type : null;
 
   const [rewards, total] = await Promise.all([
-    db.rewards.findMany({
-      where,
-      orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-    }),
-    db.rewards.count({ where }),
+    queryMainRows<RewardRow[]>(
+      `SELECT id, slug, name, type::text AS type, level_required,
+              cash_amount::text AS cash_amount,
+              daily_unlock_percentage::text AS daily_unlock_percentage,
+              pack_ids, created_at
+       FROM rewards
+       WHERE ($1::text IS NULL OR type::text = $1)
+         AND ($2::text IS NULL OR name ILIKE '%' || $2 || '%' OR slug ILIKE '%' || $2 || '%')
+         AND ($3::numeric IS NULL OR cash_amount >= $3)
+         AND ($4::numeric IS NULL OR cash_amount <= $4)
+       ORDER BY created_at DESC
+       LIMIT $5 OFFSET $6`,
+      type,
+      search,
+      params.minCashAmount ?? null,
+      params.maxCashAmount ?? null,
+      perPage,
+      (page - 1) * perPage,
+    ),
+    queryMainRows<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count
+       FROM rewards
+       WHERE ($1::text IS NULL OR type::text = $1)
+         AND ($2::text IS NULL OR name ILIKE '%' || $2 || '%' OR slug ILIKE '%' || $2 || '%')
+         AND ($3::numeric IS NULL OR cash_amount >= $3)
+         AND ($4::numeric IS NULL OR cash_amount <= $4)`,
+      type,
+      search,
+      params.minCashAmount ?? null,
+      params.maxCashAmount ?? null,
+    ).then((rows) => Number(rows[0]?.count ?? 0)),
   ]);
 
-  // Fetch pack details for all rewards in one query
-  const allPackIds = [...new Set(rewards.flatMap((r) => r.pack_ids))];
-  const packsMap = new Map<string, RewardPack>();
-  if (allPackIds.length > 0) {
-    const packs = await db.packs.findMany({
-      where: { id: { in: allPackIds } },
-      select: { id: true, name: true, image_url: true, price: true },
-    });
-    for (const p of packs) {
-      packsMap.set(p.id, { id: p.id, name: p.name, imageUrl: p.image_url, priceUsd: toNumber(p.price) });
-    }
-  }
-
   return {
-    data: rewards.map((r) => ({
-      id: r.id,
-      slug: r.slug,
-      name: r.name,
-      type: r.type,
-      levelRequired: r.level_required,
-      cashAmount: r.cash_amount ? toNumber(r.cash_amount) : null,
-      dailyUnlockPercentage: r.daily_unlock_percentage
-        ? toNumber(r.daily_unlock_percentage)
-        : null,
-      packIds: r.pack_ids,
-      packs: r.pack_ids
-        .map((id) => packsMap.get(id))
-        .filter((p): p is RewardPack => p != null),
-      packCount: r.pack_ids.length,
-      createdAt: r.created_at.toISOString(),
-    })),
+    data: await hydrateRewards(rewards),
     total,
     page,
     perPage,
@@ -258,53 +328,29 @@ export async function getLevelUpRewards(params: {
   page?: number;
   perPage?: number;
 }): Promise<PaginatedResult<RewardItem>> {
-  const db = await getDb();
-  const { page = 1, perPage = 20 } = params;
-
-  const where = {
-    level_required: { gt: 0 },
-  };
+  const page = Math.max(1, Math.floor(params.page ?? 1));
+  const perPage = Math.max(1, Math.min(200, Math.floor(params.perPage ?? 20)));
 
   const [rewards, total] = await Promise.all([
-    db.rewards.findMany({
-      where,
-      orderBy: { level_required: "asc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-    }),
-    db.rewards.count({ where }),
+    queryMainRows<RewardRow[]>(
+      `SELECT id, slug, name, type::text AS type, level_required,
+              cash_amount::text AS cash_amount,
+              daily_unlock_percentage::text AS daily_unlock_percentage,
+              pack_ids, created_at
+       FROM rewards
+       WHERE level_required > 0
+       ORDER BY level_required ASC
+       LIMIT $1 OFFSET $2`,
+      perPage,
+      (page - 1) * perPage,
+    ),
+    queryMainRows<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count FROM rewards WHERE level_required > 0`,
+    ).then((rows) => Number(rows[0]?.count ?? 0)),
   ]);
 
-  const allPackIds = [...new Set(rewards.flatMap((r) => r.pack_ids))];
-  const packsMap = new Map<string, RewardPack>();
-  if (allPackIds.length > 0) {
-    const packs = await db.packs.findMany({
-      where: { id: { in: allPackIds } },
-      select: { id: true, name: true, image_url: true, price: true },
-    });
-    for (const p of packs) {
-      packsMap.set(p.id, { id: p.id, name: p.name, imageUrl: p.image_url, priceUsd: toNumber(p.price) });
-    }
-  }
-
   return {
-    data: rewards.map((r) => ({
-      id: r.id,
-      slug: r.slug,
-      name: r.name,
-      type: r.type,
-      levelRequired: r.level_required,
-      cashAmount: r.cash_amount ? toNumber(r.cash_amount) : null,
-      dailyUnlockPercentage: r.daily_unlock_percentage
-        ? toNumber(r.daily_unlock_percentage)
-        : null,
-      packIds: r.pack_ids,
-      packs: r.pack_ids
-        .map((id) => packsMap.get(id))
-        .filter((p): p is RewardPack => p != null),
-      packCount: r.pack_ids.length,
-      createdAt: r.created_at.toISOString(),
-    })),
+    data: await hydrateRewards(rewards),
     total,
     page,
     perPage,
@@ -320,37 +366,47 @@ export async function getLevelUpRewards(params: {
 // the argument so it participates in the cache key — a blacklist change
 // keys a fresh entry rather than serving a stale population.
 const cachedRakebackStats = unstable_cache(
-  async (
-    userScope: Awaited<ReturnType<typeof excludeStaffCreatorsAndBlacklisted>>,
-  ): Promise<RakebackStats> => {
-    const db = await getDb();
-    const [claimedSum, pendingSum, byTypeRows] = await Promise.all([
-      db.rakeback_claims.aggregate({
-        where: { claimed_at: { not: null }, user: userScope },
-        _sum: { rakeback_amount_usd: true },
-        _count: { _all: true },
-      }),
-      db.rakeback_claims.aggregate({
-        where: { claimed_at: null, user: userScope },
-        _sum: { rakeback_amount_usd: true },
-        _count: { _all: true },
-      }),
-      db.rakeback_claims.groupBy({
-        by: ["rakeback_type"],
-        where: { user: userScope },
-        _sum: { rakeback_amount_usd: true },
-        _count: { _all: true },
-      }),
-    ]);
+  async (excludedIds: string[]): Promise<RakebackStats> => {
+    const scope = excludeStaffCreatorsAndBlacklistedSqlFromIds(excludedIds).replace(
+      /^user_id/,
+      "rc.user_id",
+    );
+    const byTypeRows = await queryMainRows<{
+      rakeback_type: string;
+      total_amount: string;
+      claimed_amount: string;
+      pending_amount: string;
+      claim_count: string;
+    }[]>(
+      `SELECT rc.rakeback_type::text AS rakeback_type,
+              COALESCE(SUM(rc.rakeback_amount_usd::numeric), 0)::text AS total_amount,
+              COALESCE(SUM(rc.rakeback_amount_usd::numeric)
+                FILTER (WHERE rc.claimed_at IS NOT NULL), 0)::text AS claimed_amount,
+              COALESCE(SUM(rc.rakeback_amount_usd::numeric)
+                FILTER (WHERE rc.claimed_at IS NULL), 0)::text AS pending_amount,
+              COUNT(*)::text AS claim_count
+       FROM rakeback_claims rc
+       WHERE ${scope}
+       GROUP BY rc.rakeback_type`,
+    );
 
     return {
-      totalClaimed: toNumber(claimedSum._sum.rakeback_amount_usd),
-      totalPending: toNumber(pendingSum._sum.rakeback_amount_usd),
-      claimCount: claimedSum._count._all + pendingSum._count._all,
+      totalClaimed: byTypeRows.reduce(
+        (sum, row) => sum + toNumber(row.claimed_amount),
+        0,
+      ),
+      totalPending: byTypeRows.reduce(
+        (sum, row) => sum + toNumber(row.pending_amount),
+        0,
+      ),
+      claimCount: byTypeRows.reduce(
+        (sum, row) => sum + Number(row.claim_count),
+        0,
+      ),
       byType: byTypeRows.map((r) => ({
         type: r.rakeback_type,
-        totalAmount: toNumber(r._sum.rakeback_amount_usd),
-        claimCount: r._count._all,
+        totalAmount: toNumber(r.total_amount),
+        claimCount: Number(r.claim_count),
       })),
     };
   },
@@ -359,6 +415,6 @@ const cachedRakebackStats = unstable_cache(
 );
 
 export async function getRakebackStats(): Promise<RakebackStats> {
-  const userScope = await excludeStaffCreatorsAndBlacklisted();
-  return cachedRakebackStats(userScope);
+  const excludedIds = [...(await getExcludedUserIds())].sort();
+  return cachedRakebackStats(excludedIds);
 }

@@ -1,7 +1,9 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDevDb, getProdDb } from "@/lib/db";
+import { sql } from "drizzle-orm";
+import { drizzleForEnv } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -11,8 +13,6 @@ import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { type DashboardPeriod } from "@/lib/queries/dashboard-period";
 import { getMetricsScope } from "@/lib/metrics/scope";
 import { WAGER_LEG_FILTER } from "@/lib/metrics/gaming-sql";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getHubCohortScansFromClickHouse } from "@/lib/clickhouse/queries/creator-hub/cohort";
 import {
   hubBucketTrunc,
   hubCoveringLateral,
@@ -42,7 +42,6 @@ export type HubCohortWindowed = {
 };
 
 // `bucket` is a Date from the Postgres leg and a 'YYYY-MM-DD' string from the
-// ClickHouse twin; both are accepted by `new Date(...)` in the merge helpers.
 type BucketRow = { bucket: Date | string; amount: string };
 type CountBucketRow = { bucket: Date | string; value: string };
 type WagerBucketRow = { bucket: Date | string; packs: string; battles: string };
@@ -160,14 +159,12 @@ const cachedHubCohortScans = (
   exclLedger: string,
   upgBlacklist: string,
   hasUpgrader: boolean,
-  excluded: string[],
 ) =>
   unstable_cache(
     async (): Promise<HubCohortWindowed> => {
-      const db = env === "dev" ? getDevDb() : getProdDb();
+      const db = drizzleForEnv(env);
       // Chart series always roll 30 daily buckets — independent of the KPI chip.
       const chartPeriod = HUB_CHART_PERIOD;
-      // Anchor BOTH engines to a single instant so the PG and ClickHouse legs
       // are deterministically comparable (mirrors crm / top-creators). The
       // anchor is fixed per unstable_cache entry (revalidate 300s).
       const now = new Date();
@@ -203,10 +200,7 @@ const cachedHubCohortScans = (
         depositSeriesRows,
         ledgerWagerSeriesRows,
         upgraderWagerSeriesRows,
-      } = await resolveAdminRead<HubCohortScanBundle>("creator_hub_cohort", {
-        ch: () =>
-          getHubCohortScansFromClickHouse(excluded, sinceKpiDate, sinceChartDate),
-        pg: async () => {
+      } = await (async (): Promise<HubCohortScanBundle> => {
           const [
             signupRows,
             ftdRows,
@@ -217,7 +211,7 @@ const cachedHubCohortScans = (
             ledgerWagerSeriesRows,
             upgraderWagerSeriesRows,
           ] = await Promise.all([
-            db.$queryRawUnsafe<CountRow[]>(
+            queryRows<CountRow[]>(db,
           `SELECT COUNT(*)::text AS value
              FROM "user" u
              JOIN "user" c ON c.id = u.referred_by AND c.role = 'creator'
@@ -227,7 +221,7 @@ const cachedHubCohortScans = (
               ${blacklistAnd}`,
         ),
 
-        db.$queryRawUnsafe<CountRow[]>(
+        queryRows<CountRow[]>(db,
           `SELECT COUNT(DISTINCT acu.referred_user_id)::text AS value
              FROM affiliate_code_usages acu
              JOIN "user" c ON c.id = acu.affiliate_user_id AND c.role = 'creator'
@@ -239,7 +233,7 @@ const cachedHubCohortScans = (
               ${blacklistAnd}`,
         ),
 
-        db.$queryRawUnsafe<CountRow[]>(
+        queryRows<CountRow[]>(db,
           `WITH covered_deposits AS (
              SELECT DISTINCT ON (lt.id)
                     lt.amount::numeric AS amount,
@@ -264,7 +258,7 @@ const cachedHubCohortScans = (
             WHERE cd.creator_id IS NOT NULL`,
         ),
 
-        db.$queryRawUnsafe<CountBucketRow[]>(
+        queryRows<CountBucketRow[]>(db,
           `SELECT ${bucketSignup} AS bucket, COUNT(*)::text AS value
              FROM "user" u
              JOIN "user" c ON c.id = u.referred_by AND c.role = 'creator'
@@ -276,7 +270,7 @@ const cachedHubCohortScans = (
             ORDER BY 1`,
         ),
 
-        db.$queryRawUnsafe<CountBucketRow[]>(
+        queryRows<CountBucketRow[]>(db,
           `SELECT ${bucketFtd} AS bucket,
                   COUNT(DISTINCT acu.referred_user_id)::text AS value
              FROM affiliate_code_usages acu
@@ -291,7 +285,7 @@ const cachedHubCohortScans = (
             ORDER BY 1`,
         ),
 
-        db.$queryRawUnsafe<BucketRow[]>(
+        queryRows<BucketRow[]>(db,
           `WITH covered_deposits AS (
              SELECT DISTINCT ON (lt.id)
                     lt.amount::numeric AS amount,
@@ -320,7 +314,7 @@ const cachedHubCohortScans = (
             ORDER BY 1`,
         ),
 
-        db.$queryRawUnsafe<WagerBucketRow[]>(
+        queryRows<WagerBucketRow[]>(db,
           `SELECT ${bucketLedger} AS bucket,
                   COALESCE(SUM(CASE WHEN ledger_transactions.type::text = 'pack_opening'
                                     THEN ABS(ledger_transactions.amount::numeric) ELSE 0 END), 0)::text AS packs,
@@ -342,7 +336,7 @@ const cachedHubCohortScans = (
         ),
 
         hasUpgrader
-          ? db.$queryRawUnsafe<BucketRow[]>(
+          ? queryRows<BucketRow[]>(db,
               `SELECT ${bucketUpg} AS bucket,
                       COALESCE(SUM(upgrader_games.bet_amount::numeric), 0)::text AS amount
                  FROM upgrader_games
@@ -372,8 +366,7 @@ const cachedHubCohortScans = (
             ledgerWagerSeriesRows,
             upgraderWagerSeriesRows,
           };
-        },
-      });
+      })();
 
       const dailyWagers = padHubWagerChartSeries(
         mergeWagerBucketRows(
@@ -421,7 +414,7 @@ export async function getHubCohortWindowed(
 ): Promise<HubCohortWindowed> {
   return withTiming("creator-hub.cohort", async () => {
     const env = await readDbEnv();
-    const probeDb = env === "dev" ? getDevDb() : getProdDb();
+    const probeDb = drizzleForEnv(env);
     const scope = await getMetricsScope();
     const excluded = await getExcludedUserIds();
 
@@ -433,9 +426,10 @@ export async function getHubCohortWindowed(
     const exclLedger = scope.exclStaffSessionFrag({ tsCol: "created_at" });
     const upgBlacklist = blacklistNotInClause("u_ug.id", excluded);
 
-    const upgProbe = await probeDb.$queryRaw<{ exists: string | null }[]>`
-      SELECT to_regclass('public.upgrader_games')::text AS exists`;
-    const hasUpgrader = upgProbe[0]?.exists != null;
+    const upgProbe = await probeDb.execute<{ exists: string | null }>(sql`
+      SELECT to_regclass('public.upgrader_games')::text AS exists
+    `);
+    const hasUpgrader = upgProbe.rows[0]?.exists != null;
 
     return cachedHubCohortScans(
       period,
@@ -444,7 +438,6 @@ export async function getHubCohortWindowed(
       exclLedger,
       upgBlacklist,
       hasUpgrader,
-      excluded,
     )();
   });
 }

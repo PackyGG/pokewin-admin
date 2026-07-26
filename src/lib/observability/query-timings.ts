@@ -36,7 +36,7 @@ export type QueryTimingEntry = {
 
 const RING_SIZE = 1024;
 
-// Persist across Next.js dev HMR reloads the same way the Prisma clients do,
+// Persist across Next.js dev HMR reloads the same way the database pools do,
 // so stats accumulate instead of resetting on every file change.
 const globalForTimings = globalThis as unknown as {
   __queryTimingBuffer:

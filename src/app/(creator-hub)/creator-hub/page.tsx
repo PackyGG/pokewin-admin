@@ -679,7 +679,6 @@ async function CreatorCostSeriesSection({ period }: { period: DashboardPeriod })
 }
 
 // `getHubTopCreatorsByDeposits` runs a live PG leg (`creator_hub_top_creators`
-// is not in `CUTOVER_DEFAULT_CLICKHOUSE`, so `resolveAdminRead` serves
 // Postgres directly with no try/catch around it — see resolve-read.ts's
 // "off"/"comparison" path). Unlike every sibling query on this page it was
 // NOT wrapped in `safeQuery`/`safeQueryOrNull`, so a transient failure (pool

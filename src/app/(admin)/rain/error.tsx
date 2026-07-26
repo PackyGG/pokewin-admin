@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
  * Route-level error boundary for the /rain tree (list + /rain/[id]).
  *
  * The rain view lists rain events and their prize payouts. A failed
- * query or a stale Prisma column would otherwise bubble to the umbrella
+ * query or a stale schema column would otherwise bubble to the umbrella
  * `(admin)/error.tsx`; this boundary scopes it to /rain with a calm "the
  * READ failed, the events are fine" message. The reset path re-runs the
  * server render without a full reload.
@@ -56,7 +56,7 @@ export default function RainError({
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <p className="text-xs text-muted-foreground">
           Only the read path failed — rain events and their prize payouts
-          are unchanged. A transient timeout or a stale Prisma column is the
+          are unchanged. A transient timeout or a stale schema column is the
           most common cause. Server logs have the full stack — search for the
           digest above.
         </p>

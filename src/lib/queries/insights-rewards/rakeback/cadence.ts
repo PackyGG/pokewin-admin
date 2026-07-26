@@ -1,14 +1,12 @@
+import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
-import { getRakebackCadenceFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/rakeback/cadence";
 
 /**
  * Claim cadence distribution — gap-between-claims histogram per user.
@@ -49,16 +47,15 @@ async function computeCadence(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RakebackCadence> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
-  const dateFilter =
-    days !== null ? `AND rc.claimed_at >= NOW() - INTERVAL '${days} days'` : "";
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
+  const dateFilter = daysAgoFilter("rc.claimed_at", days);
 
   // Headline aggregates — total claims + distinct claimants in window.
-  const headlineRows = await db.$queryRawUnsafe<
+  const headlineRows = await queryRows<
     { cnt: string; distinct_users: string }[]
-  >(`
+  >(db, sql`
     SELECT
       COUNT(*)::text AS cnt,
       COUNT(DISTINCT rc.user_id)::text AS distinct_users
@@ -77,7 +74,7 @@ async function computeCadence(
   // Each row is one (user, consecutive-claim) gap in hours. Filters
   // prev_claim IS NOT NULL so the first claim per user contributes no
   // row (no gap defined).
-  const gapRows = await db.$queryRawUnsafe<{ gap_h: string }[]>(`
+  const gapRows = await queryRows<{ gap_h: string }[]>(db, sql`
     WITH ordered AS (
       SELECT
         rc.user_id,
@@ -131,28 +128,16 @@ async function computeCadence(
   };
 }
 
-// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
-// through the cache on failure); off/comparison serve Postgres unchanged.
-async function resolveCadence(
-  period: InsightsRewardsPeriod,
-  blacklistIds: string[],
-): Promise<RakebackCadence> {
-  return resolveAdminRead<RakebackCadence>("insights_rakeback_cadence", {
-    pg: () => computeCadence(period, blacklistIds),
-    ch: () => getRakebackCadenceFromClickHouse(period, blacklistIds),
-  });
-}
-
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveCadence(period, blacklistIds),
+    computeCadence(period, blacklistIds),
   ["insights-rewards-rakeback-cadence-v1"],
   { revalidate: 60, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    resolveCadence(period, blacklistIds),
+    computeCadence(period, blacklistIds),
   ["insights-rewards-rakeback-cadence-lifetime-v1"],
   { revalidate: 300, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );

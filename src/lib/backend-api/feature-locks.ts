@@ -7,7 +7,7 @@ import { backendApi } from "./client";
  * a card deposit is refunded or disputed (VersolitePayWebhookService.
  * handleRefund/handleDispute). Distinct from the admin panel's own manual
  * per-feature toggle switches (inventory sales / exchanges / openings /
- * vault, written directly to the main DB via Prisma) — these two fields are
+ * vault, written directly to the main DB via Drizzle) — these two fields are
  * backend-owned and can only be read/cleared through this API.
  *
  * Source of truth (request/response shapes):

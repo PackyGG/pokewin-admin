@@ -11,11 +11,6 @@ import { getRakebackFromTodayWager } from "@/lib/queries/dashboard-rakeback-same
 import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-today";
 import { getAffiliateReferredPnlToday } from "@/lib/queries/dashboard-affiliate-referred-pnl-today";
 import { getCryptoFeeProfitCounter } from "@/lib/queries/dashboard-crypto-fee-counter";
-import { compareDashboardTodayPnl } from "@/lib/clickhouse/compare/dashboard-today-pnl";
-import { compareDashboardUpgraderStats } from "@/lib/clickhouse/compare/dashboard-upgrader-stats";
-import { compareDashboardCreatorCostsToday } from "@/lib/clickhouse/compare/dashboard-creator-costs-today";
-import { compareDashboardAffiliateReferredPnlToday } from "@/lib/clickhouse/compare/dashboard-affiliate-referred-pnl-today";
-import { compareDashboardRewardCostsToday } from "@/lib/clickhouse/compare/dashboard-reward-costs-today";
 import { requirePageAccess } from "@/lib/dal";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
@@ -36,10 +31,6 @@ import {
   CashPnlChart,
   ActiveDepositorsChart,
 } from "./charts";
-// RecentActivity moved into the admin shell layout (DockedRecentActivity).
-// The widget now docks on every admin page so the dashboard body no longer
-// renders the in-page Activity card.
-// LiveMoneyChat also lives in the admin shell layout (same dock pattern).
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import {
@@ -61,31 +52,16 @@ export default async function DashboardPage() {
   // 00:00 UTC) via buildKpiWindowPayload and carry their own per-box today/24h
   // toggle, fetching the 24h window lazily on first toggle.
 
-  // The live feeds (Recent Activity, Live Money Movements) all live in
-  // the admin shell now as docked right-edge widgets and bootstrap their
-  // own snapshots on the client (SSE / polling), so the dashboard's 60s
-  // refresh stays scoped to KPI numbers only.
   return (
-    // The right-edge docked rail (Live / Recent / Chat tabs at `right-0`)
-    // is cleared by the admin shell's own gutter: the scroll container
-    // reserves `calc(1.5rem + var(--rail-occupied))` at lg+ (globals.css),
-    // where `--rail-occupied` is the constant collapsed-tab width. We must
-    // NOT add an extra `pr-*` here — doing so double-reserves the space and
-    // leaves an empty white column between the content and the rail (the
-    // exact bug this page had). An expanded 320px panel is a fixed overlay
-    // that floats on top, so no page-level padding needs to account for it.
-    // This matches loading.tsx, which uses a plain `space-y-6` wrapper.
     <div className="space-y-6">
-      {/* Dashboard polls at 60s for the KPI numbers only — KPIs settle
-          slowly and the docked widgets own their own data on the client,
-          so this refresh no longer re-queries any of the live feeds. */}
+      {/* Dashboard polls at 60s for KPI and chart data. */}
       <AutoRefresh intervalMs={60_000} />
 
       <PageHero>
         <PageHeroIdentity
           icon={LayoutDashboard}
           title="Dashboard"
-          subtitle="Live platform overview — revenue, users, and recent activity."
+          subtitle="Live platform overview — revenue, users, and trends."
         />
       </PageHero>
 
@@ -185,11 +161,6 @@ export default async function DashboardPage() {
           <DashboardCharts />
         </Suspense>
       </div>
-
-      {/* Recent Activity moved into the admin shell as the middle
-          docked widget (<DockedRecentActivity />) so every admin page
-          gets the same live event feed on the right edge. The
-          dashboard body no longer renders the in-page card. */}
 
     </div>
   );
@@ -325,18 +296,8 @@ async function DashboardUpgraderDoubleDownToday() {
     );
   }
   const stats = upgraderResult.data;
-  // CQRS rollout: in `comparison` mode, run the ClickHouse upgrader-stats path
   // side-by-side and LOG drift. Fire-and-forget + never-throwing — the served
   // tile below stays 100% Postgres. No-op unless the flag is `comparison`.
-  void compareDashboardUpgraderStats({
-    wager: stats.wager,
-    payouts: stats.payouts,
-    pnl: stats.pnl,
-    bets: stats.bets,
-    uniquePlayers: stats.uniquePlayers,
-    wins: stats.wins,
-    losses: stats.losses,
-  });
   return (
     <UpgraderDoubleDownTodayCard
       upgrader={{
@@ -403,18 +364,8 @@ async function DashboardTodayPnl() {
     );
   }
   const ggrPayload = ggrResult.data;
-  // CQRS rollout: in `comparison` mode, run the ClickHouse windowed-P&L path
   // side-by-side and LOG drift. Fire-and-forget + never-throwing — the served
   // tile below stays 100% Postgres. No-op unless the flag is `comparison`.
-  void compareDashboardTodayPnl({
-    deposits: data.deposits,
-    withdrawals: data.withdrawals,
-    balanceChange: data.balanceChange,
-    inventoryChange: data.inventoryChange,
-    voucherChange: data.voucherChange,
-    pnl: data.pnl,
-    dayStartIso: data.dayStartIso,
-  });
   // dayStartIso is "YYYY-MM-DDT00:00:00.000Z"; the YYYY-MM-DD slice is the
   // UTC calendar day this P&L covers (matches the window boundary exactly).
   const dayLabel = data.dayStartIso.slice(0, 10);
@@ -508,32 +459,10 @@ async function DashboardRewardAndCreatorCostsToday() {
   }
   const reward = rewardResult.data;
   const creators = creatorsResult.data;
-  // CQRS rollout: in `comparison` mode, run the ClickHouse twins side-by-side
   // and LOG drift. Fire-and-forget + never-throwing — the served tile below
   // stays 100% Postgres. No-op unless each flag is `comparison`. The non-DB
   // rain line ($2/hr) has no DB source and is EXCLUDED from the reward-cost
   // comparison (the CH twin compares the DB sub-total = total − rainCost).
-  void compareDashboardRewardCostsToday({
-    lines: reward.lines.map((l) => ({ key: l.key, amount: l.amount })),
-    total: reward.total,
-    rainCost: reward.rainCost,
-    dayStartIso: reward.dayStartIso,
-  });
-  void compareDashboardCreatorCostsToday({
-    total: creators.total,
-    creatorWithdrawals: creators.creatorWithdrawals,
-    tips: creators.tips,
-    sponsoredBattles: creators.sponsoredBattles,
-    leaderboardGross: creators.leaderboardGross,
-    affiliate: creators.affiliate,
-    dayStartIso: creators.dayStartIso,
-  });
-  if (pnlResult.data) {
-    void compareDashboardAffiliateReferredPnlToday({
-      pnl: pnlResult.data.pnl,
-      dayStartIso: pnlResult.data.dayStartIso,
-    });
-  }
   // dayStartIso is "YYYY-MM-DDT00:00:00.000Z"; the YYYY-MM-DD slice is the
   // UTC calendar day this cost covers (matches the window boundary exactly,
   // identical on both legs since they share the same "today" boundary).
@@ -665,7 +594,6 @@ async function DashboardCashPnlChart() {
   // creator cost (also hover-only) are independent reads — fetch them in
   // parallel. Creator cost is a SEPARATE series merged here at the page
   // level; it never touches DailyPnlPoint or the dashboard_daily_pnl
-  // ClickHouse twin (so the P&L parity harness is unaffected) and is NOT
   // summed into the P&L total.
   const [
     { data, error, kind },
@@ -689,7 +617,6 @@ async function DashboardCashPnlChart() {
       />
     );
   }
-  // CQRS: the daily-P&L read source (off / comparison / clickhouse) is now
   // resolved inside getDailyPnl via resolveAdminRead("dashboard_daily_pnl"),
   // which also fires the comparison-mode drift log — so no page-level compare
   // call is needed here (it would double-log in comparison mode).
@@ -713,8 +640,3 @@ async function DashboardCashPnlChart() {
   }));
   return <CashPnlChart data={cash} />;
 }
-
-// `DashboardActivityFeed` was removed when the Recent Activity card moved
-// into the docked widget (<DockedRecentActivity />) in the admin shell.
-// The widget owns its own 24h count strip via `getActivityCounts24h`, so
-// the dashboard page no longer needs a server-side wrapper for it.

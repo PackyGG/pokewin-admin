@@ -1,16 +1,15 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
-import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
 import { type DashboardPeriod } from "@/lib/queries/dashboard-period";
 import {
   hubBucketByHour,
   hubPeriodToInterval,
 } from "./hub-period-sql";
-import { getCreatorCostSeriesFromClickHouse } from "@/lib/clickhouse/queries/creator-hub/creator-costs-series";
 
 /**
  * Creator Hub dashboard — windowed CREATOR-COST TIME SERIES.
@@ -37,7 +36,6 @@ import { getCreatorCostSeriesFromClickHouse } from "@/lib/clickhouse/queries/cre
  *     (Index Scan, ~90ms over a 7d window — same plan the
  *     `dashboard-creator-costs-today` canonical query uses).
  *
- * Both are indexed Postgres reads (Pfad 1 per CLAUDE.md Index-or-ClickHouse) —
  * no seq scan on MAIN.
  *
  * ─── PERFORMANCE / SCOPE ────────────────────────────────────────────────
@@ -73,13 +71,7 @@ function bucketUnit(period: DashboardPeriod): "day" | "hour" {
 const cachedCreatorCostSeries = unstable_cache(
   async (period: DashboardPeriod): Promise<CreatorCostSeries> => {
     return withTiming("creator-hub.creatorCostSeries", async () => {
-      return resolveAdminRead<CreatorCostSeries>(
-        "creator-hub_dashboard_creator_costs_timeseries",
-        {
-          pg: () => creatorCostSeriesFromPg(period),
-          ch: () => getCreatorCostSeriesFromClickHouse(period),
-        },
-      );
+      return creatorCostSeriesFromPg(period);
     });
   },
   ["hub-creator-cost-series-v1"],
@@ -95,7 +87,7 @@ export async function getHubCreatorCostSeries(
 async function creatorCostSeriesFromPg(
   period: DashboardPeriod,
 ): Promise<CreatorCostSeries> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const unit = bucketUnit(period);
   const interval = hubPeriodToInterval(period);
   const since = `NOW() - INTERVAL '${interval}'`;
@@ -124,8 +116,8 @@ async function creatorCostSeriesFromPg(
      GROUP BY DATE_TRUNC('${unit}', created_at)`;
 
   const [voucherRows, ledgerRows] = await Promise.all([
-    db.$queryRawUnsafe<VoucherRow[]>(voucherSql),
-    db.$queryRawUnsafe<LedgerRow[]>(ledgerSql),
+    queryRows<VoucherRow[]>(db, voucherSql),
+    queryRows<LedgerRow[]>(db, ledgerSql),
   ]);
 
   const byBucket = new Map<string, number>();

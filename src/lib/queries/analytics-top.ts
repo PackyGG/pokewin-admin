@@ -1,7 +1,8 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { WAGER_TYPES_SQL, GAMING_PAYOUT_TYPES_SQL } from "@/lib/metrics";
@@ -118,9 +119,11 @@ function periodFilter(
  * throw on a migration-lagged snapshot that predates upgrader.
  */
 async function hasUpgraderGames(): Promise<boolean> {
-  const db = await getDb();
-  const probe = await db.$queryRaw<{ exists: string | null }[]>`
-    SELECT to_regclass('public.upgrader_games')::text AS exists`;
+  const db = await getDrizzleDb();
+  const probe = await queryRows<{ exists: string | null }[]>(
+    db,
+    "SELECT to_regclass('public.upgrader_games')::text AS exists",
+  );
   return probe[0]?.exists != null;
 }
 
@@ -129,16 +132,16 @@ async function computeTopDepositors(
   _blacklistKey: string[],
 ): Promise<UserLeaderRow[]> {
   void _blacklistKey; // cache-key dimension only; scope is fetched internally
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const scope = await realCustomersScopeSql();
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       id: string;
       username: string | null;
       image: string | null;
       amount: string;
     }[]
-  >(`
+  >(db, `
     SELECT u.id, u.username, u.image, SUM(ABS(lt.amount::numeric))::text AS amount
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
@@ -162,7 +165,7 @@ async function computeTopWagerers(
   _blacklistKey: string[],
 ): Promise<UserLeaderRow[]> {
   void _blacklistKey; // cache-key dimension only; scope is fetched internally
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const scope = await realCustomersScopeSql();
   const sessionWindowsCte = await getCreatorSessionWindowsCte();
   const upgrader = await hasUpgraderGames();
@@ -174,14 +177,14 @@ async function computeTopWagerers(
 
   // Borrow-corrected canonical wager: ledger WAGER_TYPES (non-borrow,
   // non-on-stream) + upgrader_games.bet_amount.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       user_id: string;
       username: string | null;
       image: string | null;
       amount: string;
     }[]
-  >(`
+  >(db, `
     WITH ${sessionWindowsCte},
          ${BORROW_FILTER_CTES},
          wager_src AS (
@@ -252,7 +255,7 @@ type PnlRow = {
 async function getUserGamingPnl(
   period: LeaderboardPeriod,
 ): Promise<PnlRow[]> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const scope = await realCustomersScopeSql();
   const sessionWindowsCte = await getCreatorSessionWindowsCte();
   const upgrader = await hasUpgraderGames();
@@ -271,7 +274,7 @@ async function getUserGamingPnl(
   //          + |battle_refund| (the ledger cash gaming-payout leg)
   //          + upgrader won_amount
   // Card conversions are NEUTRAL → never on the payout side.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       user_id: string;
       username: string | null;
@@ -279,7 +282,7 @@ async function getUserGamingPnl(
       wager: string;
       payout: string;
     }[]
-  >(`
+  >(db, `
     WITH ${sessionWindowsCte},
          ${BORROW_FILTER_CTES},
          wager_src AS (
@@ -422,7 +425,7 @@ async function computeTopCreatorsByVolume(
   _blacklistKey: string[],
 ): Promise<CreatorLeaderRow[]> {
   void _blacklistKey; // cache-key dimension only; scope is fetched internally
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const days = daysForPeriod(period);
   const refWindow =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
@@ -434,7 +437,7 @@ async function computeTopCreatorsByVolume(
   // intentionally NOT applied here — this is gross referred-volume the
   // creator drove, the same affiliate-attribution mechanism creators-pnl
   // reports, not a real-money gaming-margin figure.)
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       user_id: string;
       username: string | null;
@@ -442,7 +445,7 @@ async function computeTopCreatorsByVolume(
       wager_volume: string;
       commission: string;
     }[]
-  >(`
+  >(db, `
     WITH creators AS (
       SELECT id AS user_id, username, affiliate_code
       FROM "user"
@@ -489,7 +492,7 @@ async function computeTopCountries(
   _blacklistKey: string[],
 ): Promise<CountryLeaderRow[]> {
   void _blacklistKey; // cache-key dimension only; scope is fetched internally
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const scope = await realCustomersScopeSql();
   const sessionWindowsCte = await getCreatorSessionWindowsCte();
   const upgrader = await hasUpgraderGames();
@@ -507,7 +510,7 @@ async function computeTopCountries(
   // the per-user pass, grouped by the user's country. Distinct users per
   // country come from the wager+payout participants (anyone with gaming
   // activity in the window).
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       country: string;
       country_code: string | null;
@@ -515,7 +518,7 @@ async function computeTopCountries(
       wager: string;
       payout: string;
     }[]
-  >(`
+  >(db, `
     WITH ${sessionWindowsCte},
          ${BORROW_FILTER_CTES},
          wager_src AS (

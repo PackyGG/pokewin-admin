@@ -1,6 +1,8 @@
 import type { SessionPayload } from "@/lib/session";
 import { requireMainOwner, isMainOwnerUsername } from "@/lib/owners";
-import { adminDb } from "@/lib/admin-db";
+import { and, eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_users } from "@/lib/db-schema/admin/schema";
 
 /**
  * Access to the excluded-users (blacklist) page + its server actions is
@@ -27,11 +29,10 @@ export async function canManageExcludedUsers(
   userId: string,
 ): Promise<boolean> {
   try {
-    const row = await adminDb.admin_users.findUnique({
-      where: { id: userId },
-      select: { username: true, is_active: true },
-    });
-    if (!row?.is_active) return false;
+    const [row] = await adminDrizzle.select({ username: admin_users.username })
+      .from(admin_users).where(and(eq(admin_users.id, userId),
+        eq(admin_users.is_active, true))).limit(1);
+    if (!row) return false;
     return isMainOwnerUsername(row.username);
   } catch {
     return false;

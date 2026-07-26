@@ -1,5 +1,7 @@
-import { adminDb } from "@/lib/admin-db";
-import { getDb } from "@/lib/db";
+import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import { admin_audit_events, admin_users } from "@/lib/db-schema/admin/schema";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { withTimeout, isQueryTimeoutError } from "@/lib/errors/safe-query";
 import { logError } from "@/lib/errors/logger";
 import {
@@ -17,13 +19,13 @@ import {
  * standing or their analytics-exclusion status.
  *
  * DUAL-DB (mirrors `src/lib/queries/audit.ts`):
- *   - The audit rows live in the ADMIN DB (`adminDb`). The acting employee's
+ *   - The audit rows live in the ADMIN DB. The acting employee's
  *     username is the admin DB's own `admin_users` relation, so it comes back
  *     via `include` on the same query — no extra hop.
  *   - The TARGET is a main-DB user (the `target_user_id` column references the
  *     main DB's text `user.id`). There is NO cross-DB join, so target
- *     usernames are resolved in a SEPARATE `db.user.findMany({ id: { in } })`
- *     against the MAIN DB and folded back in via an in-memory map.
+ *     usernames are resolved in one batched MAIN DB query and folded back in
+ *     via an in-memory map.
  *   - That single main-DB hit is wrapped in `withTimeout` + try/catch so a
  *     slow/unavailable main DB degrades to raw ids (the feed still renders
  *     every event, just without resolved usernames) instead of throwing away
@@ -206,16 +208,28 @@ export async function getCreatorsChangelogEvents({
   //    admin_audit_events_event_type_created_idx. We read the SOURCE set
   //    (which includes generic `role_changed` rows) and re-project below —
   //    `role_changed` rows are kept only when they're a creator removal.
-  const rows = await adminDb.admin_audit_events.findMany({
-    where: {
-      event_type: { in: [...CHANGELOG_SOURCE_EVENT_TYPES] },
-      created_at: { gte: cutoff },
-    },
-    orderBy: { created_at: "desc" },
-    include: {
-      admin_user: { select: { username: true } },
-    },
-  });
+  const rows = await adminDrizzle
+    .select({
+      id: admin_audit_events.id,
+      event_type: admin_audit_events.event_type,
+      admin_user_id: admin_audit_events.admin_user_id,
+      adminUsername: admin_users.username,
+      target_user_id: admin_audit_events.target_user_id,
+      metadata: admin_audit_events.metadata,
+      created_at: admin_audit_events.created_at,
+    })
+    .from(admin_audit_events)
+    .leftJoin(admin_users, eq(admin_users.id, admin_audit_events.admin_user_id))
+    .where(
+      and(
+        inArray(admin_audit_events.event_type, [
+          ...CHANGELOG_SOURCE_EVENT_TYPES,
+        ]),
+        gte(admin_audit_events.created_at, cutoff.toISOString()),
+      ),
+    )
+    .orderBy(desc(admin_audit_events.created_at))
+    .limit(5_000);
 
   // 2) Main DB: resolve target usernames in ONE separate query (no cross-DB
   //    join), folded back via an in-memory map. Bounded + degrade-on-failure.
@@ -226,13 +240,14 @@ export async function getCreatorsChangelogEvents({
   let targetUserMap = new Map<string, string | null>();
   if (targetIds.length > 0) {
     try {
-      const db = await getDb();
       const users = await withTimeout(
         () =>
-          db.user.findMany({
-            where: { id: { in: targetIds } },
-            select: { id: true, username: true },
-          }),
+          queryMainRows<{ id: string; username: string | null }[]>(
+            `SELECT id, username
+             FROM "user"
+             WHERE id = ANY($1::text[])`,
+            targetIds,
+          ),
         CHANGELOG_MAIN_DB_TIMEOUT_MS,
       );
       targetUserMap = new Map(users.map((u) => [u.id, u.username]));
@@ -271,7 +286,7 @@ export async function getCreatorsChangelogEvents({
       eventType = "creator_removed";
     } else {
       // Constrained to the remaining union members by the WHERE clause, so
-      // this cast is sound (Prisma types the column as a free string).
+      // this cast is sound because the column is a free-form string.
       eventType = r.event_type as CreatorChangelogEventType;
     }
     const display = EVENT_DISPLAY[eventType];
@@ -282,13 +297,13 @@ export async function getCreatorsChangelogEvents({
         label: display.label,
         tone: display.tone,
         adminUserId: r.admin_user_id,
-        adminUsername: r.admin_user?.username ?? null,
+        adminUsername: r.adminUsername,
         targetUserId: r.target_user_id,
         targetUsername: r.target_user_id
           ? targetUserMap.get(r.target_user_id) ?? null
           : null,
         metadata: r.metadata,
-        createdAt: r.created_at.toISOString(),
+        createdAt: new Date(r.created_at).toISOString(),
       },
     ];
   });

@@ -1,8 +1,10 @@
 import "server-only";
 
+import { eq, sql } from "drizzle-orm";
 import { after } from "next/server";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_audit_events, api_keys } from "@/lib/db-schema/admin/schema";
 import { isIpAllowed, resolveClientIp } from "./ip";
 import { checkApiRateLimit, type ApiRateLimitResult } from "./rate-limit";
 import { missingScopes, toApiScopes, type ApiScope } from "./scopes";
@@ -93,16 +95,15 @@ function auditAuthFailure(reason: string, request: Request, prefix: string | nul
   // column itself is nullable. Never awaited on the request path, and never
   // allowed to throw.
   after(() => {
-    adminDb.admin_audit_events
-      .create({
-        data: {
-          admin_user_id: null,
-          event_type: "api_key_auth_failed",
-          ip,
-          // `prefix` is PUBLIC (not secret) and is what makes a failure
-          // actionable. The token itself is NEVER logged.
-          metadata: { reason, prefix, path },
-        },
+    adminDrizzle
+      .insert(admin_audit_events)
+      .values({
+        admin_user_id: null,
+        event_type: "api_key_auth_failed",
+        ip,
+        // `prefix` is PUBLIC (not secret) and is what makes a failure
+        // actionable. The token itself is NEVER logged.
+        metadata: { reason, prefix, path },
       })
       .catch(() => {});
   });
@@ -128,21 +129,22 @@ export async function authenticateApiRequest(
     return INVALID;
   }
 
-  const row = await adminDb.api_keys.findUnique({
-    where: { prefix },
-    select: {
-      id: true,
-      name: true,
-      prefix: true,
-      key_hash: true,
-      scopes: true,
-      allowed_ips: true,
-      is_active: true,
-      expires_at: true,
-      revoked_at: true,
-      rate_limit_per_min: true,
-    },
-  });
+  const [row] = await adminDrizzle
+    .select({
+      id: api_keys.id,
+      name: api_keys.name,
+      prefix: api_keys.prefix,
+      key_hash: api_keys.key_hash,
+      scopes: api_keys.scopes,
+      allowed_ips: api_keys.allowed_ips,
+      is_active: api_keys.is_active,
+      expires_at: api_keys.expires_at,
+      revoked_at: api_keys.revoked_at,
+      rate_limit_per_min: api_keys.rate_limit_per_min,
+    })
+    .from(api_keys)
+    .where(eq(api_keys.prefix, prefix))
+    .limit(1);
 
   // Hash the presented token regardless of whether the row exists, then
   // compare against a dummy when it doesn't — keeps the work (and therefore
@@ -161,7 +163,10 @@ export async function authenticateApiRequest(
     return INVALID;
   }
 
-  if (row.expires_at !== null && row.expires_at.getTime() <= Date.now()) {
+  if (
+    row.expires_at !== null &&
+    new Date(row.expires_at).getTime() <= Date.now()
+  ) {
     auditAuthFailure("expired", request, prefix);
     return INVALID;
   }
@@ -207,15 +212,14 @@ export async function authenticateApiRequest(
 
   // Usage bookkeeping is best-effort and MUST NOT delay or fail the request.
   after(() => {
-    adminDb.api_keys
-      .update({
-        where: { id: row.id },
-        data: {
-          last_used_at: new Date(),
-          last_used_ip: ip,
-          request_count: { increment: 1 },
-        },
+    adminDrizzle
+      .update(api_keys)
+      .set({
+        last_used_at: new Date().toISOString(),
+        last_used_ip: ip,
+        request_count: sql`${api_keys.request_count} + 1`,
       })
+      .where(eq(api_keys.id, row.id))
       .catch(() => {});
   });
 

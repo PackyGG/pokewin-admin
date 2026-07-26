@@ -1,7 +1,8 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -18,7 +19,6 @@ import {
  * Dashboard-LOCAL "deposit-funded GGR" — an alternate headline definition
  * for the dashboard's GGR tile ONLY (owner request, 2026-07-02). Every
  * OTHER consumer of GGR/wager (`/ggr`, insights-analytics, creators net-PnL,
- * `insights/system-edge-plan`, the ClickHouse `getWindowMetrics` twin) is
  * UNCHANGED and keeps reading the canonical industry definition
  * (`getWindowMetrics` / `getGamingLegs`, wager − payouts). This module owns
  * ONLY the dashboard GGR box's headline number.
@@ -76,7 +76,6 @@ import {
  * "what counts as a wager/payout" matches the industry-GGR figure exactly
  * — the ONLY difference is the deposit-provenance filter on top.
  *
- * INDEX-OR-CLICKHOUSE: every raw-row fetch below reuses the EXACT WHERE
  * shape (`status`, `type`, `created_at`) that the canonical `getGamingLegs`
  * already runs successfully against `idx_ledger_tx_status_type_created_at`
  * — this introduces no new unindexed access pattern, it fetches raw rows
@@ -86,8 +85,8 @@ import {
 type RawEvent = { userId: string; t: number; kind: "deposit" | "wager"; amount: number };
 
 async function tableExists(name: string): Promise<boolean> {
-  const db = await getDb();
-  const probe = await db.$queryRawUnsafe<{ exists: string | null }[]>(
+  const db = await getDrizzleDb();
+  const probe = await queryRows<{ exists: string | null }[]>(db,
     `SELECT to_regclass('public.${name}')::text AS exists`,
   );
   return probe[0]?.exists != null;
@@ -114,7 +113,7 @@ async function computeDepositFundedGgr(
   blacklist: string[],
 ): Promise<number> {
   return withTiming("dashboard.depositFundedGgr", async () => {
-    const db = await getDb();
+    const db = await getDrizzleDb();
     const scopeSql = excludeStaffCreatorsAndBlacklistedSqlFromIds(blacklist);
     const cutoffLiteral = `'${cutoff.toISOString()}'::timestamptz`;
 
@@ -136,14 +135,14 @@ async function computeDepositFundedGgr(
       upgraderPayoutRows,
       ddPayoutRows,
     ] = await Promise.all([
-      db.$queryRawUnsafe<EventRow[]>(
+      queryRows<EventRow[]>(db,
         `SELECT user_id, created_at, amount::numeric::text AS amount
          FROM ledger_transactions
          WHERE status = 'completed' AND type::text = 'deposit'
            AND created_at >= ${cutoffLiteral}
            AND ${scopeSql}`,
       ),
-      db.$queryRawUnsafe<EventRow[]>(
+      queryRows<EventRow[]>(db,
         `SELECT user_id, created_at, ABS(amount::numeric)::text AS amount
          FROM ledger_transactions
          WHERE status = 'completed' AND type::text IN ${WAGER_TYPES_SQL}
@@ -152,7 +151,7 @@ async function computeDepositFundedGgr(
            AND ${WAGER_LEG_FILTER}`,
       ),
       hasUpgrader
-        ? db.$queryRawUnsafe<EventRow[]>(
+        ? queryRows<EventRow[]>(db,
             `SELECT user_id, created_at, bet_amount::numeric::text AS amount
              FROM upgrader_games
              WHERE created_at >= ${cutoffLiteral}
@@ -160,7 +159,7 @@ async function computeDepositFundedGgr(
           )
         : Promise.resolve<EventRow[]>([]),
       hasDoubleDown
-        ? db.$queryRawUnsafe<EventRow[]>(
+        ? queryRows<EventRow[]>(db,
             `SELECT user_id, resolved_at AS created_at, won_amount_usd::numeric::text AS amount
              FROM battle_double_down_offers
              WHERE result IS NOT NULL
@@ -168,7 +167,7 @@ async function computeDepositFundedGgr(
                AND ${scopeSql}`,
           )
         : Promise.resolve<EventRow[]>([]),
-      db.$queryRawUnsafe<TotalRow[]>(
+      queryRows<TotalRow[]>(db,
         `SELECT user_id, SUM(ABS(amount::numeric))::text AS total
          FROM ledger_transactions
          WHERE status = 'completed' AND type::text IN ${GAMING_PAYOUT_TYPES_SQL}
@@ -176,7 +175,7 @@ async function computeDepositFundedGgr(
            AND ${scopeSql}
          GROUP BY user_id`,
       ),
-      db.$queryRawUnsafe<TotalRow[]>(
+      queryRows<TotalRow[]>(db,
         `SELECT user_id, SUM(value_at_obtained::numeric)::text AS total
          FROM user_inventory
          WHERE obtained_at >= ${cutoffLiteral}
@@ -185,7 +184,7 @@ async function computeDepositFundedGgr(
          GROUP BY user_id`,
       ),
       hasUpgrader
-        ? db.$queryRawUnsafe<TotalRow[]>(
+        ? queryRows<TotalRow[]>(db,
             `SELECT user_id, SUM(won_amount::numeric)::text AS total
              FROM upgrader_games
              WHERE created_at >= ${cutoffLiteral}
@@ -194,7 +193,7 @@ async function computeDepositFundedGgr(
           )
         : Promise.resolve<TotalRow[]>([]),
       hasDoubleDown
-        ? db.$queryRawUnsafe<TotalRow[]>(
+        ? queryRows<TotalRow[]>(db,
             `SELECT o.user_id, SUM(CASE WHEN o.result = 'win' THEN v.value::numeric ELSE 0 END)::text AS total
              FROM battle_double_down_offers o
              LEFT JOIN vouchers v

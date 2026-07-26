@@ -8,9 +8,9 @@ import { backendApi } from "./client";
  * endpoint under `/v1/admin/challenges/*`.
  *
  * IMPORTANT: challenge tables live in the MAIN game DB, which is strictly
- * read-only in this admin panel AND is not modelled in the admin Prisma
+ * read-only in this admin panel AND is not modelled in the admin database
  * schema. ALL challenge access — list, get, create, update, archive — MUST
- * go through this backend client. Never reach for `getDb()` / Prisma for
+ * go through this backend client. Never reach directly into MAIN for
  * challenges. The admin layer wraps each call with auth + audit in
  * `challenges/actions.ts`; this client only forwards requests.
  */

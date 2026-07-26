@@ -1,12 +1,10 @@
+import { daysAgoFilter, queryRows, realCustomersScopeDrizzle, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
-import {
-  realCustomersScopeSql,
-} from "@/lib/queries/insights-games/_shared";
 import { getCreatorSessionWindowsCte } from "@/lib/queries/creator-session-windows";
 import {
   daysForInsightsPeriodCapped,
@@ -50,7 +48,7 @@ import { getInsightsRewardsBlacklist } from "./_cache";
  *   as a giveaway.
  *
  * SCOPE (canonical, not hand-rolled):
- *   `realCustomersScopeSql()` (drops staff — admin/support/creator — and
+ *   `realCustomersScopeDrizzle()` (drops staff — admin/support/creator — and
  *   the admin-managed excluded-users blacklist) + the
  *   `getCreatorSessionWindowsCte()` stream-window exclusion applied to
  *   `user_inventory.obtained_at`, exactly as the /insights/games pack
@@ -111,27 +109,30 @@ async function computeDailyPacksGiveaway(
   period: InsightsRewardsPeriod,
   _blacklistIds: string[],
 ): Promise<DailyPacksGiveaway> {
-  // `realCustomersScopeSql()` already folds in the resolved blacklist; the
+  // `realCustomersScopeDrizzle()` already folds in the resolved blacklist; the
   // `_blacklistIds` arg only participates in the cache key so an admin edit
   // to the excluded-users list busts the cache (mirrors the other helpers).
   void _blacklistIds;
   return withTiming("insights-rewards.daily-packs", async () => {
-    const db = await getDb();
-    const scope = await realCustomersScopeSql();
+    const db = await getDrizzleDb();
+    const scope = await realCustomersScopeDrizzle();
     const sessionWindowsCte = await getCreatorSessionWindowsCte();
 
     // Lifetime (`all`) CAPPED to INSIGHTS_LIFETIME_LOOKBACK_DAYS (365d) via
     // daysForInsightsPeriodCapped so the giveaway sweep over the full
     // user_inventory history never runs unbounded (CLAUDE.md "Performance
     // & Daten-Laden"). Finite windows are unchanged.
-    const uiCutoff = `AND ui.obtained_at >= NOW() - INTERVAL '${daysForInsightsPeriodCapped(period)} days'`;
+    const uiCutoff = daysAgoFilter(
+      "ui.obtained_at",
+      daysForInsightsPeriodCapped(period),
+    );
 
     // The not-on-stream guard: drop cards a creator obtained while live
     // on a deal (house-funded promo play). Applied to obtained_at, the
     // same column the window is scoped on. `scope` already drops every
     // creator wholesale, so this is belt-and-suspenders symmetric with
     // the games-pack payout side.
-    const notOnStream = `
+    const notOnStream = sql`
       AND NOT EXISTS (
         SELECT 1 FROM session_windows sw
         WHERE sw.uid = ui.user_id
@@ -154,8 +155,7 @@ async function computeDailyPacksGiveaway(
       giveaway_payout: string;
       wager: string;
     };
-    const packRows = await db.$queryRawUnsafe<PackRow[]>(
-      `WITH ${sessionWindowsCte},
+    const packRows = await queryRows<PackRow[]>(db, sql`WITH ${sql.raw(sessionWindowsCte)},
         reward_cards AS (
           SELECT
             gs.game_id        AS pack_id,
@@ -202,8 +202,7 @@ async function computeDailyPacksGiveaway(
       giveaway_payout: string;
       wager: string;
     };
-    const totalRows = await db.$queryRawUnsafe<TotalRow[]>(
-      `WITH ${sessionWindowsCte},
+    const totalRows = await queryRows<TotalRow[]>(db, sql`WITH ${sql.raw(sessionWindowsCte)},
         reward_cards AS (
           SELECT
             ui.id             AS inv_id,
@@ -236,8 +235,7 @@ async function computeDailyPacksGiveaway(
     // dailySeries doc on the return type) so the curve is the pure
     // giveaway and stays non-negative.
     type DailyRow = { date: Date; payout: string };
-    const dailyRows = await db.$queryRawUnsafe<DailyRow[]>(
-      `WITH ${sessionWindowsCte},
+    const dailyRows = await queryRows<DailyRow[]>(db, sql`WITH ${sql.raw(sessionWindowsCte)},
         reward_cards AS (
           SELECT
             DATE(ui.obtained_at) AS date,

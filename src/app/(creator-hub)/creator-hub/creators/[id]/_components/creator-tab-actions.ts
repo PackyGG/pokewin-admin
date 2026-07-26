@@ -1,8 +1,10 @@
 "use server";
 
 import { revalidatePath, revalidateTag } from "next/cache";
+import { and, eq } from "drizzle-orm";
 
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/drizzle";
+import { creator_socials } from "@/lib/db-schema/admin/schema";
 import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { CREATOR_LINKED_SOCIALS_CACHE_TAG } from "../../../../../(admin)/creators/_queries/socials-by-user";
@@ -91,32 +93,30 @@ export async function upsertCreatorSocial(
     platformUserId: null as string | null,
   }));
 
-  await adminDb.creator_socials.upsert({
-    where: {
-      target_user_id_platform: {
-        target_user_id: targetUserId,
-        platform,
-      },
-    },
-    create: {
+  const now = new Date().toISOString();
+  await adminDrizzle
+    .insert(creator_socials)
+    .values({
       target_user_id: targetUserId,
       platform,
       username: trimmed,
       platform_user_id: stats.platformUserId ?? null,
       follower_count: stats.followerCount ?? null,
-      last_fetched_at: new Date(),
-    },
-    update: {
-      username: trimmed,
-      platform_user_id: stats.platformUserId ?? null,
-      follower_count: stats.followerCount ?? null,
-      last_fetched_at: new Date(),
-      updated_at: new Date(),
-    },
+      last_fetched_at: now,
+    })
+    .onConflictDoUpdate({
+      target: [creator_socials.target_user_id, creator_socials.platform],
+      set: {
+        username: trimmed,
+        platform_user_id: stats.platformUserId ?? null,
+        follower_count: stats.followerCount ?? null,
+        last_fetched_at: now,
+        updated_at: now,
+      },
+    })
     // Only the id is consumed — explicit select avoids a RETURNING * crash if
     // the generated client knows a column prod hasn't migrated yet.
-    select: { id: true },
-  });
+    .returning({ id: creator_socials.id });
 
   if (platform === "discord" && options?.discordChannelUrl?.trim()) {
     await persistDiscordChannelUrl(
@@ -150,22 +150,20 @@ export async function removeCreatorSocial(
   if (!targetUserId) throw new Error("Missing creator id");
   assertEditablePlatform(platform);
 
-  const existing = await adminDb.creator_socials.findUnique({
-    where: {
-      target_user_id_platform: { target_user_id: targetUserId, platform },
-    },
-    select: { id: true },
-  });
-  if (!existing) {
+  const deleted = await adminDrizzle
+    .delete(creator_socials)
+    .where(
+      and(
+        eq(creator_socials.target_user_id, targetUserId),
+        eq(creator_socials.platform, platform),
+      ),
+    )
+    .returning({ id: creator_socials.id });
+  if (deleted.length === 0) {
     // Nothing to delete — keep idempotent so a double-click doesn't error.
     revalidateCreator(targetUserId);
     return;
   }
-
-  await adminDb.creator_socials.delete({
-    where: { id: existing.id },
-    select: { id: true },
-  });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -185,15 +183,18 @@ export async function upsertCreatorDiscordChannel(
   const session = await requireCreatorHubAccess();
   if (!targetUserId) throw new Error("Missing creator id");
 
-  const existing = await adminDb.creator_socials.findUnique({
-    where: {
-      target_user_id_platform: {
-        target_user_id: targetUserId,
-        platform: "discord",
-      },
-    },
-    select: { username: true },
-  });
+  const existing = (
+    await adminDrizzle
+      .select({ username: creator_socials.username })
+      .from(creator_socials)
+      .where(
+        and(
+          eq(creator_socials.target_user_id, targetUserId),
+          eq(creator_socials.platform, "discord"),
+        ),
+      )
+      .limit(1)
+  )[0];
 
   await persistDiscordChannelUrl(
     targetUserId,
@@ -240,15 +241,18 @@ export async function upsertCreatorRewardPage(
   const session = await requireCreatorHubAccess();
   if (!targetUserId) throw new Error("Missing creator id");
 
-  const existing = await adminDb.creator_socials.findUnique({
-    where: {
-      target_user_id_platform: {
-        target_user_id: targetUserId,
-        platform: "discord",
-      },
-    },
-    select: { username: true },
-  });
+  const existing = (
+    await adminDrizzle
+      .select({ username: creator_socials.username })
+      .from(creator_socials)
+      .where(
+        and(
+          eq(creator_socials.target_user_id, targetUserId),
+          eq(creator_socials.platform, "discord"),
+        ),
+      )
+      .limit(1)
+  )[0];
 
   await persistRewardPageUrl(targetUserId, rewardUrl, existing?.username);
 

@@ -121,11 +121,9 @@ export function ProfileDialog({
           <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-muted-foreground">
             <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
             <span>
-              Profile fields aren&apos;t enabled yet. Run{" "}
-              <code className="rounded bg-muted px-1 py-0.5">
-                npm run admin:migrate
-              </code>{" "}
-              to enable display name, picture and preferences editing.
+              Profile fields aren&apos;t enabled yet. Apply the required admin
+              SQL migration to enable display name, picture and preferences
+              editing.
             </span>
           </div>
         )}

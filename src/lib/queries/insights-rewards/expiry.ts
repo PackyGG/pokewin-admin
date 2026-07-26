@@ -1,7 +1,7 @@
+import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDrizzleDb } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 import {
@@ -125,9 +125,9 @@ async function hasExpirationDaysColumn(): Promise<boolean> {
   if (driftCache && now - driftCache.at < DRIFT_GUARD_CACHE_MS) {
     return driftCache.has;
   }
-  const db = await getDb();
+  const db = await getDrizzleDb();
   try {
-    const rows = await db.$queryRawUnsafe<{ exists: boolean }[]>(`
+    const rows = await queryRows<{ exists: boolean }[]>(db, sql`
       SELECT EXISTS (
         SELECT 1 FROM information_schema.columns
         WHERE table_name = 'rakeback_config'
@@ -149,20 +149,20 @@ async function fetchWindows(): Promise<{
   windows: RakebackExpiryWindow[];
   expirationConfigured: boolean;
 }> {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   const hasExp = await hasExpirationDaysColumn();
 
   // Only SELECT expiration_days when it exists — keeps a drifted DB from
   // throwing 42703 (undefined column).
   const expSelect = hasExp ? "expiration_days" : "NULL::int AS expiration_days";
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       type: string;
       display_name: string;
       expiration_days: number | null;
       enabled: boolean;
     }[]
-  >(`
+  >(db, sql`
     SELECT type::text AS type, display_name, ${expSelect}, enabled
     FROM rakeback_config
     ORDER BY CASE type::text
@@ -200,13 +200,13 @@ async function computeForfeited(
 ): Promise<RakebackForfeited | null> {
   const days = daysForInsightsPeriod(period);
   if (days === null) return null;
-  const db = await getDb();
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+  const db = await getDrizzleDb();
+  const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // current_users: anyone who claimed in the current window.
   // prior_lapsed: claimers in the prior-equal window with > 0 rakeback.
   // lapsed = prior_lapsed minus current_users.
-  const rows = await db.$queryRawUnsafe<
+  const rows = await queryRows<
     {
       user_id: string;
       username: string | null;
@@ -214,14 +214,14 @@ async function computeForfeited(
       prior_claims: string;
       last_claimed_at: Date | string | null;
     }[]
-  >(`
+  >(db, sql`
     WITH current_users AS (
       SELECT DISTINCT rc.user_id
       FROM rakeback_claims rc
       JOIN "user" u ON u.id = rc.user_id
       WHERE rc.claimed_at IS NOT NULL
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
-        AND rc.claimed_at >= NOW() - INTERVAL '${days} days'
+        AND rc.claimed_at >= NOW() - (${days} * INTERVAL '1 day')
     ),
     prior_lapsed AS (
       SELECT
@@ -233,8 +233,8 @@ async function computeForfeited(
       JOIN "user" u ON u.id = rc.user_id
       WHERE rc.claimed_at IS NOT NULL
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
-        AND rc.claimed_at >= NOW() - INTERVAL '${days * 2} days'
-        AND rc.claimed_at <  NOW() - INTERVAL '${days} days'
+        AND rc.claimed_at >= NOW() - (${days * 2} * INTERVAL '1 day')
+        AND rc.claimed_at <  NOW() - (${days} * INTERVAL '1 day')
       GROUP BY rc.user_id
       HAVING SUM(rc.rakeback_amount_usd::numeric) > 0
     )
@@ -257,25 +257,23 @@ async function computeForfeited(
   const lapsedIds = rows.map((r) => r.user_id);
   let byType: RakebackForfeited["byType"] = [];
   if (lapsedIds.length > 0) {
-    // Parameterised IN-list to avoid building a giant literal.
-    const placeholders = lapsedIds.map((_, i) => `$${i + 1}`).join(", ");
-    const typeRows = await db.$queryRawUnsafe<
+    const typeRows = await queryRows<
       { rakeback_type: string; forfeited: string; claims: string }[]
-    >(
-      `
+    >(db, sql`
       SELECT
         rc.rakeback_type::text AS rakeback_type,
         SUM(rc.rakeback_amount_usd::numeric)::text AS forfeited,
         COUNT(*)::text AS claims
       FROM rakeback_claims rc
       WHERE rc.claimed_at IS NOT NULL
-        AND rc.user_id IN (${placeholders})
-        AND rc.claimed_at >= NOW() - INTERVAL '${days * 2} days'
-        AND rc.claimed_at <  NOW() - INTERVAL '${days} days'
+        AND rc.user_id IN (${sql.join(
+          lapsedIds.map((id) => sql`${id}::uuid`),
+          sql`, `,
+        )})
+        AND rc.claimed_at >= NOW() - (${days * 2} * INTERVAL '1 day')
+        AND rc.claimed_at <  NOW() - (${days} * INTERVAL '1 day')
       GROUP BY rc.rakeback_type
-      `,
-      ...lapsedIds,
-    );
+    `);
     byType = typeRows
       .filter(
         (r): r is typeof r & { rakeback_type: "daily" | "weekly" | "monthly" } =>
@@ -335,7 +333,7 @@ async function computeExpiry(
 // ENV-KEYED cache (mirrors users-detail-cache.ts): cache ONLY on prod so a
 // dev-toggled admin always sees live dev data instead of a prod-warmed
 // entry. `unstable_cache` runs outside the request scope, so the cached
-// callback's getDb() resolves to prod regardless — caching it for a dev
+// callback's getDrizzleDb() resolves to prod regardless — caching it for a dev
 // admin would serve them prod numbers. Short layer for finite windows,
 // long layer for the lifetime sweep.
 const cachedShort = unstable_cache(

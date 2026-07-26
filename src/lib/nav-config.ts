@@ -497,10 +497,22 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // Geo Blocking — per-country deposit / withdrawal restrictions
-    // (formerly the "Country Restrictions" section of the removed /settings
-    // page). Icon string `Globe` is already registered in the ICONS map in
-    // `src/components/app-sidebar.tsx` (no React #130 risk).
+    // Global inbox + custom staff composer. The bell is shared by every shell;
+    // this main-dashboard page is its canonical history and management surface.
+    id: "nav.staff-notifications",
+    group: "System",
+    label: "Staff Notifications",
+    href: "/system/staff-notifications",
+    pageKey: "/system/staff-notifications",
+    icon: "Bell",
+    description: "Global staff inbox and custom team notifications",
+    keywords: ["staff", "notification", "inbox", "broadcast", "discord", "telegram"],
+    isNew: true,
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
+    // Geo Blocking — per-country deposit / withdrawal restrictions.
     id: "nav.geo-blocking",
     group: "System",
     label: "Geo Blocking",
@@ -608,6 +620,7 @@ const PALETTE_ORDER: string[] = [
   "nav.cards",
   "nav.my-profile",
   "nav.admin-users",
+  "nav.staff-notifications",
   "nav.security",
   "nav.geo-blocking",
 ];

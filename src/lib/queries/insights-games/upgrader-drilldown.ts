@@ -1,6 +1,6 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getCreatorSessionWindowsCte } from "../creator-session-windows";
@@ -61,7 +61,6 @@ export async function getUpgraderBucketTopUsers(
   bucket: UpgraderBucketKey,
 ): Promise<UpgraderBucketTopUser[]> {
   return withTiming("insights-games.upgrader-drilldown", async () => {
-    const db = await getDb();
     const scope = await realCustomersScopeSql();
     const sessionWindowsCte = await getCreatorSessionWindowsCte();
     const hours = hoursForPeriod(period);
@@ -106,7 +105,7 @@ export async function getUpgraderBucketTopUsers(
       payout: string;
     };
 
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryMainRows<Row[]>(
       `WITH ${sessionWindowsCte},
             in_bucket AS (
          SELECT ug.user_id,

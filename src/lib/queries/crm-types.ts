@@ -1,11 +1,8 @@
 import { toNumber } from "@/lib/utils/decimal";
 
 /**
- * Pure, engine-agnostic CRM snapshot types + bucketing. Imports NOTHING from a
- * read engine (no Postgres, no ClickHouse), so both the Postgres path
- * (src/lib/queries/crm.ts) and the ClickHouse comparison layer
- * (src/lib/clickhouse/comparison.ts) can share `bucketCrmSnapshot` without an
- * import cycle. The only difference between the two read paths is WHERE the
+ * Pure CRM snapshot types and bucketing. Imports nothing from the PostgreSQL
+ * client, so query code can share `bucketCrmSnapshot` without an import cycle.
  * per-customer rows come from — the bucketing is identical here.
  */
 
@@ -72,9 +69,8 @@ export type CrmSnapshot = {
 };
 
 /**
- * One per-customer aggregate row — the shared contract BOTH read engines
- * (Postgres `computeCrmRowsPg` and the ClickHouse twin `getCrmRowsFromClickHouse`)
- * must return, so `bucketCrmSnapshot` produces an identical snapshot regardless
+ * One per-customer aggregate row returned by the PostgreSQL query, so
+ * `bucketCrmSnapshot` produces a stable snapshot regardless
  * of source. Money columns are strings (Decimal-safe: `toString(sum(...))` /
  * `::text`, parsed via `toNumber`, never Float).
  */
@@ -133,15 +129,11 @@ function levelBandFor(level: number): LevelBandKey {
 }
 
 /**
- * Pure, engine-agnostic bucketing of the per-customer aggregate rows into the
- * CRM snapshot. Identical for the Postgres and ClickHouse paths so the two can
- * never drift on lifecycle/level bucketing, totals, or the leaderboards.
+ * Pure bucketing of the per-customer aggregate rows into the CRM snapshot.
  *
  * `levelByUser` carries the REAL `user_statistics.level` per user id. It is
  * passed in rather than read here (this module stays engine-free) and, for the
- * same reason, is resolved ONCE by the caller and handed to BOTH read legs —
- * ClickHouse has no `user_statistics` mirror, so deriving it inside each leg
- * would leave the twin unable to produce a comparable snapshot. A user missing
+ * same reason, is resolved once by the caller. A user missing
  * from the map has no stats row yet and banks as level 0, which is what the
  * product shows them.
  */

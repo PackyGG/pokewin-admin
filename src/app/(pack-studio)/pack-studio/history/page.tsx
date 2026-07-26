@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { History } from "lucide-react";
+import { sql } from "drizzle-orm";
 
 import {
   PageHero,
@@ -14,7 +15,7 @@ import { requirePackStudioPageAccess } from "@/lib/require-pack-studio-access";
 import { isOwner } from "@/lib/owners";
 import { isUuid } from "@/lib/utils/ids";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
 import { getPackHistory, getHistoryCardMeta } from "@/app/(admin)/packs/_lib/pack-history";
 import { getPackMetaByIds } from "@/app/(admin)/packs/_lib/pack-meta";
 import {
@@ -135,15 +136,14 @@ async function loadHistory(
     { username: string; displayUsername: string | null; email: string }
   >();
   if (capturedByIds.length > 0) {
-    const admins = await adminDb.admin_users.findMany({
-      where: { id: { in: capturedByIds } },
-      select: {
-        id: true,
-        username: true,
-        display_username: true,
-        email: true,
-      },
-    });
+    const admins = (
+      await adminDrizzle.execute<{
+        id: string; username: string; display_username: string | null; email: string;
+      }>(sql`
+        SELECT id, username, display_username, email
+        FROM admin_users WHERE id = ANY(${capturedByIds}::uuid[])
+      `)
+    ).rows;
     for (const a of admins) {
       adminMap.set(a.id, {
         username: a.username,

@@ -1,6 +1,6 @@
+import { queryMainRows } from "@/lib/drizzle-query";
 import "server-only";
 
-import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
@@ -97,9 +97,8 @@ import { WAGER_LEG_FILTER, PAYOUT_LEG_FILTER } from "@/lib/metrics/gaming-sql";
 //
 // `ggrWindowToMetricWindow` + `GGR_LIFETIME_LOOKBACK_DAYS` are pure date
 // helpers (no DB / `server-only`), extracted into the client-safe
-// `@/lib/metrics/ggr-window` so the ClickHouse `window-metrics.ts` twin can
-// reuse them without transitively pulling this module's Postgres client
-// (`getDb`). Re-exported here unchanged so existing Postgres consumers
+// reuse them without transitively pulling this module's Postgres client.
+// Re-exported here unchanged so existing Postgres consumers
 // (`/ggr` page, export route, contributor query, dashboard) compile and
 // behave identically.
 export {
@@ -292,7 +291,6 @@ async function getNeutralAndRewardRows(
   manualVoucherTotal: number;
 }> {
   return withTiming("ggr.neutralRewardRows", async () => {
-    const db = await getDb();
     const scope = await getMetricsScope();
     const since = window.since;
     const sinceFrag =
@@ -317,7 +315,7 @@ async function getNeutralAndRewardRows(
     // This mirrors the canonical `getRewardCost`, where a non-'manual'
     // origin (incl. NULL) falls to the reward-leg ELSE 0.
     type Row = { type: string; is_manual_voucher: boolean; total: string };
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryMainRows<Row[]>(
       `WITH ${scope.sessionWindowsCte}
        SELECT type::text AS type,
               (type::text = 'voucher_redeemed'
@@ -398,7 +396,6 @@ async function getCategoryLedgerWager(
   battles: { wager: number; count: number };
 }> {
   return withTiming("ggr.categoryWager", async () => {
-    const db = await getDb();
     const scope = await getMetricsScope();
     const since = window.since;
     const sinceFrag =
@@ -417,7 +414,7 @@ async function getCategoryLedgerWager(
     // game_session_id) resolve unqualified. The CASE then splits only the
     // WAGER_TYPES rows that pass that shared filter into packs vs battles,
     // so the two slices sum back to the headline's ledger wager leg.
-    const rows = await db.$queryRawUnsafe<Row[]>(
+    const rows = await queryMainRows<Row[]>(
       `WITH ${scope.sessionWindowsCte}
        SELECT
          COALESCE(SUM(CASE WHEN type::text = 'pack_opening'
@@ -512,7 +509,7 @@ const EMPTY_REWARD_COST: RewardCost = {
  * RESILIENCE: every reader is wrapped in `safeQuery` with a
  * {@link REWARD_QUERY_TIMEOUT_MS} (15s) bound and a neutral empty/0
  * fallback, so this function NEVER throws — a leg that fails (e.g. a stale
- * Prisma column) or times out (a single slow aggregate) degrades to its
+ * schema column) or times out (a single slow aggregate) degrades to its
  * fallback and the rest of the report still renders. This protects BOTH
  * consumers that share this helper: the `/ggr` page body and the
  * `_export.ts` gatherer. (The page's separate `getGgrTopContributors` read
@@ -730,7 +727,6 @@ export async function getGgrTopContributors(
     // Defensive clamp — the export passes a number; an out-of-range value
     // shouldn't blow up the query plan.
     const safeLimit = Math.max(1, Math.min(limit, 50));
-    const db = await getDb();
     const scope = await getMetricsScope();
     // Blacklist for the upgrader leg's wholesale-drop user filter (the
     // pack/battle legs get blacklist + staff drop via `scope.userScopeSql`).
@@ -749,8 +745,9 @@ export async function getGgrTopContributors(
     // Probe upgrader_games — fold the per-user upgrader leg in only when
     // the table exists (to_regclass returns NULL, not an error, when it
     // is absent on a pre-upgrader DB).
-    const probe = await db.$queryRaw<{ exists: string | null }[]>`
-      SELECT to_regclass('public.upgrader_games')::text AS exists`;
+    const probe = await queryMainRows<{ exists: string | null }[]>(
+      `SELECT to_regclass('public.upgrader_games')::text AS exists`,
+    );
     const hasUpgrader = probe[0]?.exists != null;
     const sinceUpg =
       since === null
@@ -791,7 +788,7 @@ export async function getGgrTopContributors(
       payout_total: string;
       net: string;
     };
-    const rows = await db.$queryRawUnsafe<QueryRow[]>(
+    const rows = await queryMainRows<QueryRow[]>(
       `WITH ${scope.sessionWindowsCte},
        real_users AS (
          SELECT u.id, u.username

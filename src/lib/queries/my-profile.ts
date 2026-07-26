@@ -1,5 +1,12 @@
-import { getDb } from "@/lib/db";
-import { adminDb } from "@/lib/admin-db";
+import { getDrizzleDb } from "@/lib/db";
+import { desc, eq, sql } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import {
+  admin_users,
+  creator_deals,
+  creator_socials,
+  creator_webhooks,
+} from "@/lib/db-schema/admin/schema";
 import { toNumber } from "@/lib/utils/decimal";
 
 type AffiliateLevelConfig = { level: number; threshold: unknown };
@@ -38,19 +45,29 @@ function resolveAffiliateLevel(
 }
 
 export async function getMyProfileData(adminUserId: string) {
-  const db = await getDb();
+  const db = await getDrizzleDb();
   // Find the admin user to get email
-  const adminUser = await adminDb.admin_users.findUnique({
-    where: { id: adminUserId },
-    select: { email: true, username: true },
-  });
+  const [adminUser] = await adminDrizzle.select({
+    email: admin_users.email, username: admin_users.username,
+  }).from(admin_users).where(eq(admin_users.id, adminUserId)).limit(1);
   if (!adminUser) return null;
 
   // Try to find the main site user by email
-  const mainUser = await db.user.findFirst({
-    where: { email: adminUser.email, role: "creator" },
-    select: { id: true, username: true, email: true, affiliate_code: true, affiliate_code_active: true },
-  });
+  const mainUser = (
+    await db.execute<{
+      id: string;
+      username: string | null;
+      email: string;
+      affiliate_code: string | null;
+      affiliate_code_active: boolean | null;
+    }>(sql`
+      SELECT id, username, email, affiliate_code, affiliate_code_active
+      FROM "user"
+      WHERE email = ${adminUser.email}
+        AND role::text = 'creator'
+      LIMIT 1
+    `)
+  ).rows[0] ?? null;
 
   // The target_user_id used in admin DB tables
   const targetUserId = mainUser?.id ?? adminUserId;
@@ -69,39 +86,73 @@ export async function getMyProfileData(adminUserId: string) {
     clickCount,
     affiliateConfigs,
   ] = await Promise.all([
-      adminDb.creator_webhooks.findMany({
-        where: { target_user_id: targetUserId },
-        orderBy: { created_at: "desc" },
-      }),
-      adminDb.creator_deals.findMany({
-        where: { target_user_id: targetUserId },
-        orderBy: { created_at: "desc" },
-      }),
-      adminDb.creator_socials.findMany({
-        where: { target_user_id: targetUserId },
-        orderBy: { platform: "asc" },
-      }),
+      adminDrizzle.select().from(creator_webhooks)
+        .where(eq(creator_webhooks.target_user_id, targetUserId))
+        .orderBy(desc(creator_webhooks.created_at)),
+      adminDrizzle.select().from(creator_deals)
+        .where(eq(creator_deals.target_user_id, targetUserId))
+        .orderBy(desc(creator_deals.created_at)),
+      adminDrizzle.select().from(creator_socials)
+        .where(eq(creator_socials.target_user_id, targetUserId))
+        .orderBy(creator_socials.platform),
       userId
-        ? db.affiliate_accounts.findUnique({ where: { user_id: userId } })
+        ? db
+            .execute<{
+              total_wager_volume_usd: unknown;
+              total_earned_usd: unknown;
+              available_usd: unknown;
+              total_paid_out_usd: unknown;
+              total_bonus_distributed_usd: unknown;
+              last_payout_at: Date | null;
+            }>(sql`
+              SELECT
+                total_wager_volume_usd,
+                total_earned_usd,
+                available_usd,
+                total_paid_out_usd,
+                total_bonus_distributed_usd,
+                last_payout_at
+              FROM affiliate_accounts
+              WHERE user_id = ${userId}
+              LIMIT 1
+            `)
+            .then((result) => result.rows[0] ?? null)
         : Promise.resolve(null),
       userId
-        ? db.affiliate_code_usages.findMany({
-            where: { affiliate_user_id: userId },
-            include: {
-              user_affiliate_code_usages_referred_user_idTouser: {
-                select: { username: true },
-              },
-            },
-            orderBy: { created_at: "desc" },
-            take: 50,
-          })
+        ? db
+            .execute<{
+              id: string;
+              referred_user_id: string;
+              referred_username: string | null;
+              usage_type: string;
+              deposit_amount_usd: unknown;
+              wager_amount_usd: unknown;
+              referrer_cut_usd: unknown;
+              user_bonus_usd: unknown;
+              created_at: Date;
+            }>(sql`
+              SELECT
+                acu.id::text AS id,
+                acu.referred_user_id,
+                referred.username AS referred_username,
+                acu.usage_type::text AS usage_type,
+                acu.deposit_amount_usd,
+                acu.wager_amount_usd,
+                acu.referrer_cut_usd,
+                acu.user_bonus_usd,
+                acu.created_at
+              FROM affiliate_code_usages acu
+              INNER JOIN "user" referred ON referred.id = acu.referred_user_id
+              WHERE acu.affiliate_user_id = ${userId}
+              ORDER BY acu.created_at DESC, acu.id DESC
+              LIMIT 50
+            `)
+            .then((result) => result.rows)
         : Promise.resolve(
             [] as Array<{
               id: string;
               referred_user_id: string;
-              user_affiliate_code_usages_referred_user_idTouser: {
-                username: string | null;
-              } | null;
+              referred_username: string | null;
               usage_type: string;
               deposit_amount_usd: unknown;
               wager_amount_usd: unknown;
@@ -111,11 +162,24 @@ export async function getMyProfileData(adminUserId: string) {
             }>,
           ),
       userId
-        ? db.affiliate_payouts.findMany({
-            where: { affiliate_user_id: userId },
-            orderBy: { created_at: "desc" },
-            take: 50,
-          })
+        ? db
+            .execute<{
+              id: string;
+              amount_usd: unknown;
+              status: string;
+              created_at: Date;
+            }>(sql`
+              SELECT
+                id::text AS id,
+                amount_usd,
+                status::text AS status,
+                created_at
+              FROM affiliate_payouts
+              WHERE affiliate_user_id = ${userId}
+              ORDER BY created_at DESC, id DESC
+              LIMIT 50
+            `)
+            .then((result) => result.rows)
         : Promise.resolve(
             [] as Array<{
               id: string;
@@ -125,13 +189,20 @@ export async function getMyProfileData(adminUserId: string) {
             }>,
           ),
       mainUser?.affiliate_code
-        ? db.affiliate_clicks.count({
-            where: { code: mainUser.affiliate_code },
-          })
+        ? db
+            .execute<{ total: string }>(sql`
+              SELECT COUNT(*)::text AS total
+              FROM affiliate_clicks
+              WHERE code = ${mainUser.affiliate_code}
+            `)
+            .then((result) => Number(result.rows[0]?.total ?? 0))
         : Promise.resolve(0),
-      db.affiliate_level_configs.findMany({
-        select: { level: true, threshold: true },
-      }),
+      db
+        .execute<AffiliateLevelConfig>(sql`
+          SELECT level, threshold
+          FROM affiliate_level_configs
+        `)
+        .then((result) => result.rows),
     ]);
 
   // Affiliate tier is derived, not stored (see resolveAffiliateLevel).
@@ -161,12 +232,12 @@ export async function getMyProfileData(adminUserId: string) {
       referrals: [],
       payouts: [],
       webhooks: webhooks.map((w) => ({
-        id: w.id, url: w.url, type: w.type, enabled: w.enabled, createdAt: w.created_at.toISOString(),
+        id: w.id, url: w.url, type: w.type, enabled: w.enabled, createdAt: new Date(w.created_at).toISOString(),
       })),
       deals: deals.map((d) => ({
         id: d.id, dealName: d.deal_name, dealType: d.deal_type, amount: toNumber(d.amount), currency: d.currency,
-        startDate: d.start_date.toISOString(), endDate: d.end_date?.toISOString() ?? null,
-        status: d.status, notes: d.notes, createdAt: d.created_at.toISOString(),
+        startDate: new Date(d.start_date).toISOString(), endDate: d.end_date ? new Date(d.end_date).toISOString() : null,
+        status: d.status, notes: d.notes, createdAt: new Date(d.created_at).toISOString(),
         keepPercentage: toNumber(d.keep_percentage),
         currencyLimitAmount: toNumber(d.currency_limit_amount), currencyLimitResetDays: d.currency_limit_reset_days,
         percentageLimit: toNumber(d.percentage_limit), tipLimit: toNumber(d.tip_limit), tipLimitResetDays: d.tip_limit_reset_days,
@@ -176,7 +247,7 @@ export async function getMyProfileData(adminUserId: string) {
       })),
       socials: socials.filter((s) => s.username !== "__pending__").map((s) => ({
         id: s.id, platform: s.platform, username: s.username,
-        followerCount: s.follower_count, lastFetchedAt: s.last_fetched_at?.toISOString() ?? null,
+        followerCount: s.follower_count, lastFetchedAt: s.last_fetched_at ? new Date(s.last_fetched_at).toISOString() : null,
       })),
     };
   }
@@ -202,7 +273,7 @@ export async function getMyProfileData(adminUserId: string) {
     referrals: referrals.map((r) => ({
       id: r.id,
       referredUserId: r.referred_user_id,
-      referredUsername: r.user_affiliate_code_usages_referred_user_idTouser?.username ?? null,
+      referredUsername: r.referred_username,
       usageType: r.usage_type,
       depositAmountUsd: toNumber(r.deposit_amount_usd),
       wagerAmountUsd: toNumber(r.wager_amount_usd),
@@ -217,12 +288,12 @@ export async function getMyProfileData(adminUserId: string) {
       createdAt: p.created_at.toISOString(),
     })),
     webhooks: webhooks.map((w) => ({
-      id: w.id, url: w.url, type: w.type, enabled: w.enabled, createdAt: w.created_at.toISOString(),
+      id: w.id, url: w.url, type: w.type, enabled: w.enabled, createdAt: new Date(w.created_at).toISOString(),
     })),
     deals: deals.map((d) => ({
       id: d.id, dealName: d.deal_name, dealType: d.deal_type, amount: toNumber(d.amount), currency: d.currency,
-      startDate: d.start_date.toISOString(), endDate: d.end_date?.toISOString() ?? null,
-      status: d.status, notes: d.notes, createdAt: d.created_at.toISOString(),
+      startDate: new Date(d.start_date).toISOString(), endDate: d.end_date ? new Date(d.end_date).toISOString() : null,
+      status: d.status, notes: d.notes, createdAt: new Date(d.created_at).toISOString(),
       keepPercentage: toNumber(d.keep_percentage),
       currencyLimitAmount: toNumber(d.currency_limit_amount), currencyLimitResetDays: d.currency_limit_reset_days,
       percentageLimit: toNumber(d.percentage_limit), tipLimit: toNumber(d.tip_limit), tipLimitResetDays: d.tip_limit_reset_days,
@@ -232,7 +303,7 @@ export async function getMyProfileData(adminUserId: string) {
     })),
     socials: socials.filter((s) => s.username !== "__pending__").map((s) => ({
       id: s.id, platform: s.platform, username: s.username,
-      followerCount: s.follower_count, lastFetchedAt: s.last_fetched_at?.toISOString() ?? null,
+      followerCount: s.follower_count, lastFetchedAt: s.last_fetched_at ? new Date(s.last_fetched_at).toISOString() : null,
     })),
   };
 }

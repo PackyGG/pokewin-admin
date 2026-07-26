@@ -77,7 +77,7 @@ export default function AdminError({
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <p className="text-xs text-muted-foreground">
           The most common causes for this admin app: a backend / DB query
-          that errored, a Prisma schema field that doesn&apos;t exist on the
+          that errored, a schema field that doesn&apos;t exist on the
           live DB yet, or a transient network blip to the backend API.
           Server logs (Vercel Functions) have the full stack — search for
           the digest above.

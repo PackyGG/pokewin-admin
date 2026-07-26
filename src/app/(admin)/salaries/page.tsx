@@ -1,9 +1,9 @@
 import { Coins, Users, Receipt, Wallet } from "lucide-react";
-import { adminDb } from "@/lib/admin-db";
+import { desc, eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { salary_employees, salary_payments } from "@/lib/db-schema/admin/schema";
 import { requireMotha } from "@/lib/salary/motha-gate";
-import { ensureSalarySchema } from "@/lib/salary/ensure-schema";
 import { addressKind } from "@/lib/salary/wallet";
-import { logError } from "@/lib/errors/logger";
 import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { SalariesClient } from "./salaries-client";
@@ -39,28 +39,16 @@ function payDayStatus(payDay: number | null, now: Date): "due" | "ok" | null {
 
 export default async function SalariesPage() {
   await requireMotha();
-  // Defensive — the original migration created salary_wallet which
-  // the latest schema drops. ensureSalarySchema runs the DROP +
-  // CREATE-IF-NOT-EXISTS sequence so a stale env self-converges.
-  //
-  // We still don't rethrow (the reads below will surface a clearer error if
-  // the schema is genuinely missing), but a silent swallow hid real DDL
-  // failures — log it so a broken self-heal is visible in the server logs
-  // (ADMIN-DB writes are permitted; the failure is worth seeing). No secrets
-  // are logged — the logger only emits err.name/.message.
-  await ensureSalarySchema().catch((err) => {
-    logError("salaries.ensureSchema", "ensureSalarySchema failed", err);
-  });
-
   const [employees, payments] = await Promise.all([
-    adminDb.salary_employees.findMany({
-      orderBy: [{ active: "desc" }, { discord_name: "asc" }],
-    }),
-    adminDb.salary_payments.findMany({
-      orderBy: { paid_at: "desc" },
-      take: 100,
-      include: { employee: { select: { discord_name: true } } },
-    }),
+    adminDrizzle.select().from(salary_employees)
+      .orderBy(desc(salary_employees.active), salary_employees.discord_name),
+    adminDrizzle.select({
+      id: salary_payments.id, employee_id: salary_payments.employee_id,
+      payment_link: salary_payments.payment_link, paid_at: salary_payments.paid_at,
+      employee_discord_name: salary_employees.discord_name,
+    }).from(salary_payments)
+      .innerJoin(salary_employees, eq(salary_employees.id, salary_payments.employee_id))
+      .orderBy(desc(salary_payments.paid_at)).limit(100),
   ]);
 
   const now = new Date();
@@ -158,9 +146,9 @@ export default async function SalariesPage() {
           payments={payments.map((p) => ({
             id: p.id,
             employeeId: p.employee_id,
-            employeeDiscordName: p.employee.discord_name,
+            employeeDiscordName: p.employee_discord_name,
             paymentLink: p.payment_link,
-            paidAt: p.paid_at.toISOString(),
+            paidAt: new Date(p.paid_at).toISOString(),
           }))}
         />
       </FadeIn>

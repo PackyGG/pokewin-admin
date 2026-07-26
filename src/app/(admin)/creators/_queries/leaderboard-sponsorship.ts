@@ -1,6 +1,8 @@
 import "server-only";
 
-import { adminDb } from "@/lib/admin-db";
+import { inArray } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import { admin_leaderboard_sponsorship } from "@/lib/db-schema/admin/schema";
 import { toNumber } from "@/lib/utils/decimal";
 import { LB_HOUSE_SHARE } from "@/lib/deal-economics";
 
@@ -21,10 +23,16 @@ export async function getLeaderboardSponsorshipMap(
   leaderboardIds: string[],
 ): Promise<Map<string, number>> {
   if (leaderboardIds.length === 0) return new Map();
-  const rows = await adminDb.admin_leaderboard_sponsorship.findMany({
-    where: { leaderboard_id: { in: leaderboardIds } },
-    select: { leaderboard_id: true, sponsored_percentage: true },
-  });
+  const rows = await adminDrizzle
+    .select({
+      leaderboard_id: admin_leaderboard_sponsorship.leaderboard_id,
+      sponsored_percentage:
+        admin_leaderboard_sponsorship.sponsored_percentage,
+    })
+    .from(admin_leaderboard_sponsorship)
+    .where(
+      inArray(admin_leaderboard_sponsorship.leaderboard_id, leaderboardIds),
+    );
   return new Map(
     rows.map((r) => [r.leaderboard_id, toNumber(r.sponsored_percentage)]),
   );

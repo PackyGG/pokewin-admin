@@ -755,7 +755,7 @@
    320px when a dock expands — the open 320px panel is a fixed right-0
    OVERLAY that floats on top, so opening a dock never reflows the layout.
    Only applied at lg+ — that's the breakpoint where the docks are meant to
-   sit beside content (mirrors the old LiveMoneyChatSpacer). This rule is
+   sit beside content. This rule is
    intentionally unlayered so it overrides the layered `md:p-6` right
    padding utility on the scroll container. */
 :root {
