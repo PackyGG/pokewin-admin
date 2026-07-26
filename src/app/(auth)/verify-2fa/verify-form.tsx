@@ -7,15 +7,29 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { verify2FA, startPasskeyLogin, verifyPasskeyLogin } from "./actions";
+import { PASSKEY_SIGNIN_FAILED_HINT } from "@/lib/passkey-migration";
 
 export function VerifyForm({ hasPasskeys = false }: { hasPasskeys?: boolean }) {
   const [state, formAction, pending] = useActionState(verify2FA, {});
   const [useRecovery, setUseRecovery] = useState(false);
   const [passkeyPending, setPasskeyPending] = useState(false);
   const [passkeyError, setPasskeyError] = useState<string | null>(null);
+  /**
+   * Set when a passkey attempt failed for a reason consistent with the
+   * packydash.com RP-ID cutover — the browser had no usable credential, or the
+   * server rejected the one it got. We can't know WHICH credential was tried
+   * (the browser picks silently), so this surfaces the likely cause plus the
+   * route that definitely works, instead of leaving someone staring at a bare
+   * "could not sign in".
+   *
+   * Deliberately NOT shown for a user-cancelled prompt — that's a deliberate
+   * action, not a failure.
+   */
+  const [showMigrationHint, setShowMigrationHint] = useState(false);
 
   async function handlePasskey() {
     setPasskeyError(null);
+    setShowMigrationHint(false);
     setPasskeyPending(true);
     try {
       const optionsJSON = await startPasskeyLogin();
@@ -35,15 +49,26 @@ export function VerifyForm({ hasPasskeys = false }: { hasPasskeys?: boolean }) {
       }
       if (result?.error) {
         setPasskeyError(result.error);
+        // The server had a credential but wouldn't accept it — the classic
+        // shape of an old-domain passkey.
+        setShowMigrationHint(true);
       }
       setPasskeyPending(false);
     } catch (err) {
       if (err instanceof Error && err.name === "NotAllowedError") {
-        setPasskeyError("Passkey sign-in was cancelled.");
+        // Covers BOTH a deliberate cancel and "the browser found nothing it
+        // could offer for this domain" — which is exactly what a pre-cutover
+        // passkey looks like from here, since the browser never even shows it.
+        // The copy has to work for both readings.
+        setPasskeyError(
+          "Passkey sign-in was cancelled, or your browser had no passkey for this domain.",
+        );
+        setShowMigrationHint(true);
       } else {
         setPasskeyError(
           err instanceof Error ? err.message : "Could not sign in with passkey.",
         );
+        setShowMigrationHint(true);
       }
       setPasskeyPending(false);
     }
@@ -55,6 +80,14 @@ export function VerifyForm({ hasPasskeys = false }: { hasPasskeys?: boolean }) {
         {(state?.error || passkeyError) && (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {state?.error || passkeyError}
+          </div>
+        )}
+        {/* Domain-move explainer. Amber, not destructive: nothing is wrong with
+            the account and the way in is one field below — this is guidance,
+            not another error. */}
+        {showMigrationHint && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs leading-relaxed text-amber-700 dark:text-amber-400">
+            {PASSKEY_SIGNIN_FAILED_HINT}
           </div>
         )}
 

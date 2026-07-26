@@ -24,6 +24,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { formatDate } from "@/lib/utils/format";
 import {
+  PASSKEY_STALE_BODY,
+  isPasskeyFromOldDomain,
+} from "@/lib/passkey-migration";
+import {
   listMyPasskeys,
   startPasskeyRegistration,
   finishPasskeyRegistration,
@@ -210,7 +214,7 @@ export function PasskeysCard({ active }: { active: boolean }) {
                   </div>
                 ) : (
                   <>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="truncate text-sm font-medium">
                         {pk.deviceName || "Unnamed passkey"}
                       </span>
@@ -222,6 +226,17 @@ export function PasskeysCard({ active }: { active: boolean }) {
                           Synced
                         </Badge>
                       )}
+                      {/* A credential created before the packydash.com RP-ID
+                          cutover is bound to the old domain — the browser won't
+                          offer it here. Say so BEFORE it fails at sign-in. */}
+                      {isPasskeyFromOldDomain(pk.createdAt) && (
+                        <Badge
+                          variant="outline"
+                          className="border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-600 dark:text-amber-400"
+                        >
+                          Needs re-adding
+                        </Badge>
+                      )}
                     </div>
                     <p className="truncate text-xs text-muted-foreground">
                       Added {formatDate(pk.createdAt)}
@@ -229,6 +244,11 @@ export function PasskeysCard({ active }: { active: boolean }) {
                         ? ` · Last used ${formatDate(pk.lastUsedAt)}`
                         : " · Never used"}
                     </p>
+                    {isPasskeyFromOldDomain(pk.createdAt) && (
+                      <p className="mt-1 text-[11px] leading-relaxed text-amber-600 dark:text-amber-400">
+                        {PASSKEY_STALE_BODY}
+                      </p>
+                    )}
                   </>
                 )}
               </div>

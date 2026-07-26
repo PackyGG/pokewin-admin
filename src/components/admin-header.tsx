@@ -45,6 +45,7 @@ import {
 } from "@/app/(admin)/profile/profile-dialog";
 import { useTimezoneContext } from "@/components/timezone-provider";
 import { NotificationBell } from "@/components/notification-bell";
+import { PasskeySetupPrompt } from "@/components/passkey-setup-prompt";
 import { cn } from "@/lib/utils";
 import type { DbEnv } from "@/lib/db-env";
 import type { AdminPreferences } from "@/lib/admin-preferences-types";
@@ -518,6 +519,13 @@ export function AdminHeader({
           ("My Profile" / "Change password") and the timezone "Custom…"
           row. Renders via a portal, so its position here doesn't affect
           header layout. Replaces the removed /profile route. */}
+      {/* One-time nudge for an admin with no passkey that works on this domain
+          (including someone whose only passkeys predate the packydash.com
+          RP-ID cutover). Renders via a portal and self-suppresses when there is
+          nothing to prompt, so its position here doesn't affect header layout.
+          Mounted in the shared header so all four shells get it from one place.
+          It is a suggestion, never a gate — TOTP is unaffected. */}
+      <PasskeySetupPrompt />
       <ProfileDialog
         open={profileOpen}
         onOpenChange={setProfileOpen}
