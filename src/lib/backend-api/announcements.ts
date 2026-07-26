@@ -1,5 +1,9 @@
 import "server-only";
 
+import { desc, sql } from "drizzle-orm";
+
+import { getDrizzleDb } from "@/lib/db";
+import { announcements } from "@/lib/db-schema/main/schema";
 import { backendApi } from "./client";
 import type { AnnouncementPayload } from "@/lib/announcement-payload";
 
@@ -67,10 +71,63 @@ type ListSuccess<T> = {
   meta: { total: number; limit: number; offset: number; hasMore: boolean };
 };
 
-export const getAnnouncements = (params?: { limit?: number; offset?: number }) =>
-  backendApi.get<ListSuccess<Announcement>>("/admin/announcements", {
-    query: { limit: params?.limit, offset: params?.offset },
-  });
+async function getAnnouncementsFromPostgres(
+  params?: { limit?: number; offset?: number },
+): Promise<ListSuccess<Announcement>> {
+  const db = await getDrizzleDb();
+  const limit = Math.min(
+    100,
+    Math.max(1, Math.trunc(params?.limit ?? 25)),
+  );
+  const offset = Math.max(0, Math.trunc(params?.offset ?? 0));
+  const [rows, totalRows] = await Promise.all([
+    db
+      .select()
+      .from(announcements)
+      .orderBy(desc(announcements.created_at))
+      .limit(limit)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(announcements),
+  ]);
+  const total = totalRows[0]?.count ?? 0;
+  const data: Announcement[] = rows.map((row) => ({
+    ...row,
+    payload: row.payload as AnnouncementPayload,
+    audience_roles:
+      row.audience_roles as AnnouncementAudienceRole[] | null,
+  }));
+  return {
+    success: true,
+    data,
+    meta: {
+      total,
+      limit,
+      offset,
+      hasMore: offset + data.length < total,
+    },
+  };
+}
+
+export const getAnnouncements = async (
+  params?: { limit?: number; offset?: number },
+): Promise<ListSuccess<Announcement>> => {
+  try {
+    return await backendApi.get<ListSuccess<Announcement>>(
+      "/admin/announcements",
+      {
+        query: { limit: params?.limit, offset: params?.offset },
+      },
+    );
+  } catch (error) {
+    console.warn(
+      "[announcements-api] backend list read failed; using PostgreSQL",
+      error,
+    );
+    return getAnnouncementsFromPostgres(params);
+  }
+};
 
 export const createAnnouncement = (input: CreateAnnouncementInput) =>
   backendApi

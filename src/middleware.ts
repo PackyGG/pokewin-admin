@@ -106,6 +106,9 @@ export async function middleware(request: NextRequest) {
         308,
       );
     }
+    if (appHost?.basePath === "/antifraud" && pathname === "/settings/api") {
+      return NextResponse.redirect(new URL("/api", request.url), 308);
+    }
 
     // Legacy /chat bookmark → resolve the redirect at the HTTP layer, BEFORE
     // React renders. chat/page.tsx did this with an in-render redirect(); an

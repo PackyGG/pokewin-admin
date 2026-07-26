@@ -2,11 +2,10 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { backendApi } from "@/lib/backend-api/client";
+import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 
 import type {
   LeaderboardApprovalStatus,
-  LeaderboardPreviewRow,
   LeaderboardTimeStatus,
 } from "./leaderboards-preview";
 
@@ -37,30 +36,18 @@ export type PreviousLeaderboardRow = {
   time_status: LeaderboardTimeStatus;
 };
 
-type ListRow = LeaderboardPreviewRow;
-
-type ListResponse = {
-  success: boolean;
-  data: { leaderboards: ListRow[]; total: number };
-};
-
 // Window of recent boards to scan for ended ones. Bounded so the read stays
 // cheap; the card surfaces "view all" for the rare creator who exceeds it.
 const PREVIOUS_LEADERBOARDS_WINDOW = 50;
 
 const cachedPreviousLeaderboards = unstable_cache(
   async (userId: string): Promise<PreviousLeaderboardRow[]> => {
-    const res = await backendApi.get<ListResponse>(
-      "/admin/affiliate-leaderboards",
-      {
-        query: {
-          creator_user_id: userId,
-          limit: PREVIOUS_LEADERBOARDS_WINDOW,
-          offset: 0,
-        },
-      },
-    );
-    return (res.data.leaderboards ?? [])
+    const res = await affiliateLeaderboardsApi.list({
+      creator_user_id: userId,
+      limit: PREVIOUS_LEADERBOARDS_WINDOW,
+      offset: 0,
+    });
+    return (res.leaderboards ?? [])
       .filter((r) => r.time_status === "ended")
       .map((r) => ({
         id: r.id,

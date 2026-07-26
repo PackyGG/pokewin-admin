@@ -2,13 +2,13 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { backendApi } from "@/lib/backend-api/client";
+import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 
 /**
  * Cached leaderboards preview for the hub Overview **Affiliate
  * Leaderboards card** (newest 6 boards for one creator).
  *
- * The card used to fire `backendApi.get("/admin/affiliate-leaderboards")`
+ * The card used to fire the backend endpoint directly
  * inline on EVERY Overview re-render — including each `?activityPeriod=`
  * switch, which only re-keys the activity chart. 120s TTL absorbs those;
  * `revalidateTag("creator-leaderboards")` in the admin leaderboard
@@ -40,11 +40,6 @@ export type LeaderboardPreviewRow = {
   creator_user_id: string;
 };
 
-type ListResponse = {
-  success: boolean;
-  data: { leaderboards: LeaderboardPreviewRow[]; total: number };
-};
-
 export type LeaderboardsPreview = {
   rows: LeaderboardPreviewRow[];
   total: number;
@@ -54,19 +49,14 @@ export const LEADERBOARDS_PREVIEW_LIMIT = 6;
 
 const cachedLeaderboardsPreview = unstable_cache(
   async (userId: string): Promise<LeaderboardsPreview> => {
-    const res = await backendApi.get<ListResponse>(
-      "/admin/affiliate-leaderboards",
-      {
-        query: {
-          creator_user_id: userId,
-          limit: LEADERBOARDS_PREVIEW_LIMIT,
-          offset: 0,
-        },
-      },
-    );
+    const res = await affiliateLeaderboardsApi.list({
+      creator_user_id: userId,
+      limit: LEADERBOARDS_PREVIEW_LIMIT,
+      offset: 0,
+    });
     return {
-      rows: res.data.leaderboards ?? [],
-      total: res.data.total ?? 0,
+      rows: res.leaderboards ?? [],
+      total: res.total ?? 0,
     };
   },
   ["creator-hub-leaderboards-preview-v1"],

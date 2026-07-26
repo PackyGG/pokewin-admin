@@ -58,6 +58,30 @@ test("all creator backend read families fall back to canonical PostgreSQL", () =
   }
 });
 
+test("creator detail leaderboard cards use the resilient shared read client", () => {
+  for (const file of [
+    "src/app/(admin)/creators/[userId]/leaderboards-card.tsx",
+    "src/app/(creator-hub)/creator-hub/creators/[id]/_queries/leaderboards-preview.ts",
+    "src/app/(creator-hub)/creator-hub/creators/[id]/_queries/previous-leaderboards.ts",
+  ]) {
+    const source = read(file);
+    assert.match(source, /affiliateLeaderboardsApi\.list/);
+    assert.doesNotMatch(source, /backendApi\.get/);
+  }
+});
+
+test("upgrader and announcement reads also recover from PostgreSQL", () => {
+  const upgrader = read("src/lib/backend-api/upgrader.ts");
+  const announcements = read("src/lib/backend-api/announcements.ts");
+
+  assert.match(upgrader, /listOutputsFromPostgres/);
+  assert.match(upgrader, /upgrader_output_cards/);
+  assert.match(upgrader, /innerJoin\(cards/);
+  assert.match(announcements, /getAnnouncementsFromPostgres/);
+  assert.match(announcements, /\.from\(announcements\)/);
+  assert.match(announcements, /count\(\*\)::int/);
+});
+
 test("legacy antifraud notifications leave the segment host explicitly", () => {
   const page = read(
     "src/app/(antifraud)/antifraud/notifications/page.tsx",
@@ -75,6 +99,11 @@ test("legacy antifraud notifications leave the segment host explicitly", () => {
     middleware,
     /https:\/\/\$\{apex\.host\}\/system\/staff-notifications/,
   );
+  assert.match(
+    middleware,
+    /appHost\?\.basePath === "\/antifraud" && pathname === "\/settings\/api"/,
+  );
+  assert.match(middleware, /new URL\("\/api", request\.url\)/);
 });
 
 test("idempotent backend reads retry bounded transient failures", () => {

@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { Trophy, ExternalLink, Plus } from "lucide-react";
 
-import { backendApi } from "@/lib/backend-api/client";
-import { BackendApiError } from "@/lib/backend-api/errors";
+import {
+    affiliateLeaderboardsApi,
+    type ListResult,
+} from "@/lib/backend-api/affiliate-leaderboards";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,14 +46,6 @@ type LeaderboardRow = {
     creator_user_id: string;
 };
 
-type ListResponse = {
-    success: boolean;
-    data: {
-        leaderboards: LeaderboardRow[];
-        total: number;
-    };
-};
-
 const APPROVAL_COLORS: Record<ApprovalStatus, string> = {
     pending: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
     approved: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
@@ -67,28 +61,18 @@ const TIME_COLORS: Record<TimeStatus, string> = {
 const PREVIEW_LIMIT = 10;
 
 export async function LeaderboardsCard({ userId }: { userId: string }) {
-    let response: ListResponse | null = null;
+    let response: ListResult | null = null;
     try {
-        response = await backendApi.get<ListResponse>("/admin/affiliate-leaderboards", {
-            query: { creator_user_id: userId, limit: PREVIEW_LIMIT, offset: 0 },
+        response = await affiliateLeaderboardsApi.list({
+            creator_user_id: userId,
+            limit: PREVIEW_LIMIT,
+            offset: 0,
         });
     } catch (err) {
-        // The backend admin endpoint may not be reachable in some envs; fail
-        // soft so the rest of the creator page still renders. This covers
-        // BOTH a structured BackendApiError (HTTP non-2xx — its message is a
-        // safe, intended summary) AND a raw transport failure (DNS / "fetch
-        // failed" / timeout that never became a BackendApiError) — the latter
-        // previously re-threw and took the whole creators segment into its
-        // error boundary. We log the raw error server-side and show a generic
-        // line for the non-BackendApiError case so no raw transport detail
-        // leaks into the DOM.
-        const isBackendErr = err instanceof BackendApiError;
-        if (!isBackendErr) {
-            console.error(
-                "[creators.detail.leaderboards] backend fetch failed (card degraded):",
-                err,
-            );
-        }
+        console.error(
+            "[creators.detail.leaderboards] backend and PostgreSQL reads failed (card degraded):",
+            err,
+        );
         return (
             <Card>
                 <CardHeader className="flex flex-row items-center justify-between">
@@ -107,17 +91,15 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                 </CardHeader>
                 <CardContent>
                     <p className="text-sm text-muted-foreground">
-                        {isBackendErr
-                            ? `Could not load leaderboards: ${err.message}`
-                            : "Could not load leaderboards — the backend was unreachable. Refresh to retry."}
+                        Could not load leaderboards. Refresh to retry.
                     </p>
                 </CardContent>
             </Card>
         );
     }
 
-    const rows = response?.data.leaderboards ?? [];
-    const total = response?.data.total ?? 0;
+    const rows: LeaderboardRow[] = response?.leaderboards ?? [];
+    const total = response?.total ?? 0;
     const manageHref = `/creators/leaderboards?creator_user_id=${encodeURIComponent(userId)}`;
 
     // Admin-side sponsored % per leaderboard (admin DB) so each row can
