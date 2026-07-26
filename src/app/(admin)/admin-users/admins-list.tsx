@@ -12,6 +12,7 @@ import {
   ADMINS_VIEW_STORAGE_KEY,
   parseAdminsViewMode,
 } from "./view-mode";
+import { groupAdminUsersByRole } from "./admin-user-sort";
 
 /**
  * Client wrapper for the Admins list — switches between the Gallery (cards)
@@ -43,6 +44,7 @@ export function AdminsList({
 
   const rawView = searchParams.get("view");
   const view = parseAdminsViewMode(rawView);
+  const groups = groupAdminUsersByRole(rows);
 
   // Re-apply a saved view when the URL has no explicit choice. Runs only when
   // `?view=` is absent, so an explicit URL/share link always wins.
@@ -65,7 +67,7 @@ export function AdminsList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawView]);
 
-  if (view === "rows") {
+  if (rows.length === 0) {
     return (
       <AdminUsersTable
         rows={rows}
@@ -77,11 +79,46 @@ export function AdminsList({
   }
 
   return (
-    <AdminUsersGallery
-      rows={rows}
-      isCurrentUserAdmin={isCurrentUserAdmin}
-      currentUserId={currentUserId}
-      rolesColumnExists={rolesColumnExists}
-    />
+    <div className="space-y-8">
+      {groups.map((group) => {
+        const headingId = `admin-group-${group.key}`;
+
+        return (
+          <section
+            key={group.key}
+            aria-labelledby={headingId}
+            className="space-y-3"
+          >
+            <div className="flex items-center gap-2 border-b border-border/60 pb-2">
+              <h3
+                id={headingId}
+                className="text-xs font-semibold uppercase tracking-[0.14em] text-foreground"
+              >
+                {group.label}
+              </h3>
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
+                {group.rows.length}
+              </span>
+            </div>
+
+            {view === "rows" ? (
+              <AdminUsersTable
+                rows={group.rows}
+                isCurrentUserAdmin={isCurrentUserAdmin}
+                currentUserId={currentUserId}
+                rolesColumnExists={rolesColumnExists}
+              />
+            ) : (
+              <AdminUsersGallery
+                rows={group.rows}
+                isCurrentUserAdmin={isCurrentUserAdmin}
+                currentUserId={currentUserId}
+                rolesColumnExists={rolesColumnExists}
+              />
+            )}
+          </section>
+        );
+      })}
+    </div>
   );
 }
