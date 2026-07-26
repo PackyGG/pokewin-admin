@@ -9,7 +9,9 @@ on:
 
 concurrency:
   group: quality-${{ github.ref }}
-  cancel-in-progress: true
+  # Let the active gate finish so frequent pushes do not report a healthy
+  # build as failed. GitHub keeps only the newest waiting run per ref.
+  cancel-in-progress: false
 
 jobs:
   verify:
