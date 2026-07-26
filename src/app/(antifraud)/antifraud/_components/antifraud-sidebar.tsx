@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Braces,
+  Fingerprint,
   Gauge,
   LayoutDashboard,
   RadioTower,
@@ -54,6 +55,7 @@ const WORKSPACE_NAV: NavItem[] = [
   { label: "Signups", href: "/antifraud/signups", icon: UserRoundSearch },
   { label: "Live Monitor", href: "/antifraud/monitor", icon: RadioTower },
   { label: "Account Review", href: "/antifraud/reviews", icon: ShieldAlert },
+  { label: "KYC", href: "/antifraud/kyc", icon: Fingerprint },
 ];
 
 /**
