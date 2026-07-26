@@ -29,6 +29,8 @@ import {
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LinkPending } from "@/components/ux";
+import { useAppHost, useCrossAppHrefs } from "@/lib/use-app-host";
+import { hrefFrom } from "@/lib/app-hosts";
 
 /**
  * Antifraud sidebar — the swapped nav rendered by the Antifraud layout INSTEAD
@@ -72,24 +74,34 @@ function NavMenu({
   items,
   pathname,
   onNavTap,
+  toHref,
 }: {
   items: NavItem[];
   pathname: string;
   onNavTap: () => void;
+  /**
+   * Canonical path → the href for the current host. On fraud.packydash.com the
+   * `/antifraud` prefix is stripped, which BOTH keeps the URL clean and keeps
+   * the active check below honest: after the middleware rewrite the browser URL
+   * is the short form, so comparing it against the long form would mark every
+   * item inactive.
+   */
+  toHref: (path: string) => string;
 }) {
   return (
     <SidebarMenu>
       {items.map((item, i) => {
         const Icon = item.icon;
+        const href = toHref(item.href);
+        const root = toHref("/antifraud");
         const isActive =
-          pathname === item.href ||
-          (item.href !== "/antifraud" && pathname.startsWith(item.href + "/"));
+          pathname === href || (href !== root && pathname.startsWith(href + "/"));
         return (
           <SidebarMenuItem key={`${item.label}-${i}`}>
             <SidebarMenuButton
               isActive={isActive}
               tooltip={item.label}
-              render={<Link href={item.href} />}
+              render={<Link href={href} />}
               onClick={onNavTap}
               className="h-11 md:h-9 group-data-[collapsible=icon]:h-8!"
             >
@@ -120,6 +132,12 @@ export function AntifraudSidebar({
 }) {
   const pathname = usePathname();
   const { isMobile, setOpenMobile } = useSidebar();
+  // Host-aware hrefs: on fraud.packydash.com the `/antifraud` prefix is
+  // stripped from in-app links, and "Back to Admin" becomes an absolute URL to
+  // the apex (a bare /dashboard would be rewritten into this host's segment).
+  const appHost = useAppHost();
+  const { admin: adminHref } = useCrossAppHrefs();
+  const toHref = (path: string) => (appHost ? hrefFrom(appHost, path) : path);
 
   // Close the mobile drawer on a navigation tap (same UX the other sidebars
   // apply — otherwise the new page renders behind the still-open sheet).
@@ -132,7 +150,7 @@ export function AntifraudSidebar({
       {/* Packy wordmark — same assets + sizing as the main AppSidebar header. */}
       <SidebarHeader className="border-b border-border px-4 py-3 flex items-center justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:h-14 group-data-[collapsible=icon]:py-0">
         <Link
-          href="/antifraud"
+          href={toHref("/antifraud")}
           onClick={handleNavTap}
           title="Antifraud"
           className="flex flex-col items-center rounded-md outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring motion-safe:transition-[transform,opacity] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-95"
@@ -171,7 +189,7 @@ export function AntifraudSidebar({
           mirrored arrow + icon placement. */}
       <div className="px-2 pt-2 group-data-[collapsible=icon]:px-0">
         <Link
-          href="/dashboard"
+          href={adminHref}
           onClick={handleNavTap}
           title="Back to Admin"
           className={cn(
@@ -203,6 +221,7 @@ export function AntifraudSidebar({
               items={WORKSPACE_NAV}
               pathname={pathname}
               onNavTap={handleNavTap}
+              toHref={toHref}
             />
           </SidebarGroupContent>
         </SidebarGroup>
@@ -214,6 +233,7 @@ export function AntifraudSidebar({
               items={TEAM_NAV}
               pathname={pathname}
               onNavTap={handleNavTap}
+              toHref={toHref}
             />
           </SidebarGroupContent>
         </SidebarGroup>
@@ -226,6 +246,7 @@ export function AntifraudSidebar({
                 items={MANAGE_NAV}
                 pathname={pathname}
                 onNavTap={handleNavTap}
+                toHref={toHref}
               />
             </SidebarGroupContent>
           </SidebarGroup>

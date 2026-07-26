@@ -26,6 +26,8 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
+import { useAppHost, useCrossAppHrefs } from "@/lib/use-app-host";
+import { hrefFrom } from "@/lib/app-hosts";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LinkPending } from "@/components/ux";
 
@@ -79,25 +81,34 @@ function StudioNavMenu({
   items,
   pathname,
   onNavTap,
+  toHref,
 }: {
   items: StudioNavItem[];
   pathname: string;
   onNavTap: () => void;
+  /**
+   * Canonical path → the href for the current host. On packs.packydash.com the
+   * `/pack-studio` prefix is stripped, which BOTH keeps the URL clean and keeps
+   * the active check honest: after the middleware rewrite the browser URL is
+   * the short form, so comparing it against the long form would mark every item
+   * inactive.
+   */
+  toHref: (path: string) => string;
 }) {
   return (
     <SidebarMenu>
       {items.map((item, i) => {
         const Icon = item.icon;
+        const href = toHref(item.href);
+        const root = toHref("/pack-studio");
         const isActive =
-          pathname === item.href ||
-          (item.href !== "/pack-studio" &&
-            pathname.startsWith(item.href + "/"));
+          pathname === href || (href !== root && pathname.startsWith(href + "/"));
         return (
           <SidebarMenuItem key={`${item.label}-${i}`}>
             <SidebarMenuButton
               isActive={isActive}
               tooltip={item.label}
-              render={<Link href={item.href} />}
+              render={<Link href={href} />}
               onClick={onNavTap}
               className="h-11 md:h-9 group-data-[collapsible=icon]:h-8!"
             >
@@ -134,6 +145,12 @@ export function PackStudioSidebar({
 }) {
   const pathname = usePathname();
   const { isMobile, setOpenMobile } = useSidebar();
+  // Host-aware links: strip the `/pack-studio` prefix while on the Studio's own
+  // host, and make "Back to Admin" absolute — a bare /dashboard there would be
+  // rewritten into this host's segment.
+  const appHost = useAppHost();
+  const { admin: adminHref } = useCrossAppHrefs();
+  const toHref = (path: string) => (appHost ? hrefFrom(appHost, path) : path);
 
   // Append owner-only (History) and operator-only (Drafts) entries after the
   // shared workspace nav. Owners are implicitly retune-operators, but the prop
@@ -156,7 +173,7 @@ export function PackStudioSidebar({
           Pack Studio title/subtitle sit below the logo when expanded. */}
       <SidebarHeader className="border-b border-border px-4 py-3 flex items-center justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:h-14 group-data-[collapsible=icon]:py-0">
         <Link
-          href="/pack-studio"
+          href={toHref("/pack-studio")}
           onClick={handleNavTap}
           title="Pack Studio"
           className="flex flex-col items-center rounded-md outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring motion-safe:transition-[transform,opacity] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-95"
@@ -195,7 +212,7 @@ export function PackStudioSidebar({
           two-line label, mirrored arrow + icon placement. */}
       <div className="px-2 pt-2 group-data-[collapsible=icon]:px-0">
         <Link
-          href="/dashboard"
+          href={adminHref}
           onClick={handleNavTap}
           title="Back to Admin"
           className={cn(
@@ -227,6 +244,7 @@ export function PackStudioSidebar({
               items={navItems}
               pathname={pathname}
               onNavTap={handleNavTap}
+              toHref={toHref}
             />
           </SidebarGroupContent>
         </SidebarGroup>

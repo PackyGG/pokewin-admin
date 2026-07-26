@@ -313,6 +313,9 @@ export function AppSidebar({
   isOwner?: boolean;
 }) {
   const pathname = usePathname();
+  // Sub-app portals must be ABSOLUTE on a segment host — a bare /pack-studio
+  // there would be rewritten into the current segment. Resolved client-side
+  // (see use-app-host) so no layout has to thread the hostname down.
   const effectiveRoles = roles ?? [role];
   const isAdmin = effectiveRoles.includes("admin");
   const isCreator = effectiveRoles.includes("creator");

@@ -28,6 +28,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
+import { useCrossAppHrefs } from "@/lib/use-app-host";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LinkPending } from "@/components/ux";
 
@@ -138,6 +139,9 @@ function HubNavMenu({
 
 export function CreatorHubSidebar() {
   const pathname = usePathname();
+  // "Back to Admin" must be ABSOLUTE when the Hub is reached from a segment
+  // host, otherwise the bare /dashboard would rewrite into that segment.
+  const crossApp = useCrossAppHrefs();
   const { isMobile, setOpenMobile } = useSidebar();
 
   // Close the mobile drawer on a navigation tap (same UX the main sidebar
@@ -191,7 +195,7 @@ export function CreatorHubSidebar() {
           two-line label, mirrored arrow + icon placement. */}
       <div className="px-2 pt-2 group-data-[collapsible=icon]:px-0">
         <Link
-          href="/dashboard"
+          href={crossApp.admin}
           onClick={handleNavTap}
           title="Back to Admin"
           className={cn(

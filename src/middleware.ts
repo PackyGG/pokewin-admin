@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { decrypt } from "@/lib/session";
 import {
-  antifraudRewritePath,
-  isAntifraudHost,
-  ANTIFRAUD_BASE_PATH,
-} from "@/lib/antifraud/host";
+  APP_HOSTS,
+  isAllowedOnHost,
+  redirectTargetForHost,
+  resolveAppHost,
+  rewritePathForHost,
+} from "@/lib/app-hosts";
 
 const PUBLIC_ROUTES = ["/login"];
 const PENDING_2FA_ROUTES = ["/verify-2fa", "/setup-2fa"];
@@ -21,28 +23,42 @@ const DEFAULT_ROUTE_BY_ROLE: Record<string, string> = {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // ── Antifraud host routing ───────────────────────────────────────────────
-  // The Antifraud workspace is ALSO served from its own hostname
-  // (fraud.packydash.com). Requests arriving there are REWRITTEN into the
-  // /antifraud route segment, so one build + one session serves both entry
-  // points and `fraud.packydash.com/reviews` renders the same tree as
-  // `packydash.com/antifraud/reviews`.
+  // ── Multi-host routing ───────────────────────────────────────────────────
+  // One deployment serves several hostnames, each fronting a different part of
+  // the app (see src/lib/app-hosts.ts):
   //
-  // This is INERT until the DNS record points at this deployment: a request
-  // whose Host doesn't match falls through with `onAntifraudHost === false` and
-  // every line below behaves exactly as it did before. Auth still runs first —
-  // the rewrite is applied only on the paths that would otherwise have been
-  // served (`NextResponse.next()`), never in place of a login redirect.
-  const onAntifraudHost = isAntifraudHost(request.headers.get("host"));
-  const antifraudTarget = onAntifraudHost
-    ? antifraudRewritePath(pathname)
+  //   packydash.com           → main dashboard   (landing host, no rewrite)
+  //   packs.packydash.com     → Pack Studio      (rewrites into /pack-studio)
+  //   fraud.packydash.com     → Antifraud        (rewrites into /antifraud)
+  //   marketing.packydash.com → marketing pages  (landing host, no rewrite)
+  //
+  // INERT until a hostname actually resolves here: an unmatched Host yields
+  // `appHost === null` and every line below behaves exactly as it did on a
+  // single domain. Auth still runs FIRST — the rewrite is only ever applied to
+  // requests that would have been served anyway (`NextResponse.next()`), never
+  // in place of a login redirect.
+  const appHost = resolveAppHost(request.headers.get("host"));
+  const rewriteTarget = appHost ? rewritePathForHost(appHost, pathname) : null;
+
+  // Where this path really belongs, if not here. Two cases, both self-healing:
+  // a path owned by another sub-app's host (an /antifraud link opened on
+  // packs.packydash.com), and a main-app path on a segment host (the
+  // "Back to Admin" link, or a gate redirecting someone to /dashboard). Either
+  // way it 308s to the right hostname instead of 404ing.
+  const redirectTarget = appHost
+    ? redirectTargetForHost(appHost, pathname)
     : null;
 
-  /** Serve this request, rewriting into /antifraud when on the fraud host. */
+  /** Serve this request, rewriting into the host's segment when it has one. */
   const serve = () => {
-    if (!antifraudTarget) return NextResponse.next();
+    if (redirectTarget) {
+      const url = new URL(redirectTarget);
+      url.search = request.nextUrl.search;
+      return NextResponse.redirect(url, 308);
+    }
+    if (!rewriteTarget) return NextResponse.next();
     const url = request.nextUrl.clone();
-    url.pathname = antifraudTarget;
+    url.pathname = rewriteTarget;
     return NextResponse.rewrite(url);
   };
 
@@ -85,20 +101,53 @@ export async function middleware(request: NextRequest) {
     // #310). Doing it here removes that trigger entirely (same rationale as the
     // static config redirects in next.config.ts).
     if (pathname === "/chat") {
-      const dest = DEFAULT_ROUTE_BY_ROLE[session.role] ?? "/dashboard";
+      // Host-aware: on a segment host the role landing routes don't exist, so
+      // fall back to that host's own landing instead of a guaranteed 404.
+      const dest = appHost?.basePath
+        ? "/"
+        : DEFAULT_ROUTE_BY_ROLE[session.role] ?? "/dashboard";
       return NextResponse.redirect(new URL(dest, request.url));
     }
 
     const isSetup2FARoute = pathname === "/setup-2fa";
     if ((isPublicRoute || isPending2FARoute) && !isSetup2FARoute) {
-      // On the antifraud host the role landing routes (/dashboard, /users, …)
-      // don't exist — everything there lives under /antifraud. Send them to the
-      // host root instead, which the rewrite above resolves to the workspace.
-      const defaultRoute = onAntifraudHost
-        ? ANTIFRAUD_BASE_PATH
+      // Each host has its own landing page: a segment host's role routes
+      // (/dashboard, /users, …) don't exist there, and `marketing` deliberately
+      // lands on /analytics rather than the viewer's role default. Falling back
+      // to the role map keeps single-domain behaviour identical.
+      //
+      // On a segment host we bounce to "/" rather than to the base path
+      // itself: the rewrite resolves "/" to the segment anyway, and this keeps
+      // the visible URL clean (packs.packydash.com/ not /pack-studio).
+      const defaultRoute = appHost
+        ? appHost.basePath
+          ? "/"
+          : appHost.landing
         : DEFAULT_ROUTE_BY_ROLE[session.role] ?? "/dashboard";
       return NextResponse.redirect(new URL(defaultRoute, request.url));
     }
+
+    // ── Per-host front-door gate ─────────────────────────────────────────
+    // A support user has no business landing on packs. or marketing. — bounce
+    // them to the apex, where their own permissions apply as normal.
+    //
+    // This is ROUTING, not the security boundary, and it is deliberately
+    // coarse: middleware only has the signed JWT, so it can't see the ADMIN-DB
+    // access toggles or per-username allowlists, and `isAllowedOnHost` fails
+    // OPEN for anything it can't determine. The real gates are unchanged —
+    // each sub-app layout still runs `canAccessPackStudio` /
+    // `canAccessAntifraud` against fresh DB state, and every page still runs
+    // its own `requirePageAccess`. Nothing here grants access; it only
+    // redirects someone away from a door that clearly isn't theirs.
+    //
+    // Note this cannot lock anyone out: the apex has no role restriction, so
+    // the bounce always lands somewhere usable.
+    if (appHost && !isAllowedOnHost(appHost, session)) {
+      const apex = APP_HOSTS[0];
+      const url = new URL(`https://${apex.host}${apex.landing}`);
+      return NextResponse.redirect(url, 307);
+    }
+
     return serve();
   }
 

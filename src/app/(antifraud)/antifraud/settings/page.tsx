@@ -16,7 +16,7 @@ import {
   getAntifraudUserAccess,
 } from "@/lib/antifraud/access";
 import { channelConfigStatus } from "@/lib/antifraud/channels";
-import { DEFAULT_ANTIFRAUD_HOST, antifraudHosts } from "@/lib/antifraud/host";
+import { APP_HOSTS, ROOT_DOMAIN } from "@/lib/app-hosts";
 import {
   AccessListEditor,
   RoleAccessToggles,
@@ -99,7 +99,8 @@ async function AccessSection() {
 
 function IntegrationSection() {
   const channels = channelConfigStatus();
-  const hosts = antifraudHosts();
+  // Every hostname this deployment answers on, and what each one fronts.
+  const hosts = APP_HOSTS;
 
   const integrations = [
     {
@@ -188,33 +189,44 @@ function IntegrationSection() {
           <span className="text-sm font-semibold">Hostnames</span>
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Requests arriving on any of these hosts are served this workspace at
-          their root — <code className="font-mono">{hosts[0]}/reviews</code>{" "}
-          renders the same page as{" "}
-          <code className="font-mono">/antifraud/reviews</code> here. Nothing
-          happens until the DNS record and the Vercel domain exist; add more
-          hosts with <code className="font-mono">NEXT_PUBLIC_ANTIFRAUD_HOSTS</code>.
+          One deployment answers on all of these. A host with a segment serves
+          that sub-app at its root —{" "}
+          <code className="font-mono">fraud.{ROOT_DOMAIN}/reviews</code> renders
+          the same page as{" "}
+          <code className="font-mono">/antifraud/reviews</code> here. Add extra
+          hosts (preview domains, local) with{" "}
+          <code className="font-mono">NEXT_PUBLIC_APP_HOST_MAP</code>.
         </p>
-        <ul className="flex flex-wrap gap-1.5">
-          {hosts.map((host) => (
+        <ul className="space-y-1.5">
+          {hosts.map((entry) => (
             <li
-              key={host}
+              key={entry.host}
               className={cn(
-                "rounded-full border px-2.5 py-1 text-[11px] font-medium",
-                host === DEFAULT_ANTIFRAUD_HOST
-                  ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-600 dark:text-cyan-300"
-                  : "border-border/60 bg-muted/40 text-muted-foreground",
+                "flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[11px]",
+                entry.basePath === "/antifraud"
+                  ? "border-cyan-500/40 bg-cyan-500/10"
+                  : "border-border/60 bg-muted/30",
               )}
             >
-              {host}
+              <code className="font-mono font-medium">{entry.host}</code>
+              <span className="text-muted-foreground">→ {entry.label}</span>
+              <span className="ml-auto text-muted-foreground">
+                lands {entry.landing}
+              </span>
+              <span className="rounded-sm border border-border/60 px-1.5 py-0.5 uppercase tracking-wide text-muted-foreground">
+                {entry.allowRoles ? entry.allowRoles.join(" · ") : "all roles"}
+              </span>
             </li>
           ))}
         </ul>
         <p className="text-[11px] text-muted-foreground">
-          To share one login across the apex domain and this sub-domain, set{" "}
-          <code className="font-mono">SESSION_COOKIE_DOMAIN=.packydash.com</code>
-          . Leaving it unset keeps the session cookie host-only, exactly as it is
-          today.
+          The role chips are the front-door routing rule only — someone on the
+          wrong door is bounced to the apex. Actual authorization is unchanged:
+          each sub-app still runs its own DB-backed access gate, and every page
+          still runs its own permission check. Set{" "}
+          <code className="font-mono">SESSION_COOKIE_DOMAIN=.{ROOT_DOMAIN}</code>{" "}
+          so one login covers every host; leaving it unset keeps the cookie
+          host-only and forces a separate login per sub-domain.
         </p>
       </div>
 
