@@ -1,4 +1,5 @@
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
+import { buildCacheKey, rateLimit } from "@/lib/cache/redis";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,11 +28,37 @@ async function upstreamJson(baseUrl: string, token: string, path: string) {
   return response.json() as Promise<unknown>;
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
+  let actorId: string;
   try {
-    await requireAntifraudAccess();
+    const session = await requireAntifraudAccess();
+    actorId = session.userId;
   } catch {
     return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  if (request.headers.get("sec-fetch-site") === "cross-site") {
+    return Response.json({ error: "forbidden" }, { status: 403 });
+  }
+  const origin = request.headers.get("origin");
+  if (origin && origin !== new URL(request.url).origin) {
+    return Response.json({ error: "forbidden" }, { status: 403 });
+  }
+  const limit = await rateLimit(
+    buildCacheKey("ratelimit:antifraud-monitor-snapshot", [actorId]),
+    60,
+    60,
+  );
+  if (!limit.allowed) {
+    return Response.json(
+      { error: "rate_limited" },
+      {
+        status: 429,
+        headers: limit.resetSeconds
+          ? { "Retry-After": String(limit.resetSeconds) }
+          : undefined,
+      },
+    );
   }
 
   const { baseUrl, token } = monitorConfig();

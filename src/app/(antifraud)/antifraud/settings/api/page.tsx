@@ -20,16 +20,16 @@ type Endpoint = {
 
 const SERVICE_ENDPOINTS: readonly Endpoint[] = [
   { method: "GET", path: "/health", purpose: "Process liveness probe.", auth: "Public" },
-  { method: "GET", path: "/ready", purpose: "Source and antifraud database readiness.", auth: "Public" },
-  { method: "GET", path: "/v1/monitors/live", purpose: "Current three-minute behavior-monitor sessions.", auth: "Bearer service token" },
-  { method: "GET", path: "/v1/cases?status=&limit=", purpose: "Risk-ordered case list with subject summaries.", auth: "Bearer service token" },
-  { method: "GET", path: "/v1/cases/:id", purpose: "Case, events, provider checks, sessions and staff actions.", auth: "Bearer service token" },
-  { method: "GET", path: "/v1/rules", purpose: "All configured behavior-flow rules.", auth: "Bearer service token" },
-  { method: "PUT", path: "/v1/rules/:id", purpose: "Update a rule and broadcast the change live.", auth: "Bearer service token" },
-  { method: "POST", path: "/v1/cases/:id/decision", purpose: "Record an analyst decision and publish it live.", auth: "Bearer service token" },
-  { method: "GET", path: "/v1/top-rain?limit=", purpose: "Top rain winners from the source database.", auth: "Bearer service token" },
-  { method: "POST", path: "/v1/ws/tickets", purpose: "Create a 30-second, single-use live-stream ticket.", auth: "Bearer service token" },
-  { method: "WS", path: "/v1/live?ticket=", purpose: "Live signup, monitor, rule and case events.", auth: "Single-use Redis ticket" },
+  { method: "GET", path: "/ready", purpose: "Source and antifraud database readiness.", auth: "Bearer read token" },
+  { method: "GET", path: "/v1/monitors/live", purpose: "Current three-minute behavior-monitor sessions.", auth: "Bearer read token" },
+  { method: "GET", path: "/v1/cases?status=&limit=", purpose: "Risk-ordered case list with subject summaries.", auth: "Bearer read token" },
+  { method: "GET", path: "/v1/cases/:id", purpose: "Case, events, provider checks, sessions and staff actions.", auth: "Bearer read token" },
+  { method: "GET", path: "/v1/rules", purpose: "All configured behavior-flow rules.", auth: "Bearer read token" },
+  { method: "PUT", path: "/v1/rules/:id", purpose: "Update a rule and broadcast the change live.", auth: "Bearer admin token" },
+  { method: "POST", path: "/v1/cases/:id/decision", purpose: "Record an analyst decision and publish it live.", auth: "Bearer admin token" },
+  { method: "GET", path: "/v1/top-rain?limit=", purpose: "Top rain winners from the source database.", auth: "Bearer read token" },
+  { method: "POST", path: "/v1/ws/tickets", purpose: "Create a 30-second, single-use live-stream ticket.", auth: "Bearer read token" },
+  { method: "WS", path: "/v1/live", purpose: "Live signup, monitor, rule and case events.", auth: "Allowed origin + single-use ticket subprotocol" },
 ];
 
 const DASHBOARD_ENDPOINTS: readonly Endpoint[] = [

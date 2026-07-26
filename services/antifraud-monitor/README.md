@@ -13,11 +13,18 @@ It does not modify the Packy frontend or backend.
 - proxycheck.io IP enrichment with a 24-hour per-IP cache
 - Configurable three-minute monitor sessions
 - Durable risk events, cases, rule matches and staff decisions
-- Authenticated HTTP API and single-use-ticket WebSocket stream
+- Rate-limited HTTP API with separate read and admin-write credentials
+- Exact-origin WebSocket stream with 30-second, single-use subprotocol tickets
 - `GET /v1/top-rain` for the top rain winners
 
 Copy `.env.example` to `.env`, supply secrets and run `npm run dev`.
 
 Database TLS is explicit per connection. Railway private-network databases use
 `disable`; set the matching `*_DATABASE_SSL=require` variable when an external
-source or mirror requires TLS.
+source or mirror requires TLS. TLS verification is strict; provide the matching
+`*_DATABASE_CA` only when the server certificate needs a private CA.
+
+`API_TOKEN` is for reads and WebSocket ticket issuance. `API_ADMIN_TOKEN` is a
+different credential used only for rule edits and case decisions. Never expose
+either token to a browser. Mutation requests require a unique
+`idempotencyKey`; writes and their immutable audit rows commit transactionally.

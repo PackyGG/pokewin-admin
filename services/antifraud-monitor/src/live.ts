@@ -6,11 +6,14 @@ import type { WebSocket } from "ws";
 import type { LiveMessage } from "./types.js";
 
 const CHANNEL = "antifraud:live";
+const MAX_BUFFERED_BYTES = 512 * 1024;
+const HEARTBEAT_MS = 30_000;
 
 export class LiveBus {
   private readonly publisher: Redis;
   private readonly subscriber: Redis;
   private readonly clients = new Set<WebSocket>();
+  private readonly clientsByActor = new Map<string, number>();
 
   constructor(redisUrl: string) {
     this.publisher = new Redis(redisUrl, {
@@ -24,7 +27,11 @@ export class LiveBus {
     this.subscriber.subscribe(CHANNEL).catch(() => undefined);
     this.subscriber.on("message", (_channel: string, payload: string) => {
       for (const client of this.clients) {
-        if (client.readyState === client.OPEN) client.send(payload);
+        if (client.bufferedAmount > MAX_BUFFERED_BYTES) {
+          client.terminate();
+        } else if (client.readyState === client.OPEN) {
+          client.send(payload);
+        }
       }
     });
   }
@@ -38,14 +45,40 @@ export class LiveBus {
     await this.publisher.publish(CHANNEL, JSON.stringify(message));
   }
 
-  addClient(client: WebSocket): void {
+  addClient(client: WebSocket, actorId: string): boolean {
+    const actorConnections = this.clientsByActor.get(actorId) ?? 0;
+    if (actorConnections >= 3 || this.clients.size >= 500) return false;
+
     this.clients.add(client);
-    client.on("close", () => this.clients.delete(client));
+    this.clientsByActor.set(actorId, actorConnections + 1);
+    let released = false;
+    let alive = true;
+    const heartbeat = setInterval(() => {
+      if (!alive) {
+        client.terminate();
+        return;
+      }
+      alive = false;
+      client.ping();
+    }, HEARTBEAT_MS);
+    client.on("pong", () => {
+      alive = true;
+    });
+    client.on("close", () => {
+      if (released) return;
+      released = true;
+      clearInterval(heartbeat);
+      this.clients.delete(client);
+      const remaining = (this.clientsByActor.get(actorId) ?? 1) - 1;
+      if (remaining <= 0) this.clientsByActor.delete(actorId);
+      else this.clientsByActor.set(actorId, remaining);
+    });
     client.send(JSON.stringify({
       type: "connected",
       at: new Date().toISOString(),
       data: {},
     } satisfies LiveMessage));
+    return true;
   }
 
   async createTicket(actor: Record<string, unknown>): Promise<string> {
@@ -60,10 +93,18 @@ export class LiveBus {
     return ticket;
   }
 
-  async consumeTicket(ticket: string): Promise<boolean> {
+  async consumeTicket(ticket: string): Promise<{ actorId: string } | null> {
     const key = `antifraud:ws-ticket:${ticket}`;
     const result = await this.publisher.call("GETDEL", key);
-    return typeof result === "string";
+    if (typeof result !== "string") return null;
+    try {
+      const parsed = JSON.parse(result) as { actorId?: unknown };
+      return typeof parsed.actorId === "string" && parsed.actorId.length > 0
+        ? { actorId: parsed.actorId }
+        : null;
+    } catch {
+      return null;
+    }
   }
 
   async close(): Promise<void> {

@@ -4,8 +4,16 @@ import type { Config } from "./config.js";
 
 const { Pool } = pg;
 
-function sslFor(mode: "disable" | "require"): false | { rejectUnauthorized: false } {
-  return mode === "disable" ? false : { rejectUnauthorized: false };
+function sslFor(
+  mode: "disable" | "require",
+  ca?: string,
+): false | { rejectUnauthorized: true; ca?: string } {
+  return mode === "disable"
+    ? false
+    : {
+        rejectUnauthorized: true,
+        ...(ca ? { ca: ca.replace(/\\n/g, "\n") } : {}),
+      };
 }
 
 export type Databases = {
@@ -16,7 +24,7 @@ export type Databases = {
 export function createDatabases(config: Config): Databases {
   const source = new Pool({
     connectionString: config.SOURCE_DATABASE_URL,
-    ssl: sslFor(config.SOURCE_DATABASE_SSL),
+    ssl: sslFor(config.SOURCE_DATABASE_SSL, config.SOURCE_DATABASE_CA),
     max: 8,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 8_000,
@@ -26,7 +34,10 @@ export function createDatabases(config: Config): Databases {
 
   const antifraud = new Pool({
     connectionString: config.ANTIFRAUD_DATABASE_URL,
-    ssl: sslFor(config.ANTIFRAUD_DATABASE_SSL),
+    ssl: sslFor(
+      config.ANTIFRAUD_DATABASE_SSL,
+      config.ANTIFRAUD_DATABASE_CA,
+    ),
     max: 12,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 8_000,

@@ -1,6 +1,7 @@
 import WebSocket from "ws";
 
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
+import { buildCacheKey, rateLimit } from "@/lib/cache/redis";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,6 +9,9 @@ export const maxDuration = 300;
 
 const HEARTBEAT_MS = 15_000;
 const MAX_FRAME_BYTES = 128_000;
+const MAX_STREAM_STARTS_PER_MINUTE = 10;
+const MAX_CONCURRENT_PER_USER = 3;
+const openStreams = new Map<string, number>();
 
 type TransportState = "connecting" | "open" | "closed" | "unconfigured" | "error";
 
@@ -52,14 +56,14 @@ async function createTicket(
   return payload.data.ticket;
 }
 
-function websocketUrl(baseUrl: string, ticket: string): string {
+function websocketUrl(baseUrl: string): string {
   const url = new URL(baseUrl);
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new Error("Monitor API URL must use HTTP or HTTPS");
   }
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.pathname = `${url.pathname.replace(/\/+$/, "")}/v1/live`;
-  url.search = new URLSearchParams({ ticket }).toString();
+  url.search = "";
   return url.toString();
 }
 
@@ -71,6 +75,42 @@ export async function GET(request: Request): Promise<Response> {
   } catch {
     return new Response("Unauthorized", { status: 401 });
   }
+
+  if (request.headers.get("sec-fetch-site") === "cross-site") {
+    return new Response("Forbidden", { status: 403 });
+  }
+  const origin = request.headers.get("origin");
+  if (origin && origin !== new URL(request.url).origin) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  const limit = await rateLimit(
+    buildCacheKey("ratelimit:antifraud-monitor-stream", [actorId]),
+    MAX_STREAM_STARTS_PER_MINUTE,
+    60,
+  );
+  if (!limit.allowed) {
+    return new Response("Too many stream requests", {
+      status: 429,
+      headers: limit.resetSeconds
+        ? { "Retry-After": String(limit.resetSeconds) }
+        : undefined,
+    });
+  }
+
+  const currentOpen = openStreams.get(actorId) ?? 0;
+  if (currentOpen >= MAX_CONCURRENT_PER_USER) {
+    return new Response("Too many concurrent streams", { status: 429 });
+  }
+  openStreams.set(actorId, currentOpen + 1);
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    const remaining = (openStreams.get(actorId) ?? 1) - 1;
+    if (remaining <= 0) openStreams.delete(actorId);
+    else openStreams.set(actorId, remaining);
+  };
 
   const { baseUrl, token } = monitorConfig();
   const encoder = new TextEncoder();
@@ -96,6 +136,7 @@ export async function GET(request: Request): Promise<Response> {
         closed = true;
         if (heartbeat) clearInterval(heartbeat);
         if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
+        release();
         try {
           controller.close();
         } catch {
@@ -124,10 +165,16 @@ export async function GET(request: Request): Promise<Response> {
       void createTicket(baseUrl, token, actorId)
         .then((ticket) => {
           if (closed) return;
-          socket = new WebSocket(websocketUrl(baseUrl, ticket), {
+          socket = new WebSocket(
+            websocketUrl(baseUrl),
+            [`antifraud-ticket.${ticket}`],
+            {
             handshakeTimeout: 8_000,
             maxPayload: MAX_FRAME_BYTES,
-          });
+            origin: new URL(request.url).origin,
+            perMessageDeflate: false,
+            },
+          );
           socket.on("open", () => send(transport("open")));
           socket.on("message", (frame) => {
             try {
@@ -155,6 +202,9 @@ export async function GET(request: Request): Promise<Response> {
           close();
         });
     },
+    cancel() {
+      release();
+    },
   });
 
   return new Response(stream, {
@@ -163,6 +213,7 @@ export async function GET(request: Request): Promise<Response> {
       Connection: "keep-alive",
       "Content-Type": "text/event-stream; charset=utf-8",
       "X-Accel-Buffering": "no",
+      "X-Content-Type-Options": "nosniff",
     },
   });
 }

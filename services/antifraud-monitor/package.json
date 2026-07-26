@@ -14,6 +14,8 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.1.0",
+    "@fastify/helmet": "^13.1.0",
+    "@fastify/rate-limit": "^10.3.0",
     "@fastify/swagger": "^9.5.1",
     "@fastify/websocket": "^11.2.0",
     "@fingerprintjs/fingerprintjs-pro-server-api": "^6.11.0",
