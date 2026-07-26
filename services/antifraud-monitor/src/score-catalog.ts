@@ -1,12 +1,23 @@
 export const DEFAULT_SCORE_WEIGHTS = {
   shared_device_two_accounts: 70,
   shared_device_three_plus_accounts: 95,
+  shared_device_ten_plus_accounts: 140,
+  shared_device_twenty_five_plus_accounts: 200,
   ip_velocity_10m: 50,
   ip_velocity_30m: 80,
+  ip_velocity_30m_ten_plus: 120,
+  ip_velocity_30m_twenty_five_plus: 200,
   ipv6_subnet_velocity: 40,
   existing_alt_flag: 45,
   generated_username: 15,
   missing_email: 5,
+  disposable_email: 60,
+  affiliate_ip_chain_three_plus: 50,
+  affiliate_ip_chain_ten_plus: 100,
+  affiliate_cluster_three_plus: 10,
+  affiliate_cluster_ten_plus: 25,
+  country_cluster_ten_plus: 10,
+  country_cluster_twenty_five_plus: 25,
   fingerprint_missing: 15,
   fingerprint_bad_bot: 80,
   fingerprint_vpn: 20,
@@ -49,13 +60,32 @@ export function scorePoints(weights: ScoreWeights = defaultScoreWeights()) {
     sharedDevice: {
       twoAccounts: weights.shared_device_two_accounts,
       threePlusAccounts: weights.shared_device_three_plus_accounts,
+      tenPlusAccounts: weights.shared_device_ten_plus_accounts,
+      twentyFivePlusAccounts: weights.shared_device_twenty_five_plus_accounts,
     },
     ipVelocity10m: weights.ip_velocity_10m,
-    ipVelocity30m: weights.ip_velocity_30m,
+    ipVelocity30m: {
+      fivePlus: weights.ip_velocity_30m,
+      tenPlus: weights.ip_velocity_30m_ten_plus,
+      twentyFivePlus: weights.ip_velocity_30m_twenty_five_plus,
+    },
     ipv6SubnetVelocity: weights.ipv6_subnet_velocity,
     existingAltFlag: weights.existing_alt_flag,
     generatedUsername: weights.generated_username,
     missingEmail: weights.missing_email,
+    disposableEmail: weights.disposable_email,
+    affiliateIpChain: {
+      threePlus: weights.affiliate_ip_chain_three_plus,
+      tenPlus: weights.affiliate_ip_chain_ten_plus,
+    },
+    affiliateCluster: {
+      threePlus: weights.affiliate_cluster_three_plus,
+      tenPlus: weights.affiliate_cluster_ten_plus,
+    },
+    countryCluster: {
+      tenPlus: weights.country_cluster_ten_plus,
+      twentyFivePlus: weights.country_cluster_twenty_five_plus,
+    },
     fingerprintMissing: weights.fingerprint_missing,
     fingerprintBadBot: weights.fingerprint_bad_bot,
     fingerprintVpn: weights.fingerprint_vpn,
@@ -133,7 +163,17 @@ export function signupScoreDefinitions(
         option(
           weights,
           "shared_device_three_plus_accounts",
-          "3 or more accounts",
+          "3–9 accounts",
+        ),
+        option(
+          weights,
+          "shared_device_ten_plus_accounts",
+          "10–24 accounts",
+        ),
+        option(
+          weights,
+          "shared_device_twenty_five_plus_accounts",
+          "25 or more accounts",
         ),
       ],
     },
@@ -147,7 +187,15 @@ export function signupScoreDefinitions(
       key: "ip_velocity_30m",
       title: "Sustained signup IP velocity",
       description: "At least 5 accounts use the same IP within 30 minutes.",
-      options: [option(weights, "ip_velocity_30m", "Matched")],
+      options: [
+        option(weights, "ip_velocity_30m", "5–9 accounts"),
+        option(weights, "ip_velocity_30m_ten_plus", "10–24 accounts"),
+        option(
+          weights,
+          "ip_velocity_30m_twenty_five_plus",
+          "25 or more accounts",
+        ),
+      ],
     },
     {
       key: "ipv6_subnet_velocity",
@@ -173,6 +221,55 @@ export function signupScoreDefinitions(
       title: "Missing email",
       description: "The signup has no stored email address.",
       options: [option(weights, "missing_email", "Matched")],
+    },
+    {
+      key: "disposable_email",
+      title: "Disposable email",
+      description:
+        "The signup email uses a known temporary or throwaway email domain.",
+      options: [option(weights, "disposable_email", "Matched")],
+    },
+    {
+      key: "affiliate_ip_chain",
+      title: "Affiliate and IP chain",
+      description:
+        "Several accounts share both the same affiliate code and signup IP within 30 minutes.",
+      options: [
+        option(
+          weights,
+          "affiliate_ip_chain_three_plus",
+          "3–9 accounts",
+        ),
+        option(weights, "affiliate_ip_chain_ten_plus", "10 or more accounts"),
+      ],
+    },
+    {
+      key: "affiliate_cluster",
+      title: "Affiliate signup cluster",
+      description:
+        "Several accounts use the same affiliate code within 30 minutes. Kept low-weight because campaigns can create legitimate bursts.",
+      options: [
+        option(
+          weights,
+          "affiliate_cluster_three_plus",
+          "3–9 accounts",
+        ),
+        option(weights, "affiliate_cluster_ten_plus", "10 or more accounts"),
+      ],
+    },
+    {
+      key: "country_cluster",
+      title: "Country signup burst",
+      description:
+        "Many accounts from the same country register within 15 minutes. This is contextual and intentionally low-weight.",
+      options: [
+        option(weights, "country_cluster_ten_plus", "10–24 accounts"),
+        option(
+          weights,
+          "country_cluster_twenty_five_plus",
+          "25 or more accounts",
+        ),
+      ],
     },
   ];
 }

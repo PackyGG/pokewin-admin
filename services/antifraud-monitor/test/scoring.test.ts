@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { baseSignupSignals, severity } from "../src/scoring.js";
+import {
+  baseSignupSignals,
+  disposableEmailDomain,
+  severity,
+  type SignupContext,
+} from "../src/scoring.js";
 import {
   ACTIVITY_SCORE_DEFINITIONS,
   activityScoreFor,
@@ -35,23 +40,26 @@ const signup: Signup = {
   user_agent: "test",
 };
 
+const normalContext: SignupContext = {
+  sameIp10m: 1,
+  sameIp30m: 1,
+  sameIpv6Subnet30m: 0,
+  sameDeviceAllTime: 1,
+  sameAffiliate30m: 0,
+  sameAffiliateIp30m: 0,
+  sameCountry15m: 1,
+};
+
 test("shared devices immediately start a monitor", () => {
   const signals = baseSignupSignals(signup, {
-    sameIp10m: 1,
-    sameIp30m: 1,
-    sameIpv6Subnet30m: 0,
+    ...normalContext,
     sameDeviceAllTime: 2,
   });
   assert.equal(signals.find((signal) => signal.key === "shared_device")?.points, 70);
 });
 
 test("normal signup has no baseline risk", () => {
-  const signals = baseSignupSignals(signup, {
-    sameIp10m: 1,
-    sameIp30m: 1,
-    sameIpv6Subnet30m: 0,
-    sameDeviceAllTime: 1,
-  });
+  const signals = baseSignupSignals(signup, normalContext);
   assert.equal(signals.length, 0);
   assert.equal(severity(0), "low");
 });
@@ -60,14 +68,61 @@ test("custom signup and activity weights drive new scores", () => {
   const weights = defaultScoreWeights();
   weights.missing_email = 37;
   weights.fiat_deposit = 61;
-  const signals = baseSignupSignals({ ...signup, email: null }, {
-    sameIp10m: 1,
-    sameIp30m: 1,
-    sameIpv6Subnet30m: 0,
-    sameDeviceAllTime: 1,
-  }, weights);
+  const signals = baseSignupSignals(
+    { ...signup, email: null },
+    normalContext,
+    weights,
+  );
   assert.equal(signals.find((signal) => signal.key === "missing_email")?.points, 37);
   assert.equal(activityScoreFor("fiat_deposit", weights), 61);
+});
+
+test("large signup bot clusters escalate beyond small shared groups", () => {
+  const signals = baseSignupSignals(
+    { ...signup, affiliate_code: "BOTCHAIN" },
+    {
+      ...normalContext,
+      sameIp10m: 50,
+      sameIp30m: 50,
+      sameDeviceAllTime: 50,
+      sameAffiliate30m: 50,
+      sameAffiliateIp30m: 50,
+      sameCountry15m: 50,
+    },
+  );
+  assert.equal(
+    signals.find((signal) => signal.key === "shared_device")?.points,
+    200,
+  );
+  assert.equal(
+    signals.find((signal) => signal.key === "ip_velocity_30m")?.points,
+    200,
+  );
+  assert.equal(
+    signals.find((signal) => signal.key === "affiliate_ip_chain")?.points,
+    100,
+  );
+  assert.equal(
+    signals.find((signal) => signal.key === "affiliate_cluster")?.points,
+    25,
+  );
+  assert.equal(
+    signals.find((signal) => signal.key === "country_cluster")?.points,
+    25,
+  );
+});
+
+test("disposable email domains are detected without flagging normal providers", () => {
+  assert.equal(disposableEmailDomain("bot@mailinator.com"), "mailinator.com");
+  assert.equal(disposableEmailDomain("player@gmail.com"), null);
+  const signals = baseSignupSignals(
+    { ...signup, email: "bot@mailinator.com" },
+    normalContext,
+  );
+  assert.equal(
+    signals.find((signal) => signal.key === "disposable_email")?.points,
+    60,
+  );
 });
 
 test("the public score catalog has unique keys and contiguous severity bands", () => {

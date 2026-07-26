@@ -113,8 +113,11 @@ export async function signupContext(
   sameIp30m: number;
   sameIpv6Subnet30m: number;
   sameDeviceAllTime: number;
+  sameAffiliate30m: number;
+  sameAffiliateIp30m: number;
+  sameCountry15m: number;
 }> {
-  const [ip, ipv6, device] = await Promise.all([
+  const [ip, ipv6, device, clusters] = await Promise.all([
     signup.signup_ip
       ? source.query<{
           same_ip_10m: string;
@@ -161,6 +164,44 @@ export async function signupContext(
           [signup.visitor_id],
         )
       : Promise.resolve({ rows: [] }),
+    signup.affiliate_code || signup.country_code
+      ? source.query<{
+          same_affiliate_30m: string;
+          same_affiliate_ip_30m: string;
+          same_country_15m: string;
+        }>(
+          `
+            SELECT
+              COUNT(*) FILTER (
+                WHERE $3::text IS NOT NULL
+                  AND LOWER(affiliate_code) = LOWER($3::text)
+              )::text AS same_affiliate_30m,
+              COUNT(*) FILTER (
+                WHERE $1::text IS NOT NULL
+                  AND $3::text IS NOT NULL
+                  AND signup_ip = $1::text
+                  AND LOWER(affiliate_code) = LOWER($3::text)
+              )::text AS same_affiliate_ip_30m,
+              COUNT(*) FILTER (
+                WHERE $4::text IS NOT NULL
+                  AND UPPER(country_code) = UPPER($4::text)
+                  AND created_at BETWEEN
+                    ($2::timestamptz ${UTC}) - interval '15 minutes'
+                    AND ($2::timestamptz ${UTC}) + interval '15 minutes'
+              )::text AS same_country_15m
+            FROM "user"
+            WHERE created_at BETWEEN
+              ($2::timestamptz ${UTC}) - interval '30 minutes'
+              AND ($2::timestamptz ${UTC}) + interval '30 minutes'
+          `,
+          [
+            signup.signup_ip,
+            signup.created_at,
+            signup.affiliate_code,
+            signup.country_code,
+          ],
+        )
+      : Promise.resolve({ rows: [] }),
   ]);
 
   return {
@@ -168,6 +209,13 @@ export async function signupContext(
     sameIp30m: Number(ip.rows[0]?.same_ip_30m ?? 0),
     sameIpv6Subnet30m: Number(ipv6.rows[0]?.same_ipv6_30m ?? 0),
     sameDeviceAllTime: Number(device.rows[0]?.count ?? 0),
+    sameAffiliate30m: Number(
+      clusters.rows[0]?.same_affiliate_30m ?? 0,
+    ),
+    sameAffiliateIp30m: Number(
+      clusters.rows[0]?.same_affiliate_ip_30m ?? 0,
+    ),
+    sameCountry15m: Number(clusters.rows[0]?.same_country_15m ?? 0),
   };
 }
 

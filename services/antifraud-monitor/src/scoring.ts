@@ -1,3 +1,8 @@
+import {
+  extractDomain,
+  isDisposableEmail,
+} from "@visulima/disposable-email-domains";
+
 import type { Signal, Signup } from "./types.js";
 import {
   defaultScoreWeights,
@@ -11,6 +16,9 @@ export type SignupContext = {
   sameIp30m: number;
   sameIpv6Subnet30m: number;
   sameDeviceAllTime: number;
+  sameAffiliate30m: number;
+  sameAffiliateIp30m: number;
+  sameCountry15m: number;
 };
 
 function generatedLooking(value: string | null): boolean {
@@ -29,6 +37,11 @@ function generatedLooking(value: string | null): boolean {
   );
 }
 
+export function disposableEmailDomain(value: string | null): string | null {
+  if (!value || !isDisposableEmail(value)) return null;
+  return extractDomain(value) ?? null;
+}
+
 export function baseSignupSignals(
   signup: Signup,
   context: SignupContext,
@@ -45,9 +58,13 @@ export function baseSignupSignals(
     title: "Shared device",
     detail: `${context.sameDeviceAllTime} accounts share this Fingerprint visitor ID.`,
     points:
-      context.sameDeviceAllTime >= 3
-        ? SCORE_POINTS.sharedDevice.threePlusAccounts
-        : SCORE_POINTS.sharedDevice.twoAccounts,
+      context.sameDeviceAllTime >= 25
+        ? SCORE_POINTS.sharedDevice.twentyFivePlusAccounts
+        : context.sameDeviceAllTime >= 10
+          ? SCORE_POINTS.sharedDevice.tenPlusAccounts
+          : context.sameDeviceAllTime >= 3
+            ? SCORE_POINTS.sharedDevice.threePlusAccounts
+            : SCORE_POINTS.sharedDevice.twoAccounts,
   });
   add(context.sameIp10m >= 3, {
     key: "ip_velocity_10m",
@@ -59,7 +76,12 @@ export function baseSignupSignals(
     key: "ip_velocity_30m",
     title: "Sustained signup IP velocity",
     detail: `${context.sameIp30m} accounts used this IP within 30 minutes.`,
-    points: SCORE_POINTS.ipVelocity30m,
+    points:
+      context.sameIp30m >= 25
+        ? SCORE_POINTS.ipVelocity30m.twentyFivePlus
+        : context.sameIp30m >= 10
+          ? SCORE_POINTS.ipVelocity30m.tenPlus
+          : SCORE_POINTS.ipVelocity30m.fivePlus,
   });
   add(context.sameIpv6Subnet30m >= 3, {
     key: "ipv6_subnet_velocity",
@@ -84,6 +106,56 @@ export function baseSignupSignals(
     title: "Missing email",
     detail: "The account has no email address.",
     points: SCORE_POINTS.missingEmail,
+  });
+  const disposableDomain = disposableEmailDomain(signup.email);
+  add(disposableDomain !== null, {
+    key: "disposable_email",
+    title: "Disposable email",
+    detail: `The signup uses the temporary email domain ${disposableDomain ?? "unknown"}.`,
+    points: SCORE_POINTS.disposableEmail,
+    payload: disposableDomain ? { domain: disposableDomain } : undefined,
+  });
+  add(context.sameAffiliateIp30m >= 3, {
+    key: "affiliate_ip_chain",
+    title: "Affiliate and IP chain",
+    detail:
+      `${context.sameAffiliateIp30m} accounts share this affiliate code and signup IP within 30 minutes.`,
+    points:
+      context.sameAffiliateIp30m >= 10
+        ? SCORE_POINTS.affiliateIpChain.tenPlus
+        : SCORE_POINTS.affiliateIpChain.threePlus,
+    payload: {
+      count: context.sameAffiliateIp30m,
+      affiliateCode: signup.affiliate_code,
+    },
+  });
+  add(context.sameAffiliate30m >= 3, {
+    key: "affiliate_cluster",
+    title: "Affiliate signup cluster",
+    detail:
+      `${context.sameAffiliate30m} accounts used this affiliate code within 30 minutes.`,
+    points:
+      context.sameAffiliate30m >= 10
+        ? SCORE_POINTS.affiliateCluster.tenPlus
+        : SCORE_POINTS.affiliateCluster.threePlus,
+    payload: {
+      count: context.sameAffiliate30m,
+      affiliateCode: signup.affiliate_code,
+    },
+  });
+  add(context.sameCountry15m >= 10, {
+    key: "country_cluster",
+    title: "Country signup burst",
+    detail:
+      `${context.sameCountry15m} accounts from ${signup.country_code ?? signup.country ?? "this country"} registered within 15 minutes.`,
+    points:
+      context.sameCountry15m >= 25
+        ? SCORE_POINTS.countryCluster.twentyFivePlus
+        : SCORE_POINTS.countryCluster.tenPlus,
+    payload: {
+      count: context.sameCountry15m,
+      countryCode: signup.country_code,
+    },
   });
 
   return signals;

@@ -314,13 +314,22 @@ test("operations config accepts read/admin tokens and rejects missing tokens", (
 });
 
 test("editable score migration seeds every runtime weight", async () => {
-  const migration = await readFile(
-    new URL(
-      "../migrations/006_editable_score_weights.sql",
-      import.meta.url,
+  const migration = [
+    await readFile(
+      new URL(
+        "../migrations/006_editable_score_weights.sql",
+        import.meta.url,
+      ),
+      "utf8",
     ),
-    "utf8",
-  );
+    await readFile(
+      new URL(
+        "../migrations/007_signup_cluster_weights.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ].join("\n");
   assert.match(migration, /CREATE TABLE IF NOT EXISTS score_weights/);
   for (const key of SCORE_WEIGHT_KEYS) {
     assert.match(migration, new RegExp(`'${key}'`));
@@ -595,6 +604,40 @@ test("malformed stored IPv6 never enters an inet parameter query", async () => {
   assert.equal(source.queries[0]?.values?.[0], signup.signup_ip);
   assert.doesNotMatch(source.queries[0]?.sql ?? "", /\$1::inet/);
   assert.equal(context.sameIpv6Subnet30m, 0);
+});
+
+test("signup context counts affiliate, affiliate-IP, and country bursts in bounded windows", async () => {
+  const source = capturePool([{
+    same_ip_10m: "4",
+    same_ip_30m: "12",
+    same_affiliate_30m: "11",
+    same_affiliate_ip_30m: "7",
+    same_country_15m: "26",
+  }]);
+  const clusteredSignup = {
+    ...signup,
+    signup_ip: "203.0.113.10",
+    affiliate_code: "PACKY",
+    country_code: "DE",
+  };
+  const context = await signupContext(source.pool, clusteredSignup);
+
+  assert.equal(source.queries.length, 2);
+  const clusterQuery = source.queries.find((query) =>
+    query.sql.includes("same_affiliate_ip_30m")
+  );
+  assert.ok(clusterQuery);
+  assert.deepEqual(clusterQuery.values, [
+    clusteredSignup.signup_ip,
+    clusteredSignup.created_at,
+    clusteredSignup.affiliate_code,
+    clusteredSignup.country_code,
+  ]);
+  assert.match(clusterQuery.sql, /interval '15 minutes'/);
+  assert.match(clusterQuery.sql, /interval '30 minutes'/);
+  assert.equal(context.sameAffiliate30m, 11);
+  assert.equal(context.sameAffiliateIp30m, 7);
+  assert.equal(context.sameCountry15m, 26);
 });
 
 test("top rain is time bounded and receives bound limit/lookback values", async () => {

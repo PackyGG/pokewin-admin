@@ -3,6 +3,10 @@ import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import websocket from "@fastify/websocket";
+import {
+  isListLoaded as isDisposableEmailListLoaded,
+  preload as preloadDisposableEmailDomains,
+} from "@visulima/disposable-email-domains";
 import Fastify from "fastify";
 import { z } from "zod";
 
@@ -900,6 +904,10 @@ app.addHook("onClose", async () => {
 
 await migrate(db.antifraud);
 await assertDatabaseConnections(db);
+await preloadDisposableEmailDomains();
+if (!isDisposableEmailListLoaded()) {
+  throw new Error("Disposable email domain list failed to load");
+}
 // Fail the boot when the live channel cannot be subscribed: a green service
 // publishing into a channel with zero subscribers is silently broken.
 await live.start();
