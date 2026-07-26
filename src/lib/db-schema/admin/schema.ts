@@ -138,7 +138,7 @@ export const admin_users = pgTable("admin_users", {
 	is_active: boolean().default(true).notNull(),
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
-	allowed_pages: text().array(),
+	allowed_pages: text().array().default(sql`'{}'::text[]`).notNull(),
 	display_username: text(),
 	profile_image: bytea("profile_image"),
 	profile_image_mime: text(),
