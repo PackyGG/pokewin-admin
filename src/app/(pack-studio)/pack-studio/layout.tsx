@@ -1,14 +1,10 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
+import { sql } from "drizzle-orm";
 
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AdminHeader } from "@/components/admin-header";
 import { TopProgressBar } from "@/components/top-progress-bar";
-import { DockedRecentActivity } from "@/components/docked-recent-activity";
-import { LiveMoneyChat } from "@/components/live-money-chat";
-import { RightRailProvider } from "@/components/right-rail-context";
-import { RailWidthSync } from "@/components/rail-width-sync";
-import { readRailOpenOrder } from "@/lib/right-rail-server";
 import { TimezoneProvider } from "@/components/timezone-provider";
 import { DevDbBanner } from "@/components/dev-db-banner";
 
@@ -23,7 +19,7 @@ import {
   type PackStudioAccessSettings,
   type PackStudioUserAccess,
 } from "@/lib/pack-studio-access";
-import { adminDb } from "@/lib/admin-db";
+import { adminDrizzle } from "@/lib/admin-db";
 import { isOwner } from "@/lib/owners";
 import { isPackStudioRetuneOperator } from "@/lib/reprice-access";
 import { getAdminPreferences } from "@/lib/admin-preferences";
@@ -65,14 +61,16 @@ async function loadHeaderProfile(userId: string): Promise<{
   profileFieldsAvailable: boolean;
 }> {
   try {
-    const row = await adminDb.admin_users.findUnique({
-      where: { id: userId },
-      select: {
-        display_username: true,
-        profile_image_mime: true,
-        email: true,
-      },
-    });
+    const row = (
+      await adminDrizzle.execute<{
+        display_username: string | null;
+        profile_image_mime: string | null;
+        email: string;
+      }>(sql`
+        SELECT display_username, profile_image_mime, email
+        FROM admin_users WHERE id = ${userId}::uuid
+      `)
+    ).rows[0];
     return {
       displayUsername: row?.display_username ?? null,
       hasAvatar: Boolean(row?.profile_image_mime),
@@ -82,14 +80,15 @@ async function loadHeaderProfile(userId: string): Promise<{
   } catch (err) {
     const code = (err as { code?: string })?.code;
     const missingColumn =
-      code === "P2022" ||
+      code === "42703" ||
       (err instanceof Error && /column .* does not exist/i.test(err.message));
     if (missingColumn) {
       try {
-        const row = await adminDb.admin_users.findUnique({
-          where: { id: userId },
-          select: { email: true },
-        });
+        const row = (
+          await adminDrizzle.execute<{ email: string }>(sql`
+            SELECT email FROM admin_users WHERE id = ${userId}::uuid
+          `)
+        ).rows[0];
         return {
           displayUsername: null,
           hasAvatar: false,
@@ -211,15 +210,10 @@ export default async function PackStudioLayout({
   // deny/redirect path below cannot produce an unhandled rejection.
   const studioAccessSettingsP = loadPackStudioAccessSettings();
   const studioUserAccessP = loadPackStudioUserAccess();
-  const allowedPagesP = loadUserPermissions(session.userId);
   const profileP = loadHeaderProfile(session.userId);
   const preferencesP = loadPreferences(session.userId);
   const dbEnvP = readDbEnvFromCookie();
   const tzCookieP = readTzCookie();
-  // Open dock keys from the `admin_rail` cookie — seeds the rail so SSR +
-  // first client paint match the admin's saved layout (no open/close
-  // flip). Shared 1:1 with the main (admin) shell.
-  const railOpenOrderP = readRailOpenOrder();
   const appAccessP = resolveAppAccess(session);
 
   // Studio access gate (security-sensitive): an owner OR a per-role toggle
@@ -241,32 +235,19 @@ export default async function PackStudioLayout({
     studioUserAccessP,
   ]);
   if (!canAccessPackStudio(session, studioAccessSettings, studioUserAccess)) {
-    const allowedPages = await allowedPagesP;
+    const allowedPages = await loadUserPermissions(session.userId);
     redirect(getDefaultRouteForRoles(roles, allowedPages));
   }
 
-  const [
-    allowedPages,
-    profile,
-    preferences,
-    dbEnv,
-    tzCookie,
-    railOpenOrder,
-    appAccess,
-  ] =
-    await Promise.all([
-      allowedPagesP,
-      profileP,
-      preferencesP,
-      dbEnvP,
-      tzCookieP,
-      railOpenOrderP,
-      appAccessP,
-    ]);
+  const [profile, preferences, dbEnv, tzCookie, appAccess] = await Promise.all([
+    profileP,
+    preferencesP,
+    dbEnvP,
+    tzCookieP,
+    appAccessP,
+  ]);
 
   const canSwitchDbEnv = session.role === "admin" && isDevDbConfigured();
-  const canOpenChatPanel =
-    session.role === "admin" || allowedPages.includes("/chat");
 
   return (
     <TimezoneProvider
@@ -316,17 +297,6 @@ export default async function PackStudioLayout({
             <PageTransition>{children}</PageTransition>
           </div>
         </SidebarInset>
-        {/* Right-edge docks — reused 1:1 from the main shell so live money /
-            recent activity stay available inside the Studio. Chat dock is
-            gated to the same permission boundary as the main layout. */}
-        <RightRailProvider
-          mounted={{ chat: canOpenChatPanel }}
-          initialOpenOrder={railOpenOrder}
-        >
-          <RailWidthSync />
-          <LiveMoneyChat />
-          <DockedRecentActivity />
-        </RightRailProvider>
       </SidebarProvider>
     </TimezoneProvider>
   );

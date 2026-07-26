@@ -89,6 +89,7 @@
 		"vercel": "^54.9.1"
 	},
 	"overrides": {
+		"path-to-regexp": "8.4.0",
 		"tar": "7.5.22"
 	}
 }

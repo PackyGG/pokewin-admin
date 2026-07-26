@@ -4,13 +4,6 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { AdminHeader } from "@/components/admin-header";
 import { HeaderRainChip } from "@/components/header-rain-chip";
 import { TopProgressBar } from "@/components/top-progress-bar";
-import { DockedChat } from "@/components/docked-chat";
-import { DockedRecentActivity } from "@/components/docked-recent-activity";
-import { LiveMoneyChat } from "@/components/live-money-chat";
-import { RightRailProvider } from "@/components/right-rail-context";
-import { RailWidthSync } from "@/components/rail-width-sync";
-import { readRailOpenOrder } from "@/lib/right-rail-server";
-import { CommandPalette } from "@/components/command-palette";
 import { TimezoneProvider } from "@/components/timezone-provider";
 import { PageTransition } from "@/components/page-transition";
 import { redirect } from "next/navigation";
@@ -39,7 +32,10 @@ import {
   type AntifraudAccessSettings,
   type AntifraudUserAccess,
 } from "@/lib/antifraud/access";
-import { adminDb } from "@/lib/admin-db";
+import { eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_users } from "@/lib/db-schema/admin/schema";
+import { isPostgresError } from "@/lib/postgres-errors";
 import { getAdminPreferences } from "@/lib/admin-preferences";
 import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
 import { readDbEnvFromCookie, isDevDbConfigured } from "@/lib/db-env";
@@ -70,14 +66,11 @@ async function loadHeaderProfile(userId: string): Promise<{
   profileFieldsAvailable: boolean;
 }> {
   try {
-    const row = await adminDb.admin_users.findUnique({
-      where: { id: userId },
-      select: {
-        display_username: true,
-        profile_image_mime: true,
-        email: true,
-      },
-    });
+    const [row] = await adminDrizzle.select({
+      display_username: admin_users.display_username,
+      profile_image_mime: admin_users.profile_image_mime,
+      email: admin_users.email,
+    }).from(admin_users).where(eq(admin_users.id, userId)).limit(1);
     return {
       displayUsername: row?.display_username ?? null,
       hasAvatar: Boolean(row?.profile_image_mime),
@@ -89,16 +82,13 @@ async function loadHeaderProfile(userId: string): Promise<{
     // just the always-present `email` so the dialog can still show identity,
     // and flag the profile fields as unavailable (controls disabled). Any
     // non-missing-column error keeps the fully-degraded default.
-    const code = (err as { code?: string })?.code;
     const missingColumn =
-      code === "P2022" ||
+      isPostgresError(err, "42703") ||
       (err instanceof Error && /column .* does not exist/i.test(err.message));
     if (missingColumn) {
       try {
-        const row = await adminDb.admin_users.findUnique({
-          where: { id: userId },
-          select: { email: true },
-        });
+        const [row] = await adminDrizzle.select({ email: admin_users.email })
+          .from(admin_users).where(eq(admin_users.id, userId)).limit(1);
         return {
           displayUsername: null,
           hasAvatar: false,
@@ -321,7 +311,6 @@ export default async function AdminLayout({
     studioUserAccess,
     antifraudAccessSettings,
     antifraudUserAccess,
-    railOpenOrder,
   ] = await Promise.all([
     loadUserPermissions(session.userId),
     loadHeaderProfile(session.userId),
@@ -337,11 +326,6 @@ export default async function AdminLayout({
     loadPackStudioUserAccess(),
     loadAntifraudAccessSettings(),
     loadAntifraudUserAccess(),
-    // Open dock keys from the `admin_rail` cookie. Passed to the
-    // RightRailProvider so SSR + the first client paint reflect the admin's
-    // SAVED rail layout — no post-mount open/close flip. Returns null when
-    // the cookie is absent (first-ever visit → provider default).
-    readRailOpenOrder(),
   ]);
   // Only surface the switcher to admins on servers where a dev DB is
   // actually configured; otherwise the toggle would be a dead option.
@@ -381,11 +365,6 @@ export default async function AdminLayout({
   // bypass the page-access gate for them. Fail-closed: the DB-failure session
   // fallback only ever yields `true` for the `motha` username.
   const isOwner = sessionIsOwner(session);
-
-  // Chat/mutes panel is only surfaced to users who could reach the old
-  // /chat page — keeps the same permission boundary as the removed route.
-  const canOpenChatPanel =
-    session.role === "admin" || allowedPages.includes("/chat");
 
   return (
     <TimezoneProvider
@@ -468,33 +447,6 @@ export default async function AdminLayout({
             <PageTransition>{children}</PageTransition>
           </div>
         </SidebarInset>
-        <CommandPalette
-          role={session.role}
-          allowedPages={allowedPages}
-          username={session.username}
-        />
-        {/* Right-edge docked widgets — three slots, top → bottom:
-              • LiveMoneyChat       (top)    deposits + withdrawals feed
-              • DockedRecentActivity (middle) signups + wagers + payouts feed
-              • DockedChat           (bottom) Chat & Mutes panel
-            All three are persistent, collapsible, and state-tracked via
-            the shared right-rail context. At most TWO may be expanded at
-            the same time — opening a third auto-collapses the oldest-
-            opened one (FIFO eviction inside RightRailProvider). The
-            chat dock is permission-gated to the same boundary the old
-            /chat page used; the live + recent docks are visible to
-            every admin user. `mounted={{ chat }}` tells the rail
-            geometry whether to reserve space for chat — without it the
-            non-admin shell would leave a 5rem empty band at the bottom. */}
-        <RightRailProvider
-          mounted={{ chat: canOpenChatPanel, alerts: false }}
-          initialOpenOrder={railOpenOrder}
-        >
-          <RailWidthSync />
-          <LiveMoneyChat />
-          <DockedRecentActivity />
-          {canOpenChatPanel && <DockedChat role={session.role} />}
-        </RightRailProvider>
       </SidebarProvider>
     </TimezoneProvider>
   );

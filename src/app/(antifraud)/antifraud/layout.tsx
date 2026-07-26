@@ -4,9 +4,6 @@ import { redirect } from "next/navigation";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AdminHeader } from "@/components/admin-header";
 import { TopProgressBar } from "@/components/top-progress-bar";
-import { RightRailProvider } from "@/components/right-rail-context";
-import { RailWidthSync } from "@/components/rail-width-sync";
-import { readRailOpenOrder } from "@/lib/right-rail-server";
 import { TimezoneProvider } from "@/components/timezone-provider";
 import { DevDbBanner } from "@/components/dev-db-banner";
 
@@ -22,7 +19,10 @@ import {
   type AntifraudAccessSettings,
   type AntifraudUserAccess,
 } from "@/lib/antifraud/access";
-import { adminDb } from "@/lib/admin-db";
+import { eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/admin-db";
+import { admin_users } from "@/lib/db-schema/admin/schema";
+import { isPostgresError } from "@/lib/postgres-errors";
 import { getAdminPreferences } from "@/lib/admin-preferences";
 import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
 import { readDbEnvFromCookie, isDevDbConfigured } from "@/lib/db-env";
@@ -41,7 +41,7 @@ import { AntifraudSidebar } from "./_components/antifraud-sidebar";
  * Antifraud layout â€” the THIRD "app inside the app", after Creator Hub and Pack
  * Studio. It reuses the SAME shell geometry + providers as the main admin
  * layout (`src/app/(admin)/layout.tsx`) â€” SidebarProvider / SidebarInset,
- * TimezoneProvider, the AdminHeader (with its notification bell), the right-rail
+ * TimezoneProvider, the AdminHeader (with its notification bell), the
  * scaffolding â€” but swaps in the `AntifraudSidebar`, so the user enters a
  * visually distinct sub-app while every auth / session / theme provider keeps
  * working unchanged.
@@ -68,14 +68,11 @@ async function loadHeaderProfile(userId: string): Promise<{
   profileFieldsAvailable: boolean;
 }> {
   try {
-    const row = await adminDb.admin_users.findUnique({
-      where: { id: userId },
-      select: {
-        display_username: true,
-        profile_image_mime: true,
-        email: true,
-      },
-    });
+    const [row] = await adminDrizzle.select({
+      display_username: admin_users.display_username,
+      profile_image_mime: admin_users.profile_image_mime,
+      email: admin_users.email,
+    }).from(admin_users).where(eq(admin_users.id, userId)).limit(1);
     return {
       displayUsername: row?.display_username ?? null,
       hasAvatar: Boolean(row?.profile_image_mime),
@@ -83,16 +80,13 @@ async function loadHeaderProfile(userId: string): Promise<{
       profileFieldsAvailable: true,
     };
   } catch (err) {
-    const code = (err as { code?: string })?.code;
     const missingColumn =
-      code === "P2022" ||
+      isPostgresError(err, "42703") ||
       (err instanceof Error && /column .* does not exist/i.test(err.message));
     if (missingColumn) {
       try {
-        const row = await adminDb.admin_users.findUnique({
-          where: { id: userId },
-          select: { email: true },
-        });
+        const [row] = await adminDrizzle.select({ email: admin_users.email })
+          .from(admin_users).where(eq(admin_users.id, userId)).limit(1);
         return {
           displayUsername: null,
           hasAvatar: false,
@@ -207,12 +201,10 @@ export default async function AntifraudLayout({
   // produce an unhandled rejection.
   const accessSettingsP = loadAccessSettings();
   const userAccessP = loadUserAccess();
-  const allowedPagesP = loadUserPermissions(session.userId);
   const profileP = loadHeaderProfile(session.userId);
   const preferencesP = loadPreferences(session.userId);
   const dbEnvP = readDbEnvFromCookie();
   const tzCookieP = readTzCookie();
-  const railOpenOrderP = readRailOpenOrder();
   const appAccessP = resolveAppAccess(session);
 
   // Access gate (security-sensitive). It awaits ONLY its own dependencies and
@@ -225,32 +217,19 @@ export default async function AntifraudLayout({
     userAccessP,
   ]);
   if (!canAccessAntifraud(session, accessSettings, userAccess)) {
-    const allowedPages = await allowedPagesP;
+    const allowedPages = await loadUserPermissions(session.userId);
     redirect(getDefaultRouteForRoles(roles, allowedPages));
   }
 
-  const [
-    allowedPages,
-    profile,
-    preferences,
-    dbEnv,
-    tzCookie,
-    railOpenOrder,
-    appAccess,
-  ] =
-    await Promise.all([
-      allowedPagesP,
-      profileP,
-      preferencesP,
-      dbEnvP,
-      tzCookieP,
-      railOpenOrderP,
-      appAccessP,
-    ]);
+  const [profile, preferences, dbEnv, tzCookie, appAccess] = await Promise.all([
+    profileP,
+    preferencesP,
+    dbEnvP,
+    tzCookieP,
+    appAccessP,
+  ]);
 
   const canSwitchDbEnv = session.role === "admin" && isDevDbConfigured();
-  const canOpenChatPanel =
-    session.role === "admin" || allowedPages.includes("/chat");
   const canManage = canManageAntifraud(session);
 
   return (
@@ -295,12 +274,6 @@ export default async function AntifraudLayout({
         {/* Rail scaffolding only — the live money + recent-activity docks are
             deliberately NOT mounted here (SECURITY_AUDIT.md HIGH-2: customer
             financial activity must not stream to workspace roles). */}
-        <RightRailProvider
-          mounted={{ chat: canOpenChatPanel }}
-          initialOpenOrder={railOpenOrder}
-        >
-          <RailWidthSync />
-        </RightRailProvider>
       </SidebarProvider>
     </TimezoneProvider>
   );
