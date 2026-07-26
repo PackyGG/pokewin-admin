@@ -203,6 +203,7 @@ export const admin_audit_events = pgTable("admin_audit_events", {
 	metadata: jsonb(),
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
+	uniqueIndex("admin_audit_antifraud_idempotency_idx").using("btree", sql`((metadata ->> 'idempotencyKey'::text))`).where(sql`((event_type = ANY (ARRAY['antifraud_monitor_case_decision'::text, 'antifraud_review_status_changed'::text])) AND (metadata ? 'idempotencyKey'::text))`),
 	index("admin_audit_events_admin_user_id_idx").using("btree", table.admin_user_id.asc().nullsLast().op("uuid_ops")),
 	index("admin_audit_events_created_at_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")),
 	index("admin_audit_events_event_type_idx").using("btree", table.event_type.asc().nullsLast().op("text_ops")),
@@ -1496,8 +1497,11 @@ export const antifraud_reviews = pgTable("antifraud_reviews", {
 	index("antifraud_reviews_created_id_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops"), table.id.desc().nullsFirst().op("uuid_ops")),
 	index("antifraud_reviews_created_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")),
 	uniqueIndex("antifraud_reviews_open_target_uniq").using("btree", table.target_user_id.asc().nullsLast().op("text_ops")).where(sql`(status = ANY (ARRAY['open'::text, 'in_review'::text]))`),
-	index("antifraud_reviews_status_created_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("text_ops")),
+	index("antifraud_reviews_reason_trgm_idx").using("gin", table.reason.asc().nullsLast().op("gin_trgm_ops")),
+	index("antifraud_reviews_status_created_idx").using("btree", table.status.asc().nullsLast().op("text_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
 	index("antifraud_reviews_target_idx").using("btree", table.target_user_id.asc().nullsLast().op("text_ops")),
+	index("antifraud_reviews_target_user_trgm_idx").using("gin", table.target_user_id.asc().nullsLast().op("gin_trgm_ops")),
+	index("antifraud_reviews_username_trgm_idx").using("gin", table.target_username.asc().nullsLast().op("gin_trgm_ops")),
 ]);
 
 export const antifraud_review_notes = pgTable("antifraud_review_notes", {
