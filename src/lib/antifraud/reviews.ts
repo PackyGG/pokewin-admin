@@ -1,8 +1,8 @@
 import "server-only";
 
 import { adminDb } from "@/lib/admin-db";
-import { isMissingRelationError } from "./notifications";
-import { loadAdminIdentities, type AdminIdentity } from "./identities";
+import { isMissingRelationError } from "../staff/notifications";
+import { loadAdminIdentities, type AdminIdentity } from "../staff/identities";
 import {
   OPEN_REVIEW_STATUSES,
   type ReviewSeverity,

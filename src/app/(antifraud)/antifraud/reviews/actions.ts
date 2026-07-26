@@ -6,7 +6,7 @@ import { z } from "zod";
 import { adminDb } from "@/lib/admin-db";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { notifyStaff } from "@/lib/antifraud/notifications";
+import { notifyStaff } from "@/lib/staff/notifications";
 import {
   REVIEW_SEVERITIES,
   REVIEW_STATUSES,

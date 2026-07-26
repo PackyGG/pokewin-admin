@@ -6,7 +6,7 @@ import {
   listStaffNotifications,
   markAllStaffNotificationsRead,
   markStaffNotificationRead,
-} from "@/lib/antifraud/notifications";
+} from "@/lib/staff/notifications";
 
 /**
  * Server actions behind the header notification bell.

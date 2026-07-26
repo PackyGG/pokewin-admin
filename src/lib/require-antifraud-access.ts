@@ -23,8 +23,8 @@ import { isNextControlFlowError } from "@/lib/utils/action-error";
  * so callers can surface a toast. Modeled 1:1 on
  * `@/lib/require-pack-studio-access`.
  *
- * The MANAGE gate on top (`requireAntifraudManager`) is what protects quiz
- * authoring and the workspace settings: owners + admins only.
+ * The MANAGE gate on top (`requireAntifraudManager`) protects workspace
+ * settings: owners + admins only.
  */
 
 async function loadSettingsFailClosed(): Promise<AntifraudAccessSettings> {
@@ -39,7 +39,6 @@ async function loadSettingsFailClosed(): Promise<AntifraudAccessSettings> {
     return deniedAntifraudSettings();
   }
 }
-
 /**
  * Per-username allow/deny override read. A read failure must NOT silently
  * widen access (empty allowlist) and must NOT silently restore access for
@@ -129,7 +128,7 @@ export async function requireAntifraudAccess(
 }
 
 /**
- * Manage gate (owners + admins) for quiz authoring and workspace settings.
+ * Manage gate (owners + admins) for workspace settings.
  * Page variant redirects into the workspace root rather than out of it — a
  * staff member who clicks a settings deep-link lands somewhere useful.
  */
@@ -145,21 +144,5 @@ export async function requireAntifraudManager(
 ): Promise<SessionPayload> {
   const session = await requireAntifraudAccess(unauthorizedMessage);
   if (!canManageAntifraud(session)) throw new Error(unauthorizedMessage);
-  return session;
-}
-
-/** Staff-only learner page gate. Admins and owners use Quiz Manager instead. */
-export async function requireAntifraudStaffPage(): Promise<SessionPayload> {
-  const session = await requireAntifraudPageAccess();
-  if (canManageAntifraud(session)) redirect("/antifraud");
-  return session;
-}
-
-/** Server-action variant of the staff-only learner gate. */
-export async function requireAntifraudStaff(
-  unauthorizedMessage = "Quizzes are only available to antifraud staff.",
-): Promise<SessionPayload> {
-  const session = await requireAntifraudAccess(unauthorizedMessage);
-  if (canManageAntifraud(session)) throw new Error(unauthorizedMessage);
   return session;
 }

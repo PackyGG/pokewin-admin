@@ -11,7 +11,7 @@ import {
   isMissingRelationError,
   notifyStaff,
   staffBroadcastRecipients,
-} from "@/lib/antifraud/notifications";
+} from "@/lib/staff/notifications";
 
 /**
  * Durable inbound webhook from the separate antifraud backend service.

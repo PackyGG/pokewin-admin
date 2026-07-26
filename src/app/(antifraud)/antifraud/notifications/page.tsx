@@ -13,7 +13,7 @@ import {
   countUnreadStaffNotifications,
   isStaffNotificationKind,
   listStaffNotifications,
-} from "@/lib/antifraud/notifications";
+} from "@/lib/staff/notifications";
 import { MarkAllButton } from "./_components/mark-all-button";
 
 export const metadata = { title: "Notifications" };

@@ -60,8 +60,8 @@ export default function AntifraudError({
 
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <p className="text-xs text-muted-foreground">
-          Nothing was changed. This workspace only ever writes the admin
-          database (cases, notes, quiz results, points) and never touches a
+          Nothing was changed. This workspace only writes antifraud cases,
+          notes, signals and settings to the admin database. It never touches a
           player&apos;s account — every account action lives on the main
           dashboard behind its own audited flow. Server logs (matched by the
           digest above) carry the full stack.

@@ -36,6 +36,7 @@ export type NavGroupKey =
   | "Content"
   | "Creator Portal"
   | "Test Tools"
+  | "Staff"
   | "System";
 
 export type NavGroupMeta = {
@@ -90,6 +91,8 @@ export type NavEntry = {
   strictUsernameAllowlist?: boolean;
   /** Renders a "NEW" badge in the sidebar. */
   isNew?: boolean;
+  /** Visible to every authenticated dashboard user, independent of page grants. */
+  alwaysVisible?: boolean;
   /** Surfaces in the sidebar. */
   inSidebar: boolean;
   /** Pinned to the sidebar footer, directly above the theme toggle. */
@@ -110,6 +113,7 @@ export const NAV_GROUP_META: NavGroupMeta[] = [
   { label: "Content" },
   { label: "Creator Portal", creatorOnly: true },
   { label: "Test Tools", devEnvOnly: true },
+  { label: "Staff" },
   // The "Rewards" group was collapsed into the Rewards hub (moved into
   // Overview below Users). The "Employees" group was deleted (Salaries moved
   // into System, Shifts removed).
@@ -448,6 +452,19 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     pageKey: "/salaries",
     icon: "Coins",
     usernameAllowlist: ["motha"],
+    inSidebar: true,
+    inPalette: false,
+  },
+  {
+    id: "nav.staff",
+    group: "Staff",
+    label: "Staff Hub",
+    href: "/staff",
+    pageKey: "/staff",
+    icon: "Users",
+    description: "Profiles, quizzes, points and the staff leaderboard",
+    keywords: ["staff", "profile", "quiz", "points", "leaderboard"],
+    alwaysVisible: true,
     inSidebar: true,
     inPalette: false,
   },

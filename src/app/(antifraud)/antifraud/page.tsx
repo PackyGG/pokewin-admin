@@ -4,16 +4,12 @@ import {
   AlertTriangle,
   CheckCircle2,
   ClipboardList,
-  GraduationCap,
   Inbox,
   ShieldAlert,
-  Trophy,
   UserCheck,
-  Users,
 } from "lucide-react";
 
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
-import { canManageAntifraud } from "@/lib/antifraud/access";
 import { safeQuery } from "@/lib/errors/safe-query";
 import {
   KpiTile,
@@ -24,11 +20,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatNumber, formatRelative } from "@/lib/utils/format";
 import { getReviewStats, listRecentSignals, listReviews } from "@/lib/antifraud/reviews";
-import { listStaffMembers, getStaffProfile } from "@/lib/antifraud/profile";
-import { listStaffQuizzes } from "@/lib/antifraud/quiz";
-import { sessionRoles } from "@/lib/dal";
 import { LiveFeed } from "./_components/live-feed";
-import { ReviewSeverityBadge, ReviewStatusBadge, StaffLevelBadge } from "./_components/badges";
+import { ReviewSeverityBadge, ReviewStatusBadge } from "./_components/badges";
 
 export const metadata = { title: "Antifraud" };
 
@@ -36,8 +29,8 @@ export const metadata = { title: "Antifraud" };
  * Antifraud → Overview.
  *
  * The workspace landing page: the state of the review queue, the live signal
- * strip fed by the (separate) fraud backend, what's waiting for THIS analyst,
- * and where the staff team stands.
+ * strip fed by the (separate) fraud backend, and what's waiting for this
+ * analyst.
  *
  * Shell-first: the hero + the live strip paint immediately and every data leg
  * streams in behind its own Suspense boundary (loading.tsx renders the matching
@@ -58,7 +51,7 @@ export default async function AntifraudOverviewPage() {
           icon={ShieldAlert}
           accent="cyan"
           title="Antifraud"
-          subtitle="Account reviews, live risk signals and the staff workspace"
+          subtitle="Account reviews and live risk signals"
         />
       </PageHero>
 
@@ -80,13 +73,6 @@ export default async function AntifraudOverviewPage() {
         </Suspense>
       </div>
 
-      <Suspense fallback={<ListSkeleton title="Your workspace" />}>
-        <PersonalSection
-          adminUserId={session.userId}
-          roles={sessionRoles(session)}
-          canManage={canManageAntifraud(session)}
-        />
-      </Suspense>
     </div>
   );
 }
@@ -273,137 +259,6 @@ async function SignalHistory() {
 }
 
 // ─── Personal / team section ──────────────────────────────────────────
-
-async function PersonalSection({
-  adminUserId,
-  roles,
-  canManage,
-}: {
-  adminUserId: string;
-  roles: string[];
-  canManage: boolean;
-}) {
-  const [profileResult, quizzesResult, membersResult] = await Promise.all([
-    safeQuery(
-      () => getStaffProfile(adminUserId),
-      null,
-      "antifraud.own-profile",
-      QUERY_TIMEOUT_MS,
-    ),
-    canManage
-      ? Promise.resolve({ data: [] })
-      : safeQuery(
-          () => listStaffQuizzes(adminUserId, roles),
-          [],
-          "antifraud.own-quizzes",
-          QUERY_TIMEOUT_MS,
-        ),
-    canManage
-      ? safeQuery(
-          () => listStaffMembers(),
-          [],
-          "antifraud.staff-board",
-          QUERY_TIMEOUT_MS,
-        )
-      : Promise.resolve({ data: [] }),
-  ]);
-  const profile = profileResult.data;
-  const quizzes = quizzesResult.data;
-  const members = membersResult.data;
-
-  const outstanding = quizzes.filter(
-    (quiz) => quiz.canTake && quiz.attemptsUsed === 0,
-  );
-  const top = members.slice(0, 5);
-
-  return (
-    <div className="space-y-4">
-      <SectionHeading
-        icon={Trophy}
-        title="Your workspace"
-        action={
-          canManage ? (
-            <HostLink
-              href="/antifraud/settings/quizzes"
-              className="text-xs font-medium text-muted-foreground hover:text-foreground"
-            >
-              Manage quizzes →
-            </HostLink>
-          ) : undefined
-        }
-      />
-
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <KpiTile
-          label="Your points"
-          value={formatNumber(profile?.pointsTotal ?? 0)}
-          sub={
-            profile
-              ? `Level ${profile.level} · ${profile.levelInfo.title}`
-              : "no activity yet"
-          }
-          icon={Trophy}
-          accent="amber"
-        />
-        {!canManage && (
-          <KpiTile
-            label="Quizzes waiting"
-            value={formatNumber(outstanding.length)}
-            sub={
-              outstanding.length === 0
-                ? "nothing to take"
-                : outstanding[0]?.title ?? ""
-            }
-            icon={GraduationCap}
-            accent="purple"
-          />
-        )}
-        {canManage && (
-          <KpiTile
-            label="Staff on the board"
-            value={formatNumber(members.length)}
-            sub="people in the workspace"
-            icon={Users}
-            accent="cyan"
-          />
-        )}
-        <KpiTile
-          label="Your cases closed"
-          value={formatNumber(profile?.reviewsResolved ?? 0)}
-          sub="cleared or flagged"
-          icon={ClipboardList}
-          accent="emerald"
-        />
-      </div>
-
-      {canManage && top.length > 0 && (
-        <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
-          {top.map((member) => (
-            <li
-              key={member.profile.adminUserId}
-              className="flex items-center gap-3 px-3 py-2.5 sm:px-4"
-            >
-              <span className="w-6 shrink-0 text-xs font-bold text-muted-foreground">
-                #{member.rank}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                {member.profile.displayName ??
-                  member.identity?.label ??
-                  "Unknown"}
-              </span>
-              <StaffLevelBadge level={member.profile.level} />
-              <span className="w-14 shrink-0 text-right text-xs font-semibold tabular-nums">
-                {formatNumber(member.profile.pointsTotal)}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-// ─── Shared bits ──────────────────────────────────────────────────────
 
 function EmptyCard({
   icon: Icon,

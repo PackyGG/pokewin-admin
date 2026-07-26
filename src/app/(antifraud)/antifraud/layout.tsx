@@ -22,7 +22,6 @@ import {
   type AntifraudAccessSettings,
   type AntifraudUserAccess,
 } from "@/lib/antifraud/access";
-import { ensureStaffProfile } from "@/lib/antifraud/profile";
 import { adminDb } from "@/lib/admin-db";
 import { getAdminPreferences } from "@/lib/admin-preferences";
 import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
@@ -39,11 +38,11 @@ import { PageTransition } from "@/components/page-transition";
 import { AntifraudSidebar } from "./_components/antifraud-sidebar";
 
 /**
- * Antifraud layout — the THIRD "app inside the app", after Creator Hub and Pack
+ * Antifraud layout â€” the THIRD "app inside the app", after Creator Hub and Pack
  * Studio. It reuses the SAME shell geometry + providers as the main admin
- * layout (`src/app/(admin)/layout.tsx`) — SidebarProvider / SidebarInset,
+ * layout (`src/app/(admin)/layout.tsx`) â€” SidebarProvider / SidebarInset,
  * TimezoneProvider, the AdminHeader (with its notification bell), the right-rail
- * scaffolding — but swaps in the `AntifraudSidebar`, so the user enters a
+ * scaffolding â€” but swaps in the `AntifraudSidebar`, so the user enters a
  * visually distinct sub-app while every auth / session / theme provider keeps
  * working unchanged.
  *
@@ -130,7 +129,7 @@ async function loadUserPermissions(userId: string): Promise<string[]> {
 /**
  * Resilient read of the per-role access toggles. A transient admin-DB fault
  * must NOT silently widen access, so any failure degrades to every toggle OFF
- * (fail-closed) — only the owner/admin bypass in `canAccessAntifraud` survives
+ * (fail-closed) â€” only the owner/admin bypass in `canAccessAntifraud` survives
  * a DB blip, which is the safe outcome for a security gate.
  */
 async function loadAccessSettings(): Promise<AntifraudAccessSettings> {
@@ -146,7 +145,7 @@ async function loadAccessSettings(): Promise<AntifraudAccessSettings> {
   }
 }
 
-/** Per-username override read — falls back to the role default on failure. */
+/** Per-username override read â€” falls back to the role default on failure. */
 async function loadUserAccess(): Promise<AntifraudUserAccess> {
   try {
     return await getAntifraudUserAccess();
@@ -171,8 +170,8 @@ async function loadPreferences(userId: string) {
 }
 
 /**
- * Resilient session verify — identical contract to the other shells':
- * cookie-missing / expired → redirect to /login; a transient DB fault on the
+ * Resilient session verify â€” identical contract to the other shells':
+ * cookie-missing / expired â†’ redirect to /login; a transient DB fault on the
  * role/active re-read falls back to the signed JWT payload so a blip doesn't
  * tear down the whole sub-app.
  */
@@ -201,7 +200,7 @@ export default async function AntifraudLayout({
   const session = await safeVerifySession();
 
   // Every remaining layout read is STARTED here, in ONE parallel wave right
-  // after the session resolves, so the shell costs session → one wave rather
+  // after the session resolves, so the shell costs session â†’ one wave rather
   // than four serial admin-DB round-trips. All of these loaders resolve (never
   // reject): each catches non-control-flow errors internally and returns a safe
   // fallback, so leaving them in flight on the deny/redirect path below cannot
@@ -217,7 +216,7 @@ export default async function AntifraudLayout({
   const appAccessP = resolveAppAccess(session);
 
   // Access gate (security-sensitive). It awaits ONLY its own dependencies and
-  // is decided BEFORE any JSX is returned — the other reads merely run
+  // is decided BEFORE any JSX is returned â€” the other reads merely run
   // concurrently; nothing renders and nothing is sent to the client until this
   // check passes.
   const roles = sessionRoles(session);
@@ -249,12 +248,6 @@ export default async function AntifraudLayout({
       appAccessP,
     ]);
 
-  // First visit into the workspace creates the staff profile + stamps the
-  // heartbeat. Deliberately AFTER the access gate (only people who can actually
-  // be here get a profile) and non-blocking in effect — it returns null rather
-  // than throwing if the tables aren't provisioned on this deployment.
-  await ensureStaffProfile(session.userId);
-
   const canSwitchDbEnv = session.role === "admin" && isDevDbConfigured();
   const canOpenChatPanel =
     session.role === "admin" || allowedPages.includes("/chat");
@@ -270,10 +263,8 @@ export default async function AntifraudLayout({
         <Suspense fallback={null}>
           <TopProgressBar />
         </Suspense>
-        {/* The swapped nav — Antifraud's own sidebar replaces AppSidebar.
-            `canManage` (owner/admin) reveals the quiz-authoring + settings
-            group; those pages are gated server-side too, so hiding the links
-            just avoids a click that would bounce. */}
+        {/* The swapped nav â€” Antifraud's own sidebar replaces AppSidebar.
+            `canManage` (owner/admin) reveals antifraud settings. */}
         <AntifraudSidebar canManage={canManage} access={appAccess} />
         <SidebarInset className="min-w-0">
           {dbEnv === "dev" && <DevDbBanner />}
@@ -297,7 +288,7 @@ export default async function AntifraudLayout({
             <ScrollToTopOnNav />
             {/* Subtle route-enter animation, shared with the main admin,
                 creator-hub and pack-studio shells so sub-app switches feel
-                coherent. Keys on pathname only; reduced-motion → instant. */}
+                coherent. Keys on pathname only; reduced-motion â†’ instant. */}
             <PageTransition>{children}</PageTransition>
           </div>
         </SidebarInset>

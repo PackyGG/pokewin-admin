@@ -3,16 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  BadgeCheck,
   Braces,
-  GraduationCap,
+  Gauge,
   LayoutDashboard,
   RadioTower,
   Settings,
   ShieldAlert,
-  Trophy,
-  Users,
-  UserCircle,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -58,22 +54,12 @@ const WORKSPACE_NAV: NavItem[] = [
   { label: "Account Review", href: "/antifraud/reviews", icon: ShieldAlert },
 ];
 
-const TEAM_NAV: NavItem[] = [
-  { label: "My Profile", href: "/antifraud/profile", icon: UserCircle },
-];
-
-const STAFF_NAV: NavItem[] = [
-  { label: "Quizzes", href: "/antifraud/quizzes", icon: GraduationCap },
-];
-
 /**
  * Owner/admin-only antifraud settings.
  */
 const MANAGE_NAV: NavItem[] = [
-  { label: "Staff Members", href: "/antifraud/staff", icon: Users },
-  { label: "Points", href: "/antifraud/settings/points", icon: Trophy },
+  { label: "Risk Scoring", href: "/antifraud/settings/points", icon: Gauge },
   { label: "API", href: "/antifraud/settings/api", icon: Braces },
-  { label: "Quiz Manager", href: "/antifraud/settings/quizzes", icon: BadgeCheck },
   { label: "Workspace Settings", href: "/antifraud/settings", icon: Settings },
 ];
 
@@ -206,18 +192,6 @@ export function AntifraudSidebar({
           <SidebarGroupContent>
             <NavMenu
               items={WORKSPACE_NAV}
-              pathname={pathname}
-              onNavTap={handleNavTap}
-              toHref={toHref}
-            />
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup className="px-2 py-1">
-          <SidebarGroupLabel>Team</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <NavMenu
-              items={canManage ? TEAM_NAV : [...STAFF_NAV, ...TEAM_NAV]}
               pathname={pathname}
               onNavTap={handleNavTap}
               toHref={toHref}

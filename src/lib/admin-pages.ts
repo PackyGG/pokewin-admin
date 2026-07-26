@@ -8,6 +8,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // Navigation
   { group: "Navigation", label: "Dashboard", key: "/dashboard" },
   { group: "Navigation", label: "Analytics", key: "/analytics" },
+  { group: "Staff", label: "Staff Hub", key: "/staff" },
   // Raw P&L was deleted (owner, 2026-07-23: "kinda useless"). Its tab, the
   // legacy /analytics/pure-pnl redirect and this page key all went. The
   // underlying getPackBattlePurePnl query STAYS — the Overview tab's

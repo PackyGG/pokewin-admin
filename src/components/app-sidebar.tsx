@@ -174,6 +174,8 @@ type NavItem = {
   // recently-added page. Purely cosmetic — remove once the team has
   // discovered the page.
   isNew?: boolean;
+  // Visible to every authenticated dashboard user, regardless of page grants.
+  alwaysVisible?: boolean;
 };
 
 type NavGroup = {
@@ -200,6 +202,7 @@ const NAV_FOOTER_ITEMS: NavItem[] = getSidebarFooterItems().map((e) => ({
   usernameAllowlist: e.usernameAllowlist,
   strictUsernameAllowlist: e.strictUsernameAllowlist,
   isNew: e.isNew,
+  alwaysVisible: e.alwaysVisible,
 }));
 
 const NAV_GROUPS: NavGroup[] = getSidebarGroups().map((group) => ({
@@ -213,6 +216,7 @@ const NAV_GROUPS: NavGroup[] = getSidebarGroups().map((group) => ({
     usernameAllowlist: e.usernameAllowlist,
     strictUsernameAllowlist: e.strictUsernameAllowlist,
     isNew: e.isNew,
+    alwaysVisible: e.alwaysVisible,
   })),
 }));
 
@@ -338,6 +342,7 @@ export function AppSidebar({
         if (item.strictUsernameAllowlist) {
           return Boolean(inAllowlist);
         }
+        if (item.alwaysVisible) return true;
         // Owners + admins see every page.
         return isAdmin || isOwner || pageAccessGranted(allowedPages, item.href);
       }),
@@ -371,6 +376,7 @@ export function AppSidebar({
           if (item.strictUsernameAllowlist) {
             return Boolean(inAllowlist);
           }
+          if (item.alwaysVisible) return true;
           // Owners + admins see every page.
           return isAdmin || isOwner || pageAccessGranted(allowedPages, item.href);
         }),

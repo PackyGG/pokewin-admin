@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import { HostLink } from "@/components/host-link";
 import { Check, Globe, Plug, Settings, Users, X } from "lucide-react";
 
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
@@ -15,7 +14,7 @@ import {
   getAntifraudAccessSettings,
   getAntifraudUserAccess,
 } from "@/lib/antifraud/access";
-import { channelConfigStatus } from "@/lib/antifraud/channels";
+import { channelConfigStatus } from "@/lib/staff/channels";
 import { APP_HOSTS, ROOT_DOMAIN } from "@/lib/app-hosts";
 import {
   AccessListEditor,
@@ -25,19 +24,19 @@ import {
 export const metadata = { title: "Workspace Settings" };
 
 /**
- * Antifraud → Manage → Workspace Settings. OWNER / ADMIN ONLY.
+ * Antifraud â†’ Manage â†’ Workspace Settings. OWNER / ADMIN ONLY.
  *
  * Two things live here:
  *
- *  1. ACCESS — who can enter the workspace (per-role toggles + per-username
+ *  1. ACCESS â€” who can enter the workspace (per-role toggles + per-username
  *     overrides). Owners and admins are always in and can never be denied.
  *
- *  2. INTEGRATION STATUS — whether the deployment has the credentials for
+ *  2. INTEGRATION STATUS â€” whether the deployment has the credentials for
  *     Discord pings, Telegram pings, the fraud-backend WebSocket and the signed
  *     ingest webhook, plus which hostnames serve this app.
  *
  * The status panel reports PRESENCE ONLY. No token, URL or secret is ever read
- * into the page — an operator needs to know whether a thing is configured, not
+ * into the page â€” an operator needs to know whether a thing is configured, not
  * what it is configured to.
  */
 
@@ -65,7 +64,7 @@ export default async function WorkspaceSettingsPage() {
   );
 }
 
-// ─── Access ───────────────────────────────────────────────────────────
+// â”€â”€â”€ Access â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function AccessSection() {
   const [settings, userAccess] = await Promise.all([
@@ -95,7 +94,7 @@ async function AccessSection() {
   );
 }
 
-// ─── Integrations ─────────────────────────────────────────────────────
+// â”€â”€â”€ Integrations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function IntegrationSection() {
   const channels = channelConfigStatus();
@@ -119,7 +118,7 @@ function IntegrationSection() {
       name: "Fraud backend stream",
       env: "ANTIFRAUD_WS_URL",
       ready: Boolean(process.env.ANTIFRAUD_WS_URL),
-      note: "The WebSocket this app proxies to the browser as a live signal feed. Optional — the workspace runs without it.",
+      note: "The WebSocket this app proxies to the browser as a live signal feed. Optional â€” the workspace runs without it.",
     },
     {
       name: "Signed ingest webhook",
@@ -133,7 +132,7 @@ function IntegrationSection() {
     <div className="space-y-4">
       <SectionHeading icon={Plug} title="Backend integrations" />
       <p className="text-xs text-muted-foreground">
-        Presence only — no secret is ever read into this page. Everything here
+        Presence only â€” no secret is ever read into this page. Everything here
         is optional: with none of it configured the workspace still runs
         entirely off the dashboard database.
       </p>
@@ -208,18 +207,18 @@ function IntegrationSection() {
               )}
             >
               <code className="font-mono font-medium">{entry.host}</code>
-              <span className="text-muted-foreground">→ {entry.label}</span>
+              <span className="text-muted-foreground">â†’ {entry.label}</span>
               <span className="ml-auto text-muted-foreground">
                 lands {entry.basePath ? "/" : entry.landing}
               </span>
               <span className="rounded-sm border border-border/60 px-1.5 py-0.5 uppercase tracking-wide text-muted-foreground">
-                {entry.allowRoles ? entry.allowRoles.join(" · ") : "all roles"}
+                {entry.allowRoles ? entry.allowRoles.join(" Â· ") : "all roles"}
               </span>
             </li>
           ))}
         </ul>
         <p className="text-[11px] text-muted-foreground">
-          The role chips are the front-door routing rule only — someone on the
+          The role chips are the front-door routing rule only â€” someone on the
           wrong door is bounced to the apex. Actual authorization is unchanged:
           each sub-app still runs its own DB-backed access gate, and every page
           still runs its own permission check. Set{" "}
@@ -229,18 +228,6 @@ function IntegrationSection() {
         </p>
       </div>
 
-      <div className="rounded-xl border border-border/60 bg-card p-4">
-        <span className="text-sm font-semibold">Quizzes</span>
-        <p className="mt-1 text-[11px] text-muted-foreground">
-          Quiz authoring lives on its own page.
-        </p>
-        <HostLink
-          href="/antifraud/settings/quizzes"
-          className="mt-2 inline-block text-xs font-medium text-cyan-600 hover:underline dark:text-cyan-400"
-        >
-          Open the Quiz Manager →
-        </HostLink>
-      </div>
     </div>
   );
 }

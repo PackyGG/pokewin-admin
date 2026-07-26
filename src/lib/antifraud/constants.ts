@@ -1,12 +1,12 @@
 /**
- * Antifraud vocabulary — statuses, severities, question shapes, and the label /
+ * Antifraud vocabulary â€” statuses, severities, question shapes, and the label /
  * colour maps for each.
  *
  * WHY THIS FILE EXISTS SEPARATELY: `reviews.ts` / `quiz.ts` are `server-only`
  * (they touch `adminDb`), but the dialogs and editors that WRITE these values
  * are Client Components and need the same vocabulary. Importing the server
- * modules from a client component drags Prisma — and therefore `tls`, `node:module`
- * and the rest of the Node graph — into the browser bundle, which is exactly
+ * modules from a client component drags Prisma â€” and therefore `tls`, `node:module`
+ * and the rest of the Node graph â€” into the browser bundle, which is exactly
  * the class of error `npm run build` exists to catch.
  *
  * So: every pure constant lives HERE (no imports, no DB, isomorphic), and the
@@ -14,7 +14,7 @@
  * imports unchanged.
  */
 
-// ─── Review status ────────────────────────────────────────────────────
+// â”€â”€â”€ Review status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const REVIEW_STATUSES = [
   "open",
@@ -29,7 +29,7 @@ export function isReviewStatus(value: string): value is ReviewStatus {
   return (REVIEW_STATUSES as readonly string[]).includes(value);
 }
 
-/** Statuses that still need work — what the queue defaults to. */
+/** Statuses that still need work â€” what the queue defaults to. */
 export const OPEN_REVIEW_STATUSES: readonly ReviewStatus[] = [
   "open",
   "in_review",
@@ -43,9 +43,8 @@ export const REVIEW_STATUS_LABELS: Record<ReviewStatus, string> = {
   flagged: "Flagged",
   escalated: "Escalated",
 };
-
 /**
- * Status badge colours. These are RISK colours, not money colours — the
+ * Status badge colours. These are RISK colours, not money colours â€” the
  * House-POV money rule governs amounts, and a review carries none. "Cleared" is
  * emerald because a clean account is the good outcome for the house;
  * "flagged" / "escalated" are the bad ones.
@@ -61,7 +60,7 @@ export const REVIEW_STATUS_COLORS: Record<ReviewStatus, string> = {
     "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
 };
 
-// ─── Review severity ──────────────────────────────────────────────────
+// â”€â”€â”€ Review severity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const REVIEW_SEVERITIES = ["low", "medium", "high", "critical"] as const;
 export type ReviewSeverity = (typeof REVIEW_SEVERITIES)[number];
@@ -84,66 +83,3 @@ export const REVIEW_SEVERITY_COLORS: Record<ReviewSeverity, string> = {
   critical:
     "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
 };
-
-// ─── Quiz shapes ──────────────────────────────────────────────────────
-
-/**
- *   yes_no — a two-button Yes / No question
- *   single — several options, exactly one correct (radio)
- *   multi  — several options, any number correct (checkbox), scored
- *            ALL-OR-NOTHING so "tick everything" isn't a winning strategy
- */
-export const QUESTION_KINDS = ["yes_no", "single", "multi"] as const;
-export type QuestionKind = (typeof QUESTION_KINDS)[number];
-
-export function isQuestionKind(value: string): value is QuestionKind {
-  return (QUESTION_KINDS as readonly string[]).includes(value);
-}
-
-export const QUESTION_KIND_LABELS: Record<QuestionKind, string> = {
-  yes_no: "Yes / No",
-  single: "Single choice",
-  multi: "Multiple choice",
-};
-
-export const QUIZ_STATUSES = ["draft", "published", "archived"] as const;
-export type QuizStatus = (typeof QUIZ_STATUSES)[number];
-
-export function isQuizStatus(value: string): value is QuizStatus {
-  return (QUIZ_STATUSES as readonly string[]).includes(value);
-}
-
-// ─── Deterministic shuffle ────────────────────────────────────────────
-
-/**
- * Stable shuffle keyed by a seed string — same seed, same order, every time.
- *
- * Used for a quiz's optional question shuffle. It has to be DETERMINISTIC (not
- * `Math.random`) for two reasons: a reload mid-attempt must not reorder the
- * questions under the taker, and the order must be reproducible on the server
- * when resuming. The seed is the attempt id, so each attempt gets its own
- * order and that order never moves.
- *
- * Lives here (isomorphic) rather than in the server-only quiz module because
- * the runner applies it client-side too — the attempt id only exists once the
- * taker presses Start.
- *
- * FNV-1a over `seed + id` as the sort key: no RNG state, no per-request drift.
- */
-export function stableShuffle<T extends { id: string }>(
-  items: readonly T[],
-  seed: string,
-): T[] {
-  const keyed = items.map((item) => ({ item, key: fnv1a(seed + item.id) }));
-  keyed.sort((a, b) => (a.key === b.key ? 0 : a.key < b.key ? -1 : 1));
-  return keyed.map((k) => k.item);
-}
-
-function fnv1a(input: string): number {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash >>> 0;
-}
