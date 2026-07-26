@@ -410,7 +410,7 @@ export function AppSidebar({
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader className="border-b border-sidebar-border/60 px-4 h-14 flex items-center justify-center group-data-[collapsible=icon]:px-0">
+      <SidebarHeader className="border-b border-sidebar-border/60 px-4 h-16 flex items-center justify-center group-data-[collapsible=icon]:px-0">
         <Link
           href={getDefaultRoute(role, allowedPages)}
           onClick={handleNavTap}
@@ -429,12 +429,12 @@ export function AppSidebar({
               wordmark recolored to dark ink so it's visible on a light
               background. Dark mode keeps logo.png. Both hide when collapsed. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-light.png" alt="PackyGG" className="h-6 group-data-[collapsible=icon]:hidden dark:hidden" />
+          <img src="/logo-light.png" alt="PackyGG" className="h-7 group-data-[collapsible=icon]:hidden dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="Pokewin" className="h-6 hidden dark:block group-data-[collapsible=icon]:hidden" />
+          <img src="/logo.png" alt="Pokewin" className="h-7 hidden dark:block group-data-[collapsible=icon]:hidden" />
           {/* Collapsed (icon) mode: show the compact favicon-sized mark */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/icon.png" alt="Pokewin" className="h-7 w-7 hidden group-data-[collapsible=icon]:block" />
+          <img src="/icon.png" alt="Pokewin" className="h-8 w-8 hidden group-data-[collapsible=icon]:block" />
         </Link>
       </SidebarHeader>
       <SidebarContent>

@@ -24,7 +24,7 @@ function endsInLabel(endsAtIso: string): string {
  * Compact live-rain countdown chip for the admin header — a cyan-tinted pill
  * that sits just to the LEFT of the profile menu. A rain glyph + the live
  * entrant count + the live $ pool total + the live countdown (reusing
- * RainCountdown). min-h-8 + rounded-full + the same p-1/px-3 padding rhythm
+ * RainCountdown). min-h-10 + rounded-full + the same padding rhythm
  * as the profile dropdown's trigger pill in admin-header.tsx, so the two
  * chips read as one matched pair sitting side by side.
  *
@@ -55,16 +55,16 @@ export async function HeaderRainChip() {
   const pool = formatCurrency(rain.totalPoolUsd);
   return (
     <span
-      className="hidden min-h-8 items-center gap-1.5 rounded-full border border-cyan-500/40 bg-cyan-500/10 px-3 text-xs font-medium text-cyan-700 sm:inline-flex dark:text-cyan-400"
+      className="hidden min-h-10 items-center gap-1.5 rounded-full border border-cyan-500/40 bg-cyan-500/10 px-3.5 text-xs font-medium text-cyan-700 sm:inline-flex dark:text-cyan-400"
       title={`Active rain · ${participants} · ${pool} pool · ${
         drawing ? "drawing winner" : endsInLabel(rain.endsAt)
       }`}
     >
-      <CloudRain className="size-3.5 shrink-0" aria-hidden />
+      <CloudRain className="size-4 shrink-0" aria-hidden />
       {/* Live entrant count — surfaced IN the chip (not just the tooltip) so
           the headline number is visible at a glance. */}
       <span className="inline-flex items-center gap-1">
-        <Users className="size-3 shrink-0" aria-hidden />
+        <Users className="size-3.5 shrink-0" aria-hidden />
         <span className="tabular-nums">
           {formatNumber(rain.participantCount)}
         </span>

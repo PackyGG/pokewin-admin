@@ -171,7 +171,7 @@ export function PackStudioSidebar({
     <Sidebar collapsible="icon">
       {/* Packy wordmark — same assets + sizing as the main AppSidebar header.
           Pack Studio title/subtitle sit below the logo when expanded. */}
-      <SidebarHeader className="border-b border-border px-4 py-3 flex items-center justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:h-14 group-data-[collapsible=icon]:py-0">
+      <SidebarHeader className="border-b border-border px-4 py-4 flex items-center justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:h-16 group-data-[collapsible=icon]:py-0">
         <Link
           href={toHref("/pack-studio")}
           onClick={handleNavTap}
@@ -182,19 +182,19 @@ export function PackStudioSidebar({
           <img
             src="/logo-light.png"
             alt="PackyGG"
-            className="h-6 group-data-[collapsible=icon]:hidden dark:hidden"
+            className="h-7 group-data-[collapsible=icon]:hidden dark:hidden"
           />
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/logo.png"
             alt="PackyGG"
-            className="h-6 hidden dark:block group-data-[collapsible=icon]:hidden"
+            className="h-7 hidden dark:block group-data-[collapsible=icon]:hidden"
           />
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/icon.png"
             alt="PackyGG"
-            className="h-7 w-7 hidden group-data-[collapsible=icon]:block"
+            className="h-8 w-8 hidden group-data-[collapsible=icon]:block"
           />
           <span className="mt-1 min-w-0 text-center group-data-[collapsible=icon]:hidden">
             <span className="block truncate text-xs font-semibold text-foreground">

@@ -335,13 +335,13 @@ export function AdminHeader({
     // backdrop blur) with a hairline divider, per the Liquid-Glass spec.
     // The /95 fallback keeps the header legible when backdrop-filter is
     // unsupported.
-    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-1.5 border-b border-border/60 bg-background/95 px-2 backdrop-blur-xl supports-[backdrop-filter]:bg-background/85 sm:gap-3 sm:px-4">
+    <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-1.5 border-b border-border/60 bg-background/95 px-2 backdrop-blur-xl supports-[backdrop-filter]:bg-background/85 sm:gap-3 sm:px-4">
       {/* SidebarTrigger renders a 44×44 hit-target on mobile (full
           touch-target spec) but stays visually compact via the inner
           icon. Margin -ml-1 lets it hug the left edge while keeping the
           tap target large. */}
-      <SidebarTrigger className="size-11 sm:size-8 -ml-1 sm:ml-0 shrink-0" />
-      <Separator orientation="vertical" className="!self-auto h-5 hidden sm:block" />
+      <SidebarTrigger className="size-11 sm:size-9 -ml-1 sm:ml-0 shrink-0" />
+      <Separator orientation="vertical" className="!self-auto h-6 hidden sm:block" />
       {/* Breadcrumbs:
             - <sm: collapse to last two segments with leading "…" so a
               long path like /creators/123/codes/abc renders as
@@ -418,15 +418,15 @@ export function AdminHeader({
               // bows out much further than the content needs, and reads as a
               // stray capsule in a header of squared-off controls. The avatar
               // inside stays circular; the box no longer tries to echo it.
-              // min-h-8 pixel-matches the rain chip beside it. Symmetric p-1
+              // min-h-10 pixel-matches the rain chip + bell beside it. Symmetric p-1
               // keeps the phone avatar-only target tidy; sm+ opens the right
               // side (pr-3) so the chevron has room.
-              "group flex min-h-8 items-center gap-2 rounded-lg border border-border/60 bg-muted/40 p-1 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring sm:pr-3",
+              "group flex min-h-10 items-center gap-2 rounded-lg border border-border/60 bg-muted/40 p-1 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring sm:pr-3",
             )}
             aria-label="Open profile menu"
             title={label}
           >
-            <Avatar size="sm" className="shrink-0">
+            <Avatar size="default" className="shrink-0">
               {hasAvatar && (
                 <AvatarImage
                   src={`/api/admin/avatar/${adminId}`}
