@@ -43,11 +43,12 @@ export async function AdminsTab({
     adminDrizzle.execute<{
       id: string; email: string; username: string; display_username: string | null;
       role: string; roles: string[]; totp_enabled: boolean; is_active: boolean;
-      is_owner: boolean; allowed_pages: string[]; created_at: Date | string;
+      is_owner: boolean; allowed_pages: string[] | null; created_at: Date | string;
     }>(sql`
       SELECT id::text, email, username, display_username, role::text AS role,
              roles::text[] AS roles, totp_enabled, is_active, is_owner,
-             allowed_pages, created_at
+             COALESCE(allowed_pages, ARRAY[]::text[]) AS allowed_pages,
+             created_at
       FROM admin_users
       ORDER BY created_at DESC
     `),
@@ -110,8 +111,12 @@ export async function AdminsTab({
   // resolved to the effective set here so the client never re-derives it.
   const rows: AdminUserRow[] = users.map((u) => {
     const roles = getEffectiveRoles(u.role, u.roles);
-    const pageKeys = u.allowed_pages.filter((p) => !p.startsWith("__can_"));
-    const capabilityKeys = u.allowed_pages.filter((p) => p.startsWith("__can_"));
+    // Historical admin rows may carry NULL despite the application treating
+    // this column as an array. Keep the render path safe even before the
+    // database constraint migration is applied.
+    const allowedPages = Array.isArray(u.allowed_pages) ? u.allowed_pages : [];
+    const pageKeys = allowedPages.filter((p) => !p.startsWith("__can_"));
+    const capabilityKeys = allowedPages.filter((p) => p.startsWith("__can_"));
     // Effective owner state for the badge: the `is_owner` column (absent on a
     // pre-migration DB → false) OR the permanent `motha` username. The narrowed
     // type from readAdminUsersWithRoles may omit `is_owner`, so read defensively.
