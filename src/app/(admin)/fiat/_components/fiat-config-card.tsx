@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import { AlertTriangle, Save, ShieldCheck } from "lucide-react";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { AlertTriangle, CreditCard, Save, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -17,10 +18,18 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Spinner } from "@/components/ux";
 import type { FiatConfigRow } from "@/lib/queries/fiat";
+import type { CountryRestrictionRow } from "@/lib/queries/geo-blocking";
+import {
+  applyGlobalFiatPolicy,
+  FIAT_JURISDICTION_POLICY,
+  isCreditCardDepositLocked,
+  isGlobalFiatPolicyActive,
+  MANDATORY_FIAT_JURISDICTION_CODES,
+} from "@/lib/fiat-jurisdiction-policy";
+import { setGlobalFiatDeposits } from "../../system/geo-blocking/actions";
 import { updateFiatConfigAction, type FiatEditableKey } from "../actions";
 
 const METHOD_OPTIONS = [
-  { value: "credit_card", label: "Credit card" },
   { value: "paypal", label: "PayPal" },
   { value: "paysafecard", label: "Paysafecard" },
   { value: "pulse", label: "Pulse" },
@@ -43,11 +52,14 @@ function parseMethods(raw: string | undefined): string[] {
 
 export function FiatConfigCard({
   rows,
+  restrictions,
   canEdit,
 }: {
   rows: FiatConfigRow[];
+  restrictions: CountryRestrictionRow[];
   canEdit: boolean;
 }) {
+  const router = useRouter();
   const byKey = useMemo(
     () => new Map(rows.map((row) => [row.key, row])),
     [rows],
@@ -61,7 +73,16 @@ export function FiatConfigCard({
   const [lockedMethods, setLockedMethods] = useState<string[]>(() =>
     parseMethods(byKey.get("locked_deposits_fiat")?.value),
   );
+  const [restrictionRows, setRestrictionRows] = useState(restrictions);
   const [isPending, startTransition] = useTransition();
+  const [globalPending, setGlobalPending] = useState(false);
+
+  useEffect(() => {
+    setLockedMethods(
+      parseMethods(byKey.get("locked_deposits_fiat")?.value),
+    );
+    setRestrictionRows(restrictions);
+  }, [byKey, restrictions]);
 
   const editableRows = new Set([
     "card_deposit_max_usd",
@@ -69,6 +90,52 @@ export function FiatConfigCard({
     "locked_deposits_fiat",
   ]);
   const referenceRows = rows.filter((row) => !editableRows.has(row.key));
+  const siteLockConfigured = byKey.has("locked_deposits_fiat");
+  const globalCardDepositsEnabled =
+    siteLockConfigured &&
+    isGlobalFiatPolicyActive(lockedMethods, restrictionRows);
+  const rowsByCode = new Map(
+    restrictionRows.map((row) => [row.countryCode, row]),
+  );
+  const policyRowsPresent = MANDATORY_FIAT_JURISDICTION_CODES.filter((code) =>
+    rowsByCode.has(code),
+  ).length;
+  const policyRowsLocked = MANDATORY_FIAT_JURISDICTION_CODES.filter((code) =>
+    isCreditCardDepositLocked(
+      rowsByCode.get(code)?.lockedDepositsFiat ?? [],
+    ),
+  ).length;
+
+  function handleGlobalCardDeposits(allowed: boolean) {
+    const previousRows = restrictionRows;
+    const previousMethods = lockedMethods;
+    setRestrictionRows((current) =>
+      applyGlobalFiatPolicy(current, allowed),
+    );
+    setGlobalPending(true);
+    startTransition(async () => {
+      try {
+        const result = await setGlobalFiatDeposits(allowed);
+        setLockedMethods(result.lockedMethods);
+        toast.success(
+          allowed
+            ? `Card deposits enabled globally with ${result.protected} required exclusions`
+            : "Card deposits disabled site-wide",
+        );
+        router.refresh();
+      } catch (error) {
+        setRestrictionRows(previousRows);
+        setLockedMethods(previousMethods);
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Global card-deposit update failed",
+        );
+      } finally {
+        setGlobalPending(false);
+      }
+    });
+  }
 
   function save(
     key: FiatEditableKey,
@@ -183,19 +250,77 @@ export function FiatConfigCard({
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
-            <ShieldCheck className="size-4" />
-            Site-wide fiat methods
+            <CreditCard className="size-4" />
+            Global card-deposit availability
           </CardTitle>
           <CardDescription>
-            A checked method is locked. Credit card is the live Whop method;
-            legacy methods remain visible because the backend still recognizes
-            their lock tokens.
+            Enables the live Whop credit-card method everywhere except the 33
+            mandatory policy jurisdictions. Disabling it locks card deposits
+            site-wide.
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          {byKey.has("locked_deposits_fiat") ? (
+        <CardContent className="space-y-4">
+          {siteLockConfigured ? (
             <div className="space-y-4">
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-3">
+                <div>
+                  <div className="text-sm font-medium">
+                    Accept card deposits
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {globalCardDepositsEnabled
+                      ? `Live globally; ${policyRowsLocked} policy jurisdictions stay locked`
+                      : "Disabled or location policy is not fully applied"}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    {globalCardDepositsEnabled ? "Enabled" : "Disabled"}
+                  </span>
+                  <Switch
+                    checked={globalCardDepositsEnabled}
+                    disabled={!canEdit || globalPending}
+                    onCheckedChange={handleGlobalCardDeposits}
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                {FIAT_JURISDICTION_POLICY.map((group) => (
+                  <div key={group.key} className="rounded-lg border p-3">
+                    <div className="text-xs font-medium">{group.label}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {group.jurisdictions
+                        .map((jurisdiction) => jurisdiction.name)
+                        .join(", ")}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                <span>
+                  Policy rows present: {policyRowsPresent} /{" "}
+                  {MANDATORY_FIAT_JURISDICTION_CODES.length}. Card-locked:{" "}
+                  {policyRowsLocked} /{" "}
+                  {MANDATORY_FIAT_JURISDICTION_CODES.length}.
+                </span>
+                <span>
+                  Ukraine subdivision enforcement requires backend PR #470.
+                </span>
+              </div>
+
+              <div className="space-y-2 border-t pt-4">
+                <div className="flex items-center gap-2 text-xs font-medium">
+                  <ShieldCheck className="size-3.5" />
+                  Advanced legacy provider locks
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Checked providers are site-locked. Credit card is controlled
+                  only by the global switch above so jurisdiction exclusions
+                  cannot be bypassed.
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {METHOD_OPTIONS.map((method) => {
                   const checked = lockedMethods.includes(method.value);
                   return (
@@ -226,6 +351,7 @@ export function FiatConfigCard({
                     </div>
                   );
                 })}
+                </div>
               </div>
               <Button
                 size="sm"
@@ -243,7 +369,7 @@ export function FiatConfigCard({
                 ) : (
                   <Save className="size-3.5" />
                 )}
-                Save method locks
+                Save legacy locks
               </Button>
             </div>
           ) : (

@@ -20,6 +20,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { EmptyState } from "@/components/empty-state";
+import {
+  CREDIT_CARD_DEPOSIT_METHOD,
+  isCreditCardDepositLocked,
+  isMandatoryFiatJurisdiction,
+} from "@/lib/fiat-jurisdiction-policy";
 
 /**
  * Generic geo-restriction table — extracted from the country-only
@@ -133,10 +138,10 @@ export const CRYPTO_OPTIONS = [
   { value: "ripple", label: "XRP" }, // NEW — verify string
 ];
 
-// Fiat deposits lock is a SINGLE on/off (one provider — no per-currency split). Stored as
-// this one-element array when locked, [] when allowed. ⚠️ VERIFY the value string against
-// packy-backend (same silent-no-op risk as the crypto values above).
-export const FIAT_LOCK_VALUE = ["fiat"];
+// Fiat deposits lock is a SINGLE on/off (one provider - no per-currency split).
+// The backend's enforced Whop token is `credit_card`; the former `fiat` token
+// was a silent no-op and is normalized away by the server actions.
+export const FIAT_LOCK_VALUE = [CREDIT_CARD_DEPOSIT_METHOD];
 
 const RESTRICTED_BADGE = "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30";
 const OPEN_BADGE = "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30";
@@ -282,6 +287,7 @@ function RowDetail({
   // deposit/withdrawal settings below take effect. Show them dimmed + click-disabled under
   // a clear note (rather than pretending they're live controls) — unblock to edit them.
   const gated = row.blocked;
+  const mandatoryFiatLock = isMandatoryFiatJurisdiction(row.code);
 
   const toggleCoin = (field: ArrayField, values: string[], optionValue: string) => {
     const next = values.includes(optionValue)
@@ -298,6 +304,15 @@ function RowDetail({
           <span>
             This country is fully geo-blocked — users can&apos;t reach the site, so the
             deposit / withdrawal settings below don&apos;t apply. Unblock it to edit them.
+          </span>
+        </div>
+      )}
+      {mandatoryFiatLock && !gated && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+          <Info className="mt-0.5 size-3.5 shrink-0" />
+          <span>
+            Required fiat-policy jurisdiction. Card deposits stay locked even
+            when global card deposits are enabled.
           </span>
         </div>
       )}
@@ -354,17 +369,32 @@ function RowDetail({
             onCheckedChange={() => onToggle(row.code, "promo_code_deposit", row.promoCodeDeposit)}
           />
           <ToggleField
-            label="Fiat deposits"
+            label={
+              mandatoryFiatLock
+                ? "Fiat deposits (required lock)"
+                : "Fiat deposits"
+            }
             hint="Card / fiat deposits (one provider — a single on/off, no per-currency split)."
             polarity="allow"
-            checked={row.lockedDepositsFiat.length === 0}
-            disabled={isPending}
+            checked={!isCreditCardDepositLocked(row.lockedDepositsFiat)}
+            disabled={isPending || mandatoryFiatLock}
             onCheckedChange={() =>
               onArrayChange(
                 row.code,
                 "locked_deposits_fiat",
                 row.lockedDepositsFiat,
-                row.lockedDepositsFiat.length > 0 ? [] : FIAT_LOCK_VALUE,
+                isCreditCardDepositLocked(row.lockedDepositsFiat)
+                  ? row.lockedDepositsFiat.filter(
+                      (value) =>
+                        value !== CREDIT_CARD_DEPOSIT_METHOD &&
+                        value !== "fiat",
+                    )
+                  : [
+                      ...row.lockedDepositsFiat.filter(
+                        (value) => value !== "fiat",
+                      ),
+                      ...FIAT_LOCK_VALUE,
+                    ],
               )
             }
           />

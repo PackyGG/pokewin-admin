@@ -3,18 +3,55 @@
 import { revalidatePath, revalidateTag } from "next/cache";
 import { after } from "next/server";
 import countries from "i18n-iso-countries";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import { getDrizzleDb } from "@/lib/db";
-import { country_restrictions } from "@/lib/db-schema/main/schema";
+import {
+  country_restrictions,
+  site_config,
+} from "@/lib/db-schema/main/schema";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { invalidateCountryRestrictionsCache } from "@/lib/invalidate-country-restrictions-cache";
 import { GEO_BLOCKING_CACHE_TAG } from "@/lib/queries/geo-blocking";
+import { FIAT_CACHE_TAG } from "@/lib/queries/fiat";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { backendApi } from "@/lib/backend-api";
 import { resolveBackendApiConfig } from "@/lib/backend-api/config";
+import { refreshSiteConfig } from "@/lib/refresh-site-config";
+import { pgArrayParam } from "@/lib/drizzle-array-param";
+import {
+  CREDIT_CARD_DEPOSIT_METHOD,
+  isCreditCardDepositLocked,
+  isMandatoryFiatJurisdiction,
+  MANDATORY_FIAT_JURISDICTION_CODES,
+  withCreditCardLock,
+  withoutCreditCardLock,
+} from "@/lib/fiat-jurisdiction-policy";
+
+const SITE_FIAT_LOCK_KEY = "locked_deposits_fiat";
+
+function parseSiteFiatLocks(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    throw new Error(
+      "The site-wide fiat lock list is invalid JSON. Fix the configured value before changing global fiat access.",
+    );
+  }
+}
+
+function revalidateFiatPolicyPages(): void {
+  revalidateTag(GEO_BLOCKING_CACHE_TAG);
+  revalidateTag(FIAT_CACHE_TAG);
+  revalidatePath("/system/geo-blocking");
+  revalidatePath("/fiat");
+  revalidatePath("/security");
+}
 
 /**
  * Geo Blocking (formerly "Country Restrictions") server actions — relocated
@@ -58,7 +95,7 @@ export async function updateCountryRestrictionArray(
   countryCode: string,
   field: string,
   values: string[]
-) {
+): Promise<void> {
   const db = await getDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_update_country_restriction", "update country restrictions");
@@ -70,10 +107,27 @@ export async function updateCountryRestrictionArray(
   ];
   if (!validFields.includes(field)) throw new Error("Invalid field");
 
+  const normalizedValues =
+    field === "locked_deposits_fiat"
+      ? isCreditCardDepositLocked(values)
+        ? withCreditCardLock(values)
+        : withoutCreditCardLock(values)
+      : [...new Set(values)];
+
+  if (
+    field === "locked_deposits_fiat" &&
+    isMandatoryFiatJurisdiction(countryCode) &&
+    !isCreditCardDepositLocked(normalizedValues)
+  ) {
+    throw new Error(
+      "Card deposits are required to stay locked for this policy jurisdiction.",
+    );
+  }
+
   const updated = await db
     .update(country_restrictions)
     .set({
-      [field]: values,
+      [field]: sql.param(normalizedValues),
       updated_at: new Date().toISOString(),
     })
     .where(eq(country_restrictions.country_code, countryCode))
@@ -83,7 +137,7 @@ export async function updateCountryRestrictionArray(
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "country_restriction_updated",
-    metadata: { country_code: countryCode, field, values },
+    metadata: { country_code: countryCode, field, values: normalizedValues },
   });
 
   after(() => {
@@ -177,12 +231,26 @@ export async function toggleCountryRestriction(
   ];
   if (!validFields.includes(field)) throw new Error("Invalid field");
 
+  const valuesToSet = {
+    [field]: value,
+    updated_at: new Date().toISOString(),
+    ...(isMandatoryFiatJurisdiction(countryCode)
+      ? {
+          locked_deposits_fiat: sql`
+            array_append(
+              array_remove(
+                array_remove(locked_deposits_fiat, 'fiat'),
+                'credit_card'
+              ),
+              'credit_card'
+            )
+          `,
+        }
+      : {}),
+  };
   const updated = await db
     .update(country_restrictions)
-    .set({
-      [field]: value,
-      updated_at: new Date().toISOString(),
-    })
+    .set(valuesToSet)
     .where(eq(country_restrictions.country_code, countryCode))
     .returning({ country_code: country_restrictions.country_code });
   if (!updated[0]) throw new Error("Country restriction not found");
@@ -248,17 +316,20 @@ export async function reloadCountryRestrictionsCache(): Promise<{
 }
 
 /**
- * Global fiat-deposit switch — allow or disable fiat (card) deposits for EVERY
- * country + US-state row in one bulk write. `locked_deposits_fiat = []` = fiat
- * allowed; `["fiat"]` = fiat locked — the same single-element marker the per-row
- * Fiat toggle writes (see FIAT_LOCK_VALUE in restrictions-table.tsx). Gated by
- * the same admin + `__can_update_country_restriction` capability as the per-row
- * array edit; audited + cache-busted like its siblings. Writes the MAIN/PROD
- * game DB (operator-triggered), same as the per-row actions above.
+ * Global card-deposit switch. Enabling removes the site-wide credit-card lock,
+ * opens every non-policy location, and keeps all mandatory jurisdictions
+ * locked. Disabling locks the site and every location. The site_config row and
+ * location rows move atomically, and the ineffective legacy `fiat` token is
+ * normalized away.
  */
 export async function setGlobalFiatDeposits(
   allowed: boolean,
-): Promise<{ affected: number }> {
+): Promise<{
+  affected: number;
+  protected: number;
+  seeded: number;
+  lockedMethods: string[];
+}> {
   const db = await getDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(
@@ -266,28 +337,172 @@ export async function setGlobalFiatDeposits(
     "__can_update_country_restriction",
     "update country restrictions",
   );
+  await requireCapability(
+    session,
+    "__can_upsert_site_config",
+    "update fiat configuration",
+  );
 
-  // [] = fiat allowed; ["fiat"] = fiat locked (matches the per-row Fiat toggle).
-  const value: string[] = allowed ? [] : ["fiat"];
-  const updated = await db
-    .update(country_restrictions)
-    .set({
-      locked_deposits_fiat: value,
-      updated_at: new Date().toISOString(),
-    })
-    .returning({ country_code: country_restrictions.country_code });
-  const res = { count: updated.length };
+  const result = await db.transaction(async (tx) => {
+    const siteResult = await tx.execute<{ value: string }>(sql`
+      SELECT value
+      FROM site_config
+      WHERE key = ${SITE_FIAT_LOCK_KEY}
+      FOR UPDATE
+    `);
+    const siteRow = siteResult.rows[0];
+    if (!siteRow) {
+      throw new Error(
+        "The site-wide fiat lock list is not configured in this environment. The global switch cannot safely create a missing money-control key.",
+      );
+    }
+
+    const currentSiteLocks = parseSiteFiatLocks(siteRow.value);
+    const nextSiteLocks = allowed
+      ? withoutCreditCardLock(currentSiteLocks)
+      : withCreditCardLock(currentSiteLocks);
+
+    await tx
+      .update(site_config)
+      .set({
+        value: JSON.stringify(nextSiteLocks.sort()),
+        updated_at: new Date().toISOString(),
+      })
+      .where(eq(site_config.key, SITE_FIAT_LOCK_KEY));
+
+    const inserted = await tx
+      .insert(country_restrictions)
+      .values(
+        MANDATORY_FIAT_JURISDICTION_CODES.map((country_code) => ({
+          country_code,
+        })),
+      )
+      .onConflictDoNothing()
+      .returning({ country_code: country_restrictions.country_code });
+
+    const updated = allowed
+      ? await tx.execute<{ country_code: string }>(sql`
+          UPDATE country_restrictions
+          SET
+            locked_deposits_fiat = CASE
+              WHEN country_code = ANY(
+                ${pgArrayParam(MANDATORY_FIAT_JURISDICTION_CODES)}::text[]
+              )
+                THEN array_append(
+                  array_remove(
+                    array_remove(locked_deposits_fiat, 'fiat'),
+                    'credit_card'
+                  ),
+                  'credit_card'
+                )
+              ELSE array_remove(
+                array_remove(locked_deposits_fiat, 'fiat'),
+                'credit_card'
+              )
+            END,
+            updated_at = NOW()
+          RETURNING country_code
+        `)
+      : await tx.execute<{ country_code: string }>(sql`
+          UPDATE country_restrictions
+          SET
+            locked_deposits_fiat = array_append(
+              array_remove(
+                array_remove(locked_deposits_fiat, 'fiat'),
+                'credit_card'
+              ),
+              'credit_card'
+            ),
+            updated_at = NOW()
+          RETURNING country_code
+        `);
+
+    return {
+      affected: updated.rows.length,
+      protected: MANDATORY_FIAT_JURISDICTION_CODES.length,
+      seeded: inserted.length,
+      lockedMethods: nextSiteLocks,
+    };
+  });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "country_restriction_updated",
-    metadata: { action: "global_fiat_deposits", allowed, affected: res.count },
+    metadata: {
+      action: "global_fiat_deposits",
+      allowed,
+      affected: result.affected,
+      protected: result.protected,
+      seeded: result.seeded,
+      method: CREDIT_CARD_DEPOSIT_METHOD,
+    },
   });
 
   after(() => {
     invalidateCountryRestrictionsCache().catch(() => {});
   });
-  revalidateTag(GEO_BLOCKING_CACHE_TAG);
-  revalidatePath("/system/geo-blocking");
-  return { affected: res.count };
+  await refreshSiteConfig();
+  revalidateFiatPolicyPages();
+  return result;
+}
+
+export async function setMandatoryJurisdictionsGeoBlocked(
+  blocked: boolean,
+): Promise<{ affected: number; seeded: number }> {
+  const db = await getDrizzleDb();
+  const session = await requireAdmin();
+  await requireCapability(
+    session,
+    "__can_toggle_country_restriction",
+    "toggle country restrictions",
+  );
+
+  const result = await db.transaction(async (tx) => {
+    const inserted = await tx
+      .insert(country_restrictions)
+      .values(
+        MANDATORY_FIAT_JURISDICTION_CODES.map((country_code) => ({
+          country_code,
+        })),
+      )
+      .onConflictDoNothing()
+      .returning({ country_code: country_restrictions.country_code });
+
+    const updated = await tx.execute<{ country_code: string }>(sql`
+      UPDATE country_restrictions
+      SET
+        blocked = ${blocked},
+        locked_deposits_fiat = array_append(
+          array_remove(
+            array_remove(locked_deposits_fiat, 'fiat'),
+            'credit_card'
+          ),
+          'credit_card'
+        ),
+        updated_at = NOW()
+      WHERE country_code = ANY(
+        ${pgArrayParam(MANDATORY_FIAT_JURISDICTION_CODES)}::text[]
+      )
+      RETURNING country_code
+    `);
+
+    return { affected: updated.rows.length, seeded: inserted.length };
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "country_restriction_updated",
+    metadata: {
+      action: "mandatory_jurisdictions_geo_block",
+      blocked,
+      affected: result.affected,
+      seeded: result.seeded,
+    },
+  });
+
+  after(() => {
+    invalidateCountryRestrictionsCache().catch(() => {});
+  });
+  revalidateFiatPolicyPages();
+  return result;
 }

@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { getCardPayments } from "@/lib/queries/card-payments";
+import { getCountryRestrictions } from "@/lib/queries/geo-blocking";
 import {
   EMPTY_FIAT_ACCESS,
   EMPTY_FIAT_OVERVIEW,
@@ -163,16 +164,28 @@ function Control({ label, value }: { label: string; value: string }) {
 }
 
 export async function FiatConfigurationTab({ canEdit }: { canEdit: boolean }) {
-  const result = await safeQuery(
-    getFiatConfig,
-    [],
-    "fiat.configuration",
-    REWARD_QUERY_TIMEOUT_MS,
-  );
+  const [configResult, restrictionsResult] = await Promise.all([
+    safeQuery(
+      getFiatConfig,
+      [],
+      "fiat.configuration",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      getCountryRestrictions,
+      [],
+      "fiat.configuration-jurisdictions",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+  ]);
   return (
     <div className="space-y-4">
-      {result.error && <QueryNotice />}
-      <FiatConfigCard rows={result.data} canEdit={canEdit} />
+      {(configResult.error || restrictionsResult.error) && <QueryNotice />}
+      <FiatConfigCard
+        rows={configResult.data}
+        restrictions={restrictionsResult.data}
+        canEdit={canEdit}
+      />
     </div>
   );
 }

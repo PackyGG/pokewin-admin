@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { Globe } from "lucide-react";
 import { requireAdmin } from "@/lib/dal";
 import { getCountryRestrictions } from "@/lib/queries/geo-blocking";
+import { getFiatConfig } from "@/lib/queries/fiat";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
@@ -69,11 +70,19 @@ export default async function GeoBlockingPage() {
 }
 
 async function GeoBlockingBody() {
-  const { data: countryRestrictions, error, kind } = await safeQuery(
-    () => getCountryRestrictions(),
-    null,
-    "geo-blocking.restrictions",
-  );
+  const [restrictionsResult, configResult] = await Promise.all([
+    safeQuery(
+      () => getCountryRestrictions(),
+      null,
+      "geo-blocking.restrictions",
+    ),
+    safeQuery(() => getFiatConfig(), [], "geo-blocking.fiat-config"),
+  ]);
+  const {
+    data: countryRestrictions,
+    error,
+    kind,
+  } = restrictionsResult;
 
   if (error || !countryRestrictions) {
     return (
@@ -86,9 +95,29 @@ async function GeoBlockingBody() {
     );
   }
 
+  const fiatLockRow = configResult.data.find(
+    (row) => row.key === "locked_deposits_fiat",
+  );
+  let siteLockedMethods: string[] | null = null;
+  if (!configResult.error && fiatLockRow) {
+    try {
+      const parsed: unknown = JSON.parse(fiatLockRow.value);
+      if (Array.isArray(parsed)) {
+        siteLockedMethods = parsed.filter(
+          (item): item is string => typeof item === "string",
+        );
+      }
+    } catch {
+      siteLockedMethods = null;
+    }
+  }
+
   return (
     <FadeIn>
-      <GeoBlockingContent countryRestrictions={countryRestrictions} />
+      <GeoBlockingContent
+        countryRestrictions={countryRestrictions}
+        siteLockedMethods={siteLockedMethods}
+      />
     </FadeIn>
   );
 }

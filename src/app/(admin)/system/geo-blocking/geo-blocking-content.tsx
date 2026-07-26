@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import countries from "i18n-iso-countries";
 import enLocale from "i18n-iso-countries/langs/en.json";
@@ -13,6 +14,7 @@ import {
   reloadCountryRestrictionsCache,
   seedMissingCountryRestrictions,
   setGlobalFiatDeposits,
+  setMandatoryJurisdictionsGeoBlocked,
   toggleCountryRestriction,
   updateCountryRestrictionArray,
 } from "./actions";
@@ -27,6 +29,16 @@ import {
 } from "./restrictions-table";
 import type { CountryRestrictionRow } from "@/lib/queries/geo-blocking";
 import { isUsStateCode, usStateName } from "./us-states";
+import {
+  applyGlobalFiatPolicy,
+  fiatJurisdictionName,
+  FIAT_JURISDICTION_POLICY,
+  isCreditCardDepositLocked,
+  isGlobalFiatPolicyActive,
+  isMandatoryFiatJurisdiction,
+  MANDATORY_FIAT_JURISDICTION_CODES,
+  withCreditCardLock,
+} from "@/lib/fiat-jurisdiction-policy";
 
 countries.registerLocale(enLocale);
 
@@ -104,14 +116,18 @@ function filterByTerm(list: RestrictionRowData[], search: string): RestrictionRo
 
 function toRestrictionRow(c: CountryRestrictionRow): RestrictionRowData {
   const isState = isUsStateCode(c.countryCode);
+  const policyName = fiatJurisdictionName(c.countryCode);
+  const isUkraineRegion = c.countryCode.startsWith("UA-");
   return {
     code: c.countryCode,
     // US state rows (US-CA, …) aren't valid alpha-2, so resolve their name from
     // the state map instead of i18n-iso-countries (which returns undefined).
-    name: isState
-      ? usStateName(c.countryCode)
-      : countries.getName(c.countryCode, "en") ?? c.countryCode,
-    glyph: isState ? "🇺🇸" : flagEmoji(c.countryCode),
+    name:
+      policyName ??
+      (isState
+        ? usStateName(c.countryCode)
+        : countries.getName(c.countryCode, "en") ?? c.countryCode),
+    glyph: isState ? "🇺🇸" : isUkraineRegion ? "🇺🇦" : flagEmoji(c.countryCode),
     physicalWithdrawal: c.physicalWithdrawal,
     digitalWithdrawal: c.digitalWithdrawal,
     giftCardDeposit: c.giftCardDeposit,
@@ -149,15 +165,18 @@ function classifyRow(row: RestrictionRowData): RowBucket {
 
 export function GeoBlockingContent({
   countryRestrictions,
+  siteLockedMethods,
 }: {
   countryRestrictions: CountryRestrictionRow[];
+  siteLockedMethods: string[] | null;
 }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   // Local optimistic copy of the rows — see the "Scroll-fix" note above.
   const [rows, setRows] = useState(countryRestrictions);
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<
-    "blocked" | "other" | "itemWithdrawal" | "all" | "usStates"
+    "blocked" | "other" | "itemWithdrawal" | "all" | "usStates" | "policy"
   >("all");
   const [itemWithdrawalOpen, setItemWithdrawalOpen] = useState(false);
   // In-flight country codes — see the "Per-row pending" note above.
@@ -165,6 +184,10 @@ export function GeoBlockingContent({
   const [seeding, setSeeding] = useState(false);
   const [reloadingCache, setReloadingCache] = useState(false);
   const [globalFiatPending, setGlobalFiatPending] = useState(false);
+  const [policyGeoPending, setPolicyGeoPending] = useState(false);
+  const [currentSiteLockedMethods, setCurrentSiteLockedMethods] = useState(
+    siteLockedMethods,
+  );
 
   async function handleReloadCache() {
     setReloadingCache(true);
@@ -202,28 +225,62 @@ export function GeoBlockingContent({
     }
   }
 
-  // Global fiat-deposit switch — allow / disable fiat for EVERY country + US
-  // state in one write. Optimistically updates all local rows so the per-row
-  // Fiat toggles reflect it immediately; the server action bulk-writes + busts
-  // the backend cache. Rolls back on failure.
+  // Global card-deposit switch. Enabling opens non-policy rows while preserving
+  // every mandatory exclusion; disabling locks every row. The server action
+  // also moves the site-wide lock in the same transaction.
   function handleGlobalFiat(allowed: boolean) {
-    const value: string[] = allowed ? [] : ["fiat"];
     const previous = rows;
-    setRows((rs) => rs.map((r) => ({ ...r, lockedDepositsFiat: value })));
+    const previousSiteLocks = currentSiteLockedMethods;
+    setRows((current) => applyGlobalFiatPolicy(current, allowed));
     setGlobalFiatPending(true);
     startTransition(async () => {
       try {
         const res = await setGlobalFiatDeposits(allowed);
+        setCurrentSiteLockedMethods(res.lockedMethods);
         toast.success(
-          `Fiat deposits ${allowed ? "allowed" : "disabled"} for all ${res.affected} entries`,
+          allowed
+            ? `Card deposits enabled outside ${res.protected} required exclusions`
+            : `Card deposits disabled across ${res.affected} location entries`,
         );
+        router.refresh();
       } catch (e) {
         setRows(previous);
+        setCurrentSiteLockedMethods(previousSiteLocks);
         toast.error(
           e instanceof Error ? e.message : "Failed to update fiat deposits",
         );
       } finally {
         setGlobalFiatPending(false);
+      }
+    });
+  }
+
+  function handlePolicyGeoBlock(blocked: boolean) {
+    const previous = rows;
+    setRows((current) =>
+      current.map((row) =>
+        isMandatoryFiatJurisdiction(row.countryCode)
+          ? { ...row, blocked }
+          : row,
+      ),
+    );
+    setPolicyGeoPending(true);
+    startTransition(async () => {
+      try {
+        const res = await setMandatoryJurisdictionsGeoBlocked(blocked);
+        toast.success(
+          `${blocked ? "Geo-blocked" : "Unblocked"} ${res.affected} policy jurisdictions`,
+        );
+        router.refresh();
+      } catch (error) {
+        setRows(previous);
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Failed to update policy geo blocks",
+        );
+      } finally {
+        setPolicyGeoPending(false);
       }
     });
   }
@@ -243,7 +300,8 @@ export function GeoBlockingContent({
   useEffect(() => {
     if (isPending) return;
     setRows(countryRestrictions);
-  }, [countryRestrictions, isPending]);
+    setCurrentSiteLockedMethods(siteLockedMethods);
+  }, [countryRestrictions, isPending, siteLockedMethods]);
 
   function patchRow(
     countryCode: string,
@@ -259,7 +317,17 @@ export function GeoBlockingContent({
   function handleToggle(countryCode: string, field: BooleanField, currentValue: boolean) {
     const next = !currentValue;
     const prop = BOOL_PROP[field];
+    const previousFiatLocks =
+      rows.find((row) => row.countryCode === countryCode)
+        ?.lockedDepositsFiat ?? [];
     patchRow(countryCode, prop, next);
+    if (isMandatoryFiatJurisdiction(countryCode)) {
+      patchRow(
+        countryCode,
+        "lockedDepositsFiat",
+        withCreditCardLock(previousFiatLocks),
+      );
+    }
     beginPending(countryCode);
     startTransition(async () => {
       try {
@@ -267,6 +335,9 @@ export function GeoBlockingContent({
         toast.success("Restriction updated");
       } catch (e) {
         patchRow(countryCode, prop, currentValue);
+        if (isMandatoryFiatJurisdiction(countryCode)) {
+          patchRow(countryCode, "lockedDepositsFiat", previousFiatLocks);
+        }
         toast.error(e instanceof Error ? e.message : "Failed");
       } finally {
         endPending(countryCode);
@@ -301,11 +372,18 @@ export function GeoBlockingContent({
   // OWN tab and don't pollute the country buckets/count. Both edit through the
   // exact same actions — a `US-CA` row toggles like any other country_code.
   const countryRows = useMemo(
-    () => restrictionRows.filter((r) => !isUsStateCode(r.code)),
+    () => restrictionRows.filter((r) => !r.code.includes("-")),
     [restrictionRows],
   );
   const stateRows = useMemo(
     () => restrictionRows.filter((r) => isUsStateCode(r.code)),
+    [restrictionRows],
+  );
+  const policyRows = useMemo(
+    () =>
+      MANDATORY_FIAT_JURISDICTION_CODES.map((code) =>
+        restrictionRows.find((row) => row.code === code),
+      ).filter((row): row is RestrictionRowData => row !== undefined),
     [restrictionRows],
   );
   const totalCount = countryRows.length;
@@ -314,21 +392,29 @@ export function GeoBlockingContent({
     [stateRows],
   );
 
-  // Global fiat-deposit state across ALL rows (countries + states). `[]` on a
-  // row = fiat allowed; a non-empty lockedDepositsFiat = fiat disabled.
   const fiatDisabledCount = useMemo(
-    () => restrictionRows.filter((r) => r.lockedDepositsFiat.length > 0).length,
+    () =>
+      restrictionRows.filter((row) =>
+        isCreditCardDepositLocked(row.lockedDepositsFiat),
+      ).length,
     [restrictionRows],
   );
-  const allFiatAllowed = fiatDisabledCount === 0;
+  const allFiatAllowed =
+    currentSiteLockedMethods !== null &&
+    isGlobalFiatPolicyActive(currentSiteLockedMethods, rows);
+  const policyFiatLocked = policyRows.filter((row) =>
+    isCreditCardDepositLocked(row.lockedDepositsFiat),
+  ).length;
+  const policyGeoBlocked = policyRows.filter((row) => row.blocked).length;
+  const allPolicyGeoBlocked =
+    policyRows.length === MANDATORY_FIAT_JURISDICTION_CODES.length &&
+    policyGeoBlocked === policyRows.length;
   const globalFiatCaption =
-    restrictionRows.length === 0
-      ? ""
-      : fiatDisabledCount === 0
-        ? "Allowed in all countries & US states"
-        : fiatDisabledCount === restrictionRows.length
-          ? "Disabled everywhere"
-          : `${fiatDisabledCount} of ${restrictionRows.length} have fiat disabled`;
+    currentSiteLockedMethods === null
+      ? "Site lock configuration could not be loaded"
+      : allFiatAllowed
+        ? `Enabled globally with ${policyFiatLocked} required exclusions`
+        : `${fiatDisabledCount} location rows currently lock card deposits`;
 
   const buckets = useMemo(() => {
     const blocked: RestrictionRowData[] = [];
@@ -360,6 +446,10 @@ export function GeoBlockingContent({
   const searchedStates = useMemo(
     () => filterByTerm(stateRows, search),
     [stateRows, search],
+  );
+  const searchedPolicy = useMemo(
+    () => filterByTerm(policyRows, search),
+    [policyRows, search],
   );
 
   const blockedRows = useMemo(
@@ -420,7 +510,7 @@ export function GeoBlockingContent({
         <div className="flex items-center gap-2.5">
           <CreditCard className="size-4 text-muted-foreground" />
           <div>
-            <div className="text-sm font-medium">Fiat deposits — global</div>
+            <div className="text-sm font-medium">Card deposits - global</div>
             <div className="text-xs text-muted-foreground">{globalFiatCaption}</div>
           </div>
         </div>
@@ -432,14 +522,64 @@ export function GeoBlockingContent({
                 : "text-rose-600 dark:text-rose-400"
             }`}
           >
-            {allFiatAllowed ? "Allowed everywhere" : "Disabled / mixed"}
+            {allFiatAllowed ? "Enabled with exclusions" : "Disabled / mixed"}
           </span>
           <Switch
             checked={allFiatAllowed}
-            disabled={globalFiatPending}
-            onCheckedChange={() => handleGlobalFiat(!allFiatAllowed)}
+            disabled={
+              globalFiatPending || currentSiteLockedMethods === null
+            }
+            onCheckedChange={handleGlobalFiat}
           />
         </div>
+      </div>
+
+      <div className="rounded-xl border bg-card px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <Ban className="size-4 text-muted-foreground" />
+            <div>
+              <div className="text-sm font-medium">
+                Fully geo-block policy jurisdictions
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {policyGeoBlocked} of{" "}
+                {MANDATORY_FIAT_JURISDICTION_CODES.length} are fully blocked.
+                Their card-deposit locks remain mandatory either way.
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span
+              className={`text-xs font-medium ${
+                allPolicyGeoBlocked
+                  ? "text-rose-600 dark:text-rose-400"
+                  : "text-muted-foreground"
+              }`}
+            >
+              {allPolicyGeoBlocked ? "Fully blocked" : "Not fully blocked"}
+            </span>
+            <Switch
+              checked={allPolicyGeoBlocked}
+              disabled={policyGeoPending}
+              onCheckedChange={handlePolicyGeoBlock}
+            />
+          </div>
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          {FIAT_JURISDICTION_POLICY.map((group) => (
+            <div key={group.key} className="rounded-lg border px-3 py-2">
+              <div className="text-xs font-medium">{group.label}</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {group.jurisdictions.map((item) => item.name).join(", ")}
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Ukraine region rows are stored here now. Runtime enforcement for
+          those four subdivisions begins when backend PR #470 is deployed.
+        </p>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -484,7 +624,15 @@ export function GeoBlockingContent({
       <Tabs
         value={tab}
         onValueChange={(v) =>
-          setTab(v as "blocked" | "other" | "itemWithdrawal" | "all" | "usStates")
+          setTab(
+            v as
+              | "blocked"
+              | "other"
+              | "itemWithdrawal"
+              | "all"
+              | "usStates"
+              | "policy",
+          )
         }
       >
         <TabsList className="flex-wrap h-auto">
@@ -495,6 +643,10 @@ export function GeoBlockingContent({
             Item Withdrawal Disabled ({itemWithdrawalRows.length})
           </TabsTrigger>
           <TabsTrigger value="usStates">US States ({searchedStates.length})</TabsTrigger>
+          <TabsTrigger value="policy">
+            Fiat Policy ({searchedPolicy.length} /{" "}
+            {MANDATORY_FIAT_JURISDICTION_CODES.length})
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="blocked">
@@ -590,6 +742,23 @@ export function GeoBlockingContent({
                 : "No US states found",
               description:
                 "All 50 states + DC live here. Blocking a state stops access for users geolocated there — layered on top of any country-level US rule (the backend already enforces this).",
+            }}
+          />
+        </TabsContent>
+
+        <TabsContent value="policy">
+          <RestrictionsTable
+            rows={searchedPolicy}
+            codeLabel="Jurisdiction"
+            pendingCodes={pendingCodes}
+            onToggle={handleToggle}
+            onArrayChange={handleArrayChange}
+            emptyState={{
+              title: search
+                ? "No policy jurisdictions match your search"
+                : "Policy jurisdictions have not been seeded",
+              description:
+                "Use the global card-deposit or policy geo-block switch to seed and enforce all required rows.",
             }}
           />
         </TabsContent>

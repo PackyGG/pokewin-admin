@@ -11,6 +11,7 @@ import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { refreshSiteConfig } from "@/lib/refresh-site-config";
 import { FIAT_CACHE_TAG } from "@/lib/queries/fiat";
+import { isCreditCardDepositLocked } from "@/lib/fiat-jurisdiction-policy";
 
 const FIAT_METHODS = [
   "credit_card",
@@ -38,6 +39,17 @@ const updateSchema = z.discriminatedUnion("key", [
 ]);
 
 export type FiatEditableKey = z.infer<typeof updateSchema>["key"];
+
+function parseFiatMethods(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    throw new Error("The configured fiat lock list is invalid JSON");
+  }
+}
 
 export async function updateFiatConfigAction(input: unknown): Promise<{
   key: FiatEditableKey;
@@ -75,6 +87,16 @@ export async function updateFiatConfigAction(input: unknown): Promise<{
   if (!current) {
     throw new Error(
       `${parsed.data.key} is not configured in this environment. This page will not create a missing money-control key.`,
+    );
+  }
+
+  if (
+    parsed.data.key === "locked_deposits_fiat" &&
+    isCreditCardDepositLocked(parseFiatMethods(current.value)) !==
+      isCreditCardDepositLocked(parsed.data.value)
+  ) {
+    throw new Error(
+      "Use the global card-deposit switch to change credit-card availability so required jurisdiction exclusions stay enforced.",
     );
   }
 
