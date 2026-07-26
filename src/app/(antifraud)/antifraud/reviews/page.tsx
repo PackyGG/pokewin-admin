@@ -15,15 +15,12 @@ import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import {
   listReviewPage,
   REVIEW_PAGE_SIZE,
-  REVIEW_SEVERITIES,
-  REVIEW_SEVERITY_LABELS,
   REVIEW_STATUSES,
   REVIEW_STATUS_LABELS,
-  isReviewSeverity,
   isReviewStatus,
   type ReviewFilters,
 } from "@/lib/antifraud/reviews";
-import { ReviewSeverityBadge, ReviewStatusBadge } from "../_components/badges";
+import { ReviewStatusBadge } from "../_components/badges";
 import { OpenCaseDialog } from "./_components/open-case-dialog";
 
 export const metadata = { title: "Account Review" };
@@ -45,7 +42,6 @@ const QUERY_TIMEOUT_MS = 10_000;
 
 type SearchParams = {
   status?: string;
-  severity?: string;
   mine?: string;
   q?: string;
   cursor?: string;
@@ -70,23 +66,18 @@ export default async function ReviewQueuePage({
       : params.status && isReviewStatus(params.status)
         ? params.status
         : "unresolved";
-  const severity =
-    params.severity && isReviewSeverity(params.severity)
-      ? params.severity
-      : undefined;
   const mine = params.mine === "1";
   const search = params.q?.trim() || undefined;
   const cursor = params.cursor?.trim() || undefined;
 
   const filters: ReviewFilters = {
     status,
-    severity,
     assignedTo: mine ? session.userId : undefined,
     search,
     limit: REVIEW_PAGE_SIZE,
   };
 
-  const filterKey = `${status}-${severity ?? "any"}-${mine ? "mine" : "all"}-${search ?? ""}-${cursor ?? "first"}`;
+  const filterKey = `${status}-${mine ? "mine" : "all"}-${search ?? ""}-${cursor ?? "first"}`;
   return (
     <div className="space-y-6">
       <PageHero>
@@ -100,7 +91,6 @@ export default async function ReviewQueuePage({
               prefill={{
                 targetUserId: params.targetUserId,
                 targetUsername: params.targetUsername,
-                severity,
                 reason: params.reason,
                 monitorCaseId: params.monitorCaseId,
               }}
@@ -112,7 +102,6 @@ export default async function ReviewQueuePage({
 
       <FilterBar
         status={status}
-        severity={severity}
         mine={mine}
         search={search}
       />
@@ -121,7 +110,7 @@ export default async function ReviewQueuePage({
         <QueueList
           filters={filters}
           cursor={cursor}
-          current={{ status, severity, mine: mine ? "1" : undefined, q: search }}
+          current={{ status, mine: mine ? "1" : undefined, q: search }}
         />
       </Suspense>
     </div>
@@ -166,18 +155,15 @@ function FilterChip({
 
 function FilterBar({
   status,
-  severity,
   mine,
   search,
 }: {
   status: string;
-  severity?: string;
   mine: boolean;
   search?: string;
 }) {
   const current: SearchParams = {
     status,
-    severity,
     mine: mine ? "1" : undefined,
     q: search,
   };
@@ -212,25 +198,6 @@ function FilterBar({
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="mr-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Severity
-        </span>
-        <FilterChip
-          href={buildHref({ severity: undefined, cursor: undefined }, current)}
-          active={!severity}
-        >
-          Any
-        </FilterChip>
-        {REVIEW_SEVERITIES.map((value) => (
-          <FilterChip
-            key={value}
-            href={buildHref({ severity: value, cursor: undefined }, current)}
-            active={severity === value}
-          >
-            {REVIEW_SEVERITY_LABELS[value]}
-          </FilterChip>
-        ))}
-        <span className="mx-1 hidden h-4 w-px bg-border sm:block" />
         <FilterChip
           href={buildHref({
             mine: mine ? undefined : "1",
@@ -245,7 +212,6 @@ function FilterBar({
       {/* GET form — no client JS, and the URL stays shareable. */}
       <form className="flex flex-wrap gap-2">
         {status && <input type="hidden" name="status" value={status} />}
-        {severity && <input type="hidden" name="severity" value={severity} />}
         {mine && <input type="hidden" name="mine" value="1" />}
         <input
           type="search"
@@ -329,7 +295,6 @@ async function QueueList({
                     <span className="truncate text-sm font-semibold">
                       {review.targetUsername ?? review.targetUserId}
                     </span>
-                    <ReviewSeverityBadge severity={review.severity} />
                     <ReviewStatusBadge status={review.status} />
                     {review.riskScore != null && (
                       <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">

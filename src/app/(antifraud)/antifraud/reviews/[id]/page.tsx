@@ -19,7 +19,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import { getReviewDetail } from "@/lib/antifraud/reviews";
-import { ReviewSeverityBadge, ReviewStatusBadge } from "../../_components/badges";
+import { ReviewStatusBadge } from "../../_components/badges";
 import { CaseControls } from "../_components/case-controls";
 import { listAssignableAnalysts } from "../actions";
 
@@ -98,7 +98,6 @@ async function CaseDetail({
             <span className="mr-1 truncate text-sm font-semibold">
               {review.targetUsername ?? review.targetUserId}
             </span>
-            <ReviewSeverityBadge severity={review.severity} />
             <ReviewStatusBadge status={review.status} />
             {review.riskScore != null && (
               <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
@@ -187,7 +186,6 @@ async function CaseDetail({
                       <span className="truncate text-xs font-semibold">
                         {signal.kind}
                       </span>
-                      <ReviewSeverityBadge severity={signal.severity} />
                       {signal.riskScore != null && (
                         <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                           risk {signal.riskScore}
@@ -255,7 +253,6 @@ async function CaseDetail({
         <CaseControls
           reviewId={review.id}
           status={review.status}
-          severity={review.severity}
           assignedTo={review.assignedTo}
           viewerId={viewerId}
           analysts={analysts}

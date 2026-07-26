@@ -18,8 +18,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { hrefForCurrentHost } from "@/lib/use-app-host";
 import {
-  REVIEW_SEVERITIES,
-  REVIEW_SEVERITY_LABELS,
   REVIEW_STATUSES,
   REVIEW_STATUS_LABELS,
   type ReviewStatus,
@@ -27,13 +25,12 @@ import {
 import {
   addReviewNote,
   assignReview,
-  updateReviewSeverity,
   updateReviewStatus,
 } from "../actions";
 
 /**
- * The working controls on a case: move its status, re-grade severity, hand it
- * to someone (or take it), and add notes.
+ * The working controls on a case: move its status, hand it to someone (or take
+ * it), and add notes.
  *
  * Everything routes through the server actions in `../actions.ts`, which
  * re-verify workspace access, write an append-only note describing the change,
@@ -44,14 +41,12 @@ import {
 export function CaseControls({
   reviewId,
   status,
-  severity,
   assignedTo,
   viewerId,
   analysts,
 }: {
   reviewId: string;
   status: string;
-  severity: string;
   assignedTo: string | null;
   viewerId: string;
   analysts: { id: string; label: string }[];
@@ -197,38 +192,6 @@ export function CaseControls({
           Cleared and Flagged need a conclusion. Moving a case back to Open,
           In review or Escalated withdraws the previous verdict and clears it.
         </p>
-      </div>
-
-      {/* ── Severity ───────────────────────────────────────────────── */}
-      <div className="space-y-1.5">
-        <Label
-          htmlFor="case-severity-select"
-          className="text-xs uppercase tracking-wide text-muted-foreground"
-        >
-          Severity
-        </Label>
-        <Select
-          value={severity}
-          onValueChange={(v) => {
-            if (!v || v === severity) return;
-            void run(
-              "severity",
-              () => updateReviewSeverity({ reviewId, severity: v }),
-              "Severity updated",
-            );
-          }}
-        >
-          <SelectTrigger id="case-severity-select" disabled={pending !== null}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {REVIEW_SEVERITIES.map((value) => (
-              <SelectItem key={value} value={value}>
-                {REVIEW_SEVERITY_LABELS[value]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       </div>
 
       {/* ── Assignment ─────────────────────────────────────────────── */}

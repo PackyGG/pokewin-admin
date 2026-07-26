@@ -14,7 +14,6 @@ import {
 } from "./admin-identities";
 import {
   OPEN_REVIEW_STATUSES,
-  type ReviewSeverity,
   type ReviewStatus,
 } from "./constants";
 
@@ -29,9 +28,9 @@ import {
  * the reviewed player is carried as a loose `target_user_id` string.
  */
 
-// The status/severity vocabulary itself lives in the isomorphic
-// `./constants` module so Client Components (the queue dialogs, the case
-// controls) can import it WITHOUT dragging this server-only file — and
+// The status vocabulary lives in the isomorphic `./constants` module so Client
+// Components (the queue dialogs, the case controls) can import it WITHOUT
+// dragging this server-only file — and
 // therefore server-only database code — into the browser bundle. Re-exported here so every
 // existing server-side import keeps working unchanged.
 export {
@@ -130,7 +129,6 @@ function toRow(row: {
 export type ReviewFilters = {
   /** Omit for the default "still needs work" set. "all" for everything. */
   status?: ReviewStatus | "all" | "unresolved";
-  severity?: ReviewSeverity;
   /** Limit to cases assigned to this admin. */
   assignedTo?: string;
   /**
@@ -167,7 +165,6 @@ function buildReviewConditions(filters: ReviewFilters): SQL[] {
     conditions.push(inArray(antifraud_reviews.status, [...OPEN_REVIEW_STATUSES]));
   }
 
-  if (filters.severity) conditions.push(eq(antifraud_reviews.severity, filters.severity));
   if (filters.assignedTo) conditions.push(eq(antifraud_reviews.assigned_to, filters.assignedTo));
 
   const term = filters.search?.trim();
@@ -446,7 +443,6 @@ export type ReviewStats = {
   escalated: number;
   resolvedToday: number;
   flaggedTotal: number;
-  criticalOpen: number;
   mineOpen: number;
 };
 
@@ -460,7 +456,6 @@ export async function getReviewStats(
     escalated: 0,
     resolvedToday: 0,
     flaggedTotal: 0,
-    criticalOpen: 0,
     mineOpen: 0,
   };
   try {
@@ -479,7 +474,7 @@ export async function getReviewStats(
 
     const result = await adminDrizzle.execute<{
       open: string; in_review: string; escalated: string; flagged: string;
-      resolved_today: string; critical_open: string; mine_open: string;
+      resolved_today: string; mine_open: string;
     }>(sql`
       SELECT
         COUNT(*) FILTER (WHERE status = 'open') AS open,
@@ -487,7 +482,6 @@ export async function getReviewStats(
         COUNT(*) FILTER (WHERE status = 'escalated') AS escalated,
         COUNT(*) FILTER (WHERE status = 'flagged') AS flagged,
         COUNT(*) FILTER (WHERE resolved_at >= ${startOfToday} AND resolved_at < ${endOfToday}) AS resolved_today,
-        COUNT(*) FILTER (WHERE severity = 'critical' AND status = ANY(${pgArrayParam([...OPEN_REVIEW_STATUSES])}::text[])) AS critical_open,
         COUNT(*) FILTER (WHERE assigned_to = ${adminUserId ?? null}::uuid AND status = ANY(${pgArrayParam([...OPEN_REVIEW_STATUSES])}::text[])) AS mine_open
       FROM antifraud_reviews
     `);
@@ -497,7 +491,7 @@ export async function getReviewStats(
     return {
       open: value("open"), inReview: value("in_review"),
       escalated: value("escalated"), resolvedToday: value("resolved_today"),
-      flaggedTotal: value("flagged"), criticalOpen: value("critical_open"),
+      flaggedTotal: value("flagged"),
       mineOpen: value("mine_open"),
     };
   } catch (err) {

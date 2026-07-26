@@ -16,7 +16,6 @@ import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 import { isPostgresError } from "@/lib/postgres-errors";
 import { notifyStaff } from "@/lib/staff/notifications";
 import {
-  REVIEW_SEVERITIES,
   REVIEW_STATUSES,
   REVIEW_STATUS_LABELS,
 } from "@/lib/antifraud/reviews";
@@ -79,7 +78,6 @@ const openReviewSchema = z.object({
     .max(64, "Username is too long")
     .optional()
     .or(z.literal("")),
-  severity: z.enum(REVIEW_SEVERITIES),
   reason: z
     .string()
     .trim()
@@ -112,7 +110,7 @@ export async function openReview(input: unknown): Promise<OpenReviewResult> {
   const session = await requireAntifraudAccess();
   const parsed = openReviewSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
-  const { targetUserId, targetUsername, severity, reason } = parsed.data;
+  const { targetUserId, targetUsername, reason } = parsed.data;
 
   type OpenOutcome =
     | { kind: "created"; id: string }
@@ -134,7 +132,7 @@ export async function openReview(input: unknown): Promise<OpenReviewResult> {
         target_user_id: targetUserId,
         target_username: targetUsername ? targetUsername : null,
         status: "open",
-        severity,
+        severity: "medium",
         source: "manual",
         reason,
         opened_by: session.userId,
@@ -145,14 +143,14 @@ export async function openReview(input: unknown): Promise<OpenReviewResult> {
         review_id: created.id,
         admin_user_id: session.userId,
         kind: "status",
-        body: `Case opened (${severity}).`,
+        body: "Case opened.",
       });
 
       await tx.insert(admin_audit_events).values({
         admin_user_id: session.userId,
         event_type: "antifraud_review_opened",
         target_user_id: targetUserId,
-        metadata: { reviewId: created.id, severity, reason },
+        metadata: { reviewId: created.id, reason },
       });
 
       return { kind: "created", id: created.id };
@@ -604,47 +602,6 @@ export async function addReviewNote(input: unknown): Promise<void> {
   });
 
   revalidatePath(`/antifraud/reviews/${parsed.data.reviewId}`);
-}
-
-const severitySchema = z.object({
-  reviewId: uuid,
-  severity: z.enum(REVIEW_SEVERITIES),
-});
-
-/** Re-grade a case's severity. Same guarded, transactional shape. */
-export async function updateReviewSeverity(input: unknown): Promise<void> {
-  const session = await requireAntifraudAccess();
-  const parsed = severitySchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
-  const { reviewId, severity } = parsed.data;
-
-  const applied = await adminDrizzle.transaction(async (tx) => {
-    const [current] = await tx.select({ severity: antifraud_reviews.severity })
-      .from(antifraud_reviews).where(eq(antifraud_reviews.id, reviewId)).limit(1);
-    if (!current) throw new Error("That case no longer exists");
-    if (current.severity === severity) return false;
-
-    const updated = await tx.update(antifraud_reviews).set({
-      severity,
-      updated_at: new Date().toISOString(),
-    }).where(and(
-      eq(antifraud_reviews.id, reviewId),
-      eq(antifraud_reviews.severity, current.severity),
-    )).returning({ id: antifraud_reviews.id });
-    if (updated.length === 0) throw new Error(STALE_CASE_MESSAGE);
-
-    await tx.insert(antifraud_review_notes).values({
-      review_id: reviewId,
-      admin_user_id: session.userId,
-      kind: "status",
-      body: `Severity changed ${current.severity} → ${severity}.`,
-    });
-    return true;
-  });
-  if (!applied) return;
-
-  revalidatePath(`/antifraud/reviews/${reviewId}`);
-  revalidatePath("/antifraud/reviews");
 }
 
 /** Assignable analysts — active admin or support accounts. */

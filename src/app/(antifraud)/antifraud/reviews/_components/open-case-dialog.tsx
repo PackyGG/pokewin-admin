@@ -18,15 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { hrefForCurrentHost } from "@/lib/use-app-host";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { REVIEW_SEVERITIES, REVIEW_SEVERITY_LABELS } from "@/lib/antifraud/constants";
 import { openReview } from "../actions";
 
 /**
@@ -40,7 +32,6 @@ import { openReview } from "../actions";
 type OpenCasePrefill = {
   targetUserId?: string;
   targetUsername?: string;
-  severity?: string;
   reason?: string;
   monitorCaseId?: string;
 };
@@ -61,13 +52,6 @@ export function OpenCaseDialog({
   const [targetUsername, setTargetUsername] = React.useState(
     prefill.targetUsername ?? "",
   );
-  const [severity, setSeverity] = React.useState<string>(
-    prefill.severity && REVIEW_SEVERITIES.includes(
-      prefill.severity as (typeof REVIEW_SEVERITIES)[number],
-    )
-      ? prefill.severity
-      : "medium",
-  );
   const [reason, setReason] = React.useState(
     prefill.reason ??
       (prefill.monitorCaseId
@@ -78,7 +62,6 @@ export function OpenCaseDialog({
   function reset() {
     setTargetUserId("");
     setTargetUsername("");
-    setSeverity("medium");
     setReason("");
   }
 
@@ -89,7 +72,6 @@ export function OpenCaseDialog({
       const result = await openReview({
         targetUserId: targetUserId.trim(),
         targetUsername: targetUsername.trim(),
-        severity,
         reason: reason.trim(),
       });
       if (!result.ok) {
@@ -159,24 +141,6 @@ export function OpenCaseDialog({
                 placeholder="shown in the queue"
                 autoComplete="off"
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="case-severity">Severity</Label>
-              <Select
-                value={severity}
-                onValueChange={(v) => setSeverity(v ?? "medium")}
-              >
-                <SelectTrigger id="case-severity">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {REVIEW_SEVERITIES.map((value) => (
-                    <SelectItem key={value} value={value}>
-                      {REVIEW_SEVERITY_LABELS[value]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="case-reason">Why is this account being reviewed?</Label>

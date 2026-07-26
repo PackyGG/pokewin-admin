@@ -94,7 +94,6 @@ async function QueueKpis({ adminUserId }: { adminUserId: string }) {
       escalated: 0,
       resolvedToday: 0,
       flaggedTotal: 0,
-      criticalOpen: 0,
       mineOpen: 0,
     },
     "antifraud.review-stats",
@@ -102,7 +101,7 @@ async function QueueKpis({ adminUserId }: { adminUserId: string }) {
   );
 
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
       <KpiTile
         label="Open cases"
         value={formatNumber(stats.open)}
@@ -116,13 +115,6 @@ async function QueueKpis({ adminUserId }: { adminUserId: string }) {
         sub="being worked"
         icon={ClipboardList}
         accent="amber"
-      />
-      <KpiTile
-        label="Critical"
-        value={formatNumber(stats.criticalOpen)}
-        sub="unresolved"
-        icon={AlertTriangle}
-        accent="rose"
       />
       <KpiTile
         label="Escalated"
@@ -192,7 +184,6 @@ async function QueuePreview() {
                     <span className="truncate text-sm font-semibold">
                       {review.targetUsername ?? review.targetUserId}
                     </span>
-                    <ReviewSeverityBadge severity={review.severity} />
                     <ReviewStatusBadge status={review.status} />
                   </span>
                   <span className="mt-0.5 line-clamp-1 block text-xs text-muted-foreground">
@@ -286,8 +277,8 @@ function EmptyCard({
 
 function KpiSkeleton() {
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
-      {Array.from({ length: 6 }).map((_, i) => (
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      {Array.from({ length: 5 }).map((_, i) => (
         <Skeleton key={i} className="h-24 w-full rounded-2xl" />
       ))}
     </div>
