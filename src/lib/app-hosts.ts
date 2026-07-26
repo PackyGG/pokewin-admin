@@ -138,6 +138,7 @@ export const APP_HOSTS: readonly AppHostConfig[] = [
     basePath: "/antifraud",
     segmentRoutes: [
       "monitor",
+      "points",
       "reviews",
       "quizzes",
       "staff",
