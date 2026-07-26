@@ -14,7 +14,7 @@
 
 - **2026-07-26 staff access correction:** staff self-profiles and quizzes are restricted to users whose effective roles include `support`; profile creation no longer runs for every dashboard account. Admins/owners retain Staff Hub management tools but only receive a self-profile if they also hold `support`. Other roles cannot enter or see Staff Hub. The members board and manual point awards fail closed to support-role recipients.
 
-- **2026-07-26 compact risk-scoring page:** the manager-only scoring catalogue moved from `/antifraud/settings/points` to `/antifraud/points` because it is an operational reference, not a workspace setting. The oversized hero, notice, KPI tiles and per-signal cards were replaced by a slim header, one summary strip, compact severity legend, and dense grouped rows for all live weights and behavior flows.
+- **2026-07-26 compact risk-scoring page:** the manager-only scoring catalogue moved from `/antifraud/settings/points` to `/antifraud/points` because it is an operational reference, not a workspace setting. The oversized hero, notice, KPI tiles and per-signal cards were replaced by a slim full-width header, one summary strip, compact severity legend, and dense grouped rows for all live weights and behavior flows.
 
 - **2026-07-26 Vercel build recovery:** commit `990e6dc1` accidentally included layout fragments from an uncommitted Prisma-to-Drizzle migration. The complete PostgreSQL/Drizzle migration is now included, so the previously missing imports and schema files are present in the production tree.
 

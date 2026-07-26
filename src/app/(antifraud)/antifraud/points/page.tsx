@@ -24,7 +24,7 @@ export default async function AntifraudPointsPage() {
   await requireAntifraudManagerPage();
 
   return (
-    <div className="mx-auto max-w-6xl space-y-5">
+    <div className="w-full space-y-5">
       <header className="flex items-start gap-3 border-b border-border/60 pb-4">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-500">
           <Gauge className="size-4" />
