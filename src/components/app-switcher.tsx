@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils";
 export type AppKey = "admin" | "creator-hub" | "pack-studio" | "antifraud";
 
 export type AppSwitcherAccess = {
+  admin?: boolean;
   creatorHub: boolean;
   packStudio: boolean;
   antifraud: boolean;
@@ -72,7 +73,7 @@ const APPS: readonly AppEntry[] = [
     key: "pack-studio",
     href: "/pack-studio",
     label: "Packs",
-    title: "Pack Studio — pack design workspace",
+    title: "Pack Studio",
     icon: Package,
     accent: "text-violet-600 dark:text-violet-400",
   },
@@ -100,7 +101,7 @@ export function AppSwitcher({
 }) {
   const entries = APPS.filter((app) => {
     if (app.key === current) return true;
-    if (app.key === "admin") return true;
+    if (app.key === "admin") return access.admin !== false;
     if (app.key === "creator-hub") return access.creatorHub;
     if (app.key === "pack-studio") return access.packStudio;
     return access.antifraud;

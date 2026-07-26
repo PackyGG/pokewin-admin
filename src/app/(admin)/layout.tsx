@@ -9,21 +9,17 @@ import { PageTransition } from "@/components/page-transition";
 import { redirect } from "next/navigation";
 import { verifySession, getUserPermissions, sessionIsOwner } from "@/lib/dal";
 import { getSession, type SessionPayload } from "@/lib/session";
-import { getEffectiveRoles } from "@/lib/admin-roles";
+import {
+  getEffectiveRoles,
+  isDedicatedPackBuilder,
+} from "@/lib/admin-roles";
 import {
   canAccessCreatorHub,
   getCreatorHubAccessSettings,
   CREATOR_HUB_TOGGLE_ROLES,
   type CreatorHubAccessSettings,
 } from "@/lib/creator-hub-access";
-import {
-  canAccessPackStudio,
-  getPackStudioAccessSettings,
-  getPackStudioUserAccess,
-  PACK_STUDIO_TOGGLE_ROLES,
-  type PackStudioAccessSettings,
-  type PackStudioUserAccess,
-} from "@/lib/pack-studio-access";
+import { canAccessPackStudio } from "@/lib/pack-studio-access";
 import {
   canAccessAntifraud,
   deniedAntifraudSettings,
@@ -175,48 +171,6 @@ async function loadCreatorHubAccessSettings(): Promise<CreatorHubAccessSettings>
 }
 
 /**
- * Resilient read of the per-role Pack-Studio access toggles, used to decide
- * whether the "Switch to Pack Studio" portal button is shown in the sidebar.
- * The decision MUST be computed server-side (it depends on ADMIN-DB settings
- * the client can't read) and is gated identically to the /pack-studio route
- * guard. Any DB fault degrades to every toggle OFF (fail-closed) so a blip
- * can't reveal the portal to a non-owner — only the owner bypass in
- * `canAccessPackStudio` survives.
- */
-async function loadPackStudioAccessSettings(): Promise<PackStudioAccessSettings> {
-  try {
-    return await getPackStudioAccessSettings();
-  } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
-    console.error(
-      "[admin-layout] loadPackStudioAccessSettings failed, hiding portal for non-owner:",
-      err,
-    );
-    return Object.fromEntries(
-      PACK_STUDIO_TOGGLE_ROLES.map((role) => [role, false]),
-    ) as PackStudioAccessSettings;
-  }
-}
-
-/**
- * Per-username allow/deny override read for the sidebar portal visibility.
- * On error we fall back to empty lists (= role-based default) — owners stay
- * in via their DB-independent bypass, admins stay in via the role default.
- */
-async function loadPackStudioUserAccess(): Promise<PackStudioUserAccess> {
-  try {
-    return await getPackStudioUserAccess();
-  } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
-    console.error(
-      "[admin-layout] loadPackStudioUserAccess failed, falling back to role default:",
-      err,
-    );
-    return { allowlist: [], denylist: [] };
-  }
-}
-
-/**
  * Resilient read of the per-role Antifraud access toggles, used to decide
  * whether the "Switch to Antifraud" portal button (the third sub-app card) is
  * shown in the sidebar. Same contract as the two above: computed SERVER-SIDE,
@@ -289,6 +243,16 @@ export default async function AdminLayout({
   children: React.ReactNode;
 }) {
   const session = await safeVerifySession();
+  const effectiveRoles = getEffectiveRoles(session.role, session.roles);
+
+  // A single-role Pack Builder belongs to the dedicated Packs webapp.
+  // Multi-role staff keep the union of their assigned jobs.
+  if (
+    isDedicatedPackBuilder(effectiveRoles) &&
+    !sessionIsOwner(session)
+  ) {
+    redirect("/pack-studio");
+  }
   // Permissions, header profile, preferences, and the current DB env
   // are independent lookups keyed on the same userId/cookie jar.
   // Serializing them cost ~4 round-trips on every admin page load —
@@ -307,8 +271,6 @@ export default async function AdminLayout({
     dbEnv,
     tzCookie,
     hubAccessSettings,
-    studioAccessSettings,
-    studioUserAccess,
     antifraudAccessSettings,
     antifraudUserAccess,
   ] = await Promise.all([
@@ -322,8 +284,6 @@ export default async function AdminLayout({
     // never throws (background-ctx safe) and returns null when absent.
     readTzCookie(),
     loadCreatorHubAccessSettings(),
-    loadPackStudioAccessSettings(),
-    loadPackStudioUserAccess(),
     loadAntifraudAccessSettings(),
     loadAntifraudUserAccess(),
   ]);
@@ -338,15 +298,8 @@ export default async function AdminLayout({
   // only `motha`.
   const canEnterCreatorHub = canAccessCreatorHub(session, hubAccessSettings);
 
-  // Whether to show the "Switch to Pack Studio" portal in the sidebar.
-  // Computed server-side (it depends on ADMIN-DB toggles) and matched 1:1 to
-  // the /pack-studio route guard so the button never appears for a user who
-  // would be redirected out of the Studio. Default (toggle off): only owners.
-  const canEnterPackStudio = canAccessPackStudio(
-    session,
-    studioAccessSettings,
-    studioUserAccess,
-  );
+  // Matched 1:1 to the role-owned /pack-studio route guard.
+  const canEnterPackStudio = canAccessPackStudio(session);
 
   // Whether to show the "Switch to Antifraud" portal (third sub-app card).
   // Same server-side computation + 1:1 match to the /antifraud route guard.

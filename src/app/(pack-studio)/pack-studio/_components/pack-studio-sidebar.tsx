@@ -4,7 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ClipboardEdit,
+  Layers3,
   LayoutDashboard,
+  Package,
   Stethoscope,
   Wand2,
   Sparkles,
@@ -50,11 +52,19 @@ type StudioNavItem = {
   icon: LucideIcon;
 };
 
-const STUDIO_NAV: StudioNavItem[] = [
+const STUDIO_OVERVIEW_NAV: StudioNavItem[] = [
   { label: "Overview", href: "/pack-studio", icon: LayoutDashboard },
+];
+
+const STUDIO_BUILD_NAV: StudioNavItem[] = [
+  { label: "Packs", href: "/pack-studio/packs", icon: Package },
+  { label: "Cards", href: "/pack-studio/cards", icon: Layers3 },
+  { label: "Pack Builder", href: "/pack-studio/builder", icon: Wand2 },
+];
+
+const STUDIO_TUNE_NAV: StudioNavItem[] = [
   { label: "Pack Doctor", href: "/pack-studio/doctor", icon: Stethoscope },
   { label: "Retune", href: "/pack-studio/retune", icon: Sparkles },
-  { label: "Pack Builder", href: "/pack-studio/builder", icon: Wand2 },
 ];
 
 /**
@@ -154,11 +164,7 @@ export function PackStudioSidebar({
   const appHost = useAppHost();
   const toHref = (path: string) => (appHost ? hrefFrom(appHost, path) : path);
 
-  // Append owner-only (History) and operator-only (Drafts) entries after the
-  // shared workspace nav. Owners are implicitly retune-operators, but the prop
-  // is the explicit signal so the layout's contract is symmetric.
-  const navItems = [
-    ...STUDIO_NAV,
+  const operationsNav = [
     ...(isRetuneOperator ? STUDIO_OPERATOR_NAV : []),
     ...(isOwner ? STUDIO_OWNER_NAV : []),
   ];
@@ -202,25 +208,57 @@ export function PackStudioSidebar({
             <span className="block truncate text-xs font-semibold text-foreground">
               Pack Studio
             </span>
-            <span className="block truncate text-[11px] text-muted-foreground">
-              Pack design workspace
-            </span>
           </span>
         </Link>
       </SidebarHeader>
 
       <SidebarContent>
         <SidebarGroup className="px-2 py-1">
-          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
+          <SidebarGroupLabel>Overview</SidebarGroupLabel>
           <SidebarGroupContent>
             <StudioNavMenu
-              items={navItems}
+              items={STUDIO_OVERVIEW_NAV}
               pathname={pathname}
               onNavTap={handleNavTap}
               toHref={toHref}
             />
           </SidebarGroupContent>
         </SidebarGroup>
+        <SidebarGroup className="px-2 py-1">
+          <SidebarGroupLabel>Build</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <StudioNavMenu
+              items={STUDIO_BUILD_NAV}
+              pathname={pathname}
+              onNavTap={handleNavTap}
+              toHref={toHref}
+            />
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup className="px-2 py-1">
+          <SidebarGroupLabel>Tune</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <StudioNavMenu
+              items={STUDIO_TUNE_NAV}
+              pathname={pathname}
+              onNavTap={handleNavTap}
+              toHref={toHref}
+            />
+          </SidebarGroupContent>
+        </SidebarGroup>
+        {operationsNav.length > 0 && (
+          <SidebarGroup className="px-2 py-1">
+            <SidebarGroupLabel>Operations</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <StudioNavMenu
+                items={operationsNav}
+                pathname={pathname}
+                onNavTap={handleNavTap}
+                toHref={toHref}
+              />
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
 
       <SidebarFooter className="border-t border-border">

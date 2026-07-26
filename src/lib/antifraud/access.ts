@@ -1,5 +1,9 @@
 import { cache } from "react";
-import { getEffectiveRoles, type AdminRole } from "@/lib/admin-roles";
+import {
+  getEffectiveRoles,
+  isDedicatedPackBuilder,
+  type AdminRole,
+} from "@/lib/admin-roles";
 import type { SessionPayload } from "@/lib/session";
 import { getAdminSetting, setAdminSetting } from "@/lib/admin-settings";
 import { isOwner } from "@/lib/owners";
@@ -182,6 +186,9 @@ export function canAccessAntifraud(
 ): boolean {
   if (isOwner(session)) return true;
 
+  const roles = getEffectiveRoles(session.role, session.roles);
+  if (isDedicatedPackBuilder(roles)) return false;
+
   const username = normalizeUsername(session.username);
   if (userAccess && username && userAccess.denylist.includes(username)) {
     return false;
@@ -190,7 +197,6 @@ export function canAccessAntifraud(
     return true;
   }
 
-  const roles = getEffectiveRoles(session.role, session.roles);
   if (roles.includes("admin")) return true;
   return roles.some(
     (role) =>

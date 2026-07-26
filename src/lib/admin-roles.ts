@@ -151,7 +151,7 @@ export function getDefaultRoute(role: string, allowedPages?: string[]): string {
   if (role === "creator") return "/my-profile";
   // pack_creator's whole job is creating packs — land them straight on the
   // packs page so they don't have to navigate.
-  if (role === "pack_creator") return "/packs";
+  if (role === "pack_creator") return "/pack-studio";
   // Prefer the dashboard as the landing page whenever this user can
   // actually reach it. Without this, the default was whatever happened to
   // be FIRST in allowed_pages — so a user with dashboard access but
@@ -173,4 +173,11 @@ export function getDefaultRouteForRoles(
 ): string {
   if (roles.length === 0) return getDefaultRoute("", allowedPages);
   return getDefaultRoute(pickPrimaryRole(roles), allowedPages);
+}
+
+/** True when Pack Builder is the viewer's only effective built-in role. */
+export function isDedicatedPackBuilder(
+  roles: readonly AdminRole[],
+): boolean {
+  return roles.length === 1 && roles[0] === "pack_creator";
 }

@@ -1,6 +1,10 @@
 import "server-only";
 
 import type { SessionPayload } from "@/lib/session";
+import {
+  getEffectiveRoles,
+  isDedicatedPackBuilder,
+} from "@/lib/admin-roles";
 import { isNextControlFlowError } from "@/lib/utils/action-error";
 import {
   canAccessCreatorHub,
@@ -10,11 +14,6 @@ import {
 } from "@/lib/creator-hub-access";
 import {
   canAccessPackStudio,
-  getPackStudioAccessSettings,
-  getPackStudioUserAccess,
-  PACK_STUDIO_TOGGLE_ROLES,
-  type PackStudioAccessSettings,
-  type PackStudioUserAccess,
 } from "@/lib/pack-studio-access";
 import {
   canAccessAntifraud,
@@ -44,8 +43,8 @@ import {
  * fresh state. This only decides what the nav shows.
  */
 export type AppAccess = {
-  /** Always true: every account has the main dashboard. */
-  admin: true;
+  /** Dedicated Pack Builders stay inside the Packs webapp. */
+  admin: boolean;
   creatorHub: boolean;
   packStudio: boolean;
   antifraud: boolean;
@@ -60,28 +59,6 @@ async function safeCreatorHubSettings(): Promise<CreatorHubAccessSettings> {
     return Object.fromEntries(
       CREATOR_HUB_TOGGLE_ROLES.map((role) => [role, false]),
     ) as CreatorHubAccessSettings;
-  }
-}
-
-async function safePackStudioSettings(): Promise<PackStudioAccessSettings> {
-  try {
-    return await getPackStudioAccessSettings();
-  } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
-    console.error("[app-access] pack-studio settings failed, closing door:", err);
-    return Object.fromEntries(
-      PACK_STUDIO_TOGGLE_ROLES.map((role) => [role, false]),
-    ) as PackStudioAccessSettings;
-  }
-}
-
-async function safePackStudioUsers(): Promise<PackStudioUserAccess> {
-  try {
-    return await getPackStudioUserAccess();
-  } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
-    console.error("[app-access] pack-studio overrides failed, role default:", err);
-    return { allowlist: [], denylist: [] };
   }
 }
 
@@ -113,19 +90,30 @@ async function safeAntifraudUsers(): Promise<AntifraudUserAccess> {
 export async function resolveAppAccess(
   session: Pick<SessionPayload, "username" | "role" | "roles" | "isOwner">,
 ): Promise<AppAccess> {
-  const [hubSettings, studioSettings, studioUsers, fraudSettings, fraudUsers] =
+  const [hubSettings, fraudSettings, fraudUsers] =
     await Promise.all([
       safeCreatorHubSettings(),
-      safePackStudioSettings(),
-      safePackStudioUsers(),
       safeAntifraudSettings(),
       safeAntifraudUsers(),
     ]);
 
+  const dedicatedPackBuilder = isDedicatedPackBuilder(
+    getEffectiveRoles(session.role, session.roles),
+  );
+
+  if (dedicatedPackBuilder) {
+    return {
+      admin: false,
+      creatorHub: false,
+      packStudio: true,
+      antifraud: false,
+    };
+  }
+
   return {
     admin: true,
     creatorHub: canAccessCreatorHub(session, hubSettings),
-    packStudio: canAccessPackStudio(session, studioSettings, studioUsers),
+    packStudio: canAccessPackStudio(session),
     antifraud: canAccessAntifraud(session, fraudSettings, fraudUsers),
   };
 }

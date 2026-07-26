@@ -11,14 +11,7 @@ import { DevDbBanner } from "@/components/dev-db-banner";
 import { verifySession, getUserPermissions, sessionRoles } from "@/lib/dal";
 import { getSession, type SessionPayload } from "@/lib/session";
 import { getEffectiveRoles, getDefaultRouteForRoles } from "@/lib/admin-roles";
-import {
-  canAccessPackStudio,
-  getPackStudioAccessSettings,
-  getPackStudioUserAccess,
-  PACK_STUDIO_TOGGLE_ROLES,
-  type PackStudioAccessSettings,
-  type PackStudioUserAccess,
-} from "@/lib/pack-studio-access";
+import { canAccessPackStudio } from "@/lib/pack-studio-access";
 import { adminDrizzle } from "@/lib/admin-db";
 import { isOwner } from "@/lib/owners";
 import { isPackStudioRetuneOperator } from "@/lib/reprice-access";
@@ -45,9 +38,9 @@ import { PackStudioSidebar } from "./_components/pack-studio-sidebar";
  * user enters a visually distinct sub-app while every auth / session / theme
  * provider keeps working unchanged.
  *
- * ACCESS: gated via `canAccessPackStudio` (owner bypass OR a per-role ADMIN-DB
- * toggle). Non-eligible viewers redirect to their landing route. The "Switch
- * to Pack Studio" portal button uses the same rule server-side.
+ * ACCESS: gated via `canAccessPackStudio` (owners, admins, and Pack Builders).
+ * Non-eligible viewers redirect to their landing route. The workspace
+ * switcher uses the same rule server-side.
  *
  * The resilient loaders below mirror the main layout's defensive reads so a
  * transient admin-DB fault degrades to safe fallbacks instead of
@@ -119,47 +112,6 @@ async function loadUserPermissions(userId: string): Promise<string[]> {
   }
 }
 
-/**
- * Resilient read of the per-role Pack-Studio access toggles. A transient
- * admin-DB fault must NOT silently widen access, so any failure degrades to
- * every toggle OFF (fail-closed) — only the owner bypass in
- * `canAccessPackStudio` survives a DB blip, which is the safe outcome for a
- * security gate.
- */
-async function loadPackStudioAccessSettings(): Promise<PackStudioAccessSettings> {
-  try {
-    return await getPackStudioAccessSettings();
-  } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
-    console.error(
-      "[pack-studio-layout] loadPackStudioAccessSettings failed, denying non-owner access:",
-      err,
-    );
-    return Object.fromEntries(
-      PACK_STUDIO_TOGGLE_ROLES.map((role) => [role, false]),
-    ) as PackStudioAccessSettings;
-  }
-}
-
-/**
- * Per-username allow/deny override read. On error we fall back to empty
- * lists (= role-based default), which keeps owners in (their bypass is
- * DB-independent) and admins in (their role default still passes) — the
- * safest middle ground when the override read blips.
- */
-async function loadPackStudioUserAccess(): Promise<PackStudioUserAccess> {
-  try {
-    return await getPackStudioUserAccess();
-  } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
-    console.error(
-      "[pack-studio-layout] loadPackStudioUserAccess failed, falling back to role default:",
-      err,
-    );
-    return { allowlist: [], denylist: [] };
-  }
-}
-
 async function loadPreferences(userId: string) {
   try {
     return await getAdminPreferences(userId);
@@ -208,33 +160,22 @@ export default async function PackStudioLayout({
   // loaders resolve (never reject): each catches non-control-flow errors
   // internally and returns a safe fallback, so leaving them in flight on the
   // deny/redirect path below cannot produce an unhandled rejection.
-  const studioAccessSettingsP = loadPackStudioAccessSettings();
-  const studioUserAccessP = loadPackStudioUserAccess();
   const profileP = loadHeaderProfile(session.userId);
   const preferencesP = loadPreferences(session.userId);
   const dbEnvP = readDbEnvFromCookie();
   const tzCookieP = readTzCookie();
   const appAccessP = resolveAppAccess(session);
 
-  // Studio access gate (security-sensitive): an owner OR a per-role toggle
-  // (ADMIN DB, default OFF) enabled for one of the viewer's effective roles —
-  // see `canAccessPackStudio`. With the toggle off ONLY owners reach the
-  // Studio; everyone else (incl. non-owner admins) is bounced to their normal
-  // landing route. We resolve the redirect the same way the DAL does so a
-  // non-eligible user lands somewhere they can actually use.
+  // Studio access gate: owners, admins, and Pack Builders enter. Everyone
+  // else is redirected to the normal landing route for their assigned roles.
   //
-  // SECURITY: the gate awaits ONLY its own dependencies (session + settings +
-  // user overrides) and is still decided BEFORE any JSX is returned — the
-  // other reads merely run concurrently; nothing renders and nothing is sent
-  // to the client until this check passes. On denial the in-flight reads are
+  // SECURITY: the gate is decided before any JSX is returned. The other reads
+  // merely run concurrently; nothing renders or reaches the client until this
+  // check passes. On denial the in-flight reads are
   // discarded (they are the viewer's OWN profile/prefs/permission rows — the
   // same rows the main (admin) shell reads for them anyway).
   const roles = sessionRoles(session);
-  const [studioAccessSettings, studioUserAccess] = await Promise.all([
-    studioAccessSettingsP,
-    studioUserAccessP,
-  ]);
-  if (!canAccessPackStudio(session, studioAccessSettings, studioUserAccess)) {
+  if (!canAccessPackStudio(session)) {
     const allowedPages = await loadUserPermissions(session.userId);
     redirect(getDefaultRouteForRoles(roles, allowedPages));
   }

@@ -156,7 +156,7 @@ export const ROLE_BASELINES: Record<AdminRole, RoleBaseline> = {
   },
   pack_creator: {
     role: "pack_creator",
-    label: "Pack Creator",
+    label: "Pack Builder",
     tokens: [...PACK_CREATOR_BASELINE_TOKENS],
     locked: true,
     bypass: false,

@@ -5,9 +5,7 @@ import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { SectionHeadingSkeleton } from "@/components/loading-skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 import { requirePackStudioPageAccess } from "@/lib/require-pack-studio-access";
-import { sessionIsOwner } from "@/lib/dal";
 import { PackStudioOverviewContent } from "./_components/overview-content";
-import { PackStudioUserAccessSection } from "./_components/pack-studio-user-access-section";
 
 /**
  * Pack Studio — Overview. Read-only risk & compliance dashboard.
@@ -25,8 +23,7 @@ import { PackStudioUserAccessSection } from "./_components/pack-studio-user-acce
  * cached base read that was already loading it.
  */
 export default async function PackStudioOverviewPage() {
-  const session = await requirePackStudioPageAccess();
-  const isOwner = sessionIsOwner(session);
+  await requirePackStudioPageAccess();
 
   return (
     <div className="space-y-6">
@@ -39,29 +36,9 @@ export default async function PackStudioOverviewPage() {
         />
       </PageHero>
 
-      {/* Owner-only per-username access toggle. Lets the owner grant or
-          revoke Pack Studio access for a specific admin (e.g. demee) in one
-          click without touching their role. Hidden for everyone else (the
-          server action behind it is also owner-gated). */}
-      {isOwner && (
-        <Suspense fallback={<UserAccessFallback />}>
-          <PackStudioUserAccessSection />
-        </Suspense>
-      )}
-
       <Suspense fallback={<OverviewFallback />}>
         <PackStudioOverviewContent />
       </Suspense>
-    </div>
-  );
-}
-
-/** Skeleton for the owner-only access card while its ADMIN-DB reads resolve. */
-function UserAccessFallback() {
-  return (
-    <div className="space-y-3">
-      <SectionHeadingSkeleton titleWidth={180} />
-      <Skeleton className="h-[200px] rounded-2xl" />
     </div>
   );
 }

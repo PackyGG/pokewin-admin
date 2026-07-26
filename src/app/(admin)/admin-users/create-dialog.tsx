@@ -25,7 +25,7 @@ const ROLE_LABELS: Record<AdminRole, string> = {
   support: "Support",
   marketing: "Marketing",
   creator: "Creator",
-  pack_creator: "Pack Creator",
+  pack_creator: "Pack Builder",
   creator_manager: "Creator Manager",
 };
 

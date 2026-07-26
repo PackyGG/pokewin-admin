@@ -123,7 +123,15 @@ export const APP_HOSTS: readonly AppHostConfig[] = [
   {
     host: `packs.${ROOT_DOMAIN}`,
     basePath: "/pack-studio",
-    segmentRoutes: ["doctor", "retune", "builder", "drafts", "history"],
+    segmentRoutes: [
+      "packs",
+      "cards",
+      "doctor",
+      "retune",
+      "builder",
+      "drafts",
+      "history",
+    ],
     landing: "/pack-studio",
     label: "Pack Studio",
     // Mirrors the role half of `canAccessPackStudio` (admins in by default).

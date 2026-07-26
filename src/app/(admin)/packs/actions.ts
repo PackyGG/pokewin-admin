@@ -2579,7 +2579,10 @@ export type BuildPackResult =
  */
 export async function buildPack(input: BuildPackInput): Promise<BuildPackResult> {
   const session = await requirePageAccess("/packs");
-  if (!isPackStudioRetuneOperator(session)) {
+  if (
+    !isPackStudioRetuneOperator(session) &&
+    !sessionHasRole(session, "pack_creator")
+  ) {
     throw new Error("The pack builder is restricted to authorized operators.");
   }
   await requireCapability(session, "__can_create_pack", "create packs");

@@ -42,6 +42,7 @@ import {
   getDefaultRoute,
   ALL_ADMIN_ROLES,
   getEffectiveRoles,
+  isDedicatedPackBuilder,
 } from "@/lib/admin-roles";
 import {
   isValidLandingRoute,
@@ -76,7 +77,7 @@ const ROUTING_CASES: Array<{
   { roles: ["support"], allowedPages: ["/users"], expected: "/users" },
   { roles: ["marketing"], allowedPages: DASH, expected: "/dashboard" },
   { roles: ["creator"], expected: "/my-profile" },
-  { roles: ["pack_creator"], expected: "/packs" },
+  { roles: ["pack_creator"], expected: "/pack-studio" },
   { roles: ["creator_manager"], expected: "/creator-hub" },
   // Multi-role: highest-privilege primary wins (admin > support > … ).
   { roles: ["support", "pack_creator"], allowedPages: DASH, expected: "/dashboard" },
@@ -88,7 +89,7 @@ const ROUTING_CASES: Array<{
 ];
 
 // ── 1. Routing is unchanged for every existing combo (the P4 NULL proof) ─────
-test("getDefaultRouteForRoles is byte-identical for every existing role combo (no landing override)", () => {
+test("getDefaultRouteForRoles sends the dedicated Pack Builder role to Pack Studio", () => {
   for (const c of ROUTING_CASES) {
     const got = getDefaultRouteForRoles(c.roles, c.allowedPages);
     assert.equal(
@@ -97,6 +98,12 @@ test("getDefaultRouteForRoles is byte-identical for every existing role combo (n
       `roles=[${c.roles.join(",")}] allowedPages=${JSON.stringify(c.allowedPages)} → ${got}, expected ${c.expected}`,
     );
   }
+});
+
+test("only a single-role Pack Builder is isolated to the Packs webapp", () => {
+  assert.equal(isDedicatedPackBuilder(["pack_creator"]), true);
+  assert.equal(isDedicatedPackBuilder(["support", "pack_creator"]), false);
+  assert.equal(isDedicatedPackBuilder(["admin", "pack_creator"]), false);
 });
 
 // ── 1b. NULL/empty landing_route → null (fall through to default routing) ────

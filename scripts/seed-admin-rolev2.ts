@@ -13,7 +13,7 @@ const SYSTEM_ROLE_LABELS: Record<AdminRole, string> = {
   support: "Support",
   marketing: "Marketing",
   creator: "Creator",
-  pack_creator: "Pack Creator",
+  pack_creator: "Pack Builder",
   creator_manager: "Creator Manager",
 };
 
@@ -25,7 +25,7 @@ const SYSTEM_ROLE_DESCRIPTIONS: Record<AdminRole, string> = {
   marketing: "Built-in marketing role.",
   creator: "Built-in creator self-service role.",
   pack_creator:
-    "Built-in pack-creator role — limited to creating/editing packs, cards, sets, and upgrader outputs.",
+    "Dedicated Packs-webapp role for building and managing packs and cards.",
   creator_manager: "Built-in Creator Hub manager role.",
 };
 
