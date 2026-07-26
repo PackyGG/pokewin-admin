@@ -2,10 +2,24 @@
 
 import { useTheme } from "next-themes";
 import { Sun, Moon, Sparkles, Sparkle } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { updatePreferences } from "@/app/(admin)/profile/preferences-actions";
+import type { AdminPreferences } from "@/lib/admin-preferences-types";
 
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
+
+  async function pick(next: AdminPreferences["theme"]) {
+    const previous = theme;
+    setTheme(next);
+    try {
+      await updatePreferences({ theme: next });
+    } catch (err) {
+      if (previous) setTheme(previous);
+      toast.error(err instanceof Error ? err.message : "Could not save theme");
+    }
+  }
 
   return (
     <div className="flex items-center justify-center gap-1 group-data-[collapsible=icon]:flex-col">
@@ -13,7 +27,7 @@ export function ThemeToggle() {
       <Button
         variant="ghost"
         size="icon"
-        onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+        onClick={() => pick(theme === "dark" ? "light" : "dark")}
         className="size-8"
       >
         <Sun className="size-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
@@ -25,7 +39,7 @@ export function ThemeToggle() {
       <Button
         variant="ghost"
         size="icon"
-        onClick={() => setTheme("grailed")}
+        onClick={() => pick("grailed")}
         className="size-8"
         title="Grailed Dark"
       >
@@ -37,7 +51,7 @@ export function ThemeToggle() {
       <Button
         variant="ghost"
         size="icon"
-        onClick={() => setTheme("grailed-light")}
+        onClick={() => pick("grailed-light")}
         className="size-8"
         title="Grailed Light"
       >

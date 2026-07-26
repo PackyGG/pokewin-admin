@@ -307,6 +307,7 @@ export function AdminHeader({
   rainSlot?: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const { setTheme } = useTheme();
   const breadcrumbs = getBreadcrumbs(pathname);
   const phoneCrumbs = truncateBreadcrumbs(breadcrumbs);
   // Hidden-form ref so the dropdown's "Log out" menu item can submit the
@@ -319,6 +320,13 @@ export function AdminHeader({
   const [profileOpen, setProfileOpen] = React.useState(false);
   const [profileSection, setProfileSection] =
     React.useState<ProfileDialogSection>("profile");
+
+  // next-themes persists to localStorage, which is isolated per subdomain.
+  // The ADMIN-DB preference is the cross-subdomain source of truth, so apply
+  // the server-loaded value whenever a shell mounts on a different origin.
+  React.useEffect(() => {
+    setTheme(preferences.theme);
+  }, [preferences.theme, setTheme]);
 
   function openProfile(section: ProfileDialogSection = "profile") {
     setProfileSection(section);
