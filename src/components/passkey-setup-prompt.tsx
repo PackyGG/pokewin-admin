@@ -25,6 +25,7 @@ import {
   finishPasskeyRegistration,
 } from "@/app/(admin)/profile/passkey-actions";
 import { isPasskeyFromOldDomain } from "@/lib/passkey-migration";
+import { isNextControlFlowError } from "@/lib/utils/action-error";
 
 /**
  * One-time nudge to set up a passkey, shown to an admin who has none that works
@@ -107,9 +108,16 @@ export function PasskeySetupPrompt() {
           if (isPasskeyFromOldDomain(key.createdAt)) stale += 1;
           else usable += 1;
         }
-      } catch {
-        // Not signed in far enough, or a transient read failure. Silence is the
-        // right outcome — this is a suggestion, not something worth an error.
+      } catch (err) {
+        // A Next redirect/notFound is CONTROL FLOW, not an error — swallowing
+        // it would suppress a real navigation. The one that matters here:
+        // `listMyPasskeys` calls `verifySession`, which redirects an admin who
+        // hasn't enrolled 2FA to /setup-2fa. Mandatory 2FA is ON by default, so
+        // eating that would strand exactly the person who most needs to move.
+        if (isNextControlFlowError(err)) throw err;
+        // Anything else (transient read failure, not signed in far enough) is
+        // genuinely ignorable — this is a suggestion, not something worth an
+        // error toast in the chrome.
         return;
       }
 
