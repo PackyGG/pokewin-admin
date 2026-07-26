@@ -245,4 +245,3 @@ export function parseMonitorFrame(raw: unknown): MonitorStreamMessage | null {
     },
   };
 }
-
