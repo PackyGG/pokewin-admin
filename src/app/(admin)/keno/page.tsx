@@ -35,7 +35,7 @@ export default async function KenoPage({
           icon={Dices}
           accent="purple"
           title="Keno"
-          subtitle="Performance, controls, payout observations, and exact draw probabilities."
+          subtitle="Performance, controls, complete backend paytables, and exact draw probabilities."
         />
       </PageHero>
 

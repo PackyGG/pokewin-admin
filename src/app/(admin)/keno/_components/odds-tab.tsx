@@ -1,4 +1,3 @@
-import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { safeQuery } from "@/lib/errors/safe-query";
 import {
   EMPTY_KENO_DASHBOARD,
@@ -14,15 +13,10 @@ export async function KenoOddsTab() {
     10_000,
   );
 
-  if (error) {
-    return (
-      <TileErrorFallback
-        label="Keno odds"
-        kind={kind ?? undefined}
-        size="panel"
-      />
-    );
-  }
-
-  return <KenoOddsExplorer observations={data.payoutObservations} />;
+  return (
+    <KenoOddsExplorer
+      observations={data.payoutObservations}
+      evidenceUnavailable={Boolean(error || kind)}
+    />
+  );
 }

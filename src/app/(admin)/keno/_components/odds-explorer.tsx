@@ -10,6 +10,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 
+import { KpiTile, SectionHeading } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -19,15 +20,19 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { KpiTile, SectionHeading } from "@/components/modern-panels";
+import {
+  getKenoHitProbability,
+  getKenoHouseEdge,
+  getKenoPayoutRow,
+  getKenoRtp,
+  type KenoRiskMode,
+} from "@/lib/keno/payouts";
+import type { KenoPayoutObservation } from "@/lib/queries/keno";
 import { cn } from "@/lib/utils";
 import { formatNumber } from "@/lib/utils/format";
-import type { KenoPayoutObservation } from "@/lib/queries/keno";
-
-type Risk = KenoPayoutObservation["risk"];
 
 const RISKS: Array<{
-  value: Risk;
+  value: KenoRiskMode;
   label: string;
   active: string;
   dot: string;
@@ -55,22 +60,6 @@ const RISKS: Array<{
   },
 ];
 
-function choose(n: number, k: number): number {
-  if (k < 0 || k > n) return 0;
-  const size = Math.min(k, n - k);
-  let result = 1;
-  for (let i = 1; i <= size; i += 1) {
-    result = (result * (n - size + i)) / i;
-  }
-  return result;
-}
-
-function hitProbability(picks: number, hits: number): number {
-  return (
-    (choose(picks, hits) * choose(40 - picks, 10 - hits)) / choose(40, 10)
-  );
-}
-
 function formatProbability(value: number): string {
   if (value <= 0) return "0%";
   if (value >= 0.01) return `${(value * 100).toFixed(2)}%`;
@@ -85,73 +74,73 @@ function formatOneIn(value: number): string {
   return `1 in ${formatNumber(Math.round(oneIn))}`;
 }
 
-function formatHouseEdge(value: number): string {
+function formatPercent(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
 }
 
-function formatMultipliers(matches: KenoPayoutObservation[]): string {
-  if (matches.length === 0) return "Not observed";
-  return matches
-    .map((match) => `${match.multiplier.toFixed(2)}×`)
-    .join(" · ");
+function formatMultiplier(value: number): string {
+  return `${value.toFixed(2)}×`;
+}
+
+function payoutOutcome(multiplier: number): string {
+  if (multiplier > 1) return "Profit";
+  if (multiplier === 1) return "Stake returned";
+  if (multiplier > 0) return "Partial return";
+  return "No payout";
 }
 
 export function KenoOddsExplorer({
   observations,
+  evidenceUnavailable = false,
 }: {
   observations: KenoPayoutObservation[];
+  evidenceUnavailable?: boolean;
 }) {
-  const [risk, setRisk] = useState<Risk>("low");
+  const [risk, setRisk] = useState<KenoRiskMode>("low");
   const [picks, setPicks] = useState(10);
 
-  const rows = useMemo(
-    () =>
-      Array.from({ length: picks + 1 }, (_, hits) => {
-        const probability = hitProbability(picks, hits);
-        const matches = observations.filter(
-          (row) =>
-            row.risk === risk && row.picks === picks && row.hits === hits,
-        );
-        return { hits, probability, matches };
-      }),
-    [observations, picks, risk],
-  );
+  const rows = useMemo(() => {
+    const payoutRow = getKenoPayoutRow(risk, picks);
+    return payoutRow.map((multiplier, hits) => {
+      const matches = observations.filter(
+        (row) =>
+          row.risk === risk && row.picks === picks && row.hits === hits,
+      );
+      const hasDrift = matches.some(
+        (match) => Math.abs(match.multiplier - multiplier) > 0.000_001,
+      );
+      return {
+        hits,
+        multiplier,
+        probability: getKenoHitProbability(picks, hits),
+        matches,
+        hasDrift,
+      };
+    });
+  }, [observations, picks, risk]);
 
-  const anyMatch = 1 - hitProbability(picks, 0);
-  const allMatch = hitProbability(picks, picks);
+  const anyMatch = 1 - getKenoHitProbability(picks, 0);
+  const allMatch = getKenoHitProbability(picks, picks);
+  const configuredRtp = getKenoRtp(risk, picks);
+  const houseEdge = getKenoHouseEdge(risk, picks);
   const mostLikely = rows.reduce((best, row) =>
     row.probability > best.probability ? row : best,
   );
   const observedOutcomeCount = rows.filter(
     (row) => row.matches.length > 0,
   ).length;
-  const expectedReturnFloor = rows.reduce((sum, row) => {
-    if (row.matches.length === 0) return sum;
-    const confirmedMultiplier = Math.max(
-      ...row.matches.map((match) => match.multiplier),
-    );
-    return sum + row.probability * confirmedMultiplier;
-  }, 0);
-  const coveredProbability = rows.reduce(
-    (sum, row) => sum + (row.matches.length > 0 ? row.probability : 0),
-    0,
+  const payoutDriftCount = rows.filter((row) => row.hasDrift).length;
+  const maximumWin = rows.reduce((highest, row) =>
+    row.multiplier > highest.multiplier ? row : highest,
   );
-  const hasCompletePayoutCurve = rows.every(
-    (row) => row.matches.length === 1,
-  );
-  const houseEdgeCeiling = 1 - expectedReturnFloor;
-  const highestConfirmedWin = rows.reduce<{
-    hits: number;
-    multiplier: number;
-  } | null>((highest, row) => {
-    const rowHigh = row.matches.reduce(
-      (value, match) => Math.max(value, match.multiplier),
-      Number.NEGATIVE_INFINITY,
-    );
-    if (!Number.isFinite(rowHigh)) return highest;
-    if (highest && highest.multiplier >= rowHigh) return highest;
-    return { hits: row.hits, multiplier: rowHigh };
-  }, null);
+
+  const evidenceLabel = evidenceUnavailable
+    ? "Settlement evidence unavailable"
+    : payoutDriftCount > 0
+      ? `${payoutDriftCount} payout mismatch${payoutDriftCount === 1 ? "" : "es"}`
+      : observedOutcomeCount > 0
+        ? `${observedOutcomeCount}/${rows.length} outcomes verified · 0 mismatches`
+        : "Backend paytable · no settled evidence yet";
 
   return (
     <div className="space-y-6">
@@ -161,7 +150,7 @@ export function KenoOddsExplorer({
           title="Odds & chances"
           action={
             <Badge variant="outline" className="font-normal">
-              Exact hypergeometric draw math
+              Backend paytable · exact hypergeometric math
             </Badge>
           }
         />
@@ -192,8 +181,8 @@ export function KenoOddsExplorer({
                 ))}
               </div>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Risk changes payouts, not draw probability. The same ten balls
-                are drawn from forty for every profile.
+                Risk changes the configured payout curve, not the draw. Every
+                mode draws the same ten numbers from forty.
               </p>
             </div>
 
@@ -223,7 +212,7 @@ export function KenoOddsExplorer({
                 )}
               </div>
               <p className="text-xs text-muted-foreground">
-                Select a pick count to recalculate every exact-hit outcome.
+                Select a pick count to load its complete configured paytable.
               </p>
             </div>
 
@@ -234,14 +223,12 @@ export function KenoOddsExplorer({
               <div className="flex min-h-10 items-center gap-3 rounded-lg border bg-background px-3 py-2">
                 <Percent className="size-4 shrink-0 text-cyan-500" />
                 <span className="font-mono text-lg font-semibold tabular-nums">
-                  {hasCompletePayoutCurve ? null : "≤ "}
-                  {formatHouseEdge(houseEdgeCeiling)}
+                  {formatPercent(houseEdge)}
                 </span>
               </div>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                {hasCompletePayoutCurve
-                  ? "Exact expected edge from this complete payout curve."
-                  : `Mathematical ceiling from confirmed payouts covering ${formatProbability(coveredProbability)} of outcomes.`}
+                Exact from every configured multiplier. RTP{" "}
+                {formatPercent(configuredRtp)}.
               </p>
             </div>
           </div>
@@ -250,19 +237,18 @@ export function KenoOddsExplorer({
 
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
         <KpiTile
-          label="Highest confirmed win"
-          value={
-            highestConfirmedWin
-              ? `${highestConfirmedWin.multiplier.toFixed(2)}×`
-              : "Not observed"
-          }
-          sub={
-            highestConfirmedWin
-              ? `${highestConfirmedWin.hits} ${highestConfirmedWin.hits === 1 ? "hit" : "hits"} · production evidence`
-              : `${risk} risk · ${picks} picks`
-          }
+          label="Maximum win"
+          value={formatMultiplier(maximumWin.multiplier)}
+          sub={`${maximumWin.hits} ${maximumWin.hits === 1 ? "hit" : "hits"} · backend paytable`}
           icon={TrendingUp}
-          accent="emerald"
+          accent="rose"
+        />
+        <KpiTile
+          label="Configured RTP"
+          value={formatPercent(configuredRtp)}
+          sub={`${formatPercent(houseEdge)} house edge`}
+          icon={Percent}
+          accent="cyan"
         />
         <KpiTile
           label="Any match"
@@ -285,31 +271,37 @@ export function KenoOddsExplorer({
           icon={Sigma}
           accent="purple"
         />
-        <KpiTile
-          label="Live payout coverage"
-          value={`${observedOutcomeCount}/${rows.length}`}
-          sub={`${risk} risk · ${picks} picks`}
-          icon={Dices}
-          accent="cyan"
-        />
       </div>
 
       <section className="space-y-3">
         <SectionHeading
           icon={Dices}
           title={`${risk[0].toUpperCase()}${risk.slice(1)} risk · ${picks} ${picks === 1 ? "pick" : "picks"}`}
+          action={
+            <Badge
+              variant="outline"
+              className={cn(
+                "font-normal",
+                payoutDriftCount > 0 &&
+                  "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300",
+              )}
+            >
+              {evidenceLabel}
+            </Badge>
+          }
         />
         <div className="overflow-hidden rounded-xl border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Exact hits</TableHead>
-                <TableHead className="hidden text-right sm:table-cell">
-                  Win multiplier
-                </TableHead>
+                <TableHead className="text-right">Win multiplier</TableHead>
+                <TableHead className="hidden md:table-cell">Result</TableHead>
                 <TableHead className="text-right">Probability</TableHead>
                 <TableHead className="text-right">Equivalent odds</TableHead>
-                <TableHead className="text-right">Observed games</TableHead>
+                <TableHead className="hidden text-right lg:table-cell">
+                  Settled evidence
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -318,40 +310,23 @@ export function KenoOddsExplorer({
                   (sum, match) => sum + match.observedGames,
                   0,
                 );
-                const multiplierLabel = formatMultipliers(row.matches);
-                const highestRowMultiplier =
-                  row.matches.length > 0
-                    ? Math.max(
-                        ...row.matches.map((match) => match.multiplier),
-                      )
-                    : null;
                 const multiplierClass =
-                  highestRowMultiplier === null
-                    ? "border-dashed text-muted-foreground"
-                    : highestRowMultiplier > 1
-                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                      : highestRowMultiplier > 0
-                        ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-                        : "text-muted-foreground";
+                  row.multiplier > 1
+                    ? "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+                    : row.multiplier === 1
+                      ? "border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300"
+                      : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
                 return (
-                  <TableRow key={row.hits}>
+                  <TableRow
+                    key={row.hits}
+                    className={
+                      row.hasDrift ? "bg-rose-500/5 hover:bg-rose-500/10" : ""
+                    }
+                  >
                     <TableCell className="font-medium">
-                      <div className="flex items-center justify-between gap-3">
-                        <span>
-                          {row.hits} {row.hits === 1 ? "hit" : "hits"}
-                        </span>
-                        <Badge
-                          variant="outline"
-                          className={cn(
-                            "shrink-0 font-mono tabular-nums sm:hidden",
-                            multiplierClass,
-                          )}
-                        >
-                          {multiplierLabel}
-                        </Badge>
-                      </div>
+                      {row.hits} {row.hits === 1 ? "hit" : "hits"}
                     </TableCell>
-                    <TableCell className="hidden text-right sm:table-cell">
+                    <TableCell className="text-right">
                       <Badge
                         variant="outline"
                         className={cn(
@@ -359,8 +334,11 @@ export function KenoOddsExplorer({
                           multiplierClass,
                         )}
                       >
-                        {multiplierLabel}
+                        {formatMultiplier(row.multiplier)}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="hidden text-muted-foreground md:table-cell">
+                      {payoutOutcome(row.multiplier)}
                     </TableCell>
                     <TableCell className="text-right font-mono tabular-nums">
                       {formatProbability(row.probability)}
@@ -368,8 +346,16 @@ export function KenoOddsExplorer({
                     <TableCell className="text-right tabular-nums text-muted-foreground">
                       {formatOneIn(row.probability)}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {observedGames > 0 ? formatNumber(observedGames) : "—"}
+                    <TableCell className="hidden text-right tabular-nums lg:table-cell">
+                      {row.hasDrift ? (
+                        <span className="text-rose-600 dark:text-rose-400">
+                          Multiplier mismatch
+                        </span>
+                      ) : observedGames > 0 ? (
+                        `${formatNumber(observedGames)} games`
+                      ) : (
+                        "No settled games"
+                      )}
                     </TableCell>
                   </TableRow>
                 );
@@ -377,14 +363,12 @@ export function KenoOddsExplorer({
             </TableBody>
           </Table>
         </div>
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-700 dark:text-amber-300">
-          Draw probabilities are exact. House edge is calculated as 1 − the
-          sum of each exact-hit probability × its payout multiplier. When the
-          selected payout curve is incomplete, the ≤ value is an upper bound
-          from confirmed multipliers only; unseen outcomes are not assumed to
-          pay 0×. Payout curves are backend constants, not database
-          configuration, so the multiplier column reports values confirmed by
-          settled production games.
+        <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-3 text-xs leading-relaxed text-blue-700 dark:text-blue-300">
+          Multipliers come from the backend&apos;s complete payout engine, not
+          from historical results. Probability uses the exact chance of each
+          hit count when ten numbers are drawn from forty. Configured RTP is Σ
+          (probability × multiplier), and house edge is 1 − RTP. Settled games
+          are used only to detect payout drift.
         </div>
       </section>
     </div>

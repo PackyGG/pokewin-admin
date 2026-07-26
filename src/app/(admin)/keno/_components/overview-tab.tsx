@@ -126,7 +126,7 @@ export async function KenoOverviewTab() {
           <KpiTile
             label="RTP"
             value={percent(lifetime.rtp)}
-            sub="Actual paid ÷ wagered"
+            sub="Realized · configured ≈92.5%"
             icon={Percent}
             accent="cyan"
           />

@@ -126,6 +126,13 @@ The webapp uses PostgreSQL as its only database engine. Drizzle ORM is the defau
 - **Leaderboard cost attribution:** affiliate leaderboards = creator cost (100% Creators Costs); on-site competitive = races (`race_prize`); never put leaderboard prizes in on-site Reward Costs.
 - **`/insights/system-edge-plan`** = the read-only planning tool to tune every edge + reward lever and see projected GGR/NGR/profit + delta + a "net edge by scenario" view (e.g. affiliate tier 8 → net edge X%). Levers are being reworked from opaque ×-multipliers into concrete, explained, real-data controls. Configs are saveable as named presets in **localStorage** (no prod-DB write).
 
+### Keno engine contract
+
+- Backend source of truth is `backend/src/utils/keno.ts`: 40 positions (`0–39` internally), 10 distinct draws, 1–10 player picks, Low/Medium/High compile-time payout curves, and $0.25–$1,000 bets.
+- Exact hit probability is hypergeometric: `C(picks,hits) × C(40-picks,10-hits) / C(40,10)`. Configured RTP is `Σ(probability × multiplier)` and house edge is `1 − RTP`; all 30 clean payout rows land near 92.5% RTP / 7.5% edge.
+- `GET /v1/keno/multipliers` returns the backend table only in development/test. The backend deliberately registers no Keno routes in production, so `/keno?tab=odds` uses the tested compile-time mirror in `src/lib/keno/payouts.ts`. Settled `keno_games` rows are evidence/drift detection only, never the source for unobserved configured multipliers.
+- Any backend payout edit must update the admin mirror and `scripts/__fixtures__/keno-payouts.test.ts` in the same release. The test locks 30 complete rows, anchor multipliers, probability normalization, and the reference RTP band.
+
 ---
 
 ## 7. ⚠️ GOTCHAS / HARD-WON LESSONS (incident log)
