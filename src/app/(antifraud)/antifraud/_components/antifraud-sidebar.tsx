@@ -97,14 +97,21 @@ function NavMenu({
    */
   toHref: (path: string) => string;
 }) {
+  const root = toHref("/antifraud");
+  const activeHref = items
+    .map((item) => toHref(item.href))
+    .filter(
+      (href) =>
+        pathname === href || (href !== root && pathname.startsWith(href + "/")),
+    )
+    .sort((a, b) => b.length - a.length)[0];
+
   return (
     <SidebarMenu>
       {items.map((item, i) => {
         const Icon = item.icon;
         const href = toHref(item.href);
-        const root = toHref("/antifraud");
-        const isActive =
-          pathname === href || (href !== root && pathname.startsWith(href + "/"));
+        const isActive = href === activeHref;
         return (
           <SidebarMenuItem key={`${item.label}-${i}`}>
             <SidebarMenuButton
