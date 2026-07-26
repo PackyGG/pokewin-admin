@@ -4,8 +4,6 @@ import { redirect } from "next/navigation";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AdminHeader } from "@/components/admin-header";
 import { TopProgressBar } from "@/components/top-progress-bar";
-import { DockedRecentActivity } from "@/components/docked-recent-activity";
-import { LiveMoneyChat } from "@/components/live-money-chat";
 import { RightRailProvider } from "@/components/right-rail-context";
 import { RailWidthSync } from "@/components/rail-width-sync";
 import { readRailOpenOrder } from "@/lib/right-rail-server";
@@ -21,12 +19,16 @@ import {
   CREATOR_HUB_TOGGLE_ROLES,
   type CreatorHubAccessSettings,
 } from "@/lib/creator-hub-access";
-import { adminDb } from "@/lib/admin-db";
+import { eq } from "drizzle-orm";
+import { adminDrizzle } from "@/lib/drizzle";
+import { admin_users } from "@/lib/db-schema/admin/schema";
 import { getAdminPreferences } from "@/lib/admin-preferences";
+import { isPostgresError } from "@/lib/postgres-errors";
 import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
 import { readDbEnvFromCookie, isDevDbConfigured } from "@/lib/db-env";
 import { readTzCookie } from "@/lib/timezone/server";
 import { isNextControlFlowError } from "@/lib/utils/action-error";
+import { resolveAppAccess } from "@/lib/app-access";
 
 // scroll-to-top island lives in the (admin) group; reused 1:1 here. The
 // (creator-hub) and (admin) route groups are sibling directories on disk,
@@ -68,14 +70,17 @@ async function loadHeaderProfile(userId: string): Promise<{
   profileFieldsAvailable: boolean;
 }> {
   try {
-    const row = await adminDb.admin_users.findUnique({
-      where: { id: userId },
-      select: {
-        display_username: true,
-        profile_image_mime: true,
-        email: true,
-      },
-    });
+    const row = (
+      await adminDrizzle
+        .select({
+          display_username: admin_users.display_username,
+          profile_image_mime: admin_users.profile_image_mime,
+          email: admin_users.email,
+        })
+        .from(admin_users)
+        .where(eq(admin_users.id, userId))
+        .limit(1)
+    )[0];
     return {
       displayUsername: row?.display_username ?? null,
       hasAvatar: Boolean(row?.profile_image_mime),
@@ -86,16 +91,16 @@ async function loadHeaderProfile(userId: string): Promise<{
     // Pre-migration fallback: the profile columns don't exist. Re-read just
     // the always-present `email` so the dialog identity still shows, and flag
     // the editing fields as unavailable.
-    const code = (err as { code?: string })?.code;
-    const missingColumn =
-      code === "P2022" ||
-      (err instanceof Error && /column .* does not exist/i.test(err.message));
+    const missingColumn = isPostgresError(err, "42703");
     if (missingColumn) {
       try {
-        const row = await adminDb.admin_users.findUnique({
-          where: { id: userId },
-          select: { email: true },
-        });
+        const row = (
+          await adminDrizzle
+            .select({ email: admin_users.email })
+            .from(admin_users)
+            .where(eq(admin_users.id, userId))
+            .limit(1)
+        )[0];
         return {
           displayUsername: null,
           hasAvatar: false,
@@ -201,9 +206,11 @@ export default async function CreatorHubLayout({
     redirect(getDefaultRouteForRoles(roles, allowedPages));
   }
 
-  const [allowedPages, profile, preferences, dbEnv, tzCookie, railOpenOrder] =
+  const [appAccess, profile, preferences, dbEnv, tzCookie, railOpenOrder] =
     await Promise.all([
-      loadUserPermissions(session.userId),
+      // Which workspaces the footer switcher may offer. Resilient (never
+      // rejects) and gated 1:1 with each sub-app's own route guard.
+      resolveAppAccess(session),
       loadHeaderProfile(session.userId),
       loadPreferences(session.userId),
       readDbEnvFromCookie(),
@@ -215,9 +222,6 @@ export default async function CreatorHubLayout({
     ]);
 
   const canSwitchDbEnv = session.role === "admin" && isDevDbConfigured();
-  const canOpenChatPanel =
-    session.role === "admin" || allowedPages.includes("/chat");
-
   return (
     <TimezoneProvider
       initialTimezone={preferences.timezone}
@@ -229,7 +233,7 @@ export default async function CreatorHubLayout({
           <TopProgressBar />
         </Suspense>
         {/* The swapped nav — Creator Hub's own sidebar replaces AppSidebar. */}
-        <CreatorHubSidebar />
+        <CreatorHubSidebar access={appAccess} />
         <SidebarInset className="min-w-0">
           {dbEnv === "dev" && <DevDbBanner />}
           <AdminHeader
@@ -265,16 +269,12 @@ export default async function CreatorHubLayout({
             above the `z-30` rail, and auto-hides once that creator is fully
             onboarded. Lazy — it fetches nothing on any other Hub route. */}
         <CreatorChecklistDock />
-        {/* Right-edge docks — reused 1:1 from the main shell so live money /
-            recent activity stay available inside the Hub. Chat dock is
-            gated to the same permission boundary as the main layout. */}
+        {/* Creator Hub keeps its separate Alerts dock. */}
         <RightRailProvider
-          mounted={{ chat: canOpenChatPanel, alerts: true }}
+          mounted={{ alerts: true }}
           initialOpenOrder={railOpenOrder}
         >
           <RailWidthSync />
-          <LiveMoneyChat />
-          <DockedRecentActivity />
           <DockedAlerts />
         </RightRailProvider>
       </SidebarProvider>

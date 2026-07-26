@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  ArrowLeft,
   ClipboardEdit,
   LayoutDashboard,
   Stethoscope,
@@ -26,10 +25,11 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
-import { useAppHost, useCrossAppHrefs } from "@/lib/use-app-host";
+import { useAppHost } from "@/lib/use-app-host";
 import { hrefFrom } from "@/lib/app-hosts";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LinkPending } from "@/components/ux";
+import { AppSwitcher, type AppSwitcherAccess } from "@/components/app-switcher";
 
 /**
  * Pack Studio sidebar — the swapped nav rendered by the Pack Studio layout
@@ -134,8 +134,11 @@ function StudioNavMenu({
 export function PackStudioSidebar({
   isOwner = false,
   isRetuneOperator = false,
+  access = { creatorHub: false, packStudio: true, antifraud: false },
 }: {
   isOwner?: boolean;
+  /** Server-computed workspace entitlement for the footer switcher. */
+  access?: AppSwitcherAccess;
   /**
    * True iff the viewer can use the staging draft tools — owners + the
    * hard-coded retune operator allowlist (`isPackStudioRetuneOperator`).
@@ -146,10 +149,9 @@ export function PackStudioSidebar({
   const pathname = usePathname();
   const { isMobile, setOpenMobile } = useSidebar();
   // Host-aware links: strip the `/pack-studio` prefix while on the Studio's own
-  // host, and make "Back to Admin" absolute — a bare /dashboard there would be
-  // rewritten into this host's segment.
+  // host. Cross-app links go through the switcher's HostLink — a bare
+  // /dashboard here would be rewritten into this host's segment.
   const appHost = useAppHost();
-  const { admin: adminHref } = useCrossAppHrefs();
   const toHref = (path: string) => (appHost ? hrefFrom(appHost, path) : path);
 
   // Append owner-only (History) and operator-only (Drafts) entries after the
@@ -207,35 +209,6 @@ export function PackStudioSidebar({
         </Link>
       </SidebarHeader>
 
-      {/* Back to Admin — symmetric portal to the main sidebar's
-          "Switch to Pack Studio" affordance: same violet gradient card,
-          two-line label, mirrored arrow + icon placement. */}
-      <div className="px-2 pt-2 group-data-[collapsible=icon]:px-0">
-        <Link
-          href={adminHref}
-          onClick={handleNavTap}
-          title="Back to Admin"
-          className={cn(
-            "group/back relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-violet-500/30 bg-gradient-to-r from-violet-500/15 via-violet-500/10 to-transparent px-3 py-2.5 outline-none",
-            "transition-colors hover:border-violet-500/50 hover:from-violet-500/25 hover:via-violet-500/15 focus-visible:ring-2 focus-visible:ring-violet-500/40",
-            "group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0",
-          )}
-        >
-          <ArrowLeft className="size-4 shrink-0 text-violet-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/back:-translate-x-0.5" />
-          <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
-            <span className="block truncate text-xs font-semibold text-violet-600 dark:text-violet-300">
-              Back to Admin
-            </span>
-            <span className="block truncate text-[11px] text-muted-foreground">
-              Main dashboard
-            </span>
-          </span>
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-violet-500/20 text-violet-600 ring-1 ring-inset ring-violet-500/30 dark:text-violet-400 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:rounded-lg">
-            <LayoutDashboard className="size-4" />
-          </span>
-        </Link>
-      </div>
-
       <SidebarContent>
         <SidebarGroup className="px-2 py-1">
           <SidebarGroupLabel>Workspace</SidebarGroupLabel>
@@ -251,6 +224,13 @@ export function PackStudioSidebar({
       </SidebarContent>
 
       <SidebarFooter className="border-t border-border">
+        {/* Same switcher the main sidebar carries — the way back to Admin (and
+            across to the other workspaces) is one control in one place. */}
+        <AppSwitcher
+          current="pack-studio"
+          access={access}
+          onNavigate={handleNavTap}
+        />
         <div className="flex items-center justify-between px-2 group-data-[collapsible=icon]:justify-center">
           <span className="text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
             Theme

@@ -2,14 +2,10 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { HostLink } from "@/components/host-link";
 import { usePathname } from "next/navigation";
 import {
   Activity,
   Bell,
-  // Antifraud portal card mark. Direct component ref — the sub-app portal
-  // cards in the footer don't go through the string-keyed ICONS map below.
-  ShieldAlert,
   LayoutDashboard,
   BarChart3,
   Users,
@@ -92,6 +88,7 @@ import { cn } from "@/lib/utils";
 import { getDefaultRoute } from "@/lib/admin-roles";
 import { pageAccessGranted } from "@/lib/admin-pages";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { AppSwitcher } from "@/components/app-switcher";
 import { getSidebarFooterItems, getSidebarGroups } from "@/lib/nav-config";
 import { LinkPending } from "@/components/ux";
 
@@ -177,6 +174,7 @@ type NavItem = {
   // recently-added page. Purely cosmetic — remove once the team has
   // discovered the page.
   isNew?: boolean;
+  alwaysVisible?: boolean;
 };
 
 type NavGroup = {
@@ -203,6 +201,7 @@ const NAV_FOOTER_ITEMS: NavItem[] = getSidebarFooterItems().map((e) => ({
   usernameAllowlist: e.usernameAllowlist,
   strictUsernameAllowlist: e.strictUsernameAllowlist,
   isNew: e.isNew,
+  alwaysVisible: e.alwaysVisible,
 }));
 
 const NAV_GROUPS: NavGroup[] = getSidebarGroups().map((group) => ({
@@ -216,6 +215,7 @@ const NAV_GROUPS: NavGroup[] = getSidebarGroups().map((group) => ({
     usernameAllowlist: e.usernameAllowlist,
     strictUsernameAllowlist: e.strictUsernameAllowlist,
     isNew: e.isNew,
+    alwaysVisible: e.alwaysVisible,
   })),
 }));
 
@@ -341,6 +341,7 @@ export function AppSidebar({
         if (item.strictUsernameAllowlist) {
           return Boolean(inAllowlist);
         }
+        if (item.alwaysVisible) return true;
         // Owners + admins see every page.
         return isAdmin || isOwner || pageAccessGranted(allowedPages, item.href);
       }),
@@ -374,6 +375,7 @@ export function AppSidebar({
           if (item.strictUsernameAllowlist) {
             return Boolean(inAllowlist);
           }
+          if (item.alwaysVisible) return true;
           // Owners + admins see every page.
           return isAdmin || isOwner || pageAccessGranted(allowedPages, item.href);
         }),
@@ -645,111 +647,20 @@ export function AppSidebar({
             })}
           </SidebarMenu>
         )}
-        {/* Creator Hub portal — sits in the sidebar footer, directly above the
-            Theme row. A distinct accent "switch to a sub-app" affordance (not a
-            normal nav link): pink gradient, megaphone mark, nudging arrow.
-            Visibility is decided SERVER-SIDE (canEnterCreatorHub prop): username
-            `motha` OR a per-role ADMIN-DB toggle (both default off), identical to
-            the /creator-hub route guard. The route itself is independently gated
-            regardless. In icon-collapsed mode it shrinks to a centered pink mark
-            with a hover tooltip. */}
-        {canEnterCreatorHub && (
-          <div className="px-2 group-data-[collapsible=icon]:px-0">
-            <HostLink
-              href="/creator-hub"
-              onClick={handleNavTap}
-              title="Switch to Creator Hub"
-              className={cn(
-                "group/portal relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-pink-500/30 bg-gradient-to-r from-pink-500/15 via-pink-500/10 to-transparent px-3 py-2.5 outline-none",
-                "transition-colors hover:border-pink-500/50 hover:from-pink-500/25 hover:via-pink-500/15 focus-visible:ring-2 focus-visible:ring-pink-500/40",
-                "group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0",
-              )}
-            >
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-pink-500/20 text-pink-600 ring-1 ring-inset ring-pink-500/30 dark:text-pink-400 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:rounded-lg">
-                <Megaphone className="size-4" />
-              </span>
-              <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
-                <span className="block truncate text-xs font-semibold text-pink-600 dark:text-pink-300">
-                  Switch to Creator Hub
-                </span>
-                <span className="block truncate text-[11px] text-muted-foreground">
-                  CM team workspace
-                </span>
-              </span>
-              <ArrowRight className="size-4 shrink-0 text-pink-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/portal:translate-x-0.5" />
-            </HostLink>
-          </div>
-        )}
-        {/* Pack Studio portal — sits directly below the Creator Hub portal in
-            the footer, a second "switch to a sub-app" affordance with its own
-            violet accent. Visibility is decided SERVER-SIDE (canEnterPackStudio
-            prop): an owner OR a per-role ADMIN-DB toggle (default off), identical
-            to the /pack-studio route guard. The route itself is independently
-            gated regardless. In icon-collapsed mode it shrinks to a centered
-            violet mark with a hover tooltip. */}
-        {canEnterPackStudio && (
-          <div className="px-2 group-data-[collapsible=icon]:px-0">
-            <HostLink
-              href="/pack-studio"
-              onClick={handleNavTap}
-              title="Switch to Pack Studio"
-              className={cn(
-                "group/studio relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-violet-500/30 bg-gradient-to-r from-violet-500/15 via-violet-500/10 to-transparent px-3 py-2.5 outline-none",
-                "transition-colors hover:border-violet-500/50 hover:from-violet-500/25 hover:via-violet-500/15 focus-visible:ring-2 focus-visible:ring-violet-500/40",
-                "group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0",
-              )}
-            >
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-violet-500/20 text-violet-600 ring-1 ring-inset ring-violet-500/30 dark:text-violet-400 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:rounded-lg">
-                <Package className="size-4" />
-              </span>
-              <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
-                <span className="block truncate text-xs font-semibold text-violet-600 dark:text-violet-300">
-                  Switch to Pack Studio
-                </span>
-                <span className="block truncate text-[11px] text-muted-foreground">
-                  Pack design workspace
-                </span>
-              </span>
-              <ArrowRight className="size-4 shrink-0 text-violet-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/studio:translate-x-0.5" />
-            </HostLink>
-          </div>
-        )}
-        {/* Antifraud portal — the THIRD sub-app card, directly below Pack
-            Studio in the footer, with its own cyan accent (pink = Creator Hub,
-            violet = Pack Studio, cyan = Antifraud, so the three read as
-            siblings rather than variants of each other). Visibility is decided
-            SERVER-SIDE (canEnterAntifraud prop): an owner, an admin, an
-            allowlisted username, or a per-role ADMIN-DB toggle — identical to
-            the /antifraud route guard. The route itself is independently gated
-            regardless. In icon-collapsed mode it shrinks to a centered cyan
-            mark with a hover tooltip. */}
-        {canEnterAntifraud && (
-          <div className="px-2 group-data-[collapsible=icon]:px-0">
-            <HostLink
-              href="/antifraud"
-              onClick={handleNavTap}
-              title="Switch to Antifraud"
-              className={cn(
-                "group/fraud relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-cyan-500/30 bg-gradient-to-r from-cyan-500/15 via-cyan-500/10 to-transparent px-3 py-2.5 outline-none",
-                "transition-colors hover:border-cyan-500/50 hover:from-cyan-500/25 hover:via-cyan-500/15 focus-visible:ring-2 focus-visible:ring-cyan-500/40",
-                "group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0",
-              )}
-            >
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-cyan-500/20 text-cyan-600 ring-1 ring-inset ring-cyan-500/30 dark:text-cyan-400 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:rounded-lg">
-                <ShieldAlert className="size-4" />
-              </span>
-              <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
-                <span className="block truncate text-xs font-semibold text-cyan-600 dark:text-cyan-300">
-                  Switch to Antifraud
-                </span>
-                <span className="block truncate text-[11px] text-muted-foreground">
-                  Risk &amp; staff workspace
-                </span>
-              </span>
-              <ArrowRight className="size-4 shrink-0 text-cyan-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/fraud:translate-x-0.5" />
-            </HostLink>
-          </div>
-        )}
+        {/* Workspace switcher — one segmented control replacing the three
+            stacked "Switch to X" cards this footer used to carry. Which
+            segments render is decided SERVER-SIDE (the canEnter* props, each
+            matched 1:1 to its route guard), so nobody sees a door they'd bounce
+            off. The routes stay independently gated regardless. */}
+        <AppSwitcher
+          current="admin"
+          access={{
+            creatorHub: canEnterCreatorHub,
+            packStudio: canEnterPackStudio,
+            antifraud: canEnterAntifraud,
+          }}
+          onNavigate={handleNavTap}
+        />
         <div className="flex items-center justify-between px-2 group-data-[collapsible=icon]:justify-center">
           <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground group-data-[collapsible=icon]:hidden">Theme</span>
           <ThemeToggle />
