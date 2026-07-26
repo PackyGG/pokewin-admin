@@ -17,6 +17,12 @@ import {
 import { LiveBus } from "./live.js";
 import { migrate } from "./migrate.js";
 import { MonitorEngine } from "./monitor.js";
+import {
+  ACTIVITY_SCORE_DEFINITIONS,
+  PROVIDER_SCORE_DEFINITIONS,
+  SEVERITY_BANDS,
+  SIGNUP_SCORE_DEFINITIONS,
+} from "./score-catalog.js";
 import { topRainWinners } from "./source.js";
 
 const config = loadConfig();
@@ -487,6 +493,27 @@ app.get("/v1/live", { websocket: true }, async (socket, request) => {
   if (!live.addClient(socket, ticket.actorId)) {
     socket.close(1013, "Too many live connections");
   }
+});
+
+app.get("/v1/scoring", async () => {
+  const rules = await db.antifraud.query(
+    `SELECT id, key, name, description, enabled, trigger, sequence,
+            exclude_before, window_seconds, score_delta, action_type, priority,
+            updated_at
+       FROM rule_definitions
+      ORDER BY priority, name`,
+  );
+  return {
+    data: {
+      monitorStartScore: config.MONITOR_START_SCORE,
+      monitorDurationSeconds: config.MONITOR_DURATION_SECONDS,
+      severityBands: SEVERITY_BANDS,
+      signupSignals: SIGNUP_SCORE_DEFINITIONS,
+      providerSignals: PROVIDER_SCORE_DEFINITIONS,
+      activitySignals: ACTIVITY_SCORE_DEFINITIONS,
+      behaviorRules: rules.rows,
+    },
+  };
 });
 
 app.setErrorHandler((error, _request, reply) => {

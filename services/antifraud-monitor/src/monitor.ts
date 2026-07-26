@@ -6,6 +6,7 @@ import type { Databases } from "./db.js";
 import { EnrichmentService, type EnrichmentResult } from "./enrichment.js";
 import type { LiveBus } from "./live.js";
 import { baseSignupSignals, severity } from "./scoring.js";
+import { activityScoreFor } from "./score-catalog.js";
 import {
   fetchActivity,
   fetchNewSignups,
@@ -385,20 +386,7 @@ export class MonitorEngine {
   }
 
   private pointsFor(activity: SourceActivity): number {
-    switch (activity.event_type) {
-      case "deposit":
-        return -20;
-      case "paid_pack_opened":
-        return -5;
-      case "reward_opened":
-        return 20;
-      case "bonus_received":
-        return 20;
-      case "rain_joined":
-        return 20;
-      default:
-        return 0;
-    }
+    return activityScoreFor(activity.event_type);
   }
 
   private async recordActivity(

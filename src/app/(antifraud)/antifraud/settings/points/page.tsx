@@ -1,8 +1,19 @@
 import { Suspense } from "react";
-import { ArrowDown, ArrowUp, History, Trophy, Users } from "lucide-react";
+import {
+  Activity,
+  Clock3,
+  Gauge,
+  Radar,
+  ShieldAlert,
+  Workflow,
+} from "lucide-react";
 
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
-import { safeQuery } from "@/lib/errors/safe-query";
+import {
+  getAntifraudScoringConfig,
+  type AntifraudScoreDefinition,
+  type AntifraudScoringConfig,
+} from "@/lib/antifraud/monitor-api";
 import {
   KpiTile,
   PageHero,
@@ -12,229 +23,269 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { formatDateTime, formatNumber } from "@/lib/utils/format";
-import {
-  listRecentStaffPointEvents,
-  listStaffMembers,
-} from "@/lib/antifraud/profile";
-import { STAFF_LEVELS } from "@/lib/antifraud/levels";
-import { StaffLevelBadge } from "../../_components/badges";
-import { AwardPointsDialog } from "../../staff/_components/award-points-dialog";
 
-export const metadata = { title: "Staff Points" };
+export const metadata = { title: "Antifraud Points" };
 
-const QUERY_TIMEOUT_MS = 10_000;
-
-export default async function StaffPointsPage() {
+export default async function AntifraudPointsPage() {
   await requireAntifraudManagerPage();
 
   return (
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          icon={Trophy}
-          accent="amber"
-          title="Staff Points"
-          subtitle="Current balances, level thresholds and the immutable points ledger"
+          icon={Gauge}
+          accent="cyan"
+          title="Antifraud Points"
+          subtitle="Every risk-score input currently used by the monitor"
           backHref="/antifraud"
         />
       </PageHero>
 
       <Suspense fallback={<PointsSkeleton />}>
-        <PointsDashboard />
+        <ScoringDashboard />
       </Suspense>
     </div>
   );
 }
 
-async function PointsDashboard() {
-  const [{ data: members }, { data: events }] = await Promise.all([
-    safeQuery(
-      () => listStaffMembers(),
-      [],
-      "antifraud.points-members",
-      QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => listRecentStaffPointEvents(100),
-      [],
-      "antifraud.points-ledger",
-      QUERY_TIMEOUT_MS,
-    ),
-  ]);
+async function ScoringDashboard() {
+  const result = await getAntifraudScoringConfig();
+  if (!result.configured) {
+    return <Unavailable text="The monitor service is not configured." />;
+  }
+  if (result.error || !result.data) {
+    return <Unavailable text="The live scoring configuration could not be loaded." />;
+  }
 
-  const totalPoints = members.reduce(
-    (sum, member) => sum + member.profile.pointsTotal,
-    0,
-  );
-  const awarded = events.reduce(
-    (sum, event) => sum + Math.max(0, event.points),
-    0,
-  );
-  const removed = events.reduce(
-    (sum, event) => sum + Math.abs(Math.min(0, event.points)),
-    0,
-  );
-  const awardMembers = members.map((member) => ({
-    id: member.profile.adminUserId,
-    label:
-      member.profile.displayName ??
-      member.identity?.label ??
-      member.profile.adminUserId.slice(0, 8),
-    points: member.profile.pointsTotal,
-  }));
+  const config = result.data;
+  const activeRules = config.behaviorRules.filter((rule) => rule.enabled).length;
+  const fixedSignals =
+    config.signupSignals.length +
+    config.providerSignals.length +
+    config.activitySignals.length;
 
   return (
     <div className="space-y-8">
+      <div className="rounded-xl border border-cyan-500/25 bg-cyan-500/5 px-4 py-3 text-xs text-muted-foreground">
+        This is the live scoring reference. Behavior flows are stored in the
+        antifraud database; fixed signup, provider and activity weights are
+        deployed with the monitor service.
+      </div>
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <KpiTile
-          label="Current points"
-          value={formatNumber(totalPoints)}
-          sub="across all staff"
-          icon={Trophy}
-          accent="amber"
-        />
-        <KpiTile
-          label="Staff"
-          value={formatNumber(members.length)}
-          sub="with a profile"
-          icon={Users}
+          label="Monitor starts at"
+          value={`${config.monitorStartScore} pts`}
+          sub="signup risk score"
+          icon={Radar}
           accent="cyan"
         />
         <KpiTile
-          label="Recent awarded"
-          value={`+${formatNumber(awarded)}`}
-          sub="latest 100 events"
-          icon={ArrowUp}
-          accent="emerald"
+          label="Monitor window"
+          value={`${config.monitorDurationSeconds / 60} min`}
+          sub="behavior observation"
+          icon={Clock3}
+          accent="purple"
         />
         <KpiTile
-          label="Recent removed"
-          value={`-${formatNumber(removed)}`}
-          sub="latest 100 events"
-          icon={ArrowDown}
-          accent="rose"
+          label="Score signals"
+          value={String(fixedSignals)}
+          sub="signup, provider and activity"
+          icon={Activity}
+          accent="amber"
+        />
+        <KpiTile
+          label="Active flows"
+          value={`${activeRules}/${config.behaviorRules.length}`}
+          sub="sequence-based rules"
+          icon={Workflow}
+          accent="emerald"
         />
       </div>
 
-      <section className="space-y-4">
-        <SectionHeading
-          icon={Users}
-          title="Current balances"
-          action={
-            awardMembers.length > 0 ? (
-              <AwardPointsDialog members={awardMembers} />
-            ) : undefined
-          }
-        />
-        {members.length === 0 ? (
-          <Empty text="No staff profiles exist yet." />
-        ) : (
-          <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
-            {members.map((member) => {
-              const label =
-                member.profile.displayName ??
-                member.identity?.label ??
-                member.profile.adminUserId.slice(0, 8);
-              return (
-                <li
-                  key={member.profile.adminUserId}
-                  className="flex items-center gap-3 px-4 py-3"
-                >
-                  <span className="w-7 shrink-0 text-xs font-bold text-muted-foreground">
-                    #{member.rank}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-semibold">
-                      {label}
-                    </span>
-                    <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                      {member.profile.quizzesCompleted} quizzes ·{" "}
-                      {member.profile.reviewsResolved} cases
-                    </span>
-                  </span>
-                  <StaffLevelBadge level={member.profile.level} />
-                  <span className="w-20 shrink-0 text-right text-sm font-bold tabular-nums">
-                    {formatNumber(member.profile.pointsTotal)}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
-
-      <section className="space-y-4">
-        <SectionHeading icon={History} title="Recent point events" />
-        {events.length === 0 ? (
-          <Empty text="No point events have been recorded yet." />
-        ) : (
-          <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
-            {events.map((event) => (
-              <li
-                key={event.id}
-                className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center"
-              >
-                <span
-                  className={cn(
-                    "w-14 shrink-0 text-sm font-bold tabular-nums",
-                    event.points > 0
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : "text-rose-600 dark:text-rose-400",
-                  )}
-                >
-                  {event.points > 0 ? "+" : ""}
-                  {event.points}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex flex-wrap items-center gap-2">
-                    <span className="truncate text-sm font-semibold">
-                      {event.recipient?.label ?? event.adminUserId.slice(0, 8)}
-                    </span>
-                    <Badge variant="outline" className="h-5 text-[9px] uppercase">
-                      {event.sourceKind}
-                    </Badge>
-                  </span>
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
-                    {event.reason}
-                  </span>
-                </span>
-                <span className="shrink-0 text-right text-[11px] text-muted-foreground">
-                  <span className="block">
-                    {event.actor?.label ?? (event.createdBy ? "Unknown" : "System")}
-                  </span>
-                  <span className="block">{formatDateTime(event.createdAt)}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="space-y-4">
-        <SectionHeading icon={Trophy} title="Level thresholds" />
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-          {STAFF_LEVELS.map((level) => (
-            <div
-              key={level.level}
-              className="rounded-xl border border-border/60 bg-card px-3 py-3"
-            >
-              <StaffLevelBadge level={level.level} />
-              <p className="mt-2 text-sm font-semibold">{level.title}</p>
-              <p className="text-[11px] text-muted-foreground">
-                {formatNumber(level.minPoints)} points
-              </p>
-            </div>
-          ))}
-        </div>
-      </section>
+      <SeverityBands bands={config.severityBands} />
+      <ScoreSection
+        icon={Radar}
+        title="Signup checks"
+        subtitle="Signals calculated from Packy signup and account-linking data."
+        definitions={config.signupSignals}
+      />
+      <ScoreSection
+        icon={ShieldAlert}
+        title="Fingerprint and IP checks"
+        subtitle="Signals returned by Fingerprint Pro Plus and proxycheck.io. Multiple matching provider signals stack."
+        definitions={config.providerSignals}
+      />
+      <ScoreSection
+        icon={Activity}
+        title="Live behavior"
+        subtitle="Points added or removed while the user is actively monitored. The running score is always floored at zero."
+        definitions={config.activitySignals}
+      />
+      <BehaviorRules config={config} />
     </div>
   );
 }
 
-function Empty({ text }: { text: string }) {
+function SeverityBands({
+  bands,
+}: {
+  bands: AntifraudScoringConfig["severityBands"];
+}) {
+  const colors = {
+    low: "border-emerald-500/30 bg-emerald-500/5",
+    medium: "border-amber-500/30 bg-amber-500/5",
+    high: "border-orange-500/30 bg-orange-500/5",
+    critical: "border-rose-500/30 bg-rose-500/5",
+  };
+
   return (
-    <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-10 text-center text-sm text-muted-foreground">
+    <section className="space-y-4">
+      <SectionHeading icon={Gauge} title="Severity bands" />
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {bands.map((band) => (
+          <div
+            key={band.key}
+            className={cn("rounded-xl border px-4 py-3", colors[band.key])}
+          >
+            <p className="text-xs font-bold uppercase tracking-wide">
+              {band.label}
+            </p>
+            <p className="mt-1 text-lg font-semibold tabular-nums">
+              {band.maximum == null
+                ? `${band.minimum}+`
+                : `${band.minimum}–${band.maximum}`}{" "}
+              pts
+            </p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ScoreSection({
+  icon,
+  title,
+  subtitle,
+  definitions,
+}: {
+  icon: typeof Radar;
+  title: string;
+  subtitle: string;
+  definitions: AntifraudScoreDefinition[];
+}) {
+  return (
+    <section className="space-y-4">
+      <SectionHeading icon={icon} title={title} />
+      <p className="-mt-2 text-xs text-muted-foreground">{subtitle}</p>
+      <ul className="grid gap-3 lg:grid-cols-2">
+        {definitions.map((definition) => (
+          <li
+            key={definition.key}
+            className="rounded-xl border border-border/60 bg-card px-4 py-3"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold">
+                  {definition.title}
+                </span>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  {definition.description}
+                </span>
+              </span>
+              <code className="shrink-0 text-[10px] text-muted-foreground">
+                {definition.key}
+              </code>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {definition.options.map((option) => (
+                <Badge
+                  key={option.label}
+                  variant="outline"
+                  className={cn(
+                    "gap-1 tabular-nums",
+                    option.points < 0
+                      ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                      : "border-rose-500/30 text-rose-600 dark:text-rose-400",
+                  )}
+                >
+                  {option.label}: {option.points > 0 ? "+" : ""}
+                  {option.points}
+                </Badge>
+              ))}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function BehaviorRules({ config }: { config: AntifraudScoringConfig }) {
+  return (
+    <section className="space-y-4">
+      <SectionHeading icon={Workflow} title="Behavior flows" />
+      <p className="-mt-2 text-xs text-muted-foreground">
+        Sequence bonuses stored in the antifraud database and evaluated during
+        the live monitor window.
+      </p>
+      <ul className="space-y-3">
+        {config.behaviorRules.map((rule) => (
+          <li
+            key={rule.id}
+            className="rounded-xl border border-border/60 bg-card px-4 py-4"
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-semibold">{rule.name}</span>
+                  <Badge variant={rule.enabled ? "default" : "outline"}>
+                    {rule.enabled ? "Enabled" : "Disabled"}
+                  </Badge>
+                  <Badge variant="outline">{rule.action_type}</Badge>
+                </span>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  {rule.description}
+                </span>
+              </span>
+              <span
+                className={cn(
+                  "shrink-0 text-lg font-bold tabular-nums",
+                  rule.score_delta < 0
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-rose-600 dark:text-rose-400",
+                )}
+              >
+                {rule.score_delta > 0 ? "+" : ""}
+                {rule.score_delta} pts
+              </span>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+              <span>Sequence</span>
+              {rule.sequence.map((event, index) => (
+                <span key={`${event}-${index}`} className="contents">
+                  {index > 0 && <span>→</span>}
+                  <code className="rounded bg-muted px-1.5 py-0.5">{event}</code>
+                </span>
+              ))}
+              <span>within {rule.window_seconds}s</span>
+              {rule.exclude_before.length > 0 && (
+                <span>
+                  · blocked after {rule.exclude_before.join(", ")}
+                </span>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function Unavailable({ text }: { text: string }) {
+  return (
+    <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-12 text-center text-sm text-muted-foreground">
       {text}
     </div>
   );
@@ -248,7 +299,7 @@ function PointsSkeleton() {
           <Skeleton key={index} className="h-24 rounded-2xl" />
         ))}
       </div>
-      <Skeleton className="h-80 rounded-xl" />
+      <Skeleton className="h-32 rounded-xl" />
       <Skeleton className="h-96 rounded-xl" />
     </div>
   );

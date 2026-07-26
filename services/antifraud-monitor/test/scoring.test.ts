@@ -2,6 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { baseSignupSignals, severity } from "../src/scoring.js";
+import {
+  ACTIVITY_SCORE_DEFINITIONS,
+  activityScoreFor,
+  PROVIDER_SCORE_DEFINITIONS,
+  SEVERITY_BANDS,
+  SIGNUP_SCORE_DEFINITIONS,
+} from "../src/score-catalog.js";
 import { sequenceMatches } from "../src/monitor.js";
 import type { Signup } from "../src/types.js";
 
@@ -45,6 +52,33 @@ test("normal signup has no baseline risk", () => {
   });
   assert.equal(signals.length, 0);
   assert.equal(severity(0), "low");
+});
+
+test("the public score catalog has unique keys and contiguous severity bands", () => {
+  const definitions = [
+    ...SIGNUP_SCORE_DEFINITIONS,
+    ...PROVIDER_SCORE_DEFINITIONS,
+    ...ACTIVITY_SCORE_DEFINITIONS,
+  ];
+  assert.equal(new Set(definitions.map((definition) => definition.key)).size, definitions.length);
+  for (let index = 1; index < SEVERITY_BANDS.length; index += 1) {
+    const previous = SEVERITY_BANDS[index - 1];
+    const current = SEVERITY_BANDS[index];
+    assert.ok(previous);
+    assert.ok(current);
+    assert.equal(previous.maximum, current.minimum - 1);
+  }
+});
+
+test("activity scoring and the public catalog use the same values", () => {
+  for (const definition of ACTIVITY_SCORE_DEFINITIONS) {
+    assert.equal(definition.options.length, 1);
+    assert.equal(
+      activityScoreFor(definition.key),
+      definition.options[0]?.points,
+    );
+  }
+  assert.equal(activityScoreFor("unknown"), 0);
 });
 
 test("reward-before-deposit does not match after a deposit", () => {

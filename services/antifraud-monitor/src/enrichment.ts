@@ -4,6 +4,7 @@ import {
 } from "@fingerprintjs/fingerprintjs-pro-server-api";
 
 import type { Config } from "./config.js";
+import { SCORE_POINTS } from "./score-catalog.js";
 import type { Signal, Signup } from "./types.js";
 
 type JsonObject = Record<string, unknown>;
@@ -62,7 +63,7 @@ export class EnrichmentService {
           key: "fingerprint_missing",
           title: "Fingerprint missing",
           detail: "Signup completed without a stored Fingerprint event.",
-          points: 15,
+          points: SCORE_POINTS.fingerprintMissing,
         }],
       };
     }
@@ -90,67 +91,75 @@ export class EnrichmentService {
         "fingerprint_bad_bot",
         "Bad bot detected",
         "Fingerprint identified browser automation or a malicious bot.",
-        80,
+        SCORE_POINTS.fingerprintBadBot,
       );
       add(
         truthy(products, "vpn", "data", "result"),
         "fingerprint_vpn",
         "VPN detected",
         "Fingerprint detected VPN use or a location mismatch.",
-        20,
+        SCORE_POINTS.fingerprintVpn,
       );
       add(
         truthy(products, "proxy", "data", "result"),
         "fingerprint_proxy",
         "Proxy detected",
         "Fingerprint detected a public or residential proxy.",
-        35,
+        SCORE_POINTS.fingerprintProxy,
       );
       add(
         truthy(products, "tor", "data", "result"),
         "fingerprint_tor",
         "Tor detected",
         "Fingerprint identified a Tor exit node.",
-        65,
+        SCORE_POINTS.fingerprintTor,
       );
       add(
         truthy(products, "incognito", "data", "result"),
         "fingerprint_incognito",
         "Private browsing",
         "The account was created in private/incognito mode.",
-        10,
+        SCORE_POINTS.fingerprintIncognito,
       );
       add(
         truthy(products, "tampering", "data", "result"),
         "fingerprint_tampering",
         "Browser tampering",
         "Fingerprint detected an anti-detect or tampered browser.",
-        70,
+        SCORE_POINTS.fingerprintTampering,
       );
       add(
         truthy(products, "virtualMachine", "data", "result"),
         "fingerprint_virtual_machine",
         "Virtual machine",
         "The signup browser appears to run in a virtual machine.",
-        25,
+        SCORE_POINTS.fingerprintVirtualMachine,
       );
       add(
         truthy(products, "highActivity", "data", "result"),
         "fingerprint_high_activity",
         "High-activity device",
         "The device is among the most active devices seen by Fingerprint.",
-        45,
+        SCORE_POINTS.fingerprintHighActivity,
       );
 
       const suspectScore = Number(
         path(products, "suspectScore", "data", "result") ?? 0,
       );
-      if (Number.isFinite(suspectScore) && suspectScore >= 20) {
+      if (
+        Number.isFinite(suspectScore) &&
+        suspectScore >= SCORE_POINTS.fingerprintSuspectScore.threshold
+      ) {
         signals.push({
           key: "fingerprint_suspect_score",
           title: "Fingerprint suspect score",
           detail: `Fingerprint returned a suspect score of ${suspectScore}.`,
-          points: Math.min(50, Math.round(suspectScore / 2)),
+          points: Math.min(
+            SCORE_POINTS.fingerprintSuspectScore.maximum,
+            Math.round(
+              suspectScore / SCORE_POINTS.fingerprintSuspectScore.divisor,
+            ),
+          ),
           payload: { suspectScore },
         });
       }
@@ -234,7 +243,9 @@ export class EnrichmentService {
       const signals: Signal[] = [];
 
       if (anonymous) {
-        const points = /tor|proxy|compromised/.test(type) ? 55 : 25;
+        const points = /tor|proxy|compromised/.test(type)
+          ? SCORE_POINTS.proxycheckAnonymous.torProxyCompromised
+          : SCORE_POINTS.proxycheckAnonymous.lowerRisk;
         signals.push({
           key: "proxycheck_anonymous",
           title: type ? `Anonymous IP: ${type}` : "Anonymous IP detected",
@@ -243,12 +254,18 @@ export class EnrichmentService {
           payload: { type },
         });
       }
-      if (Number.isFinite(risk) && risk >= 51) {
+      if (
+        Number.isFinite(risk) &&
+        risk >= SCORE_POINTS.proxycheckRisk.threshold
+      ) {
         signals.push({
           key: "proxycheck_risk",
           title: "High-risk IP",
           detail: `proxycheck.io returned a risk score of ${risk}.`,
-          points: risk >= 76 ? 45 : 25,
+          points:
+            risk >= SCORE_POINTS.proxycheckRisk.highThreshold
+              ? SCORE_POINTS.proxycheckRisk.high
+              : SCORE_POINTS.proxycheckRisk.medium,
           payload: {
             risk,
             asn: network.asn ?? node.asn,

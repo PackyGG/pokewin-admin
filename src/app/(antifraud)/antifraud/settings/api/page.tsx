@@ -25,6 +25,7 @@ const SERVICE_ENDPOINTS: readonly Endpoint[] = [
   { method: "GET", path: "/v1/cases?status=&limit=", purpose: "Risk-ordered case list with subject summaries.", auth: "Bearer read token" },
   { method: "GET", path: "/v1/cases/:id", purpose: "Case, events, provider checks, sessions and staff actions.", auth: "Bearer read token" },
   { method: "GET", path: "/v1/rules", purpose: "All configured behavior-flow rules.", auth: "Bearer read token" },
+  { method: "GET", path: "/v1/scoring", purpose: "Canonical signup, provider, activity and behavior scoring configuration.", auth: "Bearer read token" },
   { method: "PUT", path: "/v1/rules/:id", purpose: "Update a rule and broadcast the change live.", auth: "Bearer admin token" },
   { method: "POST", path: "/v1/cases/:id/decision", purpose: "Record an analyst decision and publish it live.", auth: "Bearer admin token" },
   { method: "GET", path: "/v1/top-rain?limit=", purpose: "Top rain winners from the source database.", auth: "Bearer read token" },

@@ -14,6 +14,7 @@ It does not modify the Packy frontend or backend.
 - Configurable three-minute monitor sessions
 - Durable risk events, cases, rule matches and staff decisions
 - Rate-limited HTTP API with separate read and admin-write credentials
+- `GET /v1/scoring` for the canonical live risk-point configuration
 - Exact-origin WebSocket stream with 30-second, single-use subprotocol tickets
 - `GET /v1/top-rain` for the top rain winners
 
