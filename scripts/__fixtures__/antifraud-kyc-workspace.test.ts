@@ -13,7 +13,13 @@ test("the Antifraud sidebar exposes the dedicated KYC workspace", () => {
   const sidebar = source(
     "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
   );
+  const appHosts = source("src/lib/app-hosts.ts");
+
   assert.match(sidebar, /label:\s*"KYC",\s*href:\s*"\/antifraud\/kyc"/);
+  assert.match(
+    appHosts,
+    /host:\s*`fraud\.\$\{ROOT_DOMAIN\}`[\s\S]*?segmentRoutes:\s*\[[\s\S]*?"kyc"/,
+  );
 });
 
 test("the KYC page is workspace-gated and never renders raw provider payloads", () => {
