@@ -29,6 +29,7 @@ import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
 import { readDbEnvFromCookie, isDevDbConfigured } from "@/lib/db-env";
 import { readTzCookie } from "@/lib/timezone/server";
 import { isNextControlFlowError } from "@/lib/utils/action-error";
+import { resolveAppAccess } from "@/lib/app-access";
 
 // scroll-to-top island lives in the (admin) group; reused 1:1 here. The
 // (antifraud) and (admin) route groups are sibling directories on disk, so this
@@ -213,6 +214,7 @@ export default async function AntifraudLayout({
   const dbEnvP = readDbEnvFromCookie();
   const tzCookieP = readTzCookie();
   const railOpenOrderP = readRailOpenOrder();
+  const appAccessP = resolveAppAccess(session);
 
   // Access gate (security-sensitive). It awaits ONLY its own dependencies and
   // is decided BEFORE any JSX is returned — the other reads merely run
@@ -228,7 +230,15 @@ export default async function AntifraudLayout({
     redirect(getDefaultRouteForRoles(roles, allowedPages));
   }
 
-  const [allowedPages, profile, preferences, dbEnv, tzCookie, railOpenOrder] =
+  const [
+    allowedPages,
+    profile,
+    preferences,
+    dbEnv,
+    tzCookie,
+    railOpenOrder,
+    appAccess,
+  ] =
     await Promise.all([
       allowedPagesP,
       profileP,
@@ -236,6 +246,7 @@ export default async function AntifraudLayout({
       dbEnvP,
       tzCookieP,
       railOpenOrderP,
+      appAccessP,
     ]);
 
   // First visit into the workspace creates the staff profile + stamps the
@@ -263,7 +274,7 @@ export default async function AntifraudLayout({
             `canManage` (owner/admin) reveals the quiz-authoring + settings
             group; those pages are gated server-side too, so hiding the links
             just avoids a click that would bounce. */}
-        <AntifraudSidebar canManage={canManage} />
+        <AntifraudSidebar canManage={canManage} access={appAccess} />
         <SidebarInset className="min-w-0">
           {dbEnv === "dev" && <DevDbBanner />}
           <AdminHeader

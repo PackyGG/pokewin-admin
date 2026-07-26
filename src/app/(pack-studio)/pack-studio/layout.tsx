@@ -31,6 +31,7 @@ import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
 import { readDbEnvFromCookie, isDevDbConfigured } from "@/lib/db-env";
 import { readTzCookie } from "@/lib/timezone/server";
 import { isNextControlFlowError } from "@/lib/utils/action-error";
+import { resolveAppAccess } from "@/lib/app-access";
 
 // scroll-to-top island lives in the (admin) group; reused 1:1 here. The
 // (pack-studio) and (admin) route groups are sibling directories on disk,
@@ -219,6 +220,7 @@ export default async function PackStudioLayout({
   // first client paint match the admin's saved layout (no open/close
   // flip). Shared 1:1 with the main (admin) shell.
   const railOpenOrderP = readRailOpenOrder();
+  const appAccessP = resolveAppAccess(session);
 
   // Studio access gate (security-sensitive): an owner OR a per-role toggle
   // (ADMIN DB, default OFF) enabled for one of the viewer's effective roles —
@@ -243,7 +245,15 @@ export default async function PackStudioLayout({
     redirect(getDefaultRouteForRoles(roles, allowedPages));
   }
 
-  const [allowedPages, profile, preferences, dbEnv, tzCookie, railOpenOrder] =
+  const [
+    allowedPages,
+    profile,
+    preferences,
+    dbEnv,
+    tzCookie,
+    railOpenOrder,
+    appAccess,
+  ] =
     await Promise.all([
       allowedPagesP,
       profileP,
@@ -251,6 +261,7 @@ export default async function PackStudioLayout({
       dbEnvP,
       tzCookieP,
       railOpenOrderP,
+      appAccessP,
     ]);
 
   const canSwitchDbEnv = session.role === "admin" && isDevDbConfigured();
@@ -275,6 +286,7 @@ export default async function PackStudioLayout({
         <PackStudioSidebar
           isOwner={isOwner(session)}
           isRetuneOperator={isPackStudioRetuneOperator(session)}
+          access={appAccess}
         />
         <SidebarInset className="min-w-0">
           {dbEnv === "dev" && <DevDbBanner />}
