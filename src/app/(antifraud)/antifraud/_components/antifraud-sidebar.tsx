@@ -58,7 +58,7 @@ const WORKSPACE_NAV: NavItem[] = [
  * Owner/admin-only antifraud settings.
  */
 const MANAGE_NAV: NavItem[] = [
-  { label: "Risk Scoring", href: "/antifraud/settings/points", icon: Gauge },
+  { label: "Risk Scoring", href: "/antifraud/points", icon: Gauge },
   { label: "API", href: "/antifraud/settings/api", icon: Braces },
   { label: "Workspace Settings", href: "/antifraud/settings", icon: Settings },
 ];
