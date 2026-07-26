@@ -242,8 +242,8 @@ export class MonitorEngine {
         result.requestId ?? null,
         result.status,
         result.score ?? null,
-        result.signals,
-        result.response ?? null,
+        JSON.stringify(result.signals),
+        result.response ? JSON.stringify(result.response) : null,
         result.errorCode ?? null,
       ],
     );
