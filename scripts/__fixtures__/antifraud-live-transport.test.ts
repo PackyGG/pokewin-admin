@@ -6,6 +6,11 @@ const routePath = "src/app/api/antifraud/monitor/stream/route.ts";
 const servicePath = "services/antifraud-monitor/src/live.ts";
 const packyRoutePath = "src/app/api/packy-live/route.ts";
 const packyClientPath = "src/lib/packy-ws.ts";
+const monitorClientPaths = [
+  "src/app/(antifraud)/antifraud/monitor/monitor-console.tsx",
+  "src/app/(antifraud)/antifraud/_components/live-feed.tsx",
+  "src/app/(antifraud)/antifraud/_components/overview-live-sync.tsx",
+];
 
 test("the monitor service owns connection capacity and the SSE bridge reconnects", async () => {
   const [route, service] = await Promise.all([
@@ -23,6 +28,20 @@ test("the monitor service owns connection capacity and the SSE bridge reconnects
   assert.match(service, /client\.on\("error"/);
   assert.match(route, /code === 1013/);
   assert.match(route, /CAPACITY_RETRY_MIN_MS/);
+});
+
+test("temporary terminal monitor frames keep every client eligible to reconnect", async () => {
+  const clients = await Promise.all(
+    monitorClientPaths.map((path) => readFile(path, "utf8")),
+  );
+
+  for (const client of clients) {
+    assert.doesNotMatch(client, /setStreamEnabled\(false\)/);
+    assert.doesNotMatch(client, /\{\s*enabled:\s*streamEnabled,/);
+  }
+
+  assert.match(clients[0], /Retrying automatically\./);
+  assert.match(clients[1], /Retrying automatically\./);
 });
 
 test("the Packy live bridge accepts the exact fraud host and pins the upstream origin", async () => {

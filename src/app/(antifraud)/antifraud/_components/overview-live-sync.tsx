@@ -41,7 +41,6 @@ const REFRESH_DEBOUNCE_MS = 4_000;
 export function OverviewLiveSync({ snapshotAt }: { snapshotAt: string }) {
   const router = useRouter();
   const [connection, setConnection] = React.useState<Connection>("connecting");
-  const [streamEnabled, setStreamEnabled] = React.useState(true);
   const [pending, setPending] = React.useState(0);
   const [isRefreshing, startRefresh] = React.useTransition();
   const [clockLabel, setClockLabel] = React.useState<string | null>(null);
@@ -91,7 +90,6 @@ export function OverviewLiveSync({ snapshotAt }: { snapshotAt: string }) {
                 ? "connecting"
                 : "offline",
         );
-        if (incoming.terminal) setStreamEnabled(false);
         return;
       }
       if (incoming.kind !== "activity") return;
@@ -128,7 +126,7 @@ export function OverviewLiveSync({ snapshotAt }: { snapshotAt: string }) {
         current === "unconfigured" ? current : "offline",
       );
     },
-  }, { enabled: streamEnabled, resumeParam: "after" });
+  }, { resumeParam: "after" });
 
   React.useEffect(
     () => () => {

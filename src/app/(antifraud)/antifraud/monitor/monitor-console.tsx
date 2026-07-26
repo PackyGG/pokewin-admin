@@ -354,7 +354,6 @@ export function MonitorConsole() {
   const [snapshotNotice, setSnapshotNotice] = React.useState<string | null>(
     null,
   );
-  const [streamEnabled, setStreamEnabled] = React.useState(true);
   const [sessions, setSessions] = React.useState<MonitorSession[]>([]);
   const [cases, setCases] = React.useState<MonitorCase[]>([]);
   const [events, setEvents] = React.useState<LiveEvent[]>([]);
@@ -500,8 +499,8 @@ export function MonitorConsole() {
           setStreamState("offline");
           setStreamNotice(
             message
-              ? `${message} Reload the page to reconnect.`
-              : "Offline — reload to reconnect.",
+              ? `${message} Retrying automatically.`
+              : "Offline — retrying automatically.",
           );
         } else if (state === "open") {
           setStreamState("live");
@@ -514,10 +513,6 @@ export function MonitorConsole() {
           setStreamNotice(message ?? "Live stream interrupted.");
         }
 
-        // A terminal frame means the server will not send anything else on
-        // this connection; stop the shared EventSource instead of letting it
-        // reconnect into the same refusal.
-        if (terminal) setStreamEnabled(false);
         return;
       }
       if (frameType === "connected") return;
@@ -730,11 +725,11 @@ export function MonitorConsole() {
           current === "unconfigured" ? current : "offline",
         );
         setStreamNotice((current) =>
-          current ?? "Offline — reload the page to reconnect.",
+          current ?? "Offline — automatic reconnect paused. Reload to retry.",
         );
       },
     },
-    { enabled: streamEnabled, resumeParam: "after" },
+    { resumeParam: "after" },
   );
 
   const highestScore = sessions.reduce(

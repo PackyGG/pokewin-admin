@@ -49,7 +49,6 @@ export function LiveFeed() {
   const [connection, setConnection] = React.useState<Connection>("connecting");
   const [message, setMessage] = React.useState<string | null>(null);
   const [warning, setWarning] = React.useState<string | null>(null);
-  const [streamEnabled, setStreamEnabled] = React.useState(true);
   const [events, setEvents] = React.useState<MonitorActivityEvent[]>([]);
 
   useSseStream<unknown>(
@@ -72,9 +71,14 @@ export function LiveFeed() {
             setMessage(null);
           } else {
             setConnection("offline");
-            setMessage(incoming.message);
+            setMessage(
+              incoming.terminal
+                ? incoming.message
+                  ? `${incoming.message} Retrying automatically.`
+                  : "Offline — retrying automatically."
+                : incoming.message,
+            );
           }
-          if (incoming.terminal) setStreamEnabled(false);
           return;
         }
 
@@ -107,7 +111,7 @@ export function LiveFeed() {
         setMessage((current) => current ?? "Offline — reload to reconnect.");
       },
     },
-    { enabled: streamEnabled, resumeParam: "after" },
+    { resumeParam: "after" },
   );
 
   const label =
