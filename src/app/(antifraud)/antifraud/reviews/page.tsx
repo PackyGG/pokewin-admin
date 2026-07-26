@@ -29,9 +29,9 @@ export const metadata = { title: "Account Review" };
  * Antifraud → Account Review.
  *
  * The case queue. Filters are plain links driven by search params (no client
- * state, no extra JS). Status, assignment and chronological ordering use the
- * queue indexes. Text search is prefix-only and its list + COUNT predicates
- * are covered by the ADMIN pg_trgm indexes.
+ * state, no extra JS). Status and chronological ordering use the queue indexes.
+ * Text search is prefix-only and its list + COUNT predicates are covered by the
+ * ADMIN pg_trgm indexes.
  *
  * Shell-first: the hero + filter bar paint immediately, the list streams behind
  * its own Suspense boundary keyed on the active filter so switching filters
@@ -42,7 +42,6 @@ const QUERY_TIMEOUT_MS = 10_000;
 
 type SearchParams = {
   status?: string;
-  mine?: string;
   q?: string;
   cursor?: string;
   open?: string;
@@ -57,7 +56,7 @@ export default async function ReviewQueuePage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  const session = await requireAntifraudPageAccess();
+  await requireAntifraudPageAccess();
   const params = await searchParams;
 
   const status =
@@ -66,18 +65,16 @@ export default async function ReviewQueuePage({
       : params.status && isReviewStatus(params.status)
         ? params.status
         : "unresolved";
-  const mine = params.mine === "1";
   const search = params.q?.trim() || undefined;
   const cursor = params.cursor?.trim() || undefined;
 
   const filters: ReviewFilters = {
     status,
-    assignedTo: mine ? session.userId : undefined,
     search,
     limit: REVIEW_PAGE_SIZE,
   };
 
-  const filterKey = `${status}-${mine ? "mine" : "all"}-${search ?? ""}-${cursor ?? "first"}`;
+  const filterKey = `${status}-${search ?? ""}-${cursor ?? "first"}`;
   return (
     <div className="space-y-6">
       <PageHero>
@@ -86,31 +83,28 @@ export default async function ReviewQueuePage({
           accent="cyan"
           title="Account Review"
           subtitle="Cases opened by the fraud backend or by hand"
-          action={
-            <OpenCaseDialog
-              prefill={{
-                targetUserId: params.targetUserId,
-                targetUsername: params.targetUsername,
-                reason: params.reason,
-                monitorCaseId: params.monitorCaseId,
-              }}
-              autoOpen={params.open === "1"}
-            />
-          }
         />
       </PageHero>
 
       <FilterBar
         status={status}
-        mine={mine}
         search={search}
+        openCaseProps={{
+          prefill: {
+            targetUserId: params.targetUserId,
+            targetUsername: params.targetUsername,
+            reason: params.reason,
+            monitorCaseId: params.monitorCaseId,
+          },
+          autoOpen: params.open === "1",
+        }}
       />
 
       <Suspense key={filterKey} fallback={<QueueSkeleton />}>
         <QueueList
           filters={filters}
           cursor={cursor}
-          current={{ status, mine: mine ? "1" : undefined, q: search }}
+          current={{ status, q: search }}
         />
       </Suspense>
     </div>
@@ -155,64 +149,53 @@ function FilterChip({
 
 function FilterBar({
   status,
-  mine,
   search,
+  openCaseProps,
 }: {
   status: string;
-  mine: boolean;
   search?: string;
+  openCaseProps: React.ComponentProps<typeof OpenCaseDialog>;
 }) {
   const current: SearchParams = {
     status,
-    mine: mine ? "1" : undefined,
     q: search,
   };
 
   return (
     <div className="space-y-2.5 rounded-xl border border-border/60 bg-card p-3">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="mr-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Status
-        </span>
-        <FilterChip
-          href={buildHref({ status: "unresolved", cursor: undefined }, current)}
-          active={status === "unresolved"}
-        >
-          Needs work
-        </FilterChip>
-        {REVIEW_STATUSES.map((value) => (
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Status
+          </span>
           <FilterChip
-            key={value}
-            href={buildHref({ status: value, cursor: undefined }, current)}
-            active={status === value}
+            href={buildHref({ status: "unresolved", cursor: undefined }, current)}
+            active={status === "unresolved"}
           >
-            {REVIEW_STATUS_LABELS[value]}
+            Needs work
           </FilterChip>
-        ))}
-        <FilterChip
-          href={buildHref({ status: "all", cursor: undefined }, current)}
-          active={status === "all"}
-        >
-          All
-        </FilterChip>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-1.5">
-        <FilterChip
-          href={buildHref({
-            mine: mine ? undefined : "1",
-            cursor: undefined,
-          }, current)}
-          active={mine}
-        >
-          Assigned to me
-        </FilterChip>
+          {REVIEW_STATUSES.map((value) => (
+            <FilterChip
+              key={value}
+              href={buildHref({ status: value, cursor: undefined }, current)}
+              active={status === value}
+            >
+              {REVIEW_STATUS_LABELS[value]}
+            </FilterChip>
+          ))}
+          <FilterChip
+            href={buildHref({ status: "all", cursor: undefined }, current)}
+            active={status === "all"}
+          >
+            All
+          </FilterChip>
+        </div>
+        <OpenCaseDialog {...openCaseProps} />
       </div>
 
       {/* GET form — no client JS, and the URL stays shareable. */}
       <form className="flex flex-wrap gap-2">
         {status && <input type="hidden" name="status" value={status} />}
-        {mine && <input type="hidden" name="mine" value="1" />}
         <input
           type="search"
           name="q"

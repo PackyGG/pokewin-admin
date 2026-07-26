@@ -21,4 +21,13 @@ test("Account Review exposes status workflow without severity controls", async (
   assert.doesNotMatch(actions, /updateReviewSeverity|severitySchema/);
   assert.match(actions, /severity:\s*"medium"/);
   assert.doesNotMatch(reads, /filters\.severity|criticalOpen|critical_open/);
+
+  assert.doesNotMatch(queue, /Assigned to me|params\.mine|assignedTo:/);
+  const hero = queue.slice(
+    queue.indexOf("<PageHero>"),
+    queue.indexOf("</PageHero>"),
+  );
+  const filterBar = queue.slice(queue.indexOf("function FilterBar"));
+  assert.doesNotMatch(hero, /OpenCaseDialog/);
+  assert.match(filterBar, /<OpenCaseDialog \{\.\.\.openCaseProps\} \/>/);
 });
