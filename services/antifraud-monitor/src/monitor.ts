@@ -14,6 +14,27 @@ import {
 } from "./source.js";
 import type { ActiveSession, Signal, Signup } from "./types.js";
 
+export function storedSignals(value: unknown): Signal[] {
+  let parsed = value;
+  if (typeof parsed === "string") {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(
+    (signal): signal is Signal =>
+      signal !== null &&
+      typeof signal === "object" &&
+      typeof (signal as Signal).key === "string" &&
+      typeof (signal as Signal).title === "string" &&
+      typeof (signal as Signal).detail === "string" &&
+      typeof (signal as Signal).points === "number",
+  );
+}
+
 export class MonitorEngine {
   private running = false;
   private timer: NodeJS.Timeout | null = null;
@@ -187,7 +208,7 @@ export class MonitorEngine {
     if (!signup.signup_ip) return this.enrichment.proxycheck(signup);
     const cached = await this.db.antifraud.query<{
       score: string | null;
-      signals: Signal[];
+      signals: unknown;
       response: Record<string, unknown> | null;
     }>(
       `
@@ -209,7 +230,7 @@ export class MonitorEngine {
       lookupKey: signup.signup_ip,
       score: Number(cached.rows[0].score ?? 0),
       response: cached.rows[0].response ?? {},
-      signals: cached.rows[0].signals ?? [],
+      signals: storedSignals(cached.rows[0].signals),
     };
   }
 
