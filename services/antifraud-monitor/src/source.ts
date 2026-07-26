@@ -133,9 +133,16 @@ export async function fetchActivity(
       SELECT
         lt.user_id,
         CASE
-          WHEN lt.type::text = 'deposit' THEN 'deposit'
+          WHEN lt.type::text = 'deposit' AND fdi.id IS NOT NULL THEN 'fiat_deposit'
+          WHEN lt.type::text = 'deposit' AND (
+            lt.crypto_asset IS NOT NULL
+            OR lt.deposit_address_id IS NOT NULL
+            OR lt.fireblocks_tx_id IS NOT NULL
+            OR lt.blockchain_tx_hash IS NOT NULL
+          ) THEN 'crypto_deposit'
+          WHEN lt.type::text = 'deposit' THEN 'deposit_unclassified'
           WHEN lt.type::text IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed',
-                                 'balance_reward_claim','rain_win','waitlist_prize')
+                                 'balance_reward_claim','waitlist_prize')
             THEN 'bonus_received'
           WHEN lt.type::text = 'pack_opening' THEN 'paid_pack_opened'
           ELSE 'ledger_' || lt.type::text
@@ -150,10 +157,20 @@ export async function fetchActivity(
           'amount', lt.amount::text,
           'status', lt.status::text,
           'balance_before', lt.balance_before::text,
-          'balance_after', lt.balance_after::text
+          'balance_after', lt.balance_after::text,
+          'crypto_asset', lt.crypto_asset,
+          'crypto_amount', lt.crypto_amount::text,
+          'fiat_provider', fdi.provider,
+          'fiat_currency', fdi.currency,
+          'fiat_status', fdi.status,
+          'fiat_requested_amount_cents', fdi.requested_amount_cents,
+          'fiat_credited_amount_cents', fdi.credited_amount_cents
         ) AS payload
       FROM ledger_transactions lt
-      WHERE lt.user_id = ANY($1::text[]) AND lt.created_at >= $2
+      LEFT JOIN fiat_deposit_intents fdi ON fdi.completed_ledger_id = lt.id
+      WHERE lt.user_id = ANY($1::text[])
+        AND lt.created_at >= $2
+        AND lt.type::text <> 'rain_win'
 
       UNION ALL
 
@@ -176,20 +193,6 @@ export async function fetchActivity(
       JOIN rewards r ON r.id = ur.reward_id
       WHERE ur.user_id = ANY($1::text[])
         AND COALESCE(ur.opened_at, ur.granted_at) >= $2
-
-      UNION ALL
-
-      SELECT
-        re.user_id,
-        'rain_joined',
-        'rain_entries',
-        re.id::text,
-        'Joined rain',
-        'The monitored account joined a rain.',
-        re.created_at,
-        jsonb_build_object('rain_id', re.rain_id::text)
-      FROM rain_entries re
-      WHERE re.user_id = ANY($1::text[]) AND re.created_at >= $2
 
       ORDER BY occurred_at, source_ref
     `,

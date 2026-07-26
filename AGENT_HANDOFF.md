@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-26 antifraud deposit split:** signup monitoring no longer ingests rain joins/wins. Completed ledger deposits are now classified as `fiat_deposit` only when linked through `fiat_deposit_intents.completed_ledger_id`, or `crypto_deposit` only with crypto settlement evidence; anything else fails closed as `deposit_unclassified`. Fiat/unclassified adds 20 risk points for an already-suspicious monitored signup, while irreversible crypto reduces risk by 20. The replica-only index list now covers the fiat ledger join, and migration `002_split_deposit_risk.sql` upgrades existing behavior-flow blockers.
+
 - **2026-07-26 compact risk-scoring page:** the manager-only scoring catalogue moved from `/antifraud/settings/points` to `/antifraud/points` because it is an operational reference, not a workspace setting. The oversized hero, notice, KPI tiles and per-signal cards were replaced by a slim header, one summary strip, compact severity legend, and dense grouped rows for all live weights and behavior flows.
 
 - **2026-07-26 Vercel build recovery:** commit `990e6dc1` accidentally included layout fragments from an uncommitted Prisma-to-Drizzle migration. The complete PostgreSQL/Drizzle migration is now included, so the previously missing imports and schema files are present in the production tree.

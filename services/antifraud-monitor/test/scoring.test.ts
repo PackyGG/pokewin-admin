@@ -81,12 +81,23 @@ test("activity scoring and the public catalog use the same values", () => {
   assert.equal(activityScoreFor("unknown"), 0);
 });
 
-test("reward-before-deposit does not match after a deposit", () => {
+test("reward-before-deposit does not match after a fiat deposit", () => {
   const now = Date.now();
   assert.equal(sequenceMatches([
-    { event_type: "deposit", occurred_at: new Date(now) },
+    { event_type: "fiat_deposit", occurred_at: new Date(now) },
     { event_type: "reward_opened", occurred_at: new Date(now + 1_000) },
-  ], ["reward_opened"], 180, ["deposit"]), false);
+  ], ["reward_opened"], 180, [
+    "fiat_deposit",
+    "crypto_deposit",
+    "deposit_unclassified",
+  ]), false);
+});
+
+test("fiat and crypto deposits have separate risk treatment", () => {
+  assert.equal(activityScoreFor("fiat_deposit"), 20);
+  assert.equal(activityScoreFor("crypto_deposit"), -20);
+  assert.equal(activityScoreFor("deposit_unclassified"), 20);
+  assert.equal(activityScoreFor("rain_joined"), 0);
 });
 
 test("sequence matching retries from a later valid first event", () => {

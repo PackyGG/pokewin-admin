@@ -25,7 +25,19 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_audit_register_latest_idx
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_ledger_user_time_idx
   ON ledger_transactions (user_id, created_at)
-  INCLUDE (type, amount, status, balance_before, balance_after, description);
+  INCLUDE (
+    type,
+    amount,
+    status,
+    balance_before,
+    balance_after,
+    description,
+    crypto_asset,
+    crypto_amount,
+    deposit_address_id,
+    fireblocks_tx_id,
+    blockchain_tx_hash
+  );
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_user_rewards_activity_idx
   ON user_rewards (user_id, (COALESCE(opened_at, granted_at)))
@@ -39,3 +51,14 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_rain_win_leaderboard_idx
   ON ledger_transactions (user_id)
   INCLUDE (amount, created_at)
   WHERE type = 'rain_win' AND status = 'completed';
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_fiat_completed_ledger_idx
+  ON fiat_deposit_intents (completed_ledger_id)
+  INCLUDE (
+    provider,
+    currency,
+    status,
+    requested_amount_cents,
+    credited_amount_cents
+  )
+  WHERE completed_ledger_id IS NOT NULL;

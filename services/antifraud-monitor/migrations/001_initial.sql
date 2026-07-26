@@ -159,9 +159,9 @@ INSERT INTO rule_definitions
   (key, name, description, trigger, sequence, exclude_before, window_seconds, score_delta, action_type, priority)
 VALUES
   ('reward-rush', 'Reward rush', 'A new account opens two reward packs before depositing.',
-   'sequence', '["reward_opened","reward_opened"]'::jsonb, '["deposit"]'::jsonb, 180, 35, 'manual_review', 10),
+   'sequence', '["reward_opened","reward_opened"]'::jsonb, '["fiat_deposit","crypto_deposit","deposit_unclassified"]'::jsonb, 180, 35, 'manual_review', 10),
   ('reward-before-deposit', 'Reward before deposit', 'A new account consumes a reward before any deposit.',
-   'sequence', '["reward_opened"]'::jsonb, '["deposit"]'::jsonb, 180, 20, 'manual_review', 20),
+   'sequence', '["reward_opened"]'::jsonb, '["fiat_deposit","crypto_deposit","deposit_unclassified"]'::jsonb, 180, 20, 'manual_review', 20),
   ('signup-bonus-stack', 'Signup bonus stack', 'Multiple bonus/reward credits occur during the signup monitor.',
    'sequence', '["bonus_received","bonus_received"]'::jsonb, '[]'::jsonb, 180, 35, 'manual_review', 30)
 ON CONFLICT (key) DO NOTHING;

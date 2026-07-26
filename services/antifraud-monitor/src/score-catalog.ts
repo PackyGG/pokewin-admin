@@ -30,11 +30,12 @@ export const SCORE_POINTS = {
   fingerprintSuspectScore: { divisor: 2, threshold: 20, maximum: 50 },
   proxycheckAnonymous: { lowerRisk: 25, torProxyCompromised: 55 },
   proxycheckRisk: { threshold: 51, highThreshold: 76, medium: 25, high: 45 },
-  deposit: -20,
+  cryptoDeposit: -20,
+  fiatDeposit: 20,
+  unclassifiedDeposit: 20,
   paidPackOpened: -5,
   rewardOpened: 20,
   bonusReceived: 20,
-  rainJoined: 20,
 } as const;
 
 export const SEVERITY_BANDS = [
@@ -194,10 +195,25 @@ export const PROVIDER_SCORE_DEFINITIONS: ScoreDefinition[] = [
 
 export const ACTIVITY_SCORE_DEFINITIONS: ScoreDefinition[] = [
   {
-    key: "deposit",
-    title: "Deposit",
-    description: "A deposit during the active monitoring window reduces risk.",
-    options: [{ label: "Recorded", points: SCORE_POINTS.deposit }],
+    key: "crypto_deposit",
+    title: "Crypto deposit",
+    description:
+      "An irreversible crypto deposit during monitoring is normal player behavior.",
+    options: [{ label: "Recorded", points: SCORE_POINTS.cryptoDeposit }],
+  },
+  {
+    key: "fiat_deposit",
+    title: "Fiat deposit",
+    description:
+      "A reversible fiat/card deposit by an already-monitored signup raises payment-risk attention.",
+    options: [{ label: "Recorded", points: SCORE_POINTS.fiatDeposit }],
+  },
+  {
+    key: "deposit_unclassified",
+    title: "Unclassified deposit",
+    description:
+      "A deposit without a fiat-intent link or crypto settlement evidence is held for review.",
+    options: [{ label: "Recorded", points: SCORE_POINTS.unclassifiedDeposit }],
   },
   {
     key: "paid_pack_opened",
@@ -217,26 +233,22 @@ export const ACTIVITY_SCORE_DEFINITIONS: ScoreDefinition[] = [
     description: "A bonus or reward credit is received during monitoring.",
     options: [{ label: "Recorded", points: SCORE_POINTS.bonusReceived }],
   },
-  {
-    key: "rain_joined",
-    title: "Rain joined",
-    description: "The monitored account claims a rain reward.",
-    options: [{ label: "Recorded", points: SCORE_POINTS.rainJoined }],
-  },
 ];
 
 export function activityScoreFor(eventType: string): number {
   switch (eventType) {
-    case "deposit":
-      return SCORE_POINTS.deposit;
+    case "crypto_deposit":
+      return SCORE_POINTS.cryptoDeposit;
+    case "fiat_deposit":
+      return SCORE_POINTS.fiatDeposit;
+    case "deposit_unclassified":
+      return SCORE_POINTS.unclassifiedDeposit;
     case "paid_pack_opened":
       return SCORE_POINTS.paidPackOpened;
     case "reward_opened":
       return SCORE_POINTS.rewardOpened;
     case "bonus_received":
       return SCORE_POINTS.bonusReceived;
-    case "rain_joined":
-      return SCORE_POINTS.rainJoined;
     default:
       return 0;
   }
