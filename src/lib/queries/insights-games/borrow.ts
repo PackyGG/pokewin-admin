@@ -141,7 +141,7 @@ export async function getBorrowAnalytics(
       type: string;
       cash_paid: string;
       borrow_pct: string;
-      created_at: Date;
+      created_at: Date | string;
     };
     type CohortRow = {
       is_borrower: string;
@@ -570,7 +570,7 @@ export async function getBorrowAnalytics(
         borrowedAmount,
         stickerExposure: cashPaid + borrowedAmount,
         borrowPct,
-        createdAt: biggestRow.created_at.toISOString(),
+        createdAt: new Date(biggestRow.created_at).toISOString(),
       };
     }
 

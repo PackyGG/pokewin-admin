@@ -19,8 +19,8 @@ type PromoCodeDbRow = {
   required_affiliate_code: string | null;
   requires_discord: boolean;
   max_uses: number;
-  expires_at: Date | null;
-  created_at: Date;
+  expires_at: Date | string | null;
+  created_at: Date | string;
   metadata: unknown;
 };
 
@@ -131,8 +131,8 @@ export async function getPromoCodes(params: {
         requiresDiscord: c.requires_discord,
         maxUses: c.max_uses,
         redemptionCount: Number(c.redemption_count),
-        expiresAt: c.expires_at?.toISOString() ?? null,
-        createdAt: c.created_at.toISOString(),
+        expiresAt: c.expires_at ? new Date(c.expires_at).toISOString() : null,
+        createdAt: new Date(c.created_at).toISOString(),
       };
     }),
     total,
@@ -192,9 +192,9 @@ export async function getPromoCodeDetail(id: string) {
     requiredAffiliateCode: code.required_affiliate_code,
     requiresDiscord: code.requires_discord,
     maxUses: code.max_uses,
-    expiresAt: code.expires_at?.toISOString() ?? null,
+    expiresAt: code.expires_at ? new Date(code.expires_at).toISOString() : null,
     metadata: code.metadata,
-    createdAt: code.created_at.toISOString(),
+    createdAt: new Date(code.created_at).toISOString(),
     /** Real unbounded redemption count — use this for Remaining / n-of-max. */
     redemptionCount,
   };
@@ -235,7 +235,7 @@ export async function getPromoCodeRedemptionRows(
         username: string | null;
         email: string | null;
         ip_address: string;
-        redeemed_at: Date;
+        redeemed_at: Date | string;
       }[]
     >(
       `SELECT pcr.id, pcr.user_id, u.username, u.email,
@@ -262,7 +262,7 @@ export async function getPromoCodeRedemptionRows(
       username: r.username,
       email: r.email,
       ipAddress: r.ip_address,
-      redeemedAt: r.redeemed_at.toISOString(),
+      redeemedAt: new Date(r.redeemed_at).toISOString(),
     })),
     totalCount,
     truncated: totalCount > rows.length,
@@ -342,7 +342,7 @@ const cachedPromoCodeClaims = unstable_cache(
           id: string;
           user_id: string;
           ip_address: string;
-          redeemed_at: Date;
+          redeemed_at: Date | string;
           username: string | null;
           email: string | null;
           image: string | null;
@@ -371,8 +371,8 @@ const cachedPromoCodeClaims = unstable_cache(
       region: code.region,
       maxUses: code.max_uses,
       requiresDiscord: code.requires_discord,
-      expiresAt: code.expires_at?.toISOString() ?? null,
-      createdAt: code.created_at.toISOString(),
+      expiresAt: code.expires_at ? new Date(code.expires_at).toISOString() : null,
+      createdAt: new Date(code.created_at).toISOString(),
       totalClaims,
       totalValueGiven: value * totalClaims,
       truncated: totalClaims > rows.length,
@@ -383,7 +383,7 @@ const cachedPromoCodeClaims = unstable_cache(
         email: r.email,
         image: r.image,
         ipAddress: r.ip_address,
-        redeemedAt: r.redeemed_at.toISOString(),
+        redeemedAt: new Date(r.redeemed_at).toISOString(),
       })),
     };
   },

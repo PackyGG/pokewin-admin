@@ -53,7 +53,7 @@ export async function getChatMessages(params: {
     is_deleted: boolean;
     is_pinned: boolean;
     active_mute_id: string | null;
-    created_at: Date;
+    created_at: Date | string;
   }>(sql`
     SELECT cm.id, cm.user_id, u.username, u.image, us.level, u.role::text AS role,
            cm.content, cm.is_deleted, (pcm.id IS NOT NULL) AS is_pinned,
@@ -95,7 +95,7 @@ export async function getChatMessages(params: {
       isDeleted: m.is_deleted,
       isPinned: m.is_pinned,
       activeMuteId: m.active_mute_id,
-      createdAt: m.created_at.toISOString(),
+      createdAt: new Date(m.created_at).toISOString(),
     })),
     total,
     page,
@@ -120,9 +120,9 @@ export async function getMutes(params: {
     username: string | null;
     muted_by_username: string | null;
     reason: string | null;
-    expires_at: Date | null;
-    unmuted_at: Date | null;
-    created_at: Date;
+    expires_at: Date | string | null;
+    unmuted_at: Date | string | null;
+    created_at: Date | string;
   }>(sql`
     SELECT um.id, um.user_id, subject.username,
            moderator.username AS muted_by_username, um.reason,
@@ -145,9 +145,13 @@ export async function getMutes(params: {
       username: m.username,
       mutedByUsername: m.muted_by_username,
       reason: m.reason,
-      expiresAt: m.expires_at?.toISOString() ?? null,
-      unmutedAt: m.unmuted_at?.toISOString() ?? null,
-      createdAt: m.created_at.toISOString(),
+      expiresAt: m.expires_at
+        ? new Date(m.expires_at).toISOString()
+        : null,
+      unmutedAt: m.unmuted_at
+        ? new Date(m.unmuted_at).toISOString()
+        : null,
+      createdAt: new Date(m.created_at).toISOString(),
     })),
     total,
     page,

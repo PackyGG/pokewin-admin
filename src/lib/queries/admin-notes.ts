@@ -7,8 +7,8 @@ export async function getNotesForUser(targetUserId: string) {
     admin_user_id: string;
     admin_username: string;
     content: string;
-    created_at: Date;
-    updated_at: Date;
+    created_at: Date | string;
+    updated_at: Date | string;
   }>(sql`
     SELECT n.id, n.admin_user_id, u.username AS admin_username,
            n.content, n.created_at, n.updated_at
@@ -23,7 +23,7 @@ export async function getNotesForUser(targetUserId: string) {
     adminUserId: n.admin_user_id,
     adminUsername: n.admin_username,
     content: n.content,
-    createdAt: n.created_at.toISOString(),
-    updatedAt: n.updated_at.toISOString(),
+    createdAt: new Date(n.created_at).toISOString(),
+    updatedAt: new Date(n.updated_at).toISOString(),
   }));
 }

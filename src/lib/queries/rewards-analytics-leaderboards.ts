@@ -84,8 +84,8 @@ async function buildRaceSummary(
   const userScopeSql = await raceClaimsUserScopeSql();
   type TierRow = { position: number; prize_amount_usd: string };
   type PeriodRow = {
-    starts_at: Date;
-    ends_at: Date;
+    starts_at: Date | string;
+    ends_at: Date | string;
   };
 
   const [tiers, activePeriod, recentEndedPeriod] = await Promise.all([
@@ -130,7 +130,9 @@ async function buildRaceSummary(
   }
 
   const state: "active" | "ended" = activePeriod ? "active" : "ended";
-  const periodStartDateString = chosen.starts_at.toISOString().slice(0, 10);
+  const periodStart = new Date(chosen.starts_at);
+  const periodEnd = new Date(chosen.ends_at);
+  const periodStartDateString = periodStart.toISOString().slice(0, 10);
 
   let topWinners: RaceLeaderboardWinnerRow[] = [];
 
@@ -212,8 +214,8 @@ async function buildRaceSummary(
   return {
     kind,
     state,
-    periodStart: chosen.starts_at.toISOString(),
-    periodEnd: chosen.ends_at.toISOString(),
+    periodStart: periodStart.toISOString(),
+    periodEnd: periodEnd.toISOString(),
     prizePool,
     prizePositions,
     topWinners,

@@ -112,8 +112,8 @@ type LedgerRow = {
   failure_reason: string | null;
   description: string;
   metadata: unknown;
-  created_at: Date;
-  updated_at: Date;
+  created_at: Date | string;
+  updated_at: Date | string;
   game_sessions_ledger_transactions_game_session_idTogame_sessions:
     | GameSessionRow
     | null;
@@ -324,8 +324,8 @@ function mapFinancialLedgerRow(t: LedgerRow, instantRakebackIds?: Set<string>) {
     metadata: t.metadata ? JSON.parse(JSON.stringify(t.metadata)) : null,
     fireblocksTxId: t.fireblocks_tx_id,
     externalTxId: t.external_tx_id,
-    createdAt: t.created_at.toISOString(),
-    updatedAt: t.updated_at.toISOString(),
+    createdAt: new Date(t.created_at).toISOString(),
+    updatedAt: new Date(t.updated_at).toISOString(),
     borrowPercentage: null,
     borrowedAmountUsd: null,
     sponsorshipPercentage: null,
@@ -466,8 +466,8 @@ async function fetchUserDoubleDownRows(
       result: "win" | "lose";
       won_amount_usd: string;
       payout_amount_usd: string | null;
-      resolved_at: Date | null;
-      created_at: Date;
+      resolved_at: Date | string | null;
+      created_at: Date | string;
     }>(sql`
       SELECT o.id,
              o.game_session_id,
@@ -500,7 +500,7 @@ async function fetchUserDoubleDownRows(
         r.result === "win"
           ? ddNum(r.payout_amount_usd) ?? ddNum(r.won_amount_usd) ?? 0
           : ddNum(r.won_amount_usd) ?? 0,
-      resolvedAt: r.resolved_at ?? r.created_at,
+      resolvedAt: new Date(r.resolved_at ?? r.created_at),
     }));
   } catch (e) {
     console.error(
@@ -521,7 +521,7 @@ async function fetchUserDoubleDownRows(
  */
 function buildDoubleDownRow(d: SyntheticDdRow): Transaction {
   const isWin = d.result === "win";
-  const iso = d.resolvedAt.toISOString();
+  const iso = new Date(d.resolvedAt).toISOString();
   return {
     id: d.id,
     type: "battle_bet",
@@ -587,7 +587,7 @@ function buildDoubleDownRow(d: SyntheticDdRow): Transaction {
 type TimelineRow = {
   id: string;
   synthetic: boolean;
-  sort_at: Date;
+  sort_at: Date | string;
 };
 
 export async function getUserTransactions(
@@ -1487,8 +1487,8 @@ export async function getUserTransactions(
         metadata: t.metadata ? JSON.parse(JSON.stringify(t.metadata)) : null,
         fireblocksTxId: t.fireblocks_tx_id,
         externalTxId: t.external_tx_id,
-        createdAt: t.created_at.toISOString(),
-        updatedAt: t.updated_at.toISOString(),
+        createdAt: new Date(t.created_at).toISOString(),
+        updatedAt: new Date(t.updated_at).toISOString(),
         borrowPercentage,
         borrowedAmountUsd,
         sponsorshipPercentage,

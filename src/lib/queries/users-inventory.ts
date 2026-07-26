@@ -63,9 +63,9 @@ export async function getUserInventory(
       rarity: string | null;
       value_at_obtained: string;
       source_type: string;
-      obtained_at: Date;
-      sold_at: Date | null;
-      exchanged_at: Date | null;
+      obtained_at: Date | string;
+      sold_at: Date | string | null;
+      exchanged_at: Date | string | null;
     }>(sql`
       SELECT
         ui.id,
@@ -102,9 +102,11 @@ export async function getUserInventory(
         rarity: item.rarity,
         value: toNumber(item.value_at_obtained),
         sourceType: item.source_type,
-        obtainedAt: item.obtained_at.toISOString(),
-        soldAt: item.sold_at?.toISOString() ?? null,
-        exchangedAt: item.exchanged_at?.toISOString() ?? null,
+        obtainedAt: new Date(item.obtained_at).toISOString(),
+        soldAt: item.sold_at ? new Date(item.sold_at).toISOString() : null,
+        exchangedAt: item.exchanged_at
+          ? new Date(item.exchanged_at).toISOString()
+          : null,
       };
     }),
     total,

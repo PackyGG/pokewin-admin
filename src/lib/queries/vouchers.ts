@@ -148,8 +148,8 @@ async function getVouchersImpl(params: {
     value: unknown;
     origin: string;
     description: string | null;
-    claimed_at: Date | null;
-    created_at: Date;
+    claimed_at: Date | string | null;
+    created_at: Date | string;
   };
 
   // SQL-level ORDER BY + LIMIT/OFFSET + COUNT on the authoritative source.
@@ -247,8 +247,8 @@ async function getVouchersImpl(params: {
       description: v.description,
       createdByAdminId: creatorByVoucherId.get(v.id)?.id ?? null,
       createdByUsername: creatorByVoucherId.get(v.id)?.username ?? null,
-      claimedAt: v.claimed_at?.toISOString() ?? null,
-      createdAt: v.created_at.toISOString(),
+      claimedAt: v.claimed_at ? new Date(v.claimed_at).toISOString() : null,
+      createdAt: new Date(v.created_at).toISOString(),
       ...(ftdMap ? { isFtd: ftdMap.get(v.user_id) ?? false } : {}),
     })),
     total,

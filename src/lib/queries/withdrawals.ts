@@ -193,7 +193,7 @@ async function computeWithdrawals(
     total_value_usd: string;
     inventory_item_ids: string[];
     voucher_ids: string[];
-    requested_at: Date;
+    requested_at: Date | string;
     metadata: unknown;
     tracking_number: string | null;
     carrier: string | null;
@@ -251,7 +251,7 @@ async function computeWithdrawals(
       // Serialized to an ISO string here so the cached payload survives
       // `unstable_cache`'s JSON round-trip cleanly (no Date→string drift
       // gotcha — the column never leaves this function as a Date).
-      requestedAt: w.requested_at.toISOString(),
+      requestedAt: new Date(w.requested_at).toISOString(),
       processedBy:
         (w.metadata as Record<string, unknown>)?.processed_by_admin as string ??
         w.processed_username ??
@@ -343,12 +343,12 @@ async function computeWithdrawalDetail(id: string) {
       destination_address: string | null;
       tx_hash: string | null;
       failure_reason: string | null;
-      requested_at: Date;
-      processing_at: Date | null;
-      shipped_at: Date | null;
-      completed_at: Date | null;
-      failed_at: Date | null;
-      cancelled_at: Date | null;
+      requested_at: Date | string;
+      processing_at: Date | string | null;
+      shipped_at: Date | string | null;
+      completed_at: Date | string | null;
+      failed_at: Date | string | null;
+      cancelled_at: Date | string | null;
       metadata: unknown;
       inventory_item_ids: string[];
       voucher_ids: string[];
@@ -459,12 +459,12 @@ async function computeWithdrawalDetail(id: string) {
     destinationAddress: withdrawal.destination_address,
     txHash: withdrawal.tx_hash,
     failureReason: withdrawal.failure_reason,
-    requestedAt: withdrawal.requested_at.toISOString(),
-    processingAt: withdrawal.processing_at?.toISOString() ?? null,
-    shippedAt: withdrawal.shipped_at?.toISOString() ?? null,
-    completedAt: withdrawal.completed_at?.toISOString() ?? null,
-    failedAt: withdrawal.failed_at?.toISOString() ?? null,
-    cancelledAt: withdrawal.cancelled_at?.toISOString() ?? null,
+    requestedAt: new Date(withdrawal.requested_at).toISOString(),
+    processingAt: withdrawal.processing_at ? new Date(withdrawal.processing_at).toISOString() : null,
+    shippedAt: withdrawal.shipped_at ? new Date(withdrawal.shipped_at).toISOString() : null,
+    completedAt: withdrawal.completed_at ? new Date(withdrawal.completed_at).toISOString() : null,
+    failedAt: withdrawal.failed_at ? new Date(withdrawal.failed_at).toISOString() : null,
+    cancelledAt: withdrawal.cancelled_at ? new Date(withdrawal.cancelled_at).toISOString() : null,
     processedBy: (withdrawal.metadata as Record<string, unknown>)?.processed_by_admin as string ?? withdrawal.processed_username ?? null,
     shippedBy: (withdrawal.metadata as Record<string, unknown>)?.shipped_by_admin as string ?? withdrawal.shipped_username ?? null,
     items,

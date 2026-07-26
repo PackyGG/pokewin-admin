@@ -164,7 +164,7 @@ type RawRecentRow = {
   username: string | null;
   amount: string | number | null;
   xp_awarded: string | number | null;
-  created_at: Date;
+  created_at: Date | string;
 };
 
 type RawDailyRow = {
@@ -270,10 +270,7 @@ async function queryXpSales(period: XpSalesPeriod): Promise<XpSalesResult> {
     username: r.username,
     amount: Number(r.amount ?? 0),
     xpAwarded: r.xp_awarded != null ? Number(r.xp_awarded) : null,
-    createdAt:
-      r.created_at instanceof Date
-        ? r.created_at.toISOString()
-        : new Date(r.created_at).toISOString(),
+    createdAt: new Date(r.created_at).toISOString(),
   }));
 
   const daily: XpSalesDailyPoint[] = dailyRows.map((r) => ({

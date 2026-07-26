@@ -141,7 +141,7 @@ const getCachedScores = unstable_cache(
       risk_score: number;
       tier: string;
       compliance: unknown;
-      computed_at: Date;
+      computed_at: Date | string;
     }>(sql`
       SELECT pack_id, edge::text AS edge, cv::text AS cv,
              win_rate::text AS win_rate, near_miss::text AS near_miss,
@@ -160,7 +160,7 @@ const getCachedScores = unstable_cache(
       riskScore: s.risk_score,
       tier: s.tier,
       compliance: isPackComplianceFlags(s.compliance) ? s.compliance : null,
-      computedAt: s.computed_at.toISOString(),
+      computedAt: new Date(s.computed_at).toISOString(),
     }));
   },
   ["pack-studio-doctor-scores-v2"],

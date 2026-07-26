@@ -97,11 +97,11 @@ export async function getRakebackClaims(params: {
     user_id: string;
     username: string | null;
     rakeback_type: string;
-    period_start: Date;
+    period_start: Date | string;
     wagered_amount_usd: string;
     rakeback_amount_usd: string;
-    claimed_at: Date | null;
-    created_at: Date;
+    claimed_at: Date | string | null;
+    created_at: Date | string;
   };
 
   const [claims, total] = await Promise.all([
@@ -172,11 +172,11 @@ export async function getRakebackClaims(params: {
         userId: c.user_id,
         username: c.username,
         rakebackType: c.rakeback_type,
-        periodStart: c.period_start.toISOString(),
+        periodStart: new Date(c.period_start).toISOString(),
         wageredAmountUsd: toNumber(c.wagered_amount_usd),
         rakebackAmountUsd,
-        claimedAt: c.claimed_at?.toISOString() ?? null,
-        createdAt: c.created_at.toISOString(),
+        claimedAt: c.claimed_at ? new Date(c.claimed_at).toISOString() : null,
+        createdAt: new Date(c.created_at).toISOString(),
         instant,
         instantAccruedAmountUsd,
       };
@@ -219,7 +219,7 @@ type RewardRow = {
   cash_amount: string | null;
   daily_unlock_percentage: string | null;
   pack_ids: string[];
-  created_at: Date;
+  created_at: Date | string;
 };
 
 async function hydrateRewards(rewards: RewardRow[]): Promise<RewardItem[]> {
@@ -264,7 +264,7 @@ async function hydrateRewards(rewards: RewardRow[]): Promise<RewardItem[]> {
       .map((id) => packsMap.get(id))
       .filter((pack): pack is RewardPack => pack != null),
     packCount: reward.pack_ids.length,
-    createdAt: reward.created_at.toISOString(),
+    createdAt: new Date(reward.created_at).toISOString(),
   }));
 }
 

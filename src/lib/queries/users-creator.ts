@@ -30,7 +30,7 @@ export async function getCreatorReferralClicks(
       country: string;
       region: string;
       city: string;
-      created_at: Date | null;
+      created_at: Date | string | null;
       total_count: string;
     }[]
   >(
@@ -64,7 +64,7 @@ export async function getCreatorReferralClicks(
       country: c.country,
       region: c.region,
       city: c.city,
-      createdAt: c.created_at?.toISOString() ?? null,
+      createdAt: c.created_at ? new Date(c.created_at).toISOString() : null,
       })),
     total,
     page: safePage,
@@ -103,7 +103,7 @@ export async function getCreatorCodeUsages(
       wager_amount_usd: string;
       referrer_cut_usd: string;
       user_bonus_usd: string;
-      created_at: Date;
+      created_at: Date | string;
       total_count: string;
     }[]
   >(
@@ -149,7 +149,7 @@ export async function getCreatorCodeUsages(
       wagerAmountUsd: toNumber(u.wager_amount_usd),
       referrerCutUsd: toNumber(u.referrer_cut_usd),
       userBonusUsd: toNumber(u.user_bonus_usd),
-      createdAt: u.created_at.toISOString(),
+      createdAt: new Date(u.created_at).toISOString(),
       })),
     total,
     page: safePage,
@@ -225,9 +225,9 @@ type AttributionJourneyRow = {
   code: string;
   affiliate_user_id: string;
   creator_name: string | null;
-  first_used_at: Date;
-  last_used_at: Date;
-  last_applied_at: Date | null;
+  first_used_at: Date | string;
+  last_used_at: Date | string;
+  last_applied_at: Date | string | null;
   deposit_total: string;
   wager_total: string;
   usage_count: string;
@@ -269,9 +269,11 @@ export async function getUserAttributionJourney(
     code: r.code,
     creatorUserId: r.affiliate_user_id,
     creatorName: r.creator_name,
-    firstUsedAt: r.first_used_at.toISOString(),
-    lastUsedAt: r.last_used_at.toISOString(),
-    lastAppliedAt: r.last_applied_at ? r.last_applied_at.toISOString() : null,
+    firstUsedAt: new Date(r.first_used_at).toISOString(),
+    lastUsedAt: new Date(r.last_used_at).toISOString(),
+    lastAppliedAt: r.last_applied_at
+      ? new Date(r.last_applied_at).toISOString()
+      : null,
     depositAmountUsd: toNumber(r.deposit_total),
     wagerAmountUsd: toNumber(r.wager_total),
     usageCount: Number(r.usage_count),
@@ -282,7 +284,7 @@ export async function getCreatorWithdrawalLimits(userId: string) {
   const [limits] = await queryMainRows<
     {
       currency_limit_amount: string | null;
-      currency_limit_start_date: Date | null;
+      currency_limit_start_date: Date | string | null;
       currency_limit_reset_days: number | null;
       percentage_limit: string | null;
     }[]
@@ -299,7 +301,9 @@ export async function getCreatorWithdrawalLimits(userId: string) {
   if (!limits) return null;
   return {
     currencyLimitAmount: limits.currency_limit_amount ? toNumber(limits.currency_limit_amount) : null,
-    currencyLimitStartDate: limits.currency_limit_start_date?.toISOString() ?? null,
+    currencyLimitStartDate: limits.currency_limit_start_date
+      ? new Date(limits.currency_limit_start_date).toISOString()
+      : null,
     currencyLimitResetDays: limits.currency_limit_reset_days,
     percentageLimit: limits.percentage_limit ? toNumber(limits.percentage_limit) : null,
   };

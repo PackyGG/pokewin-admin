@@ -87,8 +87,8 @@ async function computeSetsList(
       image_url: string;
       language: string;
       tcgplayer_id: number;
-      release_date: Date | null;
-      created_at: Date;
+      release_date: Date | string | null;
+      created_at: Date | string;
       card_count: string;
     }>(sql`
       SELECT
@@ -117,9 +117,9 @@ async function computeSetsList(
       imageUrl: s.image_url,
       language: s.language,
       tcgplayerId: s.tcgplayer_id,
-      releaseDate: s.release_date?.toISOString() ?? null,
+      releaseDate: s.release_date ? new Date(s.release_date).toISOString() : null,
       cardCount: Number(s.card_count),
-      createdAt: s.created_at.toISOString(),
+      createdAt: new Date(s.created_at).toISOString(),
     })),
     total,
     page: safePage,

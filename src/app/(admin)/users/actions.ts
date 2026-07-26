@@ -694,7 +694,7 @@ export async function bulkUnbanFilteredUsers(input: {
     id: string;
     username: string | null;
     banned_reason: string | null;
-    banned_at: Date | null;
+    banned_at: Date | string | null;
   }>;
   try {
     priorState = (
@@ -702,7 +702,7 @@ export async function bulkUnbanFilteredUsers(input: {
         id: string;
         username: string | null;
         banned_reason: string | null;
-        banned_at: Date | null;
+        banned_at: Date | string | null;
       }>(sql`
         SELECT id, username, banned_reason, banned_at
         FROM "user"
@@ -762,7 +762,9 @@ export async function bulkUnbanFilteredUsers(input: {
           id: u.id,
           username: u.username,
           reason: u.banned_reason,
-          banned_at: u.banned_at?.toISOString() ?? null,
+          banned_at: u.banned_at
+            ? new Date(u.banned_at).toISOString()
+            : null,
         })),
     },
   });

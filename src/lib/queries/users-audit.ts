@@ -16,7 +16,7 @@ type AuditRow = {
   event_type: string;
   ip: string | null;
   country: string | null;
-  created_at: Date;
+  created_at: Date | string;
   metadata: unknown;
 };
 
@@ -25,7 +25,7 @@ type DepositRow = {
   amount: string;
   crypto_asset: string | null;
   crypto_amount: string | null;
-  created_at: Date;
+  created_at: Date | string;
 };
 
 type WithdrawalRow = {
@@ -33,14 +33,14 @@ type WithdrawalRow = {
   total_value_usd: string;
   status: string;
   method: string;
-  requested_at: Date;
+  requested_at: Date | string;
 };
 
 type AdjustmentRow = {
   id: string;
   amount: string;
   description: string | null;
-  created_at: Date;
+  created_at: Date | string;
 };
 
 export async function getUserAuditLog(
@@ -138,7 +138,7 @@ export async function getUserAuditLog(
       eventType: event.event_type,
       ip: event.ip,
       country: event.country,
-      createdAt: event.created_at.toISOString(),
+      createdAt: new Date(event.created_at).toISOString(),
       metadata: event.metadata,
     })),
     ...depositRows.map((deposit) => ({
@@ -146,7 +146,7 @@ export async function getUserAuditLog(
       eventType: "deposit",
       ip: null,
       country: null,
-      createdAt: deposit.created_at.toISOString(),
+      createdAt: new Date(deposit.created_at).toISOString(),
       metadata: {
         amountUsd: toNumber(deposit.amount),
         cryptoAsset: deposit.crypto_asset,
@@ -159,7 +159,7 @@ export async function getUserAuditLog(
       eventType: "withdrawal",
       ip: null,
       country: null,
-      createdAt: withdrawal.requested_at.toISOString(),
+      createdAt: new Date(withdrawal.requested_at).toISOString(),
       metadata: {
         amountUsd: toNumber(withdrawal.total_value_usd),
         method: withdrawal.method,
@@ -176,7 +176,7 @@ export async function getUserAuditLog(
         eventType: "admin_balance_adjustment",
         ip: null,
         country: null,
-        createdAt: adjustment.created_at.toISOString(),
+        createdAt: new Date(adjustment.created_at).toISOString(),
         metadata: {
           amountUsd: toNumber(adjustment.amount),
           description: adjustment.description,

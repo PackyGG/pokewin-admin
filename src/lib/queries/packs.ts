@@ -774,7 +774,7 @@ const cachedPackStatScans = (packId: string, env: DbEnv) =>
       // they're independent queries against the same base table.
       return Promise.all([
         db.execute<{
-            date: Date;
+            date: Date | string;
             openings: string;
             solo: string;
             battle: string;
@@ -1023,7 +1023,7 @@ export async function getPackGames(
       card_price: string;
       is_borrowed: boolean;
       is_sponsored: boolean;
-      created_at: Date;
+      created_at: Date | string;
     }>(sql`
      SELECT
        pf.id,
@@ -1064,7 +1064,7 @@ export async function getPackGames(
       cardImageUrl: r.card_image_url,
       cardRarity: r.card_rarity,
       cardPrice: parseFloat(r.card_price),
-      createdAt: r.created_at.toISOString(),
+      createdAt: new Date(r.created_at).toISOString(),
     })),
     total,
     page: safePage,

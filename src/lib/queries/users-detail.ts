@@ -39,7 +39,7 @@ async function getUserTips(userId: string) {
           balance_before: string;
           balance_after: string;
           metadata: unknown;
-          created_at: Date;
+          created_at: Date | string;
         }[]
       >(
         `SELECT id, amount::text, balance_before::text, balance_after::text,
@@ -66,7 +66,7 @@ async function getUserTips(userId: string) {
           id: string;
           type: string;
           amount: string;
-          created_at: Date;
+          created_at: Date | string;
           metadata: unknown;
         }[]
       >(
@@ -124,7 +124,7 @@ async function getUserTips(userId: string) {
       amountUsd: toNumber(r.amount),
       counterpartyId,
       counterpartyName: null,
-      createdAt: r.created_at.toISOString(),
+      createdAt: new Date(r.created_at).toISOString(),
       sent,
     };
   });
@@ -187,7 +187,7 @@ async function getUserTips(userId: string) {
         amountUsd: toNumber(r.amount),
         counterpartyId: null,
         counterpartyName: null,
-        createdAt: r.created_at.toISOString(),
+        createdAt: new Date(r.created_at).toISOString(),
       })),
     },
     // Affiliate-leaderboard wins (affiliate_leaderboard_prize) — credits
@@ -210,7 +210,7 @@ async function getUserTips(userId: string) {
           amountUsd: toNumber(r.amount),
           counterpartyId: null,
           counterpartyName: null,
-          createdAt: r.created_at.toISOString(),
+          createdAt: new Date(r.created_at).toISOString(),
           raceType: meta.raceType,
           position: meta.position,
         };
@@ -254,7 +254,7 @@ async function enrichLeaderboardWins(
   rows: {
     id: string;
     amount: { toString(): string } | number | string;
-    created_at: Date;
+    created_at: Date | string;
     metadata: unknown;
   }[],
 ): Promise<
@@ -328,7 +328,7 @@ async function enrichLeaderboardWins(
       amountUsd: toNumber(r.amount),
       counterpartyId: null,
       counterpartyName: null,
-      createdAt: r.created_at.toISOString(),
+      createdAt: new Date(r.created_at).toISOString(),
       leaderboardId: p.leaderboardId,
       leaderboardTitle: resolvedTitle,
       position: p.position,
@@ -631,7 +631,7 @@ export async function getUserDetail(id: string) {
         suspected_alt: boolean | null;
         linked_count: bigint | number | null;
         capture_count: number | null;
-        captured_at: Date | null;
+        captured_at: Date | string | null;
         best_confidence: number | null;
         visitor_id: string | null;
         distinct_visitor_ids: number | null;
@@ -672,7 +672,9 @@ export async function getUserDetail(id: string) {
       // from the absence of a flag. Aggregates over an empty my_fp yield
       // 0 / NULL (one row is still returned), never an error.
       deviceCaptureCount: Number(rows[0]?.capture_count ?? 0),
-      deviceCapturedAt: rows[0]?.captured_at?.toISOString() ?? null,
+      deviceCapturedAt: rows[0]?.captured_at
+        ? new Date(rows[0].captured_at).toISOString()
+        : null,
       deviceConfidence: rows[0]?.best_confidence ?? null,
       deviceVisitorId: rows[0]?.visitor_id ?? null,
       deviceVisitorIdCount: Number(rows[0]?.distinct_visitor_ids ?? 0),
@@ -754,7 +756,7 @@ export async function getUserDetail(id: string) {
         locked_balance: string;
         total_wagered: string;
         total_won: string;
-        unlock_at: Date | null;
+        unlock_at: Date | string | null;
       }[]
     >(
       `SELECT available_balance::text, locked_balance::text,
@@ -1042,7 +1044,7 @@ export async function getUserDetail(id: string) {
   );
   const ownedCodes = ownedCodeRows.map((c) => ({
     code: c.code,
-    createdAt: c.created_at.toISOString(),
+    createdAt: new Date(c.created_at).toISOString(),
     isPrimary: c.code === user.affiliate_code,
     referralCount: referralCountByUpperCode.get(c.code.toUpperCase()) ?? 0,
   }));
@@ -1190,7 +1192,9 @@ export async function getUserDetail(id: string) {
           totalWagered: toNumber(balances.total_wagered),
           totalWon: toNumber(balances.total_won),
           bonusPoints: balancePoints,
-          unlockAt: balances.unlock_at?.toISOString() ?? null,
+          unlockAt: balances.unlock_at
+            ? new Date(balances.unlock_at).toISOString()
+            : null,
           inventoryValue: userPnl.inventoryValue,
           vouchersValue: userPnl.unclaimedVouchers,
           packsWagered: Math.abs(toNumber(

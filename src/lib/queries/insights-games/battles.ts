@@ -102,7 +102,7 @@ export async function getBattlesProfitability(
       bet_amount: string;
       total_pot: string;
       total_payout: string;
-      created_at: Date;
+      created_at: Date | string;
     };
 
     // Per-mode aggregate:
@@ -279,7 +279,7 @@ export async function getBattlesProfitability(
         totalPayout,
         housePnl,
         hitMultiplier,
-        createdAt: r.created_at.toISOString(),
+        createdAt: new Date(r.created_at).toISOString(),
       };
     });
 

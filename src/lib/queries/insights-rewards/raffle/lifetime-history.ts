@@ -66,8 +66,8 @@ type RawRaffleRow = {
   prizes: unknown;
   total_entries: number | null;
   participant_count: number | null;
-  ends_at: Date | null;
-  completed_at: Date | null;
+  ends_at: Date | string | null;
+  completed_at: Date | string | null;
   status: string;
 };
 
@@ -118,8 +118,10 @@ async function computeRaffleLifetimeHistory(): Promise<RaffleLifetimeHistory> {
       prizeValueUsd,
       totalEntries: Number(row.total_entries ?? 0),
       participantCount: Number(row.participant_count ?? 0),
-      endsAtIso: row.ends_at ? row.ends_at.toISOString() : null,
-      completedAtIso: row.completed_at ? row.completed_at.toISOString() : null,
+      endsAtIso: row.ends_at ? new Date(row.ends_at).toISOString() : null,
+      completedAtIso: row.completed_at
+        ? new Date(row.completed_at).toISOString()
+        : null,
     });
   }
 

@@ -222,7 +222,7 @@ export async function getRolesOverview(): Promise<RolesOverview> {
   const allRoleRows = (await adminDrizzle.execute<{
     id: string; name: string; description: string | null; is_system: boolean;
     system_key: string | null; capabilities: string[]; landing_route: string | null;
-    updated_at: Date; user_count: string;
+    updated_at: Date | string; user_count: string;
   }>(sql`
     SELECT r.id::text, r.name, r.description, r.is_system, r.system_key,
            r.capabilities, r.landing_route, r.updated_at,
@@ -270,7 +270,7 @@ export async function getRolesOverview(): Promise<RolesOverview> {
       tokenCount: tokens.length,
       holderCount: holdersByRole.get(role) ?? 0,
       landingRoute: row?.landing_route ?? null,
-      updatedAt: (row?.updated_at ?? new Date(0)).toISOString(),
+      updatedAt: new Date(row?.updated_at ?? 0).toISOString(),
     };
   });
 
@@ -290,7 +290,7 @@ export async function getRolesOverview(): Promise<RolesOverview> {
       tokenCount: r.capabilities.length,
       holderCount: Number(r.user_count),
       landingRoute: r.landing_route ?? null,
-      updatedAt: r.updated_at.toISOString(),
+      updatedAt: new Date(r.updated_at).toISOString(),
     };
   });
 

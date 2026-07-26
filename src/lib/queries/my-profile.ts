@@ -103,7 +103,7 @@ export async function getMyProfileData(adminUserId: string) {
               available_usd: unknown;
               total_paid_out_usd: unknown;
               total_bonus_distributed_usd: unknown;
-              last_payout_at: Date | null;
+              last_payout_at: Date | string | null;
             }>(sql`
               SELECT
                 total_wager_volume_usd,
@@ -129,7 +129,7 @@ export async function getMyProfileData(adminUserId: string) {
               wager_amount_usd: unknown;
               referrer_cut_usd: unknown;
               user_bonus_usd: unknown;
-              created_at: Date;
+              created_at: Date | string;
             }>(sql`
               SELECT
                 acu.id::text AS id,
@@ -158,7 +158,7 @@ export async function getMyProfileData(adminUserId: string) {
               wager_amount_usd: unknown;
               referrer_cut_usd: unknown;
               user_bonus_usd: unknown;
-              created_at: Date;
+              created_at: Date | string;
             }>,
           ),
       userId
@@ -167,7 +167,7 @@ export async function getMyProfileData(adminUserId: string) {
               id: string;
               amount_usd: unknown;
               status: string;
-              created_at: Date;
+              created_at: Date | string;
             }>(sql`
               SELECT
                 id::text AS id,
@@ -185,7 +185,7 @@ export async function getMyProfileData(adminUserId: string) {
               id: string;
               amount_usd: unknown;
               status: string;
-              created_at: Date;
+              created_at: Date | string;
             }>,
           ),
       mainUser?.affiliate_code
@@ -268,7 +268,9 @@ export async function getMyProfileData(adminUserId: string) {
     availableUsd: account ? toNumber(account.available_usd) : 0,
     totalPaidOutUsd: account ? toNumber(account.total_paid_out_usd) : 0,
     totalBonusDistributedUsd: account ? toNumber(account.total_bonus_distributed_usd) : 0,
-    lastPayoutAt: account?.last_payout_at?.toISOString() ?? null,
+    lastPayoutAt: account?.last_payout_at
+      ? new Date(account.last_payout_at).toISOString()
+      : null,
     totalClicks: clickCount,
     referrals: referrals.map((r) => ({
       id: r.id,
@@ -279,13 +281,13 @@ export async function getMyProfileData(adminUserId: string) {
       wagerAmountUsd: toNumber(r.wager_amount_usd),
       referrerCutUsd: toNumber(r.referrer_cut_usd),
       userBonusUsd: toNumber(r.user_bonus_usd),
-      createdAt: r.created_at.toISOString(),
+      createdAt: new Date(r.created_at).toISOString(),
     })),
     payouts: payouts.map((p) => ({
       id: p.id,
       amountUsd: toNumber(p.amount_usd),
       status: p.status,
-      createdAt: p.created_at.toISOString(),
+      createdAt: new Date(p.created_at).toISOString(),
     })),
     webhooks: webhooks.map((w) => ({
       id: w.id, url: w.url, type: w.type, enabled: w.enabled, createdAt: new Date(w.created_at).toISOString(),

@@ -31,8 +31,8 @@ export async function restoreDeletedUser(
   const snapshotResult = await adminDrizzle.execute<{
     id: string;
     username: string | null;
-    expires_at: Date;
-    restored_at: Date | null;
+    expires_at: Date | string;
+    restored_at: Date | string | null;
     snapshot: DeletedUserSnapshot;
   }>(sql`
     SELECT id, username, expires_at, restored_at, snapshot
@@ -44,7 +44,7 @@ export async function restoreDeletedUser(
   if (snapshotRow.restored_at) {
     throw new Error("Snapshot has already been restored");
   }
-  if (snapshotRow.expires_at.getTime() < Date.now()) {
+  if (new Date(snapshotRow.expires_at).getTime() < Date.now()) {
     throw new Error("Snapshot has expired and cannot be restored");
   }
 

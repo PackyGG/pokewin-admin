@@ -1014,7 +1014,7 @@ type UserListRow = {
   // prisma/recommended-indexes.sql #28). Doing that scan for every page of
   // the always-available column instead.
   affiliate_code: string | null;
-  created_at: Date;
+  created_at: Date | string;
   // Only `locked_balance` and `total_wagered` are actually READ off this
   // relation in hydrateUserListPage below — `availableBalance`,
   // `totalDeposited`, and `totalWithdrawn` on the displayed row all come
@@ -1215,7 +1215,7 @@ async function hydrateUserListPage(
         totalWithdrawn,
         totalWagered,
         pnl,
-        createdAt: u.created_at.toISOString(),
+        createdAt: new Date(u.created_at).toISOString(),
         suspectedAlt: deviceByUserId.get(u.id)?.suspected_alt === true,
         hasDeviceId: deviceByUserId.has(u.id),
         deviceVisitorId: deviceByUserId.get(u.id)?.visitor_id ?? null,
@@ -1951,7 +1951,7 @@ export async function getBulkUnbanPreviewUsers(
   const [users, creatorProtectedIds] = await Promise.all([
     queryMainRows<{
       id: string; username: string | null; email: string | null;
-      role: string; banned_reason: string | null; banned_at: Date | null;
+      role: string; banned_reason: string | null; banned_at: Date | string | null;
     }[]>(
       `SELECT id, username, email, role::text AS role, banned_reason, banned_at
          FROM "user" WHERE id = ANY($1::text[])`,
@@ -1972,7 +1972,7 @@ export async function getBulkUnbanPreviewUsers(
         email: u.email,
         role: u.role,
         bannedReason: u.banned_reason,
-        bannedAt: u.banned_at?.toISOString() ?? null,
+        bannedAt: u.banned_at ? new Date(u.banned_at).toISOString() : null,
         isProtected:
           u.role !== USER_ROLE_USER || protectedSet.has(u.id),
       },

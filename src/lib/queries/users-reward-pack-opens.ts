@@ -217,7 +217,7 @@ async function queryUserRewardPackOpens(
         row.opened_at == null
           ? null
           : row.opened_at instanceof Date
-            ? row.opened_at.toISOString()
+            ? new Date(row.opened_at).toISOString()
             : String(row.opened_at),
       cardCount,
       ownedCount,

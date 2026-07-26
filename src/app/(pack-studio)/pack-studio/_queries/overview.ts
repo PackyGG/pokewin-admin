@@ -124,7 +124,7 @@ const getCachedOverviewBase = unstable_cache(
         risk_score: number;
         tier: string;
         compliance: unknown;
-        computed_at: Date;
+        computed_at: Date | string;
       }>(sql`
         SELECT pack_id, edge::text AS edge, near_miss::text AS near_miss,
                max_win::text AS max_win, cv::text AS cv, risk_score, tier,
@@ -142,7 +142,7 @@ const getCachedOverviewBase = unstable_cache(
       riskScore: r.risk_score,
       tier: r.tier,
       flags: isPackComplianceFlags(r.compliance) ? r.compliance : null,
-      computedAt: r.computed_at.toISOString(),
+      computedAt: new Date(r.computed_at).toISOString(),
     }));
     return { scores, cfg };
   },

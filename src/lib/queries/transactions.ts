@@ -307,7 +307,7 @@ async function computeDepositTransactions(
     balance_after: string;
     status: string;
     description: string;
-    created_at: Date;
+    created_at: Date | string;
     crypto_asset: string | null;
     crypto_amount: string | null;
     bonus_amount: string | null;
@@ -354,7 +354,7 @@ async function computeDepositTransactions(
       balanceAfter: finalBalanceAfter,
       status: r.status,
       description: r.description,
-      createdAt: r.created_at.toISOString(),
+      createdAt: new Date(r.created_at).toISOString(),
       // payout/housePnl are game-session metrics — not applicable here.
       payout: null,
       housePnl: null,
@@ -567,7 +567,7 @@ async function computeTransactions(
     balance_after: string;
     status: string;
     description: string;
-    created_at: Date;
+    created_at: Date | string;
     crypto_asset: string | null;
     crypto_amount: string | null;
     user: { username: string | null; image: string | null } | null;
@@ -908,7 +908,7 @@ async function computeTransactions(
         balanceAfter,
         status: t.status,
         description: t.description,
-        createdAt: t.created_at.toISOString(),
+        createdAt: new Date(t.created_at).toISOString(),
         payout,
         housePnl,
         cryptoAsset: t.crypto_asset,
@@ -1006,8 +1006,8 @@ async function computeTransactionDetail(id: string) {
       failure_reason: string | null;
       description: string;
       metadata: unknown;
-      created_at: Date;
-      updated_at: Date;
+      created_at: Date | string;
+      updated_at: Date | string;
     }[]
   >(
     `
@@ -1593,8 +1593,8 @@ async function computeTransactionDetail(id: string) {
     failureReason: tx.failure_reason,
     description: tx.description,
     metadata: tx.metadata,
-    createdAt: tx.created_at.toISOString(),
-    updatedAt: tx.updated_at.toISOString(),
+    createdAt: new Date(tx.created_at).toISOString(),
+    updatedAt: new Date(tx.updated_at).toISOString(),
   };
 }
 

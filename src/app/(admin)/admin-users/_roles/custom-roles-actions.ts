@@ -79,7 +79,7 @@ export async function listRoles(): Promise<RoleRow[]> {
   await requireAdmin();
   const roles = (await adminDrizzle.execute<{
     id: string; name: string; description: string | null; capabilities: string[];
-    created_at: Date; updated_at: Date; user_count: string;
+    created_at: Date | string; updated_at: Date | string; user_count: string;
   }>(sql`
     SELECT r.id::text, r.name, r.description, r.capabilities,
            r.created_at, r.updated_at, COUNT(u.id)::text AS user_count
@@ -93,8 +93,8 @@ export async function listRoles(): Promise<RoleRow[]> {
     name: r.name,
     description: r.description,
     capabilities: r.capabilities,
-    created_at: r.created_at.toISOString(),
-    updated_at: r.updated_at.toISOString(),
+    created_at: new Date(r.created_at).toISOString(),
+    updated_at: new Date(r.updated_at).toISOString(),
     user_count: Number(r.user_count),
   }));
 }
@@ -124,7 +124,7 @@ export async function getRole(id: string): Promise<RoleRow | null> {
   await requireAdmin();
   const r = (await adminDrizzle.execute<{
     id: string; name: string; description: string | null; capabilities: string[];
-    created_at: Date; updated_at: Date; user_count: string;
+    created_at: Date | string; updated_at: Date | string; user_count: string;
   }>(sql`
     SELECT r.id::text, r.name, r.description, r.capabilities,
            r.created_at, r.updated_at, COUNT(u.id)::text AS user_count
@@ -139,8 +139,8 @@ export async function getRole(id: string): Promise<RoleRow | null> {
     name: r.name,
     description: r.description,
     capabilities: r.capabilities,
-    created_at: r.created_at.toISOString(),
-    updated_at: r.updated_at.toISOString(),
+    created_at: new Date(r.created_at).toISOString(),
+    updated_at: new Date(r.updated_at).toISOString(),
     user_count: Number(r.user_count),
   };
 }

@@ -122,7 +122,7 @@ async function computeAuditTrail(
     user_id: string;
     amount: string;
     description: string | null;
-    created_at: Date;
+    created_at: Date | string;
   };
   const [ledgerRows, totalInWindow] = await Promise.all([
     queryMainRows<LedgerRow[]>(
@@ -160,7 +160,9 @@ async function computeAuditTrail(
     ? new Date(since.getTime() - MATCH_TOLERANCE_MS)
     : undefined;
   const oldestLedger = ledgerRows[ledgerRows.length - 1].created_at;
-  const auditLowerBound = auditSince ?? new Date(oldestLedger.getTime() - MATCH_TOLERANCE_MS);
+  const auditLowerBound =
+    auditSince ??
+    new Date(new Date(oldestLedger).getTime() - MATCH_TOLERANCE_MS);
 
   const [auditEvents, giveawayRows] = await Promise.all([
     adminDrizzle
@@ -270,7 +272,7 @@ async function computeAuditTrail(
     if (!adminUserId) {
       const candidates = eventsByUser.get(lt.user_id);
       if (candidates) {
-        const ltTime = lt.created_at.getTime();
+        const ltTime = new Date(lt.created_at).getTime();
         let best: { id: string; admin: string } | null = null;
         let bestDt = Infinity;
         for (const e of candidates) {
@@ -295,7 +297,7 @@ async function computeAuditTrail(
 
     return {
       ledgerTxId: lt.id,
-      createdAt: lt.created_at.toISOString(),
+      createdAt: new Date(lt.created_at).toISOString(),
       amount,
       direction: amount >= 0 ? "credit" : "debit",
       isManualWithdrawal,

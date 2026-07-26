@@ -114,8 +114,8 @@ type RawLogRow = {
   won_amount_usd: string;
   result: DoubleDownResult | null;
   payout_amount_usd: string | null;
-  created_at: Date;
-  resolved_at: Date | null;
+  created_at: Date | string;
+  resolved_at: Date | string | null;
 };
 
 /** Decimal-safe numeric→Number; null/NaN guard. */
@@ -190,8 +190,10 @@ function mapLogRow(r: RawLogRow): DoubleDownLogRow {
     stakedUsd: num(r.won_amount_usd) ?? 0,
     result: r.result,
     payoutUsd: num(r.payout_amount_usd),
-    createdAt: r.created_at.toISOString(),
-    resolvedAt: r.resolved_at ? r.resolved_at.toISOString() : null,
+    createdAt: new Date(r.created_at).toISOString(),
+    resolvedAt: r.resolved_at
+      ? new Date(r.resolved_at).toISOString()
+      : null,
   };
 }
 
@@ -356,7 +358,7 @@ async function computeTimeSeries(
   // the tiny table (fine at this volume; flagged in recommended-indexes.sql like
   // the other reads).
   const rows = await queryMainRows<
-    { bucket: Date; started: bigint; pnl: string | null }[]
+    { bucket: Date | string; started: bigint; pnl: string | null }[]
   >(
     `
     SELECT
@@ -383,7 +385,7 @@ async function computeTimeSeries(
   return rows.map((r) => {
     const pnl = num(r.pnl) ?? 0;
     cum += pnl;
-    const d = r.bucket;
+    const d = new Date(r.bucket);
     const bucket = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
     return {
       bucket,

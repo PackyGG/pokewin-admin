@@ -110,10 +110,10 @@ export async function getRaceClaims(params: {
         user_id: string;
         username: string | null;
         race_type: string;
-        race_period_start: Date;
+        race_period_start: Date | string;
         position: number;
         prize_amount_usd: string;
-        claimed_at: Date;
+        claimed_at: Date | string;
       }[]
     >(
       `SELECT rc.id, rc.user_id, u.username, rc.race_type::text AS race_type,
@@ -140,10 +140,10 @@ export async function getRaceClaims(params: {
       userId: c.user_id,
       username: c.username,
       raceType: c.race_type,
-      racePeriodStart: c.race_period_start.toISOString(),
+      racePeriodStart: new Date(c.race_period_start).toISOString(),
       position: c.position,
       prizeAmountUsd: toNumber(c.prize_amount_usd),
-      claimedAt: c.claimed_at.toISOString(),
+      claimedAt: new Date(c.claimed_at).toISOString(),
     })),
     total,
     page: safePage,
@@ -187,7 +187,7 @@ export async function getRaceLeaderboardPeriods(params: {
   if (!raceType || raceType === "all") return [];
 
   const [groups, activeRows] = await Promise.all([
-    queryMainRows<{ period_start: Date; count: string }[]>(
+    queryMainRows<{ period_start: Date | string; count: string }[]>(
       `SELECT period_start, COUNT(*)::text AS count
          FROM race_leaderboard_snapshots
         WHERE race_type::text = $1
@@ -221,7 +221,7 @@ export async function getRaceLeaderboardPeriods(params: {
   const activeStart = activeRows[0]?.start_date ?? null;
 
   const periods: RaceLeaderboardPeriod[] = groups.map((g) => {
-    const periodStart = g.period_start.toISOString().slice(0, 10);
+    const periodStart = new Date(g.period_start).toISOString().slice(0, 10);
     return {
       periodStart,
       participants: Number(g.count),
@@ -373,7 +373,7 @@ export async function getRaceLeaderboard(params: {
           user_id: string;
           reason: string;
           created_by: string;
-          created_at: Date;
+          created_at: Date | string;
         }[]
       >(
         `SELECT id, user_id, reason, created_by, created_at
@@ -398,11 +398,11 @@ export async function getRaceLeaderboard(params: {
         id: h.id,
         reason: h.reason,
         createdBy: h.created_by,
-        createdAt: h.created_at.toISOString(),
+        createdAt: new Date(h.created_at).toISOString(),
       });
     }
     for (const c of claims) {
-      claimedAtByUser.set(c.user_id, c.claimed_at.toISOString());
+      claimedAtByUser.set(c.user_id, new Date(c.claimed_at).toISOString());
     }
   }
 
@@ -761,15 +761,15 @@ export async function getRacePeriodsOverview(params?: {
   type RacePeriodRow = {
     id: string;
     race_type: string;
-    starts_at: Date;
-    ends_at: Date;
+    starts_at: Date | string;
+    ends_at: Date | string;
     auto_renew: boolean;
     status: string;
     claims_frozen: boolean;
-    claims_unfrozen_at: Date | null;
+    claims_unfrozen_at: Date | string | null;
     claims_unfrozen_by: string | null;
-    created_at: Date;
-    updated_at: Date;
+    created_at: Date | string;
+    updated_at: Date | string;
   };
 
   const [active, recent] = await Promise.all([
@@ -796,15 +796,17 @@ export async function getRacePeriodsOverview(params?: {
   const map = (p: RacePeriodRow): RacePeriod => ({
     id: p.id,
     raceType: p.race_type,
-    startsAt: p.starts_at.toISOString(),
-    endsAt: p.ends_at.toISOString(),
+    startsAt: new Date(p.starts_at).toISOString(),
+    endsAt: new Date(p.ends_at).toISOString(),
     autoRenew: p.auto_renew,
     status: p.status,
     claimsFrozen: p.claims_frozen,
-    claimsUnfrozenAt: p.claims_unfrozen_at?.toISOString() ?? null,
+    claimsUnfrozenAt: p.claims_unfrozen_at
+      ? new Date(p.claims_unfrozen_at).toISOString()
+      : null,
     claimsUnfrozenBy: p.claims_unfrozen_by,
-    createdAt: p.created_at.toISOString(),
-    updatedAt: p.updated_at.toISOString(),
+    createdAt: new Date(p.created_at).toISOString(),
+    updatedAt: new Date(p.updated_at).toISOString(),
   });
 
   return {
@@ -836,7 +838,7 @@ export async function getRaceStandingsClaimWindow(params: {
       periodStartDate,
     ),
     queryMainRows<
-      { ends_at: Date; status: string; claims_frozen: boolean }[]
+      { ends_at: Date | string; status: string; claims_frozen: boolean }[]
     >(
       `SELECT ends_at, status::text AS status, claims_frozen
          FROM race_periods

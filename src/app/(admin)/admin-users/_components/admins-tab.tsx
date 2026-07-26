@@ -43,7 +43,7 @@ export async function AdminsTab({
     adminDrizzle.execute<{
       id: string; email: string; username: string; display_username: string | null;
       role: string; roles: string[]; totp_enabled: boolean; is_active: boolean;
-      is_owner: boolean; allowed_pages: string[]; created_at: Date;
+      is_owner: boolean; allowed_pages: string[]; created_at: Date | string;
     }>(sql`
       SELECT id::text, email, username, display_username, role::text AS role,
              roles::text[] AS roles, totp_enabled, is_active, is_owner,
@@ -62,7 +62,7 @@ export async function AdminsTab({
     adminRolesColumnExists(),
     adminDrizzle.execute<{
       admin_user_id: string;
-      last_login: Date | null;
+      last_login: Date | string | null;
       active_count: string;
     }>(sql`
       SELECT admin_user_id::text,
@@ -85,7 +85,10 @@ export async function AdminsTab({
   const lastLoginByAdmin = new Map<string, string>();
   for (const r of sessionsResult.rows) {
     if (r.last_login) {
-      lastLoginByAdmin.set(r.admin_user_id, r.last_login.toISOString());
+      const lastLogin = new Date(r.last_login);
+      if (!Number.isNaN(lastLogin.getTime())) {
+        lastLoginByAdmin.set(r.admin_user_id, lastLogin.toISOString());
+      }
     }
   }
   const activeSessionsByAdmin = new Map<string, number>();
@@ -124,7 +127,7 @@ export async function AdminsTab({
       isActive: u.is_active,
       totpEnabled: u.totp_enabled,
       isOwner,
-      createdAt: u.created_at.toISOString(),
+      createdAt: new Date(u.created_at).toISOString(),
       lastLoginAt: lastLoginByAdmin.get(u.id) ?? null,
       activeSessions: activeSessionsByAdmin.get(u.id) ?? 0,
       // admins bypass the page list entirely — surface that explicitly

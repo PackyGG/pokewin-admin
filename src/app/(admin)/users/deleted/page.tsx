@@ -38,10 +38,10 @@ export default async function DeletedUsersPage() {
       id: string;
       username: string;
       email: string;
-      deleted_at: Date;
+      deleted_at: Date | string;
       deleted_by: string;
-      expires_at: Date;
-      restored_at: Date | null;
+      expires_at: Date | string;
+      restored_at: Date | string | null;
       restored_by: string | null;
     }>(sql`
       SELECT id, username, email, deleted_at, deleted_by, expires_at,
@@ -127,10 +127,12 @@ export default async function DeletedUsersPage() {
               id: s.id,
               username: s.username,
               email: s.email,
-              deletedAt: s.deleted_at.toISOString(),
+              deletedAt: new Date(s.deleted_at).toISOString(),
               deletedByLabel: adminLabels.get(s.deleted_by) ?? s.deleted_by,
-              expiresAt: s.expires_at.toISOString(),
-              restoredAt: s.restored_at?.toISOString() ?? null,
+              expiresAt: new Date(s.expires_at).toISOString(),
+              restoredAt: s.restored_at
+                ? new Date(s.restored_at).toISOString()
+                : null,
               restoredByLabel: s.restored_by
                 ? adminLabels.get(s.restored_by) ?? s.restored_by
                 : null,

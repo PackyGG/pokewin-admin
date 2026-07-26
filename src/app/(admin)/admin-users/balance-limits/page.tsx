@@ -88,7 +88,7 @@ export default async function BalanceLimitsOverviewPage() {
     period_type: limit_period_type;
     max_amount: string;
     set_by_username: string | null;
-    updated_at: Date;
+    updated_at: Date | string;
   }>(sql`
     SELECT l.id::text, l.admin_user_id,
            COALESCE(target.username, 'Unknown') AS admin_username,
@@ -111,7 +111,7 @@ export default async function BalanceLimitsOverviewPage() {
     periodType: l.period_type,
     maxAmount: Number(l.max_amount),
     setByUsername: l.set_by_username,
-    updatedAt: l.updated_at.toISOString(),
+    updatedAt: new Date(l.updated_at).toISOString(),
   }));
 
   // KPI summary — useful at a glance for spotting whether caps look

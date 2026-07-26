@@ -122,7 +122,11 @@ async function computeDepositFundedGgr(
       tableExists("battle_double_down_offers"),
     ]);
 
-    type EventRow = { user_id: string; created_at: Date; amount: string };
+    type EventRow = {
+      user_id: string;
+      created_at: Date | string;
+      amount: string;
+    };
     type TotalRow = { user_id: string; total: string };
 
     const [
@@ -208,10 +212,10 @@ async function computeDepositFundedGgr(
 
     const events: RawEvent[] = [];
     for (const r of depositRows) {
-      events.push({ userId: r.user_id, t: r.created_at.getTime(), kind: "deposit", amount: toNumber(r.amount) });
+      events.push({ userId: r.user_id, t: new Date(r.created_at).getTime(), kind: "deposit", amount: toNumber(r.amount) });
     }
     for (const r of [...ledgerWagerRows, ...upgraderWagerRows, ...ddWagerRows]) {
-      events.push({ userId: r.user_id, t: r.created_at.getTime(), kind: "wager", amount: toNumber(r.amount) });
+      events.push({ userId: r.user_id, t: new Date(r.created_at).getTime(), kind: "wager", amount: toNumber(r.amount) });
     }
 
     const totalPayoutByUser = new Map<string, number>();

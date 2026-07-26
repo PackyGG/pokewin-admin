@@ -270,7 +270,7 @@ export async function getCardInspector(
       hp: number | null; rarity: string | null; artist: string | null;
       tcgplayer_id: number | null; type: string; card_number: string | null;
       set_id: string | null; set_name: string | null; pack_count: string;
-      created_at: Date; updated_at: Date;
+      created_at: Date | string; updated_at: Date | string;
     }>(sql`
       SELECT c.id, c.name, c.image_url, c.price::text AS price,
              c.price_raw::text AS price_raw, c.hp, c.rarity, c.artist,
@@ -316,8 +316,8 @@ export async function getCardInspector(
     setId: card.set_id,
     setName: card.set_name,
     packCount: Number(card.pack_count),
-    createdAt: card.created_at.toISOString(),
-    updatedAt: card.updated_at.toISOString(),
+    createdAt: new Date(card.created_at).toISOString(),
+    updatedAt: new Date(card.updated_at).toISOString(),
   };
 }
 
@@ -372,8 +372,8 @@ export async function getCardDetail(id: string) {
       id: string; name: string; image_url: string; price: string; price_raw: string;
       hp: number | null; rarity: string | null; artist: string | null;
       tcgplayer_id: number | null; type: string; card_number: string | null;
-      set_id: string | null; set_name: string | null; created_at: Date;
-      updated_at: Date;
+      set_id: string | null; set_name: string | null; created_at: Date | string;
+      updated_at: Date | string;
       packs: Array<{ id: string; name: string; imageUrl: string | null }>;
     }>(sql`
       SELECT c.id, c.name, c.image_url, c.price::text AS price,
@@ -442,8 +442,8 @@ export async function getCardDetail(id: string) {
     setName: card.set_name,
     inventoryCount,
     packs: card.packs,
-    createdAt: card.created_at.toISOString(),
-    updatedAt: card.updated_at.toISOString(),
+    createdAt: new Date(card.created_at).toISOString(),
+    updatedAt: new Date(card.updated_at).toISOString(),
   };
 }
 
@@ -476,7 +476,7 @@ export async function getSetsForMoveDialog(): Promise<SetForMoveDialog[]> {
     name: string;
     series: string;
     language: string;
-    release_date: Date | null;
+    release_date: Date | string | null;
   }>(sql`
     SELECT id, name, series, language, release_date
     FROM sets ORDER BY series ASC, name ASC
@@ -486,7 +486,9 @@ export async function getSetsForMoveDialog(): Promise<SetForMoveDialog[]> {
     name: s.name,
     series: s.series,
     language: s.language,
-    releaseDate: s.release_date?.toISOString() ?? null,
+    releaseDate: s.release_date
+      ? new Date(s.release_date).toISOString()
+      : null,
   }));
 }
 

@@ -68,7 +68,7 @@ export async function getProvablyFairResults(
       id: string; client_seed: string; server_seed_hash: string;
       server_seed: string | null; nonce: number; cursor: number; ticket: number;
       result_hash: string; result_metadata: unknown; game_type: string;
-      battle_id: string | null; value_at_obtained: string | null; created_at: Date;
+      battle_id: string | null; value_at_obtained: string | null; created_at: Date | string;
     }[]>(
       `SELECT pfr.id, pfr.client_seed, pfr.server_seed_hash, pfr.server_seed,
               pfr.nonce, pfr.cursor, pfr.ticket, pfr.result_hash,
@@ -107,7 +107,7 @@ export async function getProvablyFairResults(
       battleId: r.battle_id,
       cardName: null,
       cardValue: r.value_at_obtained === null ? null : toNumber(r.value_at_obtained),
-      createdAt: r.created_at.toISOString(),
+      createdAt: new Date(r.created_at).toISOString(),
     })),
     total,
     page: safePage,
@@ -139,7 +139,7 @@ export async function getSeedRotationHistory(
     queryMainRows<{
       id: string; old_client_seed: string; old_server_seed: string;
       old_server_seed_hash: string; old_nonce: number; new_client_seed: string;
-      new_server_seed_hash: string; rotated_at: Date;
+      new_server_seed_hash: string; rotated_at: Date | string;
     }[]>(
       `SELECT id, old_client_seed, old_server_seed, old_server_seed_hash,
               old_nonce, new_client_seed, new_server_seed_hash, rotated_at
@@ -165,7 +165,7 @@ export async function getSeedRotationHistory(
       oldNonce: r.old_nonce,
       newClientSeed: r.new_client_seed,
       newServerSeedHash: r.new_server_seed_hash,
-      rotatedAt: r.rotated_at.toISOString(),
+      rotatedAt: new Date(r.rotated_at).toISOString(),
     })),
     total,
     page: safePage,

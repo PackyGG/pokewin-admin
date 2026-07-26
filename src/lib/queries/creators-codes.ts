@@ -57,7 +57,7 @@ export async function getCodes(params: {
 
   const [codes, countRows] = await Promise.all([
     queryMainRows<
-      { code: string; user_id: string; created_at: Date; username: string | null }[]
+      { code: string; user_id: string; created_at: Date | string; username: string | null }[]
     >(
       `SELECT ac.code, ac.user_id, ac.created_at, u.username
        FROM affiliate_codes ac
@@ -86,7 +86,7 @@ export async function getCodes(params: {
       ownerUserId: c.user_id,
       ownerUsername: c.username ?? null,
       isActive: true,
-      createdAt: c.created_at.toISOString(),
+      createdAt: new Date(c.created_at).toISOString(),
     })),
     total,
     page: safePage,
@@ -208,8 +208,8 @@ export async function getCodeAnalytics(code: string) {
           referred_user_id: string;
           referred_username: string | null;
           referred_email: string | null;
-          first_activity: Date;
-          last_activity: Date;
+          first_activity: Date | string;
+          last_activity: Date | string;
           total_deposits: string;
           total_wagers: string;
           total_commission: string;
@@ -281,8 +281,8 @@ export async function getCodeAnalytics(code: string) {
         referred_user_id: string;
         referred_username: string | null;
         referred_email: string | null;
-        first_activity: Date;
-        last_activity: Date;
+        first_activity: Date | string;
+        last_activity: Date | string;
         total_deposits: string;
         total_wagers: string;
         total_commission: string;
@@ -379,7 +379,7 @@ export async function getCodeAnalytics(code: string) {
     safe(
       queryMainRows<
         {
-          date: Date;
+          date: Date | string;
           referrals: string;
           deposit_volume: string;
           wager_volume: string;
@@ -398,7 +398,7 @@ export async function getCodeAnalytics(code: string) {
         ORDER BY date
       `, uppercaseCode),
       [] as {
-        date: Date;
+        date: Date | string;
         referrals: string;
         deposit_volume: string;
         wager_volume: string;
@@ -406,14 +406,14 @@ export async function getCodeAnalytics(code: string) {
       }[],
     ),
     safe(
-      queryMainRows<{ date: Date; clicks: string }[]>(`
+      queryMainRows<{ date: Date | string; clicks: string }[]>(`
         SELECT DATE(created_at) AS date, COUNT(*)::text AS clicks
         FROM affiliate_clicks
         WHERE code = $1
         GROUP BY DATE(created_at)
         ORDER BY date
       `, uppercaseCode),
-      [] as { date: Date; clicks: string }[],
+      [] as { date: Date | string; clicks: string }[],
     ),
     // Country breakdown scoped to THIS code.
     //  - Clicks: affiliate_clicks.country is the full country name populated
@@ -647,8 +647,8 @@ export async function getCodeAnalytics(code: string) {
       referredUserId: u.referred_user_id,
       referredUsername: u.referred_username ?? null,
       referredEmail: u.referred_email ?? null,
-      firstActivityAt: u.first_activity.toISOString(),
-      lastActivityAt: u.last_activity.toISOString(),
+      firstActivityAt: new Date(u.first_activity).toISOString(),
+      lastActivityAt: new Date(u.last_activity).toISOString(),
       ftdDepositUsd: toNumber(u.total_deposits),
       codeDepositTotalUsd: toNumber(u.code_deposit_total),
       codeDepositCount: Number(u.code_deposit_count),
@@ -712,7 +712,7 @@ export async function getCodeReferrals(
         referred_user_id: string;
         referred_username: string | null;
         referred_email: string | null;
-        last_activity: Date;
+        last_activity: Date | string;
         total_wagers: string;
         total_commission: string;
       }[]
@@ -739,7 +739,7 @@ export async function getCodeReferrals(
         referredUserId: r.referred_user_id,
         referredUsername: r.referred_username,
         referredEmail: r.referred_email,
-        lastActivityAt: r.last_activity.toISOString(),
+        lastActivityAt: new Date(r.last_activity).toISOString(),
         totalWagersUsd: toNumber(r.total_wagers),
         totalCommissionUsd: toNumber(r.total_commission),
       })),
@@ -807,7 +807,7 @@ export async function getRecentWagersOnCode(
         email: string | null;
         type: string;
         amount: string;
-        created_at: Date;
+        created_at: Date | string;
       }[]
     >(
       `WITH code_users AS (
@@ -846,7 +846,7 @@ export async function getRecentWagersOnCode(
         // amount is negative on the user's ledger (money leaving their
         // balance); display as a positive bet figure.
         amountUsd: Math.abs(toNumber(r.amount)),
-        createdAt: r.created_at.toISOString(),
+        createdAt: new Date(r.created_at).toISOString(),
       })),
     };
   } catch (err) {

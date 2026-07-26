@@ -40,9 +40,9 @@ type PersistedCreatorAlert = {
   dedupe_key: string;
   severity: string;
   metadata: unknown;
-  read_at: Date | null;
-  dismissed_at: Date | null;
-  created_at: Date;
+  read_at: Date | string | null;
+  dismissed_at: Date | string | null;
+  created_at: Date | string;
 };
 
 export type CreatorAlertMetadata = {
@@ -632,9 +632,11 @@ export async function getCreatorAlerts(): Promise<CreatorAlertsResult> {
           ? (usernames.get(row.target_user_id) ?? null)
           : null,
         metadata: derived?.metadata ?? parseMetadata(row.metadata),
-        readAt: row.read_at?.toISOString() ?? null,
-        dismissedAt: row.dismissed_at?.toISOString() ?? null,
-        createdAt: row.created_at.toISOString(),
+        readAt: row.read_at ? new Date(row.read_at).toISOString() : null,
+        dismissedAt: row.dismissed_at
+          ? new Date(row.dismissed_at).toISOString()
+          : null,
+        createdAt: new Date(row.created_at).toISOString(),
         isUnread: row.read_at == null,
       };
     })

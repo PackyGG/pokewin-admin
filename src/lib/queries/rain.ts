@@ -44,8 +44,8 @@ export async function getRains(params: {
     status: string;
     participant_count: number;
     winner_username: string | null;
-    starts_at: Date;
-    ends_at: Date;
+    starts_at: Date | string;
+    ends_at: Date | string;
   };
 
   // List view skips provably-fair columns (server/client seeds, result
@@ -103,8 +103,8 @@ export async function getRains(params: {
       status: r.status,
       participantCount: r.participant_count,
       winnerUsername: r.winner_username,
-      startsAt: r.starts_at.toISOString(),
-      endsAt: r.ends_at.toISOString(),
+      startsAt: new Date(r.starts_at).toISOString(),
+      endsAt: new Date(r.ends_at).toISOString(),
     })),
     total,
     page,
@@ -168,9 +168,9 @@ export async function getRainHeader(id: string): Promise<RainHeader | null> {
       tip_amount_usd: string;
       total_pool_usd: string;
       participant_count: number;
-      starts_at: Date;
-      ends_at: Date;
-      completed_at: Date | null;
+      starts_at: Date | string;
+      ends_at: Date | string;
+      completed_at: Date | string | null;
       winner_user_id: string | null;
       winner_username: string | null;
       tip_count: string;
@@ -200,9 +200,9 @@ export async function getRainHeader(id: string): Promise<RainHeader | null> {
     tipAmountUsd: toNumber(rain.tip_amount_usd),
     totalPoolUsd: toNumber(rain.total_pool_usd),
     participantCount: rain.participant_count,
-    startsAt: rain.starts_at.toISOString(),
-    endsAt: rain.ends_at.toISOString(),
-    completedAt: rain.completed_at?.toISOString() ?? null,
+    startsAt: new Date(rain.starts_at).toISOString(),
+    endsAt: new Date(rain.ends_at).toISOString(),
+    completedAt: rain.completed_at ? new Date(rain.completed_at).toISOString() : null,
     winnerUserId: rain.winner_user_id,
     winnerUsername: rain.winner_username,
     tipCount: Number(rain.tip_count),
@@ -226,7 +226,7 @@ export async function getRainTips(id: string): Promise<RainTipItem[]> {
       email: string | null;
       role: string | null;
       amount_usd: string;
-      created_at: Date;
+      created_at: Date | string;
     }[]>(
       `SELECT rt.id, rt.user_id, u.username, u.email,
               u.role::text AS role, rt.amount_usd::text AS amount_usd,
@@ -253,7 +253,7 @@ export async function getRainTips(id: string): Promise<RainTipItem[]> {
       username: t.username,
       amountUsd: toNumber(t.amount_usd),
       isTeamMember: isTeam,
-      createdAt: t.created_at.toISOString(),
+      createdAt: new Date(t.created_at).toISOString(),
     };
   });
 }
@@ -272,8 +272,8 @@ export async function getRainEntries(
       id: string;
       user_id: string;
       username: string | null;
-      turnstile_verified_at: Date;
-      created_at: Date;
+      turnstile_verified_at: Date | string;
+      created_at: Date | string;
     }[]>(
       `SELECT re.id, re.user_id, u.username,
               re.turnstile_verified_at, re.created_at
@@ -297,8 +297,8 @@ export async function getRainEntries(
       id: e.id,
       userId: e.user_id,
       username: e.username,
-      turnstileVerifiedAt: e.turnstile_verified_at.toISOString(),
-      createdAt: e.created_at.toISOString(),
+      turnstileVerifiedAt: new Date(e.turnstile_verified_at).toISOString(),
+      createdAt: new Date(e.created_at).toISOString(),
     })),
     total,
     page,

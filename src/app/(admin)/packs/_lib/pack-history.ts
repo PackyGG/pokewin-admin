@@ -234,7 +234,7 @@ const HISTORY_MAX_LIMIT = 200;
 function mapSnapshotRow(r: {
   id: string;
   pack_id: string;
-  captured_at: Date;
+  captured_at: Date | string;
   captured_by: string;
   action: string;
   price: { toString(): string };
@@ -246,7 +246,7 @@ function mapSnapshotRow(r: {
   return {
     id: r.id,
     packId: r.pack_id,
-    capturedAt: r.captured_at.toISOString(),
+    capturedAt: new Date(r.captured_at).toISOString(),
     capturedBy: r.captured_by,
     action: r.action,
     price: Number(r.price.toString()),

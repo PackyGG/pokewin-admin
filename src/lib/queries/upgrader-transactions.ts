@@ -354,7 +354,7 @@ async function computeUpgraderTransactions(
     image: string | null;
     bet_amount: string;
     won_amount: string;
-    created_at: Date;
+    created_at: Date | string;
     ledger_tx_id: string | null;
     upgrader_game: unknown;
     result_metadata: unknown;
@@ -400,7 +400,7 @@ async function computeUpgraderTransactions(
       housePnl: betAmount - wonAmount,
       multiplier: isWin && betAmount > 0 ? wonAmount / betAmount : null,
       outcome: isWin ? "win" : "loss",
-      createdAt: r.created_at.toISOString(),
+      createdAt: new Date(r.created_at).toISOString(),
       ledgerTxId: r.ledger_tx_id,
       targetMultiplier: cfg.targetMultiplier,
       targetChance: cfg.targetChance,

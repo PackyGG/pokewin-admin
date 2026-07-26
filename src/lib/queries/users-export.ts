@@ -135,7 +135,7 @@ export async function exportUsers(
     country: string | null;
     country_code: string | null;
     total_deposited: string | null;
-    created_at: Date;
+    created_at: Date | string;
   }>(sql`
     SELECT
       u.email,
@@ -160,7 +160,7 @@ export async function exportUsers(
       countryCode: r.country_code,
       totalDepositedUsd:
         r.total_deposited != null ? Number(r.total_deposited) : 0,
-      createdAt: r.created_at.toISOString(),
+      createdAt: new Date(r.created_at).toISOString(),
     }));
 }
 

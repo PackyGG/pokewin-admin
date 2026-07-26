@@ -355,7 +355,7 @@ export async function getAffiliateLeaderboardClaims(
     user_id: string;
     position: number;
     prize_amount_usd: string;
-    claimed_at: Date;
+    claimed_at: Date | string;
     ledger_tx_id: string;
     username: string | null;
     email: string | null;
@@ -377,7 +377,7 @@ export async function getAffiliateLeaderboardClaims(
     email: r.email,
     position: r.position,
     prizeUsd: toNumber(r.prize_amount_usd),
-    claimedAt: r.claimed_at.toISOString(),
+    claimedAt: new Date(r.claimed_at).toISOString(),
     ledgerTxId: r.ledger_tx_id,
   }));
 }
@@ -468,12 +468,12 @@ async function getPositionReachedAtBatch(
   `;
 
   const reachedRows = await queryMainRows<
-    { user_id: string; reached_at: Date | null }[]
+    { user_id: string; reached_at: Date | string | null }[]
   >(query, ...sqlParams);
 
   const map = new Map<string, Date>();
   for (const row of reachedRows) {
-    if (row.reached_at) map.set(row.user_id, row.reached_at);
+    if (row.reached_at) map.set(row.user_id, new Date(row.reached_at));
   }
   return map;
 }

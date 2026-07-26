@@ -77,7 +77,7 @@ export async function getBattleDrilldown(
       borrow_percentage: string | null;
       sponsorship_percentage: string | null;
       pack_ids: string[];
-      created_at: Date;
+      created_at: Date | string;
     };
     type ParticipantRow = {
       id: string;
@@ -201,7 +201,7 @@ export async function getBattleDrilldown(
       winnerTeam,
       borrowPercentage: Number(battle.borrow_percentage ?? "0"),
       sponsorshipPercentage: Number(battle.sponsorship_percentage ?? "0"),
-      createdAt: battle.created_at.toISOString(),
+      createdAt: new Date(battle.created_at).toISOString(),
       packs: packs.map((p) => ({
         id: p.id,
         name: p.name,

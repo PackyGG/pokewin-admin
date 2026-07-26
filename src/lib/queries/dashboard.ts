@@ -1948,8 +1948,8 @@ export async function getActiveRain(): Promise<ActiveRainSummary> {
     base_amount_usd: string;
     tip_amount_usd: string;
     status: string;
-    starts_at: Date;
-    ends_at: Date;
+    starts_at: Date | string;
+    ends_at: Date | string;
   }[]>(
     db,
     `SELECT
@@ -1967,6 +1967,20 @@ export async function getActiveRain(): Promise<ActiveRainSummary> {
      LIMIT 1`,
   );
   if (!rain) return null;
+
+  // Raw node-postgres results normally decode timestamps as Date objects, but
+  // poolers/custom type parsers may preserve them as strings. Normalize at the
+  // query boundary so the optional header chip cannot throw on `.toISOString`
+  // and tear down an otherwise healthy admin shell.
+  const startsAt = new Date(rain.starts_at);
+  const endsAt = new Date(rain.ends_at);
+  if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) {
+    console.error("[dashboard.activeRain] Invalid PostgreSQL timestamp", {
+      rainId: rain.id,
+    });
+    return null;
+  }
+
   return {
     id: rain.id,
     participantCount: rain.participant_count,
@@ -1974,8 +1988,8 @@ export async function getActiveRain(): Promise<ActiveRainSummary> {
     baseAmountUsd: toNumber(rain.base_amount_usd),
     tipAmountUsd: toNumber(rain.tip_amount_usd),
     status: rain.status,
-    startsAt: rain.starts_at.toISOString(),
-    endsAt: rain.ends_at.toISOString(),
+    startsAt: startsAt.toISOString(),
+    endsAt: endsAt.toISOString(),
   };
 }
 

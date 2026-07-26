@@ -33,7 +33,7 @@ export async function getUserCreatorHistory(userId: string): Promise<{
     if (event) {
       return {
         everCreatorByAudit: true,
-        creatorSince: event.created_at.toISOString(),
+        creatorSince: new Date(event.created_at).toISOString(),
       };
     }
     return { everCreatorByAudit: false, creatorSince: null };
