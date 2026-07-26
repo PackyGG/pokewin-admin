@@ -138,7 +138,7 @@ export async function verify2FA(
     updatedCodes.splice(index, 1);
     await adminDrizzle.execute(sql`
       UPDATE admin_users
-      SET recovery_codes = ${updatedCodes}, updated_at = NOW()
+      SET recovery_codes = ${sql.param(updatedCodes)}, updated_at = NOW()
       WHERE id = ${adminUser.id}::uuid
     `);
   } else {

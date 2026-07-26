@@ -121,7 +121,7 @@ export async function createAdminUser(data: {
       )
       VALUES (
         ${data.email}, ${data.username}, ${passwordHash},
-        ${primary}::admin_role, ${pgArrayParam(roles)}::admin_role[], ${allowedPages},
+        ${primary}::admin_role, ${pgArrayParam(roles)}::admin_role[], ${sql.param(allowedPages)},
         ARRAY[]::text[], ARRAY[]::text[], ARRAY[]::text[]
       )
       RETURNING id::text
@@ -370,7 +370,7 @@ export async function setAdminRoles(
     UPDATE admin_users
     SET role = ${primary}::admin_role,
         roles = ${pgArrayParam(roles)}::admin_role[],
-        allowed_pages = ${mergedAllowed},
+        allowed_pages = ${sql.param(mergedAllowed)},
         updated_at = NOW()
     WHERE id = ${adminUserId}::uuid
   `);

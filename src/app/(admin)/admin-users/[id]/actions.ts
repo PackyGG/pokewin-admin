@@ -133,9 +133,9 @@ export async function updateUserPermissions(
 
   await adminDrizzle.execute(sql`
     UPDATE admin_users
-    SET permission_grants = ${grants},
-        permission_revokes = ${revokes},
-        allowed_pages = ${allowedPages},
+    SET permission_grants = ${sql.param(grants)},
+        permission_revokes = ${sql.param(revokes)},
+        allowed_pages = ${sql.param(allowedPages)},
         updated_at = NOW()
     WHERE id = ${userId}::uuid
   `);

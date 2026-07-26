@@ -2041,7 +2041,7 @@ export async function toggleFeatureLock(
   const atColumn = sql.identifier(`${byField}_at`);
   await db.execute(sql`
     INSERT INTO user_feature_locks (id, user_id, ${featureColumn}, ${atColumn})
-    VALUES (${crypto.randomUUID()}, ${userId}, ${value}, ${locked ? new Date() : null})
+    VALUES (${crypto.randomUUID()}, ${userId}, ${sql.param(value)}, ${locked ? new Date() : null})
     ON CONFLICT (user_id) DO UPDATE SET
       ${featureColumn} = EXCLUDED.${featureColumn},
       ${atColumn} = EXCLUDED.${atColumn}

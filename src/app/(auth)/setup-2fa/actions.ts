@@ -128,7 +128,7 @@ export async function confirmSetup(
     await adminDrizzle.execute(sql`
       UPDATE admin_users
       SET totp_secret = ${secret}, totp_enabled = true,
-          recovery_codes = ${hashedCodes}, updated_at = NOW()
+          recovery_codes = ${sql.param(hashedCodes)}, updated_at = NOW()
       WHERE id = ${pending.adminUserId}::uuid
     `);
 

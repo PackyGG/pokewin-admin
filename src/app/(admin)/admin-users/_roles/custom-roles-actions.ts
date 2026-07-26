@@ -209,7 +209,7 @@ export async function createRole(
   try {
     const role = (await adminDrizzle.execute<{ id: string }>(sql`
       INSERT INTO admin_roles (name, description, is_system, capabilities)
-      VALUES (${name}, ${description ?? null}, false, ${capabilities})
+      VALUES (${name}, ${description ?? null}, false, ${sql.param(capabilities)})
       RETURNING id::text
     `)).rows[0]!;
 
@@ -340,7 +340,7 @@ export async function updateRole(
       await tx.execute(sql`
         UPDATE admin_roles
         SET name = ${name}, description = ${description ?? null},
-            capabilities = ${capabilities},
+            capabilities = ${sql.param(capabilities)},
             landing_route = CASE WHEN ${landingRouteToWrite !== undefined}
               THEN ${landingRouteToWrite ?? null} ELSE landing_route END,
             updated_at = NOW()
@@ -506,7 +506,7 @@ export async function assignRoleToAdminUser(
   await adminDrizzle.execute(sql`
     UPDATE admin_users
     SET role_id = ${roleId}::uuid,
-        allowed_pages = ${newAllowed},
+        allowed_pages = ${sql.param(newAllowed)},
         updated_at = NOW()
     WHERE id = ${adminUserId}::uuid
   `);
@@ -584,7 +584,7 @@ export async function duplicateRole(
         balance_limit_daily, balance_limit_weekly, balance_limit_monthly,
         issuance_limit_daily, issuance_limit_weekly, issuance_limit_monthly
       ) VALUES (
-        ${name}, ${source.description}, false, ${capabilities},
+        ${name}, ${source.description}, false, ${sql.param(capabilities)},
         ${source.balance_limit_daily}::numeric,
         ${source.balance_limit_weekly}::numeric,
         ${source.balance_limit_monthly}::numeric,

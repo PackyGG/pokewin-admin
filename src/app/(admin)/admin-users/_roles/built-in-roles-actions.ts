@@ -227,7 +227,7 @@ export async function updateBuiltInRole(
     await adminDrizzle.transaction(async (tx) => {
       await tx.execute(sql`
         UPDATE admin_roles
-        SET capabilities = ${capabilities},
+        SET capabilities = ${sql.param(capabilities)},
             description = CASE WHEN ${description !== undefined} THEN ${description ?? null} ELSE description END,
             name = CASE WHEN ${name !== undefined} THEN ${name ?? ""} ELSE name END,
             landing_route = CASE WHEN ${landingRouteToWrite !== undefined} THEN ${landingRouteToWrite ?? null} ELSE landing_route END,
