@@ -1,5 +1,7 @@
 import { Suspense } from "react";
+import Link from "next/link";
 import {
+  Eye,
   GraduationCap,
   ShieldCheck,
   Trophy,
@@ -247,6 +249,13 @@ async function Board({
                       ? formatRelative(member.profile.lastSeenAt)
                       : "—"}
                   </span>
+                  <Link
+                    href={`/staff/pov/${member.profile.adminUserId}`}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border/70 px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+                  >
+                    <Eye className="size-3.5" />
+                    POV
+                  </Link>
                 </span>
               </li>
             );

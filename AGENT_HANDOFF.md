@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-26 support POV preview:** admins/owners can open Staff Hub → Support POV, select any support-profile user, and inspect a read-only replica of that person's staff profile (KPIs, level progress, public profile fields, and point history). Each Staff Members row also links directly to its POV. The preview is manager-gated, rejects non-support targets, and exposes no editing or notification-destination controls.
+
 - **2026-07-26 PostgreSQL timestamp hotfix:** production deployment `dpl_C5sJKsffgjF2LZDT93iepqnQ4YPB` exposed raw Drizzle timestamp strings where migrated code expected `Date` objects. Vercel confirmed `/admin-users` digest `2875875881` (`last_login.toISOString`) plus the isolated header-rain failure (`starts_at.toISOString`). Both exact failures and every audited raw-row Date-method path now normalize `Date | string` before use. TypeScript, full ESLint, and the Next 15.5.22 production build pass.
 
 - **2026-07-26 antifraud deposit split:** signup monitoring no longer ingests rain joins/wins. Completed ledger deposits are now classified as `fiat_deposit` only when linked through `fiat_deposit_intents.completed_ledger_id`, or `crypto_deposit` only with crypto settlement evidence; anything else fails closed as `deposit_unclassified`. Fiat/unclassified adds 20 risk points for an already-suspicious monitored signup, while irreversible crypto reduces risk by 20. The replica-only index list now covers the fiat ledger join, and migration `002_split_deposit_risk.sql` upgrades existing behavior-flow blockers.

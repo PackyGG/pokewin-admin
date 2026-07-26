@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import {
   BadgeCheck,
+  Eye,
   GraduationCap,
   Trophy,
   UserCircle,
@@ -108,6 +109,12 @@ async function StaffCards({
             icon={Users}
             title="Staff members"
             body="Team leaderboard and manual point awards"
+          />
+          <StaffLink
+            href="/staff/pov"
+            icon={Eye}
+            title="Support POV"
+            body="Preview the staff profile as a support user sees it"
           />
           <StaffLink
             href="/staff/points"
