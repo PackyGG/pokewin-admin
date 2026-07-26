@@ -137,6 +137,7 @@ export const APP_HOSTS: readonly AppHostConfig[] = [
     host: `fraud.${ROOT_DOMAIN}`,
     basePath: "/antifraud",
     segmentRoutes: [
+      "api",
       "monitor",
       "points",
       "reviews",
@@ -182,7 +183,7 @@ const PASSTHROUGH_PREFIXES = [
   "/monitoring",
 ];
 
-const PASSTHROUGH_EXACT = new Set(["/api", "/favicon.ico", "/robots.txt"]);
+const PASSTHROUGH_EXACT = new Set(["/favicon.ico", "/robots.txt"]);
 
 /** Strip the port and normalize, so `fraud.localhost:3000` matches cleanly. */
 export function normalizeHost(host: string | null | undefined): string {
