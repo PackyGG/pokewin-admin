@@ -5,7 +5,6 @@ import {
   sessionHasRole,
 } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
-import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabilities";
 import { isUuid } from "@/lib/utils/ids";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { PackDetailView } from "../pack-detail-view";
@@ -25,8 +24,6 @@ export default async function PackDetailPage({
   if (!isUuid(id)) notFound();
 
   const sp = await searchParams;
-
-  await ensurePackCreatorCapabilities();
 
   const isAdmin = session.role === "admin";
   let canToggle = isAdmin;

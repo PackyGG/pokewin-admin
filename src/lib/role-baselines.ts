@@ -8,8 +8,8 @@
  * `ROLE_BASELINES`. The replacement is BEHAVIOR-PRESERVING for the runtime:
  *
  *   - `computeAllowedPagesForRoles(roles)` keeps its exact signature and,
- *     for the only roles with live holders (`support` → 16 tokens,
- *     `pack_creator` → 24 tokens), returns the SAME set the copy-logic
+ *     for the only roles with live holders (`support` → 15 tokens,
+ *     `pack_creator` → 23 tokens), returns the SAME set the copy-logic
  *     produced. `createAdminUser`'s seeded `allowed_pages` is therefore
  *     unchanged for those roles.
  *
@@ -40,13 +40,9 @@ import type { RoleBaseline, PermissionToken } from "@/lib/permissions/types";
 export type BaselineMap = Partial<Record<AdminRole, PermissionToken[]>>;
 
 /**
- * The full out-of-the-box permission set for `pack_creator`, inlined here as
- * the canonical code baseline. It is byte-equal (as a SET) to
- * `PACK_CREATOR_DEFAULT_PAGES` in
- * `src/lib/pack-creator/ensure-capabilities.ts` — that module is `server-only`
- * (it imports the admin database), so the tokens are duplicated here verbatim to keep
- * THIS module DB-free. The live parity harness proves the two stay in
- * lock-step (Skailer reconciles to exactly this set).
+ * The full out-of-the-box permission set for `pack_creator`. This is the
+ * canonical DB-free source used for new-user defaults, write-time
+ * materialization, and the sticky role contract.
  */
 const PACK_CREATOR_BASELINE_TOKENS: readonly PermissionToken[] = [
   // Pages
@@ -106,10 +102,9 @@ const SUPPORT_BASELINE_TOKENS: readonly PermissionToken[] = [
 ];
 
 /**
- * The sticky subset of the support baseline — the tokens
- * `ensureSupportBaseline` re-grants on every `/users` visit
- * (src/lib/support-baseline.ts). Carried for documentation + Phase C; not
- * acted on in Phase A.
+ * The sticky subset of the support baseline. The materializer always restores
+ * these tokens after applying per-user revokes, so page rendering never needs
+ * to mutate the ADMIN database.
  */
 const SUPPORT_STICKY_TOKENS: readonly PermissionToken[] = ["/users", "/dashboard"];
 
@@ -165,8 +160,7 @@ export const ROLE_BASELINES: Record<AdminRole, RoleBaseline> = {
     tokens: [...PACK_CREATOR_BASELINE_TOKENS],
     locked: true,
     bypass: false,
-    // The whole pack_creator set is re-granted by
-    // ensurePackCreatorCapabilities on every /packs visit.
+    // The whole pack_creator set is guaranteed by the materializer.
     stickyTokens: [...PACK_CREATOR_BASELINE_TOKENS],
   },
   creator_manager: {
@@ -209,6 +203,20 @@ export function baselineTokensFor(
 }
 
 /**
+ * The code-defined tokens that cannot be revoked while a user holds `role`.
+ * These deliberately do not come from the editable DB-backed baseline map:
+ * sticky tokens are an authorization invariant, not editable role metadata.
+ */
+export function stickyTokensFor(
+  role: AdminRole | string,
+): PermissionToken[] {
+  const baseline = (ROLE_BASELINES as Record<string, RoleBaseline | undefined>)[
+    role
+  ];
+  return baseline ? [...baseline.stickyTokens] : [];
+}
+
+/**
  * Compute the seed `allowed_pages` for a NEW admin user holding `roles` —
  * the UNION of each role's code baseline.
  *
@@ -216,10 +224,10 @@ export function baselineTokensFor(
  * preset off an existing user of each role, falling back to a fixed baseline
  * only when none existed. For the roles that have live holders this returns
  * the SAME set:
- *   - support      → the 16-token SUPPORT baseline (== every live support
+ *   - support      → the 15-token SUPPORT baseline (== every live support
  *                    user's array, which the copy-logic read off them),
- *   - pack_creator → the 24-token PACK_CREATOR baseline (== Skailer's array
- *                    == PACK_CREATOR_DEFAULT_PAGES the copy-logic read).
+ *   - pack_creator → the canonical PACK_CREATOR baseline (== Skailer's array
+ *                    the copy-logic read).
  * `createAdminUser` therefore seeds an IDENTICAL `allowed_pages` for new
  * support / pack_creator users, and (as before) `[]` when `admin` is among
  * the roles.

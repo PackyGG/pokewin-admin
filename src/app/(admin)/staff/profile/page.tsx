@@ -22,7 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { formatDateTime, formatNumber, formatRelative } from "@/lib/utils/format";
 import {
-  ensureStaffProfile,
+  getStaffProfile,
   listStaffPointEvents,
 } from "@/lib/staff/profile";
 import { levelProgress } from "@/lib/staff/levels";
@@ -95,7 +95,7 @@ async function IdentitySection({
 }) {
   const [{ data: profile }, { data: events }, identity] = await Promise.all([
     safeQuery(
-      () => ensureStaffProfile(adminUserId),
+      () => getStaffProfile(adminUserId),
       null,
       "antifraud.profile-self",
       QUERY_TIMEOUT_MS,

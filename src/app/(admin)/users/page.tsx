@@ -20,7 +20,6 @@ import {
 import { getUsersPageGates } from "./_lib/admin-gates";
 import { BulkBanButton } from "./bulk-ban-button";
 import { BulkUnbanButton } from "./bulk-unban-button";
-import { ensureSupportBaseline } from "@/lib/support-baseline";
 import { UsersDataTable } from "./data-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
@@ -76,12 +75,6 @@ export default async function UsersPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  // Self-heal: ensure every support user has /users in their
-  // allowed_pages before the gate runs. Without this, an admin who
-  // saves /settings/roles → Support with /users accidentally unchecked
-  // can silently lock the whole support team out of the page. Runs
-  // once per server process; see src/lib/support-baseline.ts.
-  await ensureSupportBaseline();
   const session = await requirePageAccess("/users");
   // Validate + clamp the raw searchParams through Zod BEFORE any value
   // reaches the query. A malformed page/perPage (e.g. ?page=-5 →

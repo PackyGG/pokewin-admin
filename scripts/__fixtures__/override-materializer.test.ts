@@ -68,13 +68,49 @@ test("a revoke removes a baseline token (revoke wins)", () => {
     role: "support",
     roles: ["support"],
     customRoleTokens: [],
-    override: { grants: [], revokes: ["/users"] },
+    override: { grants: [], revokes: ["/chat"] },
   });
-  assert.ok(!eff.includes("/users"), "revoked /users absent");
+  assert.ok(!eff.includes("/chat"), "revoked /chat absent");
   assert.ok(
-    setEq(eff, SUPPORT.filter((t) => t !== "/users")),
-    "baseline \\ {/users}",
+    setEq(eff, SUPPORT.filter((t) => t !== "/chat")),
+    "baseline \\ {/chat}",
   );
+});
+
+test("sticky role tokens survive explicit revokes without a page-load write", () => {
+  const support = computeEffectivePermissions({
+    role: "support",
+    roles: ["support"],
+    customRoleTokens: [],
+    override: { grants: [], revokes: ["/users", "/dashboard"] },
+  });
+  assert.ok(support.includes("/users"), "support keeps /users");
+  assert.ok(support.includes("/dashboard"), "support keeps /dashboard");
+
+  const packCreator = computeEffectivePermissions({
+    role: "pack_creator",
+    roles: ["pack_creator"],
+    customRoleTokens: [],
+    override: {
+      grants: [],
+      revokes: [...ROLE_BASELINES.pack_creator.tokens],
+    },
+  });
+  assert.ok(
+    setEq(packCreator, ROLE_BASELINES.pack_creator.tokens),
+    "pack_creator keeps its full sticky contract",
+  );
+});
+
+test("sticky invariants survive a stale editable baseline", () => {
+  const eff = computeEffectivePermissions({
+    role: "support",
+    roles: ["support"],
+    customRoleTokens: [],
+    override: { grants: [], revokes: ["/users", "/dashboard"] },
+    baselines: { support: ["/chat"] },
+  });
+  assert.ok(setEq(eff, ["/chat", "/users", "/dashboard"]));
 });
 
 // ── 4. Revoke beats a same-token grant (order: grants then revokes) ──────────
@@ -252,12 +288,12 @@ test("materializeForOverride applies the editor's explicit override", () => {
   };
   const out = materializeForOverride(state, {
     grants: ["/packs"],
-    revokes: ["/users"],
+    revokes: ["/chat"],
   });
   assert.ok(out.includes("/packs"), "explicit grant applied");
-  assert.ok(!out.includes("/users"), "explicit revoke applied");
+  assert.ok(!out.includes("/chat"), "explicit revoke applied");
   assert.ok(
-    setEq(out, [...SUPPORT.filter((t) => t !== "/users"), "/packs"]),
+    setEq(out, [...SUPPORT.filter((t) => t !== "/chat"), "/packs"]),
     "baseline ∪ grants \\ revokes",
   );
 });

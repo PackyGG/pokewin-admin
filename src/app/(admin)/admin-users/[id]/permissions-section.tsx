@@ -323,7 +323,7 @@ function OverrideEditor({ detail }: { detail: AdminUserDetail }) {
             chips={revokes}
             footnote={
               revokesHaveSticky
-                ? "Tokens marked sticky are re-granted on the role's landing page even after a revoke (self-heal). To truly remove one, change the user's role."
+                ? "Tokens marked sticky are guaranteed by the role and cannot be revoked. To remove one, change the user's role."
                 : undefined
             }
           />

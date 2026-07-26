@@ -17,7 +17,10 @@
  */
 
 import { getEffectiveRoles } from "@/lib/admin-roles";
-import { baselineTokensFor } from "@/lib/role-baselines";
+import {
+  baselineTokensFor,
+  stickyTokensFor,
+} from "@/lib/role-baselines";
 import { sanitizePermissionKeys } from "@/app/(admin)/settings/roles/permissions-utils";
 import type {
   PermissionToken,
@@ -31,13 +34,15 @@ import type {
  *       ⋃ over r in roles(user) of BASELINE[r]   // locked built-ins
  *     ∪ user.customRoleTokens                    // custom-role capabilities
  *     ∪ user.override.grants                     // explicit additive grants
- *     \ user.override.revokes )                  // revokes win
+ *     \ user.override.revokes                    // ordinary revokes win
+ *     ∪ sticky(role) )                           // role invariants win last
  *
  * - `admin` anywhere in the effective role set → returns `[]` (total bypass),
  *   identical to the `admin`-among-roles branch in `dal.ts`'s
  *   `getUserPermissions`. The gate treats `[]` from an admin as full access.
- * - Order matters: grants are added, then revokes are removed last, so a
- *   revoke beats a baseline or grant for the same token.
+ * - Order matters: grants are added, then revokes are removed. Code-defined
+ *   sticky tokens are restored last, preserving the former self-heal behavior
+ *   without an ADMIN DB write during page rendering.
  * - `sanitizePermissionKeys` is value-token-aware (see permissions-utils.ts),
  *   so it preserves recognized value tokens like `__balance_limit_daily:10`
  *   while still dropping genuinely-unknown entries and de-duplicating.
@@ -65,6 +70,9 @@ export function computeEffectivePermissions(
   for (const token of input.customRoleTokens) set.add(token);
   for (const token of input.override.grants) set.add(token);
   for (const token of input.override.revokes) set.delete(token);
+  for (const role of roles) {
+    for (const token of stickyTokensFor(role)) set.add(token);
+  }
 
   return sanitizePermissionKeys([...set]);
 }

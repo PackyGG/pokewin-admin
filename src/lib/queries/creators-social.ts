@@ -7,7 +7,8 @@ const STALE_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
 
 /**
  * Refresh social stats for a creator if stale (>1 hour since last fetch).
- * Called on page load — non-blocking, fires and forgets.
+ * Scheduled from `next/server`'s `after()` so the refresh runs after the
+ * response and can never fail a Server Component render.
  */
 export async function refreshStaleSocials(userId: string): Promise<void> {
   const socials = await adminDrizzle.select().from(creator_socials)

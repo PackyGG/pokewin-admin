@@ -12,7 +12,6 @@ import {
 import type { SessionPayload } from "@/lib/session";
 import { pageAccessGranted } from "@/lib/admin-pages";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
-import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabilities";
 import { CreatePackButton } from "./create-pack-button";
 import { RepriceAllPacksButton } from "./reprice-all-packs";
 import { isRepriceOwner } from "@/lib/reprice-access";
@@ -41,15 +40,11 @@ type CatalogCaps = {
 
 /**
  * Resolve the Catalog tab's pack-creator capabilities — lifted verbatim from
- * the old standalone /packs page. Runs the idempotent runtime back-fill first
- * (no-op after the first run per process) so a freshly-granted capability
- * appears in this same request's permission read. Real admins always pass;
- * non-admins read their effective `allowed_pages` via a safeQuery so an
- * Admin-DB blip degrades to "no capabilities" rather than crashing the page.
+ * the old standalone /packs page. Real admins always pass; non-admins read
+ * their effective `allowed_pages` via a safeQuery so an Admin-DB blip degrades
+ * to "no capabilities" rather than crashing the page.
  */
 async function resolveCatalogCaps(session: SessionPayload): Promise<CatalogCaps> {
-  await ensurePackCreatorCapabilities();
-
   const isAdmin = session.role === "admin";
   if (isAdmin) {
     return {

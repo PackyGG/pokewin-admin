@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,8 @@ import ts from "typescript";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const RAW_QUERY_CALLEES = new Set(["execute", "queryRows", "queryMainRows"]);
-const TIMESTAMP_FIELD = /(?:^|_)(?:at|date|time|timestamp)$|^(?:date|bucket|startDate|endDate)$/i;
+const TIMESTAMP_FIELD =
+  /(?:^|_)(?:at|date|time|timestamp|start|end|after|before)$|(?:At|Date|Time|Timestamp|Start|End|After|Before)$|^(?:date|bucket)$/;
 
 type Violation = {
   file: string;
@@ -23,7 +24,7 @@ function trackedSourceFiles(): string[] {
     encoding: "utf8",
   })
     .split(/\r?\n/)
-    .filter(Boolean);
+    .filter((file) => file && existsSync(path.join(root, file)));
 }
 
 function calleeName(node: ts.CallExpression): string | null {

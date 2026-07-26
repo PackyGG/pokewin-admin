@@ -61,7 +61,7 @@ async function computeActiveSubscribers(
         AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
         ${dateFilter}
     `),
-    queryRows<{ week_start: Date; active_users: string }[]>(db, sql`
+    queryRows<{ week_start: Date | string; active_users: string }[]>(db, sql`
       SELECT
         DATE_TRUNC('week', rc.claimed_at)::date AS week_start,
         COUNT(DISTINCT rc.user_id)::text AS active_users
@@ -89,7 +89,7 @@ async function computeActiveSubscribers(
   const cohortFirstFilter = daysAgoFilter("first_claim_at", days);
   const cohortRows = await queryRows<
     {
-      cohort_week: Date;
+      cohort_week: Date | string;
       week_offset: number;
       active_count: string;
       cohort_size: string;

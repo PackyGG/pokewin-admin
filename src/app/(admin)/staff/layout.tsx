@@ -1,5 +1,5 @@
 import { canUseStaffProfile, requireStaffPage } from "@/lib/staff/access";
-import { ensureStaffProfile } from "@/lib/staff/profile";
+import { StaffPresence } from "./_components/staff-presence";
 
 export default async function StaffLayout({
   children,
@@ -7,8 +7,10 @@ export default async function StaffLayout({
   children: React.ReactNode;
 }) {
   const session = await requireStaffPage();
-  if (canUseStaffProfile(session)) {
-    await ensureStaffProfile(session.userId);
-  }
-  return children;
+  return (
+    <>
+      {canUseStaffProfile(session) && <StaffPresence />}
+      {children}
+    </>
+  );
 }

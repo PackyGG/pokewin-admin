@@ -125,21 +125,22 @@ test("editing a built-in role: a manual revoke still wins against the new baseli
   const newSupport = [...SUPPORT, "/packs"];
   const newBaselines: BaselineMap = { support: newSupport };
 
-  // Support user who manually revoked /users (a baseline page), empty override
+  // Support user who manually revoked /withdrawals (a non-sticky baseline
+  // page), empty override
   // columns → revoke encoded as the gap (baseline \ allowed).
   const state: PermissionStateCore = {
     role: "support",
     roles: ["support"],
     customRoleTokens: [],
-    allowedPages: SUPPORT.filter((t) => t !== "/users"),
+    allowedPages: SUPPORT.filter((t) => t !== "/withdrawals"),
     override: { grants: [], revokes: [] },
   };
 
   const out = rematerializeForBuiltInEdit(state, oldBaselines, newBaselines);
-  // Expected: NEW baseline with /users still revoked.
-  const expected = newSupport.filter((t) => t !== "/users");
+  // Expected: NEW baseline with /withdrawals still revoked.
+  const expected = newSupport.filter((t) => t !== "/withdrawals");
   assert.ok(setEq(out, expected), "newBaseline \\ {revoke}");
-  assert.ok(!out.includes("/users"), "manual revoke survives the edit");
+  assert.ok(!out.includes("/withdrawals"), "manual revoke survives the edit");
   assert.ok(out.includes("/packs"), "new baseline addition still applied");
 });
 

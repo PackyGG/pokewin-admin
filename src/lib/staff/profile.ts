@@ -10,10 +10,11 @@ import { loadAdminIdentities, type AdminIdentity } from "./identities";
 /**
  * The staff account layer — profiles, the points ledger, and the derived level.
  *
- * A staff profile is created lazily: the first time someone opens the Staff
- * hub, `ensureStaffProfile` writes their row. That keeps the members
- * board honest (it lists people who actually use the workspace, not every
- * admin_user that ever existed) and means no backfill was needed to ship this.
+ * A staff profile is created lazily by a post-render presence action the first
+ * time someone opens the Staff hub. That keeps the members board honest (it
+ * lists people who actually use the workspace, not every admin_user that ever
+ * existed) without mutating the ADMIN database during a Server Component
+ * render.
  *
  * POINTS DISCIPLINE — `staff_point_events` is the immutable source of truth,
  * exactly like the game ledger: nothing updates or deletes an event, and a
@@ -67,14 +68,15 @@ function toProfile(row: {
 }
 
 /**
- * Read the caller's staff profile, creating it on first sight and stamping
- * `last_seen_at`. Called once per workspace layout render.
+ * Create the caller's staff profile on first sight and stamp `last_seen_at`.
+ * This is a write helper for the authenticated presence Server Action; page
+ * and layout Server Components must use `getStaffProfile` instead.
  *
  * Returns `null` only when the tables aren't provisioned on this deployment —
  * the workspace then renders in a degraded but working state rather than
  * white-screening.
  */
-export async function ensureStaffProfile(
+export async function recordStaffPresence(
   adminUserId: string,
 ): Promise<StaffProfile | null> {
   try {
@@ -90,7 +92,7 @@ export async function ensureStaffProfile(
     return row ? toProfile({ ...row, last_seen_at: row.last_seen_at ? new Date(row.last_seen_at) : null, created_at: new Date(row.created_at) }) : null;
   } catch (err) {
     if (!isMissingRelationError(err)) {
-      console.error("[antifraud] ensureStaffProfile failed:", err);
+      console.error("[staff] recordStaffPresence failed:", err);
     }
     return null;
   }

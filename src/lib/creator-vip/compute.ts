@@ -11,6 +11,7 @@ import {
 } from "@/lib/db-schema/admin/schema";
 import { user as mainUsers } from "@/lib/db-schema/main/schema";
 import { getProdDrizzleDb } from "@/lib/db";
+import { postgresTimestamp } from "@/lib/postgres-runtime";
 import { toNumber } from "@/lib/utils/decimal";
 
 import {
@@ -314,7 +315,7 @@ async function wagerPosition(
   const since = utcNaive(accrualStart);
 
   const result = await getProdDrizzleDb().execute<{
-    run_start: Date;
+    run_start: Date | string;
     current: string;
     lifetime: string;
   }>(sql`
@@ -350,7 +351,10 @@ async function wagerPosition(
   const row = result.rows[0];
   if (!row) return fallback;
   return {
-    runStart: row.run_start ?? accrualStart,
+    runStart:
+      row.run_start == null
+        ? accrualStart
+        : postgresTimestamp(row.run_start, "creatorVip.run_start"),
     currentUsd: toNumber(row.current ?? 0),
     lifetimeUsd: toNumber(row.lifetime ?? 0),
   };

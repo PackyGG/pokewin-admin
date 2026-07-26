@@ -49,11 +49,10 @@ export type PermissionToken = string;
  *              entirely. Distinguishes "intentionally empty baseline because
  *              this role bypasses the gate" (admin) from "empty baseline
  *              because the role has no live holder yet" (marketing/creator/…).
- * - `stickyTokens` — tokens that a runtime self-heal re-grants on the role's
- *              landing page even if an admin strips them per-user (the
- *              existing `ensureSupportBaseline` / `ensurePackCreatorCapabilities`
- *              behavior). Carried here for documentation + Phase C; Phase A
- *              does not act on it. Always a subset of `tokens`.
+ * - `stickyTokens` — tokens the canonical materializer always re-adds after
+ *              per-user revokes. This preserves the role invariant without
+ *              database writes during page rendering. Always a subset of
+ *              `tokens`.
  * - `limits`  — OPTIONAL typed per-role limit slots (RoleV2 P0). All-null in
  *              the behavior-neutral foundation phase; mirrors the six
  *              `*_limit_*` columns on the `admin_roles` system row. Omitted /

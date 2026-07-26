@@ -33,12 +33,9 @@ import {
 import { HARNESS_ROLE_BASELINES } from "../permission-parity-harness.mjs";
 import { getEffectiveRoles, ALL_ADMIN_ROLES } from "@/lib/admin-roles";
 
-// NOTE: the lock-step between ROLE_BASELINES.pack_creator and the runtime
-// PACK_CREATOR_DEFAULT_PAGES (src/lib/pack-creator/ensure-capabilities.ts) is
-// NOT asserted here — that module is `server-only` (imports adminDb) and can't
-// be loaded in a plain node:test/tsx context. The link is enforced instead by
-// the LIVE harness (Skailer's parity breaks if the pack_creator baseline ever
-// diverges from his stored 24-token array) and by tsc.
+// The pack_creator token set now has one DB-free source:
+// ROLE_BASELINES.pack_creator. The live harness additionally verifies that
+// stored user permissions reconcile with that canonical set.
 
 type FixtureUser = {
   username: string;

@@ -828,7 +828,7 @@ export async function getRaceStandingsClaimWindow(params: {
   const nextDay = new Date(periodStartDate.getTime() + 86_400_000);
 
   const [snapshotRows, racePeriodRows, expiryResult] = await Promise.all([
-    queryMainRows<{ period_end: Date }[]>(
+    queryMainRows<{ period_end: Date | string }[]>(
       `SELECT period_end
          FROM race_leaderboard_snapshots
         WHERE race_type::text = $1 AND period_start = $2
@@ -866,7 +866,7 @@ export async function getRaceStandingsClaimWindow(params: {
       : null);
 
   return computeRaceClaimWindow({
-    periodEndIso: periodEnd?.toISOString() ?? null,
+    periodEndIso: periodEnd ? new Date(periodEnd).toISOString() : null,
     raceExpiryDays: expiryResult,
     claimsFrozen: racePeriod?.claims_frozen ?? false,
   });

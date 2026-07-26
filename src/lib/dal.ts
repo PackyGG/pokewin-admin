@@ -85,7 +85,7 @@ export const verifySession = cache(async (): Promise<SessionPayload> => {
     role: string;
     roles?: readonly string[] | null;
   } | null = null;
-  let sessionsValidAfter: Date | null = null;
+  let sessionsValidAfter: Date | string | null = null;
   let totpEnabled = true; // safe default: never bounce on a read failure
   // OWNER / ULTRA-ADMIN flag, read DB-fresh (NOT from the JWT) so a promote /
   // demote takes effect on the very next request — exactly like the role
@@ -97,7 +97,7 @@ export const verifySession = cache(async (): Promise<SessionPayload> => {
   try {
     const row = (await adminDrizzle.execute<{
       is_active: boolean; role: string; roles: string[];
-      sessions_valid_after: Date | null; totp_enabled: boolean; is_owner: boolean;
+      sessions_valid_after: Date | string | null; totp_enabled: boolean; is_owner: boolean;
     }>(sql`
       SELECT is_active, role::text AS role, roles::text[] AS roles,
              sessions_valid_after, totp_enabled, is_owner
@@ -134,7 +134,7 @@ export const verifySession = cache(async (): Promise<SessionPayload> => {
     // this path.
     try {
       const guardRow = (await adminDrizzle.execute<{
-        sessions_valid_after: Date | null; totp_enabled: boolean; is_owner: boolean;
+        sessions_valid_after: Date | string | null; totp_enabled: boolean; is_owner: boolean;
       }>(sql`
         SELECT sessions_valid_after, totp_enabled, is_owner
         FROM admin_users
@@ -240,7 +240,14 @@ export const getUserPermissions = cache(async (userId: string): Promise<string[]
   if (!user) return [];
   // `admin` among the user's effective roles = full access, no page list.
   if (getEffectiveRoles(user.role, user.roles).includes("admin")) return [];
-  return user.allowed_pages;
+  // Raw PostgreSQL results are an external runtime boundary. Older ADMIN
+  // schemas allowed this column to be NULL, and a stale row must not turn
+  // every permission gate into `null.includes(...)` / `null.filter(...)`.
+  return Array.isArray(user.allowed_pages)
+    ? user.allowed_pages.filter(
+        (page): page is string => typeof page === "string",
+      )
+    : [];
 });
 
 export const requireAdmin = cache(async (): Promise<SessionPayload> => {

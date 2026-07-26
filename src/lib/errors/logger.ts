@@ -119,13 +119,21 @@ export function logQueryFailure(
   // event with only bounded diagnostic tags. Never attach the raw throwable,
   // SQL, parameters, request data, or user identifiers.
   if (process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN) {
-    Sentry.withScope((scope) => {
-      scope.setTag("area", area.slice(0, 120));
-      scope.setTag("db.engine", details.engine);
-      scope.setTag("failure.kind", details.kind);
-      scope.setExtra("duration_ms", Math.max(0, Math.round(details.durationMs)));
-      scope.setFingerprint(["postgres-query-failure", area, details.kind]);
-      Sentry.captureMessage("PostgreSQL query failed", "error");
-    });
+    try {
+      Sentry.withScope((scope) => {
+        scope.setTag("area", area.slice(0, 120));
+        scope.setTag("db.engine", details.engine);
+        scope.setTag("failure.kind", details.kind);
+        scope.setExtra("duration_ms", Math.max(0, Math.round(details.durationMs)));
+        scope.setFingerprint([
+          "postgres-query-failure",
+          area.slice(0, 120),
+          details.kind,
+        ]);
+        Sentry.captureMessage("PostgreSQL query failed", "error");
+      });
+    } catch {
+      // Monitoring must never turn a safely degraded query into a route crash.
+    }
   }
 }

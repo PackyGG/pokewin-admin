@@ -21,7 +21,6 @@ import { requirePageAccess, getUserPermissions } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { canEditBalanceAdjustments } from "@/lib/balance-adjustment-edit/motha-gate";
 import { isAdjustmentVisibilityOwner } from "@/lib/users/owner-adjustments-visibility";
-import { ensureSupportBaseline } from "@/lib/support-baseline";
 import { UserTagsPanel } from "./user-tags-panel";
 import { AutoRefresh } from "../../dashboard/auto-refresh";
 import { UserViewModern } from "./user-view-modern";
@@ -161,11 +160,6 @@ export default async function UserDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  // Self-heal support's /users baseline before the gate runs — same
-  // protection as /users/page.tsx so a deep-link into /users/[id]
-  // also re-grants if the bulk role editor wiped it. See
-  // src/lib/support-baseline.ts.
-  await ensureSupportBaseline();
   const session = await requirePageAccess("/users");
   const { id: routeKey } = await params;
   // Route-key → user id resolution is the ONLY thing awaited before the

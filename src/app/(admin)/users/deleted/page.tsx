@@ -1,4 +1,5 @@
 import { pgArrayParam } from "@/lib/drizzle-array-param";
+import { after } from "next/server";
 import { Trash2, Archive, Clock, RefreshCw } from "lucide-react";
 import { adminDrizzle, sql } from "@/lib/drizzle";
 import { requirePageAccess } from "@/lib/dal";
@@ -21,19 +22,17 @@ const SNAPSHOT_RETENTION_DAYS = 7;
 export default async function DeletedUsersPage() {
   await requirePageAccess("/users/deleted");
 
-  // Purge expired snapshots on read. Fire-and-forget — we don't need to
-  // wait for the deleteMany to finish before listing the live rows.
-  // The same query 100ms later would just skip them anyway because of
-  // the < new Date() filter on the listing query below.
-  void adminDrizzle
-    .execute(sql`DELETE FROM admin_deleted_users WHERE expires_at < NOW()`)
-    .catch((err) => {
-      console.error("[/users/deleted] expired-snapshot purge failed:", err);
-    });
+  // Purge expired snapshots after the response. The listing query excludes
+  // them independently, so cleanup never participates in page rendering.
+  after(() => {
+    void adminDrizzle
+      .execute(sql`DELETE FROM admin_deleted_users WHERE expires_at < NOW()`)
+      .catch((err) => {
+        console.error("[/users/deleted] expired-snapshot purge failed:", err);
+      });
+  });
 
-  // Listing query — newest deletions first. We intentionally read AFTER
-  // firing the purge so the page never shows a row that's actually
-  // expired (purge may still be running but the filter handles that).
+  // Listing query — newest non-expired deletions first.
   const snapshots = (
     await adminDrizzle.execute<{
       id: string;

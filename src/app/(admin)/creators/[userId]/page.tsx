@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
+import { after } from "next/server";
 import Link from "next/link";
 import {
   Activity,
@@ -94,8 +95,10 @@ export default async function CreatorDetailPage({
   const header = await getCreatorHeader(userId);
   if (!header) notFound();
 
-  // Non-blocking: socials cache refresh for header display.
-  refreshStaleSocials(userId).catch(() => {});
+  // Refresh stale social stats only after the response has finished. This
+  // keeps the ADMIN update out of Server Component rendering and ensures a
+  // provider or database failure cannot fail the page.
+  after(() => refreshStaleSocials(userId).catch(() => {}));
 
   // The KPI strip (top of page) and the acquisition + affiliate-payouts
   // section (bottom of page) both render off the SAME getCreatorDetail()

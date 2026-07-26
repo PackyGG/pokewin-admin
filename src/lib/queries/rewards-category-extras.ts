@@ -134,7 +134,7 @@ async function computeRaceExtras(
     queryMainRows<
       {
         race_type: string;
-        period_start: Date;
+        period_start: Date | string;
         total_pool: string;
         winner_count: string;
       }[]

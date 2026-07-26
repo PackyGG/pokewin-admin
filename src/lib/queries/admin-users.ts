@@ -169,10 +169,8 @@ export async function getAdminUserDetail(id: string) {
         ?.bypass === true,
   );
 
-  // Sticky tokens (re-granted by the runtime self-heals on the role's landing
-  // page even if revoked per-user) — surfaced so the editor can warn that a
-  // revoke "will re-grant on page load". Union the stickyTokens of every
-  // built-in role the user holds.
+  // Sticky tokens are restored by the canonical materializer after per-user
+  // revokes. Surface them so the editor can disable ineffective controls.
   const stickyTokens = [
     ...new Set(
       effRoles.flatMap(
@@ -225,7 +223,7 @@ export async function getAdminUserDetail(id: string) {
     customRoleTokens,
     // Whether the user bypasses the gate (admin) → editor shows a banner.
     isGateBypass,
-    // Tokens the runtime self-heals re-grant on page load even if revoked.
+    // Tokens the materializer guarantees even if an override revokes them.
     stickyTokens,
     createdAt: new Date(u.created_at).toISOString(),
     updatedAt: new Date(u.updated_at).toISOString(),

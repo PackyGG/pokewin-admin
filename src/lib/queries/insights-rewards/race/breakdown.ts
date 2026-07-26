@@ -63,7 +63,7 @@ async function computeBreakdown(
   const races = await queryRows<
     {
       race_type: string;
-      period_start: Date;
+      period_start: Date | string;
       prize_pool: string;
       winner_count: string;
       top_position: number;
