@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-26 antifraud signup route hotfix:** `signups` is registered as an Antifraud segment route, so `fraud.packydash.com/signups` rewrites to `/antifraud/signups` instead of being redirected to the apex dashboard and returning 404.
+
 - **2026-07-26 support POV preview:** admins/owners have a dedicated **Support POV** entry in the main Staff sidebar section, can select any support-profile user, and inspect a read-only replica of that person's staff profile (KPIs, level progress, public profile fields, and point history). Each Staff Members row also links directly to its POV. The preview is manager-gated, rejects non-support targets, and exposes no editing or notification-destination controls.
 
 - **2026-07-26 PostgreSQL timestamp hotfix:** production deployment `dpl_C5sJKsffgjF2LZDT93iepqnQ4YPB` exposed raw Drizzle timestamp strings where migrated code expected `Date` objects. Vercel confirmed `/admin-users` digest `2875875881` (`last_login.toISOString`) plus the isolated header-rain failure (`starts_at.toISOString`). Both exact failures and every audited raw-row Date-method path now normalize `Date | string` before use. TypeScript, full ESLint, and the Next 15.5.22 production build pass.
