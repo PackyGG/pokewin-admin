@@ -30,3 +30,18 @@ test("idempotent backend reads retry bounded transient failures", () => {
   assert.match(client, /res\.status === 504/);
   assert.match(client, /method === "GET"/);
 });
+
+test("MAIN pool acquire budget outlives its statement budget", () => {
+  const db = read("src/lib/db.ts");
+
+  const acquire = Number(
+    db.match(/connectionTimeoutMillis:\s*([\d_]+)/)?.[1].replaceAll("_", ""),
+  );
+  const statement = Number(
+    db.match(/statement_timeout:\s*([\d_]+)/)?.[1].replaceAll("_", ""),
+  );
+
+  assert.ok(Number.isFinite(acquire));
+  assert.ok(Number.isFinite(statement));
+  assert.ok(acquire > statement);
+});

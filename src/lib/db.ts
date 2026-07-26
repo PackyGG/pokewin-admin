@@ -24,7 +24,10 @@ function createPool(connectionString: string | undefined, label: string): Pool {
     // deliberately small so concurrent warm instances cannot exhaust it.
     max: 3,
     idleTimeoutMillis: 10_000,
-    connectionTimeoutMillis: 10_000,
+    // A queued read must be allowed to outlive the longest statement already
+    // occupying a slot. The old 10s acquire budget guaranteed false pool
+    // failures while valid 30s statements were still running.
+    connectionTimeoutMillis: 35_000,
     // App-level Promise timeouts cannot cancel PostgreSQL work. This server-side
     // backstop releases the pool slot if a pathological query runs away.
     statement_timeout: 30_000,
