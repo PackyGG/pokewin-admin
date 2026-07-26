@@ -305,7 +305,7 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     // endpoint yet. Icon "Megaphone" is already registered in the ICONS
     // map (app-sidebar.tsx), reused here to avoid a React #130 miss.
     id: "nav.notifications",
-    group: "Overview",
+    group: "Players",
     label: "Notifications",
     href: "/notifications",
     pageKey: "/notifications",
@@ -324,13 +324,27 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     // doing. Icon "Gift" is already in the ICONS map in app-sidebar.tsx —
     // a nav icon string that ISN'T there is a runtime crash (React #130).
     id: "nav.creator-rewards",
-    group: "Overview",
+    group: "Players",
     label: "Creator Rewards",
     href: "/creator-rewards",
     pageKey: "/creator-rewards",
     icon: "Gift",
     description: "Creator wager-reward programs + claim review",
     keywords: ["creator", "vip", "wager", "reward", "claim", "review"],
+    isNew: true,
+    inSidebar: true,
+    inPalette: true,
+  },
+
+  {
+    id: "nav.fiat",
+    group: "Overview",
+    label: "Fiat",
+    href: "/fiat",
+    pageKey: "/fiat",
+    icon: "Wallet",
+    description: "Whop card deposits, limits, holds, locks, and webhooks",
+    keywords: ["fiat", "whop", "card", "deposit", "payment", "hold", "kyc"],
     isNew: true,
     inSidebar: true,
     inPalette: true,
@@ -623,6 +637,7 @@ const PALETTE_ORDER: string[] = [
   "nav.rewards",
   "nav.crm",
   "nav.deposits",
+  "nav.fiat",
   "nav.withdrawals",
   "nav.notifications",
   "nav.creators",

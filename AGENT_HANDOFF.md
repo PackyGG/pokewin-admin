@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-26 Fiat operations workspace:** Overview now includes `/fiat` with active-tab-only Overview, Configuration, Payments, Access & holds, and Webhooks views. It reads the selected MAIN environment and can update only existing reviewed fiat config keys; missing money-control keys are never created from the UI. Creator Rewards and Notifications now live under Players. Read-only verification confirms production has a $500 per-card-deposit maximum and no lifetime withdrawal-hold threshold, while dev has the same $500 maximum plus the $100 lifetime completed-deposit hold threshold. TypeScript, ESLint, 173 guardrails, production build, and read-only prod/dev query plans pass.
+
 - **2026-07-26 monitor case timestamp cleanup:** `/antifraud/monitor/cases/[id]` now shows each monitor window's exact start date/time instead of a relative age, matching the exact end timestamp. The redundant PageHero back control is removed. TypeScript and full ESLint pass.
 
 - **2026-07-26 Keno odds and payouts:** Content → Keno → Odds & Chances shows house edge beside the pick-count selector using exact hypergeometric probabilities and confirmed payout multipliers (`1 - Σ(probability × multiplier)`). It renders an exact value only for a complete, unambiguous observed curve; otherwise it renders a mathematically valid `≤` ceiling with covered probability mass, never treating an unseen payout as 0×. Win multipliers now sit directly beside exact hits as prominent badges (also inline on mobile), plus a highest-confirmed-win KPI; unknown backend-table cells say `Not observed`. Draw probability remains fixed by the 40-number/10-draw rules; payout multipliers remain compile-time backend constants and require a backend release to change.

@@ -59,6 +59,7 @@ import {
   UserCircle,
   UserSearch,
   Users,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 
@@ -161,6 +162,7 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   Trophy,
   UserCircle,
   Users,
+  Wallet,
 };
 
 function navEntryToCommand(e: NavEntry): NavCommand {

@@ -35,7 +35,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // claim credits a player's balance, so access to it is a strictly bigger
   // grant than the read-mostly /rewards config hub it used to live in. (The
   // server actions additionally require the admin role.)
-  { group: "Navigation", label: "Creator Rewards", key: "/creator-rewards" },
+  { group: "Players", label: "Creator Rewards", key: "/creator-rewards" },
   // XP Sales was merged into the /rewards tab hub (XP Sales tab); the page
   // now gates on /rewards, so the standalone /xp-sales key was retired. The
   // The insights XP-sales data layer is unaffected.
@@ -117,9 +117,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   // was NOT part of the Transactions→Content merge); its picker group is
   // left unchanged.
   { group: "Transactions", label: "Transactions", key: "/transactions/deposits" },
+  { group: "Navigation", label: "Fiat", key: "/fiat" },
   // Notifications — global broadcast announcements (backend /v1/admin/announcements).
-  // Sits in the Overview sidebar group, below Transactions.
-  { group: "Notifications", label: "Notifications", key: "/notifications" },
+  // Sits with the player-facing operational tools.
+  { group: "Players", label: "Notifications", key: "/notifications" },
   // Content
   { group: "Content", label: "Packs", key: "/packs" },
   { group: "Content", label: "Cards", key: "/cards" },
