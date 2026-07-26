@@ -55,10 +55,13 @@ type NavItem = {
 const WORKSPACE_NAV: NavItem[] = [
   { label: "Overview", href: "/antifraud", icon: LayoutDashboard },
   { label: "Signups", href: "/antifraud/signups", icon: UserRoundSearch },
-  { label: "Account Networks", href: "/antifraud/networks", icon: GitFork },
-  { label: "Creator Fraud", href: "/antifraud/creator-fraud", icon: Megaphone },
   { label: "Live Monitor", href: "/antifraud/monitor", icon: RadioTower },
   { label: "Account Review", href: "/antifraud/reviews", icon: ShieldAlert },
+];
+
+const NETWORK_NAV: NavItem[] = [
+  { label: "Account Networks", href: "/antifraud/networks", icon: GitFork },
+  { label: "Creator Fraud", href: "/antifraud/creator-fraud", icon: Megaphone },
 ];
 
 const KYC_NAV: NavItem[] = [
@@ -203,6 +206,18 @@ export function AntifraudSidebar({
           <SidebarGroupContent>
             <NavMenu
               items={WORKSPACE_NAV}
+              pathname={pathname}
+              onNavTap={handleNavTap}
+              toHref={toHref}
+            />
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup className="px-2 py-1">
+          <SidebarGroupLabel>Network</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <NavMenu
+              items={NETWORK_NAV}
               pathname={pathname}
               onNavTap={handleNavTap}
               toHref={toHref}
