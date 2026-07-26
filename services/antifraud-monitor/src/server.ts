@@ -22,18 +22,27 @@ import { migrate } from "./migrate.js";
 import { MonitorEngine } from "./monitor.js";
 import { pollerStalledFor } from "./poller-health.js";
 import { createPromiseCache } from "./promise-cache.js";
-import { caseDecisionSchema, ruleUpdateSchema } from "./request-schemas.js";
+import {
+  caseDecisionSchema,
+  ruleUpdateSchema,
+  scoreWeightUpdateSchema,
+} from "./request-schemas.js";
 import {
   sameRuleUpdateIdentity,
   type StoredRuleUpdateIdentity,
 } from "./rule-idempotency.js";
 import { sanitizedRuntimeConfig } from "./runtime-config.js";
 import {
-  ACTIVITY_SCORE_DEFINITIONS,
-  PROVIDER_SCORE_DEFINITIONS,
+  activityScoreDefinitions,
+  isScoreWeightKey,
+  providerScoreDefinitions,
   SEVERITY_BANDS,
-  SIGNUP_SCORE_DEFINITIONS,
+  signupScoreDefinitions,
 } from "./score-catalog.js";
+import {
+  ScoreWeightConflictError,
+  ScoreWeightStore,
+} from "./score-weight-store.js";
 import { topRainWinners } from "./source.js";
 import {
   clientErrorStatus,
@@ -104,7 +113,8 @@ const app = Fastify({
 });
 const db = createDatabases(config);
 const live = new LiveBus(config.REDIS_URL, app.log);
-const engine = new MonitorEngine(config, db, live, app.log);
+const scoreWeights = new ScoreWeightStore(db.antifraud);
+const engine = new MonitorEngine(config, db, live, scoreWeights, app.log);
 
 /** Lookback that bounds the resolved tail of the case list. */
 const CASES_RECENT_DAYS = 30;
@@ -808,24 +818,57 @@ app.get("/v1/live", { websocket: true }, async (socket, request) => {
 });
 
 app.get("/v1/scoring", async () => {
-  const rules = await db.antifraud.query(
-    `SELECT id, key, name, description, enabled, trigger, sequence,
-            exclude_before, window_seconds, score_delta, action_type, priority,
-            updated_at
-       FROM rule_definitions
-      ORDER BY priority, name`,
-  );
+  const [rules, weights] = await Promise.all([
+    db.antifraud.query(
+      `SELECT id, key, name, description, enabled, trigger, sequence,
+              exclude_before, window_seconds, score_delta, action_type, priority,
+              updated_at
+         FROM rule_definitions
+        ORDER BY priority, name`,
+    ),
+    scoreWeights.get(),
+  ]);
   return {
     data: {
       monitorStartScore: config.MONITOR_START_SCORE,
       monitorDurationSeconds: config.MONITOR_DURATION_SECONDS,
       severityBands: SEVERITY_BANDS,
-      signupSignals: SIGNUP_SCORE_DEFINITIONS,
-      providerSignals: PROVIDER_SCORE_DEFINITIONS,
-      activitySignals: ACTIVITY_SCORE_DEFINITIONS,
+      signupSignals: signupScoreDefinitions(weights),
+      providerSignals: providerScoreDefinitions(weights),
+      activitySignals: activityScoreDefinitions(weights),
       behaviorRules: rules.rows,
     },
   };
+});
+
+app.put("/v1/scoring/:key", {
+  config: {
+    rateLimit: {
+      max: config.API_WRITE_RATE_LIMIT_PER_MINUTE,
+      timeWindow: "1 minute",
+    },
+  },
+}, async (request, reply) => {
+  const { key } = z.object({ key: z.string() }).parse(request.params);
+  if (!isScoreWeightKey(key)) {
+    return reply.code(404).send({ error: "not_found" });
+  }
+  const body = scoreWeightUpdateSchema.parse(request.body);
+  try {
+    const updated = await scoreWeights.update({
+      key,
+      points: body.points,
+      actorId: body.actorId ?? SERVICE_ACTOR_ID,
+      actorUsername: body.actorUsername ?? null,
+      idempotencyKey: body.idempotencyKey,
+    });
+    return { data: updated };
+  } catch (error) {
+    if (error instanceof ScoreWeightConflictError) {
+      return reply.code(409).send({ error: "idempotency_conflict" });
+    }
+    throw error;
+  }
 });
 
 app.setErrorHandler((error, request, reply) => {

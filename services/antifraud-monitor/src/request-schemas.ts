@@ -1,5 +1,12 @@
 import { z } from "zod";
 
+export const scoreWeightUpdateSchema = z.object({
+  idempotencyKey: z.string().uuid(),
+  actorId: z.string().trim().min(1).max(100).optional(),
+  actorUsername: z.string().trim().min(1).max(100).optional(),
+  points: z.number().int().min(-500).max(500),
+}).strict();
+
 export const ruleUpdateSchema = z.object({
   idempotencyKey: z.string().uuid(),
   actorId: z.string().trim().min(1).max(100).optional(),

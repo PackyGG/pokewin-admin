@@ -6,13 +6,15 @@ import { DiscordAlerts } from "./discord.js";
 import {
   EnrichmentService,
   parseProxycheckResponse,
+  reweightFingerprintSignals,
   type EnrichmentResult,
 } from "./enrichment.js";
 import type { LiveBus } from "./live.js";
 import { processOrderedBatch } from "./ordered-ingestion.js";
 import { PollerHealth, type PollerHealthSnapshot } from "./poller-health.js";
 import { baseSignupSignals, severity } from "./scoring.js";
-import { activityScoreFor } from "./score-catalog.js";
+import { activityScoreFor, type ScoreWeights } from "./score-catalog.js";
+import type { ScoreWeightStore } from "./score-weight-store.js";
 import {
   fetchActivity,
   fetchNewSignups,
@@ -57,6 +59,7 @@ type PreparedSignup = {
   context: Awaited<ReturnType<typeof signupContext>>;
   fingerprint: EnrichmentResult;
   proxycheck: EnrichmentResult;
+  weights: ScoreWeights;
 };
 
 /** Grace period for a poller tick during process shutdown. */
@@ -79,6 +82,7 @@ export class MonitorEngine {
     private readonly config: Config,
     private readonly db: Databases,
     private readonly live: LiveBus,
+    private readonly scoreWeights: ScoreWeightStore,
     private readonly log: FastifyBaseLogger,
   ) {
     this.enrichment = new EnrichmentService(config);
@@ -398,25 +402,28 @@ export class MonitorEngine {
     // The assessment/case/session/events/cursor transaction follows only after
     // enrichment is durably cached.
     await this.upsertSubject(signup);
-    const context = await signupContext(this.db.source, signup);
+    const [context, weights] = await Promise.all([
+      signupContext(this.db.source, signup),
+      this.scoreWeights.get(),
+    ]);
     const [fingerprint, proxycheck] = await Promise.all([
-      this.cachedFingerprint(signup),
-      this.cachedProxycheck(signup),
+      this.cachedFingerprint(signup, weights),
+      this.cachedProxycheck(signup, weights),
     ]);
     await Promise.all([
       this.saveProviderCheck(signup.id, fingerprint),
       this.saveProviderCheck(signup.id, proxycheck),
     ]);
-    return { context, fingerprint, proxycheck };
+    return { context, fingerprint, proxycheck, weights };
   }
 
   private async persistSignup(
     signup: Signup,
     prepared: PreparedSignup,
   ): Promise<void> {
-    const { context, fingerprint, proxycheck } = prepared;
+    const { context, fingerprint, proxycheck, weights } = prepared;
     const signals = [
-      ...baseSignupSignals(signup, context),
+      ...baseSignupSignals(signup, context, weights),
       ...fingerprint.signals,
       ...proxycheck.signals,
     ];
@@ -477,9 +484,12 @@ export class MonitorEngine {
     });
   }
 
-  private async cachedFingerprint(signup: Signup): Promise<EnrichmentResult> {
+  private async cachedFingerprint(
+    signup: Signup,
+    weights: ScoreWeights,
+  ): Promise<EnrichmentResult> {
     if (!signup.fingerprint_request_id) {
-      return this.enrichment.fingerprintCheck(signup);
+      return this.enrichment.fingerprintCheck(signup, weights);
     }
     const cached = await this.db.antifraud.query<{
       score: string | null;
@@ -497,7 +507,9 @@ export class MonitorEngine {
       `,
       [signup.id, signup.fingerprint_request_id],
     );
-    if (!cached.rows[0]) return this.enrichment.fingerprintCheck(signup);
+    if (!cached.rows[0]) {
+      return this.enrichment.fingerprintCheck(signup, weights);
+    }
     return {
       provider: "fingerprint",
       status: "success",
@@ -505,7 +517,10 @@ export class MonitorEngine {
       requestId: signup.fingerprint_request_id,
       score: Number(cached.rows[0].score ?? 0),
       response: cached.rows[0].response ?? {},
-      signals: storedSignals(cached.rows[0].signals),
+      signals: reweightFingerprintSignals(
+        storedSignals(cached.rows[0].signals),
+        weights,
+      ),
     };
   }
 
@@ -565,8 +580,13 @@ export class MonitorEngine {
     );
   }
 
-  private async cachedProxycheck(signup: Signup): Promise<EnrichmentResult> {
-    if (!signup.signup_ip) return this.enrichment.proxycheck(signup);
+  private async cachedProxycheck(
+    signup: Signup,
+    weights: ScoreWeights,
+  ): Promise<EnrichmentResult> {
+    if (!signup.signup_ip) {
+      return this.enrichment.proxycheck(signup, weights);
+    }
     const cached = await this.db.antifraud.query<{
       score: string | null;
       signals: unknown;
@@ -584,9 +604,13 @@ export class MonitorEngine {
       `,
       [signup.signup_ip],
     );
-    if (!cached.rows[0]) return this.enrichment.proxycheck(signup);
+    if (!cached.rows[0]) return this.enrichment.proxycheck(signup, weights);
     const response = cached.rows[0].response ?? {};
-    const parsed = parseProxycheckResponse(response, signup.signup_ip);
+    const parsed = parseProxycheckResponse(
+      response,
+      signup.signup_ip,
+      weights,
+    );
     return {
       provider: "proxycheck",
       status: "success",
@@ -729,7 +753,10 @@ export class MonitorEngine {
   }
 
   private async scanActiveSessions(): Promise<number> {
-    const sessions = await this.activeSessions();
+    const [sessions, weights] = await Promise.all([
+      this.activeSessions(),
+      this.scoreWeights.get(),
+    ]);
     const activities = await fetchActivity(
       this.db.source,
       sessions,
@@ -753,7 +780,7 @@ export class MonitorEngine {
           left.source_ref.localeCompare(right.source_ref),
       );
       try {
-        processed += await this.recordActivityBatch(session, batch);
+        processed += await this.recordActivityBatch(session, batch, weights);
       } catch (error) {
         // A poison row rolls back only this user's batch and cannot be skipped
         // by a later cursor update. Other sessions continue independently.
@@ -770,13 +797,17 @@ export class MonitorEngine {
     return processed;
   }
 
-  private pointsFor(activity: SourceActivity): number {
-    return activityScoreFor(activity.event_type);
+  private pointsFor(
+    activity: SourceActivity,
+    weights: ScoreWeights,
+  ): number {
+    return activityScoreFor(activity.event_type, weights);
   }
 
   private async recordActivityBatch(
     session: ActiveSession,
     activities: SourceActivity[],
+    weights: ScoreWeights,
   ): Promise<number> {
     const broadcasts: Array<{
       activity: SourceActivity;
@@ -788,7 +819,7 @@ export class MonitorEngine {
     try {
       await client.query("BEGIN");
       for (const activity of activities) {
-        const delta = this.pointsFor(activity);
+        const delta = this.pointsFor(activity, weights);
         const inserted = await client.query<{ id: string; score_after: number }>(
           `
             INSERT INTO risk_events (

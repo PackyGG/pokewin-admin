@@ -23,6 +23,7 @@ import { createPromiseCache } from "../src/promise-cache.js";
 import { caseDecisionSchema } from "../src/request-schemas.js";
 import { sameRuleUpdateIdentity } from "../src/rule-idempotency.js";
 import { sanitizedRuntimeConfig } from "../src/runtime-config.js";
+import { SCORE_WEIGHT_KEYS } from "../src/score-catalog.js";
 import {
   fetchActivity,
   fetchNewSignups,
@@ -292,6 +293,38 @@ test("operations config accepts read/admin tokens and rejects missing tokens", (
     ),
     false,
   );
+  assert.equal(
+    serviceRequestAuthorized(
+      "PUT",
+      "/v1/scoring/fingerprint_vpn",
+      runtimeConfig.API_TOKEN,
+      runtimeConfig,
+    ),
+    false,
+  );
+  assert.equal(
+    serviceRequestAuthorized(
+      "PUT",
+      "/v1/scoring/fingerprint_vpn",
+      runtimeConfig.API_ADMIN_TOKEN,
+      runtimeConfig,
+    ),
+    true,
+  );
+});
+
+test("editable score migration seeds every runtime weight", async () => {
+  const migration = await readFile(
+    new URL(
+      "../migrations/006_editable_score_weights.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS score_weights/);
+  for (const key of SCORE_WEIGHT_KEYS) {
+    assert.match(migration, new RegExp(`'${key}'`));
+  }
 });
 
 test("promise cache coalesces cold loads, expires, and evicts rejection", async () => {

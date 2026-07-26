@@ -1,5 +1,10 @@
 import type { Signal, Signup } from "./types.js";
-import { SCORE_POINTS, SEVERITY_BANDS } from "./score-catalog.js";
+import {
+  defaultScoreWeights,
+  scorePoints,
+  SEVERITY_BANDS,
+  type ScoreWeights,
+} from "./score-catalog.js";
 
 export type SignupContext = {
   sameIp10m: number;
@@ -27,7 +32,9 @@ function generatedLooking(value: string | null): boolean {
 export function baseSignupSignals(
   signup: Signup,
   context: SignupContext,
+  weights: ScoreWeights = defaultScoreWeights(),
 ): Signal[] {
+  const SCORE_POINTS = scorePoints(weights);
   const signals: Signal[] = [];
   const add = (hit: boolean, signal: Signal) => {
     if (hit) signals.push(signal);

@@ -19,6 +19,7 @@ export function serviceRequestAuthorized(
 ): boolean {
   const needsAdminToken =
     (method === "PUT" && pathname.startsWith("/v1/rules/")) ||
+    (method === "PUT" && pathname.startsWith("/v1/scoring/")) ||
     (method === "POST" && pathname.includes("/decision"));
   return needsAdminToken
     ? safeTokenEqual(token, config.API_ADMIN_TOKEN)

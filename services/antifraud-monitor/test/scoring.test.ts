@@ -5,6 +5,7 @@ import { baseSignupSignals, severity } from "../src/scoring.js";
 import {
   ACTIVITY_SCORE_DEFINITIONS,
   activityScoreFor,
+  defaultScoreWeights,
   PROVIDER_SCORE_DEFINITIONS,
   SEVERITY_BANDS,
   SIGNUP_SCORE_DEFINITIONS,
@@ -55,6 +56,20 @@ test("normal signup has no baseline risk", () => {
   assert.equal(severity(0), "low");
 });
 
+test("custom signup and activity weights drive new scores", () => {
+  const weights = defaultScoreWeights();
+  weights.missing_email = 37;
+  weights.fiat_deposit = 61;
+  const signals = baseSignupSignals({ ...signup, email: null }, {
+    sameIp10m: 1,
+    sameIp30m: 1,
+    sameIpv6Subnet30m: 0,
+    sameDeviceAllTime: 1,
+  }, weights);
+  assert.equal(signals.find((signal) => signal.key === "missing_email")?.points, 37);
+  assert.equal(activityScoreFor("fiat_deposit", weights), 61);
+});
+
 test("the public score catalog has unique keys and contiguous severity bands", () => {
   const definitions = [
     ...SIGNUP_SCORE_DEFINITIONS,
@@ -62,6 +77,14 @@ test("the public score catalog has unique keys and contiguous severity bands", (
     ...ACTIVITY_SCORE_DEFINITIONS,
   ];
   assert.equal(new Set(definitions.map((definition) => definition.key)).size, definitions.length);
+  assert.equal(
+    new Set(
+      definitions.flatMap((definition) =>
+        definition.options.map((option) => option.key)
+      ),
+    ).size,
+    definitions.flatMap((definition) => definition.options).length,
+  );
   for (let index = 1; index < SEVERITY_BANDS.length; index += 1) {
     const previous = SEVERITY_BANDS[index - 1];
     const current = SEVERITY_BANDS[index];

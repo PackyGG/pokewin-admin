@@ -18,6 +18,7 @@ import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { ScoreWeightEditor } from "./score-weight-editor";
 
 export const metadata = { title: "Risk Scoring · Antifraud" };
 
@@ -110,8 +111,8 @@ async function ScoringDashboard() {
       <BehaviorRules config={config} />
 
       <p className="text-[11px] text-muted-foreground">
-        Fixed signal weights are deployed with the monitor. Behavior flows are
-        stored in the antifraud database.
+        Point edits apply to new signup assessments and new live activity.
+        Existing case history keeps the values recorded when it occurred.
       </p>
     </div>
   );
@@ -205,8 +206,9 @@ function ScoreSection({
             </div>
             <div className="flex flex-wrap gap-1.5 sm:max-w-md sm:justify-end">
               {definition.options.map((option) => (
-                <ScoreBadge
-                  key={option.label}
+                <ScoreWeightEditor
+                  key={option.key}
+                  weightKey={option.key}
                   label={option.label}
                   points={option.points}
                 />

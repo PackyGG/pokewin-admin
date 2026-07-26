@@ -4,7 +4,11 @@ import {
 } from "@fingerprintjs/fingerprintjs-pro-server-api";
 
 import type { Config } from "./config.js";
-import { SCORE_POINTS } from "./score-catalog.js";
+import {
+  defaultScoreWeights,
+  scorePoints,
+  type ScoreWeights,
+} from "./score-catalog.js";
 import type { Signal, Signup } from "./types.js";
 
 type JsonObject = Record<string, unknown>;
@@ -72,10 +76,50 @@ export type EnrichmentResult = {
   signals: Signal[];
 };
 
+export function reweightFingerprintSignals(
+  signals: Signal[],
+  weights: ScoreWeights,
+): Signal[] {
+  const points = scorePoints(weights);
+  const fixed: Record<string, number> = {
+    fingerprint_missing: points.fingerprintMissing,
+    fingerprint_bad_bot: points.fingerprintBadBot,
+    fingerprint_vpn: points.fingerprintVpn,
+    fingerprint_proxy: points.fingerprintProxy,
+    fingerprint_tor: points.fingerprintTor,
+    fingerprint_incognito: points.fingerprintIncognito,
+    fingerprint_tampering: points.fingerprintTampering,
+    fingerprint_virtual_machine: points.fingerprintVirtualMachine,
+    fingerprint_high_activity: points.fingerprintHighActivity,
+  };
+
+  return signals.map((signal) => {
+    if (signal.key === "fingerprint_suspect_score") {
+      const suspectScore = Number(signal.payload?.suspectScore ?? 0);
+      return {
+        ...signal,
+        points: Number.isFinite(suspectScore)
+          ? Math.min(
+              points.fingerprintSuspectScore.maximum,
+              Math.round(
+                suspectScore / points.fingerprintSuspectScore.divisor,
+              ),
+            )
+          : signal.points,
+      };
+    }
+    return Object.hasOwn(fixed, signal.key)
+      ? { ...signal, points: fixed[signal.key] ?? signal.points }
+      : signal;
+  });
+}
+
 export function parseProxycheckResponse(
   raw: JsonObject,
   signupIp: string,
+  weights: ScoreWeights = defaultScoreWeights(),
 ): { risk: number; signals: Signal[] } {
+  const SCORE_POINTS = scorePoints(weights);
   const direct = raw[signupIp];
   const nested = object(raw.data)[signupIp];
   const node = object(direct ?? nested);
@@ -178,7 +222,11 @@ export class EnrichmentService {
     );
   }
 
-  async fingerprintCheck(signup: Signup): Promise<EnrichmentResult> {
+  async fingerprintCheck(
+    signup: Signup,
+    weights: ScoreWeights = defaultScoreWeights(),
+  ): Promise<EnrichmentResult> {
+    const SCORE_POINTS = scorePoints(weights);
     if (!signup.fingerprint_request_id) {
       return {
         provider: "fingerprint",
@@ -313,7 +361,10 @@ export class EnrichmentService {
     }
   }
 
-  async proxycheck(signup: Signup): Promise<EnrichmentResult> {
+  async proxycheck(
+    signup: Signup,
+    weights: ScoreWeights = defaultScoreWeights(),
+  ): Promise<EnrichmentResult> {
     if (!signup.signup_ip) {
       return {
         provider: "proxycheck",
@@ -337,7 +388,11 @@ export class EnrichmentService {
       });
       if (!response.ok) throw new Error(`http_${response.status}`);
       const raw = object(await response.json());
-      const { risk, signals } = parseProxycheckResponse(raw, signup.signup_ip);
+      const { risk, signals } = parseProxycheckResponse(
+        raw,
+        signup.signup_ip,
+        weights,
+      );
 
       return {
         provider: "proxycheck",

@@ -4,6 +4,7 @@ import { cache } from "react";
 import { z } from "zod";
 
 const scoreOptionSchema = z.object({
+  key: z.string(),
   label: z.string(),
   points: z.number(),
 });
@@ -144,6 +145,70 @@ export async function getAntifraudScoringConfig(): Promise<{
     console.error("[antifraud-monitor] scoring config failed:", error);
     return { configured: true, data: null, error: true };
   }
+}
+
+export async function updateAntifraudScoreWeight(input: {
+  key: string;
+  points: number;
+  idempotencyKey: string;
+  actorId: string;
+  actorUsername?: string;
+}): Promise<{ idempotent: boolean }> {
+  const baseUrl = process.env.ANTIFRAUD_MONITOR_API_URL?.replace(/\/+$/, "");
+  const token = process.env.ANTIFRAUD_MONITOR_API_ADMIN_TOKEN;
+  if (!baseUrl || !token) {
+    throw new Error("Antifraud score editing is not configured.");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `${baseUrl}/v1/scoring/${encodeURIComponent(input.key)}`,
+      {
+        method: "PUT",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          points: input.points,
+          idempotencyKey: input.idempotencyKey,
+          actorId: input.actorId,
+          actorUsername: input.actorUsername,
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      },
+    );
+  } catch {
+    throw new Error(
+      "The monitor service did not respond. The point value was not changed.",
+    );
+  }
+
+  if (response.status === 404) throw new Error("That score check no longer exists.");
+  if (response.status === 409) {
+    throw new Error("That retry key was already used for another score change.");
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new Error("The monitor service rejected the score-edit credentials.");
+  }
+  if (response.status === 429) {
+    throw new Error("Too many score edits right now. Try again in a minute.");
+  }
+  if (!response.ok) {
+    throw new Error("The monitor service could not save that point value.");
+  }
+  const payload = z.object({
+    data: z.object({
+      idempotent: z.boolean(),
+    }),
+  }).safeParse(await response.json().catch(() => null));
+  if (!payload.success) {
+    throw new Error("The monitor service returned an unexpected response.");
+  }
+  return { idempotent: payload.data.data.idempotent };
 }
 
 // ─── Case detail ────────────────────────────────────────────────────────

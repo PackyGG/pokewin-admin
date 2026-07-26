@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { parseProxycheckResponse } from "../src/enrichment.js";
+import { defaultScoreWeights } from "../src/score-catalog.js";
 
 const IP = "203.0.113.10";
 
@@ -82,4 +83,22 @@ test("a clean network does not add proxycheck points", () => {
 
   assert.equal(result.risk, 10);
   assert.deepEqual(result.signals, []);
+});
+
+test("custom proxycheck weights apply to cached raw responses", () => {
+  const weights = defaultScoreWeights();
+  weights.proxycheck_anonymous_lower_risk = 41;
+  const result = parseProxycheckResponse({
+    [IP]: {
+      detections: {
+        vpn: true,
+        risk: 20,
+      },
+    },
+  }, IP, weights);
+
+  assert.deepEqual(
+    result.signals.map((signal) => [signal.key, signal.points]),
+    [["proxycheck_anonymous", 41]],
+  );
 });
