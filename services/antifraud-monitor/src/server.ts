@@ -41,7 +41,9 @@ const app = Fastify({
   trustProxy: 1,
   requestTimeout: 15_000,
   bodyLimit: 256 * 1024,
-  maxParamLength: 100,
+  routerOptions: {
+    maxParamLength: 100,
+  },
 });
 const db = createDatabases(config);
 const live = new LiveBus(config.REDIS_URL);
