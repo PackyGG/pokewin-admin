@@ -150,15 +150,12 @@ export const backendApiRequest = async <T = unknown>(
   // `x-bypass-secret` for trusted server-to-server callers. Same pattern as
   // the user-facing frontend (CF_BYPASS_SECRET → x-bypass-secret); legacy
   // BACKEND_BYPASS_SECRET kept as fallback for envs that haven't been renamed.
-  const bypassSecret =
-    process.env.CF_BYPASS_SECRET || process.env.BACKEND_BYPASS_SECRET;
-
   const serverOrigin = resolveServerOrigin();
 
   const headers: Record<string, string> = {
     "x-api-key": config.adminKey,
     ...config.cfHeaders,
-    ...(bypassSecret ? { "x-bypass-secret": bypassSecret } : {}),
+    ...config.bypassHeaders,
     ...(serverOrigin ? { Origin: serverOrigin } : {}),
     ...(options.body !== undefined ? { "Content-Type": "application/json" } : {}),
     ...options.headers,
@@ -175,7 +172,7 @@ export const backendApiRequest = async <T = unknown>(
     ` url=${url}` +
     ` adminKeyTail=...${config.adminKey.slice(-6)}` +
     ` cfHeaders=${Object.keys(config.cfHeaders).length > 0}` +
-    ` bypassSecret=${bypassSecret ? "set" : "missing"}`;
+    ` bypassSecret=${Object.keys(config.bypassHeaders).length > 0 ? "set" : "missing"}`;
 
   for (let attempt = 0; ; attempt++) {
     // Combine the (default) 8s timeout with an optional caller-supplied

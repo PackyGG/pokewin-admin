@@ -210,6 +210,7 @@ export async function GET(request: Request): Promise<Response> {
       headers: {
         ...PACKY_WS_BASE_HEADERS,
         ...backend.cfHeaders,
+        ...backend.bypassHeaders,
         Host: backendUrl.host,
         // The backend's privileged WS allowlist is intentionally pinned to
         // the apex dashboard origin. The browser-facing route independently

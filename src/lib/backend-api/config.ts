@@ -7,6 +7,7 @@ export type BackendApiConfig = {
   baseUrl: string;
   adminKey: string;
   cfHeaders: Record<string, string>;
+  bypassHeaders: Record<string, string>;
 };
 
 class MissingBackendApiConfigError extends Error {
@@ -116,6 +117,11 @@ const resolveCfHeaders = (): Record<string, string> => {
   };
 };
 
+const resolveBypassHeaders = (): Record<string, string> => {
+  const bypassSecret = pick("CF_BYPASS_SECRET", "BACKEND_BYPASS_SECRET");
+  return bypassSecret ? { "x-bypass-secret": bypassSecret } : {};
+};
+
 export const resolveBackendApiConfig = async (): Promise<BackendApiConfig> => {
   const requested = await readDbEnv();
   const env = resolveEffectiveEnv(requested);
@@ -124,5 +130,6 @@ export const resolveBackendApiConfig = async (): Promise<BackendApiConfig> => {
     baseUrl: resolveBaseUrl(env),
     adminKey: resolveAdminKey(env),
     cfHeaders: resolveCfHeaders(),
+    bypassHeaders: resolveBypassHeaders(),
   };
 };

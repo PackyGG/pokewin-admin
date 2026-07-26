@@ -34,6 +34,7 @@ test("the Packy live bridge accepts the exact fraud host and pins the upstream o
     /trustedOrigins\s*=\s*new Set\(\[\s*PRODUCTION_DASHBOARD_ORIGIN,\s*PRODUCTION_FRAUD_ORIGIN,/,
   );
   assert.match(route, /Origin:\s*PRODUCTION_DASHBOARD_ORIGIN/);
+  assert.match(route, /\.\.\.backend\.bypassHeaders/);
   assert.doesNotMatch(route, /Origin:\s*requestOrigin/);
 });
 
