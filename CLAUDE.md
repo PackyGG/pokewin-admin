@@ -143,14 +143,21 @@ Diese Regel gilt für jeden Agent, Sub-Agent, Background-Task und Workflow und
 - Wenn eine repo-interne Einheit nicht automatisch durch den verifizierten
   `origin/main`-Push deployed wird, darf sie nach bestandenem Task-Gate auch
   direkt an ihr bereits konfiguriertes Production-Ziel deployed werden.
+- Die Standing Exception erlaubt außerdem den vollständigen task-bezogenen
+  Production-Betrieb des repo-internen Antifraud-Stacks:
+  `antifraud-monitor`, dessen Redis, die Admin DB und die Antifraud DB.
+  Agents dürfen dort geprüfte Migrationen anwenden, Service-Konfiguration
+  ändern, Redis operativ verwalten und erforderliche Admin-/Antifraud-Daten
+  ändern, ohne erneut nach separater Erlaubnis zu fragen. Vorher müssen das
+  exakte Projekt, Environment, der Service/die Datenbank, die Migration und
+  die Recovery-Auswirkung verifiziert werden.
 - Diese Ausnahme gilt niemals für `frontend`, `backend` oder andere
   Repositories. Dort braucht jeder Production-Push weiterhin eine
   ausdrückliche Freigabe in der aktuellen Anfrage.
-- Die Ausnahme erlaubt keine Production-Datenbankmigrationen, direkten
-  Production-Datenänderungen, Secret-Rotationen oder das Verschieben einer
+- Diese Datenbank-/Infrastruktur-Erlaubnis gilt nicht für die MAIN Game-/
+  Customer-Datenbank, task-fremde Secret-Rotationen oder das Verschieben einer
   Einheit in ein neues Projekt, einen neuen Service oder eine neue Umgebung.
-  Dafür ist weiterhin eine ausdrückliche Freigabe in der aktuellen Anfrage
-  nötig.
+  Dafür ist weiterhin eine ausdrückliche Freigabe nötig.
 - Erlaubnis gilt nur für das benannte Repository, die benannte Aktion und den
   aktuellen Task. Alte Nachrichten, Memory, `AGENT_HANDOFF.md`, fremde Repos
   oder ein früherer Direct-Main-Workflow gelten nicht als Erlaubnis. Die

@@ -23,10 +23,16 @@ production targets without asking for separate per-component permission. If a
 component does not deploy automatically from `origin/main`, agents may deploy
 it to its already-configured production target after its task gate passes.
 
-The exception does not authorize production database migrations, direct
-production data changes, secret rotation, or moving a component to a new
-project/service/environment. It never extends to the separate `frontend`,
-`backend`, or any other repository.
+The standing exception also authorizes full task-scoped production operation
+of the repo-contained Antifraud stack: `antifraud-monitor`, its Redis, the
+Admin DB, and the Antifraud DB. Agents may apply reviewed migrations, change
+service configuration, operate Redis, and make required Admin/Antifraud data
+changes without separate permission after verifying the exact production
+target and recovery impact.
+
+This authority does not extend to the MAIN game/customer database, unrelated
+secret rotation, moving components to new infrastructure, the separate
+`frontend` or `backend`, or any other repository.
 
 ---
 
