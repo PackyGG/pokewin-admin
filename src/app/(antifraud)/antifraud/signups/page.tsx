@@ -83,7 +83,7 @@ async function SignupsData({ page }: { page: number }) {
       {data.length === 0 ? (
         <EmptyState text="No signups have been assessed yet." />
       ) : (
-        <div className="overflow-hidden rounded-lg border border-border/70 bg-card">
+        <div className="space-y-3">
           {data.map((signup) => (
             <SignupRow key={signup.user_id} signup={signup} />
           ))}
@@ -142,33 +142,47 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
   const networkLabels = networkRiskLabels(networkSignals);
 
   return (
-    <article className="border-b border-border/60 p-3 last:border-b-0 sm:p-4">
-      <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(220px,1.15fr)_minmax(280px,1.35fr)_minmax(250px,1.1fr)_auto] lg:items-center">
-        <div className="flex min-w-0 items-center gap-3">
-          <Avatar className="size-10 shrink-0">
-            {signup.avatar_url && (
-              <AvatarImage src={signup.avatar_url} alt={signup.username ?? "User"} />
-            )}
-            <AvatarFallback className="bg-cyan-500/10 text-xs font-semibold text-cyan-600 dark:text-cyan-400">
-              {initials}
-            </AvatarFallback>
-          </Avatar>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold">
-              {signup.username ?? "Unnamed account"}
-            </p>
-            <p className="truncate text-xs text-muted-foreground">
-              {signup.email ?? signup.user_id}
-            </p>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
-              {formatDate(signup.source_created_at)}
-            </p>
+    <article className="rounded-xl border border-border/70 bg-card p-3 shadow-sm sm:p-4">
+      <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(320px,1.2fr)_minmax(240px,1fr)] lg:items-center xl:grid-cols-[minmax(350px,1.45fr)_minmax(190px,0.7fr)_minmax(230px,1fr)_auto]">
+        <div className="min-w-0 space-y-2.5">
+          <div className="flex min-w-0 items-center gap-3">
+            <Avatar className="size-10 shrink-0">
+              {signup.avatar_url && (
+                <AvatarImage src={signup.avatar_url} alt={signup.username ?? "User"} />
+              )}
+              <AvatarFallback className="bg-cyan-500/10 text-xs font-semibold text-cyan-600 dark:text-cyan-400">
+                {initials}
+              </AvatarFallback>
+            </Avatar>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold">
+                {signup.username ?? "Unnamed account"}
+              </p>
+              <p className="truncate text-xs text-muted-foreground">
+                {signup.email ?? signup.user_id}
+              </p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                {formatDate(signup.source_created_at)}
+              </p>
+            </div>
+            <div className="w-36 shrink-0 sm:w-40">
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <ReviewSeverityBadge severity={signup.severity} />
+                <span className="text-xs font-semibold tabular-nums">
+                  {signup.score} pts
+                </span>
+              </div>
+              <RiskScoreBar score={signup.score} />
+            </div>
+          </div>
+
+          <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 pl-[52px] text-xs">
+            <Info icon={MapPin} value={location || "Location unavailable"} />
+            <Info icon={Network} value={signup.signup_ip ?? "IP unavailable"} mono />
           </div>
         </div>
 
-        <div className="grid min-w-0 gap-1.5 text-xs sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-          <Info icon={MapPin} value={location || "Location unavailable"} />
-          <Info icon={Network} value={signup.signup_ip ?? "IP unavailable"} mono />
+        <div className="grid min-w-0 gap-1.5 text-xs sm:grid-cols-2 lg:grid-cols-1">
           <Info
             icon={ScanSearch}
             value={
@@ -181,6 +195,33 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
             icon={ShieldCheck}
             value={signup.referred_by ? "Referred signup" : "Direct signup"}
           />
+          {signals.length > 0 && (
+            <div className="flex min-w-0 flex-wrap gap-1 sm:col-span-2 lg:col-span-1">
+              {signals.slice(0, 3).map((signal) => (
+                <span
+                  key={signal.key}
+                  title={signal.title}
+                  className={cn(
+                    "inline-flex h-5 max-w-40 items-center gap-1 rounded-md border px-1.5 text-[10px]",
+                    signal.points > 0
+                      ? "border-rose-500/25 bg-rose-500/8 text-rose-600 dark:text-rose-400"
+                      : "border-emerald-500/25 bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
+                  )}
+                >
+                  <span className="truncate">{signal.title}</span>
+                  <span className="shrink-0 font-bold tabular-nums">
+                    {signal.points > 0 ? "+" : ""}
+                    {signal.points}
+                  </span>
+                </span>
+              ))}
+              {signals.length > 3 && (
+                <span className="inline-flex h-5 items-center rounded-md border border-border/60 px-1.5 text-[10px] text-muted-foreground">
+                  +{signals.length - 3}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="space-y-2">
@@ -207,17 +248,7 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
           )}
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 lg:min-w-36 lg:flex-col lg:flex-nowrap lg:items-end">
-          <div className="flex items-center gap-2">
-            <ReviewSeverityBadge severity={signup.severity} />
-            <span className="text-sm font-semibold tabular-nums">
-              {signup.score} pts
-            </span>
-          </div>
-          <RiskScoreBar
-            score={signup.score}
-            className="order-3 w-full lg:order-none lg:w-36"
-          />
+        <div className="flex items-center justify-end">
           {signup.case_id ? (
             <Button
               variant="outline"
@@ -236,31 +267,6 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
           )}
         </div>
       </div>
-
-      {signals.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border/50 pt-3 lg:ml-[52px]">
-          {signals.slice(0, 4).map((signal) => (
-            <Badge
-              key={signal.key}
-              variant="outline"
-              className={cn(
-                "h-5 px-1.5 text-[10px]",
-                signal.points > 0
-                  ? "border-rose-500/25 bg-rose-500/8 text-rose-600 dark:text-rose-400"
-                  : "border-emerald-500/25 bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
-              )}
-            >
-              {signal.title} · {signal.points > 0 ? "+" : ""}
-              {signal.points}
-            </Badge>
-          ))}
-          {signals.length > 4 && (
-            <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-              +{signals.length - 4} more
-            </Badge>
-          )}
-        </div>
-      )}
     </article>
   );
 }
@@ -356,11 +362,11 @@ function SignupsSkeleton() {
   return (
     <div className="space-y-4">
       <Skeleton className="h-[67px] w-full rounded-lg" />
-      <div className="overflow-hidden rounded-lg border border-border/70">
+      <div className="space-y-3">
         {Array.from({ length: 6 }).map((_, index) => (
           <div
             key={index}
-            className="flex items-center gap-3 border-b border-border/60 p-4 last:border-b-0"
+            className="flex items-center gap-3 rounded-xl border border-border/70 bg-card p-4 shadow-sm"
           >
             <Skeleton className="size-10 shrink-0 rounded-full" />
             <div className="flex-1 space-y-2">
