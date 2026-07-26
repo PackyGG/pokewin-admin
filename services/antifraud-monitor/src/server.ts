@@ -140,15 +140,34 @@ app.addHook("onRequest", async (request, reply) => {
   }
 });
 
-app.get("/health", async () => ({ status: "ok" }));
+app.get("/health", async () => {
+  const poller = engine.healthSnapshot();
+  return {
+    status: poller.status === "degraded" ? "degraded" : "ok",
+    poller: {
+      status: poller.status,
+      leader: poller.leader,
+      lastSuccessfulTickAt: poller.lastSuccessfulTickAt,
+      consecutiveFailures: poller.consecutiveFailures,
+    },
+  };
+});
 app.get("/ready", async (_request, reply) => {
   try {
     await assertDatabaseConnections(db);
-    return { status: "ready" };
+    const poller = engine.healthSnapshot();
+    if (poller.status === "starting" || poller.status === "degraded") {
+      return reply.code(503).send({ status: "not_ready", poller });
+    }
+    return { status: "ready", poller };
   } catch {
     return reply.code(503).send({ status: "not_ready" });
   }
 });
+
+app.get("/v1/operations/poller", async () => ({
+  data: engine.healthSnapshot(),
+}));
 
 app.get("/v1/monitors/live", async () => {
   const result = await db.antifraud.query(

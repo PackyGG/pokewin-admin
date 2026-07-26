@@ -1,9 +1,11 @@
 import type { FastifyBaseLogger } from "fastify";
+import type pg from "pg";
 import type { Config } from "./config.js";
 import type { Databases } from "./db.js";
 import { DiscordAlerts } from "./discord.js";
 import { EnrichmentService, type EnrichmentResult } from "./enrichment.js";
 import type { LiveBus } from "./live.js";
+import { PollerHealth, type PollerHealthSnapshot } from "./poller-health.js";
 import { baseSignupSignals, severity } from "./scoring.js";
 import { activityScoreFor } from "./score-catalog.js";
 import {
@@ -40,6 +42,7 @@ export class MonitorEngine {
   private timer: NodeJS.Timeout | null = null;
   private readonly enrichment: EnrichmentService;
   private readonly discord: DiscordAlerts;
+  private readonly health = new PollerHealth();
 
   constructor(
     private readonly config: Config,
@@ -66,6 +69,10 @@ export class MonitorEngine {
     while (this.running) await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
+  healthSnapshot(): PollerHealthSnapshot {
+    return this.health.snapshot(this.config.POLL_STALE_AFTER_MS);
+  }
+
   private async ensureCursor(): Promise<void> {
     await this.db.antifraud.query(
       `
@@ -77,12 +84,35 @@ export class MonitorEngine {
   }
 
   private async tick(): Promise<void> {
-    if (this.running) return;
+    if (this.running) {
+      this.health.tickSkipped();
+      return;
+    }
     this.running = true;
+    this.health.tickStarted();
+    let lockClient: pg.PoolClient | null = null;
+    let leader = false;
     try {
-      await this.scanSignups();
-      await this.scanActiveSessions();
+      lockClient = await this.db.antifraud.connect();
+      const lock = await lockClient.query<{ acquired: boolean }>(
+        "SELECT pg_try_advisory_lock($1) AS acquired",
+        [841_772_992],
+      );
+      leader = lock.rows[0]?.acquired === true;
+      if (!leader) {
+        this.health.standby();
+        return;
+      }
+
+      const signupMetrics = await this.scanSignups();
+      const activitiesProcessed = await this.scanActiveSessions();
       await this.completeExpiredSessions();
+      this.health.tickSucceeded({
+        signupsProcessed: signupMetrics.processed,
+        activitiesProcessed,
+        signupBacklogPossible: signupMetrics.backlogPossible,
+        signupCursorLagMs: signupMetrics.cursorLagMs,
+      });
     } catch (error) {
       const details = error as {
         name?: unknown;
@@ -100,16 +130,27 @@ export class MonitorEngine {
         (message, secret) => message.replaceAll(secret, "[redacted]"),
         rawMessage,
       );
+      this.health.tickFailed(safeMessage);
       this.log.error(
         { err: error },
         `Antifraud monitor tick failed: ${String(details.name ?? "Error")} ${String(details.code ?? "unknown")} ${safeMessage}`,
       );
     } finally {
+      if (leader && lockClient) {
+        await lockClient
+          .query("SELECT pg_advisory_unlock($1)", [841_772_992])
+          .catch((error) => this.log.error({ err: error }, "Failed to release poller leader lock"));
+      }
+      lockClient?.release();
       this.running = false;
     }
   }
 
-  private async scanSignups(): Promise<void> {
+  private async scanSignups(): Promise<{
+    processed: number;
+    backlogPossible: boolean;
+    cursorLagMs: number | null;
+  }> {
     const cursor = await this.db.antifraud.query<{
       occurred_at: Date;
       source_id: string;
@@ -117,24 +158,45 @@ export class MonitorEngine {
       "SELECT occurred_at, source_id FROM source_cursors WHERE stream = 'signups'",
     );
     const current = cursor.rows[0];
-    if (!current) return;
-
-    const signups = await fetchNewSignups(this.db.source, {
-      occurredAt: current.occurred_at,
-      sourceId: current.source_id,
-    });
-
-    for (const signup of signups) {
-      await this.processSignup(signup);
-      await this.db.antifraud.query(
-        `
-          UPDATE source_cursors
-          SET occurred_at = $1, source_id = $2, updated_at = now()
-          WHERE stream = 'signups'
-        `,
-        [signup.created_at, signup.id],
-      );
+    if (!current) {
+      return { processed: 0, backlogPossible: false, cursorLagMs: null };
     }
+
+    let processed = 0;
+    let backlogPossible = false;
+    let latestAt = current.occurred_at;
+    let latestId = current.source_id;
+    for (let batch = 0; batch < this.config.POLL_MAX_SIGNUP_BATCHES; batch += 1) {
+      const signups = await fetchNewSignups(
+        this.db.source,
+        { occurredAt: latestAt, sourceId: latestId },
+        this.config.POLL_SIGNUP_BATCH_SIZE,
+      );
+
+      for (const signup of signups) {
+        await this.processSignup(signup);
+        await this.db.antifraud.query(
+          `
+            UPDATE source_cursors
+            SET occurred_at = $1, source_id = $2, updated_at = now()
+            WHERE stream = 'signups'
+          `,
+          [signup.created_at, signup.id],
+        );
+        latestAt = signup.created_at;
+        latestId = signup.id;
+        processed += 1;
+      }
+
+      backlogPossible = signups.length === this.config.POLL_SIGNUP_BATCH_SIZE;
+      if (!backlogPossible) break;
+    }
+
+    return {
+      processed,
+      backlogPossible,
+      cursorLagMs: Math.max(0, Date.now() - latestAt.getTime()),
+    };
   }
 
   private async processSignup(signup: Signup): Promise<void> {
@@ -382,17 +444,27 @@ export class MonitorEngine {
   private async activeSessions(): Promise<ActiveSession[]> {
     const result = await this.db.antifraud.query<ActiveSession>(
       `
-        SELECT id, case_id, user_id, current_score, started_at, ends_at
-        FROM monitor_sessions
-        WHERE status = 'active' AND ends_at > now()
+        SELECT
+          ms.id, ms.case_id, ms.user_id, ms.current_score, ms.started_at, ms.ends_at,
+          COALESCE(mac.occurred_at, ms.started_at - interval '2 seconds') AS activity_cursor_at,
+          COALESCE(mac.source, '') AS activity_cursor_source,
+          COALESCE(mac.source_ref, '') AS activity_cursor_ref
+        FROM monitor_sessions ms
+        LEFT JOIN monitor_activity_cursors mac ON mac.session_id = ms.id
+        WHERE ms.status = 'active' AND ms.ends_at > now()
       `,
     );
     return result.rows;
   }
 
-  private async scanActiveSessions(): Promise<void> {
+  private async scanActiveSessions(): Promise<number> {
     const sessions = await this.activeSessions();
-    const activities = await fetchActivity(this.db.source, sessions);
+    const activities = await fetchActivity(
+      this.db.source,
+      sessions,
+      this.config.POLL_ACTIVITY_BATCH_SIZE,
+      this.config.POLL_ACTIVITY_OVERLAP_MS,
+    );
     const byUser = new Map(sessions.map((session) => [session.user_id, session]));
 
     for (const activity of activities) {
@@ -400,6 +472,7 @@ export class MonitorEngine {
       if (!session) continue;
       await this.recordActivity(session, activity);
     }
+    return activities.length;
   }
 
   private pointsFor(activity: SourceActivity): number {
@@ -442,7 +515,8 @@ export class MonitorEngine {
       );
       const row = inserted.rows[0];
       if (!row) {
-        await client.query("ROLLBACK");
+        await this.advanceActivityCursor(client, session.id, activity);
+        await client.query("COMMIT");
         return;
       }
 
@@ -467,6 +541,7 @@ export class MonitorEngine {
         `,
         [session.case_id, row.score_after, severity(row.score_after)],
       );
+      await this.advanceActivityCursor(client, session.id, activity);
       await client.query("COMMIT");
       session.current_score = row.score_after;
 
@@ -488,6 +563,31 @@ export class MonitorEngine {
     } finally {
       client.release();
     }
+  }
+
+  private async advanceActivityCursor(
+    client: pg.PoolClient,
+    sessionId: string,
+    activity: SourceActivity,
+  ): Promise<void> {
+    await client.query(
+      `
+        INSERT INTO monitor_activity_cursors(
+          session_id, occurred_at, source, source_ref, updated_at
+        ) VALUES ($1,$2,$3,$4,now())
+        ON CONFLICT (session_id) DO UPDATE SET
+          occurred_at = EXCLUDED.occurred_at,
+          source = EXCLUDED.source,
+          source_ref = EXCLUDED.source_ref,
+          updated_at = now()
+        WHERE (
+          monitor_activity_cursors.occurred_at,
+          monitor_activity_cursors.source,
+          monitor_activity_cursors.source_ref
+        ) < (EXCLUDED.occurred_at, EXCLUDED.source, EXCLUDED.source_ref)
+      `,
+      [sessionId, activity.occurred_at, activity.source, activity.source_ref],
+    );
   }
 
   private async evaluateRules(session: ActiveSession): Promise<void> {

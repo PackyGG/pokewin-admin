@@ -26,6 +26,11 @@ const schema = z.object({
   API_WRITE_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(1_000).default(30),
   WS_TICKET_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(1_000).default(30),
   POLL_INTERVAL_MS: z.coerce.number().int().min(500).max(60_000).default(1_000),
+  POLL_SIGNUP_BATCH_SIZE: z.coerce.number().int().min(10).max(1_000).default(100),
+  POLL_MAX_SIGNUP_BATCHES: z.coerce.number().int().min(1).max(20).default(5),
+  POLL_ACTIVITY_BATCH_SIZE: z.coerce.number().int().min(100).max(10_000).default(2_000),
+  POLL_ACTIVITY_OVERLAP_MS: z.coerce.number().int().min(0).max(30_000).default(2_000),
+  POLL_STALE_AFTER_MS: z.coerce.number().int().min(5_000).max(300_000).default(15_000),
   MONITOR_DURATION_SECONDS: z.coerce.number().int().min(30).max(3_600).default(180),
   MONITOR_START_SCORE: z.coerce.number().int().min(0).max(500).default(25),
 });

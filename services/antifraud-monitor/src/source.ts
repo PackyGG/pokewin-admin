@@ -121,15 +121,30 @@ export type SourceActivity = {
 export async function fetchActivity(
   source: pg.Pool,
   sessions: ActiveSession[],
+  limit = 2_000,
+  overlapMs = 2_000,
 ): Promise<SourceActivity[]> {
   if (sessions.length === 0) return [];
-  const ids = sessions.map((session) => session.user_id);
-  const since = new Date(
-    Math.min(...sessions.map((session) => session.started_at.getTime())) - 2_000,
-  );
+  const cursors = sessions.map((session) => ({
+    user_id: session.user_id,
+    occurred_at: new Date(
+      session.activity_cursor_at.getTime() - overlapMs,
+    ).toISOString(),
+    source: "",
+    source_ref: "",
+  }));
 
   const result = await source.query<SourceActivity>(
     `
+      WITH activity_cursors AS (
+        SELECT *
+        FROM jsonb_to_recordset($1::jsonb) AS cursor(
+          user_id text,
+          occurred_at timestamptz,
+          source text,
+          source_ref text
+        )
+      )
       SELECT
         lt.user_id,
         CASE
@@ -167,9 +182,10 @@ export async function fetchActivity(
           'fiat_credited_amount_cents', fdi.credited_amount_cents
         ) AS payload
       FROM ledger_transactions lt
+      JOIN activity_cursors cursor ON cursor.user_id = lt.user_id
       LEFT JOIN fiat_deposit_intents fdi ON fdi.completed_ledger_id = lt.id
-      WHERE lt.user_id = ANY($1::text[])
-        AND lt.created_at >= $2
+      WHERE (lt.created_at, 'ledger'::text, lt.id::text)
+              > (cursor.occurred_at, cursor.source, cursor.source_ref)
         AND lt.type::text <> 'rain_win'
 
       UNION ALL
@@ -190,13 +206,15 @@ export async function fetchActivity(
           'level_required', r.level_required
         )
       FROM user_rewards ur
+      JOIN activity_cursors cursor ON cursor.user_id = ur.user_id
       JOIN rewards r ON r.id = ur.reward_id
-      WHERE ur.user_id = ANY($1::text[])
-        AND COALESCE(ur.opened_at, ur.granted_at) >= $2
+      WHERE (COALESCE(ur.opened_at, ur.granted_at), 'user_rewards'::text, ur.id::text)
+              > (cursor.occurred_at, cursor.source, cursor.source_ref)
 
-      ORDER BY occurred_at, source_ref
+      ORDER BY occurred_at, source, source_ref
+      LIMIT $2
     `,
-    [ids, since],
+    [JSON.stringify(cursors), limit],
   );
   return result.rows;
 }

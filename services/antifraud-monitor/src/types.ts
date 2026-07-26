@@ -41,4 +41,7 @@ export type ActiveSession = {
   current_score: number;
   started_at: Date;
   ends_at: Date;
+  activity_cursor_at: Date;
+  activity_cursor_source: string;
+  activity_cursor_ref: string;
 };
