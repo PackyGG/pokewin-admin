@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { admin_users, admin_giveaway_actions, admin_roles, admin_sessions, admin_notes, admin_audit_events, admin_gift_card_actions, admin_voucher_actions, expenses, recurring_expenses, admin_shifts, admin_shift_assignments, salary_employees, salary_payouts, excluded_users, employee_workspaces, employee_board_placements, employee_managers, employee_manager_workspaces, salary_payments, admin_user_tags, admin_excluded_user_balance_v2, roadmap_items, roadmap_detail_fields, roadmap_links, roadmap_linear_links, admin_passkeys, admin_withdrawal_unlocks, creator_reward_programs, creator_reward_program_windows, creator_reward_claims, chat_raffle_rounds, chat_raffle_prizes, chat_raffle_entries, chat_raffle_adjustments, staff_profiles, staff_point_events, staff_notifications, staff_notification_channels, staff_notification_prefs, staff_quizzes, staff_quiz_questions, staff_quiz_options, staff_quiz_attempts, staff_quiz_answers, antifraud_reviews, antifraud_review_notes, creator_reward_offer_windows, antifraud_signals } from "./schema";
+import { admin_users, admin_giveaway_actions, admin_roles, admin_sessions, admin_notes, admin_audit_events, admin_gift_card_actions, admin_voucher_actions, expenses, recurring_expenses, admin_shifts, admin_shift_assignments, salary_employees, salary_payouts, excluded_users, employee_workspaces, employee_board_placements, employee_managers, employee_manager_workspaces, salary_payments, admin_user_tags, admin_excluded_user_balance_v2, roadmap_items, roadmap_detail_fields, roadmap_links, roadmap_linear_links, admin_passkeys, admin_withdrawal_unlocks, creator_reward_programs, creator_reward_program_windows, creator_reward_claims, chat_raffle_rounds, chat_raffle_prizes, chat_raffle_entries, chat_raffle_adjustments, staff_profiles, staff_point_events, staff_notifications, staff_notification_channels, staff_notification_prefs, staff_quizzes, staff_quiz_questions, staff_quiz_options, staff_quiz_attempts, staff_quiz_answers, antifraud_reviews, antifraud_review_notes, creator_reward_offer_windows, antifraud_signals, pack_creation_requests } from "./schema";
 
 export const admin_giveaway_actionsRelations = relations(admin_giveaway_actions, ({one}) => ({
 	admin_user: one(admin_users, {
@@ -44,6 +44,12 @@ export const admin_usersRelations = relations(admin_users, ({one, many}) => ({
 	staff_notification_channels: many(staff_notification_channels),
 	staff_notification_prefs: many(staff_notification_prefs),
 	staff_quiz_attempts: many(staff_quiz_attempts),
+	pack_creation_requests_requested_by: many(pack_creation_requests, {
+		relationName: "pack_creation_requests_requested_by_admin_users_id"
+	}),
+	pack_creation_requests_reviewed_by: many(pack_creation_requests, {
+		relationName: "pack_creation_requests_reviewed_by_admin_users_id"
+	}),
 }));
 
 export const admin_rolesRelations = relations(admin_roles, ({many}) => ({
@@ -401,5 +407,18 @@ export const antifraud_signalsRelations = relations(antifraud_signals, ({one}) =
 	antifraud_review: one(antifraud_reviews, {
 		fields: [antifraud_signals.review_id],
 		references: [antifraud_reviews.id]
+	}),
+}));
+
+export const pack_creation_requestsRelations = relations(pack_creation_requests, ({one}) => ({
+	admin_user_requested_by: one(admin_users, {
+		fields: [pack_creation_requests.requested_by],
+		references: [admin_users.id],
+		relationName: "pack_creation_requests_requested_by_admin_users_id"
+	}),
+	admin_user_reviewed_by: one(admin_users, {
+		fields: [pack_creation_requests.reviewed_by],
+		references: [admin_users.id],
+		relationName: "pack_creation_requests_reviewed_by_admin_users_id"
 	}),
 }));

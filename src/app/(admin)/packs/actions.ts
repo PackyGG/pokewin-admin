@@ -9,7 +9,12 @@ import { isUuid } from "@/lib/utils/ids";
 import { getPackSetAssignment } from "@/lib/queries/pack-set-assignments";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { adminDrizzle } from "@/lib/admin-db";
-import { requirePageAccess, sessionHasRole } from "@/lib/dal";
+import {
+  requirePageAccess,
+  sessionHasRole,
+  sessionIsAdmin,
+  sessionIsOwner,
+} from "@/lib/dal";
 import {
   isRepriceOwner,
   isPackStudioRetuneOperator,
@@ -93,6 +98,16 @@ import {
   type SnapshotCard,
 } from "@/app/(admin)/packs/_lib/pack-history";
 import { computePoolFingerprint } from "@/app/(admin)/packs/_lib/pool-fingerprint";
+import {
+  buildPackRequestSchema,
+  claimPackCreationRequest,
+  completePackCreationRequest,
+  declinePackCreationRequest,
+  enqueuePackCreationRequest,
+  releasePackCreationRequest,
+  type BuildPackInput,
+  type ParsedBuildPackInput,
+} from "@/lib/packs/build-requests";
 
 const pack_tag = {
   pct1: "pct1",
@@ -216,6 +231,16 @@ export async function togglePackActive(packId: string, active: boolean) {
   const db = await getDrizzleDb();
   const session = await requirePageAccess("/packs");
   await requireCapability(session, "__can_toggle_pack_active", "toggle pack active state");
+  if (
+    active &&
+    sessionHasRole(session, "pack_creator") &&
+    !sessionIsAdmin(session) &&
+    !sessionIsOwner(session)
+  ) {
+    throw new Error(
+      "Pack Builders must request a live push through Pack Studio for owner approval.",
+    );
+  }
 
   const result = await db.execute<{ id: string }>(sql`
     UPDATE packs SET active = ${active}, updated_at = NOW()
@@ -2411,11 +2436,6 @@ export async function revertPackToSnapshot(
 // client unverified: card values are re-read from the DB when card ids are
 // given.
 
-const buildPackCardSchema = z.union([
-  z.object({ cardId: z.string().uuid() }),
-  z.object({ value: z.number().positive() }),
-]);
-
 async function insertBuiltPack(
   tx: Pick<MainDrizzleDb, "execute">,
   input: {
@@ -2480,51 +2500,35 @@ async function insertBuiltPackCards(
   `);
 }
 
-const buildPackSchema = z.object({
-  name: z.string().trim().min(1, "Name is required").max(60),
-  slug: z.string().trim().min(1, "Slug is required").max(60),
-  description: z.string().trim().max(2000).optional(),
-  imageUrl: z.string().trim().url().optional(),
-  price: z.number().positive("Price must be greater than 0"),
-  cardsPerOpen: z.number().int().positive().optional(),
-  // Player-facing on-site risk bar level (0..1). Optional; 0/undefined → null
-  // (no bar shown to players), matching the create/edit pack forms.
-  difficulty: z.number().min(0).max(1).optional(),
-  // When true the pack is created AND activated (live on-site instantly). When
-  // false/omitted it is created inactive (a draft to review + activate later).
-  activate: z.boolean().optional(),
-  cards: z.array(buildPackCardSchema).min(1, "At least one card is required"),
-  targets: z.object({
-    targetEdge: z.number().positive().lt(1).optional(),
-    targetWinRate: z.number().min(0).lt(1),
-    maxWinCap: z.number().positive().optional(),
-    floorRatioMin: z.number().positive().optional(),
-    nearMissMin: z.number().min(0).lt(1).optional(),
-  }),
-});
-
-export type BuildPackInput = z.input<typeof buildPackSchema>;
-
 export type BuildPackResult =
+  | {
+      ok: true;
+      requestId: string;
+      edge: number;
+      winRate: number;
+      requestedActive: boolean;
+    }
+  | { ok: false; error: string };
+
+type MaterializedPackResult =
   | { ok: true; packId: string; edge: number; winRate: number; active: boolean }
   | { ok: false; error: string };
 
 /**
- * Create a NEW pack whose card weights are shaped to a target edge + win-rate.
- * Owner-only. Validates input with Zod, resolves each card's VALUE (read fresh
+ * Materialize an owner-approved pack whose card weights are shaped to a target
+ * edge + win-rate. Validates input with Zod, resolves each card's VALUE (read fresh
  * from `cards.price` when a cardId is given), runs `shapeWeights` for
  * feasibility (returns `{ok:false,error}` and creates NOTHING if infeasible),
  * then creates the pack (`official` — the type every Pack-Studio tool scopes to)
  * reusing createPack's transaction shape.
  *
- * The pack is created INACTIVE by default (a draft to review + activate later).
- * When `activate:true` it is created AND flipped live on-site instantly — that
- * path additionally requires the `__can_toggle_pack_active` capability (the same
- * gate `togglePackActive` enforces) so going live is never a weaker check than
- * activating an existing pack. `difficulty` sets the player-facing on-site risk
- * bar (0 → null, no bar).
+ * The pack is created INACTIVE by default. When `activate:true`, the owner's
+ * approval creates and activates it in the same transaction. `difficulty` sets
+ * the player-facing on-site risk bar (0 → null, no bar).
  */
-export async function buildPack(input: BuildPackInput): Promise<BuildPackResult> {
+async function materializeApprovedPack(
+  input: BuildPackInput,
+): Promise<MaterializedPackResult> {
   const session = await requirePageAccess("/packs");
   if (
     !isPackStudioRetuneOperator(session) &&
@@ -2534,7 +2538,7 @@ export async function buildPack(input: BuildPackInput): Promise<BuildPackResult>
   }
   await requireCapability(session, "__can_create_pack", "create packs");
 
-  const parsed = buildPackSchema.safeParse(input);
+  const parsed = buildPackRequestSchema.safeParse(input);
   if (!parsed.success) {
     throw new Error(parsed.error.issues[0]?.message ?? "Invalid pack input");
   }
@@ -2697,4 +2701,185 @@ export async function buildPack(input: BuildPackInput): Promise<BuildPackResult>
     winRate: shaped.risk.winRate,
     active: activate,
   };
+}
+
+async function previewPackBuildRequest(
+  input: ParsedBuildPackInput,
+): Promise<{ ok: true; edge: number; winRate: number } | { ok: false; error: string }> {
+  const db = await getDrizzleDb();
+  const existing = await db.execute<{ id: string }>(sql`
+    SELECT id FROM packs WHERE slug = ${input.slug} LIMIT 1
+  `);
+  if (existing.rows.length > 0) {
+    return { ok: false, error: "A pack already uses this slug" };
+  }
+
+  const cardIds = input.cards
+    .filter((card): card is { cardId: string } => "cardId" in card)
+    .map((card) => card.cardId);
+  const prices = new Map<string, number>();
+  if (cardIds.length > 0) {
+    const result = await db.execute<{ id: string; price: string }>(sql`
+      SELECT id, price::text AS price
+      FROM cards
+      WHERE id = ANY(${pgArrayParam(cardIds)}::uuid[])
+    `);
+    for (const row of result.rows) prices.set(row.id, Number(row.price));
+    const missing = cardIds.filter((id) => !prices.has(id));
+    if (missing.length > 0) {
+      return { ok: false, error: `Unknown card id(s): ${missing.join(", ")}` };
+    }
+  }
+
+  const slots = input.cards.map((card) =>
+    "cardId" in card
+      ? { cardId: card.cardId, value: prices.get(card.cardId)! }
+      : { cardId: null, value: card.value },
+  );
+  const shaped = shapeWeights({
+    cards: slots.map((slot) => ({ value: slot.value })),
+    price: input.price,
+    targetEdge: resolveRetuneTargetEdge(input.targets.targetEdge),
+    targetWinRate: input.targets.targetWinRate,
+    maxWinCap: input.targets.maxWinCap,
+    floorRatioMin: input.targets.floorRatioMin,
+    nearMissMin: input.targets.nearMissMin,
+  });
+  if ("error" in shaped) return { ok: false, error: shaped.error };
+
+  const valueOnlyWithWeight = slots.some(
+    (slot, index) => slot.cardId === null && shaped.weights[index]! > 0,
+  );
+  if (valueOnlyWithWeight) {
+    return {
+      ok: false,
+      error:
+        "Pack builder needs real card ids to create a pack — value-only slots carried weight and cannot be persisted.",
+    };
+  }
+
+  return {
+    ok: true,
+    edge: shaped.risk.edge,
+    winRate: shaped.risk.winRate,
+  };
+}
+
+/**
+ * Validate a Pack Studio build and place it in the ADMIN approval queue.
+ * This action never mutates MAIN. Pack Builders may request an inactive build
+ * or a live push; both require one owner decision on System → New Packs.
+ */
+export async function buildPack(input: BuildPackInput): Promise<BuildPackResult> {
+  const session = await requirePageAccess("/packs");
+  if (
+    !isPackStudioRetuneOperator(session) &&
+    !sessionHasRole(session, "pack_creator")
+  ) {
+    throw new Error("The pack builder is restricted to authorized operators.");
+  }
+  await requireCapability(session, "__can_create_pack", "create packs");
+
+  const parsed = buildPackRequestSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Invalid pack input");
+  }
+  const preview = await previewPackBuildRequest(parsed.data);
+  if (!preview.ok) return preview;
+
+  const requestId = await enqueuePackCreationRequest({
+    requestedBy: session.userId,
+    payload: parsed.data,
+    previewEdge: preview.edge,
+    previewWinRate: preview.winRate,
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "pack_creation_requested",
+    metadata: {
+      request_id: requestId,
+      name: parsed.data.name,
+      slug: parsed.data.slug,
+      requested_active: parsed.data.activate === true,
+      card_count: parsed.data.cards.length,
+      preview_edge: preview.edge,
+      preview_win_rate: preview.winRate,
+    },
+  });
+
+  revalidatePath("/system/new-packs");
+  return {
+    ok: true,
+    requestId,
+    edge: preview.edge,
+    winRate: preview.winRate,
+    requestedActive: parsed.data.activate === true,
+  };
+}
+
+export type ApprovePackCreationResult = {
+  packId: string;
+  active: boolean;
+};
+
+/** Owner-only, one-click approval. No 2FA token is requested or accepted. */
+export async function approvePackCreationRequest(
+  requestId: string,
+): Promise<ApprovePackCreationResult> {
+  const session = await requirePageAccess("/system/new-packs");
+  if (!sessionIsOwner(session)) {
+    throw new Error("Only an owner can approve new packs");
+  }
+  const parsedId = z.string().uuid().safeParse(requestId);
+  if (!parsedId.success) throw new Error("Invalid pack request id");
+
+  const request = await claimPackCreationRequest(parsedId.data, session.userId);
+  if (!request) {
+    throw new Error("This pack request is no longer pending");
+  }
+
+  const result = await materializeApprovedPack(request.requestPayload);
+  if (!result.ok) {
+    await releasePackCreationRequest(request.id, session.userId);
+    throw new Error(result.error);
+  }
+
+  await completePackCreationRequest(request.id, session.userId, result.packId);
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "pack_creation_approved",
+    metadata: {
+      request_id: request.id,
+      requested_by: request.requestedBy,
+      pack_id: result.packId,
+      active: result.active,
+    },
+  });
+
+  revalidatePath("/system/new-packs");
+  return { packId: result.packId, active: result.active };
+}
+
+/** Owner-only, one-click decline. No note or 2FA ceremony is required. */
+export async function declinePackCreationRequestAction(
+  requestId: string,
+): Promise<void> {
+  const session = await requirePageAccess("/system/new-packs");
+  if (!sessionIsOwner(session)) {
+    throw new Error("Only an owner can decline new packs");
+  }
+  const parsedId = z.string().uuid().safeParse(requestId);
+  if (!parsedId.success) throw new Error("Invalid pack request id");
+
+  const declined = await declinePackCreationRequest(parsedId.data, session.userId);
+  if (!declined) {
+    throw new Error("This pack request is no longer pending");
+  }
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "pack_creation_declined",
+    metadata: { request_id: parsedId.data },
+  });
+  revalidatePath("/system/new-packs");
 }

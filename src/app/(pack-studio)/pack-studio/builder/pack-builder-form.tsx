@@ -8,7 +8,6 @@ import {
   useState,
   useTransition,
 } from "react";
-import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -233,10 +232,9 @@ export function PackBuilderForm({
   maxMultCeiling: number;
   /** Resolved per-pack edge-curve config (floor + risk-premium coefficients). */
   edgeCurve: EdgeCurveConfig;
-  /** True iff the viewer is the owner (buildPack is owner-gated). */
+  /** True when the viewer can submit a pack for owner approval. */
   canBuild: boolean;
 }) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   // ── Identity ──────────────────────────────────────────────────────
@@ -422,7 +420,7 @@ export function PackBuilderForm({
     );
   }
 
-  // ── Submit → buildPack (owner-gated, server re-shapes; draft OR live) ──
+  // ── Submit → owner approval queue (server re-shapes; draft OR live intent) ──
   const canSubmit =
     canBuild &&
     !isPending &&
@@ -433,10 +431,8 @@ export function PackBuilderForm({
     !shapeError &&
     Boolean(shapeOk);
 
-  // `activate:true` pushes the pack LIVE on-site the instant it's created;
-  // `false` creates it inactive (a draft to review/activate later). Difficulty
-  // is sent raw — the server normalizes 0 → null (no on-site bar), matching the
-  // create/edit pack forms.
+  // `activate:true` requests a live push; `false` requests an inactive pack.
+  // Neither path changes MAIN until an owner approves the queued request.
   function handleSubmit(activate: boolean) {
     if (!canSubmit) return;
     startTransition(async () => {
@@ -471,10 +467,8 @@ export function PackBuilderForm({
         }
 
         toast.success(
-          `${result.active ? "Pack pushed LIVE" : "Pack created (inactive)"} · edge ${(result.edge * 100).toFixed(2)}% · win-rate ${(result.winRate * 100).toFixed(1)}%`,
+          `${result.requestedActive ? "Live push requested" : "Draft creation requested"} · owner approval required · edge ${(result.edge * 100).toFixed(2)}% · win-rate ${(result.winRate * 100).toFixed(1)}%`,
         );
-        router.push(`/packs/${result.packId}`);
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to create pack");
       }
@@ -487,8 +481,8 @@ export function PackBuilderForm({
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-600 dark:text-amber-400">
           <ShieldCheck className="mt-0.5 size-4 shrink-0" />
           <p>
-            The pack builder can be explored here, but creating a pack is
-            restricted to the owner. Submit is disabled for your account.
+            Your account can explore this builder, but it does not have pack
+            creation permission. Submit is disabled.
           </p>
         </div>
       )}
@@ -837,9 +831,8 @@ export function PackBuilderForm({
               )}
 
               <div className="space-y-2">
-                {/* Push & activate — creates the pack AND flips it live on-site
-                    the instant it's confirmed. Guarded by an explicit confirm
-                    because it exposes a real pack to real players/money. */}
+                {/* Live intent is queued. The owner approval click is the only
+                    path that may create and activate the pack. */}
                 <AlertDialog
                   open={activateConfirmOpen}
                   onOpenChange={setActivateConfirmOpen}
@@ -849,16 +842,17 @@ export function PackBuilderForm({
                     className={cn(buttonVariants(), "w-full gap-2")}
                   >
                     <Rocket className="size-4" />
-                    {isPending ? "Working…" : "Push & activate (live now)"}
+                    {isPending ? "Submitting…" : "Request live push"}
                   </AlertDialogTrigger>
                   <AlertDialogContent>
                     <AlertDialogHeader>
-                      <AlertDialogTitle>Push this pack live now?</AlertDialogTitle>
+                      <AlertDialogTitle>Request owner approval?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        &ldquo;{name.trim() || "This pack"}&rdquo; will be created{" "}
-                        <strong>and activated immediately</strong> — it goes
-                        on-site for real players at {formatCurrency(packPrice)} the
-                        moment you confirm. House edge {edgePct.toFixed(2)}% ·
+                        &ldquo;{name.trim() || "This pack"}&rdquo; will be sent
+                        to the owner queue with a request to go live at{" "}
+                        {formatCurrency(packPrice)}. Nothing is created or shown
+                        to players until an owner clicks Approve. House edge{" "}
+                        {edgePct.toFixed(2)}% ·
                         win-rate{" "}
                         {previewRisk ? (previewRisk.winRate * 100).toFixed(1) : "0"}
                         %
@@ -876,14 +870,14 @@ export function PackBuilderForm({
                           handleSubmit(true);
                         }}
                       >
-                        Push live
+                        Submit request
                       </AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
 
-                {/* Push as an inactive draft — the safe default (previous
-                    behavior): review & activate later on the pack page. */}
+                {/* Inactive intent still requires the same one-time owner
+                    approval before the pack is created in MAIN. */}
                 <Button
                   type="button"
                   variant="outline"
@@ -892,12 +886,12 @@ export function PackBuilderForm({
                   className="w-full gap-2"
                 >
                   <Save className="size-4" />
-                  {isPending ? "Working…" : "Push as draft (inactive)"}
+                  {isPending ? "Submitting…" : "Request inactive draft"}
                 </Button>
               </div>
               <p className="text-center text-[11px] text-muted-foreground">
-                Draft is created inactive — review &amp; activate it later on the
-                pack page. Push &amp; activate goes on-site instantly.
+                Both options enter System → New Packs. An owner approves or
+                declines with one click; no pack goes live before approval.
               </p>
             </>
           )}

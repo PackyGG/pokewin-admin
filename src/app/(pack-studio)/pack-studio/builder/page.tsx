@@ -7,6 +7,7 @@ import {
   KpiStripSkeleton,
 } from "@/components/loading-skeletons";
 import { requirePackStudioPageAccess } from "@/lib/require-pack-studio-access";
+import { sessionHasRole } from "@/lib/dal";
 import { isPackStudioRetuneOperator } from "@/lib/reprice-access";
 import { getSets, getRarities } from "@/lib/queries/cards";
 import {
@@ -27,8 +28,8 @@ import { PackBuilderForm } from "./pack-builder-form";
  * cap) streams behind a `<Suspense>` boundary. All reads here are light + MAIN
  * read-only (sets/rarities) or ADMIN read-only (max-win cap); the heavy card
  * search runs client-side on demand via the builder's own server action, and
- * pack creation goes through the owner-gated `buildPack` action (created as an
- * inactive draft, or activated live on-site via the "Push & activate" option).
+ * pack creation goes through the ADMIN approval queue. Nothing is created in
+ * MAIN until an owner approves it on System → New Packs.
  */
 
 /** Shell-matching fallback shared by the page <Suspense> and `loading.tsx`. */
@@ -98,9 +99,9 @@ async function BuilderBody({ canBuild }: { canBuild: boolean }) {
 
 export default async function PackBuilderPage() {
   const session = await requirePackStudioPageAccess();
-  // `canBuild` matches the server-side `buildPack` gate: owners plus the
-  // hard-coded Pack-Studio retune operator allowlist (see `reprice-access.ts`).
-  const canBuild = isPackStudioRetuneOperator(session);
+  const canBuild =
+    isPackStudioRetuneOperator(session) ||
+    sessionHasRole(session, "pack_creator");
 
   return (
     <div className="space-y-6">

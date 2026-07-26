@@ -193,6 +193,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // System
   { group: "System", label: "Security", key: "/security" },
   { group: "System", label: "Admins & Access", key: "/admin-users" },
+  { group: "System", label: "New Packs", key: "/system/new-packs" },
   {
     group: "System",
     label: "Staff Notifications",

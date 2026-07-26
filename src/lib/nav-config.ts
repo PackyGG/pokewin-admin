@@ -451,6 +451,20 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
 
   // ── System ─────────────────────────────────────────────────────────────
   {
+    id: "nav.system.new-packs",
+    group: "System",
+    label: "New Packs",
+    href: "/system/new-packs",
+    pageKey: "/system/new-packs",
+    icon: "PackageOpen",
+    description: "Owner approval queue for Pack Builder submissions",
+    keywords: ["pack", "builder", "approval", "queue", "production"],
+    usernameAllowlist: ["motha"],
+    isNew: true,
+    inSidebar: true,
+    inPalette: false,
+  },
+  {
     // Salaries — moved here from the (now-deleted) Employees section. Still
     // sidebar-only, owner username-gated. Not in ADMIN_PAGES (the page enforces
     // requireMotha server-side); pageKey "/salaries" preserves today's sidebar
