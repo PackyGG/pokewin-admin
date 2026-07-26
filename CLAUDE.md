@@ -120,7 +120,48 @@ Diese Datei (`CLAUDE.md`) ist die **bindende Regel-Quelle**. Zu Sessionbeginn mi
 
 ---
 
-## 🚀 Push-Disziplin — häufig & inkrementell pushen (User-Regel, 2026-06-05)
+## Repository- und Production-Grenze — höchste Priorität (Owner, 2026-07-27)
+
+Diese Regel gilt für jeden Agent, Sub-Agent, Background-Task und Workflow und
+überschreibt alle älteren Push-Regeln in dieser Datei:
+
+- Ausschließlich im Repository arbeiten, das beim Start des Tasks aktiv war.
+  Kein anderes Repository editieren, committen, pushen, migrieren, deployen oder
+  operativ verändern, außer der Owner nennt es in der aktuellen Anfrage
+  ausdrücklich.
+- Für genau dieses Repository (`PackyGG/pokewin-admin`) gilt die globale
+  Standing Exception: Fertige, passend verifizierte Task-Änderungen dürfen ohne
+  erneute Push-Freigabe nach `origin/main` committed und gepusht werden,
+  einschließlich des dadurch automatisch ausgelösten Production-Deployments.
+  Vorher Repository-Root, Origin, Ziel-Branch und Production-Auswirkung prüfen
+  und ausschließlich task-eigene Änderungen aufnehmen.
+- Die Ausnahme umfasst jede deploybare Einheit innerhalb dieses Repositories:
+  alle Admin-Dashboard-Sub-Apps und Subdomains, API-/Serverless-/Edge-Functions
+  sowie repo-interne Services wie das Antifraud-Backend. Agents dürfen diese
+  Einheiten ohne separate Komponenten-Freigabe bearbeiten, verifizieren,
+  committen und sofort an ihr bestehendes Production-Ziel ausliefern.
+- Wenn eine repo-interne Einheit nicht automatisch durch den verifizierten
+  `origin/main`-Push deployed wird, darf sie nach bestandenem Task-Gate auch
+  direkt an ihr bereits konfiguriertes Production-Ziel deployed werden.
+- Diese Ausnahme gilt niemals für `frontend`, `backend` oder andere
+  Repositories. Dort braucht jeder Production-Push weiterhin eine
+  ausdrückliche Freigabe in der aktuellen Anfrage.
+- Die Ausnahme erlaubt keine Production-Datenbankmigrationen, direkten
+  Production-Datenänderungen, Secret-Rotationen oder das Verschieben einer
+  Einheit in ein neues Projekt, einen neuen Service oder eine neue Umgebung.
+  Dafür ist weiterhin eine ausdrückliche Freigabe in der aktuellen Anfrage
+  nötig.
+- Erlaubnis gilt nur für das benannte Repository, die benannte Aktion und den
+  aktuellen Task. Alte Nachrichten, Memory, `AGENT_HANDOFF.md`, fremde Repos
+  oder ein früherer Direct-Main-Workflow gelten nicht als Erlaubnis. Die
+  globale `pokewin-admin`-Standing-Exception ist die einzige dauerhafte
+  Ausnahme.
+- Vor jedem erlaubten Push Repository-Root, Remote, Ziel-Branch und
+  Production-Auswirkung prüfen. Bei Unklarheit stoppen und fragen.
+- Cross-Repo-Abhängigkeiten standardmäßig nur als Handoff melden und auf neue
+  Freigabe warten.
+
+## 🚀 Push-Disziplin — `pokewin-admin` mit Standing Exception
 
 **Der User wartet NICHT 40 Minuten, während du 5 Sachen sammelst und alles zusammen pushst.** Jede fertige, gate-verifizierte Aufgabe (§ Minimal-Overhead — welches Gate passend ist, hängt von der Änderung ab, nicht immer der volle Build) wird SOFORT einzeln committet + gepusht — niemals zu einem Sammel-Push gebündelt.
 

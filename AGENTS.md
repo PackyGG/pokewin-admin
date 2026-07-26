@@ -2,6 +2,32 @@
 
 Agent rulebook for Codex/Cursor sessions in this repo. **The binding rules live in [`CLAUDE.md`](./CLAUDE.md) — read that first.** This file used to carry its own full copy of those rules (~65KB); as of 2026-07-12 it's a pointer instead, so the rules have exactly one source of truth and can't drift out of sync. `CLAUDE.md` covers: Prod-DB policy, the PostgreSQL/Drizzle query rule, the minimal-overhead speed rule, push discipline, browser-verification/done-criteria, UI & design conventions, dual-DB architecture, auth/permission patterns, and the file organization/naming conventions.
 
+## Repository and production boundary
+
+Stay inside this repository. Do not edit, commit, push, migrate, deploy, or
+operate another repository unless the owner explicitly names it in the current
+request. Cross-repository work is a handoff by default.
+
+This repository has the global standing `pokewin-admin` exception: agents may
+commit and push finished, appropriately verified task changes to `origin/main`
+without asking for push permission again, including the automatic production
+deployment triggered by that push. Before pushing, verify the repository root,
+remote, target branch, and production impact, and include only task-owned
+changes.
+
+The exception covers every deployable item stored inside this repository:
+admin-dashboard sub-apps and subdomains, API/serverless/edge functions, and
+repository-contained services such as the Antifraud backend. Agents may work
+on, verify, commit, and immediately ship these items to their existing
+production targets without asking for separate per-component permission. If a
+component does not deploy automatically from `origin/main`, agents may deploy
+it to its already-configured production target after its task gate passes.
+
+The exception does not authorize production database migrations, direct
+production data changes, secret rotation, or moving a component to a new
+project/service/environment. It never extends to the separate `frontend`,
+`backend`, or any other repository.
+
 ---
 
 ## 🧠 Session Memory protocol
