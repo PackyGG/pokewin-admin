@@ -145,9 +145,8 @@ const FIELDS: {
       </>
     ),
   },
-  // Keno is deliberately absent: it is edited in the dedicated Keno section
-  // at the bottom of /security, so wager_weight_keno_bps has exactly one
-  // editable surface.
+  // Keno is deliberately absent: it is edited in Content → Keno, so
+  // wager_weight_keno_bps has exactly one editable surface.
 ];
 
 // Tolerates a field the backend hasn't shipped yet (e.g. wager_weight_keno_bps

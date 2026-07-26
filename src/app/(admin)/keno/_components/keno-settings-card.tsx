@@ -14,9 +14,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ux";
-import { updateWagerRequirementDefaultsAction } from "./wager-requirement-actions";
-import { updateLeaderboardWagerWeightsAction } from "./leaderboard-wager-weights-actions";
-import { updateRakebackWagerWeightsAction } from "./rakeback-wager-weights-actions";
+import { updateWagerRequirementDefaultsAction } from "../../security/wager-requirement-actions";
+import { updateLeaderboardWagerWeightsAction } from "../../security/leaderboard-wager-weights-actions";
+import { updateRakebackWagerWeightsAction } from "../../security/rakeback-wager-weights-actions";
 import type { WagerRequirementDefaults } from "@/lib/backend-api/wager-requirements";
 import type { LeaderboardWagerWeights } from "@/lib/backend-api/leaderboard-wager-weights";
 import type { RakebackWagerWeights } from "@/lib/backend-api/rakeback-wager-weights";
@@ -25,21 +25,16 @@ import type { RakebackWagerWeights } from "@/lib/backend-api/rakeback-wager-weig
  * Every admin-editable keno setting, in one place.
  *
  * Keno's three live weights live in three different backend endpoints
- * (withdrawal requirement / leaderboards / rakeback), each grouped by
- * DESTINATION rather than by game. That grouping is right for the per-game
- * cards above, but it means the answer to "how is keno configured?" was
- * spread across three sections. This card is the by-GAME view.
+ * (withdrawal requirement / leaderboards / rakeback). This card consolidates
+ * those destinations in the dedicated Content → Keno workspace.
  *
- * It is the sole editor for the three keno keys — the per-game cards above
- * deliberately do NOT carry a keno field, so each key has exactly one
- * editable surface (the same rule the `movedKeys` filter enforces against
- * the raw Site Configuration table).
+ * It is the sole editor for the three Keno keys. The destination-oriented
+ * cards on /security deliberately do not carry a Keno field, so each key has
+ * exactly one editable surface.
  *
- * No extra backend reads: /security already loads all three weight sets for
- * the cards above, so this card is handed the same objects. Saving reuses
- * those cards' existing server actions, so auth, the audit event and cache
- * revalidation all behave exactly as they do when edited from above — one
- * audit record per key group, recording that group's real old → new.
+ * Saving reuses the established security server actions, so auth, the audit
+ * event, and cache revalidation keep the same production contract — one audit
+ * record per key group, recording that group's real old → new.
  *
  * NOT shown, because they are not configurable: the grid (40), draw count
  * (10), pick range (1–10), bet range ($0.25–$1000), the three risk modes and
@@ -101,17 +96,19 @@ export function KenoSettingsCard({
   wagerDefaults,
   leaderboardWeights,
   rakebackWeights,
+  canEdit,
 }: {
   wagerDefaults: WagerRequirementDefaults | null;
   leaderboardWeights: LeaderboardWagerWeights | null;
   rakebackWeights: RakebackWagerWeights | null;
+  canEdit: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
 
   // Server-truth baseline per field, flattened out of the three source
   // objects. Re-baselined in place after a successful save so the card
   // reflects what persisted WITHOUT a router.refresh() (no scroll jump) —
-  // same contract as the per-game cards above.
+  // same contract as the destination-oriented cards.
   const [baseline, setBaseline] = useState<Record<FieldKey, number | undefined>>(
     () => ({
       withdrawal: wagerDefaults?.wager_weight_keno_bps,
@@ -239,7 +236,7 @@ export function KenoSettingsCard({
         <CardTitle className="text-sm font-medium">Keno Settings</CardTitle>
         <CardDescription>
           Every admin-editable keno weight in one place — the same keys the
-          Withdrawal, Leaderboard and Rakeback cards above manage for the other
+          Withdrawal, Leaderboard and Rakeback systems use for the other
           games, gathered here by game instead of by destination. Values are
           multipliers (1× = 10000 bps). Saving writes through the backend,
           which validates and refreshes its own cache.
@@ -285,7 +282,7 @@ export function KenoSettingsCard({
                   onChange={(e) =>
                     setValues((prev) => ({ ...prev, [f.key]: e.target.value }))
                   }
-                  disabled={isPending || unavailable}
+                  disabled={isPending || unavailable || !canEdit}
                 />
                 <p className="text-[11px] text-muted-foreground">
                   {unavailable ? (
@@ -303,9 +300,13 @@ export function KenoSettingsCard({
         </div>
 
         <div className="flex items-center gap-2">
-          <Button onClick={handleSave} disabled={isPending}>
+          <Button onClick={handleSave} disabled={isPending || !canEdit}>
             {isPending && <Spinner size={15} className="text-current" />}
-            {isPending ? "Saving..." : "Save changes"}
+            {isPending
+              ? "Saving..."
+              : canEdit
+                ? "Save changes"
+                : "Admin access required"}
           </Button>
         </div>
       </CardContent>
