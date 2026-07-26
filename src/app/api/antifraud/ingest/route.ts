@@ -15,6 +15,10 @@ import {
   type AntifraudSignalEvent,
 } from "@/lib/antifraud/ws";
 import { isPostgresError } from "@/lib/postgres-errors";
+import {
+  notifyStaff,
+  staffBroadcastRecipients,
+} from "@/lib/staff/notifications";
 
 /**
  * Durable inbound webhook from the separate antifraud backend service.
@@ -137,6 +141,7 @@ export async function POST(request: Request): Promise<Response> {
   let accepted = 0;
   let duplicates = 0;
   let reviewsOpened = 0;
+  const notify: AntifraudSignalEvent[] = [];
 
   for (const signal of signals) {
     try {
@@ -145,6 +150,11 @@ export async function POST(request: Request): Promise<Response> {
       else {
         accepted += 1;
         if (outcome === "review_opened") reviewsOpened += 1;
+        if (
+          SEVERITY_RANK[signal.severity] >= SEVERITY_RANK[NOTIFY_SEVERITY_FLOOR]
+        ) {
+          notify.push(signal);
+        }
       }
     } catch (err) {
       if (isPostgresError(err, "42P01")) {
@@ -154,6 +164,25 @@ export async function POST(request: Request): Promise<Response> {
       // 500 so the backend retries this delivery — the external_id unique
       // index makes the retry safe.
       return json({ error: "storage_failed" }, 500);
+    }
+  }
+
+  if (notify.length > 0) {
+    const recipients = await staffBroadcastRecipients();
+    for (const signal of notify) {
+      await notifyStaff({
+        recipients,
+        kind: "fraud_alert",
+        title: `${signal.severity.toUpperCase()} — ${signal.kind}`,
+        body: signal.summary,
+        href: "/antifraud/reviews",
+        metadata: {
+          kind: signal.kind,
+          severity: signal.severity,
+          riskScore: signal.riskScore,
+          userId: signal.userId,
+        },
+      });
     }
   }
 

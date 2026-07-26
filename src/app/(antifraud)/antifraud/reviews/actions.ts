@@ -12,6 +12,7 @@ import {
 } from "@/lib/db-schema/admin/schema";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { notifyStaff } from "@/lib/staff/notifications";
 import {
   REVIEW_SEVERITIES,
   REVIEW_STATUSES,
@@ -131,6 +132,7 @@ export async function updateReviewStatus(input: unknown): Promise<void> {
   const [current] = await adminDrizzle.select({
     status: antifraud_reviews.status, target_user_id: antifraud_reviews.target_user_id,
     assigned_to: antifraud_reviews.assigned_to,
+    opened_by: antifraud_reviews.opened_by,
   }).from(antifraud_reviews).where(eq(antifraud_reviews.id, reviewId)).limit(1);
   if (!current) throw new Error("That case no longer exists");
   if (current.status === status && !resolution) return;
@@ -164,6 +166,17 @@ export async function updateReviewStatus(input: unknown): Promise<void> {
     },
   });
 
+  if (isTerminal && current.opened_by && current.opened_by !== session.userId) {
+    await notifyStaff({
+      recipients: [current.opened_by],
+      kind: "review_resolved",
+      title: `Case ${REVIEW_STATUS_LABELS[status].toLowerCase()}`,
+      body: resolution || `A case you opened was marked ${status}.`,
+      href: `/antifraud/reviews/${reviewId}`,
+      metadata: { reviewId, status },
+    });
+  }
+
   revalidatePath("/antifraud/reviews");
   revalidatePath(`/antifraud/reviews/${reviewId}`);
   revalidatePath("/antifraud");
@@ -185,6 +198,7 @@ export async function assignReview(input: unknown): Promise<void> {
 
   const [current] = await adminDrizzle.select({
     assigned_to: antifraud_reviews.assigned_to, status: antifraud_reviews.status,
+    reason: antifraud_reviews.reason,
   }).from(antifraud_reviews).where(eq(antifraud_reviews.id, reviewId)).limit(1);
   if (!current) throw new Error("That case no longer exists");
   if (current.assigned_to === assignee) return;
@@ -212,6 +226,17 @@ export async function assignReview(input: unknown): Promise<void> {
           : "Assigned this case to another analyst."
         : "Unassigned this case.",
   });
+
+  if (assignee && assignee !== session.userId) {
+    await notifyStaff({
+      recipients: [assignee],
+      kind: "review_assigned",
+      title: "A case was assigned to you",
+      body: current.reason,
+      href: `/antifraud/reviews/${reviewId}`,
+      metadata: { reviewId },
+    });
+  }
 
   revalidatePath("/antifraud/reviews");
   revalidatePath(`/antifraud/reviews/${reviewId}`);

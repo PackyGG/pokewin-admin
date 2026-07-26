@@ -195,6 +195,11 @@ export const ADMIN_PAGES: AdminPage[] = [
   // System
   { group: "System", label: "Security", key: "/security" },
   { group: "System", label: "Admins & Access", key: "/admin-users" },
+  {
+    group: "System",
+    label: "Staff Notifications",
+    key: "/system/staff-notifications",
+  },
   // The former "/settings/roles" page key was removed: Roles & Permissions is
   // now an ADMIN-ONLY tab of /admin-users, gated by requireAdmin (not a
   // grantable page key), so the key is vestigial. No role baseline references
