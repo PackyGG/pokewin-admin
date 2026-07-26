@@ -10,6 +10,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -53,11 +54,13 @@ type FieldKey = "withdrawal" | "leaderboard" | "rakeback";
 const FIELDS: {
   key: FieldKey;
   label: string;
+  configKey: string;
   help: React.ReactNode;
 }[] = [
   {
     key: "withdrawal",
     label: "Withdrawal requirement weight",
+    configKey: "wager_weight_keno_bps",
     help: (
       <>
         How much keno wagers count toward the withdrawal wager requirement.
@@ -68,6 +71,7 @@ const FIELDS: {
   {
     key: "leaderboard",
     label: "Leaderboard weight",
+    configKey: "leaderboard_wager_weight_keno_bps",
     help: (
       <>
         How much keno wagers count on official races AND creator
@@ -79,6 +83,7 @@ const FIELDS: {
   {
     key: "rakeback",
     label: "Rakeback weight",
+    configKey: "rakeback_wager_weight_keno_bps",
     help: (
       <>
         How much keno wagers feed the rakeback base. Default 1×;{" "}
@@ -135,7 +140,9 @@ export function KenoSettingsCard({
     return (
       <Card className="border-dashed">
         <CardHeader>
-          <CardTitle className="text-sm font-medium">Keno Settings</CardTitle>
+          <CardTitle className="text-sm font-medium">
+            Keno system configuration
+          </CardTitle>
           <CardDescription>
             Every admin-editable keno weight, in one place.
           </CardDescription>
@@ -233,13 +240,16 @@ export function KenoSettingsCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-sm font-medium">Keno Settings</CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="text-sm font-medium">
+            Keno system configuration
+          </CardTitle>
+          <Badge variant="secondary">All 3 active settings</Badge>
+        </div>
         <CardDescription>
-          Every admin-editable keno weight in one place — the same keys the
-          Withdrawal, Leaderboard and Rakeback systems use for the other
-          games, gathered here by game instead of by destination. Values are
-          multipliers (1× = 10000 bps). Saving writes through the backend,
-          which validates and refreshes its own cache.
+          The complete live Keno configuration moved from the System /
+          Security page. Values are multipliers (1× = 10000 bps). Saving
+          writes through the same backend endpoints and audit trail as before.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -266,9 +276,18 @@ export function KenoSettingsCard({
             // A single endpoint being down shouldn't block the other two.
             const unavailable = baseline[f.key] === undefined;
             return (
-              <div key={f.key} className="space-y-2">
+              <div
+                key={f.key}
+                className="space-y-3 rounded-lg border bg-muted/20 p-4"
+              >
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">{f.label}</p>
+                  <code className="block truncate text-[10px] text-muted-foreground">
+                    {f.configKey}
+                  </code>
+                </div>
                 <div className="flex items-center justify-between gap-2">
-                  <Label htmlFor={`keno-${f.key}`}>{f.label} (×)</Label>
+                  <Label htmlFor={`keno-${f.key}`}>Multiplier (×)</Label>
                   <span className="text-[11px] tabular-nums text-muted-foreground">
                     {bpsHint}
                   </span>
@@ -309,6 +328,12 @@ export function KenoSettingsCard({
                 : "Admin access required"}
           </Button>
         </div>
+
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          The former <code>shard_wager_weight_keno_bps</code> key is not an
+          active Keno setting. Shards were retired site-wide, so that key
+          remains intentionally hidden and cannot be changed from the admin.
+        </p>
       </CardContent>
     </Card>
   );

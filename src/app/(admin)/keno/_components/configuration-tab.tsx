@@ -61,10 +61,10 @@ export async function KenoConfigurationTab({
       <section className="space-y-3">
         <SectionHeading
           icon={Dices}
-          title="Live Keno controls"
+          title="System configuration"
           action={
             <Badge variant="outline" className="font-normal">
-              {canEdit ? "Admin editing enabled" : "Read only"}
+              3 live settings · {canEdit ? "Editing enabled" : "Read only"}
             </Badge>
           }
         />
@@ -118,8 +118,9 @@ export async function KenoConfigurationTab({
         <p className="text-xs leading-relaxed text-muted-foreground">
           These rules and payout curves are compile-time backend constants.
           They are shown here for operational reference but require a backend
-          release to change. The three wager weights above are the complete
-          live database-backed Keno configuration currently exposed to admins.
+          release to change. The three settings above are the complete active
+          database-backed Keno configuration formerly shown on the System /
+          Security page.
         </p>
       </section>
 

@@ -129,6 +129,7 @@ The webapp uses PostgreSQL as its only database engine. Drizzle ORM is the defau
 ### Keno engine contract
 
 - Backend source of truth is `backend/src/utils/keno.ts`: 40 positions (`0–39` internally), 10 distinct draws, 1–10 player picks, Low/Medium/High compile-time payout curves, and $0.25–$1,000 bets.
+- Content → Keno → Configuration is the sole admin editor for the three active database-backed Keno weights: withdrawal requirement (`wager_weight_keno_bps`), leaderboard (`leaderboard_wager_weight_keno_bps`), and rakeback (`rakeback_wager_weight_keno_bps`). The legacy `shard_wager_weight_keno_bps` key is intentionally not editable because Shards are retired site-wide.
 - Exact hit probability is hypergeometric: `C(picks,hits) × C(40-picks,10-hits) / C(40,10)`. Configured RTP is `Σ(probability × multiplier)` and house edge is `1 − RTP`; all 30 clean payout rows land near 92.5% RTP / 7.5% edge.
 - `GET /v1/keno/multipliers` returns the backend table only in development/test. The backend deliberately registers no Keno routes in production, so `/keno?tab=odds` uses the tested compile-time mirror in `src/lib/keno/payouts.ts`. Settled `keno_games` rows are evidence/drift detection only, never the source for unobserved configured multipliers.
 - Any backend payout edit must update the admin mirror and `scripts/__fixtures__/keno-payouts.test.ts` in the same release. The test locks 30 complete rows, anchor multipliers, probability normalization, and the reference RTP band.
