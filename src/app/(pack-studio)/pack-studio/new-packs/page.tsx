@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import { redirect } from "next/navigation";
 import { CheckCircle2, Clock3, PackageOpen, Rocket } from "lucide-react";
 
 import {
@@ -9,7 +8,7 @@ import {
   SectionHeading,
 } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
-import { requirePageAccess, sessionIsOwner } from "@/lib/dal";
+import { requireOwner } from "@/lib/owners";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { listPackCreationRequests } from "@/lib/packs/build-requests";
 import { PackRequestReviewList } from "./review-list";
@@ -19,8 +18,7 @@ export const metadata = { title: "New Packs" };
 const QUERY_TIMEOUT_MS = 10_000;
 
 export default async function NewPacksPage() {
-  const session = await requirePageAccess("/system/new-packs");
-  if (!sessionIsOwner(session)) redirect("/dashboard");
+  await requireOwner();
 
   return (
     <div className="space-y-6">
@@ -44,7 +42,7 @@ async function QueueBody() {
   const { data: requests } = await safeQuery(
     () => listPackCreationRequests(100),
     [],
-    "system.new-packs",
+    "pack-studio.new-packs",
     QUERY_TIMEOUT_MS,
   );
   const pending = requests.filter((request) => request.status === "pending");

@@ -2808,7 +2808,7 @@ export async function buildPack(input: BuildPackInput): Promise<BuildPackResult>
     },
   });
 
-  revalidatePath("/system/new-packs");
+  revalidatePath("/pack-studio/new-packs");
   return {
     ok: true,
     requestId,
@@ -2857,7 +2857,7 @@ export async function approvePackCreationRequest(
     },
   });
 
-  revalidatePath("/system/new-packs");
+  revalidatePath("/pack-studio/new-packs");
   return { packId: result.packId, active: result.active };
 }
 
@@ -2881,5 +2881,5 @@ export async function declinePackCreationRequestAction(
     eventType: "pack_creation_declined",
     metadata: { request_id: parsedId.data },
   });
-  revalidatePath("/system/new-packs");
+  revalidatePath("/pack-studio/new-packs");
 }

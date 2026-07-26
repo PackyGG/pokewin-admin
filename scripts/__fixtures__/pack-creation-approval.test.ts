@@ -5,7 +5,12 @@ import test from "node:test";
 const actionsPath = "src/app/(admin)/packs/actions.ts";
 const builderPagePath =
   "src/app/(pack-studio)/pack-studio/builder/page.tsx";
-const approvalPagePath = "src/app/(admin)/system/new-packs/page.tsx";
+const approvalPagePath =
+  "src/app/(pack-studio)/pack-studio/new-packs/page.tsx";
+const sidebarPath =
+  "src/app/(pack-studio)/pack-studio/_components/pack-studio-sidebar.tsx";
+const navPath = "src/lib/nav-config.ts";
+const appHostsPath = "src/lib/app-hosts.ts";
 const migrationPath =
   "drizzle/admin/migrations/20260726_pack_creation_approval_queue.sql";
 
@@ -25,7 +30,7 @@ test("Pack Builder submissions queue before any approved MAIN write", async () =
   assert.doesNotMatch(queueAction, /insertBuiltPack|INSERT INTO packs/);
   assert.match(builderPage, /sessionHasRole\(session, "pack_creator"\)/);
 
-  assert.match(approvalPage, /sessionIsOwner\(session\)/);
+  assert.match(approvalPage, /await requireOwner\(\)/);
   assert.match(actions, /export async function approvePackCreationRequest/);
   assert.match(actions, /claimPackCreationRequest/);
   assert.match(actions, /materializeApprovedPack/);
@@ -45,4 +50,22 @@ test("Pack Builder submissions queue before any approved MAIN write", async () =
     /CHECK \(status IN \('pending', 'processing', 'approved', 'declined'\)\)/,
   );
   assert.match(migration, /pack_creation_requests_pending_slug_key/);
+});
+
+test("New Packs lives only in the owner-only Packs System section", async () => {
+  const [approvalPage, sidebar, nav, appHosts] = await Promise.all([
+    readFile(approvalPagePath, "utf8"),
+    readFile(sidebarPath, "utf8"),
+    readFile(navPath, "utf8"),
+    readFile(appHostsPath, "utf8"),
+  ]);
+
+  assert.match(approvalPage, /await requireOwner\(\)/);
+  assert.match(sidebar, /label:\s*"New Packs".*\/pack-studio\/new-packs/);
+  assert.match(
+    sidebar,
+    /\{isOwner\s*&&\s*\([\s\S]*?<SidebarGroupLabel>System<\/SidebarGroupLabel>/,
+  );
+  assert.doesNotMatch(nav, /nav\.system\.new-packs|href:\s*"\/system\/new-packs"/);
+  assert.match(appHosts, /segmentRoutes:\s*\[[\s\S]*?"new-packs"/);
 });

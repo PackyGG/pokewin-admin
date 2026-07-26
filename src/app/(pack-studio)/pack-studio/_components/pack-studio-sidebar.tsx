@@ -7,6 +7,7 @@ import {
   Layers3,
   LayoutDashboard,
   Package,
+  PackageOpen,
   Stethoscope,
   Wand2,
   Sparkles,
@@ -65,6 +66,10 @@ const STUDIO_BUILD_NAV: StudioNavItem[] = [
 const STUDIO_TUNE_NAV: StudioNavItem[] = [
   { label: "Pack Doctor", href: "/pack-studio/doctor", icon: Stethoscope },
   { label: "Retune", href: "/pack-studio/retune", icon: Sparkles },
+];
+
+const STUDIO_SYSTEM_NAV: StudioNavItem[] = [
+  { label: "New Packs", href: "/pack-studio/new-packs", icon: PackageOpen },
 ];
 
 /**
@@ -252,6 +257,19 @@ export function PackStudioSidebar({
             <SidebarGroupContent>
               <StudioNavMenu
                 items={operationsNav}
+                pathname={pathname}
+                onNavTap={handleNavTap}
+                toHref={toHref}
+              />
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+        {isOwner && (
+          <SidebarGroup className="px-2 py-1">
+            <SidebarGroupLabel>System</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <StudioNavMenu
+                items={STUDIO_SYSTEM_NAV}
                 pathname={pathname}
                 onNavTap={handleNavTap}
                 toHref={toHref}
