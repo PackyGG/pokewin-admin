@@ -25,8 +25,13 @@ export function blacklistNotInSql(
   ids: readonly string[],
 ): SQL {
   if (ids.length === 0) return sql.raw("");
+  // Bind as text: every column this targets is a `text` user id (`"user".id`,
+  // `affiliate_code_usages.affiliate_user_id`), and packy.gg ids are not UUIDs.
+  // A `::uuid` cast here made PostgreSQL fail the whole query with
+  // `42883 operator does not exist: text <> uuid` for any non-empty blacklist.
+  // Matches the canonical `blacklistNotInClause` in `../_blacklist.ts`.
   return sql`AND ${columnSql(column)} NOT IN (${sql.join(
-    ids.map((id) => sql`${id}::uuid`),
+    ids.map((id) => sql`${id}`),
     sql`, `,
   )})`;
 }
