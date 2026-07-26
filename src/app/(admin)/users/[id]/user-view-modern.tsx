@@ -92,7 +92,6 @@ import {
 import { UserAdminActions } from "./user-tabs-moderation";
 import { UserHeroSticky } from "./user-hero-sticky";
 import { CopyButton } from "@/components/copy-button";
-import { LiveDataRefresh } from "@/components/live-data-refresh";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the public surface so call sites that previously
@@ -594,18 +593,6 @@ export function UserViewModern({
 
   return (
     <div className="space-y-6">
-      {(activeTab === "overview" || activeTab === "gaming") && (
-        <LiveDataRefresh
-          topics={
-            activeTab === "gaming"
-              ? ["gaming", "balance"]
-              : ["balance", "gaming"]
-          }
-          userId={user.id}
-          debounceMs={1_000}
-          minIntervalMs={2_000}
-        />
-      )}
       {/* Hero + scroll-collapse condensed bar (feature: collapse-to-sticky
           on scroll). The bar shows avatar + name + current balance once the
           hero is scrolled past. */}

@@ -5,13 +5,7 @@ import {
   verifySession,
 } from "@/lib/dal";
 import { pageAccessGranted } from "@/lib/admin-pages";
-import {
-  subscribeAdminLiveActivity,
-  type AdminLiveTopic as AdminActivityTopic,
-} from "@/lib/admin-live-activity";
 import { resolveBackendApiConfig } from "@/lib/backend-api/config";
-import { readDbEnv, type DbEnv } from "@/lib/db-env";
-import { revalidateTag } from "next/cache";
 import https from "node:https";
 import crypto from "node:crypto";
 import type { Duplex, Writable } from "node:stream";
@@ -27,10 +21,7 @@ import type { Duplex, Writable } from "node:stream";
 import * as ws from "ws";
 
 /**
- * One authenticated SSE endpoint for dashboard live data. Chat is proxied
- * from the existing packy.gg WebSocket; admin activity is detected locally
- * through shared, read-only MAIN DB snapshots. Nothing outside this repo
- * needs an admin-specific WebSocket protocol.
+ * Authenticated SSE proxy for the existing packy.gg chat WebSocket.
  */
 
 // `Receiver` is a Writable stream but the @types/ws package doesn't
@@ -91,55 +82,13 @@ function isLoopbackOrigin(origin: string): boolean {
   }
 }
 
-function filterAndInvalidateAdminActivity(
-  raw: string,
-  allowedTopics: ReadonlySet<AdminActivityTopic>,
-  canReceiveChat: boolean,
-): string | null {
+function filterChatPayload(raw: string): string | null {
   try {
-    const event = JSON.parse(raw) as {
-      type?: unknown;
-      payload?: {
-        user_id?: unknown;
-        topics?: unknown;
-      };
-    };
-    if (event.type === "chat.pull.history") {
-      return canReceiveChat ? raw : null;
-    }
-    if (event.type !== "admin.activity") return null;
-    if (!Array.isArray(event.payload?.topics)) return null;
-    const topics = event.payload.topics.filter(
-      (topic): topic is AdminActivityTopic =>
-        typeof topic === "string" &&
-        allowedTopics.has(topic as AdminActivityTopic),
-    );
-    if (topics.length === 0) {
-      return null;
-    }
-    const topicSet = new Set(topics);
-    if (topicSet.has("deposits")) {
-      revalidateTag("transactions-deposits-list");
-    }
-    if (topicSet.has("withdrawals")) {
-      revalidateTag("transactions-withdrawals-list");
-    }
-    // These writes feed the dashboard's short-lived activity aggregates.
-    // Evict the shared tag so a live refresh cannot serve a still-warm entry.
-    if (
-      topicSet.has("deposits") ||
-      topicSet.has("card_payments") ||
-      topicSet.has("withdrawals") ||
-      topicSet.has("balance") ||
-      topicSet.has("gaming")
-    ) {
-      revalidateTag("dashboard-activity");
-    }
-    if (typeof event.payload.user_id === "string") {
-      revalidateTag(`users-detail-${event.payload.user_id}`);
-    }
-    event.payload.topics = topics;
-    return JSON.stringify(event);
+    const event = JSON.parse(raw) as { type?: unknown };
+    return event.type === "chat.pull.history" ||
+      event.type === "active.users.count"
+      ? raw
+      : null;
   } catch {
     return null;
   }
@@ -179,12 +128,8 @@ export async function GET(request: Request): Promise<Response> {
     return new Response("Forbidden", { status: 403 });
   }
 
-  // Authenticate against current DB-backed roles, then derive the exact
-  // live topic families this staff member may receive.
+  // Authenticate against current DB-backed roles and require chat access.
   let userId: string;
-  let allowedTopics: Set<AdminActivityTopic>;
-  let canReceiveChat: boolean;
-  let dbEnv: DbEnv | null = null;
   try {
     const session = await verifySession();
     userId = session.userId;
@@ -192,25 +137,8 @@ export async function GET(request: Request): Promise<Response> {
     const permissions = fullAccess
       ? []
       : await getUserPermissions(session.userId);
-    const canViewUsers = fullAccess || pageAccessGranted(permissions, "/users");
-    const canViewTransactions =
-      fullAccess || pageAccessGranted(permissions, "/transactions/deposits");
-    canReceiveChat = fullAccess || pageAccessGranted(permissions, "/chat");
-    allowedTopics = new Set<AdminActivityTopic>();
-    if (canViewUsers) {
-      allowedTopics.add("balance");
-      allowedTopics.add("gaming");
-    }
-    if (canViewTransactions) {
-      allowedTopics.add("deposits");
-      allowedTopics.add("card_payments");
-      allowedTopics.add("withdrawals");
-    }
-    if (allowedTopics.size === 0 && !canReceiveChat) {
+    if (!fullAccess && !pageAccessGranted(permissions, "/chat")) {
       return new Response("Forbidden", { status: 403 });
-    }
-    if (allowedTopics.size > 0) {
-      dbEnv = await readDbEnv();
     }
   } catch {
     return new Response("Unauthorized", { status: 401 });
@@ -222,38 +150,34 @@ export async function GET(request: Request): Promise<Response> {
     port: number;
     path: string;
     expectedAccept: string;
-  } | null = null;
-  if (canReceiveChat) {
-    try {
-      const backend = await resolveBackendApiConfig();
-      const backendUrl = new URL(backend.baseUrl);
-      if (backendUrl.protocol !== "https:") {
-        throw new Error("Live backend must use HTTPS");
-      }
-      const websocketKey = crypto.randomBytes(16).toString("base64");
-      upstream = {
-        host: backendUrl.hostname,
-        port: Number(backendUrl.port || "443"),
-        path: `${backendUrl.pathname.replace(/\/+$/, "")}/ws`,
-        expectedAccept: crypto
-          .createHash("sha1")
-          .update(websocketKey + WS_GUID)
-          .digest("base64"),
-        headers: {
-          ...PACKY_WS_BASE_HEADERS,
-          ...backend.cfHeaders,
-          Host: backendUrl.host,
-          Origin: requestOrigin,
-          "Sec-WebSocket-Key": websocketKey,
-          "x-api-key": backend.adminKey,
-        },
-      };
-    } catch (error) {
-      // Activity events are produced locally from read-only MAIN DB queries,
-      // so missing chat configuration must not take deposits/withdrawals/users
-      // offline with it.
-      console.error("[packy-live] chat backend unavailable", error);
+  };
+  try {
+    const backend = await resolveBackendApiConfig();
+    const backendUrl = new URL(backend.baseUrl);
+    if (backendUrl.protocol !== "https:") {
+      throw new Error("Live backend must use HTTPS");
     }
+    const websocketKey = crypto.randomBytes(16).toString("base64");
+    upstream = {
+      host: backendUrl.hostname,
+      port: Number(backendUrl.port || "443"),
+      path: `${backendUrl.pathname.replace(/\/+$/, "")}/ws`,
+      expectedAccept: crypto
+        .createHash("sha1")
+        .update(websocketKey + WS_GUID)
+        .digest("base64"),
+      headers: {
+        ...PACKY_WS_BASE_HEADERS,
+        ...backend.cfHeaders,
+        Host: backendUrl.host,
+        Origin: requestOrigin,
+        "Sec-WebSocket-Key": websocketKey,
+        "x-api-key": backend.adminKey,
+      },
+    };
+  } catch (error) {
+    console.error("[packy-live] chat backend unavailable", error);
+    return new Response("Live chat unavailable", { status: 503 });
   }
 
   const currentOpen = openStreams.get(userId) ?? 0;
@@ -278,7 +202,6 @@ export async function GET(request: Request): Promise<Response> {
       let req: ReturnType<typeof https.request> | null = null;
       let socket: Duplex | null = null;
       let receiver: ReceiverWithEvents | null = null;
-      let unsubscribeActivity: (() => void) | null = null;
       let heartbeat: ReturnType<typeof setInterval> | null = null;
       let rotation: ReturnType<typeof setTimeout> | null = null;
 
@@ -321,8 +244,6 @@ export async function GET(request: Request): Promise<Response> {
         decrementOnce();
         if (heartbeat) clearInterval(heartbeat);
         if (rotation) clearTimeout(rotation);
-        unsubscribeActivity?.();
-        unsubscribeActivity = null;
         cleanupUpstream();
         try {
           controller.close();
@@ -344,58 +265,33 @@ export async function GET(request: Request): Promise<Response> {
         write(`event: ${event}\ndata: ${data}\n\n`);
       };
 
-      if (dbEnv && allowedTopics.size > 0) {
-        unsubscribeActivity = subscribeAdminLiveActivity(
-          dbEnv,
-          allowedTopics,
-          (event) => {
-            const payload = filterAndInvalidateAdminActivity(
-              JSON.stringify(event),
-              allowedTopics,
-              canReceiveChat,
-            );
-            if (payload) writeEvent("packy", payload);
-          },
-        );
-      }
-
       if (request.signal.aborted) {
         cleanup();
         return;
       }
       request.signal.addEventListener("abort", cleanup, { once: true });
 
-      if (!upstream) {
+      try {
+        req = https.request({
+          host: upstream.host,
+          port: upstream.port,
+          path: upstream.path,
+          method: "GET",
+          headers: upstream.headers,
+          timeout: 15_000,
+        });
+      } catch (err) {
         writeEvent(
-          "open",
+          "error",
           JSON.stringify({
-            activity: dbEnv ? "connected" : "disabled",
-            chat: canReceiveChat ? "unavailable" : "disabled",
+            message: "upstream-init-failed",
+            detail: err instanceof Error ? err.message : String(err),
           }),
         );
-      } else {
-        try {
-          req = https.request({
-            host: upstream.host,
-            port: upstream.port,
-            path: upstream.path,
-            method: "GET",
-            headers: upstream.headers,
-            timeout: 15_000,
-          });
-        } catch (err) {
-          writeEvent(
-            "error",
-            JSON.stringify({
-              message: "upstream-init-failed",
-              detail: err instanceof Error ? err.message : String(err),
-            }),
-          );
-          req = null;
-        }
+        req = null;
       }
 
-      if (req && upstream) {
+      if (req) {
         const activeReq = req;
         const activeUpstream = upstream;
 
@@ -544,11 +440,7 @@ export async function GET(request: Request): Promise<Response> {
             } else {
               return;
             }
-            const filteredPayload = filterAndInvalidateAdminActivity(
-              payload,
-              allowedTopics,
-              canReceiveChat,
-            );
+            const filteredPayload = filterChatPayload(payload);
             if (filteredPayload == null) return;
             payload = filteredPayload;
             if (payload.includes("\n")) {
@@ -640,9 +532,7 @@ export async function GET(request: Request): Promise<Response> {
           ).Sender;
           if (typeof SenderCtor === "function") {
             const sender = new SenderCtor(rawSocket, extensions);
-            const subscribes = [
-              ...(canReceiveChat ? [{ type: "chat.pull.feed.subscribe" }] : []),
-            ];
+            const subscribes = [{ type: "chat.pull.feed.subscribe" }];
             for (const msg of subscribes) {
               try {
                 sender.send(JSON.stringify(msg), {

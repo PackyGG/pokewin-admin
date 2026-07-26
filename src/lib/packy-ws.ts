@@ -4,8 +4,8 @@
  * Client for the packy.gg live event stream via a server-side proxy.
  *
  * Uses an EventSource to /api/packy-live. The Node.js route proxies the
- * existing chat WebSocket and produces permission-filtered admin activity
- * from read-only MAIN DB snapshots, then fans both out as SSE `packy` events.
+ * existing chat WebSocket and fans permission-filtered chat events out as
+ * SSE `packy` events.
  *
  * Public API is the `subscribePackyWs(eventType, handler)` imperative
  * subscription (one shared EventSource fans out to every subscriber).
@@ -35,22 +35,6 @@ export type PackyEvent =
       payload: { messages: ChatMessage[] };
       timestamp: string;
     }
-  | {
-      type: "admin.activity";
-      payload: {
-        user_id: string | null;
-        topics: Array<
-          | "deposits"
-          | "card_payments"
-          | "withdrawals"
-          | "balance"
-          | "gaming"
-        >;
-        action: string;
-        entity_id?: string | null;
-      };
-      timestamp: string;
-    }
   | { type: string; payload: unknown; timestamp: string };
 
 // ─── Singleton state ──────────────────────────────────────────────
@@ -59,12 +43,8 @@ const SSE_PATH = "/api/packy-live";
 
 type Handler = (evt: PackyEvent) => void;
 const handlers = new Map<string, Set<Handler>>();
-type ConnectionHandler = (reconnected: boolean) => void;
-const connectionHandlers = new Set<ConnectionHandler>();
-
 let source: EventSource | null = null;
 let visibilityBound = false;
-let hasOpened = false;
 
 function totalSubscribers(): number {
   let count = 0;
@@ -119,8 +99,6 @@ function closeSource(reason: "manual" | "hidden" | "teardown" | "rotation") {
   }
   if (reason === "rotation") {
     openSource();
-  } else if (reason === "teardown") {
-    hasOpened = false;
   }
 }
 
@@ -144,18 +122,6 @@ function openSource() {
     return;
   }
   source = es;
-  es.onopen = () => {
-    const reconnected = hasOpened;
-    hasOpened = true;
-    for (const handler of connectionHandlers) {
-      try {
-        handler(reconnected);
-      } catch (err) {
-        console.error("[packy-ws] connection handler threw", err);
-      }
-    }
-  };
-
   es.addEventListener("packy", (ev: MessageEvent) => {
     if (typeof ev.data !== "string") return;
     const evt = parseMessage(ev.data);
@@ -234,15 +200,5 @@ export function subscribePackyWs<T extends PackyEvent>(
     if (totalSubscribers() === 0) {
       closeSource("teardown");
     }
-  };
-}
-
-export function subscribePackyWsConnection(
-  handler: ConnectionHandler,
-): () => void {
-  if (typeof window === "undefined") return () => {};
-  connectionHandlers.add(handler);
-  return () => {
-    connectionHandlers.delete(handler);
   };
 }

@@ -34,7 +34,6 @@ import {
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { LinkPendingShell } from "@/components/ux";
-import { LiveDataRefresh } from "@/components/live-data-refresh";
 import { BigDepositsToggle } from "./big-deposits-toggle";
 import { CardPaymentsTable } from "./card-payments-table";
 
@@ -84,23 +83,6 @@ export default async function TransactionsPage({
 
   return (
     <div className="space-y-6">
-      {/* Periodic server refresh so the active tab's list stays fresh
-          without a manual reload. router.refresh() re-runs ONLY the
-          rendered route segment — i.e. the active tab's query — so the
-          hidden tab is never fetched by the refresh either. The deposits
-          list query is cached for 300s; a refresh that lands inside the
-          window just re-reads the warm cache (no seq-scan), so the
-          cadence here is independent of the cache TTL. The component
-          itself skips the refresh when the tab is backgrounded. */}
-      <LiveDataRefresh
-        topics={[
-          tab === "card-payments"
-            ? "card_payments"
-            : tab === "withdrawals"
-              ? "withdrawals"
-              : "deposits",
-        ]}
-      />
       <PageHero>
         <PageHeroIdentity
           icon={Receipt}
