@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
 const routePath = "src/app/api/antifraud/monitor/stream/route.ts";
 const servicePath = "services/antifraud-monitor/src/live.ts";
 const packyRoutePath = "src/app/api/packy-live/route.ts";
 const packyClientPath = "src/lib/packy-ws.ts";
+const overviewPath = "src/app/(antifraud)/antifraud/page.tsx";
+const retiredOverviewActivityPath =
+  "src/app/(antifraud)/antifraud/_components/live-activity.tsx";
 const monitorClientPaths = [
   "src/app/(antifraud)/antifraud/monitor/monitor-console.tsx",
   "src/app/(antifraud)/antifraud/_components/live-feed.tsx",
@@ -79,4 +82,20 @@ test("the Packy live bridge reports upstream truth and closes dead streams", asy
     client,
     /es\.onopen\s*=\s*\(\)\s*=>\s*\{[^}]*setConnectionState\("live"\)/s,
   );
+});
+
+test("player gaming activity is shown only in the live monitor", async () => {
+  const [overview, monitor] = await Promise.all([
+    readFile(overviewPath, "utf8"),
+    readFile(monitorClientPaths[0], "utf8"),
+  ]);
+
+  assert.doesNotMatch(overview, /LiveActivity|live-activity/);
+  assert.match(overview, /grid gap-6 lg:grid-cols-2/);
+  assert.match(monitor, /subscribePackyWs<AdminActivityEvent>/);
+  assert.match(monitor, /"admin\.activity"/);
+  assert.match(monitor, /topics\.includes\("gaming"\)/);
+  assert.match(monitor, /type: "player\.activity"/);
+  assert.match(monitor, /Signups, pack openings, player actions and matched flows/);
+  await assert.rejects(access(retiredOverviewActivityPath));
 });

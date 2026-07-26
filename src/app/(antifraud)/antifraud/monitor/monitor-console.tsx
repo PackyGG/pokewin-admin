@@ -18,6 +18,7 @@ import { HostLink } from "@/components/host-link";
 import { KpiTile } from "@/components/modern-panels";
 import { Button } from "@/components/ui/button";
 import { useSseStream } from "@/lib/hooks/use-sse";
+import { subscribePackyWs, type PackyEvent } from "@/lib/packy-ws";
 import { cn } from "@/lib/utils";
 import {
   NetworkRiskBadges,
@@ -45,6 +46,7 @@ import { RiskScoreBar } from "../_components/risk-score-bar";
  */
 
 type StreamState = "connecting" | "live" | "offline" | "unconfigured";
+type AdminActivityEvent = Extract<PackyEvent, { type: "admin.activity" }>;
 
 type MonitorSession = {
   session_id: string;
@@ -294,12 +296,51 @@ function relativeTime(value: string, now: number): string {
   return `${Math.floor(seconds / 3_600)}h ago`;
 }
 
+function classifyPlayerAction(action: string): string | null {
+  const normalized = action
+    .toLowerCase()
+    .replaceAll("-", "_")
+    .replaceAll(".", "_");
+
+  if (normalized.includes("pack") && normalized.includes("open")) {
+    return "Pack opened";
+  }
+  if (normalized.includes("upgrader")) return "Upgrader bet";
+  if (normalized.includes("battle")) {
+    if (normalized.includes("creat")) return "Battle created";
+    if (normalized.includes("join")) return "Battle joined";
+    if (
+      normalized.includes("settle") ||
+      normalized.includes("complete") ||
+      normalized.includes("finish")
+    ) {
+      return "Battle settled";
+    }
+    return "Battle activity";
+  }
+  return null;
+}
+
+function shortId(value: string): string {
+  return value.length > 12 ? `${value.slice(0, 8)}…` : value;
+}
+
 function eventLabel(event: LiveEvent): { title: string; detail: string } {
   const data = event.data;
   const username = text(data.username);
   const player = username ? `@${username}` : text(data.userId, "player");
 
   switch (event.type) {
+    case "player.activity": {
+      const userId = text(data.userId);
+      const entityId = text(data.entityId);
+      return {
+        title: text(data.title, "Player activity"),
+        detail: `${userId ? `Player ${shortId(userId)}` : "Player"}${
+          entityId ? ` · Event ${shortId(entityId)}` : ""
+        }`,
+      };
+    }
     case "signup.assessed":
       return {
         title: `Signup assessed · ${player}`,
@@ -369,6 +410,7 @@ export function MonitorConsole() {
   const lastFrameAt = React.useRef(Date.now());
   const seenFrameIds = React.useRef(new Set<string>());
   const completedSessions = React.useRef(new Map<string, number>());
+  const playerEventSequence = React.useRef(0);
   // Read-only mirrors so frame handling can LOOK UP a row without doing it
   // inside a state updater (updaters must stay pure — React may run them
   // twice, and their result is not available synchronously).
@@ -476,6 +518,37 @@ export function MonitorConsole() {
     }, 1_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  // Player gaming activity uses the existing shared Packy event connection.
+  // It is folded into this page's activity log so the overview does not need
+  // to maintain a second live-activity panel.
+  React.useEffect(
+    () =>
+      subscribePackyWs<AdminActivityEvent>("admin.activity", (event) => {
+        if (!event.payload.topics.includes("gaming")) return;
+        const title = classifyPlayerAction(event.payload.action);
+        if (!title) return;
+        playerEventSequence.current += 1;
+
+        setEvents((current) =>
+          [
+            {
+              id: `player-${event.timestamp}-${playerEventSequence.current}`,
+              type: "player.activity",
+              at: event.timestamp,
+              severity: "low",
+              data: {
+                title,
+                userId: event.payload.user_id,
+                entityId: event.payload.entity_id ?? null,
+              },
+            },
+            ...current,
+          ].slice(0, MAX_EVENTS),
+        );
+      }),
+    [],
+  );
 
   const applyFrame = React.useCallback(
     (raw: unknown) => {
@@ -933,7 +1006,7 @@ export function MonitorConsole() {
           <div className="border-b border-border/60 px-3 py-3 sm:px-4">
             <h3 className="text-sm font-semibold">Live activity</h3>
             <p className="text-[11px] text-muted-foreground">
-              Signups, player actions and matched flows
+              Signups, pack openings, player actions and matched flows
             </p>
           </div>
           <div className="max-h-[480px] overflow-y-auto">
@@ -942,7 +1015,8 @@ export function MonitorConsole() {
                 <Radio className="size-6 text-muted-foreground" aria-hidden />
                 <p className="text-sm font-semibold">Waiting for events</p>
                 <p className="max-w-xs text-xs text-muted-foreground">
-                  New monitor events will appear here without refreshing.
+                  New monitor and player events will appear here without
+                  refreshing.
                 </p>
               </div>
             ) : (
@@ -955,19 +1029,25 @@ export function MonitorConsole() {
               >
                 {events.map((event) => {
                   const label = eventLabel(event);
+                  const isPlayerActivity = event.type === "player.activity";
                   return (
                     <li key={event.id} className="flex gap-2.5 px-3 py-3 sm:px-4">
                       <span
                         className={cn(
                           "mt-1.5 size-1.5 shrink-0 rounded-full",
-                          SEVERITY_DOT[event.severity] ?? SEVERITY_DOT.medium,
+                          isPlayerActivity
+                            ? "bg-cyan-500"
+                            : (SEVERITY_DOT[event.severity] ??
+                              SEVERITY_DOT.medium),
                         )}
                         aria-hidden
                       />
                       <span className="min-w-0 flex-1">
                         <span className="block text-xs font-semibold">
                           <span className="sr-only">
-                            {event.severity} severity —{" "}
+                            {isPlayerActivity
+                              ? "Player activity — "
+                              : `${event.severity} severity — `}
                           </span>
                           {label.title}
                         </span>
