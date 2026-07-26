@@ -59,7 +59,10 @@ const WORKSPACE_NAV: NavItem[] = [
   { label: "Creator Fraud", href: "/antifraud/creator-fraud", icon: Megaphone },
   { label: "Live Monitor", href: "/antifraud/monitor", icon: RadioTower },
   { label: "Account Review", href: "/antifraud/reviews", icon: ShieldAlert },
-  { label: "KYC", href: "/antifraud/kyc", icon: Fingerprint },
+];
+
+const KYC_NAV: NavItem[] = [
+  { label: "Home", href: "/antifraud/kyc", icon: Fingerprint },
 ];
 
 /**
@@ -200,6 +203,18 @@ export function AntifraudSidebar({
           <SidebarGroupContent>
             <NavMenu
               items={WORKSPACE_NAV}
+              pathname={pathname}
+              onNavTap={handleNavTap}
+              toHref={toHref}
+            />
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup className="px-2 py-1">
+          <SidebarGroupLabel>KYC</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <NavMenu
+              items={KYC_NAV}
               pathname={pathname}
               onNavTap={handleNavTap}
               toHref={toHref}

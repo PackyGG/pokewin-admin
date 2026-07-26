@@ -35,7 +35,7 @@ import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import { RequireKycDialog } from "./_components/require-kyc-dialog";
 import { ReviewKycControls } from "./_components/review-kyc-controls";
 
-export const metadata = { title: "KYC · Antifraud" };
+export const metadata = { title: "Home · KYC · Antifraud" };
 
 const QUERY_TIMEOUT_MS = 10_000;
 
@@ -67,14 +67,14 @@ export default async function AntifraudKycPage({
   const contentKey = `${status}-${search ?? ""}`;
 
   return (
-    <div className="mx-auto max-w-7xl space-y-5">
+    <div className="w-full min-w-0 space-y-5">
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border/60 pb-4">
         <div className="flex items-start gap-3">
           <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-500">
             <Fingerprint className="size-4" />
           </span>
           <div className="min-w-0">
-            <h1 className="text-xl font-semibold tracking-tight">KYC</h1>
+            <h1 className="text-xl font-semibold tracking-tight">Home</h1>
             <p className="mt-0.5 text-sm text-muted-foreground">
               Internal verification cycles, Sumsub evidence, and operating
               configuration

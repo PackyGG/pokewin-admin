@@ -9,13 +9,19 @@ function source(path: string): string {
   return readFileSync(join(root, path), "utf8");
 }
 
-test("the Antifraud sidebar exposes the dedicated KYC workspace", () => {
+test("the Antifraud sidebar exposes KYC as its own Home workspace", () => {
   const sidebar = source(
     "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
   );
+  const page = source("src/app/(antifraud)/antifraud/kyc/page.tsx");
+  const loading = source("src/app/(antifraud)/antifraud/kyc/loading.tsx");
   const appHosts = source("src/lib/app-hosts.ts");
 
-  assert.match(sidebar, /label:\s*"KYC",\s*href:\s*"\/antifraud\/kyc"/);
+  assert.match(sidebar, /const KYC_NAV[\s\S]*?label:\s*"Home",\s*href:\s*"\/antifraud\/kyc"/);
+  assert.match(sidebar, /<SidebarGroupLabel>KYC<\/SidebarGroupLabel>[\s\S]*?items=\{KYC_NAV\}/);
+  assert.doesNotMatch(page, /max-w-7xl/);
+  assert.doesNotMatch(loading, /max-w-7xl/);
+  assert.match(page, /<h1[^>]*>Home<\/h1>/);
   assert.match(
     appHosts,
     /host:\s*`fraud\.\$\{ROOT_DOMAIN\}`[\s\S]*?segmentRoutes:\s*\[[\s\S]*?"kyc"/,

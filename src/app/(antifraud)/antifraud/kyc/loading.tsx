@@ -2,7 +2,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export default function KycLoading() {
   return (
-    <div className="mx-auto max-w-7xl space-y-5">
+    <div className="w-full min-w-0 space-y-5">
       <div className="flex items-start gap-3 border-b border-border/60 pb-4">
         <Skeleton className="size-9 rounded-lg" />
         <div className="space-y-2">
