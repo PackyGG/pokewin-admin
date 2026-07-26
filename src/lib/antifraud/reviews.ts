@@ -5,6 +5,9 @@ import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { antifraud_review_notes, antifraud_reviews, antifraud_signals } from "@/lib/db-schema/admin/schema";
 import { isPostgresError } from "@/lib/postgres-errors";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
+import { getLocalDayBounds } from "@/lib/timezone/core";
+import { getAdminDisplayTimeZone } from "@/lib/timezone/server";
 import {
   loadAdminIdentities,
   type AdminIdentity,
@@ -130,65 +133,197 @@ export type ReviewFilters = {
   severity?: ReviewSeverity;
   /** Limit to cases assigned to this admin. */
   assignedTo?: string;
-  /** Substring match on the denormalized username / user id. */
+  /**
+   * PREFIX match on the denormalized username / player id / reason — see
+   * {@link buildReviewConditions} for why this is not a substring search.
+   */
   search?: string;
   limit?: number;
 };
 
 /**
- * The queue. Every filter combination is served by one of the four indexes on
- * the table: (status, created_at DESC) for the status filter, (assigned_to,
- * created_at DESC) for "my queue", (target_user_id) for the player lookup, and
- * (created_at DESC) for the bare list.
+ * Predicates shared by the queue list and its COUNT.
+ *
+ * Index coverage, stated honestly (the queue indexes on `antifraud_reviews`
+ * include `(status, created_at DESC)`, `(assigned_to, created_at DESC)`,
+ * `(target_user_id)` and `(created_at DESC, id DESC)`):
+ *
+ *   • status / assigned-to / bare list — served by one of those indexes.
+ *   • SEARCH IS NOT INDEX-BACKED. There is no trigram or full-text index on
+ *     this table, so any ILIKE here is evaluated as a filter on top of the
+ *     `created_at` ordering. That is exactly why the pattern is anchored
+ *     (`term%`, NOT `%term%`): a leading wildcard forces substantially more
+ *     string work while the ordered rows are filtered. Prefix ILIKE is still
+ *     NOT index-backed without a pattern/trigram index; the exact
+ *     `target_user_id` equality below is the only search arm that can use
+ *     `antifraud_reviews_target_idx`.
+ *     Consequence to keep in mind: searching a fragment from the MIDDLE of a
+ *     username or reason does not match. Substring search needs a pg_trgm GIN
+ *     index first; do not re-introduce `%term%` without one.
+ */
+function buildReviewConditions(filters: ReviewFilters): SQL[] {
+  const conditions: SQL[] = [];
+
+  if (filters.status === "all") {
+    // no status predicate
+  } else if (filters.status && filters.status !== "unresolved") {
+    conditions.push(eq(antifraud_reviews.status, filters.status));
+  } else {
+    conditions.push(inArray(antifraud_reviews.status, [...OPEN_REVIEW_STATUSES]));
+  }
+
+  if (filters.severity) conditions.push(eq(antifraud_reviews.severity, filters.severity));
+  if (filters.assignedTo) conditions.push(eq(antifraud_reviews.assigned_to, filters.assignedTo));
+
+  const term = filters.search?.trim();
+  if (term) {
+    const prefix = `${term}%`;
+    conditions.push(or(
+      // Exact player-id lookup — the one search shape with an index.
+      eq(antifraud_reviews.target_user_id, term),
+      ilike(antifraud_reviews.target_username, prefix),
+      ilike(antifraud_reviews.target_user_id, prefix),
+      ilike(antifraud_reviews.reason, prefix),
+    )!);
+  }
+
+  return conditions;
+}
+
+/**
+ * Flat list, newest first. Used by surfaces that want a fixed handful of
+ * cases (the overview's "needs work" strip). The paginated queue uses
+ * {@link listReviewPage} instead — a bare `limit` silently hides everything
+ * past it, which is fine for a preview strip and wrong for the queue.
  */
 export async function listReviews(
   filters: ReviewFilters = {},
 ): Promise<ReviewListItem[]> {
   const limit = Math.min(Math.max(filters.limit ?? 100, 1), 300);
   try {
-    const conditions: SQL[] = [];
-
-    if (filters.status === "all") {
-      // no status predicate
-    } else if (filters.status && filters.status !== "unresolved") {
-      conditions.push(eq(antifraud_reviews.status, filters.status));
-    } else {
-      conditions.push(inArray(antifraud_reviews.status, [...OPEN_REVIEW_STATUSES]));
-    }
-
-    if (filters.severity) conditions.push(eq(antifraud_reviews.severity, filters.severity));
-    if (filters.assignedTo) conditions.push(eq(antifraud_reviews.assigned_to, filters.assignedTo));
-    if (filters.search) {
-      const term = filters.search.trim();
-      if (term) {
-        const pattern = `%${term}%`;
-        conditions.push(or(
-          ilike(antifraud_reviews.target_username, pattern),
-          ilike(antifraud_reviews.target_user_id, pattern),
-          ilike(antifraud_reviews.reason, pattern),
-        )!);
-      }
-    }
+    const conditions = buildReviewConditions(filters);
 
     const rows = await adminDrizzle.select().from(antifraud_reviews)
       .where(conditions.length ? and(...conditions) : undefined)
       .orderBy(desc(antifraud_reviews.created_at)).limit(limit);
 
-    const identities = await loadAdminIdentities(
-      rows.flatMap((r) => [r.assigned_to, r.opened_by]),
-    );
-
-    return rows.map((row) => ({
-      ...toRow(row),
-      assignee: row.assigned_to ? identities.get(row.assigned_to) ?? null : null,
-      opener: row.opened_by ? identities.get(row.opened_by) ?? null : null,
-    }));
+    return await attachIdentities(rows);
   } catch (err) {
     if (!isMissingRelationError(err)) {
       console.error("[antifraud] listReviews failed:", err);
     }
     return [];
   }
+}
+
+async function attachIdentities(
+  rows: (typeof antifraud_reviews.$inferSelect)[],
+): Promise<ReviewListItem[]> {
+  const identities = await loadAdminIdentities(
+    rows.flatMap((r) => [r.assigned_to, r.opened_by]),
+  );
+  return rows.map((row) => ({
+    ...toRow(row),
+    assignee: row.assigned_to ? identities.get(row.assigned_to) ?? null : null,
+    opener: row.opened_by ? identities.get(row.opened_by) ?? null : null,
+  }));
+}
+
+// ─── Keyset pagination ────────────────────────────────────────────────────
+
+/** Rows per queue page. */
+export const REVIEW_PAGE_SIZE = 50;
+
+export type ReviewPage = {
+  items: ReviewListItem[];
+  /** Opaque cursor for the next (older) page, or null when this is the last. */
+  nextCursor: string | null;
+  /** Total rows matching the SAME predicates — not just this page. */
+  total: number;
+};
+
+/**
+ * Encode / decode the keyset cursor.
+ *
+ * The cursor is the last row's `(created_at, id)` tuple, base64url'd so it
+ * survives a URL without escaping. It is NOT an offset: OFFSET re-scans and
+ * skips every preceding row on each page, and shifts under concurrent inserts
+ * (a new case arriving mid-paging makes one row repeat and another vanish).
+ * The tuple comparison rides the
+ * `antifraud_reviews_created_id_idx` ordering and is stable regardless of
+ * what arrives while the analyst pages.
+ */
+function encodeReviewCursor(createdAt: string, id: string): string {
+  return Buffer.from(`${createdAt}|${id}`, "utf8").toString("base64url");
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function decodeReviewCursor(
+  cursor: string | null | undefined,
+): { createdAt: string; id: string } | null {
+  if (!cursor) return null;
+  try {
+    const raw = Buffer.from(cursor, "base64url").toString("utf8");
+    const sep = raw.lastIndexOf("|");
+    if (sep <= 0) return null;
+    const createdAt = raw.slice(0, sep);
+    const id = raw.slice(sep + 1);
+    // A hand-edited cursor must degrade to "first page", never to a query
+    // error or an injected fragment (both values are still bound as params).
+    if (!UUID_RE.test(id)) return null;
+    if (Number.isNaN(new Date(createdAt).getTime())) return null;
+    return { createdAt, id };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One page of the queue, plus the total for the header.
+ *
+ * Ordering is `(created_at DESC, id DESC)` — `created_at` alone is not a
+ * unique key, so two cases created in the same microsecond could otherwise
+ * straddle a page boundary and be shown twice or skipped. `id` is the
+ * tiebreak that makes the keyset total.
+ */
+export async function listReviewPage(
+  filters: ReviewFilters = {},
+  cursor?: string | null,
+): Promise<ReviewPage> {
+  const pageSize = Math.min(Math.max(filters.limit ?? REVIEW_PAGE_SIZE, 1), 200);
+  const conditions = buildReviewConditions(filters);
+  const after = decodeReviewCursor(cursor);
+
+  const pageConditions = [...conditions];
+  if (after) {
+    pageConditions.push(
+      sql`(${antifraud_reviews.created_at}, ${antifraud_reviews.id}) < (${after.createdAt}::timestamptz, ${after.id}::uuid)`,
+    );
+  }
+
+  const [rows, totals] = await Promise.all([
+    adminDrizzle.select().from(antifraud_reviews)
+      .where(pageConditions.length ? and(...pageConditions) : undefined)
+      .orderBy(desc(antifraud_reviews.created_at), desc(antifraud_reviews.id))
+      // One extra row is the "is there another page?" probe — cheaper and
+      // race-free compared with comparing the count against the offset.
+      .limit(pageSize + 1),
+    adminDrizzle.select({ total: sql<string>`count(*)` })
+      .from(antifraud_reviews)
+      .where(conditions.length ? and(...conditions) : undefined),
+  ]);
+
+  const hasMore = rows.length > pageSize;
+  const pageRows = hasMore ? rows.slice(0, pageSize) : rows;
+  const last = pageRows[pageRows.length - 1];
+
+  return {
+    items: await attachIdentities(pageRows),
+    nextCursor:
+      hasMore && last ? encodeReviewCursor(last.created_at, last.id) : null,
+    total: Number(totals[0]?.total ?? 0),
+  };
 }
 
 export type ReviewDetail = {
@@ -208,64 +343,106 @@ export type ReviewDetail = {
   }[];
 };
 
+/**
+ * Why this is a three-way result and not `ReviewDetail | null`:
+ *
+ * A single `null` conflates "this case id does not exist" with "the admin DB
+ * did not answer". The caller turns the first into a 404, which meant that
+ * during an admin-DB outage every case in the workspace rendered as
+ * "case not found" — the analyst is told their data is gone when in fact the
+ * database is down, and nothing reaches the error boundary that would say so.
+ */
+export type ReviewDetailResult =
+  | { kind: "ok"; detail: ReviewDetail }
+  | { kind: "not_found" }
+  | { kind: "failed"; error: string };
+
+/**
+ * Timeout for the case-detail reads. These are the only reads in this
+ * workspace that used to run unbounded: a hung admin-DB connection blocked the
+ * segment until the platform killed the whole request instead of degrading.
+ */
+export const REVIEW_DETAIL_TIMEOUT_MS = 10_000;
+
 export async function getReviewDetail(
   reviewId: string,
-): Promise<ReviewDetail | null> {
-  try {
-    const [review] = await adminDrizzle.select().from(antifraud_reviews)
-      .where(eq(antifraud_reviews.id, reviewId)).limit(1);
-    if (!review) return null;
+): Promise<ReviewDetailResult> {
+  // Read 1 — the case itself. `error` set ⇒ the query failed; `data` null with
+  // no error ⇒ the id genuinely has no row.
+  const head = await safeQueryOrNull(
+    async () => {
+      const [row] = await adminDrizzle.select().from(antifraud_reviews)
+        .where(eq(antifraud_reviews.id, reviewId)).limit(1);
+      return row ?? null;
+    },
+    "antifraud.review-detail",
+    REVIEW_DETAIL_TIMEOUT_MS,
+  );
+  if (head.error) return { kind: "failed", error: head.error };
+  const review = head.data;
+  if (!review) return { kind: "not_found" };
 
-    const [notes, signals] = await Promise.all([
-      adminDrizzle.select().from(antifraud_review_notes)
-        .where(eq(antifraud_review_notes.review_id, reviewId))
-        .orderBy(desc(antifraud_review_notes.created_at)).limit(100),
-      adminDrizzle.select().from(antifraud_signals)
-        .where(eq(antifraud_signals.target_user_id, review.target_user_id))
-        .orderBy(desc(antifraud_signals.received_at)).limit(25),
-    ]);
+  // Read 2 — the trail + the account's other signals. Also fails the whole
+  // detail rather than silently rendering an empty trail: an append-only trail
+  // that quietly shows nothing is worse than an honest error.
+  const body = await safeQueryOrNull(
+    async () => {
+      const [notes, signals] = await Promise.all([
+        adminDrizzle.select().from(antifraud_review_notes)
+          .where(eq(antifraud_review_notes.review_id, reviewId))
+          .orderBy(desc(antifraud_review_notes.created_at)).limit(100),
+        adminDrizzle.select().from(antifraud_signals)
+          .where(eq(antifraud_signals.target_user_id, review.target_user_id))
+          .orderBy(desc(antifraud_signals.received_at)).limit(25),
+      ]);
 
-    const identities = await loadAdminIdentities([
-      review.assigned_to,
-      review.opened_by,
-      review.resolved_by,
-      ...notes.map((n) => n.admin_user_id),
-    ]);
+      const identities = await loadAdminIdentities([
+        review.assigned_to,
+        review.opened_by,
+        review.resolved_by,
+        ...notes.map((n) => n.admin_user_id),
+      ]);
 
-    return {
-      review: toRow(review),
-      assignee: review.assigned_to
-        ? identities.get(review.assigned_to) ?? null
-        : null,
-      opener: review.opened_by ? identities.get(review.opened_by) ?? null : null,
-      resolver: review.resolved_by
-        ? identities.get(review.resolved_by) ?? null
-        : null,
-      notes: notes.map((note) => ({
-        id: note.id,
-        kind: note.kind,
-        body: note.body,
-        adminUserId: note.admin_user_id,
-        author: note.admin_user_id
-          ? identities.get(note.admin_user_id) ?? null
+      const detail: ReviewDetail = {
+        review: toRow(review),
+        assignee: review.assigned_to
+          ? identities.get(review.assigned_to) ?? null
           : null,
-        createdAt: new Date(note.created_at),
-      })),
-      relatedSignals: signals.map((s) => ({
-        id: s.id,
-        kind: s.kind,
-        severity: s.severity,
-        summary: s.summary,
-        riskScore: s.risk_score,
-        receivedAt: new Date(s.received_at),
-      })),
-    };
-  } catch (err) {
-    if (!isMissingRelationError(err)) {
-      console.error("[antifraud] getReviewDetail failed:", err);
-    }
-    return null;
+        opener: review.opened_by
+          ? identities.get(review.opened_by) ?? null
+          : null,
+        resolver: review.resolved_by
+          ? identities.get(review.resolved_by) ?? null
+          : null,
+        notes: notes.map((note) => ({
+          id: note.id,
+          kind: note.kind,
+          body: note.body,
+          adminUserId: note.admin_user_id,
+          author: note.admin_user_id
+            ? identities.get(note.admin_user_id) ?? null
+            : null,
+          createdAt: new Date(note.created_at),
+        })),
+        relatedSignals: signals.map((s) => ({
+          id: s.id,
+          kind: s.kind,
+          severity: s.severity,
+          summary: s.summary,
+          riskScore: s.risk_score,
+          receivedAt: new Date(s.received_at),
+        })),
+      };
+      return detail;
+    },
+    "antifraud.review-detail.trail",
+    REVIEW_DETAIL_TIMEOUT_MS,
+  );
+  if (body.error || !body.data) {
+    return { kind: "failed", error: body.error ?? "Case detail unavailable" };
   }
+
+  return { kind: "ok", detail: body.data };
 }
 
 export type ReviewStats = {
@@ -292,8 +469,18 @@ export async function getReviewStats(
     mineOpen: 0,
   };
   try {
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
+    // "Resolved today" means the ANALYST's today. `setHours(0,0,0,0)` uses the
+    // SERVER's zone, which on Vercel is UTC — so for anyone outside UTC the
+    // tile was wrong twice a day (cases resolved after local midnight were
+    // still counted as yesterday's, or vice versa). The workspace already
+    // carries a per-admin zone (profile preference → `admin_tz` cookie → UTC);
+    // `getLocalDayBounds` turns it into the exact half-open [start, end)
+    // instant pair for that zone, DST included.
+    const timeZone = await getAdminDisplayTimeZone();
+    const { start: startOfToday, end: endOfToday } = getLocalDayBounds(
+      new Date(),
+      timeZone,
+    );
 
     const result = await adminDrizzle.execute<{
       open: string; in_review: string; escalated: string; flagged: string;
@@ -304,7 +491,7 @@ export async function getReviewStats(
         COUNT(*) FILTER (WHERE status = 'in_review') AS in_review,
         COUNT(*) FILTER (WHERE status = 'escalated') AS escalated,
         COUNT(*) FILTER (WHERE status = 'flagged') AS flagged,
-        COUNT(*) FILTER (WHERE resolved_at >= ${startOfToday}) AS resolved_today,
+        COUNT(*) FILTER (WHERE resolved_at >= ${startOfToday} AND resolved_at < ${endOfToday}) AS resolved_today,
         COUNT(*) FILTER (WHERE severity = 'critical' AND status = ANY(${pgArrayParam([...OPEN_REVIEW_STATUSES])}::text[])) AS critical_open,
         COUNT(*) FILTER (WHERE assigned_to = ${adminUserId ?? null}::uuid AND status = ANY(${pgArrayParam([...OPEN_REVIEW_STATUSES])}::text[])) AS mine_open
       FROM antifraud_reviews

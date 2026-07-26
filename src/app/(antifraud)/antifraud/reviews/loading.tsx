@@ -5,7 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function ReviewQueueLoading() {
   return (
     <div className="space-y-6">
-      <PageHeroSkeleton />
+      <PageHeroSkeleton action />
       <Skeleton className="h-28 w-full rounded-xl" />
       <div className="space-y-4">
         <div className="flex items-center gap-2.5">

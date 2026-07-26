@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { HostLink } from "@/components/host-link";
-import { CheckCircle2, ShieldAlert } from "lucide-react";
+import { ArrowUp, CheckCircle2, ChevronRight, ShieldAlert } from "lucide-react";
 
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { safeQuery } from "@/lib/errors/safe-query";
@@ -13,7 +13,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import {
-  listReviews,
+  listReviewPage,
+  REVIEW_PAGE_SIZE,
   REVIEW_SEVERITIES,
   REVIEW_SEVERITY_LABELS,
   REVIEW_STATUSES,
@@ -31,8 +32,9 @@ export const metadata = { title: "Account Review" };
  * Antifraud → Account Review.
  *
  * The case queue. Filters are plain links driven by search params (no client
- * state, no extra JS) and every combination maps onto one of the four indexes
- * on `antifraud_reviews`, so filtering never degrades into a scan.
+ * state, no extra JS). Status, assignment and chronological ordering use the
+ * queue indexes. Text search is prefix-only because the current ADMIN schema
+ * has no trigram index; the data helper documents that limitation explicitly.
  *
  * Shell-first: the hero + filter bar paint immediately, the list streams behind
  * its own Suspense boundary keyed on the active filter so switching filters
@@ -46,6 +48,12 @@ type SearchParams = {
   severity?: string;
   mine?: string;
   q?: string;
+  cursor?: string;
+  open?: string;
+  targetUserId?: string;
+  targetUsername?: string;
+  reason?: string;
+  monitorCaseId?: string;
 };
 
 export default async function ReviewQueuePage({
@@ -68,17 +76,17 @@ export default async function ReviewQueuePage({
       : undefined;
   const mine = params.mine === "1";
   const search = params.q?.trim() || undefined;
+  const cursor = params.cursor?.trim() || undefined;
 
   const filters: ReviewFilters = {
     status,
     severity,
     assignedTo: mine ? session.userId : undefined,
     search,
-    limit: 150,
+    limit: REVIEW_PAGE_SIZE,
   };
 
-  const filterKey = `${status}-${severity ?? "any"}-${mine ? "mine" : "all"}-${search ?? ""}`;
-
+  const filterKey = `${status}-${severity ?? "any"}-${mine ? "mine" : "all"}-${search ?? ""}-${cursor ?? "first"}`;
   return (
     <div className="space-y-6">
       <PageHero>
@@ -87,7 +95,18 @@ export default async function ReviewQueuePage({
           accent="cyan"
           title="Account Review"
           subtitle="Cases opened by the fraud backend or by hand"
-          action={<OpenCaseDialog />}
+          action={
+            <OpenCaseDialog
+              prefill={{
+                targetUserId: params.targetUserId,
+                targetUsername: params.targetUsername,
+                severity,
+                reason: params.reason,
+                monitorCaseId: params.monitorCaseId,
+              }}
+              autoOpen={params.open === "1"}
+            />
+          }
         />
       </PageHero>
 
@@ -99,7 +118,11 @@ export default async function ReviewQueuePage({
       />
 
       <Suspense key={filterKey} fallback={<QueueSkeleton />}>
-        <QueueList filters={filters} />
+        <QueueList
+          filters={filters}
+          cursor={cursor}
+          current={{ status, severity, mine: mine ? "1" : undefined, q: search }}
+        />
       </Suspense>
     </div>
   );
@@ -166,7 +189,7 @@ function FilterBar({
           Status
         </span>
         <FilterChip
-          href={buildHref({ status: "unresolved" }, current)}
+          href={buildHref({ status: "unresolved", cursor: undefined }, current)}
           active={status === "unresolved"}
         >
           Needs work
@@ -174,14 +197,14 @@ function FilterBar({
         {REVIEW_STATUSES.map((value) => (
           <FilterChip
             key={value}
-            href={buildHref({ status: value }, current)}
+            href={buildHref({ status: value, cursor: undefined }, current)}
             active={status === value}
           >
             {REVIEW_STATUS_LABELS[value]}
           </FilterChip>
         ))}
         <FilterChip
-          href={buildHref({ status: "all" }, current)}
+          href={buildHref({ status: "all", cursor: undefined }, current)}
           active={status === "all"}
         >
           All
@@ -193,7 +216,7 @@ function FilterBar({
           Severity
         </span>
         <FilterChip
-          href={buildHref({ severity: undefined }, current)}
+          href={buildHref({ severity: undefined, cursor: undefined }, current)}
           active={!severity}
         >
           Any
@@ -201,7 +224,7 @@ function FilterBar({
         {REVIEW_SEVERITIES.map((value) => (
           <FilterChip
             key={value}
-            href={buildHref({ severity: value }, current)}
+            href={buildHref({ severity: value, cursor: undefined }, current)}
             active={severity === value}
           >
             {REVIEW_SEVERITY_LABELS[value]}
@@ -209,7 +232,10 @@ function FilterBar({
         ))}
         <span className="mx-1 hidden h-4 w-px bg-border sm:block" />
         <FilterChip
-          href={buildHref({ mine: mine ? undefined : "1" }, current)}
+          href={buildHref({
+            mine: mine ? undefined : "1",
+            cursor: undefined,
+          }, current)}
           active={mine}
         >
           Assigned to me
@@ -241,13 +267,22 @@ function FilterBar({
 
 // ─── List ─────────────────────────────────────────────────────────────
 
-async function QueueList({ filters }: { filters: ReviewFilters }) {
-  const { data: reviews } = await safeQuery(
-    () => listReviews(filters),
-    [],
+async function QueueList({
+  filters,
+  cursor,
+  current,
+}: {
+  filters: ReviewFilters;
+  cursor?: string;
+  current: SearchParams;
+}) {
+  const { data: page, error } = await safeQuery(
+    () => listReviewPage(filters, cursor),
+    { items: [], nextCursor: null, total: 0 },
     "antifraud.review-queue",
     QUERY_TIMEOUT_MS,
   );
+  const reviews = page.items;
 
   return (
     <div className="space-y-4">
@@ -257,13 +292,22 @@ async function QueueList({ filters }: { filters: ReviewFilters }) {
           <>
             Cases
             <span className="text-xs font-normal text-muted-foreground">
-              ({reviews.length})
+              ({reviews.length} of {page.total})
             </span>
           </>
         }
       />
 
-      {reviews.length === 0 ? (
+      {error ? (
+        <div className="rounded-xl border border-dashed border-rose-500/30 bg-rose-500/5 px-4 py-10 text-center">
+          <p className="text-sm font-semibold text-rose-600 dark:text-rose-400">
+            Cases could not be loaded
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            The review database did not answer. Refresh to try again.
+          </p>
+        </div>
+      ) : reviews.length === 0 ? (
         <div className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-12 text-center">
           <CheckCircle2 className="size-5 text-muted-foreground" />
           <span className="text-sm font-semibold">Nothing here</span>
@@ -327,6 +371,34 @@ async function QueueList({ filters }: { filters: ReviewFilters }) {
             </li>
           ))}
         </ul>
+      )}
+
+      {!error && (cursor || page.nextCursor) && (
+        <nav
+          aria-label="Review queue pages"
+          className="flex flex-wrap items-center justify-between gap-2"
+        >
+          {cursor ? (
+            <HostLink
+              href={buildHref({ cursor: undefined }, current)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <ArrowUp className="size-3.5" />
+              Back to newest
+            </HostLink>
+          ) : (
+            <span />
+          )}
+          {page.nextCursor && (
+            <HostLink
+              href={buildHref({ cursor: page.nextCursor }, current)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Older cases
+              <ChevronRight className="size-3.5" />
+            </HostLink>
+          )}
+        </nav>
       )}
     </div>
   );

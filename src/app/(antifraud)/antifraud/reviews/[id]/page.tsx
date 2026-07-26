@@ -78,9 +78,15 @@ async function CaseDetail({
     getReviewDetail(reviewId),
     listAssignableAnalysts(),
   ]);
-  if (!detail) notFound();
+  if (detail.kind === "not_found") notFound();
+  if (detail.kind === "failed") {
+    // Throw into the route's error boundary. A database outage is not a 404,
+    // and rendering "case not found" would falsely imply that data vanished.
+    throw new Error("The case database could not be reached.");
+  }
 
-  const { review, assignee, opener, resolver, notes, relatedSignals } = detail;
+  const { review, assignee, opener, resolver, notes, relatedSignals } =
+    detail.detail;
 
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">

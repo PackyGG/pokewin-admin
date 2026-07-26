@@ -37,14 +37,43 @@ import { openReview } from "../actions";
  * here on purpose (this workspace never reads or writes the prod game DB). The
  * username field is a convenience snapshot so the queue is readable at a glance.
  */
-export function OpenCaseDialog() {
+type OpenCasePrefill = {
+  targetUserId?: string;
+  targetUsername?: string;
+  severity?: string;
+  reason?: string;
+  monitorCaseId?: string;
+};
+
+export function OpenCaseDialog({
+  prefill = {},
+  autoOpen = false,
+}: {
+  prefill?: OpenCasePrefill;
+  autoOpen?: boolean;
+}) {
   const router = useRouter();
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = React.useState(autoOpen);
   const [loading, setLoading] = React.useState(false);
-  const [targetUserId, setTargetUserId] = React.useState("");
-  const [targetUsername, setTargetUsername] = React.useState("");
-  const [severity, setSeverity] = React.useState<string>("medium");
-  const [reason, setReason] = React.useState("");
+  const [targetUserId, setTargetUserId] = React.useState(
+    prefill.targetUserId ?? "",
+  );
+  const [targetUsername, setTargetUsername] = React.useState(
+    prefill.targetUsername ?? "",
+  );
+  const [severity, setSeverity] = React.useState<string>(
+    prefill.severity && REVIEW_SEVERITIES.includes(
+      prefill.severity as (typeof REVIEW_SEVERITIES)[number],
+    )
+      ? prefill.severity
+      : "medium",
+  );
+  const [reason, setReason] = React.useState(
+    prefill.reason ??
+      (prefill.monitorCaseId
+        ? `Escalated from monitor case ${prefill.monitorCaseId}.`
+        : ""),
+  );
 
   function reset() {
     setTargetUserId("");

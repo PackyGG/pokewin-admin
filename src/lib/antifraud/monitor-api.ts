@@ -52,13 +52,20 @@ export type AntifraudScoreDefinition = z.infer<typeof scoreDefinitionSchema>;
 
 const UPSTREAM_TIMEOUT_MS = 8_000;
 
+/** Read/ticket token — everything except the decision write. */
+function readToken(): { baseUrl?: string; token?: string } {
+  return {
+    baseUrl: process.env.ANTIFRAUD_MONITOR_API_URL?.replace(/\/+$/, ""),
+    token: process.env.ANTIFRAUD_MONITOR_API_TOKEN,
+  };
+}
+
 export async function getAntifraudScoringConfig(): Promise<{
   configured: boolean;
   data: AntifraudScoringConfig | null;
   error: boolean;
 }> {
-  const baseUrl = process.env.ANTIFRAUD_MONITOR_API_URL?.replace(/\/+$/, "");
-  const token = process.env.ANTIFRAUD_MONITOR_API_TOKEN;
+  const { baseUrl, token } = readToken();
   if (!baseUrl || !token) {
     return { configured: false, data: null, error: false };
   }
@@ -83,4 +90,289 @@ export async function getAntifraudScoringConfig(): Promise<{
     console.error("[antifraud-monitor] scoring config failed:", error);
     return { configured: true, data: null, error: true };
   }
+}
+
+// ─── Case detail ────────────────────────────────────────────────────────
+//
+// Mirrors `GET /v1/cases/:id` in services/antifraud-monitor/src/server.ts
+// field for field. `cases.score` / `peak_score` and every `*_score` on a
+// monitor session are `integer`; `provider_checks.score` is `numeric(8,2)`,
+// which node-postgres hands back as a STRING — hence `numericLike` rather
+// than `z.number()` there.
+
+/** `numeric` arrives as a string over the wire; normalize to a number. */
+const numericLike = z
+  .union([z.number(), z.string()])
+  .nullable()
+  .transform((value) => {
+    if (value === null) return null;
+    const parsed = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  });
+
+const providerSignalSchema = z.object({
+  key: z.string(),
+  title: z.string(),
+  detail: z.string(),
+  points: z.number(),
+});
+
+const caseRecordSchema = z.object({
+  id: z.string(),
+  user_id: z.string(),
+  status: z.string(),
+  severity: z.string(),
+  score: z.number(),
+  peak_score: z.number(),
+  summary: z.string(),
+  assigned_to: z.string().nullable(),
+  resolution: z.string().nullable(),
+  opened_at: z.string(),
+  updated_at: z.string(),
+  resolved_at: z.string().nullable(),
+  username: z.string().nullable(),
+  email: z.string().nullable(),
+  signup_ip: z.string().nullable(),
+  country_code: z.string().nullable(),
+  state: z.string().nullable(),
+  city: z.string().nullable(),
+  source_created_at: z.string(),
+});
+
+const riskEventSchema = z.object({
+  id: z.string(),
+  session_id: z.string().nullable(),
+  event_type: z.string(),
+  source: z.string(),
+  source_ref: z.string().nullable(),
+  score_delta: z.number(),
+  score_after: z.number(),
+  title: z.string(),
+  detail: z.string().nullable(),
+  occurred_at: z.string(),
+  recorded_at: z.string(),
+});
+
+const providerCheckSchema = z.object({
+  id: z.string(),
+  provider: z.string(),
+  request_id: z.string().nullable(),
+  status: z.string(),
+  score: numericLike,
+  signals: z.array(providerSignalSchema).catch([]),
+  error_code: z.string().nullable(),
+  checked_at: z.string(),
+  expires_at: z.string().nullable(),
+});
+
+const monitorSessionSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  started_at: z.string(),
+  ends_at: z.string(),
+  ended_at: z.string().nullable(),
+  initial_score: z.number(),
+  current_score: z.number(),
+  peak_score: z.number(),
+  event_count: z.number(),
+});
+
+const staffActionSchema = z.object({
+  id: z.string(),
+  action_type: z.string(),
+  status: z.string(),
+  actor_id: z.string(),
+  actor_username: z.string().nullable(),
+  reason: z.string().nullable(),
+  created_at: z.string(),
+  completed_at: z.string().nullable(),
+});
+
+const caseDetailSchema = z.object({
+  case: caseRecordSchema,
+  events: z.array(riskEventSchema),
+  providerChecks: z.array(providerCheckSchema),
+  sessions: z.array(monitorSessionSchema),
+  actions: z.array(staffActionSchema),
+});
+
+export type AntifraudMonitorCase = z.infer<typeof caseRecordSchema>;
+export type AntifraudMonitorRiskEvent = z.infer<typeof riskEventSchema>;
+export type AntifraudMonitorProviderCheck = z.infer<typeof providerCheckSchema>;
+export type AntifraudMonitorSession = z.infer<typeof monitorSessionSchema>;
+export type AntifraudMonitorStaffAction = z.infer<typeof staffActionSchema>;
+export type AntifraudMonitorCaseDetail = z.infer<typeof caseDetailSchema>;
+
+/**
+ * One monitor case with all of its evidence.
+ *
+ * Degrades the same way every other monitor read does: an unconfigured
+ * service is `configured: false`, an unreachable/malformed one is
+ * `error: true`, and a genuinely unknown id is `notFound: true` so the page
+ * can render a 404 instead of an "unavailable" state.
+ */
+export async function getAntifraudCaseDetail(caseId: string): Promise<{
+  configured: boolean;
+  notFound: boolean;
+  data: AntifraudMonitorCaseDetail | null;
+  error: boolean;
+}> {
+  const { baseUrl, token } = readToken();
+  if (!baseUrl || !token) {
+    return { configured: false, notFound: false, data: null, error: false };
+  }
+
+  try {
+    const response = await fetch(
+      `${baseUrl}/v1/cases/${encodeURIComponent(caseId)}`,
+      {
+        headers: {
+          accept: "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      },
+    );
+    if (response.status === 404 || response.status === 400) {
+      // 400 = the service's own uuid check rejected the id: same user-visible
+      // outcome as an unknown case.
+      return { configured: true, notFound: true, data: null, error: false };
+    }
+    if (!response.ok) {
+      throw new Error(`Monitor API returned ${response.status}`);
+    }
+    const payload = z
+      .object({ data: caseDetailSchema })
+      .parse(await response.json());
+    return {
+      configured: true,
+      notFound: false,
+      data: payload.data,
+      error: false,
+    };
+  } catch (error) {
+    console.error("[antifraud-monitor] case detail failed:", error);
+    return { configured: true, notFound: false, data: null, error: true };
+  }
+}
+
+// ─── Case decision ──────────────────────────────────────────────────────
+
+export const MONITOR_CASE_DECISIONS = [
+  "in_review",
+  "escalated",
+  "resolved_safe",
+  "resolved_fraud",
+] as const;
+export type MonitorCaseDecision = (typeof MONITOR_CASE_DECISIONS)[number];
+
+export const MONITOR_CASE_DECISION_LABELS: Record<MonitorCaseDecision, string> =
+  {
+    in_review: "Take into review",
+    escalated: "Escalate",
+    resolved_safe: "Resolve — legitimate",
+    resolved_fraud: "Resolve — fraud",
+  };
+
+/**
+ * `POST /v1/cases/:id/decision` needs the service's ADMIN token — the
+ * read token is rejected with 401 by the service's `needsAdminToken` gate.
+ * Kept as its own env var on purpose: the read token is already handed to
+ * the live-feed proxy, and a write credential should not ride along with it.
+ * Server-side only; it is never sent to the browser.
+ */
+export function antifraudDecisionsConfigured(): boolean {
+  return Boolean(
+    process.env.ANTIFRAUD_MONITOR_API_URL &&
+      process.env.ANTIFRAUD_MONITOR_API_ADMIN_TOKEN,
+  );
+}
+
+/**
+ * Record an analyst's verdict on a monitor case.
+ *
+ * The idempotency key is generated by the caller and re-sent verbatim on a
+ * retry, so a double-click or a retried network error can never produce two
+ * `staff_actions` rows — the service answers the second attempt with
+ * `{ success: true, idempotent: true }`.
+ *
+ * The authenticated server action supplies the human actor fields. They never
+ * come from the browser, and the monitor service validates and stores them in
+ * `staff_actions` so its own trail names the analyst.
+ */
+export async function submitAntifraudCaseDecision(input: {
+  caseId: string;
+  decision: MonitorCaseDecision;
+  reason: string;
+  idempotencyKey: string;
+  actorId: string;
+  actorUsername?: string;
+}): Promise<{ idempotent: boolean }> {
+  const baseUrl = process.env.ANTIFRAUD_MONITOR_API_URL?.replace(/\/+$/, "");
+  const token = process.env.ANTIFRAUD_MONITOR_API_ADMIN_TOKEN;
+  if (!baseUrl) {
+    throw new Error("The antifraud monitor service is not configured.");
+  }
+  if (!token) {
+    throw new Error(
+      "Case decisions are disabled: the monitor service's admin token is not configured.",
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `${baseUrl}/v1/cases/${encodeURIComponent(input.caseId)}/decision`,
+      {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          decision: input.decision,
+          reason: input.reason,
+          idempotencyKey: input.idempotencyKey,
+          actorId: input.actorId,
+          actorUsername: input.actorUsername,
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      },
+    );
+  } catch (error) {
+    console.error("[antifraud-monitor] decision request failed:", error);
+    throw new Error(
+      "The monitor service did not respond. The decision was not recorded — try again.",
+    );
+  }
+
+  if (response.status === 404) throw new Error("That case no longer exists.");
+  if (response.status === 409) {
+    throw new Error("This case is already resolved.");
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new Error("The monitor service rejected the decision credentials.");
+  }
+  if (response.status === 429) {
+    throw new Error("Too many decisions right now — try again in a minute.");
+  }
+  if (!response.ok) {
+    console.error(
+      "[antifraud-monitor] decision returned",
+      response.status,
+      await response.text().catch(() => ""),
+    );
+    throw new Error("The monitor service could not record that decision.");
+  }
+
+  const payload = z
+    .object({ success: z.literal(true), idempotent: z.boolean().optional() })
+    .safeParse(await response.json().catch(() => null));
+  if (!payload.success) {
+    throw new Error("The monitor service returned an unexpected response.");
+  }
+  return { idempotent: payload.data.idempotent === true };
 }

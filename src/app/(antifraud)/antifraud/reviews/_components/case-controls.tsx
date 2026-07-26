@@ -16,11 +16,13 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { hrefForCurrentHost } from "@/lib/use-app-host";
 import {
   REVIEW_SEVERITIES,
   REVIEW_SEVERITY_LABELS,
   REVIEW_STATUSES,
   REVIEW_STATUS_LABELS,
+  type ReviewStatus,
 } from "@/lib/antifraud/constants";
 import {
   addReviewNote,
@@ -75,6 +77,55 @@ export function CaseControls({
   const isTerminalTarget = (value: string) =>
     value === "cleared" || value === "flagged";
 
+  const trimmedResolution = resolution.trim();
+
+  /**
+   * Status changes get their own handler because they carry two things the
+   * generic `run` does not: the status the analyst was LOOKING AT (so the
+   * server can reject a stale tab instead of silently overwriting someone
+   * else's verdict) and a structured "that player already has a live case"
+   * answer, which becomes a toast with a link to the case that holds the slot.
+   */
+  async function changeStatus(next: ReviewStatus) {
+    setPending(`status-${next}`);
+    try {
+      const result = await updateReviewStatus({
+        reviewId,
+        status: next,
+        expectedStatus: status,
+        resolution: isTerminalTarget(next) ? trimmedResolution : "",
+      });
+      if (!result.ok) {
+        toast.error(
+          result.message,
+          result.conflictReviewId
+            ? {
+                action: {
+                  label: "Open live case",
+                  onClick: () =>
+                    router.push(
+                      hrefForCurrentHost(
+                        `/antifraud/reviews/${result.conflictReviewId}`,
+                      ),
+                    ),
+                },
+              }
+            : undefined,
+        );
+        return;
+      }
+      // Clear the box on success. Left as-is, a rationale typed for one
+      // action silently became the rationale stored for the next one.
+      setResolution("");
+      toast.success(`Marked ${REVIEW_STATUS_LABELS[next].toLowerCase()}`);
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setPending(null);
+    }
+  }
+
   return (
     <div className="space-y-5 rounded-xl border border-border/60 bg-card p-4">
       {/* ── Status ─────────────────────────────────────────────────── */}
@@ -83,45 +134,48 @@ export function CaseControls({
           Status
         </Label>
         <div className="flex flex-wrap gap-1.5">
-          {REVIEW_STATUSES.map((value) => (
-            <button
-              key={value}
-              type="button"
-              disabled={pending !== null || value === status}
-              onClick={() =>
-                run(
-                  `status-${value}`,
-                  () =>
-                    updateReviewStatus({
-                      reviewId,
-                      status: value,
-                      resolution: isTerminalTarget(value)
-                        ? resolution.trim()
-                        : "",
-                    }),
-                  `Marked ${REVIEW_STATUS_LABELS[value].toLowerCase()}`,
-                )
-              }
-              className={cn(
-                "rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-60",
-                value === status
-                  ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-600 dark:text-cyan-300"
-                  : "border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {pending === `status-${value}`
-                ? "…"
-                : REVIEW_STATUS_LABELS[value]}
-            </button>
-          ))}
+          {REVIEW_STATUSES.map((value) => {
+            // A verdict without a written conclusion closes the case and
+            // records nothing about why — blocked here AND in the action's
+            // schema (the server side is the real gate).
+            const needsConclusion =
+              isTerminalTarget(value) && trimmedResolution.length === 0;
+            return (
+              <button
+                key={value}
+                type="button"
+                disabled={pending !== null || value === status || needsConclusion}
+                title={
+                  needsConclusion
+                    ? "Write your conclusion below first"
+                    : undefined
+                }
+                onClick={() => void changeStatus(value)}
+                className={cn(
+                  "rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-60",
+                  value === status
+                    ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-600 dark:text-cyan-300"
+                    : "border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {pending === `status-${value}`
+                  ? "…"
+                  : REVIEW_STATUS_LABELS[value]}
+              </button>
+            );
+          })}
         </div>
         <Textarea
           value={resolution}
           onChange={(e) => setResolution(e.target.value)}
           rows={2}
-          placeholder="Optional: what did you conclude? (saved with Cleared / Flagged)"
+          placeholder="What did you conclude? (required for Cleared / Flagged)"
           className="text-xs"
         />
+        <p className="text-[11px] text-muted-foreground">
+          Cleared and Flagged need a conclusion. Moving a case back to Open,
+          In review or Escalated withdraws the previous verdict and clears it.
+        </p>
       </div>
 
       {/* ── Severity ───────────────────────────────────────────────── */}
