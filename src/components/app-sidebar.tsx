@@ -65,6 +65,7 @@ import {
   Anchor,
   Dices,
   Crown,
+  Eye,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -153,6 +154,7 @@ const ICONS: Record<string, LucideIcon> = {
   Anchor,
   Dices,
   Crown,
+  Eye,
 };
 
 type NavItem = {
