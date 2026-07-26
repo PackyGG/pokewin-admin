@@ -2,7 +2,7 @@ import "server-only";
 
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { getCreatorSessionWindowsCte } from "@/lib/queries/creator-session-windows";
+import { EMPTY_CREATOR_SESSION_WINDOWS_CTE } from "@/lib/queries/creator-session-windows";
 
 /**
  * scope.ts — the SINGLE canonical "real customer" scope for the metric
@@ -162,10 +162,10 @@ export type MetricsScope = {
  * cross-request cached.
  */
 export async function getMetricsScope(): Promise<MetricsScope> {
-  const [excluded, sessionWindowsCte] = await Promise.all([
-    getExcludedUserIds(),
-    getCreatorSessionWindowsCte(),
-  ]);
+  const excluded = await getExcludedUserIds();
+  // The customer relation below excludes creators wholesale, so no creator
+  // can match a session window. Keep the CTE shape without a backend fan-out.
+  const sessionWindowsCte = EMPTY_CREATOR_SESSION_WINDOWS_CTE;
   const blacklist = blacklistNotInClause("u.id", excluded);
   // Customer scope: drop staff + creators wholesale (+ blacklist). The
   // creator drop here is what keeps creators' off-stream, house-funded

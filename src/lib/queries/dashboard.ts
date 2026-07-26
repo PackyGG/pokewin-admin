@@ -15,7 +15,7 @@ import {
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
-import { getCreatorSessionWindowsCte } from "./creator-session-windows";
+import { EMPTY_CREATOR_SESSION_WINDOWS_CTE } from "./creator-session-windows";
 // Canonical metric layer (single source of truth for GGR / wager / payout
 // / scope). The dashboard's headline GGR + the GGR breakdown popover are
 // migrated onto these — the inline `wager − Σ payout(19)` formula (which
@@ -1174,14 +1174,16 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
   // every aggregate below applies the same exclusion set. The list is
   // cached via React `cache()` in fetch.ts → repeated invocations are
   // free.
-  const [, excluded, sessionWindowsCte] = await Promise.all([
+  const [, excluded] = await Promise.all([
     excludeStaffAndBlacklisted(),
     getExcludedUserIds(),
     // Creator deal/stream session windows (backend creators API;
     // 5-min cached, best-effort) — drives the customer-wager
     // exclusion in getPeriodAggregates.
-    getCreatorSessionWindowsCte(),
   ]);
+  // `getPeriodAggregates` excludes creators wholesale in `real_users`, so
+  // session windows cannot affect its result.
+  const sessionWindowsCte = EMPTY_CREATOR_SESSION_WINDOWS_CTE;
   // Inline SQL fragment for `AND id NOT IN (...)` for the raw queries
   // that already do role NOT IN ('admin','support'). Empty string when
   // nothing is blacklisted so the query stays valid.

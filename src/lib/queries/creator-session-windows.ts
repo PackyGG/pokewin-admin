@@ -20,7 +20,7 @@ const MAX_PAGES = 10;
 // An empty `session_windows` relation with the right column shape — used
 // when there are no windows (no creators, no sessions, or the backend is
 // unreachable) so the dashboard SQL is structurally identical either way.
-const EMPTY_CTE =
+export const EMPTY_CREATOR_SESSION_WINDOWS_CTE =
   "session_windows(uid, win_start, win_end) AS (" +
   "SELECT NULL::text, NULL::timestamptz, NULL::timestamptz WHERE false)";
 
@@ -55,7 +55,7 @@ export async function getCreatorSessionWindowsCte(): Promise<string> {
   if (inflight) return inflight;
   inflight = (async () => {
     try {
-      let sql = EMPTY_CTE;
+      let sql = EMPTY_CREATOR_SESSION_WINDOWS_CTE;
       try {
         sql = await buildCte();
       } catch (e) {
@@ -81,7 +81,7 @@ async function buildCte(): Promise<string> {
     WHERE role = 'creator'
   `);
   const creators = result.rows;
-  if (creators.length === 0) return EMPTY_CTE;
+  if (creators.length === 0) return EMPTY_CREATOR_SESSION_WINDOWS_CTE;
 
   const nowMs = Date.now();
   // Per-creator walk in parallel — one creator's failed fetch must not
@@ -94,7 +94,7 @@ async function buildCte(): Promise<string> {
   for (const r of settled) {
     if (r.status === "fulfilled") rows.push(...r.value);
   }
-  if (rows.length === 0) return EMPTY_CTE;
+  if (rows.length === 0) return EMPTY_CREATOR_SESSION_WINDOWS_CTE;
   return `session_windows(uid, win_start, win_end) AS (VALUES ${rows.join(",")})`;
 }
 
