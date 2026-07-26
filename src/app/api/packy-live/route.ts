@@ -52,6 +52,7 @@ export const maxDuration = 300;
 const ROTATION_MS = 240_000;
 const HEARTBEAT_MS = 15_000;
 const PRODUCTION_DASHBOARD_ORIGIN = "https://packydash.com";
+const PRODUCTION_FRAUD_ORIGIN = "https://fraud.packydash.com";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -132,7 +133,10 @@ export async function GET(request: Request): Promise<Response> {
   const requestOrigin = new URL(request.url).origin;
   const origin = request.headers.get("origin");
   const fetchSite = request.headers.get("sec-fetch-site");
-  const trustedOrigins = new Set([PRODUCTION_DASHBOARD_ORIGIN]);
+  const trustedOrigins = new Set([
+    PRODUCTION_DASHBOARD_ORIGIN,
+    PRODUCTION_FRAUD_ORIGIN,
+  ]);
   const trustedRequestOrigin =
     trustedOrigins.has(requestOrigin) ||
     (process.env.NODE_ENV !== "production" && isLoopbackOrigin(requestOrigin));
@@ -207,7 +211,10 @@ export async function GET(request: Request): Promise<Response> {
         ...PACKY_WS_BASE_HEADERS,
         ...backend.cfHeaders,
         Host: backendUrl.host,
-        Origin: requestOrigin,
+        // The backend's privileged WS allowlist is intentionally pinned to
+        // the apex dashboard origin. The browser-facing route independently
+        // verifies the exact apex/fraud origin above before this handshake.
+        Origin: PRODUCTION_DASHBOARD_ORIGIN,
         "Sec-WebSocket-Key": websocketKey,
         "x-api-key": backend.adminKey,
       },
