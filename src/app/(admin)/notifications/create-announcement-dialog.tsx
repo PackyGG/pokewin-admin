@@ -52,6 +52,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { uploadImageClient } from "@/lib/upload-image-client";
 import { MAIN_SITE_PAGES, mainSiteUrl, packUrl } from "@/lib/utils/main-site";
+import { toValidIso } from "@/lib/client-runtime-safety";
 import {
   ANNOUNCEMENT_CTA_MAX,
   EMPTY_PAYLOAD_DRAFT,
@@ -279,23 +280,36 @@ export function CreateAnnouncementDialog({
       toast.error(check.error);
       return;
     }
+    const endsAtIso = endsAt ? toValidIso(endsAt) : null;
+    if (endsAt && !endsAtIso) {
+      toast.error("Enter a valid end date");
+      return;
+    }
     startTransition(async () => {
-      const result = await createAnnouncementAction({
-        title: title.trim(),
-        body: body.trim() || null,
-        category,
-        type,
-        audienceRoles: everyoneAudience ? null : [...audienceRoles],
-        endsAt: endsAt ? new Date(endsAt).toISOString() : null,
-        payload,
-      });
-      if (!result.success) {
-        toast.error(result.error);
-        return;
+      try {
+        const result = await createAnnouncementAction({
+          title: title.trim(),
+          body: body.trim() || null,
+          category,
+          type,
+          audienceRoles: everyoneAudience ? null : [...audienceRoles],
+          endsAt: endsAtIso,
+          payload,
+        });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        toast.success("Announcement published");
+        handleOpenChange(false);
+        router.refresh();
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Could not publish announcement",
+        );
       }
-      toast.success("Announcement published");
-      handleOpenChange(false);
-      router.refresh();
     });
   }
 

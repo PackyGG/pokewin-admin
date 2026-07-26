@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { sql, type SQL } from "drizzle-orm";
 import { getDrizzleDb, type MainDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
@@ -158,7 +159,7 @@ function ledgerWhereSql(filter: LedgerFilter, alias = "lt"): SQL {
   ];
   if (filter.types?.length) {
     clauses.push(
-      sql`${sql.identifier(alias)}.type = ANY(${filter.types}::ledger_transaction_type[])`,
+      sql`${sql.identifier(alias)}.type = ANY(${pgArrayParam(filter.types)}::ledger_transaction_type[])`,
     );
   }
   if (filter.status) {
@@ -174,7 +175,7 @@ function ledgerWhereSql(filter: LedgerFilter, alias = "lt"): SQL {
   }
   if (filter.hideWithdrawals) {
     clauses.push(
-      sql`${sql.identifier(alias)}.type <> ALL(${[...BLACKLIST_HIDDEN_WITHDRAWAL_TYPES]}::ledger_transaction_type[])`,
+      sql`${sql.identifier(alias)}.type <> ALL(${pgArrayParam([...BLACKLIST_HIDDEN_WITHDRAWAL_TYPES])}::ledger_transaction_type[])`,
     );
   }
   if (filter.hideAdjustments) {
@@ -184,7 +185,7 @@ function ledgerWhereSql(filter: LedgerFilter, alias = "lt"): SQL {
   } else if (filter.mothaAdjustmentIds) {
     clauses.push(
       filter.mothaAdjustmentIds.length > 0
-        ? sql`(${sql.identifier(alias)}.type <> 'admin_balance_adjustment'::ledger_transaction_type OR ${sql.identifier(alias)}.id = ANY(${filter.mothaAdjustmentIds}::uuid[]))`
+        ? sql`(${sql.identifier(alias)}.type <> 'admin_balance_adjustment'::ledger_transaction_type OR ${sql.identifier(alias)}.id = ANY(${pgArrayParam(filter.mothaAdjustmentIds)}::uuid[]))`
         : sql`${sql.identifier(alias)}.type <> 'admin_balance_adjustment'::ledger_transaction_type`,
     );
   }
@@ -201,7 +202,7 @@ async function fetchLedgerRowsByIds(
     "game_sessions_ledger_transactions_game_session_idTogame_sessions"
   >>(sql`
     SELECT lt.*
-    FROM unnest(${ids}::uuid[]) WITH ORDINALITY requested(id, ord)
+    FROM unnest(${pgArrayParam(ids)}::uuid[]) WITH ORDINALITY requested(id, ord)
     JOIN ledger_transactions lt ON lt.id = requested.id
     ORDER BY requested.ord
   `);
@@ -255,7 +256,7 @@ async function fetchLedgerRowsByIds(
         LEFT JOIN user_inventory ui ON ui.id = pfr.inventory_item_id
         WHERE pfr.game_session_id = gs.id
       ) pf ON true
-      WHERE gs.id = ANY(${sessionIds}::uuid[])
+      WHERE gs.id = ANY(${pgArrayParam(sessionIds)}::uuid[])
     `);
     for (const row of sessionResult.rows) {
       sessions.set(row.id, {
@@ -483,7 +484,9 @@ async function fetchUserDoubleDownRows(
       WHERE o.user_id = ${canonicalUserId}
         AND o.status = 'resolved'
         AND o.result IS NOT NULL
-        ${ids?.length ? sql`AND o.id = ANY(${ids}::uuid[])` : sql.empty()}
+        ${ids?.length
+          ? sql`AND o.id = ANY(${pgArrayParam(ids)}::uuid[])`
+          : sql.empty()}
       ORDER BY COALESCE(o.resolved_at, o.created_at) DESC
     `);
     const rows = result.rows;
@@ -871,7 +874,7 @@ export async function getUserTransactions(
                status::text AS status,
                password
         FROM battles
-        WHERE id = ANY(${[...battleIdsToFetch]}::uuid[])
+        WHERE id = ANY(${pgArrayParam([...battleIdsToFetch])}::uuid[])
       `);
       const battleRows = battleResult.rows;
       for (const b of battleRows) {
@@ -914,7 +917,7 @@ export async function getUserTransactions(
     const result = new Map<string, { id: string; name: string }>();
     if (packGameIds.length === 0) return result;
     const directPacks = (await db.execute<{ id: string; name: string }>(sql`
-      SELECT id, name FROM packs WHERE id = ANY(${packGameIds}::uuid[])
+      SELECT id, name FROM packs WHERE id = ANY(${pgArrayParam(packGameIds)}::uuid[])
     `)).rows;
     for (const p of directPacks) result.set(p.id, p);
     const remaining = packGameIds.filter((id) => !result.has(id));
@@ -927,7 +930,7 @@ export async function getUserTransactions(
         SELECT up.id, p.id AS pack_id, p.name AS pack_name
         FROM user_packs up
         LEFT JOIN packs p ON p.id = up.pack_id
-        WHERE up.id = ANY(${remaining}::uuid[])
+        WHERE up.id = ANY(${pgArrayParam(remaining)}::uuid[])
       `)).rows;
       for (const up of userPacks) {
         if (up.pack_id && up.pack_name) {
@@ -950,7 +953,7 @@ export async function getUserTransactions(
     }>(sql`
       SELECT id, card_id, source_type::text AS source_type, source_id
       FROM user_inventory
-      WHERE id = ANY(${cardSaleItemIds}::uuid[])
+      WHERE id = ANY(${pgArrayParam(cardSaleItemIds)}::uuid[])
     `)).rows;
     const cardIds = [...new Set(inventoryItems.map((i) => i.card_id))];
     const cards = cardIds.length > 0
@@ -962,7 +965,7 @@ export async function getUserTransactions(
         }>(sql`
           SELECT id, name, image_url, rarity::text AS rarity
           FROM cards
-          WHERE id = ANY(${cardIds}::uuid[])
+          WHERE id = ANY(${pgArrayParam(cardIds)}::uuid[])
         `)).rows
       : [];
     return { inventoryItems, cards };
@@ -988,7 +991,7 @@ export async function getUserTransactions(
       }>(sql`
         WITH tx AS (
           SELECT lt.id, lt.created_at
-          FROM unnest(${ledgerIds}::uuid[]) requested(id)
+          FROM unnest(${pgArrayParam(ledgerIds)}::uuid[]) requested(id)
           JOIN ledger_transactions lt ON lt.id = requested.id
         )
         SELECT tx.id,
@@ -1033,7 +1036,7 @@ export async function getUserTransactions(
         SELECT value::text AS value, origin_id
         FROM vouchers
         WHERE user_id = ${canonicalUserId}
-          AND origin_id = ANY(${pageGameSessionIds}::uuid[])
+          AND origin_id = ANY(${pgArrayParam(pageGameSessionIds)}::uuid[])
       `).then((result) => result.rows),
     ]);
   const { inventoryItems, cards } = invAndCards;
@@ -1152,7 +1155,7 @@ export async function getUserTransactions(
         FROM user_inventory
         WHERE user_id = ${canonicalUserId}
           AND source_type = 'battle'::source_type
-          AND source_id = ANY(${wonGameSessionIds}::uuid[])
+          AND source_id = ANY(${pgArrayParam(wonGameSessionIds)}::uuid[])
         GROUP BY source_id
       `)).rows;
       for (const g of grouped) {

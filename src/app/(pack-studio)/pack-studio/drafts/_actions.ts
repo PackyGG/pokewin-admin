@@ -1,5 +1,6 @@
 "use server";
 
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
 import { sql } from "drizzle-orm";
@@ -441,7 +442,7 @@ export async function bulkSeedAllActiveDrafts(
   const existing = (
     await adminDrizzle.execute<{ pack_id: string }>(sql`
       SELECT pack_id FROM pack_retune_drafts
-      WHERE pack_id = ANY(${ids}::uuid[]) AND status = 'draft'
+      WHERE pack_id = ANY(${pgArrayParam(ids)}::uuid[]) AND status = 'draft'
     `)
   ).rows;
   const alreadyPending = new Set(existing.map((r) => r.pack_id));

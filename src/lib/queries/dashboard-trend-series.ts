@@ -30,23 +30,23 @@ export type DashboardTrendSeries = {
 };
 
 type LedgerBucketRow = {
-  bucket: Date;
+  bucket: Date | string;
   packs: string;
   battles: string;
   deposits: string;
   active_depositors: string;
 };
 
-type CountBucketRow = { bucket: Date; value: string };
-type UpgraderBucketRow = { bucket: Date; upgrader: string };
+type CountBucketRow = { bucket: Date | string; value: string };
+type UpgraderBucketRow = { bucket: Date | string; upgrader: string };
 type AttributionBucketRow = {
-  bucket: Date;
+  bucket: Date | string;
   organic: string;
   creator_attributed: string;
 };
-type FtdBucketRow = { bucket: Date; count: string; total: string };
+type FtdBucketRow = { bucket: Date | string; count: string; total: string };
 
-function bucketKey(d: Date, period: DashboardPeriod): string {
+function bucketKey(d: Date | string, period: DashboardPeriod): string {
   return dashboardChartDateLabel(new Date(d), period);
 }
 

@@ -120,7 +120,7 @@ async function computeOverview(
         ${dateFilter}
     `),
     queryRows<
-      { date: Date; volume: string; cnt: string; claimants: string }[]
+      { date: Date | string; volume: string; cnt: string; claimants: string }[]
     >(db, sql`
       SELECT
         DATE(lt.created_at) AS date,

@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { Trash2, Archive, Clock, RefreshCw } from "lucide-react";
 import { adminDrizzle, sql } from "@/lib/drizzle";
 import { requirePageAccess } from "@/lib/dal";
@@ -69,7 +70,7 @@ export default async function DeletedUsersPage() {
         }>(sql`
           SELECT id, username, display_username
           FROM admin_users
-          WHERE id = ANY(${Array.from(adminIds)}::uuid[])
+          WHERE id = ANY(${pgArrayParam(Array.from(adminIds))}::uuid[])
         `)
       ).rows
     : [];

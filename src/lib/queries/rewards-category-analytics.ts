@@ -127,7 +127,7 @@ async function computeCategoryAnalytics(
         ${dateFilter}
     `),
     queryMainRows<
-      { date: Date; volume: string; cnt: string }[]
+      { date: Date | string; volume: string; cnt: string }[]
     >(`
       SELECT
         DATE(lt.created_at) AS date,
@@ -165,7 +165,7 @@ async function computeCategoryAnalytics(
       LIMIT ${TOP_LIMIT}
     `),
     queryMainRows<
-      { date: Date; volume: string; cnt: string }[]
+      { date: Date | string; volume: string; cnt: string }[]
     >(`
       SELECT
         DATE(lt.created_at) AS date,

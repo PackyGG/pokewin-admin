@@ -620,7 +620,7 @@ const cachedDailyOverview = unstable_cache(
     const since = new Date(sinceIso);
     return queryMainRows<
       {
-        date: Date;
+        date: Date | string;
         deposits: string;
         withdrawals: string;
         wager: string;

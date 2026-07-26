@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import "server-only";
 
 import { and, count, eq, inArray, sql } from "drizzle-orm";
@@ -5,6 +6,7 @@ import { adminDrizzle } from "@/lib/drizzle";
 import { creator_reward_claims } from "@/lib/db-schema/admin/schema";
 import { getProdDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { postgresTimestamp } from "@/lib/postgres-runtime";
 
 import { BASIS_HOLDING_STATUSES } from "./types";
 import type { ProgramForCompute } from "./compute";
@@ -97,7 +99,7 @@ async function signedUpUnderCode(
       SELECT 1 FROM affiliate_code_usages
        WHERE referred_user_id = ${userId}
          AND usage_type::text = 'signup'
-         AND UPPER(code) = ANY(${upper}::text[])
+         AND UPPER(code) = ANY(${pgArrayParam(upper)}::text[])
     ) AS hit
   `);
   return result.rows[0]?.hit === true;
@@ -137,7 +139,7 @@ export async function firstDeposits(
 ): Promise<{ amountUsd: number; at: Date }[]> {
   const result = await getProdDrizzleDb().execute<{
     amount: string;
-    created_at: Date;
+    created_at: Date | string;
   }>(sql`
     SELECT amount::text, created_at
       FROM ledger_transactions
@@ -149,7 +151,7 @@ export async function firstDeposits(
   `);
   return result.rows.map((r) => ({
     amountUsd: Math.abs(toNumber(r.amount)),
-    at: r.created_at,
+    at: postgresTimestamp(r.created_at, "firstDeposits.created_at"),
   }));
 }
 

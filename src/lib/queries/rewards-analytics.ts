@@ -303,7 +303,7 @@ export async function getRewardsAnalytics(
   const [dailyRows, recipientRows] = await Promise.all([
     queryMainRows<
       {
-        date: Date;
+        date: Date | string;
         bonuses: string;
         rakeback: string;
         affiliate: string;

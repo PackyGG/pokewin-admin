@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 // Use the request-scoped Drizzle client so the export follows whichever
 // environment the calling admin has toggled on.
 import { sql, type SQL } from "drizzle-orm";
@@ -77,7 +78,7 @@ export async function exportUsers(
 
   const excluded = await getExcludedUserIds();
   if (excluded.length > 0)
-    predicates.push(sql`u.id <> ALL(${excluded}::text[])`);
+    predicates.push(sql`u.id <> ALL(${pgArrayParam(excluded)}::text[])`);
 
   // OR-groups that must be ANDed together. The country-exclude filter and
   // the no-deposit filter are EACH a 2-leg OR; the old code wrote both
@@ -94,12 +95,12 @@ export async function exportUsers(
       .filter((c) => c.length > 0),
   )];
   if (filters.countryMode === "include" && codes.length > 0) {
-    predicates.push(sql`u.country_code = ANY(${codes}::text[])`);
+    predicates.push(sql`u.country_code = ANY(${pgArrayParam(codes)}::text[])`);
   } else if (filters.countryMode === "exclude" && codes.length > 0) {
     // Explicitly include null country codes (no country data =
     // not one of the excluded) so the filter does what the admin expects.
     predicates.push(
-      sql`(u.country_code IS NULL OR u.country_code <> ALL(${codes}::text[]))`,
+      sql`(u.country_code IS NULL OR u.country_code <> ALL(${pgArrayParam(codes)}::text[]))`,
     );
   }
 

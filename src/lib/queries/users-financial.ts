@@ -219,7 +219,7 @@ export async function getUserBalanceHistory(userId: string) {
   // For a high-activity user this previously fetched thousands of rows
   // only to collapse them client-side — this keeps the payload to at most
   // one row per day the user was active.
-  const rows = await queryMainRows<{ date: Date; balance: string }[]>(
+  const rows = await queryMainRows<{ date: Date | string; balance: string }[]>(
     `
     SELECT DISTINCT ON (DATE(created_at))
       DATE(created_at) AS date,

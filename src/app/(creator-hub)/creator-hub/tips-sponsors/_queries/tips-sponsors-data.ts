@@ -134,7 +134,7 @@ async function queryLedgerWindow(
 
 async function queryChart30d(): Promise<TipsSponsorChartRow[]> {
   const rows = await queryMainRows<
-    { bucket: Date; type: string; total: string | null }[]
+    { bucket: Date | string; type: string; total: string | null }[]
   >(
     `SELECT date_trunc('day', lt.created_at AT TIME ZONE 'UTC') AS bucket,
             lt.type::text AS type,

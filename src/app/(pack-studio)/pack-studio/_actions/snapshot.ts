@@ -1,5 +1,6 @@
 "use server";
 
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { revalidateTag } from "next/cache";
 import { sql } from "drizzle-orm";
 import { requirePackStudioAccess } from "@/lib/require-pack-studio-access";
@@ -80,7 +81,7 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
   const idResult = await db.execute<{ id: string }>(sql`
     SELECT id
     FROM packs
-    WHERE pack_type::text = ANY(${[...PACK_STUDIO_CASH_PACK_TYPES]}::text[])
+    WHERE pack_type::text = ANY(${pgArrayParam([...PACK_STUDIO_CASH_PACK_TYPES])}::text[])
       AND price > 0
       AND active = true
   `);
@@ -195,16 +196,16 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
         risk_score, tier, compliance, computed_at
       )
       SELECT
-        unnest(${packIdArr}::text[]),
-        unnest(${edgeArr}::numeric[]),
-        unnest(${cvArr}::numeric[]),
-        unnest(${winRateArr}::numeric[]),
-        unnest(${nearMissArr}::numeric[]),
-        unnest(${maxWinArr}::numeric[]),
-        unnest(${maxMultArr}::numeric[]),
-        unnest(${riskScoreArr}::int[]),
-        unnest(${tierArr}::text[]),
-        unnest(${complianceArr}::text[])::jsonb,
+        unnest(${pgArrayParam(packIdArr)}::text[]),
+        unnest(${pgArrayParam(edgeArr)}::numeric[]),
+        unnest(${pgArrayParam(cvArr)}::numeric[]),
+        unnest(${pgArrayParam(winRateArr)}::numeric[]),
+        unnest(${pgArrayParam(nearMissArr)}::numeric[]),
+        unnest(${pgArrayParam(maxWinArr)}::numeric[]),
+        unnest(${pgArrayParam(maxMultArr)}::numeric[]),
+        unnest(${pgArrayParam(riskScoreArr)}::int[]),
+        unnest(${pgArrayParam(tierArr)}::text[]),
+        unnest(${pgArrayParam(complianceArr)}::text[])::jsonb,
         ${computedAt}::timestamptz
       ON CONFLICT (pack_id) DO UPDATE SET
         edge        = EXCLUDED.edge,

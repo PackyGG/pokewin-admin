@@ -75,8 +75,8 @@ async function compute(
       username: string | null;
       total_referred: string;
       total_paid_out_lifetime: string;
-      last_claim_at: Date | null;
-      last_usage_at: Date | null;
+      last_claim_at: Date | string | null;
+      last_usage_at: Date | string | null;
       window_wager: string;
       has_window_usage: boolean;
     }[]

@@ -44,7 +44,7 @@ async function computeDaily(
 
   const rows = await queryRows<
     {
-      date: Date;
+      date: Date | string;
       cnt: string;
       volume: string;
       distinct_users: string;

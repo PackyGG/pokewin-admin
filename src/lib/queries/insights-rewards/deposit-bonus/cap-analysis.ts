@@ -148,7 +148,7 @@ async function computeCapAnalysis(
           ${dateFilter}
       `),
       queryRows<
-        { date: Date; bonuses: string; cap_hits: string }[]
+        { date: Date | string; bonuses: string; cap_hits: string }[]
       >(db, sql`
         SELECT
           DATE(lt.created_at) AS date,
@@ -190,7 +190,7 @@ async function computeCapAnalysis(
           username: string | null;
           hits: string;
           total_bonus: string;
-          last_hit_at: Date;
+          last_hit_at: Date | string;
         }[]
       >(db, sql`
         SELECT
@@ -289,7 +289,7 @@ async function computeCapAnalysis(
       username: string | null;
       deposit_usd: string;
       bonus_usd: string;
-      created_at: Date;
+      created_at: Date | string;
     }[]
   >(db, sql`
     WITH window_deposits AS MATERIALIZED (

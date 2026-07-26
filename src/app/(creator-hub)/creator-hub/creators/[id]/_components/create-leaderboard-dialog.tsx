@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ux";
+import { toValidIso } from "@/lib/client-runtime-safety";
 
 import {
   createLeaderboard,
@@ -62,9 +63,9 @@ const leaderboardFormSchema = z
       .max(100, "House share % must be between 0 and 100"),
   })
   .superRefine((data, ctx) => {
-    const startISO = new Date(data.start_date).toISOString();
-    const endISO = new Date(data.end_date).toISOString();
-    if (Number.isNaN(new Date(startISO).getTime())) {
+    const startISO = toValidIso(data.start_date);
+    const endISO = toValidIso(data.end_date);
+    if (!startISO) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Enter a valid start date",
@@ -72,7 +73,7 @@ const leaderboardFormSchema = z
       });
       return;
     }
-    if (Number.isNaN(new Date(endISO).getTime())) {
+    if (!endISO) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Enter a valid end date",
@@ -280,8 +281,12 @@ export function CreateLeaderboardDialog({ userId }: Props) {
       return;
     }
 
-    const startISO = new Date(parsed.data.start_date).toISOString();
-    const endISO = new Date(parsed.data.end_date).toISOString();
+    const startISO = toValidIso(parsed.data.start_date);
+    const endISO = toValidIso(parsed.data.end_date);
+    if (!startISO || !endISO) {
+      toast.error("Enter valid start and end dates");
+      return;
+    }
 
     startTransition(async () => {
       const r = await createLeaderboard({

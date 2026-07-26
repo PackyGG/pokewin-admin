@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { History } from "lucide-react";
@@ -141,7 +142,7 @@ async function loadHistory(
         id: string; username: string; display_username: string | null; email: string;
       }>(sql`
         SELECT id, username, display_username, email
-        FROM admin_users WHERE id = ANY(${capturedByIds}::uuid[])
+        FROM admin_users WHERE id = ANY(${pgArrayParam(capturedByIds)}::uuid[])
       `)
     ).rows;
     for (const a of admins) {

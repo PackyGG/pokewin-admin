@@ -16,6 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { toValidIso } from "@/lib/client-runtime-safety";
 
 import {
     editLeaderboard,
@@ -235,10 +236,18 @@ export function EditDialog({
             return;
         }
 
-        const startISO = startParsed ? startParsed.toISOString() : undefined;
-        const endISO = endParsed ? endParsed.toISOString() : undefined;
-        const startChanged = startISO && startISO !== new Date(leaderboard.start_date).toISOString();
-        const endChanged = endISO && endISO !== new Date(leaderboard.end_date).toISOString();
+        const startISO = toValidIso(startParsed) ?? undefined;
+        const endISO = toValidIso(endParsed) ?? undefined;
+        if ((startParsed && !startISO) || (endParsed && !endISO)) {
+            toast.error("Enter valid start and end dates");
+            return;
+        }
+        const startChanged = Boolean(
+            startISO && startISO !== toValidIso(leaderboard.start_date),
+        );
+        const endChanged = Boolean(
+            endISO && endISO !== toValidIso(leaderboard.end_date),
+        );
 
         const tiersParsed = tiers
             .map((t) => ({

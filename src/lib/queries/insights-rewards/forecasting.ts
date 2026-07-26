@@ -92,7 +92,7 @@ async function computeForecasting(
   // window. Then JS handles the zero-fill + 7d trailing avg + 30d
   // projection.
   const rows = await queryRows<
-    { date: Date; category: string; total: string }[]
+    { date: Date | string; category: string; total: string }[]
   >(db, sql`
     SELECT
       DATE(lt.created_at) AS date,

@@ -136,8 +136,8 @@ export async function getLimitsForAdmin(adminUserId: string) {
     admin_user_id: string;
     period_type: limit_period_type;
     max_amount: string;
-    created_at: Date;
-    updated_at: Date;
+    created_at: Date | string;
+    updated_at: Date | string;
     created_by: string | null;
     updated_by: string | null;
   }>(sql`
@@ -155,8 +155,8 @@ export async function getAllLimits() {
     admin_user_id: string;
     period_type: limit_period_type;
     max_amount: string;
-    created_at: Date;
-    updated_at: Date;
+    created_at: Date | string;
+    updated_at: Date | string;
     created_by: string | null;
     updated_by: string | null;
     adminUsername: string;

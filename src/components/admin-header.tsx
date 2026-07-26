@@ -47,6 +47,7 @@ import { useTimezoneContext } from "@/components/timezone-provider";
 import { NotificationBell } from "@/components/notification-bell";
 import { PasskeySetupPrompt } from "@/components/passkey-setup-prompt";
 import { cn } from "@/lib/utils";
+import { normalizeStringArray } from "@/lib/client-runtime-safety";
 import type { DbEnv } from "@/lib/db-env";
 import type { AdminPreferences } from "@/lib/admin-preferences-types";
 
@@ -287,7 +288,7 @@ export function AdminHeader({
    * includes `role`). A user can hold several roles at once, so the header
    * shows every one of them — not just the primary.
    */
-  roles: string[];
+  roles: string[] | null;
   /**
    * Whether the admin-DB profile columns exist (display name / avatar /
    * preferences). Gates the editing controls in the profile dialog the same
@@ -327,8 +328,9 @@ export function AdminHeader({
   const label = displayUsername ?? username;
   // Defensive: always render at least the primary role. Dedupe in case a
   // caller passed a list that already includes `role`.
+  const normalizedRoles = normalizeStringArray(roles);
   const roleList =
-    roles && roles.length > 0 ? [...new Set(roles)] : [role];
+    normalizedRoles.length > 0 ? [...new Set(normalizedRoles)] : [role];
 
   return (
     // Glass chrome: layered translucency (background token ~85% +

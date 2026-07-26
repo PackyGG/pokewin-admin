@@ -181,7 +181,7 @@ async function computeTracker(
           WHERE d.created_at >= NOW() - INTERVAL '30 days') AS last30d_deposits
     `),
     queryMainRows<
-      { date: Date; bonus: string; deposits: string }[]
+      { date: Date | string; bonus: string; deposits: string }[]
     >(`
       WITH days AS (
         SELECT generate_series(

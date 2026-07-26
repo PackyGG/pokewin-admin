@@ -1,5 +1,6 @@
 "use server";
 
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { revalidatePath, revalidateTag, unstable_cache } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
 import { sql } from "drizzle-orm";
@@ -441,7 +442,7 @@ export async function getPackEditPool(packId: string): Promise<EditPool> {
         id: string; name: string; image_url: string; price: string;
       }>(sql`
         SELECT id, name, image_url, price::text AS price
-        FROM cards WHERE id = ANY(${cardIds}::uuid[])
+        FROM cards WHERE id = ANY(${pgArrayParam(cardIds)}::uuid[])
       `)
     ).rows;
     for (const r of cardRows) {
@@ -740,7 +741,7 @@ async function applyPackEditInner(
   const editedIds = [...seen];
   const existingCards = (
     await db.execute<{ id: string }>(sql`
-      SELECT id FROM cards WHERE id = ANY(${editedIds}::uuid[])
+      SELECT id FROM cards WHERE id = ANY(${pgArrayParam(editedIds)}::uuid[])
     `)
   ).rows;
   const existingCardIds = new Set(existingCards.map((c) => c.id));
@@ -863,11 +864,11 @@ async function applyPackEditInner(
         SELECT ${packId}::uuid, input.card_id, input.weight, input.color,
                input.animation, input.card_order
         FROM UNNEST(
-          ${rows.map((r) => r.card_id)}::uuid[],
-          ${rows.map((r) => r.weight)}::int[],
-          ${rows.map((r) => r.color)}::text[],
-          ${rows.map((r) => r.animation)}::boolean[],
-          ${rows.map((r) => r.order)}::int[]
+          ${pgArrayParam(rows.map((r) => r.card_id))}::uuid[],
+          ${pgArrayParam(rows.map((r) => r.weight))}::int[],
+          ${pgArrayParam(rows.map((r) => r.color))}::text[],
+          ${pgArrayParam(rows.map((r) => r.animation))}::boolean[],
+          ${pgArrayParam(rows.map((r) => r.order))}::int[]
         ) AS input(card_id, weight, color, animation, card_order)
       `);
     }
@@ -1364,7 +1365,7 @@ async function resolveAndShapeStagedPool(
       id: string; price: string; name: string; image_url: string;
     }>(sql`
       SELECT id, price::text AS price, name, image_url
-      FROM cards WHERE id = ANY(${editedIds}::uuid[])
+      FROM cards WHERE id = ANY(${pgArrayParam(editedIds)}::uuid[])
     `)
   ).rows;
   const cardMetaById = new Map<
@@ -2030,7 +2031,7 @@ async function applyStagedPackEditAndRetuneInner(
       UPDATE packs
       SET price = CASE WHEN ${shouldWritePrice} THEN ${priceAfter} ELSE price END,
           tags = CASE WHEN ${shouldWriteTags}
-            THEN ${tagDbValues}::pack_tag[] ELSE tags END,
+            THEN ${pgArrayParam(tagDbValues)}::pack_tag[] ELSE tags END,
           updated_at = NOW()
       WHERE id = ${packId}::uuid
     `);
@@ -2042,11 +2043,11 @@ async function applyStagedPackEditAndRetuneInner(
         SELECT ${packId}::uuid, input.card_id, input.weight, input.color,
                input.animation, input.card_order
         FROM UNNEST(
-          ${rows.map((row) => row.card_id)}::uuid[],
-          ${rows.map((row) => row.weight)}::int[],
-          ${rows.map((row) => row.color)}::text[],
-          ${rows.map((row) => row.animation)}::boolean[],
-          ${rows.map((row) => row.order)}::int[]
+          ${pgArrayParam(rows.map((row) => row.card_id))}::uuid[],
+          ${pgArrayParam(rows.map((row) => row.weight))}::int[],
+          ${pgArrayParam(rows.map((row) => row.color))}::text[],
+          ${pgArrayParam(rows.map((row) => row.animation))}::boolean[],
+          ${pgArrayParam(rows.map((row) => row.order))}::int[]
         ) AS input(card_id, weight, color, animation, card_order)
       `);
     }

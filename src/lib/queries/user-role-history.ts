@@ -20,7 +20,9 @@ export async function getUserCreatorHistory(userId: string): Promise<{
   creatorSince: string | null;
 }> {
   try {
-    const result = await adminDrizzle.execute<{ created_at: Date }>(sql`
+    const result = await adminDrizzle.execute<{
+      created_at: Date | string;
+    }>(sql`
       SELECT created_at
       FROM admin_audit_events
       WHERE target_user_id = ${userId}

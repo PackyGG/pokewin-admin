@@ -128,9 +128,9 @@ async function computeSuspicious(
       username: string | null;
       bonus_in_window: string;
       bonus_count: string;
-      last_bonus_at: Date;
+      last_bonus_at: Date | string;
       withdraw_amount: string;
-      withdrew_at: Date;
+      withdrew_at: Date | string;
       hours_to_withdraw: string;
     }[]
   >(db, sql`
@@ -219,7 +219,7 @@ async function computeSuspicious(
       username: string | null;
       bonus_in_window: string;
       bonus_count: string;
-      last_bonus_at: Date;
+      last_bonus_at: Date | string;
       has_ever_wagered: boolean;
     }[]
   >(db, sql`

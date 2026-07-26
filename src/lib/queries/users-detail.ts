@@ -560,7 +560,7 @@ export async function getUserDetail(id: string) {
   })
     .then((excludedUserIds) =>
       queryMainRows<
-        { upper_code: string; referral_count: bigint | number | null }[]
+        { upper_code: string; referral_count: string | number | null }[]
       >(
         `
         WITH codes AS (
@@ -580,7 +580,10 @@ export async function getUserDetail(id: string) {
     )
     .catch((e) => {
       console.error("[getUserDetail] owned-code referral count query failed:", e);
-      return [] as Array<{ upper_code: string; referral_count: bigint | number | null }>;
+      return [] as Array<{
+        upper_code: string;
+        referral_count: string | number | null;
+      }>;
     });
 
   // Canonical P&L components (deposits, withdrawals, on-site balance,
@@ -629,7 +632,7 @@ export async function getUserDetail(id: string) {
   const fingerprintSignalPromise = queryMainRows<
       {
         suspected_alt: boolean | null;
-        linked_count: bigint | number | null;
+        linked_count: string | number | null;
         capture_count: number | null;
         captured_at: Date | string | null;
         best_confidence: number | null;
@@ -866,7 +869,7 @@ export async function getUserDetail(id: string) {
     // the main batch instead of a serial tail. orderBy created_at ASC:
     // the LAST row is the newest, used as the affiliate-code fallback
     // below (replaces the dropped findFirst ... orderBy desc limit 1).
-    queryMainRows<{ code: string; created_at: Date }[]>(
+    queryMainRows<{ code: string; created_at: Date | string }[]>(
       `SELECT code, created_at FROM affiliate_codes
         WHERE user_id = $1 ORDER BY created_at ASC`,
       id,
@@ -911,7 +914,10 @@ export async function getUserDetail(id: string) {
     // match what the user-page currently shows. Single round-trip,
     // .catch keeps page from breaking on enum/schema drift.
     queryMainRows<
-      { total_referred: bigint | number | null; total_wager_volume_usd: string | null }[]
+      {
+        total_referred: string | number | null;
+        total_wager_volume_usd: string | null;
+      }[]
     >(
       `
       WITH codes AS (
@@ -929,7 +935,10 @@ export async function getUserDetail(id: string) {
       id,
     ).catch((e) => {
       console.error("[getUserDetail] live affiliate aggregate query failed:", e);
-      return [] as Array<{ total_referred: bigint | number | null; total_wager_volume_usd: string | null }>;
+      return [] as Array<{
+        total_referred: string | number | null;
+        total_wager_volume_usd: string | null;
+      }>;
     }),
     fingerprintSignalPromise,
     signupIpSharedPromise,

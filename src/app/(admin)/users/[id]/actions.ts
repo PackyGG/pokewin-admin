@@ -1,5 +1,6 @@
 "use server";
 
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import crypto from "crypto";
 import { revalidatePath, revalidateTag, unstable_cache } from "next/cache";
 import { z } from "zod";
@@ -43,6 +44,7 @@ import {
   type SiteRole,
 } from "@/lib/user-site-roles";
 import { isSafeWebhookUrl } from "@/lib/security/webhook-url";
+import { postgresTimestamp, postgresTimestampIso } from "@/lib/postgres-runtime";
 
 /**
  * Bust BOTH the route segment AND the per-user `unstable_cache` entries for
@@ -1434,7 +1436,7 @@ export async function extendVaultLock(
   try {
     await db.transaction(async (tx) => {
       const b = (await tx.execute<{
-        id: string; locked_balance: string; unlock_at: Date | null;
+        id: string; locked_balance: string; unlock_at: Date | string | null;
       }>(sql`
         SELECT id, locked_balance::text, unlock_at
         FROM balances WHERE user_id = ${userId} FOR UPDATE
@@ -1446,7 +1448,9 @@ export async function extendVaultLock(
         throw new Error("No vault balance to freeze");
       }
 
-      previousUnlockAt = b.unlock_at;
+      previousUnlockAt = b.unlock_at
+        ? postgresTimestamp(b.unlock_at, "extendVaultLock.unlock_at")
+        : null;
       // NOW + 10 years computed server-side (clock-skew safe against the
       // client — the action is the source of truth for the timestamp the
       // admin_audit metadata records).
@@ -1492,9 +1496,9 @@ export async function extendVaultLock(
       user_id: userId,
       locked_balance_at_time: lockedAmount,
       previous_unlock_at: previousUnlockAt
-        ? (previousUnlockAt as Date).toISOString()
+        ? postgresTimestampIso(previousUnlockAt, "extendVaultLock.previousUnlockAt")
         : null,
-      new_unlock_at: (newUnlockAt as Date).toISOString(),
+      new_unlock_at: postgresTimestampIso(newUnlockAt, "extendVaultLock.newUnlockAt"),
       reason: reason?.trim() || null,
     },
   });
@@ -1502,7 +1506,7 @@ export async function extendVaultLock(
   invalidateUserCaches(userId);
   return {
     success: true,
-    new_unlock_at: (newUnlockAt as Date).toISOString(),
+    new_unlock_at: postgresTimestampIso(newUnlockAt, "extendVaultLock.newUnlockAt"),
     locked_amount_usd: lockedAmount.toFixed(2),
   };
 }
@@ -1782,7 +1786,7 @@ export async function changeRole(
       db.execute(sql`
         UPDATE "user"
         SET role = ${primary}::user_role,
-            roles = ${dedupedRoles}::user_role[],
+            roles = ${pgArrayParam(dedupedRoles)}::user_role[],
             updated_at = NOW()
         WHERE id = ${userId}
         RETURNING id
@@ -2095,7 +2099,7 @@ export async function getUserDeposits(
     await db.execute<{
       id: string;
       amount: string;
-      created_at: Date;
+      created_at: Date | string;
       bonus_paid: string;
     }>(sql`
       WITH deposits AS (
@@ -2128,7 +2132,7 @@ export async function getUserDeposits(
   return rows.map((r) => ({
     id: r.id,
     amount: Math.abs(Number(r.amount)),
-    createdAt: r.created_at.toISOString(),
+    createdAt: postgresTimestampIso(r.created_at, "deposit.created_at"),
     bonusPaid: Math.round(Number(r.bonus_paid) * 100) / 100,
   }));
 }
@@ -2166,7 +2170,7 @@ export async function getUserJoinedSponsoredBattles(
       status: string;
       bet_amount: string;
       sponsorship_percentage: number;
-      created_at: Date;
+      created_at: Date | string;
       winnings: string;
     }
   >(
@@ -2223,7 +2227,7 @@ export async function getUserJoinedSponsoredBattles(
     return {
       battleId: r.battle_id,
       gameSessionId: r.game_session_id,
-      at: r.created_at.toISOString(),
+      at: postgresTimestampIso(r.created_at, "battle.created_at"),
       result,
       winnings: Number(r.winnings),
       betAmount: Number(r.bet_amount),
@@ -2261,7 +2265,7 @@ export async function getUserInventorySaleBatches(
       card_id: string;
       card_name: string | null;
       value_at_obtained: string;
-      sold_at: Date;
+      sold_at: Date | string;
     }>(sql`
       SELECT ui.id, ui.card_id, c.name AS card_name,
              ui.value_at_obtained::text, ui.sold_at
@@ -2280,10 +2284,11 @@ export async function getUserInventorySaleBatches(
   const batches = new Map<string, InventorySaleBatch>();
   for (const r of rows) {
     if (!r.sold_at) continue;
-    const key = r.sold_at.toISOString().slice(0, 19);
+    const soldAt = postgresTimestampIso(r.sold_at, "inventory.sold_at");
+    const key = soldAt.slice(0, 19);
     let b = batches.get(key);
     if (!b) {
-      b = { id: r.id, at: r.sold_at.toISOString(), count: 0, total: 0, cards: [] };
+      b = { id: r.id, at: soldAt, count: 0, total: 0, cards: [] };
       batches.set(key, b);
     }
     const value = Number(r.value_at_obtained);
@@ -2361,7 +2366,7 @@ export async function deleteUserVoucher(data: {
   }
 
   const voucher = (await db.execute<{
-    id: string; value: string; origin: string; claimed_at: Date | null;
+    id: string; value: string; origin: string; claimed_at: Date | string | null;
   }>(sql`
     SELECT id, value::text, origin::text, claimed_at FROM vouchers
     WHERE id = ${parsed.data.voucherId}::uuid
@@ -2466,7 +2471,7 @@ export async function getUserVouchers(
       value: string;
       origin: string;
       description: string | null;
-      created_at: Date;
+      created_at: Date | string;
     }>(sql`
       SELECT id, value::text, origin::text, description, created_at
       FROM vouchers
@@ -2480,7 +2485,7 @@ export async function getUserVouchers(
     value: Number(v.value),
     origin: String(v.origin),
     description: v.description,
-    createdAt: v.created_at.toISOString(),
+    createdAt: postgresTimestampIso(v.created_at, "voucher.created_at"),
   }));
 }
 
@@ -2589,9 +2594,9 @@ async function removeOneInventoryItem(
     id: string;
     card_id: string;
     value_at_obtained: string;
-    sold_at: Date | null;
-    exchanged_at: Date | null;
-    withdrawal_locked_at: Date | null;
+      sold_at: Date | string | null;
+      exchanged_at: Date | string | null;
+      withdrawal_locked_at: Date | string | null;
     card_name: string | null;
     has_open_withdrawal: boolean;
   };
@@ -2608,7 +2613,7 @@ async function removeOneInventoryItem(
                    SELECT 1
                    FROM card_withdrawal_requests cwr
                    WHERE cwr.user_id = ${userId}
-                     AND cwr.status::text = ANY(${[...OPEN_WITHDRAWAL_STATUSES]}::text[])
+                     AND cwr.status::text = ANY(${pgArrayParam([...OPEN_WITHDRAWAL_STATUSES])}::text[])
                      AND cwr.inventory_item_ids @> ARRAY[${inventoryItemId}::uuid]
                  ) AS has_open_withdrawal
           FROM user_inventory ui
@@ -2848,7 +2853,7 @@ export async function getGameSessionDetails(
       game_id: string | null;
       result: string | null;
       bet_amount: string;
-      created_at: Date;
+      created_at: Date | string;
     }>(sql`
       SELECT id, user_id, game_type::text AS game_type, game_id,
              result, bet_amount::text AS bet_amount, created_at
@@ -2962,7 +2967,7 @@ export async function getGameSessionDetails(
         }>(sql`
           SELECT id, name, image_url, rarity::text AS rarity, price::text AS price
           FROM cards
-          WHERE id = ANY(${cardIds}::uuid[])
+          WHERE id = ANY(${pgArrayParam(cardIds)}::uuid[])
         `)
       ).rows
     : [];
@@ -3060,7 +3065,7 @@ export async function getGameSessionDetails(
           .execute<{ id: string; name: string; image_url: string | null }>(sql`
             SELECT id, name, image_url
             FROM packs
-            WHERE id = ANY(${[...packIdSet]}::uuid[])
+            WHERE id = ANY(${pgArrayParam([...packIdSet])}::uuid[])
           `)
           .then((result) => result.rows)
       : Promise.resolve([] as { id: string; name: string; image_url: string | null }[]),
@@ -3075,7 +3080,7 @@ export async function getGameSessionDetails(
           }>(sql`
             SELECT id, name, image_url, rarity::text AS rarity, price::text AS price
             FROM cards
-            WHERE id = ANY(${missingCardIds}::uuid[])
+            WHERE id = ANY(${pgArrayParam(missingCardIds)}::uuid[])
           `)
           .then((result) => result.rows)
       : Promise.resolve([]),
@@ -3145,7 +3150,7 @@ export async function getGameSessionDetails(
     items,
     pfResults,
     packsOpened,
-    createdAt: session.created_at.toISOString(),
+    createdAt: postgresTimestampIso(session.created_at, "session.created_at"),
   };
 }
 
@@ -3204,7 +3209,7 @@ export async function getInventoryItemOrigin(
       value_at_obtained: string;
       source_type: string;
       source_id: string | null;
-      obtained_at: Date;
+      obtained_at: Date | string;
       pull_chance: string | null;
       card_name: string | null;
       image_url: string | null;
@@ -3235,7 +3240,7 @@ export async function getInventoryItemOrigin(
     rarity: item.rarity,
     value: Number(item.value_at_obtained),
     sourceType: item.source_type,
-    obtainedAt: item.obtained_at.toISOString(),
+    obtainedAt: postgresTimestampIso(item.obtained_at, "inventory.obtained_at"),
     pullChance: item.pull_chance !== null ? Number(item.pull_chance) : null,
     session,
   };

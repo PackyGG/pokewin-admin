@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import "server-only";
 
 import { asc, count, desc, eq, inArray, sql } from "drizzle-orm";
@@ -143,7 +144,7 @@ export async function getUsersWithTags(
       }>(sql`
         SELECT id, username, email, country, country_code
         FROM "user"
-        WHERE id = ANY(${targetUserIds}::text[])
+        WHERE id = ANY(${pgArrayParam(targetUserIds)}::text[])
       `)
       .then((result) => result.rows),
     includeFinancials

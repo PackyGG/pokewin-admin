@@ -5,6 +5,7 @@ import { readDbEnv } from "@/lib/db-env";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { isUuid } from "@/lib/utils/ids";
+import { postgresTimestampIso } from "@/lib/postgres-runtime";
 import type { PaginatedResult } from "@/lib/types";
 import { battle_status, battle_mode } from "@/lib/db-schema/main/schema";
 
@@ -540,7 +541,7 @@ export async function getBattles(params: {
       betAmount,
       winnerTeam: b.winner_team,
       regionCode: b.region_code,
-      createdAt: b.created_at.toISOString(),
+      createdAt: postgresTimestampIso(b.created_at, "battles.created_at"),
       totalPayout: b.status === "completed"
         ? creatorPayout
         : outcomeLocked
@@ -635,7 +636,7 @@ export async function getBattleDetail(id: string) {
         total_unpacked: string | null;
         pack_ids: string[];
         region_code: string;
-        created_at: Date;
+        created_at: Date | string;
         borrow_percentage: number | null;
         sponsorship_percentage: number | null;
         server_seed_hash: string;
@@ -939,7 +940,7 @@ export async function getBattleDetail(id: string) {
     // battle-detail page load. Admins fetch the plaintext on demand via
     // the revealBattlePassword server action, which audit-logs the view.
     hasPassword: battle.password !== null && battle.password.length > 0,
-    createdAt: battle.created_at.toISOString(),
+    createdAt: postgresTimestampIso(battle.created_at, "battle.created_at"),
     packs: packs.map((p) => ({ id: p.id, name: p.name, imageUrl: p.image_url, priceUsd: toNumber(p.price) })),
     teamsData,
     participants: battle.battle_participants.map((p) => ({

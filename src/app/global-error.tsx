@@ -89,10 +89,19 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("[global-error] root layout threw:", error);
-    // Report to Sentry (no-op when dormant). This is where root-layout React
-    // crashes (incl. transient hook-order #310) become visible with a digest.
-    Sentry.captureException(error);
+    try {
+      console.error("[global-error] root layout threw:", error);
+    } catch {
+      // The final fallback must stay renderable even if logging is patched.
+    }
+    try {
+      // Report to Sentry (no-op when dormant). This is where root-layout React
+      // crashes (incl. transient hook-order #310) become visible with a digest.
+      Sentry.captureException(error);
+    } catch {
+      // Reporting failures must never replace the original fallback with the
+      // browser's generic client-side exception screen.
+    }
   }, [error]);
 
   return (

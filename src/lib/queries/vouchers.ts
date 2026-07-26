@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { unstable_cache } from "next/cache";
 import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { getDrizzleDb } from "@/lib/db";
@@ -102,7 +103,7 @@ async function getVouchersImpl(params: {
     // If there are no admin-created vouchers at all, "system" matches
     // everything — leave the where clause untouched.
     if (adminCreatedIds.length > 0) {
-      conditions.push(sql`v.id::text <> ALL(${adminCreatedIds}::text[])`);
+      conditions.push(sql`v.id::text <> ALL(${pgArrayParam(adminCreatedIds)}::text[])`);
     }
   } else if (createdBy) {
     const actions = await adminDrizzle
@@ -118,7 +119,7 @@ async function getVouchersImpl(params: {
     if (createdByVoucherIds.length === 0) {
       return { data: [], total: 0, page: safePage, perPage: safePerPage, totalPages: 0 };
     }
-    conditions.push(sql`v.id::text = ANY(${createdByVoucherIds}::text[])`);
+    conditions.push(sql`v.id::text = ANY(${pgArrayParam(createdByVoucherIds)}::text[])`);
   }
 
   if (claimed === true) conditions.push(sql`v.claimed_at IS NOT NULL`);
@@ -213,7 +214,7 @@ async function getVouchersImpl(params: {
         .execute<{ user_id: string; total_deposited: unknown }>(sql`
           SELECT user_id, total_deposited
           FROM balances
-          WHERE user_id = ANY(${ftdUserIds}::text[])
+          WHERE user_id = ANY(${pgArrayParam(ftdUserIds)}::text[])
         `)
         .then((result) => result.rows)
     : Promise.resolve(

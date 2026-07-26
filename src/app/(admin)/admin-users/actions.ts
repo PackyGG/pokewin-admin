@@ -1,5 +1,6 @@
 "use server";
 
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { revalidatePath } from "next/cache";
 import bcrypt from "bcryptjs";
 import { sql } from "drizzle-orm";
@@ -120,7 +121,7 @@ export async function createAdminUser(data: {
       )
       VALUES (
         ${data.email}, ${data.username}, ${passwordHash},
-        ${primary}::admin_role, ${roles}::admin_role[], ${allowedPages},
+        ${primary}::admin_role, ${pgArrayParam(roles)}::admin_role[], ${allowedPages},
         ARRAY[]::text[], ARRAY[]::text[], ARRAY[]::text[]
       )
       RETURNING id::text
@@ -368,7 +369,7 @@ export async function setAdminRoles(
   await adminDrizzle.execute(sql`
     UPDATE admin_users
     SET role = ${primary}::admin_role,
-        roles = ${roles}::admin_role[],
+        roles = ${pgArrayParam(roles)}::admin_role[],
         allowed_pages = ${mergedAllowed},
         updated_at = NOW()
     WHERE id = ${adminUserId}::uuid

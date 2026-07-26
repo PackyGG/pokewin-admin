@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { cache } from "react";
 import { sql } from "drizzle-orm";
 
@@ -81,7 +82,7 @@ const getPackMetaByKey = cache(async function getPackMetaByKey(
     SELECT id, name, slug, price::text AS price, pack_type::text AS pack_type,
            active, tags::text[] AS tags
     FROM packs
-    WHERE id = ANY(${packIds}::uuid[])
+    WHERE id = ANY(${pgArrayParam(packIds)}::uuid[])
   `);
 
   for (const r of result.rows) {

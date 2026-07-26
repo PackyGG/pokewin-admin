@@ -1,5 +1,6 @@
 "use server";
 
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
 import { sql } from "drizzle-orm";
@@ -151,7 +152,7 @@ async function replacePackState(
   await db.transaction(async (tx) => {
     const tagsUpdate =
       options?.tags !== undefined
-        ? sql`, tags = ${packTagDbValues(options.tags)}::pack_tag[]`
+        ? sql`, tags = ${pgArrayParam(packTagDbValues(options.tags))}::pack_tag[]`
         : sql``;
     const priceUpdate =
       options?.price !== undefined ? sql`, price = ${options.price}` : sql``;
@@ -170,11 +171,11 @@ async function replacePackState(
         )
         SELECT ${packId}::uuid, *
         FROM unnest(
-          ${rows.map((r) => r.card_id)}::uuid[],
-          ${rows.map((r) => r.weight)}::int[],
-          ${rows.map((r) => r.color)}::text[],
-          ${rows.map((r) => r.animation)}::boolean[],
-          ${rows.map((r) => r.order)}::int[]
+          ${pgArrayParam(rows.map((r) => r.card_id))}::uuid[],
+          ${pgArrayParam(rows.map((r) => r.weight))}::int[],
+          ${pgArrayParam(rows.map((r) => r.color))}::text[],
+          ${pgArrayParam(rows.map((r) => r.animation))}::boolean[],
+          ${pgArrayParam(rows.map((r) => r.order))}::int[]
         )
       `);
     }
@@ -329,7 +330,7 @@ export async function createPack(data: {
         ${data.name.trim()}, ${data.slug.trim()},
         ${data.description.trim() || null}, ${data.imageUrl}, ${data.price},
         ${data.cardsPerOpen}, ${data.packType},
-        ${packTagDbValues(data.tags)}::pack_tag[], ${data.difficulty}, false
+        ${pgArrayParam(packTagDbValues(data.tags))}::pack_tag[], ${data.difficulty}, false
       )
       RETURNING id
     `);
@@ -343,11 +344,11 @@ export async function createPack(data: {
         )
         SELECT ${pack.id}::uuid, *
         FROM unnest(
-          ${data.cards.map((c) => c.cardId)}::uuid[],
-          ${data.cards.map((c) => c.weight)}::int[],
-          ${data.cards.map((c) => c.color)}::text[],
-          ${data.cards.map((c) => c.animation)}::boolean[],
-          ${data.cards.map((c) => c.order)}::int[]
+          ${pgArrayParam(data.cards.map((c) => c.cardId))}::uuid[],
+          ${pgArrayParam(data.cards.map((c) => c.weight))}::int[],
+          ${pgArrayParam(data.cards.map((c) => c.color))}::text[],
+          ${pgArrayParam(data.cards.map((c) => c.animation))}::boolean[],
+          ${pgArrayParam(data.cards.map((c) => c.order))}::int[]
         )
       `);
     }
@@ -459,7 +460,7 @@ export async function updatePack(
           price = ${data.price},
           cards_per_open = ${data.cardsPerOpen},
           pack_type = ${data.packType},
-          tags = ${packTagDbValues(data.tags)}::pack_tag[],
+          tags = ${pgArrayParam(packTagDbValues(data.tags))}::pack_tag[],
           difficulty = ${data.difficulty},
           updated_at = NOW()
       WHERE id = ${id}::uuid
@@ -476,11 +477,11 @@ export async function updatePack(
         )
         SELECT ${id}::uuid, *
         FROM unnest(
-          ${data.cards.map((c) => c.cardId)}::uuid[],
-          ${data.cards.map((c) => c.weight)}::int[],
-          ${data.cards.map((c) => c.color)}::text[],
-          ${data.cards.map((c) => c.animation)}::boolean[],
-          ${data.cards.map((c) => c.order)}::int[]
+          ${pgArrayParam(data.cards.map((c) => c.cardId))}::uuid[],
+          ${pgArrayParam(data.cards.map((c) => c.weight))}::int[],
+          ${pgArrayParam(data.cards.map((c) => c.color))}::text[],
+          ${pgArrayParam(data.cards.map((c) => c.animation))}::boolean[],
+          ${pgArrayParam(data.cards.map((c) => c.order))}::int[]
         )
       `);
     }
@@ -2336,7 +2337,7 @@ export async function revertPackToSnapshot(
     snapshotCardIds.length > 0
       ? (
           await db.execute<{ id: string }>(sql`
-            SELECT id FROM cards WHERE id = ANY(${snapshotCardIds}::uuid[])
+            SELECT id FROM cards WHERE id = ANY(${pgArrayParam(snapshotCardIds)}::uuid[])
           `)
         ).rows
       : [];
@@ -2522,12 +2523,12 @@ async function insertBuiltPackCards(
     )
     SELECT *
     FROM unnest(
-      ${rows.map((r) => r.pack_id)}::uuid[],
-      ${rows.map((r) => r.card_id)}::uuid[],
-      ${rows.map((r) => r.weight)}::int[],
-      ${rows.map((r) => r.color)}::text[],
-      ${rows.map((r) => r.animation)}::boolean[],
-      ${rows.map((r) => r.order)}::int[]
+      ${pgArrayParam(rows.map((r) => r.pack_id))}::uuid[],
+      ${pgArrayParam(rows.map((r) => r.card_id))}::uuid[],
+      ${pgArrayParam(rows.map((r) => r.weight))}::int[],
+      ${pgArrayParam(rows.map((r) => r.color))}::text[],
+      ${pgArrayParam(rows.map((r) => r.animation))}::boolean[],
+      ${pgArrayParam(rows.map((r) => r.order))}::int[]
     )
   `);
 }
@@ -2618,7 +2619,7 @@ export async function buildPack(input: BuildPackInput): Promise<BuildPackResult>
     const cardResult = await readDb.execute<{ id: string; price: string }>(sql`
       SELECT id, price::text AS price
       FROM cards
-      WHERE id = ANY(${cardIds}::uuid[])
+      WHERE id = ANY(${pgArrayParam(cardIds)}::uuid[])
     `);
     for (const row of cardResult.rows) priceByCard.set(row.id, Number(row.price));
     const missing = cardIds.filter((id) => !priceByCard.has(id));

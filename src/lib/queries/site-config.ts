@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { sql } from "drizzle-orm";
 import { getDrizzleDb } from "@/lib/db";
 
@@ -20,7 +21,7 @@ export async function getSiteConfigValues(
   const result = await db.execute<{ key: string; value: string }>(sql`
     SELECT key, value
     FROM site_config
-    WHERE key = ANY(${keys}::text[])
+    WHERE key = ANY(${pgArrayParam(keys)}::text[])
   `);
 
   const out: Record<string, string> = {};

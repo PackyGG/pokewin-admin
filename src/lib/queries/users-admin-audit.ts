@@ -83,7 +83,7 @@ type BulkAuditRow = {
   event_type: string;
   ip: string | null;
   metadata: unknown;
-  created_at: Date;
+  created_at: Date | string;
   admin_id: string | null;
   admin_username: string | null;
   admin_role: string | null;

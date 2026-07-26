@@ -195,7 +195,7 @@ async function computeCategorySpendBreakdown(
       GROUP BY 1
     `),
     queryRows<
-      { date: Date; category: string; total: string }[]
+      { date: Date | string; category: string; total: string }[]
     >(db, sql`
       SELECT
         DATE(lt.created_at) AS date,

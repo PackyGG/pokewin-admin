@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import "server-only";
 
 import { sql } from "drizzle-orm";
@@ -143,7 +144,7 @@ async function runPackCreatorBaseline(includeRolesArray: boolean): Promise<void>
   await adminDrizzle.execute(sql`
     WITH defaults AS (
       SELECT key, ord
-      FROM unnest(${defaults}::text[]) WITH ORDINALITY AS d(key, ord)
+      FROM unnest(${pgArrayParam(defaults)}::text[]) WITH ORDINALITY AS d(key, ord)
     )
     UPDATE "admin_users" au
        SET "allowed_pages" =

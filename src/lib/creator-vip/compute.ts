@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import "server-only";
 
 import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
@@ -321,7 +322,7 @@ async function wagerPosition(
       SELECT COALESCE(MAX(created_at), ${since}::timestamp) AS run_start
         FROM affiliate_code_usages
        WHERE referred_user_id = ${userId}
-         AND UPPER(code) <> ALL(${upper}::text[])
+         AND UPPER(code) <> ALL(${pgArrayParam(upper)}::text[])
          AND created_at >= ${since}::timestamp
     ),
     live AS (
@@ -329,11 +330,11 @@ async function wagerPosition(
         FROM affiliate_code_usages acu
        WHERE acu.referred_user_id = ${userId}
          AND acu.usage_type::text = 'wager'
-         AND UPPER(acu.code) = ANY(${upper}::text[])
+         AND UPPER(acu.code) = ANY(${pgArrayParam(upper)}::text[])
          AND acu.created_at >= ${since}::timestamp
          AND EXISTS (
            SELECT 1
-             FROM unnest(${starts}::timestamp[], ${ends}::timestamp[]) AS w(s, e)
+             FROM unnest(${pgArrayParam(starts)}::timestamp[], ${pgArrayParam(ends)}::timestamp[]) AS w(s, e)
             WHERE acu.created_at >= w.s AND acu.created_at < w.e
          )
     )
@@ -842,7 +843,7 @@ export async function computeAllEntitlements(
     SELECT EXISTS (
       SELECT 1 FROM affiliate_code_usages
        WHERE referred_user_id = ${userId}
-         AND UPPER(code) = ANY(${allCodes}::text[])
+         AND UPPER(code) = ANY(${pgArrayParam(allCodes)}::text[])
     ) AS hit
   `);
   if (attached.rows[0]?.hit !== true) return [];

@@ -271,7 +271,7 @@ async function computeAnalyticsData(
       `),
       queryMainRows<
         {
-          date: Date;
+          date: Date | string;
           pack_wager: string;
           battle_wager: string;
           unique_visitors: string;
@@ -349,7 +349,7 @@ async function computeAnalyticsData(
         GROUP BY DATE(created_at)
         ORDER BY date
       `),
-      queryMainRows<{ date: Date; count: string }[]>(`
+      queryMainRows<{ date: Date | string; count: string }[]>(`
         SELECT DATE(created_at) AS date, COUNT(*)::text AS count
         FROM "user"
         WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn} ${dateFilter}

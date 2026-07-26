@@ -704,10 +704,10 @@ async function computeSignupExtras(
   const cohortDepositRows = await queryMainRows<
     {
       user_id: string;
-      signed_up_at: Date;
+      signed_up_at: Date | string;
       had_claim: number;
       first_deposit_usd: string | null;
-      first_deposit_at: Date | null;
+      first_deposit_at: Date | string | null;
       deposit_count: string;
       second_deposit_within_7d: number;
       second_deposit_within_30d: number;

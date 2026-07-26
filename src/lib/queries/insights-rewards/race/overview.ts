@@ -78,7 +78,7 @@ async function computeOverview(
         ${dateFilter}
     `),
     queryRows<
-      { date: Date; total: string; cnt: string }[]
+      { date: Date | string; total: string; cnt: string }[]
     >(db, sql`
       SELECT
         DATE(rc.claimed_at) AS date,

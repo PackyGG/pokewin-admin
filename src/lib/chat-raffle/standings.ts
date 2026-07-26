@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import "server-only";
 
 import { sql } from "drizzle-orm";
@@ -118,9 +119,9 @@ export async function getChatRaffleStandings(params: {
   const excluded = await getExcludedUserIds();
   const blacklistFilter =
     excluded.length > 0
-      ? sql`AND s.user_id <> ALL(${excluded}::text[])`
+      ? sql`AND s.user_id <> ALL(${pgArrayParam(excluded)}::text[])`
       : sql``;
-  const roleFilter = sql`u.role::text <> ALL(${[...CUSTOMER_EXCLUDED_ROLES]}::text[])`;
+  const roleFilter = sql`u.role::text <> ALL(${pgArrayParam([...CUSTOMER_EXCLUDED_ROLES])}::text[])`;
 
   // Identical text counts once per bucket when the knob is on; otherwise the
   // dedupe rank is ignored.

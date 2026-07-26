@@ -613,7 +613,7 @@ const cachedDailyChart = unstable_cache(
     // and threw `22P02`. The daily upgrader series is merged in by the
     // caller from the upgrader-native table.
     return queryRows<{
-      date: Date;
+      date: Date | string;
       packs: string;
       battles: string;
       deposits: string;
@@ -651,14 +651,14 @@ const cachedDailyChart = unstable_cache(
  * layer (admin / support / creator + blacklist dropped).
  */
 const cachedDailyUpgrader = unstable_cache(
-  async (blacklistIdNotIn: string): Promise<{ date: Date; upgrader: string }[]> => {
+  async (blacklistIdNotIn: string): Promise<{ date: Date | string; upgrader: string }[]> => {
     const db = await getDrizzleDb();
     const probe = await queryRows<{ exists: string | null }[]>(
       db,
       `SELECT to_regclass('public.upgrader_games')::text AS exists`,
     );
     if (probe[0]?.exists == null) return [];
-    return queryRows<{ date: Date; upgrader: string }[]>(db, `
+    return queryRows<{ date: Date | string; upgrader: string }[]>(db, `
       SELECT
         DATE(created_at) as date,
         COALESCE(SUM(bet_amount::numeric), 0)::text as upgrader
@@ -685,7 +685,7 @@ const cachedDailyUpgrader = unstable_cache(
 const cachedDailySignups = unstable_cache(
   async (blacklistIdNotIn: string) => {
     const db = await getDrizzleDb();
-    return queryRows<{ date: Date; count: string }[]>(db, `
+    return queryRows<{ date: Date | string; count: string }[]>(db, `
       SELECT DATE(created_at) as date, COUNT(*)::text as count
       FROM "user"
       WHERE created_at >= NOW() - INTERVAL '30 days'
@@ -703,7 +703,7 @@ const cachedDailyWagerAttribution = unstable_cache(
   async (blacklistIdNotIn: string) => {
     const db = await getDrizzleDb();
     return queryRows<{
-      date: Date;
+      date: Date | string;
       organic: string;
       creator_attributed: string;
     }[]>(db, `
@@ -745,7 +745,7 @@ const cachedFtdCombined = unstable_cache(
     const db = await getDrizzleDb();
     return queryRows<{
       tag: string;
-      bucket: Date | null;
+      bucket: Date | string | null;
       count: string;
       total: string;
     }[]>(db, `

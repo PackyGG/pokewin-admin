@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { unstable_cache } from "next/cache";
 import { sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
@@ -55,7 +56,7 @@ export async function getTunedPackIds(): Promise<string[]> {
         const result = await adminDrizzle.execute<{ pack_id: string }>(sql`
           SELECT DISTINCT metadata->>'pack_id' AS pack_id
           FROM admin_audit_events
-          WHERE event_type = ANY(${[...RETUNE_WORKSPACE_EVENT_TYPES]}::text[])
+          WHERE event_type = ANY(${pgArrayParam([...RETUNE_WORKSPACE_EVENT_TYPES])}::text[])
             AND COALESCE(metadata->>'pack_id', '') <> ''
         `);
         return result.rows.map((row) => row.pack_id);

@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import "server-only";
 
 import { sql } from "drizzle-orm";
@@ -355,7 +356,7 @@ export async function getHistoryCardMeta(
   }>(sql`
     SELECT id, name, image_url, price::text AS price
     FROM cards
-    WHERE id = ANY(${cardIds}::uuid[])
+    WHERE id = ANY(${pgArrayParam(cardIds)}::uuid[])
   `);
   for (const r of result.rows) {
     out.set(r.id, {

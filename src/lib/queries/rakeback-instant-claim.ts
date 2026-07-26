@@ -296,9 +296,9 @@ async function queryRakebackInstantClaimUsage(
   const [aggRows, byTypeRows] = await Promise.all([
     queryMainRows<
       {
-        total_count: bigint;
-        instant_count: bigint;
-        instant_users: bigint;
+        total_count: string;
+        instant_count: string;
+        instant_users: string;
         total_usd: string | null;
         instant_usd: string | null;
         instant_saved_usd: string | null;
@@ -318,7 +318,7 @@ async function queryRakebackInstantClaimUsage(
        AND ${scopeSql}`,
     ),
     queryMainRows<
-      { type: string; instant_count: bigint; instant_usd: string | null }[]
+      { type: string; instant_count: string; instant_usd: string | null }[]
     >(
       `SELECT
        rc.rakeback_type::text                                         AS type,

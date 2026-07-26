@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { unstable_cache } from "next/cache";
 import { sql } from "drizzle-orm";
 import { getDrizzleDb } from "@/lib/db";
@@ -61,7 +62,7 @@ const cachedPromoCodesMoneyStats = unstable_cache(
     const blacklistIds = blacklistKey ? blacklistKey.split(",") : [];
     const blacklistFilter =
       blacklistIds.length > 0
-        ? sql`AND u.id <> ALL(${blacklistIds}::text[])`
+        ? sql`AND u.id <> ALL(${pgArrayParam(blacklistIds)}::text[])`
         : sql``;
 
     const [claimedResult, allocatedResult] = await Promise.all([

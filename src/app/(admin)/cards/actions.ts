@@ -1,5 +1,6 @@
 "use server";
 
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
@@ -520,28 +521,28 @@ async function checkCardReferences(
     db.execute<{ card_id: string; count: string }>(sql`
       SELECT card_id, COUNT(*)::text AS count
       FROM pack_cards
-      WHERE card_id = ANY(${uniqueIds}::uuid[])
+      WHERE card_id = ANY(${pgArrayParam(uniqueIds)}::uuid[])
       GROUP BY card_id
     `),
     // 2. user_inventory — soft reference (no FK); count holdings per card.
     db.execute<{ card_id: string; count: string }>(sql`
       SELECT card_id, COUNT(*)::text AS count
       FROM user_inventory
-      WHERE card_id = ANY(${uniqueIds}::uuid[])
+      WHERE card_id = ANY(${pgArrayParam(uniqueIds)}::uuid[])
       GROUP BY card_id
     `),
     // 3. upgrader_output_cards — card_id is UNIQUE, so just fetch the ids that
     //    appear; presence ⇒ blocked.
     db.execute<{ card_id: string }>(sql`
       SELECT card_id FROM upgrader_output_cards
-      WHERE card_id = ANY(${uniqueIds}::uuid[])
+      WHERE card_id = ANY(${pgArrayParam(uniqueIds)}::uuid[])
     `),
     // 4. upgrader_games.target_card_id — RESTRICT FK; group so we know which
     //    candidate ids are referenced as an upgrader target.
     db.execute<{ target_card_id: string }>(sql`
       SELECT DISTINCT target_card_id
       FROM upgrader_games
-      WHERE target_card_id = ANY(${uniqueIds}::uuid[])
+      WHERE target_card_id = ANY(${pgArrayParam(uniqueIds)}::uuid[])
     `),
     // 5. provably_fair_results.result_metadata — Json soft reference. A card id
     //    can sit at the top level as the rolled `card_id` OR (for upgrader
@@ -559,14 +560,14 @@ async function checkCardReferences(
           FROM provably_fair_results
          WHERE result_metadata @> ANY (
            SELECT jsonb_build_object('card_id', id)
-           FROM unnest(${uniqueIds}::text[]) AS ids(id)
+           FROM unnest(${pgArrayParam(uniqueIds)}::text[]) AS ids(id)
          )
         UNION ALL
         SELECT (result_metadata->>'target_card_id') AS card_id
           FROM provably_fair_results
          WHERE result_metadata @> ANY (
            SELECT jsonb_build_object('target_card_id', id)
-           FROM unnest(${uniqueIds}::text[]) AS ids(id)
+           FROM unnest(${pgArrayParam(uniqueIds)}::text[]) AS ids(id)
          )
       ) t
     `),
@@ -675,7 +676,7 @@ export async function deleteCards(input: {
     // ids simply don't come back; we only ever delete ids that still exist.
     const cards = (
       await db.execute<{ id: string; name: string }>(sql`
-        SELECT id, name FROM cards WHERE id = ANY(${ids}::uuid[])
+        SELECT id, name FROM cards WHERE id = ANY(${pgArrayParam(ids)}::uuid[])
       `)
     ).rows;
 
@@ -738,7 +739,7 @@ export async function deleteCards(input: {
           return { result: { count: 0 }, lateBlockedIds: lateBlocked };
         }
         const deleted = await tx.execute<{ id: string }>(sql`
-          DELETE FROM cards WHERE id = ANY(${safeNow}::uuid[]) RETURNING id
+          DELETE FROM cards WHERE id = ANY(${pgArrayParam(safeNow)}::uuid[]) RETURNING id
         `);
         return {
           result: { count: deleted.rowCount ?? deleted.rows.length },

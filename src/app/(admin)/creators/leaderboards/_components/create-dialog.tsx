@@ -17,6 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { toValidIso } from "@/lib/client-runtime-safety";
 
 import {
     createLeaderboard,
@@ -238,8 +239,12 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
             return;
         }
 
-        const startISO = new Date(startDate).toISOString();
-        const endISO = new Date(endDate).toISOString();
+        const startISO = toValidIso(startDate);
+        const endISO = toValidIso(endDate);
+        if (!startISO || !endISO) {
+            toast.error("Enter valid start and end dates");
+            return;
+        }
         if (new Date(endISO) <= new Date(startISO)) {
             toast.error("End date must be after start date");
             return;

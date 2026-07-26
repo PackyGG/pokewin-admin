@@ -125,7 +125,7 @@ async function computeOverview(
         ${dateFilter}
     `),
     queryMainRows<
-      { date: Date; credit_vol: string; debit_vol: string; cnt: string }[]
+      { date: Date | string; credit_vol: string; debit_vol: string; cnt: string }[]
     >(`
       SELECT
         DATE(lt.created_at) AS date,

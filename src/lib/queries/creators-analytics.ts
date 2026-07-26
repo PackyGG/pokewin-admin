@@ -78,7 +78,7 @@ async function computeAffiliateAnalytics(
            AND u.affiliate_code_active = true`,
       ).then((rows) => Number(rows[0]?.count ?? 0)),
       queryRows<
-        { date: Date; signups: string; wager: string; deposit: string; commission: string }[]
+        { date: Date | string; signups: string; wager: string; deposit: string; commission: string }[]
       >(queryDb, `
         SELECT
           DATE(created_at) AS date,
@@ -91,7 +91,7 @@ async function computeAffiliateAnalytics(
         GROUP BY DATE(created_at)
         ORDER BY date
       `),
-      queryRows<{ date: Date; clicks: string }[]>(queryDb, `
+      queryRows<{ date: Date | string; clicks: string }[]>(queryDb, `
         SELECT DATE(created_at) AS date, COUNT(*)::text AS clicks
         FROM affiliate_clicks
         WHERE 1=1 ${dateFilter}

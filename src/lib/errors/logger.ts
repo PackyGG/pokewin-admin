@@ -1,3 +1,5 @@
+import * as Sentry from "@sentry/nextjs";
+
 /**
  * Tiny dependency-free server-side logger.
  *
@@ -111,4 +113,19 @@ export function logQueryFailure(
     `query failed engine=${details.engine} duration_ms=${details.durationMs} kind=${details.kind}`,
     err,
   );
+
+  // safeQuery deliberately catches the original exception, so Sentry's
+  // unhandled-error integration cannot see it. Emit a sanitized operational
+  // event with only bounded diagnostic tags. Never attach the raw throwable,
+  // SQL, parameters, request data, or user identifiers.
+  if (process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN) {
+    Sentry.withScope((scope) => {
+      scope.setTag("area", area.slice(0, 120));
+      scope.setTag("db.engine", details.engine);
+      scope.setTag("failure.kind", details.kind);
+      scope.setExtra("duration_ms", Math.max(0, Math.round(details.durationMs)));
+      scope.setFingerprint(["postgres-query-failure", area, details.kind]);
+      Sentry.captureMessage("PostgreSQL query failed", "error");
+    });
+  }
 }

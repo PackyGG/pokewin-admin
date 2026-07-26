@@ -69,6 +69,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import {
+  normalizeStringArray,
+  parseBooleanRecord,
+  readBrowserStorage,
+  writeBrowserStorage,
+} from "@/lib/client-runtime-safety";
+import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
@@ -227,6 +233,7 @@ const NAV_GROUPS: NavGroup[] = getSidebarGroups().map((group) => ({
 }));
 
 const STORAGE_KEY = "sidebar-collapsed-groups";
+const NAV_GROUP_LABELS = new Set(NAV_GROUPS.map((group) => group.label));
 
 function useCollapsedGroups(activeGroupLabel: string | undefined) {
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
@@ -236,17 +243,17 @@ function useCollapsedGroups(activeGroupLabel: string | undefined) {
   });
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored) as Record<string, boolean>;
+    const stored = readBrowserStorage(STORAGE_KEY);
+    if (stored) {
+      const parsed = parseBooleanRecord(stored, NAV_GROUP_LABELS);
+      if (parsed) {
         if (activeGroupLabel) parsed[activeGroupLabel] = true;
         setOpenGroups(parsed);
       } else if (activeGroupLabel) {
         setOpenGroups((prev) => ({ ...prev, [activeGroupLabel]: true }));
       }
-    } catch {
-      // fallback: keep defaults (all collapsed)
+    } else if (activeGroupLabel) {
+      setOpenGroups((prev) => ({ ...prev, [activeGroupLabel]: true }));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -256,7 +263,7 @@ function useCollapsedGroups(activeGroupLabel: string | undefined) {
       setOpenGroups((prev) => {
         if (prev[activeGroupLabel]) return prev;
         const next = { ...prev, [activeGroupLabel]: true };
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        writeBrowserStorage(STORAGE_KEY, JSON.stringify(next));
         return next;
       });
     }
@@ -265,7 +272,7 @@ function useCollapsedGroups(activeGroupLabel: string | undefined) {
   const toggleGroup = useCallback((label: string) => {
     setOpenGroups((prev) => {
       const next = { ...prev, [label]: !prev[label] };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      writeBrowserStorage(STORAGE_KEY, JSON.stringify(next));
       return next;
     });
   }, []);
@@ -289,8 +296,8 @@ export function AppSidebar({
   // Used for the admin bypass + the creator-only group so a multi-role
   // user that merely INCLUDES admin/creator is treated correctly even
   // when that isn't their highest-privilege primary role.
-  roles?: string[];
-  allowedPages: string[];
+  roles?: string[] | null;
+  allowedPages: string[] | null;
   username: string;
   dbEnv: "prod" | "dev";
   // Whether to show the "Switch to Creator Hub" portal button. Computed
@@ -326,7 +333,14 @@ export function AppSidebar({
   // Sub-app portals must be ABSOLUTE on a segment host — a bare /pack-studio
   // there would be rewritten into the current segment. Resolved client-side
   // (see use-app-host) so no layout has to thread the hostname down.
-  const effectiveRoles = useMemo(() => roles ?? [role], [role, roles]);
+  const effectiveRoles = useMemo(() => {
+    const normalized = normalizeStringArray(roles);
+    return normalized.length > 0 ? normalized : [role];
+  }, [role, roles]);
+  const effectiveAllowedPages = useMemo(
+    () => normalizeStringArray(allowedPages),
+    [allowedPages],
+  );
   const isAdmin = effectiveRoles.includes("admin");
   const isCreator = effectiveRoles.includes("creator");
 
@@ -360,9 +374,9 @@ export function AppSidebar({
         }
         if (item.alwaysVisible) return true;
         // Owners + admins see every page.
-        return isAdmin || isOwner || pageAccessGranted(allowedPages, item.href);
+        return isAdmin || isOwner || pageAccessGranted(effectiveAllowedPages, item.href);
       }),
-    [isAdmin, isOwner, allowedPages, username, effectiveRoles],
+    [isAdmin, isOwner, effectiveAllowedPages, username, effectiveRoles],
   );
 
   const groupsWithVisibility = useMemo(() =>
@@ -404,10 +418,10 @@ export function AppSidebar({
           }
           if (item.alwaysVisible) return true;
           // Owners + admins see every page.
-          return isAdmin || isOwner || pageAccessGranted(allowedPages, item.href);
+          return isAdmin || isOwner || pageAccessGranted(effectiveAllowedPages, item.href);
         }),
       })),
-  [isAdmin, isOwner, allowedPages, username, dbEnv, effectiveRoles]);
+  [isAdmin, isOwner, effectiveAllowedPages, username, dbEnv, effectiveRoles]);
 
   const activeGroupLabel = useMemo(() =>
     groupsWithVisibility.find((group) =>
@@ -441,7 +455,7 @@ export function AppSidebar({
     <Sidebar collapsible="icon">
       <SidebarHeader className="border-b border-sidebar-border/60 px-4 h-16 flex items-center justify-center group-data-[collapsible=icon]:px-0">
         <Link
-          href={getDefaultRoute(role, allowedPages)}
+          href={getDefaultRoute(role, effectiveAllowedPages)}
           onClick={handleNavTap}
           // Subtle press feedback matching the house interaction feel:
           // a soft hover dim + a brief settle-on-press scale. Motion is

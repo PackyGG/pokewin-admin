@@ -1,0 +1,50 @@
+name: Quality gates
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - claude/hungry-gould
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      # Build-time validation must never receive production credentials.
+      # Loopback placeholders satisfy eager configuration checks and guarantee
+      # that accidental build-time database access cannot reach any database.
+      SESSION_SECRET: ci-build-only-session-secret-not-for-runtime
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:65535/ci
+      ADMIN_DATABASE_URL: postgresql://ci:ci@127.0.0.1:65535/ci_admin
+      IMAGEKIT_PRIVATE_KEY: ci-build-only-imagekit-key
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+
+      - name: Runtime and architecture guardrails
+        run: npm run test:guardrails
+
+      - name: TypeScript
+        run: npx tsc --noEmit --incremental false
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build

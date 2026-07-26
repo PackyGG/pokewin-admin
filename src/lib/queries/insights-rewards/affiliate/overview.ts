@@ -129,7 +129,7 @@ async function compute(
     `),
     // Daily commission paid — capped at chart horizon to keep payload sane.
     queryRows<
-      { date: Date; total: string; cnt: string }[]
+      { date: Date | string; total: string; cnt: string }[]
     >(db, sql`
       SELECT
         DATE(lt.created_at) AS date,
@@ -144,7 +144,7 @@ async function compute(
       ORDER BY 1 ASC
     `),
     queryRows<
-      { date: Date; wager: string }[]
+      { date: Date | string; wager: string }[]
     >(db, sql`
       SELECT
         DATE(acu.created_at) AS date,

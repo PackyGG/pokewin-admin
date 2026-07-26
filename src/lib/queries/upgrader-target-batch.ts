@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { sql } from "drizzle-orm";
 import { getDrizzleDb } from "@/lib/db";
 import {
@@ -73,7 +74,7 @@ export async function fetchUpgraderTargetByLedgerTxIds(
                 ${sql.raw(ltTargetExpr)},
                 ${sql.raw(ugTargetExpr)}
               )::text AS sql_target_multiplier
-       FROM unnest(${ledgerTxIds}::uuid[]) AS bet_id(id)
+       FROM unnest(${pgArrayParam(ledgerTxIds)}::uuid[]) AS bet_id(id)
        JOIN ledger_transactions lt ON lt.id = bet_id.id
        LEFT JOIN LATERAL (
          SELECT gs_inner.*

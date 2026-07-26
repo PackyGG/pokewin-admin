@@ -1,5 +1,6 @@
 "use server";
 
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { getDrizzleDb } from "@/lib/db";
 import { adminDrizzle, sql } from "@/lib/drizzle";
@@ -290,7 +291,7 @@ export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
     }>(sql`
       SELECT id, username, email
       FROM "user"
-      WHERE id = ANY(${userIds}::text[])
+      WHERE id = ANY(${pgArrayParam(userIds)}::text[])
     `)
   ).rows;
 
@@ -363,10 +364,10 @@ export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
   // Destructive delete. On failure we roll back the snapshots we just
   // inserted — best-effort so /users/deleted doesn't fill with ghosts.
   try {
-    await db.execute(sql`DELETE FROM "user" WHERE id = ANY(${userIds}::text[])`);
+    await db.execute(sql`DELETE FROM "user" WHERE id = ANY(${pgArrayParam(userIds)}::text[])`);
   } catch (err) {
     await adminDrizzle
-      .execute(sql`DELETE FROM admin_deleted_users WHERE id = ANY(${userIds}::text[])`)
+      .execute(sql`DELETE FROM admin_deleted_users WHERE id = ANY(${pgArrayParam(userIds)}::text[])`)
       .catch(() => {
         console.error(
           `[bulkDeleteUsers] failed to roll back ${userIds.length} snapshots after main-DB deleteMany failure`,
@@ -533,10 +534,10 @@ export async function bulkBanFilteredUsers(input: {
           SET is_banned = TRUE, banned_reason = ${reason},
               banned_at = ${bannedAt}, banned_by = ${issuerMainUserId},
               updated_at = NOW()
-          WHERE id = ANY(${chunk}::text[]) AND is_banned = FALSE
+          WHERE id = ANY(${pgArrayParam(chunk)}::text[]) AND is_banned = FALSE
           RETURNING id
         `);
-        await tx.execute(sql`DELETE FROM session WHERE "userId" = ANY(${chunk}::text[])`);
+        await tx.execute(sql`DELETE FROM session WHERE "userId" = ANY(${pgArrayParam(chunk)}::text[])`);
         return updated.rows.length;
       });
     }
@@ -706,7 +707,7 @@ export async function bulkUnbanFilteredUsers(input: {
       }>(sql`
         SELECT id, username, banned_reason, banned_at
         FROM "user"
-        WHERE id = ANY(${userIds}::text[])
+        WHERE id = ANY(${pgArrayParam(userIds)}::text[])
       `)
     ).rows;
   } catch (err) {
@@ -730,7 +731,7 @@ export async function bulkUnbanFilteredUsers(input: {
         UPDATE "user"
         SET is_banned = FALSE, banned_reason = NULL, banned_at = NULL,
             banned_by = NULL, updated_at = NOW()
-        WHERE id = ANY(${chunk}::text[]) AND is_banned = TRUE
+        WHERE id = ANY(${pgArrayParam(chunk)}::text[]) AND is_banned = TRUE
         RETURNING id
       `);
       unbannedCount += updated.rows.length;

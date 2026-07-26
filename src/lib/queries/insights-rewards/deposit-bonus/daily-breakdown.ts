@@ -68,7 +68,7 @@ async function computeDailyBreakdown(
   // bonus-attached deposits via the canonical pairing rule.
   const rows = await queryRows<
     {
-      date: Date;
+      date: Date | string;
       deposit_count: string;
       deposit_volume: string;
       with_bonus_count: string;

@@ -343,7 +343,7 @@ const cachedBiggestSingleDeposit = unstable_cache(
         username: string | null;
         image: string | null;
         amount: string;
-        created_at: Date;
+        created_at: Date | string;
       }[]
     >(
       `
@@ -402,7 +402,7 @@ const cachedBiggestSingleWithdrawal = unstable_cache(
         username: string | null;
         image: string | null;
         amount: string;
-        created_at: Date;
+        created_at: Date | string;
       }[]
     >(
       `
@@ -467,7 +467,7 @@ const cachedBiggestSingleLoss = unstable_cache(
         image: string | null;
         amount: string;
         type: string;
-        created_at: Date;
+        created_at: Date | string;
       }[]
     >(
       `
@@ -532,7 +532,7 @@ const cachedBiggestSingleWin = unstable_cache(
         image: string | null;
         amount: string;
         type: string;
-        created_at: Date;
+        created_at: Date | string;
       }[]
     >(
       `

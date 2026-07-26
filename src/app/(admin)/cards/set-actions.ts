@@ -1,5 +1,6 @@
 "use server";
 
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
@@ -62,7 +63,7 @@ export async function bulkMoveCardsToSet(input: {
     const updated = await tx.execute<{ id: string }>(sql`
       UPDATE cards
       SET set_id = ${set.id}::uuid, updated_at = NOW()
-      WHERE id = ANY(${uniqueIds}::uuid[])
+      WHERE id = ANY(${pgArrayParam(uniqueIds)}::uuid[])
       RETURNING id
     `);
     return {

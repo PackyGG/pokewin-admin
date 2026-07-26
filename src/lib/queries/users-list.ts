@@ -969,7 +969,7 @@ type UserListItem = {
 };
 
 /** One grouped `user` row per distinct signup_ip on the current page. */
-type SharedIpRow = { signup_ip: string; n: bigint | number };
+type SharedIpRow = { signup_ip: string; n: string | number };
 
 /** One grouped `fingerprints` row per user on the current page. */
 type DeviceRow = {

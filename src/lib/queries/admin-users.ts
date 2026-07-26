@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import {
   and,
   count,
@@ -311,7 +312,7 @@ export async function getAdminUserAuditStats(adminUserId: string) {
       .limit(1)
       .then((rows) => rows[0] ?? null),
     adminDrizzle
-      .execute<{ date: Date; count: bigint }>(sql`
+      .execute<{ date: Date | string; count: bigint }>(sql`
         SELECT DATE(created_at AT TIME ZONE 'UTC') AS date,
                COUNT(*)::bigint AS count
         FROM admin_audit_events
@@ -457,7 +458,7 @@ export async function getAdminUserAuditEvents(
             .execute<{ id: string; username: string | null; email: string | null }>(sql`
               SELECT id, username, email
               FROM "user"
-              WHERE id = ANY(${targetUserIds}::text[])
+              WHERE id = ANY(${pgArrayParam(targetUserIds)}::text[])
             `)
             .then((result) => result.rows),
         AUDIT_MAIN_DB_TIMEOUT_MS,

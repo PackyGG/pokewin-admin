@@ -352,7 +352,7 @@ async function computeProgramSpend(
           GROUP BY 1
         `),
         // 2. Per-leaf daily series — drives the sparklines + stacked chart.
-        queryRows<{ date: Date; leaf: string; total: string }[]>(db, sql`
+        queryRows<{ date: Date | string; leaf: string; total: string }[]>(db, sql`
           SELECT
             DATE(lt.created_at) AS date,
             ${sql.raw(LEAF_CASE_SQL)} AS leaf,
@@ -383,7 +383,7 @@ async function computeProgramSpend(
           GROUP BY 1
         `),
         // 4. Creator pool daily series (both legs combined).
-        queryRows<{ date: Date; total: string }[]>(db, sql`
+        queryRows<{ date: Date | string; total: string }[]>(db, sql`
           SELECT
             DATE(lt.created_at) AS date,
             COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total

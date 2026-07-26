@@ -26,6 +26,7 @@ import {
   type SafeQueryResult,
 } from "@/lib/errors/safe-query";
 import { getLimitsForAdmin } from "@/lib/balance-limits";
+import { postgresTimestampIso } from "@/lib/postgres-runtime";
 import { adminRolesColumnExists } from "@/lib/admin-user-roles";
 import { listAssignablePresets } from "../_roles/custom-roles-actions";
 import { Badge } from "@/components/ui/badge";
@@ -324,8 +325,8 @@ async function AdminUserDetailBody({
           balanceLimits={balanceLimits.map((l) => ({
             ...l,
             max_amount: Number(l.max_amount),
-            created_at: l.created_at.toISOString(),
-            updated_at: l.updated_at.toISOString(),
+            created_at: postgresTimestampIso(l.created_at, "balanceLimit.created_at"),
+            updated_at: postgresTimestampIso(l.updated_at, "balanceLimit.updated_at"),
           }))}
           isCurrentUserAdmin={isCurrentUserAdmin}
           rolesColumnExists={rolesColumnExists}

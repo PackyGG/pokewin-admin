@@ -424,7 +424,7 @@ async function computeDepositBonusCohortExtras(
         username: string | null;
         deposit_usd: string;
         bonus_usd: string;
-        created_at: Date;
+        created_at: Date | string;
       }[]
     >(`
       WITH window_deposits AS MATERIALIZED (

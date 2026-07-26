@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import "server-only";
 
 import { cache } from "react";
@@ -191,7 +192,7 @@ async function computeExcludedUsersForPage(): Promise<ExcludedUsersPageData> {
       await db.execute<{ user_id: string; total_deposited: string }>(sql`
         SELECT user_id, total_deposited::text AS total_deposited
         FROM balances
-        WHERE user_id = ANY(${userIds}::text[])
+        WHERE user_id = ANY(${pgArrayParam(userIds)}::text[])
       `)
     ).rows;
     for (const b of balanceRows) {

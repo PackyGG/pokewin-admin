@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import "server-only";
 
 import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
@@ -297,8 +298,8 @@ export async function getReviewStats(
         COUNT(*) FILTER (WHERE status = 'escalated') AS escalated,
         COUNT(*) FILTER (WHERE status = 'flagged') AS flagged,
         COUNT(*) FILTER (WHERE resolved_at >= ${startOfToday}) AS resolved_today,
-        COUNT(*) FILTER (WHERE severity = 'critical' AND status = ANY(${[...OPEN_REVIEW_STATUSES]}::text[])) AS critical_open,
-        COUNT(*) FILTER (WHERE assigned_to = ${adminUserId ?? null}::uuid AND status = ANY(${[...OPEN_REVIEW_STATUSES]}::text[])) AS mine_open
+        COUNT(*) FILTER (WHERE severity = 'critical' AND status = ANY(${pgArrayParam([...OPEN_REVIEW_STATUSES])}::text[])) AS critical_open,
+        COUNT(*) FILTER (WHERE assigned_to = ${adminUserId ?? null}::uuid AND status = ANY(${pgArrayParam([...OPEN_REVIEW_STATUSES])}::text[])) AS mine_open
       FROM antifraud_reviews
     `);
     const row = result.rows[0];

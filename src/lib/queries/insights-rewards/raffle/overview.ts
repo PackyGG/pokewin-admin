@@ -99,7 +99,7 @@ type RaffleRow = {
   winner_user_id: string | null;
   total_entries: number | null;
   participant_count: number | null;
-  completed_at: Date | null;
+  completed_at: Date | string | null;
 };
 
 // Prize parsing + valuation now live in the shared `./prize-valuation`
@@ -203,7 +203,7 @@ async function computeRaffleBaseline(
     if (row.winner_user_id) winners.add(row.winner_user_id);
     totalEntries += Number(row.total_entries ?? 0);
 
-    const day = (row.completed_at ?? new Date()).toISOString().split("T")[0];
+    const day = new Date(row.completed_at ?? new Date()).toISOString().split("T")[0];
     const bucket = dailyMap.get(day) ?? { cost: 0, count: 0 };
     bucket.cost += cost;
     bucket.count += 1;

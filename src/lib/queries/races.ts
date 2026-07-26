@@ -384,7 +384,7 @@ export async function getRaceLeaderboard(params: {
         periodDate,
         userIds,
       ),
-      queryMainRows<{ user_id: string; claimed_at: Date }[]>(
+      queryMainRows<{ user_id: string; claimed_at: Date | string }[]>(
         `SELECT user_id, claimed_at FROM race_claims
           WHERE race_type::text = $1 AND race_period_start = $2
             AND user_id = ANY($3::text[])`,
@@ -618,7 +618,7 @@ const cachedLiveRaceStandings = unstable_cache(
         ORDER BY r.position
         LIMIT $5 OFFSET $6
       `, startsNaive, endsNaive, like, idEq, safePerPage, offset),
-      queryRows<{ count: bigint }[]>(db, `
+      queryRows<{ count: string }[]>(db, `
         SELECT COUNT(*)::bigint AS count FROM (
           SELECT g.user_id
           FROM game_sessions g

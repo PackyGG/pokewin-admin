@@ -6,6 +6,10 @@ import {
   railCookieWriteString,
   type RailKey,
 } from "@/lib/right-rail-cookie";
+import {
+  readBrowserStorage,
+  writeBrowserStorage,
+} from "@/lib/client-runtime-safety";
 
 type RailState = Record<RailKey, boolean>;
 
@@ -27,8 +31,12 @@ const RightRailCtx = React.createContext<RightRailState | null>(null);
 
 function writeStoredState(state: RailState): void {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEYS.alerts, state.alerts ? "1" : "0");
-  document.cookie = railCookieWriteString(state.alerts ? ["alerts"] : []);
+  writeBrowserStorage(STORAGE_KEYS.alerts, state.alerts ? "1" : "0");
+  try {
+    document.cookie = railCookieWriteString(state.alerts ? ["alerts"] : []);
+  } catch {
+    // Persisted rail state is optional; locked-down cookies are non-fatal.
+  }
 }
 
 export function RightRailProvider({
@@ -49,13 +57,17 @@ export function RightRailProvider({
   }));
 
   React.useEffect(() => {
-    const stored = window.localStorage.getItem(STORAGE_KEYS.alerts);
+    const stored = readBrowserStorage(STORAGE_KEYS.alerts);
     if (stored !== "0" && stored !== "1") return;
     const storedOpen = stored === "1";
     setOpenState((current) =>
       current.alerts === storedOpen ? current : { alerts: storedOpen },
     );
-    document.cookie = railCookieWriteString(storedOpen ? ["alerts"] : []);
+    try {
+      document.cookie = railCookieWriteString(storedOpen ? ["alerts"] : []);
+    } catch {
+      // Keep the in-memory state when cookies are unavailable.
+    }
   }, []);
 
   const setOpen = React.useCallback((key: RailKey, next: boolean) => {

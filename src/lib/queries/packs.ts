@@ -1,3 +1,4 @@
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { unstable_cache } from "next/cache";
 import { sql, type SQL } from "drizzle-orm";
 import {
@@ -30,7 +31,7 @@ async function fetchShardCosts(
   if (ids.length === 0) return new Map();
   try {
     const result = await db.execute<{ id: string; shard_cost: number | null }>(sql`
-      SELECT id, shard_cost FROM packs WHERE id = ANY(${ids}::uuid[])
+      SELECT id, shard_cost FROM packs WHERE id = ANY(${pgArrayParam(ids)}::uuid[])
     `);
     return new Map(
       result.rows.map((r) => [
@@ -212,18 +213,18 @@ export async function getPacks(params: {
   if (set === "pokemon") {
     const poolOr: SQL[] = [];
     if (assignedToThis.length > 0) {
-      poolOr.push(sql`p.id = ANY(${assignedToThis}::uuid[])`);
+      poolOr.push(sql`p.id = ANY(${pgArrayParam(assignedToThis)}::uuid[])`);
     }
     poolOr.push(
       assigned.allIds.length > 0
-        ? sql`NOT (p.id = ANY(${assigned.allIds}::uuid[]))`
+        ? sql`NOT (p.id = ANY(${pgArrayParam(assigned.allIds)}::uuid[]))`
         : sql`true`,
     );
     predicates.push(sql`(${sql.join(poolOr, sql` OR `)})`);
   } else {
     predicates.push(
       assignedToThis.length > 0
-        ? sql`p.id = ANY(${assignedToThis}::uuid[])`
+        ? sql`p.id = ANY(${pgArrayParam(assignedToThis)}::uuid[])`
         : sql`false`,
     );
   }
@@ -412,19 +413,19 @@ async function fetchPacksListStats(
   if (set === "pokemon") {
     const branches: SQL[] = [];
     if (assignedToThis.length > 0) {
-      branches.push(sql`packs.id = ANY(${assignedToThis}::uuid[])`);
+      branches.push(sql`packs.id = ANY(${pgArrayParam(assignedToThis)}::uuid[])`);
     }
     // Unassigned packs default to Pokemon.
     branches.push(
       assigned.allIds.length > 0
-        ? sql`NOT (packs.id = ANY(${assigned.allIds}::uuid[]))`
+        ? sql`NOT (packs.id = ANY(${pgArrayParam(assigned.allIds)}::uuid[]))`
         : sql`true`,
     );
     poolPredicate = sql`(${sql.join(branches, sql` OR `)})`;
   } else {
     poolPredicate =
       assignedToThis.length > 0
-        ? sql`packs.id = ANY(${assignedToThis}::uuid[])`
+        ? sql`packs.id = ANY(${pgArrayParam(assignedToThis)}::uuid[])`
         : sql`false`;
   }
 
@@ -549,9 +550,9 @@ export async function getPacksPoolComposition(opts?: {
   const db = await getDrizzleDb();
   let whereClause: SQL;
   if (opts?.packIds && opts.packIds.length > 0) {
-    whereClause = sql`p.id = ANY(${opts.packIds}::uuid[])`;
+    whereClause = sql`p.id = ANY(${pgArrayParam(opts.packIds)}::uuid[])`;
   } else {
-    whereClause = sql`p.pack_type = ANY(${[...REPRICE_INCLUDED_PACK_TYPES]}::text[])
+    whereClause = sql`p.pack_type = ANY(${pgArrayParam([...REPRICE_INCLUDED_PACK_TYPES])}::text[])
                       AND p.price > 0 AND p.active = true`;
   }
 
