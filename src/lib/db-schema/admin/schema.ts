@@ -1493,6 +1493,7 @@ export const antifraud_reviews = pgTable("antifraud_reviews", {
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	index("antifraud_reviews_assigned_idx").using("btree", table.assigned_to.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	index("antifraud_reviews_created_id_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops"), table.id.desc().nullsFirst().op("uuid_ops")),
 	index("antifraud_reviews_created_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")),
 	uniqueIndex("antifraud_reviews_open_target_uniq").using("btree", table.target_user_id.asc().nullsLast().op("text_ops")).where(sql`(status = ANY (ARRAY['open'::text, 'in_review'::text]))`),
 	index("antifraud_reviews_status_created_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("text_ops")),

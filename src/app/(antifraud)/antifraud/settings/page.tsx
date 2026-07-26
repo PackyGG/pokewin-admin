@@ -12,8 +12,8 @@ import {
   getAntifraudAccessSettings,
   getAntifraudUserAccess,
 } from "@/lib/antifraud/access";
+import { getAntifraudRuntimeConfig } from "@/lib/antifraud/monitor-api";
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
-import { channelConfigStatus } from "@/lib/staff/channels";
 import { cn } from "@/lib/utils";
 import {
   AccessListEditor,
@@ -52,13 +52,17 @@ export default async function SettingsPage({
       <SettingsTabNav active={tab} />
 
       {tab === "discord" ? (
-        <DiscordConfigSection />
+        <Suspense fallback={<Skeleton className="h-[520px] w-full rounded-xl" />}>
+          <DiscordConfigSection />
+        </Suspense>
       ) : (
         <>
           <Suspense fallback={<Skeleton className="h-64 w-full rounded-xl" />}>
             <AccessSection />
           </Suspense>
-          <IntegrationSection />
+          <Suspense fallback={<Skeleton className="h-72 w-full rounded-xl" />}>
+            <IntegrationSection />
+          </Suspense>
         </>
       )}
     </div>
@@ -98,12 +102,13 @@ async function AccessSection() {
  * Both halves are required, so a half-configured integration is DEAD, and it
  * must never render the same green as a working one.
  */
-type IntegrationStatus = "ready" | "partial" | "missing";
+type IntegrationStatus = "ready" | "partial" | "missing" | "unknown";
 
 const STATUS_LABEL: Record<IntegrationStatus, string> = {
   ready: "Configured",
   partial: "Half-configured",
   missing: "Not set",
+  unknown: "Unavailable",
 };
 
 function pairStatus(first: boolean, second: boolean): IntegrationStatus {
@@ -111,12 +116,29 @@ function pairStatus(first: boolean, second: boolean): IntegrationStatus {
   return first || second ? "partial" : "missing";
 }
 
-function IntegrationSection() {
+function reportedStatus(value: boolean | undefined): IntegrationStatus {
+  if (value === undefined) return "unknown";
+  return value ? "ready" : "missing";
+}
+
+async function IntegrationSection() {
   // Presence only — never the value. `Boolean()` on the raw env is the whole
   // check; nothing below ever reads a secret into the render tree.
   const monitorUrl = Boolean(process.env.ANTIFRAUD_MONITOR_API_URL);
   const monitorToken = Boolean(process.env.ANTIFRAUD_MONITOR_API_TOKEN);
   const monitorStatus = pairStatus(monitorUrl, monitorToken);
+  const runtime = await getAntifraudRuntimeConfig();
+  const runtimeData = runtime.data ?? undefined;
+  const liveValues = runtimeData
+    ? Object.values(runtimeData.live)
+    : undefined;
+  const liveStatus: IntegrationStatus = liveValues
+    ? liveValues.every(Boolean)
+      ? "ready"
+      : liveValues.some(Boolean)
+        ? "partial"
+        : "missing"
+    : "unknown";
 
   const integrations: Array<{
     name: string;
@@ -144,10 +166,31 @@ function IntegrationSection() {
           : "Base URL plus bearer token for the monitor service. Drives the Live Monitor console and the Risk Scoring page.",
     },
     {
+      name: "Monitor live transport",
+      envs: ["REDIS_URL", "API_TOKEN", "API_ADMIN_TOKEN", "ALLOWED_ORIGINS"],
+      status: liveStatus,
+      note:
+        liveStatus === "partial"
+          ? "The deployed monitor reports an incomplete Redis, token, or exact-origin configuration."
+          : "Authoritative status reported by the deployed monitor; values are never returned.",
+    },
+    {
+      name: "Fingerprint Pro",
+      envs: ["FINGERPRINT_SECRET_API_KEY"],
+      status: reportedStatus(runtimeData?.providers.fingerprintConfigured),
+      note: "Provider presence reported by the deployed monitor service.",
+    },
+    {
+      name: "Proxycheck",
+      envs: ["PROXYCHECK_API_KEY"],
+      status: reportedStatus(runtimeData?.providers.proxycheckConfigured),
+      note: "Provider presence reported by the deployed monitor service.",
+    },
+    {
       name: "Discord alert webhook",
       envs: ["ANTIFRAUD_DISCORD_WEBHOOK_URL"],
-      status: channelConfigStatus().discord ? "ready" : "missing",
-      note: "Channel webhook the antifraud alerts are delivered through. Unset means every alert is dropped.",
+      status: reportedStatus(runtimeData?.discord.webhookConfigured),
+      note: "Authoritative webhook presence reported by the deployed monitor. Unset means every alert is dropped.",
     },
   ];
 
@@ -171,13 +214,16 @@ function IntegrationSection() {
                   "bg-emerald-500/10 text-emerald-500",
                 integration.status === "partial" &&
                   "bg-amber-500/10 text-amber-500",
+                integration.status === "unknown" &&
+                  "bg-amber-500/10 text-amber-500",
                 integration.status === "missing" &&
                   "bg-muted text-muted-foreground",
               )}
             >
               {integration.status === "ready" ? (
                 <Check className="size-3" />
-              ) : integration.status === "partial" ? (
+              ) : integration.status === "partial" ||
+                integration.status === "unknown" ? (
                 <AlertTriangle className="size-3" />
               ) : (
                 <X className="size-3" />
@@ -205,6 +251,8 @@ function IntegrationSection() {
                 integration.status === "ready" &&
                   "text-emerald-600 dark:text-emerald-400",
                 integration.status === "partial" &&
+                  "text-amber-600 dark:text-amber-400",
+                integration.status === "unknown" &&
                   "text-amber-600 dark:text-amber-400",
                 integration.status === "missing" && "text-muted-foreground",
               )}

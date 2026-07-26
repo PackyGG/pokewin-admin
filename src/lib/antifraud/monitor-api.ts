@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { z } from "zod";
 
 const scoreOptionSchema = z.object({
@@ -52,6 +53,27 @@ export type AntifraudScoreDefinition = z.infer<typeof scoreDefinitionSchema>;
 
 const UPSTREAM_TIMEOUT_MS = 8_000;
 
+const runtimeConfigSchema = z.object({
+  discord: z.object({
+    webhookConfigured: z.boolean(),
+    dashboardUrlConfigured: z.boolean(),
+    supportRecipientIds: z.array(z.string()),
+    urgentRecipientIds: z.array(z.string()),
+  }),
+  providers: z.object({
+    fingerprintConfigured: z.boolean(),
+    proxycheckConfigured: z.boolean(),
+  }),
+  live: z.object({
+    redisConfigured: z.boolean(),
+    readTokenConfigured: z.boolean(),
+    adminTokenConfigured: z.boolean(),
+    exactOriginsConfigured: z.boolean(),
+  }),
+});
+
+export type AntifraudRuntimeConfig = z.infer<typeof runtimeConfigSchema>;
+
 /** Read/ticket token — everything except the decision write. */
 function readToken(): { baseUrl?: string; token?: string } {
   return {
@@ -59,6 +81,38 @@ function readToken(): { baseUrl?: string; token?: string } {
     token: process.env.ANTIFRAUD_MONITOR_API_TOKEN,
   };
 }
+
+export const getAntifraudRuntimeConfig = cache(async (): Promise<{
+  configured: boolean;
+  data: AntifraudRuntimeConfig | null;
+  error: boolean;
+}> => {
+  const { baseUrl, token } = readToken();
+  if (!baseUrl || !token) {
+    return { configured: false, data: null, error: false };
+  }
+
+  try {
+    const response = await fetch(`${baseUrl}/v1/operations/config`, {
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`Monitor API returned ${response.status}`);
+    }
+    const payload = z
+      .object({ data: runtimeConfigSchema })
+      .parse(await response.json());
+    return { configured: true, data: payload.data, error: false };
+  } catch {
+    console.error("[antifraud-monitor] runtime config request failed");
+    return { configured: true, data: null, error: true };
+  }
+});
 
 export async function getAntifraudScoringConfig(): Promise<{
   configured: boolean;
