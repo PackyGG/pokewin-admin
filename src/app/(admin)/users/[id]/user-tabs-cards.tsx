@@ -302,7 +302,6 @@ export const ActivityStatsCard = React.memo(function ActivityStatsCard({
   statistics,
   balances,
   inventoryCount,
-  bonusPoints,
   avgDeposit,
   userId,
   canAdjustXp,
@@ -310,7 +309,6 @@ export const ActivityStatsCard = React.memo(function ActivityStatsCard({
   statistics: UserDetail["statistics"];
   balances: UserDetail["balances"];
   inventoryCount: number;
-  bonusPoints: number;
   avgDeposit: number;
   userId: string;
   canAdjustXp: boolean;
@@ -380,7 +378,6 @@ export const ActivityStatsCard = React.memo(function ActivityStatsCard({
           value={String(statistics?.battlesPlayed ?? 0)}
         />
         <InfoRow label="Inventory Items" value={String(inventoryCount)} />
-        <InfoRow label="Bonus Points" value={String(bonusPoints)} />
         <InfoRow label="Avg. Deposit" value={formatCurrency(avgDeposit)} />
         {(() => {
           // Avg house edge = (wagered - won) / wagered × 100. Aggregate

@@ -122,9 +122,6 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Notifications", label: "Notifications", key: "/notifications" },
   // Content
   { group: "Content", label: "Packs", key: "/packs" },
-  // Shard Packs (/rewards/shards) — the shard-pack system was disabled at
-  // the backend/DB level by the owner (2026-07) and the dedicated admin
-  // surface was removed; the page key was retired.
   { group: "Content", label: "Cards", key: "/cards" },
   { group: "Content", label: "Sets", key: "/sets" },
   { group: "Content", label: "Upgrader", key: "/upgrader" },

@@ -228,7 +228,6 @@ const DATA: UserDetail = {
     totalWithdrawn: 1_111_111.11,
     totalWagered: 9_876_543.21,
     totalWon: 8_765_432.1,
-    bonusPoints: 0,
     unlockAt: null,
     inventoryValue: 456_789.12,
     vouchersValue: 0,

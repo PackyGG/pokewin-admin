@@ -337,6 +337,8 @@ export function AppSidebar({
   );
   const isAdmin = effectiveRoles.includes("admin");
   const isCreator = effectiveRoles.includes("creator");
+  const dedicatedPackBuilder =
+    effectiveRoles.length === 1 && effectiveRoles[0] === "pack_creator";
 
   const visibleFooterItems = useMemo(
     () =>
@@ -356,11 +358,11 @@ export function AppSidebar({
         if (item.strictUsernameAllowlist) {
           return Boolean(inAllowlist);
         }
-        if (item.alwaysVisible) return true;
+        if (item.alwaysVisible && !dedicatedPackBuilder) return true;
         // Owners + admins see every page.
         return isAdmin || isOwner || pageAccessGranted(effectiveAllowedPages, item.href);
       }),
-    [isAdmin, isOwner, effectiveAllowedPages, username],
+    [isAdmin, isOwner, effectiveAllowedPages, username, dedicatedPackBuilder],
   );
 
   const groupsWithVisibility = useMemo(() =>
@@ -390,12 +392,12 @@ export function AppSidebar({
           if (item.strictUsernameAllowlist) {
             return Boolean(inAllowlist);
           }
-          if (item.alwaysVisible) return true;
+          if (item.alwaysVisible && !dedicatedPackBuilder) return true;
           // Owners + admins see every page.
           return isAdmin || isOwner || pageAccessGranted(effectiveAllowedPages, item.href);
         }),
       })),
-  [isAdmin, isOwner, effectiveAllowedPages, username, dbEnv]);
+  [isAdmin, isOwner, effectiveAllowedPages, username, dbEnv, dedicatedPackBuilder]);
 
   const activeGroupLabel = useMemo(() =>
     groupsWithVisibility.find((group) =>

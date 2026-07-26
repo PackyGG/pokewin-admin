@@ -18,7 +18,6 @@ const CATEGORY_OPTIONS = [
   { label: "5%", value: "pct5" },
   { label: "10%", value: "pct10" },
   { label: "Daily / Reward packs", value: "reward" },
-  { label: "Shard packs", value: "shard" },
 ] as const;
 
 const CATEGORY_CHIP_LABELS: Record<string, string> = {
@@ -26,7 +25,6 @@ const CATEGORY_CHIP_LABELS: Record<string, string> = {
   pct5: "Category: 5%",
   pct10: "Category: 10%",
   reward: "Category: Daily / Reward",
-  shard: "Category: Shard",
 };
 
 /**

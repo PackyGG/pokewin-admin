@@ -7,6 +7,11 @@ import {
   resolveAppHost,
   rewritePathForHost,
 } from "@/lib/app-hosts";
+import {
+  getEffectiveRoles,
+  isDedicatedPackBuilder,
+  isPackBuilderContentPath,
+} from "@/lib/admin-roles";
 
 const PUBLIC_ROUTES = ["/login"];
 const PENDING_2FA_ROUTES = ["/verify-2fa", "/setup-2fa"];
@@ -94,6 +99,28 @@ export async function middleware(request: NextRequest) {
   // already-authenticated user has nothing to verify). `/login` is still
   // bounced. This is the ONLY behavioral change to the authenticated branch.
   if (isAuthenticated) {
+    const sessionRoles = getEffectiveRoles(session.role, session.roles);
+    const owner =
+      session.isOwner === true ||
+      (session.username ?? "").trim().toLowerCase() === "motha";
+    const dedicatedPackBuilder =
+      !owner && isDedicatedPackBuilder(sessionRoles);
+
+    // Dedicated Pack Builders may use Pack Studio plus only the Packs, Cards,
+    // and Sets route families in the normal dashboard. Enforce this before a
+    // page or server action renders; the DB-fresh page/capability gates remain
+    // the second security boundary.
+    if (
+      dedicatedPackBuilder &&
+      appHost?.basePath !== "/pack-studio" &&
+      pathname !== "/pack-studio" &&
+      !pathname.startsWith("/pack-studio/") &&
+      !isPackBuilderContentPath(pathname) &&
+      pathname !== "/setup-2fa"
+    ) {
+      return NextResponse.redirect(new URL("/pack-studio", request.url), 307);
+    }
+
     // Legacy Antifraud inbox URL -> canonical shared System inbox. This must
     // happen before the App Router renders the redirect page: a cross-origin
     // redirect emitted from an RSC response makes React try an impossible

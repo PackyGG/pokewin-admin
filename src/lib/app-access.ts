@@ -43,8 +43,9 @@ import {
  * fresh state. This only decides what the nav shows.
  */
 export type AppAccess = {
-  /** Dedicated Pack Builders stay inside the Packs webapp. */
+  /** Dedicated Pack Builders enter Admin at their first allowed Content page. */
   admin: boolean;
+  adminHref?: string;
   creatorHub: boolean;
   packStudio: boolean;
   antifraud: boolean;
@@ -103,7 +104,8 @@ export async function resolveAppAccess(
 
   if (dedicatedPackBuilder) {
     return {
-      admin: false,
+      admin: true,
+      adminHref: "/packs",
       creatorHub: false,
       packStudio: true,
       antifraud: false,

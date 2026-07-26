@@ -181,3 +181,21 @@ export function isDedicatedPackBuilder(
 ): boolean {
   return roles.length === 1 && roles[0] === "pack_creator";
 }
+
+/**
+ * The only main-dashboard route families a dedicated Pack Builder may enter.
+ * Pack Studio remains their primary workspace; these are the three Content
+ * catalog surfaces needed to manage the same packs, cards, and sets.
+ */
+export const PACK_BUILDER_CONTENT_PATHS = [
+  "/packs",
+  "/cards",
+  "/sets",
+] as const;
+
+/** True when a pathname is one of the Pack Builder Content pages or a child. */
+export function isPackBuilderContentPath(pathname: string): boolean {
+  return PACK_BUILDER_CONTENT_PATHS.some(
+    (base) => pathname === base || pathname.startsWith(`${base}/`),
+  );
+}

@@ -141,7 +141,6 @@ export type UserDetail = {
     totalWithdrawn: number;
     totalWagered: number;
     totalWon: number;
-    bonusPoints: number;
     unlockAt: string | null;
     inventoryValue: number;
     vouchersValue: number;

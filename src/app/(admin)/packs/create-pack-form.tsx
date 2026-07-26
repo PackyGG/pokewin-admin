@@ -35,7 +35,6 @@ const pack_tag = {
 } as const;
 type pack_tag = (typeof pack_tag)[keyof typeof pack_tag];
 import { RiskLevelSlider } from "./risk-level-slider";
-import { TargetEvOddsSetter } from "./target-ev-odds-setter";
 
 /**
  * Heavy body of the "Create Pack" dialog, split out of
@@ -135,16 +134,9 @@ function ImageDropzone({
 
 export function CreatePackForm({
   onClose,
-  // When set (e.g. from the dedicated /rewards/shards "Create shard pack"
-  // dialog) the pack type is locked to this value and the type Select is
-  // hidden. Defaults to undefined → the normal editable type Select with
-  // "official" preselected, identical to the original /packs flow.
-  lockedType,
 }: {
   onClose: () => void;
-  lockedType?: string;
 }) {
-  const isShardMode = lockedType === "shard";
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -155,8 +147,7 @@ export function CreatePackForm({
   const [price, setPrice] = useState("");
   const [priceManual, setPriceManual] = useState(false);
   const [cardsPerOpen, setCardsPerOpen] = useState("1");
-  const [packType, setPackType] = useState(lockedType ?? "official");
-  const [shardCost, setShardCost] = useState("");
+  const [packType, setPackType] = useState("official");
   const [tags, setTags] = useState<pack_tag[]>([]);
   const [difficulty, setDifficulty] = useState(0);
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -225,7 +216,7 @@ export function CreatePackForm({
   const totalOdds = cards.reduce((sum, c) => sum + c.odds, 0);
   const weightedPriceSum = cards.reduce((sum, c) => sum + c.priceUsd * c.odds, 0);
   const packPrice = parseFloat(price) || 0;
-  const cpo = isShardMode ? 1 : parseInt(cardsPerOpen) || 1;
+  const cpo = parseInt(cardsPerOpen) || 1;
 
   // Reuse the exact Edge Calc EV math: E[V_card] = Σ(w·price)/Σ(w),
   // E[Payout] = E[V_card] × cardsPerOpen. Odds (normalized %) are the
@@ -247,23 +238,11 @@ export function CreatePackForm({
   const suggestedPrice = suggestedPriceFromEv(expectedPayout);
 
   useEffect(() => {
-    if (isShardMode || priceManual) return;
+    if (priceManual) return;
     if (suggestedPrice <= 0) return;
     const next = suggestedPrice.toFixed(2);
     setPrice((prev) => (prev === next ? prev : next));
-  }, [isShardMode, suggestedPrice, priceManual]);
-
-  function resolveSubmitPrice(): number {
-    const fromState = parseFloat(price);
-    if (fromState > 0) return fromState;
-    const fromEv = suggestedPriceFromEv(expectedPayout);
-    if (fromEv > 0) return fromEv;
-    return 0.01;
-  }
-
-  function applyTargetEvOdds(odds: number[]) {
-    setCards((prev) => prev.map((c, i) => ({ ...c, odds: odds[i] ?? c.odds })));
-  }
+  }, [suggestedPrice, priceManual]);
 
   function oddsToWeights(entries: CardEntry[]): number[] {
     return entries.map((c) => Math.max(1, Math.round(c.odds / 100 * 1_000_000)));
@@ -277,8 +256,7 @@ export function CreatePackForm({
     setPrice("");
     setPriceManual(false);
     setCardsPerOpen("1");
-    setPackType(lockedType ?? "official");
-    setShardCost("");
+    setPackType("official");
     setTags([]);
     setDifficulty(0);
     setImageFile(null);
@@ -286,21 +264,9 @@ export function CreatePackForm({
     setCards([]);
   }
 
-  // Shard packs must carry an integer shard cost >= 1. Validate client-side
-  // for a fast toast; the server action re-validates as the source of truth.
-  const parsedShardCost = parseInt(shardCost, 10);
-  const shardCostValid =
-    packType !== "shard" ||
-    (Number.isInteger(parsedShardCost) && parsedShardCost >= 1);
-
   function handleSubmit() {
     startTransition(async () => {
       try {
-        if (packType === "shard" && !shardCostValid) {
-          toast.error("Shard packs require a shard cost of at least 1");
-          return;
-        }
-
         let imageUrl: string | null = null;
 
         if (imageFile) {
@@ -308,18 +274,16 @@ export function CreatePackForm({
         }
 
         const weights = oddsToWeights(cards);
-        const submitPrice = isShardMode ? resolveSubmitPrice() : parseFloat(price) || 0;
         await createPack({
           name,
           slug,
-          description: isShardMode ? "" : description,
-          price: submitPrice,
-          cardsPerOpen: isShardMode ? 1 : parseInt(cardsPerOpen) || 5,
+          description,
+          price: parseFloat(price) || 0,
+          cardsPerOpen: parseInt(cardsPerOpen) || 5,
           packType,
-          shardCost: packType === "shard" ? parsedShardCost : null,
           imageUrl,
-          tags: isShardMode ? [] : tags,
-          difficulty: isShardMode ? null : difficulty || null,
+          tags,
+          difficulty: difficulty || null,
           cards: cards.map((c, i) => ({
             cardId: c.cardId,
             weight: weights[i],
@@ -364,19 +328,12 @@ export function CreatePackForm({
             </div>
           </div>
 
-          {!isShardMode && (
-            <div className="space-y-1.5">
-              <Label>Description</Label>
-              <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional description" />
-            </div>
-          )}
+          <div className="space-y-1.5">
+            <Label>Description</Label>
+            <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional description" />
+          </div>
 
-          {!isShardMode ? (
-          <div
-            className={`grid grid-cols-1 gap-4 ${
-              lockedType ? "sm:grid-cols-2" : "sm:grid-cols-3"
-            }`}
-          >
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="space-y-1.5">
               <Label>Price (USD)</Label>
               <Input
@@ -416,45 +373,22 @@ export function CreatePackForm({
               <Label>Cards per Open</Label>
               <Input type="number" value={cardsPerOpen} onChange={(e) => setCardsPerOpen(e.target.value)} min="1" />
             </div>
-            {!lockedType && (
-              <div className="space-y-1.5">
-                <Label>Pack Type</Label>
-                <Select value={packType} onValueChange={(v) => v && setPackType(v)}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="official">Official</SelectItem>
-                    <SelectItem value="custom">Custom</SelectItem>
-                    <SelectItem value="promo">Promo</SelectItem>
-                    <SelectItem value="reward">Reward</SelectItem>
-                    <SelectItem value="shard">Shard</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-          </div>
-          ) : null}
-
-          {packType === "shard" && (
             <div className="space-y-1.5">
-              <Label>Shard Cost</Label>
-              <Input
-                type="number"
-                value={shardCost}
-                onChange={(e) => setShardCost(e.target.value)}
-                placeholder="e.g. 100"
-                min="1"
-                step="1"
-              />
-              <p className="text-xs text-muted-foreground">
-                Number of shards required to buy &amp; open this pack. Shard
-                packs free-roll cards into inventory like reward packs.
-              </p>
+              <Label>Pack Type</Label>
+              <Select value={packType} onValueChange={(v) => v && setPackType(v)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="official">Official</SelectItem>
+                  <SelectItem value="custom">Custom</SelectItem>
+                  <SelectItem value="promo">Promo</SelectItem>
+                  <SelectItem value="reward">Reward</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-          )}
+          </div>
 
-          {!isShardMode && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Tags</Label>
@@ -489,7 +423,6 @@ export function CreatePackForm({
               <RiskLevelSlider value={difficulty} onChange={setDifficulty} />
             </div>
           </div>
-          )}
 
           <div className="space-y-1.5">
             <Label>Image</Label>
@@ -515,19 +448,6 @@ export function CreatePackForm({
             />
           </div>
 
-          {isShardMode && cards.length > 0 && (
-            <TargetEvOddsSetter
-              cards={cards}
-              cardsPerOpen={cpo}
-              onApplyOdds={applyTargetEvOdds}
-              onPriceDerived={(p) => {
-                setPriceManual(true);
-                setPrice(p.toFixed(2));
-              }}
-              disabled={isPending}
-            />
-          )}
-
           {cards.length > 0 && (
             <SortableCardTable
               cards={cards}
@@ -546,8 +466,7 @@ export function CreatePackForm({
               <p className="text-muted-foreground">
                 EV/card: {formatCurrency(evPerCard)} · EV/open: {formatCurrency(expectedPayout)}
               </p>
-              {!isShardMode && (
-                <>
+              <>
               <span className="text-muted-foreground/40">|</span>
               <p
                 className={
@@ -560,8 +479,7 @@ export function CreatePackForm({
               >
                 RTP: {packPrice > 0 ? ((expectedPayout / packPrice) * 100).toFixed(6) : "0.000000"}% · House edge: {houseEdge.toFixed(6)}%
               </p>
-                </>
-              )}
+              </>
             </div>
           )}
 
@@ -577,8 +495,7 @@ export function CreatePackForm({
           disabled={
             isPending ||
             !name ||
-            !shardCostValid ||
-            (isShardMode ? cards.length === 0 : !price)
+            !price
           }
           className="w-full sm:w-auto"
         >

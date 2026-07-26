@@ -35,6 +35,8 @@ export type AppKey = "admin" | "creator-hub" | "pack-studio" | "antifraud";
 
 export type AppSwitcherAccess = {
   admin?: boolean;
+  /** Optional role-specific Admin landing route (Pack Builder uses /packs). */
+  adminHref?: string;
   creatorHub: boolean;
   packStudio: boolean;
   antifraud: boolean;
@@ -126,10 +128,12 @@ export function AppSwitcher({
         {entries.map((app) => {
           const Icon = app.icon;
           const isActive = app.key === current;
+          const href =
+            app.key === "admin" ? (access.adminHref ?? app.href) : app.href;
           return (
             <HostLink
               key={app.key}
-              href={app.href}
+              href={href}
               onClick={onNavigate}
               title={app.title}
               aria-current={isActive ? "page" : undefined}

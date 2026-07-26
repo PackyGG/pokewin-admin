@@ -83,6 +83,7 @@ const getPackMetaByKey = cache(async function getPackMetaByKey(
            active, tags::text[] AS tags
     FROM packs
     WHERE id = ANY(${pgArrayParam(packIds)}::uuid[])
+      AND pack_type <> ${"shard"}
   `);
 
   for (const r of result.rows) {

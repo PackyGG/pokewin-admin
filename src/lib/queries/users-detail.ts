@@ -410,31 +410,6 @@ export async function getUserHeader(id: string): Promise<{
 }
 
 /**
- * Reads the spendable-points counter name-agnostically across schema drift.
- * The dev and prod DBs are on different migrations: 0127 renamed
- * balances.bonus_points -> shards on dev but not (yet) on prod. The same
- * generated clients serve both DBs, so broad selects request the divergent
- * column and fail
- * on whichever DB lacks it. Try the post-rename name first, fall back to the
- * legacy name, and treat "column absent" as 0. id is parameterised and the
- * column names are a fixed allowlist, so legacy raw query is safe here.
- */
-async function fetchBalancePoints(id: string): Promise<number> {
-  for (const col of ["shards", "bonus_points"] as const) {
-    try {
-      const rows = await queryMainRows<Array<{ pts: number | null }>>(
-        `SELECT "${col}" AS pts FROM balances WHERE user_id = $1`,
-        id,
-      );
-      return Number(rows[0]?.pts ?? 0);
-    } catch {
-      // Column doesn't exist on this DB's migration state — try the next name.
-    }
-  }
-  return 0;
-}
-
-/**
  * Reads the per-user wager-requirement debt + cleared progress, drift-safe
  * across DBs that don't carry the columns yet.
  *
@@ -717,7 +692,6 @@ export async function getUserDetail(id: string) {
     ownedCodeRows,
     ownedCodeReferralCountRows,
     tips,
-    balancePoints,
     wagerLockedAgg,
     liveAffiliateRows,
     fingerprintSignal,
@@ -747,12 +721,7 @@ export async function getUserDetail(id: string) {
         GROUP BY u.id`,
       id,
     ).then((rows) => rows[0] ?? null),
-    // SCHEMA-DRIFT GUARD: dev and prod are on different migrations (0127
-    // renamed balances.bonus_points -> shards on dev only). A bare
-    // findUnique() pulls EVERY model column, so it requests the divergent
-    // column and throws 42703 on whichever DB lacks it. Select only columns
-    // that exist identically in BOTH DBs; the points value is read
-    // name-agnostically via fetchBalancePoints below.
+    // Select only the balance columns this page renders.
     queryMainRows<
       {
         available_balance: string;
@@ -894,9 +863,6 @@ export async function getUserDetail(id: string) {
     // metadata.direction). Runs in parallel; resolves counterparty names
     // for the shown rows internally.
     getUserTips(id),
-    // Spendable points counter, read name-agnostically across the
-    // bonus_points -> shards rename (see fetchBalancePoints).
-    fetchBalancePoints(id),
     // Wager-requirement debt + cleared progress for the new "Locked" line in
     // the balance breakdown (see fetchWagerLocked). Drift-safe: returns nulls
     // if the columns aren't on this DB → the row hides.
@@ -1200,7 +1166,6 @@ export async function getUserDetail(id: string) {
           totalWithdrawn: isBlacklisted ? 0 : userPnl.withdrawals,
           totalWagered: toNumber(balances.total_wagered),
           totalWon: toNumber(balances.total_won),
-          bonusPoints: balancePoints,
           unlockAt: balances.unlock_at
             ? new Date(balances.unlock_at).toISOString()
             : null,

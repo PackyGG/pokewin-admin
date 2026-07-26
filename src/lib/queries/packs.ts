@@ -6,7 +6,6 @@ import {
   getDrizzleDb,
   getDevDrizzleDb,
   getProdDrizzleDb,
-  type MainDrizzleDb,
 } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
@@ -15,36 +14,6 @@ import { MS_PER_DAY } from "@/lib/utils/time";
 import { getPackSetAssignmentsGrouped } from "@/lib/queries/pack-set-assignments";
 
 type PackTag = "pct1" | "pct5" | "pct10" | "fifty50" | "onepiece";
-
-/**
- * Reads pack `shard_cost` values schema-defensively. The shard-packs
- * migration (the `shard_cost` column) is on dev but NOT prod, and the same
- * generated schema serves both — so a typed `shard_cost` selection would
- * throw 42703 on prod. Read it via bound SQL instead and treat a missing column
- * as "no shard cost" (null). Intersection-schema + raw pattern: the divergent
- * column never enters the typed client, and this lights up on prod
- * automatically once the column lands there.
- */
-async function fetchShardCosts(
-  db: Pick<MainDrizzleDb, "execute">,
-  ids: string[],
-): Promise<Map<string, number | null>> {
-  if (ids.length === 0) return new Map();
-  try {
-    const result = await db.execute<{ id: string; shard_cost: number | null }>(sql`
-      SELECT id, shard_cost FROM packs WHERE id = ANY(${pgArrayParam(ids)}::uuid[])
-    `);
-    return new Map(
-      result.rows.map((r) => [
-        r.id,
-        r.shard_cost === null ? null : Number(r.shard_cost),
-      ]),
-    );
-  } catch {
-    // shard_cost column absent on this DB (e.g. prod) — no shard costs.
-    return new Map();
-  }
-}
 
 /**
  * Category filter for the /packs list.
@@ -72,14 +41,13 @@ async function fetchShardCosts(
  * collide with the daily/reward filter or invent a relationship that
  * doesn't exist in the data.
  */
-export type PackCategoryFilter = "pct1" | "pct5" | "pct10" | "reward" | "shard";
+export type PackCategoryFilter = "pct1" | "pct5" | "pct10" | "reward";
 
 const PACK_CATEGORY_FILTERS: readonly PackCategoryFilter[] = [
   "pct1",
   "pct5",
   "pct10",
   "reward",
-  "shard",
 ] as const;
 
 /** Whitelist + coerce a raw `?tag=` param to a known category, else undefined. */
@@ -108,8 +76,6 @@ function buildPackCategoryWhere(
       return sql`${"%10"}::pack_tag = ANY(p.tags)`;
     case "reward":
       return sql`p.pack_type = ${"reward"}`;
-    case "shard":
-      return sql`p.pack_type = ${"shard"}`;
   }
 }
 
@@ -143,7 +109,7 @@ export type PackListItem = {
  * The pack "set" axis (a.k.a. pool tab on /packs): Pokemon / One Piece /
  * Rewards / Meme. This is a PACK-LEVEL label an admin assigns from the pack
  * editor — its OWN axis, fully independent of `pack_type`
- * (official / custom / reward / shard / promo) and the `pack_tag` battle-odds
+ * (official / custom / reward / promo) and the `pack_tag` battle-odds
  * tags (%1 / %5 / %10 / 50-50 / onepiece). It has NOTHING to do with the card
  * `sets` table.
  *
@@ -190,20 +156,14 @@ export async function getPacks(params: {
   if (active === "active") predicates.push(sql`p.active = true`);
   else if (active === "inactive") predicates.push(sql`p.active = false`);
 
-  // Category filter (1% / 5% / 10% tag, daily/reward, or shard pack type).
+  // Category filter (1% / 5% / 10% tag or daily/reward pack type).
   // Combines with status + search + pool + sort — Object.assign merges the
   // fragment's top-level keys (`tags` or `pack_type`) onto the where without
   // clobbering the others.
   //
-  // When NO category is selected, shard packs are excluded from the default
-  // list. Shard packs are managed on the dedicated /rewards/shards surface
-  // (and via the explicit "Shard packs" category filter here); keeping them
-  // out of the default /packs list and any official dropdowns avoids mixing
-  // a shard-currency pack into the cash pack catalog. The "shard" filter is
-  // the explicit opt-in to see only shard packs.
-  predicates.push(
-    tag ? buildPackCategoryWhere(tag) : sql`p.pack_type <> ${"shard"}`,
-  );
+  // Retired shard packs stay hidden from every catalog query.
+  predicates.push(sql`p.pack_type <> ${"shard"}`);
+  if (tag) predicates.push(buildPackCategoryWhere(tag));
 
   // Scope to the active pool (Pokemon / One Piece / Rewards / Meme). The set is
   // a PACK-LEVEL admin assignment (admin DB), not derived from cards: a pack
@@ -449,6 +409,7 @@ async function fetchPacksListStats(
         COALESCE(SUM(total_payout), 0)::text                    AS payout
       FROM packs
       WHERE ${poolPredicate}
+        AND pack_type <> ${"shard"}
   `);
   const r = result.rows[0];
   const totalRevenue = Number(r?.revenue ?? 0);
@@ -477,7 +438,7 @@ export async function getPacksListStats(
   // assignment changes bust this slot via revalidateTag("packs-list-stats").
   return unstable_cache(
     () => fetchPacksListStats(set, "prod"),
-    ["packs-list-stats-v4", set],
+    ["packs-list-stats-v5", set],
     { revalidate: 60, tags: ["packs-list-stats"] },
   )();
 }
@@ -485,8 +446,8 @@ export async function getPacksListStats(
 /**
  * Pack types IN SCOPE for the global re-price tool: `official` only (there is no
  * `custom` pack type — every cash pack is just a pack). EXCLUDED: `promo`,
- * `reward` (free daily/welcome type, no real sticker price), and `shard`
- * (separate shard-cost model). The tool ALSO only ever adjusts the pack `price`;
+ * and `reward` (free daily/welcome type, no real sticker price). The tool ALSO
+ * only ever adjusts the pack `price`;
  * it never changes card odds. Hardcoded trusted literals (no user input) — safe
  * to interpolate into SQL.
  */
@@ -679,14 +640,11 @@ export async function getPackDetail(id: string) {
     LEFT JOIN cards c ON c.id = pc.card_id
     LEFT JOIN sets s ON s.id = c.set_id
     WHERE p.id = ${id}::uuid
+      AND p.pack_type <> ${"shard"}
     GROUP BY p.id
   `);
   const pack = result.rows[0];
   if (!pack) return null;
-
-  // shard_cost lives only on the dev schema — read it via raw SQL (null on
-  // a DB without the column) so this detail query works on both DBs.
-  const shardCost = (await fetchShardCosts(db, [pack.id])).get(pack.id) ?? null;
 
   const totalWeight = pack.cards.reduce((sum, pc) => sum + pc.weight, 0);
 
@@ -705,7 +663,6 @@ export async function getPackDetail(id: string) {
     actualHouseEdge: toNumber(pack.actual_house_edge),
     active: pack.active,
     packType: pack.pack_type,
-    shardCost,
     tags: pack.tags,
     difficulty: pack.difficulty,
     cards: pack.cards.map((pc) => ({

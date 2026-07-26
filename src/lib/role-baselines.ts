@@ -49,7 +49,6 @@ const PACK_CREATOR_BASELINE_TOKENS: readonly PermissionToken[] = [
   "/packs",
   "/cards",
   "/sets",
-  "/upgrader",
   // Packs
   "__can_create_pack",
   "__can_update_pack",
@@ -69,10 +68,6 @@ const PACK_CREATOR_BASELINE_TOKENS: readonly PermissionToken[] = [
   "__can_seed_initial_sets",
   "__can_force_absorb_cards",
   "__can_upload_set_image",
-  // Upgrader (output-card pool on /upgrader)
-  "__can_add_upgrader_output",
-  "__can_toggle_upgrader_output",
-  "__can_remove_upgrader_output",
 ];
 
 /**

@@ -103,30 +103,6 @@ const pack_tag = {
 } as const;
 type pack_tag = (typeof pack_tag)[keyof typeof pack_tag];
 
-/**
- * Persists a pack's `shard_cost` via raw SQL. The column is on the dev schema
- * only (not prod), and the generated Drizzle schema can't type a column that's
- * absent on one DB — so writing it through `packs.create/update` data would
- * be a type error AND would throw 42703 on prod. Done as a separate post-commit
- * UPDATE (never inside the caller's transaction, so a missing column can't
- * poison it) and swallowed when the column is absent. Intersection-schema +
- * raw pattern, matching the read side in queries/packs.ts.
- */
-async function writeShardCost(
-  db: Pick<MainDrizzleDb, "execute">,
-  packId: string,
-  shardCost: number | null,
-): Promise<void> {
-  try {
-    await db.execute(sql`
-      UPDATE packs SET shard_cost = ${shardCost} WHERE id = ${packId}::uuid
-    `);
-  } catch {
-    // shard_cost column absent on this DB (e.g. prod) — shard packs aren't
-    // supported here, so there's nothing to persist.
-  }
-}
-
 function packTagDbValues(tags: pack_tag[]): string[] {
   return tags.map((tag) => {
     if (tag === pack_tag.pct1) return "%1";
@@ -268,28 +244,17 @@ export type PackCardInput = {
   order: number;
 };
 
-/**
- * Resolve the `shard_cost` column value for a pack write.
- *   - pack_type === 'shard'  → requires an integer >= 1 (throws otherwise).
- *   - any other pack_type    → always null (a non-shard pack never carries
- *                              a shard cost, even if one was sent).
- * Keeps the column a single source of truth so the dedicated /rewards/shards
- * page, the /packs create/edit flow, and the backend all agree.
- */
-function normalizeShardCost(
-  packType: string,
-  shardCost: number | null | undefined,
-): number | null {
-  if (packType !== "shard") return null;
-  if (
-    shardCost == null ||
-    !Number.isFinite(shardCost) ||
-    !Number.isInteger(shardCost) ||
-    shardCost < 1
-  ) {
-    throw new Error("Shard packs require a shard cost of at least 1");
+const MANAGEABLE_PACK_TYPES = new Set([
+  "official",
+  "custom",
+  "promo",
+  "reward",
+]);
+
+function assertManageablePackType(packType: string): void {
+  if (!MANAGEABLE_PACK_TYPES.has(packType)) {
+    throw new Error("Unsupported pack type");
   }
-  return shardCost;
 }
 
 export async function createPack(data: {
@@ -299,9 +264,6 @@ export async function createPack(data: {
   price: number;
   cardsPerOpen: number;
   packType: string;
-  // Cost in shards to buy & open this pack. Required (>=1) when
-  // packType === 'shard'; forced to null for every other type.
-  shardCost?: number | null;
   imageUrl: string | null;
   tags: pack_tag[];
   difficulty: number | null;
@@ -314,10 +276,7 @@ export async function createPack(data: {
   if (!data.slug.trim()) throw new Error("Slug is required");
   if (data.price <= 0) throw new Error("Price must be greater than 0");
 
-  // Shard packs carry a shard cost (an integer >= 1); every other type
-  // never stores one. Normalize here so the column is the single source
-  // of truth regardless of what the client sent.
-  const shardCost = normalizeShardCost(data.packType, data.shardCost);
+  assertManageablePackType(data.packType);
 
   await requireCapability(session, "__can_create_pack", "create packs");
 
@@ -356,11 +315,6 @@ export async function createPack(data: {
     return pack;
   });
 
-  // shard_cost is dev-only — persist it outside the transaction (no-op on a
-  // DB without the column). Shard packs are a dev feature, so this only
-  // matters where the column exists.
-  await writeShardCost(db, pack.id, shardCost);
-
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "pack_created",
@@ -382,8 +336,6 @@ export async function updatePack(
     price: number;
     cardsPerOpen: number;
     packType: string;
-    // See createPack: required (>=1) for shard packs, forced null otherwise.
-    shardCost?: number | null;
     imageUrl: string | null;
     tags: pack_tag[];
     difficulty: number | null;
@@ -397,7 +349,7 @@ export async function updatePack(
   if (!data.slug.trim()) throw new Error("Slug is required");
   if (data.price <= 0) throw new Error("Price must be greater than 0");
 
-  const shardCost = normalizeShardCost(data.packType, data.shardCost);
+  assertManageablePackType(data.packType);
 
   await requireCapability(session, "__can_update_pack", "update packs");
 
@@ -486,11 +438,6 @@ export async function updatePack(
       `);
     }
   });
-
-  // shard_cost is dev-only — persist it outside the transaction (no-op on a
-  // DB without the column). Writing null clears it when a pack is no longer
-  // a shard pack.
-  await writeShardCost(db, id, shardCost);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -725,7 +672,7 @@ export async function getPackSetForEdit(
 // ─── Global re-price to a target house edge (default 10.99%) ──────────
 //
 // Scope: ACTIVE, OFFICIAL packs only (never inactive, never promo / custom /
-// reward / shard). The tool ONLY ever adjusts a pack's `price` — it NEVER
+// reward). The tool ONLY ever adjusts a pack's `price` — it NEVER
 // touches card odds (the pack_cards pool is read to compute EV, never written).
 // The single most dangerous action in the panel; deliberately defensive:
 //   1. `planRepriceAllPacks(target)` is a READ-ONLY dry-run — computes the full
@@ -746,7 +693,7 @@ export async function getPackSetForEdit(
  * `official` only. There is no `custom` pack type — every cash pack is an
  * `official` pack — so this matches the query module's
  * `REPRICE_INCLUDED_PACK_TYPES` (which scopes the GLOBAL dry-run/loop). Reward /
- * shard / promo stay excluded.
+ * promo stays excluded.
  */
 const REPRICE_OR_RETUNE_PACK_TYPES: readonly string[] = ["official"];
 
@@ -1103,7 +1050,7 @@ export async function repricePackToTargetEdge(
     });
     // Scope: official packs only (there is no custom pack type — every cash pack
     // is an official pack whose price is a house-edge lever). Every other type
-    // (reward / shard / promo) is excluded. Every other guard (owner, token,
+    // (reward / promo) is excluded. Every other guard (owner, token,
     // price>0, hard-band) is unchanged.
     if (!REPRICE_OR_RETUNE_PACK_TYPES.includes(comp.packType)) {
       return skip(`Out of scope: only official packs are re-priced (this is '${comp.packType}').`);

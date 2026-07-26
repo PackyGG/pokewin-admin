@@ -27,7 +27,6 @@ import {
   Wallet,
   Gauge,
   Lock,
-  Gem,
   AlertTriangle,
   Target,
 } from "lucide-react";
@@ -125,8 +124,6 @@ export function UserWagerProgressCard({
     sources,
     totalLockedUsd,
     gameWeights,
-    shards,
-    shardWagerProgress,
     backendAvailable,
   } = localData;
 
@@ -277,7 +274,7 @@ export function UserWagerProgressCard({
           </table>
         </div>
 
-        {/* Game weights + shards (informational). */}
+        {/* Current per-game wager weights (informational). */}
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
           {gameWeights && (
             <span className="inline-flex items-center gap-1.5">
@@ -286,16 +283,6 @@ export function UserWagerProgressCard({
               {formatX(gameWeights.battlesBps)} · upgrader{" "}
               {formatX(gameWeights.upgraderBps)} · keno{" "}
               {formatX(gameWeights.kenoBps)}
-            </span>
-          )}
-          {shards > 0 && (
-            <span className="inline-flex items-center gap-1.5">
-              <Gem className="size-3.5" />
-              {shards.toLocaleString("en-US")} shards ·{" "}
-              {shardWagerProgress.toLocaleString("en-US", {
-                maximumFractionDigits: 2,
-              })}{" "}
-              shard-wager progress
             </span>
           )}
         </div>

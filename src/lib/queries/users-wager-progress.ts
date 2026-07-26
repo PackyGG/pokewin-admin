@@ -152,9 +152,6 @@ export type UserWagerProgress = {
   /** Σ of all per-source still-locked (unwagered_*) balances. Distinct from
    *  `remaining` (the withdrawal gate, which also includes deposit debt). */
   totalLockedUsd: number;
-  /** Secondary shard currency (informational). */
-  shards: number;
-  shardWagerProgress: number;
   /** Whether the backend bps config was reachable. When false, per-source
    *  `requirementBps` and `gameWeights` are null — but the gate figures
    *  (`remaining`/`withdrawable`/`met`) are still authoritative (column-read). */
@@ -170,8 +167,6 @@ type RawBalanceRow = {
   total_tips_won: string | null;
   wager_requirement_progress: string | null;
   wager_requirement_remaining: string | null;
-  shards: number | null;
-  shard_wager_progress: string | null;
   unwagered_race_prize_usd: string | null;
   unwagered_bonus_other_usd: string | null;
   unwagered_rakeback_usd: string | null;
@@ -226,8 +221,6 @@ export async function getUserWagerProgress(
       total_tips_won::text               AS total_tips_won,
       wager_requirement_progress::text   AS wager_requirement_progress,
       wager_requirement_remaining::text  AS wager_requirement_remaining,
-      shards                             AS shards,
-      shard_wager_progress::text         AS shard_wager_progress,
       unwagered_race_prize_usd::text     AS unwagered_race_prize_usd,
       unwagered_bonus_other_usd::text    AS unwagered_bonus_other_usd,
       unwagered_rakeback_usd::text       AS unwagered_rakeback_usd,
@@ -344,8 +337,6 @@ export async function getUserWagerProgress(
       : null,
     sources,
     totalLockedUsd,
-    shards: num(row.shards),
-    shardWagerProgress: num(row.shard_wager_progress),
     backendAvailable,
   };
 }
