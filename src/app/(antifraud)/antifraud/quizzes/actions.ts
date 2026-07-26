@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { adminDb } from "@/lib/admin-db";
 import { sessionRoles } from "@/lib/dal";
-import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
+import { requireAntifraudStaff } from "@/lib/require-antifraud-access";
 import { awardStaffPoints } from "@/lib/antifraud/profile";
 import { notifyStaff } from "@/lib/antifraud/notifications";
 import { quizVisibleToRoles, scoreAnswers } from "@/lib/antifraud/quiz";
@@ -36,7 +36,7 @@ const startSchema = z.object({ quizId: z.string().uuid("Invalid quiz") });
  * second tab lands back on the same attempt rather than burning a try.
  */
 export async function startQuizAttempt(input: unknown): Promise<{ id: string }> {
-  const session = await requireAntifraudAccess();
+  const session = await requireAntifraudStaff();
   const parsed = startSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const { quizId } = parsed.data;
@@ -142,7 +142,7 @@ export type SubmitResult = {
 export async function submitQuizAttempt(
   input: unknown,
 ): Promise<SubmitResult> {
-  const session = await requireAntifraudAccess();
+  const session = await requireAntifraudStaff();
   const parsed = submitSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const { attemptId, answers } = parsed.data;

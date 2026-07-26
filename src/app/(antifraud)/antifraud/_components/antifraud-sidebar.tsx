@@ -5,11 +5,13 @@ import { usePathname } from "next/navigation";
 import {
   ArrowLeft,
   BadgeCheck,
+  Braces,
   GraduationCap,
   LayoutDashboard,
   RadioTower,
   Settings,
   ShieldAlert,
+  Trophy,
   Users,
   UserCircle,
   type LucideIcon,
@@ -57,9 +59,11 @@ const WORKSPACE_NAV: NavItem[] = [
 ];
 
 const TEAM_NAV: NavItem[] = [
-  { label: "Quizzes", href: "/antifraud/quizzes", icon: GraduationCap },
-  { label: "Staff Members", href: "/antifraud/staff", icon: Users },
   { label: "My Profile", href: "/antifraud/profile", icon: UserCircle },
+];
+
+const STAFF_NAV: NavItem[] = [
+  { label: "Quizzes", href: "/antifraud/quizzes", icon: GraduationCap },
 ];
 
 /**
@@ -68,6 +72,9 @@ const TEAM_NAV: NavItem[] = [
  * would bounce.
  */
 const MANAGE_NAV: NavItem[] = [
+  { label: "Staff Members", href: "/antifraud/staff", icon: Users },
+  { label: "Points", href: "/antifraud/settings/points", icon: Trophy },
+  { label: "API", href: "/antifraud/settings/api", icon: Braces },
   { label: "Quiz Manager", href: "/antifraud/settings/quizzes", icon: BadgeCheck },
   { label: "Workspace Settings", href: "/antifraud/settings", icon: Settings },
 ];
@@ -232,7 +239,7 @@ export function AntifraudSidebar({
           <SidebarGroupLabel>Team</SidebarGroupLabel>
           <SidebarGroupContent>
             <NavMenu
-              items={TEAM_NAV}
+              items={canManage ? TEAM_NAV : [...STAFF_NAV, ...TEAM_NAV]}
               pathname={pathname}
               onNavTap={handleNavTap}
               toHref={toHref}

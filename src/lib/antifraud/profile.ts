@@ -297,6 +297,61 @@ export type StaffPointEvent = {
   createdAt: Date;
 };
 
+export type StaffPointLedgerEvent = StaffPointEvent & {
+  adminUserId: string;
+  sourceId: string | null;
+  recipient: AdminIdentity | null;
+  actor: AdminIdentity | null;
+};
+
+/**
+ * Manager ledger: newest point movements across the whole team. The bounded
+ * order uses staff_point_events_created_idx, then identities are resolved in
+ * one primary-key batch.
+ */
+export async function listRecentStaffPointEvents(
+  limit = 100,
+): Promise<StaffPointLedgerEvent[]> {
+  try {
+    const rows = await adminDb.staff_point_events.findMany({
+      select: {
+        id: true,
+        admin_user_id: true,
+        points: true,
+        source_kind: true,
+        source_id: true,
+        reason: true,
+        created_by: true,
+        created_at: true,
+      },
+      orderBy: { created_at: "desc" },
+      take: Math.min(Math.max(limit, 1), 200),
+    });
+    const identities = await loadAdminIdentities(
+      rows.flatMap((row) => [row.admin_user_id, row.created_by]),
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      adminUserId: row.admin_user_id,
+      points: row.points,
+      sourceKind: row.source_kind,
+      sourceId: row.source_id,
+      reason: row.reason,
+      createdBy: row.created_by,
+      createdAt: row.created_at,
+      recipient: identities.get(row.admin_user_id) ?? null,
+      actor: row.created_by
+        ? identities.get(row.created_by) ?? null
+        : null,
+    }));
+  } catch (err) {
+    if (!isMissingRelationError(err)) {
+      console.error("[antifraud] listRecentStaffPointEvents failed:", err);
+    }
+    return [];
+  }
+}
+
 /** The profile page's activity list. */
 export async function listStaffPointEvents(
   adminUserId: string,

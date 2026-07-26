@@ -2,8 +2,7 @@ import { Suspense } from "react";
 import { HostLink } from "@/components/host-link";
 import { CheckCircle2, GraduationCap, Trophy } from "lucide-react";
 
-import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
-import { canManageAntifraud } from "@/lib/antifraud/access";
+import { requireAntifraudStaffPage } from "@/lib/require-antifraud-access";
 import { sessionRoles } from "@/lib/dal";
 import { safeQuery } from "@/lib/errors/safe-query";
 import {
@@ -31,9 +30,8 @@ export const metadata = { title: "Quizzes" };
 const QUERY_TIMEOUT_MS = 10_000;
 
 export default async function QuizzesPage() {
-  const session = await requireAntifraudPageAccess();
+  const session = await requireAntifraudStaffPage();
   const roles = sessionRoles(session);
-  const canManage = canManageAntifraud(session);
 
   return (
     <div className="space-y-6">
@@ -43,16 +41,6 @@ export default async function QuizzesPage() {
           accent="purple"
           title="Quizzes"
           subtitle="One point per correct answer"
-          action={
-            canManage ? (
-              <HostLink
-                href="/antifraud/settings/quizzes"
-                className="rounded-md border border-border/60 bg-muted/40 px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted"
-              >
-                Manage quizzes
-              </HostLink>
-            ) : undefined
-          }
         />
       </PageHero>
 

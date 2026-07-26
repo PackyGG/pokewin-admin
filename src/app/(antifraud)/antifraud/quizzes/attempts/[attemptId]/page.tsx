@@ -34,6 +34,10 @@ export default async function QuizResultPage({
 }) {
   const session = await requireAntifraudPageAccess();
   const { attemptId } = await params;
+  const canManage = canManageAntifraud(session);
+  const backHref = canManage
+    ? "/antifraud/settings/quizzes"
+    : "/antifraud/quizzes";
 
   return (
     <div className="space-y-6">
@@ -43,7 +47,7 @@ export default async function QuizResultPage({
           accent="emerald"
           title="Quiz result"
           subtitle="Result"
-          backHref="/antifraud/quizzes"
+          backHref={backHref}
         />
       </PageHero>
 
@@ -51,7 +55,7 @@ export default async function QuizResultPage({
         <ResultBody
           attemptId={attemptId}
           viewerId={session.userId}
-          canManage={canManageAntifraud(session)}
+          canManage={canManage}
         />
       </Suspense>
     </div>
@@ -195,10 +199,14 @@ async function ResultBody({
 
       <div className="flex flex-wrap gap-3">
         <HostLink
-          href="/antifraud/quizzes"
+          href={
+            canManage
+              ? "/antifraud/settings/quizzes"
+              : "/antifraud/quizzes"
+          }
           className="rounded-md border border-border/60 bg-muted/40 px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted"
         >
-          Back to quizzes
+          {canManage ? "Back to Quiz Manager" : "Back to quizzes"}
         </HostLink>
         <HostLink
           href="/antifraud/profile"

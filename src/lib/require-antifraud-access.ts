@@ -147,3 +147,19 @@ export async function requireAntifraudManager(
   if (!canManageAntifraud(session)) throw new Error(unauthorizedMessage);
   return session;
 }
+
+/** Staff-only learner page gate. Admins and owners use Quiz Manager instead. */
+export async function requireAntifraudStaffPage(): Promise<SessionPayload> {
+  const session = await requireAntifraudPageAccess();
+  if (canManageAntifraud(session)) redirect("/antifraud");
+  return session;
+}
+
+/** Server-action variant of the staff-only learner gate. */
+export async function requireAntifraudStaff(
+  unauthorizedMessage = "Quizzes are only available to antifraud staff.",
+): Promise<SessionPayload> {
+  const session = await requireAntifraudAccess(unauthorizedMessage);
+  if (canManageAntifraud(session)) throw new Error(unauthorizedMessage);
+  return session;
+}

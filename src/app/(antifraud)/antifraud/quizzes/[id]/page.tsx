@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { notFound, redirect } from "next/navigation";
 import { GraduationCap } from "lucide-react";
 
-import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
+import { requireAntifraudStaffPage } from "@/lib/require-antifraud-access";
 import { sessionRoles } from "@/lib/dal";
 import { adminDb } from "@/lib/admin-db";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
@@ -30,7 +30,7 @@ export default async function TakeQuizPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const session = await requireAntifraudPageAccess();
+  const session = await requireAntifraudStaffPage();
   const { id } = await params;
 
   return (

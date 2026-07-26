@@ -62,6 +62,7 @@ export async function awardPointsManually(input: unknown): Promise<void> {
   });
 
   revalidatePath("/antifraud/staff");
+  revalidatePath("/antifraud/settings/points");
   revalidatePath("/antifraud/profile");
   revalidatePath("/antifraud");
 }

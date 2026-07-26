@@ -6,8 +6,7 @@ import {
   Users,
 } from "lucide-react";
 
-import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
-import { canManageAntifraud } from "@/lib/antifraud/access";
+import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
 import { safeQuery } from "@/lib/errors/safe-query";
 import {
   KpiTile,
@@ -41,8 +40,7 @@ export const metadata = { title: "Staff Members" };
 const QUERY_TIMEOUT_MS = 10_000;
 
 export default async function StaffMembersPage() {
-  const session = await requireAntifraudPageAccess();
-  const canManage = canManageAntifraud(session);
+  const session = await requireAntifraudManagerPage();
 
   return (
     <div className="space-y-6">
@@ -56,17 +54,15 @@ export default async function StaffMembersPage() {
       </PageHero>
 
       <Suspense fallback={<BoardSkeleton />}>
-        <Board canManage={canManage} viewerId={session.userId} />
+        <Board viewerId={session.userId} />
       </Suspense>
     </div>
   );
 }
 
 async function Board({
-  canManage,
   viewerId,
 }: {
-  canManage: boolean;
   viewerId: string;
 }) {
   const { data: members } = await safeQuery(
@@ -140,18 +136,16 @@ async function Board({
           icon={Trophy}
           title="Team board"
           action={
-            canManage ? (
-              <AwardPointsDialog
-                members={members.map((member) => ({
-                  id: member.profile.adminUserId,
-                  label:
-                    member.profile.displayName ??
-                    member.identity?.label ??
-                    member.profile.adminUserId.slice(0, 8),
-                  points: member.profile.pointsTotal,
-                }))}
-              />
-            ) : undefined
+            <AwardPointsDialog
+              members={members.map((member) => ({
+                id: member.profile.adminUserId,
+                label:
+                  member.profile.displayName ??
+                  member.identity?.label ??
+                  member.profile.adminUserId.slice(0, 8),
+                points: member.profile.pointsTotal,
+              }))}
+            />
           }
         />
 

@@ -283,27 +283,33 @@ async function PersonalSection({
   roles: string[];
   canManage: boolean;
 }) {
-  const [{ data: profile }, { data: quizzes }, { data: members }] =
-    await Promise.all([
-      safeQuery(
-        () => getStaffProfile(adminUserId),
-        null,
-        "antifraud.own-profile",
-        QUERY_TIMEOUT_MS,
-      ),
-      safeQuery(
-        () => listStaffQuizzes(adminUserId, roles),
-        [],
-        "antifraud.own-quizzes",
-        QUERY_TIMEOUT_MS,
-      ),
-      safeQuery(
-        () => listStaffMembers(),
-        [],
-        "antifraud.staff-board",
-        QUERY_TIMEOUT_MS,
-      ),
-    ]);
+  const [profileResult, quizzesResult, membersResult] = await Promise.all([
+    safeQuery(
+      () => getStaffProfile(adminUserId),
+      null,
+      "antifraud.own-profile",
+      QUERY_TIMEOUT_MS,
+    ),
+    canManage
+      ? Promise.resolve({ data: [] })
+      : safeQuery(
+          () => listStaffQuizzes(adminUserId, roles),
+          [],
+          "antifraud.own-quizzes",
+          QUERY_TIMEOUT_MS,
+        ),
+    canManage
+      ? safeQuery(
+          () => listStaffMembers(),
+          [],
+          "antifraud.staff-board",
+          QUERY_TIMEOUT_MS,
+        )
+      : Promise.resolve({ data: [] }),
+  ]);
+  const profile = profileResult.data;
+  const quizzes = quizzesResult.data;
+  const members = membersResult.data;
 
   const outstanding = quizzes.filter(
     (quiz) => quiz.canTake && quiz.attemptsUsed === 0,
@@ -339,27 +345,38 @@ async function PersonalSection({
           icon={Trophy}
           accent="amber"
         />
+        {!canManage && (
+          <KpiTile
+            label="Quizzes waiting"
+            value={formatNumber(outstanding.length)}
+            sub={
+              outstanding.length === 0
+                ? "nothing to take"
+                : outstanding[0]?.title ?? ""
+            }
+            icon={GraduationCap}
+            accent="purple"
+          />
+        )}
+        {canManage && (
+          <KpiTile
+            label="Staff on the board"
+            value={formatNumber(members.length)}
+            sub="people in the workspace"
+            icon={Users}
+            accent="cyan"
+          />
+        )}
         <KpiTile
-          label="Quizzes waiting"
-          value={formatNumber(outstanding.length)}
-          sub={
-            outstanding.length === 0
-              ? "nothing to take"
-              : outstanding[0]?.title ?? ""
-          }
-          icon={GraduationCap}
-          accent="purple"
-        />
-        <KpiTile
-          label="Staff on the board"
-          value={formatNumber(members.length)}
-          sub="people in the workspace"
-          icon={Users}
-          accent="cyan"
+          label="Your cases closed"
+          value={formatNumber(profile?.reviewsResolved ?? 0)}
+          sub="cleared or flagged"
+          icon={ClipboardList}
+          accent="emerald"
         />
       </div>
 
-      {top.length > 0 && (
+      {canManage && top.length > 0 && (
         <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
           {top.map((member) => (
             <li
