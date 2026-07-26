@@ -1,17 +1,21 @@
 import "server-only";
 
 import {
+  and,
   asc,
   desc,
   eq,
   getTableColumns,
+  gt,
   inArray,
+  isNull,
   sql,
 } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/drizzle";
 import {
   admin_users,
   creator_reward_claims,
+  creator_reward_offer_windows,
   creator_reward_programs,
 } from "@/lib/db-schema/admin/schema";
 import { user as mainUsers } from "@/lib/db-schema/main/schema";
@@ -524,37 +528,67 @@ export async function createClaimRequest(params: {
   }
 
   try {
-    const [created] = await adminDrizzle
-      .insert(creator_reward_claims)
-      .values({
-        program_id: program.id,
-        leg: params.leg,
-        user_id: params.userId,
-        discord_user_id: params.discordUserId ?? null,
-        // FTD lossback has no wager basis; its own snapshot lives in the
-        // ftd_* columns. The wager columns stay 0 rather than being reused for
-        // a different meaning.
-        ftd_deposit_usd:
-          entitlement.ftd?.firstDepositUsd != null
-            ? String(entitlement.ftd.firstDepositUsd)
-            : null,
-        ftd_loss_usd:
-          entitlement.ftd?.lostUsd != null
-            ? String(entitlement.ftd.lostUsd)
-            : null,
-        wager_basis_usd: String(entitlement.qualifyingWagerUsd),
-        lifetime_wager_usd: String(entitlement.lifetimeWagerUsd),
-        forfeited_wager_usd: String(entitlement.forfeitedWagerUsd),
-        run_started_at: new Date(entitlement.runStartedAt).toISOString(),
-        prior_consumed_usd: String(entitlement.priorConsumedUsd),
-        consumed_wager_usd: String(entitlement.consumesWagerUsd),
-        units: entitlement.units,
-        amount_usd: String(entitlement.amountUsd),
-        applied_reward_usd: String(entitlement.appliedRewardUsd),
-        was_vip: entitlement.isVip,
-        status: "pending",
-      })
-      .returning({ id: creator_reward_claims.id });
+    const created = await adminDrizzle.transaction(async (tx) => {
+      const [claim] = await tx
+        .insert(creator_reward_claims)
+        .values({
+          program_id: program.id,
+          leg: params.leg,
+          user_id: params.userId,
+          discord_user_id: params.discordUserId ?? null,
+          // FTD lossback has no wager basis; its own snapshot lives in the
+          // ftd_* columns. The wager columns stay 0 rather than being reused for
+          // a different meaning.
+          ftd_deposit_usd:
+            entitlement.ftd?.firstDepositUsd != null
+              ? String(entitlement.ftd.firstDepositUsd)
+              : null,
+          ftd_loss_usd:
+            entitlement.ftd?.lostUsd != null
+              ? String(entitlement.ftd.lostUsd)
+              : null,
+          wager_basis_usd: String(entitlement.qualifyingWagerUsd),
+          lifetime_wager_usd: String(entitlement.lifetimeWagerUsd),
+          forfeited_wager_usd: String(entitlement.forfeitedWagerUsd),
+          run_started_at: new Date(entitlement.runStartedAt).toISOString(),
+          prior_consumed_usd: String(entitlement.priorConsumedUsd),
+          consumed_wager_usd: String(entitlement.consumesWagerUsd),
+          units: entitlement.units,
+          amount_usd: String(entitlement.amountUsd),
+          applied_reward_usd: String(entitlement.appliedRewardUsd),
+          was_vip: entitlement.isVip,
+          status: "pending",
+        })
+        .returning({ id: creator_reward_claims.id });
+
+      const now = new Date().toISOString();
+      const claimedWindows = await tx
+        .select({ id: creator_reward_offer_windows.id })
+        .from(creator_reward_offer_windows)
+        .where(
+          and(
+            eq(creator_reward_offer_windows.program_id, program.id),
+            eq(creator_reward_offer_windows.user_id, params.userId),
+            eq(creator_reward_offer_windows.leg, params.leg),
+            isNull(creator_reward_offer_windows.claimed_at),
+            gt(creator_reward_offer_windows.expires_at, now),
+          ),
+        )
+        .orderBy(asc(creator_reward_offer_windows.expires_at))
+        .limit(entitlement.units);
+      if (claimedWindows.length > 0) {
+        await tx
+          .update(creator_reward_offer_windows)
+          .set({ claimed_at: now })
+          .where(
+            inArray(
+              creator_reward_offer_windows.id,
+              claimedWindows.map((window) => window.id),
+            ),
+          );
+      }
+      return claim;
+    });
 
     return {
       ok: true,

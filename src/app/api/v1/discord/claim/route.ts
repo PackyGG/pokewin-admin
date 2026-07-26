@@ -138,6 +138,8 @@ export const POST = withApiKey(
       const status =
         result.code === "already_pending"
           ? 409
+          : result.code === "not_eligible"
+            ? 409
           : result.code === "program_not_found"
             ? 404
             : 400;

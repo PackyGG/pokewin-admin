@@ -7,6 +7,7 @@ import {
   rakeback_claims,
   rakeback_config,
   rewards,
+  user,
   user_rewards,
 } from "@/lib/db-schema/main/schema";
 import { toNumber } from "@/lib/utils/decimal";
@@ -139,8 +140,14 @@ export const POST = withApiKey(
     // Same single index probe as /discord/linked. providerId is asserted so a
     // same-valued account on another provider can't resolve to a Packy user.
     const [linkedAccount] = await db
-      .select({ providerId: account.providerId, userId: account.userId })
+      .select({
+        providerId: account.providerId,
+        userId: account.userId,
+        code: user.affiliate_code,
+        codeExpiresAt: user.affiliate_code_expires_at,
+      })
       .from(account)
+      .innerJoin(user, eq(user.id, account.userId))
       .where(eq(account.accountId, discordUserId))
       .limit(1);
 
@@ -272,6 +279,15 @@ export const POST = withApiKey(
       });
     }
 
-    return { discordUserId, claimable };
+    const codeExpiresAt = linkedAccount.codeExpiresAt
+      ? new Date(linkedAccount.codeExpiresAt)
+      : null;
+    return {
+      discordUserId,
+      code: linkedAccount.code?.toUpperCase() ?? null,
+      codeExpired:
+        codeExpiresAt !== null && codeExpiresAt.getTime() <= Date.now(),
+      claimable,
+    };
   },
 );

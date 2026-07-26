@@ -36,13 +36,14 @@ it by hand in the dashboard, and only then is the player's balance credited.
 Design the UX around that: the honest message after a successful claim is
 "submitted for review", never "paid".
 
-### The four commands
+### The five commands
 
 | Command | Endpoint | What it does |
 |---|---|---|
 | `/verify` | `POST /api/v1/discord/verify` | Confirms the account is linked, and records that they verified |
 | `/info` | `POST /api/v1/discord/info` | Their summary card: code, time left, totals |
 | `/check` | `POST /api/v1/discord/rewards` | What they can claim right now |
+| `/creator` | `POST /api/v1/discord/creator` | The linked creator's own program performance |
 | *(Claim button)* | `POST /api/v1/discord/claim` | Files a claim for staff review |
 
 ---
@@ -147,10 +148,11 @@ that work.
 | `discord:verify` | `/discord/verify` |
 | `discord:info:read` | `/discord/info` |
 | `discord:rewards:read` | `/discord/rewards` |
+| `discord:creator:read` | `/discord/creator` |
 | `discord:rewards:claim` | `/discord/claim` |
 | `discord:read` | `/discord/linked` (only needed for a bare link check) |
 
-A full rewards bot needs the first four.
+A full rewards bot needs the first five.
 
 > **`discord:info:read` is the sensitive one.** It is the only endpoint that
 > returns a username and internal user id. Every other endpoint is built so a
@@ -268,6 +270,8 @@ Everything the player can claim.
 {
   "data": {
     "discordUserId": "123456789012345678",
+    "code": "JIMMY",
+    "codeExpired": false,
     "claimable": [
       { "id": "ur_9f1c…", "name": "Welcome Pack" },
       { "id": "rb_daily", "name": "Daily Rakeback", "amount": 5.5, "currency": "USD" },
@@ -301,6 +305,8 @@ and link them there.
   twice, simply won't see that program. So an absent lossback is not a bug.
 - `id` and `name` are always present; `amount` only when there genuinely is a
   cash value (many rewards grant packs, not cash — don't render `$0`).
+- `code` and `codeExpired` mirror `/info`, so `/check` does not need a second
+  request just to explain an empty result.
 - **Nothing to claim → `200` with `"claimable": []`.** Never a 404. Only an
   explicit empty array means "you have nothing".
 - **Unlinked → `404 not_linked`**, deliberately *not* an empty array, so you
@@ -351,13 +357,43 @@ Claim-specific failures:
 |---|---|---|
 | 409 | `already_pending` | They already have a claim in the queue for this program. Say "we're already on it" — this is not an error. |
 | 400 | `nothing_claimable` | Nothing payable yet. On a wager program the message carries how much more wager is needed. |
-| 400 | `not_eligible` | Blocked — switched code, banned, locked, program inactive, or (lossback) already claimed / deposited again / first deposit under the minimum. The message explains which; it is safe to show verbatim. |
+| 409 | `not_eligible` | Blocked or no longer available. Refresh `/check`; do not expose a deadline. |
 | 400 | `not_claimable_here` | A non-`vip_*` id. That reward is claimed on the site. |
 | 404 | `program_not_found` | Program no longer exists. |
 
 ---
 
-## 8. Link check only — `POST /api/v1/discord/linked`
+## 8. Creator performance — `POST /api/v1/discord/creator`
+
+**Scope:** `discord:creator:read`
+
+The caller sends only `{ "discordUserId": "..." }`. The API resolves the
+creator and code server-side; it never accepts a code to query.
+
+```json
+{
+  "data": {
+    "code": "JIMMY",
+    "programs": [
+      { "type": "wager", "active": true, "perThresholdUsd": 5,
+        "thresholdUsd": 1000, "vipPerThresholdUsd": 8 },
+      { "type": "ftd_lossback", "active": true, "lossbackPct": 10,
+        "minDepositUsd": 25 }
+    ],
+    "players": { "total": 1240, "active7d": 88 },
+    "wagerUsd": { "allTime": 512000, "last7d": 24000 },
+    "payoutsUsd": { "approved": 2560, "pending": 120 }
+  }
+}
+```
+
+`404 not_linked` means the Discord account has no Packy link.
+`404 program_not_found` means the linked account is not a creator or has no
+creator code. A creator with a code but no reward program gets `programs: []`.
+
+---
+
+## 9. Link check only — `POST /api/v1/discord/linked`
 
 **Scope:** `discord:read`
 

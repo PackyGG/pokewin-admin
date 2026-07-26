@@ -1515,6 +1515,28 @@ export const antifraud_review_notes = pgTable("antifraud_review_notes", {
 		}).onDelete("cascade"),
 ]);
 
+export const creator_reward_offer_windows = pgTable("creator_reward_offer_windows", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	program_id: uuid().notNull(),
+	user_id: text().notNull(),
+	leg: text().notNull(),
+	run_started_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
+	basis_position_usd: numeric({ precision: 20, scale:  2 }).notNull(),
+	basis_usd: numeric({ precision: 20, scale:  2 }).default('0').notNull(),
+	claimable_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	expires_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
+	claimed_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+}, (table) => [
+	index("creator_reward_offer_windows_lookup_idx").using("btree", table.program_id.asc().nullsLast().op("timestamptz_ops"), table.user_id.asc().nullsLast().op("text_ops"), table.leg.asc().nullsLast().op("text_ops"), table.expires_at.asc().nullsLast().op("uuid_ops")),
+	index("creator_reward_offer_windows_open_expiry_idx").using("btree", table.expires_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(claimed_at IS NULL)`),
+	uniqueIndex("creator_reward_offer_windows_unit_key").using("btree", table.program_id.asc().nullsLast().op("text_ops"), table.user_id.asc().nullsLast().op("uuid_ops"), table.leg.asc().nullsLast().op("timestamptz_ops"), table.run_started_at.asc().nullsLast().op("text_ops"), table.basis_position_usd.asc().nullsLast().op("timestamptz_ops")),
+	foreignKey({
+			columns: [table.program_id],
+			foreignColumns: [creator_reward_programs.id],
+			name: "creator_reward_offer_windows_program_id_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+]);
+
 export const antifraud_signals = pgTable("antifraud_signals", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	external_id: text(),

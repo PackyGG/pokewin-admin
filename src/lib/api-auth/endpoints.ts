@@ -55,6 +55,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/creator",
+    summary:
+      "Body { discordUserId }. Returns the linked creator's own code, reward-program configuration, player counts, wager volume, and pending/approved payouts. The code is resolved server-side and cannot be supplied by the caller.",
+    scopes: ["discord:creator:read"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/claim",
     summary:
       "Body { discordUserId, claimableId }. Files a claim request for a creator VIP wager reward (the `vip_*` ids returned by /discord/rewards). Eligibility is recomputed server-side — the caller never supplies an amount. Creates a PENDING row for staff review; no balance moves until a human approves.",

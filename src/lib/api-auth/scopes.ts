@@ -44,13 +44,19 @@ export const API_SCOPES = {
   "discord:rewards:read": {
     label: "Read claimable rewards",
     description:
-      "List what a Discord-linked player can currently claim (names + amounts). Separate from discord:read so reward data can be granted independently.",
-    access: "prod-read",
+      "List what a Discord-linked player can currently claim (names + amounts). Tracks creator-reward offer windows in the admin DB so expiry is enforced consistently.",
+    access: "admin-write",
   },
   "discord:info:read": {
     label: "Read a player's reward summary",
     description:
       "Username, user id, current code + time left on it, and rewards open / pending / claimed. UNLIKE the other Discord scopes this returns PROFILE DATA — grant it only to a bot that renders a player-facing card.",
+    access: "admin-write",
+  },
+  "discord:creator:read": {
+    label: "Read creator performance",
+    description:
+      "Read the linked creator's own code, configured reward legs, player counts, wager volume, and reward payouts. The caller cannot choose a code.",
     access: "prod-read",
   },
   "discord:verify": {

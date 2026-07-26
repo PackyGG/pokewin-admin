@@ -24,6 +24,10 @@ import {
   firstDeposits,
   holdingsUsd,
 } from "./ftd-lossback";
+import {
+  enforceOfferExpiry,
+  expiredWagerBasisUsd,
+} from "./offer-expiry";
 
 /**
  * The ONE eligibility engine for creator VIP wager rewards.
@@ -430,6 +434,7 @@ async function priorHoldings(
     if (consumedUsd < 0) consumedUsd = 0;
   }
 
+  consumedUsd += await expiredWagerBasisUsd(programId, userId, runStart);
   return { consumedUsd, approvedRewardUsd };
 }
 
@@ -578,7 +583,7 @@ export async function computeEntitlement(
   const lifetimeCents = toCents(lifetimeWagerUsd);
   const forfeitedCents = Math.max(0, lifetimeCents - wagerCents);
 
-  return {
+  return enforceOfferExpiry({
     ...base,
     type: "wager",
     ftd: null,
@@ -599,7 +604,7 @@ export async function computeEntitlement(
       units === 0 && cappedByUserLimit
         ? "This user has reached the program's per-user reward cap."
         : null,
-  };
+  }, userId);
 }
 
 
@@ -734,7 +739,7 @@ export async function computeLossbackEntitlement(
     }
   }
 
-  return {
+  return enforceOfferExpiry({
     ...empty,
     ftd: { ...ftd, payoutUsd: payout },
     units: payout > 0 ? 1 : 0,
@@ -745,7 +750,7 @@ export async function computeLossbackEntitlement(
       capped && payout === 0
         ? "This user has reached the program's per-user reward cap."
         : ftd.blockedReason,
-  };
+  }, userId);
 }
 
 /** Is this leg configured on the program at all? */
