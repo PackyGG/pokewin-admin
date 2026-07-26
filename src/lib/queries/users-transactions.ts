@@ -192,6 +192,33 @@ function ledgerWhereSql(filter: LedgerFilter, alias = "lt"): SQL {
   return sql.join(clauses, sql` AND `);
 }
 
+/**
+ * Mirror the public transaction filters onto synthetic Double Down events.
+ * These events render as completed `battle_bet` rows at their resolved time,
+ * even though their source table uses its own status enum.
+ */
+function doubleDownWhereSql(filter: LedgerFilter): SQL {
+  const eventAt = sql`COALESCE(o.resolved_at, o.created_at)`;
+  const clauses: SQL[] = [
+    sql`o.user_id = ${filter.userId}`,
+    sql`o.status = 'resolved'`,
+    sql`o.result IS NOT NULL`,
+  ];
+  if (filter.types?.length && !filter.types.includes("battle_bet")) {
+    clauses.push(sql`false`);
+  }
+  if (filter.status && filter.status !== "completed") {
+    clauses.push(sql`false`);
+  }
+  if (filter.dateFrom) {
+    clauses.push(sql`${eventAt} >= ${filter.dateFrom}`);
+  }
+  if (filter.dateTo) {
+    clauses.push(sql`${eventAt} <= ${filter.dateTo}`);
+  }
+  return sql.join(clauses, sql` AND `);
+}
+
 async function fetchLedgerRowsByIds(
   db: MainDrizzleDb,
   ids: string[],
@@ -620,6 +647,7 @@ export async function getUserTransactions(
     hideWithdrawals: false,
     hideAdjustments: false,
   };
+  let requestedTypeFilterIsEmpty = false;
 
   // IMPORTANT: filter the requested type(s) against the LIVE enum, not just
   // the generated schema enum. The application schema is ahead of prod
@@ -633,10 +661,16 @@ export async function getUserTransactions(
   if (filters?.type && filters.type !== "all") {
     if (await isLiveLedgerTxType(filters.type)) {
       filter.types = [filters.type];
+    } else {
+      requestedTypeFilterIsEmpty = true;
     }
   } else if (filters?.types && filters.types.length > 0) {
     const validTypes = await filterLedgerTxTypesLive(filters.types);
-    if (validTypes.length > 0) filter.types = validTypes;
+    if (validTypes.length > 0) {
+      filter.types = validTypes;
+    } else {
+      requestedTypeFilterIsEmpty = true;
+    }
   }
   if (
     filters?.status &&
@@ -664,6 +698,15 @@ export async function getUserTransactions(
       filter.dateFrom = dateFilter.gte;
       filter.dateTo = dateFilter.lte;
     }
+  }
+  if (requestedTypeFilterIsEmpty) {
+    return {
+      data: [],
+      total: 0,
+      page,
+      perPage,
+      totalPages: 0,
+    };
   }
 
   const canonicalUserId = await resolveCanonicalUserId(db, userId);
@@ -771,6 +814,7 @@ export async function getUserTransactions(
   // the synthetic list stays empty and only real ledger rows render.
   const rawOffset = (page - 1) * perPage;
   const where = ledgerWhereSql(filter);
+  const doubleDownWhere = doubleDownWhereSql(filter);
   const [timelineResult, totalResult] = await Promise.all([
     db.execute<TimelineRow>(sql`
       WITH timeline AS (
@@ -781,9 +825,7 @@ export async function getUserTransactions(
         SELECT o.id, true AS synthetic,
                COALESCE(o.resolved_at, o.created_at) AS sort_at
         FROM battle_double_down_offers o
-        WHERE o.user_id = ${canonicalUserId}
-          AND o.status = 'resolved'
-          AND o.result IS NOT NULL
+        WHERE ${doubleDownWhere}
       )
       SELECT id, synthetic, sort_at
       FROM timeline
@@ -795,9 +837,7 @@ export async function getUserTransactions(
       SELECT (
         (SELECT count(*) FROM ledger_transactions lt WHERE ${where}) +
         (SELECT count(*) FROM battle_double_down_offers o
-          WHERE o.user_id = ${canonicalUserId}
-            AND o.status = 'resolved'
-            AND o.result IS NOT NULL)
+          WHERE ${doubleDownWhere})
       )::text AS total
     `),
   ]);

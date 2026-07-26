@@ -2,11 +2,15 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { queryMainRows } from "@/lib/drizzle-query";
+import {
+  queryMainRows,
+  queryMainRowsInTimeboxedTx,
+} from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 import { readDbEnv } from "@/lib/db-env";
+import { CREATOR_PNL_STATEMENT_TIMEOUT_MS } from "@/lib/queries/creators-pnl";
 import { WITHDRAWAL_LIABILITY_STATUSES } from "@/lib/queries/pnl";
 
 /**
@@ -427,10 +431,13 @@ async function computeRiskData(creatorUserId: string): Promise<RiskData> {
   let partial = false;
 
   try {
-    [perUserRows, perGameRows] = await Promise.all([
-      queryMainRows<PerUserRow[]>(perUserSql, creatorUserId),
-      queryMainRows<PerGameRow[]>(perGameSql, creatorUserId),
-    ]);
+    [perUserRows, perGameRows] = await queryMainRowsInTimeboxedTx(
+      CREATOR_PNL_STATEMENT_TIMEOUT_MS,
+      async (query) => [
+        await query<PerUserRow[]>(perUserSql, creatorUserId),
+        await query<PerGameRow[]>(perGameSql, creatorUserId),
+      ] as const,
+    );
   } catch (e) {
     console.error("[creator-hub.creators.risk] core scan failed:", e);
     partial = true;

@@ -491,7 +491,7 @@ async function computeCapHitters(
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
         AND lt.type::text = 'deposit_bonus'
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
         AND ABS(lt.amount::numeric) = ${capLiteral}
         ${dateFilter}
       GROUP BY lt.user_id
@@ -1174,7 +1174,7 @@ export const getDepositBonusDepositSizeDistribution = makeCachedPair(
 
 export const getDepositBonusCapHitters = makeCachedPair(
   computeCapHitters,
-  "insights-rewards-deposit-bonus-impact-cap-hitters",
+  "insights-rewards-deposit-bonus-impact-cap-hitters-v2",
   DEPOSIT_BONUS_CACHE_TAGS,
 );
 

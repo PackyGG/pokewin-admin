@@ -1,5 +1,5 @@
 import { unstable_cache } from "next/cache";
-import { and, desc, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, desc, gte, inArray, isNotNull, not, sql } from "drizzle-orm";
 import { queryMainRows } from "@/lib/drizzle-query";
 import { adminDrizzle } from "@/lib/drizzle";
 import {
@@ -19,8 +19,8 @@ import {
   MANUAL_WD_DESC_PREFIX,
 } from "./_shared";
 import {
-  officialStreamAdjustmentSqlPredicate,
-  OFFICIAL_STREAM_ADJUSTMENT_CATEGORY,
+  statsExcludedAdjustmentSqlPredicate,
+  STATS_EXCLUDED_ADJUSTMENT_CATEGORY_KEYS,
 } from "@/lib/balance-adjustment-categories";
 
 /**
@@ -107,13 +107,9 @@ async function computeAuditTrail(
   const since =
     days !== null ? new Date(Date.now() - days * 86_400_000) : undefined;
 
-  // 1. Recent ledger adjustment rows (main DB) + total count.
-  // FAKE-BALANCE: exclude official_stream adjustments from this forensic
-  // feed (and its total) — owner-designated fake balance is hidden
-  // everywhere. `NOT (admin_balance_adjustment AND category=official_stream)`
-  // combined with the outer `type` filter leaves the non-official_stream
-  // adjustments.
-  const officialStreamPredicate = officialStreamAdjustmentSqlPredicate({
+  // 1. Recent ledger adjustment rows (main DB) + total count. Exclude both
+  // stats-hidden categories so every balance-adjustment lens reconciles.
+  const statsExcludedPredicate = statsExcludedAdjustmentSqlPredicate({
     typeColumn: "lt.type",
     metadataColumn: "lt.metadata",
   });
@@ -132,7 +128,7 @@ async function computeAuditTrail(
        WHERE lt.type::text = 'admin_balance_adjustment'
          AND lt.status::text = 'completed'
          AND ($1::timestamptz IS NULL OR lt.created_at >= $1::timestamptz)
-         AND NOT (${officialStreamPredicate})
+         AND NOT (${statsExcludedPredicate})
        ORDER BY lt.created_at DESC
        LIMIT $2`,
       since ?? null,
@@ -144,7 +140,7 @@ async function computeAuditTrail(
        WHERE lt.type::text = 'admin_balance_adjustment'
          AND lt.status::text = 'completed'
          AND ($1::timestamptz IS NULL OR lt.created_at >= $1::timestamptz)
-         AND NOT (${officialStreamPredicate})`,
+         AND NOT (${statsExcludedPredicate})`,
       since ?? null,
     ).then((rows) => Number(rows[0]?.count ?? 0)),
   ]);
@@ -183,7 +179,12 @@ async function computeAuditTrail(
           ]),
           isNotNull(admin_audit_events.admin_user_id),
           gte(admin_audit_events.created_at, auditLowerBound.toISOString()),
-          sql`COALESCE(${admin_audit_events.metadata}->>'category', '') <> ${OFFICIAL_STREAM_ADJUSTMENT_CATEGORY}`,
+          not(
+            inArray(
+              sql<string>`COALESCE(${admin_audit_events.metadata}->>'category', '')`,
+              [...STATS_EXCLUDED_ADJUSTMENT_CATEGORY_KEYS],
+            ),
+          ),
         ),
       )
       .orderBy(desc(admin_audit_events.created_at))
@@ -316,14 +317,14 @@ async function computeAuditTrail(
 const cached = unstable_cache(
   async (period: InsightsRewardsPeriod, limit: number) =>
     computeAuditTrail(period, limit),
-  ["insights-balance-adjustments-audit-trail-v1"],
+  ["insights-balance-adjustments-audit-trail-v2"],
   { revalidate: 60, tags: [...BALANCE_ADJ_CACHE_TAGS] },
 );
 
 const cachedLifetime = unstable_cache(
   async (period: InsightsRewardsPeriod, limit: number) =>
     computeAuditTrail(period, limit),
-  ["insights-balance-adjustments-audit-trail-lifetime-v1"],
+  ["insights-balance-adjustments-audit-trail-lifetime-v2"],
   { revalidate: 300, tags: [...BALANCE_ADJ_CACHE_TAGS] },
 );
 

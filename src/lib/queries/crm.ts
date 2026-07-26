@@ -4,13 +4,12 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { WAGER_TYPES_SQL, GAMING_PAYOUT_TYPES_SQL } from "@/lib/metrics";
-import { getCreatorSessionWindowsCte } from "./creator-session-windows";
 import {
-  realCustomersScopeSql,
-  BORROW_FILTER_CTES,
-  WAGER_NON_BORROW_FILTER,
-  PAYOUT_NON_BORROW_FILTER,
-} from "./insights-games/_shared";
+  PAYOUT_LEG_FILTER,
+  WAGER_LEG_FILTER,
+} from "@/lib/metrics/gaming-sql";
+import { getCreatorSessionWindowsCte } from "./creator-session-windows";
+import { realCustomersScopeSql } from "./insights-games/_shared";
 import { bucketCrmSnapshot, type CrmAggregateRow, type CrmSnapshot } from "./crm-types";
 
 // Types live in the engine-neutral ./crm-types (so the CH comparison layer can
@@ -42,16 +41,16 @@ export { bucketCrmSnapshot } from "./crm-types";
  *     (deposits ≥ $1k AND no activity in >30d) — the win-back alert list.
  *   • Top value players    — leaderboard by deposits with lifecycle + GGR.
  *
- * Per segment we also report house GGR (borrow-corrected gaming margin,
+ * Per segment we also report house GGR (canonical gaming margin,
  * customer scope) so each cohort's contribution is visible.
  *
  * Scope + model match the canonical /analytics surfaces exactly (via
- * `realCustomersScopeSql` + the borrow CTEs + `@/lib/metrics`): staff +
- * creators + blacklist dropped, borrow plays excluded on both wager and
- * payout sides. Read-only against MAIN (SELECT only).
+ * `realCustomersScopeSql` + `@/lib/metrics`): staff + creators + blacklist
+ * dropped, borrow plays counted at their net cash on both wager and payout
+ * sides, and reward packs excluded. Read-only against MAIN (SELECT only).
  *
- *   wager  = Σ|ledger WAGER_TYPES| (non-borrow) + upgrader_games.bet_amount
- *   payout = Σ inventory.value_at_obtained[pack|battle] (non-borrow)
+ *   wager  = Σ|ledger WAGER_TYPES| (net cash) + upgrader_games.bet_amount
+ *   payout = Σ inventory.value_at_obtained[pack|battle] (net cash)
  *          + Σ|GAMING_PAYOUT_TYPES| + upgrader_games.won_amount
  *   ggr    = wager − payout   (house POV: positive = house win)
  */
@@ -95,7 +94,6 @@ async function computeCrmRowsPg(anchor: Date): Promise<RawRow[]> {
 
   const rows = await queryMainRows<RawRow[]>(`
     WITH ${sessionWindowsCte},
-         ${BORROW_FILTER_CTES},
          deposit_src AS (
            SELECT lt.user_id,
                   ABS(lt.amount::numeric) AS deposits, 0::numeric AS withdrawals,
@@ -122,7 +120,7 @@ async function computeCrmRowsPg(anchor: Date): Promise<RawRow[]> {
            FROM ledger_transactions lt
            WHERE lt.status = 'completed' AND lt.type::text IN ${WAGER_TYPES_SQL}
              AND lt.user_id IN ${scope}
-             ${WAGER_NON_BORROW_FILTER}
+             AND ${WAGER_LEG_FILTER}
              ${notInSession("lt.user_id", "lt.created_at")}
              AND lt.created_at >= ${cutoff}
          ),
@@ -143,7 +141,7 @@ async function computeCrmRowsPg(anchor: Date): Promise<RawRow[]> {
            FROM user_inventory ui
            WHERE ui.source_type IN ('pack','battle')
              AND ui.user_id IN ${scope}
-             ${PAYOUT_NON_BORROW_FILTER}
+             AND ${PAYOUT_LEG_FILTER}
              ${notInSession("ui.user_id", "ui.obtained_at")}
              AND ui.obtained_at >= ${cutoff}
          )${

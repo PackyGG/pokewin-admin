@@ -64,10 +64,6 @@ async function computePerType(
   const db = await getDrizzleDb();
   const days = daysForInsightsPeriod(period);
   const dateClaims = daysAgoFilter("rc.claimed_at", days);
-  const dateSnapshots =
-    days !== null
-      ? sql`AND rls.period_start >= (NOW() - (${days} * INTERVAL '1 day'))::date`
-      : sql.raw("");
   const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Three parallel queries: per-type claim rollup + per-type entrant
@@ -95,10 +91,9 @@ async function computePerType(
         ${dateClaims}
       GROUP BY rc.race_type
     `),
-    // Entrant counts come from race_leaderboard_snapshots. We count each
-    // (user, race_type, period_start) as one entrant. The avg entrants
-    // per race = total entries / distinct races. Same staff + blacklist
-    // exclusion via JOIN to user.
+    // Scope snapshots to the exact race instances whose claims landed in the
+    // active window. Filtering on period_start incorrectly drops weekly and
+    // monthly races whose bucket began before a short 24h/3d window.
     queryRows<
       {
         race_type: string;
@@ -107,15 +102,24 @@ async function computePerType(
         distinct_entrants: string;
       }[]
     >(db, sql`
+      WITH races_in_window AS (
+        SELECT DISTINCT rc.race_type, rc.race_period_start
+        FROM race_claims rc
+        JOIN "user" u ON u.id = rc.user_id
+        WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
+          ${dateClaims}
+      )
       SELECT
         rls.race_type::text AS race_type,
         COUNT(DISTINCT (rls.period_start))::text AS distinct_races,
         COUNT(*)::text AS total_entries,
         COUNT(DISTINCT rls.user_id)::text AS distinct_entrants
       FROM race_leaderboard_snapshots rls
+      JOIN races_in_window ri
+        ON ri.race_type = rls.race_type
+       AND ri.race_period_start = rls.period_start
       JOIN "user" u ON u.id = rls.user_id
       WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
-        ${dateSnapshots}
       GROUP BY rls.race_type
     `),
     queryRows<{ race_type: string; total: string }[]>(db, sql`
@@ -207,14 +211,14 @@ async function computePerType(
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computePerType(period, blacklistIds),
-  ["insights-rewards-race-per-type-v1"],
+  ["insights-rewards-race-per-type-v2"],
   { revalidate: 60, tags: ["insights-rewards-race"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computePerType(period, blacklistIds),
-  ["insights-rewards-race-per-type-lifetime-v1"],
+  ["insights-rewards-race-per-type-lifetime-v2"],
   { revalidate: 300, tags: ["insights-rewards-race"] },
 );
 

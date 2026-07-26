@@ -117,7 +117,7 @@ export function windowDateFilterCappedTail(
 }
 
 /**
- * Resolved exclusion list — staff (admin / support) + dynamic blacklist
+ * Resolved exclusion list — staff (admin / support), creators, + dynamic blacklist
  * (`excluded_users` table). Returns the sorted id list so callers
  * participate in the cache key.
  */
@@ -127,7 +127,7 @@ export async function getResolvedBlacklist(): Promise<string[]> {
 }
 
 /**
- * AND-fragment that filters a user-id column down to non-staff +
+ * AND-fragment that filters a user-id column to non-staff, non-creator,
  * non-blacklisted users. Mirrors the inline patterns in
  * `rewards-category-analytics.ts`.
  *
@@ -140,7 +140,7 @@ export function staffAndBlacklistSubquery(
   subqueryColumn = "id",
 ): SQL {
   const tail = blacklistNotInSql(subqueryColumn, blacklistIds);
-  return sql`(SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${tail})`;
+  return sql`(SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${tail})`;
 }
 
 /** Cache TTL for a given period — re-exported for convenience. */

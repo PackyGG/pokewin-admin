@@ -3,8 +3,8 @@ import { unstable_cache } from "next/cache";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   getResolvedBlacklist,
-  staffAndBlacklistSubquery,
 } from "@/lib/queries/insights-rewards/deposit-bonus/_shared";
+import { realCustomerIdsSubquery } from "@/lib/queries/_blacklist";
 
 /**
  * Deposit-bonus tracker for /rewards/deposit-bonus.
@@ -116,7 +116,7 @@ type ScalarRow = {
 async function computeTracker(
   blacklistIds: string[],
 ): Promise<DepositBonusTracker> {
-  const userScope = staffAndBlacklistSubquery(blacklistIds);
+  const userScope = realCustomerIdsSubquery(blacklistIds);
 
   // ── Scalars: bonus + deposit rollups split by regime via the `cut` CTE.
   // Both legs are bounded to the last 90d (covers the old baseline window,
@@ -317,7 +317,7 @@ export type DepositBonusRecipient = {
 async function computeTopRecipients(
   blacklistIds: string[],
 ): Promise<DepositBonusRecipient[]> {
-  const userScope = staffAndBlacklistSubquery(blacklistIds);
+  const userScope = realCustomerIdsSubquery(blacklistIds);
   type Row = {
     user_id: string;
     username: string | null;

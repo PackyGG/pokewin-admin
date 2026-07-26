@@ -82,6 +82,7 @@ export async function getMyProfileData(adminUserId: string) {
     socials,
     account,
     referrals,
+    totalReferred,
     payouts,
     clickCount,
     affiliateConfigs,
@@ -161,6 +162,15 @@ export async function getMyProfileData(adminUserId: string) {
               created_at: Date | string;
             }>,
           ),
+      userId
+        ? db
+            .execute<{ total: string }>(sql`
+              SELECT COUNT(DISTINCT referred_user_id)::text AS total
+              FROM affiliate_code_usages
+              WHERE affiliate_user_id = ${userId}
+            `)
+            .then((result) => Number(result.rows[0]?.total ?? 0))
+        : Promise.resolve(0),
       userId
         ? db
             .execute<{
@@ -262,7 +272,7 @@ export async function getMyProfileData(adminUserId: string) {
     codeActive: mainUser.affiliate_code_active ?? false,
     level: affiliateLevel,
     linked: true,
-    totalReferred: referrals.length,
+    totalReferred,
     totalWagerVolumeUsd: account ? toNumber(account.total_wager_volume_usd) : 0,
     totalEarnedUsd: account ? toNumber(account.total_earned_usd) : 0,
     availableUsd: account ? toNumber(account.available_usd) : 0,

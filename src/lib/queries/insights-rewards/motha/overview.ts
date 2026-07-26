@@ -139,7 +139,7 @@ async function computeOverview(
         MAX(ABS(lt.amount::numeric))::text AS max_amount
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.user_id = ${mothaId}::uuid
+        AND lt.user_id = ${mothaId}
         AND lt.type::text IN ('creator_tip', 'battle_sponsorship')
         ${ledgerDateFilter}
     `),
@@ -151,7 +151,7 @@ async function computeOverview(
         COUNT(*)::text AS rain_cnt,
         MAX(ABS(rt.amount_usd::numeric))::text AS max_amount
       FROM rain_tips rt
-      WHERE rt.user_id = ${mothaId}::uuid
+      WHERE rt.user_id = ${mothaId}
         ${rainDateFilter}
     `),
   ]);
@@ -165,13 +165,13 @@ async function computeOverview(
       SELECT DATE(lt.created_at) AS d
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.user_id = ${mothaId}::uuid
+        AND lt.user_id = ${mothaId}
         AND lt.type::text IN ('creator_tip', 'battle_sponsorship')
         ${ledgerDateFilter}
       UNION
       SELECT DATE(rt.created_at) AS d
       FROM rain_tips rt
-      WHERE rt.user_id = ${mothaId}::uuid
+      WHERE rt.user_id = ${mothaId}
         ${rainDateFilter}
     ) days
   `);

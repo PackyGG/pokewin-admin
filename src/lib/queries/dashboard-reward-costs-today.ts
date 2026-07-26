@@ -360,7 +360,7 @@ async function rewardCostsTodayLinesFromPg(
                 queryDb,
                 `SELECT id, price::text AS price
                  FROM packs
-                 WHERE id = ANY($1::text[])`,
+                 WHERE id = ANY($1::uuid[])`,
                 [...packIds],
               )
             : Promise.resolve([] as Array<{ id: string; price: unknown }>),
@@ -369,7 +369,7 @@ async function rewardCostsTodayLinesFromPg(
                 queryDb,
                 `SELECT id, price::text AS price
                  FROM cards
-                 WHERE id = ANY($1::text[])`,
+                 WHERE id = ANY($1::uuid[])`,
                 [...cardIds],
               )
             : Promise.resolve([] as Array<{ id: string; price: unknown }>),

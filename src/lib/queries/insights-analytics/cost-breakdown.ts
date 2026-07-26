@@ -751,26 +751,21 @@ export async function getCostBreakdown(
   period: InsightsPeriod,
   periodLabel: string,
   contributorLimit = 10,
-  lifetimeLookbackDays?: number,
+  lifetimeLookbackDays = INSIGHTS_HUB_WAGER_LOOKBACK_DAYS,
 ): Promise<CostBreakdown> {
   const now = new Date();
-  // Lifetime ("all") normally has NO lower bound. When a caller passes
-  // `lifetimeLookbackDays` (the /insights hub does, = 365), bound the
+  // Lifetime ("all") is always bounded by `lifetimeLookbackDays` (365 by
+  // default), so the
   // lifetime window to `now − N days` so the heavy canonical reads
   // (getWindowMetrics / getDailyGamingMetrics / calculateWindowedPnl /
   // getBridgeTerms) never run an unbounded full-history scan — the same 365d
   // cap /ggr and insights-analytics/overview.ts apply. Finite periods are
-  // unaffected, and callers that omit the param keep the unbounded behaviour
-  // (so /insights/cost-breakdown is unchanged).
+  // unaffected.
   const cutoff =
-    period === "all" && lifetimeLookbackDays != null
+    period === "all"
       ? new Date(now.getTime() - lifetimeLookbackDays * MS_PER_DAY)
       : periodToCutoff(period, now);
-  // Canonical window: unbounded lifetime only when NOT capped; otherwise the
-  // cutoff (a finite period, or the capped lifetime lookback).
-  const window: MetricWindow = {
-    since: period === "all" && lifetimeLookbackDays == null ? null : cutoff,
-  };
+  const window: MetricWindow = { since: cutoff };
 
   const [excluded, creatorIds] = await Promise.all([
     getExcludedUserIds(),

@@ -234,7 +234,7 @@ async function hydrateRewards(rewards: RewardRow[]): Promise<RewardItem[]> {
     }[]>(
       `SELECT id, name, image_url, price::text AS price
        FROM packs
-       WHERE id = ANY($1::text[])`,
+       WHERE id = ANY($1::uuid[])`,
       allPackIds,
     );
     for (const pack of packs) {
@@ -286,7 +286,7 @@ export async function getRewards(params: {
       `SELECT id, slug, name, type::text AS type, level_required,
               cash_amount::text AS cash_amount,
               daily_unlock_percentage::text AS daily_unlock_percentage,
-              pack_ids, created_at
+              COALESCE(pack_ids, ARRAY[]::uuid[]) AS pack_ids, created_at
        FROM rewards
        WHERE ($1::text IS NULL OR type::text = $1)
          AND ($2::text IS NULL OR name ILIKE '%' || $2 || '%' OR slug ILIKE '%' || $2 || '%')
@@ -336,7 +336,7 @@ export async function getLevelUpRewards(params: {
       `SELECT id, slug, name, type::text AS type, level_required,
               cash_amount::text AS cash_amount,
               daily_unlock_percentage::text AS daily_unlock_percentage,
-              pack_ids, created_at
+              COALESCE(pack_ids, ARRAY[]::uuid[]) AS pack_ids, created_at
        FROM rewards
        WHERE level_required > 0
        ORDER BY level_required ASC

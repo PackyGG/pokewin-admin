@@ -1,6 +1,7 @@
 import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { drizzleForEnv } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 import {
@@ -58,8 +59,9 @@ export type SignupOverview = {
 async function computeOverview(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
+  env: DbEnv,
 ): Promise<SignupOverview> {
-  const db = await getDrizzleDb();
+  const db = drizzleForEnv(env);
   const days = daysForInsightsPeriod(period);
   const signupDateFilter = daysAgoFilter("u.created_at", days);
   const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
@@ -200,14 +202,14 @@ async function computeOverview(
 // moves second-to-second. Mirrors the cross-category-summary.ts pattern.
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeOverview(period, blacklistIds),
+    computeOverview(period, blacklistIds, "prod"),
   ["insights-rewards-signup-overview-v1"],
   { revalidate: 60, tags: [SIGNUP_CACHE_TAG] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeOverview(period, blacklistIds),
+    computeOverview(period, blacklistIds, "prod"),
   ["insights-rewards-signup-overview-lifetime-v1"],
   { revalidate: 300, tags: [SIGNUP_CACHE_TAG] },
 );
@@ -217,6 +219,8 @@ export async function getSignupOverview(
 ): Promise<SignupOverview> {
   const blacklist = await getExcludedUserIds();
   const sorted = [...blacklist].sort();
+  const env = await readDbEnv();
+  if (env !== "prod") return computeOverview(period, sorted, env);
   const data = await (cacheTtlForInsightsPeriod(period) >= 300
     ? cachedLong(period, sorted)
     : cachedShort(period, sorted));

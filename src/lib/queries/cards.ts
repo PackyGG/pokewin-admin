@@ -1,6 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { sql, type SQL } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { drizzleForEnv, getDrizzleDb } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import type { PaginatedResult } from "@/lib/types";
@@ -78,8 +79,9 @@ function buildCardsWhere(params: {
  */
 async function fetchCardsListCount(
   where: SQL,
+  env: DbEnv,
 ): Promise<number> {
-  const db = await getDrizzleDb();
+  const db = drizzleForEnv(env);
   const result = await db.execute<{ count: string }>(sql`
     SELECT COUNT(*)::text AS count FROM cards c ${where}
   `);
@@ -91,7 +93,7 @@ function getCardsListCount(
   cacheKey: string,
 ): Promise<number> {
   return unstable_cache(
-    () => fetchCardsListCount(where),
+    () => fetchCardsListCount(where, "prod"),
     ["cards-list-count-v1", cacheKey],
     { revalidate: 60, tags: ["cards-list-count"] },
   )();
@@ -119,7 +121,8 @@ export async function getCards(params: {
     sortBy = "created_at",
     sortOrder = "desc",
   } = params;
-  const db = await getDrizzleDb();
+  const env = await readDbEnv();
+  const db = drizzleForEnv(env);
 
   const where = buildCardsWhere({ search, rarity, setId, minPrice, maxPrice });
 
@@ -172,7 +175,9 @@ export async function getCards(params: {
       ORDER BY ${orderBy}
       LIMIT ${safePerPage} OFFSET ${(safePage - 1) * safePerPage}
     `).then((result) => result.rows),
-    getCardsListCount(where, countKey),
+    env === "prod"
+      ? getCardsListCount(where, countKey)
+      : fetchCardsListCount(where, env),
   ]);
 
   return {
@@ -329,8 +334,11 @@ export async function getCardInspector(
  * `getCardsListCount` / `getCardsStats`). Same COUNT, just memoised — the
  * surfaced number is unchanged, only fresher reads degrade to ≤60s lag.
  */
-async function fetchCardInventoryCount(id: string): Promise<number> {
-  const db = await getDrizzleDb();
+async function fetchCardInventoryCount(
+  id: string,
+  env: DbEnv,
+): Promise<number> {
+  const db = drizzleForEnv(env);
   const result = await db.execute<{ count: string }>(sql`
     SELECT COUNT(*)::text AS count
     FROM user_inventory
@@ -341,14 +349,15 @@ async function fetchCardInventoryCount(id: string): Promise<number> {
 
 function getCardInventoryCount(id: string): Promise<number> {
   return unstable_cache(
-    () => fetchCardInventoryCount(id),
+    () => fetchCardInventoryCount(id, "prod"),
     ["card-inventory-count-v1", id],
     { revalidate: 60, tags: ["card-inventory-count"] },
   )();
 }
 
 export async function getCardDetail(id: string) {
-  const db = await getDrizzleDb();
+  const env = await readDbEnv();
+  const db = drizzleForEnv(env);
   // Explicit `select` on the card columns. Everything named here is a
   // column present on EVERY card DB (original schema), so the typed
   // `findUnique` is safe on production and on older snapshots alike.
@@ -398,7 +407,9 @@ export async function getCardDetail(id: string) {
       WHERE c.id = ${id}::uuid
       GROUP BY c.id, s.name
     `),
-    getCardInventoryCount(id),
+    env === "prod"
+      ? getCardInventoryCount(id)
+      : fetchCardInventoryCount(id, env),
     // OnePiece game-design columns. Read on their own so a DB without the
     // cost/power migration (missing-column → 42703) degrades to
     // `null` here instead of crashing the detail page. Mirrors the
@@ -536,8 +547,11 @@ export async function getMoveDialogData(): Promise<MoveDialogData> {
  * Postgres hash-aggregate instead of the full row-scan-then-distinct
  * `findMany` would do. `"all"` is the catalog-wide sentinel for the cache key.
  */
-async function fetchRarities(setId?: string): Promise<(string | null)[]> {
-  const db = await getDrizzleDb();
+async function fetchRarities(
+  setId: string | undefined,
+  env: DbEnv,
+): Promise<(string | null)[]> {
+  const db = drizzleForEnv(env);
   const where =
     setId && setId !== "unassigned"
       ? sql`WHERE set_id = ${setId}::uuid`
@@ -551,8 +565,10 @@ async function fetchRarities(setId?: string): Promise<(string | null)[]> {
 }
 
 export async function getRarities(setId?: string): Promise<(string | null)[]> {
+  const env = await readDbEnv();
+  if (env !== "prod") return fetchRarities(setId, env);
   return unstable_cache(
-    () => fetchRarities(setId),
+    () => fetchRarities(setId, "prod"),
     ["cards-rarities-v1", setId ?? "all"],
     { revalidate: 60, tags: ["cards-rarities"] },
   )();
@@ -579,8 +595,11 @@ export type CardsStats = {
  * KPI strip is fine. Within a single request unstable_cache also
  * deduplicates so a Suspense fan-out only runs the query once.
  */
-async function fetchCardsStats(setId?: string): Promise<CardsStats> {
-  const db = await getDrizzleDb();
+async function fetchCardsStats(
+  setId: string | undefined,
+  env: DbEnv,
+): Promise<CardsStats> {
+  const db = drizzleForEnv(env);
   // When `setId` is provided, narrow every aggregate to that set so the
   // KPI strip + total count reflect the active per-set tab on /cards.
   // `totalSets` keeps the catalog-wide value either way — it's a meta
@@ -638,6 +657,8 @@ async function fetchCardsStats(setId?: string): Promise<CardsStats> {
 }
 
 export async function getCardsStats(setId?: string): Promise<CardsStats> {
+  const env = await readDbEnv();
+  if (env !== "prod") return fetchCardsStats(setId, env);
   // v3 cache key — `unstable_cache`'s keyParts array is the ONLY segment
   // key for cache slots; the function-arg list is NOT automatically mixed
   // into the key. v2 used a static one-string keyParts (["cards-list-stats-v2"]),
@@ -649,7 +670,7 @@ export async function getCardsStats(setId?: string): Promise<CardsStats> {
   // gives each set its own slot. `"all"` is the sentinel for the
   // catalog-wide aggregate.
   return unstable_cache(
-    () => fetchCardsStats(setId),
+    () => fetchCardsStats(setId, "prod"),
     ["cards-list-stats-v3", setId ?? "all"],
     { revalidate: 60, tags: ["cards-list-stats"] },
   )();

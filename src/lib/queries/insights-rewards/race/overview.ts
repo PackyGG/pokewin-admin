@@ -13,7 +13,7 @@ import {
  * Overview headline KPIs + daily prize chart for /insights/rewards/race.
  *
  * Source of truth is `race_claims` — one row per (user, race instance,
- * position) carrying `prize_amount_usd`. Staff + blacklist excluded via
+ * position) carrying `prize_amount_usd`. Staff, creators, and blacklist excluded via
  * the same join pattern the rest of the rewards-insights module uses.
  *
  * What the helper returns:
@@ -57,7 +57,7 @@ async function computeOverview(
   const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // One rollup query + one daily-series query in parallel. Both join to
-  // user for staff + blacklist exclusion, both sweep race_claims.
+  // user for canonical customer-scope exclusion, both sweep race_claims.
   const [rollupRows, dailyRows] = await Promise.all([
     queryRows<
       {
@@ -74,7 +74,7 @@ async function computeOverview(
         COUNT(*)::text AS winner_count
       FROM race_claims rc
       JOIN "user" u ON u.id = rc.user_id
-      WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
+      WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
         ${dateFilter}
     `),
     queryRows<
@@ -86,7 +86,7 @@ async function computeOverview(
         COUNT(*)::text AS cnt
       FROM race_claims rc
       JOIN "user" u ON u.id = rc.user_id
-      WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
+      WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
         ${dateFilter}
       GROUP BY DATE(rc.claimed_at)
       ORDER BY date ASC
@@ -123,14 +123,14 @@ async function computeOverview(
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeOverview(period, blacklistIds),
-  ["insights-rewards-race-overview-v1"],
+  ["insights-rewards-race-overview-v2"],
   { revalidate: 60, tags: ["insights-rewards-race"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeOverview(period, blacklistIds),
-  ["insights-rewards-race-overview-lifetime-v1"],
+  ["insights-rewards-race-overview-lifetime-v2"],
   { revalidate: 300, tags: ["insights-rewards-race"] },
 );
 

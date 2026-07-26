@@ -36,7 +36,7 @@ import {
  *
  * Lifetime windows have no prior frame → returns `null`.
  *
- * Source: `rakeback_claims` + `ledger_transactions`. Staff + blacklist
+ * Source: `rakeback_claims` + `ledger_transactions`. Staff, creators, and blacklist
  * excluded.
  */
 
@@ -102,7 +102,7 @@ async function computeLapsed(
       FROM rakeback_claims rc
       JOIN "user" u ON u.id = rc.user_id
       WHERE rc.claimed_at IS NOT NULL
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
         AND rc.claimed_at >= NOW() - (${days} * INTERVAL '1 day')
     ),
     prior_lapsed AS (
@@ -113,7 +113,7 @@ async function computeLapsed(
       FROM rakeback_claims rc
       JOIN "user" u ON u.id = rc.user_id
       WHERE rc.claimed_at IS NOT NULL
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
         AND rc.claimed_at >= NOW() - (${days * 2} * INTERVAL '1 day')
         AND rc.claimed_at < NOW() - (${days} * INTERVAL '1 day')
       GROUP BY rc.user_id
@@ -232,14 +232,14 @@ async function computeLapsed(
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeLapsed(period, blacklistIds),
-  ["insights-rewards-rakeback-lapsed-v1"],
+  ["insights-rewards-rakeback-lapsed-v2"],
   { revalidate: 60, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeLapsed(period, blacklistIds),
-  ["insights-rewards-rakeback-lapsed-lifetime-v1"],
+  ["insights-rewards-rakeback-lapsed-lifetime-v2"],
   { revalidate: 300, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );
 

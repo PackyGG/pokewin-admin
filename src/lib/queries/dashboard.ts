@@ -15,6 +15,10 @@ import {
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
+import {
+  adminInventoryRemovalDisposedSql,
+  adminVoucherRemovalClaimedSql,
+} from "./pnl";
 import { EMPTY_CREATOR_SESSION_WINDOWS_CTE } from "./creator-session-windows";
 // Canonical metric layer (single source of truth for GGR / wager / payout
 // / scope). The dashboard's headline GGR + the GGR breakdown popover are
@@ -1458,16 +1462,28 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
             WHERE obtained_at >= $1
               AND user_id IN (SELECT id FROM real_users)
               AND ${nonCreatorOwnerSql("user_id")}), 0)::text AS inv_obtained,
-          COALESCE((SELECT SUM(value_at_obtained::numeric) FROM user_inventory
-            WHERE (sold_at >= $1 OR exchanged_at >= $1)
-              AND user_id IN (SELECT id FROM real_users)
-              AND ${nonCreatorOwnerSql("user_id")}), 0)::text AS inv_disposed,
+          (
+            COALESCE((SELECT SUM(value_at_obtained::numeric) FROM user_inventory
+              WHERE (sold_at >= $1 OR exchanged_at >= $1)
+                AND user_id IN (SELECT id FROM real_users)
+                AND ${nonCreatorOwnerSql("user_id")}), 0)
+            + ${adminInventoryRemovalDisposedSql(
+              "$1",
+              `lt.user_id IN (SELECT id FROM real_users) AND ${nonCreatorOwnerSql("lt.user_id")}`,
+            )}
+          )::text AS inv_disposed,
           COALESCE((SELECT SUM(value::numeric) FROM vouchers
             WHERE created_at >= $1
               AND user_id IN (SELECT id FROM real_users)), 0)::text AS vch_issued,
-          COALESCE((SELECT SUM(value::numeric) FROM vouchers
-            WHERE claimed_at >= $1
-              AND user_id IN (SELECT id FROM real_users)), 0)::text AS vch_claimed
+          (
+            COALESCE((SELECT SUM(value::numeric) FROM vouchers
+              WHERE claimed_at >= $1
+                AND user_id IN (SELECT id FROM real_users)), 0)
+            + ${adminVoucherRemovalClaimedSql(
+              "$1",
+              "lt.user_id IN (SELECT id FROM real_users)",
+            )}
+          )::text AS vch_claimed
       `, periodCutoff),
     ),
     // Lifetime + 24h + 7d deposit transaction counts in one indexed
@@ -2314,12 +2330,11 @@ async function ggrTopContributorsForCutoff(
   >(db, `
     WITH ${sessionWindowsCte},
     real_users AS (
-      -- Staff (admin/support) + blacklist dropped; creators KEPT (their
-      -- on-session rows are removed per-row in the legs below). Role list
-      -- matches @/lib/metrics/scope STAFF_ROLES.
+      -- Match the headline GGR population exactly: staff, creators, and the
+      -- admin-managed blacklist are all excluded wholesale.
       SELECT u.id, u.username
       FROM "user" u
-      WHERE u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
+      WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
     ),
     non_borrow_pack_sessions AS (
       SELECT game_session_id FROM ledger_transactions

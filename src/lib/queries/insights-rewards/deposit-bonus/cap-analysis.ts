@@ -176,7 +176,12 @@ async function computeCapAnalysis(
         )
         SELECT
           LEAST(${HISTOGRAM_BUCKETS - 1},
-                FLOOR(amt / NULLIF(${capLiteral} / ${HISTOGRAM_BUCKETS}, 0))
+                FLOOR(
+                  amt / NULLIF(
+                    ${capLiteral}::numeric / ${HISTOGRAM_BUCKETS}::numeric,
+                    0::numeric
+                  )
+                )
           )::int AS bucket,
           COUNT(*)::text AS cnt,
           COALESCE(SUM(amt), 0)::text AS volume

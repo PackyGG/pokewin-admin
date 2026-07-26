@@ -88,7 +88,7 @@ async function compute(
   >(db, sql`
     WITH usage_agg AS (
       SELECT
-        acu.code,
+        UPPER(acu.code) AS code,
         acu.affiliate_user_id,
         COUNT(DISTINCT acu.referred_user_id) AS signups,
         COUNT(DISTINCT acu.referred_user_id) FILTER (WHERE acu.deposit_amount_usd::numeric > 0) AS depositors,
@@ -98,16 +98,16 @@ async function compute(
       FROM affiliate_code_usages acu
       WHERE acu.status = 'completed'
         ${acuDate}
-      GROUP BY acu.code, acu.affiliate_user_id
+      GROUP BY UPPER(acu.code), acu.affiliate_user_id
     ),
     click_agg AS (
       SELECT
-        ac.code,
+        UPPER(ac.code) AS code,
         COUNT(*) AS clicks
       FROM affiliate_clicks ac
       WHERE 1 = 1
         ${clickDate}
-      GROUP BY ac.code
+      GROUP BY UPPER(ac.code)
     )
     SELECT
       ua.code,
@@ -122,7 +122,7 @@ async function compute(
     FROM usage_agg ua
     LEFT JOIN click_agg ca ON ca.code = ua.code
     JOIN "user" u ON u.id = ua.affiliate_user_id
-    WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
+    WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
     ORDER BY COALESCE(ua.total_wager, 0) DESC, ua.signups DESC
     LIMIT ${ROW_LIMIT}
   `);
@@ -152,13 +152,13 @@ async function compute(
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     compute(period, blacklistIds),
-  ["insights-affiliate-code-perf-v1-short"],
+  ["insights-affiliate-code-perf-v2-short"],
   { revalidate: 60, tags: [CACHE_TAG, "rewards-analytics"] },
 );
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     compute(period, blacklistIds),
-  ["insights-affiliate-code-perf-v1-long"],
+  ["insights-affiliate-code-perf-v2-long"],
   { revalidate: 300, tags: [CACHE_TAG, "rewards-analytics"] },
 );
 

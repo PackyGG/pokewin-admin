@@ -10,6 +10,8 @@ import {
   type MetricWindow,
 } from "@/lib/metrics/queries";
 import { getMetricsScope } from "@/lib/metrics/scope";
+import { GGR_LIFETIME_LOOKBACK_DAYS } from "@/lib/metrics/ggr-window";
+import { MS_PER_DAY } from "@/lib/utils/time";
 
 // SQL fragment builder for user_id filtering on the secondary
 // `ledger_transactions` display aggregates (pack/battle wager tiles,
@@ -48,14 +50,20 @@ function utcStartOfDay(): Date {
 
 /**
  * Convert an analytics `Period` to a metric-window `since` Date for the
- * canonical `@/lib/metrics` builders. `all` → null (lifetime, no lower
- * bound). `today` uses the UTC start-of-day boundary (see `utcStartOfDay`);
+ * canonical `@/lib/metrics` builders. `all` uses the canonical bounded
+ * lifetime lookback. `today` uses the UTC start-of-day boundary;
  * the other windows are rolling N-day from `now` — matching
  * `periodToDateFilter` exactly so the canonical and ledger-aggregate
  * windows agree.
  */
 function periodToMetricWindow(period: Period): MetricWindow {
-  if (period === "all") return { since: null };
+  if (period === "all") {
+    return {
+      since: new Date(
+        Date.now() - GGR_LIFETIME_LOOKBACK_DAYS * MS_PER_DAY,
+      ),
+    };
+  }
   if (period === "today") return { since: utcStartOfDay() };
   const days = parseDays(period);
   return { since: new Date(Date.now() - days * 24 * 60 * 60 * 1000) };
@@ -76,7 +84,7 @@ function periodToDateFilter(period: Period): string {
     case "90d":
       return "AND created_at >= NOW() - INTERVAL '90 days'";
     case "all":
-      return "";
+      return `AND created_at >= NOW() - INTERVAL '${GGR_LIFETIME_LOOKBACK_DAYS} days'`;
   }
 }
 
@@ -97,7 +105,7 @@ function battleSinceFragment(period: Period): string {
     case "90d":
       return `{col} >= NOW() - INTERVAL '${parseDays(period)} days'`;
     case "all":
-      return "";
+      return `{col} >= NOW() - INTERVAL '${GGR_LIFETIME_LOOKBACK_DAYS} days'`;
   }
 }
 
@@ -194,10 +202,11 @@ async function computeAnalyticsData(
   // the user table (rather than on `user_id IN (subquery)`). Empty
   // string when nothing is blacklisted.
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
-  // Same filter, but without the leading "AND " because it'll be the only WHERE condition
-  // Exclude battles created by admin/creator (support counts as normal user)
-  const battleStaffExcl = `user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
-  const battleStaffExclAliased = `b.user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
+  // Battle metadata uses the same canonical customer population as the money
+  // aggregates: staff, creators, and the dynamic blacklist are all excluded.
+  const battleCustomerIds = `(SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn})`;
+  const battleStaffExcl = `user_id IN ${battleCustomerIds}`;
+  const battleStaffExclAliased = `b.user_id IN ${battleCustomerIds}`;
 
   // `today` anchors at midnight UTC of the current calendar day (matching
   // `periodToDateFilter` / `periodToMetricWindow`); the other windows are
@@ -652,13 +661,13 @@ async function computeAnalyticsData(
  */
 const cachedAnalyticsData = unstable_cache(
   computeAnalyticsData,
-  ["analytics-data-v1"],
+  ["analytics-data-v2"],
   { revalidate: 60, tags: ["analytics"] },
 );
 
 const cachedAnalyticsDataLifetime = unstable_cache(
   computeAnalyticsData,
-  ["analytics-data-lifetime-v1"],
+  ["analytics-data-lifetime-v2"],
   { revalidate: 300, tags: ["analytics"] },
 );
 
@@ -703,8 +712,9 @@ async function computePackAndBattleStats(
 ): Promise<{ battleStats: BattleModeStats; packStats: PackPopularityStats }> {
   const dateFilter = periodToDateFilter(period);
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
-  const battleStaffExcl = `user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
-  const battleStaffExclAliased = `b.user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
+  const battleCustomerIds = `(SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn})`;
+  const battleStaffExcl = `user_id IN ${battleCustomerIds}`;
+  const battleStaffExclAliased = `b.user_id IN ${battleCustomerIds}`;
   // `today` anchors at midnight UTC of the current calendar day, matching
   // the page's other "today" predicates (see `battleSinceFragment`).
   const battleSinceClause = battleSinceFragment(period);
@@ -853,13 +863,13 @@ async function computePackAndBattleStats(
  */
 const cachedPackAndBattleStats = unstable_cache(
   computePackAndBattleStats,
-  ["analytics-pack-battle-stats-v1"],
+  ["analytics-pack-battle-stats-v2"],
   { revalidate: 60, tags: ["analytics"] },
 );
 
 const cachedPackAndBattleStatsLifetime = unstable_cache(
   computePackAndBattleStats,
-  ["analytics-pack-battle-stats-lifetime-v1"],
+  ["analytics-pack-battle-stats-lifetime-v2"],
   { revalidate: 300, tags: ["analytics"] },
 );
 

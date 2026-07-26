@@ -152,8 +152,9 @@ export async function getBattleDrilldown(
       packs = await queryMainRows<PackRow[]>(
         `SELECT id::text AS id, name, image_url, price::text AS price
          FROM packs
-         WHERE id = ANY(ARRAY[${packIds.map((id) => `'${id}'::uuid`).join(",")}])
+         WHERE id = ANY($1::uuid[])
          ORDER BY price DESC`,
+        packIds,
       );
     }
 

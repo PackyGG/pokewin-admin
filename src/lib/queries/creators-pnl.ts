@@ -1,4 +1,4 @@
-import { queryMainRows } from "@/lib/drizzle-query";
+import { queryMainRowsInTimeboxedTx } from "@/lib/drizzle-query";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "./_blacklist";
 import { WITHDRAWAL_LIABILITY_STATUSES } from "./pnl";
@@ -185,6 +185,7 @@ const LIFETIME_LOOKBACK_INTERVAL = `INTERVAL '${LIFETIME_LOOKBACK_DAYS} days'`;
 // leaks to other pool users). The app-level safeQuery wrapper around the
 // panel uses a matching budget so it doesn't cut the populating scan off
 // early. Genuine failures still surface; the happy path now completes.
+export const CREATOR_PNL_STATEMENT_TIMEOUT_MS = 55_000;
 
 // "Withdrawn unit" derived table: emits one row per value-unit (card
 // OR session-linked voucher) leaving the house via a
@@ -513,11 +514,15 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
   // per deposit row per scan instead of six times across the call), so the
   // total stays well within the raised budget — and after the first run the
   // 5-min cache serves every subsequent load.
-  const [perUserRows, cardWdHeadlineRows, lifetimeRows] = await Promise.all([
-    queryMainRows<PerUserPeriodRow[]>(perUserSql, userId),
-    queryMainRows<PeriodCardWdRow[]>(cardWdHeadlineSql, userId),
-    queryMainRows<LifetimeRow[]>(lifetimeSql, userId),
-  ]);
+  const [perUserRows, cardWdHeadlineRows, lifetimeRows] =
+    await queryMainRowsInTimeboxedTx(
+      CREATOR_PNL_STATEMENT_TIMEOUT_MS,
+      async (query) => [
+        await query<PerUserPeriodRow[]>(perUserSql, userId),
+        await query<PeriodCardWdRow[]>(cardWdHeadlineSql, userId),
+        await query<LifetimeRow[]>(lifetimeSql, userId),
+      ] as const,
+    );
 
   return assemble(perUserRows, cardWdHeadlineRows, lifetimeRows);
 }

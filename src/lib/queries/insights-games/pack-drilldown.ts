@@ -455,7 +455,7 @@ export async function getPackDrilldown(
          FROM pulls p
          JOIN cards c ON c.id = p.card_id
          GROUP BY c.id, c.name, c.image_url, c.price
-         ORDER BY pulls::bigint DESC, total_value::numeric DESC
+         ORDER BY COUNT(*) DESC, COALESCE(SUM(p.value), 0) DESC
          LIMIT 15`,
       ),
       // 4) Borrow vs non-borrow split — every pack-opening ledger row

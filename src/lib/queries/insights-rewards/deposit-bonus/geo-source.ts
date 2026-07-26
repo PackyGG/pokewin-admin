@@ -65,7 +65,7 @@ async function computeGeoSource(
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
         AND lt.type::text = 'deposit_bonus'
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
         ${dateFilter}
       GROUP BY COALESCE(u.country_code, '??')
       ORDER BY SUM(ABS(lt.amount::numeric)) DESC
@@ -80,7 +80,7 @@ async function computeGeoSource(
         JOIN "user" u ON u.id = lt.user_id
         WHERE lt.status = 'completed'
           AND lt.type::text = 'deposit_bonus'
-          AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+          AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
           ${dateFilter}
       ),
       primary_provider AS (
@@ -107,7 +107,7 @@ async function computeGeoSource(
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
         AND lt.type::text = 'deposit_bonus'
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
         ${dateFilter}
     `),
   ]);
@@ -144,14 +144,14 @@ async function computeGeoSource(
 const cachedGeoSource = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeGeoSource(period, blacklistIds),
-  ["insights-rewards-deposit-bonus-geo-source-v1"],
+  ["insights-rewards-deposit-bonus-geo-source-v2"],
   { revalidate: 60, tags: [...DEPOSIT_BONUS_CACHE_TAGS] },
 );
 
 const cachedGeoSourceLifetime = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeGeoSource(period, blacklistIds),
-  ["insights-rewards-deposit-bonus-geo-source-lifetime-v1"],
+  ["insights-rewards-deposit-bonus-geo-source-lifetime-v2"],
   { revalidate: 300, tags: [...DEPOSIT_BONUS_CACHE_TAGS] },
 );
 

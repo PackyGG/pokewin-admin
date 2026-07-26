@@ -14,9 +14,12 @@ import {
   type GamesPeriod,
   periodCutoffSqlCapped,
   realCustomersScopeSql,
-  BORROW_FILTER_CTES,
 } from "./_shared";
-import { REWARD_PACK_SESSIONS } from "@/lib/metrics/gaming-sql";
+import { GAMING_PAYOUT_TYPES_SQL } from "@/lib/metrics";
+import {
+  PAYOUT_LEG_FILTER,
+  WAGER_LEG_FILTER,
+} from "@/lib/metrics/gaming-sql";
 import { ratioToPct } from "./_metrics";
 
 /**
@@ -24,17 +27,13 @@ import { ratioToPct } from "./_metrics";
  * battles + upgrader for the selected period.
  *
  * Wager side (CANONICAL gaming legs — agrees with @/lib/metrics):
- *   • pack_opening → only NON-BORROW opens count, AND reward/daily packs
+ *   • pack_opening → borrow opens count at net cash, while reward/daily packs
  *     (`packs.pack_type='reward'`, ≈$0) are EXCLUDED — they are a house
  *     giveaway tracked in /insights/rewards (daily-packs.ts), not gaming.
- *     The reward-pack session set is the shared `REWARD_PACK_SESSIONS`
- *     predicate from `@/lib/metrics/gaming-sql` (same join daily-packs.ts
- *     uses) so this surface drops the exact same opens.
- *   • battle_bet → borrow-gated by its game_session (borrowed battles
- *     drop on both wager + payout sides).
+ *   • battle_bet → borrow battles count at the net-cash ledger amount.
  *   • battle_sponsorship → counted DIRECTLY, with NO borrow gate. Its
  *     ledger rows have `game_session_id = NULL`, so the
- *     `game_session_id IN (non_borrow_battle_sessions)` gate silently
+ *     old non-borrow session gate silently
  *     DROPPED every sponsorship row (NULL IN (...) → NULL → excluded) —
  *     the bug that made the headline GGR omit sponsorship while the
  *     dashboard "Total Wager" tile counted it. All sponsored battles are
@@ -46,9 +45,11 @@ import { ratioToPct } from "./_metrics";
  *     (verified source of truth). No borrow concept on upgrader.
  *
  * Payout side:
- *   • Cards delivered from non-borrow pack/battle opens — the
+ *   • Cards delivered from pack/battle opens — the
  *     `value_at_obtained` is the realised value at the moment the
  *     row entered inventory (already net of any borrow auto-resale).
+ *   • Battle cash/voucher legs — completed `battle_refund` and
+ *     `battle_excess_to_voucher` ledger rows.
  *   • Upgrader payouts — `upgrader_games.won_amount` (gross payout
  *     on a win, 0 on a loss).
  *
@@ -161,8 +162,8 @@ export async function getGamesOverview(
     type SeriesRow = { bucket: string; wager: string; payout: string };
 
     // Two parallel queries: KPI aggregate + day/hour buckets for the
-    // chart. Both use the same scope + borrow filters so the totals
-    // and the chart agree.
+    // chart. Both use the same canonical scope + gaming-leg filters so
+    // the totals and the chart agree.
     //
     // The session_windows CTE comes from getCreatorSessionWindowsCte
     // (cached for 5 minutes — same as dashboard) and is appended in
@@ -173,63 +174,42 @@ export async function getGamesOverview(
         // ── Wager side (KPIs) — pack + battle only (upgrader is sourced
         //    from upgrader_games in the payout query below) ──
         queryMainRows<KpiRow[]>(
-          `WITH ${sessionWindowsCte},
-                ${BORROW_FILTER_CTES}
+          `WITH ${sessionWindowsCte}
            SELECT
              COALESCE(SUM(CASE
                WHEN lt.type::text = 'pack_opening'
-                    AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
-                    AND (lt.game_session_id IS NULL OR lt.game_session_id NOT IN ${REWARD_PACK_SESSIONS})
-                    AND NOT EXISTS (
-                      SELECT 1 FROM session_windows sw
-                      WHERE sw.uid = lt.user_id
-                        AND lt.created_at >= sw.win_start
-                        AND lt.created_at <  sw.win_end
-                    )
                THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS pack_wager,
              COALESCE(SUM(CASE
-               WHEN (
-                      (lt.type::text = 'battle_bet'
-                       AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
-                      OR lt.type::text = 'battle_sponsorship'
-                    )
-                    AND NOT EXISTS (
-                      SELECT 1 FROM session_windows sw
-                      WHERE sw.uid = lt.user_id
-                        AND lt.created_at >= sw.win_start
-                        AND lt.created_at <  sw.win_end
-                    )
+               WHEN lt.type::text IN ('battle_bet','battle_sponsorship')
                THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
-             COALESCE(SUM(CASE
-               WHEN lt.type::text = 'pack_opening'
-                    AND (lt.game_session_id IS NULL OR lt.game_session_id NOT IN ${REWARD_PACK_SESSIONS})
-               THEN 1 ELSE 0 END), 0)::text AS pack_plays,
+             COALESCE(SUM(CASE WHEN lt.type::text = 'pack_opening' THEN 1 ELSE 0 END), 0)::text AS pack_plays,
              COALESCE(SUM(CASE WHEN lt.type::text IN ('battle_bet','battle_sponsorship') THEN 1 ELSE 0 END), 0)::text AS battle_plays
            FROM ledger_transactions lt
            WHERE lt.status = 'completed'
              AND lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship')
              AND lt.user_id IN ${scope}
+             AND ${WAGER_LEG_FILTER}
+             AND NOT EXISTS (
+               SELECT 1 FROM session_windows sw
+               WHERE sw.uid = lt.user_id
+                 AND lt.created_at >= sw.win_start
+                 AND lt.created_at <  sw.win_end
+             )
              ${ltCutoff}`,
         ),
         // ── Payout side (KPIs) ──
-        // packs + battles: inventory rows from non-borrow sessions
-        // (the borrowed portion is already auto-resold so
-        // value_at_obtained is net keep). upgrader: bet_amount +
+        // packs + battles: inventory rows at their net obtained value, plus
+        // the battle refund/voucher ledger legs. upgrader: bet_amount +
         // won_amount + play count from `upgrader_games` (the canonical
         // upgrader source — it is NOT booked to the ledger).
         queryMainRows<PayoutRow[]>(
-          `WITH ${sessionWindowsCte},
-                ${BORROW_FILTER_CTES}
+          `WITH ${sessionWindowsCte}
            SELECT
              (
                SELECT COALESCE(SUM(ui.value_at_obtained::numeric), 0)::text
                FROM user_inventory ui
                WHERE ui.source_type = 'pack'
-                 AND ui.source_id IN (SELECT game_session_id FROM non_borrow_pack_sessions)
-                 -- Drop reward/daily-pack won cards (Fix 2) so the giveaway
-                 -- is not counted as a gaming payout — keyed on source_id
-                 -- (the originating game_session_id).
-                 AND (ui.source_id IS NULL OR ui.source_id NOT IN ${REWARD_PACK_SESSIONS})
+                 AND ${PAYOUT_LEG_FILTER}
                  AND ui.user_id IN ${scope}
                  AND NOT EXISTS (
                    SELECT 1 FROM session_windows sw
@@ -240,20 +220,36 @@ export async function getGamesOverview(
                  ${uiCutoff}
              ) AS pack_payout,
              (
-               SELECT COALESCE(SUM(ui.value_at_obtained::numeric), 0)::text
-               FROM user_inventory ui
-               WHERE ui.source_type = 'battle'
-                 AND ui.source_id IN (SELECT game_session_id FROM non_borrow_battle_sessions)
-                 AND (ui.source_id IS NULL OR ui.source_id NOT IN ${REWARD_PACK_SESSIONS})
-                 AND ui.user_id IN ${scope}
-                 AND NOT EXISTS (
-                   SELECT 1 FROM session_windows sw
-                   WHERE sw.uid = ui.user_id
-                     AND ui.obtained_at >= sw.win_start
-                     AND ui.obtained_at <  sw.win_end
-                 )
-                 ${uiCutoff}
-             ) AS battle_payout,
+               COALESCE((
+                 SELECT SUM(ui.value_at_obtained::numeric)
+                 FROM user_inventory ui
+                 WHERE ui.source_type = 'battle'
+                   AND ${PAYOUT_LEG_FILTER}
+                   AND ui.user_id IN ${scope}
+                   AND NOT EXISTS (
+                     SELECT 1 FROM session_windows sw
+                     WHERE sw.uid = ui.user_id
+                       AND ui.obtained_at >= sw.win_start
+                       AND ui.obtained_at <  sw.win_end
+                   )
+                   ${uiCutoff}
+               ), 0)
+               +
+               COALESCE((
+                 SELECT SUM(ABS(lt.amount::numeric))
+                 FROM ledger_transactions lt
+                 WHERE lt.status = 'completed'
+                   AND lt.type::text IN ${GAMING_PAYOUT_TYPES_SQL}
+                   AND lt.user_id IN ${scope}
+                   AND NOT EXISTS (
+                     SELECT 1 FROM session_windows sw
+                     WHERE sw.uid = lt.user_id
+                       AND lt.created_at >= sw.win_start
+                       AND lt.created_at <  sw.win_end
+                   )
+                   ${ltCutoff}
+               ), 0)
+             )::text AS battle_payout,
              (
                SELECT COALESCE(SUM(ug.bet_amount::numeric), 0)::text
                FROM upgrader_games ug
@@ -304,12 +300,7 @@ export async function getGamesOverview(
              FROM ledger_transactions lt
              WHERE lt.status = 'completed'
                AND lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship')
-               -- Reward/daily-pack opens are not gaming (Fix 2) — a user
-               -- whose only activity is a reward pack is not a gaming
-               -- customer, so drop those pack_opening rows here too.
-               AND (lt.type::text <> 'pack_opening'
-                    OR lt.game_session_id IS NULL
-                    OR lt.game_session_id NOT IN ${REWARD_PACK_SESSIONS})
+               AND ${WAGER_LEG_FILTER}
                AND lt.user_id IN ${scope}
                AND NOT EXISTS (
                  SELECT 1 FROM session_windows sw
@@ -334,8 +325,7 @@ export async function getGamesOverview(
         // ── Series: pack + battle wagers and payouts ──
         queryMainRows<SeriesRow[]>(
           `WITH ${sessionWindowsCte},
-                ${BORROW_FILTER_CTES},
-                wager_src AS (
+           wager_src AS (
              SELECT lt.created_at AS ts,
                     ABS(lt.amount::numeric) AS wager,
                     0::numeric AS payout
@@ -343,13 +333,7 @@ export async function getGamesOverview(
              WHERE lt.status = 'completed'
                AND lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship')
                AND lt.user_id IN ${scope}
-               AND (
-                 (lt.type::text = 'pack_opening'
-                  AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
-                  AND (lt.game_session_id IS NULL OR lt.game_session_id NOT IN ${REWARD_PACK_SESSIONS}))
-                 OR (lt.type::text = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
-                 OR lt.type::text = 'battle_sponsorship'
-               )
+               AND ${WAGER_LEG_FILTER}
                AND NOT EXISTS (
                  SELECT 1 FROM session_windows sw
                  WHERE sw.uid = lt.user_id
@@ -365,11 +349,7 @@ export async function getGamesOverview(
              FROM user_inventory ui
              WHERE ui.source_type IN ('pack','battle')
                AND ui.user_id IN ${scope}
-               AND (
-                 (ui.source_type = 'pack' AND ui.source_id IN (SELECT game_session_id FROM non_borrow_pack_sessions))
-                 OR (ui.source_type = 'battle' AND ui.source_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
-               )
-               AND (ui.source_id IS NULL OR ui.source_id NOT IN ${REWARD_PACK_SESSIONS})
+               AND ${PAYOUT_LEG_FILTER}
                AND NOT EXISTS (
                  SELECT 1 FROM session_windows sw
                  WHERE sw.uid = ui.user_id
@@ -377,11 +357,31 @@ export async function getGamesOverview(
                    AND ui.obtained_at <  sw.win_end
                )
                ${uiCutoff}
+           ),
+           ledger_payout_src AS (
+             SELECT lt.created_at AS ts,
+                    0::numeric AS wager,
+                    ABS(lt.amount::numeric) AS payout
+             FROM ledger_transactions lt
+             WHERE lt.status = 'completed'
+               AND lt.type::text IN ${GAMING_PAYOUT_TYPES_SQL}
+               AND lt.user_id IN ${scope}
+               AND NOT EXISTS (
+                 SELECT 1 FROM session_windows sw
+                 WHERE sw.uid = lt.user_id
+                   AND lt.created_at >= sw.win_start
+                   AND lt.created_at <  sw.win_end
+               )
+               ${ltCutoff}
            )
            SELECT ${seriesBucketExpr} AS bucket,
                   COALESCE(SUM(src.wager), 0)::text AS wager,
                   COALESCE(SUM(src.payout), 0)::text AS payout
-           FROM (SELECT * FROM wager_src UNION ALL SELECT * FROM payout_src) src
+           FROM (
+             SELECT * FROM wager_src
+             UNION ALL SELECT * FROM payout_src
+             UNION ALL SELECT * FROM ledger_payout_src
+           ) src
            GROUP BY ${seriesBucketExpr}
            ORDER BY 1`,
         ),

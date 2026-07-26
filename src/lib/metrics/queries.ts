@@ -30,7 +30,6 @@ import {
 } from "./formulas";
 import { getMetricsScope } from "./scope";
 import {
-  REWARD_PACK_SESSIONS,
   WAGER_LEG_FILTER,
   PAYOUT_LEG_FILTER,
 } from "./gaming-sql";
@@ -98,8 +97,8 @@ function sinceClause(column: string, since: Date | null): string {
 
 // ─── Reward-pack exclusion fragments (borrow-net-inclusive) ──────────
 //
-// The pure SQL fragments (`REWARD_PACK_SESSIONS`) and the composed
-// wager/payout predicates (`WAGER_LEG_FILTER` / `PAYOUT_LEG_FILTER`) live
+// The composed wager/payout predicates
+// (`WAGER_LEG_FILTER` / `PAYOUT_LEG_FILTER`) live
 // in the client-safe `./gaming-sql` module so the pure `__checks__` can
 // assert their shape without the DB. On the borrow-net-INCLUSIVE basis
 // (owner decision, 2026-06-13 — see gaming-sql.ts):
@@ -827,12 +826,7 @@ export async function getDailyGamingMetrics(
            --    game_session_id=NULL and all sponsored battles are
            --    borrow_percentage=0.
            COALESCE(SUM(CASE WHEN type::text IN ${WAGER_TYPES_SQL}
-             AND (
-               (type::text = 'pack_opening'
-                AND (game_session_id IS NULL OR game_session_id NOT IN ${REWARD_PACK_SESSIONS}))
-               OR type::text = 'battle_bet'
-               OR type::text = 'battle_sponsorship'
-             )
+             AND ${WAGER_LEG_FILTER}
              THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS wager,
            -- GAMING_PAYOUT_TYPES = battle_refund + battle_excess_to_voucher
            -- (both battle-win settlement legs; field name kept for the

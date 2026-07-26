@@ -2,6 +2,7 @@ import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { unstable_cache } from "next/cache";
 import { sql, type SQL } from "drizzle-orm";
 import {
+  drizzleForEnv,
   getDrizzleDb,
   getDevDrizzleDb,
   getProdDrizzleDb,
@@ -401,8 +402,9 @@ export type PacksListStats = {
 
 async function fetchPacksListStats(
   set: PackSetFilter,
+  env: DbEnv,
 ): Promise<PacksListStats> {
-  const db = await getDrizzleDb();
+  const db = drizzleForEnv(env);
 
   // Build the pool predicate from the PACK-LEVEL admin assignments: a pack
   // counts toward the set it's assigned to; any pack without an assignment
@@ -466,13 +468,15 @@ async function fetchPacksListStats(
 export async function getPacksListStats(
   set: PackSetFilter = "pokemon",
 ): Promise<PacksListStats> {
+  const env = await readDbEnv();
+  if (env !== "prod") return fetchPacksListStats(set, env);
   // `set` is mixed into keyParts per call: unstable_cache does NOT fold
   // function args into the cache key automatically, so a single static
   // key would let the per-set aggregates collide (the first to land would
   // serve all — the exact stale-cache bug fixed on getCardsStats). Pack-set
   // assignment changes bust this slot via revalidateTag("packs-list-stats").
   return unstable_cache(
-    () => fetchPacksListStats(set),
+    () => fetchPacksListStats(set, "prod"),
     ["packs-list-stats-v4", set],
     { revalidate: 60, tags: ["packs-list-stats"] },
   )();

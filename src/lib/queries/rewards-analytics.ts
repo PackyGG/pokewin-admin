@@ -377,7 +377,7 @@ export async function getRewardsAnalytics(
         ${dateFilter}
       GROUP BY u.id, u.username, u.image
       HAVING SUM(CASE WHEN ${rewardRowPredicate("lt")} THEN ABS(lt.amount::numeric) ELSE 0 END) > 0
-      ORDER BY total DESC
+      ORDER BY SUM(CASE WHEN ${rewardRowPredicate("lt")} THEN ABS(lt.amount::numeric) ELSE 0 END) DESC
       LIMIT ${TOP_RECIPIENTS_LIMIT}
     `),
   ]);

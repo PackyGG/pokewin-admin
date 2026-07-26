@@ -70,8 +70,8 @@ async function computeSetsList(
         : sql`s.name DESC`
       : field === "release_date"
         ? order === "asc"
-          ? sql`s.release_date ASC`
-          : sql`s.release_date DESC`
+          ? sql`s.release_date ASC NULLS LAST`
+          : sql`s.release_date DESC NULLS LAST`
         : order === "asc"
           ? sql`s.created_at ASC`
           : sql`s.created_at DESC`;

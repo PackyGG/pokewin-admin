@@ -6,13 +6,12 @@ import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { WAGER_TYPES_SQL, GAMING_PAYOUT_TYPES_SQL } from "@/lib/metrics";
-import { getCreatorSessionWindowsCte } from "./creator-session-windows";
 import {
-  realCustomersScopeSql,
-  BORROW_FILTER_CTES,
-  WAGER_NON_BORROW_FILTER,
-  PAYOUT_NON_BORROW_FILTER,
-} from "./insights-games/_shared";
+  PAYOUT_LEG_FILTER,
+  WAGER_LEG_FILTER,
+} from "@/lib/metrics/gaming-sql";
+import { getCreatorSessionWindowsCte } from "./creator-session-windows";
+import { realCustomersScopeSql } from "./insights-games/_shared";
 
 /**
  * Top-performers leaderboards for /analytics Top Performers tab —
@@ -20,7 +19,7 @@ import {
  *
  * Six leaderboards:
  *   • top_depositors  — sum of completed deposit ledger rows in period
- *   • top_wagerers    — canonical borrow-corrected wager (pack + battle +
+ *   • top_wagerers    — canonical net-cash wager (pack + battle +
  *                       sponsorship from the ledger, upgrader from
  *                       `upgrader_games`)
  *   • top_losers      — highest house P&L against the user = canonical
@@ -35,11 +34,11 @@ import {
  * CANONICAL MODEL (matches analytics.ts / dashboard / /ggr / insights-
  * games via `@/lib/metrics`):
  *   • wager  = Σ|ledger WAGER_TYPES| (pack_opening / battle_bet /
- *              battle_sponsorship), borrow plays dropped, PLUS
+ *              battle_sponsorship), borrow plays counted at net cash, PLUS
  *              `upgrader_games.bet_amount` (upgrader is NOT in the ledger).
  *   • payout = Σ `user_inventory.value_at_obtained` for source pack/battle
  *              (the dominant pack/battle payout — cards the user KEPT,
- *              borrow plays dropped) + Σ|battle_refund| (the only ledger
+ *              borrow plays counted at net cash) + Σ|battle_refund| (the ledger
  *              cash gaming-payout leg) + `upgrader_games.won_amount`.
  *   • Card conversions (card_sale / card_exchange / voucher↔balance) are
  *              NEUTRAL — value the user already owns changing form — and
@@ -48,7 +47,7 @@ import {
  *
  * Scope (every user-level / country leaderboard): real customers only
  * (admin / support / creator dropped + admin blacklist), borrow plays
- * excluded on BOTH the wager and payout side, creator-on-stream rows
+ * counted at net cash on BOTH the wager and payout side, creator-on-stream rows
  * dropped via the `session_windows` CTE — `realCustomersScopeSql` already
  * drops every creator wholesale, so the session-window filter is a
  * belt-and-suspenders match to the rest of the canonical surfaces and
@@ -175,8 +174,8 @@ async function computeTopWagerers(
   const ugCutoff =
     days !== null ? `AND ug.created_at >= NOW() - INTERVAL '${days} days'` : "";
 
-  // Borrow-corrected canonical wager: ledger WAGER_TYPES (non-borrow,
-  // non-on-stream) + upgrader_games.bet_amount.
+  // Canonical wager: ledger WAGER_TYPES at net cash (reward packs and
+  // creator-on-stream rows excluded) + upgrader_games.bet_amount.
   const rows = await queryRows<
     {
       user_id: string;
@@ -186,14 +185,13 @@ async function computeTopWagerers(
     }[]
   >(db, `
     WITH ${sessionWindowsCte},
-         ${BORROW_FILTER_CTES},
          wager_src AS (
            SELECT lt.user_id, ABS(lt.amount::numeric) AS amount
            FROM ledger_transactions lt
            WHERE lt.status = 'completed'
              AND lt.type::text IN ${WAGER_TYPES_SQL}
              AND lt.user_id IN ${scope}
-             ${WAGER_NON_BORROW_FILTER}
+             AND ${WAGER_LEG_FILTER}
              AND NOT EXISTS (
                SELECT 1 FROM session_windows sw
                WHERE sw.uid = lt.user_id
@@ -269,8 +267,8 @@ async function getUserGamingPnl(
   const ugCutoff =
     days !== null ? `AND ug.created_at >= NOW() - INTERVAL '${days} days'` : "";
 
-  // wager  = ledger WAGER_TYPES (non-borrow, non-on-stream) + upgrader bet
-  // payout = inventory keep (pack/battle, non-borrow, non-on-stream)
+  // wager  = ledger WAGER_TYPES at net cash (reward packs/non-on-stream) + upgrader bet
+  // payout = inventory keep at net cash (pack/battle, reward packs/non-on-stream)
   //          + |battle_refund| (the ledger cash gaming-payout leg)
   //          + upgrader won_amount
   // Card conversions are NEUTRAL → never on the payout side.
@@ -284,7 +282,6 @@ async function getUserGamingPnl(
     }[]
   >(db, `
     WITH ${sessionWindowsCte},
-         ${BORROW_FILTER_CTES},
          wager_src AS (
            SELECT lt.user_id,
                   ABS(lt.amount::numeric) AS wager,
@@ -293,7 +290,7 @@ async function getUserGamingPnl(
            WHERE lt.status = 'completed'
              AND lt.type::text IN ${WAGER_TYPES_SQL}
              AND lt.user_id IN ${scope}
-             ${WAGER_NON_BORROW_FILTER}
+             AND ${WAGER_LEG_FILTER}
              AND NOT EXISTS (
                SELECT 1 FROM session_windows sw
                WHERE sw.uid = lt.user_id
@@ -325,7 +322,7 @@ async function getUserGamingPnl(
            FROM user_inventory ui
            WHERE ui.source_type IN ('pack','battle')
              AND ui.user_id IN ${scope}
-             ${PAYOUT_NON_BORROW_FILTER}
+             AND ${PAYOUT_LEG_FILTER}
              AND NOT EXISTS (
                SELECT 1 FROM session_windows sw
                WHERE sw.uid = ui.user_id
@@ -520,7 +517,6 @@ async function computeTopCountries(
     }[]
   >(db, `
     WITH ${sessionWindowsCte},
-         ${BORROW_FILTER_CTES},
          wager_src AS (
            SELECT lt.user_id,
                   ABS(lt.amount::numeric) AS wager,
@@ -529,7 +525,7 @@ async function computeTopCountries(
            WHERE lt.status = 'completed'
              AND lt.type::text IN ${WAGER_TYPES_SQL}
              AND lt.user_id IN ${scope}
-             ${WAGER_NON_BORROW_FILTER}
+             AND ${WAGER_LEG_FILTER}
              AND NOT EXISTS (
                SELECT 1 FROM session_windows sw
                WHERE sw.uid = lt.user_id
@@ -561,7 +557,7 @@ async function computeTopCountries(
            FROM user_inventory ui
            WHERE ui.source_type IN ('pack','battle')
              AND ui.user_id IN ${scope}
-             ${PAYOUT_NON_BORROW_FILTER}
+             AND ${PAYOUT_LEG_FILTER}
              AND NOT EXISTS (
                SELECT 1 FROM session_windows sw
                WHERE sw.uid = ui.user_id
@@ -617,7 +613,7 @@ async function computeTopCountries(
 /**
  * Cross-request cache for the six Top-performers leaderboards. `/analytics`
  * → Top tab re-runs on every 5-minute `AutoRefresh` tick for every viewer;
- * without a shared cache each heavy borrow-corrected wager / per-user P&L /
+ * without a shared cache each heavy canonical wager / per-user P&L /
  * per-country GGR scan re-ran per tick per viewer. Each board gets a 60s
  * (finite window) + 300s (lifetime) `unstable_cache` pair keyed on `(period,
  * sortedBlacklist)`. The compute functions fetch their canonical scope

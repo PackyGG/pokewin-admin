@@ -1,3 +1,5 @@
+import { sql } from "drizzle-orm";
+
 import { getDrizzleDb, type MainDrizzleDb } from "@/lib/db";
 import {
   decodePostgresRows,
@@ -51,4 +53,53 @@ export async function queryMainDecodedRows<T>(
   decoder: PostgresDecoder<T>,
 ): Promise<T[]> {
   return queryDecodedRows(await getDrizzleDb(), query, values, decoder);
+}
+
+/** A `$n`-style MAIN read bound to one transaction's connection. */
+export type TxQuery = <T extends Record<string, unknown>[]>(
+  query: string,
+  ...values: readonly unknown[]
+) => Promise<T>;
+
+/** Upper bound for a raised per-statement budget, as a sanity guard. */
+const MAX_STATEMENT_TIMEOUT_MS = 120_000;
+
+/**
+ * Run trusted MAIN reads on one connection in a READ ONLY transaction with a
+ * raised per-statement timeout. `SET LOCAL` reverts automatically at commit.
+ */
+export async function queryRowsInTimeboxedTx<T>(
+  db: MainDrizzleDb,
+  statementTimeoutMs: number,
+  run: (query: TxQuery) => Promise<T>,
+): Promise<T> {
+  if (
+    !Number.isInteger(statementTimeoutMs) ||
+    statementTimeoutMs <= 0 ||
+    statementTimeoutMs > MAX_STATEMENT_TIMEOUT_MS
+  ) {
+    throw new Error(
+      `Invalid raised statement timeout: ${statementTimeoutMs}ms (expected an integer in 1..${MAX_STATEMENT_TIMEOUT_MS})`,
+    );
+  }
+
+  return db.transaction(async (tx) => {
+    await tx.execute(sql.raw("SET TRANSACTION READ ONLY"));
+    await tx.execute(
+      sql.raw(`SET LOCAL statement_timeout = ${statementTimeoutMs}`),
+    );
+    return run((query, ...values) => queryRows(tx, query, ...values));
+  });
+}
+
+/** Request-scoped variant for callers outside `unstable_cache` callbacks. */
+export async function queryMainRowsInTimeboxedTx<T>(
+  statementTimeoutMs: number,
+  run: (query: TxQuery) => Promise<T>,
+): Promise<T> {
+  return queryRowsInTimeboxedTx(
+    await getDrizzleDb(),
+    statementTimeoutMs,
+    run,
+  );
 }

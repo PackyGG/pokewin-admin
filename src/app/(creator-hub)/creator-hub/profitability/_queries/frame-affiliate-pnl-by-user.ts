@@ -3,12 +3,13 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 
 import { drizzleForEnv } from "@/lib/db";
-import { queryRows } from "@/lib/drizzle-query";
+import { queryRowsInTimeboxedTx } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 import {
   COVERING_CREATOR_SQL,
+  CREATOR_PNL_STATEMENT_TIMEOUT_MS,
   WITHDRAWN_UNITS_SQL,
 } from "@/lib/queries/creators-pnl";
 import { toNumber } from "@/lib/utils/decimal";
@@ -201,14 +202,19 @@ const cachedFramePnl = (
           LEFT JOIN wd w ON w.creator_id = f.cid
           LEFT JOIN claims cl ON cl.creator_id = f.cid`;
 
-      const rows = await queryRows<
-          {
-            creator_id: string;
-            deposits: string;
-            card_withdrawals: string;
-            affiliate_claims: string;
-          }[]
-        >(db, sql, ...params);
+      const rows = await queryRowsInTimeboxedTx(
+        db,
+        CREATOR_PNL_STATEMENT_TIMEOUT_MS,
+        (query) =>
+          query<
+            {
+              creator_id: string;
+              deposits: string;
+              card_withdrawals: string;
+              affiliate_claims: string;
+            }[]
+          >(sql, ...params),
+      );
 
       return rows.map((r) => {
         const deposits = toNumber(r.deposits);

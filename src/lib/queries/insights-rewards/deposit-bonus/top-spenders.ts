@@ -83,7 +83,7 @@ async function computeTopSpenders(
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
         AND lt.type::text = 'deposit_bonus'
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
         ${dateFilter}
       GROUP BY lt.user_id
       ORDER BY SUM(ABS(lt.amount::numeric)) DESC
@@ -167,14 +167,14 @@ async function computeTopSpenders(
 const cachedTopSpenders = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeTopSpenders(period, blacklistIds),
-  ["insights-rewards-deposit-bonus-top-spenders-v1"],
+  ["insights-rewards-deposit-bonus-top-spenders-v2"],
   { revalidate: 60, tags: [...DEPOSIT_BONUS_CACHE_TAGS] },
 );
 
 const cachedTopSpendersLifetime = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeTopSpenders(period, blacklistIds),
-  ["insights-rewards-deposit-bonus-top-spenders-lifetime-v1"],
+  ["insights-rewards-deposit-bonus-top-spenders-lifetime-v2"],
   { revalidate: 300, tags: [...DEPOSIT_BONUS_CACHE_TAGS] },
 );
 

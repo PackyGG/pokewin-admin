@@ -2,6 +2,7 @@ import { queryMainRows } from "@/lib/drizzle-query";
 import { adminDrizzle } from "@/lib/drizzle";
 import { admin_users } from "@/lib/db-schema/admin/schema";
 import { toNumber } from "@/lib/utils/decimal";
+import { isUuid } from "@/lib/utils/ids";
 import type { PaginatedResult } from "@/lib/types";
 
 export type RainListItem = {
@@ -32,8 +33,7 @@ export async function getRains(params: {
   const perPage = Math.max(1, Math.min(200, Math.floor(params.perPage ?? 20)));
   const status = params.status && params.status !== "all" ? params.status : null;
   const search = params.search?.trim() || null;
-  const searchId =
-    search && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(search) ? search : null;
+  const searchId = search && isUuid(search) ? search : null;
   const numberOrNull = (value: number | undefined) =>
     value != null && Number.isFinite(value) ? value : null;
   type RainRow = {

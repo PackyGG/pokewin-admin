@@ -4,7 +4,6 @@ import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
-import { WAGER_TYPES_SQL } from "@/lib/metrics/ledger-sets";
 
 export type TopPack24hRow = {
   id: string;
@@ -334,16 +333,13 @@ async function computePackProfitability(
       }[]
     >(db, `
       WITH battle_wager AS (
-        -- Battle wager per pack: each participant's battle_bet /
-        -- battle_sponsorship ledger row (their ACTUAL cash stake across all
+        -- Battle wager per pack: each participant's battle_bet plus direct
+        -- battle_sponsorship ledger rows (their ACTUAL cash stake across all
         -- real participants, NOT just the creator's bet_amount), joined to
-        -- its battle via battle_participants.game_session_id, then split
+        -- the battle via session or metadata, then split
         -- EVENLY across the packs on that battle (a 2-pack battle = half the
         -- stake per pack) so multi-pack battles don't double-count a pack's
-        -- slice. WAGER_TYPES_SQL is the canonical @/lib/metrics set; the
-        -- battle_participants join restricts it to the battle members
-        -- (pack_opening rows never match a participant session). Non-borrow
-        -- battles only.
+        -- slice. Non-borrow battles only.
         SELECT
           pid::uuid AS pack_id,
           bp.battle_id,
@@ -352,7 +348,19 @@ async function computePackProfitability(
         JOIN battle_participants bp ON bp.game_session_id = lt.game_session_id
         JOIN battles b ON b.id = bp.battle_id
         CROSS JOIN LATERAL UNNEST(b.pack_ids::uuid[]) AS pid
-        WHERE lt.type::text IN ${WAGER_TYPES_SQL} AND lt.status = 'completed'
+        WHERE lt.type::text = 'battle_bet' AND lt.status = 'completed'
+          AND COALESCE(b.borrow_percentage, 0) = 0
+          AND lt.user_id IN ${realCustomers}
+          ${ltWhere}
+        UNION ALL
+        SELECT
+          pid::uuid AS pack_id,
+          b.id AS battle_id,
+          ABS(lt.amount::numeric) / GREATEST(array_length(b.pack_ids, 1), 1) AS wager
+        FROM ledger_transactions lt
+        JOIN battles b ON b.id = (lt.metadata->>'battle_id')::uuid
+        CROSS JOIN LATERAL UNNEST(b.pack_ids::uuid[]) AS pid
+        WHERE lt.type::text = 'battle_sponsorship' AND lt.status = 'completed'
           AND COALESCE(b.borrow_percentage, 0) = 0
           AND lt.user_id IN ${realCustomers}
           ${ltWhere}
@@ -449,13 +457,13 @@ async function computePackProfitability(
  */
 const cachedPackProfitability = unstable_cache(
   computePackProfitability,
-  ["analytics-pack-profitability-v1"],
+  ["analytics-pack-profitability-v2"],
   { revalidate: 60, tags: ["analytics"] },
 );
 
 const cachedPackProfitabilityLifetime = unstable_cache(
   computePackProfitability,
-  ["analytics-pack-profitability-lifetime-v1"],
+  ["analytics-pack-profitability-lifetime-v2"],
   { revalidate: 300, tags: ["analytics"] },
 );
 

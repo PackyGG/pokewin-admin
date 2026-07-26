@@ -64,7 +64,7 @@ async function compute(
     FROM affiliate_code_usages acu
     JOIN "user" u ON u.id = acu.affiliate_user_id
     WHERE acu.status = 'completed'
-      AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+      AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
       ${acuDate}
     GROUP BY acu.affiliate_user_id
     HAVING SUM(acu.wager_amount_usd::numeric) > 0
@@ -73,10 +73,10 @@ async function compute(
   `);
   if (topAffiliates.length === 0) return [];
 
-  // Inline-quote the affiliate id list — safe because it came from our
-  // own DB query above (already an array of strings).
+  // Bind the affiliate id list as text: these user-id columns are text,
+  // not UUIDs.
   const affiliateIdsSql = sql.join(
-    topAffiliates.map((affiliate) => sql`${affiliate.affiliate_user_id}::uuid`),
+    topAffiliates.map((affiliate) => sql`${affiliate.affiliate_user_id}`),
     sql`, `,
   );
 
@@ -116,7 +116,12 @@ async function compute(
         c.affiliate_user_id,
         c.referred_user_id,
         COUNT(lt.id) AS deposit_count,
-        MIN(ABS(lt.amount::numeric)) FILTER (WHERE lt.amount IS NOT NULL) AS first_deposit_proxy
+        (
+          ARRAY_AGG(
+            ABS(lt.amount::numeric)
+            ORDER BY lt.created_at ASC, lt.id ASC
+          ) FILTER (WHERE lt.id IS NOT NULL)
+        )[1] AS first_deposit
       FROM cohort c
       LEFT JOIN ledger_transactions lt
         ON lt.user_id = c.referred_user_id
@@ -130,7 +135,7 @@ async function compute(
         COUNT(DISTINCT d.referred_user_id) AS referred_active,
         COUNT(DISTINCT d.referred_user_id) FILTER (WHERE d.deposit_count >= 1) AS depositors,
         COUNT(DISTINCT d.referred_user_id) FILTER (WHERE d.deposit_count >= 2) AS repeat_depositors,
-        AVG(d.first_deposit_proxy) FILTER (WHERE d.deposit_count >= 1) AS avg_first_deposit
+        AVG(d.first_deposit) FILTER (WHERE d.deposit_count >= 1) AS avg_first_deposit
       FROM deposits_per_user d
       GROUP BY d.affiliate_user_id
     )
@@ -171,13 +176,13 @@ async function compute(
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     compute(period, blacklistIds),
-  ["insights-affiliate-cohort-v1-short"],
+  ["insights-affiliate-cohort-v2-short"],
   { revalidate: 60, tags: [CACHE_TAG, "rewards-analytics"] },
 );
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     compute(period, blacklistIds),
-  ["insights-affiliate-cohort-v1-long"],
+  ["insights-affiliate-cohort-v2-long"],
   { revalidate: 300, tags: [CACHE_TAG, "rewards-analytics"] },
 );
 

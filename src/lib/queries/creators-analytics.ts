@@ -3,7 +3,7 @@ import { getDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { realCustomerIdsSubquery } from "./_blacklist";
+import { blacklistNotInClause } from "./_blacklist";
 import type { AffiliateAnalyticsData } from "./creators-types";
 
 type Period = "today" | "7d" | "30d" | "90d" | "all";
@@ -37,7 +37,8 @@ async function computeAffiliateAnalytics(
 ): Promise<AffiliateAnalyticsData> {
   const queryDb = await getDrizzleDb();
   const dateFilter = periodToDateFilter(period);
-  const referredScope = realCustomerIdsSubquery(excluded);
+  const blacklistIdNotIn = blacklistNotInClause("id", excluded);
+  const referredScope = `(SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn})`;
   const referredFilter = `AND referred_user_id IN ${referredScope}`;
 
   const [signupsAgg, payoutsAgg, usagesAgg, clicksAgg, activeCreators, dailyUsages, dailyClicks] =
@@ -152,13 +153,13 @@ async function computeAffiliateAnalytics(
  */
 const cachedAffiliateAnalytics = unstable_cache(
   computeAffiliateAnalytics,
-  ["creators-affiliate-analytics-v1"],
+  ["creators-affiliate-analytics-v2"],
   { revalidate: 60, tags: ["creators-analytics"] },
 );
 
 const cachedAffiliateAnalyticsLifetime = unstable_cache(
   computeAffiliateAnalytics,
-  ["creators-affiliate-analytics-lifetime-v1"],
+  ["creators-affiliate-analytics-lifetime-v2"],
   { revalidate: 300, tags: ["creators-analytics"] },
 );
 

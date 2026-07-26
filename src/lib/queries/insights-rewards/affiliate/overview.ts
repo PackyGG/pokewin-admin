@@ -86,6 +86,15 @@ async function compute(
   const blacklistSub = blacklistNotInSql("id", blacklistIds);
 
   const chartDays = ctx.days === null ? MAX_CHART_DAYS : Math.min(ctx.days, MAX_CHART_DAYS);
+  const chartBucketCount = ctx.days === null ? chartDays + 1 : ctx.days + 1;
+  const chartLtDate =
+    ctx.days === null
+      ? sql`AND lt.created_at >= NOW() - (${chartDays} * INTERVAL '1 day')`
+      : ctx.dateFilterFor("lt.created_at");
+  const chartAcuDate =
+    ctx.days === null
+      ? sql`AND acu.created_at >= NOW() - (${chartDays} * INTERVAL '1 day')`
+      : ctx.dateFilterFor("acu.created_at");
 
   const [claimRollup, usageRollup, dailyClaim, dailyWager] = await Promise.all([
     // Affiliate reward ledger rollup — affiliate_claim (commission) AND
@@ -138,7 +147,7 @@ async function compute(
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
         AND lt.type::text = 'affiliate_claim'
-        AND lt.created_at >= NOW() - (${chartDays} * INTERVAL '1 day')
+        ${chartLtDate}
         AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistSub})
       GROUP BY 1
       ORDER BY 1 ASC
@@ -151,7 +160,7 @@ async function compute(
         COALESCE(SUM(acu.wager_amount_usd::numeric), 0)::text AS wager
       FROM affiliate_code_usages acu
       WHERE acu.status = 'completed'
-        AND acu.created_at >= NOW() - (${chartDays} * INTERVAL '1 day')
+        ${chartAcuDate}
         ${blacklistNotInSql("acu.affiliate_user_id", blacklistIds)}
       GROUP BY 1
       ORDER BY 1 ASC
@@ -176,11 +185,13 @@ async function compute(
   const commissionPctOfWager =
     downstreamWager > 0 ? (totalCommissionPaid / downstreamWager) * 100 : null;
 
-  // Zero-fill the date axis.
+  // Zero-fill every UTC date touched by the rolling window. A 24-hour window
+  // spans today plus a partial prior day, so finite windows intentionally have
+  // `days + 1` buckets and reconcile exactly with the KPI cutoff.
   const axis: string[] = [];
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
-  for (let i = chartDays - 1; i >= 0; i--) {
+  for (let i = chartBucketCount - 1; i >= 0; i--) {
     const d = new Date(today);
     d.setUTCDate(d.getUTCDate() - i);
     axis.push(d.toISOString().split("T")[0]);
@@ -228,13 +239,13 @@ async function compute(
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     compute(period, blacklistIds),
-  ["insights-affiliate-overview-v2-short"],
+  ["insights-affiliate-overview-v3-short"],
   { revalidate: 60, tags: [CACHE_TAG, "rewards-analytics"] },
 );
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     compute(period, blacklistIds),
-  ["insights-affiliate-overview-v2-long"],
+  ["insights-affiliate-overview-v3-long"],
   { revalidate: 300, tags: [CACHE_TAG, "rewards-analytics"] },
 );
 

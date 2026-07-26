@@ -139,10 +139,9 @@ export async function getGamesTopUsers(
     if (includeOnPacks) wagerTypes.push("'pack_opening'");
     if (includeOnBattles) wagerTypes.push("'battle_bet'", "'battle_sponsorship'");
     if (includeOnKeno) wagerTypes.push("'keno_bet'");
-    // Defensive: an empty types tuple is unreachable for the pack/battle
-    // filters but a one-char placeholder keeps SQL well-formed when the
-    // filter is upgrader-only (ledger wager arm contributes nothing then).
-    const wagerTypeIn = wagerTypes.length > 0 ? wagerTypes.join(", ") : "''";
+    const wagerTypePredicate = wagerTypes.length > 0
+      ? `AND lt.type::text IN (${wagerTypes.join(", ")})`
+      : "AND false";
 
     const wagerSrcPredicates: string[] = [];
     if (includeOnPacks) {
@@ -177,7 +176,9 @@ export async function getGamesTopUsers(
     const invSourceTypes: string[] = [];
     if (includeOnPacks) invSourceTypes.push("'pack'");
     if (includeOnBattles) invSourceTypes.push("'battle'");
-    const invSourceIn = invSourceTypes.length > 0 ? invSourceTypes.join(", ") : "''";
+    const invSourcePredicate = invSourceTypes.length > 0
+      ? `AND ui.source_type::text IN (${invSourceTypes.join(", ")})`
+      : "AND false";
     const invPredicates: string[] = [];
     if (includeOnPacks) {
       invPredicates.push(
@@ -225,7 +226,7 @@ export async function getGamesTopUsers(
                   1::int AS play
            FROM ledger_transactions lt
            WHERE lt.status = 'completed'
-             AND lt.type IN (${wagerTypeIn})
+             ${wagerTypePredicate}
              AND lt.user_id IN ${scope}
              ${wagerOrPredicate}
              AND NOT EXISTS (
@@ -242,7 +243,8 @@ export async function getGamesTopUsers(
                   ui.value_at_obtained::numeric AS payouts,
                   0::int AS play
            FROM user_inventory ui
-           WHERE ui.source_type IN (${invSourceIn})
+           WHERE 1 = 1
+             ${invSourcePredicate}
              AND ui.user_id IN ${scope}
              ${invOrPredicate}
              AND NOT EXISTS (

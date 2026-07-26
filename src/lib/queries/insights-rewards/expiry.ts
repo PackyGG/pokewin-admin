@@ -163,7 +163,7 @@ async function fetchWindows(): Promise<{
       enabled: boolean;
     }[]
   >(db, sql`
-    SELECT type::text AS type, display_name, ${expSelect}, enabled
+    SELECT type::text AS type, display_name, ${sql.raw(expSelect)}, enabled
     FROM rakeback_config
     ORDER BY CASE type::text
       WHEN 'daily' THEN 1 WHEN 'weekly' THEN 2 WHEN 'monthly' THEN 3 ELSE 4 END
