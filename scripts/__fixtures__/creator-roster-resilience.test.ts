@@ -25,6 +25,49 @@ test("creator list surfaces share the retained roster cache", () => {
   assert.match(cache, /count\(\*\)::int/);
 });
 
+test("all creator backend read families fall back to canonical PostgreSQL", () => {
+  const creators = read("src/lib/backend-api/creators.ts");
+  const leaderboards = read(
+    "src/lib/backend-api/affiliate-leaderboards.ts",
+  );
+  const postgres = read("src/lib/backend-api/postgres-reads.ts");
+
+  for (const fallback of [
+    "listCreatorsFromPostgres",
+    "listCreatorDealsFromPostgres",
+    "getCreatorDealFromPostgres",
+    "listCreatorSessionsFromPostgres",
+    "listPendingConversionsFromPostgres",
+    "listCreatorSocialsFromPostgres",
+    "getCreatorApiKeyStatusFromPostgres",
+  ]) {
+    assert.match(creators, new RegExp(fallback));
+  }
+  assert.match(leaderboards, /listAffiliateLeaderboardsFromPostgres/);
+  assert.match(leaderboards, /getAffiliateLeaderboardFromPostgres/);
+
+  for (const table of [
+    "creator_deals",
+    "creator_stream_sessions",
+    "creator_session_pending_conversions",
+    "creator_socials",
+    "affiliate_leaderboards",
+    "affiliate_leaderboard_prize_tiers",
+  ]) {
+    assert.match(postgres, new RegExp(table));
+  }
+});
+
+test("legacy antifraud notifications leave the segment host explicitly", () => {
+  const page = read(
+    "src/app/(antifraud)/antifraud/notifications/page.tsx",
+  );
+
+  assert.match(page, /hrefFrom\(resolveAppHost\(host\)/);
+  assert.match(page, /"\/system\/staff-notifications"/);
+  assert.doesNotMatch(page, /redirect\("\/system\/staff-notifications"\)/);
+});
+
 test("idempotent backend reads retry bounded transient failures", () => {
   const client = read("src/lib/backend-api/client.ts");
 

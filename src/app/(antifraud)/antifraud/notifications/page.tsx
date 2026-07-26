@@ -1,5 +1,7 @@
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { hrefFrom, resolveAppHost } from "@/lib/app-hosts";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 
 /**
@@ -9,5 +11,8 @@ import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
  */
 export default async function LegacyAntifraudNotificationsPage() {
   await requireAntifraudPageAccess();
-  redirect("/system/staff-notifications");
+  const host = (await headers()).get("host") ?? "";
+  redirect(
+    hrefFrom(resolveAppHost(host), "/system/staff-notifications"),
+  );
 }

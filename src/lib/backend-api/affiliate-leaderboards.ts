@@ -1,6 +1,10 @@
 import "server-only";
 
 import { backendApi } from "./client";
+import {
+  getAffiliateLeaderboardFromPostgres,
+  listAffiliateLeaderboardsFromPostgres,
+} from "./postgres-reads";
 
 export type ApprovalStatus = "pending" | "approved" | "rejected";
 
@@ -122,10 +126,19 @@ function adminHeaders(adminUserId: string): Record<string, string> {
 }
 
 export const affiliateLeaderboardsApi = {
-  list: (query: ListQuery = {}) =>
-    backendApi
-      .get<Success<ListResult>>(BASE, { query })
-      .then((r) => r.data),
+  list: async (query: ListQuery = {}): Promise<ListResult> => {
+    try {
+      return await backendApi
+        .get<Success<ListResult>>(BASE, { query })
+        .then((r) => r.data);
+    } catch (error) {
+      console.warn(
+        "[affiliate-leaderboards-api] backend list read failed; using PostgreSQL",
+        error,
+      );
+      return listAffiliateLeaderboardsFromPostgres(query);
+    }
+  },
 
   create: (input: CreateInput, adminUserId: string) =>
     backendApi
@@ -136,10 +149,21 @@ export const affiliateLeaderboardsApi = {
       )
       .then((r) => r.data),
 
-  get: (id: string) =>
-    backendApi
-      .get<Success<LeaderboardAdminRow>>(`${BASE}/${encodeURIComponent(id)}`)
-      .then((r) => r.data),
+  get: async (id: string): Promise<LeaderboardAdminRow> => {
+    try {
+      return await backendApi
+        .get<Success<LeaderboardAdminRow>>(`${BASE}/${encodeURIComponent(id)}`)
+        .then((r) => r.data);
+    } catch (error) {
+      console.warn(
+        `[affiliate-leaderboards-api] backend detail read failed for ${id}; using PostgreSQL`,
+        error,
+      );
+      const row = await getAffiliateLeaderboardFromPostgres(id);
+      if (!row) throw error;
+      return row;
+    }
+  },
 
   approve: (id: string, adminUserId: string) =>
     backendApi
