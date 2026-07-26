@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { HostLink } from "@/components/host-link";
 import { CheckCircle2, Trophy, XCircle } from "lucide-react";
 
-import { requireStaffPage } from "@/lib/staff/access";
+import { requireStaffLearnerPage } from "@/lib/staff/access";
 import { canManageStaff } from "@/lib/staff/access";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { KpiTile } from "@/components/modern-panels";
@@ -32,7 +32,7 @@ export default async function QuizResultPage({
 }: {
   params: Promise<{ attemptId: string }>;
 }) {
-  const session = await requireStaffPage();
+  const session = await requireStaffLearnerPage();
   const { attemptId } = await params;
   const canManage = canManageStaff(session);
   const backHref = canManage

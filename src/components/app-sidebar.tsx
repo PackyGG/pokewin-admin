@@ -176,6 +176,8 @@ type NavItem = {
   isNew?: boolean;
   // Visible to every authenticated dashboard user, regardless of page grants.
   alwaysVisible?: boolean;
+  // Role required unless the viewer is an admin or owner.
+  roleAllowlist?: string[];
 };
 
 type NavGroup = {
@@ -203,6 +205,7 @@ const NAV_FOOTER_ITEMS: NavItem[] = getSidebarFooterItems().map((e) => ({
   strictUsernameAllowlist: e.strictUsernameAllowlist,
   isNew: e.isNew,
   alwaysVisible: e.alwaysVisible,
+  roleAllowlist: e.roleAllowlist,
 }));
 
 const NAV_GROUPS: NavGroup[] = getSidebarGroups().map((group) => ({
@@ -217,6 +220,7 @@ const NAV_GROUPS: NavGroup[] = getSidebarGroups().map((group) => ({
     strictUsernameAllowlist: e.strictUsernameAllowlist,
     isNew: e.isNew,
     alwaysVisible: e.alwaysVisible,
+    roleAllowlist: e.roleAllowlist,
   })),
 }));
 
@@ -320,7 +324,7 @@ export function AppSidebar({
   // Sub-app portals must be ABSOLUTE on a segment host — a bare /pack-studio
   // there would be rewritten into the current segment. Resolved client-side
   // (see use-app-host) so no layout has to thread the hostname down.
-  const effectiveRoles = roles ?? [role];
+  const effectiveRoles = useMemo(() => roles ?? [role], [role, roles]);
   const isAdmin = effectiveRoles.includes("admin");
   const isCreator = effectiveRoles.includes("creator");
 
@@ -342,11 +346,21 @@ export function AppSidebar({
         if (item.strictUsernameAllowlist) {
           return Boolean(inAllowlist);
         }
+        if (
+          item.roleAllowlist &&
+          !isAdmin &&
+          !isOwner &&
+          !item.roleAllowlist.some((requiredRole) =>
+            effectiveRoles.includes(requiredRole),
+          )
+        ) {
+          return false;
+        }
         if (item.alwaysVisible) return true;
         // Owners + admins see every page.
         return isAdmin || isOwner || pageAccessGranted(allowedPages, item.href);
       }),
-    [isAdmin, isOwner, allowedPages, username],
+    [isAdmin, isOwner, allowedPages, username, effectiveRoles],
   );
 
   const groupsWithVisibility = useMemo(() =>
@@ -376,12 +390,22 @@ export function AppSidebar({
           if (item.strictUsernameAllowlist) {
             return Boolean(inAllowlist);
           }
+          if (
+            item.roleAllowlist &&
+            !isAdmin &&
+            !isOwner &&
+            !item.roleAllowlist.some((requiredRole) =>
+              effectiveRoles.includes(requiredRole),
+            )
+          ) {
+            return false;
+          }
           if (item.alwaysVisible) return true;
           // Owners + admins see every page.
           return isAdmin || isOwner || pageAccessGranted(allowedPages, item.href);
         }),
       })),
-  [isAdmin, isOwner, allowedPages, username, dbEnv]);
+  [isAdmin, isOwner, allowedPages, username, dbEnv, effectiveRoles]);
 
   const activeGroupLabel = useMemo(() =>
     groupsWithVisibility.find((group) =>

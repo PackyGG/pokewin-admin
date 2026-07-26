@@ -30,7 +30,7 @@ export const metadata = { title: "Staff Members" };
 /**
  * Antifraud → Staff Members.
  *
- * The team board: who is in the workspace, their level, their points, and how
+ * The team board: support users in the workspace, their level, their points, and how
  * much they've actually done (quizzes taken, cases closed). Ranked by points,
  * which is what the whole level system is for.
  *
@@ -91,8 +91,8 @@ async function Board({
         <Users className="size-5 text-muted-foreground" />
         <span className="text-sm font-semibold">Nobody here yet</span>
         <span className="max-w-sm text-xs text-muted-foreground">
-          A staff profile is created the first time someone opens this
-          workspace, so the board fills itself as the team arrives.
+          A staff profile is created when a support user first opens this
+          workspace, so the board fills itself as the support team arrives.
         </span>
       </div>
     );

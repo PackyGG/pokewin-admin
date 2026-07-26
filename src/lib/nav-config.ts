@@ -93,6 +93,8 @@ export type NavEntry = {
   isNew?: boolean;
   /** Visible to every authenticated dashboard user, independent of page grants. */
   alwaysVisible?: boolean;
+  /** Role required unless the viewer is an admin or owner. */
+  roleAllowlist?: string[];
   /** Surfaces in the sidebar. */
   inSidebar: boolean;
   /** Pinned to the sidebar footer, directly above the theme toggle. */
@@ -465,6 +467,7 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     description: "Profiles, quizzes, points and the staff leaderboard",
     keywords: ["staff", "profile", "quiz", "points", "leaderboard"],
     alwaysVisible: true,
+    roleAllowlist: ["support"],
     inSidebar: true,
     inPalette: false,
   },

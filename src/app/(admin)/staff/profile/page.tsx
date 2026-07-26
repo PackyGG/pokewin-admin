@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { eq } from "drizzle-orm";
 
-import { requireStaffPage } from "@/lib/staff/access";
+import { requireStaffProfilePage } from "@/lib/staff/access";
 import { adminDrizzle } from "@/lib/admin-db";
 import { admin_users, staff_notification_channels, staff_notification_prefs } from "@/lib/db-schema/admin/schema";
 import { safeQuery } from "@/lib/errors/safe-query";
@@ -60,7 +60,7 @@ export const metadata = { title: "My Profile" };
 const QUERY_TIMEOUT_MS = 10_000;
 
 export default async function StaffProfilePage() {
-  const session = await requireStaffPage();
+  const session = await requireStaffProfilePage();
 
   return (
     <div className="space-y-6">

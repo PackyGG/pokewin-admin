@@ -129,7 +129,10 @@ export async function listStaffMembers(): Promise<StaffMember[]> {
     const identities = await loadAdminIdentities(
       rows.map((r) => r.admin_user_id),
     );
-    return rows.map((row, index) => ({
+    const supportRows = rows.filter((row) =>
+      identities.get(row.admin_user_id)?.roles.includes("support"),
+    );
+    return supportRows.map((row, index) => ({
       profile: toProfile({ ...row, last_seen_at: row.last_seen_at ? new Date(row.last_seen_at) : null, created_at: new Date(row.created_at) }),
       identity: identities.get(row.admin_user_id) ?? null,
       rank: index + 1,
@@ -321,7 +324,7 @@ export type StaffPointLedgerEvent = StaffPointEvent & {
 };
 
 /**
- * Manager ledger: newest point movements across the whole team. The bounded
+ * Manager ledger: newest point movements for support users. The bounded
  * order uses staff_point_events_created_idx, then identities are resolved in
  * one primary-key batch.
  */
@@ -346,20 +349,24 @@ export async function listRecentStaffPointEvents(
     const identities = await loadAdminIdentities(
       rows.flatMap((row) => [row.admin_user_id, row.created_by]),
     );
-    return rows.map((row) => ({
-      id: row.id,
-      adminUserId: row.admin_user_id,
-      points: row.points,
-      sourceKind: row.source_kind,
-      sourceId: row.source_id,
-      reason: row.reason,
-      createdBy: row.created_by,
-      createdAt: new Date(row.created_at),
-      recipient: identities.get(row.admin_user_id) ?? null,
-      actor: row.created_by
-        ? identities.get(row.created_by) ?? null
-        : null,
-    }));
+    return rows
+      .filter((row) =>
+        identities.get(row.admin_user_id)?.roles.includes("support"),
+      )
+      .map((row) => ({
+        id: row.id,
+        adminUserId: row.admin_user_id,
+        points: row.points,
+        sourceKind: row.source_kind,
+        sourceId: row.source_id,
+        reason: row.reason,
+        createdBy: row.created_by,
+        createdAt: new Date(row.created_at),
+        recipient: identities.get(row.admin_user_id) ?? null,
+        actor: row.created_by
+          ? identities.get(row.created_by) ?? null
+          : null,
+      }));
   } catch (err) {
     if (!isMissingRelationError(err)) {
       console.error("[antifraud] listRecentStaffPointEvents failed:", err);

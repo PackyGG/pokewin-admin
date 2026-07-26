@@ -6,6 +6,7 @@ import { z } from "zod";
 import { requireStaffManager } from "@/lib/staff/access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { awardStaffPoints } from "@/lib/staff/profile";
+import { loadAdminIdentities } from "@/lib/staff/identities";
 
 /**
  * Manual points adjustments — OWNER / ADMIN ONLY.
@@ -38,6 +39,10 @@ export async function awardPointsManually(input: unknown): Promise<void> {
   const parsed = awardSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const { adminUserId, points, reason } = parsed.data;
+  const recipient = (await loadAdminIdentities([adminUserId])).get(adminUserId);
+  if (!recipient?.roles.includes("support")) {
+    throw new Error("Points can only be awarded to support users.");
+  }
 
   const result = await awardStaffPoints({
     adminUserId,

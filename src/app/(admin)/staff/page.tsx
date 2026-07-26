@@ -11,7 +11,11 @@ import {
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { sessionRoles } from "@/lib/dal";
 import { safeQuery } from "@/lib/errors/safe-query";
-import { canManageStaff, requireStaffPage } from "@/lib/staff/access";
+import {
+  canManageStaff,
+  canUseStaffProfile,
+  requireStaffPage,
+} from "@/lib/staff/access";
 import { getStaffProfile } from "@/lib/staff/profile";
 import { listStaffQuizzes } from "@/lib/staff/quiz";
 import { StaffCardsSkeleton } from "./_components/staff-cards-skeleton";
@@ -39,6 +43,7 @@ export default async function StaffPage() {
           adminUserId={session.userId}
           roles={sessionRoles(session)}
           canManage={canManageStaff(session)}
+          hasSupportRole={canUseStaffProfile(session)}
         />
       </Suspense>
     </div>
@@ -49,19 +54,23 @@ async function StaffCards({
   adminUserId,
   roles,
   canManage,
+  hasSupportRole,
 }: {
   adminUserId: string;
   roles: string[];
   canManage: boolean;
+  hasSupportRole: boolean;
 }) {
   const [profileResult, quizzesResult] = await Promise.all([
-    safeQuery(
-      () => getStaffProfile(adminUserId),
-      null,
-      "staff.profile",
-      QUERY_TIMEOUT_MS,
-    ),
-    canManage
+    hasSupportRole
+      ? safeQuery(
+          () => getStaffProfile(adminUserId),
+          null,
+          "staff.profile",
+          QUERY_TIMEOUT_MS,
+        )
+      : Promise.resolve({ data: null }),
+    canManage || !hasSupportRole
       ? Promise.resolve({ data: [] })
       : safeQuery(
           () => listStaffQuizzes(adminUserId, roles),
@@ -76,13 +85,15 @@ async function StaffCards({
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      <StaffLink
-        href="/staff/profile"
-        icon={UserCircle}
-        title="My profile"
-        body={`Level ${profileResult.data?.level ?? 1} · ${profileResult.data?.pointsTotal ?? 0} points`}
-      />
-      {!canManage && (
+      {hasSupportRole && (
+        <StaffLink
+          href="/staff/profile"
+          icon={UserCircle}
+          title="My profile"
+          body={`Level ${profileResult.data?.level ?? 1} · ${profileResult.data?.pointsTotal ?? 0} points`}
+        />
+      )}
+      {hasSupportRole && !canManage && (
         <StaffLink
           href="/staff/quizzes"
           icon={GraduationCap}
