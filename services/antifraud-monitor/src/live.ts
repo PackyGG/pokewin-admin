@@ -14,6 +14,7 @@ const MAX_BUFFERED_BYTES = 512 * 1024;
 const HEARTBEAT_MS = 30_000;
 const TICKET_TTL_SECONDS = 30;
 const TICKET_CREATE_ATTEMPTS = 3;
+export const MAX_CONNECTIONS_PER_ACTOR = 8;
 
 const PUBLISH_SCRIPT = `
 local id = redis.call(
@@ -205,7 +206,12 @@ export class LiveBus {
 
   addClient(client: WebSocket, actorId: string): boolean {
     const actorConnections = this.clientsByActor.get(actorId) ?? 0;
-    if (actorConnections >= 3 || this.clients.size >= 500) return false;
+    if (
+      actorConnections >= MAX_CONNECTIONS_PER_ACTOR ||
+      this.clients.size >= 500
+    ) {
+      return false;
+    }
 
     this.clients.add(client);
     this.clientsByActor.set(actorId, actorConnections + 1);

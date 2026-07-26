@@ -18,8 +18,11 @@ test("the monitor service owns connection capacity and the SSE bridge reconnects
     /MAX_CONCURRENT_PER_USER|openStreams|Too many live monitor tabs/,
   );
   assert.match(route, /scheduleReconnect\("Live stream interrupted, reconnecting"\)/);
-  assert.match(service, /actorConnections >= 3/);
+  assert.match(service, /MAX_CONNECTIONS_PER_ACTOR = 8/);
+  assert.match(service, /actorConnections >= MAX_CONNECTIONS_PER_ACTOR/);
   assert.match(service, /client\.on\("error"/);
+  assert.match(route, /code === 1013/);
+  assert.match(route, /CAPACITY_RETRY_MIN_MS/);
 });
 
 test("the Packy live bridge accepts the exact fraud host and pins the upstream origin", async () => {

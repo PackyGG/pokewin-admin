@@ -12,7 +12,12 @@ import { serviceRequestAuthorized } from "../src/auth.js";
 import type { Config } from "../src/config.js";
 import { sameDecisionIdentity } from "../src/decision-idempotency.js";
 import { pollerStalledFor, type PollerHealthSnapshot } from "../src/poller-health.js";
-import { LiveBus, parseEnvelope, STREAM_ID_PATTERN } from "../src/live.js";
+import {
+  LiveBus,
+  MAX_CONNECTIONS_PER_ACTOR,
+  parseEnvelope,
+  STREAM_ID_PATTERN,
+} from "../src/live.js";
 import { processOrderedBatch } from "../src/ordered-ingestion.js";
 import { createPromiseCache } from "../src/promise-cache.js";
 import { caseDecisionSchema } from "../src/request-schemas.js";
@@ -27,6 +32,10 @@ import {
   storedIpv6,
   topRainWinners,
 } from "../src/source.js";
+import {
+  clientErrorStatus,
+  ticketRateLimitKey,
+} from "../src/transport-limits.js";
 import type { ActiveSession, Signup } from "../src/types.js";
 
 type CapturedQuery = { sql: string; values: unknown[] | undefined };
@@ -416,27 +425,65 @@ test("websocket tickets retry a failed NX reservation", async () => {
 
 test("websocket client errors terminate and release the actor slot", async () => {
   const { bus } = liveBusFixture();
-  const clients = Array.from({ length: 4 }, () => new FakeWebSocket());
+  const clients = Array.from(
+    { length: MAX_CONNECTIONS_PER_ACTOR + 1 },
+    () => new FakeWebSocket(),
+  );
 
-  for (const client of clients.slice(0, 3)) {
+  for (const client of clients.slice(0, MAX_CONNECTIONS_PER_ACTOR)) {
     assert.equal(
       bus.addClient(client as unknown as WebSocket, "staff-1"),
       true,
     );
   }
   assert.equal(
-    bus.addClient(clients[3] as unknown as WebSocket, "staff-1"),
+    bus.addClient(
+      clients[MAX_CONNECTIONS_PER_ACTOR] as unknown as WebSocket,
+      "staff-1",
+    ),
     false,
   );
 
   clients[0]?.emit("error", new Error("peer reset"));
   assert.equal(clients[0]?.terminated, 1);
   assert.equal(
-    bus.addClient(clients[3] as unknown as WebSocket, "staff-1"),
+    bus.addClient(
+      clients[MAX_CONNECTIONS_PER_ACTOR] as unknown as WebSocket,
+      "staff-1",
+    ),
     true,
   );
 
   await bus.close();
+});
+
+test("websocket ticket limits follow staff actors instead of shared server IPs", () => {
+  const sharedIp = "10.0.0.1";
+  assert.equal(
+    ticketRateLimitKey({
+      body: { actorId: "staff-1" },
+      ip: sharedIp,
+    } as never),
+    "ws-ticket:actor:staff-1",
+  );
+  assert.equal(
+    ticketRateLimitKey({
+      body: { actorId: "staff-2" },
+      ip: sharedIp,
+    } as never),
+    "ws-ticket:actor:staff-2",
+  );
+  assert.equal(
+    ticketRateLimitKey({ body: {}, ip: sharedIp } as never),
+    "ws-ticket:ip:10.0.0.1",
+  );
+});
+
+test("safe client errors preserve their HTTP status", () => {
+  assert.equal(clientErrorStatus({ statusCode: 429 }), 429);
+  assert.equal(clientErrorStatus({ statusCode: 403 }), 403);
+  assert.equal(clientErrorStatus({ statusCode: 500 }), null);
+  assert.equal(clientErrorStatus(new Error("boom")), null);
 });
 
 test("signup and activity cursors preserve exact application-precision UTC tuples", async () => {

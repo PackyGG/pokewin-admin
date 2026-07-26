@@ -37,6 +37,7 @@ const MAX_STREAM_STARTS_PER_MINUTE = 10;
 const ROTATE_AFTER_MS = 240_000;
 const UPSTREAM_RETRY_MIN_MS = 1_000;
 const UPSTREAM_RETRY_MAX_MS = 30_000;
+const CAPACITY_RETRY_MIN_MS = 15_000;
 /** Reconnect delay advertised to the browser's own EventSource retry. */
 const CLIENT_RETRY_MS = 15_000;
 
@@ -302,7 +303,7 @@ export async function GET(request: Request): Promise<Response> {
         }
       };
 
-      const scheduleReconnect = (message: string) => {
+      const scheduleReconnect = (message: string, minimumDelayMs = 0) => {
         if (closed || retryTimer) return;
         attempt += 1;
         const backoff = Math.min(
@@ -310,7 +311,10 @@ export async function GET(request: Request): Promise<Response> {
           UPSTREAM_RETRY_MIN_MS * 2 ** (attempt - 1),
         );
         // Jitter so several instances don't stampede the service together.
-        const delay = Math.round(backoff * (0.5 + Math.random() * 0.5));
+        const delay = Math.max(
+          minimumDelayMs,
+          Math.round(backoff * (0.5 + Math.random() * 0.5)),
+        );
         setState("connecting", message);
         retryTimer = setTimeout(() => {
           retryTimer = null;
@@ -387,10 +391,17 @@ export async function GET(request: Request): Promise<Response> {
               console.error("[antifraud-monitor] websocket failed");
               // `ws` always emits `close` after `error`; reconnect from there.
             });
-            next.on("close", () => {
+            next.on("close", (code) => {
               if (closed || socket !== next) return;
               socket = null;
-              scheduleReconnect("Live stream interrupted, reconnecting");
+              if (code === 1013) {
+                scheduleReconnect(
+                  "Live stream capacity reached, retrying",
+                  CAPACITY_RETRY_MIN_MS,
+                );
+              } else {
+                scheduleReconnect("Live stream interrupted, reconnecting");
+              }
             });
           })
           .catch(() => {

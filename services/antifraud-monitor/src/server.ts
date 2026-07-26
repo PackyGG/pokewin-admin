@@ -35,6 +35,10 @@ import {
   SIGNUP_SCORE_DEFINITIONS,
 } from "./score-catalog.js";
 import { topRainWinners } from "./source.js";
+import {
+  clientErrorStatus,
+  ticketRateLimitKey,
+} from "./transport-limits.js";
 
 // Naive timestamps read from either database must be interpreted as UTC even
 // when the container image ships a local zone. The pools pin the session
@@ -735,6 +739,8 @@ app.post("/v1/ws/tickets", {
     rateLimit: {
       max: config.WS_TICKET_RATE_LIMIT_PER_MINUTE,
       timeWindow: "1 minute",
+      hook: "preHandler",
+      keyGenerator: ticketRateLimitKey,
     },
   },
 }, async (request) => {
@@ -793,7 +799,11 @@ app.get("/v1/live", { websocket: true }, async (socket, request) => {
     return;
   }
   if (!live.addClient(socket, ticket.actorId)) {
-    socket.close(1013, "too_many_connections");
+    request.log.warn(
+      { actorId: ticket.actorId },
+      "Rejected antifraud live websocket: actor connection capacity reached",
+    );
+    socket.close(1013, "connection_capacity");
   }
 });
 
@@ -818,11 +828,21 @@ app.get("/v1/scoring", async () => {
   };
 });
 
-app.setErrorHandler((error, _request, reply) => {
+app.setErrorHandler((error, request, reply) => {
   if (error instanceof z.ZodError) {
     return reply.code(400).send({
       error: "invalid_request",
       issues: error.issues,
+    });
+  }
+  const clientStatus = clientErrorStatus(error);
+  if (clientStatus !== null) {
+    request.log.warn(
+      { statusCode: clientStatus },
+      "Antifraud API request rejected",
+    );
+    return reply.code(clientStatus).send({
+      error: clientStatus === 429 ? "rate_limited" : "request_rejected",
     });
   }
   app.log.error({ err: error }, "Unhandled request error");
