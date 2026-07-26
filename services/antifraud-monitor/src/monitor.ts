@@ -3,7 +3,11 @@ import type pg from "pg";
 import type { Config } from "./config.js";
 import type { Databases } from "./db.js";
 import { DiscordAlerts } from "./discord.js";
-import { EnrichmentService, type EnrichmentResult } from "./enrichment.js";
+import {
+  EnrichmentService,
+  parseProxycheckResponse,
+  type EnrichmentResult,
+} from "./enrichment.js";
 import type { LiveBus } from "./live.js";
 import { processOrderedBatch } from "./ordered-ingestion.js";
 import { PollerHealth, type PollerHealthSnapshot } from "./poller-health.js";
@@ -581,13 +585,15 @@ export class MonitorEngine {
       [signup.signup_ip],
     );
     if (!cached.rows[0]) return this.enrichment.proxycheck(signup);
+    const response = cached.rows[0].response ?? {};
+    const parsed = parseProxycheckResponse(response, signup.signup_ip);
     return {
       provider: "proxycheck",
       status: "success",
       lookupKey: signup.signup_ip,
-      score: Number(cached.rows[0].score ?? 0),
-      response: cached.rows[0].response ?? {},
-      signals: storedSignals(cached.rows[0].signals),
+      score: parsed.risk,
+      response,
+      signals: parsed.signals,
     };
   }
 

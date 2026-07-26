@@ -169,15 +169,16 @@ export const PROVIDER_SCORE_DEFINITIONS: ScoreDefinition[] = [
   },
   {
     key: "proxycheck_anonymous",
-    title: "Anonymous IP",
-    description: "proxycheck.io identifies anonymized traffic.",
+    title: "Proxy, VPN or anonymous IP",
+    description:
+      "proxycheck.io identifies a proxy, VPN, Tor exit, compromised IP, scraper or hosting network.",
     options: [
       {
-        label: "VPN or anonymous",
+        label: "VPN, hosting, scraper or anonymous",
         points: SCORE_POINTS.proxycheckAnonymous.lowerRisk,
       },
       {
-        label: "Tor, proxy or compromised",
+        label: "Tor, proxy or compromised IP",
         points: SCORE_POINTS.proxycheckAnonymous.torProxyCompromised,
       },
     ],

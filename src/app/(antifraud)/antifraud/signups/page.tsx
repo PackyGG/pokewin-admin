@@ -24,6 +24,11 @@ import { HostLink } from "@/components/host-link";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { ReviewSeverityBadge } from "../_components/badges";
+import {
+  NetworkRiskBadges,
+  networkRiskLabels,
+} from "../_components/network-risk-badges";
+import { RiskScoreBar } from "../_components/risk-score-bar";
 
 export const metadata = { title: "Signups · Antifraud" };
 
@@ -130,6 +135,11 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
     .filter(Boolean)
     .join(", ");
   const signals = signup.signals.filter((signal) => signal.points !== 0);
+  const networkSignals = [
+    ...signup.fingerprint_signals,
+    ...signup.proxycheck_signals,
+  ];
+  const networkLabels = networkRiskLabels(networkSignals);
 
   return (
     <article className="border-b border-border/60 p-3 last:border-b-0 sm:p-4">
@@ -173,30 +183,41 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
-          <ProviderCheck
-            icon={Fingerprint}
-            label="Fingerprint"
-            status={signup.fingerprint_status}
-            score={signup.fingerprint_score}
-            signalCount={signup.fingerprint_signals.length}
-          />
-          <ProviderCheck
-            icon={Network}
-            label="IP check"
-            status={signup.proxycheck_status}
-            score={signup.proxycheck_score}
-            signalCount={signup.proxycheck_signals.length}
-          />
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <ProviderCheck
+              icon={Fingerprint}
+              label="Fingerprint"
+              status={signup.fingerprint_status}
+              score={signup.fingerprint_score}
+              signalCount={signup.fingerprint_signals.length}
+            />
+            <ProviderCheck
+              icon={Network}
+              label="IP check"
+              status={signup.proxycheck_status}
+              score={signup.proxycheck_score}
+              signalCount={signup.proxycheck_signals.length}
+            />
+          </div>
+          {networkLabels.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              <NetworkRiskBadges signals={networkSignals} />
+            </div>
+          )}
         </div>
 
-        <div className="flex items-center justify-between gap-3 lg:min-w-32 lg:flex-col lg:items-end">
+        <div className="flex flex-wrap items-center justify-between gap-3 lg:min-w-36 lg:flex-col lg:flex-nowrap lg:items-end">
           <div className="flex items-center gap-2">
             <ReviewSeverityBadge severity={signup.severity} />
             <span className="text-sm font-semibold tabular-nums">
               {signup.score} pts
             </span>
           </div>
+          <RiskScoreBar
+            score={signup.score}
+            className="order-3 w-full lg:order-none lg:w-36"
+          />
           {signup.case_id ? (
             <Button
               variant="outline"

@@ -19,6 +19,11 @@ import { KpiTile } from "@/components/modern-panels";
 import { Button } from "@/components/ui/button";
 import { useSseStream } from "@/lib/hooks/use-sse";
 import { cn } from "@/lib/utils";
+import {
+  NetworkRiskBadges,
+  networkRiskLabels,
+} from "../_components/network-risk-badges";
+import { RiskScoreBar } from "../_components/risk-score-bar";
 
 /**
  * Live behaviour monitor console.
@@ -52,6 +57,7 @@ type MonitorSession = {
   peak_score: number;
   event_count: number;
   severity: string;
+  proxycheck_signals: unknown;
 };
 
 type MonitorCase = {
@@ -64,6 +70,7 @@ type MonitorCase = {
   peak_score: number;
   summary: string | null;
   updated_at: string;
+  proxycheck_signals: unknown;
 };
 
 type LiveEvent = {
@@ -87,7 +94,6 @@ const MAX_CASES = 40;
 const STALE_STREAM_MS = 45_000;
 /** Hard floor between two stream-triggered resyncs. */
 const RESYNC_COOLDOWN_MS = 10_000;
-
 const SEVERITY_CLASSES: Record<string, string> = {
   low: "border-slate-500/30 bg-slate-500/10 text-slate-600 dark:text-slate-300",
   medium: "border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-300",
@@ -161,6 +167,7 @@ function parseSession(value: unknown): MonitorSession | null {
     severity: isSeverity(row.severity)
       ? row.severity
       : severityForScore(currentScore),
+    proxycheck_signals: row.proxycheck_signals,
   };
 }
 
@@ -178,6 +185,7 @@ function parseCase(value: unknown): MonitorCase | null {
     peak_score: number(row.peak_score),
     summary: typeof row.summary === "string" ? row.summary : null,
     updated_at: text(row.updated_at, new Date().toISOString()),
+    proxycheck_signals: row.proxycheck_signals,
   };
 }
 
@@ -567,6 +575,7 @@ export function MonitorConsole() {
             peak_score: initialScore,
             event_count: 0,
             severity: frameSeverity,
+            proxycheck_signals: data.signals,
           },
           ...current.filter((session) => session.session_id !== sessionId),
         ]);
@@ -651,6 +660,10 @@ export function MonitorConsole() {
                 ? data.summary
                 : (existing?.summary ?? null),
             updated_at: at,
+            proxycheck_signals:
+              existing?.proxycheck_signals
+              ?? finished?.proxycheck_signals
+              ?? [],
           };
           return mergeCases(
             current.filter((item) => item.id !== completedCaseId),
@@ -856,6 +869,9 @@ export function MonitorConsole() {
                           <span className={severityBadge(session.severity)}>
                             {session.severity}
                           </span>
+                          <NetworkRiskBadges
+                            signals={session.proxycheck_signals}
+                          />
                         </div>
                         <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
                           {session.user_id} · {session.event_count} actions
@@ -892,6 +908,9 @@ export function MonitorConsole() {
                       <span className="w-12 text-right text-[11px] tabular-nums text-muted-foreground">
                         {Math.ceil(remainingMs / 1_000)}s
                       </span>
+                    </div>
+                    <div className="mt-2.5">
+                      <RiskScoreBar score={session.current_score} />
                     </div>
                   </>
                 );
@@ -960,6 +979,11 @@ export function MonitorConsole() {
                         <span className="mt-0.5 block text-[11px] text-muted-foreground">
                           {label.detail}
                         </span>
+                        {networkRiskLabels(event.data.signals).length > 0 && (
+                          <span className="mt-1 flex flex-wrap gap-1">
+                            <NetworkRiskBadges signals={event.data.signals} />
+                          </span>
+                        )}
                       </span>
                       <span className="shrink-0 text-[10px] text-muted-foreground">
                         {relativeTime(event.at, now)}
@@ -1003,6 +1027,7 @@ export function MonitorConsole() {
                         <span className={severityBadge(item.severity)}>
                           {item.severity}
                         </span>
+                        <NetworkRiskBadges signals={item.proxycheck_signals} />
                         <span className="rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                           {item.status}
                         </span>
@@ -1012,6 +1037,7 @@ export function MonitorConsole() {
                       </span>
                     </span>
                     <span className="flex shrink-0 items-center justify-between gap-5 sm:justify-end">
+                      <RiskScoreBar score={item.score} />
                       <span className="text-right">
                         <span className="block text-lg font-bold tabular-nums">
                           {item.score}

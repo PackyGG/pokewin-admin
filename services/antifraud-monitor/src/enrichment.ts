@@ -72,6 +72,82 @@ export type EnrichmentResult = {
   signals: Signal[];
 };
 
+export function parseProxycheckResponse(
+  raw: JsonObject,
+  signupIp: string,
+): { risk: number; signals: Signal[] } {
+  const direct = raw[signupIp];
+  const nested = object(raw.data)[signupIp];
+  const node = object(direct ?? nested);
+  const detections = object(node.detections);
+  const network = object(node.network);
+  const risk = Number(
+    detections.risk
+      ?? node.risk
+      ?? object(node.risk_score).score
+      ?? raw.risk
+      ?? 0,
+  );
+  const detectionTypes = [
+    "proxy",
+    "vpn",
+    "tor",
+    "compromised",
+    "scraper",
+    "hosting",
+  ].filter((key) => detections[key] === true);
+  const anonymous =
+    node.proxy === "yes" ||
+    node.anonymous === true ||
+    detections.anonymous === true;
+  const positiveDetection = anonymous || detectionTypes.length > 0;
+  const type = String(
+    detectionTypes.join(", ")
+      || node.type
+      || detections.type
+      || detections.operator_type
+      || "",
+  ).toLowerCase();
+  const signals: Signal[] = [];
+
+  if (positiveDetection) {
+    const points = /tor|proxy|compromised/.test(type)
+      ? SCORE_POINTS.proxycheckAnonymous.torProxyCompromised
+      : SCORE_POINTS.proxycheckAnonymous.lowerRisk;
+    signals.push({
+      key: "proxycheck_anonymous",
+      title: type ? `Anonymous IP: ${type}` : "Anonymous IP detected",
+      detail: "proxycheck.io identified anonymized or proxy traffic.",
+      points,
+      payload: { type, detectionTypes },
+    });
+  }
+  if (
+    Number.isFinite(risk) &&
+    risk >= SCORE_POINTS.proxycheckRisk.threshold
+  ) {
+    signals.push({
+      key: "proxycheck_risk",
+      title: "High-risk IP",
+      detail: `proxycheck.io returned a risk score of ${risk}.`,
+      points:
+        risk >= SCORE_POINTS.proxycheckRisk.highThreshold
+          ? SCORE_POINTS.proxycheckRisk.high
+          : SCORE_POINTS.proxycheckRisk.medium,
+      payload: {
+        risk,
+        asn: network.asn ?? node.asn,
+        provider: network.provider ?? node.provider,
+      },
+    });
+  }
+
+  return {
+    risk: Number.isFinite(risk) ? risk : 0,
+    signals,
+  };
+}
+
 export class EnrichmentService {
   private readonly fingerprint: FingerprintJsServerApiClient;
 
@@ -261,76 +337,13 @@ export class EnrichmentService {
       });
       if (!response.ok) throw new Error(`http_${response.status}`);
       const raw = object(await response.json());
-      const direct = raw[signup.signup_ip];
-      const nested = object(raw.data)[signup.signup_ip];
-      const node = object(direct ?? nested);
-      const detections = object(node.detections);
-      const network = object(node.network);
-      const risk = Number(
-        detections.risk
-          ?? node.risk
-          ?? object(node.risk_score).score
-          ?? raw.risk
-          ?? 0,
-      );
-      const detectionTypes = [
-        "proxy",
-        "vpn",
-        "tor",
-        "compromised",
-        "scraper",
-        "hosting",
-      ].filter((key) => detections[key] === true);
-      const anonymous =
-        node.proxy === "yes" ||
-        node.anonymous === true ||
-        detections.anonymous === true;
-      const type = String(
-        detectionTypes.join(", ")
-          || node.type
-          || detections.type
-          || detections.operator_type
-          || "",
-      ).toLowerCase();
-      const signals: Signal[] = [];
-
-      if (anonymous) {
-        const points = /tor|proxy|compromised/.test(type)
-          ? SCORE_POINTS.proxycheckAnonymous.torProxyCompromised
-          : SCORE_POINTS.proxycheckAnonymous.lowerRisk;
-        signals.push({
-          key: "proxycheck_anonymous",
-          title: type ? `Anonymous IP: ${type}` : "Anonymous IP detected",
-          detail: "proxycheck.io identified anonymized or proxy traffic.",
-          points,
-          payload: { type },
-        });
-      }
-      if (
-        Number.isFinite(risk) &&
-        risk >= SCORE_POINTS.proxycheckRisk.threshold
-      ) {
-        signals.push({
-          key: "proxycheck_risk",
-          title: "High-risk IP",
-          detail: `proxycheck.io returned a risk score of ${risk}.`,
-          points:
-            risk >= SCORE_POINTS.proxycheckRisk.highThreshold
-              ? SCORE_POINTS.proxycheckRisk.high
-              : SCORE_POINTS.proxycheckRisk.medium,
-          payload: {
-            risk,
-            asn: network.asn ?? node.asn,
-            provider: network.provider ?? node.provider,
-          },
-        });
-      }
+      const { risk, signals } = parseProxycheckResponse(raw, signup.signup_ip);
 
       return {
         provider: "proxycheck",
         status: "success",
         lookupKey: signup.signup_ip,
-        score: Number.isFinite(risk) ? risk : undefined,
+        score: risk,
         response: raw,
         signals,
       };

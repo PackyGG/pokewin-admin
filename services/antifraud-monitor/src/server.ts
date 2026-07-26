@@ -268,7 +268,15 @@ app.get("/v1/monitors/live", async () => {
       SELECT
         ms.id AS session_id, ms.case_id, ms.user_id, s.username,
         ms.started_at, ms.ends_at, ms.current_score, ms.peak_score,
-        ms.event_count, c.severity
+        ms.event_count, c.severity,
+        (
+          SELECT pc.signals
+          FROM provider_checks pc
+          WHERE pc.user_id = ms.user_id
+            AND pc.provider = 'proxycheck'
+          ORDER BY pc.checked_at DESC
+          LIMIT 1
+        ) AS proxycheck_signals
       FROM monitor_sessions ms
       JOIN cases c ON c.id = ms.case_id
       JOIN subjects s ON s.user_id = ms.user_id
@@ -411,7 +419,16 @@ app.get("/v1/cases", async (request) => {
   values.push(query.limit);
   const result = await db.antifraud.query(
     `
-      SELECT c.*, s.username, s.email, s.signup_ip::text, s.country_code, s.city
+      SELECT
+        c.*, s.username, s.email, s.signup_ip::text, s.country_code, s.city,
+        (
+          SELECT pc.signals
+          FROM provider_checks pc
+          WHERE pc.user_id = c.user_id
+            AND pc.provider = 'proxycheck'
+          ORDER BY pc.checked_at DESC
+          LIMIT 1
+        ) AS proxycheck_signals
       FROM cases c
       JOIN subjects s ON s.user_id = c.user_id
       WHERE ${conditions.join(" AND ")}
