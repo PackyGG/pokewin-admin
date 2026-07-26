@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { Check, Plug, Settings, Users, X } from "lucide-react";
+import { AlertTriangle, Check, Plug, Settings, Users, X } from "lucide-react";
 
 import {
   PageHero,
@@ -13,6 +13,7 @@ import {
   getAntifraudUserAccess,
 } from "@/lib/antifraud/access";
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
+import { channelConfigStatus } from "@/lib/staff/channels";
 import { cn } from "@/lib/utils";
 import {
   AccessListEditor,
@@ -92,19 +93,67 @@ async function AccessSection() {
   );
 }
 
+/**
+ * A pair of env vars can be half-set — URL without token, or token without URL.
+ * Both halves are required, so a half-configured integration is DEAD, and it
+ * must never render the same green as a working one.
+ */
+type IntegrationStatus = "ready" | "partial" | "missing";
+
+const STATUS_LABEL: Record<IntegrationStatus, string> = {
+  ready: "Configured",
+  partial: "Half-configured",
+  missing: "Not set",
+};
+
+function pairStatus(first: boolean, second: boolean): IntegrationStatus {
+  if (first && second) return "ready";
+  return first || second ? "partial" : "missing";
+}
+
 function IntegrationSection() {
-  const integrations = [
+  // Presence only — never the value. `Boolean()` on the raw env is the whole
+  // check; nothing below ever reads a secret into the render tree.
+  const monitorUrl = Boolean(process.env.ANTIFRAUD_MONITOR_API_URL);
+  const monitorToken = Boolean(process.env.ANTIFRAUD_MONITOR_API_TOKEN);
+  const monitorStatus = pairStatus(monitorUrl, monitorToken);
+
+  const integrations: Array<{
+    name: string;
+    envs: readonly string[];
+    status: IntegrationStatus;
+    note: string;
+  }> = [
     {
       name: "Fraud backend stream",
-      env: "ANTIFRAUD_WS_URL",
-      ready: Boolean(process.env.ANTIFRAUD_WS_URL),
+      envs: ["ANTIFRAUD_WS_URL"],
+      status: process.env.ANTIFRAUD_WS_URL ? "ready" : "missing",
       note: "The WebSocket this app proxies to the browser as a live signal feed.",
     },
     {
       name: "Signed ingest webhook",
-      env: "ANTIFRAUD_INGEST_SECRET",
-      ready: Boolean(process.env.ANTIFRAUD_INGEST_SECRET),
+      envs: ["ANTIFRAUD_INGEST_SECRET"],
+      status: process.env.ANTIFRAUD_INGEST_SECRET ? "ready" : "missing",
       note: "Shared HMAC secret for POST /api/antifraud/ingest. Until it is set the endpoint refuses everything.",
+    },
+    {
+      name: "Live monitor API",
+      envs: ["ANTIFRAUD_MONITOR_API_URL", "ANTIFRAUD_MONITOR_API_TOKEN"],
+      status: monitorStatus,
+      note:
+        monitorStatus === "partial"
+          ? `Both halves are required. ${
+              monitorUrl
+                ? "ANTIFRAUD_MONITOR_API_TOKEN"
+                : "ANTIFRAUD_MONITOR_API_URL"
+            } is missing, so the Live Monitor and Risk Scoring pages read nothing.`
+          : "Base URL plus bearer token for the monitor service. Drives the Live Monitor console and the Risk Scoring page.",
+    },
+    {
+      name: "Discord alert webhook",
+      envs: ["ANTIFRAUD_DISCORD_WEBHOOK_URL"],
+      status: channelConfigStatus().discord ? "ready" : "missing",
+      note: "Channel webhook the antifraud alerts are delivered through. Unset means every alert is dropped.",
     },
   ];
 
@@ -118,19 +167,24 @@ function IntegrationSection() {
       <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
         {integrations.map((integration) => (
           <li
-            key={integration.env}
+            key={integration.name}
             className="flex items-start gap-3 px-4 py-3"
           >
             <span
               className={cn(
                 "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-md",
-                integration.ready
-                  ? "bg-emerald-500/10 text-emerald-500"
-                  : "bg-muted text-muted-foreground",
+                integration.status === "ready" &&
+                  "bg-emerald-500/10 text-emerald-500",
+                integration.status === "partial" &&
+                  "bg-amber-500/10 text-amber-500",
+                integration.status === "missing" &&
+                  "bg-muted text-muted-foreground",
               )}
             >
-              {integration.ready ? (
+              {integration.status === "ready" ? (
                 <Check className="size-3" />
+              ) : integration.status === "partial" ? (
+                <AlertTriangle className="size-3" />
               ) : (
                 <X className="size-3" />
               )}
@@ -138,9 +192,14 @@ function IntegrationSection() {
             <span className="min-w-0 flex-1">
               <span className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium">{integration.name}</span>
-                <code className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                  {integration.env}
-                </code>
+                {integration.envs.map((env) => (
+                  <code
+                    key={env}
+                    className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+                  >
+                    {env}
+                  </code>
+                ))}
               </span>
               <span className="mt-0.5 block text-[11px] text-muted-foreground">
                 {integration.note}
@@ -149,12 +208,14 @@ function IntegrationSection() {
             <span
               className={cn(
                 "shrink-0 text-[10px] font-bold uppercase tracking-wide",
-                integration.ready
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-muted-foreground",
+                integration.status === "ready" &&
+                  "text-emerald-600 dark:text-emerald-400",
+                integration.status === "partial" &&
+                  "text-amber-600 dark:text-amber-400",
+                integration.status === "missing" && "text-muted-foreground",
               )}
             >
-              {integration.ready ? "Configured" : "Not set"}
+              {STATUS_LABEL[integration.status]}
             </span>
           </li>
         ))}

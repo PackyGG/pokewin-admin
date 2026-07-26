@@ -14,6 +14,7 @@ import {
   type AntifraudScoreDefinition,
   type AntifraudScoringConfig,
 } from "@/lib/antifraud/monitor-api";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -23,19 +24,20 @@ export const metadata = { title: "Risk Scoring · Antifraud" };
 export default async function AntifraudPointsPage() {
   await requireAntifraudManagerPage();
 
+  // Shell-first: the hero + back affordance paint immediately, the monitor API
+  // read streams in behind the Suspense boundary. Container geometry matches
+  // the sibling antifraud pages (overview / reviews / settings): `space-y-6`.
   return (
-    <div className="w-full space-y-5">
-      <header className="flex items-start gap-3 border-b border-border/60 pb-4">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-500">
-          <Gauge className="size-4" />
-        </span>
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight">Risk scoring</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            The live point values and thresholds used by the antifraud monitor.
-          </p>
-        </div>
-      </header>
+    <div className="space-y-6">
+      <PageHero>
+        <PageHeroIdentity
+          icon={Gauge}
+          accent="cyan"
+          title="Risk scoring"
+          subtitle="The live point values and thresholds used by the antifraud monitor"
+          backHref="/antifraud"
+        />
+      </PageHero>
 
       <Suspense fallback={<PointsSkeleton />}>
         <ScoringDashboard />
