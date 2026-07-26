@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-27 local repository reconciliation:** stale pre-production branches, worktrees, and stashes were audited against `origin/main`; their changes were already shipped under newer commits, superseded, or intentionally reverted. The only surviving unfinished behavior was the Geo Blocking fiat-baseline counter fix, now on production as `d0c34055`, with focused regression coverage added. The shared staff-notification contract also gained a source guardrail. Guardrails, TypeScript, zero-warning ESLint, and the production build pass.
+
 - **2026-07-27 Antifraud live activity consolidation:** the overview no longer renders its separate player Live Activity card. Pack-opening, upgrader, and battle events now subscribe through the shared Packy live client on `/antifraud/monitor` and appear in that page's existing Live activity log alongside signup, monitor, and matched-flow events. The retired overview-only component was deleted. The focused transport fixture, all 202 guardrails, TypeScript, zero-warning ESLint, diff check, and the production build pass.
 
 - **2026-07-27 Account Review status-only workflow:** `/antifraud/reviews` no longer exposes review severity in queue filters/rows, detail surfaces, manual-case entry, case controls, server mutations, or review KPIs. The unused “Assigned to me” filter is removed, and “Open case” now sits inside the compact filter card beside status controls. Manual cases retain the required internal schema value without making it an analyst-controlled field. Incoming fraud-signal severity remains on the separate overview feed. A focused status-only/layout guardrail, all current guardrails, TypeScript, zero-warning ESLint, and the production build pass.
