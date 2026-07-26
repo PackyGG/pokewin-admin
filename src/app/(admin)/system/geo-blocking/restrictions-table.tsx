@@ -91,28 +91,47 @@ export type RestrictionRowData = {
 // the DB (we never write it) but it must not colour a country as "restricted" or add to
 // any count. Same reasoning drops it from the per-country editor + classifyRow.
 
+/**
+ * `ignoreFiatLock` — the card-deposit lock is a SITE-WIDE switch, not a
+ * per-location rule. When card deposits are turned off globally every single
+ * row carries `locked_deposits_fiat`, so counting it as a per-location
+ * restriction painted all 250 countries and all 51 US states as "restricted"
+ * while nothing was actually geo-blocked (owner, 2026-07-27: "idk why it says
+ * they restricted but rn basically there is not geo block restrictions live"
+ * — verified read-only against prod: 0 rows with `blocked = true`, 301 rows
+ * with the fiat lock). Callers pass `true` while the global switch is off so
+ * the baseline lock stops masquerading as a restriction; with the switch ON a
+ * remaining fiat lock IS a real per-jurisdiction exclusion and still counts.
+ */
+
 /** Any restriction active at all (drives the Restricted/Unrestricted split + KPI counts). */
-export function isRowRestricted(row: RestrictionRowData): boolean {
+export function isRowRestricted(
+  row: RestrictionRowData,
+  ignoreFiatLock = false,
+): boolean {
   return (
     row.blocked ||
     !row.physicalWithdrawal ||
     !row.digitalWithdrawal ||
     !row.promoCodeDeposit ||
     row.lockedDepositsCrypto.length > 0 ||
-    row.lockedDepositsFiat.length > 0 ||
+    (!ignoreFiatLock && row.lockedDepositsFiat.length > 0) ||
     row.lockedWithdrawalsCrypto.length > 0
   );
 }
 
 /** Count of individually-active restrictions, shown in the per-row summary badge. */
-export function countActiveRestrictions(row: RestrictionRowData): number {
+export function countActiveRestrictions(
+  row: RestrictionRowData,
+  ignoreFiatLock = false,
+): number {
   let n = 0;
   if (row.blocked) n++;
   if (!row.physicalWithdrawal) n++;
   if (!row.digitalWithdrawal) n++;
   if (!row.promoCodeDeposit) n++;
   if (row.lockedDepositsCrypto.length > 0) n++;
-  if (row.lockedDepositsFiat.length > 0) n++;
+  if (!ignoreFiatLock && row.lockedDepositsFiat.length > 0) n++;
   if (row.lockedWithdrawalsCrypto.length > 0) n++;
   return n;
 }
@@ -411,9 +430,15 @@ function RowDetail({
   );
 }
 
-function RestrictionSummaryBadge({ row }: { row: RestrictionRowData }) {
-  const restricted = isRowRestricted(row);
-  const count = countActiveRestrictions(row);
+function RestrictionSummaryBadge({
+  row,
+  ignoreFiatLock,
+}: {
+  row: RestrictionRowData;
+  ignoreFiatLock: boolean;
+}) {
+  const restricted = isRowRestricted(row, ignoreFiatLock);
+  const count = countActiveRestrictions(row, ignoreFiatLock);
   return (
     <Badge variant="outline" className={restricted ? RESTRICTED_BADGE : OPEN_BADGE}>
       {restricted ? `${count} restriction${count === 1 ? "" : "s"}` : "All allowed"}
@@ -428,8 +453,14 @@ export function RestrictionsTable({
   onToggle,
   onArrayChange,
   emptyState,
+  ignoreFiatLock = false,
 }: {
   rows: RestrictionRowData[];
+  /**
+   * Treat the site-wide card-deposit lock as baseline rather than a per-row
+   * restriction — see the note above `isRowRestricted`.
+   */
+  ignoreFiatLock?: boolean;
   /** Header label for the leading column — "Country" today, "State" later. */
   codeLabel?: string;
   /**
@@ -520,7 +551,7 @@ export function RestrictionsTable({
                         className="inline-flex items-center gap-1.5 rounded-full hover:opacity-80"
                         aria-expanded={isOpen}
                       >
-                        <RestrictionSummaryBadge row={row} />
+                        <RestrictionSummaryBadge row={row} ignoreFiatLock={ignoreFiatLock} />
                         {isOpen ? (
                           <ChevronDown className="size-3.5 text-muted-foreground" />
                         ) : (
@@ -586,7 +617,7 @@ export function RestrictionsTable({
                 className="mt-3 flex w-full items-center justify-between rounded-lg border bg-background/40 px-3 py-2 text-left"
                 aria-expanded={isOpen}
               >
-                <RestrictionSummaryBadge row={row} />
+                <RestrictionSummaryBadge row={row} ignoreFiatLock={ignoreFiatLock} />
                 {isOpen ? (
                   <ChevronDown className="size-4 text-muted-foreground" />
                 ) : (

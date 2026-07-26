@@ -154,19 +154,21 @@ type RowBucket = "blocked" | "itemWithdrawalOnly" | "other" | "open";
  * also happens to have item withdrawal off; "itemWithdrawalOnly" only fires
  * when NOTHING else is restricted alongside it.
  */
-function classifyRow(row: RestrictionRowData): RowBucket {
+function classifyRow(row: RestrictionRowData, ignoreFiatLock: boolean): RowBucket {
   if (row.blocked) return "blocked";
   // gift_card_deposit is intentionally omitted — the product has no gift cards, so that
   // flag is dead and must not affect bucketing (mirrors isRowRestricted in the table).
+  // `ignoreFiatLock` does the same for the site-wide card-deposit lock while it is off
+  // globally — see the note above isRowRestricted in ./restrictions-table.tsx.
   const onlyItemWithdrawalOff =
     !row.physicalWithdrawal &&
     row.digitalWithdrawal &&
     row.promoCodeDeposit &&
     row.lockedDepositsCrypto.length === 0 &&
-    row.lockedDepositsFiat.length === 0 &&
+    (ignoreFiatLock || row.lockedDepositsFiat.length === 0) &&
     row.lockedWithdrawalsCrypto.length === 0;
   if (onlyItemWithdrawalOff) return "itemWithdrawalOnly";
-  if (isRowRestricted(row)) return "other";
+  if (isRowRestricted(row, ignoreFiatLock)) return "other";
   return "open";
 }
 
@@ -415,8 +417,12 @@ export function GeoBlockingContent({
     [restrictionRows],
   );
   const totalCount = countryRows.length;
-  const statesRestricted = useMemo(
-    () => stateRows.filter((r) => isRowRestricted(r)).length,
+  // Count states that are actually GEO-BLOCKED, not "has any flag set". The old
+  // `isRowRestricted` count read 51/51 purely because the global card-deposit
+  // lock is on every row (owner, 2026-07-27) — that is a site-wide payment
+  // switch, not a geo restriction, and it already has its own panel above.
+  const statesBlocked = useMemo(
+    () => stateRows.filter((r) => r.blocked).length,
     [stateRows],
   );
 
@@ -430,6 +436,9 @@ export function GeoBlockingContent({
   const allFiatAllowed =
     currentSiteLockedMethods !== null &&
     isGlobalFiatPolicyActive(currentSiteLockedMethods, rows);
+  // Card deposits off site-wide ⇒ every row carries the fiat lock, so it is a
+  // baseline, not a per-location restriction. See ./restrictions-table.tsx.
+  const fiatLockIsBaseline = !allFiatAllowed;
   const policyFiatLocked = policyRows.filter((row) =>
     isCreditCardDepositLocked(row.lockedDepositsFiat),
   ).length;
@@ -450,7 +459,7 @@ export function GeoBlockingContent({
     const other: RestrictionRowData[] = [];
     const open: RestrictionRowData[] = [];
     for (const row of countryRows) {
-      switch (classifyRow(row)) {
+      switch (classifyRow(row, fiatLockIsBaseline)) {
         case "blocked":
           blocked.push(row);
           break;
@@ -465,7 +474,7 @@ export function GeoBlockingContent({
       }
     }
     return { blocked, itemWithdrawalOnly, other, open };
-  }, [countryRows]);
+  }, [countryRows, fiatLockIsBaseline]);
 
   // The scope dropdown picks WHICH row-set is on the table; the restriction
   // dropdown narrows it to one `classifyRow` bucket. Both counts are live.
@@ -489,17 +498,19 @@ export function GeoBlockingContent({
       itemWithdrawalOnly: 0,
       open: 0,
     };
-    for (const row of scopeRows) counts[classifyRow(row)] += 1;
+    for (const row of scopeRows) counts[classifyRow(row, fiatLockIsBaseline)] += 1;
     return counts;
-  }, [scopeRows]);
+  }, [scopeRows, fiatLockIsBaseline]);
 
   const visibleRows = useMemo(() => {
     const byRestriction =
       restriction === "all"
         ? scopeRows
-        : scopeRows.filter((row) => classifyRow(row) === restriction);
+        : scopeRows.filter(
+            (row) => classifyRow(row, fiatLockIsBaseline) === restriction,
+          );
     return filterByTerm(byRestriction, search);
-  }, [scopeRows, restriction, search]);
+  }, [scopeRows, restriction, search, fiatLockIsBaseline]);
 
   const scopeNoun =
     scope === "usStates" ? "US states" : scope === "policy" ? "policy jurisdictions" : "countries";
@@ -555,8 +566,8 @@ export function GeoBlockingContent({
           accent="emerald"
         />
         <KpiTile
-          label="US States Restricted"
-          value={`${statesRestricted} / ${stateRows.length}`}
+          label="US States Blocked"
+          value={`${statesBlocked} / ${stateRows.length}`}
           icon={MapPin}
           accent="purple"
         />
@@ -714,6 +725,7 @@ export function GeoBlockingContent({
       <RestrictionsTable
         rows={visibleRows}
         codeLabel={SCOPE_CODE_LABEL[scope]}
+        ignoreFiatLock={fiatLockIsBaseline}
         pendingCodes={pendingCodes}
         onToggle={handleToggle}
         onArrayChange={handleArrayChange}
