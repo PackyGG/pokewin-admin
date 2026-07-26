@@ -131,6 +131,8 @@ export function LiveActivity() {
       ? "Live"
       : connection === "paused"
         ? "Paused"
+        : connection === "unavailable"
+          ? "Unavailable"
         : connection === "reconnecting"
           ? "Reconnecting"
           : "Connecting";
@@ -165,8 +167,9 @@ export function LiveActivity() {
               {isLive ? "Waiting for player activity" : `${statusLabel}…`}
             </span>
             <span className="max-w-xs text-xs text-muted-foreground">
-              Pack openings, upgrader bets and battle activity appear here as
-              the backend publishes them.
+              {connection === "unavailable"
+                ? "The live backend is unavailable. Retrying automatically."
+                : "Pack openings, upgrader bets and battle activity appear here as the backend publishes them."}
             </span>
           </div>
         ) : (

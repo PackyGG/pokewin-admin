@@ -239,10 +239,12 @@ export async function GET(request: Request): Promise<Response> {
   };
 
   const encoder = new TextEncoder();
+  let cancelStream: (() => void) | null = null;
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       let closed = false;
+      let upstreamFailed = false;
       let req: ReturnType<typeof https.request> | null = null;
       let socket: Duplex | null = null;
       let receiver: ReceiverWithEvents | null = null;
@@ -289,6 +291,7 @@ export async function GET(request: Request): Promise<Response> {
         if (heartbeat) clearInterval(heartbeat);
         if (rotation) clearTimeout(rotation);
         cleanupUpstream();
+        cancelStream = null;
         try {
           controller.close();
         } catch {
@@ -309,6 +312,17 @@ export async function GET(request: Request): Promise<Response> {
         write(`event: ${event}\ndata: ${data}\n\n`);
       };
 
+      const failUpstream = (detail: Record<string, unknown>) => {
+        if (closed || upstreamFailed) return;
+        upstreamFailed = true;
+        console.warn("[packy-live] upstream unavailable", detail);
+        writeEvent("upstream-error", JSON.stringify(detail));
+        setTimeout(cleanup, 0);
+      };
+
+      cancelStream = cleanup;
+      write("retry: 10000\n\n");
+
       if (request.signal.aborted) {
         cleanup();
         return;
@@ -325,13 +339,10 @@ export async function GET(request: Request): Promise<Response> {
           timeout: 15_000,
         });
       } catch (err) {
-        writeEvent(
-          "error",
-          JSON.stringify({
-            message: "upstream-init-failed",
-            detail: err instanceof Error ? err.message : String(err),
-          }),
-        );
+        failUpstream({
+          message: "upstream-init-failed",
+          detail: err instanceof Error ? err.message : String(err),
+        });
         req = null;
       }
 
@@ -340,34 +351,22 @@ export async function GET(request: Request): Promise<Response> {
         const activeUpstream = upstream;
 
         activeReq.on("error", (err) => {
-          writeEvent(
-            "error",
-            JSON.stringify({
-              message: err.message ?? String(err),
-              phase: "request",
-            }),
-          );
-          cleanupUpstream();
+          failUpstream({
+            message: err.message ?? String(err),
+            phase: "request",
+          });
         });
 
         activeReq.on("response", (res) => {
-          writeEvent(
-            "error",
-            JSON.stringify({
-              message: "upstream-did-not-upgrade",
-              status: res.statusCode ?? 0,
-            }),
-          );
           res.resume();
-          cleanupUpstream();
+          failUpstream({
+            message: "upstream-did-not-upgrade",
+            status: res.statusCode ?? 0,
+          });
         });
 
         activeReq.on("timeout", () => {
-          writeEvent(
-            "error",
-            JSON.stringify({ message: "upstream-timeout", phase: "request" }),
-          );
-          cleanupUpstream();
+          failUpstream({ message: "upstream-timeout", phase: "request" });
         });
 
         activeReq.on("upgrade", (res, rawSocket, head) => {
@@ -378,16 +377,11 @@ export async function GET(request: Request): Promise<Response> {
 
           const accept = res.headers["sec-websocket-accept"];
           if (accept !== activeUpstream.expectedAccept) {
-            writeEvent(
-              "error",
-              JSON.stringify({
-                message: "accept-mismatch",
-                expected: activeUpstream.expectedAccept,
-                got: String(accept ?? "(none)"),
-              }),
-            );
             rawSocket.destroy();
-            cleanupUpstream();
+            failUpstream({
+              message: "accept-mismatch",
+              got: String(accept ?? "(none)"),
+            });
             return;
           }
 
@@ -419,15 +413,11 @@ export async function GET(request: Request): Promise<Response> {
               }
             ).PerMessageDeflate;
             if (typeof PmdCtor !== "function") {
-              writeEvent(
-                "error",
-                JSON.stringify({
-                  message:
-                    "PerMessageDeflate not available — ws import misresolved",
-                }),
-              );
               rawSocket.destroy();
-              cleanupUpstream();
+              failUpstream({
+                message:
+                  "PerMessageDeflate not available — ws import misresolved",
+              });
               return;
             }
             const pmd = new PmdCtor({}, false, 100 * 1024 * 1024);
@@ -453,14 +443,10 @@ export async function GET(request: Request): Promise<Response> {
             }
           ).Receiver;
           if (typeof ReceiverCtor !== "function") {
-            writeEvent(
-              "error",
-              JSON.stringify({
-                message: "Receiver not available — ws import misresolved",
-              }),
-            );
             rawSocket.destroy();
-            cleanupUpstream();
+            failUpstream({
+              message: "Receiver not available — ws import misresolved",
+            });
             return;
           }
           receiver = new ReceiverCtor({
@@ -498,25 +484,18 @@ export async function GET(request: Request): Promise<Response> {
           });
 
           receiver.on("conclude", (code, reason) => {
-            writeEvent(
-              "close",
-              JSON.stringify({
-                code,
-                reason: reason?.toString("utf8") ?? "",
-              }),
-            );
-            cleanupUpstream();
+            failUpstream({
+              message: "upstream-closed",
+              code,
+              reason: reason?.toString("utf8") ?? "",
+            });
           });
 
           receiver.on("error", (err) => {
-            writeEvent(
-              "error",
-              JSON.stringify({
-                message: err.message ?? String(err),
-                phase: "receiver",
-              }),
-            );
-            cleanupUpstream();
+            failUpstream({
+              message: err.message ?? String(err),
+              phase: "receiver",
+            });
           });
 
           if (head && head.length > 0) {
@@ -528,22 +507,18 @@ export async function GET(request: Request): Promise<Response> {
           });
           rawSocket.on("close", () => {
             if (!closed) {
-              writeEvent(
-                "close",
-                JSON.stringify({ code: 1006, reason: "socket-closed" }),
-              );
-              cleanupUpstream();
+              failUpstream({
+                message: "upstream-closed",
+                code: 1006,
+                reason: "socket-closed",
+              });
             }
           });
           rawSocket.on("error", (err) => {
-            writeEvent(
-              "error",
-              JSON.stringify({
-                message: err.message ?? String(err),
-                phase: "socket",
-              }),
-            );
-            cleanupUpstream();
+            failUpstream({
+              message: err.message ?? String(err),
+              phase: "socket",
+            });
           });
 
           // ── Opt into the feeds we care about ────────────────────────
@@ -597,25 +572,19 @@ export async function GET(request: Request): Promise<Response> {
                   compress: false,
                 });
               } catch (err) {
-                writeEvent(
-                  "error",
-                  JSON.stringify({
-                    phase: "subscribe",
-                    msg: err instanceof Error ? err.message : String(err),
-                  }),
-                );
+                failUpstream({
+                  phase: "subscribe",
+                  message: err instanceof Error ? err.message : String(err),
+                });
               }
             }
           } else {
-            writeEvent(
-              "error",
-              JSON.stringify({
-                message: "Sender not available — ws import misresolved",
-              }),
-            );
+            failUpstream({
+              message: "Sender not available — ws import misresolved",
+            });
           }
 
-          writeEvent("open", "{}");
+          writeEvent("upstream-open", "{}");
         });
 
         activeReq.end();
@@ -633,7 +602,7 @@ export async function GET(request: Request): Promise<Response> {
       }, ROTATION_MS);
     },
     cancel() {
-      // abort listener handles cleanup
+      cancelStream?.();
     },
   });
 

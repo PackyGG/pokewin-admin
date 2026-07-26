@@ -63,6 +63,7 @@ export type PackyConnectionState =
   | "connecting"
   | "live"
   | "reconnecting"
+  | "unavailable"
   | "paused";
 type ConnectionStateHandler = (state: PackyConnectionState) => void;
 const connectionStateHandlers = new Set<ConnectionStateHandler>();
@@ -167,11 +168,20 @@ function openSource() {
   source = es;
   es.onopen = () => {
     hasOpened = true;
-    setConnectionState("live");
   };
   es.onerror = () => {
-    if (source === es) setConnectionState("reconnecting");
+    if (source === es && connectionState !== "unavailable") {
+      setConnectionState("reconnecting");
+    }
   };
+
+  es.addEventListener("upstream-open", () => {
+    if (source === es) setConnectionState("live");
+  });
+
+  es.addEventListener("upstream-error", () => {
+    if (source === es) setConnectionState("unavailable");
+  });
 
   es.addEventListener("packy", (ev: MessageEvent) => {
     if (typeof ev.data !== "string") return;

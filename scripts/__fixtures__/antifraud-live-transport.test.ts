@@ -5,6 +5,7 @@ import test from "node:test";
 const routePath = "src/app/api/antifraud/monitor/stream/route.ts";
 const servicePath = "services/antifraud-monitor/src/live.ts";
 const packyRoutePath = "src/app/api/packy-live/route.ts";
+const packyClientPath = "src/lib/packy-ws.ts";
 
 test("the monitor service owns connection capacity and the SSE bridge reconnects", async () => {
   const [route, service] = await Promise.all([
@@ -34,4 +35,25 @@ test("the Packy live bridge accepts the exact fraud host and pins the upstream o
   );
   assert.match(route, /Origin:\s*PRODUCTION_DASHBOARD_ORIGIN/);
   assert.doesNotMatch(route, /Origin:\s*requestOrigin/);
+});
+
+test("the Packy live bridge reports upstream truth and closes dead streams", async () => {
+  const [route, client] = await Promise.all([
+    readFile(packyRoutePath, "utf8"),
+    readFile(packyClientPath, "utf8"),
+  ]);
+
+  assert.match(route, /writeEvent\("upstream-error"/);
+  assert.doesNotMatch(route, /writeEvent\(\s*"error"/);
+  assert.match(route, /writeEvent\("upstream-open"/);
+  assert.match(route, /setTimeout\(cleanup,\s*0\)/);
+  assert.match(route, /cancelStream\?\.\(\)/);
+
+  assert.match(client, /\|\s*"unavailable"/);
+  assert.match(client, /addEventListener\("upstream-open"/);
+  assert.match(client, /addEventListener\("upstream-error"/);
+  assert.doesNotMatch(
+    client,
+    /es\.onopen\s*=\s*\(\)\s*=>\s*\{[^}]*setConnectionState\("live"\)/s,
+  );
 });
