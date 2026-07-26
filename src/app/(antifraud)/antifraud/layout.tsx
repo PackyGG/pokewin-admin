@@ -4,6 +4,9 @@ import { redirect } from "next/navigation";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AdminHeader } from "@/components/admin-header";
 import { TopProgressBar } from "@/components/top-progress-bar";
+import { RightRailProvider } from "@/components/right-rail-context";
+import { RailWidthSync } from "@/components/rail-width-sync";
+import { readRailOpenOrder } from "@/lib/right-rail-server";
 import { TimezoneProvider } from "@/components/timezone-provider";
 import { DevDbBanner } from "@/components/dev-db-banner";
 
@@ -19,15 +22,13 @@ import {
   type AntifraudAccessSettings,
   type AntifraudUserAccess,
 } from "@/lib/antifraud/access";
-import { eq } from "drizzle-orm";
-import { adminDrizzle } from "@/lib/admin-db";
-import { admin_users } from "@/lib/db-schema/admin/schema";
+import { ensureStaffProfile } from "@/lib/antifraud/profile";
+import { adminDb } from "@/lib/admin-db";
 import { getAdminPreferences } from "@/lib/admin-preferences";
 import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
 import { readDbEnvFromCookie, isDevDbConfigured } from "@/lib/db-env";
 import { readTzCookie } from "@/lib/timezone/server";
 import { isNextControlFlowError } from "@/lib/utils/action-error";
-import { resolveAppAccess } from "@/lib/app-access";
 
 // scroll-to-top island lives in the (admin) group; reused 1:1 here. The
 // (antifraud) and (admin) route groups are sibling directories on disk, so this
@@ -67,11 +68,14 @@ async function loadHeaderProfile(userId: string): Promise<{
   profileFieldsAvailable: boolean;
 }> {
   try {
-    const [row] = await adminDrizzle.select({
-      display_username: admin_users.display_username,
-      profile_image_mime: admin_users.profile_image_mime,
-      email: admin_users.email,
-    }).from(admin_users).where(eq(admin_users.id, userId)).limit(1);
+    const row = await adminDb.admin_users.findUnique({
+      where: { id: userId },
+      select: {
+        display_username: true,
+        profile_image_mime: true,
+        email: true,
+      },
+    });
     return {
       displayUsername: row?.display_username ?? null,
       hasAvatar: Boolean(row?.profile_image_mime),
@@ -81,12 +85,14 @@ async function loadHeaderProfile(userId: string): Promise<{
   } catch (err) {
     const code = (err as { code?: string })?.code;
     const missingColumn =
-      code === "42703" ||
+      code === "P2022" ||
       (err instanceof Error && /column .* does not exist/i.test(err.message));
     if (missingColumn) {
       try {
-        const [row] = await adminDrizzle.select({ email: admin_users.email })
-          .from(admin_users).where(eq(admin_users.id, userId)).limit(1);
+        const row = await adminDb.admin_users.findUnique({
+          where: { id: userId },
+          select: { email: true },
+        });
         return {
           displayUsername: null,
           hasAvatar: false,
@@ -201,13 +207,13 @@ export default async function AntifraudLayout({
   // produce an unhandled rejection.
   const accessSettingsP = loadAccessSettings();
   const userAccessP = loadUserAccess();
+  const allowedPagesP = loadUserPermissions(session.userId);
   const profileP = loadHeaderProfile(session.userId);
   const preferencesP = loadPreferences(session.userId);
   const dbEnvP = readDbEnvFromCookie();
   const tzCookieP = readTzCookie();
-  // Which workspaces the footer switcher may offer. Resilient (never rejects)
-  // and gated 1:1 with each sub-app's own route guard.
-  const appAccessP = resolveAppAccess(session);
+  const railOpenOrderP = readRailOpenOrder();
+
   // Access gate (security-sensitive). It awaits ONLY its own dependencies and
   // is decided BEFORE any JSX is returned — the other reads merely run
   // concurrently; nothing renders and nothing is sent to the client until this
@@ -218,23 +224,29 @@ export default async function AntifraudLayout({
     userAccessP,
   ]);
   if (!canAccessAntifraud(session, accessSettings, userAccess)) {
-    const allowedPages = await loadUserPermissions(session.userId);
+    const allowedPages = await allowedPagesP;
     redirect(getDefaultRouteForRoles(roles, allowedPages));
   }
 
-  const [profile, preferences, dbEnv, tzCookie, appAccess] = await Promise.all([
-    profileP,
-    preferencesP,
-    dbEnvP,
-    tzCookieP,
-    appAccessP,
-  ]);
+  const [allowedPages, profile, preferences, dbEnv, tzCookie, railOpenOrder] =
+    await Promise.all([
+      allowedPagesP,
+      profileP,
+      preferencesP,
+      dbEnvP,
+      tzCookieP,
+      railOpenOrderP,
+    ]);
 
   // First visit into the workspace creates the staff profile + stamps the
   // heartbeat. Deliberately AFTER the access gate (only people who can actually
   // be here get a profile) and non-blocking in effect — it returns null rather
   // than throwing if the tables aren't provisioned on this deployment.
+  await ensureStaffProfile(session.userId);
+
   const canSwitchDbEnv = session.role === "admin" && isDevDbConfigured();
+  const canOpenChatPanel =
+    session.role === "admin" || allowedPages.includes("/chat");
   const canManage = canManageAntifraud(session);
 
   return (
@@ -248,8 +260,10 @@ export default async function AntifraudLayout({
           <TopProgressBar />
         </Suspense>
         {/* The swapped nav — Antifraud's own sidebar replaces AppSidebar.
-            `canManage` (owner/admin) reveals antifraud settings. */}
-        <AntifraudSidebar canManage={canManage} access={appAccess} />
+            `canManage` (owner/admin) reveals the quiz-authoring + settings
+            group; those pages are gated server-side too, so hiding the links
+            just avoids a click that would bounce. */}
+        <AntifraudSidebar canManage={canManage} />
         <SidebarInset className="min-w-0">
           {dbEnv === "dev" && <DevDbBanner />}
           <AdminHeader
@@ -276,6 +290,15 @@ export default async function AntifraudLayout({
             <PageTransition>{children}</PageTransition>
           </div>
         </SidebarInset>
+        {/* Rail scaffolding only — the live money + recent-activity docks are
+            deliberately NOT mounted here (SECURITY_AUDIT.md HIGH-2: customer
+            financial activity must not stream to workspace roles). */}
+        <RightRailProvider
+          mounted={{ chat: canOpenChatPanel }}
+          initialOpenOrder={railOpenOrder}
+        >
+          <RailWidthSync />
+        </RightRailProvider>
       </SidebarProvider>
     </TimezoneProvider>
   );

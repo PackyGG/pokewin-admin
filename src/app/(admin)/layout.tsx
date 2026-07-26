@@ -4,17 +4,42 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { AdminHeader } from "@/components/admin-header";
 import { HeaderRainChip } from "@/components/header-rain-chip";
 import { TopProgressBar } from "@/components/top-progress-bar";
+import { DockedChat } from "@/components/docked-chat";
+import { DockedRecentActivity } from "@/components/docked-recent-activity";
+import { LiveMoneyChat } from "@/components/live-money-chat";
+import { RightRailProvider } from "@/components/right-rail-context";
+import { RailWidthSync } from "@/components/rail-width-sync";
+import { readRailOpenOrder } from "@/lib/right-rail-server";
+import { CommandPalette } from "@/components/command-palette";
 import { TimezoneProvider } from "@/components/timezone-provider";
 import { PageTransition } from "@/components/page-transition";
 import { redirect } from "next/navigation";
 import { verifySession, getUserPermissions, sessionIsOwner } from "@/lib/dal";
 import { getSession, type SessionPayload } from "@/lib/session";
 import { getEffectiveRoles } from "@/lib/admin-roles";
-import { isPostgresError } from "@/lib/postgres-errors";
-import { resolveAppAccess } from "@/lib/app-access";
-import { eq } from "drizzle-orm";
-import { adminDrizzle } from "@/lib/drizzle";
-import { admin_users } from "@/lib/db-schema/admin/schema";
+import {
+  canAccessCreatorHub,
+  getCreatorHubAccessSettings,
+  CREATOR_HUB_TOGGLE_ROLES,
+  type CreatorHubAccessSettings,
+} from "@/lib/creator-hub-access";
+import {
+  canAccessPackStudio,
+  getPackStudioAccessSettings,
+  getPackStudioUserAccess,
+  PACK_STUDIO_TOGGLE_ROLES,
+  type PackStudioAccessSettings,
+  type PackStudioUserAccess,
+} from "@/lib/pack-studio-access";
+import {
+  canAccessAntifraud,
+  deniedAntifraudSettings,
+  getAntifraudAccessSettings,
+  getAntifraudUserAccess,
+  type AntifraudAccessSettings,
+  type AntifraudUserAccess,
+} from "@/lib/antifraud/access";
+import { adminDb } from "@/lib/admin-db";
 import { getAdminPreferences } from "@/lib/admin-preferences";
 import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
 import { readDbEnvFromCookie, isDevDbConfigured } from "@/lib/db-env";
@@ -39,23 +64,20 @@ async function loadHeaderProfile(userId: string): Promise<{
    * Whether the optional admin-DB profile columns (display_username /
    * profile_image_mime) exist. The profile dialog uses this to gate its
    * editing controls the same way the old /profile page did. Detected by
-   * whether the column-bearing select threw SQLSTATE 42703 — any other
-   * failure keeps the safe `false` default.
+   * whether the column-bearing select threw P2022 / "column does not
+   * exist" — any other failure keeps the safe `false` default.
    */
   profileFieldsAvailable: boolean;
 }> {
   try {
-    const row = (
-      await adminDrizzle
-        .select({
-          display_username: admin_users.display_username,
-          profile_image_mime: admin_users.profile_image_mime,
-          email: admin_users.email,
-        })
-        .from(admin_users)
-        .where(eq(admin_users.id, userId))
-        .limit(1)
-    )[0];
+    const row = await adminDb.admin_users.findUnique({
+      where: { id: userId },
+      select: {
+        display_username: true,
+        profile_image_mime: true,
+        email: true,
+      },
+    });
     return {
       displayUsername: row?.display_username ?? null,
       hasAvatar: Boolean(row?.profile_image_mime),
@@ -67,16 +89,16 @@ async function loadHeaderProfile(userId: string): Promise<{
     // just the always-present `email` so the dialog can still show identity,
     // and flag the profile fields as unavailable (controls disabled). Any
     // non-missing-column error keeps the fully-degraded default.
-    const missingColumn = isPostgresError(err, "42703");
+    const code = (err as { code?: string })?.code;
+    const missingColumn =
+      code === "P2022" ||
+      (err instanceof Error && /column .* does not exist/i.test(err.message));
     if (missingColumn) {
       try {
-        const row = (
-          await adminDrizzle
-            .select({ email: admin_users.email })
-            .from(admin_users)
-            .where(eq(admin_users.id, userId))
-            .limit(1)
-        )[0];
+        const row = await adminDb.admin_users.findUnique({
+          where: { id: userId },
+          select: { email: true },
+        });
         return {
           displayUsername: null,
           hasAvatar: false,
@@ -99,7 +121,7 @@ async function loadHeaderProfile(userId: string): Promise<{
 
 /**
  * Resilient read of `getUserPermissions` for the layout. A transient
- * Admin DB failure (connection blip, statement timeout) here would otherwise
+ * adminDb failure (connection blip, statement timeout) here would otherwise
  * crash the entire admin shell — which is exactly the failure mode
  * /dashboard, /cards, /packs hit in prod after the page-body queries were
  * already hardened with safeQuery. Falling back to an empty allow-list is
@@ -121,7 +143,7 @@ async function loadUserPermissions(userId: string): Promise<string[]> {
 
 /**
  * Resilient read of `getAdminPreferences` for the layout. The preferences
- * column already self-heals for the unapplied-migration case (42703), but
+ * column already self-heals for the unapplied-migration case (P2022), but
  * any OTHER throw — connection drop, timeout, unexpected shape — would
  * propagate past the layout and white-screen the shell. Falling back to
  * DEFAULT_PREFERENCES keeps the timezone provider's safe defaults so the
@@ -139,9 +161,110 @@ async function loadPreferences(userId: string) {
 }
 
 /**
+ * Resilient read of the per-role Creator-Hub access toggles, used to decide
+ * whether the "Switch to Creator Hub" portal button is shown in the
+ * sidebar. The decision MUST be computed server-side (it depends on ADMIN-DB
+ * settings the client can't read) and is gated identically to the
+ * /creator-hub route guard. Any DB fault degrades to every toggle OFF
+ * (fail-closed) so a blip can't reveal the portal to a non-owner — only the
+ * hard-coded `motha` bypass in `canAccessCreatorHub` survives.
+ */
+async function loadCreatorHubAccessSettings(): Promise<CreatorHubAccessSettings> {
+  try {
+    return await getCreatorHubAccessSettings();
+  } catch (err) {
+    if (isNextControlFlowError(err)) throw err;
+    console.error(
+      "[admin-layout] loadCreatorHubAccessSettings failed, hiding portal for non-owner:",
+      err,
+    );
+    return Object.fromEntries(
+      CREATOR_HUB_TOGGLE_ROLES.map((role) => [role, false]),
+    ) as CreatorHubAccessSettings;
+  }
+}
+
+/**
+ * Resilient read of the per-role Pack-Studio access toggles, used to decide
+ * whether the "Switch to Pack Studio" portal button is shown in the sidebar.
+ * The decision MUST be computed server-side (it depends on ADMIN-DB settings
+ * the client can't read) and is gated identically to the /pack-studio route
+ * guard. Any DB fault degrades to every toggle OFF (fail-closed) so a blip
+ * can't reveal the portal to a non-owner — only the owner bypass in
+ * `canAccessPackStudio` survives.
+ */
+async function loadPackStudioAccessSettings(): Promise<PackStudioAccessSettings> {
+  try {
+    return await getPackStudioAccessSettings();
+  } catch (err) {
+    if (isNextControlFlowError(err)) throw err;
+    console.error(
+      "[admin-layout] loadPackStudioAccessSettings failed, hiding portal for non-owner:",
+      err,
+    );
+    return Object.fromEntries(
+      PACK_STUDIO_TOGGLE_ROLES.map((role) => [role, false]),
+    ) as PackStudioAccessSettings;
+  }
+}
+
+/**
+ * Per-username allow/deny override read for the sidebar portal visibility.
+ * On error we fall back to empty lists (= role-based default) — owners stay
+ * in via their DB-independent bypass, admins stay in via the role default.
+ */
+async function loadPackStudioUserAccess(): Promise<PackStudioUserAccess> {
+  try {
+    return await getPackStudioUserAccess();
+  } catch (err) {
+    if (isNextControlFlowError(err)) throw err;
+    console.error(
+      "[admin-layout] loadPackStudioUserAccess failed, falling back to role default:",
+      err,
+    );
+    return { allowlist: [], denylist: [] };
+  }
+}
+
+/**
+ * Resilient read of the per-role Antifraud access toggles, used to decide
+ * whether the "Switch to Antifraud" portal button (the third sub-app card) is
+ * shown in the sidebar. Same contract as the two above: computed SERVER-SIDE,
+ * gated identically to the /antifraud route guard, and any DB fault degrades to
+ * every toggle OFF (fail-closed) — only the owner/admin bypass inside
+ * `canAccessAntifraud` survives a blip.
+ */
+async function loadAntifraudAccessSettings(): Promise<AntifraudAccessSettings> {
+  try {
+    return await getAntifraudAccessSettings();
+  } catch (err) {
+    if (isNextControlFlowError(err)) throw err;
+    console.error(
+      "[admin-layout] loadAntifraudAccessSettings failed, hiding toggle-based portal:",
+      err,
+    );
+    return deniedAntifraudSettings();
+  }
+}
+
+/** Per-username Antifraud override read — role default on failure. */
+async function loadAntifraudUserAccess(): Promise<AntifraudUserAccess> {
+  try {
+    return await getAntifraudUserAccess();
+  } catch (err) {
+    if (isNextControlFlowError(err)) throw err;
+    console.error(
+      "[admin-layout] loadAntifraudUserAccess failed, falling back to role default:",
+      err,
+    );
+    return { allowlist: [], denylist: [] };
+  }
+}
+
+/**
  * Resilient wrapper around `verifySession()`. The session check itself is
  * cookie-only (cheap, can't throw for connectivity reasons), but the
- * DB-side `is_active` / role re-read inside it can throw if the Admin DB has a
+ * DB-side `is_active` / role re-read inside it can throw if adminDb has a
  * transient fault — which would otherwise crash the entire admin shell at
  * its very first await (the layout's gate). On a non-control-flow DB
  * failure we fall back to the JWT payload alone: it was signed at login,
@@ -183,7 +306,7 @@ export default async function AdminLayout({
   //
   // Every entry is wrapped by a layout-local helper that catches non-
   // control-flow errors and returns a safe fallback so a transient
-  // Admin DB fault can't take the whole admin shell down (the failure mode
+  // adminDb fault can't take the whole admin shell down (the failure mode
   // that white-screened /dashboard, /cards, /packs in prod after their
   // page-body queries were already hardened with safeQuery). Each wrapper
   // re-throws `redirect()` / `notFound()` so navigation still works.
@@ -193,7 +316,12 @@ export default async function AdminLayout({
     preferences,
     dbEnv,
     tzCookie,
-    appAccess,
+    hubAccessSettings,
+    studioAccessSettings,
+    studioUserAccess,
+    antifraudAccessSettings,
+    antifraudUserAccess,
+    railOpenOrder,
   ] = await Promise.all([
     loadUserPermissions(session.userId),
     loadHeaderProfile(session.userId),
@@ -204,14 +332,47 @@ export default async function AdminLayout({
     // (no hydration flash) when the admin has no explicit pref. readTzCookie
     // never throws (background-ctx safe) and returns null when absent.
     readTzCookie(),
-    // Which workspaces the sidebar switcher may offer. Resilient (never
-    // rejects) and gated 1:1 with each sub-app's own route guard, so nobody is
-    // shown a door they'd bounce off.
-    resolveAppAccess(session),
+    loadCreatorHubAccessSettings(),
+    loadPackStudioAccessSettings(),
+    loadPackStudioUserAccess(),
+    loadAntifraudAccessSettings(),
+    loadAntifraudUserAccess(),
+    // Open dock keys from the `admin_rail` cookie. Passed to the
+    // RightRailProvider so SSR + the first client paint reflect the admin's
+    // SAVED rail layout — no post-mount open/close flip. Returns null when
+    // the cookie is absent (first-ever visit → provider default).
+    readRailOpenOrder(),
   ]);
   // Only surface the switcher to admins on servers where a dev DB is
   // actually configured; otherwise the toggle would be a dead option.
   const canSwitchDbEnv = session.role === "admin" && isDevDbConfigured();
+
+  // Whether to show the "Switch to Creator Hub" portal in the sidebar.
+  // Computed server-side (it depends on ADMIN-DB toggles) and matched 1:1
+  // to the /creator-hub route guard so the button never appears for a user
+  // who would be redirected out of the Hub. Default (both toggles off):
+  // only `motha`.
+  const canEnterCreatorHub = canAccessCreatorHub(session, hubAccessSettings);
+
+  // Whether to show the "Switch to Pack Studio" portal in the sidebar.
+  // Computed server-side (it depends on ADMIN-DB toggles) and matched 1:1 to
+  // the /pack-studio route guard so the button never appears for a user who
+  // would be redirected out of the Studio. Default (toggle off): only owners.
+  const canEnterPackStudio = canAccessPackStudio(
+    session,
+    studioAccessSettings,
+    studioUserAccess,
+  );
+
+  // Whether to show the "Switch to Antifraud" portal (third sub-app card).
+  // Same server-side computation + 1:1 match to the /antifraud route guard.
+  // Default: owners + admins; other roles need their toggle flipped or an
+  // explicit username allowlist entry.
+  const canEnterAntifraud = canAccessAntifraud(
+    session,
+    antifraudAccessSettings,
+    antifraudUserAccess,
+  );
 
   // OWNER / ultra-admin flag for the sidebar. Computed server-side from the
   // DB-fresh session (verifySession populated `session.isOwner`); the permanent
@@ -220,6 +381,11 @@ export default async function AdminLayout({
   // bypass the page-access gate for them. Fail-closed: the DB-failure session
   // fallback only ever yields `true` for the `motha` username.
   const isOwner = sessionIsOwner(session);
+
+  // Chat/mutes panel is only surfaced to users who could reach the old
+  // /chat page — keeps the same permission boundary as the removed route.
+  const canOpenChatPanel =
+    session.role === "admin" || allowedPages.includes("/chat");
 
   return (
     <TimezoneProvider
@@ -239,9 +405,9 @@ export default async function AdminLayout({
           allowedPages={allowedPages}
           username={session.username}
           dbEnv={dbEnv}
-          canEnterCreatorHub={appAccess.creatorHub}
-          canEnterPackStudio={appAccess.packStudio}
-          canEnterAntifraud={appAccess.antifraud}
+          canEnterCreatorHub={canEnterCreatorHub}
+          canEnterPackStudio={canEnterPackStudio}
+          canEnterAntifraud={canEnterAntifraud}
           isOwner={isOwner}
         />
         {/* SidebarInset is the shadcn shell partner to <Sidebar> — it's the
@@ -302,6 +468,33 @@ export default async function AdminLayout({
             <PageTransition>{children}</PageTransition>
           </div>
         </SidebarInset>
+        <CommandPalette
+          role={session.role}
+          allowedPages={allowedPages}
+          username={session.username}
+        />
+        {/* Right-edge docked widgets — three slots, top → bottom:
+              • LiveMoneyChat       (top)    deposits + withdrawals feed
+              • DockedRecentActivity (middle) signups + wagers + payouts feed
+              • DockedChat           (bottom) Chat & Mutes panel
+            All three are persistent, collapsible, and state-tracked via
+            the shared right-rail context. At most TWO may be expanded at
+            the same time — opening a third auto-collapses the oldest-
+            opened one (FIFO eviction inside RightRailProvider). The
+            chat dock is permission-gated to the same boundary the old
+            /chat page used; the live + recent docks are visible to
+            every admin user. `mounted={{ chat }}` tells the rail
+            geometry whether to reserve space for chat — without it the
+            non-admin shell would leave a 5rem empty band at the bottom. */}
+        <RightRailProvider
+          mounted={{ chat: canOpenChatPanel, alerts: false }}
+          initialOpenOrder={railOpenOrder}
+        >
+          <RailWidthSync />
+          <LiveMoneyChat />
+          <DockedRecentActivity />
+          {canOpenChatPanel && <DockedChat role={session.role} />}
+        </RightRailProvider>
       </SidebarProvider>
     </TimezoneProvider>
   );

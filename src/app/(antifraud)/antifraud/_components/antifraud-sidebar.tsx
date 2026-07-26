@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  ArrowLeft,
   BadgeCheck,
   Braces,
   GraduationCap,
@@ -31,8 +32,7 @@ import {
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LinkPending } from "@/components/ux";
-import { AppSwitcher, type AppSwitcherAccess } from "@/components/app-switcher";
-import { useAppHost } from "@/lib/use-app-host";
+import { useAppHost, useCrossAppHrefs } from "@/lib/use-app-host";
 import { hrefFrom } from "@/lib/app-hosts";
 
 /**
@@ -67,7 +67,9 @@ const STAFF_NAV: NavItem[] = [
 ];
 
 /**
- * Owner/admin-only antifraud settings.
+ * Owner/admin-only entries. The settings pages are gated server-side
+ * (`requireAntifraudManagerPage`); hiding the link just avoids a click that
+ * would bounce.
  */
 const MANAGE_NAV: NavItem[] = [
   { label: "Staff Members", href: "/antifraud/staff", icon: Users },
@@ -140,19 +142,17 @@ function NavMenu({
 
 export function AntifraudSidebar({
   canManage = false,
-  access = { creatorHub: false, packStudio: false, antifraud: true },
 }: {
   /** Owner / admin — reveals the authoring + settings group. */
   canManage?: boolean;
-  /** Server-computed workspace entitlement for the footer switcher. */
-  access?: AppSwitcherAccess;
 }) {
   const pathname = usePathname();
   const { isMobile, setOpenMobile } = useSidebar();
   // Host-aware hrefs: on fraud.packydash.com the `/antifraud` prefix is
-  // stripped from in-app links. Cross-app links are handled by the switcher's
-  // HostLink (a bare /dashboard here would be rewritten into this segment).
+  // stripped from in-app links, and "Back to Admin" becomes an absolute URL to
+  // the apex (a bare /dashboard would be rewritten into this host's segment).
   const appHost = useAppHost();
+  const { admin: adminHref } = useCrossAppHrefs();
   const toHref = (path: string) => (appHost ? hrefFrom(appHost, path) : path);
 
   // Close the mobile drawer on a navigation tap (same UX the other sidebars
@@ -194,11 +194,40 @@ export function AntifraudSidebar({
               Antifraud
             </span>
             <span className="block truncate text-[11px] text-muted-foreground">
-              Risk workspace
+              Risk &amp; staff workspace
             </span>
           </span>
         </Link>
       </SidebarHeader>
+
+      {/* Back to Admin — symmetric portal to the main sidebar's "Switch to
+          Antifraud" affordance: same cyan gradient card, two-line label,
+          mirrored arrow + icon placement. */}
+      <div className="px-2 pt-2 group-data-[collapsible=icon]:px-0">
+        <Link
+          href={adminHref}
+          onClick={handleNavTap}
+          title="Back to Admin"
+          className={cn(
+            "group/back relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-cyan-500/30 bg-gradient-to-r from-cyan-500/15 via-cyan-500/10 to-transparent px-3 py-2.5 outline-none",
+            "transition-colors hover:border-cyan-500/50 hover:from-cyan-500/25 hover:via-cyan-500/15 focus-visible:ring-2 focus-visible:ring-cyan-500/40",
+            "group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0",
+          )}
+        >
+          <ArrowLeft className="size-4 shrink-0 text-cyan-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/back:-translate-x-0.5" />
+          <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+            <span className="block truncate text-xs font-semibold text-cyan-600 dark:text-cyan-300">
+              Back to Admin
+            </span>
+            <span className="block truncate text-[11px] text-muted-foreground">
+              Main dashboard
+            </span>
+          </span>
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-cyan-500/20 text-cyan-600 ring-1 ring-inset ring-cyan-500/30 dark:text-cyan-400 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:rounded-lg">
+            <LayoutDashboard className="size-4" />
+          </span>
+        </Link>
+      </div>
 
       <SidebarContent>
         <SidebarGroup className="px-2 py-1">
@@ -241,13 +270,6 @@ export function AntifraudSidebar({
       </SidebarContent>
 
       <SidebarFooter className="border-t border-border">
-        {/* Same switcher the main sidebar carries — the way back to Admin (and
-            across to the other workspaces) is one control in one place. */}
-        <AppSwitcher
-          current="antifraud"
-          access={access}
-          onNavigate={handleNavTap}
-        />
         <div className="flex items-center justify-between px-2 group-data-[collapsible=icon]:justify-center">
           <span className="text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
             Theme
