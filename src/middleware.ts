@@ -94,6 +94,19 @@ export async function middleware(request: NextRequest) {
   // already-authenticated user has nothing to verify). `/login` is still
   // bounced. This is the ONLY behavioral change to the authenticated branch.
   if (isAuthenticated) {
+    // Legacy Antifraud inbox URL -> canonical shared System inbox. This must
+    // happen before the App Router renders the redirect page: a cross-origin
+    // redirect emitted from an RSC response makes React try an impossible
+    // cross-host RSC fetch first, producing React #310 before the hard
+    // navigation succeeds.
+    if (appHost?.basePath === "/antifraud" && pathname === "/notifications") {
+      const apex = APP_HOSTS[0];
+      return NextResponse.redirect(
+        new URL(`https://${apex.host}/system/staff-notifications`),
+        308,
+      );
+    }
+
     // Legacy /chat bookmark → resolve the redirect at the HTTP layer, BEFORE
     // React renders. chat/page.tsx did this with an in-render redirect(); an
     // unconditional in-render redirect on the initial document load is replayed

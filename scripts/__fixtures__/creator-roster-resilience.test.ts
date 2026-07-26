@@ -62,10 +62,19 @@ test("legacy antifraud notifications leave the segment host explicitly", () => {
   const page = read(
     "src/app/(antifraud)/antifraud/notifications/page.tsx",
   );
+  const middleware = read("src/middleware.ts");
 
   assert.match(page, /hrefFrom\(resolveAppHost\(host\)/);
   assert.match(page, /"\/system\/staff-notifications"/);
   assert.doesNotMatch(page, /redirect\("\/system\/staff-notifications"\)/);
+  assert.match(
+    middleware,
+    /appHost\?\.basePath === "\/antifraud" && pathname === "\/notifications"/,
+  );
+  assert.match(
+    middleware,
+    /https:\/\/\$\{apex\.host\}\/system\/staff-notifications/,
+  );
 });
 
 test("idempotent backend reads retry bounded transient failures", () => {
