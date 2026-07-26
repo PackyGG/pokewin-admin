@@ -3,6 +3,7 @@ import { drizzleForEnv } from "@/lib/db";
 import { queryMainRows, queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
+import { postgresTimestampIso } from "@/lib/postgres-runtime";
 import type { PaginatedResult } from "@/lib/types";
 import { getRewardExpiry } from "@/lib/backend-api/reward-expiry";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -866,7 +867,10 @@ export async function getRaceStandingsClaimWindow(params: {
       : null);
 
   return computeRaceClaimWindow({
-    periodEndIso: periodEnd ? new Date(periodEnd).toISOString() : null,
+    periodEndIso:
+      periodEnd == null
+        ? null
+        : postgresTimestampIso(periodEnd, "race claim window period_end"),
     raceExpiryDays: expiryResult,
     claimsFrozen: racePeriod?.claims_frozen ?? false,
   });

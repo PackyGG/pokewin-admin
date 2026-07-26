@@ -37,14 +37,21 @@ test("tagged SQL never interpolates a bare JavaScript array", () => {
     /(?<!\$)\$\{(?!pgArrayParam\()[^}\r\n]+\}::[A-Za-z_][A-Za-z0-9_]*\[\]/g;
   const bareAnyAll =
     /\b(?:ANY|ALL)\s*\(\s*(?<!\$)\$\{(?!pgArrayParam\()[^}\r\n]+\}/g;
+  const knownArrayValue =
+    /(?<!\$)\$\{(?!pgArrayParam\()(?:allowedPages|mergedAllowed|grants|revokes|capabilities|newAllowed)\}/g;
 
   for (const file of sourceFiles(path.join(root, "src"))) {
     const source = readFileSync(file, "utf8");
-    if (bareArrayCast.test(source) || bareAnyAll.test(source)) {
+    if (
+      bareArrayCast.test(source) ||
+      bareAnyAll.test(source) ||
+      knownArrayValue.test(source)
+    ) {
       unsafe.push(path.relative(root, file).replaceAll("\\", "/"));
     }
     bareArrayCast.lastIndex = 0;
     bareAnyAll.lastIndex = 0;
+    knownArrayValue.lastIndex = 0;
   }
 
   assert.deepEqual(unsafe, []);

@@ -42,6 +42,7 @@ type LogLevel = "error" | "warn" | "info";
  * this for a JSON emitter without touching call sites.
  */
 function emit(level: LogLevel, area: string, message: string, err?: unknown) {
+  try {
   const ts = new Date().toISOString();
   const prefix = `[${level}:${area}]`;
   let suffix = "";
@@ -68,6 +69,10 @@ function emit(level: LogLevel, area: string, message: string, err?: unknown) {
   if (level === "error") console.error(line);
   else if (level === "warn") console.warn(line);
   else console.log(line);
+  } catch {
+    // Logging is observability, never control flow. A hostile Error getter or
+    // failing console sink must not replace a contained application failure.
+  }
 }
 
 /**
@@ -91,6 +96,15 @@ export function logInfo(area: string, message: string) {
 
 /** Which read engine a degraded query was hitting. */
 export type QueryEngine = "postgres";
+
+export function runTelemetrySafely(report: () => void): void {
+  try {
+    report();
+  } catch {
+    // Observability is best-effort. A reporting failure must not escape an
+    // application error handler.
+  }
+}
 
 /**
  * Emit one structured query-failure line carrying the engine token,
@@ -119,7 +133,7 @@ export function logQueryFailure(
   // event with only bounded diagnostic tags. Never attach the raw throwable,
   // SQL, parameters, request data, or user identifiers.
   if (process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN) {
-    try {
+    runTelemetrySafely(() => {
       Sentry.withScope((scope) => {
         scope.setTag("area", area.slice(0, 120));
         scope.setTag("db.engine", details.engine);
@@ -132,8 +146,6 @@ export function logQueryFailure(
         ]);
         Sentry.captureMessage("PostgreSQL query failed", "error");
       });
-    } catch {
-      // Monitoring must never turn a safely degraded query into a route crash.
-    }
+    });
   }
 }

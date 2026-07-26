@@ -1,5 +1,6 @@
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
+import { runWithConcurrency } from "@/lib/promise-pool";
 import { singleFlight } from "@/lib/cache/single-flight";
 import { getDrizzleDb, type MainDrizzleDb } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
@@ -1278,7 +1279,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     ftdCombinedT,
     windowedPeriodDeltaT,
     lifetimeDepositMetricsT,
-  ] = await Promise.all([
+  ] = await runWithConcurrency([
     // Per-sub-query timings — wraps each Promise.all entry with
     // `withTimingResult("dashboard.<name>")` so /system/stats can pinpoint
     // exactly which sub-query is dragging the dashboard latency AND the
@@ -1292,7 +1293,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // rolling-24h signup count in ONE scan of the user table via
     // COUNT(*) FILTER. 5-min cached — user counts don't move by more
     // than a handful per minute, so the 5-min cap is invisible.
-    withTimingResult("dashboard.userCounts", () =>
+    () => withTimingResult("dashboard.userCounts", () =>
       cachedUserCounts(
         blacklistIdNotIn,
         startOfDay.toISOString(),
@@ -1305,41 +1306,41 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // 5-min cross-request cached — these are lifetime sums that move
     // by at most a few users per minute, so 5-min staleness is
     // invisible. Raw SQL keeps the blacklist cache key stable.
-    withTimingResult("dashboard.balanceAggregates", () =>
+    () => withTimingResult("dashboard.balanceAggregates", () =>
       cachedBalanceAggregates(blacklistIdNotIn),
     ),
     // Daily wager + deposit + active-depositor series for the last 30
     // days in ONE ledger scan. 5-min cached — historic days don't
     // change and today's row moves slowly enough that operators
     // wouldn't notice a 5-min lag.
-    withTimingResult("dashboard.dailyChart", () =>
+    () => withTimingResult("dashboard.dailyChart", () =>
       skipDailyCharts ? Promise.resolve([]) : cachedDailyChart(blacklistIdNotIn),
     ),
     // Daily upgrader wager (last 30 days) from `upgrader_games` — the
     // upgrader-native companion to the daily ledger scan above. Merged
     // into the dailyWagers series by date. Empty on a pre-upgrader DB
     // (to_regclass guard). 5-min cached.
-    withTimingResult("dashboard.dailyUpgrader", () =>
+    () => withTimingResult("dashboard.dailyUpgrader", () =>
       skipDailyCharts
         ? Promise.resolve([])
         : cachedDailyUpgrader(blacklistIdNotIn),
     ),
     // Signups last 30 days. 5-min cached for the same reason.
-    withTimingResult("dashboard.dailySignups", () =>
+    () => withTimingResult("dashboard.dailySignups", () =>
       skipDailyCharts
         ? Promise.resolve([])
         : cachedDailySignups(blacklistIdNotIn),
     ),
     // Daily wager attribution split — organic (no creator-code
     // referral) vs creator-attributed. 5-min cached.
-    withTimingResult("dashboard.dailyWagerAttribution", () =>
+    () => withTimingResult("dashboard.dailyWagerAttribution", () =>
       skipDailyCharts
         ? Promise.resolve([])
         : cachedDailyWagerAttribution(blacklistIdNotIn),
     ),
     // Period-scoped trend series (replaces the four 30-day caches above
     // when the global chip selector drives getDashboardStats).
-    withTimingResult("dashboard.trendSeries", () =>
+    () => withTimingResult("dashboard.trendSeries", () =>
       chartPeriod
         ? getDashboardTrendSeries(chartPeriod, blacklistIdNotIn, dbEnv)
         : Promise.resolve(null as DashboardTrendSeries | null),
@@ -1354,7 +1355,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // NO LONGER produced here — see `windowMetrics` below.
     // NOT cached — recomputes every render because the cutoff depends
     // on the selected period.
-    withTimingResult("dashboard.periodAggregates", () =>
+    () => withTimingResult("dashboard.periodAggregates", () =>
       getPeriodAggregates(db, periodCutoff, blacklistIdNotIn, sessionWindowsCte),
     ),
     // Canonical headline GGR (+ NGR / RTP / house-edge / bets) for the
@@ -1383,7 +1384,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     //     the all-zero fallback (`EMPTY_WINDOW_METRICS`) instead of
     //     hanging the entire KPI strip until the platform kills the
     //     request. `.data` is unwrapped at the read site below.
-    withTimingResult("dashboard.windowMetrics", () =>
+    () => withTimingResult("dashboard.windowMetrics", () =>
       safeQuery(
         () => config.loadWindowMetrics(blacklistIdNotIn),
         EMPTY_WINDOW_METRICS,
@@ -1395,11 +1396,14 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // `upgrader_games` (canonical helper) — drives the Total Wager
     // card's Upgrader chip + breakdown. `null` on a pre-upgrader DB
     // (to_regclass guard). NOT cached — window-dependent.
-    withTimingResult("dashboard.upgraderWindow", () => upgraderMetrics(metricWindow)),
+    () =>
+      withTimingResult("dashboard.upgraderWindow", () =>
+        upgraderMetrics(metricWindow),
+      ),
     // Distinct depositors = real users whose LIFETIME completed-deposit
     // total is > 0. 5-min cached — lifetime depositor count moves
     // slower than 5 minutes.
-    withTimingResult("dashboard.uniqueDepositors", () =>
+    () => withTimingResult("dashboard.uniqueDepositors", () =>
       cachedUniqueDepositors(blacklistIdNotIn),
     ),
     // NOTE: the lifetime realized P&L snapshot (getRealizedPnlSnapshot) —
@@ -1413,11 +1417,11 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // Rolling-24h pack opening count for the "24h Activity" tile.
     // 60s cached — matches the dashboard's auto-refresh cadence so the
     // tile stays close to live without re-counting on every render.
-    withTimingResult("dashboard.packsOpened24h", () =>
+    () => withTimingResult("dashboard.packsOpened24h", () =>
       cached24hPackOpens(blacklistIdNotIn),
     ),
     // Rolling-24h battle count — 60s cached for the same reason.
-    withTimingResult("dashboard.battlesPlayed24h", () =>
+    () => withTimingResult("dashboard.battlesPlayed24h", () =>
       cached24hBattles(blacklistIdNotIn),
     ),
     // FTDs combined — rolling-24h figure (count + total) + per-day
@@ -1425,7 +1429,10 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // first_deposits CTE. 5-min cached — first deposits don't change
     // that often, and FTD math involves a lifetime DISTINCT ON scan
     // which was one of the heavier queries on the hot path.
-    withTimingResult("dashboard.ftdCombined", () => cachedFtdCombined(blacklistIdNotIn)),
+    () =>
+      withTimingResult("dashboard.ftdCombined", () =>
+        cachedFtdCombined(blacklistIdNotIn),
+      ),
     // Windowed inventory + voucher deltas for the SELECTED period.
     // The other three components of the period P&L (deposits, card-
     // withdrawals, ledger balance change, manual withdrawals) already
@@ -1433,7 +1440,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // the two pieces it doesn't carry, so we fetch them in one
     // composite query. Each subselect is a narrow indexed range scan;
     // PG materializes the common `real_users` CTE once.
-    withTimingResult("dashboard.windowedPeriodDelta", () =>
+    () => withTimingResult("dashboard.windowedPeriodDelta", () =>
       queryRows<{
         inv_obtained: string;
         inv_disposed: string;
@@ -1465,10 +1472,10 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // scan. 5-min cached. The rolling-24h / 7d cutoffs are recomputed
     // inside the cached fn from Date.now() — within the 5-min TTL
     // there's no meaningful drift.
-    withTimingResult("dashboard.lifetimeDepositMetrics", () =>
+    () => withTimingResult("dashboard.lifetimeDepositMetrics", () =>
       cachedLifetimeDepositMetrics(blacklistIdNotIn),
     ),
-  ]);
+  ], 2);
 
   // Unwrap the `{ data, durationMs }` envelopes back into the original
   // variable names so every downstream read below is unchanged, and collect

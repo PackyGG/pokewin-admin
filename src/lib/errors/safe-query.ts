@@ -101,6 +101,16 @@ export function isQueryTimeoutError(err: unknown): err is QueryTimeoutError {
   return err instanceof QueryTimeoutError;
 }
 
+function getSafeErrorMessage(err: unknown): string {
+  try {
+    return err instanceof Error && typeof err.message === "string"
+      ? err.message
+      : "Unknown query error";
+  } catch {
+    return "Unknown query error";
+  }
+}
+
 /**
  * Race a promise-returning query against a wall-clock timeout. Resolves
  * with the query's value if it settles first; rejects with a
@@ -143,7 +153,7 @@ export async function safeQuery<T>(
       return { data: fallback, error: err.message, kind: "timeout" };
     }
     logQueryFailure(context, { engine: "postgres", durationMs, kind: "error" }, err);
-    const message = err instanceof Error ? err.message : "Unknown query error";
+    const message = getSafeErrorMessage(err);
     return { data: fallback, error: message, kind: "error" };
   }
 }
@@ -176,7 +186,7 @@ export async function safeQueryOrNull<T>(
       return { data: null, error: err.message, kind: "timeout" };
     }
     logQueryFailure(context, { engine: "postgres", durationMs, kind: "error" }, err);
-    const message = err instanceof Error ? err.message : "Unknown query error";
+    const message = getSafeErrorMessage(err);
     return { data: null, error: message, kind: "error" };
   }
 }
