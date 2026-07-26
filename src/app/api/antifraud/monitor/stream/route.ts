@@ -359,7 +359,12 @@ export async function GET(request: Request): Promise<Response> {
             socket = next;
             next.on("open", () => {
               if (closed || socket !== next) return;
-              void replayEvents(baseUrl, token, lastDeliveredId)
+              // A brand-new browser already loaded an authoritative snapshot.
+              // Replay is only for resuming a stream that has a known cursor;
+              // otherwise retained history could regress the current snapshot.
+              void (lastDeliveredId
+                ? replayEvents(baseUrl, token, lastDeliveredId)
+                : Promise.resolve([]))
                 .then((replayed) => {
                   if (closed || socket !== next) return;
                   for (const event of replayed) forward(event);

@@ -361,6 +361,7 @@ export function MonitorConsole() {
   const resyncTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastFrameAt = React.useRef(Date.now());
   const seenFrameIds = React.useRef(new Set<string>());
+  const completedSessions = React.useRef(new Map<string, number>());
   // Read-only mirrors so frame handling can LOOK UP a row without doing it
   // inside a state updater (updaters must stay pure — React may run them
   // twice, and their result is not available synchronously).
@@ -407,7 +408,10 @@ export function MonitorConsole() {
         return;
       }
 
-      const nextSessions = list(payload.live, parseSession);
+      const nextSessions = list(payload.live, parseSession).filter((session) => {
+        const completedAt = completedSessions.current.get(session.session_id);
+        return !completedAt || timeOf(session.started_at) > completedAt;
+      });
       const nextCases = list(payload.cases, parseCase);
       setSessions((current) =>
         mergeSessions(current, nextSessions, requestedAt),
@@ -597,6 +601,14 @@ export function MonitorConsole() {
       if (frameType === "monitor.completed" && sessionId) {
         // Apply the frame instead of refetching: the engine expires a whole
         // batch in one statement and publishes one frame per row.
+        completedSessions.current.set(
+          sessionId,
+          timeOf(text(data.completedAt) || text(data.at)) || Date.now(),
+        );
+        if (completedSessions.current.size > 1_000) {
+          const oldest = completedSessions.current.keys().next().value;
+          if (oldest) completedSessions.current.delete(oldest);
+        }
         const finished = sessionsRef.current.find(
           (session) => session.session_id === sessionId,
         );

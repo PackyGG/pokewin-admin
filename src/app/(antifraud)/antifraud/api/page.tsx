@@ -37,6 +37,13 @@ const READ_ENDPOINTS: Endpoint[] = [
   },
   {
     method: "GET",
+    path: "/v1/operations/config",
+    description:
+      "Sanitized deployed integration presence and compiled Discord recipients. No secrets.",
+    auth: "Bearer read token",
+  },
+  {
+    method: "GET",
     path: "/v1/monitors/live",
     description: "Up to 200 active behavior-monitor sessions.",
     auth: "Bearer read token",
