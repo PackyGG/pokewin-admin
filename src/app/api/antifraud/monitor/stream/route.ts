@@ -33,15 +33,12 @@ export const maxDuration = 300;
 const HEARTBEAT_MS = 15_000;
 const MAX_FRAME_BYTES = 128_000;
 const MAX_STREAM_STARTS_PER_MINUTE = 10;
-const MAX_CONCURRENT_PER_USER = 3;
 /** Rotate well under `maxDuration` so the client reopens gracefully. */
 const ROTATE_AFTER_MS = 240_000;
 const UPSTREAM_RETRY_MIN_MS = 1_000;
 const UPSTREAM_RETRY_MAX_MS = 30_000;
 /** Reconnect delay advertised to the browser's own EventSource retry. */
 const CLIENT_RETRY_MS = 15_000;
-
-const openStreams = new Map<string, number>();
 
 const SSE_HEADERS: Record<string, string> = {
   "Cache-Control": "no-cache, no-transform",
@@ -229,23 +226,6 @@ export async function GET(request: Request): Promise<Response> {
     );
   }
 
-  const currentOpen = openStreams.get(actorId) ?? 0;
-  if (currentOpen >= MAX_CONCURRENT_PER_USER) {
-    return terminalStream(
-      "closed",
-      "Too many live monitor tabs are open for this account.",
-    );
-  }
-  openStreams.set(actorId, currentOpen + 1);
-  let released = false;
-  const release = () => {
-    if (released) return;
-    released = true;
-    const remaining = (openStreams.get(actorId) ?? 1) - 1;
-    if (remaining <= 0) openStreams.delete(actorId);
-    else openStreams.set(actorId, remaining);
-  };
-
   const { baseUrl, token } = monitorConfig();
   const encoder = new TextEncoder();
   const requestOrigin = new URL(request.url).origin;
@@ -315,7 +295,6 @@ export async function GET(request: Request): Promise<Response> {
         if (retryTimer) clearTimeout(retryTimer);
         if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
         socket = null;
-        release();
         try {
           controller.close();
         } catch {
@@ -450,7 +429,6 @@ export async function GET(request: Request): Promise<Response> {
     },
     cancel() {
       if (teardown) teardown();
-      else release();
     },
   });
 
