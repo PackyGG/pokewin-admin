@@ -48,6 +48,10 @@ import {
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
 import { uploadImageClient } from "@/lib/upload-image-client";
+import {
+  REPRICE_TARGET_MAX,
+  REPRICE_TARGET_MIN,
+} from "@/app/(admin)/insights/edge-calc/math";
 
 import {
   shapeWeights,
@@ -71,6 +75,7 @@ import { RiskLevelSlider } from "@/app/(admin)/packs/risk-level-slider";
 import { RiskLevelBar } from "../_components/risk-level-bar";
 import { PackRiskBarPreview } from "../_components/pack-risk-bar-preview";
 import { BuilderCardPicker } from "./builder-card-picker";
+import { calculateBuilderPricing } from "./builder-pricing";
 import type { BuilderCardItem } from "./actions";
 
 /**
@@ -242,6 +247,7 @@ export function PackBuilderForm({
   const [slug, setSlug] = useState("");
   const [slugManual, setSlugManual] = useState(false);
   const [price, setPrice] = useState("");
+  const [autoPrice, setAutoPrice] = useState(true);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
 
@@ -254,6 +260,10 @@ export function PackBuilderForm({
   const [maxWinCap, setMaxWinCap] = useState(String(defaultMaxWinCap));
   const [nearMissPct, setNearMissPct] = useState(10); // % → 0.10
   const [spiciness, setSpiciness] = useState<Spiciness>("balanced");
+  const [customEdgeEnabled, setCustomEdgeEnabled] = useState(false);
+  const [customEdgePct, setCustomEdgePct] = useState(
+    (edgeCurve.edgeFloor * 100).toFixed(2),
+  );
   // Player-facing risk level (0..1) — the on-site `difficulty` dial. Manual,
   // NOT derived from the CV tier (they are different measures). Defaults to 0
   // so, like the create/edit pack forms, an untouched pack ships `difficulty:
@@ -279,7 +289,7 @@ export function PackBuilderForm({
   // to carry (the operator's cap when set, else the auto cap = lesser of the
   // global cap and price × the multiplier ceiling). Updates live as price/cap
   // change; 0 until a positive price is entered.
-  const targetEdge = useMemo(() => {
+  const configuredTargetEdge = useMemo(() => {
     if (!(packPrice > 0)) return edgeCurve.edgeFloor;
     // TAG-AWARE auto cap: a lottery pack ("1% …") gets the hit-rate-loosened
     // jackpot ceiling so the live edge preview matches the retune's cap.
@@ -293,6 +303,36 @@ export function PackBuilderForm({
       );
     return autoTargetEdge({ price: packPrice, maxWin: maxWinProxy }, edgeCurve);
   }, [packPrice, cap, defaultMaxWinCap, maxMultCeiling, edgeCurve, name]);
+  const customEdgeValue = Number(customEdgePct);
+  const customEdgeValid =
+    Number.isFinite(customEdgeValue) &&
+    customEdgeValue >= REPRICE_TARGET_MIN * 100 &&
+    customEdgeValue <= REPRICE_TARGET_MAX * 100;
+  const targetEdge =
+    customEdgeEnabled && customEdgeValid
+      ? customEdgeValue / 100
+      : configuredTargetEdge;
+
+  // Auto-price from the pool's EV using the same formula as the standard pack
+  // create/edit forms: price = EV / (1 - target edge). Before the shaper has
+  // produced odds for a new pool, equal weights provide the initial seed. Once
+  // odds exist, their exact EV drives the price and the loop settles at the
+  // selected edge (whole-cent rounding is intentional: packs.price is scale 2).
+  const pricing = useMemo(
+    () =>
+      customEdgeEnabled && !customEdgeValid
+        ? { expectedPayout: 0, suggestedPrice: 0 }
+        : calculateBuilderPricing(cards, targetEdge),
+    [cards, customEdgeEnabled, customEdgeValid, targetEdge],
+  );
+  const pricingEv = pricing.expectedPayout;
+  const suggestedPrice = pricing.suggestedPrice;
+
+  useEffect(() => {
+    if (!autoPrice || !(suggestedPrice > 0)) return;
+    const next = suggestedPrice.toFixed(2);
+    setPrice((current) => (current === next ? current : next));
+  }, [autoPrice, suggestedPrice]);
 
   function handleNameChange(val: string) {
     setName(val);
@@ -428,6 +468,7 @@ export function PackBuilderForm({
     slug.trim().length > 0 &&
     packPrice > 0 &&
     cards.length > 0 &&
+    (!customEdgeEnabled || customEdgeValid) &&
     !shapeError &&
     Boolean(shapeOk);
 
@@ -516,19 +557,55 @@ export function PackBuilderForm({
             </div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label>Price (USD)</Label>
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="pack-price">Price (USD)</Label>
+                  <div className="flex items-center gap-2">
+                    <Label
+                      htmlFor="auto-pack-price"
+                      className="text-xs font-normal text-muted-foreground"
+                    >
+                      Auto from EV
+                    </Label>
+                    <Switch
+                      id="auto-pack-price"
+                      size="sm"
+                      checked={autoPrice}
+                      onCheckedChange={(checked) => setAutoPrice(!!checked)}
+                    />
+                  </div>
+                </div>
                 <Input
+                  id="pack-price"
                   type="number"
                   value={price}
-                  onChange={(e) => setPrice(e.target.value)}
+                  onChange={(e) => {
+                    setAutoPrice(false);
+                    setPrice(e.target.value);
+                  }}
                   placeholder="0.00"
                   min="0"
                   step="0.01"
+                  readOnly={autoPrice}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Weights are shaped to this pack&apos;s target edge —{" "}
-                  {targetEdgePct.toFixed(2)}% at this price &amp; max-win (rises
-                  from the 10.99% floor with house risk).
+                  {pricingEv > 0
+                    ? `EV ${formatCurrency(pricingEv)} · ${autoPrice ? "Auto price" : "Suggested"} ${formatCurrency(suggestedPrice)} · target ${targetEdgePct.toFixed(2)}%`
+                    : "Add cards to calculate the pack price automatically from EV and edge."}
+                  {!autoPrice && suggestedPrice > 0 && (
+                    <>
+                      {" · "}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAutoPrice(true);
+                          setPrice(suggestedPrice.toFixed(2));
+                        }}
+                        className="text-primary underline underline-offset-2"
+                      >
+                        use auto price
+                      </button>
+                    </>
+                  )}
                 </p>
               </div>
               <div className="space-y-1.5">
@@ -582,6 +659,50 @@ export function PackBuilderForm({
           {/* Dials */}
           <div className="space-y-4">
             <SectionHeading icon={Target} title="Dials" />
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <Label htmlFor="custom-edge-toggle">Target edge</Label>
+                  <p className="text-xs text-muted-foreground">
+                    {customEdgeEnabled
+                      ? "Custom edge drives the automatic EV price."
+                      : `Configured curve · ${targetEdgePct.toFixed(2)}% for this pack.`}
+                  </p>
+                </div>
+                <Switch
+                  id="custom-edge-toggle"
+                  size="sm"
+                  checked={customEdgeEnabled}
+                  onCheckedChange={(checked) => setCustomEdgeEnabled(!!checked)}
+                />
+              </div>
+              {customEdgeEnabled && (
+                <>
+                  <div className="relative">
+                    <Input
+                      type="number"
+                      value={customEdgePct}
+                      onChange={(event) => setCustomEdgePct(event.target.value)}
+                      min={REPRICE_TARGET_MIN * 100}
+                      max={REPRICE_TARGET_MAX * 100}
+                      step="0.01"
+                      aria-label="Custom target edge percentage"
+                      className="pr-8"
+                    />
+                    <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted-foreground">
+                      %
+                    </span>
+                  </div>
+                  {!customEdgeValid && (
+                    <p className="text-xs text-destructive">
+                      Target edge must be between {REPRICE_TARGET_MIN * 100}% and{" "}
+                      {REPRICE_TARGET_MAX * 100}%.
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
