@@ -1,7 +1,19 @@
 "use server";
 
+import { revalidatePath, revalidateTag } from "next/cache";
+import { unstable_rethrow } from "next/navigation";
+import { z } from "zod";
+
 import { requirePackStudioAccess } from "@/lib/require-pack-studio-access";
+import { requireCapability } from "@/lib/require-capability";
+import { sessionHasRole } from "@/lib/dal";
+import { isOwner } from "@/lib/owners";
+import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { getCards } from "@/lib/queries/cards";
+import {
+  discardPackBuildDraft,
+  submitPackBuildDraftForApproval,
+} from "@/lib/packs/build-requests";
 
 /**
  * Pack-Studio Builder server actions.
@@ -75,4 +87,112 @@ export async function searchBuilderCards(params: {
     page: result.page,
     totalPages: result.totalPages,
   };
+}
+
+export type PackBuildDraftActionResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+async function requireBuildDraftOperator() {
+  const session = await requirePackStudioAccess(
+    "Not authorized to manage Pack Builder drafts.",
+  );
+  await requireCapability(session, "__can_create_pack", "manage pack build drafts");
+  return session;
+}
+
+function canManageEveryBuildDraft(
+  session: Awaited<ReturnType<typeof requireBuildDraftOperator>>,
+): boolean {
+  return isOwner(session) || sessionHasRole(session, "admin");
+}
+
+/**
+ * Promote an inactive saved build into the live owner-approval queue.
+ * Expected refusals return as data so Next production does not replace them
+ * with the generic Server Components error message.
+ */
+export async function requestPackBuildDraftApproval(
+  requestId: string,
+): Promise<PackBuildDraftActionResult> {
+  try {
+    const session = await requireBuildDraftOperator();
+    const parsed = z.string().uuid().safeParse(requestId);
+    if (!parsed.success) return { ok: false, error: "Invalid build draft id" };
+
+    const submitted = await submitPackBuildDraftForApproval({
+      requestId: parsed.data,
+      actorId: session.userId,
+      canManageAll: canManageEveryBuildDraft(session),
+    });
+    if (!submitted) {
+      return {
+        ok: false,
+        error: "This build draft is no longer available or belongs to another builder.",
+      };
+    }
+
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "pack_build_draft_submitted",
+      metadata: { request_id: parsed.data },
+    });
+    revalidatePath("/pack-studio/builder-drafts");
+    revalidatePath("/pack-studio/new-packs");
+    revalidateTag("pack-build-drafts");
+    return { ok: true };
+  } catch (error) {
+    unstable_rethrow(error);
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Could not request approval for this build draft.",
+    };
+  }
+}
+
+/**
+ * Discard a saved inactive build. This only updates the ADMIN staging row and
+ * never touches MAIN.
+ */
+export async function discardPackBuildDraftAction(
+  requestId: string,
+): Promise<PackBuildDraftActionResult> {
+  try {
+    const session = await requireBuildDraftOperator();
+    const parsed = z.string().uuid().safeParse(requestId);
+    if (!parsed.success) return { ok: false, error: "Invalid build draft id" };
+
+    const discarded = await discardPackBuildDraft({
+      requestId: parsed.data,
+      actorId: session.userId,
+      canManageAll: canManageEveryBuildDraft(session),
+    });
+    if (!discarded) {
+      return {
+        ok: false,
+        error: "This build draft is no longer available or belongs to another builder.",
+      };
+    }
+
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "pack_build_draft_discarded",
+      metadata: { request_id: parsed.data },
+    });
+    revalidatePath("/pack-studio/builder-drafts");
+    revalidateTag("pack-build-drafts");
+    return { ok: true };
+  } catch (error) {
+    unstable_rethrow(error);
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Could not discard this build draft.",
+    };
+  }
 }

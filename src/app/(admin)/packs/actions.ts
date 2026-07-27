@@ -21,6 +21,7 @@ import {
   isPackStudioRetuneOperatorNonOwner,
 } from "@/lib/reprice-access";
 import { requireCapability } from "@/lib/require-capability";
+import { requirePackStudioAccess } from "@/lib/require-pack-studio-access";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import {
   getPackDetail,
@@ -2796,12 +2797,31 @@ async function previewPackBuildRequest(
 }
 
 /**
- * Validate a Pack Studio build and place it in the ADMIN approval queue.
- * This action never mutates MAIN. Pack Builders may request an inactive build
- * or a live push; both require one owner decision on System → New Packs.
+ * Validate a Pack Studio build and store it in ADMIN staging.
+ * This action never mutates MAIN. Inactive builds are saved drafts; live
+ * requests appear in System → New Packs for one owner decision.
  */
 export async function buildPack(input: BuildPackInput): Promise<BuildPackResult> {
-  const session = await requirePageAccess("/packs");
+  try {
+    return await buildPackInner(input);
+  } catch (error) {
+    // Next masks thrown Server Action messages in production. Keep expected
+    // builder refusals as typed data so the form can show the real problem.
+    unstable_rethrow(error);
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "The pack build could not be saved.",
+    };
+  }
+}
+
+async function buildPackInner(input: BuildPackInput): Promise<BuildPackResult> {
+  const session = await requirePackStudioAccess(
+    "The pack builder is restricted to authorized operators.",
+  );
   if (
     !isPackStudioRetuneOperator(session) &&
     !sessionHasRole(session, "pack_creator")
@@ -2826,7 +2846,10 @@ export async function buildPack(input: BuildPackInput): Promise<BuildPackResult>
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
-    eventType: "pack_creation_requested",
+    eventType:
+      parsed.data.activate === true
+        ? "pack_creation_requested"
+        : "pack_build_draft_saved",
     metadata: {
       request_id: requestId,
       name: parsed.data.name,
@@ -2839,6 +2862,8 @@ export async function buildPack(input: BuildPackInput): Promise<BuildPackResult>
   });
 
   revalidatePath("/pack-studio/new-packs");
+  revalidatePath("/pack-studio/builder-drafts");
+  revalidateTag("pack-build-drafts");
   return {
     ok: true,
     requestId,

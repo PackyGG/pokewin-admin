@@ -129,6 +129,7 @@ export const APP_HOSTS: readonly AppHostConfig[] = [
       "doctor",
       "retune",
       "builder",
+      "builder-drafts",
       "new-packs",
       "drafts",
       "history",

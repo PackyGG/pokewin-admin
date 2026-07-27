@@ -6,7 +6,7 @@ import { HeaderRainChip } from "@/components/header-rain-chip";
 import { TopProgressBar } from "@/components/top-progress-bar";
 import { TimezoneProvider } from "@/components/timezone-provider";
 import { PageTransition } from "@/components/page-transition";
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 import { verifySession, getUserPermissions, sessionIsOwner } from "@/lib/dal";
 import { getSession, type SessionPayload } from "@/lib/session";
 import {
@@ -36,7 +36,6 @@ import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
 import { readDbEnvFromCookie, isDevDbConfigured } from "@/lib/db-env";
 import { readTzCookie } from "@/lib/timezone/server";
 import { DevDbBanner } from "@/components/dev-db-banner";
-import { isNextControlFlowError } from "@/lib/utils/action-error";
 import { ScrollToTopOnNav } from "./scroll-to-top-on-nav";
 
 /**
@@ -120,7 +119,7 @@ async function loadUserPermissions(userId: string): Promise<string[]> {
   try {
     return await getUserPermissions(userId);
   } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
+    unstable_rethrow(err);
     console.error("[admin-layout] loadUserPermissions failed:", err);
     return [];
   }
@@ -139,7 +138,7 @@ async function loadPreferences(userId: string) {
   try {
     return await getAdminPreferences(userId);
   } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
+    unstable_rethrow(err);
     console.error("[admin-layout] loadPreferences failed:", err);
     return { ...DEFAULT_PREFERENCES };
   }
@@ -158,7 +157,7 @@ async function loadCreatorHubAccessSettings(): Promise<CreatorHubAccessSettings>
   try {
     return await getCreatorHubAccessSettings();
   } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
+    unstable_rethrow(err);
     console.error(
       "[admin-layout] loadCreatorHubAccessSettings failed, hiding portal for non-owner:",
       err,
@@ -181,7 +180,7 @@ async function loadAntifraudAccessSettings(): Promise<AntifraudAccessSettings> {
   try {
     return await getAntifraudAccessSettings();
   } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
+    unstable_rethrow(err);
     console.error(
       "[admin-layout] loadAntifraudAccessSettings failed, hiding toggle-based portal:",
       err,
@@ -195,7 +194,7 @@ async function loadAntifraudUserAccess(): Promise<AntifraudUserAccess> {
   try {
     return await getAntifraudUserAccess();
   } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
+    unstable_rethrow(err);
     console.error(
       "[admin-layout] loadAntifraudUserAccess failed, falling back to role default:",
       err,
@@ -220,7 +219,7 @@ async function safeVerifySession(): Promise<SessionPayload> {
   try {
     return await verifySession();
   } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
+    unstable_rethrow(err);
     console.error(
       "[admin-layout] safeVerifySession DB lookup failed, falling back to JWT:",
       err,

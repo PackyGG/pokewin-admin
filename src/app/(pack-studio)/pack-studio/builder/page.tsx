@@ -28,8 +28,8 @@ import { PackBuilderForm } from "./pack-builder-form";
  * cap) streams behind a `<Suspense>` boundary. All reads here are light + MAIN
  * read-only (sets/rarities) or ADMIN read-only (max-win cap); the heavy card
  * search runs client-side on demand via the builder's own server action, and
- * pack creation goes through the ADMIN approval queue. Nothing is created in
- * MAIN until an owner approves it on System → New Packs.
+ * a saved draft stays in ADMIN staging, while live requests go through the
+ * owner queue. Nothing is created in MAIN until a live request is approved.
  */
 
 /** Shell-matching fallback shared by the page <Suspense> and `loading.tsx`. */

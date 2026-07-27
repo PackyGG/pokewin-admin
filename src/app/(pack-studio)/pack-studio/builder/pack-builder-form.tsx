@@ -8,6 +8,7 @@ import {
   useState,
   useTransition,
 } from "react";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -48,6 +49,8 @@ import {
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
 import { uploadImageClient } from "@/lib/upload-image-client";
+import { hrefFrom } from "@/lib/app-hosts";
+import { useAppHost } from "@/lib/use-app-host";
 import {
   clampPackBuilderEdge,
   isPackBuilderEdgeInRange,
@@ -247,10 +250,12 @@ export function PackBuilderForm({
   maxMultCeiling: number;
   /** Resolved per-pack edge-curve config (floor + risk-premium coefficients). */
   edgeCurve: EdgeCurveConfig;
-  /** True when the viewer can submit a pack for owner approval. */
+  /** True when the viewer can save a build draft or request live approval. */
   canBuild: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+  const appHost = useAppHost();
 
   // ── Identity ──────────────────────────────────────────────────────
   const [name, setName] = useState("");
@@ -490,7 +495,7 @@ export function PackBuilderForm({
     );
   }
 
-  // ── Submit → owner approval queue (server re-shapes; draft OR live intent) ──
+  // ── Submit → saved draft OR owner approval queue ──
   const canSubmit =
     canBuild &&
     !isPending &&
@@ -504,8 +509,8 @@ export function PackBuilderForm({
     !shapeError &&
     Boolean(shapeOk);
 
-  // `activate:true` requests a live push; `false` requests an inactive pack.
-  // Neither path changes MAIN until an owner approves the queued request.
+  // `activate:true` requests a live push. `false` saves an ADMIN-only draft.
+  // Neither path changes MAIN at submission time.
   function handleSubmit(activate: boolean) {
     if (!canSubmit) return;
     startTransition(async () => {
@@ -543,9 +548,20 @@ export function PackBuilderForm({
           return;
         }
 
-        toast.success(
-          `${result.requestedActive ? "Live push requested" : "Draft creation requested"} · owner approval required · edge ${(result.edge * 100).toFixed(2)}% · win-rate ${(result.winRate * 100).toFixed(1)}%`,
-        );
+        if (result.requestedActive) {
+          toast.success(
+            `Live push requested · owner approval required · edge ${(result.edge * 100).toFixed(2)}% · win-rate ${(result.winRate * 100).toFixed(1)}%`,
+          );
+        } else {
+          toast.success(
+            `Build draft saved · edge ${(result.edge * 100).toFixed(2)}% · win-rate ${(result.winRate * 100).toFixed(1)}%`,
+          );
+          router.push(
+            appHost
+              ? hrefFrom(appHost, "/pack-studio/builder-drafts")
+              : "/pack-studio/builder-drafts",
+          );
+        }
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to create pack");
       }
@@ -1061,8 +1077,8 @@ export function PackBuilderForm({
                   </AlertDialogContent>
                 </AlertDialog>
 
-                {/* Inactive intent still requires the same one-time owner
-                    approval before the pack is created in MAIN. */}
+                {/* ADMIN-only saved build. It enters the owner queue only when
+                    a builder requests a live push from Build Drafts. */}
                 <Button
                   type="button"
                   variant="outline"
@@ -1071,12 +1087,12 @@ export function PackBuilderForm({
                   className="w-full gap-2"
                 >
                   <Save className="size-4" />
-                  {isPending ? "Submitting…" : "Request inactive draft"}
+                  {isPending ? "Saving…" : "Save build draft"}
                 </Button>
               </div>
               <p className="text-center text-[11px] text-muted-foreground">
-                Both options enter System → New Packs. An owner approves or
-                declines with one click; no pack goes live before approval.
+                Saved drafts go straight to Build Drafts with no approval.
+                Only live requests enter System → New Packs.
               </p>
             </>
           )}

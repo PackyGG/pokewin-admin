@@ -61,6 +61,11 @@ const STUDIO_BUILD_NAV: StudioNavItem[] = [
   { label: "Packs", href: "/pack-studio/packs", icon: Package },
   { label: "Cards", href: "/pack-studio/cards", icon: Layers3 },
   { label: "Pack Builder", href: "/pack-studio/builder", icon: Wand2 },
+  {
+    label: "Build Drafts",
+    href: "/pack-studio/builder-drafts",
+    icon: ClipboardEdit,
+  },
 ];
 
 const STUDIO_TUNE_NAV: StudioNavItem[] = [

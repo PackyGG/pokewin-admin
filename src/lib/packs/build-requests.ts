@@ -197,6 +197,94 @@ export async function listPackCreationRequests(
   return result.rows.map(parseRequestRow);
 }
 
+/**
+ * Saved Pack Builder drafts. They reuse the existing ADMIN queue row shape,
+ * but remain `requested_active = false` and never enter the owner review page.
+ */
+export async function listPackBuildDrafts(
+  limit = 100,
+): Promise<PackCreationRequest[]> {
+  const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+  const result = await adminDrizzle.execute<RawPackCreationRequest>(sql`
+    SELECT
+      r.id,
+      r.status,
+      r.requested_by,
+      requester.username AS requester_username,
+      reviewer.username AS reviewer_username,
+      r.name,
+      r.slug,
+      r.requested_active,
+      r.request_payload,
+      r.preview_edge::text AS preview_edge,
+      r.preview_win_rate::text AS preview_win_rate,
+      r.created_pack_id,
+      r.created_at::text AS created_at,
+      r.review_started_at::text AS review_started_at,
+      r.reviewed_at::text AS reviewed_at
+    FROM pack_creation_requests r
+    JOIN admin_users requester ON requester.id = r.requested_by
+    LEFT JOIN admin_users reviewer ON reviewer.id = r.reviewed_by
+    WHERE r.status = 'pending'
+      AND r.requested_active = false
+    ORDER BY r.created_at DESC
+    LIMIT ${boundedLimit}
+  `);
+  return result.rows.map(parseRequestRow);
+}
+
+/**
+ * Move a saved inactive build into the owner queue as a live request.
+ * The stored payload is updated with the same intent so approval cannot read
+ * a stale `activate:false` value.
+ */
+export async function submitPackBuildDraftForApproval(input: {
+  requestId: string;
+  actorId: string;
+  canManageAll: boolean;
+}): Promise<boolean> {
+  const result = await adminDrizzle.execute<{ id: string }>(sql`
+    UPDATE pack_creation_requests
+    SET
+      requested_active = true,
+      request_payload = jsonb_set(request_payload, '{activate}', 'true'::jsonb)
+    WHERE id = ${input.requestId}::uuid
+      AND status = 'pending'
+      AND requested_active = false
+      AND (
+        requested_by = ${input.actorId}::uuid
+        OR ${input.canManageAll}
+      )
+    RETURNING id
+  `);
+  return result.rows.length === 1;
+}
+
+/** Discard a saved build without sending it through owner approval. */
+export async function discardPackBuildDraft(input: {
+  requestId: string;
+  actorId: string;
+  canManageAll: boolean;
+}): Promise<boolean> {
+  const result = await adminDrizzle.execute<{ id: string }>(sql`
+    UPDATE pack_creation_requests
+    SET
+      status = 'declined',
+      reviewed_by = ${input.actorId}::uuid,
+      review_started_at = NOW(),
+      reviewed_at = NOW()
+    WHERE id = ${input.requestId}::uuid
+      AND status = 'pending'
+      AND requested_active = false
+      AND (
+        requested_by = ${input.actorId}::uuid
+        OR ${input.canManageAll}
+      )
+    RETURNING id
+  `);
+  return result.rows.length === 1;
+}
+
 export async function claimPackCreationRequest(
   requestId: string,
   reviewerId: string,
@@ -210,6 +298,7 @@ export async function claimPackCreationRequest(
         review_started_at = NOW()
       WHERE id = ${requestId}::uuid
         AND status = 'pending'
+        AND requested_active = true
       RETURNING *
     )
     SELECT

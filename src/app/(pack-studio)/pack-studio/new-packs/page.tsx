@@ -27,7 +27,7 @@ export default async function NewPacksPage() {
           icon={PackageOpen}
           accent="purple"
           title="New Packs"
-          subtitle="The final owner gate before a Pack Builder request can reach production."
+          subtitle="The final owner gate before a Pack Builder request can go live."
         />
       </PageHero>
 
@@ -45,9 +45,9 @@ async function QueueBody() {
     "pack-studio.new-packs",
     QUERY_TIMEOUT_MS,
   );
-  const pending = requests.filter((request) => request.status === "pending");
-  const livePending = pending.filter((request) => request.requestedActive);
-  const approved = requests.filter((request) => request.status === "approved");
+  const approvalRequests = requests.filter((request) => request.requestedActive);
+  const pending = approvalRequests.filter((request) => request.status === "pending");
+  const approved = approvalRequests.filter((request) => request.status === "approved");
 
   return (
     <div className="space-y-6">
@@ -61,8 +61,8 @@ async function QueueBody() {
         />
         <KpiTile
           label="Live requests"
-          value={String(livePending.length)}
-          sub="would activate on approval"
+          value={String(approvalRequests.length)}
+          sub="in the latest 100 requests"
           icon={Rocket}
           accent="rose"
         />
@@ -78,11 +78,11 @@ async function QueueBody() {
       <section className="space-y-3">
         <SectionHeading icon={PackageOpen} title="Approval queue" />
         <p className="text-sm text-muted-foreground">
-          Approve or decline once. Approval revalidates cards, prices, odds,
-          and risk against current data before creating the pack.
+          Only live requests need approval. Saved inactive builds stay on the
+          separate Build Drafts page until a builder submits them here.
         </p>
         <PackRequestReviewList
-          requests={requests.map((request) => ({
+          requests={approvalRequests.map((request) => ({
             id: request.id,
             status: request.status,
             requesterUsername: request.requesterUsername,

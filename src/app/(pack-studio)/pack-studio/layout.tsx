@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 import { sql } from "drizzle-orm";
 
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
@@ -19,7 +19,6 @@ import { getAdminPreferences } from "@/lib/admin-preferences";
 import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
 import { readDbEnvFromCookie, isDevDbConfigured } from "@/lib/db-env";
 import { readTzCookie } from "@/lib/timezone/server";
-import { isNextControlFlowError } from "@/lib/utils/action-error";
 import { resolveAppAccess } from "@/lib/app-access";
 
 // scroll-to-top island lives in the (admin) group; reused 1:1 here. The
@@ -106,7 +105,7 @@ async function loadUserPermissions(userId: string): Promise<string[]> {
   try {
     return await getUserPermissions(userId);
   } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
+    unstable_rethrow(err);
     console.error("[pack-studio-layout] loadUserPermissions failed:", err);
     return [];
   }
@@ -116,7 +115,7 @@ async function loadPreferences(userId: string) {
   try {
     return await getAdminPreferences(userId);
   } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
+    unstable_rethrow(err);
     console.error("[pack-studio-layout] loadPreferences failed:", err);
     return { ...DEFAULT_PREFERENCES };
   }
@@ -132,7 +131,7 @@ async function safeVerifySession(): Promise<SessionPayload> {
   try {
     return await verifySession();
   } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
+    unstable_rethrow(err);
     console.error(
       "[pack-studio-layout] safeVerifySession DB lookup failed, falling back to JWT:",
       err,

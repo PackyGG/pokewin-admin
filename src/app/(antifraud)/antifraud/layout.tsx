@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AdminHeader } from "@/components/admin-header";
@@ -27,7 +27,6 @@ import { getAdminPreferences } from "@/lib/admin-preferences";
 import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
 import { readDbEnvFromCookie, isDevDbConfigured } from "@/lib/db-env";
 import { readTzCookie } from "@/lib/timezone/server";
-import { isNextControlFlowError } from "@/lib/utils/action-error";
 import { resolveAppAccess } from "@/lib/app-access";
 
 // scroll-to-top island lives in the (admin) group; reused 1:1 here. The
@@ -114,7 +113,7 @@ async function loadUserPermissions(userId: string): Promise<string[]> {
   try {
     return await getUserPermissions(userId);
   } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
+    unstable_rethrow(err);
     console.error("[antifraud-layout] loadUserPermissions failed:", err);
     return [];
   }
@@ -130,7 +129,7 @@ async function loadAccessSettings(): Promise<AntifraudAccessSettings> {
   try {
     return await getAntifraudAccessSettings();
   } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
+    unstable_rethrow(err);
     console.error(
       "[antifraud-layout] loadAccessSettings failed, denying toggle-based access:",
       err,
@@ -144,7 +143,7 @@ async function loadUserAccess(): Promise<AntifraudUserAccess> {
   try {
     return await getAntifraudUserAccess();
   } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
+    unstable_rethrow(err);
     console.error(
       "[antifraud-layout] loadUserAccess failed, falling back to role default:",
       err,
@@ -157,7 +156,7 @@ async function loadPreferences(userId: string) {
   try {
     return await getAdminPreferences(userId);
   } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
+    unstable_rethrow(err);
     console.error("[antifraud-layout] loadPreferences failed:", err);
     return { ...DEFAULT_PREFERENCES };
   }
@@ -173,7 +172,7 @@ async function safeVerifySession(): Promise<SessionPayload> {
   try {
     return await verifySession();
   } catch (err) {
-    if (isNextControlFlowError(err)) throw err;
+    unstable_rethrow(err);
     console.error(
       "[antifraud-layout] safeVerifySession DB lookup failed, falling back to JWT:",
       err,
