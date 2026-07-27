@@ -59,13 +59,25 @@ test("the dashboard reports both internal state and Sumsub evidence", () => {
   assert.match(query, /backendUrlConfigured/);
   assert.match(query, /automaticUnlock:\s*false/);
   assert.doesNotMatch(page, /How KYC works here/);
-  assert.match(page, /Accounts flagged for verification/);
-  assert.match(page, /verification records/);
+  assert.match(page, /Accounts currently requiring KYC/);
+  assert.match(page, /historical verification\s+records/);
   assert.match(page, /Ready for admin decision/);
   assert.doesNotMatch(page, /System details and webhook activity/);
   assert.doesNotMatch(page, /Configuration and policy/);
   assert.doesNotMatch(page, /Sumsub webhook evidence/);
   assert.doesNotMatch(page, /<SystemDetails/);
+});
+
+test("the KYC landing view shows only accounts that currently require KYC", () => {
+  const page = source("src/app/(antifraud)/antifraud/kyc/page.tsx");
+
+  assert.match(
+    page,
+    /isKycFilter\(params\.status\)\s*\?\s*params\.status\s*:\s*"required"/,
+  );
+  assert.match(page, /all:\s*"KYC record history"/);
+  assert.match(page, /No accounts currently require KYC/);
+  assert.match(page, /completed historical cycles/);
 });
 
 test("untouched default KYC rows stay out of the review queue and totals", () => {

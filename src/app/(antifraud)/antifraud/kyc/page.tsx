@@ -32,13 +32,23 @@ export const metadata = { title: "KYC Review · Antifraud" };
 const QUERY_TIMEOUT_MS = 10_000;
 
 const FILTER_LABELS: Record<KycFilter, string> = {
-  all: "All records",
+  all: "History",
   required: "Withdrawals locked",
   awaiting_review: "Decision open",
   provider_pending: "Waiting on Sumsub",
   approved: "Sumsub approved",
   rejected: "Rejected / failed",
   cleared: "Cleared by admin",
+};
+
+const FILTER_TITLES: Record<KycFilter, string> = {
+  all: "KYC record history",
+  required: "Accounts currently requiring KYC",
+  awaiting_review: "Open KYC decisions",
+  provider_pending: "Accounts waiting on Sumsub",
+  approved: "Accounts approved by Sumsub",
+  rejected: "Rejected KYC records",
+  cleared: "Cleared KYC history",
 };
 
 type SearchParams = {
@@ -53,7 +63,7 @@ export default async function AntifraudKycPage({
 }) {
   const session = await requireAntifraudPageAccess();
   const params = await searchParams;
-  const status = isKycFilter(params.status) ? params.status : "all";
+  const status = isKycFilter(params.status) ? params.status : "required";
   const search = params.q?.trim() || undefined;
   const canManage = canManageAntifraud(session);
   const contentKey = `${status}-${search ?? ""}`;
@@ -205,14 +215,15 @@ async function KycDashboardContent({
         <KpiTile
           label="Cleared by admin"
           value={String(stats.cleared)}
-          sub="withdrawals unlocked"
+          sub="completed historical cycles"
           icon={UserCheck}
           accent="cyan"
         />
       </div>
 
       <p className="text-xs text-muted-foreground">
-        {stats.total} verification records · {stats.required} currently locked ·{" "}
+        {stats.required} currently locked · {stats.total} historical verification
+        records ·{" "}
         {stats.rejected} rejected · {stats.withApplicant} linked to a Sumsub
         applicant
       </p>
@@ -241,7 +252,7 @@ function AccountList({
         icon={Fingerprint}
         title={
           <>
-            Accounts flagged for verification
+            {FILTER_TITLES[filter]}
             <span className="text-xs font-normal text-muted-foreground">
               ({accounts.length} shown · {FILTER_LABELS[filter]})
             </span>
@@ -253,7 +264,9 @@ function AccountList({
         <div className="rounded-lg border border-dashed border-border/70 bg-card/40 px-4 py-12 text-center">
           <CheckCircle2 className="mx-auto size-5 text-muted-foreground" />
           <p className="mt-2 text-sm font-semibold">
-            No accounts match this view
+            {filter === "required"
+              ? "No accounts currently require KYC"
+              : "No accounts match this view"}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             Change the filter or search, or require KYC for an account.
