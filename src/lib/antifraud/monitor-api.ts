@@ -16,6 +16,38 @@ const scoreDefinitionSchema = z.object({
   options: z.array(scoreOptionSchema),
 });
 
+const behaviorRuleSchema = z.object({
+  id: z.string().uuid(),
+  key: z.string(),
+  name: z.string(),
+  description: z.string(),
+  enabled: z.boolean(),
+  trigger: z.string(),
+  sequence: z.array(z.string()),
+  exclude_before: z.array(z.string()),
+  window_seconds: z.number(),
+  score_delta: z.number(),
+  action_type: z.string(),
+  priority: z.number(),
+  updated_at: z.string(),
+});
+
+const monitorEventSchema = z.object({
+  key: z.string(),
+  name: z.string(),
+  category: z.enum([
+    "Account",
+    "Money",
+    "Rewards",
+    "Games",
+    "Social",
+    "Security",
+  ]),
+  description: z.string(),
+  source: z.string(),
+  status: z.enum(["live", "planned"]),
+});
+
 const scoringConfigSchema = z.object({
   monitorStartScore: z.number(),
   monitorDurationSeconds: z.number(),
@@ -30,27 +62,13 @@ const scoringConfigSchema = z.object({
   signupSignals: z.array(scoreDefinitionSchema),
   providerSignals: z.array(scoreDefinitionSchema),
   activitySignals: z.array(scoreDefinitionSchema),
-  behaviorRules: z.array(
-    z.object({
-      id: z.string().uuid(),
-      key: z.string(),
-      name: z.string(),
-      description: z.string(),
-      enabled: z.boolean(),
-      trigger: z.string(),
-      sequence: z.array(z.string()),
-      exclude_before: z.array(z.string()),
-      window_seconds: z.number(),
-      score_delta: z.number(),
-      action_type: z.string(),
-      priority: z.number(),
-      updated_at: z.string(),
-    }),
-  ),
+  behaviorRules: z.array(behaviorRuleSchema),
 });
 
 export type AntifraudScoringConfig = z.infer<typeof scoringConfigSchema>;
 export type AntifraudScoreDefinition = z.infer<typeof scoreDefinitionSchema>;
+export type AntifraudBehaviorRule = z.infer<typeof behaviorRuleSchema>;
+export type AntifraudMonitorEvent = z.infer<typeof monitorEventSchema>;
 
 const UPSTREAM_TIMEOUT_MS = 8_000;
 
@@ -145,6 +163,136 @@ export async function getAntifraudScoringConfig(): Promise<{
     console.error("[antifraud-monitor] scoring config failed:", error);
     return { configured: true, data: null, error: true };
   }
+}
+
+export async function getAntifraudEventCatalog(): Promise<{
+  configured: boolean;
+  data: AntifraudMonitorEvent[];
+  error: boolean;
+}> {
+  const { baseUrl, token } = readToken();
+  if (!baseUrl || !token) {
+    return { configured: false, data: [], error: false };
+  }
+  try {
+    const response = await fetch(`${baseUrl}/v1/events`, {
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error(`Monitor API returned ${response.status}`);
+    const payload = z
+      .object({ data: z.array(monitorEventSchema) })
+      .parse(await response.json());
+    return { configured: true, data: payload.data, error: false };
+  } catch (error) {
+    console.error("[antifraud-monitor] event catalog failed:", error);
+    return { configured: true, data: [], error: true };
+  }
+}
+
+export type AntifraudRuleMutation = {
+  name: string;
+  description: string;
+  enabled: boolean;
+  sequence: string[];
+  excludeBefore: string[];
+  windowSeconds: number;
+  scoreDelta: number;
+  actionType: "manual_review" | "escalate";
+  idempotencyKey: string;
+  actorId: string;
+  actorUsername?: string;
+};
+
+async function mutateAntifraudRule(
+  path: string,
+  method: "POST" | "PUT",
+  input: AntifraudRuleMutation,
+): Promise<AntifraudBehaviorRule> {
+  const baseUrl = process.env.ANTIFRAUD_MONITOR_API_URL?.replace(/\/+$/, "");
+  const token = process.env.ANTIFRAUD_MONITOR_API_ADMIN_TOKEN;
+  if (!baseUrl || !token) {
+    throw new Error("Antifraud flow editing is not configured.");
+  }
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      method,
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(input),
+      cache: "no-store",
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch {
+    throw new Error(
+      "The monitor service did not respond. The flow was not changed.",
+    );
+  }
+
+  const payload = await response.json().catch(() => null);
+  if (response.status === 404) throw new Error("That flow no longer exists.");
+  if (response.status === 409) {
+    throw new Error("That retry key was already used for another flow change.");
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new Error("The monitor service rejected the flow-edit credentials.");
+  }
+  if (response.status === 429) {
+    throw new Error("Too many flow edits right now. Try again in a minute.");
+  }
+  if (response.status === 400) {
+    const unavailable = z
+      .object({
+        error: z.enum(["unknown_events", "events_not_live"]),
+        events: z.array(z.string()),
+      })
+      .safeParse(payload);
+    if (unavailable.success) {
+      const reason =
+        unavailable.data.error === "events_not_live"
+          ? "not live yet"
+          : "not in the event catalog";
+      throw new Error(
+        `This flow cannot be enabled: ${unavailable.data.events.join(", ")} ${reason}.`,
+      );
+    }
+    throw new Error("The monitor service rejected the flow configuration.");
+  }
+  if (!response.ok) {
+    throw new Error("The monitor service could not save that flow.");
+  }
+  const parsed = z
+    .object({ data: behaviorRuleSchema })
+    .safeParse(payload);
+  if (!parsed.success) {
+    throw new Error("The monitor service returned an unexpected response.");
+  }
+  return parsed.data.data;
+}
+
+export function createAntifraudRule(
+  input: AntifraudRuleMutation,
+): Promise<AntifraudBehaviorRule> {
+  return mutateAntifraudRule("/v1/rules", "POST", input);
+}
+
+export function updateAntifraudRule(
+  ruleId: string,
+  input: AntifraudRuleMutation,
+): Promise<AntifraudBehaviorRule> {
+  return mutateAntifraudRule(
+    `/v1/rules/${encodeURIComponent(ruleId)}`,
+    "PUT",
+    input,
+  );
 }
 
 export async function updateAntifraudScoreWeight(input: {
@@ -317,6 +465,17 @@ const networkCaseMemberSchema = z.object({
   avatar_url: z.string().nullable(),
 });
 
+const flowMatchSchema = z.object({
+  id: z.string().uuid(),
+  session_id: z.string().uuid().nullable(),
+  rule_key: z.string(),
+  rule_name: z.string(),
+  score_delta: z.number(),
+  action_type: z.string(),
+  sequence: z.array(z.string()),
+  matched_at: z.string(),
+});
+
 const caseDetailSchema = z.object({
   case: caseRecordSchema,
   events: z.array(riskEventSchema),
@@ -324,6 +483,7 @@ const caseDetailSchema = z.object({
   sessions: z.array(monitorSessionSchema),
   actions: z.array(staffActionSchema),
   members: z.array(networkCaseMemberSchema).default([]),
+  matches: z.array(flowMatchSchema).default([]),
 });
 
 export type AntifraudMonitorCase = z.infer<typeof caseRecordSchema>;
@@ -332,6 +492,7 @@ export type AntifraudMonitorProviderCheck = z.infer<typeof providerCheckSchema>;
 export type AntifraudMonitorSession = z.infer<typeof monitorSessionSchema>;
 export type AntifraudMonitorStaffAction = z.infer<typeof staffActionSchema>;
 export type AntifraudMonitorNetworkMember = z.infer<typeof networkCaseMemberSchema>;
+export type AntifraudMonitorFlowMatch = z.infer<typeof flowMatchSchema>;
 export type AntifraudMonitorCaseDetail = z.infer<typeof caseDetailSchema>;
 
 /**

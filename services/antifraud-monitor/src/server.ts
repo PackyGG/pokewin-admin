@@ -3,6 +3,7 @@ import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import websocket from "@fastify/websocket";
+import { isDeepStrictEqual } from "node:util";
 import {
   isListLoaded as isDisposableEmailListLoaded,
   preload as preloadDisposableEmailDomains,
@@ -24,12 +25,18 @@ import {
 import { LiveBus, STREAM_ID_PATTERN } from "./live.js";
 import { migrate } from "./migrate.js";
 import { MonitorEngine } from "./monitor.js";
+import {
+  isDocumentedMonitorEvent,
+  MONITOR_EVENT_CATALOG,
+  unavailableMonitorEvents,
+} from "./event-catalog.js";
 import { registerNetworkRoutes } from "./network-routes.js";
 import { NetworkRiskService } from "./network-risk.js";
 import { pollerStalledFor } from "./poller-health.js";
 import { createPromiseCache } from "./promise-cache.js";
 import {
   caseDecisionSchema,
+  ruleCreateSchema,
   ruleUpdateSchema,
   scoreWeightUpdateSchema,
 } from "./request-schemas.js";
@@ -140,6 +147,30 @@ const cachedTopRain = createPromiseCache<number, TopRainRow[]>(
   (limit) => topRainWinners(db.source, limit),
   TOP_RAIN_CACHE_MS,
 );
+
+function ruleEventError(
+  sequence: string[],
+  excludeBefore: string[],
+  enabled: boolean,
+): { code: string; events: string[] } | null {
+  const eventKeys = [...sequence, ...excludeBefore];
+  const undocumented = [...new Set(
+    eventKeys.filter((key) => !isDocumentedMonitorEvent(key)),
+  )];
+  if (undocumented.length > 0) {
+    return { code: "unknown_events", events: undocumented };
+  }
+  const unavailable = enabled ? unavailableMonitorEvents(eventKeys) : [];
+  return unavailable.length > 0
+    ? { code: "events_not_live", events: unavailable }
+    : null;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
 
 async function publishCommittedMutation(
   type: string,
@@ -475,7 +506,7 @@ app.get("/v1/cases", async (request) => {
 
 app.get("/v1/cases/:id", async (request, reply) => {
   const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-  const [caseResult, events, checks, sessions, actions, members] = await Promise.all([
+  const [caseResult, events, checks, sessions, actions, members, matches] = await Promise.all([
     db.antifraud.query(
       `
         SELECT
@@ -535,6 +566,21 @@ app.get("/v1/cases/:id", async (request, reply) => {
         LIMIT 5000`,
       [id],
     ),
+    db.antifraud.query(
+      `SELECT
+          rm.id, rm.session_id, rd.key AS rule_key,
+          COALESCE(rm.evidence->>'ruleName', rd.name) AS rule_name,
+          COALESCE((rm.evidence->>'scoreDelta')::int, rd.score_delta) AS score_delta,
+          COALESCE(rm.evidence->>'actionType', rd.action_type) AS action_type,
+          COALESCE(rm.evidence->'sequence', rd.sequence) AS sequence,
+          rm.matched_at
+         FROM rule_matches rm
+         JOIN rule_definitions rd ON rd.id=rm.rule_id
+        WHERE rm.case_id=$1
+        ORDER BY rm.matched_at
+        LIMIT 200`,
+      [id],
+    ),
   ]);
   if (!caseResult.rows[0]) return reply.code(404).send({ error: "not_found" });
   return {
@@ -545,15 +591,131 @@ app.get("/v1/cases/:id", async (request, reply) => {
       sessions: sessions.rows,
       actions: actions.rows,
       members: members.rows,
+      matches: matches.rows,
     },
   };
 });
+
+app.get("/v1/events", async () => ({
+  data: MONITOR_EVENT_CATALOG,
+}));
 
 app.get("/v1/rules", async () => {
   const result = await db.antifraud.query(
     "SELECT * FROM rule_definitions ORDER BY priority, name",
   );
   return { data: result.rows };
+});
+
+app.post("/v1/rules", {
+  config: {
+    rateLimit: {
+      max: config.API_WRITE_RATE_LIMIT_PER_MINUTE,
+      timeWindow: "1 minute",
+    },
+  },
+}, async (request, reply) => {
+  const body = ruleCreateSchema.parse(request.body);
+  const eventError = ruleEventError(
+    body.sequence,
+    body.excludeBefore,
+    body.enabled,
+  );
+  if (eventError) return reply.code(400).send({ error: eventError.code, events: eventError.events });
+
+  const actorId = body.actorId ?? SERVICE_ACTOR_ID;
+  const actorUsername = body.actorUsername ?? null;
+  const {
+    idempotencyKey: _idempotencyKey,
+    actorId: _actorId,
+    actorUsername: _actorUsername,
+    ...changes
+  } = body;
+  const requestIdentity = { actorId, actorUsername, changes };
+  const client = await db.antifraud.connect();
+  let created: Record<string, unknown>;
+  let idempotent = false;
+  try {
+    await client.query("BEGIN");
+    const duplicate = await client.query<{
+      action: string;
+      actor_id: string;
+      actor_username: string | null;
+      request_state: unknown;
+      after_state: Record<string, unknown> | null;
+    }>(
+      `SELECT action, actor_id, actor_username, request_state, after_state
+         FROM service_audit_events
+        WHERE idempotency_key=$1`,
+      [body.idempotencyKey],
+    );
+    const existing = duplicate.rows[0];
+    if (existing) {
+      if (
+        existing.action !== "rule.create" ||
+        existing.actor_id !== actorId ||
+        existing.actor_username !== actorUsername ||
+        !isDeepStrictEqual(existing.request_state, requestIdentity) ||
+        !existing.after_state
+      ) {
+        await client.query("COMMIT");
+        return reply.code(409).send({ error: "idempotency_conflict" });
+      }
+      created = existing.after_state;
+      idempotent = true;
+      await client.query("COMMIT");
+    } else {
+      const result = await client.query(
+        `
+          INSERT INTO rule_definitions(
+            key, name, description, enabled, trigger, sequence, exclude_before,
+            window_seconds, score_delta, action_type, priority
+          ) VALUES (
+            'custom-' || gen_random_uuid()::text,$1,$2,$3,'sequence',$4::jsonb,
+            $5::jsonb,$6,$7,$8,
+            (SELECT COALESCE(MAX(priority), 0) + 10 FROM rule_definitions)
+          )
+          RETURNING *
+        `,
+        [
+          body.name,
+          body.description,
+          body.enabled,
+          JSON.stringify(body.sequence),
+          JSON.stringify(body.excludeBefore),
+          body.windowSeconds,
+          body.scoreDelta,
+          body.actionType,
+        ],
+      );
+      created = result.rows[0] as Record<string, unknown>;
+      await client.query(
+        `INSERT INTO service_audit_events(
+           idempotency_key, actor_id, actor_username, action, target_type,
+           target_id, request_state, before_state, after_state
+         ) VALUES (
+           $1,$2,$3,'rule.create','rule',$4,$5::jsonb,NULL,$6::jsonb
+         )`,
+        [
+          body.idempotencyKey,
+          actorId,
+          actorUsername,
+          created.id,
+          JSON.stringify(requestIdentity),
+          JSON.stringify(created),
+        ],
+      );
+      await client.query("COMMIT");
+    }
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+  engine.invalidateRules();
+  if (!idempotent) await publishCommittedMutation("rule.created", { rule: created });
+  return { data: created, idempotent };
 });
 
 app.put("/v1/rules/:id", {
@@ -613,6 +775,24 @@ app.put("/v1/rules/:id", {
       await client.query("ROLLBACK");
       return reply.code(404).send({ error: "not_found" });
     }
+    const currentRule = before.rows[0] as Record<string, unknown>;
+    const nextSequence = body.sequence ?? stringArray(currentRule.sequence);
+    const nextExcludeBefore =
+      body.excludeBefore ?? stringArray(currentRule.exclude_before);
+    const nextEnabled =
+      body.enabled ?? currentRule.enabled === true;
+    const eventError = ruleEventError(
+      nextSequence,
+      nextExcludeBefore,
+      nextEnabled,
+    );
+    if (eventError) {
+      await client.query("ROLLBACK");
+      return reply.code(400).send({
+        error: eventError.code,
+        events: eventError.events,
+      });
+    }
     const result = await client.query(
       `
         UPDATE rule_definitions SET
@@ -664,6 +844,7 @@ app.put("/v1/rules/:id", {
   } finally {
     client.release();
   }
+  engine.invalidateRules();
   await publishCommittedMutation("rule.updated", { rule: updated });
   return { data: updated };
 });

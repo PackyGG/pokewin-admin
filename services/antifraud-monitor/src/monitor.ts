@@ -55,6 +55,11 @@ type SequenceRule = {
   action_type: string;
 };
 
+type RuleSession = Pick<
+  ActiveSession,
+  "id" | "case_id" | "user_id" | "current_score"
+>;
+
 type PreparedSignup = {
   context: Awaited<ReturnType<typeof signupContext>>;
   fingerprint: EnrichmentResult;
@@ -115,6 +120,10 @@ export class MonitorEngine {
 
   healthSnapshot(): PollerHealthSnapshot {
     return this.health.snapshot(this.config.POLL_STALE_AFTER_MS);
+  }
+
+  invalidateRules(): void {
+    this.rulesCache = null;
   }
 
   private watchdogBudgetMs(): number {
@@ -493,6 +502,12 @@ export class MonitorEngine {
       durationSeconds: this.config.MONITOR_DURATION_SECONDS,
       signals,
     });
+    await this.evaluateRules({
+      id: opened.sessionId,
+      case_id: opened.caseId,
+      user_id: signup.id,
+      current_score: score,
+    });
   }
 
   private async cachedFingerprint(
@@ -713,6 +728,22 @@ export class MonitorEngine {
     );
     const sessionId = sessionResult.rows[0]?.id;
     if (!sessionId) throw new Error("Failed to open monitor session");
+
+    await client.query(
+      `
+        INSERT INTO risk_events (
+          case_id, session_id, user_id, event_type, source, source_ref,
+          score_delta, score_after, title, detail, payload, occurred_at
+        ) VALUES (
+          $1,$2,$3,'account_signed_up','signup',$4,0,0,
+          'Account signed up','The account entered live signup monitoring.',
+          '{}'::jsonb,($5::timestamptz - interval '1 millisecond')
+        )
+        ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL
+        DO NOTHING
+      `,
+      [caseId, sessionId, signup.id, `${signup.id}:account_signed_up`, signup.created_at],
+    );
 
     let runningScore = 0;
     for (const signal of signals) {
@@ -965,7 +996,7 @@ export class MonitorEngine {
     return result.rows;
   }
 
-  private async evaluateRules(session: ActiveSession): Promise<void> {
+  private async evaluateRules(session: RuleSession): Promise<void> {
     const rules = await this.sequenceRules();
 
     const events = await this.db.antifraud.query<{
@@ -997,7 +1028,19 @@ export class MonitorEngine {
           ON CONFLICT (rule_id, session_id) DO NOTHING
           RETURNING id
         `,
-        [rule.id, session.case_id, session.id, { sequence: rule.sequence }],
+        [
+          rule.id,
+          session.case_id,
+          session.id,
+          {
+            sequence: rule.sequence,
+            excludeBefore: rule.exclude_before,
+            windowSeconds: rule.window_seconds,
+            scoreDelta: rule.score_delta,
+            actionType: rule.action_type,
+            ruleName: rule.name,
+          },
+        ],
       );
       if (match.rowCount === 0) continue;
 
@@ -1015,10 +1058,22 @@ export class MonitorEngine {
           `
             UPDATE cases
             SET score=$2, peak_score=GREATEST(peak_score,$2),
-                severity=$3, updated_at=now()
+                severity=$3,
+                status=CASE
+                  WHEN $4 = 'escalate' THEN 'escalated'
+                  WHEN $4 = 'manual_review' AND status = 'monitoring'
+                    THEN 'in_review'
+                  ELSE status
+                END,
+                updated_at=now()
             WHERE id=$1
           `,
-          [session.case_id, nextScore, severity(nextScore)],
+          [
+            session.case_id,
+            nextScore,
+            severity(nextScore),
+            rule.action_type,
+          ],
         ),
       ]);
       session.current_score = nextScore;

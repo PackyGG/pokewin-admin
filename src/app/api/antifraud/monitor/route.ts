@@ -28,6 +28,36 @@ async function upstreamJson(baseUrl: string, token: string, path: string) {
   return response.json() as Promise<unknown>;
 }
 
+function flowMonitoring(value: unknown): {
+  active: number;
+  total: number;
+  names: string[];
+} {
+  const data =
+    value && typeof value === "object" && "data" in value
+      ? (value as { data: unknown }).data
+      : [];
+  const rows = Array.isArray(data) ? data : [];
+  const activeRows = rows.filter(
+    (row) =>
+      row &&
+      typeof row === "object" &&
+      (row as { enabled?: unknown }).enabled === true,
+  );
+  return {
+    active: activeRows.length,
+    total: rows.length,
+    names: activeRows
+      .map((row) =>
+        typeof (row as { name?: unknown }).name === "string"
+          ? (row as { name: string }).name
+          : "",
+      )
+      .filter(Boolean)
+      .slice(0, 8),
+  };
+}
+
 export async function GET(request: Request): Promise<Response> {
   let actorId: string;
   try {
@@ -68,15 +98,17 @@ export async function GET(request: Request): Promise<Response> {
         configured: false,
         live: [],
         cases: [],
+        flows: { active: 0, total: 0, names: [] },
       },
       { headers: { "Cache-Control": "no-store" } },
     );
   }
 
   try {
-    const [live, cases] = await Promise.all([
+    const [live, cases, rules] = await Promise.all([
       upstreamJson(baseUrl, token, "/v1/monitors/live"),
       upstreamJson(baseUrl, token, "/v1/cases?limit=40"),
+      upstreamJson(baseUrl, token, "/v1/rules"),
     ]);
     return Response.json(
       {
@@ -89,6 +121,7 @@ export async function GET(request: Request): Promise<Response> {
           cases && typeof cases === "object" && "data" in cases
             ? (cases as { data: unknown }).data
             : [],
+        flows: flowMonitoring(rules),
       },
       { headers: { "Cache-Control": "no-store" } },
     );
@@ -100,6 +133,7 @@ export async function GET(request: Request): Promise<Response> {
         error: "monitor_unavailable",
         live: [],
         cases: [],
+        flows: { active: 0, total: 0, names: [] },
       },
       {
         status: 503,

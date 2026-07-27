@@ -149,6 +149,8 @@ export const APP_HOSTS: readonly AppHostConfig[] = [
       "api",
       "monitor",
       "points",
+      "flows",
+      "events",
       "reviews",
       "kyc",
       "signups",

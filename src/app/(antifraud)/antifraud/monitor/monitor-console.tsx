@@ -11,6 +11,7 @@ import {
   ShieldAlert,
   UserRoundSearch,
   WifiOff,
+  Workflow,
   X,
 } from "lucide-react";
 
@@ -88,6 +89,13 @@ type Snapshot = {
   error?: string;
   live?: unknown;
   cases?: unknown;
+  flows?: unknown;
+};
+
+type FlowCoverage = {
+  active: number;
+  total: number;
+  names: string[];
 };
 
 const MAX_EVENTS = 60;
@@ -150,6 +158,17 @@ function optionalNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseFlowCoverage(value: unknown): FlowCoverage {
+  const row = record(value);
+  return {
+    active: number(row?.active),
+    total: number(row?.total),
+    names: Array.isArray(row?.names)
+      ? row.names.filter((name): name is string => typeof name === "string")
+      : [],
+  };
 }
 
 function parseSession(value: unknown): MonitorSession | null {
@@ -397,6 +416,11 @@ export function MonitorConsole() {
   );
   const [sessions, setSessions] = React.useState<MonitorSession[]>([]);
   const [cases, setCases] = React.useState<MonitorCase[]>([]);
+  const [flowCoverage, setFlowCoverage] = React.useState<FlowCoverage>({
+    active: 0,
+    total: 0,
+    names: [],
+  });
   const [events, setEvents] = React.useState<LiveEvent[]>([]);
   const [refreshing, setRefreshing] = React.useState(false);
   const [now, setNow] = React.useState(() => Date.now());
@@ -462,6 +486,7 @@ export function MonitorConsole() {
         return !completedAt || timeOf(session.started_at) > completedAt;
       });
       const nextCases = list(payload.cases, parseCase);
+      setFlowCoverage(parseFlowCoverage(payload.flows));
       setSessions((current) =>
         mergeSessions(current, nextSessions, requestedAt),
       );
@@ -824,7 +849,7 @@ export function MonitorConsole() {
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <div role="status" aria-live="polite">
           <KpiTile
             label="Connection"
@@ -842,6 +867,13 @@ export function MonitorConsole() {
           accent="cyan"
         />
         <KpiTile
+          label="Flows checked"
+          value={`${flowCoverage.active}/${flowCoverage.total}`}
+          sub="Evaluated on every event"
+          icon={Workflow}
+          accent="blue"
+        />
+        <KpiTile
           label="High risk"
           value={highRisk.toLocaleString()}
           sub="High or critical sessions"
@@ -856,6 +888,20 @@ export function MonitorConsole() {
           accent={highestScore >= 80 ? "rose" : "blue"}
         />
       </div>
+
+      {flowCoverage.active > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2.5 text-xs text-muted-foreground">
+          <Workflow className="mt-0.5 size-4 shrink-0 text-cyan-500" aria-hidden />
+          <span>
+            Checking {flowCoverage.active} active{" "}
+            {flowCoverage.active === 1 ? "flow" : "flows"}
+            {flowCoverage.names.length > 0
+              ? `: ${flowCoverage.names.join(" · ")}`
+              : ""}
+            . Matches appear in Live activity and are stored on the case.
+          </span>
+        </div>
+      )}
 
       {streamNotice && (
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-800 dark:text-amber-200">

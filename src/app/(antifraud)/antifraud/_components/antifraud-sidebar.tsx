@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Activity,
+  Blocks,
   Braces,
   Fingerprint,
   Gauge,
@@ -73,6 +75,8 @@ const KYC_NAV: NavItem[] = [
  */
 const MANAGE_NAV: NavItem[] = [
   { label: "Risk Scoring", href: "/antifraud/points", icon: Gauge },
+  { label: "Point Flows", href: "/antifraud/flows", icon: Blocks },
+  { label: "Events & Triggers", href: "/antifraud/events", icon: Activity },
   { label: "API", href: "/antifraud/api", icon: Braces },
   { label: "Settings", href: "/antifraud/settings", icon: Settings },
 ];

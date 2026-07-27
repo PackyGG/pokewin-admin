@@ -102,6 +102,8 @@ The webapp uses PostgreSQL as its only database engine. Drizzle ORM is the defau
 - Mutating actions must `createAdminAuditEvent()`. 2FA-gate sensitive mutations (balance, XP, withdrawals).
 - **Login = password → second factor at `/verify-2fa`.** Second factor is EITHER a TOTP code (`otpauth`) OR a **passkey (WebAuthn, `@simplewebauthn` v13)** — passkeys are an additive ALTERNATIVE to TOTP, not a replacement. Passkeys live in the ADMIN DB table `admin_passkeys` (per-admin, FK cascade); enrollment is in the profile dialog's Security section (`src/app/(admin)/profile/passkeys-card.tsx` + `passkey-actions.ts`); login branch in `src/app/(auth)/verify-2fa/`. Server wrappers + RP config in `src/lib/webauthn.ts` (RP ID/origin derived from request host, overridable via `WEBAUTHN_RP_ID`/`WEBAUTHN_ORIGIN`). The WebAuthn challenge rides a 5-min signed cookie (`admin_webauthn_challenge`) via the existing `encryptGeneric`/`decryptGeneric` in `session.ts`. Counter + `last_used_at` give a replay guard; passkey login audits with `method:"passkey"`.
 
+- **Custom Antifraud point flows:** manager-only `/antifraud/flows` creates and edits ordered `rule_definitions` sequences; `/antifraud/events` is the authoritative live/planned event vocabulary. Enabled flows may contain only live events. The monitor evaluates every enabled flow after each accepted event, matches once per flow/session, applies its score plus manual-review/escalation outcome, sends the existing alert, and stores immutable match evidence shown on the monitor case. Planned events are documentation/draft-only until their source is connected.
+
 ---
 
 ## 6. 💰 DOMAIN: MONEY & REWARDS

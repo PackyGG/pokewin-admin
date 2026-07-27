@@ -18,6 +18,7 @@ export function serviceRequestAuthorized(
   config: Pick<Config, "API_TOKEN" | "API_ADMIN_TOKEN">,
 ): boolean {
   const needsAdminToken =
+    (method === "POST" && pathname === "/v1/rules") ||
     (method === "PUT" && pathname.startsWith("/v1/rules/")) ||
     (method === "PUT" && pathname.startsWith("/v1/scoring/")) ||
     (method === "PUT" && pathname.startsWith("/v1/analysis-rules/")) ||

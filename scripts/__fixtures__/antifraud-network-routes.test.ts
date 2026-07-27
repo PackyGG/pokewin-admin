@@ -5,7 +5,7 @@ import test from "node:test";
 
 const root = process.cwd();
 
-test("the Antifraud host owns account-network and creator-fraud routes", () => {
+test("the Antifraud host owns network, creator, flow, and event routes", () => {
   const appHosts = readFileSync(join(root, "src/lib/app-hosts.ts"), "utf8");
   const antifraudHost =
     appHosts.match(
@@ -14,4 +14,6 @@ test("the Antifraud host owns account-network and creator-fraud routes", () => {
 
   assert.match(antifraudHost, /"networks"/);
   assert.match(antifraudHost, /"creator-fraud"/);
+  assert.match(antifraudHost, /"flows"/);
+  assert.match(antifraudHost, /"events"/);
 });

@@ -12,6 +12,7 @@ import {
   ScanSearch,
   ShieldAlert,
   UserRoundSearch,
+  Workflow,
 } from "lucide-react";
 
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
@@ -30,6 +31,7 @@ import {
   antifraudDecisionsConfigured,
   getAntifraudCaseDetail,
   MONITOR_CASE_DECISION_LABELS,
+  type AntifraudMonitorFlowMatch,
   type AntifraudMonitorProviderCheck,
   type AntifraudMonitorRiskEvent,
   type AntifraudMonitorSession,
@@ -97,8 +99,15 @@ async function CaseDetail({ caseId }: { caseId: string }) {
     return <EmptyState text="This case could not be loaded right now." />;
   }
 
-  const { case: subject, events, providerChecks, sessions, actions, members } =
-    result.data;
+  const {
+    case: subject,
+    events,
+    providerChecks,
+    sessions,
+    actions,
+    members,
+    matches,
+  } = result.data;
   const decisionsEnabled = antifraudDecisionsConfigured();
   const activeSession = sessions.find((session) => session.status === "active");
   const location = [subject.city, subject.state, subject.country_code]
@@ -141,7 +150,13 @@ async function CaseDetail({ caseId }: { caseId: string }) {
         <KpiTile
           label="Scored events"
           value={formatNumber(events.length)}
-          sub={events.length >= 500 ? "showing first 500" : "on this case"}
+          sub={
+            matches.length > 0
+              ? `${matches.length} matched ${matches.length === 1 ? "flow" : "flows"}`
+              : events.length >= 500
+                ? "showing first 500"
+                : "on this case"
+          }
           icon={Activity}
           accent="amber"
         />
@@ -285,6 +300,17 @@ async function CaseDetail({ caseId }: { caseId: string }) {
             )}
           </div>
 
+          {matches.length > 0 && (
+            <div className="space-y-3">
+              <SectionHeading icon={Workflow} title="Matched flows" />
+              <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
+                {matches.map((match) => (
+                  <FlowMatchRow key={match.id} match={match} />
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* ── Timeline ────────────────────────────────────────── */}
           <div className="space-y-3">
             <SectionHeading icon={Activity} title="Scored events" />
@@ -348,6 +374,38 @@ async function CaseDetail({ caseId }: { caseId: string }) {
 }
 
 // ─── Rows ────────────────────────────────────────────────────────────────
+
+function FlowMatchRow({ match }: { match: AntifraudMonitorFlowMatch }) {
+  return (
+    <li className="grid gap-2 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-4">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold">{match.rule_name}</span>
+          <Badge variant="outline" className="text-[10px]">
+            {match.action_type === "escalate" ? "Escalated" : "Manual review"}
+          </Badge>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {match.sequence.join(" → ")}
+        </p>
+        <p className="mt-1 text-[10px] text-muted-foreground">
+          Matched {formatDateTime(match.matched_at)}
+        </p>
+      </div>
+      <span
+        className={cn(
+          "text-sm font-bold tabular-nums",
+          match.score_delta < 0
+            ? "text-emerald-600 dark:text-emerald-400"
+            : "text-rose-600 dark:text-rose-400",
+        )}
+      >
+        {match.score_delta > 0 ? "+" : ""}
+        {match.score_delta} pts
+      </span>
+    </li>
+  );
+}
 
 function ProviderCheckCard({
   check,
