@@ -15,7 +15,7 @@ export default function AccountNetworksLoading() {
           backHref="/antifraud"
         />
       </PageHero>
-      <Skeleton className="h-10 rounded-md" />
+      <Skeleton className="h-[122px] rounded-xl" />
       <Skeleton className="h-[560px] rounded-xl" />
     </div>
   );
