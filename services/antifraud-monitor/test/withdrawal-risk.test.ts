@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { scoreWithdrawal } from "../src/withdrawal-risk.js";
@@ -22,7 +23,9 @@ test("a reconciled, traceable withdrawal is good", () => {
   const result = scoreWithdrawal(safeInput);
   assert.equal(result.riskScore, 0);
   assert.equal(result.verdict, "good");
-  assert.ok(result.signals.some((signal) => signal.key === "amount_reconciled"));
+  assert.ok(
+    result.signals.some((signal) => signal.key === "amount_reconciled"),
+  );
   assert.ok(result.signals.some((signal) => signal.key === "source_traced"));
   assert.ok(result.flowChecks.every((check) => check.status === "pass"));
   assert.deepEqual(result.scoreBreakdown, {
@@ -81,4 +84,18 @@ test("untraceable and mismatched assets surface both evidence gaps", () => {
     result.flowChecks.find((check) => check.key === "integrity")?.status,
     "block",
   );
+});
+
+test("withdrawal assessments exclude protected users and use a request-specific trail", async () => {
+  const source = await readFile(
+    new URL("../src/withdrawal-risk.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /COALESCE\(u\.role::text,''\)<>'creator'/);
+  assert.match(source, /'creator'<>ALL\(COALESCE\(u\.roles::text\[\]/);
+  assert.match(source, /cwr\.user_id<>ALL\(\$\$\{values\.length\}::text\[\]\)/);
+  assert.match(source, /WITH latest_deposit AS/);
+  assert.match(source, /latest_other AS/);
+  assert.match(source, /result\.rows\.reverse\(\)/);
+  assert.doesNotMatch(source, /interval '90 days'/);
 });

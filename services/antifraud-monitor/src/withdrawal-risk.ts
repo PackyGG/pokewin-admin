@@ -14,11 +14,7 @@ export type WithdrawalSignal = {
 };
 
 export type WithdrawalRiskCategory =
-  | "integrity"
-  | "funding"
-  | "behavior"
-  | "account"
-  | "network";
+  "integrity" | "funding" | "behavior" | "account" | "network";
 
 export type WithdrawalScoreBreakdown = Record<WithdrawalRiskCategory, number>;
 
@@ -40,6 +36,7 @@ export type WithdrawalTimelineEvent = {
   occurredAt: string;
   category: "deposit" | "play" | "win" | "reward" | "withdrawal" | "account";
   tone: "good" | "neutral" | "warning" | "bad";
+  isOrigin: boolean;
 };
 
 export type WithdrawalSource = {
@@ -51,6 +48,10 @@ export type WithdrawalSource = {
 };
 
 export type WithdrawalFlow = {
+  originType: string | null;
+  originLabel: string;
+  originAt: string | null;
+  originAmountUsd: number;
   depositsUsd: number;
   gameWinsUsd: number;
   gameLossesUsd: number;
@@ -89,7 +90,8 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
   const signals: WithdrawalSignal[] = [];
   const amount = Math.max(0, input.amountUsd);
   const difference = Math.abs(input.assetValueUsd - amount);
-  const differenceRatio = amount > 0 ? difference / amount : difference > 0 ? 1 : 0;
+  const differenceRatio =
+    amount > 0 ? difference / amount : difference > 0 ? 1 : 0;
   const tracedRatio =
     input.assetValueUsd > 0 ? input.tracedAssetUsd / input.assetValueUsd : 0;
 
@@ -97,7 +99,8 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
     signals.push({
       key: "amount_reconciled",
       label: "Amount reconciles",
-      detail: "The attached cards and vouchers reconcile with the requested value.",
+      detail:
+        "The attached cards and vouchers reconcile with the requested value.",
       points: 0,
       tone: "good",
       category: "integrity",
@@ -151,7 +154,8 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
     signals.push({
       key: "rapid_cashout",
       label: "Rapid cash-out",
-      detail: "A deposit was followed by this withdrawal within one hour with little play.",
+      detail:
+        "A deposit was followed by this withdrawal within one hour with little play.",
       points: 35,
       tone: "bad",
       category: "behavior",
@@ -162,7 +166,8 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
     signals.push({
       key: "no_gameplay",
       label: "No gameplay trail",
-      detail: "No qualifying game activity was found in the 90-day funding window.",
+      detail:
+        "No qualifying game activity was found between the funding origin and this withdrawal.",
       points: 20,
       tone: "warning",
       category: "behavior",
@@ -175,7 +180,7 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
     signals.push({
       key: "funding_gap",
       label: "Funding gap",
-      detail: `$${Math.max(0, amount - explainedFunding).toFixed(2)} is not covered by deposits, wins, or rewards in the funding window.`,
+      detail: `$${Math.max(0, amount - explainedFunding).toFixed(2)} is not covered by deposits, wins, or rewards in this withdrawal's funding trail.`,
       points: 25,
       tone: "warning",
       category: "funding",
@@ -190,7 +195,8 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
     signals.push({
       key: "reward_funded",
       label: "Mostly reward-funded",
-      detail: "At least half of the recent incoming value came from rewards or promotions.",
+      detail:
+        "At least half of the recent incoming value came from rewards or promotions.",
       points: 18,
       tone: "warning",
       category: "funding",
@@ -328,6 +334,9 @@ type SourceWithdrawal = {
 
 type LedgerContext = {
   withdrawal_id: string;
+  origin_type: string | null;
+  origin_at: string | null;
+  origin_amount_usd: string;
   deposits_usd: string;
   game_losses_usd: string;
   game_wins_usd: string;
@@ -366,7 +375,30 @@ const REWARD_TYPES = [
   "balance_reward_claim",
   "affiliate_claim",
   "affiliate_leaderboard_prize",
+  "challenge_prize",
 ];
+const OTHER_FUNDING_SOURCE_TYPES = [
+  ...REWARD_TYPES,
+  ...GAME_WIN_TYPES,
+  "admin_balance_adjustment",
+  "card_sale",
+  "reward_card_sale",
+  "exchange_excess_credit",
+  "voucher_redeemed",
+];
+
+function fundingSourceLabel(type: string | null): string {
+  if (!type) return "No funding origin found";
+  if (type === "deposit") return "Latest deposit";
+  const labels: Record<string, string> = {
+    admin_balance_adjustment: "Admin balance credit",
+    card_sale: "Card sale",
+    reward_card_sale: "Reward card sale",
+    exchange_excess_credit: "Exchange credit",
+    voucher_redeemed: "Voucher redemption",
+  };
+  return labels[type] ?? type.replaceAll("_", " ");
+}
 
 function timelineCategory(type: string): {
   category: WithdrawalTimelineEvent["category"];
@@ -451,10 +483,17 @@ function buildSources(
     existing.traceable = existing.traceable && traceable;
     grouped.set(key, existing);
   };
-  request.inventory_item_ids.forEach((id) => add(inventoryById.get(id), "unknown_card"));
-  request.voucher_ids.forEach((id) => add(voucherById.get(id), "unknown_voucher"));
+  request.inventory_item_ids.forEach((id) =>
+    add(inventoryById.get(id), "unknown_card"),
+  );
+  request.voucher_ids.forEach((id) =>
+    add(voucherById.get(id), "unknown_voucher"),
+  );
   return [...grouped.values()]
-    .map((source) => ({ ...source, valueUsd: Number(source.valueUsd.toFixed(2)) }))
+    .map((source) => ({
+      ...source,
+      valueUsd: Number(source.valueUsd.toFixed(2)),
+    }))
     .sort((a, b) => b.valueUsd - a.valueUsd);
 }
 
@@ -472,9 +511,49 @@ async function loadLedgerContext(
         SELECT *
         FROM unnest($1::uuid[], $2::text[], $3::timestamptz[])
           AS t(withdrawal_id, user_id, requested_at)
+      ),
+      origins AS (
+        SELECT
+          t.*,
+          COALESCE(latest_deposit.type, latest_other.type) AS origin_type,
+          COALESCE(latest_deposit.created_at, latest_other.created_at)
+            AS origin_at,
+          COALESCE(latest_deposit.amount_usd, latest_other.amount_usd, 0)
+            AS origin_amount_usd
+        FROM targets t
+        LEFT JOIN LATERAL (
+          SELECT
+            lt.type::text AS type,
+            lt.created_at,
+            ABS(lt.amount::numeric) AS amount_usd
+          FROM ledger_transactions lt
+          WHERE lt.user_id=t.user_id
+            AND lt.status::text='completed'
+            AND lt.type::text='deposit'
+            AND lt.created_at<=t.requested_at
+          ORDER BY lt.created_at DESC, lt.id DESC
+          LIMIT 1
+        ) latest_deposit ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            lt.type::text AS type,
+            lt.created_at,
+            ABS(lt.amount::numeric) AS amount_usd
+          FROM ledger_transactions lt
+          WHERE latest_deposit.created_at IS NULL
+            AND lt.user_id=t.user_id
+            AND lt.status::text='completed'
+            AND lt.type::text=ANY($7::text[])
+            AND lt.created_at<=t.requested_at
+          ORDER BY lt.created_at DESC, lt.id DESC
+          LIMIT 1
+        ) latest_other ON TRUE
       )
       SELECT
-        t.withdrawal_id,
+        o.withdrawal_id,
+        o.origin_type,
+        o.origin_at,
+        o.origin_amount_usd::text,
         COALESCE(SUM(ABS(lt.amount::numeric))
           FILTER (WHERE lt.type::text='deposit'), 0)::text AS deposits_usd,
         COALESCE(SUM(ABS(lt.amount::numeric))
@@ -487,21 +566,34 @@ async function loadLedgerContext(
           WHERE lt.type::text=ANY($4::text[]) OR lt.type::text=ANY($5::text[])
         )::int AS game_events,
         MAX(lt.created_at) FILTER (WHERE lt.type::text='deposit') AS last_deposit_at
-      FROM targets t
+      FROM origins o
       LEFT JOIN ledger_transactions lt
-        ON lt.user_id=t.user_id
+        ON o.origin_at IS NOT NULL
+       AND lt.user_id=o.user_id
        AND lt.status::text='completed'
-       AND lt.created_at > t.requested_at - interval '90 days'
-       AND lt.created_at <= t.requested_at
+       AND lt.created_at>=o.origin_at
+       AND lt.created_at<=o.requested_at
        AND (
          lt.type::text='deposit'
          OR lt.type::text=ANY($4::text[])
          OR lt.type::text=ANY($5::text[])
          OR lt.type::text=ANY($6::text[])
        )
-      GROUP BY t.withdrawal_id
+      GROUP BY
+        o.withdrawal_id,
+        o.origin_type,
+        o.origin_at,
+        o.origin_amount_usd
     `,
-    [ids, userIds, requestedAt, GAME_LOSS_TYPES, GAME_WIN_TYPES, REWARD_TYPES],
+    [
+      ids,
+      userIds,
+      requestedAt,
+      GAME_LOSS_TYPES,
+      GAME_WIN_TYPES,
+      REWARD_TYPES,
+      OTHER_FUNDING_SOURCE_TYPES,
+    ],
   );
   return new Map(result.rows.map((row) => [row.withdrawal_id, row]));
 }
@@ -572,7 +664,10 @@ async function destinationReuse(
     [addresses],
   );
   return new Map(
-    result.rows.map((row) => [row.destination_address, Math.max(0, row.users - 1)]),
+    result.rows.map((row) => [
+      row.destination_address,
+      Math.max(0, row.users - 1),
+    ]),
   );
 }
 
@@ -585,6 +680,63 @@ export class WithdrawalRiskService {
     requestedAt: string;
     amountUsd: number;
   }): Promise<WithdrawalTimelineEvent[]> {
+    const originResult = await this.db.source.query<{
+      id: string;
+      type: string;
+      amount_usd: string;
+      description: string | null;
+      created_at: string;
+    }>(
+      `
+        WITH latest_deposit AS (
+          SELECT id, type::text, ABS(amount::numeric)::text AS amount_usd,
+                 description, created_at
+          FROM ledger_transactions
+          WHERE user_id=$1
+            AND status::text='completed'
+            AND type::text='deposit'
+            AND created_at<=$2::timestamptz
+          ORDER BY created_at DESC, id DESC
+          LIMIT 1
+        ),
+        latest_other AS (
+          SELECT id, type::text, ABS(amount::numeric)::text AS amount_usd,
+                 description, created_at
+          FROM ledger_transactions
+          WHERE user_id=$1
+            AND status::text='completed'
+            AND type::text=ANY($3::text[])
+            AND created_at<=$2::timestamptz
+            AND NOT EXISTS (SELECT 1 FROM latest_deposit)
+          ORDER BY created_at DESC, id DESC
+          LIMIT 1
+        )
+        SELECT id::text, type, amount_usd, description, created_at
+        FROM latest_deposit
+        UNION ALL
+        SELECT id::text, type, amount_usd, description, created_at
+        FROM latest_other
+        LIMIT 1
+      `,
+      [input.userId, input.requestedAt, OTHER_FUNDING_SOURCE_TYPES],
+    );
+    const origin = originResult.rows[0];
+    if (!origin) {
+      return [
+        {
+          id: `withdrawal:${input.withdrawalId}`,
+          type: "withdrawal_requested",
+          label: "Withdrawal requested",
+          detail:
+            "No completed funding origin could be linked to this request.",
+          amountUsd: input.amountUsd,
+          occurredAt: input.requestedAt,
+          category: "withdrawal",
+          tone: "bad",
+          isOrigin: false,
+        },
+      ];
+    }
     const result = await this.db.source.query<{
       id: string;
       type: string;
@@ -598,14 +750,50 @@ export class WithdrawalRiskService {
         FROM ledger_transactions
         WHERE user_id=$1
           AND status::text='completed'
-          AND created_at > $2::timestamptz - interval '90 days'
-          AND created_at <= $2::timestamptz
+          AND created_at >= $2::timestamptz
+          AND created_at <= $3::timestamptz
         ORDER BY created_at DESC, id DESC
-        LIMIT 150
+        LIMIT 148
       `,
-      [input.userId, input.requestedAt],
+      [input.userId, origin.created_at, input.requestedAt],
     );
+    const ledgerEvents = result.rows.reverse().map((row) => {
+      const display = timelineCategory(row.type);
+      return {
+        id: row.id,
+        type: row.type,
+        label:
+          row.id === origin.id
+            ? `Funding origin: ${fundingSourceLabel(row.type)}`
+            : display.label,
+        detail:
+          row.id === origin.id
+            ? "This is the starting source used for the current withdrawal trail."
+            : row.description,
+        amountUsd: number(row.amount_usd),
+        occurredAt: new Date(row.created_at).toISOString(),
+        category: display.category,
+        tone: display.tone,
+        isOrigin: row.id === origin.id,
+      };
+    });
+    if (!ledgerEvents.some((event) => event.isOrigin)) {
+      const display = timelineCategory(origin.type);
+      ledgerEvents.unshift({
+        id: origin.id,
+        type: origin.type,
+        label: `Funding origin: ${fundingSourceLabel(origin.type)}`,
+        detail:
+          "This is the starting source used for the current withdrawal trail.",
+        amountUsd: number(origin.amount_usd),
+        occurredAt: new Date(origin.created_at).toISOString(),
+        category: display.category,
+        tone: display.tone,
+        isOrigin: true,
+      });
+    }
     return [
+      ...ledgerEvents,
       {
         id: `withdrawal:${input.withdrawalId}`,
         type: "withdrawal_requested",
@@ -615,20 +803,8 @@ export class WithdrawalRiskService {
         occurredAt: input.requestedAt,
         category: "withdrawal",
         tone: "bad",
+        isOrigin: false,
       },
-      ...result.rows.map((row) => {
-        const display = timelineCategory(row.type);
-        return {
-          id: row.id,
-          type: row.type,
-          label: display.label,
-          detail: row.description,
-          amountUsd: number(row.amount_usd),
-          occurredAt: new Date(row.created_at).toISOString(),
-          category: display.category,
-          tone: display.tone,
-        };
-      }),
     ];
   }
 
@@ -637,10 +813,18 @@ export class WithdrawalRiskService {
     limit: number;
     status?: string;
     search?: string;
+    excludedUserIds?: string[];
   }): Promise<{ ids: string[]; total: number }> {
     const offset = (input.page - 1) * input.limit;
     const values: unknown[] = [];
-    const conditions: string[] = [];
+    const conditions: string[] = [
+      `COALESCE(u.role::text,'')<>'creator'`,
+      `'creator'<>ALL(COALESCE(u.roles::text[], ARRAY[]::text[]))`,
+    ];
+    if (input.excludedUserIds?.length) {
+      values.push(input.excludedUserIds);
+      conditions.push(`cwr.user_id<>ALL($${values.length}::text[])`);
+    }
     if (input.status) {
       values.push(input.status);
       conditions.push(`cwr.status::text=$${values.length}`);
@@ -696,7 +880,10 @@ export class WithdrawalRiskService {
       const sources = buildSources(request, assets.inventory, assets.vouchers);
       const ledger = ledgerById.get(request.id);
       const amountUsd = number(request.total_value_usd);
-      const assetValueUsd = sources.reduce((sum, source) => sum + source.valueUsd, 0);
+      const assetValueUsd = sources.reduce(
+        (sum, source) => sum + source.valueUsd,
+        0,
+      );
       const tracedAssetUsd = sources
         .filter((source) => source.traceable)
         .reduce((sum, source) => sum + source.valueUsd, 0);
@@ -706,14 +893,24 @@ export class WithdrawalRiskService {
         ? new Date(ledger.last_deposit_at)
         : null;
       const flow: WithdrawalFlow = {
+        originType: ledger?.origin_type ?? null,
+        originLabel: fundingSourceLabel(ledger?.origin_type ?? null),
+        originAt: ledger?.origin_at
+          ? new Date(ledger.origin_at).toISOString()
+          : null,
+        originAmountUsd: number(ledger?.origin_amount_usd),
         depositsUsd: number(ledger?.deposits_usd),
         gameWinsUsd:
           number(ledger?.game_wins_usd) +
           sources
             .filter((source) =>
-              ["pack", "battle", "upgrader", "voucher_battle", "voucher_upgrader"].includes(
-                source.key,
-              ),
+              [
+                "pack",
+                "battle",
+                "upgrader",
+                "voucher_battle",
+                "voucher_upgrader",
+              ].includes(source.key),
             )
             .reduce((sum, source) => sum + source.valueUsd, 0),
         gameLossesUsd: number(ledger?.game_losses_usd),
@@ -721,15 +918,16 @@ export class WithdrawalRiskService {
           number(ledger?.rewards_usd) +
           sources
             .filter((source) =>
-              ["reward", "raffle", "voucher_creator"].includes(
-                source.key,
-              ),
+              ["reward", "raffle", "voucher_creator"].includes(source.key),
             )
             .reduce((sum, source) => sum + source.valueUsd, 0),
         withdrawalUsd: amountUsd,
         gameEvents: number(ledger?.game_events),
         minutesSinceLastDeposit: lastDepositAt
-          ? Math.max(0, (requestedAt.getTime() - lastDepositAt.getTime()) / 60_000)
+          ? Math.max(
+              0,
+              (requestedAt.getTime() - lastDepositAt.getTime()) / 60_000,
+            )
           : null,
         accountAgeDays: Math.max(
           0,
@@ -742,7 +940,8 @@ export class WithdrawalRiskService {
         amountUsd,
         assetValueUsd,
         tracedAssetUsd,
-        assetCount: request.inventory_item_ids.length + request.voucher_ids.length,
+        assetCount:
+          request.inventory_item_ids.length + request.voucher_ids.length,
         depositsUsd: flow.depositsUsd,
         gameWinsUsd: flow.gameWinsUsd,
         gameLossesUsd: flow.gameLossesUsd,
@@ -751,7 +950,7 @@ export class WithdrawalRiskService {
         minutesSinceLastDeposit: flow.minutesSinceLastDeposit,
         accountAgeDays: flow.accountAgeDays,
         otherUsersAtDestination: request.destination_address
-          ? reuseByAddress.get(request.destination_address) ?? 0
+          ? (reuseByAddress.get(request.destination_address) ?? 0)
           : 0,
       });
       return { request, sources, flow, ...scored };

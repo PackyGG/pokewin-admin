@@ -8,7 +8,14 @@ const querySchema = z.object({
   page: z.coerce.number().int().min(1).max(10_000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   status: z
-    .enum(["pending", "processing", "shipped", "completed", "failed", "cancelled"])
+    .enum([
+      "pending",
+      "processing",
+      "shipped",
+      "completed",
+      "failed",
+      "cancelled",
+    ])
     .optional(),
   verdict: z.enum(["good", "review", "bad"]).optional(),
   reviewStatus: z
@@ -51,6 +58,63 @@ const reviewBodySchema = z
   });
 
 const idSchema = z.object({ id: z.string().uuid() });
+const excludedUsersSchema = z.array(z.string().trim().min(1).max(100));
+const excludedUsersHeaderSchema = z
+  .string()
+  .min(2)
+  .max(100_000)
+  .transform((value, context): unknown => {
+    try {
+      return JSON.parse(value);
+    } catch {
+      context.addIssue({
+        code: "custom",
+        message: "Invalid excluded-users header.",
+      });
+      return z.NEVER;
+    }
+  })
+  .pipe(excludedUsersSchema);
+
+function excludedUserIds(headers: Record<string, unknown>): string[] {
+  return excludedUsersHeaderSchema.parse(headers["x-antifraud-excluded-users"]);
+}
+
+async function creatorUserIdsForAssessments(db: Databases): Promise<string[]> {
+  const assessed = await db.antifraud.query<{ user_id: string }>(
+    "SELECT DISTINCT user_id FROM withdrawal_assessments",
+  );
+  const userIds = assessed.rows.map((row) => row.user_id);
+  if (userIds.length === 0) return [];
+  const creators = await db.source.query<{ id: string }>(
+    `
+      SELECT id
+      FROM "user"
+      WHERE id=ANY($1::text[])
+        AND (
+          role::text='creator'
+          OR 'creator'=ANY(COALESCE(roles::text[], ARRAY[]::text[]))
+        )
+    `,
+    [userIds],
+  );
+  return creators.rows.map((row) => row.id);
+}
+
+async function userIsCreator(db: Databases, userId: string): Promise<boolean> {
+  const result = await db.source.query<{ creator: boolean }>(
+    `
+      SELECT (
+        role::text='creator'
+        OR 'creator'=ANY(COALESCE(roles::text[], ARRAY[]::text[]))
+      ) AS creator
+      FROM "user"
+      WHERE id=$1
+    `,
+    [userId],
+  );
+  return result.rows[0]?.creator ?? false;
+}
 
 function reviewStatusFor(
   action: z.infer<typeof reviewBodySchema>["action"],
@@ -68,12 +132,16 @@ export async function registerWithdrawalRoutes(
 ): Promise<void> {
   app.get("/v1/withdrawals", async (request) => {
     const query = querySchema.parse(request.query);
+    const excluded = excludedUserIds(request.headers);
     const usesAssessmentFilter = Boolean(query.verdict || query.reviewStatus);
     const refreshed = await service.refreshPage(
       usesAssessmentFilter
-        ? { ...query, page: 1, limit: 100 }
-        : query,
+        ? { ...query, page: 1, limit: 100, excludedUserIds: excluded }
+        : { ...query, excludedUserIds: excluded },
     );
+    const ignoredUserIds = [
+      ...new Set([...excluded, ...(await creatorUserIdsForAssessments(db))]),
+    ];
 
     const conditions: string[] = [];
     const values: unknown[] = [];
@@ -101,9 +169,17 @@ export async function registerWithdrawalRoutes(
         OR lower(COALESCE(email,'')) LIKE $${values.length}
       )`);
     }
+    if (ignoredUserIds.length > 0) {
+      values.push(ignoredUserIds);
+      conditions.push(`user_id<>ALL($${values.length}::text[])`);
+    }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const offset = usesAssessmentFilter ? (query.page - 1) * query.limit : 0;
     values.push(query.limit, offset);
+    const summaryValues: unknown[] = [];
+    const summaryWhere =
+      ignoredUserIds.length > 0 ? `WHERE user_id<>ALL($1::text[])` : "";
+    if (ignoredUserIds.length > 0) summaryValues.push(ignoredUserIds);
     const [rows, total, summary] = await Promise.all([
       db.antifraud.query(
         `
@@ -149,11 +225,13 @@ export async function registerWithdrawalRoutes(
               AS block_recommended,
             COALESCE(SUM(amount_usd),0)::float8 AS amount_usd
           FROM withdrawal_assessments
+          ${summaryWhere}
         `,
+        summaryValues,
       ),
     ]);
     const count = usesAssessmentFilter
-      ? total.rows[0]?.count ?? 0
+      ? (total.rows[0]?.count ?? 0)
       : refreshed.total;
     return {
       data: rows.rows,
@@ -179,6 +257,7 @@ export async function registerWithdrawalRoutes(
 
   app.get("/v1/withdrawals/:id", async (request, reply) => {
     const { id } = idSchema.parse(request.params);
+    const excluded = new Set(excludedUserIds(request.headers));
     const [assessment, trail] = await Promise.all([
       db.antifraud.query<{
         withdrawal_id: string;
@@ -213,6 +292,9 @@ export async function registerWithdrawalRoutes(
     ]);
     const row = assessment.rows[0];
     if (!row) return reply.code(404).send({ error: "not_found" });
+    if (excluded.has(row.user_id) || (await userIsCreator(db, row.user_id))) {
+      return reply.code(404).send({ error: "not_found" });
+    }
     const timeline = await service.loadTimeline({
       withdrawalId: row.withdrawal_id,
       userId: row.user_id,
@@ -228,70 +310,83 @@ export async function registerWithdrawalRoutes(
     };
   });
 
-  app.post("/v1/withdrawals/:id/review", {
-    config: {
-      rateLimit: {
-        max: 30,
-        timeWindow: "1 minute",
+  app.post(
+    "/v1/withdrawals/:id/review",
+    {
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: "1 minute",
+        },
       },
     },
-  }, async (request, reply) => {
-    const { id } = idSchema.parse(request.params);
-    const body = reviewBodySchema.parse(request.body);
-    const nextStatus = reviewStatusFor(body.action);
-    const note = body.note?.trim() || null;
-    const client = await db.antifraud.connect();
-    try {
-      await client.query("BEGIN");
-      const replay = await client.query<{
-        withdrawal_id: string;
-        action: string;
-        actor_id: string;
-        actor_username: string | null;
-        note: string | null;
-      }>(
-        `
-          SELECT withdrawal_id, action, actor_id, actor_username, note
-          FROM withdrawal_review_events
-          WHERE idempotency_key=$1
-        `,
-        [body.idempotencyKey],
-      );
-      const existing = replay.rows[0];
-      if (existing) {
-        const exact =
-          existing.withdrawal_id === id &&
-          existing.action === body.action &&
-          existing.actor_id === body.actorId &&
-          existing.actor_username === (body.actorUsername ?? null) &&
-          existing.note === note;
-        await client.query("COMMIT");
-        return exact
-          ? { success: true, idempotent: true }
-          : reply.code(409).send({ error: "idempotency_conflict" });
-      }
-
-      const current = await client.query<{ review_status: string }>(
-        `
-          SELECT review_status
+    async (request, reply) => {
+      const { id } = idSchema.parse(request.params);
+      const body = reviewBodySchema.parse(request.body);
+      const excluded = new Set(excludedUserIds(request.headers));
+      const nextStatus = reviewStatusFor(body.action);
+      const note = body.note?.trim() || null;
+      const client = await db.antifraud.connect();
+      try {
+        await client.query("BEGIN");
+        const current = await client.query<{
+          review_status: string;
+          user_id: string;
+        }>(
+          `
+          SELECT review_status, user_id
           FROM withdrawal_assessments
           WHERE withdrawal_id=$1
           FOR UPDATE
         `,
-        [id],
-      );
-      const row = current.rows[0];
-      if (!row) {
-        await client.query("ROLLBACK");
-        return reply.code(404).send({ error: "not_found" });
-      }
-      if (row.review_status !== body.expectedStatus) {
-        await client.query("ROLLBACK");
-        return reply.code(409).send({ error: "review_state_changed" });
-      }
+          [id],
+        );
+        const row = current.rows[0];
+        if (!row) {
+          await client.query("ROLLBACK");
+          return reply.code(404).send({ error: "not_found" });
+        }
+        if (
+          excluded.has(row.user_id) ||
+          (await userIsCreator(db, row.user_id))
+        ) {
+          await client.query("ROLLBACK");
+          return reply.code(404).send({ error: "not_found" });
+        }
+        const replay = await client.query<{
+          withdrawal_id: string;
+          action: string;
+          actor_id: string;
+          actor_username: string | null;
+          note: string | null;
+        }>(
+          `
+          SELECT withdrawal_id, action, actor_id, actor_username, note
+          FROM withdrawal_review_events
+          WHERE idempotency_key=$1
+        `,
+          [body.idempotencyKey],
+        );
+        const existing = replay.rows[0];
+        if (existing) {
+          const exact =
+            existing.withdrawal_id === id &&
+            existing.action === body.action &&
+            existing.actor_id === body.actorId &&
+            existing.actor_username === (body.actorUsername ?? null) &&
+            existing.note === note;
+          await client.query("COMMIT");
+          return exact
+            ? { success: true, idempotent: true }
+            : reply.code(409).send({ error: "idempotency_conflict" });
+        }
+        if (row.review_status !== body.expectedStatus) {
+          await client.query("ROLLBACK");
+          return reply.code(409).send({ error: "review_state_changed" });
+        }
 
-      await client.query(
-        `
+        await client.query(
+          `
           UPDATE withdrawal_assessments
           SET review_status=$2,
               review_decision=$3,
@@ -302,38 +397,39 @@ export async function registerWithdrawalRoutes(
               reviewed_at=CASE WHEN $2='in_review' THEN NULL ELSE now() END
           WHERE withdrawal_id=$1
         `,
-        [
-          id,
-          nextStatus,
-          body.action === "start_review" ? null : body.action,
-          body.actorId,
-          body.actorUsername ?? null,
-          note,
-        ],
-      );
-      await client.query(
-        `
+          [
+            id,
+            nextStatus,
+            body.action === "start_review" ? null : body.action,
+            body.actorId,
+            body.actorUsername ?? null,
+            note,
+          ],
+        );
+        await client.query(
+          `
           INSERT INTO withdrawal_review_events(
             withdrawal_id, action, actor_id, actor_username, note,
             idempotency_key
           ) VALUES ($1,$2,$3,$4,$5,$6)
         `,
-        [
-          id,
-          body.action,
-          body.actorId,
-          body.actorUsername ?? null,
-          note,
-          body.idempotencyKey,
-        ],
-      );
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
-    return { success: true };
-  });
+          [
+            id,
+            body.action,
+            body.actorId,
+            body.actorUsername ?? null,
+            note,
+            body.idempotencyKey,
+          ],
+        );
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+      return { success: true };
+    },
+  );
 }

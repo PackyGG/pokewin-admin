@@ -44,6 +44,16 @@ async function loadExcludedUserIdsFromDb(): Promise<string[]> {
 }
 
 /**
+ * Security-sensitive blacklist read. Unlike the analytics helper below, this
+ * throws when the Admin DB cannot provide the current complete list.
+ */
+export const getExcludedUserIdsStrict = cache(async (): Promise<string[]> => {
+  const ids = await loadExcludedUserIdsFromDb();
+  lastKnownGoodExcludedUserIds = ids;
+  return ids;
+});
+
+/**
  * Refresh the in-process last-known-good blacklist after a successful
  * admin mutation (add/remove). Keeps the fail-closed fallback aligned
  * with the DB the mutation just wrote to.
@@ -162,9 +172,7 @@ export type ExcludedUsersPageData = {
 function isTableMissing(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const e = err as { code?: unknown; meta?: { code?: unknown } };
-  return (
-    e.code === "42P01" || e.meta?.code === "42P01"
-  );
+  return e.code === "42P01" || e.meta?.code === "42P01";
 }
 
 async function computeExcludedUsersForPage(): Promise<ExcludedUsersPageData> {

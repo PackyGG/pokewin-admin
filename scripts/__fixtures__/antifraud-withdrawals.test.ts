@@ -32,21 +32,31 @@ test("the page reads the monitor service and never imports MAIN DB access", () =
     "src/app/(antifraud)/antifraud/withdrawals/[id]/page.tsx",
   );
   const api = read("src/lib/antifraud/withdrawals-api.ts");
+  const excludedUsers = read("src/lib/excluded-users/fetch.ts");
   assert.match(page, /listWithdrawalAssessments/);
   assert.match(page, /Review flow/);
   assert.match(detail, /Withdrawal review flow/);
-  assert.match(detail, /Behavior timeline/);
+  assert.match(detail, /Withdrawal money trail/);
+  assert.match(detail, /Current withdrawal trail/);
+  assert.doesNotMatch(detail, /90-day money flow/);
   assert.match(detail, /WithdrawalReviewControls/);
   assert.doesNotMatch(detail, /redirect\(["']\/withdrawals/);
   assert.doesNotMatch(page, /@\/lib\/db/);
   assert.doesNotMatch(detail, /@\/lib\/db/);
   assert.match(api, /\/v1\/withdrawals/);
+  assert.match(api, /getExcludedUserIdsStrict/);
+  assert.match(api, /x-antifraud-excluded-users/);
+  assert.match(
+    excludedUsers,
+    /getExcludedUserIdsStrict[\s\S]*?await loadExcludedUserIdsFromDb\(\)/,
+  );
   assert.doesNotMatch(api, /@\/lib\/db/);
 });
 
 test("the monitor service keeps the source pool read-only and persists assessments", () => {
   const database = read("services/antifraud-monitor/src/db.ts");
   const risk = read("services/antifraud-monitor/src/withdrawal-risk.ts");
+  const routes = read("services/antifraud-monitor/src/withdrawal-routes.ts");
   const migration = read(
     "services/antifraud-monitor/migrations/009_withdrawal_assessments.sql",
   );
@@ -57,6 +67,11 @@ test("the monitor service keeps the source pool read-only and persists assessmen
   assert.match(risk, /INSERT INTO withdrawal_assessments/);
   assert.match(risk, /loadTimeline/);
   assert.match(risk, /flowChecks/);
+  assert.match(risk, /COALESCE\(u\.role::text,''\)<>'creator'/);
+  assert.match(risk, /latest_deposit/);
+  assert.doesNotMatch(risk, /interval '90 days'/);
+  assert.match(routes, /excludedUsersHeaderSchema/);
+  assert.match(routes, /userIsCreator/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS withdrawal_assessments/);
   assert.match(
     workflowMigration,

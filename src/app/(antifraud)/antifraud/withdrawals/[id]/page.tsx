@@ -60,7 +60,9 @@ export default async function WithdrawalReviewPage({
   const result = await getWithdrawalAssessment(id);
   if (result.notFound) notFound();
   if (!result.configured) {
-    return <Unavailable text="The Antifraud monitor service is not configured." />;
+    return (
+      <Unavailable text="The Antifraud monitor service is not configured." />
+    );
   }
   if (result.error || !result.data) {
     return <Unavailable text="This withdrawal review could not be loaded." />;
@@ -152,7 +154,9 @@ function WithdrawalReview({ detail }: { detail: WithdrawalDetail }) {
           accent={failedChecks === 0 ? "emerald" : "amber"}
           label="Flow checks"
           value={`${withdrawal.flow_checks.length - failedChecks}/${withdrawal.flow_checks.length}`}
-          sub={failedChecks === 0 ? "all passed" : `${failedChecks} need attention`}
+          sub={
+            failedChecks === 0 ? "all passed" : `${failedChecks} need attention`
+          }
         />
         <KpiTile
           icon={Clock3}
@@ -303,13 +307,36 @@ function MoneyTrail({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
         icon={CircleDollarSign}
         title={
           <>
-            90-day money flow
+            Withdrawal money trail
             <span className="text-xs font-normal text-muted-foreground">
-              {flow.gameEvents} gameplay events
+              {flow.originLabel} to current request
             </span>
           </>
         }
       />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-xs">
+        <Badge
+          variant="outline"
+          className="border-cyan-500/30 text-cyan-700 dark:text-cyan-300"
+        >
+          Trail origin
+        </Badge>
+        <span className="font-medium">{flow.originLabel}</span>
+        {flow.originAt ? (
+          <>
+            <span className="font-semibold tabular-nums">
+              {formatCurrency(flow.originAmountUsd)}
+            </span>
+            <span className="text-muted-foreground">
+              {formatDateTime(flow.originAt)}
+            </span>
+          </>
+        ) : (
+          <span className="text-muted-foreground">
+            No completed funding source was found before this request.
+          </span>
+        )}
+      </div>
       <div className="grid gap-2 sm:grid-cols-5">
         {steps.map((step) => {
           const Icon = step.icon;
@@ -319,7 +346,9 @@ function MoneyTrail({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
               <p className="mt-2 text-[11px] text-muted-foreground">
                 {step.label}
               </p>
-              <p className={cn("text-sm font-semibold tabular-nums", step.tone)}>
+              <p
+                className={cn("text-sm font-semibold tabular-nums", step.tone)}
+              >
                 {formatCurrency(step.value)}
               </p>
             </div>
@@ -331,16 +360,19 @@ function MoneyTrail({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
 }
 
 function BehaviorTimeline({ detail }: { detail: WithdrawalDetail }) {
-  const events = detail.timeline.slice(0, 40);
+  const events =
+    detail.timeline.length <= 40
+      ? detail.timeline
+      : [detail.timeline[0], ...detail.timeline.slice(-39)];
   return (
     <section className="space-y-3">
       <SectionHeading
         icon={History}
         title={
           <>
-            Behavior timeline
+            Current withdrawal trail
             <span className="text-xs font-normal text-muted-foreground">
-              latest {events.length} relevant events
+              {events.length} linked events from origin to request
             </span>
           </>
         }
@@ -366,9 +398,19 @@ function BehaviorTimeline({ detail }: { detail: WithdrawalDetail }) {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium capitalize">
-                    {event.label}
-                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="truncate text-sm font-medium capitalize">
+                      {event.label}
+                    </p>
+                    {event.isOrigin && (
+                      <Badge
+                        variant="outline"
+                        className="border-cyan-500/30 text-[10px] text-cyan-700 dark:text-cyan-300"
+                      >
+                        Origin
+                      </Badge>
+                    )}
+                  </div>
                   {event.detail && (
                     <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
                       {event.detail}
@@ -596,8 +638,7 @@ function checkStyle(status: "pass" | "review" | "block") {
       border: "border-emerald-500/20",
       circle:
         "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-      badge:
-        "border-emerald-500/30 text-emerald-600 dark:text-emerald-400",
+      badge: "border-emerald-500/30 text-emerald-600 dark:text-emerald-400",
       dot: "bg-emerald-500",
     };
   }

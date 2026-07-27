@@ -2,6 +2,8 @@ import "server-only";
 
 import { z } from "zod";
 
+import { getExcludedUserIdsStrict } from "@/lib/excluded-users/fetch";
+
 const numeric = z.union([z.number(), z.string()]).transform(Number);
 
 const signalSchema = z.object({
@@ -41,6 +43,10 @@ const reviewStatusSchema = z.enum([
 ]);
 
 const flowSchema = z.object({
+  originType: z.string().nullable().default(null),
+  originLabel: z.string().default("No funding origin found"),
+  originAt: z.string().nullable().default(null),
+  originAmountUsd: z.number().default(0),
   depositsUsd: z.number(),
   gameWinsUsd: z.number(),
   gameLossesUsd: z.number(),
@@ -112,6 +118,7 @@ const timelineEventSchema = z.object({
     "account",
   ]),
   tone: z.enum(["good", "neutral", "warning", "bad"]),
+  isOrigin: z.boolean().default(false),
 });
 
 const reviewEventSchema = z.object({
@@ -156,10 +163,22 @@ const detailResponseSchema = z.object({
 export type WithdrawalAssessment = z.infer<typeof withdrawalSchema>;
 export type WithdrawalVerdict = WithdrawalAssessment["verdict"];
 export type WithdrawalReviewStatus = z.infer<typeof reviewStatusSchema>;
-export type WithdrawalReviewAction = z.infer<typeof reviewEventSchema>["action"];
+export type WithdrawalReviewAction = z.infer<
+  typeof reviewEventSchema
+>["action"];
 export type WithdrawalDetail = z.infer<typeof detailResponseSchema>["data"];
 
 const UPSTREAM_TIMEOUT_MS = 12_000;
+const EXCLUDED_USERS_HEADER = "x-antifraud-excluded-users";
+
+async function monitorHeaders(token: string): Promise<Record<string, string>> {
+  const excludedUserIds = await getExcludedUserIdsStrict();
+  return {
+    accept: "application/json",
+    authorization: `Bearer ${token}`,
+    [EXCLUDED_USERS_HEADER]: JSON.stringify(excludedUserIds),
+  };
+}
 
 export async function listWithdrawalAssessments(input: {
   page: number;
@@ -197,10 +216,7 @@ export async function listWithdrawalAssessments(input: {
 
   try {
     const response = await fetch(`${baseUrl}/v1/withdrawals?${params}`, {
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${token}`,
-      },
+      headers: await monitorHeaders(token),
       cache: "no-store",
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
@@ -221,9 +237,7 @@ export async function listWithdrawalAssessments(input: {
   }
 }
 
-export async function getWithdrawalAssessment(
-  withdrawalId: string,
-): Promise<{
+export async function getWithdrawalAssessment(withdrawalId: string): Promise<{
   configured: boolean;
   notFound: boolean;
   error: boolean;
@@ -238,10 +252,7 @@ export async function getWithdrawalAssessment(
     const response = await fetch(
       `${baseUrl}/v1/withdrawals/${encodeURIComponent(withdrawalId)}`,
       {
-        headers: {
-          accept: "application/json",
-          authorization: `Bearer ${token}`,
-        },
+        headers: await monitorHeaders(token),
         cache: "no-store",
         signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       },
@@ -284,8 +295,7 @@ export async function updateWithdrawalReview(input: {
     {
       method: "POST",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${token}`,
+        ...(await monitorHeaders(token)),
         "content-type": "application/json",
       },
       body: JSON.stringify({
