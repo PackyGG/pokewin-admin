@@ -21,7 +21,7 @@ test("the Antifraud sidebar exposes KYC as its own Home workspace", () => {
   assert.match(sidebar, /<SidebarGroupLabel>KYC<\/SidebarGroupLabel>[\s\S]*?items=\{KYC_NAV\}/);
   assert.doesNotMatch(page, /max-w-7xl/);
   assert.doesNotMatch(loading, /max-w-7xl/);
-  assert.match(page, /<h1[^>]*>Home<\/h1>/);
+  assert.match(page, /<h1[^>]*>KYC review<\/h1>/);
   assert.match(
     appHosts,
     /host:\s*`fraud\.\$\{ROOT_DOMAIN\}`[\s\S]*?segmentRoutes:\s*\[[\s\S]*?"kyc"/,
@@ -51,6 +51,7 @@ test("KYC mutations are manager-only and preserve the verification-cycle guard",
 });
 
 test("the dashboard reports both internal state and Sumsub evidence", () => {
+  const page = source("src/app/(antifraud)/antifraud/kyc/page.tsx");
   const query = source("src/lib/antifraud/kyc.ts");
 
   assert.match(query, /user_kyc/);
@@ -58,4 +59,12 @@ test("the dashboard reports both internal state and Sumsub evidence", () => {
   assert.match(query, /usedLevels/);
   assert.match(query, /backendUrlConfigured/);
   assert.match(query, /automaticUnlock:\s*false/);
+  assert.match(page, /Sumsub reports the identity check/);
+  assert.match(page, /Approval alone does not unlock anything/);
+  assert.match(page, /Ready for admin decision/);
+  assert.match(page, /System details and webhook activity/);
+  assert.ok(
+    page.indexOf("<AccountList") < page.indexOf("<SystemDetails"),
+    "the daily review queue must appear before technical diagnostics",
+  );
 });

@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-27 KYC review usability:** `/antifraud/kyc` now explains the three-step lock/provider/admin flow before the queue, uses plain-language operational counts and filters, gives every account one primary state plus an explicit next action, and places the daily account review before configuration/webhook diagnostics. Sumsub evidence and admin clearance remain visibly separate; permissions and mutations are unchanged. Focused KYC guardrails, TypeScript, and zero-warning ESLint pass.
+
 - **2026-07-27 admin/owner passkey grace:** a successful in-app passkey approval now opens a signed, HttpOnly 10-minute no-prompt window across the shared sensitive-action fields for active admins and owners only. Every reuse is user-bound and checks DB-fresh privilege; other roles retain one-action passkey proofs, TOTP stays single-use, role changes stop reuse, and logout clears the window. No schema or email service is required. All 226 guardrails, TypeScript, zero-warning ESLint, and the production build pass.
 
 - **2026-07-27 Pack Builder edge band:** `/pack-studio/builder` accepts only an inclusive 10.95%–12.00% target and resulting house edge. The configured curve is clamped into that range; client validation, queued-request Zod validation, submission preview, and fresh-price owner approval all fail closed outside it. Focused tests, all 221 guardrails, TypeScript, zero-warning ESLint, and the production build pass.

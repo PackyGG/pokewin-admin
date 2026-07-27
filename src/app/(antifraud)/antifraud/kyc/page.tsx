@@ -1,14 +1,13 @@
 import { Suspense } from "react";
 import {
+  ArrowRight,
   BadgeCheck,
   Check,
   CheckCircle2,
   Clock3,
-  Database,
   Fingerprint,
   KeyRound,
   LockKeyhole,
-  RefreshCw,
   ShieldCheck,
   ShieldX,
   UserCheck,
@@ -35,18 +34,36 @@ import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import { RequireKycDialog } from "./_components/require-kyc-dialog";
 import { ReviewKycControls } from "./_components/review-kyc-controls";
 
-export const metadata = { title: "Home · KYC · Antifraud" };
+export const metadata = { title: "KYC Review · Antifraud" };
 
 const QUERY_TIMEOUT_MS = 10_000;
 
+const WORKFLOW_STEPS = [
+  {
+    number: "1",
+    title: "KYC is required",
+    text: "Withdrawals lock for the current verification cycle.",
+  },
+  {
+    number: "2",
+    title: "Sumsub checks identity",
+    text: "Its status is evidence. Approval alone does not unlock anything.",
+  },
+  {
+    number: "3",
+    title: "Admin makes the decision",
+    text: "Mark safe to unlock this cycle, or reject to keep it locked.",
+  },
+] as const;
+
 const FILTER_LABELS: Record<KycFilter, string> = {
-  all: "All",
-  required: "Required",
-  awaiting_review: "Needs review",
-  provider_pending: "Provider pending",
+  all: "All accounts",
+  required: "Withdrawals locked",
+  awaiting_review: "Decision open",
+  provider_pending: "Waiting on Sumsub",
   approved: "Sumsub approved",
-  rejected: "Rejected",
-  cleared: "Cleared",
+  rejected: "Rejected / failed",
+  cleared: "Cleared by admin",
 };
 
 type SearchParams = {
@@ -74,16 +91,17 @@ export default async function AntifraudKycPage({
             <Fingerprint className="size-4" />
           </span>
           <div className="min-w-0">
-            <h1 className="text-xl font-semibold tracking-tight">Home</h1>
+            <h1 className="text-xl font-semibold tracking-tight">KYC review</h1>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              Internal verification cycles, Sumsub evidence, and operating
-              configuration
+              See who is waiting, what Sumsub found, and whether withdrawals
+              can be unlocked
             </p>
           </div>
         </div>
         {canManage && <RequireKycDialog />}
       </header>
 
+      <WorkflowGuide />
       <FilterBar status={status} search={search} />
 
       <Suspense key={contentKey} fallback={<DashboardSkeleton />}>
@@ -94,6 +112,46 @@ export default async function AntifraudKycPage({
         />
       </Suspense>
     </div>
+  );
+}
+
+function WorkflowGuide() {
+  return (
+    <section
+      aria-labelledby="kyc-workflow-title"
+      className="rounded-lg border border-cyan-500/20 bg-cyan-500/[0.04] p-3 sm:p-4"
+    >
+      <div className="mb-3">
+        <h2 id="kyc-workflow-title" className="text-sm font-semibold">
+          How KYC works here
+        </h2>
+        <p className="text-xs text-muted-foreground">
+          Sumsub reports the identity check. The admin decision controls the
+          withdrawal lock.
+        </p>
+      </div>
+      <ol className="grid gap-2 sm:grid-cols-3">
+        {WORKFLOW_STEPS.map((step, index) => (
+          <li
+            key={step.number}
+            className="flex items-start gap-2.5 rounded-md border border-border/60 bg-background/70 p-3"
+          >
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-cyan-500/10 text-xs font-semibold text-cyan-600 dark:text-cyan-300">
+              {step.number}
+            </span>
+            <span className="min-w-0">
+              <span className="block text-xs font-semibold">{step.title}</span>
+              <span className="mt-0.5 block text-[11px] leading-4 text-muted-foreground">
+                {step.text}
+              </span>
+            </span>
+            {index < WORKFLOW_STEPS.length - 1 ? (
+              <ArrowRight className="ml-auto hidden size-3.5 shrink-0 text-muted-foreground/50 sm:block" />
+            ) : null}
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 
@@ -144,6 +202,7 @@ function FilterBar({
           name="q"
           defaultValue={search ?? ""}
           placeholder="Search player, email, user ID, or applicant ID…"
+          aria-label="Search KYC accounts"
           className="h-8 min-w-0 flex-1 rounded-md border border-border/60 bg-background px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
         <button
@@ -187,59 +246,71 @@ async function KycDashboardContent({
   const { stats } = result.data;
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         <KpiTile
-          label="Tracked"
-          value={String(stats.total)}
-          sub={`${stats.withApplicant} applicants`}
-          icon={Database}
-          accent="blue"
-        />
-        <KpiTile
-          label="Required"
-          value={String(stats.required)}
-          sub="withdrawals locked"
+          label="Open decisions"
+          value={String(stats.awaitingReview)}
+          sub="admin has not closed the cycle"
           icon={LockKeyhole}
           accent="rose"
         />
         <KpiTile
-          label="Needs review"
-          value={String(stats.awaitingReview)}
-          sub="admin decision pending"
+          label="Waiting on Sumsub"
+          value={String(stats.providerPending)}
+          sub="provider check is not final"
           icon={Clock3}
           accent="amber"
         />
         <KpiTile
-          label="Provider pending"
-          value={String(stats.providerPending)}
-          sub="pending or on hold"
-          icon={RefreshCw}
-          accent="orange"
-        />
-        <KpiTile
-          label="Approved"
+          label="Sumsub approved"
           value={String(stats.approved)}
-          sub="Sumsub result"
+          sub="provider result, not admin clearance"
           icon={BadgeCheck}
           accent="emerald"
         />
         <KpiTile
-          label="Cleared"
+          label="Cleared by admin"
           value={String(stats.cleared)}
-          sub={`${stats.rejected} rejected`}
+          sub="withdrawals unlocked"
           icon={UserCheck}
           accent="cyan"
         />
       </div>
 
-      <Configuration dashboard={result.data} />
+      <p className="text-xs text-muted-foreground">
+        {stats.total} tracked accounts · {stats.required} currently locked ·{" "}
+        {stats.rejected} rejected · {stats.withApplicant} linked to a Sumsub
+        applicant
+      </p>
+
       <AccountList
         accounts={result.data.accounts}
         canManage={canManage}
         filter={status}
       />
-      <WebhookEvents dashboard={result.data} />
+      <SystemDetails dashboard={result.data} />
     </div>
+  );
+}
+
+function SystemDetails({ dashboard }: { dashboard: KycDashboard }) {
+  return (
+    <section className="space-y-6 rounded-lg border border-border/70 bg-card p-4">
+      <div className="flex items-start gap-3">
+        <KeyRound className="size-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold">
+            System details and webhook activity
+          </span>
+          <span className="block text-xs text-muted-foreground">
+            Setup and provider-delivery diagnostics. Not needed for normal KYC
+            reviews.
+          </span>
+        </span>
+      </div>
+      <Configuration dashboard={dashboard} />
+      <WebhookEvents dashboard={dashboard} />
+    </section>
   );
 }
 
@@ -375,7 +446,7 @@ function AccountList({
         icon={Fingerprint}
         title={
           <>
-            Accounts
+            KYC accounts
             <span className="text-xs font-normal text-muted-foreground">
               ({accounts.length} shown · {FILTER_LABELS[filter]})
             </span>
@@ -417,21 +488,18 @@ function AccountCard({
     account.displayUsername ?? account.username ?? account.email ?? account.userId;
   const awaitingReview =
     account.kycRequired && account.adminDecision === "pending";
+  const presentation = getAccountPresentation(account);
 
   return (
     <details className="group overflow-hidden rounded-lg border border-border/70 bg-card">
       <summary className="flex cursor-pointer list-none flex-wrap items-center gap-3 px-3 py-3 outline-none hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-4">
         <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-1.5">
+          <span className="flex flex-wrap items-center gap-2">
             <span className="truncate text-sm font-semibold">{label}</span>
-            <RequiredBadge required={account.kycRequired} />
-            <DecisionBadge decision={account.adminDecision} />
-            <ProviderBadge status={account.status} />
-            {account.reviewAnswer && (
-              <Badge variant="outline" className="h-5 text-[10px]">
-                {account.reviewAnswer}
-              </Badge>
-            )}
+            <KycStateBadge presentation={presentation} />
+          </span>
+          <span className="mt-1 block text-xs text-muted-foreground">
+            {presentation.summary}
           </span>
           <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
             {account.userId}
@@ -439,6 +507,9 @@ function AccountCard({
         </span>
 
         <span className="flex shrink-0 items-center gap-3 text-[11px] text-muted-foreground">
+          <span className="hidden max-w-52 text-right lg:inline">
+            Next: {presentation.nextStep}
+          </span>
           <span className="hidden sm:inline">
             cycle {account.verificationCycle}
           </span>
@@ -450,8 +521,21 @@ function AccountCard({
       </summary>
 
       <div className="border-t border-border/60 px-3 py-4 sm:px-4">
+        <div
+          className={cn(
+            "mb-4 rounded-md border px-3 py-2.5",
+            presentation.panelClassName,
+          )}
+        >
+          <p className="text-xs font-semibold">{presentation.label}</p>
+          <p className="mt-0.5 text-xs">{presentation.summary}</p>
+          <p className="mt-1 text-[11px] opacity-80">
+            <span className="font-semibold">Next:</span>{" "}
+            {presentation.nextStep}
+          </p>
+        </div>
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-          <InfoGroup title="Account and internal control">
+          <InfoGroup title="Why KYC was required">
             <InfoRow label="Email" value={account.email ?? "—"} />
             <InfoRow label="Country" value={account.countryCode ?? "—"} />
             <InfoRow
@@ -480,6 +564,10 @@ function AccountCard({
               wrap
             />
             <InfoRow
+              label="Admin decision"
+              value={adminDecisionLabel(account.adminDecision)}
+            />
+            <InfoRow
               label="Reviewed at"
               value={
                 account.adminReviewedAt
@@ -497,13 +585,16 @@ function AccountCard({
             />
           </InfoGroup>
 
-          <InfoGroup title="Sumsub provider evidence">
+          <InfoGroup title="What Sumsub reported">
             <InfoRow label="Applicant ID" value={account.applicantId ?? "—"} mono />
             <InfoRow
               label="Level"
               value={account.levelName ?? "Backend default"}
             />
-            <InfoRow label="Provider status" value={account.status} />
+            <InfoRow
+              label="Provider status"
+              value={providerStatusLabel(account.status)}
+            />
             <InfoRow
               label="Review answer"
               value={account.reviewAnswer ?? "—"}
@@ -608,63 +699,132 @@ function InfoRow({
   );
 }
 
-function RequiredBadge({ required }: { required: boolean }) {
-  return (
-    <Badge
-      variant="outline"
-      className={cn(
-        "h-5 text-[10px]",
-        required
-          ? "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400"
-          : "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-      )}
-    >
-      {required ? "KYC required" : "Not required"}
-    </Badge>
-  );
+type AccountPresentation = {
+  label: string;
+  summary: string;
+  nextStep: string;
+  badgeClassName: string;
+  panelClassName: string;
+};
+
+function getAccountPresentation(account: KycAccount): AccountPresentation {
+  if (!account.kycRequired && account.adminDecision === "safe") {
+    return {
+      label: "Cleared by admin",
+      summary: "This verification cycle is complete and withdrawals are unlocked.",
+      nextStep: "No action needed unless a new KYC cycle is required.",
+      badgeClassName:
+        "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+      panelClassName:
+        "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+    };
+  }
+
+  if (account.adminDecision === "rejected") {
+    return {
+      label: "Rejected by admin",
+      summary: "The current cycle was rejected and withdrawals remain locked.",
+      nextStep: "Review the reason before requiring a new verification cycle.",
+      badgeClassName:
+        "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400",
+      panelClassName:
+        "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300",
+    };
+  }
+
+  if (account.kycRequired && account.adminDecision === "pending") {
+    if (account.status === "approved") {
+      return {
+        label: "Ready for admin decision",
+        summary: "Sumsub approved the identity check, but withdrawals are still locked.",
+        nextStep: "Review the evidence, then mark this cycle safe or reject it.",
+        badgeClassName:
+          "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+        panelClassName:
+          "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+      };
+    }
+    if (account.status === "rejected") {
+      return {
+        label: "Sumsub rejected",
+        summary: "The provider did not approve the identity check. Withdrawals are locked.",
+        nextStep: "Review the rejection evidence and record the admin decision.",
+        badgeClassName:
+          "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400",
+        panelClassName:
+          "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300",
+      };
+    }
+    if (account.status === "pending" || account.status === "on_hold") {
+      return {
+        label: account.status === "on_hold" ? "Sumsub on hold" : "Waiting on Sumsub",
+        summary: "The provider check is not final and withdrawals remain locked.",
+        nextStep: "Wait for a final provider result, or reject if other evidence requires it.",
+        badgeClassName:
+          "border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400",
+        panelClassName:
+          "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300",
+      };
+    }
+    return {
+      label: "Verification not started",
+      summary: "KYC is required, but no Sumsub applicant or result exists yet.",
+      nextStep: "The player must start the identity check. Withdrawals stay locked.",
+      badgeClassName:
+        "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+      panelClassName:
+        "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    };
+  }
+
+  if (account.kycRequired) {
+    return {
+      label: "KYC required",
+      summary: "A current verification cycle is active and withdrawals are locked.",
+      nextStep: "Review the current cycle state before taking action.",
+      badgeClassName:
+        "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+      panelClassName:
+        "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    };
+  }
+
+  return {
+    label: "No KYC action",
+    summary: "This account is tracked but does not currently require verification.",
+    nextStep: "No action needed.",
+    badgeClassName: "text-muted-foreground",
+    panelClassName: "border-border/70 bg-muted/30 text-foreground",
+  };
 }
 
-function DecisionBadge({
-  decision,
+function KycStateBadge({
+  presentation,
 }: {
-  decision: KycAccount["adminDecision"];
+  presentation: AccountPresentation;
 }) {
   return (
     <Badge
       variant="outline"
-      className={cn(
-        "h-5 text-[10px]",
-        decision === "safe" &&
-          "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-        decision === "pending" &&
-          "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
-        decision === "rejected" &&
-          "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400",
-      )}
+      className={cn("h-5 text-[10px]", presentation.badgeClassName)}
     >
-      admin: {decision}
+      {presentation.label}
     </Badge>
   );
 }
 
-function ProviderBadge({ status }: { status: KycAccount["status"] }) {
-  return (
-    <Badge
-      variant="outline"
-      className={cn(
-        "h-5 text-[10px]",
-        status === "approved" &&
-          "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-        (status === "pending" || status === "on_hold") &&
-          "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
-        status === "rejected" &&
-          "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400",
-        status === "none" && "text-muted-foreground",
-      )}
-    >
-      provider: {status}
-    </Badge>
-  );
+function adminDecisionLabel(decision: KycAccount["adminDecision"]): string {
+  if (decision === "safe") return "Safe — withdrawals unlocked";
+  if (decision === "rejected") return "Rejected — withdrawals locked";
+  return "Open — no admin decision yet";
+}
+
+function providerStatusLabel(status: KycAccount["status"]): string {
+  if (status === "approved") return "Approved by Sumsub";
+  if (status === "rejected") return "Rejected by Sumsub";
+  if (status === "on_hold") return "On hold at Sumsub";
+  if (status === "pending") return "Pending at Sumsub";
+  return "No provider result";
 }
 
 function WebhookEvents({ dashboard }: { dashboard: KycDashboard }) {
@@ -763,16 +923,13 @@ function shortId(value: string): string {
 function DashboardSkeleton() {
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-        {Array.from({ length: 6 }, (_, index) => (
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        {Array.from({ length: 4 }, (_, index) => (
           <Skeleton key={index} className="h-24 rounded-lg" />
         ))}
       </div>
-      <div className="grid gap-3 lg:grid-cols-2">
-        <Skeleton className="h-64 rounded-lg" />
-        <Skeleton className="h-64 rounded-lg" />
-      </div>
       <Skeleton className="h-80 rounded-lg" />
+      <Skeleton className="h-16 rounded-lg" />
     </div>
   );
 }
