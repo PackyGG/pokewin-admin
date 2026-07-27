@@ -45,6 +45,8 @@ import {
   type StoredRuleUpdateIdentity,
 } from "./rule-idempotency.js";
 import { sanitizedRuntimeConfig } from "./runtime-config.js";
+import { registerFiatRoutes } from "./fiat-routes.js";
+import { FiatRiskService } from "./fiat-risk.js";
 import {
   activityScoreDefinitions,
   isScoreWeightKey,
@@ -131,6 +133,7 @@ const live = new LiveBus(config.REDIS_URL, app.log);
 const scoreWeights = new ScoreWeightStore(db.antifraud);
 const networkRisk = new NetworkRiskService(db, app.log);
 const withdrawalRisk = new WithdrawalRiskService(db);
+const fiatRisk = new FiatRiskService(db);
 const engine = new MonitorEngine(
   config,
   db,
@@ -1084,6 +1087,7 @@ app.put("/v1/scoring/:key", {
 
 await registerNetworkRoutes(app, db, networkRisk, config);
 await registerWithdrawalRoutes(app, db, withdrawalRisk);
+await registerFiatRoutes(app, db, fiatRisk);
 
 app.setErrorHandler((error, request, reply) => {
   if (error instanceof z.ZodError) {

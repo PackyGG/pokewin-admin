@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   Activity,
   ArrowUpFromLine,
+  Banknote,
   Blocks,
   Braces,
   Fingerprint,
@@ -68,6 +69,7 @@ const NETWORK_NAV: NavItem[] = [
 ];
 
 const TRANSACTION_NAV: NavItem[] = [
+  { label: "Fiat Deposits", href: "/antifraud/fiat-deposits", icon: Banknote },
   { label: "Withdrawals", href: "/antifraud/withdrawals", icon: ArrowUpFromLine },
 ];
 
