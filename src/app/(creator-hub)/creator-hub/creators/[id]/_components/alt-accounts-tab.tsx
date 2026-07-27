@@ -124,10 +124,10 @@ async function AltAccountsContent({ userId }: { userId: string }) {
       ) : (
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold text-muted-foreground">
+            <h3 className="text-base font-semibold">
               Suspected alt clusters
-              <span className="ml-1.5 text-xs font-normal">
-                ({data.clusters.length} found · worst first)
+              <span className="ml-2 text-sm font-normal text-muted-foreground">
+                {data.clusters.length} found · worst first
               </span>
             </h3>
           </div>
@@ -196,35 +196,36 @@ function AltKpiStrip({ data }: { data: AltAccountsData }) {
 
 function ClusterCard({ cluster }: { cluster: AltCluster }) {
   const Icon = cluster.collusion ? ShieldAlert : TriangleAlert;
+  const hardCount = cluster.signals.filter((s) => s.strength === "hard").length;
 
   return (
     <Card
       size="sm"
       className={cn(
-        "gap-0 p-0 ring-1",
+        "gap-0 overflow-hidden p-0 ring-1",
         cluster.collusion
           ? "ring-rose-500/30 bg-rose-500/[0.03]"
           : "ring-amber-500/25 bg-amber-500/[0.02]",
       )}
     >
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 px-4 py-3">
-        <div className="flex items-center gap-2.5">
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border/60 px-5 py-4">
+        <div className="flex items-center gap-3">
           <div
             className={cn(
-              "flex size-8 shrink-0 items-center justify-center rounded-lg border",
+              "flex size-10 shrink-0 items-center justify-center rounded-xl border",
               cluster.collusion
                 ? "border-rose-500/30 bg-rose-500/10 text-rose-500"
                 : "border-amber-500/30 bg-amber-500/10 text-amber-500",
             )}
           >
-            <Icon className="size-4" />
+            <Icon className="size-5" />
           </div>
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span
                 className={cn(
-                  "text-sm font-semibold",
+                  "text-base font-semibold leading-none",
                   cluster.collusion
                     ? "text-rose-600 dark:text-rose-400"
                     : "text-amber-600 dark:text-amber-400",
@@ -232,33 +233,39 @@ function ClusterCard({ cluster }: { cluster: AltCluster }) {
               >
                 {cluster.collusion ? "Likely collusion" : "Review"}
               </span>
-              <span className="rounded-md border border-border/60 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+              <span className="rounded-md border border-border/60 bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
                 {cluster.members.length} accounts
               </span>
             </div>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
-              Risk score {cluster.score}/100
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              Risk score{" "}
+              <span className="font-semibold tabular-nums text-foreground">
+                {cluster.score}
+              </span>
+              /100 · {cluster.signals.length} signal
+              {cluster.signals.length === 1 ? "" : "s"}
+              {hardCount > 0 && ` (${hardCount} hard)`}
             </p>
           </div>
         </div>
 
         {/* Cluster money context (house-POV: user money in = emerald). */}
-        <div className="flex items-center gap-4 text-right">
+        <div className="flex items-center gap-6 text-right">
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">
               Deposits
             </div>
-            <div className="text-sm font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+            <div className="mt-1 text-lg font-semibold tabular-nums leading-none text-emerald-600 dark:text-emerald-400">
               {cluster.clusterDepositsUsd > 0
                 ? formatCurrency(cluster.clusterDepositsUsd)
                 : "—"}
             </div>
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">
               Wager (code)
             </div>
-            <div className="text-sm font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+            <div className="mt-1 text-lg font-semibold tabular-nums leading-none text-emerald-600 dark:text-emerald-400">
               {cluster.clusterWagerUsd > 0
                 ? formatCurrency(cluster.clusterWagerUsd)
                 : "—"}
@@ -267,17 +274,26 @@ function ClusterCard({ cluster }: { cluster: AltCluster }) {
         </div>
       </div>
 
-      {/* Signals */}
-      <div className="flex flex-wrap gap-1.5 px-4 py-3">
-        {cluster.signals.map((s, i) => (
-          <SignalChip key={`${s.kind}-${i}`} signal={s} />
-        ))}
+      {/* Evidence — one readable row per signal, nothing truncated. */}
+      <div className="px-5 py-4">
+        <div className="mb-2.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Evidence
+        </div>
+        <div className="space-y-2">
+          {cluster.signals.map((s, i) => (
+            <SignalRow key={`${s.kind}-${i}`} signal={s} />
+          ))}
+        </div>
       </div>
 
       {/* Members */}
       <div className="border-t border-border/60">
-        <div className="grid grid-cols-[2fr_1fr_1fr] gap-x-3 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="px-5 pt-4 pb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Accounts in this cluster
+        </div>
+        <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)] gap-x-4 border-b border-border/60 px-5 pb-2 text-xs font-medium text-muted-foreground sm:grid-cols-[minmax(0,2fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)]">
           <span>Account</span>
+          <span className="hidden sm:block">Joined</span>
           <span className="text-right">Deposits</span>
           <span className="text-right">Wager</span>
         </div>
@@ -285,8 +301,7 @@ function ClusterCard({ cluster }: { cluster: AltCluster }) {
           {cluster.members.map((m) => (
             <div
               key={m.userId}
-              className="grid grid-cols-[2fr_1fr_1fr] items-center gap-x-3 px-4 py-2 text-sm"
-            >
+              className="grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-x-4 px-5 py-3 text-sm sm:grid-cols-[minmax(0,2fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)]">
               <div className="min-w-0">
                 <div className="truncate font-medium">
                   {m.username ?? (
@@ -295,19 +310,24 @@ function ClusterCard({ cluster }: { cluster: AltCluster }) {
                     </span>
                   )}
                 </div>
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-                  {m.maskedEmail && <span className="truncate">{m.maskedEmail}</span>}
-                  {m.createdAt && (
-                    <span title="Account created">
-                      · joined {formatDateTime(m.createdAt)}
-                    </span>
-                  )}
-                </div>
+                {m.maskedEmail && (
+                  <div className="truncate text-xs text-muted-foreground">
+                    {m.maskedEmail}
+                  </div>
+                )}
+                {m.createdAt && (
+                  <div className="text-xs text-muted-foreground sm:hidden">
+                    joined {formatDateTime(m.createdAt)}
+                  </div>
+                )}
               </div>
-              <div className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">
+              <div className="hidden text-sm tabular-nums text-muted-foreground sm:block">
+                {m.createdAt ? formatDateTime(m.createdAt) : "—"}
+              </div>
+              <div className="text-right font-medium tabular-nums text-emerald-600 dark:text-emerald-400">
                 {m.depositsUsd > 0 ? formatCurrency(m.depositsUsd) : "—"}
               </div>
-              <div className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">
+              <div className="text-right font-medium tabular-nums text-emerald-600 dark:text-emerald-400">
                 {m.wagerUsd > 0 ? formatCurrency(m.wagerUsd) : "—"}
               </div>
             </div>
@@ -328,29 +348,72 @@ const SIGNAL_ICON: Record<AltSignalKind, React.ElementType> = {
   platform_alt_flag: ShieldAlert,
 };
 
-function SignalChip({ signal }: { signal: AltSignalSummary }) {
+/**
+ * One evidence row per signal. Replaces the old micro-chip: the detail
+ * (masked wallet / IP / timestamp) is the thing an analyst actually reads, so
+ * it gets a full-width monospace line that wraps instead of a 160px truncation
+ * hidden behind a tooltip.
+ */
+function SignalRow({ signal }: { signal: AltSignalSummary }) {
   const Icon = SIGNAL_ICON[signal.kind];
   const hard = signal.strength === "hard";
   return (
-    <span
+    <div
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-medium",
+        "flex flex-wrap items-start gap-x-3 gap-y-2 rounded-xl border p-3 sm:flex-nowrap sm:items-center",
         hard
-          ? "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400"
-          : "border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+          ? "border-rose-500/25 bg-rose-500/[0.06]"
+          : "border-amber-500/20 bg-amber-500/[0.05]",
       )}
-      title={`${signal.label}: ${signal.detail} (${signal.userCount} accounts)`}
     >
-      <Icon className="size-3 shrink-0" />
-      <span className="font-semibold">{signal.label}</span>
-      <span className="text-muted-foreground">·</span>
-      <span className="max-w-[160px] truncate font-normal opacity-90">
-        {signal.detail}
-      </span>
-      <span className="rounded bg-background/40 px-1 text-[10px]">
-        {signal.userCount}
-      </span>
-    </span>
+      <div
+        className={cn(
+          "flex size-8 shrink-0 items-center justify-center rounded-lg border",
+          hard
+            ? "border-rose-500/30 bg-rose-500/10 text-rose-500"
+            : "border-amber-500/30 bg-amber-500/10 text-amber-500",
+        )}
+      >
+        <Icon className="size-4" />
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={cn(
+              "text-sm font-semibold",
+              hard
+                ? "text-rose-600 dark:text-rose-400"
+                : "text-amber-600 dark:text-amber-400",
+            )}
+          >
+            {signal.label}
+          </span>
+          <span
+            className={cn(
+              "rounded-md border px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide",
+              hard
+                ? "border-rose-500/30 text-rose-600 dark:text-rose-400"
+                : "border-amber-500/30 text-amber-600 dark:text-amber-400",
+            )}
+          >
+            {hard ? "Hard evidence" : "Corroborating"}
+          </span>
+        </div>
+        <div className="mt-1 break-all font-mono text-sm text-foreground/90">
+          {signal.detail}
+        </div>
+      </div>
+
+      <div className="shrink-0 text-left sm:text-right">
+        <div className="text-base font-semibold tabular-nums leading-none">
+          {signal.userCount}
+        </div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          account{signal.userCount === 1 ? "" : "s"}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -391,7 +454,7 @@ function DataGapNotice({ data }: { data: AltAccountsData }) {
             Some signals are unavailable on this database — results are a lower
             bound
           </div>
-          <ul className="space-y-1 text-[12px] text-muted-foreground">
+          <ul className="space-y-1 text-sm text-muted-foreground">
             {data.gaps.map((g) => (
               <li key={g.kind} className="flex gap-1.5">
                 <span className="mt-1 size-1 shrink-0 rounded-full bg-amber-500/60" />
