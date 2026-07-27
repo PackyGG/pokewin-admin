@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Activity,
+  ArrowUpFromLine,
   Blocks,
   Braces,
   Fingerprint,
@@ -64,6 +65,10 @@ const WORKSPACE_NAV: NavItem[] = [
 const NETWORK_NAV: NavItem[] = [
   { label: "Account Networks", href: "/antifraud/networks", icon: GitFork },
   { label: "Creator Fraud", href: "/antifraud/creator-fraud", icon: Megaphone },
+];
+
+const TRANSACTION_NAV: NavItem[] = [
+  { label: "Withdrawals", href: "/antifraud/withdrawals", icon: ArrowUpFromLine },
 ];
 
 const KYC_NAV: NavItem[] = [
@@ -210,6 +215,18 @@ export function AntifraudSidebar({
           <SidebarGroupContent>
             <NavMenu
               items={WORKSPACE_NAV}
+              pathname={pathname}
+              onNavTap={handleNavTap}
+              toHref={toHref}
+            />
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup className="px-2 py-1">
+          <SidebarGroupLabel>Transactions</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <NavMenu
+              items={TRANSACTION_NAV}
               pathname={pathname}
               onNavTap={handleNavTap}
               toHref={toHref}

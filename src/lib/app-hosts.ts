@@ -148,6 +148,7 @@ export const APP_HOSTS: readonly AppHostConfig[] = [
     segmentRoutes: [
       "api",
       "monitor",
+      "withdrawals",
       "points",
       "flows",
       "events",

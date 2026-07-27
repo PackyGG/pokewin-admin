@@ -61,6 +61,8 @@ import {
   clientErrorStatus,
   ticketRateLimitKey,
 } from "./transport-limits.js";
+import { registerWithdrawalRoutes } from "./withdrawal-routes.js";
+import { WithdrawalRiskService } from "./withdrawal-risk.js";
 
 // Naive timestamps read from either database must be interpreted as UTC even
 // when the container image ships a local zone. The pools pin the session
@@ -128,6 +130,7 @@ const db = createDatabases(config);
 const live = new LiveBus(config.REDIS_URL, app.log);
 const scoreWeights = new ScoreWeightStore(db.antifraud);
 const networkRisk = new NetworkRiskService(db, app.log);
+const withdrawalRisk = new WithdrawalRiskService(db);
 const engine = new MonitorEngine(
   config,
   db,
@@ -1078,6 +1081,7 @@ app.put("/v1/scoring/:key", {
 });
 
 await registerNetworkRoutes(app, db, networkRisk, config);
+await registerWithdrawalRoutes(app, db, withdrawalRisk);
 
 app.setErrorHandler((error, request, reply) => {
   if (error instanceof z.ZodError) {
