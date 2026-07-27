@@ -265,18 +265,6 @@ const nextConfig: NextConfig = {
         permanent: true,
       },
       {
-        // The withdrawals list was consolidated into the unified
-        // Transactions page. Next forwards incoming query params that the
-        // destination doesn't use, so deep-links like
-        // /withdrawals?status=pending keep their filters (param names —
-        // status / method / minValue / maxValue / search — are identical on
-        // both surfaces). `source` matches exactly, so this cannot swallow
-        // /withdrawals/:id (live detail route).
-        source: "/withdrawals",
-        destination: "/transactions/deposits?tab=withdrawals",
-        permanent: true,
-      },
-      {
         // Roles & Permissions was merged into /admin-users as an admin-only
         // tab ("Admins & Access"). The old standalone /settings/roles index
         // page is gone — forward bookmarks + role presets to the merged tab.

@@ -11,9 +11,19 @@ test("withdrawals are exposed as their own Fraud transaction section", () => {
     "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
   );
   const hosts = read("src/lib/app-hosts.ts");
+  const middleware = read("src/middleware.ts");
+  const nextConfig = read("next.config.ts");
   assert.match(sidebar, /SidebarGroupLabel>Transactions/);
   assert.match(sidebar, /\/antifraud\/withdrawals/);
   assert.match(hosts, /"withdrawals"/);
+  assert.match(
+    middleware,
+    /pathname === "\/withdrawals"[\s\S]*?appHost\?\.basePath !== "\/antifraud"/,
+  );
+  assert.doesNotMatch(
+    nextConfig,
+    /source:\s*"\/withdrawals"[\s\S]*?destination:\s*"\/transactions\/deposits/,
+  );
 });
 
 test("the page reads the monitor service and never imports MAIN DB access", () => {

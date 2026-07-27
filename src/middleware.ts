@@ -56,6 +56,19 @@ export async function middleware(request: NextRequest) {
 
   /** Serve this request, rewriting into the host's segment when it has one. */
   const serve = () => {
+    // The normal Admin app consolidated its legacy /withdrawals list into the
+    // Transactions page. Keep that redirect host-aware: the Fraud subdomain
+    // owns /withdrawals as a real behavioral review workspace, so a global
+    // next.config redirect would intercept it before this host rewrite runs.
+    if (
+      pathname === "/withdrawals" &&
+      appHost?.basePath !== "/antifraud"
+    ) {
+      const url = new URL("/transactions/deposits", request.url);
+      url.search = request.nextUrl.search;
+      url.searchParams.set("tab", "withdrawals");
+      return NextResponse.redirect(url, 308);
+    }
     if (redirectTarget) {
       const url = new URL(redirectTarget);
       url.search = request.nextUrl.search;
