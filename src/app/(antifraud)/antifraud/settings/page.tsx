@@ -45,7 +45,6 @@ export default async function SettingsPage({
           accent="cyan"
           title="Settings"
           subtitle="Access, integrations, and alert delivery"
-          backHref="/antifraud"
         />
       </PageHero>
 

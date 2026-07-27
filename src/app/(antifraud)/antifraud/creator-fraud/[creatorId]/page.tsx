@@ -51,7 +51,6 @@ export default async function CreatorFraudDetailPage({
           accent="cyan"
           title="Creator assessment"
           subtitle="Network, affiliate, and gameplay/money evidence"
-          backHref={`/antifraud/creator-fraud?window=${window}`}
         />
       </PageHero>
       <Suspense key={`${creatorId}-${window}`} fallback={<DetailSkeleton />}>

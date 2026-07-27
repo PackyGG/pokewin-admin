@@ -149,7 +149,6 @@ export default async function AntifraudApiPage() {
           accent="blue"
           title="Antifraud API"
           subtitle="Current service, live transport and durable ingest contracts"
-          backHref="/antifraud"
         />
       </PageHero>
 

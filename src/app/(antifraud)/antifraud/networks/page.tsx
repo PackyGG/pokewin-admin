@@ -51,7 +51,6 @@ export default async function AccountNetworksPage({
           accent="cyan"
           title="Account networks"
           subtitle="Trace complete signup-IP and device connections across accounts"
-          backHref="/antifraud"
         />
       </PageHero>
 

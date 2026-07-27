@@ -12,7 +12,6 @@ export default function WithdrawalsLoading() {
           accent="cyan"
           title="Withdrawals"
           subtitle="Trace every payout back to its deposits, play, wins, and rewards"
-          backHref="/antifraud"
         />
       </PageHero>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

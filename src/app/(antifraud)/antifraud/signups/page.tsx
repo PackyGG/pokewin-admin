@@ -50,7 +50,6 @@ export default async function AntifraudSignupsPage({
           accent="cyan"
           title="Signups"
           subtitle="Every new account with its signup risk assessment and provider checks"
-          backHref="/antifraud"
         />
       </PageHero>
 

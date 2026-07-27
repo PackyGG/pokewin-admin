@@ -12,7 +12,6 @@ export default function AccountNetworksLoading() {
           accent="cyan"
           title="Account networks"
           subtitle="Trace complete signup-IP and device connections across accounts"
-          backHref="/antifraud"
         />
       </PageHero>
       <Skeleton className="h-[122px] rounded-xl" />

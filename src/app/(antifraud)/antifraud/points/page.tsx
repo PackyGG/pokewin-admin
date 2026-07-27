@@ -41,7 +41,6 @@ export default async function AntifraudPointsPage() {
           accent="cyan"
           title="Risk scoring"
           subtitle="The live point values and thresholds used by the antifraud monitor"
-          backHref="/antifraud"
         />
       </PageHero>
 

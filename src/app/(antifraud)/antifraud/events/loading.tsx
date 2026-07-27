@@ -12,7 +12,6 @@ export default function Loading() {
           accent="cyan"
           title="Events & triggers"
           subtitle="The complete action vocabulary for custom point flows"
-          backHref="/antifraud"
         />
       </PageHero>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

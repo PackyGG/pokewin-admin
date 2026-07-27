@@ -19,7 +19,6 @@ export default async function AntifraudEventsPage() {
           accent="cyan"
           title="Events & triggers"
           subtitle="The complete action vocabulary for custom point flows"
-          backHref="/antifraud"
         />
       </PageHero>
       <Suspense fallback={<CatalogSkeleton />}>

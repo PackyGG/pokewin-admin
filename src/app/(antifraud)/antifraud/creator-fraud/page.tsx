@@ -54,7 +54,6 @@ export default async function CreatorFraudPage({
           accent="cyan"
           title="Creator fraud"
           subtitle="Affiliate-code behavior, connected accounts, and economic risk"
-          backHref="/antifraud"
         />
       </PageHero>
 

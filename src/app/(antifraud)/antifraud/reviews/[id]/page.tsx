@@ -57,7 +57,6 @@ export default async function ReviewDetailPage({
           accent="cyan"
           title="Account review"
           subtitle="Case"
-          backHref="/antifraud/reviews"
         />
       </PageHero>
 

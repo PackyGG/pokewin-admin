@@ -12,7 +12,6 @@ export default function CreatorFraudLoading() {
           accent="cyan"
           title="Creator fraud"
           subtitle="Affiliate-code behavior, connected accounts, and economic risk"
-          backHref="/antifraud"
         />
       </PageHero>
       <Skeleton className="h-10 rounded-md" />

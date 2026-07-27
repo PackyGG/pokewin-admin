@@ -12,7 +12,6 @@ export default function Loading() {
           accent="cyan"
           title="Point flow builder"
           subtitle="Combine player events in order and decide what happens when the sequence matches"
-          backHref="/antifraud"
         />
       </PageHero>
       <div className="grid gap-5 xl:grid-cols-[300px_minmax(0,1fr)]">

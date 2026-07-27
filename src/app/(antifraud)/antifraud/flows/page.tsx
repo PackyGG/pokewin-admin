@@ -22,7 +22,6 @@ export default async function AntifraudFlowsPage() {
           accent="cyan"
           title="Point flow builder"
           subtitle="Combine player events in order and decide what happens when the sequence matches"
-          backHref="/antifraud"
         />
       </PageHero>
       <Suspense fallback={<FlowBuilderSkeleton />}>
