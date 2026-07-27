@@ -34,7 +34,6 @@ test("the KYC page is workspace-gated and never renders raw provider payloads", 
 
   assert.match(page, /requireAntifraudPageAccess\(\)/);
   assert.match(page, /canManageAntifraud\(session\)/);
-  assert.match(page, /Raw webhook payloads can contain identity documents/);
   assert.doesNotMatch(query, /payload:\s*sumsub_webhook_events\.payload/);
 });
 
@@ -63,11 +62,10 @@ test("the dashboard reports both internal state and Sumsub evidence", () => {
   assert.match(page, /Accounts flagged for verification/);
   assert.match(page, /verification records/);
   assert.match(page, /Ready for admin decision/);
-  assert.match(page, /System details and webhook activity/);
-  assert.ok(
-    page.indexOf("<AccountList") < page.indexOf("<SystemDetails"),
-    "the daily review queue must appear before technical diagnostics",
-  );
+  assert.doesNotMatch(page, /System details and webhook activity/);
+  assert.doesNotMatch(page, /Configuration and policy/);
+  assert.doesNotMatch(page, /Sumsub webhook evidence/);
+  assert.doesNotMatch(page, /<SystemDetails/);
 });
 
 test("untouched default KYC rows stay out of the review queue and totals", () => {

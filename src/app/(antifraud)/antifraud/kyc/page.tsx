@@ -1,17 +1,12 @@
 import { Suspense } from "react";
 import {
   BadgeCheck,
-  Check,
   CheckCircle2,
   Clock3,
   Fingerprint,
-  KeyRound,
   LockKeyhole,
-  ShieldCheck,
   ShieldX,
   UserCheck,
-  Webhook,
-  X,
 } from "lucide-react";
 
 import { HostLink } from "@/components/host-link";
@@ -23,7 +18,6 @@ import {
   getKycDashboard,
   isKycFilter,
   type KycAccount,
-  type KycDashboard,
   type KycFilter,
 } from "@/lib/antifraud/kyc";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
@@ -228,145 +222,6 @@ async function KycDashboardContent({
         canManage={canManage}
         filter={status}
       />
-      <SystemDetails dashboard={result.data} />
-    </div>
-  );
-}
-
-function SystemDetails({ dashboard }: { dashboard: KycDashboard }) {
-  return (
-    <section className="space-y-6 rounded-lg border border-border/70 bg-card p-4">
-      <div className="flex items-start gap-3">
-        <KeyRound className="size-4 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1">
-          <span className="block text-sm font-semibold">
-            System details and webhook activity
-          </span>
-          <span className="block text-xs text-muted-foreground">
-            Setup and provider-delivery diagnostics. Not needed for normal KYC
-            reviews.
-          </span>
-        </span>
-      </div>
-      <Configuration dashboard={dashboard} />
-      <WebhookEvents dashboard={dashboard} />
-    </section>
-  );
-}
-
-function Configuration({ dashboard }: { dashboard: KycDashboard }) {
-  const { config, stats } = dashboard;
-  const integrationRows = [
-    {
-      label: "Backend admin API URL",
-      ready: config.backendUrlConfigured,
-      note: "Routes status reads and every KYC mutation to the backend.",
-    },
-    {
-      label: "Backend admin API key",
-      ready: config.backendKeyConfigured,
-      note: "Server-only credential. Its value is never exposed here.",
-    },
-    {
-      label: "Cloudflare service access",
-      ready: config.cloudflareAccessConfigured,
-      note: "Optional service-token pair for protected backend deployments.",
-    },
-    {
-      label: "Sumsub activity",
-      ready: stats.withApplicant > 0 || stats.webhookEvents > 0,
-      note: `${stats.withApplicant} applicants · ${stats.webhookEvents} webhook events`,
-    },
-  ];
-
-  return (
-    <section className="space-y-3">
-      <SectionHeading icon={KeyRound} title="Configuration and policy" />
-      <div className="grid gap-3 lg:grid-cols-2">
-        <div className="overflow-hidden rounded-lg border border-border/70 bg-card">
-          <div className="border-b border-border/60 px-4 py-3">
-            <p className="text-sm font-semibold">Integration health</p>
-            <p className="text-xs text-muted-foreground">
-              {config.env.toUpperCase()} environment · presence checks only
-            </p>
-          </div>
-          <ul className="divide-y divide-border/60">
-            {integrationRows.map((row) => (
-              <li key={row.label} className="flex items-start gap-3 px-4 py-3">
-                <span
-                  className={cn(
-                    "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-md",
-                    row.ready
-                      ? "bg-emerald-500/10 text-emerald-500"
-                      : "bg-muted text-muted-foreground",
-                  )}
-                >
-                  {row.ready ? (
-                    <Check className="size-3" />
-                  ) : (
-                    <X className="size-3" />
-                  )}
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium">{row.label}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    {row.note}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="overflow-hidden rounded-lg border border-border/70 bg-card">
-          <div className="border-b border-border/60 px-4 py-3">
-            <p className="text-sm font-semibold">Decision contract</p>
-            <p className="text-xs text-muted-foreground">
-              The rules enforced by the internal KYC state machine
-            </p>
-          </div>
-          <dl className="divide-y divide-border/60 text-xs">
-            <ConfigRow label="Provider" value={config.provider} />
-            <ConfigRow
-              label="Default Sumsub level"
-              value="Backend environment"
-            />
-            <ConfigRow
-              label="Per-account override"
-              value={
-                stats.usedLevels.length
-                  ? stats.usedLevels.join(", ")
-                  : "None used"
-              }
-            />
-            <ConfigRow
-              label="Provider result"
-              value="Informational; never auto-unlocks"
-            />
-            <ConfigRow
-              label="Unlock authority"
-              value="Owner/admin marks current cycle safe"
-            />
-            <ConfigRow
-              label="Stale decision protection"
-              value="Verification-cycle compare-and-set"
-            />
-            <ConfigRow
-              label="Stored provider payload"
-              value="Database only; raw PII hidden from this page"
-            />
-          </dl>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function ConfigRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-start justify-between gap-4 px-4 py-2.5">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="max-w-[60%] text-right font-medium">{value}</dd>
     </div>
   );
 }
@@ -768,93 +623,6 @@ function providerStatusLabel(status: KycAccount["status"]): string {
   if (status === "on_hold") return "On hold at Sumsub";
   if (status === "pending") return "Pending at Sumsub";
   return "No provider result";
-}
-
-function WebhookEvents({ dashboard }: { dashboard: KycDashboard }) {
-  return (
-    <section className="space-y-3">
-      <SectionHeading
-        icon={Webhook}
-        title={
-          <>
-            Sumsub webhook evidence
-            <span className="text-xs font-normal text-muted-foreground">
-              ({dashboard.stats.processedWebhookEvents}/
-              {dashboard.stats.webhookEvents} processed)
-            </span>
-          </>
-        }
-      />
-
-      {dashboard.events.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border/70 bg-card/40 px-4 py-10 text-center">
-          <Webhook className="mx-auto size-5 text-muted-foreground" />
-          <p className="mt-2 text-sm font-semibold">
-            No Sumsub webhook events recorded
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            The storage is ready, but this environment has no provider evidence
-            yet.
-          </p>
-        </div>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-border/70 bg-card">
-          <table className="w-full min-w-[760px] text-left text-xs">
-            <thead className="border-b border-border/60 bg-muted/30 text-[10px] uppercase tracking-wide text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 font-medium">Event</th>
-                <th className="px-3 py-2 font-medium">Applicant</th>
-                <th className="px-3 py-2 font-medium">External user</th>
-                <th className="px-3 py-2 font-medium">Provider time</th>
-                <th className="px-3 py-2 font-medium">Received</th>
-                <th className="px-3 py-2 font-medium">Processed</th>
-                <th className="px-3 py-2 font-medium">Digest</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/60">
-              {dashboard.events.map((event) => (
-                <tr key={event.digest}>
-                  <td className="px-3 py-2 font-medium">{event.eventType}</td>
-                  <td className="px-3 py-2 font-mono text-[11px]">
-                    {event.applicantId ?? "—"}
-                  </td>
-                  <td className="px-3 py-2 font-mono text-[11px]">
-                    {event.externalUserId ?? "—"}
-                  </td>
-                  <td className="px-3 py-2">
-                    {formatDateTime(event.providerCreatedAt)}
-                  </td>
-                  <td className="px-3 py-2">
-                    {formatDateTime(event.receivedAt)}
-                  </td>
-                  <td className="px-3 py-2">
-                    {event.processedAt ? (
-                      <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
-                        <ShieldCheck className="size-3" />
-                        {formatDateTime(event.processedAt)}
-                      </span>
-                    ) : (
-                      <span className="text-amber-600 dark:text-amber-400">
-                        Pending
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 font-mono text-[11px]">
-                    {shortId(event.digest)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <p className="text-[11px] text-muted-foreground">
-        Raw webhook payloads can contain identity documents and provider PII.
-        They remain in the protected database and are intentionally not
-        rendered in the dashboard.
-      </p>
-    </section>
-  );
 }
 
 function shortId(value: string): string {
