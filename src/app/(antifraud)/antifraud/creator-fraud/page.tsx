@@ -53,7 +53,7 @@ export default async function CreatorFraudPage({
           icon={ShieldAlert}
           accent="cyan"
           title="Creator fraud"
-          subtitle="Affiliate-code behavior, connected accounts, and economic risk"
+          subtitle="Fraud risk among referred accounts; the creator account's own behavior is excluded"
         />
       </PageHero>
 
@@ -107,10 +107,10 @@ async function CreatorFraudContent({
 }) {
   const result = await listCreatorFraud({ window, page, search: search || undefined });
   if (!result.configured) return <Empty text="The monitor service is not configured." />;
-  if (result.error) return <Empty text="Creator assessments could not be loaded." />;
+  if (result.error) return <Empty text="Affiliate cohort assessments could not be loaded." />;
   if (result.data.length === 0) {
     return (
-      <Empty text="Creator assessments are being prepared. This page refreshes every 30 seconds.">
+      <Empty text="Affiliate cohort assessments are being prepared. This page refreshes every 30 seconds.">
         <ScanPoller />
       </Empty>
     );
@@ -123,8 +123,8 @@ async function CreatorFraudContent({
             <tr>
               <th className="px-4 py-3 font-medium">Creator</th>
               <th className="px-3 py-3 font-medium">Codes</th>
-              <th className="px-3 py-3 text-right font-medium">Accounts</th>
-              <th className="px-3 py-3 text-right font-medium">Network</th>
+              <th className="px-3 py-3 text-right font-medium">Referred</th>
+              <th className="px-3 py-3 text-right font-medium">Connected</th>
               <th className="px-3 py-3 text-right font-medium">Deposits</th>
               <th className="px-3 py-3 text-right font-medium">Wager</th>
               <th className="min-w-40 px-4 py-3 font-medium">Risk</th>
@@ -233,7 +233,7 @@ function CreatorCard({
     >
       <CreatorIdentity assessment={assessment} />
       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <Mini label="Accounts" value={String(metrics.cohortSize)} />
+        <Mini label="Referred" value={String(metrics.cohortSize)} />
         <Mini label="Connected" value={String(metrics.connectedAccounts)} />
         <Mini label="Deposits" value={formatCurrency(metrics.depositsUsd)} />
         <Mini label="Wager" value={formatCurrency(metrics.wagerUsd)} />

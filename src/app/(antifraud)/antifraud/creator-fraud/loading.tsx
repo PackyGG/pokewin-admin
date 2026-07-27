@@ -11,7 +11,7 @@ export default function CreatorFraudLoading() {
           icon={ShieldAlert}
           accent="cyan"
           title="Creator fraud"
-          subtitle="Affiliate-code behavior, connected accounts, and economic risk"
+          subtitle="Fraud risk among referred accounts; the creator account's own behavior is excluded"
         />
       </PageHero>
       <Skeleton className="h-10 rounded-md" />

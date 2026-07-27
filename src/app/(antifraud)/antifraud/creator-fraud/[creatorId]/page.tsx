@@ -24,7 +24,7 @@ import { RiskScoreBar } from "../../_components/risk-score-bar";
 import { ScanPoller } from "../../networks/scan-poller";
 import { CreatorRescanButton } from "../creator-rescan-button";
 
-export const metadata = { title: "Creator Assessment · Antifraud" };
+export const metadata = { title: "Affiliate Cohort Assessment · Antifraud" };
 
 export default async function CreatorFraudDetailPage({
   params,
@@ -49,8 +49,8 @@ export default async function CreatorFraudDetailPage({
         <PageHeroIdentity
           icon={ShieldAlert}
           accent="cyan"
-          title="Creator assessment"
-          subtitle="Network, affiliate, and gameplay/money evidence"
+          title="Affiliate cohort assessment"
+          subtitle="Only referred-account networks and activity; creator account behavior is excluded"
         />
       </PageHero>
       <Suspense key={`${creatorId}-${window}`} fallback={<DetailSkeleton />}>
@@ -100,7 +100,7 @@ async function CreatorDetail({
       </div>
 
       <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-border/70 bg-card lg:grid-cols-4">
-        <Metric icon={Users} label="Cohort" value={String(metrics.cohortSize)} />
+        <Metric icon={Users} label="Referred" value={String(metrics.cohortSize)} />
         <Metric icon={Network} label="Mapped" value={String(metrics.connectedAccounts)} />
         <Metric icon={BadgeDollarSign} label="Deposits" value={formatCurrency(metrics.depositsUsd)} tone="positive" />
         <Metric icon={Activity} label="Wager" value={formatCurrency(metrics.wagerUsd)} tone="positive" />
@@ -121,16 +121,16 @@ async function CreatorDetail({
           </div>
           <RiskScoreBar score={assessment.score} />
           <div className="mt-4 grid grid-cols-3 gap-2">
-            <Breakdown label="Network" value={assessment.breakdown.network} />
-            <Breakdown label="Affiliate" value={assessment.breakdown.affiliate} />
-            <Breakdown label="Behavior" value={assessment.breakdown.behavior} />
+            <Breakdown label="Affiliate networks" value={assessment.breakdown.network} />
+            <Breakdown label="Signup patterns" value={assessment.breakdown.affiliate} />
+            <Breakdown label="Affiliate activity" value={assessment.breakdown.behavior} />
           </div>
         </section>
 
         <section className="rounded-xl border border-border/70 bg-card p-4">
           <p className="text-sm font-semibold">Network maps</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Open complete account components detected from creator evidence.
+            Open complete account components detected among referred accounts.
           </p>
           {metrics.networkCount === 0 && metrics.networkRoots.length > 0 && (
             <p className="mt-2 rounded-md bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-700 dark:text-amber-300">
@@ -178,7 +178,7 @@ async function CreatorDetail({
             ))}
           </div>
         ) : (
-          <Empty text="No creator-fraud checks triggered in this window." />
+          <Empty text="No affiliate-cohort checks triggered in this window." />
         )}
       </section>
     </div>

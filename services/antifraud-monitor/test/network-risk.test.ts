@@ -116,6 +116,25 @@ test("creator assessments retain account-level evidence and queue detected IP ne
   );
 });
 
+test("creator assessments score referred accounts and exclude the creator account", async () => {
+  const source = await readFile(
+    new URL("../src/network-risk.ts", import.meta.url),
+    "utf8",
+  );
+  const assessment = source.slice(
+    source.indexOf("async assessCreator("),
+    source.indexOf("private creatorEvidenceGroup("),
+  );
+
+  assert.equal(
+    (assessment.match(/AND referred_user_id <> \$1/g) ?? []).length,
+    2,
+    "both cohort membership and affiliate aggregates must exclude the creator",
+  );
+  assert.match(assessment, /referred accounts share a deposit source wallet/);
+  assert.match(assessment, /Referred-account value trails expected GGR/);
+});
+
 test("staff-requested network scans run ahead of background reconciliation", async () => {
   const source = await readFile(
     new URL("../src/network-risk.ts", import.meta.url),

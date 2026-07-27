@@ -125,7 +125,7 @@ async function ScoringDashboard() {
           />
           <AnalysisRules
             title="Creator fraud checks"
-            description="Affiliate, network, and behavior scoring"
+            description="Referred-account networks and activity; creator behavior is excluded"
             rules={analysis.data.filter((rule) => rule.category === "creator")}
           />
         </>

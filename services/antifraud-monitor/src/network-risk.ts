@@ -871,6 +871,7 @@ export class NetworkRiskService {
         SELECT DISTINCT referred_user_id
         FROM affiliate_code_usages
         WHERE affiliate_user_id=$1
+          AND referred_user_id <> $1
           AND ($2::int IS NULL OR created_at >= (now() AT TIME ZONE 'UTC') - ($2::int * interval '1 day'))
         LIMIT 50_000
       `,
@@ -897,6 +898,7 @@ export class NetworkRiskService {
           COALESCE(SUM(user_bonus_usd),0)::text AS user_bonus
         FROM affiliate_code_usages
         WHERE affiliate_user_id=$1
+          AND referred_user_id <> $1
           AND ($2::int IS NULL OR created_at >= (now() AT TIME ZONE 'UTC') - ($2::int * interval '1 day'))
       `,
       [creatorUserId, days],
@@ -1021,16 +1023,16 @@ export class NetworkRiskService {
 
     const rules = await this.analysisRules("creator");
     const signals: AnalysisSignal[] = [];
-    this.addSignal(signals, rules, "creator_network_accounts", networkMetrics.connectedAccounts, `${networkMetrics.connectedAccounts} cohort accounts appear in shared account networks.`, "network");
-    this.addSignal(signals, rules, "creator_external_accounts", networkMetrics.externalAccounts, `${networkMetrics.externalAccounts} accounts outside the creator cohort are directly connected.`, "network");
-    this.addSignal(signals, rules, "creator_signup_burst", largestHour, `Largest one-hour signup burst contains ${largestHour} accounts.`, "affiliate");
-    this.addSignal(signals, rules, "creator_ip_chain", largestIp, `Largest exact signup-IP chain contains ${largestIp} creator-attributed accounts.`, "affiliate");
-    this.addSignal(signals, rules, "creator_country_cluster", countryRatio, `${countryRatio.toFixed(1)}% of the cohort is concentrated in one country.`, "affiliate");
-    this.addSignal(signals, rules, "creator_proxy_ratio", proxyRatio, `${proxyRatio.toFixed(1)}% of assessed cohort accounts have anonymous-network evidence.`, "affiliate");
-    this.addSignal(signals, rules, "creator_disposable_ratio", disposableRatio, `${disposableRatio.toFixed(1)}% of cohort accounts use disposable email domains.`, "affiliate");
-    this.addSignal(signals, rules, "creator_wallet_reuse", depositSignals.rows[0]?.reused_wallet_accounts ?? 0, `${depositSignals.rows[0]?.reused_wallet_accounts ?? 0} accounts share a deposit source wallet.`, "behavior");
-    this.addSignal(signals, rules, "creator_synchronized_deposits", depositSignals.rows[0]?.synchronized_accounts ?? 0, `${depositSignals.rows[0]?.synchronized_accounts ?? 0} accounts deposited in the same second.`, "behavior");
-    this.addSignal(signals, rules, "creator_ggr_shortfall", ggrShortfallPct, `Actual attributed value trails expected GGR by ${ggrShortfallPct.toFixed(1)}%.`, "behavior");
+    this.addSignal(signals, rules, "creator_network_accounts", networkMetrics.connectedAccounts, `${networkMetrics.connectedAccounts} referred accounts appear in shared account networks.`, "network");
+    this.addSignal(signals, rules, "creator_external_accounts", networkMetrics.externalAccounts, `${networkMetrics.externalAccounts} accounts outside the referred cohort are directly connected.`, "network");
+    this.addSignal(signals, rules, "creator_signup_burst", largestHour, `Largest one-hour referred-account signup burst contains ${largestHour} accounts.`, "affiliate");
+    this.addSignal(signals, rules, "creator_ip_chain", largestIp, `Largest exact signup-IP chain contains ${largestIp} referred accounts.`, "affiliate");
+    this.addSignal(signals, rules, "creator_country_cluster", countryRatio, `${countryRatio.toFixed(1)}% of referred accounts are concentrated in one country.`, "affiliate");
+    this.addSignal(signals, rules, "creator_proxy_ratio", proxyRatio, `${proxyRatio.toFixed(1)}% of assessed referred accounts have anonymous-network evidence.`, "affiliate");
+    this.addSignal(signals, rules, "creator_disposable_ratio", disposableRatio, `${disposableRatio.toFixed(1)}% of referred accounts use disposable email domains.`, "affiliate");
+    this.addSignal(signals, rules, "creator_wallet_reuse", depositSignals.rows[0]?.reused_wallet_accounts ?? 0, `${depositSignals.rows[0]?.reused_wallet_accounts ?? 0} referred accounts share a deposit source wallet.`, "behavior");
+    this.addSignal(signals, rules, "creator_synchronized_deposits", depositSignals.rows[0]?.synchronized_accounts ?? 0, `${depositSignals.rows[0]?.synchronized_accounts ?? 0} referred accounts deposited in the same second.`, "behavior");
+    this.addSignal(signals, rules, "creator_ggr_shortfall", ggrShortfallPct, `Referred-account value trails expected GGR by ${ggrShortfallPct.toFixed(1)}%.`, "behavior");
     const scored = scoreAnalysisSignals(signals);
 
     await this.db.antifraud.query(

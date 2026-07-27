@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-28 creator affiliate-fraud scope:** Creator-fraud assessments now treat the creator only as the owner of the affiliate cohort. Self-referral rows are excluded from both cohort membership and affiliate economic aggregates, so the creator account's own behavior cannot affect the score. Dashboard and rule copy now consistently identifies referred-account network, signup, and activity evidence. The monitor service passes 60 tests; dashboard TypeScript, zero-warning ESLint, 230 guardrails, diff check, and the production build pass.
+
 - **2026-07-28 KYC review usability:** `/antifraud/kyc` excludes untouched backend placeholder rows and now lands on the current `kyc_required` queue rather than historical records. Completed cycles remain under clearly labelled history views, and system-configuration/webhook diagnostics are no longer rendered. The production MAIN read confirmed zero currently required accounts and two completed `reason: test` cycles with no Sumsub applicant; MAIN was not mutated. Focused KYC guardrails, TypeScript, and zero-warning ESLint pass.
 
 - **2026-07-28 Antifraud monitor-case recovery:** account-case creation now uses the exact `subject_type = 'account'` predicate from migration 008, fixing PostgreSQL `42P10` failures after the network-case index split. The elected poller retries stored signup dead letters in bounded/capped batches, reconstructs each original three-minute activity window before completion, deletes only committed recoveries, and exposes pending/recovered counts so dead letters can no longer look healthy. Monitor TypeScript/build and 62 tests pass; dashboard TypeScript, zero-warning ESLint, all 226 guardrails, diff check, and the production build pass.

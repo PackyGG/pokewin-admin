@@ -107,6 +107,7 @@ The webapp uses PostgreSQL as its only database engine. Drizzle ORM is the defau
 - **Staff password recovery is admin-driven:** `/admin-users/[id]` can set a new password after the acting admin completes a TOTP/passkey step-up. The write hashes with bcrypt cost 12, revokes all target sessions, protects owner accounts from non-main-owner resets, and audit-logs no password material. This flow needs no email provider; email is only needed for a future self-service reset-link flow.
 
 - **Custom Antifraud point flows:** manager-only `/antifraud/flows` creates and edits ordered `rule_definitions` sequences; `/antifraud/events` is the authoritative live/planned event vocabulary. Enabled flows may contain only live events. The monitor evaluates every enabled flow after each accepted event, matches once per flow/session, applies its score plus manual-review/escalation outcome, sends the existing alert, and stores immutable match evidence shown on the monitor case. Planned events are documentation/draft-only until their source is connected.
+- **Creator fraud means affiliate-cohort fraud:** the creator account is only the owner/grouping key for affiliate codes. Creator-fraud scoring evaluates referred accounts, their connected networks, signup patterns, deposit/wager economics, and shared-wallet/timing evidence. The creator account's own behavior and any self-referral rows are excluded.
 
 ---
 

@@ -27,7 +27,7 @@ export function CreatorRescanButton({
         startTransition(async () => {
           try {
             await rescanCreatorFraud({ creatorId, window });
-            toast.success("Creator assessment queued");
+            toast.success("Affiliate cohort assessment queued");
             router.refresh();
           } catch (error) {
             toast.error(
