@@ -13,6 +13,48 @@ export type BuilderPricing = {
   suggestedPrice: number;
 };
 
+const ODDS_UNITS_PER_PERCENT = 10_000;
+export const EXACT_ODDS_TOTAL_UNITS = 100 * ODDS_UNITS_PER_PERCENT;
+
+export function oddsPercentToUnits(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(Math.max(0, value) * ODDS_UNITS_PER_PERCENT);
+}
+
+export function getBuilderOddsTotalUnits(
+  cards: Pick<BuilderPricingCard, "odds">[],
+): number {
+  return cards.reduce(
+    (total, card) => total + oddsPercentToUnits(card.odds),
+    0,
+  );
+}
+
+export function hasExactBuilderOddsTotal(
+  cards: Pick<BuilderPricingCard, "odds">[],
+): boolean {
+  return getBuilderOddsTotalUnits(cards) === EXACT_ODDS_TOTAL_UNITS;
+}
+
+/**
+ * Round shaped percentages to the builder's four-decimal precision while
+ * keeping their displayed sum exactly 100.0000%.
+ */
+export function normalizeBuilderOdds(values: number[]): number[] {
+  if (values.length === 0) return [];
+
+  const units = values.map(oddsPercentToUnits);
+  const largestIndex = units.reduce(
+    (bestIndex, value, index) =>
+      value > units[bestIndex]! ? index : bestIndex,
+    0,
+  );
+  units[largestIndex] +=
+    EXACT_ODDS_TOTAL_UNITS - units.reduce((sum, value) => sum + value, 0);
+
+  return units.map((value) => value / ODDS_UNITS_PER_PERCENT);
+}
+
 /**
  * Derive a Pack Builder sticker price from the current pool EV and target edge.
  * A brand-new pool has no shaped odds yet, so it starts with equal weights.

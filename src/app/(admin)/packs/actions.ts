@@ -2582,9 +2582,26 @@ async function materializeApprovedPack(
     }
   }
 
-  const slots: { cardId: string | null; value: number }[] = data.cards.map((c) => {
-    if ("cardId" in c) return { cardId: c.cardId, value: priceByCard.get(c.cardId)! };
-    return { cardId: null, value: c.value };
+  const slots: {
+    cardId: string | null;
+    value: number;
+    color: string | null;
+    animation: boolean;
+  }[] = data.cards.map((c) => {
+    if ("cardId" in c) {
+      return {
+        cardId: c.cardId,
+        value: priceByCard.get(c.cardId)!,
+        color: c.color ?? null,
+        animation: c.animation ?? false,
+      };
+    }
+    return {
+      cardId: null,
+      value: c.value,
+      color: null,
+      animation: false,
+    };
   });
 
   const shaped = shapeWeights({
@@ -2616,15 +2633,21 @@ async function materializeApprovedPack(
   // write arms; a dead 0%-odds row must never be persisted.
   const cardRows = persistable
     .filter(
-      (s): s is { cardId: string; value: number; weight: number } =>
+      (s): s is {
+        cardId: string;
+        value: number;
+        color: string | null;
+        animation: boolean;
+        weight: number;
+      } =>
         s.cardId !== null && s.weight > 0,
     )
     .map((s, i) => ({
       pack_id: "", // filled per-tx below
       card_id: s.cardId,
       weight: s.weight,
-      color: null as string | null,
-      animation: false,
+      color: s.color,
+      animation: s.animation,
       order: i,
     }));
 

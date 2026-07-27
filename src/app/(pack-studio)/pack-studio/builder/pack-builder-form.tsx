@@ -75,7 +75,13 @@ import { RiskLevelSlider } from "@/app/(admin)/packs/risk-level-slider";
 import { RiskLevelBar } from "../_components/risk-level-bar";
 import { PackRiskBarPreview } from "../_components/pack-risk-bar-preview";
 import { BuilderCardPicker } from "./builder-card-picker";
-import { calculateBuilderPricing } from "./builder-pricing";
+import {
+  calculateBuilderPricing,
+  EXACT_ODDS_TOTAL_UNITS,
+  getBuilderOddsTotalUnits,
+  hasExactBuilderOddsTotal,
+  normalizeBuilderOdds,
+} from "./builder-pricing";
 import type { BuilderCardItem } from "./actions";
 
 /**
@@ -131,6 +137,8 @@ type PoolCard = {
   odds: number;
   /** True while showing the auto-shaped odds; flips false on manual edit. */
   autoOdds: boolean;
+  color: string | null;
+  animation: boolean;
 };
 
 function autoSlug(val: string): string {
@@ -354,6 +362,8 @@ export function PackBuilderForm({
           priceUsd: item.priceUsd,
           odds: 0,
           autoOdds: true,
+          color: null,
+          animation: false,
         },
       ];
     });
@@ -387,15 +397,17 @@ export function PackBuilderForm({
     if (!shapeOk) return;
     const totalW = shapeOk.weights.reduce((s, w) => s + w, 0);
     if (!(totalW > 0)) return;
+    const normalizedOdds = normalizeBuilderOdds(
+      shapeOk.weights.map((weight) => (weight / totalW) * 100),
+    );
     setCards((prev) => {
       let changed = false;
       const next = prev.map((c, i) => {
         if (!c.autoOdds) return c;
-        const pct = (shapeOk.weights[i]! / totalW) * 100;
-        const rounded = Math.round(pct * 10000) / 10000;
-        if (Math.abs(rounded - c.odds) < 1e-9) return c;
+        const normalized = normalizedOdds[i]!;
+        if (Math.abs(normalized - c.odds) < 1e-9) return c;
         changed = true;
-        return { ...c, odds: rounded };
+        return { ...c, odds: normalized };
       });
       return changed ? next : prev;
     });
@@ -420,6 +432,9 @@ export function PackBuilderForm({
   const overCap =
     previewRisk && cap !== undefined ? previewRisk.maxWin > cap + 1e-9 : false;
   const compliant = Boolean(previewRisk) && edgeHealthy && !overCap;
+  const oddsTotalUnits = getBuilderOddsTotalUnits(cards);
+  const oddsTotalPct = oddsTotalUnits / 10_000;
+  const oddsTotalExact = hasExactBuilderOddsTotal(cards);
 
   // ── Table glue (reuse the shared SortableCardTable) ──────────────
   const tableCards: SortableCard[] = cards.map((c) => ({
@@ -428,8 +443,8 @@ export function PackBuilderForm({
     imageUrl: c.imageUrl,
     priceUsd: c.priceUsd,
     odds: c.odds,
-    color: null,
-    animation: false,
+    color: c.color,
+    animation: c.animation,
   }));
 
   function handleReorder(next: SortableCard[]) {
@@ -441,12 +456,17 @@ export function PackBuilderForm({
     setCards((prev) =>
       prev.map((c, i) => {
         if (i !== index) return c;
-        // A manual odds edit pins the row to its value (autoOdds:false); other
-        // updates (none used here today) leave the auto flag alone.
+        const next = {
+          ...c,
+          color: updates.color !== undefined ? updates.color : c.color,
+          animation:
+            updates.animation !== undefined ? updates.animation : c.animation,
+        };
+        // A manual odds edit pins the row to its value (autoOdds:false).
         if (typeof updates.odds === "number") {
-          return { ...c, odds: updates.odds, autoOdds: false };
+          return { ...next, odds: updates.odds, autoOdds: false };
         }
-        return c;
+        return next;
       }),
     );
   }
@@ -468,6 +488,7 @@ export function PackBuilderForm({
     slug.trim().length > 0 &&
     packPrice > 0 &&
     cards.length > 0 &&
+    oddsTotalExact &&
     (!customEdgeEnabled || customEdgeValid) &&
     !shapeError &&
     Boolean(shapeOk);
@@ -490,7 +511,11 @@ export function PackBuilderForm({
           price: packPrice,
           difficulty,
           activate,
-          cards: cards.map((c) => ({ cardId: c.cardId })),
+          cards: cards.map((c) => ({
+            cardId: c.cardId,
+            color: c.color,
+            animation: c.animation,
+          })),
           targets: {
             // The pack's OWN per-pack target edge (edge curve), so the server
             // re-shape matches the live preview — not a flat 10.99%.
@@ -648,6 +673,29 @@ export function PackBuilderForm({
                   odds cell pins that row; the server re-shapes weights
                   authoritatively on submit.
                 </p>
+                <div
+                  className={cn(
+                    "flex items-center justify-between rounded-md border px-3 py-2 text-xs",
+                    oddsTotalExact
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                      : "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400",
+                  )}
+                  role={oddsTotalExact ? undefined : "alert"}
+                >
+                  <span>Total odds</span>
+                  <span className="font-semibold tabular-nums">
+                    {oddsTotalPct.toFixed(4)}%
+                  </span>
+                </div>
+                {!oddsTotalExact && (
+                  <p className="text-xs text-destructive">
+                    Total odds must equal exactly 100.0000% before this pack can
+                    be submitted
+                    {oddsTotalUnits > EXACT_ODDS_TOTAL_UNITS
+                      ? " — reduce the odds."
+                      : " — add the missing odds."}
+                  </p>
+                )}
               </>
             ) : (
               <p className="text-sm text-muted-foreground">

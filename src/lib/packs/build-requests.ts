@@ -6,8 +6,14 @@ import { z } from "zod";
 import { adminDrizzle } from "@/lib/admin-db";
 import { isPostgresError } from "@/lib/postgres-errors";
 
+const packCardColorSchema = z.string().trim().min(1).max(32).nullable().optional();
+
 const buildPackCardSchema = z.union([
-  z.object({ cardId: z.string().uuid() }),
+  z.object({
+    cardId: z.string().uuid(),
+    color: packCardColorSchema,
+    animation: z.boolean().optional(),
+  }),
   z.object({ value: z.number().positive() }),
 ]);
 

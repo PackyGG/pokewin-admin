@@ -13,6 +13,9 @@ const navPath = "src/lib/nav-config.ts";
 const appHostsPath = "src/lib/app-hosts.ts";
 const migrationPath =
   "drizzle/admin/migrations/20260726_pack_creation_approval_queue.sql";
+const builderFormPath =
+  "src/app/(pack-studio)/pack-studio/builder/pack-builder-form.tsx";
+const buildRequestsPath = "src/lib/packs/build-requests.ts";
 
 test("Pack Builder submissions queue before any approved MAIN write", async () => {
   const [actions, builderPage, approvalPage, migration] = await Promise.all([
@@ -50,6 +53,28 @@ test("Pack Builder submissions queue before any approved MAIN write", async () =
     /CHECK \(status IN \('pending', 'processing', 'approved', 'declined'\)\)/,
   );
   assert.match(migration, /pack_creation_requests_pending_slug_key/);
+});
+
+test("Pack Builder preserves card color and animation through owner approval", async () => {
+  const [actions, builderForm, buildRequests] = await Promise.all([
+    readFile(actionsPath, "utf8"),
+    readFile(builderFormPath, "utf8"),
+    readFile(buildRequestsPath, "utf8"),
+  ]);
+
+  assert.match(builderForm, /color:\s*c\.color/);
+  assert.match(builderForm, /animation:\s*c\.animation/);
+  assert.match(buildRequests, /color:\s*packCardColorSchema/);
+  assert.match(buildRequests, /animation:\s*z\.boolean\(\)\.optional\(\)/);
+
+  const materialize = actions.slice(
+    actions.indexOf("async function materializeApprovedPack"),
+    actions.indexOf("async function previewPackBuildRequest"),
+  );
+  assert.match(materialize, /color:\s*c\.color \?\? null/);
+  assert.match(materialize, /animation:\s*c\.animation \?\? false/);
+  assert.match(materialize, /color:\s*s\.color/);
+  assert.match(materialize, /animation:\s*s\.animation/);
 });
 
 test("New Packs lives only in the owner-only Packs System section", async () => {
