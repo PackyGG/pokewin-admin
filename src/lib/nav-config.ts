@@ -245,6 +245,21 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    // Restored for the Marketing app. The full affiliate-board management
+    // route stayed live after its nav entry was removed, so this points back
+    // to the existing source of truth instead of duplicating the page.
+    id: "nav.creators.leaderboards",
+    group: "Overview",
+    label: "Leaderboards",
+    href: "/creators/leaderboards",
+    pageKey: "/creators/leaderboards",
+    icon: "Trophy",
+    description: "Create and manage creator affiliate leaderboards",
+    keywords: ["creator", "affiliate", "leaderboard", "prize"],
+    inSidebar: true,
+    inPalette: false,
+  },
+  {
     // Player CRM — palette-only. /crm was folded into the (owner-only)
     // Insights Overview as a tab; the standalone /crm route now 308-redirects
     // to ?tab=crm and the sidebar dropped the standalone link. href carries

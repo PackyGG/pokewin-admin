@@ -30,6 +30,14 @@ export const ADMIN_PAGES: AdminPage[] = [
   // permission inherits from /insights/real-numbers, so the standalone /crm
   // page key was retired (mirrors how /map dropped its key into /analytics).
   { group: "Navigation", label: "Creators", key: "/creators" },
+  // Affiliate leaderboard management is a first-class Marketing surface.
+  // Keep its own grant so marketing staff can manage boards without inheriting
+  // every creator-directory permission.
+  {
+    group: "Creators",
+    label: "Affiliate Leaderboards",
+    key: "/creators/leaderboards",
+  },
   // Creator Rewards — VIP wager-milestone programs + the manual claim-review
   // queue. Its own grantable key, NOT inherited from /rewards: approving a
   // claim credits a player's balance, so access to it is a strictly bigger
