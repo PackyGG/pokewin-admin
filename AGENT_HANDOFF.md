@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-27 Pack Builder edge band:** `/pack-studio/builder` accepts only an inclusive 10.95%–12.00% target and resulting house edge. The configured curve is clamped into that range; client validation, queued-request Zod validation, submission preview, and fresh-price owner approval all fail closed outside it. Focused tests, all 221 guardrails, TypeScript, zero-warning ESLint, and the production build pass.
+
 - **2026-07-27 staff password recovery:** each `/admin-users/[id]` profile now has an admin-driven password reset. It requires the acting admin's TOTP/passkey step-up, uses the shared 10-character/72-byte bcrypt policy, immediately revokes the target's active sessions, protects owner accounts from non-main-owner resets, and writes a password-free audit event. No email service or schema change is required. All 219 guardrails, TypeScript, zero-warning ESLint, and the production build pass.
 
 - **2026-07-27 Pack Builder card controls and odds gate:** `/pack-studio/builder` now keeps card colors and animation switches in client state, carries them through the ADMIN approval request, and writes them when an owner approves the pack. Auto-shaped display odds are rounded to four decimals while remaining exactly 100.0000%; any manual total even 0.0001% under or over blocks submission with the exact total shown. Focused tests, all 216 guardrails, TypeScript, zero-warning ESLint, and the production build pass.

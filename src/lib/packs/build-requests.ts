@@ -4,6 +4,11 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { adminDrizzle } from "@/lib/admin-db";
+import {
+  PACK_BUILDER_EDGE_ERROR,
+  PACK_BUILDER_EDGE_MAX,
+  PACK_BUILDER_EDGE_MIN,
+} from "@/lib/packs/builder-edge";
 import { isPostgresError } from "@/lib/postgres-errors";
 
 const packCardColorSchema = z.string().trim().min(1).max(32).nullable().optional();
@@ -28,7 +33,11 @@ export const buildPackRequestSchema = z.object({
   activate: z.boolean().optional(),
   cards: z.array(buildPackCardSchema).min(1, "At least one card is required"),
   targets: z.object({
-    targetEdge: z.number().positive().lt(1).optional(),
+    targetEdge: z
+      .number()
+      .min(PACK_BUILDER_EDGE_MIN, PACK_BUILDER_EDGE_ERROR)
+      .max(PACK_BUILDER_EDGE_MAX, PACK_BUILDER_EDGE_ERROR)
+      .optional(),
     targetWinRate: z.number().min(0).lt(1),
     maxWinCap: z.number().positive().optional(),
     floorRatioMin: z.number().positive().optional(),

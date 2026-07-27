@@ -108,6 +108,7 @@ import {
   type BuildPackInput,
   type ParsedBuildPackInput,
 } from "@/lib/packs/build-requests";
+import { getPackBuilderEdgeError } from "@/lib/packs/builder-edge";
 
 const pack_tag = {
   pct1: "pct1",
@@ -2616,6 +2617,10 @@ async function materializeApprovedPack(
   if ("error" in shaped) {
     return { ok: false, error: shaped.error };
   }
+  const edgeError = getPackBuilderEdgeError(shaped.risk.edge);
+  if (edgeError) {
+    return { ok: false, error: edgeError };
+  }
 
   // Only real cards (a cardId) can be persisted into pack_cards. A value-only
   // slot can't be written — surface it rather than silently dropping it.
@@ -2769,6 +2774,8 @@ async function previewPackBuildRequest(
     nearMissMin: input.targets.nearMissMin,
   });
   if ("error" in shaped) return { ok: false, error: shaped.error };
+  const edgeError = getPackBuilderEdgeError(shaped.risk.edge);
+  if (edgeError) return { ok: false, error: edgeError };
 
   const valueOnlyWithWeight = slots.some(
     (slot, index) => slot.cardId === null && shaped.weights[index]! > 0,

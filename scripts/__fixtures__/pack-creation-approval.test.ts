@@ -16,6 +16,7 @@ const migrationPath =
 const builderFormPath =
   "src/app/(pack-studio)/pack-studio/builder/pack-builder-form.tsx";
 const buildRequestsPath = "src/lib/packs/build-requests.ts";
+const builderEdgePath = "src/lib/packs/builder-edge.ts";
 
 test("Pack Builder submissions queue before any approved MAIN write", async () => {
   const [actions, builderPage, approvalPage, migration] = await Promise.all([
@@ -75,6 +76,27 @@ test("Pack Builder preserves card color and animation through owner approval", a
   assert.match(materialize, /animation:\s*c\.animation \?\? false/);
   assert.match(materialize, /color:\s*s\.color/);
   assert.match(materialize, /animation:\s*s\.animation/);
+});
+
+test("Pack Builder enforces the 10.95% to 12.00% edge band through approval", async () => {
+  const [actions, builderForm, buildRequests, builderEdge] = await Promise.all([
+    readFile(actionsPath, "utf8"),
+    readFile(builderFormPath, "utf8"),
+    readFile(buildRequestsPath, "utf8"),
+    readFile(builderEdgePath, "utf8"),
+  ]);
+
+  assert.match(builderEdge, /PACK_BUILDER_EDGE_MIN = 0\.1095/);
+  assert.match(builderEdge, /PACK_BUILDER_EDGE_MAX = 0\.12/);
+  assert.match(buildRequests, /\.min\(PACK_BUILDER_EDGE_MIN/);
+  assert.match(buildRequests, /\.max\(PACK_BUILDER_EDGE_MAX/);
+  assert.match(builderForm, /clampPackBuilderEdge\(/);
+  assert.match(builderForm, /isPackBuilderEdgeInRange\(/);
+  assert.equal(
+    actions.match(/getPackBuilderEdgeError\(shaped\.risk\.edge\)/g)?.length,
+    2,
+    "submission preview and owner materialization must both reject out-of-range edges",
+  );
 });
 
 test("New Packs lives only in the owner-only Packs System section", async () => {

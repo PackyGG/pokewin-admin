@@ -49,9 +49,11 @@ import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
 import { uploadImageClient } from "@/lib/upload-image-client";
 import {
-  REPRICE_TARGET_MAX,
-  REPRICE_TARGET_MIN,
-} from "@/app/(admin)/insights/edge-calc/math";
+  clampPackBuilderEdge,
+  isPackBuilderEdgeInRange,
+  PACK_BUILDER_EDGE_MAX,
+  PACK_BUILDER_EDGE_MIN,
+} from "@/lib/packs/builder-edge";
 
 import {
   shapeWeights,
@@ -270,7 +272,7 @@ export function PackBuilderForm({
   const [spiciness, setSpiciness] = useState<Spiciness>("balanced");
   const [customEdgeEnabled, setCustomEdgeEnabled] = useState(false);
   const [customEdgePct, setCustomEdgePct] = useState(
-    (edgeCurve.edgeFloor * 100).toFixed(2),
+    (clampPackBuilderEdge(edgeCurve.edgeFloor) * 100).toFixed(2),
   );
   // Player-facing risk level (0..1) — the on-site `difficulty` dial. Manual,
   // NOT derived from the CV tier (they are different measures). Defaults to 0
@@ -298,7 +300,7 @@ export function PackBuilderForm({
   // global cap and price × the multiplier ceiling). Updates live as price/cap
   // change; 0 until a positive price is entered.
   const configuredTargetEdge = useMemo(() => {
-    if (!(packPrice > 0)) return edgeCurve.edgeFloor;
+    if (!(packPrice > 0)) return clampPackBuilderEdge(edgeCurve.edgeFloor);
     // TAG-AWARE auto cap: a lottery pack ("1% …") gets the hit-rate-loosened
     // jackpot ceiling so the live edge preview matches the retune's cap.
     const intendedHitRate = parsePackHitRate(name) ?? undefined;
@@ -309,13 +311,14 @@ export function PackBuilderForm({
         { globalCap: defaultMaxWinCap, maxMultCeiling },
         intendedHitRate,
       );
-    return autoTargetEdge({ price: packPrice, maxWin: maxWinProxy }, edgeCurve);
+    return clampPackBuilderEdge(
+      autoTargetEdge({ price: packPrice, maxWin: maxWinProxy }, edgeCurve),
+    );
   }, [packPrice, cap, defaultMaxWinCap, maxMultCeiling, edgeCurve, name]);
   const customEdgeValue = Number(customEdgePct);
   const customEdgeValid =
     Number.isFinite(customEdgeValue) &&
-    customEdgeValue >= REPRICE_TARGET_MIN * 100 &&
-    customEdgeValue <= REPRICE_TARGET_MAX * 100;
+    isPackBuilderEdgeInRange(customEdgeValue / 100);
   const targetEdge =
     customEdgeEnabled && customEdgeValid
       ? customEdgeValue / 100
@@ -428,10 +431,17 @@ export function PackBuilderForm({
   // ── Compliance (within-phase) ────────────────────────────────────
   const edgePct = previewRisk ? previewRisk.edge * 100 : 0;
   const targetEdgePct = targetEdge * 100;
+  const edgeWithinBuilderRange = previewRisk
+    ? isPackBuilderEdgeInRange(previewRisk.edge)
+    : false;
   const edgeHealthy = previewRisk ? previewRisk.edge >= targetEdge - 1e-6 : false;
   const overCap =
     previewRisk && cap !== undefined ? previewRisk.maxWin > cap + 1e-9 : false;
-  const compliant = Boolean(previewRisk) && edgeHealthy && !overCap;
+  const compliant =
+    Boolean(previewRisk) &&
+    edgeWithinBuilderRange &&
+    edgeHealthy &&
+    !overCap;
   const oddsTotalUnits = getBuilderOddsTotalUnits(cards);
   const oddsTotalPct = oddsTotalUnits / 10_000;
   const oddsTotalExact = hasExactBuilderOddsTotal(cards);
@@ -490,6 +500,7 @@ export function PackBuilderForm({
     cards.length > 0 &&
     oddsTotalExact &&
     (!customEdgeEnabled || customEdgeValid) &&
+    edgeWithinBuilderRange &&
     !shapeError &&
     Boolean(shapeOk);
 
@@ -732,8 +743,8 @@ export function PackBuilderForm({
                       type="number"
                       value={customEdgePct}
                       onChange={(event) => setCustomEdgePct(event.target.value)}
-                      min={REPRICE_TARGET_MIN * 100}
-                      max={REPRICE_TARGET_MAX * 100}
+                      min={PACK_BUILDER_EDGE_MIN * 100}
+                      max={PACK_BUILDER_EDGE_MAX * 100}
                       step="0.01"
                       aria-label="Custom target edge percentage"
                       className="pr-8"
@@ -744,8 +755,9 @@ export function PackBuilderForm({
                   </div>
                   {!customEdgeValid && (
                     <p className="text-xs text-destructive">
-                      Target edge must be between {REPRICE_TARGET_MIN * 100}% and{" "}
-                      {REPRICE_TARGET_MAX * 100}%.
+                      Target edge must be between{" "}
+                      {(PACK_BUILDER_EDGE_MIN * 100).toFixed(2)}% and{" "}
+                      {(PACK_BUILDER_EDGE_MAX * 100).toFixed(2)}%.
                     </p>
                   )}
                 </>
@@ -916,7 +928,9 @@ export function PackBuilderForm({
                   value={`${edgePct.toFixed(2)}%`}
                   sub={`target ${targetEdgePct.toFixed(2)}%`}
                   icon={ShieldCheck}
-                  accent={edgeHealthy ? "emerald" : "rose"}
+                  accent={
+                    edgeWithinBuilderRange && edgeHealthy ? "emerald" : "rose"
+                  }
                 />
                 <KpiTile
                   label="Win-rate"
@@ -985,7 +999,9 @@ export function PackBuilderForm({
                 ) : (
                   <span className="inline-flex items-center gap-1 rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-xs font-medium text-rose-600 dark:text-rose-400">
                     <AlertTriangle className="size-3.5" />
-                    {!edgeHealthy
+                    {!edgeWithinBuilderRange
+                      ? `Edge ${edgePct.toFixed(2)}% outside 10.95%–12.00%`
+                      : !edgeHealthy
                       ? `Edge ${edgePct.toFixed(2)}% below ${targetEdgePct.toFixed(2)}%`
                       : "Max win over cap"}
                   </span>

@@ -7,6 +7,21 @@ import {
   hasExactBuilderOddsTotal,
   normalizeBuilderOdds,
 } from "../../src/app/(pack-studio)/pack-studio/builder/builder-pricing";
+import {
+  clampPackBuilderEdge,
+  isPackBuilderEdgeInRange,
+  PACK_BUILDER_EDGE_MAX,
+  PACK_BUILDER_EDGE_MIN,
+} from "../../src/lib/packs/builder-edge";
+
+test("Pack Builder accepts only edges from 10.95% through 12.00%", () => {
+  assert.equal(isPackBuilderEdgeInRange(PACK_BUILDER_EDGE_MIN), true);
+  assert.equal(isPackBuilderEdgeInRange(PACK_BUILDER_EDGE_MAX), true);
+  assert.equal(isPackBuilderEdgeInRange(0.109499), false);
+  assert.equal(isPackBuilderEdgeInRange(0.120001), false);
+  assert.equal(clampPackBuilderEdge(0.01), PACK_BUILDER_EDGE_MIN);
+  assert.equal(clampPackBuilderEdge(0.5), PACK_BUILDER_EDGE_MAX);
+});
 
 test("Pack Builder seeds a new pool with equal-weight EV", () => {
   const pricing = calculateBuilderPricing(
