@@ -1,5 +1,6 @@
 "use server";
 
+import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
 import { eq, ilike, or, sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
@@ -21,6 +22,108 @@ import {
 } from "@/lib/permissions/write-paths";
 import { wouldReduceOwnAccessViaOverride } from "@/lib/admin-guards";
 import { isPostgresError } from "@/lib/postgres-errors";
+import {
+  isMainOwner,
+  isMainOwnerUsername,
+} from "@/lib/owners";
+import {
+  ADMIN_PASSWORD_BCRYPT_COST,
+  adminPasswordSchema,
+} from "@/lib/admin-password-policy";
+
+export async function resetAdminPassword(
+  adminUserId: string,
+  input: {
+    newPassword: string;
+    confirmPassword: string;
+    stepUpCredential: string;
+  },
+): Promise<void> {
+  const session = await requireAdmin();
+  await requireCapability(
+    session,
+    "__can_reset_admin_password",
+    "reset admin passwords",
+  );
+
+  if (input.newPassword !== input.confirmPassword) {
+    throw new Error("New password and confirmation do not match");
+  }
+
+  const password = adminPasswordSchema.safeParse(input.newPassword);
+  if (!password.success) {
+    throw new Error(
+      password.error.issues[0]?.message ?? "Invalid password",
+    );
+  }
+
+  const targetIdentity = (
+    await adminDrizzle.execute<{
+      username: string;
+      is_owner: boolean;
+    }>(sql`
+      SELECT username, is_owner
+      FROM admin_users
+      WHERE id = ${adminUserId}::uuid
+      LIMIT 1
+    `)
+  ).rows[0];
+  if (!targetIdentity) throw new Error("Admin user not found");
+
+  // Owner credentials can only be reset by the permanent main owner. This
+  // keeps a regular full-access admin from combining password + 2FA resets to
+  // take over an owner account.
+  if (
+    (isMainOwnerUsername(targetIdentity.username) ||
+      targetIdentity.is_owner) &&
+    !isMainOwner(session)
+  ) {
+    throw new Error("Only the main owner can reset an owner's password");
+  }
+
+  await require2FA(session.userId, input.stepUpCredential);
+
+  const passwordHash = await bcrypt.hash(
+    password.data,
+    ADMIN_PASSWORD_BCRYPT_COST,
+  );
+  const now = new Date();
+
+  const target = await adminDrizzle.transaction(async (tx) => {
+    const updated = await tx.execute<{ username: string }>(sql`
+      UPDATE admin_users
+      SET password_hash = ${passwordHash},
+          sessions_valid_after = ${now},
+          updated_at = ${now}
+      WHERE id = ${adminUserId}::uuid
+      RETURNING username
+    `);
+    const row = updated.rows[0];
+    if (!row) throw new Error("Admin user not found");
+
+    await tx.execute(sql`
+      UPDATE admin_sessions
+      SET logged_out_at = ${now}
+      WHERE admin_user_id = ${adminUserId}::uuid
+        AND logged_out_at IS NULL
+        AND expires_at > ${now}
+    `);
+
+    return row;
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "admin_password_reset",
+    metadata: {
+      target_admin_id: adminUserId,
+      target_username: target.username,
+      sessions_revoked: true,
+    },
+  });
+
+  revalidatePath(`/admin-users/${adminUserId}`);
+}
 
 export async function forceExpireAllSessions(adminUserId: string) {
   const session = await requireAdmin();

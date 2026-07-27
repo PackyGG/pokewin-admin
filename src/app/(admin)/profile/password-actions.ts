@@ -8,10 +8,10 @@ import { admin_users } from "@/lib/db-schema/admin/schema";
 import { verifySession } from "@/lib/dal";
 import { require2FA } from "@/lib/require-2fa";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-
-// Matches createAdminUser (src/app/(admin)/admin-users/actions.ts) — bcrypt
-// cost factor 12 for every admin password hash.
-const BCRYPT_COST = 12;
+import {
+  ADMIN_PASSWORD_BCRYPT_COST,
+  adminPasswordSchema,
+} from "@/lib/admin-password-policy";
 
 // Self-service password change for the *currently logged-in* admin only.
 // The schema never carries a target user id — the action acts on
@@ -22,9 +22,7 @@ const BCRYPT_COST = 12;
 const changePasswordSchema = z
   .object({
     currentPassword: z.string().min(1, "Current password is required"),
-    newPassword: z
-      .string()
-      .min(10, "New password must be at least 10 characters"),
+    newPassword: adminPasswordSchema,
     confirmPassword: z.string().min(1, "Please confirm your new password"),
     twoFactorCode: z
       .string()
@@ -90,7 +88,10 @@ export async function changeOwnPassword(input: {
   // (no password change without a valid code).
   await require2FA(session.userId, twoFactorCode);
 
-  const newHash = await bcrypt.hash(newPassword, BCRYPT_COST);
+  const newHash = await bcrypt.hash(
+    newPassword,
+    ADMIN_PASSWORD_BCRYPT_COST,
+  );
 
   await adminDrizzle.update(admin_users).set({ password_hash: newHash })
     .where(eq(admin_users.id, session.userId));

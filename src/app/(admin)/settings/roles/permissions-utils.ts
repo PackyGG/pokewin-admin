@@ -819,6 +819,12 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "Admin Users",
   },
   {
+    key: "__can_reset_admin_password",
+    label: "Reset Admin Password",
+    description: "Set a new password for an admin and revoke their sessions",
+    group: "Admin Users",
+  },
+  {
     key: "__can_change_admin_role",
     label: "Change Admin Role",
     description: "Change an admin user's role (admin / support / marketing / creator) — requires 2FA",

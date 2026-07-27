@@ -111,7 +111,17 @@ export function CreateAdminDialog() {
           </div>
           <div className="space-y-2">
             <Label htmlFor="password">Password</Label>
-            <Input id="password" name="password" type="password" required minLength={8} />
+            <Input
+              id="password"
+              name="password"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={10}
+            />
+            <p className="text-xs text-muted-foreground">
+              At least 10 characters and at most 72 UTF-8 bytes.
+            </p>
           </div>
           <div className="space-y-2">
             <Label>Roles</Label>

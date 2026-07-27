@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { StepUpField } from "@/components/step-up-field";
 import {
   AlertDialog,
@@ -21,7 +23,7 @@ import {
   toggleAdminActive,
   resetAdmin2FA,
 } from "../actions";
-import { forceExpireAllSessions } from "./actions";
+import { forceExpireAllSessions, resetAdminPassword } from "./actions";
 import type { AdminUserDetail } from "@/lib/queries/admin-users";
 
 /* ── Management Actions ── */
@@ -58,6 +60,8 @@ export function ManagementActions({
           <Reset2FADialog detail={detail} handleAction={handleAction} />
         )}
 
+        <ResetPasswordDialog detail={detail} handleAction={handleAction} />
+
         <AlertDialog>
           <AlertDialogTrigger className={buttonVariants({ variant: "destructive", size: "sm" })}>
             Expire All Sessions
@@ -89,11 +93,124 @@ export function ManagementActions({
   );
 }
 
+// ── Reset Password Dialog (with step-up) ──────────────────────────────
+//
+// Password resets are credential changes, so the acting admin must step up
+// with their own TOTP or passkey. The server also revokes the target's sessions.
+function ResetPasswordDialog({
+  detail,
+  handleAction,
+}: {
+  detail: AdminUserDetail;
+  handleAction: (action: () => Promise<void>, label: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [stepUpCredential, setStepUpCredential] = useState("");
+
+  function reset() {
+    setNewPassword("");
+    setConfirmPassword("");
+    setStepUpCredential("");
+  }
+
+  const passwordBytes = new TextEncoder().encode(newPassword).byteLength;
+  const passwordReady =
+    newPassword.length >= 10 &&
+    passwordBytes <= 72 &&
+    newPassword === confirmPassword &&
+    stepUpCredential.trim().length > 0;
+
+  return (
+    <AlertDialog
+      open={open}
+      onOpenChange={(value) => {
+        setOpen(value);
+        if (!value) reset();
+      }}
+    >
+      <AlertDialogTrigger
+        className={buttonVariants({ variant: "outline", size: "sm" })}
+      >
+        Reset Password
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            Reset password for {detail.username}?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            Set a new password and share it securely with the staff member.
+            Their existing sessions will be signed out immediately.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="admin-reset-password">New password</Label>
+            <Input
+              id="admin-reset-password"
+              type="password"
+              autoComplete="new-password"
+              minLength={10}
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              At least 10 characters and at most 72 UTF-8 bytes.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="admin-reset-password-confirm">
+              Confirm password
+            </Label>
+            <Input
+              id="admin-reset-password-confirm"
+              type="password"
+              autoComplete="new-password"
+              minLength={10}
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+            />
+          </div>
+        </div>
+
+        <StepUpField
+          value={stepUpCredential}
+          onChange={setStepUpCredential}
+        />
+
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <Button
+            disabled={!passwordReady}
+            onClick={() => {
+              const payload = {
+                newPassword,
+                confirmPassword,
+                stepUpCredential: stepUpCredential.trim(),
+              };
+              handleAction(
+                () => resetAdminPassword(detail.id, payload),
+                "Password reset",
+              );
+              reset();
+              setOpen(false);
+            }}
+          >
+            Reset password
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 // ── Toggle Active Dialog (with TOTP) ──────────────────────────────────
 //
 // Toggling another admin's active state is a privilege-escalation-class
-// action, so it gates on TOTP. Self-deactivation is also blocked
-// server-side; the error surfaces here as a toast.
+// action, so it gates on TOTP. Self-deactivation is also blocked server-side.
 function ToggleActiveDialog({
   detail,
   handleAction,

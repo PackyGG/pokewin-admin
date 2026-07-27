@@ -30,6 +30,10 @@ import {
   wouldDropLastActiveAdmin,
   wouldRemoveOwnAdminViaRoles,
 } from "@/lib/admin-guards";
+import {
+  ADMIN_PASSWORD_BCRYPT_COST,
+  adminPasswordSchema,
+} from "@/lib/admin-password-policy";
 
 /**
  * Normalize a caller-supplied role payload into a deduped, validated set
@@ -97,7 +101,18 @@ export async function createAdminUser(data: {
   // so the result is a real `admin_role` — narrow it to the database enum.
   const primary = pickPrimaryRole(roles);
 
-  const passwordHash = await bcrypt.hash(data.password, 12);
+  const password = adminPasswordSchema.safeParse(data.password);
+  if (!password.success) {
+    return fail(
+      password.error.issues[0]?.message ?? "Invalid password.",
+      "VALIDATION",
+    );
+  }
+
+  const passwordHash = await bcrypt.hash(
+    password.data,
+    ADMIN_PASSWORD_BCRYPT_COST,
+  );
 
   // Seed allowed_pages as the UNION of every assigned role's preset (each
   // copied off an existing user of that role, else the role's fixed
