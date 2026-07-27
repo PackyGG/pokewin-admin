@@ -9,6 +9,7 @@ import {
   CircleDollarSign,
   Clock3,
   Gift,
+  ListChecks,
   Search,
   ShieldAlert,
   ShieldCheck,
@@ -28,6 +29,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   listWithdrawalAssessments,
   type WithdrawalAssessment,
+  type WithdrawalReviewStatus,
   type WithdrawalVerdict,
 } from "@/lib/antifraud/withdrawals-api";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
@@ -45,11 +47,19 @@ const STATUSES = [
   "cancelled",
 ] as const;
 const VERDICTS = ["good", "review", "bad"] as const;
+const REVIEW_STATUSES = [
+  "unreviewed",
+  "in_review",
+  "cleared",
+  "escalated",
+  "block_recommended",
+] as const;
 
 type FilterState = {
   page: number;
   status?: string;
   verdict?: WithdrawalVerdict;
+  reviewStatus?: WithdrawalReviewStatus;
   search: string;
 };
 
@@ -60,6 +70,7 @@ export default async function WithdrawalsPage({
     page?: string;
     status?: string;
     verdict?: string;
+    reviewStatus?: string;
     search?: string;
   }>;
 }) {
@@ -74,6 +85,11 @@ export default async function WithdrawalsPage({
     verdict: VERDICTS.includes(params.verdict as WithdrawalVerdict)
       ? (params.verdict as WithdrawalVerdict)
       : undefined,
+    reviewStatus: REVIEW_STATUSES.includes(
+      params.reviewStatus as WithdrawalReviewStatus,
+    )
+      ? (params.reviewStatus as WithdrawalReviewStatus)
+      : undefined,
     search: params.search?.trim().slice(0, 100) ?? "",
   };
 
@@ -83,15 +99,15 @@ export default async function WithdrawalsPage({
         <PageHeroIdentity
           icon={ArrowUpFromLine}
           accent="cyan"
-          title="Withdrawals"
-          subtitle="Trace every payout back to its deposits, play, wins, and rewards"
+          title="Withdrawal security"
+          subtitle="Run every payout through funding, behavior, account, and destination checks"
         />
       </PageHero>
 
       <Filters state={state} />
 
       <Suspense
-        key={`${state.page}-${state.status}-${state.verdict}-${state.search}`}
+        key={`${state.page}-${state.status}-${state.verdict}-${state.reviewStatus}-${state.search}`}
         fallback={<WithdrawalListSkeleton />}
       >
         <WithdrawalContent state={state} />
@@ -110,6 +126,31 @@ function Filters({ state }: { state: FilterState }) {
           <FilterButton label="Review" active={state.verdict === "review"} state={state} verdict="review" />
           <FilterButton label="Bad" active={state.verdict === "bad"} state={state} verdict="bad" />
           <span className="mx-1 hidden h-8 w-px bg-border sm:block" />
+          <FilterButton
+            label="Unreviewed"
+            active={state.reviewStatus === "unreviewed"}
+            state={state}
+            reviewStatus="unreviewed"
+          />
+          <FilterButton
+            label="In review"
+            active={state.reviewStatus === "in_review"}
+            state={state}
+            reviewStatus="in_review"
+          />
+          <FilterButton
+            label="Escalated"
+            active={state.reviewStatus === "escalated"}
+            state={state}
+            reviewStatus="escalated"
+          />
+          <FilterButton
+            label="All workflow"
+            active={!state.reviewStatus}
+            state={state}
+            reviewStatus={null}
+          />
+          <span className="mx-1 hidden h-8 w-px bg-border sm:block" />
           <FilterButton label="Any status" active={!state.status} state={state} status={null} />
           <FilterButton label="Pending" active={state.status === "pending"} state={state} status="pending" />
           <FilterButton label="Processing" active={state.status === "processing"} state={state} status="processing" />
@@ -118,6 +159,9 @@ function Filters({ state }: { state: FilterState }) {
         <form className="flex w-full gap-2 xl:w-auto" action="/antifraud/withdrawals">
           {state.status && <input type="hidden" name="status" value={state.status} />}
           {state.verdict && <input type="hidden" name="verdict" value={state.verdict} />}
+          {state.reviewStatus && (
+            <input type="hidden" name="reviewStatus" value={state.reviewStatus} />
+          )}
           <Input
             name="search"
             defaultValue={state.search}
@@ -141,18 +185,22 @@ function FilterButton({
   state,
   status,
   verdict,
+  reviewStatus,
 }: {
   label: string;
   active: boolean;
   state: FilterState;
   status?: string | null;
   verdict?: WithdrawalVerdict | null;
+  reviewStatus?: WithdrawalReviewStatus | null;
 }) {
   const next = {
     ...state,
     page: 1,
     status: status === null ? undefined : status ?? state.status,
     verdict: verdict === null ? undefined : verdict ?? state.verdict,
+    reviewStatus:
+      reviewStatus === null ? undefined : reviewStatus ?? state.reviewStatus,
   };
   return (
     <Button
@@ -170,6 +218,7 @@ async function WithdrawalContent({ state }: { state: FilterState }) {
     page: state.page,
     status: state.status,
     verdict: state.verdict,
+    reviewStatus: state.reviewStatus,
     search: state.search || undefined,
   });
   if (!result.configured) {
@@ -232,13 +281,23 @@ async function WithdrawalContent({ state }: { state: FilterState }) {
 function SummaryCards({
   summary,
 }: {
-  summary: { total: number; good: number; review: number; bad: number; amount_usd: number };
+  summary: {
+    total: number;
+    good: number;
+    review: number;
+    bad: number;
+    unreviewed: number;
+    in_review: number;
+    escalated: number;
+    block_recommended: number;
+    amount_usd: number;
+  };
 }) {
   const cards = [
-    { label: "Tracked", value: summary.total.toLocaleString(), icon: WalletCards, tone: "text-cyan-600 dark:text-cyan-400" },
-    { label: "Good", value: summary.good.toLocaleString(), icon: ShieldCheck, tone: "text-emerald-600 dark:text-emerald-400" },
-    { label: "Needs review", value: summary.review.toLocaleString(), icon: AlertTriangle, tone: "text-amber-600 dark:text-amber-400" },
-    { label: "Bad", value: summary.bad.toLocaleString(), icon: ShieldAlert, tone: "text-rose-600 dark:text-rose-400" },
+    { label: "Unreviewed", value: summary.unreviewed.toLocaleString(), icon: WalletCards, tone: "text-cyan-600 dark:text-cyan-400" },
+    { label: "In review", value: summary.in_review.toLocaleString(), icon: ListChecks, tone: "text-amber-600 dark:text-amber-400" },
+    { label: "Escalated", value: summary.escalated.toLocaleString(), icon: AlertTriangle, tone: "text-orange-600 dark:text-orange-400" },
+    { label: "Block recommended", value: summary.block_recommended.toLocaleString(), icon: ShieldAlert, tone: "text-rose-600 dark:text-rose-400" },
   ];
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -307,12 +366,57 @@ function WithdrawalRow({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
               </span>
             </span>
           </div>
+          {withdrawal.flow_checks.length > 0 ? (
+            <Button
+              size="sm"
+              render={
+                <HostLink
+                  href={`/antifraud/withdrawals/${withdrawal.withdrawal_id}`}
+                />
+              }
+            >
+              Review flow
+              <ArrowRight className="size-3.5" />
+            </Button>
+          ) : (
+            <Button size="sm" disabled>
+              Assessment pending
+            </Button>
+          )}
         </div>
       </div>
 
       <div className="grid gap-5 p-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(260px,0.75fr)]">
         <div className="space-y-4">
           <MoneyFlow withdrawal={withdrawal} />
+          {withdrawal.flow_checks.length > 0 && (
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Review flow
+              </p>
+              <div className="grid gap-2 sm:grid-cols-5">
+                {withdrawal.flow_checks.map((check, index) => (
+                  <div
+                    key={check.key}
+                    className={cn(
+                      "rounded-lg border px-2.5 py-2 text-xs",
+                      check.status === "pass" &&
+                        "border-emerald-500/25 bg-emerald-500/5",
+                      check.status === "review" &&
+                        "border-amber-500/25 bg-amber-500/5",
+                      check.status === "block" &&
+                        "border-rose-500/25 bg-rose-500/5",
+                    )}
+                  >
+                    <span className="block text-[10px] text-muted-foreground">
+                      {index + 1}. {check.status}
+                    </span>
+                    <span className="mt-0.5 block font-medium">{check.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div>
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               Exact withdrawal sources
@@ -445,6 +549,7 @@ function withdrawalHref(state: FilterState): string {
   if (state.page > 1) params.set("page", String(state.page));
   if (state.status) params.set("status", state.status);
   if (state.verdict) params.set("verdict", state.verdict);
+  if (state.reviewStatus) params.set("reviewStatus", state.reviewStatus);
   if (state.search) params.set("search", state.search);
   const query = params.toString();
   return `/antifraud/withdrawals${query ? `?${query}` : ""}`;

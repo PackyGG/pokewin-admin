@@ -24,6 +24,9 @@ export function serviceRequestAuthorized(
     (method === "PUT" && pathname.startsWith("/v1/analysis-rules/")) ||
     (method === "POST" && pathname.includes("/decision")) ||
     (method === "POST" && pathname.includes("/rescan")) ||
+    (method === "POST" &&
+      pathname.startsWith("/v1/withdrawals/") &&
+      pathname.endsWith("/review")) ||
     (method === "POST" && pathname === "/v1/network-cases") ||
     (method === "GET" &&
       pathname.startsWith("/v1/networks/") &&

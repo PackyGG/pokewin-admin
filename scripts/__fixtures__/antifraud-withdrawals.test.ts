@@ -18,9 +18,18 @@ test("withdrawals are exposed as their own Fraud transaction section", () => {
 
 test("the page reads the monitor service and never imports MAIN DB access", () => {
   const page = read("src/app/(antifraud)/antifraud/withdrawals/page.tsx");
+  const detail = read(
+    "src/app/(antifraud)/antifraud/withdrawals/[id]/page.tsx",
+  );
   const api = read("src/lib/antifraud/withdrawals-api.ts");
   assert.match(page, /listWithdrawalAssessments/);
+  assert.match(page, /Review flow/);
+  assert.match(detail, /Withdrawal review flow/);
+  assert.match(detail, /Behavior timeline/);
+  assert.match(detail, /WithdrawalReviewControls/);
+  assert.doesNotMatch(detail, /redirect\(["']\/withdrawals/);
   assert.doesNotMatch(page, /@\/lib\/db/);
+  assert.doesNotMatch(detail, /@\/lib\/db/);
   assert.match(api, /\/v1\/withdrawals/);
   assert.doesNotMatch(api, /@\/lib\/db/);
 });
@@ -31,7 +40,16 @@ test("the monitor service keeps the source pool read-only and persists assessmen
   const migration = read(
     "services/antifraud-monitor/migrations/009_withdrawal_assessments.sql",
   );
+  const workflowMigration = read(
+    "services/antifraud-monitor/migrations/010_withdrawal_review_workflow.sql",
+  );
   assert.match(database, /default_transaction_read_only=on/);
   assert.match(risk, /INSERT INTO withdrawal_assessments/);
+  assert.match(risk, /loadTimeline/);
+  assert.match(risk, /flowChecks/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS withdrawal_assessments/);
+  assert.match(
+    workflowMigration,
+    /CREATE TABLE IF NOT EXISTS withdrawal_review_events/,
+  );
 });

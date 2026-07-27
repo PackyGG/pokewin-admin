@@ -10,6 +10,36 @@ export type WithdrawalSignal = {
   detail: string;
   points: number;
   tone: "good" | "neutral" | "warning" | "bad";
+  category: WithdrawalRiskCategory;
+};
+
+export type WithdrawalRiskCategory =
+  | "integrity"
+  | "funding"
+  | "behavior"
+  | "account"
+  | "network";
+
+export type WithdrawalScoreBreakdown = Record<WithdrawalRiskCategory, number>;
+
+export type WithdrawalFlowCheck = {
+  key: WithdrawalRiskCategory;
+  label: string;
+  description: string;
+  status: "pass" | "review" | "block";
+  score: number;
+  evidence: string[];
+};
+
+export type WithdrawalTimelineEvent = {
+  id: string;
+  type: string;
+  label: string;
+  detail: string | null;
+  amountUsd: number;
+  occurredAt: string;
+  category: "deposit" | "play" | "win" | "reward" | "withdrawal" | "account";
+  tone: "good" | "neutral" | "warning" | "bad";
 };
 
 export type WithdrawalSource = {
@@ -53,6 +83,8 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
   verdict: WithdrawalVerdict;
   summary: string;
   signals: WithdrawalSignal[];
+  scoreBreakdown: WithdrawalScoreBreakdown;
+  flowChecks: WithdrawalFlowCheck[];
 } {
   const signals: WithdrawalSignal[] = [];
   const amount = Math.max(0, input.amountUsd);
@@ -68,6 +100,7 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
       detail: "The attached cards and vouchers reconcile with the requested value.",
       points: 0,
       tone: "good",
+      category: "integrity",
     });
   } else {
     signals.push({
@@ -76,6 +109,7 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
       detail: `$${difference.toFixed(2)} of the request is not explained by its attached assets.`,
       points: differenceRatio > 0.1 ? 45 : 25,
       tone: differenceRatio > 0.1 ? "bad" : "warning",
+      category: "integrity",
     });
   }
 
@@ -86,6 +120,7 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
       detail: "The withdrawal has no card or voucher records to trace.",
       points: 35,
       tone: "bad",
+      category: "integrity",
     });
   } else if (tracedRatio >= 0.9) {
     signals.push({
@@ -94,6 +129,7 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
       detail: `${Math.round(tracedRatio * 100)}% of the attached value has a known origin.`,
       points: 0,
       tone: "good",
+      category: "integrity",
     });
   } else {
     signals.push({
@@ -102,6 +138,7 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
       detail: `${Math.round((1 - tracedRatio) * 100)}% of the attached value has no dependable origin.`,
       points: tracedRatio < 0.5 ? 35 : 18,
       tone: tracedRatio < 0.5 ? "bad" : "warning",
+      category: "integrity",
     });
   }
 
@@ -117,6 +154,7 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
       detail: "A deposit was followed by this withdrawal within one hour with little play.",
       points: 35,
       tone: "bad",
+      category: "behavior",
     });
   }
 
@@ -127,6 +165,7 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
       detail: "No qualifying game activity was found in the 90-day funding window.",
       points: 20,
       tone: "warning",
+      category: "behavior",
     });
   }
 
@@ -139,6 +178,7 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
       detail: `$${Math.max(0, amount - explainedFunding).toFixed(2)} is not covered by deposits, wins, or rewards in the funding window.`,
       points: 25,
       tone: "warning",
+      category: "funding",
     });
   }
 
@@ -153,6 +193,7 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
       detail: "At least half of the recent incoming value came from rewards or promotions.",
       points: 18,
       tone: "warning",
+      category: "funding",
     });
   }
 
@@ -163,6 +204,7 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
       detail: "The account is less than one day old.",
       points: 25,
       tone: "bad",
+      category: "account",
     });
   } else if (input.accountAgeDays < 7) {
     signals.push({
@@ -171,6 +213,7 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
       detail: "The account is less than seven days old.",
       points: 10,
       tone: "warning",
+      category: "account",
     });
   }
 
@@ -181,6 +224,7 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
       detail: `The same payout destination appears on ${input.otherUsersAtDestination} other account${input.otherUsersAtDestination === 1 ? "" : "s"}.`,
       points: Math.min(70, 50 + input.otherUsersAtDestination * 10),
       tone: "bad",
+      category: "network",
     });
   }
 
@@ -196,7 +240,73 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
   const summary =
     primary?.detail ??
     "The amount, asset origins, and recent funding activity reconcile.";
-  return { riskScore, verdict, summary, signals };
+  const scoreBreakdown: WithdrawalScoreBreakdown = {
+    integrity: 0,
+    funding: 0,
+    behavior: 0,
+    account: 0,
+    network: 0,
+  };
+  for (const signal of signals) {
+    scoreBreakdown[signal.category] = Math.min(
+      100,
+      scoreBreakdown[signal.category] + signal.points,
+    );
+  }
+  const definitions: {
+    key: WithdrawalRiskCategory;
+    label: string;
+    description: string;
+  }[] = [
+    {
+      key: "integrity",
+      label: "Request integrity",
+      description: "Reconcile the requested amount and every attached asset.",
+    },
+    {
+      key: "funding",
+      label: "Funding source",
+      description: "Explain the payout through deposits, wins, and rewards.",
+    },
+    {
+      key: "behavior",
+      label: "Play behavior",
+      description: "Check play-through, velocity, and rapid cash-out behavior.",
+    },
+    {
+      key: "account",
+      label: "Account trust",
+      description: "Evaluate account maturity and other trust context.",
+    },
+    {
+      key: "network",
+      label: "Payout destination",
+      description: "Look for destinations reused across player accounts.",
+    },
+  ];
+  const flowChecks: WithdrawalFlowCheck[] = definitions.map((definition) => {
+    const categorySignals = signals.filter(
+      (signal) => signal.category === definition.key,
+    );
+    const score = scoreBreakdown[definition.key];
+    return {
+      ...definition,
+      status: score >= 40 ? "block" : score > 0 ? "review" : "pass",
+      score,
+      evidence:
+        categorySignals.length > 0
+          ? categorySignals.map((signal) => signal.detail)
+          : ["No risk signal triggered for this check."],
+    };
+  });
+  return {
+    riskScore,
+    verdict,
+    summary,
+    signals,
+    scoreBreakdown,
+    flowChecks,
+  };
 }
 
 type SourceWithdrawal = {
@@ -257,6 +367,42 @@ const REWARD_TYPES = [
   "affiliate_claim",
   "affiliate_leaderboard_prize",
 ];
+
+function timelineCategory(type: string): {
+  category: WithdrawalTimelineEvent["category"];
+  tone: WithdrawalTimelineEvent["tone"];
+  label: string;
+} {
+  if (type === "deposit") {
+    return { category: "deposit", tone: "good", label: "Deposit completed" };
+  }
+  if (GAME_LOSS_TYPES.includes(type)) {
+    return {
+      category: "play",
+      tone: "good",
+      label: type.replaceAll("_", " "),
+    };
+  }
+  if (GAME_WIN_TYPES.includes(type)) {
+    return {
+      category: "win",
+      tone: "bad",
+      label: type.replaceAll("_", " "),
+    };
+  }
+  if (REWARD_TYPES.includes(type)) {
+    return {
+      category: "reward",
+      tone: "bad",
+      label: type.replaceAll("_", " "),
+    };
+  }
+  return {
+    category: "account",
+    tone: "neutral",
+    label: type.replaceAll("_", " "),
+  };
+}
 
 function number(value: unknown): number {
   const parsed = Number(value ?? 0);
@@ -433,6 +579,59 @@ async function destinationReuse(
 export class WithdrawalRiskService {
   constructor(private readonly db: Databases) {}
 
+  async loadTimeline(input: {
+    withdrawalId: string;
+    userId: string;
+    requestedAt: string;
+    amountUsd: number;
+  }): Promise<WithdrawalTimelineEvent[]> {
+    const result = await this.db.source.query<{
+      id: string;
+      type: string;
+      amount_usd: string;
+      description: string | null;
+      created_at: string;
+    }>(
+      `
+        SELECT id::text, type::text, ABS(amount::numeric)::text AS amount_usd,
+               description, created_at
+        FROM ledger_transactions
+        WHERE user_id=$1
+          AND status::text='completed'
+          AND created_at > $2::timestamptz - interval '90 days'
+          AND created_at <= $2::timestamptz
+        ORDER BY created_at DESC, id DESC
+        LIMIT 150
+      `,
+      [input.userId, input.requestedAt],
+    );
+    return [
+      {
+        id: `withdrawal:${input.withdrawalId}`,
+        type: "withdrawal_requested",
+        label: "Withdrawal requested",
+        detail: "This request entered the fraud review flow.",
+        amountUsd: input.amountUsd,
+        occurredAt: input.requestedAt,
+        category: "withdrawal",
+        tone: "bad",
+      },
+      ...result.rows.map((row) => {
+        const display = timelineCategory(row.type);
+        return {
+          id: row.id,
+          type: row.type,
+          label: display.label,
+          detail: row.description,
+          amountUsd: number(row.amount_usd),
+          occurredAt: new Date(row.created_at).toISOString(),
+          category: display.category,
+          tone: display.tone,
+        };
+      }),
+    ];
+  }
+
   async refreshPage(input: {
     page: number;
     limit: number;
@@ -569,10 +768,10 @@ export class WithdrawalRiskService {
               withdrawal_id, user_id, username, email, avatar_url, method,
               status, amount_usd, asset_count, requested_at, source_updated_at,
               risk_score, verdict, summary, signals, flow, source_breakdown,
-              assessed_at
+              score_breakdown, flow_checks, assessed_at
             ) VALUES (
               $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-              $15::jsonb,$16::jsonb,$17::jsonb,now()
+              $15::jsonb,$16::jsonb,$17::jsonb,$18::jsonb,$19::jsonb,now()
             )
             ON CONFLICT (withdrawal_id) DO UPDATE SET
               user_id=EXCLUDED.user_id,
@@ -591,6 +790,8 @@ export class WithdrawalRiskService {
               signals=EXCLUDED.signals,
               flow=EXCLUDED.flow,
               source_breakdown=EXCLUDED.source_breakdown,
+              score_breakdown=EXCLUDED.score_breakdown,
+              flow_checks=EXCLUDED.flow_checks,
               assessed_at=now()
           `,
           [
@@ -611,6 +812,8 @@ export class WithdrawalRiskService {
             JSON.stringify(assessment.signals),
             JSON.stringify(assessment.flow),
             JSON.stringify(assessment.sources),
+            JSON.stringify(assessment.scoreBreakdown),
+            JSON.stringify(assessment.flowChecks),
           ],
         );
       }

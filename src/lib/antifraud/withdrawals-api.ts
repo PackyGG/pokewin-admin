@@ -10,7 +10,35 @@ const signalSchema = z.object({
   detail: z.string(),
   points: z.number(),
   tone: z.enum(["good", "neutral", "warning", "bad"]),
+  category: z
+    .enum(["integrity", "funding", "behavior", "account", "network"])
+    .default("behavior"),
 });
+
+const flowCheckSchema = z.object({
+  key: z.enum(["integrity", "funding", "behavior", "account", "network"]),
+  label: z.string(),
+  description: z.string(),
+  status: z.enum(["pass", "review", "block"]),
+  score: z.number(),
+  evidence: z.array(z.string()),
+});
+
+const scoreBreakdownSchema = z.object({
+  integrity: z.number().default(0),
+  funding: z.number().default(0),
+  behavior: z.number().default(0),
+  account: z.number().default(0),
+  network: z.number().default(0),
+});
+
+const reviewStatusSchema = z.enum([
+  "unreviewed",
+  "in_review",
+  "cleared",
+  "escalated",
+  "block_recommended",
+]);
 
 const flowSchema = z.object({
   depositsUsd: z.number(),
@@ -50,7 +78,50 @@ const withdrawalSchema = z.object({
   signals: z.array(signalSchema),
   flow: flowSchema,
   source_breakdown: z.array(sourceSchema),
+  score_breakdown: scoreBreakdownSchema.default({
+    integrity: 0,
+    funding: 0,
+    behavior: 0,
+    account: 0,
+    network: 0,
+  }),
+  flow_checks: z.array(flowCheckSchema).default([]),
+  review_status: reviewStatusSchema.default("unreviewed"),
+  review_decision: z.string().nullable().default(null),
+  reviewed_by: z.string().nullable().default(null),
+  reviewed_by_username: z.string().nullable().default(null),
+  review_note: z.string().nullable().default(null),
+  review_started_at: z.string().nullable().default(null),
+  reviewed_at: z.string().nullable().default(null),
   assessed_at: z.string(),
+});
+
+const timelineEventSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  label: z.string(),
+  detail: z.string().nullable(),
+  amountUsd: z.number(),
+  occurredAt: z.string(),
+  category: z.enum([
+    "deposit",
+    "play",
+    "win",
+    "reward",
+    "withdrawal",
+    "account",
+  ]),
+  tone: z.enum(["good", "neutral", "warning", "bad"]),
+});
+
+const reviewEventSchema = z.object({
+  id: z.string().uuid(),
+  withdrawal_id: z.string().uuid(),
+  action: z.enum(["start_review", "clear", "escalate", "recommend_block"]),
+  actor_id: z.string(),
+  actor_username: z.string().nullable(),
+  note: z.string().nullable(),
+  created_at: z.string(),
 });
 
 const responseSchema = z.object({
@@ -66,12 +137,27 @@ const responseSchema = z.object({
     good: z.number(),
     review: z.number(),
     bad: z.number(),
+    unreviewed: z.number().default(0),
+    in_review: z.number().default(0),
+    escalated: z.number().default(0),
+    block_recommended: z.number().default(0),
     amount_usd: numeric,
+  }),
+});
+
+const detailResponseSchema = z.object({
+  data: z.object({
+    assessment: withdrawalSchema,
+    timeline: z.array(timelineEventSchema),
+    reviewEvents: z.array(reviewEventSchema),
   }),
 });
 
 export type WithdrawalAssessment = z.infer<typeof withdrawalSchema>;
 export type WithdrawalVerdict = WithdrawalAssessment["verdict"];
+export type WithdrawalReviewStatus = z.infer<typeof reviewStatusSchema>;
+export type WithdrawalReviewAction = z.infer<typeof reviewEventSchema>["action"];
+export type WithdrawalDetail = z.infer<typeof detailResponseSchema>["data"];
 
 const UPSTREAM_TIMEOUT_MS = 12_000;
 
@@ -79,6 +165,7 @@ export async function listWithdrawalAssessments(input: {
   page: number;
   status?: string;
   verdict?: WithdrawalVerdict;
+  reviewStatus?: WithdrawalReviewStatus;
   search?: string;
 }): Promise<{
   configured: boolean;
@@ -105,6 +192,7 @@ export async function listWithdrawalAssessments(input: {
   });
   if (input.status) params.set("status", input.status);
   if (input.verdict) params.set("verdict", input.verdict);
+  if (input.reviewStatus) params.set("reviewStatus", input.reviewStatus);
   if (input.search) params.set("search", input.search);
 
   try {
@@ -130,5 +218,94 @@ export async function listWithdrawalAssessments(input: {
       pagination: null,
       summary: null,
     };
+  }
+}
+
+export async function getWithdrawalAssessment(
+  withdrawalId: string,
+): Promise<{
+  configured: boolean;
+  notFound: boolean;
+  error: boolean;
+  data: WithdrawalDetail | null;
+}> {
+  const baseUrl = process.env.ANTIFRAUD_MONITOR_API_URL?.replace(/\/+$/, "");
+  const token = process.env.ANTIFRAUD_MONITOR_API_TOKEN;
+  if (!baseUrl || !token) {
+    return { configured: false, notFound: false, error: false, data: null };
+  }
+  try {
+    const response = await fetch(
+      `${baseUrl}/v1/withdrawals/${encodeURIComponent(withdrawalId)}`,
+      {
+        headers: {
+          accept: "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      },
+    );
+    if (response.status === 404) {
+      return { configured: true, notFound: true, error: false, data: null };
+    }
+    if (!response.ok) {
+      throw new Error(`Monitor API returned ${response.status}`);
+    }
+    const payload = detailResponseSchema.parse(await response.json());
+    return {
+      configured: true,
+      notFound: false,
+      error: false,
+      data: payload.data,
+    };
+  } catch (error) {
+    console.error("[antifraud-withdrawals] detail failed:", error);
+    return { configured: true, notFound: false, error: true, data: null };
+  }
+}
+
+export async function updateWithdrawalReview(input: {
+  withdrawalId: string;
+  action: WithdrawalReviewAction;
+  actorId: string;
+  actorUsername?: string;
+  note?: string;
+  expectedStatus: WithdrawalReviewStatus;
+  idempotencyKey: string;
+}): Promise<void> {
+  const baseUrl = process.env.ANTIFRAUD_MONITOR_API_URL?.replace(/\/+$/, "");
+  const token = process.env.ANTIFRAUD_MONITOR_API_ADMIN_TOKEN;
+  if (!baseUrl || !token) {
+    throw new Error("The Antifraud monitor service is not configured.");
+  }
+  const response = await fetch(
+    `${baseUrl}/v1/withdrawals/${encodeURIComponent(input.withdrawalId)}/review`,
+    {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        action: input.action,
+        actorId: input.actorId,
+        actorUsername: input.actorUsername,
+        note: input.note,
+        expectedStatus: input.expectedStatus,
+        idempotencyKey: input.idempotencyKey,
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    },
+  );
+  if (response.status === 409) {
+    throw new Error(
+      "Someone else changed this withdrawal review. Refresh and try again.",
+    );
+  }
+  if (!response.ok) {
+    throw new Error("The withdrawal review could not be updated.");
   }
 }
