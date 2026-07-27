@@ -319,6 +319,7 @@ export async function fetchSessionActivity(
       WHERE lt.user_id = $1
         AND lt.created_at >=
           ($2::timestamptz ${UTC}) - ($5::int * interval '1 millisecond')
+        AND lt.created_at <= ($6::timestamptz ${UTC})
         AND lt.type::text <> 'rain_win'
 
       UNION ALL
@@ -343,6 +344,8 @@ export async function fetchSessionActivity(
       WHERE ur.user_id = $1
         AND COALESCE(ur.opened_at, ur.granted_at) >=
           ($2::timestamptz ${UTC}) - ($5::int * interval '1 millisecond')
+        AND COALESCE(ur.opened_at, ur.granted_at) <=
+          ($6::timestamptz ${UTC})
       )
       SELECT *
       FROM candidate_activity
@@ -352,7 +355,7 @@ export async function fetchSessionActivity(
         occurred_at,
         source,
         source_ref
-      LIMIT $6
+      LIMIT $7
     `,
     [
       session.user_id,
@@ -360,6 +363,7 @@ export async function fetchSessionActivity(
       session.activity_cursor_source,
       session.activity_cursor_ref,
       overlapMs,
+      session.ends_at,
       limit,
     ],
   );

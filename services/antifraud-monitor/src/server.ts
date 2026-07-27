@@ -286,6 +286,8 @@ app.get("/health", async (_request, reply) => {
       leader: poller.leader,
       lastSuccessfulTickAt: poller.lastSuccessfulTickAt,
       consecutiveFailures: poller.consecutiveFailures,
+      signupsRecovered: poller.signupsRecovered,
+      signupFailuresPending: poller.signupFailuresPending,
     },
   };
   // A wedged engine must fail the platform healthcheck so the process is

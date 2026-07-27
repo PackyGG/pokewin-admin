@@ -42,12 +42,17 @@ advancement commit atomically. Provider successes are cached before that
 transaction so a process restart does not normally repeat paid enrichment.
 An unprocessable signup is retained in `signup_ingestion_failures` and its
 cursor is advanced transactionally, preventing one poison account from
-blocking or repeatedly enriching every later signup.
+blocking or repeatedly enriching every later signup. The elected poller retries
+stored failures in bounded batches with a capped attempt count, reports the
+pending/recovered totals through its health snapshot, and removes a dead letter
+only after the assessment and any case/session commit successfully.
 
 Activity reads use a separate bounded batch per active session. The overlap
 window preserves the full `(occurred_at, source, source_ref)` cursor, fresh
 events are selected before overlap replays, and each session batch persists
-its events, score and cursor in one transaction.
+its events, score and cursor in one transaction. Session windows are anchored
+to the source signup timestamp and activity reads are capped at the exact
+window end, including when an expired dead letter is reconstructed.
 
 `GET /v1/operations/config` is protected by either service token and is the
 source of truth for deployed monitor configuration. Its response is:

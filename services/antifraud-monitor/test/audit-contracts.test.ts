@@ -24,6 +24,7 @@ import { caseDecisionSchema } from "../src/request-schemas.js";
 import { sameRuleUpdateIdentity } from "../src/rule-idempotency.js";
 import { sanitizedRuntimeConfig } from "../src/runtime-config.js";
 import { SCORE_WEIGHT_KEYS } from "../src/score-catalog.js";
+import { parseFailedSignup } from "../src/signup-failure.js";
 import {
   fetchActivity,
   fetchNewSignups,
@@ -402,6 +403,21 @@ test("poison signup is dead-lettered and later siblings do not reemit", async ()
   assert.deepEqual(emitted, ["A", "C"]);
 });
 
+test("stored signup failures restore dates and reject malformed payloads", () => {
+  const restored = parseFailedSignup({
+    ...signup,
+    created_at: signup.created_at.toISOString(),
+  });
+  assert.ok(restored);
+  assert.equal(restored.created_at instanceof Date, true);
+  assert.equal(
+    restored.created_at.toISOString(),
+    signup.created_at.toISOString(),
+  );
+  assert.equal(parseFailedSignup({ ...signup, id: "" }), null);
+  assert.equal(parseFailedSignup({ ...signup, created_at: "not-a-date" }), null);
+});
+
 test("live replay envelopes require valid ids and object payloads", () => {
   assert.equal(STREAM_ID_PATTERN.test("1720000000000-7"), true);
   assert.equal(STREAM_ID_PATTERN.test("latest"), false);
@@ -560,12 +576,14 @@ test("signup and activity cursors preserve exact application-precision UTC tuple
   );
   assert.match(sql, /':granted'/);
   assert.match(sql, /':opened'/);
+  assert.match(sql, /created_at <= \(\$6::timestamptz AT TIME ZONE 'UTC'\)/);
   assert.deepEqual(activity.queries[0]?.values, [
     session.user_id,
     session.activity_cursor_at,
     session.activity_cursor_source,
     session.activity_cursor_ref,
     2_000,
+    session.ends_at,
     40,
   ]);
 });
@@ -583,7 +601,7 @@ test("activity fetch gives every live session its own bounded batch", async () =
   );
   assert.equal(source.queries.length, 2);
   assert.deepEqual(
-    source.queries.map((query) => query.values?.[5]),
+    source.queries.map((query) => query.values?.[6]),
     [20, 20],
   );
 });
@@ -686,9 +704,53 @@ test("cases index and staff actor persistence stay aligned with routes", async (
   assert.match(migration, /cases_severity_rank_updated_idx/);
   assert.match(migration, /ADD COLUMN IF NOT EXISTS actor_username text/);
   assert.match(server, /idempotency_key, actor_id, actor_username, action/);
+  assert.match(server, /signupsRecovered: poller\.signupsRecovered/);
+  assert.match(server, /signupFailuresPending: poller\.signupFailuresPending/);
   assert.match(
     server,
     /case_id,user_id,action_type,status,actor_id,actor_username,reason/,
+  );
+});
+
+test("account-case conflict target matches the partial unique index", async () => {
+  const monitor = await readFile(
+    new URL("../src/monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const migration = await readFile(
+    new URL(
+      "../migrations/008_account_networks_creator_fraud.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  for (const source of [monitor, migration]) {
+    assert.match(source, /subject_type = 'account'/);
+    assert.match(
+      source,
+      /status IN \('open',\s*'monitoring',\s*'in_review',\s*'escalated'\)/,
+    );
+  }
+  assert.match(
+    monitor,
+    /ON CONFLICT \(user_id\) WHERE subject_type = 'account'/,
+  );
+});
+
+test("monitor windows retain and reconstruct the exact signup interval", async () => {
+  const monitor = await readFile(
+    new URL("../src/monitor.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    monitor,
+    /\$5::timestamptz \+ \(\$3::text \|\| ' seconds'\)::interval/,
+  );
+  assert.match(monitor, /WHERE ms\.status = 'active'/);
+  assert.doesNotMatch(
+    monitor,
+    /WHERE ms\.status = 'active' AND ms\.ends_at > now\(\)/,
   );
 });
 
@@ -782,6 +844,8 @@ test("leader liveness stalls only after its bounded timeout", () => {
     consecutiveFailures: 0,
     skippedTicks: 0,
     signupsProcessed: 0,
+    signupsRecovered: 0,
+    signupFailuresPending: 0,
     activitiesProcessed: 0,
     signupBacklogPossible: false,
     signupCursorLagMs: 0,

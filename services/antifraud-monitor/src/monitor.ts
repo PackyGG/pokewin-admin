@@ -15,6 +15,7 @@ import { PollerHealth, type PollerHealthSnapshot } from "./poller-health.js";
 import { baseSignupSignals, severity } from "./scoring.js";
 import { activityScoreFor, type ScoreWeights } from "./score-catalog.js";
 import type { ScoreWeightStore } from "./score-weight-store.js";
+import { parseFailedSignup } from "./signup-failure.js";
 import {
   fetchActivity,
   fetchNewSignups,
@@ -73,6 +74,10 @@ const TICK_WATCHDOG_INTERVALS = 10;
 const RULES_CACHE_TTL_MS = 30_000;
 /** Signups per batch processed in parallel (each does 2 provider lookups). */
 const SIGNUP_CONCURRENCY = 4;
+/** Old failures retry in small, leader-only batches without blocking new input. */
+const FAILED_SIGNUP_REPLAY_BATCH_SIZE = 20;
+const FAILED_SIGNUP_REPLAY_DELAY_SECONDS = 60;
+const FAILED_SIGNUP_REPLAY_MAX_ATTEMPTS = 5;
 
 export class MonitorEngine {
   private running = false;
@@ -254,6 +259,8 @@ export class MonitorEngine {
       if (signupMetrics && activitiesProcessed !== null && completed) {
         this.health.tickSucceeded({
           signupsProcessed: signupMetrics.processed,
+          signupsRecovered: signupMetrics.recovered,
+          signupFailuresPending: signupMetrics.failuresPending,
           activitiesProcessed,
           signupBacklogPossible: signupMetrics.backlogPossible,
           signupCursorLagMs: signupMetrics.cursorLagMs,
@@ -305,9 +312,12 @@ export class MonitorEngine {
 
   private async scanSignups(): Promise<{
     processed: number;
+    recovered: number;
+    failuresPending: number;
     backlogPossible: boolean;
     cursorLagMs: number | null;
   }> {
+    const recovered = await this.replayFailedSignups();
     const cursor = await this.db.antifraud.query<{
       occurred_at: Date;
       source_id: string;
@@ -316,7 +326,13 @@ export class MonitorEngine {
     );
     const current = cursor.rows[0];
     if (!current) {
-      return { processed: 0, backlogPossible: false, cursorLagMs: null };
+      return {
+        processed: 0,
+        recovered,
+        failuresPending: await this.countFailedSignups(),
+        backlogPossible: false,
+        cursorLagMs: null,
+      };
     }
 
     let processed = 0;
@@ -360,11 +376,82 @@ export class MonitorEngine {
 
     return {
       processed,
+      recovered,
+      failuresPending: await this.countFailedSignups(),
       backlogPossible,
       cursorLagMs: backlogPossible
         ? Math.max(0, Date.now() - latestAt.getTime())
         : 0,
     };
+  }
+
+  private async replayFailedSignups(): Promise<number> {
+    const failures = await this.db.antifraud.query<{
+      user_id: string;
+      payload: unknown;
+    }>(
+      `
+        SELECT user_id, payload
+        FROM signup_ingestion_failures
+        WHERE failure_count < $1
+          AND last_failed_at <= now() - ($2::text || ' seconds')::interval
+        ORDER BY last_failed_at, user_id
+        LIMIT $3
+      `,
+      [
+        FAILED_SIGNUP_REPLAY_MAX_ATTEMPTS,
+        FAILED_SIGNUP_REPLAY_DELAY_SECONDS,
+        FAILED_SIGNUP_REPLAY_BATCH_SIZE,
+      ],
+    );
+
+    let recovered = 0;
+    for (const failure of failures.rows) {
+      const signup = parseFailedSignup(failure.payload);
+      if (!signup || signup.id !== failure.user_id) {
+        await this.db.antifraud.query(
+          `
+            UPDATE signup_ingestion_failures
+            SET failure_count = $2,
+                error_text = 'Stored signup payload is invalid',
+                last_failed_at = now()
+            WHERE user_id = $1
+          `,
+          [failure.user_id, FAILED_SIGNUP_REPLAY_MAX_ATTEMPTS],
+        );
+        this.log.error(
+          { userId: failure.user_id },
+          "Antifraud signup dead letter has an invalid stored payload",
+        );
+        continue;
+      }
+
+      try {
+        const prepared = await this.prepareSignup(signup);
+        await this.persistSignup(signup, prepared);
+        const deleted = await this.db.antifraud.query(
+          "DELETE FROM signup_ingestion_failures WHERE user_id = $1",
+          [signup.id],
+        );
+        if ((deleted.rowCount ?? 0) > 0) {
+          recovered += 1;
+          this.log.info(
+            { userId: signup.id },
+            "Antifraud signup recovered from the ingestion dead letter",
+          );
+        }
+      } catch (error) {
+        await this.deadLetterSignup(signup, error);
+      }
+    }
+    return recovered;
+  }
+
+  private async countFailedSignups(): Promise<number> {
+    const result = await this.db.antifraud.query<{ count: number }>(
+      "SELECT COUNT(*)::int AS count FROM signup_ingestion_failures",
+    );
+    return result.rows[0]?.count ?? 0;
   }
 
   private async upsertSubject(signup: Signup): Promise<void> {
@@ -691,9 +778,12 @@ export class MonitorEngine {
   ): Promise<{ caseId: string; sessionId: string }> {
     const caseResult = await client.query<{ id: string }>(
         `
-          INSERT INTO cases(user_id, status, severity, score, peak_score, summary)
-          VALUES ($1, 'monitoring', $2, $3, $3, $4)
-          ON CONFLICT (user_id) WHERE status IN ('open','monitoring','in_review','escalated')
+          INSERT INTO cases(
+            user_id, subject_type, status, severity, score, peak_score, summary
+          )
+          VALUES ($1, 'account', 'monitoring', $2, $3, $3, $4)
+          ON CONFLICT (user_id) WHERE subject_type = 'account'
+            AND status IN ('open','monitoring','in_review','escalated')
           DO UPDATE SET
             score = GREATEST(cases.score, EXCLUDED.score),
             peak_score = GREATEST(cases.peak_score, EXCLUDED.peak_score),
@@ -714,9 +804,12 @@ export class MonitorEngine {
     const sessionResult = await client.query<{ id: string }>(
         `
           INSERT INTO monitor_sessions (
-            case_id, user_id, ends_at, initial_score, current_score, peak_score
+            case_id, user_id, started_at, ends_at,
+            initial_score, current_score, peak_score
           ) VALUES (
-            $1, $2, now() + ($3::text || ' seconds')::interval, $4, $4, $4
+            $1, $2, $5::timestamptz,
+            $5::timestamptz + ($3::text || ' seconds')::interval,
+            $4, $4, $4
           )
           ON CONFLICT (user_id) WHERE status = 'active'
           DO UPDATE SET
@@ -724,7 +817,13 @@ export class MonitorEngine {
             peak_score = GREATEST(monitor_sessions.peak_score, EXCLUDED.peak_score)
           RETURNING id
         `,
-        [caseId, signup.id, this.config.MONITOR_DURATION_SECONDS, score],
+        [
+          caseId,
+          signup.id,
+          this.config.MONITOR_DURATION_SECONDS,
+          score,
+          signup.created_at,
+        ],
     );
     const sessionId = sessionResult.rows[0]?.id;
     if (!sessionId) throw new Error("Failed to open monitor session");
@@ -788,7 +887,7 @@ export class MonitorEngine {
           COALESCE(mac.source_ref, '') AS activity_cursor_ref
         FROM monitor_sessions ms
         LEFT JOIN monitor_activity_cursors mac ON mac.session_id = ms.id
-        WHERE ms.status = 'active' AND ms.ends_at > now()
+        WHERE ms.status = 'active'
       `,
     );
     return result.rows;

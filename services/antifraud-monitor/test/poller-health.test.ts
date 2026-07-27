@@ -9,6 +9,8 @@ test("poller health reports success, backlog, and recovery", () => {
   health.tickSucceeded(
     {
       signupsProcessed: 4,
+      signupsRecovered: 0,
+      signupFailuresPending: 2,
       activitiesProcessed: 7,
       signupBacklogPossible: true,
       signupCursorLagMs: 12_000,
@@ -25,6 +27,8 @@ test("poller health reports success, backlog, and recovery", () => {
   health.tickSucceeded(
     {
       signupsProcessed: 0,
+      signupsRecovered: 2,
+      signupFailuresPending: 0,
       activitiesProcessed: 0,
       signupBacklogPossible: false,
       signupCursorLagMs: 5_000,
@@ -38,6 +42,8 @@ test("poller health reports success, backlog, and recovery", () => {
   );
   assert.equal(snapshot.status, "healthy");
   assert.equal(snapshot.lastTickDurationMs, 100);
+  assert.equal(snapshot.signupsRecovered, 2);
+  assert.equal(snapshot.signupFailuresPending, 0);
 });
 
 test("poller health reports failures and standby replicas", () => {

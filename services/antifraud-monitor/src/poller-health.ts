@@ -9,6 +9,8 @@ export type PollerHealthSnapshot = {
   consecutiveFailures: number;
   skippedTicks: number;
   signupsProcessed: number;
+  signupsRecovered: number;
+  signupFailuresPending: number;
   activitiesProcessed: number;
   signupBacklogPossible: boolean;
   signupCursorLagMs: number | null;
@@ -42,6 +44,8 @@ export class PollerHealth {
   private consecutiveFailures = 0;
   private skippedTicks = 0;
   private signupsProcessed = 0;
+  private signupsRecovered = 0;
+  private signupFailuresPending = 0;
   private activitiesProcessed = 0;
   private signupBacklogPossible = false;
   private signupCursorLagMs: number | null = null;
@@ -69,6 +73,8 @@ export class PollerHealth {
   tickSucceeded(
     metrics: {
       signupsProcessed: number;
+      signupsRecovered: number;
+      signupFailuresPending: number;
       activitiesProcessed: number;
       signupBacklogPossible: boolean;
       signupCursorLagMs: number | null;
@@ -82,6 +88,8 @@ export class PollerHealth {
     this.lastTickDurationMs = this.duration(now);
     this.consecutiveFailures = 0;
     this.signupsProcessed = metrics.signupsProcessed;
+    this.signupsRecovered = metrics.signupsRecovered;
+    this.signupFailuresPending = metrics.signupFailuresPending;
     this.activitiesProcessed = metrics.activitiesProcessed;
     this.signupBacklogPossible = metrics.signupBacklogPossible;
     this.signupCursorLagMs = metrics.signupCursorLagMs;
@@ -104,7 +112,10 @@ export class PollerHealth {
     } else if (this.lastSuccessfulTickAt) {
       const stale = now.getTime() - this.lastSuccessfulTickAt.getTime() > staleAfterMs;
       status =
-        stale || this.consecutiveFailures > 0 || this.signupBacklogPossible
+        stale ||
+          this.consecutiveFailures > 0 ||
+          this.signupBacklogPossible ||
+          this.signupFailuresPending > 0
           ? "degraded"
           : "healthy";
     } else if (this.consecutiveFailures > 0) {
@@ -122,6 +133,8 @@ export class PollerHealth {
       consecutiveFailures: this.consecutiveFailures,
       skippedTicks: this.skippedTicks,
       signupsProcessed: this.signupsProcessed,
+      signupsRecovered: this.signupsRecovered,
+      signupFailuresPending: this.signupFailuresPending,
       activitiesProcessed: this.activitiesProcessed,
       signupBacklogPossible: this.signupBacklogPossible,
       signupCursorLagMs: this.signupCursorLagMs,
