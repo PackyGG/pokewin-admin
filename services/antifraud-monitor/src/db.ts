@@ -16,6 +16,27 @@ function sslFor(
       };
 }
 
+export function sourceSslFor(
+  mode: "disable" | "require",
+  ca?: string,
+):
+  | false
+  | { rejectUnauthorized: false }
+  | { rejectUnauthorized: true; ca: string } {
+  if (mode === "disable") return false;
+  if (ca) {
+    return {
+      rejectUnauthorized: true,
+      ca: ca.replace(/\\n/g, "\n"),
+    };
+  }
+  // The Coolify mirror uses a private CA that is not present in Railway's
+  // trust store. Keep transport encrypted while matching libpq's documented
+  // sslmode=require behavior. Supplying SOURCE_DATABASE_CA restores strict
+  // certificate verification without any code change.
+  return { rejectUnauthorized: false };
+}
+
 export type Databases = {
   source: pg.Pool;
   antifraud: pg.Pool;
@@ -24,7 +45,10 @@ export type Databases = {
 export function createDatabases(config: Config): Databases {
   const source = new Pool({
     connectionString: config.SOURCE_DATABASE_URL,
-    ssl: sslFor(config.SOURCE_DATABASE_SSL, config.SOURCE_DATABASE_CA),
+    ssl: sourceSslFor(
+      config.SOURCE_DATABASE_SSL,
+      config.SOURCE_DATABASE_CA,
+    ),
     max: 8,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 8_000,

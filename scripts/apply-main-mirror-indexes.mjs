@@ -34,10 +34,96 @@ function loadLocalEnv() {
 }
 
 function endpointIdentity(rawUrl) {
-  const url = new URL(rawUrl);
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error("A configured database URL is invalid");
+  }
   const port = url.port || "5432";
   return `${url.hostname.toLowerCase()}:${port}${url.pathname}`;
 }
+
+function endpointDetails(rawUrl) {
+  if (!rawUrl) return null;
+  try {
+    const url = new URL(rawUrl);
+    return {
+      host: url.hostname,
+      port: Number(url.port || "5432"),
+      database: decodeURIComponent(url.pathname.replace(/^\/+/, "")) || null,
+      sslMode: url.searchParams.get("sslmode"),
+      libpqCompat: url.searchParams.get("uselibpqcompat") === "true",
+    };
+  } catch {
+    return { invalid: true };
+  }
+}
+
+function mirrorConnectionString(rawUrl) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error("The configured mirror database URL is invalid");
+  }
+  if (
+    url.searchParams.get("sslmode") === "require" &&
+    !url.searchParams.has("uselibpqcompat")
+  ) {
+    // node-postgres 8 aliases sslmode=require to verify-full. The mirrors use
+    // the standard libpq meaning: encrypted transport without CA validation.
+    url.searchParams.set("uselibpqcompat", "true");
+  }
+  return url.toString();
+}
+
+function redactedErrorMessage(error) {
+  if (!(error instanceof Error)) return "Unknown mirror index operation failure";
+  return error.message
+    .replace(/(postgres(?:ql)?:\/\/)[^@\s]+@/gi, "$1[redacted]@")
+    .replace(/\bpassword\s*=\s*[^\s]+/gi, "password=[redacted]");
+}
+
+function errorField(error, field) {
+  if (typeof error !== "object" || error === null || !(field in error)) return undefined;
+  const value = error[field];
+  return typeof value === "string" || typeof value === "number" ? value : undefined;
+}
+
+function errorHint(code) {
+  switch (code) {
+    case "ECONNREFUSED":
+      return "The host responded, but no PostgreSQL listener accepted this port";
+    case "ETIMEDOUT":
+      return "The endpoint did not respond; check routing, firewall, and allowlists";
+    case "ENOTFOUND":
+      return "The configured database hostname did not resolve";
+    case "28P01":
+      return "PostgreSQL rejected the configured username or password";
+    case "3D000":
+      return "The configured PostgreSQL database does not exist";
+    case "42501":
+      return "The mirror user lacks a required PostgreSQL privilege";
+    case "UNABLE_TO_VERIFY_LEAF_SIGNATURE":
+    case "SELF_SIGNED_CERT_IN_CHAIN":
+    case "DEPTH_ZERO_SELF_SIGNED_CERT":
+      return "TLS reached PostgreSQL, but the server did not present a certificate chain trusted by Node.js";
+    case "ERR_TLS_CERT_ALTNAME_INVALID":
+      return "TLS reached PostgreSQL, but the certificate does not match the configured mirror hostname";
+    default:
+      return null;
+  }
+}
+
+const operation = {
+  requestedTarget: target,
+  target: null,
+  mirrorKey: null,
+  endpoint: null,
+  phase: "initialization",
+  index: null,
+};
 
 function statementsFrom(filePath) {
   const withoutLineComments = fs
@@ -92,6 +178,14 @@ async function applyTarget(name) {
   const mirrorUrl = process.env[mirrorKey];
   const primaryUrl = process.env[primaryKey];
 
+  Object.assign(operation, {
+    target: name,
+    mirrorKey,
+    endpoint: endpointDetails(mirrorUrl),
+    phase: "configuration",
+    index: null,
+  });
+
   if (!mirrorUrl || !primaryUrl) {
     throw new Error(`${mirrorKey} and ${primaryKey} must both be configured`);
   }
@@ -100,7 +194,7 @@ async function applyTarget(name) {
   }
 
   const client = new Client({
-    connectionString: mirrorUrl,
+    connectionString: mirrorConnectionString(mirrorUrl),
     application_name: `pokewin-admin-mirror-indexes-${name}`,
     connectionTimeoutMillis: 10_000,
     statement_timeout: 0,
@@ -108,8 +202,11 @@ async function applyTarget(name) {
   const summary = { target: name, created: [], skipped: [], dropped: [] };
 
   try {
+    operation.phase = "connect";
     await client.connect();
+    operation.phase = "enable-ddl-session";
     await client.query("SET default_transaction_read_only = off");
+    operation.phase = "preflight";
     const preflight = await client.query(`
       SELECT
         pg_is_in_recovery() AS is_recovery,
@@ -122,6 +219,7 @@ async function applyTarget(name) {
       throw new Error(`${mirrorKey} user lacks CREATE on schema public`);
     }
 
+    operation.phase = "acquire-advisory-lock";
     await client.query(
       "SELECT pg_advisory_lock(hashtext('pokewin-admin-main-mirror-indexes-v1'))",
     );
@@ -130,6 +228,8 @@ async function applyTarget(name) {
         const name = indexName(statement);
         const isDrop = /^DROP/i.test(statement);
 
+        operation.index = name;
+        operation.phase = "inspect-index";
         if (!isDrop) {
           const existing = await client.query(
             `SELECT i.indisvalid
@@ -143,23 +243,32 @@ async function applyTarget(name) {
             continue;
           }
           if (existing.rows.length) {
+            operation.phase = "drop-invalid-index";
             await client.query(`DROP INDEX CONCURRENTLY IF EXISTS "${name}"`);
             summary.dropped.push(name);
           }
         }
 
+        operation.phase = isDrop ? "drop-index" : "create-index";
         await client.query(statement);
         (isDrop ? summary.dropped : summary.created).push(name);
       }
     } finally {
-      await client.query(
-        "SELECT pg_advisory_unlock(hashtext('pokewin-admin-main-mirror-indexes-v1'))",
-      );
+      try {
+        await client.query(
+          "SELECT pg_advisory_unlock(hashtext('pokewin-admin-main-mirror-indexes-v1'))",
+        );
+      } catch (error) {
+        operation.phase = "release-advisory-lock";
+        throw error;
+      }
     }
   } finally {
     await client.end().catch(() => undefined);
   }
 
+  operation.phase = "complete";
+  operation.index = null;
   return summary;
 }
 
@@ -170,17 +279,31 @@ try {
   for (const name of targets) results.push(await applyTarget(name));
   console.log(JSON.stringify(results, null, 2));
 } catch (error) {
-  const code =
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    typeof error.code === "string"
-      ? error.code
-      : "MIRROR_INDEX_APPLY_FAILED";
-  const message =
-    code === "MIRROR_INDEX_APPLY_FAILED" && error instanceof Error
-      ? error.message
-      : "The configured mirror connection or index operation failed";
-  console.error(JSON.stringify({ target, status: "failed", code, message }));
+  const code = errorField(error, "code") ?? "MIRROR_INDEX_APPLY_FAILED";
+  console.error(
+    JSON.stringify({
+      target: operation.target ?? target,
+      requestedTarget: operation.requestedTarget,
+      status: "failed",
+      mirrorKey: operation.mirrorKey,
+      endpoint: operation.endpoint,
+      phase: operation.phase,
+      index: operation.index,
+      code,
+      message: redactedErrorMessage(error),
+      hint: errorHint(code),
+      socket: {
+        errno: errorField(error, "errno"),
+        syscall: errorField(error, "syscall"),
+        address: errorField(error, "address"),
+        port: errorField(error, "port"),
+      },
+      postgres: {
+        severity: errorField(error, "severity"),
+        routine: errorField(error, "routine"),
+        constraint: errorField(error, "constraint"),
+      },
+    }),
+  );
   process.exitCode = 1;
 }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -27,10 +27,79 @@ test("mirror DB configuration fails closed and forces read-only sessions", () =>
   assert.match(source, /MIRROR_PRODUCTION_DB/);
   assert.match(source, /MIRROR_DEV_DB/);
   assert.match(source, /default_transaction_read_only=on/);
+  assert.match(source, /uselibpqcompat/);
+  assert.match(source, /sslmode"\) === "require"/);
   assert.match(source, /getReadDrizzleDb/);
   assert.match(source, /getPrimaryDrizzleDb/);
   assert.doesNotMatch(source, /MIRROR_PRODUCTION_DB\s*\?\?\s*process\.env\.DATABASE_URL/);
   assert.doesNotMatch(source, /MIRROR_DEV_DB\s*\?\?\s*process\.env\.DEV_DATABASE_URL/);
+});
+
+test("mirror index failures expose safe, actionable connection diagnostics", () => {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(repoRoot, "scripts/apply-main-mirror-indexes.mjs"), "prod"],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        MIRROR_PRODUCTION_DB:
+          "postgresql://diagnostic-user:super-secret-password@127.0.0.1:1/diagnostic-db?sslmode=disable",
+        DATABASE_URL:
+          "postgresql://protected-user:another-secret@127.0.0.1:2/protected-db?sslmode=disable",
+      },
+    },
+  );
+
+  assert.equal(result.status, 1);
+  const diagnosticLine = result.stderr
+    .split(/\r?\n/)
+    .find((line) => line.trim().startsWith("{"));
+  assert.ok(diagnosticLine, result.stderr);
+
+  const diagnostic = JSON.parse(diagnosticLine) as {
+    target: string;
+    mirrorKey: string;
+    endpoint: {
+      host: string;
+      port: number;
+      database: string;
+      sslMode: string;
+      libpqCompat: boolean;
+    };
+    phase: string;
+    index: string | null;
+    code: string;
+    hint: string;
+    socket: { syscall?: string; address?: string; port?: number };
+  };
+
+  assert.equal(diagnostic.target, "prod");
+  assert.equal(diagnostic.mirrorKey, "MIRROR_PRODUCTION_DB");
+  assert.deepEqual(diagnostic.endpoint, {
+    host: "127.0.0.1",
+    port: 1,
+    database: "diagnostic-db",
+    sslMode: "disable",
+    libpqCompat: false,
+  });
+  assert.equal(diagnostic.phase, "connect");
+  assert.equal(diagnostic.index, null);
+  assert.equal(diagnostic.code, "ECONNREFUSED");
+  assert.match(diagnostic.hint, /no PostgreSQL listener/i);
+  assert.equal(diagnostic.socket.syscall, "connect");
+  assert.equal(diagnostic.socket.address, "127.0.0.1");
+  assert.equal(diagnostic.socket.port, 1);
+  assert.doesNotMatch(result.stderr, /super-secret-password|another-secret/);
+  assert.doesNotMatch(result.stderr, /postgresql:\/\/diagnostic-user/);
+
+  const runnerSource = fs.readFileSync(
+    path.join(repoRoot, "scripts/apply-main-mirror-indexes.mjs"),
+    "utf8",
+  );
+  assert.match(runnerSource, /UNABLE_TO_VERIFY_LEAF_SIGNATURE/);
+  assert.match(runnerSource, /certificate chain trusted by Node\.js/);
 });
 
 test("query modules cannot request the writable MAIN client", () => {

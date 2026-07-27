@@ -28,8 +28,10 @@ Copy `.env.example` to `.env`, supply secrets and run `npm run dev`.
 
 Database TLS is explicit per connection. Railway private-network databases use
 `disable`; set the matching `*_DATABASE_SSL=require` variable when an external
-source or mirror requires TLS. TLS verification is strict; provide the matching
-`*_DATABASE_CA` only when the server certificate needs a private CA.
+source or mirror requires TLS. The Antifraud database connection always verifies
+TLS certificates. The MAIN source uses encrypted libpq `require` semantics when
+no CA is supplied; set `SOURCE_DATABASE_CA` to the private CA PEM to enable
+strict source-certificate verification.
 
 `API_TOKEN` is for reads and WebSocket ticket issuance. `API_ADMIN_TOKEN` is a
 different credential used only for rule edits and case decisions. Never expose

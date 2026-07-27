@@ -15,6 +15,24 @@ const globalForMainDb = globalThis as unknown as {
 
 type MainDbAccess = "read" | "primary";
 
+function mirrorConnectionString(connectionString: string): string {
+  let url: URL;
+  try {
+    url = new URL(connectionString);
+  } catch {
+    throw new Error("The configured MAIN mirror URL is invalid");
+  }
+  if (
+    url.searchParams.get("sslmode") === "require" &&
+    !url.searchParams.has("uselibpqcompat")
+  ) {
+    // node-postgres 8 aliases sslmode=require to verify-full. Our mirror URLs
+    // intentionally use the standard libpq meaning: encrypted transport.
+    url.searchParams.set("uselibpqcompat", "true");
+  }
+  return url.toString();
+}
+
 function createPool(
   connectionString: string | undefined,
   env: DbEnv,
@@ -28,7 +46,9 @@ function createPool(
 
   const isReadMirror = access === "read";
   const pool = new Pool({
-    connectionString,
+    connectionString: isReadMirror
+      ? mirrorConnectionString(connectionString)
+      : connectionString,
     application_name: `pokewin-admin-main-${env}-${access}`,
     min: 0,
     // Read traffic is isolated on the mirrors and can use modestly wider
