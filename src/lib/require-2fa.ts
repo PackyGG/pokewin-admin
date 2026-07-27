@@ -1,8 +1,10 @@
 import { sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { verifyTOTPWithStep } from "@/lib/totp";
-import { verifyStepUpToken } from "@/lib/session";
+import { getPasskeyGrace, verifyStepUpToken } from "@/lib/session";
 import { isPostgresError } from "@/lib/postgres-errors";
+import { canUsePasskeyGrace } from "@/lib/admin-guards";
+import { PASSKEY_GRACE_CREDENTIAL } from "@/lib/passkey-grace-shared";
 
 /**
  * Second-factor gate for a privileged admin action. The `credential` is the
@@ -25,6 +27,40 @@ export async function require2FA(
   }
 
   const value = credential.trim();
+
+  // Only a DB-fresh active admin or owner may reuse the signed passkey window.
+  // TOTP codes and ordinary one-use passkey proofs retain their prior behavior.
+  if (value === PASSKEY_GRACE_CREDENTIAL) {
+    const actor = (await adminDrizzle.execute<{
+      role: string;
+      roles: string[] | null;
+      username: string | null;
+      is_owner: boolean | null;
+    }>(sql`
+      SELECT role::text, roles::text[], username, is_owner
+      FROM admin_users
+      WHERE id = ${adminUserId}::uuid
+        AND is_active = true
+      LIMIT 1
+    `)).rows[0];
+    if (
+      !actor ||
+      !canUsePasskeyGrace({
+        role: actor.role,
+        roles: actor.roles,
+        username: actor.username,
+        isOwner: actor.is_owner,
+      })
+    ) {
+      throw new Error("Passkey reuse is available only to admins and owners.");
+    }
+    if (!(await getPasskeyGrace(adminUserId))) {
+      throw new Error(
+        "Passkey verification expired. Approve again with a passkey or code.",
+      );
+    }
+    return;
+  }
 
   // Passkey path: a valid step-up proof for THIS admin satisfies the gate.
   // verifyStepUpToken never throws and returns null for a plain TOTP code, so we

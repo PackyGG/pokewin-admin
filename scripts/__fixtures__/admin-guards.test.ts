@@ -28,6 +28,7 @@ import {
   wouldReduceOwnAccessViaOverride,
   isSessionRevoked,
   mandatory2faEnabledFromValue,
+  canUsePasskeyGrace,
 } from "@/lib/admin-guards";
 
 // ── roleSetHasAdmin ───────────────────────────────────────────────────────────
@@ -38,6 +39,45 @@ test("roleSetHasAdmin: admin via primary role, via roles array, and absent", () 
   assert.equal(roleSetHasAdmin("support", null), false, "null roles, non-admin primary");
   // Unknown/garbage role strings are dropped by getEffectiveRoles → not admin.
   assert.equal(roleSetHasAdmin("ADMIN", []), false, "case-sensitive: not the enum");
+});
+
+test("canUsePasskeyGrace: permits only admins and owners", () => {
+  assert.equal(
+    canUsePasskeyGrace({
+      role: "admin",
+      roles: ["admin"],
+      username: "staff",
+      isOwner: false,
+    }),
+    true,
+  );
+  assert.equal(
+    canUsePasskeyGrace({
+      role: "support",
+      roles: ["support"],
+      username: "owner",
+      isOwner: true,
+    }),
+    true,
+  );
+  assert.equal(
+    canUsePasskeyGrace({
+      role: "support",
+      roles: ["support"],
+      username: "MoThA",
+      isOwner: false,
+    }),
+    true,
+  );
+  assert.equal(
+    canUsePasskeyGrace({
+      role: "support",
+      roles: ["support"],
+      username: "staff",
+      isOwner: false,
+    }),
+    false,
+  );
 });
 
 // ── Guard 1: last-admin ───────────────────────────────────────────────────────

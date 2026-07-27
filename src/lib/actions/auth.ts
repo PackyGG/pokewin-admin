@@ -5,6 +5,7 @@ import {
   deleteSession,
   deletePendingSession,
   deleteWebauthnChallenge,
+  deletePasskeyGrace,
 } from "@/lib/session";
 
 export async function logout() {
@@ -13,5 +14,6 @@ export async function logout() {
   // cookies so no signed pending-2FA / passkey-challenge token survives sign-out.
   await deletePendingSession();
   await deleteWebauthnChallenge();
+  await deletePasskeyGrace();
   redirect("/login");
 }

@@ -1,6 +1,10 @@
 "use server";
 
-import { verifySession } from "@/lib/dal";
+import {
+  sessionIsAdmin,
+  sessionIsOwner,
+  verifySession,
+} from "@/lib/dal";
 import { sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { buildAuthenticationOptions, checkAuthentication } from "@/lib/webauthn";
@@ -9,6 +13,8 @@ import {
   getWebauthnChallenge,
   deleteWebauthnChallenge,
   createStepUpToken,
+  createPasskeyGrace,
+  getPasskeyGrace,
 } from "@/lib/session";
 import { MS_PER_MINUTE } from "@/lib/utils/time";
 import type {
@@ -79,6 +85,28 @@ export async function hasMyPasskeys(): Promise<boolean> {
   return result.rows[0]?.exists === true;
 }
 
+/**
+ * Initial state for the shared step-up field. Grace is exposed only for a
+ * currently privileged session, so a demotion immediately restores prompts.
+ */
+export async function getMyPasskeyStepUpState(): Promise<{
+  hasPasskeys: boolean;
+  graceExpiresAt: string | null;
+}> {
+  const session = await verifySession();
+  const result = await adminDrizzle.execute<{ exists: boolean }>(sql`
+    SELECT EXISTS(
+      SELECT 1 FROM admin_passkeys WHERE admin_user_id = ${session.userId}::uuid
+    ) AS exists
+  `);
+  const privileged = sessionIsAdmin(session) || sessionIsOwner(session);
+  const grace = privileged ? await getPasskeyGrace(session.userId) : null;
+  return {
+    hasPasskeys: result.rows[0]?.exists === true,
+    graceExpiresAt: grace?.expiresAt ?? null,
+  };
+}
+
 /** Build assertion options scoped to the current admin's registered passkeys. */
 export async function startPasskeyStepUp(): Promise<PublicKeyCredentialRequestOptionsJSON> {
   const session = await verifySession();
@@ -116,7 +144,7 @@ export async function startPasskeyStepUp(): Promise<PublicKeyCredentialRequestOp
  */
 export async function verifyPasskeyStepUp(
   response: AuthenticationResponseJSON,
-): Promise<{ token: string }> {
+): Promise<{ token: string; graceExpiresAt: string | null }> {
   const session = await verifySession();
 
   if (isStepUpRateLimited(session.userId)) {
@@ -192,5 +220,9 @@ export async function verifyPasskeyStepUp(
 
   clearStepUpFailures(session.userId);
   const token = await createStepUpToken(session.userId);
-  return { token };
+  const privileged = sessionIsAdmin(session) || sessionIsOwner(session);
+  const grace = privileged
+    ? await createPasskeyGrace(session.userId)
+    : null;
+  return { token, graceExpiresAt: grace?.expiresAt ?? null };
 }

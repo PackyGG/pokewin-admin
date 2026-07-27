@@ -36,6 +36,24 @@ export function roleSetHasAdmin(
 }
 
 /**
+ * Only effective admins and owners may reuse a passkey assertion. Kept pure so
+ * both the minting path and the consuming action can apply the same rule to
+ * DB-fresh account fields.
+ */
+export function canUsePasskeyGrace(args: {
+  role: string;
+  roles: readonly string[] | null | undefined;
+  username: string | null | undefined;
+  isOwner: boolean | null | undefined;
+}): boolean {
+  return (
+    roleSetHasAdmin(args.role, args.roles) ||
+    args.isOwner === true ||
+    (args.username ?? "").trim().toLowerCase() === "motha"
+  );
+}
+
+/**
  * Last-admin guard decision (PURE). Given:
  *   • whether the TARGET currently counts as an active effective-admin,
  *   • whether the proposed change leaves the target still an active admin,

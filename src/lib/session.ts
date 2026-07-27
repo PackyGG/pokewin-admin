@@ -1,6 +1,7 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { MS_PER_HOUR } from "@/lib/utils/time";
+import { PASSKEY_GRACE_TTL_MS } from "@/lib/passkey-grace-shared";
 
 // SECURITY (SECURITY_AUDIT.md LOW): fail fast instead of the bare `!`. An
 // unset SESSION_SECRET would otherwise sign/verify every admin JWT, pending-2FA
@@ -23,6 +24,7 @@ const encodedKey = new TextEncoder().encode(secretKey);
 const COOKIE_NAME = "admin_session";
 const PENDING_COOKIE_NAME = "admin_2fa_pending";
 const WEBAUTHN_CHALLENGE_COOKIE = "admin_webauthn_challenge";
+const PASSKEY_GRACE_COOKIE = "admin_passkey_grace";
 
 export type SessionPayload = {
   userId: string;
@@ -308,5 +310,81 @@ export async function verifyStepUpToken(
     return null;
   }
   return { jti: payload.jti ?? null };
+}
+
+// --- Admin/owner passkey grace (10-min signed HttpOnly cookie) ---
+
+const PASSKEY_GRACE_PURPOSE = "admin_passkey_grace";
+
+type PasskeyGracePayload = {
+  purpose: typeof PASSKEY_GRACE_PURPOSE;
+  adminUserId: string;
+  expiresAt: string;
+};
+
+/**
+ * Start the reusable passkey window after a verified WebAuthn assertion.
+ * Eligibility is checked by the caller before minting and again by require2FA
+ * before use; this cookie only carries the cryptographic proof.
+ */
+export async function createPasskeyGrace(
+  adminUserId: string,
+): Promise<{ expiresAt: string }> {
+  const expiresAt = new Date(Date.now() + PASSKEY_GRACE_TTL_MS);
+  const expiresAtIso = expiresAt.toISOString();
+  const token = await encryptGeneric(
+    {
+      purpose: PASSKEY_GRACE_PURPOSE,
+      adminUserId,
+      expiresAt: expiresAtIso,
+    },
+    "10m",
+  );
+  const cookieStore = await cookies();
+  cookieStore.set(PASSKEY_GRACE_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    expires: expiresAt,
+    path: "/",
+    domain: sessionCookieDomain(),
+  });
+  return { expiresAt: expiresAtIso };
+}
+
+/** Validate the signed grace proof and bind it to the current admin account. */
+export async function getPasskeyGrace(
+  adminUserId: string,
+): Promise<{ expiresAt: string } | null> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(PASSKEY_GRACE_COOKIE)?.value;
+  if (!token) return null;
+  const payload = await decryptGeneric<PasskeyGracePayload>(token);
+  if (
+    !payload ||
+    payload.purpose !== PASSKEY_GRACE_PURPOSE ||
+    payload.adminUserId !== adminUserId ||
+    !payload.expiresAt ||
+    new Date(payload.expiresAt).getTime() <= Date.now()
+  ) {
+    return null;
+  }
+  return { expiresAt: payload.expiresAt };
+}
+
+export async function deletePasskeyGrace(): Promise<void> {
+  const cookieStore = await cookies();
+  cookieStore.delete(PASSKEY_GRACE_COOKIE);
+  const domain = sessionCookieDomain();
+  if (domain) {
+    cookieStore.set(PASSKEY_GRACE_COOKIE, "", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      expires: new Date(0),
+      path: "/",
+      domain,
+    });
+  }
 }
 

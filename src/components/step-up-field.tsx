@@ -11,26 +11,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ux";
 import {
-  hasMyPasskeys,
+  getMyPasskeyStepUpState,
   startPasskeyStepUp,
   verifyPasskeyStepUp,
 } from "@/lib/passkey-step-up-actions";
+import { PASSKEY_GRACE_CREDENTIAL } from "@/lib/passkey-grace-shared";
 
-// ---------------------------------------------------------------------------
-// Shared second-factor field for privileged-action dialogs. Drop-in replacement
-// for the hand-rolled "2FA code" <Input> that these dialogs used to duplicate:
-// it renders the same authenticator-code input AND — for admins who have a
-// passkey — a "Use a passkey" button.
-//
-// The field's string value is whatever should be submitted to the action's 2FA
-// argument: the typed 6-digit code, OR (after a passkey assertion) a short-lived
-// step-up proof token. Because passkey mode yields a NON-EMPTY string too, every
-// existing dialog's `if (!code.trim())` guard, submit, and action call keep
-// working unchanged — swap the input for <StepUpField> and nothing else moves.
-//
-// require2FA on the server accepts either form. See passkey-step-up-actions.ts.
-// ---------------------------------------------------------------------------
-
+/**
+ * Shared second-factor field for privileged actions. A passkey normally yields
+ * a one-use proof. For admins and owners, the server instead also establishes
+ * a signed ten-minute grace window and this field stays approved until expiry.
+ */
 export function StepUpField({
   value,
   onChange,
@@ -39,9 +30,7 @@ export function StepUpField({
   autoFocus = false,
   id,
 }: {
-  /** Current field value — the typed code or a passkey proof token. */
   value: string;
-  /** Called with the new value (bare string, not an event). */
   onChange: (value: string) => void;
   label?: string;
   disabled?: boolean;
@@ -50,45 +39,92 @@ export function StepUpField({
 }) {
   const [offerPasskey, setOfferPasskey] = useState(false);
   const [pending, setPending] = useState(false);
-  // True once a passkey assertion succeeded and `value` holds its proof token.
   const [verified, setVerified] = useState(false);
+  const [graceExpiresAt, setGraceExpiresAt] = useState<number | null>(null);
+  const [remainingSeconds, setRemainingSeconds] = useState(0);
+  const [useCodeForThisAction, setUseCodeForThisAction] = useState(false);
   const mounted = useRef(true);
+  const onChangeRef = useRef(onChange);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   useEffect(() => {
     mounted.current = true;
-    // Only offer the passkey path when the browser supports WebAuthn AND this
-    // admin actually has a registered passkey — otherwise the button would just
-    // error on click. Fetched lazily on mount (the dialog is already open).
-    if (browserSupportsWebAuthn()) {
-      hasMyPasskeys()
-        .then((has) => {
-          if (mounted.current) setOfferPasskey(has);
-        })
-        .catch(() => {
-          /* stay hidden — TOTP still works */
-        });
-    }
+    // Read grace even if a new WebAuthn ceremony is unavailable. An existing
+    // approval window should still suppress the prompt.
+    getMyPasskeyStepUpState()
+      .then((state) => {
+        if (!mounted.current) return;
+        setOfferPasskey(browserSupportsWebAuthn() && state.hasPasskeys);
+        if (!state.graceExpiresAt) return;
+        const expiresAt = new Date(state.graceExpiresAt).getTime();
+        if (expiresAt > Date.now()) {
+          setGraceExpiresAt(expiresAt);
+          setVerified(true);
+          onChangeRef.current(PASSKEY_GRACE_CREDENTIAL);
+        }
+      })
+      .catch(() => {
+        // TOTP remains available when the optional state check fails.
+      });
     return () => {
       mounted.current = false;
     };
   }, []);
 
-  // If the parent clears the value (e.g. resets the field after a successful
-  // submit) while we're showing the passkey-verified state, drop back to the
-  // code input. Matters for always-mounted usages (an inline Card, not a Dialog
-  // that unmounts on close) — otherwise it keeps showing "Verified" over an
-  // empty value and the next action can't be authorized.
+  // Many dialogs clear their code after submitting. Re-arm those fields while
+  // grace remains active so the next action does not prompt again.
   useEffect(() => {
-    if (verified && value === "") setVerified(false);
-  }, [verified, value]);
+    if (!verified || value !== "") return;
+    if (
+      graceExpiresAt &&
+      graceExpiresAt > Date.now() &&
+      !useCodeForThisAction
+    ) {
+      onChangeRef.current(PASSKEY_GRACE_CREDENTIAL);
+      return;
+    }
+    setVerified(false);
+  }, [graceExpiresAt, useCodeForThisAction, value, verified]);
+
+  useEffect(() => {
+    if (!graceExpiresAt) {
+      setRemainingSeconds(0);
+      return;
+    }
+    const updateRemaining = () => {
+      const seconds = Math.max(
+        0,
+        Math.ceil((graceExpiresAt - Date.now()) / 1000),
+      );
+      setRemainingSeconds(seconds);
+      if (seconds === 0) {
+        setGraceExpiresAt(null);
+        setVerified(false);
+        onChangeRef.current("");
+      }
+    };
+    updateRemaining();
+    const timer = window.setInterval(updateRemaining, 1000);
+    return () => window.clearInterval(timer);
+  }, [graceExpiresAt]);
 
   async function handlePasskey() {
     setPending(true);
     try {
       const optionsJSON = await startPasskeyStepUp();
       const response = await startAuthentication({ optionsJSON });
-      const { token } = await verifyPasskeyStepUp(response);
-      onChange(token);
+      const { token, graceExpiresAt: graceExpiry } =
+        await verifyPasskeyStepUp(response);
+      setUseCodeForThisAction(false);
+      if (graceExpiry) {
+        setGraceExpiresAt(new Date(graceExpiry).getTime());
+        onChange(PASSKEY_GRACE_CREDENTIAL);
+      } else {
+        onChange(token);
+      }
       setVerified(true);
     } catch (err) {
       if (err instanceof Error && err.name === "NotAllowedError") {
@@ -104,9 +140,14 @@ export function StepUpField({
   }
 
   function reset() {
+    setUseCodeForThisAction(true);
+    setGraceExpiresAt(null);
     setVerified(false);
     onChange("");
   }
+
+  const remainingMinutes = Math.floor(remainingSeconds / 60);
+  const remainingClockSeconds = String(remainingSeconds % 60).padStart(2, "0");
 
   if (verified) {
     return (
@@ -115,7 +156,9 @@ export function StepUpField({
         <div className="flex items-center justify-between rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm">
           <span className="flex items-center gap-2 font-medium text-emerald-600 dark:text-emerald-400">
             <Check className="size-4" />
-            Verified with passkey
+            {graceExpiresAt
+              ? `Passkey approved · ${remainingMinutes}:${remainingClockSeconds} remaining`
+              : "Verified with passkey"}
           </span>
           <button
             type="button"
@@ -123,7 +166,7 @@ export function StepUpField({
             disabled={disabled}
             className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground disabled:opacity-50"
           >
-            Use a code instead
+            Use a code for this action
           </button>
         </div>
       </div>
@@ -136,7 +179,7 @@ export function StepUpField({
       <Input
         id={id}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(event) => onChange(event.target.value)}
         placeholder="6-digit authenticator code"
         autoComplete="one-time-code"
         inputMode="numeric"
