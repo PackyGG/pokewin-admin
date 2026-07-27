@@ -94,3 +94,23 @@ test("network storage isolates exact values and supports one live network case",
   assert.doesNotMatch(graphRoute, /target_key=ANY/);
   assert.doesNotMatch(routes, /websocket:\s*true|EventSource/);
 });
+
+test("creator assessments retain account-level evidence and queue detected IP networks", async () => {
+  const source = await readFile(
+    new URL("../src/network-risk.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /ipGroups: ipEvidenceGroups/);
+  assert.match(source, /walletGroups: walletEvidenceGroups/);
+  assert.match(source, /group\.members\.map\(\(member\) => member\.userId\)/);
+  assert.match(
+    source,
+    /this\.enqueueAccount\(group\.rootUserId, `creator:\$\{creatorUserId\}`\)/,
+  );
+  assert.doesNotMatch(
+    source,
+    /ipGroups:[\s\S]{0,200}(signup_ip|source_address)/,
+    "creator metrics must not persist exact IPs or wallet addresses",
+  );
+});

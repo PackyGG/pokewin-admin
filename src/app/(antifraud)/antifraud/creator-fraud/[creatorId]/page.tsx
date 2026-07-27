@@ -102,7 +102,7 @@ async function CreatorDetail({
 
       <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-border/70 bg-card lg:grid-cols-4">
         <Metric icon={Users} label="Cohort" value={String(metrics.cohortSize)} />
-        <Metric icon={Network} label="Connected" value={String(metrics.connectedAccounts)} />
+        <Metric icon={Network} label="Mapped" value={String(metrics.connectedAccounts)} />
         <Metric icon={BadgeDollarSign} label="Deposits" value={formatCurrency(metrics.depositsUsd)} tone="positive" />
         <Metric icon={Activity} label="Wager" value={formatCurrency(metrics.wagerUsd)} tone="positive" />
       </div>
@@ -131,8 +131,14 @@ async function CreatorDetail({
         <section className="rounded-xl border border-border/70 bg-card p-4">
           <p className="text-sm font-semibold">Network maps</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Open complete account components connected to this creator cohort.
+            Open complete account components detected from creator evidence.
           </p>
+          {metrics.networkCount === 0 && metrics.networkRoots.length > 0 && (
+            <p className="mt-2 rounded-md bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+              Shared-IP groups were detected. Their graph scans are queued and
+              may still be building.
+            </p>
+          )}
           <div className="mt-3 flex flex-wrap gap-2">
             {metrics.networkRoots.length > 0 ? (
               metrics.networkRoots.slice(0, 6).map((root) => (
@@ -143,7 +149,7 @@ async function CreatorDetail({
                   render={<HostLink href={`/antifraud/networks?user=${encodeURIComponent(root)}`} />}
                 >
                   <Network className="size-3.5" />
-                  {root.slice(0, 10)}
+                  {evidenceLabel(metrics, root)}
                 </Button>
               ))
             ) : (
@@ -164,6 +170,7 @@ async function CreatorDetail({
                 <span>
                   <span className="block text-sm font-medium">{signal.title}</span>
                   <span className="block text-xs text-muted-foreground">{signal.detail}</span>
+                  <SignalEvidence signalKey={signal.key} metrics={metrics} />
                 </span>
                 <Badge variant="outline" className="border-rose-500/25 text-rose-600 dark:text-rose-400">
                   +{signal.points} pts
@@ -184,16 +191,184 @@ function readMetrics(assessment: CreatorFraudAssessment) {
     const parsed = Number(assessment.metrics[key] ?? 0);
     return Number.isFinite(parsed) ? parsed : 0;
   };
+  const groups = (key: string): CreatorEvidenceGroup[] => {
+    const value = assessment.metrics[key];
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((group) => {
+      if (!group || typeof group !== "object") return [];
+      const record = group as Record<string, unknown>;
+      if (
+        typeof record.rootUserId !== "string" ||
+        !Array.isArray(record.members)
+      ) {
+        return [];
+      }
+      const members = record.members.flatMap((member) => {
+        if (!member || typeof member !== "object") return [];
+        const memberRecord = member as Record<string, unknown>;
+        if (typeof memberRecord.userId !== "string") return [];
+        return [{
+          userId: memberRecord.userId,
+          username:
+            typeof memberRecord.username === "string"
+              ? memberRecord.username
+              : null,
+        }];
+      });
+      if (members.length < 2) return [];
+      return [{
+        accountCount: numberFromUnknown(record.accountCount, members.length),
+        rootUserId: record.rootUserId,
+        members,
+      }];
+    });
+  };
   const roots = assessment.metrics.networkRoots;
   return {
     cohortSize: number("cohortSize"),
     connectedAccounts: number("connectedAccounts"),
+    externalAccounts: number("externalAccounts"),
+    networkCount: number("networkCount"),
+    detectedIpAccounts: number("detectedIpAccounts"),
     depositsUsd: number("depositsUsd"),
     wagerUsd: number("wagerUsd"),
+    withdrawalsUsd: number("withdrawalsUsd"),
+    expectedGgrUsd: number("expectedGgrUsd"),
+    actualValueUsd: number("actualValueUsd"),
+    ggrGapUsd: number("ggrGapUsd"),
+    ipGroups: groups("ipGroups"),
+    walletGroups: groups("walletGroups"),
     networkRoots: Array.isArray(roots)
       ? roots.filter((value): value is string => typeof value === "string")
       : [],
   };
+}
+
+type CreatorEvidenceGroup = {
+  accountCount: number;
+  rootUserId: string;
+  members: Array<{ userId: string; username: string | null }>;
+};
+
+type CreatorMetrics = ReturnType<typeof readMetrics>;
+
+function numberFromUnknown(value: unknown, fallback = 0): number {
+  const parsed = Number(value ?? fallback);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function evidenceLabel(metrics: CreatorMetrics, rootUserId: string): string {
+  for (const group of metrics.ipGroups) {
+    const member = group.members.find((item) => item.userId === rootUserId);
+    if (member) return member.username ?? rootUserId.slice(0, 10);
+  }
+  return rootUserId.slice(0, 10);
+}
+
+function SignalEvidence({
+  signalKey,
+  metrics,
+}: {
+  signalKey: string;
+  metrics: CreatorMetrics;
+}) {
+  if (signalKey === "creator_ip_chain") {
+    return (
+      <EvidenceGroups
+        groups={metrics.ipGroups}
+        networkLinks
+        emptyText="The next assessment will attach the involved account names."
+      />
+    );
+  }
+  if (signalKey === "creator_wallet_reuse") {
+    return (
+      <EvidenceGroups
+        groups={metrics.walletGroups}
+        emptyText="The next assessment will attach the involved account names."
+      />
+    );
+  }
+  if (signalKey === "creator_ggr_shortfall") {
+    return (
+      <div className="mt-2 grid gap-1.5 text-[11px] sm:grid-cols-2 lg:grid-cols-4">
+        <EvidenceMetric label="Expected GGR" value={formatCurrency(metrics.expectedGgrUsd)} />
+        <EvidenceMetric label="Deposits" value={formatCurrency(metrics.depositsUsd)} tone="positive" />
+        <EvidenceMetric label="Withdrawals" value={formatCurrency(metrics.withdrawalsUsd)} tone="negative" />
+        <EvidenceMetric label="Actual value" value={formatCurrency(metrics.actualValueUsd)} tone={metrics.actualValueUsd < 0 ? "negative" : "positive"} />
+      </div>
+    );
+  }
+  return null;
+}
+
+function EvidenceGroups({
+  groups,
+  networkLinks = false,
+  emptyText,
+}: {
+  groups: CreatorEvidenceGroup[];
+  networkLinks?: boolean;
+  emptyText: string;
+}) {
+  if (groups.length === 0) {
+    return <span className="mt-2 block text-[11px] text-amber-600 dark:text-amber-400">{emptyText}</span>;
+  }
+  return (
+    <div className="mt-2 space-y-1.5">
+      {groups.map((group, index) => (
+        <div
+          key={`${group.rootUserId}-${index}`}
+          className="flex flex-wrap items-center gap-1.5 rounded-md bg-muted/40 px-2 py-1.5 text-[11px]"
+        >
+          <span className="font-medium">Group {index + 1}:</span>
+          {group.members.map((member) => (
+            <HostLink
+              key={member.userId}
+              href={`/users/${member.userId}`}
+              className="text-cyan-600 hover:underline dark:text-cyan-400"
+            >
+              {member.username ?? member.userId.slice(0, 10)}
+            </HostLink>
+          ))}
+          {networkLinks && (
+            <HostLink
+              href={`/antifraud/networks?user=${encodeURIComponent(group.rootUserId)}`}
+              className="ml-auto inline-flex items-center gap-1 font-medium text-cyan-600 hover:underline dark:text-cyan-400"
+            >
+              <Network className="size-3" />
+              Open network
+            </HostLink>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EvidenceMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "positive" | "negative";
+}) {
+  return (
+    <span className="rounded-md bg-muted/40 px-2 py-1.5">
+      <span className="block text-muted-foreground">{label}</span>
+      <span className={
+        tone === "positive"
+          ? "font-semibold text-emerald-600 dark:text-emerald-400"
+          : tone === "negative"
+            ? "font-semibold text-rose-600 dark:text-rose-400"
+            : "font-semibold"
+      }>
+        {value}
+      </span>
+    </span>
+  );
 }
 
 function Metric({

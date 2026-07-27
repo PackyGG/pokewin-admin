@@ -51,6 +51,17 @@ export type AnalysisSignal = {
   category: "network" | "affiliate" | "behavior";
 };
 
+type CreatorEvidenceMember = {
+  userId: string;
+  username: string | null;
+};
+
+type CreatorEvidenceGroup = {
+  accountCount: number;
+  rootUserId: string;
+  members: CreatorEvidenceMember[];
+};
+
 type GraphNode = {
   key: string;
   type: "account" | "ip" | "device";
@@ -893,6 +904,7 @@ export class NetworkRiskService {
     const depositSignals = cohortIds.length
       ? await this.db.source.query<{
           reused_wallet_accounts: number;
+          reused_wallet_groups: unknown;
           synchronized_accounts: number;
           withdrawals: string;
         }>(
@@ -905,12 +917,13 @@ export class NetworkRiskService {
                 AND ($2::int IS NULL OR created_at >= (now() AT TIME ZONE 'UTC') - ($2::int * interval '1 day'))
             ),
             wallets AS (
-              SELECT COUNT(DISTINCT user_id)::int AS accounts
+              SELECT
+                COUNT(DISTINCT user_id)::int AS accounts,
+                array_agg(DISTINCT user_id ORDER BY user_id) AS member_ids
               FROM deposits
               WHERE source_address IS NOT NULL
               GROUP BY source_address
               HAVING COUNT(DISTINCT user_id) >= 2
-              ORDER BY accounts DESC LIMIT 1
             ),
             synchronized AS (
               SELECT COUNT(DISTINCT user_id)::int AS accounts
@@ -927,7 +940,17 @@ export class NetworkRiskService {
                 AND ($2::int IS NULL OR created_at >= (now() AT TIME ZONE 'UTC') - ($2::int * interval '1 day'))
             )
             SELECT
-              COALESCE((SELECT accounts FROM wallets),0)::int AS reused_wallet_accounts,
+              COALESCE((SELECT MAX(accounts) FROM wallets),0)::int AS reused_wallet_accounts,
+              COALESCE((
+                SELECT jsonb_agg(
+                  jsonb_build_object(
+                    'accountCount', accounts,
+                    'memberIds', member_ids
+                  )
+                  ORDER BY accounts DESC, member_ids::text
+                )
+                FROM wallets
+              ), '[]'::jsonb) AS reused_wallet_groups,
               COALESCE((SELECT accounts FROM synchronized),0)::int AS synchronized_accounts,
               (SELECT amount FROM withdrawals) AS withdrawals
           `,
@@ -935,13 +958,15 @@ export class NetworkRiskService {
         )
       : { rows: [] };
 
-    const ipCounts = new Map<string, number>();
+    const ipMembers = new Map<string, SourceAccount[]>();
     const countryCounts = new Map<string, number>();
     const hourlyCounts = new Map<string, number>();
     let disposable = 0;
     for (const account of accounts.values()) {
       if (account.signup_ip) {
-        ipCounts.set(account.signup_ip, (ipCounts.get(account.signup_ip) ?? 0) + 1);
+        const members = ipMembers.get(account.signup_ip) ?? [];
+        members.push(account);
+        ipMembers.set(account.signup_ip, members);
       }
       if (account.country_code) {
         const country = account.country_code.toUpperCase();
@@ -951,7 +976,20 @@ export class NetworkRiskService {
       hourlyCounts.set(hour, (hourlyCounts.get(hour) ?? 0) + 1);
       if (disposableEmailDomain(account.email)) disposable += 1;
     }
-    const largestIp = Math.max(0, ...ipCounts.values());
+    const sharedIpGroups = [...ipMembers.values()]
+      .filter((members) => members.length >= 2)
+      .sort((left, right) => right.length - left.length);
+    const ipEvidenceGroups = sharedIpGroups
+      .slice(0, 20)
+      .map((members) => this.creatorEvidenceGroup(members));
+    const walletEvidenceGroups = this.walletEvidenceGroups(
+      depositSignals.rows[0]?.reused_wallet_groups,
+      accounts,
+    );
+    const largestIp = Math.max(
+      0,
+      ...sharedIpGroups.map((members) => members.length),
+    );
     const largestCountry = Math.max(0, ...countryCounts.values());
     const largestHour = Math.max(0, ...hourlyCounts.values());
     const cohortSize = accounts.size;
@@ -960,6 +998,17 @@ export class NetworkRiskService {
     const proxyCount = await this.proxyAccountCount(cohortIds);
     const proxyRatio = cohortSize ? (proxyCount / cohortSize) * 100 : 0;
     const networkMetrics = await this.creatorNetworkMetrics(cohortIds);
+    const networkRoots = [
+      ...new Set([
+        ...networkMetrics.networkRoots,
+        ...ipEvidenceGroups.map((group) => group.rootUserId),
+      ]),
+    ].slice(0, 20);
+    const detectedIpAccounts = new Set(
+      ipEvidenceGroups.flatMap((group) =>
+        group.members.map((member) => member.userId),
+      ),
+    ).size;
 
     const deposits = numeric(usage.rows[0]?.deposits);
     const wager = numeric(usage.rows[0]?.wager);
@@ -1015,7 +1064,10 @@ export class NetworkRiskService {
           connectedAccounts: networkMetrics.connectedAccounts,
           externalAccounts: networkMetrics.externalAccounts,
           networkCount: networkMetrics.networkCount,
-          networkRoots: networkMetrics.networkRoots.slice(0, 20),
+          networkRoots,
+          detectedIpAccounts,
+          ipGroups: ipEvidenceGroups,
+          walletGroups: walletEvidenceGroups,
           depositsUsd: deposits,
           wagerUsd: wager,
           withdrawalsUsd: withdrawals,
@@ -1033,6 +1085,72 @@ export class NetworkRiskService {
         false,
       ],
     );
+
+    const queued = await Promise.allSettled(
+      ipEvidenceGroups.map((group) =>
+        this.enqueueAccount(group.rootUserId, `creator:${creatorUserId}`),
+      ),
+    );
+    const failedQueues = queued.filter(
+      (result) => result.status === "rejected",
+    ).length;
+    if (failedQueues > 0) {
+      this.log.warn(
+        { creatorUserId, failedQueues },
+        "Some creator evidence networks could not be queued",
+      );
+    }
+  }
+
+  private creatorEvidenceGroup(
+    sourceMembers: SourceAccount[],
+  ): CreatorEvidenceGroup {
+    const members = sourceMembers
+      .map((account) => ({
+        userId: account.id,
+        username: account.username,
+      }))
+      .sort((left, right) =>
+        (left.username ?? left.userId).localeCompare(
+          right.username ?? right.userId,
+        ),
+      );
+    return {
+      accountCount: members.length,
+      rootUserId: members[0]?.userId ?? sourceMembers[0]!.id,
+      members,
+    };
+  }
+
+  private walletEvidenceGroups(
+    rawGroups: unknown,
+    accounts: Map<string, SourceAccount>,
+  ): CreatorEvidenceGroup[] {
+    if (!Array.isArray(rawGroups)) return [];
+    const groups: CreatorEvidenceGroup[] = [];
+    for (const rawGroup of rawGroups.slice(0, 20)) {
+      if (!rawGroup || typeof rawGroup !== "object") continue;
+      const memberIds = (rawGroup as { memberIds?: unknown }).memberIds;
+      if (!Array.isArray(memberIds)) continue;
+      const members = memberIds
+        .filter((value): value is string => typeof value === "string")
+        .map((userId) => ({
+          userId,
+          username: accounts.get(userId)?.username ?? null,
+        }))
+        .sort((left, right) =>
+          (left.username ?? left.userId).localeCompare(
+            right.username ?? right.userId,
+          ),
+        );
+      if (members.length < 2) continue;
+      groups.push({
+        accountCount: members.length,
+        rootUserId: members[0]!.userId,
+        members,
+      });
+    }
+    return groups;
   }
 
   private async creatorNetworkMetrics(userIds: string[]): Promise<{

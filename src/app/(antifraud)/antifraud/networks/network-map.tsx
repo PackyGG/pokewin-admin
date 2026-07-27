@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { HostLink } from "@/components/host-link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -242,7 +243,7 @@ export function AccountNetworkMap({
                 <Button
                   size="sm"
                   variant="outline"
-                  render={<a href={`/users/${selected.user_id}`} />}
+                  render={<HostLink href={`/users/${selected.user_id}`} />}
                 >
                   Open account
                 </Button>
