@@ -69,3 +69,19 @@ test("the dashboard reports both internal state and Sumsub evidence", () => {
     "the daily review queue must appear before technical diagnostics",
   );
 });
+
+test("untouched default KYC rows stay out of the review queue and totals", () => {
+  const query = source("src/lib/antifraud/kyc.ts");
+
+  assert.match(query, /function meaningfulKycRecordCondition\(\): SQL/);
+  assert.match(
+    query,
+    /const conditions: SQL\[\] = \[meaningfulKycRecordCondition\(\)\]/,
+  );
+  assert.match(
+    query,
+    /FROM user_kyc\s+WHERE \$\{meaningfulKycRecordCondition\(\)\}/,
+  );
+  assert.match(query, /verification_cycle\} > 0/);
+  assert.match(query, /status\} <> 'none'/);
+});

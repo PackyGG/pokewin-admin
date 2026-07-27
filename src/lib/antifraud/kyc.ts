@@ -177,11 +177,35 @@ function statusCondition(filter: KycFilter): SQL | undefined {
   }
 }
 
+/**
+ * Untouched default rows are not verification activity and must not make the
+ * account appear in the review workspace or its totals.
+ */
+function meaningfulKycRecordCondition(): SQL {
+  return sql`(
+    ${user_kyc.kyc_required}
+    OR ${user_kyc.kyc_required_at} IS NOT NULL
+    OR ${user_kyc.kyc_required_by} IS NOT NULL
+    OR NULLIF(BTRIM(${user_kyc.kyc_required_reason}), '') IS NOT NULL
+    OR ${user_kyc.verification_cycle} > 0
+    OR ${user_kyc.admin_decision} <> 'pending'
+    OR ${user_kyc.admin_reviewed_at} IS NOT NULL
+    OR ${user_kyc.admin_reviewed_by} IS NOT NULL
+    OR ${user_kyc.applicant_id} IS NOT NULL
+    OR ${user_kyc.status} <> 'none'
+    OR ${user_kyc.review_answer} IS NOT NULL
+    OR ${user_kyc.reject_type} IS NOT NULL
+    OR ${user_kyc.moderation_comment} IS NOT NULL
+    OR ${user_kyc.last_webhook_created_at} IS NOT NULL
+    OR ${user_kyc.last_webhook_digest} IS NOT NULL
+  )`;
+}
+
 async function listKycAccounts(
   filters: KycDashboardFilters,
 ): Promise<KycAccount[]> {
   const db = await getDrizzleDb();
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [meaningfulKycRecordCondition()];
   const filter = filters.status ?? "all";
   const status = statusCondition(filter);
   if (status) conditions.push(status);
@@ -296,6 +320,7 @@ async function loadKycStats(): Promise<KycDashboardStats> {
       ARRAY_AGG(DISTINCT level_name ORDER BY level_name)
         FILTER (WHERE level_name IS NOT NULL) AS used_levels
     FROM user_kyc
+    WHERE ${meaningfulKycRecordCondition()}
   `);
   const row = result.rows[0];
   const number = (value: string | undefined): number => Number(value ?? 0);
