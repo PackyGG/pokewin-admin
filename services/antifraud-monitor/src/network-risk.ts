@@ -304,7 +304,7 @@ export class NetworkRiskService {
           SELECT id, target_kind, target_id, window_days
           FROM network_scan_jobs
           WHERE status = 'pending'
-          ORDER BY created_at
+          ORDER BY (requested_by IS NULL), created_at
           FOR UPDATE SKIP LOCKED
           LIMIT 1
         `,

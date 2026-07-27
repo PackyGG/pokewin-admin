@@ -114,3 +114,12 @@ test("creator assessments retain account-level evidence and queue detected IP ne
     "creator metrics must not persist exact IPs or wallet addresses",
   );
 });
+
+test("staff-requested network scans run ahead of background reconciliation", async () => {
+  const source = await readFile(
+    new URL("../src/network-risk.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /ORDER BY \(requested_by IS NULL\), created_at/);
+});
