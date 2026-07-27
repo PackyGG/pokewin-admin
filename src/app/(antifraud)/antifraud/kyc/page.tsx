@@ -1,6 +1,5 @@
 import { Suspense } from "react";
 import {
-  ArrowRight,
   BadgeCheck,
   Check,
   CheckCircle2,
@@ -38,26 +37,8 @@ export const metadata = { title: "KYC Review · Antifraud" };
 
 const QUERY_TIMEOUT_MS = 10_000;
 
-const WORKFLOW_STEPS = [
-  {
-    number: "1",
-    title: "KYC is required",
-    text: "Withdrawals lock for the current verification cycle.",
-  },
-  {
-    number: "2",
-    title: "Sumsub checks identity",
-    text: "Its status is evidence. Approval alone does not unlock anything.",
-  },
-  {
-    number: "3",
-    title: "Admin makes the decision",
-    text: "Mark safe to unlock this cycle, or reject to keep it locked.",
-  },
-] as const;
-
 const FILTER_LABELS: Record<KycFilter, string> = {
-  all: "All accounts",
+  all: "All records",
   required: "Withdrawals locked",
   awaiting_review: "Decision open",
   provider_pending: "Waiting on Sumsub",
@@ -101,7 +82,6 @@ export default async function AntifraudKycPage({
         {canManage && <RequireKycDialog />}
       </header>
 
-      <WorkflowGuide />
       <FilterBar status={status} search={search} />
 
       <Suspense key={contentKey} fallback={<DashboardSkeleton />}>
@@ -112,46 +92,6 @@ export default async function AntifraudKycPage({
         />
       </Suspense>
     </div>
-  );
-}
-
-function WorkflowGuide() {
-  return (
-    <section
-      aria-labelledby="kyc-workflow-title"
-      className="rounded-lg border border-cyan-500/20 bg-cyan-500/[0.04] p-3 sm:p-4"
-    >
-      <div className="mb-3">
-        <h2 id="kyc-workflow-title" className="text-sm font-semibold">
-          How KYC works here
-        </h2>
-        <p className="text-xs text-muted-foreground">
-          Sumsub reports the identity check. The admin decision controls the
-          withdrawal lock.
-        </p>
-      </div>
-      <ol className="grid gap-2 sm:grid-cols-3">
-        {WORKFLOW_STEPS.map((step, index) => (
-          <li
-            key={step.number}
-            className="flex items-start gap-2.5 rounded-md border border-border/60 bg-background/70 p-3"
-          >
-            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-cyan-500/10 text-xs font-semibold text-cyan-600 dark:text-cyan-300">
-              {step.number}
-            </span>
-            <span className="min-w-0">
-              <span className="block text-xs font-semibold">{step.title}</span>
-              <span className="mt-0.5 block text-[11px] leading-4 text-muted-foreground">
-                {step.text}
-              </span>
-            </span>
-            {index < WORKFLOW_STEPS.length - 1 ? (
-              <ArrowRight className="ml-auto hidden size-3.5 shrink-0 text-muted-foreground/50 sm:block" />
-            ) : null}
-          </li>
-        ))}
-      </ol>
-    </section>
   );
 }
 
@@ -202,7 +142,7 @@ function FilterBar({
           name="q"
           defaultValue={search ?? ""}
           placeholder="Search player, email, user ID, or applicant ID…"
-          aria-label="Search KYC accounts"
+          aria-label="Search verification records"
           className="h-8 min-w-0 flex-1 rounded-md border border-border/60 bg-background px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
         <button
@@ -278,7 +218,7 @@ async function KycDashboardContent({
       </div>
 
       <p className="text-xs text-muted-foreground">
-        {stats.total} tracked accounts · {stats.required} currently locked ·{" "}
+        {stats.total} verification records · {stats.required} currently locked ·{" "}
         {stats.rejected} rejected · {stats.withApplicant} linked to a Sumsub
         applicant
       </p>
@@ -446,7 +386,7 @@ function AccountList({
         icon={Fingerprint}
         title={
           <>
-            KYC accounts
+            Accounts flagged for verification
             <span className="text-xs font-normal text-muted-foreground">
               ({accounts.length} shown · {FILTER_LABELS[filter]})
             </span>
@@ -457,7 +397,9 @@ function AccountList({
       {accounts.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border/70 bg-card/40 px-4 py-12 text-center">
           <CheckCircle2 className="mx-auto size-5 text-muted-foreground" />
-          <p className="mt-2 text-sm font-semibold">No matching KYC accounts</p>
+          <p className="mt-2 text-sm font-semibold">
+            No accounts match this view
+          </p>
           <p className="mt-1 text-xs text-muted-foreground">
             Change the filter or search, or require KYC for an account.
           </p>
@@ -791,7 +733,8 @@ function getAccountPresentation(account: KycAccount): AccountPresentation {
 
   return {
     label: "No KYC action",
-    summary: "This account is tracked but does not currently require verification.",
+    summary:
+      "This account has a verification record but does not currently require verification.",
     nextStep: "No action needed.",
     badgeClassName: "text-muted-foreground",
     panelClassName: "border-border/70 bg-muted/30 text-foreground",

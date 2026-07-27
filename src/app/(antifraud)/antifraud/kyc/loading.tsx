@@ -10,11 +10,6 @@ export default function KycLoading() {
           <Skeleton className="h-4 w-96 max-w-[70vw]" />
         </div>
       </div>
-      <div className="grid gap-2 rounded-lg border border-border/70 p-3 sm:grid-cols-3">
-        {Array.from({ length: 3 }, (_, index) => (
-          <Skeleton key={index} className="h-20 rounded-md" />
-        ))}
-      </div>
       <Skeleton className="h-20 rounded-lg" />
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         {Array.from({ length: 4 }, (_, index) => (

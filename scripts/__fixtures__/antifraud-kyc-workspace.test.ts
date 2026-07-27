@@ -59,8 +59,9 @@ test("the dashboard reports both internal state and Sumsub evidence", () => {
   assert.match(query, /usedLevels/);
   assert.match(query, /backendUrlConfigured/);
   assert.match(query, /automaticUnlock:\s*false/);
-  assert.match(page, /Sumsub reports the identity check/);
-  assert.match(page, /Approval alone does not unlock anything/);
+  assert.doesNotMatch(page, /How KYC works here/);
+  assert.match(page, /Accounts flagged for verification/);
+  assert.match(page, /verification records/);
   assert.match(page, /Ready for admin decision/);
   assert.match(page, /System details and webhook activity/);
   assert.ok(
